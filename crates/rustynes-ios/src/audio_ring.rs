@@ -5,11 +5,17 @@
 //! is unit-tested on the workspace host build, the way `audio_dsp` is. The
 //! iOS-only `audio.rs` wires it to the cpal CoreAudio stream.
 //!
-//! - [`Ring`](crate::audio_ring::Ring) — the lock-free single-producer / single-consumer sample queue,
-//!   moved here from `audio.rs` unchanged in its discipline, and given a batched
-//!   [`Ring::pop_into`](crate::audio_ring::Ring::pop_into) (one index load and one index store per device buffer,
-//!   not per sample; IOS-03), a fill level, and a start threshold, so playback
-//!   starts from a filled buffer instead of underrunning its first callbacks.
+//! - [`ring`](crate::audio_ring::ring) — the lock-free single-producer /
+//!   single-consumer sample queue, moved here from `audio.rs` unchanged in its
+//!   discipline, and given a batched
+//!   [`RingRx::pop_into`](crate::audio_ring::RingRx::pop_into) (one index load
+//!   and one index store per device buffer, not per sample; IOS-03), a fill
+//!   level, and a start threshold, so playback starts from a filled buffer
+//!   instead of underrunning its first callbacks. It is reached only through
+//!   one [`RingTx`](crate::audio_ring::RingTx) and one
+//!   [`RingRx`](crate::audio_ring::RingRx), neither `Clone`, both `&mut self`,
+//!   so the single-producer / single-consumer rule its `unsafe` relies on is
+//!   enforced by the types rather than asked of the caller.
 //! - [`Producer`](crate::audio_ring::Producer) — dynamic rate control (IOS-02). The sink had none: the ring
 //!   filled or drained at whatever rate the host clock and the audio clock
 //!   drifted apart, and nothing pulled it back to a target. The producer runs a
@@ -25,6 +31,7 @@
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// A single-producer / single-consumer lock-free ring of mono `f32` samples.
 ///
@@ -39,7 +46,13 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// Forming a `&mut [f32]` / `&[f32]` over the *whole* boxed slice from the two
 /// threads concurrently is undefined behaviour even for disjoint indices, so it
 /// is avoided here.
-pub struct Ring {
+///
+/// Private: its `&self` [`Ring::push`] and [`Ring::pop_into`] are sound only
+/// with ONE producer and ONE consumer, and `Ring` is `Sync`, so a public `Ring`
+/// would let safe code race two producers on one cell. The handles returned by
+/// [`ring`] are the only way in (found in review of v2.7.4, which had made it
+/// public when moving it out of `audio.rs`).
+struct Ring {
     buf: Box<[UnsafeCell<f32>]>,
     cap: usize,
     /// Read index, owned exclusively by the consumer.
@@ -72,8 +85,7 @@ unsafe impl Send for Ring {}
 impl Ring {
     /// A ring holding up to `cap - 1` samples, draining only once
     /// `start_threshold` are queued.
-    #[must_use]
-    pub fn new(cap: usize, start_threshold: usize) -> Self {
+    fn new(cap: usize, start_threshold: usize) -> Self {
         let cap = cap.max(2);
         let buf = (0..cap)
             .map(|_| UnsafeCell::new(0.0f32))
@@ -90,8 +102,7 @@ impl Ring {
     }
 
     /// Samples currently queued (a snapshot; either side may move it next).
-    #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         let head = self.head.load(Ordering::Acquire);
         let tail = self.tail.load(Ordering::Acquire);
         if tail >= head {
@@ -101,17 +112,11 @@ impl Ring {
         }
     }
 
-    /// Whether nothing is queued.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Producer: enqueue mono samples. When the ring is full the INCOMING
     /// (newest) samples are dropped — the consumer-owned `head` is never written
     /// here, which is what keeps this a sound SPSC queue. Returns how many were
     /// queued.
-    pub fn push(&self, samples: &[f32]) -> usize {
+    fn push(&self, samples: &[f32]) -> usize {
         let mut tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         let mut queued = 0;
@@ -144,7 +149,7 @@ impl Ring {
     /// The batching is a cost property with no observable output: a mutation
     /// back to one index load and store per sample is expected to pass every
     /// test here.
-    pub fn pop_into(&self, out: &mut [f32]) -> usize {
+    fn pop_into(&self, out: &mut [f32]) -> usize {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
         let avail = if tail >= head {
@@ -176,6 +181,61 @@ impl Ring {
             self.primed.store(false, Ordering::Relaxed);
         }
         n
+    }
+}
+
+/// A ring of `cap` slots (holding `cap - 1` samples) that drains only once
+/// `start_threshold` are queued, returned as its only producer and consumer.
+#[must_use]
+pub fn ring(cap: usize, start_threshold: usize) -> (RingTx, RingRx) {
+    let shared = Arc::new(Ring::new(cap, start_threshold));
+    (RingTx(Arc::clone(&shared)), RingRx(shared))
+}
+
+/// The producer end of a [`ring`]: the only handle that can enqueue.
+pub struct RingTx(Arc<Ring>);
+
+impl RingTx {
+    /// Enqueue mono samples; when the ring is full the newest are dropped.
+    /// Returns how many were queued.
+    pub fn push(&mut self, samples: &[f32]) -> usize {
+        self.0.push(samples)
+    }
+
+    /// Samples currently queued.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether nothing is queued.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// The consumer end of a [`ring`]: the only handle that can dequeue.
+pub struct RingRx(Arc<Ring>);
+
+impl RingRx {
+    /// Fill `out` from the queue (see the private `Ring::pop_into` for the
+    /// start-threshold and batching rules). Returns how many real samples were
+    /// written; the rest of `out` is silence.
+    pub fn pop_into(&mut self, out: &mut [f32]) -> usize {
+        self.0.pop_into(out)
+    }
+
+    /// Samples currently queued.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether nothing is queued.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -265,16 +325,19 @@ pub fn drc_ratio(fill: f64) -> f64 {
 /// the queue settles at `target` samples instead of drifting with the gap
 /// between the host clock and the audio clock.
 pub struct Producer {
+    tx: RingTx,
     resampler: HermiteResampler,
     scratch: Vec<f32>,
     target: usize,
 }
 
 impl Producer {
-    /// A producer steering the ring towards `target` queued samples.
+    /// A producer feeding `tx`, steering its ring towards `target` queued
+    /// samples.
     #[must_use]
-    pub fn new(target: usize) -> Self {
+    pub fn new(target: usize, tx: RingTx) -> Self {
         Self {
+            tx,
             resampler: HermiteResampler::new(),
             scratch: Vec::with_capacity(2048),
             target: target.max(1),
@@ -283,13 +346,13 @@ impl Producer {
 
     /// Resample `samples` at the ratio the ring's fill calls for, and queue
     /// them. Returns how many were queued.
-    pub fn push(&mut self, ring: &Ring, samples: &[f32]) -> usize {
+    pub fn push(&mut self, samples: &[f32]) -> usize {
         #[allow(clippy::cast_precision_loss)] // sample counts, far below 2^52
-        let fill = ring.len() as f64 / (2.0 * self.target as f64);
+        let fill = self.tx.len() as f64 / (2.0 * self.target as f64);
         self.resampler.set_ratio(drc_ratio(fill));
         self.scratch.clear();
         self.resampler.process(samples, &mut self.scratch);
-        ring.push(&self.scratch)
+        self.tx.push(&self.scratch)
     }
 
     /// The ratio used for the last block (for diagnostics and tests).
@@ -327,44 +390,44 @@ mod tests {
 
     #[test]
     fn a_ring_waits_for_its_start_threshold_then_drains_in_order() {
-        let ring = Ring::new(64, 8);
+        let (mut tx, mut rx) = ring(64, 8);
         let mut out = [9.0f32; 4];
-        ring.push(&[1.0, 2.0, 3.0]);
-        assert_eq!(ring.pop_into(&mut out), 0, "below the threshold: silence");
+        tx.push(&[1.0, 2.0, 3.0]);
+        assert_eq!(rx.pop_into(&mut out), 0, "below the threshold: silence");
         assert_eq!(out, [0.0; 4]);
-        ring.push(&[4.0, 5.0, 6.0, 7.0, 8.0]);
-        assert_eq!(ring.pop_into(&mut out), 4);
+        tx.push(&[4.0, 5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(rx.pop_into(&mut out), 4);
         assert_eq!(out, [1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(ring.len(), 4);
+        assert_eq!(rx.len(), 4);
     }
 
     #[test]
     fn an_underrun_waits_for_the_threshold_again() {
-        let ring = Ring::new(64, 4);
-        ring.push(&[1.0; 4]);
+        let (mut tx, mut rx) = ring(64, 4);
+        tx.push(&[1.0; 4]);
         let mut out = [0.0f32; 6];
-        assert_eq!(ring.pop_into(&mut out), 4, "partial buffer, then silence");
+        assert_eq!(rx.pop_into(&mut out), 4, "partial buffer, then silence");
         assert_eq!(&out[4..], &[0.0, 0.0]);
-        ring.push(&[2.0; 2]);
-        assert_eq!(ring.pop_into(&mut out), 0, "two samples back is not enough");
-        ring.push(&[2.0; 2]);
-        assert_eq!(ring.pop_into(&mut out), 4);
+        tx.push(&[2.0; 2]);
+        assert_eq!(rx.pop_into(&mut out), 0, "two samples back is not enough");
+        tx.push(&[2.0; 2]);
+        assert_eq!(rx.pop_into(&mut out), 4);
     }
 
     #[test]
     fn a_full_ring_drops_the_newest_samples() {
-        let ring = Ring::new(8, 1); // holds 7
-        assert_eq!(ring.push(&[1.0; 10]), 7);
-        assert_eq!(ring.len(), 7);
+        let (mut tx, mut rx) = ring(8, 1); // holds 7
+        assert_eq!(tx.push(&[1.0; 10]), 7);
+        assert_eq!(tx.len(), 7);
         let mut out = [0.0f32; 7];
-        assert_eq!(ring.pop_into(&mut out), 7);
-        assert!(ring.is_empty());
+        assert_eq!(rx.pop_into(&mut out), 7);
+        assert!(rx.is_empty() && tx.is_empty());
         // Wrap-around keeps order.
-        ring.push(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        tx.push(&[1.0, 2.0, 3.0, 4.0, 5.0]);
         let mut three = [0.0f32; 3];
-        ring.pop_into(&mut three);
+        rx.pop_into(&mut three);
         assert_eq!(three, [1.0, 2.0, 3.0]);
-        assert_eq!(ring.len(), 2);
+        assert_eq!(rx.len(), 2);
     }
 
     /// IOS-02: the servo pulls a ring that sits away from the target back
@@ -374,16 +437,16 @@ mod tests {
     fn rate_control_steers_the_ring_to_its_target() {
         let target = 4800;
         for start in [0usize, 9_000] {
-            let ring = Ring::new(48_000, 1);
-            ring.push(&vec![0.0; start]);
-            let mut producer = Producer::new(target);
+            let (mut tx, mut rx) = ring(48_000, 1);
+            tx.push(&vec![0.0; start]);
+            let mut producer = Producer::new(target, tx);
             let block = vec![0.25f32; 800];
             let mut out = vec![0.0f32; 800];
             for _ in 0..3000 {
-                producer.push(&ring, &block);
-                ring.pop_into(&mut out);
+                producer.push(&block);
+                rx.pop_into(&mut out);
             }
-            let fill = ring.len();
+            let fill = rx.len();
             assert!(
                 fill.abs_diff(target) < target / 4,
                 "started at {start}, settled at {fill}, target {target}"
@@ -393,12 +456,12 @@ mod tests {
 
     #[test]
     fn the_ratio_follows_the_fill() {
-        let ring = Ring::new(48_000, 1);
-        let mut p = Producer::new(1000);
-        p.push(&ring, &[0.0; 10]);
+        let (tx, _rx) = ring(48_000, 1);
+        let mut p = Producer::new(1000, tx);
+        p.push(&[0.0; 10]);
         assert!(p.ratio() < 1.0, "an empty ring stretches");
-        ring.push(&vec![0.0; 5000]);
-        p.push(&ring, &[0.0; 10]);
+        p.tx.push(&vec![0.0; 5000]);
+        p.push(&[0.0; 10]);
         assert!(p.ratio() > 1.0, "an over-full ring squeezes");
     }
 

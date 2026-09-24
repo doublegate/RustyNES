@@ -365,11 +365,20 @@ final class EmulatorCore {
     private var lastAudioRebuild: CFTimeInterval = 0
     /// The last audio-depth config applied, re-applied to a rebuilt sink.
     private var lastAudioDepth: AudioDepthConfig?
+    /// Set when a rebuild destroyed the sink and could not open a new one, so
+    /// the next frames keep retrying (throttled by `lastAudioRebuild`). Without
+    /// it `audio` is nil after the failure and nothing ever retried. A sink that
+    /// never opened at init stays silent, as before.
+    private var audioLost = false
 
-    /// Rebuild the output sink if its stream has died. Cheap when it has not:
-    /// one FFI call reading an atomic flag.
+    /// Rebuild the output sink if its stream has died, or retry one a failed
+    /// rebuild left missing. Cheap otherwise: one FFI call reading an atomic flag.
     func recoverAudioIfNeeded() {
-        guard let audio, rustynes_ios_audio_is_invalid(audio) != 0 else { return }
+        if let audio {
+            guard rustynes_ios_audio_is_invalid(audio) != 0 else { return }
+        } else if !audioLost {
+            return
+        }
         rebuildAudioSink()
     }
 
@@ -390,9 +399,11 @@ final class EmulatorCore {
             self.audio = nil
         }
         guard let sink = rustynes_ios_audio_new() else {
+            audioLost = true
             NSLog("RustyNES: audio sink rebuild failed; retrying")
             return
         }
+        audioLost = false
         let rate = rustynes_ios_audio_sample_rate(sink)
         if rate != sampleRate {
             NSLog("RustyNES: audio came back at \(rate) Hz, the core runs at \(sampleRate) Hz; reopen the game to match")

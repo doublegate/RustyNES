@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::audio_dsp::{AudioDepth, DepthConfig, DepthParams};
-use crate::audio_ring::{Producer, Ring, fan_out};
+use crate::audio_ring::{Producer, fan_out, ring};
 
 /// The queue depth rate control steers towards (v2.7.4, audit IOS-02): 50 ms.
 /// Playback starts once this much is queued, so the first callbacks do not
@@ -62,8 +62,8 @@ const fn stream_error_is_fatal(kind: cpal::ErrorKind) -> bool {
 /// [`AudioSink::push`]; the stream pulls them on its own thread. Dropping the sink
 /// stops the stream.
 pub struct AudioSink {
-    ring: Arc<Ring>,
-    /// Rate control on the producer side (IOS-02). A `Mutex` for interior
+    /// Rate control on the producer side (IOS-02), owning the ring's only
+    /// producer handle (the callback owns the only consumer). A `Mutex` for interior
     /// mutability behind the `&self` FFI handle: only the main thread pushes,
     /// so it is never contended, and the real-time callback never takes it.
     producer: Mutex<Producer>,
@@ -103,8 +103,7 @@ impl AudioSink {
         // v2.7.4 (IOS-02): a 50 ms target with rate control, starting only once
         // the target is queued; the ring holds four times that.
         let target = (sample_rate * TARGET_LATENCY_MS / 1000) as usize;
-        let ring = Arc::new(Ring::new(target * 4, target));
-        let ring_cb = Arc::clone(&ring);
+        let (tx, mut rx) = ring(target * 4, target);
         let invalidated = Arc::new(AtomicBool::new(false));
         let invalidated_cb = Arc::clone(&invalidated);
         // Allocated once, here; the callback only ever slices it.
@@ -132,7 +131,7 @@ impl AudioSink {
                     for block in data.chunks_mut(channels * MAX_CHUNK_FRAMES) {
                         let frames = block.len() / channels;
                         let chunk = &mut mono[..frames];
-                        ring_cb.pop_into(chunk);
+                        rx.pop_into(chunk);
                         for (frame, &m) in block.chunks_mut(channels).zip(chunk.iter()) {
                             if bypass {
                                 // Fan the mono value out to every channel (the
@@ -157,8 +156,7 @@ impl AudioSink {
         stream.play().map_err(|e| format!("play stream: {e}"))?;
 
         Ok(Self {
-            ring,
-            producer: Mutex::new(Producer::new(target)),
+            producer: Mutex::new(Producer::new(target, tx)),
             invalidated,
             stream,
             sample_rate,
@@ -175,7 +173,7 @@ impl AudioSink {
             .producer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        producer.push(&self.ring, samples);
+        producer.push(samples);
     }
 
     /// Whether the stream has died (device gone, audio service lost, or a

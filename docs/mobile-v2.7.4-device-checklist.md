@@ -58,6 +58,8 @@ Settings for A6-A7.
 | I11 | MOB-09 | Join a netplay room by host name on a slow network | The interface stays responsive during the lookup |
 | I12 | new | With a game running, open a `.nes` from the Files app | The new game appears and runs (it used to freeze) |
 | I13 | IOS-06 | Play with a game controller, including turbo | Input as before |
+| I14 | MOB-09 | Start a room-code join, then close the game before it connects | Nothing connects afterwards; the next game opens with no netplay session |
+| I15 | MOB-07 | (only if a crash reproduces) | The app stays open, the game freezes, and a message says to reopen it or load a save state |
 
 ## Record
 

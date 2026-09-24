@@ -323,6 +323,7 @@ final class AppModel: ObservableObject {
             netplay.detach()
             emulator?.shutdown()
             emulator = core
+            startWarningPoll()
             if let batteryNotice { errorMessage = batteryNotice }
             currentEntry = entry
             library.markPlayed(entry.sha, info: core.info)
@@ -361,6 +362,8 @@ final class AppModel: ObservableObject {
         ra.detachFromGame()
         netplay.detach()
         cloudSaveStates.setCurrentGame(sha: nil)
+        warningTimer?.invalidate()
+        warningTimer = nil
         emulator?.shutdown()
         emulator = nil
         currentEntry = nil
@@ -507,14 +510,7 @@ final class AppModel: ObservableObject {
     func applyDisplaySettings() {
         guard let emulator else { return }
         let e = effectiveDisplay()
-        // v2.7.4 (IOS-11): while the device is hot, drop the shader passes -- the
-        // one expensive, optional GPU work -- until it cools. The chosen filter is
-        // untouched and comes back on its own.
-        if thermallyConstrained {
-            emulator.setFilter(.none)
-        } else {
-            emulator.setFilter(e.filter, p0: e.params.0, p1: e.params.1, p2: e.params.2, p3: e.params.3)
-        }
+        applyFilter()
         // Palette: "" means the built-in NES palette; a "builtin.*" id selects a v1.9.8
         // accessibility palette; otherwise it is an imported `.pal` stem. An
         // unknown/missing id falls back to the built-in palette.
@@ -717,6 +713,19 @@ final class AppModel: ObservableObject {
         warningMessage = warnings.joined(separator: "\n")
     }
 
+    /// Polls `surfaceWarnings` once a second while a game is open (v2.7.4). The
+    /// bridge also queues `recoveredFromInternalError` when it contains a panic
+    /// (MOB-07), and nothing drained the queue outside a movie load, so that
+    /// message never reached the screen.
+    private var warningTimer: Timer?
+
+    private func startWarningPoll() {
+        warningTimer?.invalidate()
+        warningTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.surfaceWarnings() }
+        }
+    }
+
     // MARK: - iCloud config sync (v1.9.5)
 
     /// Pull the cloud config values into the local model (last-writer-wins: a
@@ -866,8 +875,8 @@ final class AppModel: ObservableObject {
     private func flushBatteryInBackground() {
         guard let saver = battery, let core = emulator else { return }
         let task = BackgroundTask(name: "RustyNES battery save")
+        defer { task.end() }
         saver.flushNow(core.batteryRam())
-        task.end()
     }
 
     /// Whether the device is hot enough to shed optional GPU work (IOS-11).
@@ -879,7 +888,22 @@ final class AppModel: ObservableObject {
         let constrained = state == .serious || state == .critical
         guard constrained != thermallyConstrained else { return }
         thermallyConstrained = constrained
-        applyDisplaySettings()
+        // Only the filter: `applyDisplaySettings` also re-reads the palette and
+        // HD pack from disk, which a hot device should be spared.
+        applyFilter()
+    }
+
+    /// Apply the effective video filter (v2.7.4, IOS-11): while the device is
+    /// hot, drop the shader passes -- the one expensive, optional GPU work --
+    /// until it cools. The chosen filter is untouched and comes back on its own.
+    private func applyFilter() {
+        guard let emulator else { return }
+        if thermallyConstrained {
+            emulator.setFilter(.none)
+        } else {
+            let e = effectiveDisplay()
+            emulator.setFilter(e.filter, p0: e.params.0, p1: e.params.1, p2: e.params.2, p3: e.params.3)
+        }
     }
 
     /// Sticky after the audio route went away (headphones unplugged). v2.7.4: its

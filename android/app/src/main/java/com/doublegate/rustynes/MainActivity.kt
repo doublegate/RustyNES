@@ -101,6 +101,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import uniffi.rustynes_mobile.HostWarning
+import uniffi.rustynes_mobile.InternalException
 import uniffi.rustynes_mobile.NesController
 import uniffi.rustynes_mobile.RaLoginStatus
 import uniffi.rustynes_mobile.RaToast
@@ -1276,6 +1277,10 @@ private fun EmulatorScreen(
         scope.launch {
             runCatching {
                 val prepared = withContext(Dispatchers.IO) {
+                    // Write the running game's battery save first, so reopening
+                    // the same game reads it back with at most the frames run
+                    // during this preparation missing, not up to a second's worth.
+                    emulator.flushBattery()
                     prepareRom(context, read(), uri, name())
                 }
                 status = publishRom(scope, emulator, prepared, settings)
@@ -2565,6 +2570,8 @@ private fun EmulatorScreen(
         // v2.7.4 (AND-09): the battery save is compared once a second (60 frames)
         // and written on a change, on Dispatchers.IO so the loop never waits on disk.
         var batteryFrame = 0
+        // v2.7.4: host warnings are drained on the same low cadence (see below).
+        var warnFrame = 0
         // v1.8.8 "Atlas" (Workstream E): accumulate frames run with fast-forward
         // (turbo) engaged and post the PGS incremental achievement in batches (every
         // ~30 turbo frames) to avoid a per-frame FFI/Task hit. No-op behind the
@@ -2573,201 +2580,221 @@ private fun EmulatorScreen(
         var turboFrames = 0
         try {
             while (isActive) {
-                val ctrl = emulator.controller
-                if (ctrl != null && !romLoaded) {
-                    romLoaded = true
-                    // A fresh controller just appeared: (re-)apply Four Score for the
-                    // current pad count and re-push every port's held mask onto it.
-                    gamepad.onControllerReady()
-                    emulator.reapplyAllPorts()
-                }
-                if (ctrl == null || emulator.paused) {
-                    audio.pause() // AND-03: silence + release focus while paused
-                    delay(50)
-                    continue
-                }
-                audio.resume()
-                val saver = emulator.battery
-                if (saver != null && ++batteryFrame >= 60) {
-                    batteryFrame = 0
-                    if (saver.tryBegin()) {
-                        launch(Dispatchers.IO) {
-                            try {
-                                runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
-                                    .onFailure {
-                                        android.util.Log.w("RustyNES", "battery save failed", it)
-                                    }
-                            } finally {
-                                saver.end()
+                try {
+                    val ctrl = emulator.controller
+                    if (ctrl != null && !romLoaded) {
+                        romLoaded = true
+                        // A fresh controller just appeared: (re-)apply Four Score for the
+                        // current pad count and re-push every port's held mask onto it.
+                        gamepad.onControllerReady()
+                        emulator.reapplyAllPorts()
+                    }
+                    if (ctrl == null || emulator.paused) {
+                        audio.pause() // AND-03: silence + release focus while paused
+                        delay(50)
+                        continue
+                    }
+                    audio.resume()
+                    val saver = emulator.battery
+                    if (saver != null && ++batteryFrame >= 60) {
+                        batteryFrame = 0
+                        if (saver.tryBegin()) {
+                            launch(Dispatchers.IO) {
+                                try {
+                                    runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
+                                        .onFailure {
+                                            android.util.Log.w("RustyNES", "battery save failed", it)
+                                        }
+                                } finally {
+                                    saver.end()
+                                }
                             }
                         }
                     }
-                }
-                // Advance the turbo/autofire pulse once per emulated frame, then push
-                // the per-port masks updated below. Cheap no-op when nothing is held
-                // in turbo. Must run BEFORE the input is latched into the core.
-                gamepad.onFrameTick()
-                // Netplay (v1.8.6): while a session is active the loop drives the core
-                // via `npAdvanceFrame` (rollback owns pacing), NOT `runFrame`. Force
-                // speed to 100% — no turbo / fast-forward / frame-skip / rewind — and
-                // present + drain audio only on a frame that actually advanced.
-                val np = ctrl.npIsActive()
-                val turbo = !np && emulator.turbo
-                // v1.8.8 "Atlas" (Workstream E): batch the turbo-frames achievement.
-                if (turbo) {
-                    turboFrames++
-                    if (turboFrames >= 30) {
-                        host?.playGames?.increment(PgsIds.ACH_TURBO_100, turboFrames)
-                        turboFrames = 0
+                    // Advance the turbo/autofire pulse once per emulated frame, then push
+                    // the per-port masks updated below. Cheap no-op when nothing is held
+                    // in turbo. Must run BEFORE the input is latched into the core.
+                    gamepad.onFrameTick()
+                    // Netplay (v1.8.6): while a session is active the loop drives the core
+                    // via `npAdvanceFrame` (rollback owns pacing), NOT `runFrame`. Force
+                    // speed to 100% — no turbo / fast-forward / frame-skip / rewind — and
+                    // present + drain audio only on a frame that actually advanced.
+                    val np = ctrl.npIsActive()
+                    val turbo = !np && emulator.turbo
+                    // v1.8.8 "Atlas" (Workstream E): batch the turbo-frames achievement.
+                    if (turbo) {
+                        turboFrames++
+                        if (turboFrames >= 30) {
+                            host?.playGames?.increment(PgsIds.ACH_TURBO_100, turboFrames)
+                            turboFrames = 0
+                        }
                     }
-                }
-                val start = System.nanoTime()
-                // Emulate, play this frame's audio, and pack the framebuffer all
-                // off the main thread (the blocking audio write and the 61k-pixel
-                // RGBA->ARGB pack must never run on the UI thread). Only the cheap
-                // setPixels + asImageBitmap stay on the UI thread.
-                var usedHd = false
-                var logLines: List<String> = emptyList()
-                // Whether this iteration produced a frame to present (always for
-                // single-player; for netplay only when the tick advanced — a stalled /
-                // connecting / error tick produces nothing and skips present + audio).
-                var producedFrame = true
-                // Capture the HD bitmap once per iteration so an Unload on the UI
-                // thread can't null it mid-frame (the local keeps the object alive).
-                val hdBmp = if (np) null else if (hdActive) hd.bitmap else null
-                withContext(Dispatchers.Default) {
-                    if (np) {
-                        // Netplay tick: REPLACES runFrame. `npAdvanceFrame` advanced the
-                        // same `Nes`, so read the framebuffer via the non-advancing
-                        // index path (running runFrame again would desync rollback).
-                        val tick = ctrl.npAdvanceFrame(emulator.p1Mask().toUByte())
-                        if (!tick.producedFrame) {
-                            producedFrame = false
-                            // Still drain the audio ring so it doesn't back up while
-                            // connecting / stalling (discarded — no present this tick).
-                            ctrl.drainAudioBytes()
+                    val start = System.nanoTime()
+                    // Emulate, play this frame's audio, and pack the framebuffer all
+                    // off the main thread (the blocking audio write and the 61k-pixel
+                    // RGBA->ARGB pack must never run on the UI thread). Only the cheap
+                    // setPixels + asImageBitmap stay on the UI thread.
+                    var usedHd = false
+                    var logLines: List<String> = emptyList()
+                    // Whether this iteration produced a frame to present (always for
+                    // single-player; for netplay only when the tick advanced — a stalled /
+                    // connecting / error tick produces nothing and skips present + audio).
+                    var producedFrame = true
+                    // Capture the HD bitmap once per iteration so an Unload on the UI
+                    // thread can't null it mid-frame (the local keeps the object alive).
+                    val hdBmp = if (np) null else if (hdActive) hd.bitmap else null
+                    withContext(Dispatchers.Default) {
+                        if (np) {
+                            // Netplay tick: REPLACES runFrame. `npAdvanceFrame` advanced the
+                            // same `Nes`, so read the framebuffer via the non-advancing
+                            // index path (running runFrame again would desync rollback).
+                            val tick = ctrl.npAdvanceFrame(emulator.p1Mask().toUByte())
+                            if (!tick.producedFrame) {
+                                producedFrame = false
+                                // Still drain the audio ring so it doesn't back up while
+                                // connecting / stalling (discarded — no present this tick).
+                                ctrl.drainAudioBytes()
+                                return@withContext
+                            }
+                            // Index framebuffer -> ARGB via the shared composite LUT (the
+                            // GPU SurfaceView is bypassed during netplay — the picture goes
+                            // through the Bitmap path, like the HD-pack path).
+                            packIndexToArgb(ctrl.indexFramebufferBytes(), pixels)
+                            val audioBytes = ctrl.drainAudioBytes()
+                            if (!emulator.muted) audio.writeBytes(audioBytes)
+                            if (scriptLoaded) logLines = ctrl.drainScriptLog()
                             return@withContext
                         }
-                        // Index framebuffer -> ARGB via the shared composite LUT (the
-                        // GPU SurfaceView is bypassed during netplay — the picture goes
-                        // through the Bitmap path, like the HD-pack path).
-                        packIndexToArgb(ctrl.indexFramebufferBytes(), pixels)
-                        val audioBytes = ctrl.drainAudioBytes()
-                        if (!emulator.muted) audio.writeBytes(audioBytes)
-                        if (scriptLoaded) logLines = ctrl.drainScriptLog()
-                        return@withContext
-                    }
-                    val fb = ctrl.runFrame()
-                    if (hdBmp != null) {
-                        // HD-pack: composite the upscaled frame (Bitmap path only —
-                        // the GPU SurfaceView is fixed at 256x240).
-                        val comp = ctrl.compositeHdFrame()
-                        if (comp.size == hd.w * hd.h * 4) {
-                            packRgbaToArgb(comp, hd.pixels)
-                            usedHd = true
+                        val fb = ctrl.runFrame()
+                        if (hdBmp != null) {
+                            // HD-pack: composite the upscaled frame (Bitmap path only —
+                            // the GPU SurfaceView is fixed at 256x240).
+                            val comp = ctrl.compositeHdFrame()
+                            if (comp.size == hd.w * hd.h * 4) {
+                                packRgbaToArgb(comp, hd.pixels)
+                                usedHd = true
+                            } else {
+                                packRgbaToArgb(fb, pixels)
+                            }
                         } else {
+                            // Bisqwit needs the palette-index frame + NTSC phase; submit it
+                            // BEFORE the frame so the render thread pairs them (it consumes
+                            // the frame first). Only fetched while that filter is active.
+                            if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
+                                gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
+                            }
+                            // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
+                            // no-op when the GPU renderer is off.
+                            gpuSurface?.submitFrame(fb)
                             packRgbaToArgb(fb, pixels)
                         }
-                    } else {
-                        // Bisqwit needs the palette-index frame + NTSC phase; submit it
-                        // BEFORE the frame so the render thread pairs them (it consumes
-                        // the frame first). Only fetched while that filter is active.
-                        if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
-                            gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
+                        // Hot path: drain audio as raw bytes (no per-sample Float boxing)
+                        // and write straight to the PCM_FLOAT track.
+                        val audioBytes = ctrl.drainAudioBytes()
+                        // In fast-forward the audio is dropped (writing it would block
+                        // the loop back to real time); otherwise play unless muted.
+                        if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
+                        // Lua: drain the script's print/log output (cheap when empty).
+                        if (scriptLoaded) logLines = ctrl.drainScriptLog()
+                    }
+                    if (producedFrame) {
+                        val presented: Bitmap
+                        if (usedHd && hdBmp != null) {
+                            hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
+                            frame = hdBmp.asImageBitmap()
+                            presented = hdBmp
+                        } else {
+                            reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                            frame = reuse.asImageBitmap()
+                            presented = reuse
                         }
-                        // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
-                        // no-op when the GPU renderer is off.
-                        gpuSurface?.submitFrame(fb)
-                        packRgbaToArgb(fb, pixels)
-                    }
-                    // Hot path: drain audio as raw bytes (no per-sample Float boxing)
-                    // and write straight to the PCM_FLOAT track.
-                    val audioBytes = ctrl.drainAudioBytes()
-                    // In fast-forward the audio is dropped (writing it would block
-                    // the loop back to real time); otherwise play unless muted.
-                    if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
-                    // Lua: drain the script's print/log output (cheap when empty).
-                    if (scriptLoaded) logLines = ctrl.drainScriptLog()
-                }
-                if (producedFrame) {
-                    val presented: Bitmap
-                    if (usedHd && hdBmp != null) {
-                        hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
-                        frame = hdBmp.asImageBitmap()
-                        presented = hdBmp
-                    } else {
-                        reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                        frame = reuse.asImageBitmap()
-                        presented = reuse
-                    }
-                    // v1.8.8 "Atlas" (Workstream F): publish the gameplay frame for
-                    // capture (a reference to the just-blitted buffer, no UI chrome),
-                    // and feed the clip ring when recording (it copies on the throttle
-                    // beat). Both are cheap; the encode happens off-loop on Stop.
-                    capture.latestFrame = presented
-                    capture.clip?.offer(presented)
-                    // Append new script log lines (keep the last 8 for the overlay).
-                    if (logLines.isNotEmpty()) {
-                        scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
-                            .takeLast(8).joinToString("\n")
-                    }
-                    // Mirror the picture to the external display while casting (no-op
-                    // otherwise). Same main-thread publish point as the Compose frame.
-                    castManager.pushFrame(reuse)
-                    // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38):
-                    // stream the palette-index plane to the Web Receiver, internally
-                    // throttled to ~20-30fps and 64 KB-capped. Compiled out entirely
-                    // in default builds (flag off); a cheap no-op when no Cast session.
-                    if (BuildConfig.CHROMECAST_ENABLED) {
-                        chromecast.sendFrame(ctrl.indexFramebufferBytes())
-                    }
-                }
-                // Netplay status poll (v1.8.6): refresh the panel/overlay snapshot at a
-                // low cadence whether or not a frame was produced (so a stall / connect
-                // shows live). Its counter always advances (unlike the RA one).
-                if (np) {
-                    if (!npActive) npActive = true
-                    if (++npFrame % 15 == 0) npStatus = ctrl.npStatus()
-                } else if (npActive) {
-                    // A session that ended (Leave / error tear-down) clears the snapshot.
-                    npStatus = null
-                    npActive = false
-                    npHostInfo = null
-                    npRoomCode = null
-                }
-                // RetroAchievements: poll the toast queue + login status at a low
-                // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).
-                if (settings.raEnabled && (++raFrame % 15) == 0) {
-                    val rctrl = emulator.controller
-                    if (rctrl != null && rctrl.raIsEnabled()) {
-                        // Assign unconditionally: raPollToasts returns the live,
-                        // TTL'd toast set (it does not drain), so reflecting it
-                        // every poll both shows new toasts and clears them once
-                        // they expire (an empty poll => the HUD goes away).
-                        raToasts = rctrl.raPollToasts()
-                        val st = rctrl.raLoginStatus()
-                        val loggedIn = st == RaLoginStatus.LOGGED_IN
-                        if (loggedIn && !raWasLoggedIn) {
-                            // LOGGED_OUT -> LOGGED_IN edge: persist the token + user
-                            // (never the password) for silent re-login, surface the
-                            // user, and identify the loaded game if not yet done.
-                            rctrl.raToken()?.let { settings.raToken = it }
-                            raUserName = rctrl.raUser()?.displayName ?: settings.raUsername
-                            raStatus = "Signed in"
-                            if (!raGameLoaded) raIdentifyGame()
-                        } else if (!loggedIn && raWasLoggedIn) {
-                            raUserName = null
-                            raStatus = "Logged out"
-                        } else if (st == RaLoginStatus.ERROR) {
-                            raStatus = "Login failed"
+                        // v1.8.8 "Atlas" (Workstream F): publish the gameplay frame for
+                        // capture (a reference to the just-blitted buffer, no UI chrome),
+                        // and feed the clip ring when recording (it copies on the throttle
+                        // beat). Both are cheap; the encode happens off-loop on Stop.
+                        capture.latestFrame = presented
+                        capture.clip?.offer(presented)
+                        // Append new script log lines (keep the last 8 for the overlay).
+                        if (logLines.isNotEmpty()) {
+                            scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
+                                .takeLast(8).joinToString("\n")
                         }
-                        raWasLoggedIn = loggedIn
+                        // Mirror the picture to the external display while casting (no-op
+                        // otherwise). Same main-thread publish point as the Compose frame.
+                        castManager.pushFrame(reuse)
+                        // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38):
+                        // stream the palette-index plane to the Web Receiver, internally
+                        // throttled to ~20-30fps and 64 KB-capped. Compiled out entirely
+                        // in default builds (flag off); a cheap no-op when no Cast session.
+                        if (BuildConfig.CHROMECAST_ENABLED) {
+                            chromecast.sendFrame(ctrl.indexFramebufferBytes())
+                        }
                     }
-                }
-                // Fast-forward skips the pacing delay so the core runs ahead.
-                if (!turbo) {
-                    val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
-                    if (remainingMs > 0) delay(remainingMs)
+                    // Netplay status poll (v1.8.6): refresh the panel/overlay snapshot at a
+                    // low cadence whether or not a frame was produced (so a stall / connect
+                    // shows live). Its counter always advances (unlike the RA one).
+                    if (np) {
+                        if (!npActive) npActive = true
+                        if (++npFrame % 15 == 0) npStatus = ctrl.npStatus()
+                    } else if (npActive) {
+                        // A session that ended (Leave / error tear-down) clears the snapshot.
+                        npStatus = null
+                        npActive = false
+                        npHostInfo = null
+                        npRoomCode = null
+                    }
+                    // RetroAchievements: poll the toast queue + login status at a low
+                    // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).
+                    if (settings.raEnabled && (++raFrame % 15) == 0) {
+                        val rctrl = emulator.controller
+                        if (rctrl != null && rctrl.raIsEnabled()) {
+                            // Assign unconditionally: raPollToasts returns the live,
+                            // TTL'd toast set (it does not drain), so reflecting it
+                            // every poll both shows new toasts and clears them once
+                            // they expire (an empty poll => the HUD goes away).
+                            raToasts = rctrl.raPollToasts()
+                            val st = rctrl.raLoginStatus()
+                            val loggedIn = st == RaLoginStatus.LOGGED_IN
+                            if (loggedIn && !raWasLoggedIn) {
+                                // LOGGED_OUT -> LOGGED_IN edge: persist the token + user
+                                // (never the password) for silent re-login, surface the
+                                // user, and identify the loaded game if not yet done.
+                                rctrl.raToken()?.let { settings.raToken = it }
+                                raUserName = rctrl.raUser()?.displayName ?: settings.raUsername
+                                raStatus = "Signed in"
+                                if (!raGameLoaded) raIdentifyGame()
+                            } else if (!loggedIn && raWasLoggedIn) {
+                                raUserName = null
+                                raStatus = "Logged out"
+                            } else if (st == RaLoginStatus.ERROR) {
+                                raStatus = "Login failed"
+                            }
+                            raWasLoggedIn = loggedIn
+                        }
+                    }
+                    // v2.7.4: surface the host warnings the bridge queues -- among them
+                    // RECOVERED_FROM_INTERNAL_ERROR, which a contained panic leaves
+                    // (MOB-07). Before, they were drained only after a movie load, so
+                    // that message never reached the screen.
+                    if ((++warnFrame % 15) == 0) {
+                        ctrl.drainWarningCodes()
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { codes -> status = codes.joinToString("\n") { hostWarningText(context, it) } }
+                    }
+                    // Fast-forward skips the pacing delay so the core runs ahead.
+                    if (!turbo) {
+                        val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
+                        if (remainingMs > 0) delay(remainingMs)
+                    }
+                } catch (e: InternalException) {
+                    // v2.7.4 (review of MOB-03): a panic in a bridge call outside
+                    // the frame paths (those contain their own, and freeze the
+                    // game) comes back as InternalException. Uncaught, it would end
+                    // this LaunchedEffect and crash the app. Log it and carry on:
+                    // the next bridge call recovers the lock, freezes the machine and
+                    // queues the warning the poll above shows.
+                    android.util.Log.e("RustyNES", "bridge panic contained", e)
+                    delay(FRAME_NANOS / 1_000_000)
                 }
             }
         } finally {

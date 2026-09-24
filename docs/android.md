@@ -118,7 +118,11 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/<version>     # e.g. 29.0.14206865
 # Cross-compile both crates for the shipped ABIs. `release-mobile` is the
 # workspace `release` profile with `panic = "unwind"` (v2.7.4, audit MOB-03):
 # `release` aborts on panic, which made every panic guard on the mobile FFI
-# dead code. It costs about 18% native size on arm64 (measured below).
+# dead code. It costs about 18% native size on arm64 and no measurable frame
+# time (v2.7.4, `cargo ndk`, the same tree built both ways):
+#   librustynes_android.so 11.64 MB -> 13.74 MB, librustynes_mobile.so
+#   6.21 MB -> 7.32 MB; `nes_run_frame_nestest_fast` 3.947 / 3.936 ms (abort)
+#   vs 3.949 / 3.940 ms (unwind), interleaved on one host.
 cargo ndk -t arm64-v8a -t x86_64 --platform 26 \
   build --profile release-mobile -p rustynes-mobile -p rustynes-android
 

@@ -81,14 +81,26 @@ final class NetplayModel: ObservableObject {
     private weak var core: EmulatorCore?
     private var pollTimer: Timer?
 
-    /// Bumped on every attach / detach (v2.7.4). A join or host runs detached
-    /// (MOB-09), so it can finish after the game it started for was closed or
-    /// swapped; its completion checks this first, and a stale one leaves the
-    /// session it just made on the old core instead of publishing it.
+    /// Bumped on every attach, detach and leave (v2.7.4). A join or host runs
+    /// detached (MOB-09), so it can finish after the game it started for was
+    /// closed or swapped, or after the player pressed Leave; its completion
+    /// checks this first, and a stale one ends the session it just made instead
+    /// of publishing it.
     private var generation = 0
 
+    /// Whether a detached join / host is still running. Only one runs at a time:
+    /// the bridge's session slot has no identity, so a stale completion's
+    /// `npLeave` is safe only while nothing newer can have been started on the
+    /// same core. Cleared when the operation finishes, stale or not.
+    private var inFlight = false
+
+    private var busyHint: String {
+        "Still connecting. Wait for it to finish, or press Leave and try again once it has."
+    }
+
     /// Whether an operation started at `started` is still the current one. If not,
-    /// end whatever session it established on `core`, which nothing else will.
+    /// end whatever session it established on `core`, which nothing else will
+    /// (`inFlight` guarantees it is that operation's session).
     private func stillCurrent(_ started: Int, on core: EmulatorCore) -> Bool {
         guard started == generation else {
             if core.npIsActive() { core.npLeave() }
@@ -128,6 +140,7 @@ final class NetplayModel: ObservableObject {
     /// published in `hostedPort`).
     func host(port: UInt16 = 0) {
         guard let core else { lastError = "Open a game first to host netplay."; return }
+        guard !inFlight else { lastError = busyHint; return }
         do {
             hostedPort = try core.npHost(localPort: port, numPlayers: 2)
             lastError = nil
@@ -142,12 +155,15 @@ final class NetplayModel: ObservableObject {
         guard let core else { lastError = "Open a game first to join netplay."; return }
         let trimmed = address.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { lastError = "Enter the host's ip:port."; return }
+        guard !inFlight else { lastError = busyHint; return }
         // v2.7.4 (frontend audit MOB-09): `npJoin` resolves the host name with a
         // blocking DNS lookup. This model is @MainActor, so the lookup used to run
         // on the main thread and freeze the UI while it waited. It runs detached
         // now; the result is published back on the main actor.
         let started = generation
+        inFlight = true
         Task {
+            defer { inFlight = false }
             do {
                 try await Task.detached { try core.npJoin(address: trimmed) }.value
                 guard stillCurrent(started, on: core) else { return }
@@ -169,11 +185,14 @@ final class NetplayModel: ObservableObject {
     func hostRoom() {
         guard let core else { lastError = "Open a game first to host netplay."; return }
         guard signalingConfigured else { lastError = signalingHint; return }
+        guard !inFlight else { lastError = busyHint; return }
         // v2.7.4 (MOB-09): the TURN host is resolved during this call; off the
         // main thread, as in `join`.
         let cfg = makeNetConfig()
         let started = generation
+        inFlight = true
         Task {
+            defer { inFlight = false }
             do {
                 let code = try await Task.detached {
                     try core.npHostRoom(numPlayers: 2, cfg: cfg)
@@ -196,10 +215,13 @@ final class NetplayModel: ObservableObject {
         guard signalingConfigured else { lastError = signalingHint; return }
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { lastError = "Enter the room code."; return }
+        guard !inFlight else { lastError = busyHint; return }
         // v2.7.4 (MOB-09): off the main thread, as in `join`.
         let cfg = makeNetConfig()
         let started = generation
+        inFlight = true
         Task {
+            defer { inFlight = false }
             do {
                 try await Task.detached { try core.npJoinRoom(roomCode: trimmed, cfg: cfg) }.value
                 guard stillCurrent(started, on: core) else { return }
@@ -245,6 +267,9 @@ final class NetplayModel: ObservableObject {
 
     /// Leave the session and return to single-player.
     func leave() {
+        // Also abandons a join / host still in flight: its completion is now
+        // stale and ends the session it makes (see `stillCurrent`).
+        generation += 1
         core?.npLeave()
         hostedPort = nil
         hostedRoomCode = nil

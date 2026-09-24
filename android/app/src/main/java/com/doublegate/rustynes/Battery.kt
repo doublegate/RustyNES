@@ -44,7 +44,7 @@ sealed interface SavedBattery {
  * are pinned by `BatterySaverTest` without a device.
  *
  * Thread-safety: the periodic flush runs on `Dispatchers.IO` while the lifecycle
- * flushes run on the main thread, so [flushIfChanged] is synchronized; [tryBegin]
+ * flushes run on the main thread, so [flushIfChanged] holds a per-file lock; [tryBegin]
  * keeps the loop from queueing a second periodic flush behind a slow one.
  *
  * [flushIfChanged] takes the RAM as a function it calls INSIDE the lock, not as
@@ -56,6 +56,16 @@ sealed interface SavedBattery {
  */
 class BatterySaver(private val file: File) {
     private var last: ByteArray? = null
+
+    /**
+     * One lock per `.sav` path, shared by every saver of that file. Reopening the
+     * running game gives the outgoing and incoming sessions a saver each for the
+     * same file, and their writes would otherwise meet in `AtomicFile`'s single
+     * staging file for the path (one could rename the other's half-written image
+     * into place). Not reproduced on the JVM -- each 8 KiB image is one write
+     * call there -- so this is structural, not pinned by a test.
+     */
+    private val lock: Any = locks.computeIfAbsent(file.absoluteFile.path) { Any() }
 
     @Volatile
     private var disabled = false
@@ -94,8 +104,7 @@ class BatterySaver(private val file: File) {
     }
 
     /** Record what the cartridge now holds (after a load, or at power-on) as clean. */
-    @Synchronized
-    fun baseline(current: ByteArray) {
+    fun baseline(current: ByteArray) = synchronized(lock) {
         last = current.copyOf()
     }
 
@@ -105,15 +114,16 @@ class BatterySaver(private val file: File) {
      * docs for why). A failed write throws and leaves the baseline alone, so the
      * next flush retries; the file keeps its previous contents ([writeAtomic]).
      */
-    @Synchronized
     fun flushIfChanged(read: () -> ByteArray): Boolean {
-        if (disabled) return false
-        val current = read()
-        if (current.isEmpty()) return false
-        if (last?.contentEquals(current) == true) return false
-        writeAtomic(file, current)
-        last = current.copyOf()
-        return true
+        synchronized(lock) {
+            if (disabled) return false
+            val current = read()
+            if (current.isEmpty()) return false
+            if (last?.contentEquals(current) == true) return false
+            writeAtomic(file, current)
+            last = current.copyOf()
+            return true
+        }
     }
 
     /** Claim the periodic-flush slot; false while one is already running. */
@@ -121,4 +131,9 @@ class BatterySaver(private val file: File) {
 
     /** Release the periodic-flush slot. */
     fun end() = busy.set(false)
+
+    private companion object {
+        /** See [lock]. One entry per ROM ever opened this process: a few bytes each. */
+        val locks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    }
 }
