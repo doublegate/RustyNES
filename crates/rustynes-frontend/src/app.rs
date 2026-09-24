@@ -4302,6 +4302,11 @@ impl App {
     /// redraw. Native-only + `emu-thread`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
     fn on_emu_frame(&mut self) {
+        // v2.7.3 (DESK-03) — let the thread post the next wakeup. First, so a
+        // frame produced while this handler runs still gets one.
+        if let Some(thread) = self.emu_thread.as_ref() {
+            thread.control().frame_event_handled();
+        }
         // RA stays on the winit thread (`rc_client` is single-threaded): the
         // emu thread produced with `ra: None`, so drive it here against the
         // freshly produced (between-frames) core state — mirroring the

@@ -57,6 +57,10 @@ cycle-accurate core later replaced.
   a Bluetooth drop or an audio-server restart used to leave the emulator silent
   until restart. The stream is now reopened, on the same device or the default,
   within about two seconds (frontend audit DESK-04).
+- **Fast-forward no longer floods the UI thread.** Every fast-forwarded frame
+  posted its own wakeup, hundreds a second, each contending for the emulator
+  lock. At most one is now pending while fast-forwarding (frontend audit
+  DESK-03).
 
 ### Security
 
