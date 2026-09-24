@@ -616,6 +616,186 @@ mod tests {
         assert!(matches!(err, ScriptError::Lua(_) | ScriptError::Budget));
     }
 
+    /// SEC-03 (v2.7.3): the budget is enforced by a VM hook that raises an
+    /// ordinary Lua error, and `pcall`, `xpcall` and `coroutine.resume` catch
+    /// ordinary errors. Wrapped in any of them, a runaway loop caught its own
+    /// abort every 10,000 instructions and never ended, holding the host's
+    /// emulator lock. The abort must now escape every catcher.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_budget_abort_cannot_be_caught() {
+        for script in [
+            "while true do pcall(function() while true do end end) end",
+            "while true do xpcall(function() while true do end end, function(e) return e end) end",
+            "while true do coroutine.resume(coroutine.create(function() while true do end end)) end",
+            // Nested catchers: the abort has to escape all of them.
+            "pcall(function() pcall(function() while true do end end) while true do end end)",
+        ] {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            let err = eng.load(script).expect_err(script);
+            assert!(err.to_string().contains("budget"), "{script}: {err}");
+        }
+    }
+
+    /// Review on #551: the host-fired callbacks (`reset`, `spriteZeroHit`,
+    /// `codeBreak`, and the `TAStudio` three) ran Lua with no budget hook at all,
+    /// so a runaway `reset` callback hung the host.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_host_fired_callback_is_under_the_budget() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_instruction_budget(100_000);
+        eng.load(
+            "emu.addEventCallback(function() while true do end end, 'reset') \
+             emu.addEventCallback(function() while true do end end, 'codeBreak')",
+        )
+        .expect("loads");
+        let err = eng.fire_reset().expect_err("runaway reset callback");
+        assert!(err.to_string().contains("budget"), "{err}");
+        let err = eng
+            .fire_code_break(0x8000)
+            .expect_err("runaway codeBreak callback");
+        assert!(err.to_string().contains("budget"), "{err}");
+    }
+
+    /// Review on #551: a budget abort left its flag set once the hook was
+    /// removed, so the next host-fired callback's first `pcall` re-raised the
+    /// old abort although that callback had spent nothing.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_budget_abort_does_not_leak_into_the_next_callback() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_instruction_budget(100_000);
+        eng.load(
+            "emu.addEventCallback(function() emu.log(tostring(pcall(tostring, 1))) end, 'reset')",
+        )
+        .expect("loads");
+        eng.load("while true do end").expect_err("trips the budget");
+        eng.fire_reset()
+            .expect("an ordinary pcall in a fresh callback");
+        assert_eq!(eng.drain_log(), vec!["true".to_string()]);
+    }
+
+    /// v2.7.3, found while fixing SEC-03: a coroutine ran with NO budget at
+    /// all, no `pcall` needed. mlua's per-thread hook finds no callback for a
+    /// coroutine and removes itself there; the hook is now global.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_coroutine_is_under_the_budget_too() {
+        for script in [
+            "coroutine.wrap(function() while true do end end)()",
+            "coroutine.resume(coroutine.create(function() while true do end end))",
+        ] {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            let err = eng.load(script).expect_err(script);
+            assert!(err.to_string().contains("budget"), "{script}: {err}");
+        }
+    }
+
+    /// SEC-03: the per-frame callback path installs its own hook, so it gets
+    /// its own test. A runaway `onFrame` callback, in a coroutine or behind
+    /// `pcall`, must still be stopped by the budget.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_runaway_frame_callback_is_stopped() {
+        for body in [
+            "coroutine.wrap(function() while true do end end)()",
+            "while true do pcall(function() while true do end end) end",
+        ] {
+            let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            eng.load(&format!("emu.onFrame(function() {body} end)"))
+                .expect("registering is fine");
+            nes.run_frame();
+            let err = eng.on_frame(&mut nes).expect_err(body);
+            assert!(err.to_string().contains("budget"), "{body}: {err}");
+        }
+    }
+
+    /// SEC-03: an ordinary error inside `pcall` must still be caught; only the
+    /// budget abort is uncatchable.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn pcall_still_catches_ordinary_errors() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "local ok, e = pcall(error, 'boom') \
+             emu.log(tostring(ok), e) \
+             local ok2, e2 = xpcall(function() error('x', 0) end, function(m) return 'h:' .. m end) \
+             emu.log(tostring(ok2), e2) \
+             local co = coroutine.create(function() error('c', 0) end) \
+             emu.log(tostring(coroutine.resume(co)))",
+        )
+        .expect("ordinary errors are caught");
+        assert_eq!(
+            eng.drain_log(),
+            vec![
+                "false\tboom".to_string(),
+                "false\th:x".into(),
+                "false".into()
+            ]
+        );
+    }
+
+    /// SEC-02 (v2.7.3): there was no heap limit, so one `string.rep` could take
+    /// all the host's memory. 128 MiB in one allocation must now be refused.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_script_cannot_allocate_past_the_memory_limit() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("local s = string.rep('x', 128 * 1024 * 1024) emu.log(#s)")
+            .expect_err("128 MiB exceeds the script heap");
+        assert!(err.to_string().to_lowercase().contains("memory"), "{err}");
+        // Small allocations are unaffected.
+        eng.load("emu.log(#string.rep('y', 1024 * 1024))")
+            .expect("1 MiB is fine");
+        assert_eq!(eng.drain_log(), vec!["1048576".to_string()]);
+    }
+
+    /// Review on #551: `emu.log` / `print` queued lines in HOST memory, outside
+    /// the Lua heap limit, with no bound on count or length. One call of a
+    /// 32 MiB string, many times over, grew the host without limit.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn the_host_log_is_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("for i = 1, 20000 do emu.log(i) end")
+            .expect("loads");
+        let lines = eng.drain_log();
+        assert_eq!(
+            lines.len(),
+            crate::types::MAX_QUEUED_CMDS,
+            "line count capped"
+        );
+        eng.load("local s = string.rep('z', 1024 * 1024) print(s)")
+            .expect("loads");
+        let lines = eng.drain_log();
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].len() <= crate::types::MAX_LOG_LINE_BYTES + 16,
+            "line length capped: {}",
+            lines[0].len()
+        );
+        assert!(lines[0].ends_with(" [truncated]"), "the cut is marked");
+    }
+
+    /// The cut lands on a character boundary: 'é' is two bytes, and 4096 is
+    /// even, so an odd offset forces the step back (a mid-char `truncate`
+    /// panics).
+    #[test]
+    fn a_log_line_is_cut_on_a_char_boundary() {
+        let line = format!("x{}", "é".repeat(crate::types::MAX_LOG_LINE_BYTES));
+        let clipped = crate::types::clip_log_line(line);
+        assert!(clipped.ends_with(" [truncated]"));
+        assert_eq!(clipped.len(), crate::types::MAX_LOG_LINE_BYTES - 1 + 12);
+        let short = crate::types::clip_log_line("ok".to_string());
+        assert_eq!(short, "ok");
+    }
+
     /// NROM whose boot loop writes `$2000` each iteration:
     /// `LDA #$80; STA $2000; JMP $C000`.
     #[cfg(not(feature = "script-wasm"))]

@@ -26,6 +26,94 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.3] - 2026-09-23 - "Hearth" (the desktop and web frontends keep what they are given)
+
+### Fixed — desktop and web
+
+- **Battery saves persist on the desktop.** A cartridge with a battery now
+  keeps its in-game save in `<data_dir>/battery/<rom-sha256>.sav`: loaded when
+  the ROM loads, and written when it changes (checked once a second, and always
+  on ROM switch, close and exit). Until now the desktop kept no such file, and
+  an in-game save survived only inside a save state. Only carts whose header
+  sets the battery bit are persisted, and a file that cannot be used is left
+  untouched rather than overwritten, with the reason shown in the status bar.
+  The periodic write runs without holding the emulator (frontend ledger FE-01).
+  New: `Nes::has_battery()`.
+- **The debugger's text no longer turns to garbage after a skipped frame.**
+  With the debugger or a tool panel open, a frame whose swapchain image could
+  not be acquired (a resize, a lost surface, a timeout) discarded egui's font
+  and image uploads, which egui sends only once. The panels then drew with
+  textures the renderer never received until restart. Uploads now happen before
+  the acquire, and releases after it (frontend audit DESK-01).
+- **One key no longer does three things.** `M` toggled the menu bar, held the
+  Famicom microphone, and pressed P3 Select, all at once; P2 Select and P3
+  Right were both `L`. New defaults: the microphone is held on `N`, P3 Select
+  is `,` and P2 Select is `R`. `M` still toggles the menu bar. Saved bindings
+  are kept as they are (frontend audit DESK-02).
+- **No more periodic audio clicks at low latency on large-period devices.**
+  When the audio device's period was at least twice the configured latency
+  (for example a 2048-frame period at the 20 ms setting), rate control held the
+  buffer below one device callback, and the stream underran about once a
+  second. The latency target now never drops below two device callbacks (frontend
+  audit DESK-05; the audit's own 1024-frame example measured no underruns).
+- **Audio comes back after the output device goes away.** Unplugging headphones,
+  a Bluetooth drop or an audio-server restart used to leave the emulator silent
+  until restart. The stream is now reopened, on the same device or the default,
+  within about two seconds, taking the new device's channel layout if it
+  differs (frontend audit DESK-04).
+- **Fast-forward no longer floods the UI thread.** Every fast-forwarded frame
+  posted its own wakeup, hundreds a second, each contending for the emulator
+  lock. At most one is now pending while fast-forwarding, except with
+  RetroAchievements active, which still counts every frame (frontend audit
+  DESK-03).
+- **The web build fits a phone screen**, instead of a fixed 512 x 480 canvas
+  that overflowed it, and releases the audio worklet's temporary script URL once
+  loaded (frontend audit DESK-06, DESK-07).
+- **Achievement badges from earlier games are released** when another ROM loads,
+  instead of staying resident for the whole session (frontend audit DESK-08).
+- **Stopping an A/V recording no longer freezes the window.** The ffmpeg encode,
+  seconds to minutes for a long take, ran on the UI thread. It now finishes in
+  the background, reports when done, and completes before a quit (frontend
+  audit SEC-05).
+
+### Changed
+
+- **The `[retroachievements] host` setting is gone.** Nothing ever read it, so
+  editing it changed nothing. Config files that still contain it load
+  unchanged, and the next save drops it (frontend audit CON-05).
+- **Building the web frontend with both `wasm-canvas` and `wasm-winit`** now
+  stops at compile time with the right invocation, instead of failing late at
+  `wasm-bindgen` (frontend audit CON-01).
+
+### Security
+
+- **An HD pack can no longer exhaust memory with one image.** A PNG's declared
+  size was trusted when sizing its decode buffer, so a small file could ask for
+  gigabytes. Images are now refused past 16384 pixels a side or 4096 x 4096 in
+  total, before anything is allocated, and a whole pack may decode at most
+  1 GiB of images (frontend audit SEC-01).
+- **A Lua script can no longer hang the emulator or exhaust its memory.** The
+  per-frame instruction budget could be caught by `pcall`, `xpcall` or
+  `coroutine.resume`, so a wrapped runaway loop ran forever holding the
+  emulator lock. It now escapes every catcher, and the budget now also covers
+  callbacks the host fires (`reset`, `spriteZeroHit`, `codeBreak`, the TAStudio
+  events), which had none. And a loop inside a coroutine had
+  no budget at all, because the hook was removed inside coroutines; it is now
+  global. The script heap is capped at 64 MiB, and `emu.log` / `print` output,
+  which is held outside that heap, at 8,192 lines a frame of up to 4 KiB each
+  (frontend audit SEC-02, SEC-03, and FE-02, found while fixing SEC-03).
+- **Script HTTP requests cannot reach the machine's own services by default.**
+  With the opt-in `script-ipc` feature, `comm.httpGet` / `httpPost` fetched any
+  URL, including loopback services and cloud metadata. Addresses that resolve
+  to loopback, private or link-local ranges now need the host listed in
+  `RUSTYNES_COMM_HTTP_ALLOW` (e.g. `localhost:8080`). Redirects are returned to
+  the script instead of followed, no environment proxy is used (it would
+  resolve the target where the check cannot see it), and a body over 10 MiB
+  is a transport failure (`status = 0`) (frontend audit SEC-04; ADR 0016 amended).
+- **An HD pack's music cannot claim an absurd sample rate.** The declared rate
+  sized the resampled track, so a 1 Hz header expanded it 48,000-fold; rates
+  outside 8-384 kHz now make the track inert (frontend audit CON-03).
+
 ## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
 
 ### Fixed — mapper memory

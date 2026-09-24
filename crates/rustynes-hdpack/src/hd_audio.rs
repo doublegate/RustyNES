@@ -129,13 +129,27 @@ pub fn parse_audio_decl(kind: TrackKind, rest: &str) -> Option<HdAudioDecl> {
     })
 }
 
+/// v2.7.3 (frontend audit CON-03) — the source sample rates an HD-audio track
+/// may declare. The rate comes from the file's header and sizes the resampled
+/// output: a track claiming 1 Hz would be expanded 48,000-fold at a 48 kHz
+/// output (0 Hz was clamped to 1 Hz). Within these bounds the expansion is at
+/// most 48x, so the output stays proportional to the decoded input.
+const SOURCE_RATES: core::ops::RangeInclusive<u32> = 8_000..=384_000;
+
+/// Whether an HD-audio track's declared source rate is usable (CON-03).
+#[must_use]
+pub fn source_rate_supported(rate: u32) -> bool {
+    SOURCE_RATES.contains(&rate)
+}
+
 /// Decode an OGG Vorbis byte stream to interleaved-collapsed **mono** `f32`
 /// samples at its native rate, then linearly resample to `out_rate`.
 ///
 /// `lewton` (pure-Rust, MIT/ISC/Apache-2.0 — no C, gated behind `hd-pack` so the
 /// default/wasm builds never pull it) decodes packet-by-packet; multi-channel
 /// audio is downmixed to mono by averaging. Returns `None` on any decode error
-/// (the track is then inert). The linear resample is intentionally simple: HD
+/// (the track is then inert), including a declared source rate outside
+/// [`source_rate_supported`]. The linear resample is intentionally simple: HD
 /// audio is a presentation nicety, not part of the determinism contract, and the
 /// game audio it mixes with already rides the frontend's Hermite DRC stage.
 #[must_use]
@@ -143,7 +157,10 @@ pub fn decode_ogg_to_mono(bytes: &[u8], out_rate: u32) -> Option<Vec<f32>> {
     use lewton::inside_ogg::OggStreamReader;
 
     let mut reader = OggStreamReader::new(std::io::Cursor::new(bytes)).ok()?;
-    let src_rate = reader.ident_hdr.audio_sample_rate.max(1);
+    let src_rate = reader.ident_hdr.audio_sample_rate;
+    if !source_rate_supported(src_rate) {
+        return None;
+    }
     let channels = usize::from(reader.ident_hdr.audio_channels).max(1);
 
     let mut mono: Vec<f32> = Vec::new();
@@ -519,6 +536,18 @@ mod tests {
         assert_eq!(sanitize_audio_name("a/b.ogg"), None);
         assert_eq!(sanitize_audio_name("C:\\x.ogg"), None);
         assert_eq!(sanitize_audio_name(""), None);
+    }
+
+    /// CON-03 (v2.7.3): the declared source rate sizes the output, so an
+    /// absurd one is refused before anything is decoded or allocated.
+    #[test]
+    fn a_track_with_an_absurd_source_rate_is_refused() {
+        for bad in [0, 1, 7_999, 384_001, u32::MAX] {
+            assert!(!source_rate_supported(bad), "{bad} Hz");
+        }
+        for good in [8_000, 22_050, 44_100, 48_000, 96_000, 384_000] {
+            assert!(source_rate_supported(good), "{good} Hz");
+        }
     }
 
     #[test]

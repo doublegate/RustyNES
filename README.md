@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.7.2-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.7.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -439,7 +439,7 @@ the D-pad), and you can drag-and-drop a `.nes` / `.fds` onto the window to load 
 | -------------- | ------------------- | ------------- |
 | D-Pad          | Arrow keys          | W / A / S / D |
 | A / B          | Z / X               | Q / E         |
-| Start / Select | Enter / Right-Shift | P / L         |
+| Start / Select | Enter / Right-Shift | P / R         |
 
 ### System and tools
 
@@ -452,7 +452,7 @@ the D-pad), and you can drag-and-drop a `.nes` / `.fds` onto the window to load 
 | TAS record / play / branch   | F6 / F7 / F8       | Swap disk side (FDS)    | F9        |
 | Toggle menu bar              | M                  | Insert coin (Vs.)       | F10       |
 | Toggle debugger              | `` ` `` (backtick) | Fullscreen              | F11       |
-| Quit / exit fullscreen       | Esc                | Save-state slot         | 0 – 9     |
+| Quit / exit fullscreen       | Esc                | Famicom microphone      | N (hold)  |
 
 ---
 
@@ -674,18 +674,16 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.7.2 "Bankroll"** (2026-09-23) — cartridge memory, every bank a cartridge has and nothing it has not: MMC1 reaches SUROM / SXROM, MMC5 banks its PRG-RAM, Namco 163 selects nametables, and `$6000-$7FFF` reads open bus where a board has nothing there. Built on **v2.7.1 "Keepsake"** (2026-09-23) — six cartridge boards now hand RetroArch their battery save instead of an empty one, every user file the frontend writes is written atomically, and three mapper files are now recorded as derived from Mesen2 and puNES.
+RustyNES's current release is **v2.7.3 "Hearth"** (2026-09-23) — the desktop and web frontends keep what they are given: battery saves persist on the desktop, a Lua script can no longer hang or exhaust the emulator, script HTTP cannot reach local services by default, and audio survives a device change. Built on **v2.7.2 "Bankroll"** (2026-09-23) — cartridge memory, every bank a cartridge has and nothing it has not: MMC1 reaches SUROM / SXROM, MMC5 banks its PRG-RAM, Namco 163 selects nametables, and `$6000-$7FFF` reads open bus where a board has nothing there.
 
-v2.7.2 changes what the CPU reads at `$6000-$7FFF` on every board with
-nothing there, so the accuracy numbers below were re-measured on its release
-tree: AccuracyCoin 144/144 and nestest pass, and the full
-`--features test-roms` suite passes 2,666 tests. v2.7.1 found that the
-desktop and mobile frontends never persist a cartridge's battery RAM, so on
-those hosts an in-game save survives only inside a save state. That is still
-recorded and not yet fixed; the desktop half is v2.7.3's. Built on
-**v2.7.0 "Palisade"**, which changed the core (the pulse-1 sweep clamp and the
-save-state decoders), and **v2.6.23 "Pulse"**, which closed the
-CHR-during-rendering divergence in the MiSTer sibling.
+v2.7.3 changes the frontends and adds one core accessor, and the accuracy
+numbers below were re-measured on its release tree anyway: AccuracyCoin
+144/144 and nestest pass, and the full `--features test-roms` suite passes
+2,698 tests. The desktop now keeps battery saves; the mobile apps still keep
+them only inside a save state, which is v2.7.4's. Built on **v2.7.2
+"Bankroll"**, which completed cartridge memory in the core, and **v2.6.23
+"Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
+sibling.
 
 | Measure | Value |
 |---|---|

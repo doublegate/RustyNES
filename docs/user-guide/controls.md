@@ -28,7 +28,7 @@ defaults and the two ways to change them.
 | D-pad Right | `D` |
 | A | `Q` |
 | B | `E` |
-| Select | `L` |
+| Select | `R` |
 | Start | `P` |
 
 Player 2 input is fully wired — these keys drive the second controller
@@ -51,8 +51,12 @@ standard two-controller NES; while on, Players 3 and 4 are multiplexed onto
 | D-pad Right | `L` | `Numpad6` |
 | A      | `U` | `Numpad7` |
 | B      | `O` | `Numpad9` |
-| Select | `M` | `Numpad1` |
+| Select | `,` (Comma) | `Numpad1` |
 | Start  | `.` (Period) | `Numpad3` |
+
+v2.7.3 changed three defaults so no key does two things: P2 Select was `L`
+(also P3 Right), and P3 Select and the microphone were both `M` (also the
+menu-bar toggle). A `config.toml` that already names its keys keeps them.
 
 All four players are rebindable (keyboard and gamepad) in the same input
 modal, and a third/fourth USB gamepad auto-binds to Players 3/4 — most
@@ -82,6 +86,7 @@ modal, and a third/fourth USB gamepad auto-binds to Players 3/4 — most
 | Fullscreen | `F11` | Toggle borderless fullscreen (native only) |
 | Open ROM | `F12` | Open the file picker to load a different `.nes` ROM |
 | Toggle menu bar | `M` | Show / hide the always-on menu bar |
+| Famicom microphone | `N` | Held — drives the expansion-port microphone bit (`$4016` bit 2) |
 | Debugger overlay | `` ` `` (Backquote, the `~` key) | Toggles the egui overlay |
 
 Esc cancels the in-app rebind capture too — if you click "rebind" in the

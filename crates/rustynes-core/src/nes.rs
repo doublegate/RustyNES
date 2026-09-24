@@ -246,6 +246,21 @@ impl Nes {
         self.bus.mapper.sram_mut()
     }
 
+    /// v2.7.3 — whether the cartridge header declares battery-backed PRG-RAM
+    /// (iNES flags 6 bit 1).
+    ///
+    /// [`Self::sram`] is not the same question: several boards expose their
+    /// work RAM through it whatever the header says (NROM returns its 8 KiB
+    /// PRG-RAM for every image, and MMC1 and MMC3 allocate RAM by default). A
+    /// host that persists save RAM to disk — the desktop frontend's `.sav`
+    /// files — must gate on this, or a volatile cartridge acquires a save it
+    /// never had and restores stale RAM across power cycles. Always `false`
+    /// for an FDS disk (which has its own writable-disk save) and an NSF.
+    #[must_use]
+    pub const fn has_battery(&self) -> bool {
+        self.bus.cart.has_battery
+    }
+
     /// Returns a reference to the internal VRAM (nametables).
     pub fn vram(&self) -> &[u8] {
         self.bus.ppu.vram_ref()

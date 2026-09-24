@@ -277,6 +277,18 @@ pub struct EmuControl {
     /// frame-advance key while paused). The thread consumes one per loop and
     /// produces exactly one unthrottled frame for each.
     frame_advance: AtomicU32,
+    /// v2.7.3 (frontend audit DESK-03) — an `EmuFrame` wakeup is queued and
+    /// the winit thread has not handled it yet. Consulted only while
+    /// fast-forwarding, when the thread produces hundreds of frames a second
+    /// and used to post one wakeup per frame, flooding the event loop and
+    /// contending for the emulator lock. See [`Self::should_signal_frame`].
+    frame_event_pending: AtomicBool,
+    /// Review on #551 — a `RetroAchievements` session is live, so every frame
+    /// gets its own wakeup even while fast-forwarding. RA's hit counts and
+    /// delta conditions advance once per `do_frame`, and the winit thread runs
+    /// one per wakeup; coalescing would change how they count. Set by the
+    /// winit thread from [`Self::set_ra_every_frame`].
+    ra_every_frame: AtomicBool,
     /// v2.3.3 — display-regime tick accounting. Diagnostic only; nothing reads
     /// these to make a decision.
     ///
@@ -341,6 +353,8 @@ impl EmuControl {
             frame_nanos: AtomicU64::new(dur_nanos(rustynes_core::FRAME_DURATION_NTSC)),
             fast_forward: AtomicBool::new(false),
             frame_advance: AtomicU32::new(0),
+            frame_event_pending: AtomicBool::new(false),
+            ra_every_frame: AtomicBool::new(false),
             tick_ok: AtomicU64::new(0),
             tick_timeout: AtomicU64::new(0),
             tick_dropped: AtomicU64::new(0),
@@ -485,6 +499,33 @@ impl EmuControl {
     /// quick presses step two frames.
     pub fn request_frame_advance(&self) {
         self.frame_advance.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// v2.7.3 (DESK-03) — whether the thread should post an `EmuFrame` wakeup
+    /// for the frame it just produced.
+    ///
+    /// At normal speed, always: the winit thread drives `RetroAchievements`
+    /// once per wakeup, and RA wants one `do_frame` per emulated frame.
+    /// While fast-forwarding, only if no wakeup is already pending, so at
+    /// most one sits in the queue, unless a `RetroAchievements` session is
+    /// live ([`Self::set_ra_every_frame`]), which keeps one wakeup per frame as
+    /// before v2.7.3 (review on #551). Even then the handler reads the core as
+    /// it is when the handler runs, not as each frame left it, so RA was never
+    /// frame-exact during fast-forward; what is kept is the `do_frame` count.
+    pub fn should_signal_frame(&self, fast_forward: bool) -> bool {
+        let first = !self.frame_event_pending.swap(true, Ordering::AcqRel);
+        first || !fast_forward || self.ra_every_frame.load(Ordering::Acquire)
+    }
+
+    /// Review on #551 — whether a `RetroAchievements` session is live; see
+    /// [`Self::should_signal_frame`].
+    pub fn set_ra_every_frame(&self, on: bool) {
+        self.ra_every_frame.store(on, Ordering::Release);
+    }
+
+    /// v2.7.3 (DESK-03) — the winit thread has taken the pending wakeup.
+    pub fn frame_event_handled(&self) {
+        self.frame_event_pending.store(false, Ordering::Release);
     }
 
     /// Consume one pending frame-advance step. Returns `true` (and decrements)
@@ -726,9 +767,11 @@ fn run_loop(
             drive_wallclock(emu, audio.as_mut(), shared_input, control, present)
         };
 
-        if produced {
+        if produced && control.should_signal_frame(fast_forward) {
             // Wake the winit thread for housekeeping + redraw. A dead proxy
-            // (event loop gone) means we're shutting down.
+            // (event loop gone) means we're shutting down. While
+            // fast-forwarding, a wakeup is posted only when none is pending
+            // (DESK-03).
             if proxy.send_event(AppEvent::EmuFrame).is_err() {
                 return;
             }
@@ -1011,6 +1054,40 @@ fn elevate_thread_priority() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DESK-03 (v2.7.3): while fast-forwarding, at most one `EmuFrame`
+    /// wakeup is pending; at normal speed every frame still gets one, since
+    /// `RetroAchievements` is driven once per wakeup.
+    #[test]
+    fn fast_forward_keeps_at_most_one_wakeup_pending() {
+        let c = EmuControl::new();
+        assert!(c.should_signal_frame(true), "the first frame wakes the UI");
+        for _ in 0..1000 {
+            assert!(
+                !c.should_signal_frame(true),
+                "no flood while one is pending"
+            );
+        }
+        c.frame_event_handled();
+        assert!(c.should_signal_frame(true), "the next frame wakes it again");
+
+        let n = EmuControl::new();
+        for _ in 0..5 {
+            assert!(n.should_signal_frame(false), "normal speed: every frame");
+        }
+
+        // Review on #551: with a RetroAchievements session live, fast-forward
+        // keeps one wakeup per frame, so RA's frame count is unchanged.
+        let r = EmuControl::new();
+        r.set_ra_every_frame(true);
+        for _ in 0..5 {
+            assert!(r.should_signal_frame(true), "RA live: every frame");
+        }
+        r.set_ra_every_frame(false);
+        r.frame_event_handled();
+        assert!(r.should_signal_frame(true));
+        assert!(!r.should_signal_frame(true), "coalesced again without RA");
+    }
     use rustynes_core::Buttons;
 
     // ---- v2.3.3 F15: display-tick timing plumbing -----------------------

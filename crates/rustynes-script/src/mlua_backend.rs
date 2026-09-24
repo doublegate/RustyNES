@@ -25,6 +25,16 @@ use crate::types::{
 use crate::types::{CommCmd, CommResult};
 use crate::{Shared, SharedCounter, SharedFlag};
 
+/// The budget abort's message. One constant, because the host and the tests
+/// recognise the abort by it, and the uncatchable re-raise must match the
+/// hook's own error.
+const BUDGET_EXCEEDED: &str = "script exceeded the per-frame instruction budget";
+
+/// v2.7.3 (frontend audit SEC-02) — the script VM's heap ceiling, 64 MiB. Far
+/// above any legitimate script's working set (a full RAM mirror plus the
+/// draw-command queue is a few KiB), far below any host's memory.
+const SCRIPT_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+
 /// Max inclusive address span a single value-modifying `emu.addMemoryCallback`
 /// may cover. The implementation registers one Lua registry value per address,
 /// so an unbounded range (up to 64K) would allocate 64K registry entries; this
@@ -187,6 +197,12 @@ pub struct MluaBackend {
     instr_count: SharedCounter,
     /// Per-frame instruction budget.
     budget: SharedCounter,
+    /// v2.7.3 (frontend audit SEC-03) — set by the budget hook when it trips,
+    /// cleared with the counter at the start of each frame. The hook's error is
+    /// an ordinary Lua error, which `pcall` / `xpcall` / `coroutine.resume`
+    /// catch; the sandbox's wrappers of those three read this flag and re-raise,
+    /// so the abort escapes every catcher (see `install_budget_guards`).
+    budget_tripped: SharedFlag,
     /// When `true`, `emu.write` AND `emu.setInput` are silent no-ops
     /// (deterministic / locked session). Shared as a `SharedFlag` so both the
     /// per-frame-scoped `write` accessor and the persistent `setInput` prelude
@@ -308,7 +324,7 @@ impl MluaBackend {
     fn install_prelude(&self) -> Result<(), ScriptError> {
         let emu = self.lua.create_table()?;
 
-        // emu.log(msg) — append to the host-visible buffer.
+        // emu.log(msg) — append to the host-visible buffer, capped.
         let log = self.log.clone();
         let log_fn = self
             .lua
@@ -317,7 +333,9 @@ impl MluaBackend {
                 for v in msg.iter() {
                     parts.push(value_to_string(v));
                 }
-                log.borrow_mut().push(parts.join("\t"));
+                // Capped in count and length: this queue is host memory,
+                // outside the script heap limit (review on #551).
+                push_capped(&log, crate::types::clip_log_line(parts.join("\t")));
                 Ok(())
             })?;
         emu.set("log", log_fn.clone())?;
@@ -1147,29 +1165,101 @@ impl MluaBackend {
         Ok(())
     }
 
+    /// v2.7.3 (frontend audit SEC-03) — make the budget abort uncatchable.
+    ///
+    /// Lua 5.4 has no error a script cannot catch: an error raised by a debug
+    /// hook is an ordinary one, and `pcall`, `xpcall` and `coroutine.resume`
+    /// all catch it. So a runaway loop wrapped in any of them caught its own
+    /// abort every 10,000 instructions and ran forever, holding the host's
+    /// emulator lock. This replaces the three catchers with wrappers that
+    /// re-raise once [`Self::budget_tripped`] is set. Every enclosing catcher is
+    /// such a wrapper too, so the abort propagates to the host however deeply
+    /// it is nested. Ordinary errors are still caught as before.
+    ///
+    /// The flag reader is passed in as a chunk argument and captured as an
+    /// upvalue, so no script can reach it, and the originals are captured the
+    /// same way. This runs at VM creation, before any user code exists to take
+    /// a reference to the unwrapped functions.
+    fn install_budget_guards(&self) -> Result<(), ScriptError> {
+        let tripped = self.budget_tripped.clone();
+        let is_tripped = self.lua.create_function(move |_, ()| Ok(tripped.get()))?;
+        self.lua
+            .load(
+                r"
+                local is_tripped, message = ...
+                local raw_pcall, raw_xpcall = pcall, xpcall
+                local raw_resume = coroutine.resume
+                local function check(...)
+                    if is_tripped() then
+                        error(message, 0)
+                    end
+                    return ...
+                end
+                pcall = function(...) return check(raw_pcall(...)) end
+                xpcall = function(...) return check(raw_xpcall(...)) end
+                coroutine.resume = function(...) return check(raw_resume(...)) end
+                ",
+            )
+            .set_name("=budget-guards")
+            .call::<()>((is_tripped, BUDGET_EXCEEDED))?;
+        Ok(())
+    }
+
     /// Install the per-frame instruction-budget hook (and reset the counter).
     fn arm_hook(&self) -> Result<(), ScriptError> {
         self.instr_count.set(0);
+        self.budget_tripped.set(false);
         let count = self.instr_count.clone();
         let budget = self.budget.clone();
+        let tripped = self.budget_tripped.clone();
+        // v2.7.3: a GLOBAL hook, not `set_hook`. `set_hook` binds the callback
+        // to the main thread only; when Lua copies the hook into a coroutine,
+        // mlua finds no callback for that thread and REMOVES the hook there. So
+        // `coroutine.wrap(function() while true do end end)()` ran with no
+        // budget at all. A global hook dispatches through one shared callback,
+        // and Lua 5.4's `lua_newthread` copies it into every coroutine.
         // mlua 0.11 makes `set_hook` fallible. The instruction-budget hook is
         // the sandbox's runaway-script guard, so a failed install is surfaced
         // as an error rather than silently leaving scripts uncapped.
-        self.lua.set_hook(
+        self.lua.set_global_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_lua, _debug| {
                 let n = count.get() + 10_000;
                 count.set(n);
                 if n > budget.get() {
-                    Err(mlua::Error::RuntimeError(
-                        "script exceeded the per-frame instruction budget".into(),
-                    ))
+                    tripped.set(true);
+                    Err(mlua::Error::RuntimeError(BUDGET_EXCEEDED.into()))
                 } else {
                     Ok(VmState::Continue)
                 }
             },
         )?;
         Ok(())
+    }
+
+    /// Remove the budget hook and clear its trip flag. The flag must not
+    /// outlive the hook: left set, the next callback's first `pcall` re-raised
+    /// an abort that callback never earned (review on #551).
+    ///
+    /// Today every Lua entry point arms first, and [`Self::arm_hook`] clears
+    /// the flag too, so this clear is a second line: removing it alone is
+    /// expected to pass `a_budget_abort_does_not_leak_into_the_next_callback`
+    /// (measured). It is what keeps a future entry that forgets to arm from
+    /// inheriting a stale abort.
+    fn disarm_hook(&self) {
+        self.lua.remove_hook();
+        self.budget_tripped.set(false);
+    }
+
+    /// Run a host-fired callback dispatch under the instruction budget. Before
+    /// the #551 review only `load` and `on_frame` armed it, so a runaway
+    /// `reset` / `spriteZeroHit` / `codeBreak` / `TAStudio` callback ran
+    /// unbounded while the host held the emulator lock.
+    fn with_budget<T>(&self, f: impl FnOnce() -> mlua::Result<T>) -> Result<T, ScriptError> {
+        self.arm_hook()?;
+        let r = f();
+        self.disarm_hook();
+        r.map_err(ScriptError::from)
     }
 }
 
@@ -1180,6 +1270,10 @@ impl VmBackend for MluaBackend {
             StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::COROUTINE,
             mlua::LuaOptions::default(),
         )?;
+        // v2.7.3 (frontend audit SEC-02) — a heap ceiling. Without one a single
+        // `string.rep` could take every byte the host has. An allocation past
+        // the limit fails with a Lua memory error instead.
+        lua.set_memory_limit(SCRIPT_MEMORY_LIMIT)?;
 
         let log: Shared<Vec<String>> = Shared::new(Vec::new());
         let controls: Shared<Vec<ControlCmd>> = Shared::new(Vec::new());
@@ -1219,6 +1313,7 @@ impl VmBackend for MluaBackend {
             irq_cbs: Shared::new(Vec::new()),
             instr_count,
             budget,
+            budget_tripped: SharedFlag::new(false),
             writes_locked: SharedFlag::new(false),
             breakpoint_cbs: Shared::new(HashMap::new()),
             pause_frames: Shared::new(Vec::new()),
@@ -1248,6 +1343,7 @@ impl VmBackend for MluaBackend {
         };
         engine.install_prelude()?;
         engine.install_platform_tables()?;
+        engine.install_budget_guards()?;
         Ok(engine)
     }
 
@@ -1313,7 +1409,7 @@ impl VmBackend for MluaBackend {
     fn load(&mut self, src: &str) -> Result<(), ScriptError> {
         self.arm_hook()?;
         let r = self.lua.load(src).exec().map_err(ScriptError::from);
-        self.lua.remove_hook();
+        self.disarm_hook();
         r
     }
 
@@ -1421,20 +1517,21 @@ impl VmBackend for MluaBackend {
         }
 
         self.instr_count.set(0);
+        self.budget_tripped.set(false);
         let count = self.instr_count.clone();
         let budget = self.budget.clone();
+        let tripped = self.budget_tripped.clone();
         // mlua 0.11: `set_hook` is fallible. Surface a failed install as an
         // error rather than silently running the frame's callbacks without the
         // runaway-script budget guard (see arm_hook).
-        lua.set_hook(
+        lua.set_global_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_lua, _debug| {
                 let n = count.get() + 10_000;
                 count.set(n);
                 if n > budget.get() {
-                    Err(mlua::Error::RuntimeError(
-                        "script exceeded the per-frame instruction budget".into(),
-                    ))
+                    tripped.set(true);
+                    Err(mlua::Error::RuntimeError(BUDGET_EXCEEDED.into()))
                 } else {
                     Ok(VmState::Continue)
                 }
@@ -1957,6 +2054,7 @@ impl VmBackend for MluaBackend {
         });
 
         lua.remove_hook();
+        self.budget_tripped.set(false);
         result.map_err(ScriptError::from)
     }
 
@@ -1975,7 +2073,7 @@ impl VmBackend for MluaBackend {
     }
 
     fn query_tas_cell(&self, frame: usize, column: u32) -> Result<TasCellDecor, ScriptError> {
-        tastudio::query_cell(&self.lua, &self.tas, frame, column).map_err(ScriptError::from)
+        self.with_budget(|| tastudio::query_cell(&self.lua, &self.tas, frame, column))
     }
 
     fn take_clear_icon_cache(&self) -> bool {
@@ -1983,12 +2081,11 @@ impl VmBackend for MluaBackend {
     }
 
     fn fire_greenzone_invalidated(&self, first_frame: usize) -> Result<(), ScriptError> {
-        tastudio::fire_event(&self.lua, &self.tas.greenzone_cbs, first_frame)
-            .map_err(ScriptError::from)
+        self.with_budget(|| tastudio::fire_event(&self.lua, &self.tas.greenzone_cbs, first_frame))
     }
 
     fn fire_branch_load(&self, index: usize) -> Result<(), ScriptError> {
-        tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index).map_err(ScriptError::from)
+        self.with_budget(|| tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index))
     }
 
     // v2.1.10 "Creator Tools" (B9) — host-fired lifecycle events. Each replays
@@ -1996,16 +2093,15 @@ impl VmBackend for MluaBackend {
     // arg via the shared `fire_event_list` helper (the same output-only,
     // no-live-`Nes` dispatch as the greenzone / branch events).
     fn fire_reset(&self) -> Result<(), ScriptError> {
-        fire_event_list(&self.lua, &self.event_reset, 0).map_err(ScriptError::from)
+        self.with_budget(|| fire_event_list(&self.lua, &self.event_reset, 0))
     }
 
     fn fire_sprite_zero_hit(&self, frame: usize) -> Result<(), ScriptError> {
-        fire_event_list(&self.lua, &self.event_sprite_zero_hit, frame as u64)
-            .map_err(ScriptError::from)
+        self.with_budget(|| fire_event_list(&self.lua, &self.event_sprite_zero_hit, frame as u64))
     }
 
     fn fire_code_break(&self, pc: u16) -> Result<(), ScriptError> {
-        fire_event_list(&self.lua, &self.event_code_break, u64::from(pc)).map_err(ScriptError::from)
+        self.with_budget(|| fire_event_list(&self.lua, &self.event_code_break, u64::from(pc)))
     }
 
     fn needs_reset_event(&self) -> bool {

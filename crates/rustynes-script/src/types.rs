@@ -28,6 +28,26 @@ pub const DEFAULT_INSTRUCTION_BUDGET: u64 = 1_000_000;
 /// dropped.
 pub const MAX_QUEUED_CMDS: usize = 8192;
 
+/// Longest `emu.log` / `print` line kept, in bytes; longer lines are cut on a
+/// character boundary and marked. The log queue lives in HOST memory, outside
+/// the script heap limit, so without this one call per iteration of a large
+/// string grew the host without bound (review on #551). Together with the
+/// [`MAX_QUEUED_CMDS`] line cap it bounds a frame's log at 32 MiB.
+pub const MAX_LOG_LINE_BYTES: usize = 4096;
+
+/// Clip `line` to [`MAX_LOG_LINE_BYTES`], appending ` [truncated]` when cut.
+pub fn clip_log_line(mut line: String) -> String {
+    if line.len() > MAX_LOG_LINE_BYTES {
+        let mut cut = MAX_LOG_LINE_BYTES;
+        while !line.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        line.truncate(cut);
+        line.push_str(" [truncated]");
+    }
+    line
+}
+
 /// Errors from loading or running a script.
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {

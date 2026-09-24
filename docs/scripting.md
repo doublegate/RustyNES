@@ -70,6 +70,22 @@ The runaway-loop guard is shared in spirit: piccolo's `Fuel` is fed the same
 per-frame instruction budget (`DEFAULT_INSTRUCTION_BUDGET`, 1,000,000), and
 exhaustion surfaces as a `ScriptError::Budget`.
 
+On the native (mlua) backend, v2.7.3 closed three ways around the sandbox's
+limits (frontend audit SEC-02 / SEC-03):
+
+- **The budget cannot be caught.** The instruction hook raises an ordinary Lua
+  error, and `pcall`, `xpcall` and `coroutine.resume` catch ordinary errors, so a
+  runaway loop wrapped in any of them used to catch its own abort and run
+  forever, holding the emulator lock. The sandbox replaces those three with
+  wrappers that re-raise once the budget has tripped this frame. Ordinary errors
+  are still caught as usual.
+- **Coroutines are under the budget.** The hook was bound to the main thread,
+  and mlua removed it inside every coroutine, so a loop in a coroutine ran with
+  no budget at all. It is now a global hook, which Lua copies into each new
+  coroutine.
+- **The heap is capped at 64 MiB.** An allocation past it fails with a Lua
+  memory error rather than exhausting the host.
+
 ## Loading a script
 
 Open the console: **Debug → Lua Script** (or the toolbar "Lua" checkbox in the
@@ -145,7 +161,7 @@ hijacks an in-progress IRQ/BRK sequence).
 | `emu.drawRect(x, y, w, h [, color])` | Draw a filled rectangle. |
 | `emu.drawPixel(x, y [, color])` | Draw a single pixel. |
 | `emu.drawLine(x1, y1, x2, y2 [, color])` *(v2.1.10)* | Draw a straight line segment — the fourth HUD primitive, ideal for graphs / plots / hitbox overlays. Full mlua + piccolo parity. |
-| `emu.log(...)` | Append to the console. `print(...)` is redirected here too. |
+| `emu.log(...)` | Append to the console. `print(...)` is redirected here too. At most 8,192 lines per frame, each cut at 4 KiB (the queue is host memory, outside the script heap limit). |
 
 All four draw primitives are pure overlay: they decorate the presented frame and
 are **never** write-gated (drawing cannot perturb deterministic state).
@@ -381,6 +397,31 @@ result. See ADR 0016.
 like `emu.write`: under netplay / TAS replay or record / RA-hardcore the verb is
 dropped at the source (the async ones return `id = 0`), no `CommCmd` is queued,
 and the host opens no connection. The core synthesis never sees a `CommCmd`.
+
+**HTTP destinations (v2.7.3, frontend audit SEC-04).** A script may reach public
+addresses. It may not reach an address that resolves to loopback, a private
+range (RFC 1918, CGNAT, IPv6 unique-local), link-local (including the
+`169.254.169.254` cloud-metadata endpoint), or an unspecified, broadcast,
+multicast or documentation address (IPv4-mapped and IPv4-compatible IPv6 forms are
+judged as their IPv4 address), **unless the user lists the host** in the
+`RUSTYNES_COMM_HTTP_ALLOW` environment variable: comma-separated `host` or
+`host:port` entries, for example `RUSTYNES_COMM_HTTP_ALLOW=localhost:8080,127.0.0.1`.
+This keeps a local bot or RL endpoint one line of configuration away, while a
+downloaded script cannot probe the machine's own services. It is the same
+arrangement as TCP, where the user names the endpoint (`RUSTYNES_COMM_TCP`).
+
+- The check runs on the addresses the connection actually uses (in the HTTP
+  client's resolver), so a hostname that resolves inward is caught, including
+  one that changes its answer between lookups.
+- Redirects are **not followed**: the 3xx status comes back to the script, and
+  any next request goes through the same check.
+- No proxy is used, even one set in `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`:
+  a CONNECT proxy resolves the target itself, where the check cannot see it.
+  Behind a mandatory proxy, script HTTP does not work.
+- A refused request returns `status = 0`, like any transport failure.
+- Response bodies are limited to 10 MiB. A body that is larger, or that
+  cannot be read to the end, is a transport failure: `status = 0` and an empty
+  `body`, never a truncated one.
 
 ### `client` — host automation (E2)
 

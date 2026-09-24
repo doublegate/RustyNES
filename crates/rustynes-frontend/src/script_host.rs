@@ -47,6 +47,193 @@ const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// worker re-attempt (and re-pay the connect timeout) on every single command.
 const TCP_RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 
+/// v2.7.3 (frontend audit SEC-04) — the most a `comm.httpGet` / `httpPost`
+/// response body may be. ureq 3's `read_to_string` already stops at 10 MB; the
+/// limit is stated here so a ureq default change cannot lift it silently.
+/// Because it equals that default, removing it changes no test result today:
+/// a mutation of this line is EXPECTED to come back not caught.
+#[cfg(feature = "script-ipc")]
+const HTTP_BODY_LIMIT: u64 = 10 * 1024 * 1024;
+
+/// v2.7.3 (SEC-04) — the environment variable naming hosts a script may reach
+/// even though they resolve to a loopback, private or link-local address:
+/// comma-separated, each `host` or `host:port` (`localhost:8080,127.0.0.1`).
+/// The same pattern as `RUSTYNES_COMM_TCP`: the USER names inward endpoints, a
+/// script never can.
+#[cfg(feature = "script-ipc")]
+const HTTP_ALLOW_ENV: &str = "RUSTYNES_COMM_HTTP_ALLOW";
+
+/// Whether a script may reach `ip` without the user allowlisting its host.
+///
+/// Refused: loopback, unspecified, the RFC 1918 private ranges, link-local
+/// (which includes the `169.254.169.254` cloud metadata endpoint), CGNAT shared
+/// space (`100.64.0.0/10`), `0.0.0.0/8`, broadcast, multicast and documentation
+/// ranges, and in IPv6 the loopback, unique-local (`fc00::/7`) and link-local
+/// (`fe80::/10`) and documentation (`2001:db8::/32`) ranges. An IPv4-mapped or
+/// IPv4-compatible IPv6 address is judged as its IPv4 form, so both
+/// `::ffff:127.0.0.1` and `::127.0.0.1` are loopback.
+#[cfg(feature = "script-ipc")]
+fn is_public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || a == 0
+                || (a == 100 && (b & 0xC0) == 64))
+        }
+        IpAddr::V6(v6) => {
+            // `to_ipv4`, not `to_ipv4_mapped`: it also unwraps the deprecated
+            // IPv4-compatible form (`::127.0.0.1`), which some stacks still
+            // route to the embedded IPv4 address. `::1` and `::` become
+            // `0.0.0.1` / `0.0.0.0`, which the IPv4 arm refuses.
+            if let Some(v4) = v6.to_ipv4() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let documentation = v6.segments()[..2] == [0x2001, 0x0db8];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+                || documentation)
+        }
+    }
+}
+
+/// Parse [`HTTP_ALLOW_ENV`]'s value: trimmed, lower-cased, empty entries dropped.
+#[cfg(feature = "script-ipc")]
+fn parse_allowlist(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|e| e.trim().to_ascii_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
+/// Whether `uri`'s host (or `host:port`) is on the user's allowlist.
+#[cfg(feature = "script-ipc")]
+fn host_allowlisted(uri: &ureq::http::Uri, allow: &[String]) -> bool {
+    let Some(host) = uri.host() else {
+        return false;
+    };
+    // `[::1]` in a URI; the allowlist may name it with or without brackets.
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    let port = uri.port_u16().or_else(|| match uri.scheme_str() {
+        Some("https") => Some(443),
+        Some("http") => Some(80),
+        _ => None,
+    });
+    allow.iter().any(|entry| {
+        let entry = entry.trim_start_matches('[').replace("]:", ":");
+        let entry = entry.trim_end_matches(']');
+        entry == host || port.is_some_and(|p| entry == format!("{host}:{p}"))
+    })
+}
+
+/// The first resolved address a script may not reach, if any.
+#[cfg(feature = "script-ipc")]
+fn first_blocked(
+    uri: &ureq::http::Uri,
+    addrs: &[std::net::SocketAddr],
+    allow: &[String],
+) -> Option<std::net::SocketAddr> {
+    if host_allowlisted(uri, allow) {
+        return None;
+    }
+    addrs.iter().copied().find(|a| !is_public(a.ip()))
+}
+
+/// v2.7.3 (SEC-04) — ureq's default resolver, with every resolved address
+/// checked before ureq connects to it.
+///
+/// Checking HERE, rather than resolving the URL up front and then handing it to
+/// ureq, is what makes the check hold: a pre-check resolves the name once and
+/// ureq resolves it again, so a name can answer a public address to the check
+/// and `127.0.0.1` to the connection (DNS rebinding). The resolver's answer is
+/// the one ureq connects to. Redirects are disabled on the agent for the same
+/// reason: a public URL could otherwise redirect inward past this check.
+///
+/// `ureq::unversioned` does not follow semver. A breaking change there fails
+/// to compile rather than silently weakening this, which is the direction we
+/// want.
+#[cfg(feature = "script-ipc")]
+#[derive(Debug)]
+struct GuardedResolver {
+    inner: ureq::unversioned::resolver::DefaultResolver,
+    allow: Vec<String>,
+}
+
+#[cfg(feature = "script-ipc")]
+impl ureq::unversioned::resolver::Resolver for GuardedResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let addrs = self.inner.resolve(uri, config, timeout)?;
+        if let Some(blocked) = first_blocked(uri, &addrs, &self.allow) {
+            return Err(ureq::Error::Other(
+                format!(
+                    "blocked: {} resolves to {}, a non-public address; list the host in {HTTP_ALLOW_ENV} to allow it",
+                    uri.host().unwrap_or("?"),
+                    blocked.ip()
+                )
+                .into(),
+            ));
+        }
+        Ok(addrs)
+    }
+}
+
+/// The script-IPC HTTP agent: a global timeout, no automatic redirects, the
+/// [`GuardedResolver`], and statuses returned rather than raised.
+#[cfg(feature = "script-ipc")]
+fn http_agent(allow: Vec<String>) -> ureq::Agent {
+    let config = http_config(ureq::Agent::config_builder());
+    ureq::Agent::with_parts(
+        config,
+        ureq::unversioned::transport::DefaultConnector::new(),
+        GuardedResolver {
+            inner: ureq::unversioned::resolver::DefaultResolver::default(),
+            allow,
+        },
+    )
+}
+
+/// The script-IPC agent settings, applied over `builder`. Split from
+/// [`http_agent`] so a test can start from a builder that already carries a
+/// proxy, as `Agent::config_builder()` does when `HTTP_PROXY` & co. are set.
+#[cfg(feature = "script-ipc")]
+fn http_config(
+    builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+) -> ureq::config::Config {
+    builder
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        // Report the real status + body for non-2xx instead of an `Err` (ureq 3's
+        // `StatusCode` error drops the body the script wants).
+        .http_status_as_error(false)
+        // v2.7.3 (SEC-04): a 3xx is returned to the script, never followed, so
+        // the next hop goes through the resolver check like any other request.
+        .max_redirects(0)
+        // Review on #551: no proxy, including one from the environment. Through
+        // a CONNECT proxy the resolver above checks the PROXY's address and the
+        // proxy resolves the script's target, so the check would never see it.
+        // A user behind a mandatory proxy loses script HTTP; that is the price.
+        .proxy(None)
+        .build()
+}
+
 /// The host side of the `comm.*` bridge: owns the worker thread + the result
 /// inbox the host pumps back into the engine each frame.
 pub struct ScriptHost {
@@ -124,13 +311,9 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
     // Host-owned connection state — the script can NEVER name any of these
     // handles; it only ever sees the marshalled `CommResult` values below.
     #[cfg(feature = "script-ipc")]
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(20)))
-        // Report the real status + body for non-2xx instead of an `Err` (ureq 3's
-        // `StatusCode` error drops the body the script wants).
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let agent = http_agent(parse_allowlist(
+        &std::env::var(HTTP_ALLOW_ENV).unwrap_or_default(),
+    ));
     // A single outbound TCP socket (`socketServerSend`) — lazily connected to the
     // host's configured endpoint via the env override (off-by-default; an
     // unconfigured host simply drops the byte stream). Kept host-side.
@@ -252,10 +435,18 @@ fn http_call(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> (
         |_| (0, String::new()),
         // With `http_status_as_error(false)`, non-2xx responses arrive as `Ok` too,
         // so the script gets the real status code + body.
+        // A body that cannot be read -- over `HTTP_BODY_LIMIT`, or cut off --
+        // is a transport failure too. Returning the real 2xx with an empty
+        // body made it indistinguishable from an empty response (agy round 3
+        // on #551).
         |mut resp| {
             let status = resp.status().as_u16();
-            let body = resp.body_mut().read_to_string().unwrap_or_default();
-            (status, body)
+            resp.body_mut()
+                .with_config()
+                .limit(HTTP_BODY_LIMIT)
+                .lossy_utf8(true)
+                .read_to_string()
+                .map_or_else(|_| (0, String::new()), |body| (status, body))
         },
     )
 }
@@ -324,5 +515,174 @@ mod tests {
                 data: vec![]
             })
         );
+    }
+
+    /// A one-shot local HTTP server. Answers every connection with `response`
+    /// and counts connections, so a test can assert one was never made.
+    #[cfg(feature = "script-ipc")]
+    fn local_server(response: String) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (port, hits)
+    }
+
+    /// Review on #551: `Agent::config_builder()` picks up `HTTP_PROXY` /
+    /// `HTTPS_PROXY` / `ALL_PROXY`. Through a CONNECT proxy the resolver sees
+    /// the PROXY's address, and the proxy resolves the script's target itself,
+    /// so the SEC-04 check never saw the target. The agent must not use one.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn an_environment_proxy_is_not_used() {
+        let proxied = ureq::Agent::config_builder()
+            .proxy(Some(ureq::Proxy::new("http://proxy.example:3128").unwrap()));
+        assert!(proxied.build().proxy().is_some(), "the builder carries it");
+        let proxied = ureq::Agent::config_builder()
+            .proxy(Some(ureq::Proxy::new("http://proxy.example:3128").unwrap()));
+        assert!(http_config(proxied).proxy().is_none());
+        assert_eq!(
+            http_config(ureq::Agent::config_builder()).max_redirects(),
+            0
+        );
+    }
+
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn inward_addresses_are_not_public() {
+        use std::net::IpAddr;
+        for blocked in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "0.1.2.3",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            // Review on #551: the IPv6 documentation range, and the deprecated
+            // IPv4-compatible form, which `to_ipv4_mapped` does not unwrap.
+            "2001:db8::1",
+            "2001:db8:ffff::1",
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "::169.254.169.254",
+        ] {
+            let ip: IpAddr = blocked.parse().unwrap();
+            assert!(!is_public(ip), "{blocked} must be refused");
+        }
+        for allowed in [
+            "93.184.216.34",
+            "1.1.1.1",
+            "100.128.0.1",
+            "2606:4700::1111",
+            "2001:db9::1",
+            "::1.1.1.1",
+        ] {
+            let ip: IpAddr = allowed.parse().unwrap();
+            assert!(is_public(ip), "{allowed} is public");
+        }
+    }
+
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn the_allowlist_matches_host_or_host_and_port() {
+        let uri = |u: &str| u.parse::<ureq::http::Uri>().unwrap();
+        let allow = parse_allowlist(" LocalHost:8080 , 127.0.0.1,[::1],");
+        assert_eq!(allow, vec!["localhost:8080", "127.0.0.1", "[::1]"]);
+        assert!(host_allowlisted(&uri("http://localhost:8080/x"), &allow));
+        assert!(
+            !host_allowlisted(&uri("http://localhost:9090/x"), &allow),
+            "wrong port"
+        );
+        assert!(
+            host_allowlisted(&uri("http://127.0.0.1:5000/"), &allow),
+            "any port"
+        );
+        assert!(host_allowlisted(&uri("http://[::1]:7000/"), &allow));
+        assert!(!host_allowlisted(&uri("http://192.168.1.1/"), &allow));
+    }
+
+    /// SEC-04: a script reached any address, including loopback services. With
+    /// no allowlist the request must fail at resolution, before a connection.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn a_loopback_request_is_refused_before_connecting() {
+        let (port, hits) = local_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".into());
+        let agent = http_agent(Vec::new());
+        let err = agent
+            .get(&format!("http://127.0.0.1:{port}/"))
+            .call()
+            .expect_err("loopback is blocked");
+        assert!(err.to_string().contains("blocked"), "{err}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no connection"
+        );
+    }
+
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn an_allowlisted_host_is_reached() {
+        let (port, hits) = local_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".into());
+        let agent = http_agent(parse_allowlist("127.0.0.1"));
+        let (status, body) = http_call(agent.get(&format!("http://127.0.0.1:{port}/")).call());
+        assert_eq!((status, body.as_str()), (200, "ok"));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// agy round 3 on #551: a body over the limit came back as the real 2xx
+    /// status with an empty body, indistinguishable from an empty response.
+    /// A body that cannot be read is a transport failure: `status = 0`.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn a_body_over_the_limit_is_a_transport_failure() {
+        #[allow(clippy::cast_possible_truncation)] // 10 MiB + 1 fits a usize.
+        let len = HTTP_BODY_LIMIT as usize + 1;
+        let (port, _) = local_server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n{}",
+            "x".repeat(len)
+        ));
+        let agent = http_agent(parse_allowlist("127.0.0.1"));
+        let (status, body) = http_call(agent.get(&format!("http://127.0.0.1:{port}/")).call());
+        assert_eq!((status, body.len()), (0, 0));
+    }
+
+    /// A redirect is returned to the script, never followed: otherwise a public
+    /// URL could hop inward past the resolver check.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn a_redirect_is_returned_not_followed() {
+        let (inner, inner_hits) =
+            local_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nno".into());
+        let (outer, _) = local_server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{inner}/\r\nContent-Length: 0\r\n\r\n"
+        ));
+        let agent = http_agent(parse_allowlist("127.0.0.1"));
+        let (status, _) = http_call(agent.get(&format!("http://127.0.0.1:{outer}/")).call());
+        assert_eq!(status, 302);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(inner_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

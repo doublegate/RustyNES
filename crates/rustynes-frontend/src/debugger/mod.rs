@@ -1261,6 +1261,12 @@ impl DebuggerOverlay {
         // breakpoints and watchpoints stay, and stay ARMED -- they are
         // user-authored and, unlike a frozen byte, they do not write.
         self.watch_ui.clear_rom_bound();
+        // v2.7.3 (frontend audit DESK-08) — the previous game's achievement
+        // badges. They are GPU textures and nothing else ever released them.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+        if let Some(cache) = self.badge_cache.as_mut() {
+            cache.clear();
+        }
     }
 
     /// Returns `true` when the overlay is currently visible. The render
@@ -3153,12 +3159,47 @@ impl DebuggerOverlay {
         )
     }
 
+    /// v2.7.3 (frontend audit DESK-01) — upload `prepared`'s texture updates
+    /// now, and hand back the ids it wants freed.
+    ///
+    /// Call BEFORE the swapchain acquire, then pass the result to
+    /// [`Self::free_shell_textures`] after the render, whether or not the
+    /// frame was presented. egui's texture delta is one-shot, so uploading only
+    /// from [`Self::paint_shell`] (which runs after a successful acquire) lost
+    /// it on every skipped frame. Leaves `prepared` with an empty delta, which
+    /// `paint_shell` then treats as nothing to do.
+    pub fn upload_shell_textures(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        prepared: &mut PreparedShell,
+    ) -> Vec<egui::TextureId> {
+        let delta = std::mem::take(&mut prepared.textures_delta);
+        for (id, image) in delta.set {
+            self.renderer.update_texture(device, queue, id, &image);
+        }
+        delta.free
+    }
+
+    /// v2.7.3 (DESK-01) — apply the frees [`Self::upload_shell_textures`]
+    /// returned. After the render, so no texture the frame drew is released
+    /// under it.
+    pub fn free_shell_textures(&mut self, free: Vec<egui::TextureId>) {
+        for id in free {
+            self.renderer.free_texture(&id);
+        }
+    }
+
     /// v2.3.0 "Datum II" — **phase 2** of the shell frame: paint the prepared egui
     /// output into `view`.
     ///
     /// Pure GPU work — it never touches the emulator, so the caller MUST have
     /// dropped the emulator lock before calling this (it runs after the blocking
     /// swapchain acquire inside [`crate::gfx::Gfx`]'s render path).
+    ///
+    /// Any texture updates still in `prepared` are applied here. The main
+    /// window's overlay-visible path moves them out first with
+    /// [`Self::upload_shell_textures`] (DESK-01).
     pub fn paint_shell(
         &mut self,
         device: &wgpu::Device,

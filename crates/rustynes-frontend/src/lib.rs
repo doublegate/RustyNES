@@ -25,6 +25,13 @@ pub mod app;
 /// where the loss is a user's game progress.
 pub mod atomic_write;
 pub mod audio;
+/// v2.7.3 "Hearth" (FE-01) — cartridge battery RAM, persisted to disk.
+///
+/// Files live at `<data_dir>/battery/<rom_sha256>.sav`. Until this release the
+/// desktop kept no in-game save at all outside a save state: nothing here read
+/// `Nes::sram()`. Native-only (filesystem); the web build has no `.sav` store.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod battery_save;
 // v1.7.0 "Forge" H3 — frontend stereo output DSP (panning / Schroeder reverb /
 // headphone crossfeed). Bypass-by-default (center pan, 0% reverb, 0 crossfeed)
 // reproduces today's mono-duplicated-to-stereo output bit-for-bit.
@@ -257,6 +264,23 @@ pub mod virtual_pad;
 // plumbing. The egui piano-roll grid (A2) and branches/projects (A4) layer on
 // top of this model.
 pub mod tastudio;
+
+// v2.7.3 (frontend audit CON-01) — the two web frontends each declare a
+// `#[wasm_bindgen(start)]`, and a cdylib may have only one. `wasm-winit` is a
+// default feature, so `--features wasm-canvas` WITHOUT `--no-default-features`
+// enabled both, and the build failed late, at wasm-bindgen's duplicate-start
+// check, with an error that did not name the cause. Fail at compile time
+// instead, saying what to do.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "wasm-canvas",
+    feature = "wasm-winit"
+))]
+compile_error!(
+    "`wasm-canvas` and `wasm-winit` are mutually exclusive, and `wasm-winit` is a \
+     default feature: build the canvas embed with \
+     `--no-default-features --features wasm-canvas`"
+);
 
 // v1.3.0 Sprint 1.4 — two wasm32 frontends, selected by cargo
 // feature (each provides a unique `#[wasm_bindgen(start)]`):

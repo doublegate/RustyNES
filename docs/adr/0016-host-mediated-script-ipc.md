@@ -94,3 +94,35 @@ memory; the `client` mutators reuse the existing gated host paths).
 
 See `docs/scripting.md` (the `comm.*` / `client.*` / `userdata.*` reference) and
 `crates/rustynes-frontend/src/script_host.rs` (the host bridge).
+
+## Amendment (2026-09-23, v2.7.3): HTTP destinations are gated
+
+The decision above prevented a script from getting a raw socket. It did not
+limit **where** the host would connect on a script's behalf: `comm.httpGet` and
+`comm.httpPost` fetched any URL. A script downloaded from the Internet could
+therefore reach the machine's own services, such as an unauthenticated
+container API on `127.0.0.1` or a cloud metadata endpoint (frontend audit
+SEC-04). The TCP transport never had this problem, because the user names its
+endpoint (`RUSTYNES_COMM_TCP`).
+
+The maintainer chose (2026-09-23): **public destinations by default; loopback,
+private, link-local and similar addresses only when the user allowlists the
+host** in `RUSTYNES_COMM_HTTP_ALLOW`. Blocking inward addresses outright was
+rejected, because this ADR's own use case (local bot and RL endpoints) usually
+means `localhost`. Requiring an allowlist for every destination was rejected as
+needlessly strict for public endpoints.
+
+How it holds:
+
+- The check is in the HTTP client's resolver, on the addresses the connection
+  uses, not on a separate lookup, so a name that answers differently to a
+  second lookup gains nothing.
+- Redirects are not followed. A public URL cannot hop inward past the check.
+- The response body is limited to 10 MiB; a larger one is a transport
+  failure (`status = 0`, empty body).
+- No proxy is used, including one named in `HTTP_PROXY` / `ALL_PROXY`: through a
+  CONNECT proxy the resolver would check the proxy's address, not the target's.
+
+This uses ureq's `unversioned` resolver interface, which does not follow
+semver. A breaking change there fails to compile; it cannot silently remove the
+check.

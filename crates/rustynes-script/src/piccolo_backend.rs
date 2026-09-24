@@ -198,7 +198,8 @@ impl PiccoloBackend {
                     for v in stack.drain(..) {
                         parts.push(value_to_string(v));
                     }
-                    log.borrow_mut().push(parts.join("\t"));
+                    // Capped in count and length, as in the mlua backend.
+                    push_capped(&log, crate::types::clip_log_line(parts.join("\t")));
                     Ok(CallbackReturn::Return)
                 });
                 emu.set(ctx, "log", log_fn).ok();

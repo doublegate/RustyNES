@@ -226,6 +226,13 @@ pub fn ensure_audio() -> Option<u32> {
             } else {
                 false
             };
+            // v2.7.3 (frontend audit DESK-07) — `addModule` has fetched the
+            // module by the time its promise settles, so the object URL is no
+            // longer needed. Unrevoked, each audio (re)arm kept one more Blob
+            // alive for the life of the tab.
+            if let Some(url) = blob_url.as_deref() {
+                let _ = web_sys::Url::revoke_object_url(url);
+            }
             if ok && attach_worklet_node(&ctx) {
                 log("Web Audio armed (AudioWorklet)");
             } else {

@@ -46,6 +46,82 @@ const DEFAULT_CAPACITY: usize = 16_384;
 /// 50 ms band for its stop+refill resync).
 const RESYNC_EXCESS_MS: u32 = 50;
 
+/// v2.7.3 (frontend audit DESK-04) — the least time between two attempts to
+/// reopen a failed output stream, so an absent device is retried at a walk,
+/// not on every produced frame.
+const REOPEN_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// v2.7.3 (DESK-04) — whether a cpal stream error means the stream is dead.
+///
+/// Only three kinds do: the device went away, the host audio server went
+/// away, or the stream was invalidated. The rest leave it running: an `Xrun`
+/// is a glitch, `DeviceChanged` means cpal already followed the default device
+/// to its replacement, and `RealtimeDenied` only costs scheduling priority.
+/// Reopening on those would churn the device for nothing.
+#[must_use]
+pub const fn stream_error_is_fatal(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::DeviceNotAvailable
+            | cpal::ErrorKind::HostUnavailable
+            | cpal::ErrorKind::StreamInvalidated
+    )
+}
+
+/// v2.7.3 (DESK-04) — whether a reopen attempt may run now, given the last one.
+#[must_use]
+pub fn reopen_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_none_or(|t| now.saturating_duration_since(t) >= REOPEN_BACKOFF)
+}
+
+/// How long a stream build may wait on the backend. `None` (what cpal calls
+/// "wait indefinitely") let a stalled audio server hang the caller, which for
+/// the DESK-04 reopen is the winit thread (review on #551). Not every backend
+/// honours a timeout; cpal 0.18 documents `CoreAudio` and JACK as doing so.
+const STREAM_BUILD_TIMEOUT: Option<std::time::Duration> = Some(std::time::Duration::from_secs(2));
+
+/// Review on #551 — the channel count and sample format to reopen with on a
+/// device whose supported ranges are `ranges` (`channels, format, min Hz, max
+/// Hz`), or `None` when none of them plays `rate`.
+///
+/// The RATE is fixed: the emulation thread's producer and the EQ stage were
+/// built at it, and changing it needs them rebuilt, which a reopen does not do.
+/// The layout is free, because `build_stream` writes any channel count and all
+/// three formats. The original layout is preferred; otherwise the first range
+/// that plays the rate in a supported format. The replacement device found
+/// after an unplug is often a different one (the host default), so reusing the
+/// old layout blindly failed every retry on a device that could not take it.
+#[must_use]
+pub fn reopen_layout(
+    ranges: &[(u16, SampleFormat, u32, u32)],
+    rate: u32,
+    channels: u16,
+    format: SampleFormat,
+) -> Option<(u16, SampleFormat)> {
+    let plays = |&&(_, f, lo, hi): &&(u16, SampleFormat, u32, u32)| {
+        lo <= rate
+            && rate <= hi
+            && matches!(f, SampleFormat::F32 | SampleFormat::I16 | SampleFormat::U16)
+    };
+    ranges
+        .iter()
+        .filter(plays)
+        .find(|&&(c, f, ..)| c == channels && f == format)
+        .or_else(|| ranges.iter().find(|r| plays(r)))
+        .map(|&(c, f, ..)| (c, f))
+}
+
+/// Review on #551 (agy round 2) — whether a reopen failure message is new,
+/// recording it if so. A device that stays unplugged fails the same way every
+/// 2 s; only a change of reason is worth another log line.
+fn reopen_log_is_new(last: &mut Option<String>, msg: &str) -> bool {
+    if last.as_deref() == Some(msg) {
+        return false;
+    }
+    *last = Some(msg.to_owned());
+    true
+}
+
 /// Errors from audio init.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
@@ -126,6 +202,12 @@ struct QueueInner {
     /// Samples required before playback (un)gates. 0 disables the gate
     /// (bare `SampleQueue::new()`, unit tests).
     start_threshold: AtomicUsize,
+    /// v2.7.3 (frontend audit DESK-05) — the largest request the device
+    /// callback has made, in samples. The latency target cannot usefully sit
+    /// below two of these: with a device period of 2048 frames and a 20 ms
+    /// (960-sample) target, the DRC held occupancy under one callback and the
+    /// stream underran about once a second. See [`SampleQueue::effective_latency`].
+    max_request: AtomicUsize,
     /// v1.0.0 — master output gain (f32 bits, like the slot encoding).
     /// Applied at the single cpal consume point in [`Self::pop_or_silence`]
     /// (post-resampler, lock-free, affecting the buffered tail too). Default
@@ -201,6 +283,7 @@ impl SampleQueue {
                 paused: AtomicBool::new(false),
                 playing: AtomicBool::new(false),
                 start_threshold: AtomicUsize::new(0),
+                max_request: AtomicUsize::new(0),
                 gain: AtomicU64::new(u64::from(1.0f32.to_bits())),
                 base_ratio: AtomicU64::new(u64::from(1.0f32.to_bits())),
                 eq_gen: AtomicU64::new(0),
@@ -215,6 +298,25 @@ impl SampleQueue {
                 crossfeed: AtomicU32::new(0),
             }),
         }
+    }
+
+    /// Mutation note: this raised target and the raised start-gate in
+    /// [`Self::pop_or_silence`] each prevent the DESK-05 underruns on their own
+    /// in `the_drc_target_is_never_below_two_device_callbacks` (a rate-matched
+    /// simulation, 30 s or with start-up counted: 0 either way). So reverting
+    /// ONE of them is expected to come back not caught; reverting both is
+    /// caught. Both are kept because on a real device they cover different
+    /// moments: the gate covers start-up and recovery after an underrun, the
+    /// target the steady-state level the DRC holds.
+    ///
+    /// v2.7.3 (DESK-05) — the latency target actually achievable: the
+    /// configured `latency_samples`, raised to twice the largest callback the
+    /// device has made. A buffer held below one callback cannot serve it, so a
+    /// lower target only buys underruns. Producers servo and resync against
+    /// this; before the first callback it is the configured value.
+    #[must_use]
+    pub fn effective_latency(&self, latency_samples: usize) -> usize {
+        latency_samples.max(2 * self.inner.max_request.load(Ordering::Relaxed))
     }
 
     /// Arm the start-gate: playback waits until `samples` are buffered
@@ -408,8 +510,20 @@ impl SampleQueue {
             return 0;
         }
 
+        self.inner
+            .max_request
+            .fetch_max(out.len(), Ordering::Relaxed);
         if !self.inner.playing.load(Ordering::Relaxed) {
-            let threshold = self.inner.start_threshold.load(Ordering::Relaxed);
+            let mut threshold = self.inner.start_threshold.load(Ordering::Relaxed);
+            // v2.7.3 (DESK-05) — never open the gate on less than two
+            // callbacks' worth: opening on one serves a short buffer at once.
+            // A zero threshold still means "no gate". Clamped to half the ring,
+            // like `set_start_threshold`, so the gate can always open.
+            if threshold > 0 {
+                threshold = threshold
+                    .max(2 * out.len())
+                    .min(self.inner.ring.capacity() / 2);
+            }
             if avail >= threshold && (avail > 0 || threshold == 0) {
                 self.inner.playing.store(true, Ordering::Relaxed);
             } else {
@@ -606,8 +720,28 @@ pub struct AudioOutput {
     resync_samples: usize,
     /// v1.1.0 beta.2 — the optional graphic-EQ output stage.
     eq_stage: EqStage,
-    /// Live stream handle. Dropping it stops audio.
-    _stream: cpal::Stream,
+    /// Live stream handle. Dropping it stops audio. Held for its `Drop` and
+    /// replaced by [`Self::try_reopen`]; never read, hence the allow.
+    #[allow(dead_code)]
+    stream: cpal::Stream,
+    /// v2.7.3 (DESK-04) — the device name this output was asked for (`None` =
+    /// the host default), so a reopen picks the same device, or the default
+    /// if it is gone.
+    device_name: Option<String>,
+    /// The stream configuration it opened with. A reopen uses exactly this:
+    /// the core is already synthesising at `sample_rate`, and the queue holds
+    /// samples at that rate.
+    config: cpal::StreamConfig,
+    /// The sample format it opened with.
+    format: SampleFormat,
+    /// Set by the stream's error callback on a fatal error
+    /// ([`stream_error_is_fatal`]); cleared by a successful reopen.
+    failed: Arc<AtomicBool>,
+    /// When the last reopen was attempted (`REOPEN_BACKOFF` (2 s)).
+    last_reopen: Option<std::time::Instant>,
+    /// The last reopen failure logged, so a device that stays away is
+    /// reported once, not every 2 s (agy round 2 on #551). Cleared on success.
+    last_reopen_log: Option<String>,
 }
 
 impl AudioOutput {
@@ -707,10 +841,21 @@ impl AudioOutput {
         // Ring sized to 4x the latency target: the DRC holds occupancy at
         // 1x, the resync rule caps excursions at ~1.3x — full is unreachable
         // in steady state, so push never drops.
-        let queue = SampleQueue::with_capacity(latency_samples * 4);
+        // v2.7.3 (DESK-05) — at least the default ring, so a latency target
+        // raised to two device callbacks (up to 4096-frame periods) still has
+        // its resync band inside the ring.
+        let queue = SampleQueue::with_capacity((latency_samples * 4).max(DEFAULT_CAPACITY));
         queue.set_start_threshold(latency_samples);
 
-        let stream = build_stream(&device, &config, format, queue.clone(), channels)?;
+        let failed = Arc::new(AtomicBool::new(false));
+        let stream = build_stream(
+            &device,
+            &config,
+            format,
+            queue.clone(),
+            channels,
+            failed.clone(),
+        )?;
         stream.play().map_err(|e| AudioError::Cpal(e.to_string()))?;
         Ok(Self {
             sample_rate,
@@ -721,8 +866,115 @@ impl AudioOutput {
             latency_samples,
             resync_samples,
             eq_stage: EqStage::new(sample_rate),
-            _stream: stream,
+            stream,
+            device_name: device_name.map(str::to_owned),
+            config,
+            format,
+            failed,
+            last_reopen: None,
+            last_reopen_log: None,
         })
+    }
+
+    /// v2.7.3 (frontend audit DESK-04) — true once the output stream has
+    /// died (device unplugged, Bluetooth dropped, audio server restarted).
+    /// Before v2.7.3 nothing noticed: audio stayed silent until restart.
+    #[must_use]
+    pub fn stream_failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    /// v2.7.3 (DESK-04) — rebuild a failed stream over the SAME queue.
+    ///
+    /// Keeping the queue is the point: the emulation thread's
+    /// [`AudioProducer`] holds a clone of it and never has to be re-wired,
+    /// so audio resumes without restarting anything. The device is the one
+    /// asked for, or the host default if that one is gone. The sample rate is
+    /// the original, since the core already synthesises at it; the channel
+    /// count and format are whatever that device plays at that rate
+    /// ([`reopen_layout`]). A device that cannot play the rate is logged and
+    /// retried after `REOPEN_BACKOFF` (2 s), in case the original returns.
+    /// Returns whether a new stream is playing.
+    pub fn try_reopen(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if !reopen_due(self.last_reopen, now) {
+            return false;
+        }
+        self.last_reopen = Some(now);
+        let host = cpal::default_host();
+        let device = self
+            .device_name
+            .as_deref()
+            .and_then(|want| {
+                host.output_devices()
+                    .ok()
+                    .and_then(|mut it| it.find(|d: &cpal::Device| d.to_string() == want))
+            })
+            .or_else(|| host.default_output_device());
+        let Some(device) = device else {
+            self.log_reopen_failure("no output device yet; retrying");
+            return false;
+        };
+        let ranges: Vec<_> = device
+            .supported_output_configs()
+            .map(|it| {
+                it.map(|r| {
+                    (
+                        r.channels(),
+                        r.sample_format(),
+                        r.min_sample_rate(),
+                        r.max_sample_rate(),
+                    )
+                })
+                .collect()
+            })
+            .unwrap_or_default();
+        let Some((channels, format)) =
+            reopen_layout(&ranges, self.sample_rate, self.channels, self.format)
+        else {
+            self.log_reopen_failure(&format!(
+                "{device} cannot play {} Hz; retrying (restart to switch rates)",
+                self.sample_rate
+            ));
+            return false;
+        };
+        let config = cpal::StreamConfig {
+            channels,
+            ..self.config
+        };
+        let stream = match build_stream(
+            &device,
+            &config,
+            format,
+            self.queue.clone(),
+            channels,
+            self.failed.clone(),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                self.log_reopen_failure(&format!("reopen failed ({e}); retrying"));
+                return false;
+            }
+        };
+        if let Err(e) = stream.play() {
+            self.log_reopen_failure(&format!("reopened stream will not play ({e}); retrying"));
+            return false;
+        }
+        self.failed.store(false, Ordering::Relaxed);
+        self.stream = stream;
+        self.config = config;
+        self.channels = channels;
+        self.format = format;
+        self.last_reopen_log = None;
+        eprintln!("rustynes: audio: output reopened on {device}");
+        true
+    }
+
+    /// Log a reopen failure unless it repeats the previous one.
+    fn log_reopen_failure(&mut self, msg: &str) {
+        if reopen_log_is_new(&mut self.last_reopen_log, msg) {
+            eprintln!("rustynes: audio: {msg}");
+        }
     }
 
     /// v2.8.0 Phase 5 — build a `Send` producer half over this output's
@@ -760,7 +1012,10 @@ impl AudioOutput {
         // followed by catch-up can put far more than the target in flight.
         // Skipping whole batches converges in a handful of frames and is
         // ONE clean discontinuity instead of a crackle tail.
-        if self.queue.len() > self.resync_samples {
+        // v2.7.3 (DESK-05) — the target the device can actually be served at.
+        let latency = self.queue.effective_latency(self.latency_samples);
+        let resync = self.resync_samples + (latency - self.latency_samples);
+        if self.queue.len() > resync {
             self.queue.count_skipped(samples.len());
             return;
         }
@@ -769,7 +1024,7 @@ impl AudioOutput {
                 // v1.0.0 — center the DRC band on the emulation-speed factor.
                 rs.set_base_ratio(self.queue.base_ratio());
                 #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
-                let fill = self.queue.len() as f64 / (2.0 * self.latency_samples as f64);
+                let fill = self.queue.len() as f64 / (2.0 * latency as f64);
                 rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
@@ -804,13 +1059,15 @@ impl AudioOutput {
             return 1.0;
         }
         let base = self.queue.base_ratio();
+        let latency = self.queue.effective_latency(self.latency_samples);
         #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
-        let fill = self.queue.len() as f64 / (2.0 * self.latency_samples.max(1) as f64);
+        let fill = self.queue.len() as f64 / (2.0 * latency.max(1) as f64);
         drc_ratio(fill) * base
     }
 
-    /// H8 — the latency target in milliseconds the DRC servos toward (the
-    /// clamped `[audio] latency_ms` setpoint).
+    /// H8 — the latency target in milliseconds the DRC servos toward: the
+    /// clamped `[audio] latency_ms` setpoint, raised to two device callbacks
+    /// when the device's period is larger (v2.7.3, DESK-05).
     #[must_use]
     pub fn latency_target_ms(&self) -> f32 {
         if self.sample_rate == 0 {
@@ -818,14 +1075,15 @@ impl AudioOutput {
         }
         #[allow(clippy::cast_precision_loss)]
         {
-            self.latency_samples as f32 * 1000.0 / self.sample_rate as f32
+            self.latency_target_samples() as f32 * 1000.0 / self.sample_rate as f32
         }
     }
 
-    /// The latency target in samples (Performance panel readout).
+    /// The latency target in samples (Performance panel readout), as
+    /// [`SampleQueue::effective_latency`] raises it.
     #[must_use]
-    pub const fn latency_target_samples(&self) -> usize {
-        self.latency_samples
+    pub fn latency_target_samples(&self) -> usize {
+        self.queue.effective_latency(self.latency_samples)
     }
 }
 
@@ -853,7 +1111,10 @@ impl AudioProducer {
         if samples.is_empty() {
             return;
         }
-        if self.queue.len() > self.resync_samples {
+        // v2.7.3 (DESK-05) — the target the device can actually be served at.
+        let latency = self.queue.effective_latency(self.latency_samples);
+        let resync = self.resync_samples + (latency - self.latency_samples);
+        if self.queue.len() > resync {
             self.queue.count_skipped(samples.len());
             return;
         }
@@ -862,7 +1123,7 @@ impl AudioProducer {
                 // v1.0.0 — center the DRC band on the emulation-speed factor.
                 rs.set_base_ratio(self.queue.base_ratio());
                 #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
-                let fill = self.queue.len() as f64 / (2.0 * self.latency_samples as f64);
+                let fill = self.queue.len() as f64 / (2.0 * latency as f64);
                 rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
@@ -923,8 +1184,16 @@ fn build_stream(
     format: SampleFormat,
     queue: SampleQueue,
     channels: u16,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, AudioError> {
-    let err_fn = |e| eprintln!("cpal stream error: {e}");
+    // v2.7.3 (DESK-04) — a fatal error flags the output for reopening; before,
+    // it was only printed, and the stream stayed dead.
+    let err_fn = move |e: cpal::Error| {
+        if stream_error_is_fatal(e.kind()) {
+            failed.store(true, Ordering::Relaxed);
+        }
+        eprintln!("cpal stream error: {e}");
+    };
     let chans = usize::from(channels.max(1));
     // Reused mono scratch buffer — the real-time callback must not allocate
     // (v2.8.0 Phase 1; the old `vec![0.0; frames]` per callback is gone).
@@ -954,7 +1223,7 @@ fn build_stream(
                     );
                 },
                 err_fn,
-                None,
+                STREAM_BUILD_TIMEOUT,
             )
             .map_err(|e| AudioError::Cpal(e.to_string())),
         SampleFormat::I16 => device
@@ -971,7 +1240,7 @@ fn build_stream(
                     );
                 },
                 err_fn,
-                None,
+                STREAM_BUILD_TIMEOUT,
             )
             .map_err(|e| AudioError::Cpal(e.to_string())),
         SampleFormat::U16 => device
@@ -988,7 +1257,7 @@ fn build_stream(
                     );
                 },
                 err_fn,
-                None,
+                STREAM_BUILD_TIMEOUT,
             )
             .map_err(|e| AudioError::Cpal(e.to_string())),
         _ => Err(AudioError::NoConfig),
@@ -1070,6 +1339,42 @@ fn fill<S: cpal::SizedSample + cpal::FromSample<f32>>(
 mod tests {
     use super::*;
 
+    /// agy round 2 on #551: a device that stays away is logged once per
+    /// reason, not every 2 s.
+    #[test]
+    fn a_repeated_reopen_failure_is_logged_once() {
+        let mut last = None;
+        assert!(reopen_log_is_new(&mut last, "no output device yet"));
+        assert!(!reopen_log_is_new(&mut last, "no output device yet"));
+        assert!(reopen_log_is_new(&mut last, "cannot play 48000 Hz"));
+        assert!(reopen_log_is_new(&mut last, "no output device yet"));
+    }
+
+    /// Review on #551: a reopen after an unplug often lands on a different
+    /// device. Keep the rate, prefer the old layout, else take the device's.
+    #[test]
+    fn a_reopen_takes_the_replacement_devices_layout_at_the_same_rate() {
+        use SampleFormat::{F32, I16, U8};
+        let headset = [(2, F32, 44_100, 48_000)];
+        assert_eq!(reopen_layout(&headset, 48_000, 2, F32), Some((2, F32)));
+        // A 6-channel i16 interface: new layout, same rate.
+        let hdmi = [(6, I16, 32_000, 48_000), (8, I16, 32_000, 48_000)];
+        assert_eq!(reopen_layout(&hdmi, 48_000, 2, F32), Some((6, I16)));
+        // The old layout wins when offered, even listed second.
+        let both = [(6, I16, 48_000, 48_000), (2, F32, 48_000, 48_000)];
+        assert_eq!(reopen_layout(&both, 48_000, 2, F32), Some((2, F32)));
+        // Nothing at the rate, or only a format `build_stream` cannot write.
+        assert_eq!(
+            reopen_layout(&[(2, F32, 44_100, 44_100)], 48_000, 2, F32),
+            None
+        );
+        assert_eq!(
+            reopen_layout(&[(2, U8, 48_000, 48_000)], 48_000, 2, F32),
+            None
+        );
+        assert_eq!(reopen_layout(&[], 48_000, 2, F32), None);
+    }
+
     #[test]
     fn push_then_pop_returns_samples_in_order() {
         let q = SampleQueue::new();
@@ -1126,6 +1431,138 @@ mod tests {
         assert_eq!(out[63], 63.0);
     }
 
+    /// Run a 48 kHz timeline: the core pushes `frame` samples 60 times a second
+    /// and the device asks for `period` samples per callback. Returns the
+    /// underruns counted after the first second (start-up excluded).
+    fn simulate_steady_state(start_threshold: usize, period: usize) -> u64 {
+        const RATE: usize = 48_000;
+        let frame = RATE / 60;
+        let q = SampleQueue::with_capacity(16_384);
+        q.set_start_threshold(start_threshold);
+        let mut out = vec![0.0f32; period];
+        let (mut next_push, mut next_pop) = (0usize, 0usize);
+        let mut after_warmup = None;
+        while next_pop < 6 * RATE {
+            if next_push <= next_pop {
+                q.push(&vec![0.5; frame]);
+                next_push += frame;
+            } else {
+                q.pop_or_silence(&mut out);
+                next_pop += period;
+                if after_warmup.is_none() && next_pop >= RATE {
+                    after_warmup = Some(q.underruns());
+                }
+            }
+        }
+        q.underruns() - after_warmup.unwrap()
+    }
+
+    /// The same timeline, with the real producer and its DRC servo in the loop,
+    /// as the emulation thread runs it (`make_producer(true)`).
+    fn simulate_with_drc(latency_samples: usize, period: usize) -> u64 {
+        simulate_with_drc_for(latency_samples, period, 6, true)
+    }
+
+    /// [`simulate_with_drc`] over `secs` seconds; `skip_warmup` excludes the
+    /// first second's underruns.
+    fn simulate_with_drc_for(
+        latency_samples: usize,
+        period: usize,
+        secs: usize,
+        skip_warmup: bool,
+    ) -> u64 {
+        const RATE: usize = 48_000;
+        let frame = RATE / 60;
+        let q = SampleQueue::with_capacity(16_384);
+        q.set_start_threshold(latency_samples);
+        let mut producer = AudioProducer {
+            sample_rate: 48_000,
+            queue: q.clone(),
+            resampler: Some(HermiteResampler::new()),
+            resample_buf: Vec::with_capacity(2048),
+            latency_samples,
+            resync_samples: latency_samples + RATE * RESYNC_EXCESS_MS as usize / 1000,
+            eq_stage: EqStage::new(48_000),
+        };
+        let mut out = vec![0.0f32; period];
+        let (mut next_push, mut next_pop) = (0usize, 0usize);
+        let mut after_warmup = if skip_warmup { None } else { Some(0) };
+        while next_pop < secs * RATE {
+            if next_push <= next_pop {
+                producer.push_samples(&vec![0.5; frame]);
+                next_push += frame;
+            } else {
+                q.pop_or_silence(&mut out);
+                next_pop += period;
+                if after_warmup.is_none() && next_pop >= RATE {
+                    after_warmup = Some(q.underruns());
+                }
+            }
+        }
+        q.underruns() - after_warmup.unwrap()
+    }
+
+    /// DESK-05 (v2.7.3): with a 20 ms latency (960 samples at 48 kHz) and a
+    /// device period of 1024 frames, the gate opened at 960, the first callback
+    /// asked for 1024, came up short, counted an underrun and re-gated, forever.
+    /// Production and consumption are rate-matched here, so every underrun is
+    /// the gate's doing.
+    #[test]
+    fn a_callback_larger_than_the_latency_does_not_underrun_forever() {
+        assert_eq!(
+            simulate_steady_state(960, 1024),
+            0,
+            "a steady rate-matched stream must not underrun"
+        );
+        // The ordinary case is unaffected.
+        assert_eq!(simulate_steady_state(4800, 1024), 0);
+    }
+
+    /// DESK-05, the form that is real. The audit's case (a 960-sample target, a
+    /// 1024-frame period) measures 0 underruns with or without DRC: the gate
+    /// holds consumption until more than a callback is buffered. But with the
+    /// DRC servo in the loop and a device period of at least twice the target,
+    /// the servo held occupancy below one callback: 4 underruns in 5 s at
+    /// 960 / 2048 on v2.7.2, an audible click about once a second.
+
+    #[test]
+    fn the_drc_target_is_never_below_two_device_callbacks() {
+        for period in [2048usize, 4096] {
+            assert_eq!(
+                simulate_with_drc(960, period),
+                0,
+                "a 20 ms target with a {period}-frame device period"
+            );
+        }
+        assert_eq!(simulate_with_drc(960, 1024), 0);
+        assert_eq!(simulate_with_drc(4800, 1024), 0);
+    }
+
+    /// DESK-04 (v2.7.3): only the three kinds that end a stream trigger a
+    /// reopen. An xrun or an automatic reroute must not churn the device.
+    #[test]
+    fn only_a_dead_stream_is_reopened() {
+        use cpal::ErrorKind as K;
+        for fatal in [
+            K::DeviceNotAvailable,
+            K::HostUnavailable,
+            K::StreamInvalidated,
+        ] {
+            assert!(stream_error_is_fatal(fatal), "{fatal:?}");
+        }
+        for benign in [K::Xrun, K::DeviceChanged, K::RealtimeDenied, K::DeviceBusy] {
+            assert!(!stream_error_is_fatal(benign), "{benign:?}");
+        }
+    }
+
+    #[test]
+    fn a_reopen_is_retried_at_a_walk() {
+        let t0 = std::time::Instant::now();
+        assert!(reopen_due(None, t0), "the first attempt runs at once");
+        assert!(!reopen_due(Some(t0), t0 + REOPEN_BACKOFF / 2));
+        assert!(reopen_due(Some(t0), t0 + REOPEN_BACKOFF));
+    }
+
     #[test]
     fn start_gate_holds_silence_until_threshold_then_plays() {
         let q = SampleQueue::with_capacity(256);
@@ -1147,8 +1584,11 @@ mod tests {
         let q = SampleQueue::with_capacity(256);
         q.set_start_threshold(8);
         q.push(&[1.0; 8]);
-        let mut out = [0.0f32; 8];
-        assert_eq!(q.pop_or_silence(&mut out), 8); // gate opened, drained
+        // v2.7.3 (DESK-05): the gate opens on two callbacks' worth, so it is
+        // drained with two 4-sample callbacks (2 x 4 = the threshold of 8).
+        let mut out = [0.0f32; 4];
+        assert_eq!(q.pop_or_silence(&mut out), 4); // gate opened
+        assert_eq!(q.pop_or_silence(&mut out), 4); // drained
         let mut small = [9.0f32; 2];
         // Empty while playing -> short fill -> underrun + re-gate.
         assert_eq!(q.pop_or_silence(&mut small), 0);

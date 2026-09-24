@@ -672,6 +672,15 @@ const HEALTH_CHECK_GRACE: u32 = 600;
 #[cfg(not(target_arch = "wasm32"))]
 const DISPLAY_SYNC_RATE_FALLBACK: f32 = 0.02;
 
+/// v2.7.3 (SEC-05) — an A/V recording finalising off the winit thread.
+#[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+struct AvFinalize {
+    /// The `AvRecorder::stop` running on its own thread.
+    handle: std::thread::JoinHandle<Result<PathBuf, crate::av_record::AvError>>,
+    /// Frames recorded, for the completion message.
+    frames: u64,
+}
+
 /// Application state. Constructed in `resumed()` (per winit 0.30 idiom),
 /// torn down on exit.
 // The app legitimately tracks several independent boolean modes (exit
@@ -756,6 +765,13 @@ pub struct App {
     config: Config,
     #[cfg(not(target_arch = "wasm32"))]
     data_dir: Option<PathBuf>,
+    /// v2.7.3 (frontend audit SEC-05) — an A/V recording being finalised on a
+    /// background thread: ffmpeg muxing, which takes seconds to minutes for a
+    /// long take and used to run on this (the winit) thread, freezing the
+    /// window. Polled by [`Self::poll_av_finalize`]; joined on exit so the
+    /// recording still completes.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    av_finalize: Option<AvFinalize>,
     /// v1.5.0 "Lens" Workstream I1 — a **persistent** system clipboard handle
     /// for File -> Copy Screenshot to Clipboard. On X11 / Wayland the clipboard
     /// content is *owned by the live process*: the previous code created a
@@ -1079,6 +1095,9 @@ impl App {
     ///
     /// Returns an `io::Error` if the file can't be read.
     #[cfg(not(target_arch = "wasm32"))]
+    // One line per `App` field in the struct literal below; splitting the
+    // literal up would scatter the field list rather than shorten anything.
+    #[allow(clippy::too_many_lines)]
     pub fn new(rom_path: &std::path::Path) -> std::io::Result<Self> {
         // The CLI / initial-ROM path must run the same `.zip` extraction +
         // same-stem soft-patching as `load_rom_from_path` (see the helper).
@@ -1120,6 +1139,8 @@ impl App {
             input,
             config,
             data_dir,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+            av_finalize: None,
             #[cfg(not(target_arch = "wasm32"))]
             clipboard: None,
             debugger: None,
@@ -1423,6 +1444,9 @@ impl App {
             // it described. Harmless today only because the status path is
             // guarded on a ROM being present — exactly the kind of coupling
             // that stops being harmless quietly.
+            // v2.7.3 (FE-01) — the final battery write goes before the ROM.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.detach_battery();
             emu.clear_rom();
             emu.perf.clear();
             emu.present_fb.clear();
@@ -1714,9 +1738,17 @@ impl App {
         {
             self.dual_mode = dual_cabinet.is_some();
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let data_dir = self.data_dir.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        let battery_notice;
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
+            // v2.7.3 (FE-01) — the outgoing cartridge's final battery write,
+            // before its `Nes` is replaced.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.detach_battery();
             emu.frame_duration = nes.frame_duration();
             emu.next_frame_time = Some(Instant::now() + emu.frame_duration);
             emu.audio_buf.clear();
@@ -1740,6 +1772,16 @@ impl App {
             {
                 emu.set_nes(nes);
             }
+            // v2.7.3 (FE-01) — load the incoming cartridge's `.sav` under the
+            // same lock, so the emulation thread cannot run a frame first.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                battery_notice = emu.attach_battery(data_dir.as_deref());
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(notice) = battery_notice {
+            self.ui.set_status(StatusMessage::error(notice));
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
         // (it anchored on the previous game); end it so the editor can't
@@ -2177,6 +2219,48 @@ impl App {
         Some(nes)
     }
 
+    /// The once-per-produced-frame host I/O: flush the FDS writable disk
+    /// (v2.2.0; a `disk_is_dirty()` check when clean or non-FDS) and the
+    /// cartridge's battery RAM (v2.7.3, FE-01; compared once a second), and
+    /// reopen a dead audio stream (v2.7.3, DESK-04; retried every 2 s).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn per_frame_host_io(&mut self) {
+        self.flush_fds_save();
+        self.flush_battery();
+        self.recover_audio();
+    }
+
+    /// v2.7.3 (FE-01) — the periodic battery write. The copy is taken under a
+    /// brief lock and written with it RELEASED: `write_atomic` fsyncs, and
+    /// holding the emulator across that stalled the emulation thread for as
+    /// long as the disk took (review on #551).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_battery(&mut self) {
+        let Some(write) = self.emu.lock().battery_due_write() else {
+            return;
+        };
+        let result = write.write();
+        let notice = self.emu.lock().battery_written(write, &result);
+        if let Some(notice) = notice {
+            self.ui.set_status(StatusMessage::error(notice));
+        }
+    }
+
+    /// v2.7.3 (frontend audit DESK-04) — when the audio stream has died
+    /// (device unplugged, Bluetooth dropped, audio server restarted), rebuild
+    /// it over the same queue, at most once every two seconds. Before this,
+    /// audio stayed silent until the app was restarted.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn recover_audio(&mut self) {
+        if let Some(audio) = self.audio.as_mut()
+            && audio.stream_failed()
+            && audio.try_reopen()
+        {
+            self.ui
+                .set_status(StatusMessage::info("Audio output reconnected"));
+        }
+    }
+
     /// Flush the FDS writable disk (see [`crate::emu::EmuCore::flush_fds_save`]).
     #[cfg(not(target_arch = "wasm32"))]
     fn flush_fds_save(&self) {
@@ -2484,6 +2568,46 @@ impl App {
         active
     }
 
+    /// v2.7.3 (SEC-05) — report a background A/V finalize once it is done.
+    /// With `wait`, block until it is (the exit path, so a quit does not
+    /// abandon ffmpeg half-way and lose the take).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn poll_av_finalize(&mut self, wait: bool) {
+        if !wait
+            && !self
+                .av_finalize
+                .as_ref()
+                .is_some_and(|f| f.handle.is_finished())
+        {
+            return;
+        }
+        let Some(AvFinalize { handle, frames }) = self.av_finalize.take() else {
+            return;
+        };
+        match handle.join() {
+            Ok(Ok(path)) => {
+                eprintln!(
+                    "rustynes: A/V recording -> {} ({frames} frames)",
+                    path.display()
+                );
+                self.ui.set_status(StatusMessage::success(format!(
+                    "A/V recording saved: {}",
+                    path.display()
+                )));
+            }
+            Ok(Err(e)) => {
+                eprintln!("rustynes: A/V recording finalize failed: {e}");
+                self.ui
+                    .set_status(StatusMessage::info("A/V recording failed (encode)"));
+            }
+            Err(_) => {
+                eprintln!("rustynes: A/V recording finalize thread panicked");
+                self.ui
+                    .set_status(StatusMessage::info("A/V recording failed (encode)"));
+            }
+        }
+    }
+
     /// v1.6.0 "Studio" Workstream G — toggle A/V recording (native).
     ///
     /// **Start**: open a `.mp4` / `.mkv` save dialog, then arm an
@@ -2498,29 +2622,38 @@ impl App {
     fn handle_av_record_toggle(&mut self) {
         use crate::av_record::{AvParams, AvRecorder};
         // Stop path: take the recorder out under a brief lock, then finalize
-        // with the guard dropped (the ffmpeg wait can block).
+        // it on its own thread. v2.7.3 (SEC-05): `stop` waits for ffmpeg to
+        // mux, seconds to minutes for a long take, and it used to run right
+        // here, freezing the window for the whole encode.
         if self.av_recording_active() {
             let recorder = self.emu.lock().av_recorder.take();
             if let Some(recorder) = recorder {
                 let frames = recorder.frames();
-                match recorder.stop() {
-                    Ok(path) => {
-                        eprintln!(
-                            "rustynes: A/V recording -> {} ({frames} frames)",
-                            path.display()
-                        );
-                        self.ui.set_status(StatusMessage::success(format!(
-                            "A/V recording saved: {}",
-                            path.display()
-                        )));
+                match std::thread::Builder::new()
+                    .name("av-finalize".into())
+                    .spawn(move || recorder.stop())
+                {
+                    Ok(handle) => {
+                        self.av_finalize = Some(AvFinalize { handle, frames });
+                        self.ui
+                            .set_status(StatusMessage::info("Finishing A/V recording..."));
                     }
                     Err(e) => {
-                        eprintln!("rustynes: A/V recording finalize failed: {e}");
+                        eprintln!("rustynes: A/V recording finalize thread failed: {e}");
                         self.ui
                             .set_status(StatusMessage::info("A/V recording failed (encode)"));
                     }
                 }
             }
+            return;
+        }
+        // The previous take's temp and staging files are named after its
+        // output path, so a new take must not start while one is finishing:
+        // choosing the same file would write over what ffmpeg is reading.
+        if self.av_finalize.is_some() {
+            self.ui.set_status(StatusMessage::info(
+                "A/V recording: still finishing the previous recording",
+            ));
             return;
         }
 
@@ -4263,6 +4396,15 @@ impl App {
     /// redraw. Native-only + `emu-thread`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
     fn on_emu_frame(&mut self) {
+        // v2.7.3 (DESK-03) — let the thread post the next wakeup. First, so a
+        // frame produced while this handler runs still gets one.
+        if let Some(thread) = self.emu_thread.as_ref() {
+            thread.control().frame_event_handled();
+            // Review on #551: RA counts one `do_frame` per wakeup, so a live
+            // session turns fast-forward coalescing off.
+            #[cfg(feature = "retroachievements")]
+            thread.control().set_ra_every_frame(self.ra.is_some());
+        }
         // RA stays on the winit thread (`rc_client` is single-threaded): the
         // emu thread produced with `ra: None`, so drive it here against the
         // freshly produced (between-frames) core state — mirroring the
@@ -7370,9 +7512,8 @@ impl App {
         // build. `post_produce_housekeeping` is the one point both regimes share.
         self.detached.request_redraw_tick();
 
-        // v2.2.0 — persist the FDS writable disk if it changed this frame.
-        // Cheap when clean / non-FDS (a `disk_is_dirty()` check only).
-        self.flush_fds_save();
+        // Persist cartridge saves; reopen a dead audio stream (DESK-04).
+        self.per_frame_host_io();
 
         // Push the measured fps + movie status into the debugger so the
         // user can read them from the top toolbar. One scoped lock builds
@@ -8680,7 +8821,19 @@ impl App {
         // regime). Locks internally, so the cluster guard above is dropped.
         #[cfg(not(target_arch = "wasm32"))]
         self.resolve_pacing();
+        #[cfg(not(target_arch = "wasm32"))]
+        let battery_notice = {
+            let mut guard = self.emu.lock();
+            guard.set_nes(nes);
+            // v2.7.3 (FE-01) — the initial ROM's `.sav`, before its first frame.
+            guard.attach_battery(self.data_dir.as_deref())
+        };
+        #[cfg(target_arch = "wasm32")]
         self.emu.lock().set_nes(nes);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(notice) = battery_notice {
+            self.ui.set_status(StatusMessage::error(notice));
+        }
         // v1.6.0 "Studio" A2 — a fresh ROM here invalidates any prior TAStudio
         // session (it anchored on the previous `Nes`).
         if let Some(d) = self.debugger.as_mut() {
@@ -10056,12 +10209,30 @@ impl ApplicationHandler<AppEvent> for App {
                     // removed. Zero cost in release.
                     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
                     let _gpu_phase = crate::emu::GpuPhaseGuard::enter();
+                    // v2.7.3 (frontend audit DESK-01) — upload egui's texture
+                    // delta NOW, before `Gfx` acquires the swapchain image. The
+                    // delta is one-shot: the frame above is the only time egui
+                    // hands over a new font-atlas page or image. The paint below
+                    // runs only if the acquire succeeds, so on a Lost / Outdated
+                    // / Timeout frame the uploads used to be dropped with
+                    // `prepared`, and every later frame drew with texture ids the
+                    // renderer had never seen, garbled until restart. The frees
+                    // are applied after the render, whatever it returned (as
+                    // `detached.rs` already does), so a skipped frame no longer
+                    // leaks the textures egui released either. The hidden-
+                    // overlay path is not affected: it builds the egui frame
+                    // inside the paint closure, and egui keeps undelivered
+                    // updates until a frame actually runs.
+                    let mut prepared = prepared;
+                    let texture_frees =
+                        debugger.upload_shell_textures(&gfx.device, &gfx.queue, &mut prepared);
+                    let painter = &mut *debugger;
                     let overlay = move |device: &wgpu::Device,
                                         queue: &wgpu::Queue,
                                         encoder: &mut wgpu::CommandEncoder,
                                         view: &wgpu::TextureView,
                                         size: (u32, u32)| {
-                        debugger.paint_shell(device, queue, encoder, view, size, prepared);
+                        painter.paint_shell(device, queue, encoder, view, size, prepared);
                     };
                     // v2.3.3 F8 (PR #357 review) — restart the WAIT clock here.
                     // Started before the branch, it spanned the framebuffer
@@ -10098,6 +10269,7 @@ impl ApplicationHandler<AppEvent> for App {
                         video_phase,
                         overlay,
                     );
+                    debugger.free_shell_textures(texture_frees);
                     render_result
                 } else {
                     // Common path: copy the presented framebuffer under a brief
@@ -10921,6 +11093,12 @@ impl ApplicationHandler<AppEvent> for App {
             // lost on quit. No-op when clean / non-FDS. Native-only.
             #[cfg(not(target_arch = "wasm32"))]
             self.flush_fds_save();
+            // v2.7.3 (FE-01) — the final battery write on quit.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.emu.lock().detach_battery();
+            // v2.7.3 (SEC-05) — let a finishing A/V recording complete.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+            self.poll_av_finalize(true);
             // v2.7.0 — save the RA progress sidecar on quit. No-op when no RA
             // session / game. Native-only + feature-gated.
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -10936,6 +11114,10 @@ impl ApplicationHandler<AppEvent> for App {
         // spin at max rate and starved emulation ("slows to a crawl").
         #[cfg(not(target_arch = "wasm32"))]
         self.reconcile_detached(event_loop);
+        // v2.7.3 (SEC-05) — report a finished background A/V finalize. Here,
+        // not per produced frame, so it is reported while paused too.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+        self.poll_av_finalize(false);
         // Wall-clock pacer. Native: produce up to one frame (with bounded
         // catch-up) and stay on `Poll`; the actual present happens on the
         // resulting `RedrawRequested`. wasm32: this is a no-op keep-alive
