@@ -78,6 +78,16 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
 - Input converges on the **single late-latched `Buttons` mask per port**, exactly
   as the desktop and wasm hosts do — touch and hardware gamepad are
   indistinguishable to the core, so TAS/netplay/rollback are unaffected.
+- **Input never waits for the emulator (v2.7.4, audit MOB-01).** `set_buttons` /
+  `set_button` write per-port atomics outside the controller's lock, and each
+  frame latches them into the core just before it runs — the point at which a
+  lock-waiting call used to land, so emulated input timing is unchanged. Before
+  v2.7.4 a touch event on the UI thread waited out a whole frame (or a netplay
+  rollback, a Lua callback) for the same mutex `run_frame` holds. This is shared
+  with iOS: it lives in `rustynes-mobile`.
+- **ROM buffers are capped at 16 MiB at the bridge (v2.7.4, audit MOB-02)**,
+  compressed or not. Only zip entries were bounded before; a plain file of any
+  size reached the core, which copies it whole and then again into PRG and CHR.
 - Save-states use the **platform-independent `.rns` format**, so a state saved on
   desktop loads on Android and a `.rnm` TAS replays bit-identically — desktop⇄
   Android cross-play stays valid.

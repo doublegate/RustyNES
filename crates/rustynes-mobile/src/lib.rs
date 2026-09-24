@@ -33,6 +33,7 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustynes_core::{Buttons, Nes, Region};
@@ -580,10 +581,13 @@ pub fn host_warning_message(kind: HostWarning) -> String {
     kind.message()
 }
 
+/// The largest ROM image the bridge accepts, compressed or not: 16 MiB. Any
+/// real NES / FDS / UNIF image is well under it.
+const MAX_ROM_BYTES: usize = 16 * 1024 * 1024;
+
 /// Mutable state behind the controller's lock.
 struct Inner {
     nes: Nes,
-    masks: [u8; 4],
     sample_rate: u32,
     /// Active TAS recording (`.rnm`), if any — captured each frame before the tick.
     recorder: Option<rustynes_core::MovieRecorder>,
@@ -646,6 +650,16 @@ struct Inner {
 #[derive(uniffi::Object)]
 pub struct NesController {
     inner: Mutex<Inner>,
+    /// v2.7.4 (frontend audit MOB-01) — the per-port controller masks, OUTSIDE
+    /// the lock. Touch and gamepad events arrive on the UI thread at up to
+    /// 240 Hz; when these lived in [`Inner`], every one waited for `inner`,
+    /// which `run_frame` holds for a whole frame (and a netplay rollback, a Lua
+    /// callback, a `RetroAchievements` evaluation). Input now writes these
+    /// atomics without locking, and each frame latches them into the core just
+    /// before it runs ([`Self::latch_input`]) -- the same point at which a
+    /// `set_buttons` that waited for the lock used to land, so the emulated
+    /// input timing is unchanged.
+    masks: [AtomicU8; 4],
 }
 
 impl NesController {
@@ -653,6 +667,22 @@ impl NesController {
     /// panic on one call can never wedge the whole FFI surface.
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Copy the host's current masks into the core (MOB-01). Called under the
+    /// lock, before a frame runs.
+    fn latch_input(&self, g: &mut Inner) {
+        for (p, m) in self.masks.iter().enumerate() {
+            g.nes
+                .set_buttons(p, Buttons::from_bits_truncate(m.load(Ordering::Acquire)));
+        }
+    }
+
+    /// Clear every port's mask (a new cartridge starts with nothing held).
+    fn clear_input(&self) {
+        for m in &self.masks {
+            m.store(0, Ordering::Release);
+        }
     }
 
     /// The loaded ROM's SHA-256 (the foreign-movie-import stamp / netplay
@@ -677,6 +707,7 @@ impl NesController {
     /// added in later increments).
     #[uniffi::constructor]
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Arc<Self>, MobileError> {
+        check_rom_size(&rom)?;
         let rom = decompress_rom(rom);
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
@@ -684,9 +715,9 @@ impl NesController {
             }
         })?;
         Ok(Arc::new(Self {
+            masks: [const { AtomicU8::new(0) }; 4],
             inner: Mutex::new(Inner {
                 nes,
-                masks: [0; 4],
                 sample_rate,
                 recorder: None,
                 playback: None,
@@ -708,6 +739,7 @@ impl NesController {
     /// # Errors
     /// Returns [`MobileError::RomLoad`] if `rom` is not a valid cartridge image.
     pub fn load_rom(&self, rom: Vec<u8>, sample_rate: u32) -> Result<(), MobileError> {
+        check_rom_size(&rom)?;
         let rom = decompress_rom(rom);
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
@@ -716,7 +748,7 @@ impl NesController {
         })?;
         let mut g = self.lock();
         g.nes = nes;
-        g.masks = [0; 4];
+        self.clear_input();
         g.sample_rate = sample_rate;
         // A new cartridge invalidates any in-flight movie + HD-pack + script.
         g.recorder = None;
@@ -750,6 +782,7 @@ impl NesController {
     /// copying; this owned-`Vec` form is the typed-surface convenience.
     pub fn run_frame(&self) -> Vec<u8> {
         let mut g = self.lock();
+        self.latch_input(&mut g);
         pre_tick_movie(&mut g);
         let fb = g.nes.run_frame().to_vec();
         post_frame_script(&mut g);
@@ -762,6 +795,7 @@ impl NesController {
     /// the framebuffer through the native surface path and only need the tick.
     pub fn step_frame(&self) {
         let mut g = self.lock();
+        self.latch_input(&mut g);
         pre_tick_movie(&mut g);
         let _ = g.nes.run_frame();
         post_frame_script(&mut g);
@@ -798,10 +832,8 @@ impl NesController {
     /// Returns [`MobileError::InvalidPort`] if `port > 3`.
     pub fn set_buttons(&self, port: u32, mask: u8) -> Result<(), MobileError> {
         let p = port_index(port)?;
-        let mut g = self.lock();
-        g.masks[p] = mask;
-        g.nes.set_buttons(p, Buttons::from_bits_truncate(mask));
-        drop(g);
+        // Lock-free (MOB-01): latched into the core at the next frame.
+        self.masks[p].store(mask, Ordering::Release);
         Ok(())
     }
 
@@ -818,12 +850,14 @@ impl NesController {
         pressed: bool,
     ) -> Result<(), MobileError> {
         let p = port_index(port)?;
-        let mut g = self.lock();
-        let mut mask = Buttons::from_bits_truncate(g.masks[p]);
-        mask.set(button.bit(), pressed);
-        g.masks[p] = mask.bits();
-        g.nes.set_buttons(p, mask);
-        drop(g);
+        // Lock-free (MOB-01). One atomic read-modify-write per edge, so a
+        // press and a release racing on two threads cannot lose either bit.
+        let bit = button.bit().bits();
+        if pressed {
+            self.masks[p].fetch_or(bit, Ordering::AcqRel);
+        } else {
+            self.masks[p].fetch_and(!bit, Ordering::AcqRel);
+        }
         Ok(())
     }
 
@@ -833,7 +867,7 @@ impl NesController {
     /// Returns [`MobileError::InvalidPort`] if `port > 3`.
     pub fn buttons(&self, port: u32) -> Result<u8, MobileError> {
         let p = port_index(port)?;
-        Ok(self.lock().masks[p])
+        Ok(self.masks[p].load(Ordering::Acquire))
     }
 
     /// Enable/disable the Four Score adapter (4-controller multiplexer).
@@ -879,13 +913,11 @@ impl NesController {
             reason: e.to_string(),
         })?;
         // The restore overwrote the core's controller latch with the snapshot's
-        // state, so re-apply the masks the host currently holds — otherwise a
-        // button held across a load would stick or desync (the desktop host
-        // re-latches input the same way after a state load).
-        for p in 0..4 {
-            let m = Buttons::from_bits_truncate(g.masks[p]);
-            g.nes.set_buttons(p, m);
-        }
+        // state. Before v2.7.4 the host masks were re-applied here; they now
+        // live outside the lock and every frame latches them before it runs
+        // (MOB-01), so a held button survives the load with no step here.
+        // A re-latch at this point was measured redundant: removing it left
+        // every test green, because nothing emulates between the two.
         drop(g);
         Ok(())
     }
@@ -1949,6 +1981,26 @@ impl NesController {
     }
 }
 
+/// v2.7.4 (frontend audit MOB-02) — refuse a buffer over [`MAX_ROM_BYTES`]
+/// before anything copies it. Only zip entries were bounded before: a plain
+/// image of any size went to the core, which copies the whole buffer and then
+/// splits it into PRG and CHR, so a mistaken or hostile multi-hundred-MiB file
+/// meant several allocations of that size on a device with a per-app memory
+/// limit. The caller's own buffer already exists by the time this runs; the
+/// check stops the copies after it.
+fn check_rom_size(rom: &[u8]) -> Result<(), MobileError> {
+    if rom.len() > MAX_ROM_BYTES {
+        return Err(MobileError::RomLoad {
+            reason: format!(
+                "ROM file is {} bytes, which exceeds the {} MiB limit",
+                rom.len(),
+                MAX_ROM_BYTES / (1024 * 1024)
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
 /// (`.nes` / `.fds` / `.unf` / `.unif`); otherwise return `bytes` unchanged. Lets
 /// the host hand a still-compressed ROM straight through — the same convenience the
@@ -1959,7 +2011,7 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
     use std::io::Read;
     // Bound both the declared size AND the actual read so a zip bomb (or a bogus huge
     // entry) can't OOM the app — any real NES/FDS/UNIF image is well under 16 MiB.
-    const MAX_ROM_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_ENTRY_BYTES: u64 = MAX_ROM_BYTES as u64;
     if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
         return bytes;
     }
@@ -1979,11 +2031,11 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
             })
         })?;
         let e = archive.by_index(idx).ok()?;
-        if e.size() > MAX_ROM_BYTES {
+        if e.size() > MAX_ENTRY_BYTES {
             return None;
         }
         let mut out = Vec::new();
-        e.take(MAX_ROM_BYTES).read_to_end(&mut out).ok()?;
+        e.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;
         (!out.is_empty()).then_some(out)
     })();
     extracted.unwrap_or(bytes)
@@ -2346,6 +2398,69 @@ mod tests {
         assert_eq!(ctrl.frame(), 1);
     }
 
+    /// v2.7.4 (frontend audit MOB-02): a buffer over the ROM cap is refused
+    /// at the bridge, before the core copies it. A VALID image padded past the
+    /// cap loaded on v2.7.3, because only zip entries were checked -- the
+    /// cartridge loader ignores trailing bytes, so nothing else refused it.
+    #[test]
+    fn a_rom_over_the_size_cap_is_refused_at_the_bridge() {
+        let mut rom = tiny_nrom();
+        rom.resize(MAX_ROM_BYTES + 1, 0);
+        match NesController::new(rom.clone(), DEFAULT_SAMPLE_RATE) {
+            Err(MobileError::RomLoad { reason }) => {
+                assert!(reason.contains("exceeds"), "{reason}");
+            }
+            Err(other) => panic!("wrong error: {other}"),
+            Ok(_) => panic!("an oversized ROM loaded"),
+        }
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(matches!(
+            ctrl.load_rom(rom, DEFAULT_SAMPLE_RATE),
+            Err(MobileError::RomLoad { .. })
+        ));
+        // Exactly at the cap is still accepted.
+        let mut at_cap = tiny_nrom();
+        at_cap.resize(MAX_ROM_BYTES, 0);
+        assert!(ctrl.load_rom(at_cap, DEFAULT_SAMPLE_RATE).is_ok());
+    }
+
+    /// v2.7.4 (frontend audit MOB-01): input must not wait for the frame lock.
+    /// Touch events arrive on the UI thread; on v2.7.3 `set_buttons` took the
+    /// same mutex `run_frame` holds for a whole frame (and a rollback, and a
+    /// script), so a slow frame stalled the UI. Here the lock is held by the
+    /// test itself; the input call must still return.
+    #[test]
+    fn input_does_not_wait_for_the_frame_lock() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let held = ctrl.lock();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                ctrl.set_buttons(0, 0x81).unwrap();
+                ctrl.set_button(1, NesButton::Start, true).unwrap();
+                tx.send((ctrl.buttons(0).unwrap(), ctrl.buttons(1).unwrap()))
+                    .unwrap();
+            });
+            let got = rx.recv_timeout(std::time::Duration::from_secs(2));
+            drop(held); // let a blocked thread finish either way
+            assert_eq!(got, Ok((0x81, 0x08)), "input blocked on the frame lock");
+        });
+    }
+
+    /// The masks set lock-free are latched into the core at the next frame.
+    #[test]
+    fn held_input_reaches_the_core_at_the_next_frame() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.set_buttons(0, 0x81).unwrap();
+        ctrl.set_button(1, NesButton::Up, true).unwrap();
+        ctrl.step_frame();
+        let (p1, p2) = {
+            let g = ctrl.lock();
+            (g.nes.buttons(0).bits(), g.nes.buttons(1).bits())
+        };
+        assert_eq!((p1, p2), (0x81, 0x10));
+    }
+
     #[test]
     fn rejects_garbage_rom() {
         // `NesController` is a UniFFI object (no `Debug`), so match rather than
@@ -2405,6 +2520,9 @@ mod tests {
         ctrl.set_button(0, NesButton::A, true).unwrap();
         ctrl.load_state(blob).expect("restore");
         assert_eq!(ctrl.buttons(0).unwrap(), Buttons::A.bits());
+        // ...and it reaches the core on the next frame (MOB-01's latch).
+        ctrl.step_frame();
+        assert_eq!(ctrl.lock().nes.buttons(0), Buttons::A);
     }
 
     #[test]
