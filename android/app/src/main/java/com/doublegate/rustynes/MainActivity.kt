@@ -560,7 +560,7 @@ class EmulatorHandle {
     fun flushBattery() {
         val saver = battery ?: return
         val ctrl = controller ?: return
-        runCatching { saver.flushIfChanged(ctrl.batteryRam()) }
+        runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
             .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
     }
 
@@ -759,7 +759,7 @@ private fun publishRom(
     emulator.battery = prepared.battery
     if (outgoingCtrl != null && outgoingBattery != null) {
         scope.launch(Dispatchers.IO) {
-            runCatching { outgoingBattery.flushIfChanged(outgoingCtrl.batteryRam()) }
+            runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
                 .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
         }
     }
@@ -2593,7 +2593,7 @@ private fun EmulatorScreen(
                     if (saver.tryBegin()) {
                         launch(Dispatchers.IO) {
                             try {
-                                runCatching { saver.flushIfChanged(ctrl.batteryRam()) }
+                                runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
                                     .onFailure {
                                         android.util.Log.w("RustyNES", "battery save failed", it)
                                     }

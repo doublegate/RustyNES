@@ -676,11 +676,13 @@ and the Material-for-MkDocs documentation handbook at
 
 RustyNES's current release is **v2.7.4 "Pocket"** (2026-09-24) — the mobile apps survive what a phone does to them: an internal error no longer closes the Android or iOS app, battery saves persist on both, the apps pause and give up audio when they should, and saves are written so a dying phone keeps the last good one. Built on **v2.7.3 "Hearth"** (2026-09-23) — the desktop and web frontends keep what they are given: battery saves persist on the desktop, a Lua script can no longer hang or exhaust the emulator, script HTTP cannot reach local services by default, and audio survives a device change.
 
-v2.7.3 changes the frontends and adds one core accessor, and the accuracy
-numbers below were re-measured on its release tree anyway: AccuracyCoin
-144/144 and nestest pass, and the full `--features test-roms` suite passes
-2,698 tests. The desktop now keeps battery saves; the mobile apps still keep
-them only inside a save state, which is v2.7.4's. Built on **v2.7.2
+v2.7.4 changes the mobile apps and one core path (a rejected save-state load
+now leaves the machine as it was), so the accuracy numbers below were
+re-measured on its release tree: AccuracyCoin 144/144 and nestest pass, and
+the full `--features test-roms` suite passes 2,716 tests. Desktop, Android and
+iOS all keep battery saves now. Every iOS change in v2.7.4, and the Android
+lifecycle and audio changes, are checked on devices by the maintainer before
+release (`docs/mobile-v2.7.4-device-checklist.md`). Built on **v2.7.2
 "Bankroll"**, which completed cartridge memory in the core, and **v2.6.23
 "Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
 sibling.

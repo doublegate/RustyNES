@@ -46,6 +46,13 @@ sealed interface SavedBattery {
  * Thread-safety: the periodic flush runs on `Dispatchers.IO` while the lifecycle
  * flushes run on the main thread, so [flushIfChanged] is synchronized; [tryBegin]
  * keeps the loop from queueing a second periodic flush behind a slow one.
+ *
+ * [flushIfChanged] takes the RAM as a function it calls INSIDE the lock, not as
+ * bytes read beforehand. With bytes, a periodic flush that read the RAM, then
+ * waited on the lock while a final flush (close, ROM switch, background) wrote
+ * newer RAM, would write its older copy over the final one. Read under the lock,
+ * the late flush sees RAM at least as new as the final flush did, and finds it
+ * unchanged.
  */
 class BatterySaver(private val file: File) {
     private var last: ByteArray? = null
@@ -93,13 +100,16 @@ class BatterySaver(private val file: File) {
     }
 
     /**
-     * Write [current] if it differs from the last write. Returns whether it wrote.
-     * A failed write throws and leaves the baseline alone, so the next flush
-     * retries; the file keeps its previous contents ([writeAtomic]).
+     * Read the RAM with [read] and write it if it differs from the last write.
+     * Returns whether it wrote. [read] runs under this saver's lock (see the class
+     * docs for why). A failed write throws and leaves the baseline alone, so the
+     * next flush retries; the file keeps its previous contents ([writeAtomic]).
      */
     @Synchronized
-    fun flushIfChanged(current: ByteArray): Boolean {
-        if (disabled || current.isEmpty()) return false
+    fun flushIfChanged(read: () -> ByteArray): Boolean {
+        if (disabled) return false
+        val current = read()
+        if (current.isEmpty()) return false
         if (last?.contentEquals(current) == true) return false
         writeAtomic(file, current)
         last = current.copyOf()

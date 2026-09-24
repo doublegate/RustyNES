@@ -81,6 +81,22 @@ final class NetplayModel: ObservableObject {
     private weak var core: EmulatorCore?
     private var pollTimer: Timer?
 
+    /// Bumped on every attach / detach (v2.7.4). A join or host runs detached
+    /// (MOB-09), so it can finish after the game it started for was closed or
+    /// swapped; its completion checks this first, and a stale one leaves the
+    /// session it just made on the old core instead of publishing it.
+    private var generation = 0
+
+    /// Whether an operation started at `started` is still the current one. If not,
+    /// end whatever session it established on `core`, which nothing else will.
+    private func stillCurrent(_ started: Int, on core: EmulatorCore) -> Bool {
+        guard started == generation else {
+            if core.npIsActive() { core.npLeave() }
+            return false
+        }
+        return true
+    }
+
     /// Whether a session is live / connecting (the loop drives via `npAdvanceFrame`).
     var isActive: Bool { core?.npIsActive() ?? false }
 
@@ -89,9 +105,13 @@ final class NetplayModel: ObservableObject {
 
     // MARK: - Lifecycle (driven by AppModel.openGame / closeGame)
 
-    func attach(core: EmulatorCore) { self.core = core }
+    func attach(core: EmulatorCore) {
+        generation += 1
+        self.core = core
+    }
 
     func detach() {
+        generation += 1
         stopPolling()
         // End any live session before dropping the core ref, so teardown is
         // deterministic and the peer is notified (a game close/swap mid-session).
@@ -126,13 +146,16 @@ final class NetplayModel: ObservableObject {
         // blocking DNS lookup. This model is @MainActor, so the lookup used to run
         // on the main thread and freeze the UI while it waited. It runs detached
         // now; the result is published back on the main actor.
+        let started = generation
         Task {
             do {
                 try await Task.detached { try core.npJoin(address: trimmed) }.value
+                guard stillCurrent(started, on: core) else { return }
                 hostedPort = nil
                 lastError = nil
                 startPolling()
             } catch {
+                guard started == generation else { return }
                 lastError = "Could not join: \(error.localizedDescription)"
             }
         }
@@ -149,15 +172,19 @@ final class NetplayModel: ObservableObject {
         // v2.7.4 (MOB-09): the TURN host is resolved during this call; off the
         // main thread, as in `join`.
         let cfg = makeNetConfig()
+        let started = generation
         Task {
             do {
-                hostedRoomCode = try await Task.detached {
+                let code = try await Task.detached {
                     try core.npHostRoom(numPlayers: 2, cfg: cfg)
                 }.value
+                guard stillCurrent(started, on: core) else { return }
+                hostedRoomCode = code
                 hostedPort = nil
                 lastError = nil
                 startPolling()
             } catch {
+                guard started == generation else { return }
                 lastError = "Could not host room: \(error.localizedDescription)"
             }
         }
@@ -171,14 +198,17 @@ final class NetplayModel: ObservableObject {
         guard !trimmed.isEmpty else { lastError = "Enter the room code."; return }
         // v2.7.4 (MOB-09): off the main thread, as in `join`.
         let cfg = makeNetConfig()
+        let started = generation
         Task {
             do {
                 try await Task.detached { try core.npJoinRoom(roomCode: trimmed, cfg: cfg) }.value
+                guard stillCurrent(started, on: core) else { return }
                 hostedPort = nil
                 hostedRoomCode = nil
                 lastError = nil
                 startPolling()
             } catch {
+                guard started == generation else { return }
                 lastError = "Could not join room: \(error.localizedDescription)"
             }
         }

@@ -106,10 +106,13 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
             // Retire the previous worker (if it outlived its surface) before the
             // new one can be current, so it can no longer consume surface state.
             prev?.running?.set(false)
+            // The thread is assigned BEFORE the worker is published: `wake()`
+            // reads `worker?.thread` from the emulation thread, and reading an
+            // unassigned `lateinit` there throws.
+            next.thread = Thread({ renderLoop(next, prev) }, "nes-gl")
             worker = next
         }
         prev?.thread?.let(LockSupport::unpark)
-        next.thread = Thread({ renderLoop(next, prev) }, "nes-gl")
         next.thread.start()
     }
 

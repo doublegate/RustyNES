@@ -55,8 +55,8 @@ class PersistenceTest {
         val s = saver()
         assertTrue(s.read(8) is SavedBattery.None)
         s.baseline(ByteArray(8))
-        assertFalse("power-on RAM is not a save", s.flushIfChanged(ByteArray(8)))
-        assertTrue(s.flushIfChanged(byteArrayOf(0xA5.toByte(), 0, 0, 0, 0, 0, 0, 0)))
+        assertFalse("power-on RAM is not a save", s.flushIfChanged { ByteArray(8) })
+        assertTrue(s.flushIfChanged { byteArrayOf(0xA5.toByte(), 0, 0, 0, 0, 0, 0, 0) })
         val back = saver().read(8)
         assertTrue(back is SavedBattery.Found)
         assertEquals(0xA5.toByte(), (back as SavedBattery.Found).bytes[0])
@@ -67,8 +67,8 @@ class PersistenceTest {
     fun an_unchanged_battery_save_is_not_rewritten() {
         val s = saver()
         val bytes = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
-        assertTrue(s.flushIfChanged(bytes))
-        assertFalse(s.flushIfChanged(bytes.copyOf()))
+        assertTrue(s.flushIfChanged { bytes })
+        assertFalse(s.flushIfChanged { bytes.copyOf() })
     }
 
     /** A save of the wrong size is refused and never overwritten that session. */
@@ -79,7 +79,7 @@ class PersistenceTest {
         f.writeBytes(ByteArray(32) { 7 })
         val s = BatterySaver(f)
         assertTrue(s.read(8) is SavedBattery.Unusable)
-        assertFalse(s.flushIfChanged(ByteArray(8) { 1 }))
+        assertFalse(s.flushIfChanged { ByteArray(8) { 1 } })
         assertArrayEquals(ByteArray(32) { 7 }, f.readBytes())
     }
 
@@ -107,12 +107,32 @@ class PersistenceTest {
         )
     }
 
+    /**
+     * A flush scheduled before the final one but run after it must not write
+     * older RAM over it. The periodic flush is launched with the RAM still
+     * changing; the final flush (close / ROM switch / background) writes the
+     * newest RAM; the late periodic flush then reads the RAM when it runs, finds
+     * it unchanged, and writes nothing. (It pins the saver's contract. That each
+     * call site passes a reader rather than bytes it read earlier is checked by
+     * reading MainActivity, not by this test.)
+     */
+    @Test
+    fun a_late_periodic_flush_does_not_overwrite_the_final_one() {
+        val s = saver()
+        var ram = byteArrayOf(1, 0, 0, 0, 0, 0, 0, 0)
+        val periodic: () -> ByteArray = { ram.copyOf() } // launched now, runs later
+        ram = byteArrayOf(2, 0, 0, 0, 0, 0, 0, 0)
+        assertTrue("the final flush writes", s.flushIfChanged { ram.copyOf() })
+        assertFalse("the late flush finds nothing new", s.flushIfChanged(periodic))
+        assertEquals(2.toByte(), (saver().read(8) as SavedBattery.Found).bytes[0])
+    }
+
     /** A saver the bridge refused (disabled) never writes. */
     @Test
     fun a_disabled_battery_saver_never_writes() {
         val s = saver()
         s.disable()
-        assertFalse(s.flushIfChanged(ByteArray(8) { 1 }))
+        assertFalse(s.flushIfChanged { ByteArray(8) { 1 } })
         assertFalse(tmp.root.resolve("battery/rom.sav").exists())
     }
 }

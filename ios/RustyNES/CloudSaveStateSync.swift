@@ -11,11 +11,18 @@
 //      "state-<sha>-<n>", record type "SaveState", default zone of the user's PRIVATE
 //      database. Fields: sha (String), slot (Int64), savedAt (Date), frame (Int64),
 //      blob (CKAsset = the .rns file), thumbnail (CKAsset, optional).
-//    * On save -> upload in the background (force-overwrite, client-wins).
+//    * On save -> upload in the background, inside a UIKit background task so it
+//      finishes when the app is backgrounded. Conflict-safe since v2.7.4 (IOS-10):
+//      the server record is fetched first and a NEWER remote save is left alone;
+//      otherwise that record is updated and saved with `.ifServerRecordUnchanged`,
+//      so a write from another device in between fails this upload rather than
+//      being overwritten, and the per-record result decides the slot's status.
+//      (Before v2.7.4 this was force-overwrite, client-wins, and an older save
+//      uploaded later replaced a newer one.)
 //    * On game open / app launch -> fetch the (up to four) known record IDs and
-//      reconcile: pull any slot whose remote `savedAt` is newer than the local copy
-//      into the sandbox (last-writer-wins by timestamp). Local-newer slots stay as-is
-//      (already uploaded at save time).
+//      reconcile by `savedAt`: pull any slot whose remote copy is newer into the
+//      sandbox; UPLOAD any slot whose local copy is newer, since that means its
+//      upload never landed (v2.7.4, IOS-04 -- it used to be marked synced).
 //    * Per-slot status (synced / uploading / local-only / unavailable) is published
 //      for the SaveStatesView indicator.
 //
