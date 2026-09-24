@@ -36,6 +36,12 @@ cycle-accurate core later replaced.
   sets the battery bit are persisted, and a file that cannot be used is left
   untouched rather than overwritten (frontend ledger FE-01). New:
   `Nes::has_battery()`.
+- **The debugger's text no longer turns to garbage after a skipped frame.**
+  With the debugger or a tool panel open, a frame whose swapchain image could
+  not be acquired (a resize, a lost surface, a timeout) discarded egui's font
+  and image uploads, which egui sends only once. The panels then drew with
+  textures the renderer never received until restart. Uploads now happen before
+  the acquire, and releases after it (frontend audit DESK-01).
 
 ### Security
 

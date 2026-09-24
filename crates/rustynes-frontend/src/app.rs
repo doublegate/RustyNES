@@ -10083,12 +10083,30 @@ impl ApplicationHandler<AppEvent> for App {
                     // removed. Zero cost in release.
                     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
                     let _gpu_phase = crate::emu::GpuPhaseGuard::enter();
+                    // v2.7.3 (frontend audit DESK-01) — upload egui's texture
+                    // delta NOW, before `Gfx` acquires the swapchain image. The
+                    // delta is one-shot: the frame above is the only time egui
+                    // hands over a new font-atlas page or image. The paint below
+                    // runs only if the acquire succeeds, so on a Lost / Outdated
+                    // / Timeout frame the uploads used to be dropped with
+                    // `prepared`, and every later frame drew with texture ids the
+                    // renderer had never seen, garbled until restart. The frees
+                    // are applied after the render, whatever it returned (as
+                    // `detached.rs` already does), so a skipped frame no longer
+                    // leaks the textures egui released either. The hidden-
+                    // overlay path is not affected: it builds the egui frame
+                    // inside the paint closure, and egui keeps undelivered
+                    // updates until a frame actually runs.
+                    let mut prepared = prepared;
+                    let texture_frees =
+                        debugger.upload_shell_textures(&gfx.device, &gfx.queue, &mut prepared);
+                    let painter = &mut *debugger;
                     let overlay = move |device: &wgpu::Device,
                                         queue: &wgpu::Queue,
                                         encoder: &mut wgpu::CommandEncoder,
                                         view: &wgpu::TextureView,
                                         size: (u32, u32)| {
-                        debugger.paint_shell(device, queue, encoder, view, size, prepared);
+                        painter.paint_shell(device, queue, encoder, view, size, prepared);
                     };
                     // v2.3.3 F8 (PR #357 review) — restart the WAIT clock here.
                     // Started before the branch, it spanned the framebuffer
@@ -10125,6 +10143,7 @@ impl ApplicationHandler<AppEvent> for App {
                         video_phase,
                         overlay,
                     );
+                    debugger.free_shell_textures(texture_frees);
                     render_result
                 } else {
                     // Common path: copy the presented framebuffer under a brief
