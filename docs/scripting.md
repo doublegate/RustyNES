@@ -161,7 +161,7 @@ hijacks an in-progress IRQ/BRK sequence).
 | `emu.drawRect(x, y, w, h [, color])` | Draw a filled rectangle. |
 | `emu.drawPixel(x, y [, color])` | Draw a single pixel. |
 | `emu.drawLine(x1, y1, x2, y2 [, color])` *(v2.1.10)* | Draw a straight line segment — the fourth HUD primitive, ideal for graphs / plots / hitbox overlays. Full mlua + piccolo parity. |
-| `emu.log(...)` | Append to the console. `print(...)` is redirected here too. |
+| `emu.log(...)` | Append to the console. `print(...)` is redirected here too. At most 8,192 lines per frame, each cut at 4 KiB (the queue is host memory, outside the script heap limit). |
 
 All four draw primitives are pure overlay: they decorate the presented frame and
 are **never** write-gated (drawing cannot perturb deterministic state).
@@ -402,7 +402,8 @@ and the host opens no connection. The core synthesis never sees a `CommCmd`.
 addresses. It may not reach an address that resolves to loopback, a private
 range (RFC 1918, CGNAT, IPv6 unique-local), link-local (including the
 `169.254.169.254` cloud-metadata endpoint), or an unspecified, broadcast,
-multicast or documentation address, **unless the user lists the host** in the
+multicast or documentation address (IPv4-mapped and IPv4-compatible IPv6 forms are
+judged as their IPv4 address), **unless the user lists the host** in the
 `RUSTYNES_COMM_HTTP_ALLOW` environment variable: comma-separated `host` or
 `host:port` entries, for example `RUSTYNES_COMM_HTTP_ALLOW=localhost:8080,127.0.0.1`.
 This keeps a local bot or RL endpoint one line of configuration away, while a
@@ -414,8 +415,12 @@ arrangement as TCP, where the user names the endpoint (`RUSTYNES_COMM_TCP`).
   one that changes its answer between lookups.
 - Redirects are **not followed**: the 3xx status comes back to the script, and
   any next request goes through the same check.
+- No proxy is used, even one set in `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`:
+  a CONNECT proxy resolves the target itself, where the check cannot see it.
+  Behind a mandatory proxy, script HTTP does not work.
 - A refused request returns `status = 0`, like any transport failure.
-- Response bodies are capped at 10 MiB.
+- Response bodies are limited to 10 MiB. A larger body is discarded, not
+  truncated: the script receives the real status with an empty `body`.
 
 ### `client` — host automation (E2)
 

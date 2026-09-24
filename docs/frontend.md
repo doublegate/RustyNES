@@ -199,10 +199,15 @@ is `request_redraw()` → `RedrawRequested` on rAF.)
   `HostUnavailable` or `StreamInvalidated`, not an xrun or an automatic
   reroute), the output is flagged. Once per produced frame the host rebuilds the
   stream over the **same** queue, at most every 2 s: on the device that was
-  asked for, or the default if it is gone, with the original rate, channels and
-  format. Keeping the queue means the emulation thread's producer is never
-  re-wired. Before this, audio stayed silent until restart. Not under automated
-  test (it needs a real device); the fatal-kind choice and the retry pacing are.
+  asked for, or the default if it is gone. The rate is the original one (the
+  producer and EQ were built at it); the channel count and format are whatever
+  that device plays at that rate (`reopen_layout`, preferring the original), and
+  a device that cannot play the rate is retried until one can. Every stream
+  build waits at most 2 s on the backend (`STREAM_BUILD_TIMEOUT`), where the
+  backend honours a timeout. Keeping the queue means the emulation thread's
+  producer is never re-wired. Before this, audio stayed silent until restart.
+  Not under automated test (it needs a real device); the fatal-kind choice, the
+  retry pacing and the layout choice are.
 - Underrun / overrun counters + occupancy are exposed in the debugger
   Performance panel (Phase 0).
 
@@ -2056,9 +2061,15 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   differ from the last write: compared once a second while running, and always
   at ROM switch, close and exit. There is no core dirty flag; "clean" means equal
   to the last write.
-- **Never clobbers a save it did not read.** A `.sav` that cannot be read, or
-  whose length is not the cartridge's save size, is left untouched and the
-  session is not persisted (logged).
+- **The periodic write runs with the lock released.** `BatterySave::due_write`
+  copies the changed bytes under a brief `EmuCore` lock; the write, which fsyncs,
+  happens after the lock is dropped, and `written` records the outcome. The
+  forced writes at switch, close and exit stay under the lock, because they must
+  land before the `Nes` they copy from is replaced.
+- **Never clobbers a save it did not read.** A `.sav` whose length (from its
+  metadata, checked before any read) is not the cartridge's save size, or that
+  cannot be read, is left untouched and the session is not persisted. The
+  reason is shown in the status bar as well as logged.
 - **Keyed on the full-file hash**, like save states, so a header correction
   starts a new file; the old one is kept.
 - **Loading a save state** restores the save RAM it captured, and the next

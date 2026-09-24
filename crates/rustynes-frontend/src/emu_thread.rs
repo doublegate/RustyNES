@@ -283,6 +283,12 @@ pub struct EmuControl {
     /// and used to post one wakeup per frame, flooding the event loop and
     /// contending for the emulator lock. See [`Self::should_signal_frame`].
     frame_event_pending: AtomicBool,
+    /// Review on #551 — a `RetroAchievements` session is live, so every frame
+    /// gets its own wakeup even while fast-forwarding. RA's hit counts and
+    /// delta conditions advance once per `do_frame`, and the winit thread runs
+    /// one per wakeup; coalescing would change how they count. Set by the
+    /// winit thread from [`Self::set_ra_every_frame`].
+    ra_every_frame: AtomicBool,
     /// v2.3.3 — display-regime tick accounting. Diagnostic only; nothing reads
     /// these to make a decision.
     ///
@@ -348,6 +354,7 @@ impl EmuControl {
             fast_forward: AtomicBool::new(false),
             frame_advance: AtomicU32::new(0),
             frame_event_pending: AtomicBool::new(false),
+            ra_every_frame: AtomicBool::new(false),
             tick_ok: AtomicU64::new(0),
             tick_timeout: AtomicU64::new(0),
             tick_dropped: AtomicU64::new(0),
@@ -500,12 +507,20 @@ impl EmuControl {
     /// At normal speed, always: the winit thread drives `RetroAchievements`
     /// once per wakeup, and RA wants one `do_frame` per emulated frame.
     /// While fast-forwarding, only if no wakeup is already pending, so at
-    /// most one sits in the queue. Under the old flood the handler read the
-    /// core state as it was when the handler ran, not as each frame left it,
-    /// so RA was not frame-exact during fast-forward before this either.
+    /// most one sits in the queue, unless a `RetroAchievements` session is
+    /// live ([`Self::set_ra_every_frame`]), which keeps one wakeup per frame as
+    /// before v2.7.3 (review on #551). Even then the handler reads the core as
+    /// it is when the handler runs, not as each frame left it, so RA was never
+    /// frame-exact during fast-forward; what is kept is the `do_frame` count.
     pub fn should_signal_frame(&self, fast_forward: bool) -> bool {
         let first = !self.frame_event_pending.swap(true, Ordering::AcqRel);
-        first || !fast_forward
+        first || !fast_forward || self.ra_every_frame.load(Ordering::Acquire)
+    }
+
+    /// Review on #551 — whether a `RetroAchievements` session is live; see
+    /// [`Self::should_signal_frame`].
+    pub fn set_ra_every_frame(&self, on: bool) {
+        self.ra_every_frame.store(on, Ordering::Release);
     }
 
     /// v2.7.3 (DESK-03) — the winit thread has taken the pending wakeup.
@@ -1060,6 +1075,18 @@ mod tests {
         for _ in 0..5 {
             assert!(n.should_signal_frame(false), "normal speed: every frame");
         }
+
+        // Review on #551: with a RetroAchievements session live, fast-forward
+        // keeps one wakeup per frame, so RA's frame count is unchanged.
+        let r = EmuControl::new();
+        r.set_ra_every_frame(true);
+        for _ in 0..5 {
+            assert!(r.should_signal_frame(true), "RA live: every frame");
+        }
+        r.set_ra_every_frame(false);
+        r.frame_event_handled();
+        assert!(r.should_signal_frame(true));
+        assert!(!r.should_signal_frame(true), "coalesced again without RA");
     }
     use rustynes_core::Buttons;
 

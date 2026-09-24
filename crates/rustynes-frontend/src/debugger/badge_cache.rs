@@ -83,10 +83,16 @@ impl BadgeCache {
         }
     }
 
-    /// Ensure the badge at `url` is being fetched. No-op for an empty URL, an
-    /// already-known URL (pending/ready/failed), or an in-flight URL.
+    /// Ensure the badge at `url` is being fetched. No-op for an empty URL or an
+    /// already-known URL (pending/ready/failed). A URL still in flight from
+    /// before a [`Self::clear`] is marked wanted again rather than re-sent, so
+    /// its result is kept.
     pub fn request(&mut self, url: &str) {
-        if url.is_empty() || self.states.contains_key(url) || self.in_flight.contains(url) {
+        if url.is_empty() || self.states.contains_key(url) {
+            return;
+        }
+        if self.in_flight.contains(url) {
+            self.states.insert(url.to_string(), BadgeState::Pending);
             return;
         }
         if let Some(tx) = &self.job_tx
@@ -101,30 +107,39 @@ impl BadgeCache {
     /// Call once per frame (from the panel render) with the egui context.
     pub fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(done) = self.fetch_rx.try_recv() {
-            self.in_flight.remove(&done.url);
-            let next = match done.bytes.and_then(|b| decode_png(&b)) {
-                Some(image) => {
-                    let tex =
-                        ctx.load_texture(done.url.clone(), image, egui::TextureOptions::LINEAR);
-                    BadgeState::Ready(tex)
-                }
-                None => BadgeState::Failed,
-            };
-            self.states.insert(done.url, next);
+            self.accept(done, ctx);
         }
+    }
+
+    /// Record one finished download. A result nobody wants any more (requested
+    /// for a game since unloaded) is dropped without decoding.
+    fn accept(&mut self, done: BadgeFetch, ctx: &egui::Context) {
+        self.in_flight.remove(&done.url);
+        if !self.states.contains_key(&done.url) {
+            return;
+        }
+        let next = match done.bytes.and_then(|b| decode_png(&b)) {
+            Some(image) => {
+                let tex = ctx.load_texture(done.url.clone(), image, egui::TextureOptions::LINEAR);
+                BadgeState::Ready(tex)
+            }
+            None => BadgeState::Failed,
+        };
+        self.states.insert(done.url, next);
     }
 
     /// v2.7.3 (frontend audit DESK-08) — forget the previous game's badges.
     ///
     /// Nothing evicted them before: every badge of every game played in a
     /// session stayed resident as a GPU texture. Dropping a ready entry drops
-    /// its `TextureHandle`, which frees the texture. In-flight fetches are
-    /// kept, so their results still land in the map rather than being
-    /// requested again, and the map stays bounded by one game's badges plus
-    /// whatever was in flight at the switch.
+    /// its `TextureHandle`, which frees the texture. Fetches still in flight
+    /// are forgotten too: their results are discarded on arrival unless the
+    /// new game requests the same badge (review on #551 — keeping them as
+    /// Pending decoded textures for a game no longer loaded, and repeated
+    /// switches accumulated them). The worker's queue is not cancelled; the
+    /// dedup set still stops a second fetch of a URL in flight.
     pub fn clear(&mut self) {
-        self.states
-            .retain(|_, state| matches!(state, BadgeState::Pending));
+        self.states.clear();
     }
 
     /// The ready texture for `url`, if it has been fetched + decoded.
@@ -225,10 +240,28 @@ fn fetch(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// DESK-08 (v2.7.3): a game change releases every decoded badge and every
-    /// failure, and keeps fetches still in flight.
+    /// A 1x1 RGBA PNG, for feeding [`BadgeCache::accept`].
+    fn png_1x1() -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 1, 1);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut writer = enc.write_header().expect("png header");
+            writer
+                .write_image_data(&[0xFF, 0x00, 0x00, 0xFF])
+                .expect("png data");
+        }
+        out
+    }
+
+    /// DESK-08 (v2.7.3): a game change releases every badge, decoded or not.
+    /// Review on #551: a fetch still in flight at the switch used to be kept
+    /// as Pending and then decoded into a texture for a game no longer
+    /// loaded, and repeated switches accumulated them. Its result is now
+    /// discarded unless the new game asks for the same badge.
     #[test]
-    fn clear_drops_decoded_and_failed_badges_but_keeps_pending_ones() {
+    fn a_game_change_releases_every_badge_including_in_flight_ones() {
         let ctx = egui::Context::default();
         let tex = ctx.load_texture(
             "badge",
@@ -238,14 +271,35 @@ mod tests {
         let mut cache = BadgeCache::new();
         cache.states.insert("ready".into(), BadgeState::Ready(tex));
         cache.states.insert("failed".into(), BadgeState::Failed);
-        cache.states.insert("pending".into(), BadgeState::Pending);
+        for url in ["old", "shared"] {
+            cache.states.insert(url.into(), BadgeState::Pending);
+            cache.in_flight.insert(url.into());
+        }
         cache.clear();
-        assert!(cache.texture("ready").is_none());
-        assert!(!cache.states.contains_key("failed"));
-        assert!(matches!(
-            cache.states.get("pending"),
-            Some(BadgeState::Pending)
-        ));
+        assert!(cache.states.is_empty(), "nothing of the old game is kept");
+
+        // The new game wants "shared" too: not fetched twice, but kept.
+        cache.request("shared");
+        assert_eq!(cache.in_flight.len(), 2, "no second fetch");
+        for url in ["old", "shared"] {
+            cache.accept(
+                BadgeFetch {
+                    url: url.into(),
+                    bytes: Some(png_1x1()),
+                },
+                &ctx,
+            );
+        }
+        assert!(
+            cache.texture("old").is_none(),
+            "the old game's badge is dropped"
+        );
+        assert!(
+            cache.texture("shared").is_some(),
+            "a badge still wanted lands"
+        );
+        assert!(cache.in_flight.is_empty());
+        assert_eq!(cache.states.len(), 1);
     }
 
     /// A 1x1 opaque-red RGBA PNG, encoded with the `png` crate, round-trips

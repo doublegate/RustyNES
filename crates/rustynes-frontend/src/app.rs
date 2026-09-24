@@ -1740,6 +1740,8 @@ impl App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         let data_dir = self.data_dir.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        let battery_notice;
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
@@ -1773,7 +1775,13 @@ impl App {
             // v2.7.3 (FE-01) — load the incoming cartridge's `.sav` under the
             // same lock, so the emulation thread cannot run a frame first.
             #[cfg(not(target_arch = "wasm32"))]
-            emu.attach_battery(data_dir.as_deref());
+            {
+                battery_notice = emu.attach_battery(data_dir.as_deref());
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(notice) = battery_notice {
+            self.ui.set_status(StatusMessage::error(notice));
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
         // (it anchored on the previous game); end it so the editor can't
@@ -2218,8 +2226,21 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn per_frame_host_io(&mut self) {
         self.flush_fds_save();
-        self.emu.lock().flush_battery(false);
+        self.flush_battery();
         self.recover_audio();
+    }
+
+    /// v2.7.3 (FE-01) — the periodic battery write. The copy is taken under a
+    /// brief lock and written with it RELEASED: `write_atomic` fsyncs, and
+    /// holding the emulator across that stalled the emulation thread for as
+    /// long as the disk took (review on #551).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_battery(&self) {
+        let Some(write) = self.emu.lock().battery_due_write() else {
+            return;
+        };
+        let result = write.write();
+        self.emu.lock().battery_written(write, &result);
     }
 
     /// v2.7.3 (frontend audit DESK-04) — when the audio stream has died
@@ -4376,6 +4397,10 @@ impl App {
         // frame produced while this handler runs still gets one.
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.control().frame_event_handled();
+            // Review on #551: RA counts one `do_frame` per wakeup, so a live
+            // session turns fast-forward coalescing off.
+            #[cfg(feature = "retroachievements")]
+            thread.control().set_ra_every_frame(self.ra.is_some());
         }
         // RA stays on the winit thread (`rc_client` is single-threaded): the
         // emu thread produced with `ra: None`, so drive it here against the
@@ -8793,12 +8818,18 @@ impl App {
         // regime). Locks internally, so the cluster guard above is dropped.
         #[cfg(not(target_arch = "wasm32"))]
         self.resolve_pacing();
-        {
+        #[cfg(not(target_arch = "wasm32"))]
+        let battery_notice = {
             let mut guard = self.emu.lock();
             guard.set_nes(nes);
             // v2.7.3 (FE-01) — the initial ROM's `.sav`, before its first frame.
-            #[cfg(not(target_arch = "wasm32"))]
-            guard.attach_battery(self.data_dir.as_deref());
+            guard.attach_battery(self.data_dir.as_deref())
+        };
+        #[cfg(target_arch = "wasm32")]
+        self.emu.lock().set_nes(nes);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(notice) = battery_notice {
+            self.ui.set_status(StatusMessage::error(notice));
         }
         // v1.6.0 "Studio" A2 — a fresh ROM here invalidates any prior TAStudio
         // session (it anchored on the previous `Nes`).

@@ -69,8 +69,9 @@ const HTTP_ALLOW_ENV: &str = "RUSTYNES_COMM_HTTP_ALLOW";
 /// (which includes the `169.254.169.254` cloud metadata endpoint), CGNAT shared
 /// space (`100.64.0.0/10`), `0.0.0.0/8`, broadcast, multicast and documentation
 /// ranges, and in IPv6 the loopback, unique-local (`fc00::/7`) and link-local
-/// (`fe80::/10`) ranges. An IPv4-mapped IPv6 address is judged as its IPv4 form,
-/// so `::ffff:127.0.0.1` is loopback.
+/// (`fe80::/10`) and documentation (`2001:db8::/32`) ranges. An IPv4-mapped or
+/// IPv4-compatible IPv6 address is judged as its IPv4 form, so both
+/// `::ffff:127.0.0.1` and `::127.0.0.1` are loopback.
 #[cfg(feature = "script-ipc")]
 fn is_public(ip: std::net::IpAddr) -> bool {
     use std::net::IpAddr;
@@ -88,14 +89,20 @@ fn is_public(ip: std::net::IpAddr) -> bool {
                 || (a == 100 && (b & 0xC0) == 64))
         }
         IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
+            // `to_ipv4`, not `to_ipv4_mapped`: it also unwraps the deprecated
+            // IPv4-compatible form (`::127.0.0.1`), which some stacks still
+            // route to the embedded IPv4 address. `::1` and `::` become
+            // `0.0.0.1` / `0.0.0.0`, which the IPv4 arm refuses.
+            if let Some(v4) = v6.to_ipv4() {
                 return is_public(IpAddr::V4(v4));
             }
+            let documentation = v6.segments()[..2] == [0x2001, 0x0db8];
             !(v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
                 || v6.is_unique_local()
-                || v6.is_unicast_link_local())
+                || v6.is_unicast_link_local()
+                || documentation)
         }
     }
 }
@@ -193,15 +200,7 @@ impl ureq::unversioned::resolver::Resolver for GuardedResolver {
 /// [`GuardedResolver`], and statuses returned rather than raised.
 #[cfg(feature = "script-ipc")]
 fn http_agent(allow: Vec<String>) -> ureq::Agent {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(20)))
-        // Report the real status + body for non-2xx instead of an `Err` (ureq 3's
-        // `StatusCode` error drops the body the script wants).
-        .http_status_as_error(false)
-        // v2.7.3 (SEC-04): a 3xx is returned to the script, never followed, so
-        // the next hop goes through the resolver check like any other request.
-        .max_redirects(0)
-        .build();
+    let config = http_config(ureq::Agent::config_builder());
     ureq::Agent::with_parts(
         config,
         ureq::unversioned::transport::DefaultConnector::new(),
@@ -210,6 +209,29 @@ fn http_agent(allow: Vec<String>) -> ureq::Agent {
             allow,
         },
     )
+}
+
+/// The script-IPC agent settings, applied over `builder`. Split from
+/// [`http_agent`] so a test can start from a builder that already carries a
+/// proxy, as `Agent::config_builder()` does when `HTTP_PROXY` & co. are set.
+#[cfg(feature = "script-ipc")]
+fn http_config(
+    builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+) -> ureq::config::Config {
+    builder
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        // Report the real status + body for non-2xx instead of an `Err` (ureq 3's
+        // `StatusCode` error drops the body the script wants).
+        .http_status_as_error(false)
+        // v2.7.3 (SEC-04): a 3xx is returned to the script, never followed, so
+        // the next hop goes through the resolver check like any other request.
+        .max_redirects(0)
+        // Review on #551: no proxy, including one from the environment. Through
+        // a CONNECT proxy the resolver above checks the PROXY's address and the
+        // proxy resolves the script's target, so the check would never see it.
+        // A user behind a mandatory proxy loses script HTTP; that is the price.
+        .proxy(None)
+        .build()
 }
 
 /// The host side of the `comm.*` bridge: owns the worker thread + the result
@@ -515,6 +537,25 @@ mod tests {
         (port, hits)
     }
 
+    /// Review on #551: `Agent::config_builder()` picks up `HTTP_PROXY` /
+    /// `HTTPS_PROXY` / `ALL_PROXY`. Through a CONNECT proxy the resolver sees
+    /// the PROXY's address, and the proxy resolves the script's target itself,
+    /// so the SEC-04 check never saw the target. The agent must not use one.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn an_environment_proxy_is_not_used() {
+        let proxied = ureq::Agent::config_builder()
+            .proxy(Some(ureq::Proxy::new("http://proxy.example:3128").unwrap()));
+        assert!(proxied.build().proxy().is_some(), "the builder carries it");
+        let proxied = ureq::Agent::config_builder()
+            .proxy(Some(ureq::Proxy::new("http://proxy.example:3128").unwrap()));
+        assert!(http_config(proxied).proxy().is_none());
+        assert_eq!(
+            http_config(ureq::Agent::config_builder()).max_redirects(),
+            0
+        );
+    }
+
     #[cfg(feature = "script-ipc")]
     #[test]
     fn inward_addresses_are_not_public() {
@@ -536,11 +577,25 @@ mod tests {
             "fe80::1",
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
+            // Review on #551: the IPv6 documentation range, and the deprecated
+            // IPv4-compatible form, which `to_ipv4_mapped` does not unwrap.
+            "2001:db8::1",
+            "2001:db8:ffff::1",
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "::169.254.169.254",
         ] {
             let ip: IpAddr = blocked.parse().unwrap();
             assert!(!is_public(ip), "{blocked} must be refused");
         }
-        for allowed in ["93.184.216.34", "1.1.1.1", "100.128.0.1", "2606:4700::1111"] {
+        for allowed in [
+            "93.184.216.34",
+            "1.1.1.1",
+            "100.128.0.1",
+            "2606:4700::1111",
+            "2001:db9::1",
+            "::1.1.1.1",
+        ] {
             let ip: IpAddr = allowed.parse().unwrap();
             assert!(is_public(ip), "{allowed} is public");
         }

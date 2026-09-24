@@ -1694,28 +1694,68 @@ impl EmuCore {
     /// loaded ROM, and after [`Self::detach_battery`] released the previous one.
     /// A Vs. `DualSystem` cabinet is not persisted (it installs through
     /// [`Self::set_dual`], and the four `DualSystem` boards carry no battery).
+    ///
+    /// Returns the reason when an existing `.sav` could not be used, so the
+    /// caller can show it: that session's save is not written, and a player
+    /// who only finds out from stderr loses progress without knowing why
+    /// (review on #551).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_battery(&mut self, data_dir: Option<&std::path::Path>) {
+    #[must_use]
+    pub fn attach_battery(&mut self, data_dir: Option<&std::path::Path>) -> Option<String> {
         self.battery = None;
         let (Some(dir), Some(nes)) = (data_dir, self.nes.as_mut()) else {
-            return;
+            return None;
         };
         match crate::battery_save::BatterySave::attach(nes, dir) {
             Ok(Some(save)) => {
                 eprintln!("rustynes: battery save -> {}", save.path().display());
                 self.battery = Some(save);
+                None
             }
-            Ok(None) => {}
-            Err(e) => eprintln!("rustynes: battery save not loaded, and will not be written: {e}"),
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("rustynes: battery save not loaded, and will not be written: {e}");
+                Some(format!(
+                    "Battery save not loaded; this session will not save: {e}"
+                ))
+            }
         }
     }
 
-    /// v2.7.3 (FE-01) — write the battery RAM if it changed. Without `force`
-    /// this is the once-per-produced-frame call and compares only every
-    /// [`crate::battery_save::CHECK_PERIOD_FRAMES`] frames. A failed write is
-    /// logged and retried at the next comparison.
+    /// v2.7.3 (FE-01) — the periodic battery write that is due, if any, as a
+    /// copy that can be written with the emulator lock released. Compares only
+    /// every [`crate::battery_save::CHECK_PERIOD_FRAMES`] calls. Report the
+    /// outcome with [`Self::battery_written`].
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn flush_battery(&mut self, force: bool) {
+    pub fn battery_due_write(&mut self) -> Option<crate::battery_save::BatteryWrite> {
+        let (save, nes) = (self.battery.as_mut()?, self.nes.as_ref()?);
+        save.due_write(nes, false)
+    }
+
+    /// v2.7.3 (FE-01) — record a write taken by [`Self::battery_due_write`].
+    /// A failure is logged and retried at the next comparison.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn battery_written(
+        &mut self,
+        write: crate::battery_save::BatteryWrite,
+        result: &std::io::Result<()>,
+    ) {
+        if let Err(e) = result {
+            eprintln!(
+                "rustynes: battery save failed {}: {e}",
+                write.path().display()
+            );
+        }
+        if let Some(save) = self.battery.as_mut() {
+            save.written(write, result);
+        }
+    }
+
+    /// v2.7.3 (FE-01) — write the battery RAM now if it changed, under the
+    /// caller's lock. Used only by [`Self::detach_battery`], where the write
+    /// must land before the `Nes` it copies from is replaced.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_battery(&mut self, force: bool) {
         let (Some(save), Some(nes)) = (self.battery.as_mut(), self.nes.as_ref()) else {
             return;
         };

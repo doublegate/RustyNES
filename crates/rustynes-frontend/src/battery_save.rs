@@ -81,7 +81,7 @@ pub enum AttachError {
         /// The file.
         path: PathBuf,
         /// Its length.
-        found: usize,
+        found: u64,
         /// The cartridge's `sram()` length.
         expected: usize,
     },
@@ -101,6 +101,34 @@ impl core::fmt::Display for AttachError {
                 path.display()
             ),
         }
+    }
+}
+
+/// A `.sav` write taken by [`BatterySave::due_write`]: the path and a copy of
+/// the save RAM, so it can be written without holding the emulator.
+#[derive(Debug)]
+pub struct BatteryWrite {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl BatteryWrite {
+    /// Write the bytes durably (`write_atomic`), creating the directory.
+    ///
+    /// # Errors
+    ///
+    /// The directory creation or the atomic write failed.
+    pub fn write(&self) -> io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::atomic_write::write_atomic(&self.path, &self.bytes)
+    }
+
+    /// The file it writes.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -132,17 +160,32 @@ impl BatterySave {
             return Ok(None);
         }
         let path = sav_path(data_dir, nes.rom_sha256());
-        match std::fs::read(&path) {
-            Ok(bytes) if bytes.len() == nes.sram().len() => {
-                nes.sram_mut().copy_from_slice(&bytes);
-            }
-            Ok(bytes) => {
+        let expected = nes.sram().len();
+        // Size first, from the metadata: reading a file of the wrong size in
+        // full would let a huge or corrupt `.sav` allocate without bound
+        // before being refused (review on #551).
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() != expected as u64 => {
                 return Err(AttachError::WrongSize {
                     path,
-                    found: bytes.len(),
-                    expected: nes.sram().len(),
+                    found: meta.len(),
+                    expected,
                 });
             }
+            Ok(_) => match std::fs::read(&path) {
+                Ok(bytes) if bytes.len() == expected => {
+                    nes.sram_mut().copy_from_slice(&bytes);
+                }
+                // Changed size between the two calls.
+                Ok(bytes) => {
+                    return Err(AttachError::WrongSize {
+                        path,
+                        found: bytes.len() as u64,
+                        expected,
+                    });
+                }
+                Err(e) => return Err(AttachError::Unreadable(path, e)),
+            },
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(AttachError::Unreadable(path, e)),
         }
@@ -159,35 +202,58 @@ impl BatterySave {
         &self.path
     }
 
-    /// Write the live save RAM if it differs from the last write.
+    /// The write that is due now, if any: a copy of the live save RAM when it
+    /// differs from the last write.
     ///
     /// Without `force`, the comparison runs only every [`CHECK_PERIOD_FRAMES`]
-    /// calls (one call per produced frame); with it, it runs now. Returns whether
-    /// a file was written.
+    /// calls (one call per produced frame); with it, it runs now.
+    ///
+    /// Split from the write itself so the caller can take this under the
+    /// emulator lock and write with the lock RELEASED: a durable write
+    /// includes an fsync, and holding the lock across it stalled the emulation
+    /// thread for as long as the disk took (review on #551). Report the
+    /// outcome with [`Self::written`].
+    pub fn due_write(&mut self, nes: &Nes, force: bool) -> Option<BatteryWrite> {
+        if !force {
+            self.frames += 1;
+            if self.frames < CHECK_PERIOD_FRAMES {
+                return None;
+            }
+        }
+        self.frames = 0;
+        let live = nes.sram();
+        (live != self.last.as_slice()).then(|| BatteryWrite {
+            path: self.path.clone(),
+            bytes: live.to_vec(),
+        })
+    }
+
+    /// Record a finished [`BatteryWrite`]: on success its bytes become the
+    /// baseline; on failure the baseline stays, so the next comparison retries.
+    /// A write taken for a different file (the ROM changed while it was in
+    /// flight) is ignored.
+    pub fn written(&mut self, write: BatteryWrite, result: &io::Result<()>) {
+        if result.is_ok() && write.path == self.path {
+            self.last = write.bytes;
+        }
+    }
+
+    /// Write the live save RAM now if it differs from the last write:
+    /// [`Self::due_write`], the write, and [`Self::written`] in one call. For
+    /// the unload / switch / exit paths, and tests.
     ///
     /// # Errors
     ///
     /// The directory creation or the atomic write failed. The baseline is not
     /// advanced, so the next flush retries.
     pub fn flush(&mut self, nes: &Nes, force: bool) -> io::Result<bool> {
-        if !force {
-            self.frames += 1;
-            if self.frames < CHECK_PERIOD_FRAMES {
-                return Ok(false);
-            }
-        }
-        self.frames = 0;
-        let live = nes.sram();
-        if live == self.last.as_slice() {
+        let Some(write) = self.due_write(nes, force) else {
             return Ok(false);
-        }
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        crate::atomic_write::write_atomic(&self.path, live)?;
-        self.last.clear();
-        self.last.extend_from_slice(live);
-        Ok(true)
+        };
+        let result = write.write();
+        let wrote = result.is_ok();
+        self.written(write, &result);
+        result.map(|()| wrote)
     }
 }
 
@@ -281,6 +347,47 @@ mod tests {
             "power-on RAM is the baseline"
         );
         assert!(!save.path().exists(), "so nothing was written");
+    }
+
+    /// Review on #551: a wrong-size file is refused from its metadata, before
+    /// it is read. `/dev/zero` reports length 0 and never ends, so reading it
+    /// first (the v2.7.3 draft) hangs this test; the metadata check refuses it
+    /// at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_wrong_size_save_is_refused_without_reading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut nes = Nes::from_rom(&rom(true)).unwrap();
+        let path = sav_path(dir.path(), nes.rom_sha256());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
+        assert!(matches!(
+            BatterySave::attach(&mut nes, dir.path()),
+            Err(AttachError::WrongSize { found: 0, .. })
+        ));
+    }
+
+    /// The periodic write can run without the emulator: `due_write` copies,
+    /// the write happens elsewhere, `written` updates the baseline.
+    #[test]
+    fn a_due_write_carries_its_own_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut nes = Nes::from_rom(&rom(true)).unwrap();
+        let mut save = BatterySave::attach(&mut nes, dir.path()).unwrap().unwrap();
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let write = save.due_write(&nes, true).expect("RAM changed");
+        nes.run_frame(); // the console runs on while the file is written
+        let result = write.write();
+        assert!(result.is_ok());
+        let on_disk = std::fs::read(write.path()).unwrap();
+        save.written(write, &result);
+        assert_eq!(on_disk[0], 0xA5);
+        assert!(
+            save.due_write(&nes, true).is_some(),
+            "later changes are still due"
+        );
     }
 
     #[test]

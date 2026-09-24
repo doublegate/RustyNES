@@ -528,9 +528,9 @@ impl HdPack {
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
         if is_zip {
-            Self::load_zip_from_reader(std::fs::File::open(path).ok()?)
+            Self::load_zip_from_reader(std::fs::File::open(path).ok()?, MAX_HD_PACK_BYTES)
         } else {
-            Self::load_folder(path)
+            Self::load_folder(path, MAX_HD_PACK_BYTES)
         }
     }
 
@@ -539,10 +539,12 @@ impl HdPack {
     /// branch; the bytes are read through a `Cursor`.
     #[must_use]
     pub fn load_from_zip_bytes(data: &[u8]) -> Option<Self> {
-        Self::load_zip_from_reader(std::io::Cursor::new(data))
+        Self::load_zip_from_reader(std::io::Cursor::new(data), MAX_HD_PACK_BYTES)
     }
 
-    fn load_folder(dir: &Path) -> Option<Self> {
+    /// `budget` is the decoded RGBA bytes the whole pack may hold
+    /// ([`MAX_HD_PACK_BYTES`] outside tests); see [`decode_png`].
+    fn load_folder(dir: &Path, mut budget: u64) -> Option<Self> {
         let hires = std::fs::read_to_string(dir.join("hires.txt")).ok()?;
         let parsed = parse_hires(&hires);
         let mut images = Vec::with_capacity(parsed.image_names.len());
@@ -550,13 +552,17 @@ impl HdPack {
             // Reject any name that would escape the pack dir (path traversal).
             let decoded = sanitize_image_name(name)
                 .and_then(|safe| std::fs::read(dir.join(safe)).ok())
-                .and_then(|b| decode_png(&b));
+                .and_then(|b| decode_png(&b, &mut budget));
             images.push(decoded);
         }
         Self::finish(parsed, images)
     }
 
-    fn load_zip_from_reader<R: std::io::Read + std::io::Seek>(reader: R) -> Option<Self> {
+    /// `budget` as for [`Self::load_folder`].
+    fn load_zip_from_reader<R: std::io::Read + std::io::Seek>(
+        reader: R,
+        mut budget: u64,
+    ) -> Option<Self> {
         let mut archive = zip::ZipArchive::new(reader).ok()?;
         // Find the `hires.txt` entry (allow it to live in a subfolder).
         let hires_name = (0..archive.len()).find_map(|i| {
@@ -589,7 +595,7 @@ impl HdPack {
                 let entry_name = joined.to_string_lossy().replace('\\', "/");
                 read_zip_entry(&mut archive, &entry_name)
                     .or_else(|| read_zip_entry(&mut archive, safe))
-                    .and_then(|b| decode_png(&b))
+                    .and_then(|b| decode_png(&b, &mut budget))
             });
             images.push(decoded);
         }
@@ -870,6 +876,13 @@ const MAX_HD_IMAGE_SIDE: u32 = 16_384;
 /// RGBA8. Room for an 8192 x 2048 sheet or a 4096 x 4096 one.
 const MAX_HD_IMAGE_PIXELS: u64 = 4096 * 4096;
 
+/// The decoded RGBA bytes one whole pack may hold: 1 GiB, sixteen images of
+/// the largest allowed size. The per-image cap alone bounded one image, not
+/// their number, and both loaders keep every image they decode, so a small zip
+/// of highly compressible 4096 x 4096 images could still ask for tens of
+/// gigabytes (review on #551). Real packs are far below this.
+const MAX_HD_PACK_BYTES: u64 = 1 << 30;
+
 /// Whether declared PNG dimensions are within the HD-pack budget (v2.7.3,
 /// frontend audit SEC-01). Checked BEFORE the decode buffer is sized, because
 /// the size comes straight from the file's IHDR: a 20 KiB image can declare
@@ -885,15 +898,22 @@ const fn png_dimensions_allowed(width: u32, height: u32) -> bool {
 /// Decode a PNG to RGBA8.
 ///
 /// Returns `None` for an image this loader cannot use, including one whose
-/// header declares dimensions past [`png_dimensions_allowed`]. That check runs
-/// on the header alone, before any pixel buffer exists.
-fn decode_png(bytes: &[u8]) -> Option<ReplacementImage> {
+/// header declares dimensions past [`png_dimensions_allowed`], or whose RGBA
+/// size exceeds what is left of the pack's `budget` (which is then left as it
+/// was). Both checks run on the header alone, before any pixel buffer exists;
+/// an image that is accepted is charged to `budget`.
+fn decode_png(bytes: &[u8], budget: &mut u64) -> Option<ReplacementImage> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().ok()?;
     let header = reader.info();
     if !png_dimensions_allowed(header.width, header.height) {
         return None;
     }
+    let rgba_bytes = u64::from(header.width) * u64::from(header.height) * 4;
+    if rgba_bytes > *budget {
+        return None;
+    }
+    *budget -= rgba_bytes;
     let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
@@ -2631,16 +2651,94 @@ mod tests {
     /// are valid and decode on v2.7.2; past the budget they must now be refused.
     #[test]
     fn a_png_past_the_hd_budget_is_refused_before_decoding() {
-        let small = decode_png(&gray_png(2, 2)).expect("a small image decodes");
+        let mut unlimited = u64::MAX;
+        let small = decode_png(&gray_png(2, 2), &mut unlimited).expect("a small image decodes");
         assert_eq!((small.width, small.height, small.rgba.len()), (2, 2, 16));
 
         let too_big = gray_png(4097, 4096);
         assert!(too_big.len() < 256 * 1024, "the attack file is small");
-        assert!(decode_png(&too_big).is_none(), "one row past the area cap");
         assert!(
-            decode_png(&gray_png(MAX_HD_IMAGE_SIDE + 1, 1)).is_none(),
+            decode_png(&too_big, &mut unlimited).is_none(),
+            "one row past the area cap"
+        );
+        assert!(
+            decode_png(&gray_png(MAX_HD_IMAGE_SIDE + 1, 1), &mut unlimited).is_none(),
             "one column past the side cap"
         );
+    }
+
+    /// A zip holding `hires.txt` and three 64 x 64 images, one tile rule each.
+    fn three_image_zip() -> Vec<u8> {
+        use std::fmt::Write as _;
+        use std::io::Write as _;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        let mut hires = String::from("<ver>106\n<scale>2\n");
+        for i in 0..3 {
+            writeln!(hires, "<img>t{i}.png").unwrap();
+        }
+        for i in 0..3 {
+            writeln!(hires, "<tile>{i},{ZERO_TILE_DATA},0F162736,0,0,1,N").unwrap();
+        }
+        zip.start_file("hires.txt", opts).unwrap();
+        zip.write_all(hires.as_bytes()).unwrap();
+        for i in 0..3 {
+            zip.start_file(format!("t{i}.png"), opts).unwrap();
+            zip.write_all(&gray_png(64, 64)).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    /// Review on #551: the per-image cap did not bound the pack. The budget is
+    /// charged per decoded image, a refused image leaves it untouched, and the
+    /// zip loader honours it (the folder loader shares `decode_png`).
+    #[test]
+    fn a_pack_is_bounded_in_total_not_only_per_image() {
+        let one = 64 * 64 * 4;
+        let mut budget = 2 * one + one / 2;
+        assert!(decode_png(&gray_png(64, 64), &mut budget).is_some());
+        assert!(decode_png(&gray_png(64, 64), &mut budget).is_some());
+        assert_eq!(budget, one / 2);
+        assert!(
+            decode_png(&gray_png(64, 64), &mut budget).is_none(),
+            "over budget"
+        );
+        assert_eq!(budget, one / 2, "a refusal costs nothing");
+
+        let bytes = three_image_zip();
+        let full = HdPack::load_zip_from_reader(std::io::Cursor::new(&bytes), MAX_HD_PACK_BYTES)
+            .expect("loads");
+        assert_eq!(full.images.len(), 3);
+        let capped =
+            HdPack::load_zip_from_reader(std::io::Cursor::new(&bytes), 2 * one).expect("loads");
+        assert_eq!(
+            capped.images.len(),
+            2,
+            "the third image is over the pack budget"
+        );
+    }
+
+    /// The folder loader threads the same budget. The zip's entries are
+    /// unpacked into a scratch directory under the system temp dir.
+    #[test]
+    fn a_folder_pack_is_bounded_too() {
+        let dir =
+            std::env::temp_dir().join(format!("rustynes-hdpack-budget-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bytes = three_image_zip();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            let mut out = std::fs::File::create(dir.join(entry.name())).unwrap();
+            std::io::copy(&mut entry, &mut out).unwrap();
+        }
+        let one = 64 * 64 * 4;
+        let full = HdPack::load_folder(&dir, MAX_HD_PACK_BYTES).map(|p| p.images.len());
+        let capped = HdPack::load_folder(&dir, 2 * one).map(|p| p.images.len());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(full, Some(3));
+        assert_eq!(capped, Some(2), "the third image is over the pack budget");
     }
 
     #[test]

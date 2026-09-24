@@ -36,8 +36,9 @@ cycle-accurate core later replaced.
   on ROM switch, close and exit). Until now the desktop kept no such file, and
   an in-game save survived only inside a save state. Only carts whose header
   sets the battery bit are persisted, and a file that cannot be used is left
-  untouched rather than overwritten (frontend ledger FE-01). New:
-  `Nes::has_battery()`.
+  untouched rather than overwritten, with the reason shown in the status bar.
+  The periodic write runs without holding the emulator (frontend ledger FE-01).
+  New: `Nes::has_battery()`.
 - **The debugger's text no longer turns to garbage after a skipped frame.**
   With the debugger or a tool panel open, a frame whose swapchain image could
   not be acquired (a resize, a lost surface, a timeout) discarded egui's font
@@ -58,10 +59,12 @@ cycle-accurate core later replaced.
 - **Audio comes back after the output device goes away.** Unplugging headphones,
   a Bluetooth drop or an audio-server restart used to leave the emulator silent
   until restart. The stream is now reopened, on the same device or the default,
-  within about two seconds (frontend audit DESK-04).
+  within about two seconds, taking the new device's channel layout if it
+  differs (frontend audit DESK-04).
 - **Fast-forward no longer floods the UI thread.** Every fast-forwarded frame
   posted its own wakeup, hundreds a second, each contending for the emulator
-  lock. At most one is now pending while fast-forwarding (frontend audit
+  lock. At most one is now pending while fast-forwarding, except with
+  RetroAchievements active, which still counts every frame (frontend audit
   DESK-03).
 - **The web build fits a phone screen**, instead of a fixed 512 x 480 canvas
   that overflowed it, and releases the audio worklet's temporary script URL once
@@ -87,21 +90,26 @@ cycle-accurate core later replaced.
 - **An HD pack can no longer exhaust memory with one image.** A PNG's declared
   size was trusted when sizing its decode buffer, so a small file could ask for
   gigabytes. Images are now refused past 16384 pixels a side or 4096 x 4096 in
-  total, before anything is allocated (frontend audit SEC-01).
+  total, before anything is allocated, and a whole pack may decode at most
+  1 GiB of images (frontend audit SEC-01).
 - **A Lua script can no longer hang the emulator or exhaust its memory.** The
   per-frame instruction budget could be caught by `pcall`, `xpcall` or
   `coroutine.resume`, so a wrapped runaway loop ran forever holding the
-  emulator lock. It now escapes every catcher. And a loop inside a coroutine had
+  emulator lock. It now escapes every catcher, and the budget now also covers
+  callbacks the host fires (`reset`, `spriteZeroHit`, `codeBreak`, the TAStudio
+  events), which had none. And a loop inside a coroutine had
   no budget at all, because the hook was removed inside coroutines; it is now
-  global. The script heap is capped at 64 MiB (frontend audit SEC-02, SEC-03,
-  and FE-02, found while fixing SEC-03).
+  global. The script heap is capped at 64 MiB, and `emu.log` / `print` output,
+  which is held outside that heap, at 8,192 lines a frame of up to 4 KiB each
+  (frontend audit SEC-02, SEC-03, and FE-02, found while fixing SEC-03).
 - **Script HTTP requests cannot reach the machine's own services by default.**
   With the opt-in `script-ipc` feature, `comm.httpGet` / `httpPost` fetched any
   URL, including loopback services and cloud metadata. Addresses that resolve
   to loopback, private or link-local ranges now need the host listed in
   `RUSTYNES_COMM_HTTP_ALLOW` (e.g. `localhost:8080`). Redirects are returned to
-  the script instead of followed, and bodies are capped at 10 MiB (frontend
-  audit SEC-04; ADR 0016 amended).
+  the script instead of followed, no environment proxy is used (it would
+  resolve the target where the check cannot see it), and a body over 10 MiB
+  is discarded (frontend audit SEC-04; ADR 0016 amended).
 - **An HD pack's music cannot claim an absurd sample rate.** The declared rate
   sized the resampled track, so a 1 Hz header expanded it 48,000-fold; rates
   outside 8-384 kHz now make the track inert (frontend audit CON-03).

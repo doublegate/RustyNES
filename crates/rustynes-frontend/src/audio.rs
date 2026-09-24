@@ -74,6 +74,43 @@ pub fn reopen_due(last: Option<std::time::Instant>, now: std::time::Instant) -> 
     last.is_none_or(|t| now.saturating_duration_since(t) >= REOPEN_BACKOFF)
 }
 
+/// How long a stream build may wait on the backend. `None` (what cpal calls
+/// "wait indefinitely") let a stalled audio server hang the caller, which for
+/// the DESK-04 reopen is the winit thread (review on #551). Not every backend
+/// honours a timeout; cpal 0.18 documents `CoreAudio` and JACK as doing so.
+const STREAM_BUILD_TIMEOUT: Option<std::time::Duration> = Some(std::time::Duration::from_secs(2));
+
+/// Review on #551 — the channel count and sample format to reopen with on a
+/// device whose supported ranges are `ranges` (`channels, format, min Hz, max
+/// Hz`), or `None` when none of them plays `rate`.
+///
+/// The RATE is fixed: the emulation thread's producer and the EQ stage were
+/// built at it, and changing it needs them rebuilt, which a reopen does not do.
+/// The layout is free, because `build_stream` writes any channel count and all
+/// three formats. The original layout is preferred; otherwise the first range
+/// that plays the rate in a supported format. The replacement device found
+/// after an unplug is often a different one (the host default), so reusing the
+/// old layout blindly failed every retry on a device that could not take it.
+#[must_use]
+pub fn reopen_layout(
+    ranges: &[(u16, SampleFormat, u32, u32)],
+    rate: u32,
+    channels: u16,
+    format: SampleFormat,
+) -> Option<(u16, SampleFormat)> {
+    let plays = |&&(_, f, lo, hi): &&(u16, SampleFormat, u32, u32)| {
+        lo <= rate
+            && rate <= hi
+            && matches!(f, SampleFormat::F32 | SampleFormat::I16 | SampleFormat::U16)
+    };
+    ranges
+        .iter()
+        .filter(plays)
+        .find(|&&(c, f, ..)| c == channels && f == format)
+        .or_else(|| ranges.iter().find(|r| plays(r)))
+        .map(|&(c, f, ..)| (c, f))
+}
+
 /// Errors from audio init.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
@@ -837,10 +874,12 @@ impl AudioOutput {
     /// Keeping the queue is the point: the emulation thread's
     /// [`AudioProducer`] holds a clone of it and never has to be re-wired,
     /// so audio resumes without restarting anything. The device is the one
-    /// asked for, or the host default if that one is gone, and the
-    /// configuration is the original, since the core already synthesises at
-    /// its rate. A device that cannot take it is logged and retried after
-    /// `REOPEN_BACKOFF` (2 s). Returns whether a new stream is playing.
+    /// asked for, or the host default if that one is gone. The sample rate is
+    /// the original, since the core already synthesises at it; the channel
+    /// count and format are whatever that device plays at that rate
+    /// ([`reopen_layout`]). A device that cannot play the rate is logged and
+    /// retried after `REOPEN_BACKOFF` (2 s), in case the original returns.
+    /// Returns whether a new stream is playing.
     pub fn try_reopen(&mut self) -> bool {
         let now = std::time::Instant::now();
         if !reopen_due(self.last_reopen, now) {
@@ -861,12 +900,39 @@ impl AudioOutput {
             eprintln!("rustynes: audio: no output device yet; retrying");
             return false;
         };
+        let ranges: Vec<_> = device
+            .supported_output_configs()
+            .map(|it| {
+                it.map(|r| {
+                    (
+                        r.channels(),
+                        r.sample_format(),
+                        r.min_sample_rate(),
+                        r.max_sample_rate(),
+                    )
+                })
+                .collect()
+            })
+            .unwrap_or_default();
+        let Some((channels, format)) =
+            reopen_layout(&ranges, self.sample_rate, self.channels, self.format)
+        else {
+            eprintln!(
+                "rustynes: audio: {device} cannot play {} Hz; retrying (restart to switch rates)",
+                self.sample_rate
+            );
+            return false;
+        };
+        let config = cpal::StreamConfig {
+            channels,
+            ..self.config
+        };
         let stream = match build_stream(
             &device,
-            &self.config,
-            self.format,
+            &config,
+            format,
             self.queue.clone(),
-            self.channels,
+            channels,
             self.failed.clone(),
         ) {
             Ok(s) => s,
@@ -881,6 +947,9 @@ impl AudioOutput {
         }
         self.failed.store(false, Ordering::Relaxed);
         self.stream = stream;
+        self.config = config;
+        self.channels = channels;
+        self.format = format;
         eprintln!("rustynes: audio: output reopened on {device}");
         true
     }
@@ -1131,7 +1200,7 @@ fn build_stream(
                     );
                 },
                 err_fn,
-                None,
+                STREAM_BUILD_TIMEOUT,
             )
             .map_err(|e| AudioError::Cpal(e.to_string())),
         SampleFormat::I16 => device
@@ -1148,7 +1217,7 @@ fn build_stream(
                     );
                 },
                 err_fn,
-                None,
+                STREAM_BUILD_TIMEOUT,
             )
             .map_err(|e| AudioError::Cpal(e.to_string())),
         SampleFormat::U16 => device
@@ -1165,7 +1234,7 @@ fn build_stream(
                     );
                 },
                 err_fn,
-                None,
+                STREAM_BUILD_TIMEOUT,
             )
             .map_err(|e| AudioError::Cpal(e.to_string())),
         _ => Err(AudioError::NoConfig),
@@ -1246,6 +1315,31 @@ fn fill<S: cpal::SizedSample + cpal::FromSample<f32>>(
 )]
 mod tests {
     use super::*;
+
+    /// Review on #551: a reopen after an unplug often lands on a different
+    /// device. Keep the rate, prefer the old layout, else take the device's.
+    #[test]
+    fn a_reopen_takes_the_replacement_devices_layout_at_the_same_rate() {
+        use SampleFormat::{F32, I16, U8};
+        let headset = [(2, F32, 44_100, 48_000)];
+        assert_eq!(reopen_layout(&headset, 48_000, 2, F32), Some((2, F32)));
+        // A 6-channel i16 interface: new layout, same rate.
+        let hdmi = [(6, I16, 32_000, 48_000), (8, I16, 32_000, 48_000)];
+        assert_eq!(reopen_layout(&hdmi, 48_000, 2, F32), Some((6, I16)));
+        // The old layout wins when offered, even listed second.
+        let both = [(6, I16, 48_000, 48_000), (2, F32, 48_000, 48_000)];
+        assert_eq!(reopen_layout(&both, 48_000, 2, F32), Some((2, F32)));
+        // Nothing at the rate, or only a format `build_stream` cannot write.
+        assert_eq!(
+            reopen_layout(&[(2, F32, 44_100, 44_100)], 48_000, 2, F32),
+            None
+        );
+        assert_eq!(
+            reopen_layout(&[(2, U8, 48_000, 48_000)], 48_000, 2, F32),
+            None
+        );
+        assert_eq!(reopen_layout(&[], 48_000, 2, F32), None);
+    }
 
     #[test]
     fn push_then_pop_returns_samples_in_order() {

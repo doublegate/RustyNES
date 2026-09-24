@@ -118,7 +118,10 @@ How it holds:
   uses, not on a separate lookup, so a name that answers differently to a
   second lookup gains nothing.
 - Redirects are not followed. A public URL cannot hop inward past the check.
-- The response body is capped at 10 MiB.
+- The response body is limited to 10 MiB; a larger one is discarded, and the
+  script gets the status with an empty body.
+- No proxy is used, including one named in `HTTP_PROXY` / `ALL_PROXY`: through a
+  CONNECT proxy the resolver would check the proxy's address, not the target's.
 
 This uses ureq's `unversioned` resolver interface, which does not follow
 semver. A breaking change there fails to compile; it cannot silently remove the

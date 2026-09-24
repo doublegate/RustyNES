@@ -324,7 +324,7 @@ impl MluaBackend {
     fn install_prelude(&self) -> Result<(), ScriptError> {
         let emu = self.lua.create_table()?;
 
-        // emu.log(msg) — append to the host-visible buffer.
+        // emu.log(msg) — append to the host-visible buffer, capped.
         let log = self.log.clone();
         let log_fn = self
             .lua
@@ -333,7 +333,9 @@ impl MluaBackend {
                 for v in msg.iter() {
                     parts.push(value_to_string(v));
                 }
-                log.borrow_mut().push(parts.join("\t"));
+                // Capped in count and length: this queue is host memory,
+                // outside the script heap limit (review on #551).
+                push_capped(&log, crate::types::clip_log_line(parts.join("\t")));
                 Ok(())
             })?;
         emu.set("log", log_fn.clone())?;
@@ -1234,6 +1236,31 @@ impl MluaBackend {
         )?;
         Ok(())
     }
+
+    /// Remove the budget hook and clear its trip flag. The flag must not
+    /// outlive the hook: left set, the next callback's first `pcall` re-raised
+    /// an abort that callback never earned (review on #551).
+    ///
+    /// Today every Lua entry point arms first, and [`Self::arm_hook`] clears
+    /// the flag too, so this clear is a second line: removing it alone is
+    /// expected to pass `a_budget_abort_does_not_leak_into_the_next_callback`
+    /// (measured). It is what keeps a future entry that forgets to arm from
+    /// inheriting a stale abort.
+    fn disarm_hook(&self) {
+        self.lua.remove_hook();
+        self.budget_tripped.set(false);
+    }
+
+    /// Run a host-fired callback dispatch under the instruction budget. Before
+    /// the #551 review only `load` and `on_frame` armed it, so a runaway
+    /// `reset` / `spriteZeroHit` / `codeBreak` / `TAStudio` callback ran
+    /// unbounded while the host held the emulator lock.
+    fn with_budget<T>(&self, f: impl FnOnce() -> mlua::Result<T>) -> Result<T, ScriptError> {
+        self.arm_hook()?;
+        let r = f();
+        self.disarm_hook();
+        r.map_err(ScriptError::from)
+    }
 }
 
 impl VmBackend for MluaBackend {
@@ -1382,7 +1409,7 @@ impl VmBackend for MluaBackend {
     fn load(&mut self, src: &str) -> Result<(), ScriptError> {
         self.arm_hook()?;
         let r = self.lua.load(src).exec().map_err(ScriptError::from);
-        self.lua.remove_hook();
+        self.disarm_hook();
         r
     }
 
@@ -2027,6 +2054,7 @@ impl VmBackend for MluaBackend {
         });
 
         lua.remove_hook();
+        self.budget_tripped.set(false);
         result.map_err(ScriptError::from)
     }
 
@@ -2045,7 +2073,7 @@ impl VmBackend for MluaBackend {
     }
 
     fn query_tas_cell(&self, frame: usize, column: u32) -> Result<TasCellDecor, ScriptError> {
-        tastudio::query_cell(&self.lua, &self.tas, frame, column).map_err(ScriptError::from)
+        self.with_budget(|| tastudio::query_cell(&self.lua, &self.tas, frame, column))
     }
 
     fn take_clear_icon_cache(&self) -> bool {
@@ -2053,12 +2081,11 @@ impl VmBackend for MluaBackend {
     }
 
     fn fire_greenzone_invalidated(&self, first_frame: usize) -> Result<(), ScriptError> {
-        tastudio::fire_event(&self.lua, &self.tas.greenzone_cbs, first_frame)
-            .map_err(ScriptError::from)
+        self.with_budget(|| tastudio::fire_event(&self.lua, &self.tas.greenzone_cbs, first_frame))
     }
 
     fn fire_branch_load(&self, index: usize) -> Result<(), ScriptError> {
-        tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index).map_err(ScriptError::from)
+        self.with_budget(|| tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index))
     }
 
     // v2.1.10 "Creator Tools" (B9) — host-fired lifecycle events. Each replays
@@ -2066,16 +2093,15 @@ impl VmBackend for MluaBackend {
     // arg via the shared `fire_event_list` helper (the same output-only,
     // no-live-`Nes` dispatch as the greenzone / branch events).
     fn fire_reset(&self) -> Result<(), ScriptError> {
-        fire_event_list(&self.lua, &self.event_reset, 0).map_err(ScriptError::from)
+        self.with_budget(|| fire_event_list(&self.lua, &self.event_reset, 0))
     }
 
     fn fire_sprite_zero_hit(&self, frame: usize) -> Result<(), ScriptError> {
-        fire_event_list(&self.lua, &self.event_sprite_zero_hit, frame as u64)
-            .map_err(ScriptError::from)
+        self.with_budget(|| fire_event_list(&self.lua, &self.event_sprite_zero_hit, frame as u64))
     }
 
     fn fire_code_break(&self, pc: u16) -> Result<(), ScriptError> {
-        fire_event_list(&self.lua, &self.event_code_break, u64::from(pc)).map_err(ScriptError::from)
+        self.with_budget(|| fire_event_list(&self.lua, &self.event_code_break, u64::from(pc)))
     }
 
     fn needs_reset_event(&self) -> bool {
