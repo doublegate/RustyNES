@@ -2046,6 +2046,13 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
 - File extension: `.rns` (RustyNES State).
 - Stored in `directories::ProjectDirs::data_dir() / "RustyNES" / "saves" / "<rom-sha256>" / "slot-N.rns"`.
 - Format: tagged sections per chip with version header. See the module-level rustdoc of [`crates/rustynes-core/src/save_state.rs`](../crates/rustynes-core/src/save_state.rs) for the on-wire layout (`HEADER` magic + format version + truncated ROM SHA-256 tag, followed by `BUS / CPU / PPU / APU / MAP` sections in any order with per-section version bytes). The CHANGELOG `[Unreleased]` entries also document per-chip section version bumps as they happen (e.g., MMC5 v2→v3 when vertical split-screen landed).
+- **A load that fails changes nothing** (v2.7.4, audit MOB-08). `Nes::restore`
+  applies the bus sections before it checks the CPU section, so before v2.7.4 a
+  blob rejected at the CPU stage left the bus from the blob and the CPU from the
+  running game. A user-driven restore now snapshots the running machine first
+  and puts it back on any failure. `restore_quiet` (run-ahead and netplay
+  rollback, which only ever restore snapshots the core just wrote) skips the
+  backup, because it is the per-frame hot path.
 
 ## Battery saves (`.sav`, native, v2.7.3)
 
