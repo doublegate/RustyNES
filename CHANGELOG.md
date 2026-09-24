@@ -33,11 +33,15 @@ cycle-accurate core later replaced.
   `before_script` that each job's own `before_script` replaced, so the
   bindings were generated against Linux headers and failed. Both jobs now set
   it themselves.
-- **New RetroArch cores: 32-bit Windows, 32-bit Linux, and webOS** (armv7a
-  and aarch64). webOS aarch64 is new ground: no reference core builds it yet,
-  and the buildbot has no `webos/aarch64` download tree so far.
-- The Linux aarch64 job now uses libretro's own aarch64 template instead of
-  installing its cross linker itself.
+- **New buildbot targets: 32-bit Windows, 32-bit Linux, and webOS** (armv7a
+  and aarch64). The first three publish to live download trees, so those
+  cores reach RetroArch's updater. webOS aarch64 is a build target only for
+  now: no reference core builds it yet, and the buildbot has no
+  `webos/aarch64` download tree, so it does not reach the updater until one
+  exists.
+- The Linux aarch64 job now builds from libretro's own aarch64 template,
+  which sets the linker and installs the `gcc-aarch64-linux-gnu` cross
+  compiler; the job no longer spells either out itself.
 - The GitHub `libretro-cross` gate also checks `i686-pc-windows-gnu`,
   `i686-unknown-linux-gnu` and `armv7-unknown-linux-gnueabi`, so the new
   32-bit jobs get a pull-request-time rehearsal.
