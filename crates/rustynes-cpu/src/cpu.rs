@@ -16,12 +16,18 @@
 //!   distinction,
 //! - the `JMP ($XXFF)` indirect page-bug.
 //!
-//! The CPU steps one *instruction* at a time, returning the cycle count. The
-//! `Bus::on_cpu_cycle` callback is invoked once per consumed cycle so the
-//! scheduler / test harness can advance the PPU and count cycles. This is
-//! sufficient for nestest, blargg `instr_test_v5`, `cpu_timing_test`, and
-//! `branch_timing_tests` — the Phase-2 lockstep `tick()` is layered on top in
-//! a later sprint without changing this stepping interface.
+//! The CPU steps one *instruction* at a time (`Cpu::step`), returning the
+//! cycle count. Since the v2.0.0 one-clock scheduler (ADR 0002 / ADR 0029)
+//! every cycle is clocked in two halves: `start_cycle` catches the PPU up
+//! (`Bus::run_ppu_to`) and runs the bus's per-cycle work (`Bus::cpu_clock`),
+//! and `end_cycle` catches the PPU up to the cycle's end and ticks the DMC
+//! (`Bus::cpu_clock_apu_dmc`). A cycle with a bus access (`read1` /
+//! `write1`) performs it between the halves; an internal cycle (`idle_tick`)
+//! runs both halves with no access. There
+//! is no separate `tick()`, and the pre-v2.0.0 per-cycle `Bus::on_cpu_cycle`
+//! callback survives only as the default body of `Bus::cpu_clock` for
+//! simple test buses. (Until v2.7.5 this header still described that
+//! callback as the stepping interface; core audit §4.7.)
 
 // Truncating casts are intentional throughout: this module is byte-arithmetic
 // against the 6502's 8/16-bit register file. `as u8` / `as i8` is the

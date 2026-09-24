@@ -457,9 +457,10 @@ pub struct LockstepBus {
     /// the default + Four Score reads and the determinism contract are
     /// unaffected unless a device is explicitly attached.
     expansion_device: [Option<crate::input_device::InputDevice>; 2],
-    /// A3 (v2.2.3), default **off**: serve a Zapper's light bit from the
-    /// beam-relative temporal model instead of the frame-granular one. See
-    /// [`Bus::set_zapper_temporal_light`].
+    /// A3 (v2.2.3): serve a Zapper's light bit from the beam-relative
+    /// temporal model instead of the frame-granular one. Default **on** since
+    /// v2.3.6 (the constructor sets `true`); off restores the frame-granular
+    /// model. See [`LockstepBus::set_zapper_temporal_light`].
     zapper_temporal_light: bool,
     /// Famicom built-in **microphone** signal (v2.2.0 "Capstone"). The hardwired
     /// second Famicom controller carries a push-to-talk microphone whose state is

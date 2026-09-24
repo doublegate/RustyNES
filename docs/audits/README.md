@@ -69,8 +69,10 @@ Every finding goes **triage → pin red → fix → gate**:
 
 A fix that would break a standing rule is **escalated to the maintainer**, not
 applied or dropped silently. The rules most likely to bite here are NEVER
-LAUNDER, the >3% same-runner A/B + byte-identical bar for performance work,
-off-by-default features, and the ADR 0037 reference firewall.
+LAUNDER, the performance adoption rule (byte-identical, plus the evidence-quality
+bar in `scripts/perf/ab_check.sh`: a consistent, reproduced, clean gain on two
+independent runs, adoptable even below 3%), off-by-default features, and the
+ADR 0037 reference firewall.
 
 ## Verdicts
 

@@ -80,6 +80,13 @@ use crate::blip_kernel::{Kernel, TAPS};
 use crate::mixer::FilterChain;
 use alloc::vec::Vec;
 
+/// The most capacity [`BlipBuf::drain_all`] keeps for the next frame, in
+/// samples (v2.7.5). A frame is about 800 samples at 48 kHz, so four frames'
+/// worth keeps the per-frame benefit at any common output rate while a caller
+/// that once let audio pile up (the probe engine's undrained trials, ~24,000
+/// samples) does not leave a buffer that size resident for good.
+const DRAIN_ALL_KEEP_CAPACITY: usize = 4096;
+
 /// CPU cycles per second, NTSC.
 pub const CPU_HZ_NTSC: f64 = 1_789_773.0;
 /// CPU cycles per second, PAL (slightly slower).
@@ -313,12 +320,32 @@ impl BlipBuf {
     }
 
     /// Drain all finalized samples into a new `Vec`.
+    ///
+    /// The filled buffer goes to the caller, and a fresh one with the same
+    /// capacity takes its place (v2.7.5, core audit IMP-07). A buffer returned
+    /// by value must be replaced every call whatever happens; the choice is
+    /// only whether its replacement starts empty. With `mem::take` it started
+    /// at capacity zero and regrew by doubling through the next frame's pushes
+    /// (about nine reallocations for a frame's ~800 samples); now it is one
+    /// allocation of the size the last frame needed, up to
+    /// `DRAIN_ALL_KEEP_CAPACITY` samples. Measured -0.89% frame
+    /// time on a steady-state frame-then-drain workload, reproduced on two
+    /// runs (`docs/performance.md` §v2.7.5). Callers that drain into their own
+    /// buffer with [`Self::drain`] allocate nothing and are unaffected. The
+    /// samples themselves are untouched, so the output is byte-identical.
     #[must_use]
     pub fn drain_all(&mut self) -> Vec<f32> {
-        // `core::mem::take` is `std::mem::take` (the std path re-exports).
-        // Using the `core` path keeps this module portable to `#![no_std]`
-        // builds. See `docs/architecture.md` §no_std boundary.
-        core::mem::take(&mut self.samples)
+        // The `core` path keeps this module portable to `#![no_std]` builds.
+        // See `docs/architecture.md` §no_std boundary.
+        // Nothing queued: hand back an unallocated `Vec` and keep the buffer,
+        // rather than allocate a replacement for an empty one.
+        if self.samples.is_empty() {
+            return Vec::new();
+        }
+        // Clamped so a one-off backlog is not kept as a high-water mark
+        // (see `DRAIN_ALL_KEEP_CAPACITY`); a per-frame drain is far below it.
+        let capacity = self.samples.capacity().min(DRAIN_ALL_KEEP_CAPACITY);
+        core::mem::replace(&mut self.samples, Vec::with_capacity(capacity))
     }
 
     /// Number of samples currently buffered, awaiting drain.
@@ -344,6 +371,69 @@ mod tests {
 
     /// 10 frames at 60 Hz (used by spectral tests + decay tests).
     const TEN_FRAMES_NTSC: usize = ONE_SECOND_NTSC / 6;
+
+    /// v2.7.5 (core audit IMP-07): `drain_all` hands the filled buffer to the
+    /// caller and keeps a same-capacity one for the next frame. With
+    /// `mem::take` the buffer restarted at capacity zero and regrew by doubling
+    /// through every frame's pushes (about nine reallocations for a frame's
+    /// ~800 samples). Measured on a steady-state frame-then-drain workload:
+    /// -0.89% frame time on two runs (docs/performance.md §v2.7.5).
+    #[test]
+    fn drain_all_keeps_room_for_the_next_frame() {
+        let mut b = BlipBuf::new(44_100, CPU_HZ_NTSC);
+        for _ in 0..TEN_FRAMES_NTSC / 10 {
+            b.add_sample(0.25);
+        }
+        let first = b.drain_all();
+        assert!(!first.is_empty(), "a frame produces samples");
+        assert!(
+            b.samples.capacity() >= first.len(),
+            "the next frame must not start from capacity zero: {} < {}",
+            b.samples.capacity(),
+            first.len()
+        );
+        assert!(b.is_empty(), "the drained samples are gone");
+    }
+
+    /// An empty drain hands back an empty, unallocated `Vec` and keeps the
+    /// buffer as it is (agy on #553): polling with nothing queued used to
+    /// allocate a replacement and return the old, empty buffer to be freed.
+    #[test]
+    fn an_empty_drain_all_allocates_nothing() {
+        let mut b = BlipBuf::new(44_100, CPU_HZ_NTSC);
+        for _ in 0..TEN_FRAMES_NTSC / 10 {
+            b.add_sample(0.25);
+        }
+        let _ = b.drain_all();
+        let kept = b.samples.capacity();
+        let empty = b.drain_all();
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 0, "no buffer handed out for nothing");
+        assert_eq!(b.samples.capacity(), kept, "the kept buffer stays");
+    }
+
+    /// The kept capacity is clamped (agy on #553): a caller that lets audio
+    /// pile up once -- the probe engine's undrained trials, ~24,000 samples --
+    /// must not leave a buffer that size resident for good. The per-frame case
+    /// (~800 samples) is far below the clamp, so it keeps its full benefit.
+    #[test]
+    fn drain_all_does_not_keep_a_high_water_mark() {
+        let mut b = BlipBuf::new(48_000, CPU_HZ_NTSC);
+        for _ in 0..ONE_SECOND_NTSC {
+            b.add_sample(0.25);
+        }
+        let backlog = b.drain_all();
+        assert!(
+            backlog.len() > DRAIN_ALL_KEEP_CAPACITY,
+            "a long undrained run"
+        );
+        assert!(
+            b.samples.capacity() <= DRAIN_ALL_KEEP_CAPACITY,
+            "kept {} after a {}-sample backlog",
+            b.samples.capacity(),
+            backlog.len()
+        );
+    }
 
     #[test]
     fn empty_buffer_reads_zero_samples() {

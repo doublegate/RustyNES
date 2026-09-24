@@ -54,7 +54,11 @@ mod pulse;
 mod snapshot;
 mod triangle;
 
-pub use apu::{Apu, ApuBus, CHANNEL_GAIN_UNITY, CHANNEL_MASK_ALL};
+// `ApuBus` is deprecated (v2.7.5) but still re-exported, so its public path
+// keeps working until v2.9.0 decides its removal (ADR 0041).
+#[allow(deprecated)]
+pub use apu::ApuBus;
+pub use apu::{Apu, CHANNEL_GAIN_UNITY, CHANNEL_MASK_ALL};
 pub use blip::{BlipBuf, CPU_HZ_NTSC, CPU_HZ_PAL};
 pub use dmc::Dmc;
 pub use dmc::REENABLE_BUMP;
