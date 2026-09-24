@@ -89,6 +89,14 @@
         #nes-canvas {
             width: 512px;
             height: 480px;
+            /* v2.7.3 (frontend audit DESK-06): shrink to fit a narrow screen
+               instead of overflowing it. winit writes the canvas's width and
+               height as INLINE styles, which beat this stylesheet; max-width
+               still applies against an inline width, and the !important
+               height with aspect-ratio keeps the 512:480 shape at any width. */
+            max-width: calc(100vw - 24px);
+            height: auto !important;
+            aspect-ratio: 512 / 480;
             image-rendering: pixelated;
             background: #000;
             border: 2px solid #333;

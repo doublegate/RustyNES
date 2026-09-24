@@ -1261,6 +1261,12 @@ impl DebuggerOverlay {
         // breakpoints and watchpoints stay, and stay ARMED -- they are
         // user-authored and, unlike a frozen byte, they do not write.
         self.watch_ui.clear_rom_bound();
+        // v2.7.3 (frontend audit DESK-08) — the previous game's achievement
+        // badges. They are GPU textures and nothing else ever released them.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+        if let Some(cache) = self.badge_cache.as_mut() {
+            cache.clear();
+        }
     }
 
     /// Returns `true` when the overlay is currently visible. The render

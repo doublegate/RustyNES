@@ -114,6 +114,19 @@ impl BadgeCache {
         }
     }
 
+    /// v2.7.3 (frontend audit DESK-08) — forget the previous game's badges.
+    ///
+    /// Nothing evicted them before: every badge of every game played in a
+    /// session stayed resident as a GPU texture. Dropping a ready entry drops
+    /// its `TextureHandle`, which frees the texture. In-flight fetches are
+    /// kept, so their results still land in the map rather than being
+    /// requested again, and the map stays bounded by one game's badges plus
+    /// whatever was in flight at the switch.
+    pub fn clear(&mut self) {
+        self.states
+            .retain(|_, state| matches!(state, BadgeState::Pending));
+    }
+
     /// The ready texture for `url`, if it has been fetched + decoded.
     #[must_use]
     pub fn texture(&self, url: &str) -> Option<&egui::TextureHandle> {
@@ -211,6 +224,29 @@ fn fetch(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DESK-08 (v2.7.3): a game change releases every decoded badge and every
+    /// failure, and keeps fetches still in flight.
+    #[test]
+    fn clear_drops_decoded_and_failed_badges_but_keeps_pending_ones() {
+        let ctx = egui::Context::default();
+        let tex = ctx.load_texture(
+            "badge",
+            egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+            egui::TextureOptions::LINEAR,
+        );
+        let mut cache = BadgeCache::new();
+        cache.states.insert("ready".into(), BadgeState::Ready(tex));
+        cache.states.insert("failed".into(), BadgeState::Failed);
+        cache.states.insert("pending".into(), BadgeState::Pending);
+        cache.clear();
+        assert!(cache.texture("ready").is_none());
+        assert!(!cache.states.contains_key("failed"));
+        assert!(matches!(
+            cache.states.get("pending"),
+            Some(BadgeState::Pending)
+        ));
+    }
 
     /// A 1x1 opaque-red RGBA PNG, encoded with the `png` crate, round-trips
     /// through the decoder to the expected single pixel.

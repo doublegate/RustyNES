@@ -61,6 +61,11 @@ cycle-accurate core later replaced.
   posted its own wakeup, hundreds a second, each contending for the emulator
   lock. At most one is now pending while fast-forwarding (frontend audit
   DESK-03).
+- **The web build fits a phone screen**, instead of a fixed 512 x 480 canvas
+  that overflowed it, and releases the audio worklet's temporary script URL once
+  loaded (frontend audit DESK-06, DESK-07).
+- **Achievement badges from earlier games are released** when another ROM loads,
+  instead of staying resident for the whole session (frontend audit DESK-08).
 
 ### Security
 
