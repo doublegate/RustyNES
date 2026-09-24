@@ -141,6 +141,10 @@ pub struct BatterySave {
     last: Vec<u8>,
     /// Produced frames since the last periodic comparison.
     frames: u32,
+    /// The last write to `path` failed. Lets [`Self::written`] report only the
+    /// FIRST failure of a run, so a full disk is shown to the player once
+    /// rather than every second (agy round 2 on #551).
+    failing: bool,
 }
 
 impl BatterySave {
@@ -193,6 +197,7 @@ impl BatterySave {
             path,
             last: nes.sram().to_vec(),
             frames: 0,
+            failing: false,
         }))
     }
 
@@ -232,9 +237,20 @@ impl BatterySave {
     /// baseline; on failure the baseline stays, so the next comparison retries.
     /// A write taken for a different file (the ROM changed while it was in
     /// flight) is ignored.
-    pub fn written(&mut self, write: BatteryWrite, result: &io::Result<()>) {
-        if result.is_ok() && write.path == self.path {
+    ///
+    /// Returns `true` when this is the first failure after a success (or after
+    /// attaching), so the caller can tell the player once; the retries that
+    /// follow return `false` until a write succeeds again.
+    pub fn written(&mut self, write: BatteryWrite, result: &io::Result<()>) -> bool {
+        if write.path != self.path {
+            return false;
+        }
+        if result.is_ok() {
             self.last = write.bytes;
+            self.failing = false;
+            false
+        } else {
+            !std::mem::replace(&mut self.failing, true)
         }
     }
 
@@ -252,7 +268,7 @@ impl BatterySave {
         };
         let result = write.write();
         let wrote = result.is_ok();
-        self.written(write, &result);
+        let _first_failure = self.written(write, &result);
         result.map(|()| wrote)
     }
 }
@@ -365,6 +381,43 @@ mod tests {
             BatterySave::attach(&mut nes, dir.path()),
             Err(AttachError::WrongSize { found: 0, .. })
         ));
+    }
+
+    /// agy round 2 on #551: a failing write is reported once per run of
+    /// failures, not every second. `<data_dir>/battery` is made a FILE so the
+    /// directory cannot be created.
+    #[test]
+    fn a_failing_write_is_reported_once_per_run_of_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut nes = Nes::from_rom(&rom(true)).unwrap();
+        let mut save = BatterySave::attach(&mut nes, dir.path()).unwrap().unwrap();
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let blocker = dir.path().join(BATTERY_DIR);
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let attempt = |save: &mut BatterySave| {
+            let write = save.due_write(&nes, true).expect("still due");
+            let result = write.write();
+            (result.is_ok(), save.written(write, &result))
+        };
+        assert_eq!(attempt(&mut save), (false, true), "first failure: report");
+        assert_eq!(attempt(&mut save), (false, false), "retry: quiet");
+        std::fs::remove_file(&blocker).unwrap();
+        assert_eq!(attempt(&mut save), (true, false), "success clears it");
+        assert!(
+            save.due_write(&nes, true).is_none(),
+            "and the baseline moved"
+        );
+        nes.run_frame(); // the program changes the RAM again
+        std::fs::remove_dir_all(&blocker).unwrap(); // the success created it
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let write = save.due_write(&nes, true).expect("due again");
+        let result = write.write();
+        assert!(
+            save.written(write, &result),
+            "a new run of failures reports"
+        );
     }
 
     /// The periodic write can run without the emulator: `due_write` copies,

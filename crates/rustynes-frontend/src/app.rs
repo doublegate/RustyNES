@@ -2235,12 +2235,15 @@ impl App {
     /// holding the emulator across that stalled the emulation thread for as
     /// long as the disk took (review on #551).
     #[cfg(not(target_arch = "wasm32"))]
-    fn flush_battery(&self) {
+    fn flush_battery(&mut self) {
         let Some(write) = self.emu.lock().battery_due_write() else {
             return;
         };
         let result = write.write();
-        self.emu.lock().battery_written(write, &result);
+        let notice = self.emu.lock().battery_written(write, &result);
+        if let Some(notice) = notice {
+            self.ui.set_status(StatusMessage::error(notice));
+        }
     }
 
     /// v2.7.3 (frontend audit DESK-04) — when the audio stream has died

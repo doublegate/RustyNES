@@ -679,7 +679,7 @@ RustyNES's current release is **v2.7.3 "Hearth"** (2026-09-23) — the desktop a
 v2.7.3 changes the frontends and adds one core accessor, and the accuracy
 numbers below were re-measured on its release tree anyway: AccuracyCoin
 144/144 and nestest pass, and the full `--features test-roms` suite passes
-2,695 tests. The desktop now keeps battery saves; the mobile apps still keep
+2,697 tests. The desktop now keeps battery saves; the mobile apps still keep
 them only inside a save state, which is v2.7.4's. Built on **v2.7.2
 "Bankroll"**, which completed cartridge memory in the core, and **v2.6.23
 "Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer

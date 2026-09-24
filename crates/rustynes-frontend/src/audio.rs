@@ -111,6 +111,17 @@ pub fn reopen_layout(
         .map(|&(c, f, ..)| (c, f))
 }
 
+/// Review on #551 (agy round 2) — whether a reopen failure message is new,
+/// recording it if so. A device that stays unplugged fails the same way every
+/// 2 s; only a change of reason is worth another log line.
+fn reopen_log_is_new(last: &mut Option<String>, msg: &str) -> bool {
+    if last.as_deref() == Some(msg) {
+        return false;
+    }
+    *last = Some(msg.to_owned());
+    true
+}
+
 /// Errors from audio init.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
@@ -728,6 +739,9 @@ pub struct AudioOutput {
     failed: Arc<AtomicBool>,
     /// When the last reopen was attempted (`REOPEN_BACKOFF` (2 s)).
     last_reopen: Option<std::time::Instant>,
+    /// The last reopen failure logged, so a device that stays away is
+    /// reported once, not every 2 s (agy round 2 on #551). Cleared on success.
+    last_reopen_log: Option<String>,
 }
 
 impl AudioOutput {
@@ -858,6 +872,7 @@ impl AudioOutput {
             format,
             failed,
             last_reopen: None,
+            last_reopen_log: None,
         })
     }
 
@@ -897,7 +912,7 @@ impl AudioOutput {
             })
             .or_else(|| host.default_output_device());
         let Some(device) = device else {
-            eprintln!("rustynes: audio: no output device yet; retrying");
+            self.log_reopen_failure("no output device yet; retrying");
             return false;
         };
         let ranges: Vec<_> = device
@@ -917,10 +932,10 @@ impl AudioOutput {
         let Some((channels, format)) =
             reopen_layout(&ranges, self.sample_rate, self.channels, self.format)
         else {
-            eprintln!(
-                "rustynes: audio: {device} cannot play {} Hz; retrying (restart to switch rates)",
+            self.log_reopen_failure(&format!(
+                "{device} cannot play {} Hz; retrying (restart to switch rates)",
                 self.sample_rate
-            );
+            ));
             return false;
         };
         let config = cpal::StreamConfig {
@@ -937,12 +952,12 @@ impl AudioOutput {
         ) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("rustynes: audio: reopen failed ({e}); retrying");
+                self.log_reopen_failure(&format!("reopen failed ({e}); retrying"));
                 return false;
             }
         };
         if let Err(e) = stream.play() {
-            eprintln!("rustynes: audio: reopened stream will not play ({e}); retrying");
+            self.log_reopen_failure(&format!("reopened stream will not play ({e}); retrying"));
             return false;
         }
         self.failed.store(false, Ordering::Relaxed);
@@ -950,8 +965,16 @@ impl AudioOutput {
         self.config = config;
         self.channels = channels;
         self.format = format;
+        self.last_reopen_log = None;
         eprintln!("rustynes: audio: output reopened on {device}");
         true
+    }
+
+    /// Log a reopen failure unless it repeats the previous one.
+    fn log_reopen_failure(&mut self, msg: &str) {
+        if reopen_log_is_new(&mut self.last_reopen_log, msg) {
+            eprintln!("rustynes: audio: {msg}");
+        }
     }
 
     /// v2.8.0 Phase 5 — build a `Send` producer half over this output's
@@ -1315,6 +1338,17 @@ fn fill<S: cpal::SizedSample + cpal::FromSample<f32>>(
 )]
 mod tests {
     use super::*;
+
+    /// agy round 2 on #551: a device that stays away is logged once per
+    /// reason, not every 2 s.
+    #[test]
+    fn a_repeated_reopen_failure_is_logged_once() {
+        let mut last = None;
+        assert!(reopen_log_is_new(&mut last, "no output device yet"));
+        assert!(!reopen_log_is_new(&mut last, "no output device yet"));
+        assert!(reopen_log_is_new(&mut last, "cannot play 48000 Hz"));
+        assert!(reopen_log_is_new(&mut last, "no output device yet"));
+    }
 
     /// Review on #551: a reopen after an unplug often lands on a different
     /// device. Keep the rate, prefer the old layout, else take the device's.

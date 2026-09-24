@@ -1733,21 +1733,28 @@ impl EmuCore {
     }
 
     /// v2.7.3 (FE-01) — record a write taken by [`Self::battery_due_write`].
-    /// A failure is logged and retried at the next comparison.
+    /// A failure is logged and retried at the next comparison. Returns a
+    /// message for the status bar on the FIRST failure of a run, so a player
+    /// whose disk is full learns of it once rather than never (stderr only)
+    /// or every second (agy round 2 on #551).
     #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
     pub fn battery_written(
         &mut self,
         write: crate::battery_save::BatteryWrite,
         result: &std::io::Result<()>,
-    ) {
+    ) -> Option<String> {
+        let path = write.path().display().to_string();
         if let Err(e) = result {
-            eprintln!(
-                "rustynes: battery save failed {}: {e}",
-                write.path().display()
-            );
+            eprintln!("rustynes: battery save failed {path}: {e}");
         }
-        if let Some(save) = self.battery.as_mut() {
-            save.written(write, result);
+        let first = self
+            .battery
+            .as_mut()
+            .is_some_and(|save| save.written(write, result));
+        match result {
+            Err(e) if first => Some(format!("Battery save failed ({e}); retrying")),
+            _ => None,
         }
     }
 
