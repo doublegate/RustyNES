@@ -66,6 +66,10 @@ cycle-accurate core later replaced.
   loaded (frontend audit DESK-06, DESK-07).
 - **Achievement badges from earlier games are released** when another ROM loads,
   instead of staying resident for the whole session (frontend audit DESK-08).
+- **Stopping an A/V recording no longer freezes the window.** The ffmpeg encode,
+  seconds to minutes for a long take, ran on the UI thread. It now finishes in
+  the background, reports when done, and completes before a quit (frontend
+  audit SEC-05).
 
 ### Changed
 

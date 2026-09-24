@@ -672,6 +672,15 @@ const HEALTH_CHECK_GRACE: u32 = 600;
 #[cfg(not(target_arch = "wasm32"))]
 const DISPLAY_SYNC_RATE_FALLBACK: f32 = 0.02;
 
+/// v2.7.3 (SEC-05) — an A/V recording finalising off the winit thread.
+#[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+struct AvFinalize {
+    /// The `AvRecorder::stop` running on its own thread.
+    handle: std::thread::JoinHandle<Result<PathBuf, crate::av_record::AvError>>,
+    /// Frames recorded, for the completion message.
+    frames: u64,
+}
+
 /// Application state. Constructed in `resumed()` (per winit 0.30 idiom),
 /// torn down on exit.
 // The app legitimately tracks several independent boolean modes (exit
@@ -756,6 +765,13 @@ pub struct App {
     config: Config,
     #[cfg(not(target_arch = "wasm32"))]
     data_dir: Option<PathBuf>,
+    /// v2.7.3 (frontend audit SEC-05) — an A/V recording being finalised on a
+    /// background thread: ffmpeg muxing, which takes seconds to minutes for a
+    /// long take and used to run on this (the winit) thread, freezing the
+    /// window. Polled by [`Self::poll_av_finalize`]; joined on exit so the
+    /// recording still completes.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    av_finalize: Option<AvFinalize>,
     /// v1.5.0 "Lens" Workstream I1 — a **persistent** system clipboard handle
     /// for File -> Copy Screenshot to Clipboard. On X11 / Wayland the clipboard
     /// content is *owned by the live process*: the previous code created a
@@ -1079,6 +1095,9 @@ impl App {
     ///
     /// Returns an `io::Error` if the file can't be read.
     #[cfg(not(target_arch = "wasm32"))]
+    // One line per `App` field in the struct literal below; splitting the
+    // literal up would scatter the field list rather than shorten anything.
+    #[allow(clippy::too_many_lines)]
     pub fn new(rom_path: &std::path::Path) -> std::io::Result<Self> {
         // The CLI / initial-ROM path must run the same `.zip` extraction +
         // same-stem soft-patching as `load_rom_from_path` (see the helper).
@@ -1120,6 +1139,8 @@ impl App {
             input,
             config,
             data_dir,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+            av_finalize: None,
             #[cfg(not(target_arch = "wasm32"))]
             clipboard: None,
             debugger: None,
@@ -2523,6 +2544,46 @@ impl App {
         active
     }
 
+    /// v2.7.3 (SEC-05) — report a background A/V finalize once it is done.
+    /// With `wait`, block until it is (the exit path, so a quit does not
+    /// abandon ffmpeg half-way and lose the take).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn poll_av_finalize(&mut self, wait: bool) {
+        if !wait
+            && !self
+                .av_finalize
+                .as_ref()
+                .is_some_and(|f| f.handle.is_finished())
+        {
+            return;
+        }
+        let Some(AvFinalize { handle, frames }) = self.av_finalize.take() else {
+            return;
+        };
+        match handle.join() {
+            Ok(Ok(path)) => {
+                eprintln!(
+                    "rustynes: A/V recording -> {} ({frames} frames)",
+                    path.display()
+                );
+                self.ui.set_status(StatusMessage::success(format!(
+                    "A/V recording saved: {}",
+                    path.display()
+                )));
+            }
+            Ok(Err(e)) => {
+                eprintln!("rustynes: A/V recording finalize failed: {e}");
+                self.ui
+                    .set_status(StatusMessage::info("A/V recording failed (encode)"));
+            }
+            Err(_) => {
+                eprintln!("rustynes: A/V recording finalize thread panicked");
+                self.ui
+                    .set_status(StatusMessage::info("A/V recording failed (encode)"));
+            }
+        }
+    }
+
     /// v1.6.0 "Studio" Workstream G — toggle A/V recording (native).
     ///
     /// **Start**: open a `.mp4` / `.mkv` save dialog, then arm an
@@ -2537,29 +2598,38 @@ impl App {
     fn handle_av_record_toggle(&mut self) {
         use crate::av_record::{AvParams, AvRecorder};
         // Stop path: take the recorder out under a brief lock, then finalize
-        // with the guard dropped (the ffmpeg wait can block).
+        // it on its own thread. v2.7.3 (SEC-05): `stop` waits for ffmpeg to
+        // mux, seconds to minutes for a long take, and it used to run right
+        // here, freezing the window for the whole encode.
         if self.av_recording_active() {
             let recorder = self.emu.lock().av_recorder.take();
             if let Some(recorder) = recorder {
                 let frames = recorder.frames();
-                match recorder.stop() {
-                    Ok(path) => {
-                        eprintln!(
-                            "rustynes: A/V recording -> {} ({frames} frames)",
-                            path.display()
-                        );
-                        self.ui.set_status(StatusMessage::success(format!(
-                            "A/V recording saved: {}",
-                            path.display()
-                        )));
+                match std::thread::Builder::new()
+                    .name("av-finalize".into())
+                    .spawn(move || recorder.stop())
+                {
+                    Ok(handle) => {
+                        self.av_finalize = Some(AvFinalize { handle, frames });
+                        self.ui
+                            .set_status(StatusMessage::info("Finishing A/V recording..."));
                     }
                     Err(e) => {
-                        eprintln!("rustynes: A/V recording finalize failed: {e}");
+                        eprintln!("rustynes: A/V recording finalize thread failed: {e}");
                         self.ui
                             .set_status(StatusMessage::info("A/V recording failed (encode)"));
                     }
                 }
             }
+            return;
+        }
+        // The previous take's temp and staging files are named after its
+        // output path, so a new take must not start while one is finishing:
+        // choosing the same file would write over what ffmpeg is reading.
+        if self.av_finalize.is_some() {
+            self.ui.set_status(StatusMessage::info(
+                "A/V recording: still finishing the previous recording",
+            ));
             return;
         }
 
@@ -10992,6 +11062,9 @@ impl ApplicationHandler<AppEvent> for App {
             // v2.7.3 (FE-01) — the final battery write on quit.
             #[cfg(not(target_arch = "wasm32"))]
             self.emu.lock().detach_battery();
+            // v2.7.3 (SEC-05) — let a finishing A/V recording complete.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+            self.poll_av_finalize(true);
             // v2.7.0 — save the RA progress sidecar on quit. No-op when no RA
             // session / game. Native-only + feature-gated.
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -11007,6 +11080,10 @@ impl ApplicationHandler<AppEvent> for App {
         // spin at max rate and starved emulation ("slows to a crawl").
         #[cfg(not(target_arch = "wasm32"))]
         self.reconcile_detached(event_loop);
+        // v2.7.3 (SEC-05) — report a finished background A/V finalize. Here,
+        // not per produced frame, so it is reported while paused too.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+        self.poll_av_finalize(false);
         // Wall-clock pacer. Native: produce up to one frame (with bounded
         // catch-up) and stay on `Poll`; the actual present happens on the
         // resulting `RedrawRequested`. wasm32: this is a no-op keep-alive
