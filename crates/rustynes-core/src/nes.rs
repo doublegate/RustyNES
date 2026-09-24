@@ -2224,8 +2224,14 @@ impl Nes {
             if let Some(backup) = backup {
                 // Our own fresh snapshot always restores (the round-trip
                 // invariant every save-state test pins); if it somehow did not,
-                // the original error is still the one worth reporting.
-                let _ = self.apply_snapshot(&backup);
+                // the original error is still the one worth reporting. The
+                // core has no logger (`no_std`), so the invariant is asserted
+                // in debug and test builds rather than silently assumed.
+                let rolled_back = self.apply_snapshot(&backup);
+                debug_assert!(
+                    rolled_back.is_ok(),
+                    "rolling back to this core's own snapshot failed: {rolled_back:?}"
+                );
             }
             return Err(e);
         }

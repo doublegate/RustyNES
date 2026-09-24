@@ -220,9 +220,19 @@ final class CloudSaveStateSync: ObservableObject {
             // The call succeeds as a whole even when this record's save failed
             // (e.g. `serverRecordChanged`); the per-record result is the answer.
             // Before v2.7.4 it was discarded, so such a failure read as success.
-            guard case .success? = saved[id] else { return nil }
-            return savedAt
+            switch saved[id] {
+            case .success?:
+                return savedAt
+            case .failure(let error)?:
+                // Typically `serverRecordChanged`: another device wrote first.
+                NSLog("RustyNES: iCloud slot \(slot) not uploaded: \(error)")
+                return nil
+            case nil:
+                NSLog("RustyNES: iCloud slot \(slot) upload returned no result")
+                return nil
+            }
         } catch {
+            NSLog("RustyNES: iCloud slot \(slot) upload failed: \(error)")
             return nil
         }
     }
