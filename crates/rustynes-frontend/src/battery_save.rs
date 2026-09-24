@@ -132,6 +132,16 @@ impl BatteryWrite {
     }
 }
 
+/// Read at most `limit` bytes of `path`.
+fn read_at_most(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// One cartridge's battery RAM, bound to its `.sav` file.
 #[derive(Debug)]
 pub struct BatterySave {
@@ -176,7 +186,10 @@ impl BatterySave {
                     expected,
                 });
             }
-            Ok(_) => match std::fs::read(&path) {
+            // Read through `take(expected + 1)`: a file that grows between the
+            // metadata check and the read cannot allocate past one byte over,
+            // and that byte is what shows it changed (agy round 3 on #551).
+            Ok(_) => match read_at_most(&path, expected as u64 + 1) {
                 Ok(bytes) if bytes.len() == expected => {
                     nes.sram_mut().copy_from_slice(&bytes);
                 }
@@ -418,6 +431,18 @@ mod tests {
             save.written(write, &result),
             "a new run of failures reports"
         );
+    }
+
+    /// agy round 3 on #551: the read after the size check is bounded, so a
+    /// file that grows in between cannot allocate without limit. The race
+    /// itself is not reproducible in a test; the bound is.
+    #[test]
+    fn the_save_read_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grown.sav");
+        std::fs::write(&path, [7u8; 10]).unwrap();
+        assert_eq!(read_at_most(&path, 4).unwrap(), vec![7u8; 4]);
+        assert_eq!(read_at_most(&path, 64).unwrap().len(), 10);
     }
 
     /// The periodic write can run without the emulator: `due_write` copies,

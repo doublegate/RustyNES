@@ -435,16 +435,18 @@ fn http_call(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> (
         |_| (0, String::new()),
         // With `http_status_as_error(false)`, non-2xx responses arrive as `Ok` too,
         // so the script gets the real status code + body.
+        // A body that cannot be read -- over `HTTP_BODY_LIMIT`, or cut off --
+        // is a transport failure too. Returning the real 2xx with an empty
+        // body made it indistinguishable from an empty response (agy round 3
+        // on #551).
         |mut resp| {
             let status = resp.status().as_u16();
-            let body = resp
-                .body_mut()
+            resp.body_mut()
                 .with_config()
                 .limit(HTTP_BODY_LIMIT)
                 .lossy_utf8(true)
                 .read_to_string()
-                .unwrap_or_default();
-            (status, body)
+                .map_or_else(|_| (0, String::new()), |body| (status, body))
         },
     )
 }
@@ -648,6 +650,23 @@ mod tests {
         let (status, body) = http_call(agent.get(&format!("http://127.0.0.1:{port}/")).call());
         assert_eq!((status, body.as_str()), (200, "ok"));
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// agy round 3 on #551: a body over the limit came back as the real 2xx
+    /// status with an empty body, indistinguishable from an empty response.
+    /// A body that cannot be read is a transport failure: `status = 0`.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn a_body_over_the_limit_is_a_transport_failure() {
+        #[allow(clippy::cast_possible_truncation)] // 10 MiB + 1 fits a usize.
+        let len = HTTP_BODY_LIMIT as usize + 1;
+        let (port, _) = local_server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n{}",
+            "x".repeat(len)
+        ));
+        let agent = http_agent(parse_allowlist("127.0.0.1"));
+        let (status, body) = http_call(agent.get(&format!("http://127.0.0.1:{port}/")).call());
+        assert_eq!((status, body.len()), (0, 0));
     }
 
     /// A redirect is returned to the script, never followed: otherwise a public

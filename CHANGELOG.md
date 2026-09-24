@@ -109,7 +109,7 @@ cycle-accurate core later replaced.
   `RUSTYNES_COMM_HTTP_ALLOW` (e.g. `localhost:8080`). Redirects are returned to
   the script instead of followed, no environment proxy is used (it would
   resolve the target where the check cannot see it), and a body over 10 MiB
-  is discarded (frontend audit SEC-04; ADR 0016 amended).
+  is a transport failure (`status = 0`) (frontend audit SEC-04; ADR 0016 amended).
 - **An HD pack's music cannot claim an absurd sample rate.** The declared rate
   sized the resampled track, so a 1 Hz header expanded it 48,000-fold; rates
   outside 8-384 kHz now make the track inert (frontend audit CON-03).

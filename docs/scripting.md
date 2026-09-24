@@ -419,8 +419,9 @@ arrangement as TCP, where the user names the endpoint (`RUSTYNES_COMM_TCP`).
   a CONNECT proxy resolves the target itself, where the check cannot see it.
   Behind a mandatory proxy, script HTTP does not work.
 - A refused request returns `status = 0`, like any transport failure.
-- Response bodies are limited to 10 MiB. A larger body is discarded, not
-  truncated: the script receives the real status with an empty `body`.
+- Response bodies are limited to 10 MiB. A body that is larger, or that
+  cannot be read to the end, is a transport failure: `status = 0` and an empty
+  `body`, never a truncated one.
 
 ### `client` — host automation (E2)
 
