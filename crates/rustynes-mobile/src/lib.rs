@@ -124,6 +124,13 @@ pub enum MobileError {
         /// What was wrong with the cheat code.
         reason: String,
     },
+    /// Battery save RAM could not be loaded (v2.7.4): the cartridge has no
+    /// battery, or the save is not the cartridge's save size.
+    #[error("battery save error: {reason}")]
+    Battery {
+        /// Why the save was refused.
+        reason: String,
+    },
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -918,6 +925,65 @@ impl NesController {
         // (MOB-01), so a held button survives the load with no step here.
         // A re-latch at this point was measured redundant: removing it left
         // every test green, because nothing emulates between the two.
+        drop(g);
+        Ok(())
+    }
+
+    /// v2.7.4 (frontend audit MOB-05) — whether the cartridge's header sets
+    /// the battery bit, i.e. whether its save RAM is an in-game save to keep.
+    ///
+    /// The save RAM slice is not the question: NROM, MMC1 and MMC3 expose work
+    /// RAM whatever the header says, and persisting it would give a volatile
+    /// cartridge a save it never had. Same rule as the desktop (FE-01).
+    pub fn has_battery(&self) -> bool {
+        self.lock().nes.has_battery()
+    }
+
+    /// v2.7.4 (MOB-05) — a copy of the battery-backed save RAM, for the host
+    /// to write to its `.sav`. Empty when the cartridge has no battery.
+    ///
+    /// There is no dirty flag: the host compares with the bytes it last wrote,
+    /// as the desktop does, and writes on a difference (and at ROM unload and
+    /// when the app stops).
+    pub fn battery_ram(&self) -> Vec<u8> {
+        let g = self.lock();
+        let out = if g.nes.has_battery() {
+            g.nes.sram().to_vec()
+        } else {
+            Vec::new()
+        };
+        drop(g);
+        out
+    }
+
+    /// v2.7.4 (MOB-05) — load a `.sav` into the battery-backed save RAM. Call
+    /// right after constructing the controller (or `load_rom`), before the
+    /// first frame, so the game boots with its save.
+    ///
+    /// # Errors
+    /// [`MobileError::Battery`] if the cartridge has no battery, or `bytes` is
+    /// not exactly its save size. Nothing is copied on a refusal: a partial
+    /// copy would mix two saves, and a file of the wrong size is more likely
+    /// another game's or another emulator's than a truncated one of ours.
+    pub fn load_battery_ram(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        let mut g = self.lock();
+        if !g.nes.has_battery() {
+            drop(g);
+            return Err(MobileError::Battery {
+                reason: "this cartridge has no battery".into(),
+            });
+        }
+        let expected = g.nes.sram().len();
+        if bytes.len() != expected {
+            drop(g);
+            return Err(MobileError::Battery {
+                reason: format!(
+                    "the save is {} bytes; this cartridge's is {expected}",
+                    bytes.len()
+                ),
+            });
+        }
+        g.nes.sram_mut().copy_from_slice(&bytes);
         drop(g);
         Ok(())
     }
@@ -2459,6 +2525,78 @@ mod tests {
             (g.nes.buttons(0).bits(), g.nes.buttons(1).bits())
         };
         assert_eq!((p1, p2), (0x81, 0x10));
+    }
+
+    /// An NROM whose header sets the battery bit (flags 6 bit 1) and whose
+    /// program writes its save RAM every frame: `LDA #$A5; STA $6000;
+    /// INC $6001; JMP $C005`. `battery: false` clears the bit.
+    fn battery_nrom(battery: bool) -> Vec<u8> {
+        let mut v = b"NES\x1A".to_vec();
+        v.extend_from_slice(&[1, 1, if battery { 0x02 } else { 0 }, 0]);
+        v.resize(16, 0);
+        let mut prg = vec![0xEAu8; 0x4000];
+        prg[..11].copy_from_slice(&[
+            0xA9, 0xA5, 0x8D, 0x00, 0x60, 0xEE, 0x01, 0x60, 0x4C, 0x05, 0xC0,
+        ]);
+        prg[0x3FFC] = 0x00;
+        prg[0x3FFD] = 0xC0;
+        v.extend_from_slice(&prg);
+        v.extend(core::iter::repeat_n(0u8, 0x2000));
+        v
+    }
+
+    /// v2.7.4 (frontend audit MOB-05 / AND-09): the bridge exposed no battery
+    /// RAM, so neither mobile app could keep an in-game save. A save written in
+    /// one session comes back in the next through the new API.
+    #[test]
+    fn a_battery_save_round_trips_through_the_bridge() {
+        let ctrl = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(ctrl.has_battery());
+        for _ in 0..3 {
+            ctrl.step_frame();
+        }
+        let saved = ctrl.battery_ram();
+        assert_eq!(saved.len(), 0x2000, "NROM's 8 KiB work RAM");
+        assert_eq!(saved[0], 0xA5, "the program ran");
+
+        // A fresh session (a relaunch) gets the bytes back before its first frame.
+        let next = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
+        assert_eq!(next.battery_ram()[0], 0, "power-on RAM is not the save");
+        next.load_battery_ram(saved.clone()).expect("load the save");
+        assert_eq!(next.battery_ram(), saved);
+    }
+
+    /// A cartridge without the battery bit has nothing to persist, even though
+    /// NROM exposes work RAM whatever the header says -- keying on the RAM
+    /// slice would give a volatile cartridge a save it never had.
+    #[test]
+    fn a_cart_without_a_battery_has_nothing_to_persist() {
+        let ctrl = NesController::new(battery_nrom(false), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(!ctrl.has_battery());
+        ctrl.step_frame();
+        assert!(ctrl.battery_ram().is_empty());
+        assert!(matches!(
+            ctrl.load_battery_ram(vec![0; 0x2000]),
+            Err(MobileError::Battery { .. })
+        ));
+    }
+
+    /// A save of the wrong size is refused and leaves the cartridge untouched:
+    /// a partial copy would mix two saves.
+    #[test]
+    fn a_battery_save_of_the_wrong_size_is_refused() {
+        let ctrl = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
+        for _ in 0..3 {
+            ctrl.step_frame();
+        }
+        let before = ctrl.battery_ram();
+        for len in [0, 0x1FFF, 0x2001] {
+            assert!(matches!(
+                ctrl.load_battery_ram(vec![0x11; len]),
+                Err(MobileError::Battery { .. })
+            ));
+        }
+        assert_eq!(ctrl.battery_ram(), before);
     }
 
     #[test]
