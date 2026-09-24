@@ -185,6 +185,15 @@ is `request_redraw()` → `RedrawRequested` on rAF.)
   underrun re-gates until refilled (one clean gap, not a crackle spiral).
   If occupancy overshoots the target by >50 ms after a produce stall, the
   producer skips batches until it returns (counted as overrun-dropped).
+- **The target is at least two device callbacks (v2.7.3, frontend audit
+  DESK-05).** A buffer held below one callback cannot serve it. The queue records
+  the largest callback the device makes; the start-gate opens on no less than
+  two of them, and the DRC servos and resyncs against `max(latency target, 2 x
+  largest callback)`. Measured in a rate-matched simulation: a 20 ms target on
+  a device with a 2048-frame period underran 4 times in 5 s before the change,
+  0 after. The audit's own example, a 1024-frame period, did not underrun either
+  way. The Performance panel's latency readout reports the raised target. The
+  ring is at least 16,384 samples, so a raised target keeps its resync band.
 - Underrun / overrun counters + occupancy are exposed in the debugger
   Performance panel (Phase 0).
 

@@ -47,6 +47,12 @@ cycle-accurate core later replaced.
   Right were both `L`. New defaults: the microphone is held on `N`, P3 Select
   is `,` and P2 Select is `R`. `M` still toggles the menu bar. Saved bindings
   are kept as they are (frontend audit DESK-02).
+- **No more periodic audio clicks at low latency on large-period devices.**
+  When the audio device's period was at least twice the configured latency
+  (for example a 2048-frame period at the 20 ms setting), rate control held the
+  buffer below one device callback, and the stream underran about once a
+  second. The latency target now never drops below two device callbacks (frontend
+  audit DESK-05; the audit's own 1024-frame example measured no underruns).
 
 ### Security
 

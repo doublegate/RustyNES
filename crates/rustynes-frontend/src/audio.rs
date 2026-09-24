@@ -126,6 +126,12 @@ struct QueueInner {
     /// Samples required before playback (un)gates. 0 disables the gate
     /// (bare `SampleQueue::new()`, unit tests).
     start_threshold: AtomicUsize,
+    /// v2.7.3 (frontend audit DESK-05) — the largest request the device
+    /// callback has made, in samples. The latency target cannot usefully sit
+    /// below two of these: with a device period of 2048 frames and a 20 ms
+    /// (960-sample) target, the DRC held occupancy under one callback and the
+    /// stream underran about once a second. See [`SampleQueue::effective_latency`].
+    max_request: AtomicUsize,
     /// v1.0.0 — master output gain (f32 bits, like the slot encoding).
     /// Applied at the single cpal consume point in [`Self::pop_or_silence`]
     /// (post-resampler, lock-free, affecting the buffered tail too). Default
@@ -201,6 +207,7 @@ impl SampleQueue {
                 paused: AtomicBool::new(false),
                 playing: AtomicBool::new(false),
                 start_threshold: AtomicUsize::new(0),
+                max_request: AtomicUsize::new(0),
                 gain: AtomicU64::new(u64::from(1.0f32.to_bits())),
                 base_ratio: AtomicU64::new(u64::from(1.0f32.to_bits())),
                 eq_gen: AtomicU64::new(0),
@@ -215,6 +222,25 @@ impl SampleQueue {
                 crossfeed: AtomicU32::new(0),
             }),
         }
+    }
+
+    /// Mutation note: this raised target and the raised start-gate in
+    /// [`Self::pop_or_silence`] each prevent the DESK-05 underruns on their own
+    /// in `the_drc_target_is_never_below_two_device_callbacks` (a rate-matched
+    /// simulation, 30 s or with start-up counted: 0 either way). So reverting
+    /// ONE of them is expected to come back not caught; reverting both is
+    /// caught. Both are kept because on a real device they cover different
+    /// moments: the gate covers start-up and recovery after an underrun, the
+    /// target the steady-state level the DRC holds.
+    ///
+    /// v2.7.3 (DESK-05) — the latency target actually achievable: the
+    /// configured `latency_samples`, raised to twice the largest callback the
+    /// device has made. A buffer held below one callback cannot serve it, so a
+    /// lower target only buys underruns. Producers servo and resync against
+    /// this; before the first callback it is the configured value.
+    #[must_use]
+    pub fn effective_latency(&self, latency_samples: usize) -> usize {
+        latency_samples.max(2 * self.inner.max_request.load(Ordering::Relaxed))
     }
 
     /// Arm the start-gate: playback waits until `samples` are buffered
@@ -408,8 +434,20 @@ impl SampleQueue {
             return 0;
         }
 
+        self.inner
+            .max_request
+            .fetch_max(out.len(), Ordering::Relaxed);
         if !self.inner.playing.load(Ordering::Relaxed) {
-            let threshold = self.inner.start_threshold.load(Ordering::Relaxed);
+            let mut threshold = self.inner.start_threshold.load(Ordering::Relaxed);
+            // v2.7.3 (DESK-05) — never open the gate on less than two
+            // callbacks' worth: opening on one serves a short buffer at once.
+            // A zero threshold still means "no gate". Clamped to half the ring,
+            // like `set_start_threshold`, so the gate can always open.
+            if threshold > 0 {
+                threshold = threshold
+                    .max(2 * out.len())
+                    .min(self.inner.ring.capacity() / 2);
+            }
             if avail >= threshold && (avail > 0 || threshold == 0) {
                 self.inner.playing.store(true, Ordering::Relaxed);
             } else {
@@ -707,7 +745,10 @@ impl AudioOutput {
         // Ring sized to 4x the latency target: the DRC holds occupancy at
         // 1x, the resync rule caps excursions at ~1.3x — full is unreachable
         // in steady state, so push never drops.
-        let queue = SampleQueue::with_capacity(latency_samples * 4);
+        // v2.7.3 (DESK-05) — at least the default ring, so a latency target
+        // raised to two device callbacks (up to 4096-frame periods) still has
+        // its resync band inside the ring.
+        let queue = SampleQueue::with_capacity((latency_samples * 4).max(DEFAULT_CAPACITY));
         queue.set_start_threshold(latency_samples);
 
         let stream = build_stream(&device, &config, format, queue.clone(), channels)?;
@@ -760,7 +801,10 @@ impl AudioOutput {
         // followed by catch-up can put far more than the target in flight.
         // Skipping whole batches converges in a handful of frames and is
         // ONE clean discontinuity instead of a crackle tail.
-        if self.queue.len() > self.resync_samples {
+        // v2.7.3 (DESK-05) — the target the device can actually be served at.
+        let latency = self.queue.effective_latency(self.latency_samples);
+        let resync = self.resync_samples + (latency - self.latency_samples);
+        if self.queue.len() > resync {
             self.queue.count_skipped(samples.len());
             return;
         }
@@ -769,7 +813,7 @@ impl AudioOutput {
                 // v1.0.0 — center the DRC band on the emulation-speed factor.
                 rs.set_base_ratio(self.queue.base_ratio());
                 #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
-                let fill = self.queue.len() as f64 / (2.0 * self.latency_samples as f64);
+                let fill = self.queue.len() as f64 / (2.0 * latency as f64);
                 rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
@@ -804,13 +848,15 @@ impl AudioOutput {
             return 1.0;
         }
         let base = self.queue.base_ratio();
+        let latency = self.queue.effective_latency(self.latency_samples);
         #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
-        let fill = self.queue.len() as f64 / (2.0 * self.latency_samples.max(1) as f64);
+        let fill = self.queue.len() as f64 / (2.0 * latency.max(1) as f64);
         drc_ratio(fill) * base
     }
 
-    /// H8 — the latency target in milliseconds the DRC servos toward (the
-    /// clamped `[audio] latency_ms` setpoint).
+    /// H8 — the latency target in milliseconds the DRC servos toward: the
+    /// clamped `[audio] latency_ms` setpoint, raised to two device callbacks
+    /// when the device's period is larger (v2.7.3, DESK-05).
     #[must_use]
     pub fn latency_target_ms(&self) -> f32 {
         if self.sample_rate == 0 {
@@ -818,14 +864,15 @@ impl AudioOutput {
         }
         #[allow(clippy::cast_precision_loss)]
         {
-            self.latency_samples as f32 * 1000.0 / self.sample_rate as f32
+            self.latency_target_samples() as f32 * 1000.0 / self.sample_rate as f32
         }
     }
 
-    /// The latency target in samples (Performance panel readout).
+    /// The latency target in samples (Performance panel readout), as
+    /// [`SampleQueue::effective_latency`] raises it.
     #[must_use]
-    pub const fn latency_target_samples(&self) -> usize {
-        self.latency_samples
+    pub fn latency_target_samples(&self) -> usize {
+        self.queue.effective_latency(self.latency_samples)
     }
 }
 
@@ -853,7 +900,10 @@ impl AudioProducer {
         if samples.is_empty() {
             return;
         }
-        if self.queue.len() > self.resync_samples {
+        // v2.7.3 (DESK-05) — the target the device can actually be served at.
+        let latency = self.queue.effective_latency(self.latency_samples);
+        let resync = self.resync_samples + (latency - self.latency_samples);
+        if self.queue.len() > resync {
             self.queue.count_skipped(samples.len());
             return;
         }
@@ -862,7 +912,7 @@ impl AudioProducer {
                 // v1.0.0 — center the DRC band on the emulation-speed factor.
                 rs.set_base_ratio(self.queue.base_ratio());
                 #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
-                let fill = self.queue.len() as f64 / (2.0 * self.latency_samples as f64);
+                let fill = self.queue.len() as f64 / (2.0 * latency as f64);
                 rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
@@ -1126,6 +1176,113 @@ mod tests {
         assert_eq!(out[63], 63.0);
     }
 
+    /// Run a 48 kHz timeline: the core pushes `frame` samples 60 times a second
+    /// and the device asks for `period` samples per callback. Returns the
+    /// underruns counted after the first second (start-up excluded).
+    fn simulate_steady_state(start_threshold: usize, period: usize) -> u64 {
+        const RATE: usize = 48_000;
+        let frame = RATE / 60;
+        let q = SampleQueue::with_capacity(16_384);
+        q.set_start_threshold(start_threshold);
+        let mut out = vec![0.0f32; period];
+        let (mut next_push, mut next_pop) = (0usize, 0usize);
+        let mut after_warmup = None;
+        while next_pop < 6 * RATE {
+            if next_push <= next_pop {
+                q.push(&vec![0.5; frame]);
+                next_push += frame;
+            } else {
+                q.pop_or_silence(&mut out);
+                next_pop += period;
+                if after_warmup.is_none() && next_pop >= RATE {
+                    after_warmup = Some(q.underruns());
+                }
+            }
+        }
+        q.underruns() - after_warmup.unwrap()
+    }
+
+    /// The same timeline, with the real producer and its DRC servo in the loop,
+    /// as the emulation thread runs it (`make_producer(true)`).
+    fn simulate_with_drc(latency_samples: usize, period: usize) -> u64 {
+        simulate_with_drc_for(latency_samples, period, 6, true)
+    }
+
+    /// [`simulate_with_drc`] over `secs` seconds; `skip_warmup` excludes the
+    /// first second's underruns.
+    fn simulate_with_drc_for(
+        latency_samples: usize,
+        period: usize,
+        secs: usize,
+        skip_warmup: bool,
+    ) -> u64 {
+        const RATE: usize = 48_000;
+        let frame = RATE / 60;
+        let q = SampleQueue::with_capacity(16_384);
+        q.set_start_threshold(latency_samples);
+        let mut producer = AudioProducer {
+            sample_rate: 48_000,
+            queue: q.clone(),
+            resampler: Some(HermiteResampler::new()),
+            resample_buf: Vec::with_capacity(2048),
+            latency_samples,
+            resync_samples: latency_samples + RATE * RESYNC_EXCESS_MS as usize / 1000,
+            eq_stage: EqStage::new(48_000),
+        };
+        let mut out = vec![0.0f32; period];
+        let (mut next_push, mut next_pop) = (0usize, 0usize);
+        let mut after_warmup = if skip_warmup { None } else { Some(0) };
+        while next_pop < secs * RATE {
+            if next_push <= next_pop {
+                producer.push_samples(&vec![0.5; frame]);
+                next_push += frame;
+            } else {
+                q.pop_or_silence(&mut out);
+                next_pop += period;
+                if after_warmup.is_none() && next_pop >= RATE {
+                    after_warmup = Some(q.underruns());
+                }
+            }
+        }
+        q.underruns() - after_warmup.unwrap()
+    }
+
+    /// DESK-05 (v2.7.3): with a 20 ms latency (960 samples at 48 kHz) and a
+    /// device period of 1024 frames, the gate opened at 960, the first callback
+    /// asked for 1024, came up short, counted an underrun and re-gated, forever.
+    /// Production and consumption are rate-matched here, so every underrun is
+    /// the gate's doing.
+    #[test]
+    fn a_callback_larger_than_the_latency_does_not_underrun_forever() {
+        assert_eq!(
+            simulate_steady_state(960, 1024),
+            0,
+            "a steady rate-matched stream must not underrun"
+        );
+        // The ordinary case is unaffected.
+        assert_eq!(simulate_steady_state(4800, 1024), 0);
+    }
+
+    /// DESK-05, the form that is real. The audit's case (a 960-sample target, a
+    /// 1024-frame period) measures 0 underruns with or without DRC: the gate
+    /// holds consumption until more than a callback is buffered. But with the
+    /// DRC servo in the loop and a device period of at least twice the target,
+    /// the servo held occupancy below one callback: 4 underruns in 5 s at
+    /// 960 / 2048 on v2.7.2, an audible click about once a second.
+
+    #[test]
+    fn the_drc_target_is_never_below_two_device_callbacks() {
+        for period in [2048usize, 4096] {
+            assert_eq!(
+                simulate_with_drc(960, period),
+                0,
+                "a 20 ms target with a {period}-frame device period"
+            );
+        }
+        assert_eq!(simulate_with_drc(960, 1024), 0);
+        assert_eq!(simulate_with_drc(4800, 1024), 0);
+    }
+
     #[test]
     fn start_gate_holds_silence_until_threshold_then_plays() {
         let q = SampleQueue::with_capacity(256);
@@ -1147,8 +1304,11 @@ mod tests {
         let q = SampleQueue::with_capacity(256);
         q.set_start_threshold(8);
         q.push(&[1.0; 8]);
-        let mut out = [0.0f32; 8];
-        assert_eq!(q.pop_or_silence(&mut out), 8); // gate opened, drained
+        // v2.7.3 (DESK-05): the gate opens on two callbacks' worth, so it is
+        // drained with two 4-sample callbacks (2 x 4 = the threshold of 8).
+        let mut out = [0.0f32; 4];
+        assert_eq!(q.pop_or_silence(&mut out), 4); // gate opened
+        assert_eq!(q.pop_or_silence(&mut out), 4); // drained
         let mut small = [9.0f32; 2];
         // Empty while playing -> short fill -> underrun + re-gate.
         assert_eq!(q.pop_or_silence(&mut small), 0);
