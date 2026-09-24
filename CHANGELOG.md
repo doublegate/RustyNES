@@ -26,21 +26,29 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.7.5] - 2026-09-24 - "Ledger" (every audit claim closed with a measurement or a reason)
+## [2.7.5] - 2026-09-24 - "Tally" (every audit claim closed with a measurement or a reason)
 
 The last release of the v2.7.x audit line: the core and frontend audit ledgers
 now have no open row. No emulation behaviour changes, so AccuracyCoin,
 nestest, and every golden are unaffected.
 
-### Measured and rejected — the core audit's performance proposals
+### Performance — the core audit's proposals, measured
 
-- **Twelve hot-path changes, none adopted, each with its number.** They were
-  measured before any was built: one probe applied every proposal at its
-  maximum (deleting the work outright where needed) to bound what the whole set
-  could win, and the bound was zero on two clean runs. The two that could not
-  share that bound (CPU inlining and cold-path outlining; the branchless palette
-  mirror) got their own runs and also measured zero. The full record, including
-  the audit premises that turned out wrong, is in `docs/performance.md`.
+- **The audio buffer keeps its capacity between frames**, so each frame's audio
+  is gathered into one allocation instead of regrowing from nothing: -0.89%
+  frame time, reproduced on two runs, for the apps that take audio a frame at a
+  time (the mobile apps and the web build). The desktop was already
+  allocation-free here. Audio is byte-identical.
+- **The other eleven hot-path changes are rejected.** Ten were measured before
+  any was built (one more had been in v2.3.1), and one was closed by
+  reasoning. One probe applied most of them at their maximum, deleting the work
+  outright where needed, to bound what they could win; the bound was zero on
+  two clean runs, and the one rewrite among them (branchless status flags) was
+  also run alone, twice, and measured zero. CPU inlining and cold-path
+  outlining, and the branchless palette mirror, got their own runs and measured
+  zero too. The full record, including the audit premises that turned out wrong
+  and a benchmark that could not see the change it was credited with measuring,
+  is in `docs/performance.md`.
 - **Capping the audio buffer is rejected** as a behaviour change with no user:
   every host drains each frame, and the one consumer that accumulates would
   have lost audio.

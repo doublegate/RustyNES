@@ -674,13 +674,14 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.7.5 "Ledger"** (2026-09-24) — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were measured and none adopted, 18 dead bus methods and the unused ApuBus trait are deprecated, and the core and frontend ledgers have no open row. Built on **v2.7.4 "Pocket"** (2026-09-24) — the mobile apps survive what a phone does to them: an internal error no longer closes the Android or iOS app, battery saves persist on both, the apps pause and give up audio when they should, and saves are written so a dying phone keeps the last good one.
+RustyNES's current release is **v2.7.5 "Tally"** (2026-09-24) — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused ApuBus trait are deprecated; and the core and frontend ledgers have no open row. Built on **v2.7.4 "Pocket"** (2026-09-24) — the mobile apps survive what a phone does to them: an internal error no longer closes the Android or iOS app, battery saves persist on both, the apps pause and give up audio when they should, and saves are written so a dying phone keeps the last good one.
 
 v2.7.5 changes no emulation behaviour, and the accuracy numbers below were
 re-measured on its release tree anyway: AccuracyCoin 144/144 and nestest pass,
-and the full `--features test-roms` suite passes 2,718 tests. It
+and the full `--features test-roms` suite passes 2,719 tests. It
 closes the v2.7.x audit line: the core audit's twelve performance proposals
-were measured and none adopted (`docs/performance.md`), and the core and
+were closed, eleven by measurement, and one adopted (`docs/performance.md`),
+and the core and
 frontend ledgers have no open row. Desktop, Android and iOS all keep battery
 saves. v2.7.4's mobile changes have a device checklist
 (`docs/mobile-v2.7.4-device-checklist.md`); this repository records no run of

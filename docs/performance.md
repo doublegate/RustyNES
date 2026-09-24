@@ -812,18 +812,18 @@ and item 2 (skipping the GPU upload when no new frame arrived) remains defensibl
 as not doing obviously-pointless work — but neither is a performance claim, and
 neither should be described as one.
 
-### v2.7.5 — the core audit's performance proposals, measured by ceiling (decision: all REJECTED)
+### v2.7.5 — the core audit's performance proposals (decision: one ADOPTED, the rest REJECTED)
 
 The core audit ([`docs/audits/core-audit-report.md`](audits/core-audit-report.md)
 §3, and IMP-12 in §4.6) proposed twelve hot-path changes, plus a buffer cap
-(IMP-07's second half) that is a behaviour change and is judged separately below. This project's record
-was already heavily against micro-optimising this core — the v2.3.1 campaign
-above measured ten items and adopted none — so v2.7.5 measured before building,
-and measured all of them at once first.
+(IMP-07's second half) that is a behaviour change and is judged separately
+below. This project's record was already heavily against micro-optimising this
+core — the v2.3.1 campaign above measured ten items and adopted none — so
+v2.7.5 measured before building, and measured most of them at once first.
 
 **Method: one combined ceiling probe.** Every proposal was applied at its
 MAXIMUM in a single tree, knowingly breaking correctness where the real change
-would have been subtle, so that the result bounds what the whole set could win:
+would have been subtle, so that the result bounds what the set could win:
 
 | item | what the probe did | per-frame volume the audit cited |
 | --- | --- | --- |
@@ -832,9 +832,14 @@ would have been subtle, so that the result bounds what the whole set could win:
 | §3.1 C | `sample_nmi_edge` removed from all three PPU catch-up loops | one call per PPU dot |
 | IMP-04 | `Status::set_nz` rewritten branchless | two branches per ALU instruction |
 | IMP-06 | the four redundant rendering-state stores deleted from `tick_visible_render_fast` | 245,760 stores |
-| IMP-07 | `BlipBuf::drain_all` keeps its capacity instead of restarting from zero | ~10 reallocations per drain |
 | §3.5b | the pulse channels' `muted()` check deleted from `output()` | two sweep-target computations per CPU cycle |
 | §3.6 | the `cpu_read_unmapped` virtual call skipped for every cartridge read | one dynamic call per `$4020+` read |
+
+(IMP-07's capacity change was also in the probe tree, but **the probe could not
+see it**: the `full_frame` benches restore a snapshot per iteration, which
+replaces the `BlipBuf`, and never drain audio, so `drain_all` never runs in
+them. The record first counted it among the zeros; review on #553 prompted the
+check that found this. It was measured separately below, and adopted.)
 
 `scripts/perf/ab_check.sh`, `AB_MEASUREMENT_TIME=25`, i9-10850K, fat LTO,
 shipped workloads, each with its A/B/A order-bias control:
@@ -851,11 +856,46 @@ shipped workloads, each with its A/B/A order-bias control:
 Run 2 is void: its control swung from −5.5% to +12.1% while background
 indexers and Syncthing were busy, and it is reported only so the record is
 complete. Runs 1 and 3 agree: **the ceiling is zero** — within the control's own
-movement, with no consistent sign. Deleting the work outright buys nothing, so
-no correct implementation of any of the eight can. The mechanisms are the ones
-the v2.3.1 campaign already named: fat LTO with one codegen unit has inlined and
-merged the calls, perfectly predicted branches and store-buffer-absorbed stores
-cost nothing on the critical path.
+movement, with no consistent sign. The mechanisms are the ones the v2.3.1
+campaign already named: fat LTO with one codegen unit has inlined and merged the
+calls, perfectly predicted branches and store-buffer-absorbed stores cost
+nothing on the critical path.
+
+**A combined bound is a bound on the SUM**, and review on #553 rightly pointed
+out that offsetting effects could hide an individual gain. Six of the seven are
+deletions of work, which cannot make the core slower except through code
+layout; the seventh, IMP-04, is a rewrite that could move either way. So IMP-04
+was also run alone, twice:
+
+| run | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: |
+| 1, candidate | −2.55% (p = 0.07) | +0.17% (p = 0.05) | +0.19% (p = 0.00) | −0.04% (p = 0.46) |
+| 1, control | −2.49% | +0.21% | +0.11% | −0.04% |
+| 2, candidate | +0.09% (p = 0.02) | +0.24% (p = 0.00) | +0.26% (p = 0.00) | +0.10% (p = 0.20) |
+| 2, control | −0.03% | +0.11% | +0.24% | +0.07% |
+
+The candidate tracks its control in both runs (run 1's `nestest` dip hit both
+sides): **zero**, if anything marginally slower.
+
+**IMP-07's capacity change, measured where it acts: ADOPTED.** A temporary
+(uncommitted) bench ran the shape `Nes::drain_audio` callers have — one frame,
+then a drain, on the same machine every iteration — as a manual A/B/A with
+criterion baselines, pinned to cores 2-5, 25 s per measurement:
+
+| run | reference | candidate | control (reference again) |
+| --- | ---: | ---: | ---: |
+| 1 | 3.958 ms | 3.924 ms (−0.89%, p = 0.00) | 3.939 ms (−0.52%) |
+| 2 | 3.952 ms | 3.916 ms (−0.89%, p = 0.00) | 3.959 ms (+0.22%) |
+
+The candidate is the fastest measurement in both runs, the same −0.89% each
+time, with the controls on either side of the reference: a consistent,
+reproduced, clean gain, adoptable under `ab_check.sh`'s rule (the v2.3.1
+maintainer decision) though below 3%. It affects only callers of
+`Nes::drain_audio` — the mobile bridge and the wasm build; the desktop and
+libretro drain into their own buffer with `drain_audio_into`, which allocates
+nothing. The samples are untouched, so audio is byte-identical by construction.
+Why ~35 µs for about nine small reallocations is not established; the number is
+reported as measured.
 
 Some of the audit's premises were also simply wrong, which the measurement
 makes moot but is worth recording:
@@ -870,7 +910,7 @@ makes moot but is worth recording:
   borrow of `self.mapper` in the same loop.
 - IMP-07's "eliminates per-frame allocations" cannot hold for an API that
   returns a `Vec` by value; the change only turns about ten reallocations into
-  one, which the probe shows is invisible. The **second half of IMP-07 — capping
+  one, which the frame-then-drain bench above shows is measurable. The **second half of IMP-07 — capping
   the buffered samples at 16,384 — is rejected as a behaviour change with no
   user.** Every host drains every frame (desktop, web, libretro, both mobile
   apps, and the test suites checked), so no real consumer grows without bound.
@@ -896,9 +936,12 @@ line.
 | 1, control | **+4.50%** | −0.51% | +0.42% | −1.23% |
 | 2, candidate | −0.15% (p = 0.00) | −0.25% (p = 0.00) | −0.11% (p = 0.03) | +0.10% (p = 0.04) |
 | 2, control | −0.18% | −0.06% | −0.17% | +0.07% |
+| 3, candidate | −0.12% (p = 0.00) | −0.20% (p = 0.08) | +0.11% (p = 0.11) | −0.15% (p = 0.01) |
+| 3, control | +0.03% | −0.09% | +0.10% | +0.06% |
 
 Run 1 is void (a concurrent test suite from another session; control +4.5%).
-Run 2 is clean and reads the candidate as its own control: **zero**. The
+Runs 2 and 3 are clean: every candidate-minus-control difference is within
+0.21 points and the signs do not reproduce between them. **Zero.** The
 common read path was already short enough that where the rare branches live
 does not matter to the core that runs it.
 
@@ -906,21 +949,24 @@ does not matter to the core that runs it.
 ceiling, because `palette_index` really is on the hot path (`emit_pixel` ->
 `read_palette`, 61,440 times a frame): the probe deleted the mirroring outright.
 
-| | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| run | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
 | --- | ---: | ---: | ---: | ---: |
-| candidate | +0.01% (p = 0.87) | +0.04% (p = 0.41) | +0.34% (p = 0.00) | +0.32% (p = 0.00) |
-| control | −0.18% | +0.06% | +0.22% | +0.11% |
+| 1, candidate | +0.01% (p = 0.87) | +0.04% (p = 0.41) | +0.34% (p = 0.00) | +0.32% (p = 0.00) |
+| 1, control | −0.18% | +0.06% | +0.22% | +0.11% |
+| 2, candidate | −1.24% (p = 0.02) | −0.97% (p = 0.33) | +0.12% (p = 0.01) | −0.02% (p = 0.66) |
+| 2, control | −1.12% | −1.13% | −0.08% | +0.09% |
 
-Ceiling zero — if anything the deletion reads slower on the fast path, within
-the control's reach. The third proposal, folding the phase dispatch of
+Ceiling zero on both runs — the candidate tracks its control (run 2 began under
+load, which moved the exact-path workloads on both sides). The third proposal, folding the phase dispatch of
 `tick_visible_render_fast` into one `match`, has no ceiling (it restructures
 control flow rather than removing work) and was not pursued: the store elision
 in the same function measured zero, and restructuring without an upper bound is
 the shape the v2.3.1 campaign already spent ten items on.
 
-**Result: nothing adopted.** Of the twelve, ten were measured here, IMP-12 was
-measured in v2.3.1, and the phase `match` was closed by reasoning. The core's
-cost is still the work the accuracy model requires.
+**Result: one adopted (IMP-07's capacity change), the rest rejected.** Of the
+twelve, ten were measured here, IMP-12 was measured in v2.3.1, and the phase
+`match` was closed by reasoning. The core's per-frame cost is still the work the
+accuracy model requires.
 
 **MOB-06 (the mobile framebuffer copy) was not measured and is not changed.**
 Its cost is Android / iOS allocation and garbage-collection pressure (245,760
