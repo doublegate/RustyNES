@@ -105,8 +105,8 @@ regression gates (the ROMs themselves are user-supplied, never shipped).
 
 This accuracy was developed across the emulation engine's lineage — the
 cycle-accurate master-clock scheduler, the unified DMA engine, and the
-cpu_interrupts_v2 / MMC3-IRQ closures — and is held byte-identically
-through every release up to and including the current **v1.8.8 "Atlas"**.
+cpu_interrupts_v2 / MMC3-IRQ closures — and is re-measured on every release;
+[`docs/STATUS.md`](../STATUS.md) carries the current release and its numbers.
 
 ### Remaining edge cases
 

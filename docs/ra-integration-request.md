@@ -87,5 +87,6 @@ RustyNES.
   pointer to where hardcore is enforced (`crates/rustynes-cheevos/` + the frontend RA
   session). Offering a short screen-share / code walkthrough of the hardcore gates
   speeds up approval.
-- **Before sending:** cite the current stable release (v1.8.8) so the version
-  you reference is the one they'd test, and confirm your public repo URL.
+- **Before sending:** cite the current stable release (the "Current release"
+  line in `docs/STATUS.md`) so the version you reference is the one they'd
+  test, and confirm your public repo URL.
