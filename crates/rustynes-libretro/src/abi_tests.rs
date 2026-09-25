@@ -424,6 +424,22 @@ fn a_panic_inside_a_frame_is_contained_and_the_memory_stays_valid() {
         !serialize(&mut buf),
         "a poisoned core must refuse to serialize"
     );
+    // The report reaches the frontend's log and names the fault itself, not
+    // only the callback it happened in (review on #556).
+    #[cfg(target_arch = "x86_64")]
+    {
+        let logged = LOGGED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert!(
+            logged
+                .iter()
+                .any(|line| line.contains("internal error in retro_run")
+                    && line.contains("injected by the C-ABI harness")),
+            "the contained panic and its message must be logged, got {logged:?}"
+        );
+    }
     assert_eq!(
         system_ram(),
         ram,

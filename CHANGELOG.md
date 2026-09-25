@@ -90,6 +90,7 @@ load.
   failures, rejected cheats, a contained panic, the abort warning) went to
   stderr, which RetroArch does not put in its own log. They now go through
   libretro's log interface, and to stderr only when a frontend offers none.
+  A contained panic is logged with its own message.
 - **A C-ABI test harness for the libretro core.** The core's tests now drive the
   exported `retro_*` functions as a frontend does, which is how the four fixes
   above were pinned red first.

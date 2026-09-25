@@ -477,18 +477,28 @@ impl RustyNesLibretro {
         // `AssertUnwindSafe`: after a caught panic nothing reads the
         // half-updated state except through the poisoned guard above, which
         // refuses every emulation call until the game is unloaded.
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))).unwrap_or_else(|_| {
-            self.poisoned = true;
-            self.log(
-                retro_log_level::RETRO_LOG_ERROR,
-                &format!(
-                    "internal error in {what}; emulation stopped for this game. \
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))).unwrap_or_else(
+            |payload| {
+                self.poisoned = true;
+                // The panic's own message, when it carries one (`panic!` with a
+                // literal gives `&str`, with arguments `String`), so the report in
+                // the frontend's log names the fault and not only the callback.
+                let cause = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("no message");
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!(
+                        "internal error in {what} ({cause}); emulation stopped for this game. \
                      Its memory stays readable, so battery saves can still be written. \
                      Reload the game to continue."
-                ),
-            );
-            fallback
-        })
+                    ),
+                );
+                fallback
+            },
+        )
     }
 
     /// Write one line to the frontend's log, or to stderr when it has none.

@@ -4580,6 +4580,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn restore_rejects_every_truncation_even_with_the_zero_tail_rule() {
+        // v2.8.0, review on #556 (agy). `SectionIter` now ends at an all-zero
+        // tail, so the question is whether a TRUNCATED state (a short file:
+        // a frontend passes `retro_unserialize` a buffer of the file's size
+        // and does not pad it) could now pass as a complete one that happens
+        // to end in zeros. Every proper prefix of a real snapshot is tried:
+        // a cut inside a section leaves a tail that starts with a non-zero
+        // tag and a length the remaining bytes cannot satisfy, and a cut on a
+        // section boundary drops a required section. Every one is an error.
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let mut blob = Vec::new();
+        nes.snapshot_core_into(&mut blob);
+        let accepted: Vec<usize> = (0..blob.len())
+            .filter(|&k| nes.restore_quiet(&blob[..k]).is_ok())
+            .collect();
+        assert!(
+            accepted.is_empty(),
+            "{} of {} truncations restored, first at {:?}",
+            accepted.len(),
+            blob.len(),
+            accepted.first()
+        );
+        // The full state still restores after all those rejections.
+        nes.restore_quiet(&blob)
+            .expect("the untruncated state restores");
+    }
+
     /// Build a minimal NSF (3 songs) whose `init` enables all APU channels and
     /// programs a steady pulse-1 tone, and whose `play` is a bare `RTS`. Loaded
     /// at $8000; init=$8000, play=$800C.
