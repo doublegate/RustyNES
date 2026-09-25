@@ -985,6 +985,43 @@ borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
 
+### v2.8.0 — the libretro core built with `panic = "unwind"` (decision: ADOPTED; the cost is ~0.1% of instructions)
+
+The libretro core must unwind for its panic containment to exist (libretro
+audit L-1.1): under the workspace's release `panic = "abort"`, `catch_unwind`
+never sees a panic and RetroArch aborts. The plan required measuring what
+unwinding costs on the frame path before shipping it, and recording the result
+either way.
+
+**Timing was the wrong instrument on this machine that day.** Another session
+was compiling other projects in bursts (load average 22), so a manual A/B/A on
+`nes_run_frame_*_fast` (25 s per measurement, pinned to cores 2-5) produced one
+usable run and one void one:
+
+| run | `nestest_fast` abort / unwind | `flowing_palette_fast` abort / unwind |
+| --- | ---: | ---: |
+| 1 (reference measured while load was falling: void; the two later measurements compare directly) | 3.9089 / 3.9087 ms | 2.6606 / 2.6339 ms |
+| 2 (control +27% to +35% under a new load spike) | void | void |
+
+**So the decision rests on retired instructions, which contention does not
+move.** A temporary runner (600 frames, fast dot path, built twice into
+separate target directories with `CARGO_PROFILE_RELEASE_PANIC` set each way),
+`perf stat -r 5 -e instructions:u,cycles:u`:
+
+| ROM | instructions, abort → unwind | cycles, abort → unwind |
+| --- | ---: | ---: |
+| `nestest` | 24,549,968,015 → 24,573,787,779 (**+0.097%**, ±0.00%) | 11,323 M → 11,239 M (−0.75%) |
+| `flowing_palette` | 21,751,381,216 → 21,774,795,433 (**+0.108%**, ±0.00%) | 7,504 M → 7,549 M (+0.60%) |
+
+Both builds produce the same frames (the runner's output checksum is identical
+per ROM). Unwinding adds about 0.1% of instructions, the unwind-table and
+landing-pad bookkeeping; the cycle deltas have opposite signs on the two ROMs
+and sit inside the load's noise, and the one usable timing run shows nothing.
+The binary is 4.4% larger (1,729,512 → 1,805,904 bytes for the runner). This
+is a correctness change, not an optimisation, so the adoption rule for
+optimisations does not apply; a tenth of a percent is the recorded price of
+RetroArch surviving a panic. Desktop, web and mobile builds are unchanged.
+
 ### v2.7.6 — the six v2.7.5 deletions measured one at a time (decision: all REJECTED as performance; IMP-06 kept as an assertion)
 
 The combined ceiling above bounds the SUM of seven changes, and six of them
