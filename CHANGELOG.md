@@ -26,7 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### Save states and the libretro boundary (v2.8.0, in progress)
+## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
+
+The first release of the v2.8.x line: the libretro audit's findings about the
+boundary between the RustyNES core and RetroArch, each shown failing in a new
+C-ABI test harness before it was fixed. Emulation behaviour does not change:
+AccuracyCoin 144/144, nestest and every golden are as before. The save state
+gains one byte (the internal data bus), and states from earlier releases still
+load.
+
+### Save states and the libretro boundary
 
 - **A save state followed by zero padding now loads.** `SectionIter` ends at a
   tail that is zero to the end of the blob; any non-zero byte is still read as

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.7.6-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.8.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,14 +674,16 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.7.6 "Recount"** (2026-09-24) — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, where the benchmarks reach them: five are zero, and the sixth, the pulse sweep-mute check, bounds at about 0.2%, and the cheap byte-identical way to take it measured slower; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets. Built on **v2.7.5 "Tally"** (2026-09-24) — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused ApuBus trait are deprecated; and the core and frontend ledgers have no open row.
+RustyNES's current release is **v2.8.0 "Bulkhead"** (2026-09-25) — the libretro core stops a fault at its own boundary: an internal error no longer closes RetroArch, save states survive plugging in a Zapper, closing a game withdraws its memory maps, the core loads from any libretro frontend, and the save state now carries the 2A03 internal data bus. Built on **v2.7.6 "Recount"** (2026-09-24) — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, where the benchmarks reach them: five are zero, and the sixth, the pulse sweep-mute check, bounds at about 0.2%, and the cheap byte-identical way to take it measured slower; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets.
 
-v2.7.6 changes no emulation behaviour (its one code change is a debug
-assertion), and the accuracy numbers below were re-measured on its release
-tree anyway: AccuracyCoin 144/144 and nestest pass, and the full
-`--features test-roms` suite passes 2,722 tests. It measures alone the six
-performance proposals v2.7.5 bounded only together (five zero, one worth at most 0.2%,
-`docs/performance.md`), and ships the contributed libretro buildbot fixes.
+v2.8.0 opens the v2.8.x libretro + RTL audit line. It changes no emulation
+behaviour, and the accuracy numbers below were re-measured on its release tree:
+AccuracyCoin 144/144 and nestest pass, and the full `--features test-roms`
+suite passes 2,735 tests. The libretro core is now built to unwind on a panic
+(about 0.1% more instructions per frame, `docs/performance.md`), is driven by a
+C-ABI test harness exactly as a frontend drives it, and uses a vendored
+`rust-libretro-sys` with the standard `retro_game_info` written out. v2.7.6
+measured alone the six performance proposals v2.7.5 bounded only together, and
 v2.7.5 closed the v2.7.x audit line: the core and frontend ledgers have no
 open row. Desktop, Android and iOS all keep battery
 saves. v2.7.4's mobile changes have a device checklist
