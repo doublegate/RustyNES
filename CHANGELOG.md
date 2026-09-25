@@ -26,6 +26,18 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### The libretro core's build and metadata (v2.8.1, in progress)
+
+- **The libretro `Makefile` does what its callers ask.** `make PREFIX=/usr/local`
+  no longer breaks the copy (the file prefix is now `LIB_PREFIX`),
+  `platform=win` builds the Windows target instead of the host's, `DEBUG=1`
+  builds and copies the debug core, and the copy follows `CARGO_TARGET_DIR`.
+  Each was reproduced with `make -n` first and is pinned by a test.
+- **UNIF images are offered to RetroArch.** The core always loaded `.unf` /
+  `.unif`, but advertised only `nes|fds`, so RetroArch's file browser hid them.
+- **`scripts/resubmit_libretro_docs_pr.sh` passes its title and body to `gh`.**
+  A missing line continuation had split the command in two.
+
 ## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
 
 The first release of the v2.8.x line: the libretro audit's findings about the

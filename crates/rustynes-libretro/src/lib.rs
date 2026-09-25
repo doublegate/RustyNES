@@ -1051,7 +1051,7 @@ impl Core for RustyNesLibretro {
         SystemInfo {
             library_name: CString::new("RustyNES").unwrap(),
             library_version: CString::new(env!("CARGO_PKG_VERSION")).unwrap(),
-            valid_extensions: CString::new("nes|fds").unwrap(),
+            valid_extensions: CString::new("nes|fds|unf|unif").unwrap(),
             need_fullpath: false,
             block_extract: false,
         }
@@ -1634,6 +1634,19 @@ mod abi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unif_is_an_advertised_extension() {
+        // libretro audit §3.4 (L-3.4b). The core loads UNIF (`rustynes-mappers`
+        // `parse` recognises the `UNIF` magic), but RetroArch filters its file
+        // browser by `valid_extensions`, so `.unf` / `.unif` images were hidden.
+        let info = RustyNesLibretro::default().get_info();
+        let exts = info.valid_extensions.to_str().expect("ASCII");
+        let exts: Vec<&str> = exts.split('|').collect();
+        for ext in ["nes", "fds", "unf", "unif"] {
+            assert!(exts.contains(&ext), "{ext} missing from {exts:?}");
+        }
+    }
 
     /// A standard `retro_game_info` with only `path` set.
     fn game_at(path: &CStr) -> retro_game_info {

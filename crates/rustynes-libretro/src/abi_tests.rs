@@ -327,6 +327,23 @@ fn messages_reach_the_frontends_log_interface() {
     );
 }
 
+/// libretro audit §3.4 (L-3.4b). The core advertises `unf|unif` from v2.8.1;
+/// this pins that it also LOADS one through the C ABI, from a committed CC0
+/// test image, rather than advertising a format the load path refuses.
+#[test]
+fn a_unif_image_loads_through_the_c_abi() {
+    const SCANLINE_UNIF: &[u8] =
+        include_bytes!("../../../tests/roms/nes-test-roms/scanline/scanline.unif");
+    let _frontend = frontend();
+    assert!(
+        SCANLINE_UNIF.starts_with(b"UNIF"),
+        "the fixture is a UNIF image"
+    );
+    assert!(load(SCANLINE_UNIF, false), "a UNIF image must load");
+    run_frame();
+    unload();
+}
+
 /// libretro audit §2.1 and §2.2 (L-2.1, L-2.2). `retro_serialize_size` is read
 /// once, but a Zapper plugged in mid-game grows the snapshot, so the frontend's
 /// buffer was too small and every save state, rewind and run-ahead frame
