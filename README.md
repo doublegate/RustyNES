@@ -674,7 +674,7 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.8.1 "Gasket"** (2026-09-25) — the libretro core fits the frontends around it: four-player games work through a Four Score option, a controller works again after its port leaves the Zapper, RetroArch no longer reads past the core's input-descriptor list, expansion audio no longer clips, UNIF images are offered, and the Makefile honours PREFIX, platform=win, DEBUG and CARGO_TARGET_DIR. Built on **v2.8.0 "Bulkhead"** (2026-09-25) — the libretro core stops a fault at its own boundary: an internal error no longer closes RetroArch, save states survive plugging in a Zapper, closing a game withdraws its memory maps, the core loads from any libretro frontend, and the save state now carries the 2A03 internal data bus.
+RustyNES's current release is **v2.8.1 "Gasket"** (2026-09-25) — the libretro core fits the frontends around it: four-player games work through a Four Score option, a controller works again after its port leaves the Zapper, RetroArch no longer reads past the core's input-descriptor list, expansion audio no longer clips, the core declares UNIF images, and the Makefile honours PREFIX, platform=win, DEBUG and CARGO_TARGET_DIR. Built on **v2.8.0 "Bulkhead"** (2026-09-25) — the libretro core stops a fault at its own boundary: an internal error no longer closes RetroArch, save states survive plugging in a Zapper, closing a game withdraws its memory maps, the core loads from any libretro frontend, and the save state now carries the 2A03 internal data bus.
 
 v2.8.1 closes the libretro half of the v2.8.x audit line: every row of the
 libretro ledger has a verdict. It changes no emulation behaviour, and the

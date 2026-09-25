@@ -40,8 +40,10 @@ libretro core's audio is about 6 dB quieter, on purpose.
   `platform=win` builds the Windows target instead of the host's, `DEBUG=1`
   builds and copies the debug core, and the copy follows `CARGO_TARGET_DIR`.
   Each was reproduced with `make -n` first and is pinned by a test.
-- **UNIF images are offered to RetroArch.** The core always loaded `.unf` /
-  `.unif`, but advertised only `nes|fds`, so RetroArch's file browser hid them.
+- **The core declares UNIF.** It always loaded `.unf` / `.unif`, but its
+  `retro_get_system_info` and its `.info` said only `nes|fds`. The copy of the
+  `.info` RetroArch downloads lives in libretro-super and still says `nes|fds`
+  until the upstream sync at v3.0.0 (maintainer decision, 2026-09-22).
 - **`scripts/resubmit_libretro_docs_pr.sh` passes its title and body to `gh`.**
   A missing line continuation had split the command in two.
 - **Four-player games work in RetroArch.** A new core option,

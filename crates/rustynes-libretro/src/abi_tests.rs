@@ -478,19 +478,47 @@ fn the_four_score_option_reads_players_three_and_four() {
     assert_eq!(without, 2, "Four Score off again: two pads, as before");
 }
 
-/// libretro audit §3.4 (L-3.4b). The core advertises `unf|unif` from v2.8.1;
-/// this pins that it also LOADS one through the C ABI, from a committed CC0
-/// test image, rather than advertising a format the load path refuses.
+/// A UNIF image of the committed CC0 nestest cartridge, built here rather than
+/// read from a fixture.
+///
+/// v2.8.1's first version of the UNIF test included a `.unif` from
+/// `tests/roms/nes-test-roms/`, which is gitignored: it existed on the machine
+/// that wrote the test and nowhere else, so CI could not compile it (Copilot,
+/// #557). Building the image from nestest needs no third-party file. Layout per
+/// `rustynes_mappers::unif`: the 32-byte header (`UNIF`, revision, zeros),
+/// then `MAPR` (the board name, NUL-terminated), `PRG0`, `CHR0` and `MIRR`.
+fn nestest_as_unif() -> &'static [u8] {
+    const PRG: usize = 16 * 1024;
+    const CHR: usize = 8 * 1024;
+    let prg = &NESTEST[16..16 + PRG];
+    let chr = &NESTEST[16 + PRG..16 + PRG + CHR];
+    let mut unif = Vec::new();
+    unif.extend_from_slice(b"UNIF");
+    unif.extend_from_slice(&7u32.to_le_bytes());
+    unif.extend_from_slice(&[0; 24]);
+    for (id, data) in [
+        (b"MAPR", &b"NES-NROM-128\0"[..]),
+        (b"PRG0", prg),
+        (b"CHR0", chr),
+        (b"MIRR", &[NESTEST[6] & 1][..]),
+    ] {
+        unif.extend_from_slice(id);
+        unif.extend_from_slice(&u32::try_from(data.len()).expect("small").to_le_bytes());
+        unif.extend_from_slice(data);
+    }
+    // Leaked once per test run: `load` hands the frontend a `'static` buffer.
+    Box::leak(unif.into_boxed_slice())
+}
+
+/// libretro audit §3.4 (L-3.4b). The core declares `unf|unif` from v2.8.1;
+/// this pins that it also LOADS one through the C ABI, so it does not declare
+/// a format its load path refuses.
 #[test]
 fn a_unif_image_loads_through_the_c_abi() {
-    const SCANLINE_UNIF: &[u8] =
-        include_bytes!("../../../tests/roms/nes-test-roms/scanline/scanline.unif");
+    let unif = nestest_as_unif();
     let _frontend = frontend();
-    assert!(
-        SCANLINE_UNIF.starts_with(b"UNIF"),
-        "the fixture is a UNIF image"
-    );
-    assert!(load(SCANLINE_UNIF, false), "a UNIF image must load");
+    assert!(unif.starts_with(b"UNIF"), "the image is a UNIF container");
+    assert!(load(unif, false), "a UNIF image must load");
     run_frame();
     unload();
 }
