@@ -5,7 +5,7 @@ supported_extensions = "nes|fds|unf|unif"
 corename = "RustyNES"
 license = "GPLv3+"
 permissions = ""
-display_version = "v2.8.1"
+display_version = "v2.8.2"
 categories = "Emulator"
 
 # Hardware Information

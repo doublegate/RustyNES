@@ -26,7 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### RTL correctness on the MiSTer core's on-die path (v2.8.2, in progress)
+## [2.8.2] - 2026-09-25 - "Solder" (the MiSTer core's on-die RTL, corrected against the oracle and the wiki)
+
+The third release of the v2.8.x line and its first RTL release: the RTL
+audit's correctness rows for the MiSTer core's on-die path. One emulator
+change (MMC1), which the test-roms suite, AccuracyCoin 144/144 and nestest
+were re-run on; the rest is the MiSTer core, whose bitstream is re-cut at
+fitter seed 4 (+0.429 ns setup / +0.097 ns hold). **No hardware has run any
+bitstream.**
+
+### The emulator
 
 - **MMC1 never ignores a reset write.** The serial port ignores a write on
   the cycle after another, but only the data bit: the bit-7 reset always
@@ -34,7 +43,9 @@ cycle-accurate core later replaced.
   *Shinsenden* (a reset on a read-modify-write's second write) needs not to
   do. The MiSTer core already had it right.
 
-The rest of this section is the MiSTer core (`RustyNES_MiSTer`). Each fix
+### The MiSTer core
+
+Each fix
 failed a new co-simulation gate first, and that gate catches the fix's mutant.
 The RTL was written from the nesdev wiki and first-divergence reads of this
 emulator's traces; no reference HDL was opened (ADR 0037).
@@ -57,9 +68,12 @@ emulator's traces; no reference HDL was opened (ADR 0037).
   gate.** The core was already right; the gate guards the emulator's v2.7.0
   fix.
 - **The RTL audit's v2.8.2 rows are closed** in
-  `docs/audits/rtl-disposition.md`. Three were not defects as written, and one
-  (MMC1) was the emulator's defect, not the core's; the ledger gains an
-  INVERTED verdict for that case.
+  `docs/audits/rtl-disposition.md`. Two were not defects as written (the
+  MMC3 Sharp reload-to-zero, which the core already implements, and a
+  `$2002` case that needs two reads one dot apart), two CPU rows show no
+  effect under any gate and are left for the v2.9.0 re-audit, and one (MMC1)
+  was the emulator's defect, not the core's; the ledger gains an INVERTED
+  verdict for that case.
 
 ## [2.8.1] - 2026-09-25 - "Gasket" (the libretro core fits the frontends around it)
 
