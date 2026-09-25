@@ -65,8 +65,10 @@ pub struct Mmc1 {
     shift: u8,
     shift_count: u8,
 
-    // Cycle of the most recently accepted register write (for the consecutive-
-    // write bug). `u64::MAX` means "no prior write to inhibit on".
+    // Cycle of the most recent serial-port write, accepted or ignored (for the
+    // consecutive-write bug; since v2.8.2 an ignored write counts too, per
+    // "ignores every write after the first"). `u64::MAX` means "no prior
+    // write to inhibit on".
     last_write_cycle: u64,
     cpu_cycle: u64,
 
@@ -386,13 +388,17 @@ impl Mapper for Mmc1 {
                 }
             }
             0x8000..=0xFFFF => {
-                // Consecutive-write bug: ignore writes on the cycle
-                // immediately following another accepted write.
-                if self.last_write_cycle != u64::MAX
-                    && self.cpu_cycle == self.last_write_cycle.wrapping_add(1)
-                {
-                    return;
-                }
+                // Consecutive-cycle writes (nesdev MMC1): the serial port
+                // "ignores every write after the first", but "this restriction
+                // only applies to the data being written on bit 0; the bit 7
+                // reset is never ignored". So the filter is checked AFTER the
+                // reset, and every serial-port write -- ignored ones included
+                // -- counts as the last write. Until v2.8.2 the reset was
+                // filtered too, which *Shinsenden* (a reset on an `RRA abs,X`'s
+                // second write) needs not to be; the MiSTer RTL was right and
+                // this was wrong (RTL audit R-3.5a, inverted).
+                let consecutive = self.last_write_cycle != u64::MAX
+                    && self.cpu_cycle == self.last_write_cycle.wrapping_add(1);
                 self.last_write_cycle = self.cpu_cycle;
 
                 if value & 0x80 != 0 {
@@ -400,6 +406,9 @@ impl Mapper for Mmc1 {
                     self.shift = 0x10;
                     self.shift_count = 0;
                     self.control |= 0x0C;
+                    return;
+                }
+                if consecutive {
                     return;
                 }
                 // Shift bit 0 of value into bit 4 of shift, sliding right.
@@ -606,6 +615,51 @@ mod tests {
             }
             m.cpu_write(addr, bit);
         }
+    }
+
+    /// nesdev MMC1, "Consecutive-cycle writes": the serial port ignores a
+    /// write on the cycle after another, but "this restriction only applies to
+    /// the data being written on bit 0; the bit 7 reset is never ignored".
+    /// *Shinsenden* sets bit 7 on a read-modify-write's SECOND write (`RRA
+    /// abs,X`) "and will crash ... if this reset is ignored". Before v2.8.2 the
+    /// oracle filtered the reset too; the `MiSTer` RTL never did (RTL audit
+    /// R-3.5a had the two the wrong way round).
+    #[test]
+    fn a_reset_on_the_cycle_after_a_write_is_never_ignored() {
+        let mut m = Mmc1::new(synth_prg(4), synth_chr(2), Mirroring::Vertical, 0).unwrap();
+        write5(&mut m, 0x8000, 0b0_1000); // PRG mode 2: $C000 switchable
+        write5(&mut m, 0xE000, 1);
+        assert_eq!(m.cpu_read(0xC000), 1, "mode 2 set up");
+        for _ in 0..3 {
+            m.notify_cpu_cycle();
+        }
+        m.cpu_write(0x8000, 0x7F); // RMW's first write: data, accepted
+        m.notify_cpu_cycle();
+        m.cpu_write(0x8000, 0x80); // the next cycle: the reset
+        assert_eq!(
+            m.cpu_read(0xC000),
+            3,
+            "the reset ORs $0C into Control, so the last bank is fixed at $C000"
+        );
+        // The shift register was cleared too: a fresh 5-write sequence latches.
+        write5(&mut m, 0xE000, 2);
+        assert_eq!(m.cpu_read(0x8000), 2);
+    }
+
+    /// The other half of the same rule, as *Bill & Ted's Excellent Adventure*
+    /// needs it: `INC` on a `$FF` byte writes `$FF` (a reset) and then `$00`
+    /// on the next cycle, and that `$00` data write must be ignored.
+    #[test]
+    fn a_data_write_on_the_cycle_after_a_reset_is_ignored() {
+        let mut m = Mmc1::new(synth_prg(4), synth_chr(2), Mirroring::Vertical, 0).unwrap();
+        for _ in 0..3 {
+            m.notify_cpu_cycle();
+        }
+        m.cpu_write(0x8000, 0xFF);
+        m.notify_cpu_cycle();
+        m.cpu_write(0x8000, 0x00); // ignored: would misalign the next sequence
+        write5(&mut m, 0xE000, 2);
+        assert_eq!(m.cpu_read(0x8000), 2, "the ignored write left no stray bit");
     }
 
     #[test]

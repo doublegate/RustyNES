@@ -26,6 +26,14 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### RTL correctness on the MiSTer core's on-die path (v2.8.2, in progress)
+
+- **MMC1 never ignores a reset write.** The serial port ignores a write on
+  the cycle after another, but only the data bit: the bit-7 reset always
+  takes effect (nesdev MMC1). The emulator ignored the reset too, which
+  *Shinsenden* (a reset on a read-modify-write's second write) needs not to
+  do. The MiSTer core already had it right.
+
 ## [2.8.1] - 2026-09-25 - "Gasket" (the libretro core fits the frontends around it)
 
 The second release of the v2.8.x line, and the last of its libretro work:
