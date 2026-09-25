@@ -26,6 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.6] - 2026-09-24 - "Recount" (the v2.7.5 deletions measured one at a time)
+
+A measurement release between the v2.7.x and v2.8.x audit lines. v2.7.5
+bounded six of the core audit's performance proposals only together; each is
+now measured alone, and all six are zero. One of them, three stores that
+re-wrote values the code already guarantees, is now an assertion of that
+guarantee. It also ships the
+libretro buildbot work contributed in #554. No emulation behaviour changes:
+the one code change is byte-identical in release builds.
+
 ### Performance record: the v2.7.5 deletions measured one at a time
 
 - **Six performance proposals that v2.7.5 bounded only together are now each

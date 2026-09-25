@@ -94,7 +94,7 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is well past its first stable release — the current release is **v2.7.5 "Tally"** — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused ApuBus trait are deprecated; and the core and frontend ledgers have no open row. Built on **v2.7.4 "Pocket"** — the mobile apps survive what a phone does to them: an internal error no longer closes the Android or iOS app, battery saves persist on both, the apps pause and give up audio when they should, and saves are written so a dying phone keeps the last good one. **No hardware has run any bitstream.**
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.7.6 "Recount"** — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, and all six are zero; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets. Built on **v2.7.5 "Tally"** — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused ApuBus trait are deprecated; and the core and frontend ledgers have no open row. **No hardware has run any bitstream.**
 
 **Q: How accurate is RustyNES?**
 
