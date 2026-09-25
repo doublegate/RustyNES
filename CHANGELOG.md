@@ -65,8 +65,15 @@ cycle-accurate core later replaced.
   with that struct written by hand (`vendor/rust-libretro-sys`, MIT, credited
   in `NOTICE`), and a frontend that refuses the command loads through the
   standard struct: its data, or the file at its path.
+- **An internal error in the libretro core no longer closes RetroArch.** A
+  panic anywhere in a frame crossed into RetroArch and aborted it, with no
+  chance to write a battery save. The core is now built to unwind, and every
+  callback that runs emulation stops a panic at its own boundary: the game
+  stops, RetroArch keeps running, and the game's memory stays readable so its
+  battery save can still be written. Reloading the game continues. The core
+  also frees its buffers when RetroArch shuts it down.
 - **A C-ABI test harness for the libretro core.** The core's tests now drive the
-  exported `retro_*` functions as a frontend does, which is how the three fixes
+  exported `retro_*` functions as a frontend does, which is how the four fixes
   above were pinned red first.
 
 ## [2.7.6] - 2026-09-24 - "Recount" (the v2.7.5 deletions measured one at a time)

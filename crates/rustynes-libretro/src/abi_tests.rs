@@ -279,3 +279,58 @@ fn registered_memory_stays_put_across_a_restore() {
     assert_eq!(before, after, "WRAM moved during a restore");
     unload();
 }
+
+/// libretro audit §1.1 (L-1.1). A panic inside a frame used to cross the
+/// `extern "C"` boundary and abort the frontend: in this test process it would
+/// abort the test binary, which is what the mutation that removes
+/// `contained` shows. Contained, `retro_run` returns, the core refuses further
+/// emulation (poisoned), and the console is kept rather than dropped, so the
+/// WRAM pointer the frontend holds still points at live memory. Reloading the
+/// game clears the poison.
+#[test]
+fn a_panic_inside_a_frame_is_contained_and_the_memory_stays_valid() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    run_frame();
+    let ram = system_ram();
+    INJECT_PANIC_IN_RUN.store(true, SeqCst);
+    run_frame();
+    let mut buf = vec![0_u8; serialize_size()];
+    assert!(
+        !serialize(&mut buf),
+        "a poisoned core must refuse to serialize"
+    );
+    assert_eq!(
+        system_ram(),
+        ram,
+        "the console must be kept after a panic, not dropped under the frontend"
+    );
+    unload();
+    assert!(
+        load(NESTEST, true),
+        "a reload must work after a contained panic"
+    );
+    run_frame();
+    let mut buf = vec![0_u8; serialize_size()];
+    assert!(serialize(&mut buf), "reloading must clear the poison");
+    unload();
+}
+
+/// `retro_deinit` releases the core's buffers (libretro audit §1.4: the
+/// instance itself is never freed by `rust-libretro`), and the core still
+/// works after a fresh `retro_init`, which a frontend reusing a loaded library
+/// does.
+#[test]
+fn the_core_works_again_after_deinit_and_init() {
+    let _frontend = frontend();
+    // SAFETY: plain lifecycle calls, in the order a frontend makes them.
+    unsafe {
+        rust_libretro::retro_deinit();
+        rust_libretro::retro_init();
+    }
+    assert!(load(NESTEST, true));
+    run_frame();
+    let mut buf = vec![0_u8; serialize_size()];
+    assert!(serialize(&mut buf));
+    unload();
+}
