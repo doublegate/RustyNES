@@ -44,7 +44,13 @@ fn dry_run(args: &[&str], env: &[(&str, &str)]) -> Option<String> {
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let out = cmd.output().ok()?;
+    // Skip ONLY when `make` is absent; any other spawn error is a real
+    // failure and must not read as a pass (agy, #557).
+    let out = match cmd.output() {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => panic!("could not run make: {e}"),
+    };
     assert!(
         out.status.success(),
         "make -n {args:?} failed: {}",
