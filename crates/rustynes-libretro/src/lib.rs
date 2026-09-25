@@ -154,10 +154,11 @@ struct ControllerTables {
     /// essentially every light-gun game put the Zapper, but nothing forbids
     /// port 1, so both are offered.
     pad_and_gun: [retro_controller_description; 2],
-    /// Ports 3-4: pad only. These exist for a Vs. `DualSystem` cabinet, whose
-    /// SUB console takes its P1/P2 from libretro ports 2/3. A cabinet has no
-    /// light gun, so offering one there would advertise hardware that cannot
-    /// exist.
+    /// Ports 3-4: pad only. They carry players 3 and 4 when the Four Score
+    /// option is on, and a Vs. `DualSystem` cabinet's SUB console (its P1/P2)
+    /// otherwise. Neither has a light gun: the Zapper plugs into the console's
+    /// own two ports, and a cabinet has none, so offering one here would
+    /// advertise hardware that cannot exist.
     pad_only: [retro_controller_description; 1],
 }
 
@@ -213,6 +214,86 @@ static CONTROLLER_INFO: ControllerTables = ControllerTables {
         id: RETRO_DEVICE_JOYPAD,
     }],
 };
+
+/// The eight NES buttons, in the order RetroArch lists them.
+const NES_BUTTONS: [(u32, &CStr); 8] = [
+    (RETRO_DEVICE_ID_JOYPAD_A, c"NES A Button"),
+    (RETRO_DEVICE_ID_JOYPAD_B, c"NES B Button"),
+    (RETRO_DEVICE_ID_JOYPAD_SELECT, c"Select"),
+    (RETRO_DEVICE_ID_JOYPAD_START, c"Start"),
+    (RETRO_DEVICE_ID_JOYPAD_UP, c"D-Pad Up"),
+    (RETRO_DEVICE_ID_JOYPAD_DOWN, c"D-Pad Down"),
+    (RETRO_DEVICE_ID_JOYPAD_LEFT, c"D-Pad Left"),
+    (RETRO_DEVICE_ID_JOYPAD_RIGHT, c"D-Pad Right"),
+];
+
+/// Input descriptors for all four ports (players 1-2, and players 3-4 for the
+/// Four Score or a Vs. cabinet's second console), then the terminator.
+///
+/// Two things here are load-bearing, both learned the hard way:
+///
+/// * **The terminator's `description` is NULL.** libretro.h ends the list at a
+///   null description, and RetroArch's handler loops
+///   `for (; desc->description; desc++)`. `rust-libretro`'s
+///   `input_descriptors!` macro ends its array with `""` instead, a NON-null
+///   pointer, so until v2.8.1 RetroArch read past the end of this core's
+///   array until it happened on a null (found while adding ports 2-4).
+/// * **It is `'static`.** RetroArch keeps the description pointers.
+struct InputDescriptors([retro_input_descriptor; 33]);
+
+// SAFETY: plain integers and pointers to `'static` C string literals, built
+// once at compile time and never mutated.
+unsafe impl Sync for InputDescriptors {}
+
+static INPUT_DESCRIPTORS: InputDescriptors = InputDescriptors(all_port_descriptors());
+
+const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
+    let terminator = retro_input_descriptor {
+        port: 0,
+        device: 0,
+        index: 0,
+        id: 0,
+        description: std::ptr::null(),
+    };
+    let mut out = [terminator; 33];
+    let mut port = 0;
+    while port < 4 {
+        let mut b = 0;
+        while b < NES_BUTTONS.len() {
+            out[port * NES_BUTTONS.len() + b] = retro_input_descriptor {
+                port: port as u32,
+                device: RETRO_DEVICE_JOYPAD,
+                index: 0,
+                id: NES_BUTTONS[b].0,
+                description: NES_BUTTONS[b].1.as_ptr(),
+            };
+            b += 1;
+        }
+        port += 1;
+    }
+    out
+}
+
+/// The Four Score core option: its key, and the `SET_VARIABLES` array that
+/// declares it (terminated by a null key). `'static` because the frontend
+/// keeps the pointers.
+const FOUR_SCORE_KEY: &CStr = c"rustynes_four_score";
+
+struct CoreVariables([retro_variable; 2]);
+
+// SAFETY: pointers to `'static` C string literals, never mutated.
+unsafe impl Sync for CoreVariables {}
+
+static CORE_VARIABLES: CoreVariables = CoreVariables([
+    retro_variable {
+        key: FOUR_SCORE_KEY.as_ptr(),
+        value: c"Four Score (players 3 and 4); disabled|enabled".as_ptr(),
+    },
+    retro_variable {
+        key: std::ptr::null(),
+        value: std::ptr::null(),
+    },
+]);
 
 /// Named `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` address space for PPU nametable
 /// RAM (CIRAM), distinct from the blank/default CPU-bus address space WRAM
@@ -290,6 +371,12 @@ pub struct RustyNesLibretro {
     /// hardware requires that, and the Vs. cabinet has four ports.
     port_devices: [u32; 4],
 
+    /// The `rustynes_four_score` core option: whether the Four Score adapter is
+    /// plugged in, so players 3 and 4 (libretro ports 2 and 3) reach the game.
+    /// Off by default, as on the console, because a game that does not expect
+    /// the adapter can read its signature bits.
+    four_score: bool,
+
     /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
     /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
     /// serialized state, matching `Nes::add_genie_code`'s own contract, so
@@ -319,12 +406,30 @@ impl Default for RustyNesLibretro {
             // Every port starts as a joypad, which is what the frontend assumes
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
+            four_score: false,
             genie_cheats: BTreeMap::new(),
         }
     }
 }
 
-impl CoreOptions for RustyNesLibretro {}
+impl CoreOptions for RustyNesLibretro {
+    /// Declare the core's options. Only one exists: the Four Score adapter,
+    /// which a user must be able to plug in for four-player games (libretro
+    /// audit summary, L-S1). The legacy `SET_VARIABLES` form is enough for a
+    /// two-value switch and every frontend supports it.
+    fn set_core_options(&self, ctx: &SetEnvironmentContext) -> bool {
+        // SAFETY: the context carries the frontend's environment callback for
+        // the duration of `retro_set_environment`; `CORE_VARIABLES` is a
+        // `'static`, null-key-terminated array.
+        unsafe {
+            let generic_ctx: GenericContext = ctx.into();
+            rust_libretro::environment::set_variables(
+                *generic_ctx.environment_callback(),
+                &CORE_VARIABLES.0,
+            )
+        }
+    }
+}
 
 #[repr(C)]
 struct RetroGameInfoExt {
@@ -402,8 +507,18 @@ fn poll_zapper(ctx: &mut RunContext, nes: &mut Nes, port: u32) {
 ///
 /// Factored out of `on_run` so both the single-console and Vs. `DualSystem` present
 /// paths share one mapping (ports 0/1 → main P1/P2, ports 2/3 → sub P1/P2 in dual).
+///
+/// One `input_state` call per port: the joypad is read as a bitmask
+/// (`RETRO_DEVICE_ID_JOYPAD_MASK`), which `rust-libretro` falls back from to
+/// sixteen per-button reads only when the frontend cannot report bitmasks.
+/// Until v2.8.1 it was always the sixteen (libretro audit §2.5).
 fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons {
-    let jp = ctx.get_joypad_state(port, 0);
+    // SAFETY: `get_joypad_bitmask` is `unsafe` only because `rust-libretro`
+    // marks every "unstable" environment command that way. Its body calls the
+    // frontend's `input_state` callback, which `ctx` holds valid for the
+    // duration of `on_run`, exactly as the safe `get_joypad_state` does, and
+    // falls back to that function when the frontend reports no bitmask support.
+    let jp = unsafe { ctx.get_joypad_bitmask(port, 0) };
     let mut bt = rustynes_core::Buttons::empty();
     if jp.contains(JoypadState::A) {
         bt |= rustynes_core::Buttons::A;
@@ -432,6 +547,42 @@ fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons 
     bt
 }
 
+/// Convert one mixer sample to the frontend's `i16`, with `1.0` at full scale.
+///
+/// The mixer's output is bipolar and DC-blocked. Measured over 900 frames of
+/// the bbbradsmith `db_*` ROMs (v2.8.1): the 2A03 alone spans about
+/// `-0.385..0.223`, and a Namco 163 channel reaches `+/-0.870`. Until v2.8.1
+/// this scaled by `65535`, putting full scale at `0.5` on the premise that the
+/// output stays inside `[-0.5, 0.5]`; that holds for the 2A03 and not for
+/// expansion audio, so `db_n163` hard-clipped 14,017 samples here while the
+/// desktop frontend, which hands the same `f32`s to the audio device, played
+/// them clean. Full scale at `1.0` is the desktop's scale: nothing measured
+/// clips, and the libretro core is about 6 dB quieter than before.
+#[inline]
+fn sample_to_i16(sample: f32) -> i16 {
+    // The clamp keeps a stray out-of-range sample (or a NaN, which `as`
+    // maps to 0) from wrapping; it is saturation, not normal operation.
+    (sample * 32767.0).clamp(-32768.0, 32767.0) as i16
+}
+
+/// Hand one frame's pad state to a single console: players 1-2 always, and
+/// players 3-4 with the Four Score adapter plugged in exactly when `extra` is
+/// present (the `rustynes_four_score` option). Unplugging it again restores
+/// the standard two-pad reads, byte-identical to a console that never had it.
+const fn apply_pads(
+    nes: &mut Nes,
+    pads: [rustynes_core::Buttons; 2],
+    extra: Option<(rustynes_core::Buttons, rustynes_core::Buttons)>,
+) {
+    nes.set_buttons(0, pads[0]);
+    nes.set_buttons(1, pads[1]);
+    nes.set_four_score(extra.is_some());
+    if let Some((p3, p4)) = extra {
+        nes.set_buttons(2, p3);
+        nes.set_buttons(3, p4);
+    }
+}
+
 /// Copy one RGBA8 NES scanline into an XRGB8888 destination scanline, swapping the
 /// R and B channels (RGBA in memory → B G R X for libretro's XRGB8888). `dst` and
 /// `src` must each be at least `NES_W * 4` bytes.
@@ -448,6 +599,34 @@ fn blit_scanline_rgba_to_xrgb(dst: &mut [u8], src: &[u8]) {
 }
 
 impl RustyNesLibretro {
+    /// Record the device the frontend assigned to `port`, and take a Zapper
+    /// off the bus when the port stops being a light gun.
+    ///
+    /// The Zapper is attached lazily, by the first `set_zapper` of a frame in
+    /// which the port is a light gun. Until v2.8.1 nothing detached it, so a
+    /// port switched back to a joypad went on reading the gun and the pad on
+    /// it was dead for the rest of the session (libretro audit summary, L-S1).
+    fn set_port_device(&mut self, port: u32, device: u32) {
+        let Some(slot) = self.port_devices.get_mut(port as usize) else {
+            // Ports beyond the NES's four are ignored rather than refused:
+            // libretro permits a frontend to probe more ports than a system has.
+            return;
+        };
+        *slot = device;
+        // Only the console's two ports can carry a Zapper (`set_zapper` takes
+        // 0..=1), and a Vs. cabinet never gets one.
+        if device != RETRO_DEVICE_LIGHTGUN
+            && port < 2
+            && let Some(nes) = self.nes.as_mut()
+            && matches!(
+                nes.expansion_device(port as usize),
+                Some(rustynes_core::InputDevice::Zapper(_))
+            )
+        {
+            nes.set_expansion_device(port as usize, None);
+        }
+    }
+
     /// Run `f`, stopping a panic at this layer (libretro audit §1.1).
     ///
     /// Every `Core` callback that runs emulation goes through here. A panic
@@ -831,8 +1010,7 @@ impl RustyNesLibretro {
         // only ever allocates if a future change enlarges `audio_float_buffer`.
         self.audio_buffer.reserve(produced * 2);
         for &sample in &self.audio_float_buffer[..produced] {
-            // RustyNES APU outputs bipolar ~[-0.5, 0.5], so we scale by 65535.0.
-            let s16 = (sample * 65535.0).clamp(-32768.0, 32767.0) as i16;
+            let s16 = sample_to_i16(sample);
             // Duplicate the sample for stereo interleaving (Left, Right).
             self.audio_buffer.push(s16);
             self.audio_buffer.push(s16);
@@ -859,10 +1037,16 @@ impl RustyNesLibretro {
 
     /// The classic single-console present path: 256x240 XRGB8888 + one audio stream.
     fn run_single(&mut self, ctx: &mut RunContext) {
-        ctx.poll_input();
-        // Port 0 → Player 1, Port 1 → Player 2.
+        // No `poll_input` here: `rust-libretro`'s `retro_run` has already
+        // polled the frontend before calling `on_run`, and a second poll per
+        // frame was pure overhead (libretro audit §2.5).
+        //
+        // Port 0 → Player 1, Port 1 → Player 2; with the Four Score option,
+        // ports 2 and 3 → Players 3 and 4.
         let b0 = joypad_to_buttons(ctx, 0);
         let b1 = joypad_to_buttons(ctx, 1);
+        let four_score = self.four_score;
+        let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
         let zapper_ports = self.lightgun_ports();
@@ -877,8 +1061,7 @@ impl RustyNesLibretro {
                 !INJECT_PANIC_IN_RUN.swap(false, std::sync::atomic::Ordering::SeqCst),
                 "injected by the C-ABI harness"
             );
-            nes.set_buttons(0, b0);
-            nes.set_buttons(1, b1);
+            apply_pads(nes, [b0, b1], b34);
             // A Zapper occupies a port INSTEAD of a joypad, but the joypad write
             // above is harmless and deliberate: the Zapper's own byte is assembled
             // by `set_zapper`, and leaving the pad state written keeps a port that
@@ -924,7 +1107,7 @@ impl RustyNesLibretro {
     /// desktop frontend); the SUB console's APU ring is drained-and-discarded to keep
     /// it bounded. The deterministic core is untouched — this is a parallel present.
     fn run_dual(&mut self, ctx: &mut RunContext) {
-        ctx.poll_input();
+        // Input was already polled by `retro_run`; see `run_single`.
         // Ports 0/1 drive the MAIN console's P1/P2; ports 2/3 the SUB console's.
         let buttons = [
             joypad_to_buttons(ctx, 0),
@@ -1051,7 +1234,7 @@ impl Core for RustyNesLibretro {
         SystemInfo {
             library_name: CString::new("RustyNES").unwrap(),
             library_version: CString::new(env!("CARGO_PKG_VERSION")).unwrap(),
-            valid_extensions: CString::new("nes|fds").unwrap(),
+            valid_extensions: CString::new("nes|fds|unf|unif").unwrap(),
             need_fullpath: false,
             block_extract: false,
         }
@@ -1171,18 +1354,9 @@ impl Core for RustyNesLibretro {
                 );
             }
 
-            // Register standardized controller layouts for the frontend to bind against.
-            let descriptors = rust_libretro::input_descriptors!(
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "NES A Button" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "NES B Button" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" },
-                { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }
-            );
-            rust_libretro::environment::set_input_descriptors(cb, &descriptors);
+            // Name the buttons on all four ports; see `INPUT_DESCRIPTORS` for
+            // why the table is a null-terminated `'static`.
+            rust_libretro::environment::set_input_descriptors(cb, &INPUT_DESCRIPTORS.0);
 
             // Advertise the devices each port accepts, so RetroArch's
             // Controls menu offers "NES Zapper" instead of only a gamepad.
@@ -1267,12 +1441,24 @@ impl Core for RustyNesLibretro {
     /// libretro wrapper polled joypads only, so light-gun games were unplayable
     /// through RetroArch despite the emulation being present and correct.
     fn on_set_controller_port_device(&mut self, port: u32, device: u32, _ctx: &mut GenericContext) {
-        if let Some(slot) = self.port_devices.get_mut(port as usize) {
-            *slot = device;
-        }
-        // Ports beyond the NES's four are silently ignored rather than treated as
-        // an error: libretro permits a frontend to probe more ports than a system
-        // has, and refusing would be a spec violation on our side.
+        self.set_port_device(port, device);
+    }
+
+    /// Read the core options. `rust-libretro` calls this before
+    /// `retro_load_game` and before any `retro_run` for which the frontend
+    /// reports a change, so the Four Score setting is current on every frame.
+    fn on_options_changed(&mut self, ctx: &mut OptionsChangedContext) {
+        // SAFETY: the context carries the frontend's environment callback for
+        // the duration of this call; the returned string is copied out below.
+        let value = unsafe {
+            let generic_ctx: GenericContext = (&*ctx).into();
+            rust_libretro::environment::get_variable(
+                *generic_ctx.environment_callback(),
+                FOUR_SCORE_KEY.to_str().unwrap_or_default(),
+            )
+            .map(str::to_owned)
+        };
+        self.four_score = value.as_deref() == Some("enabled");
     }
 
     /// Soft-reset the console — RetroArch's Restart, and the front-panel RESET
@@ -1625,6 +1811,7 @@ retro_core!(RustyNesLibretro {
     poisoned: false,
     log_printf: None,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
+    four_score: false,
     genie_cheats: BTreeMap::new(),
 });
 
@@ -1634,6 +1821,84 @@ mod abi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_a_port_away_from_the_zapper_unplugs_it() {
+        // Executive-summary claim (L-S1). The Zapper is attached lazily by
+        // `set_zapper`; before v2.8.1 nothing detached it, so a port switched
+        // back to a joypad kept reading the gun.
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut core = RustyNesLibretro {
+            nes: Some(Nes::from_rom(rom).expect("nestest loads")),
+            ..RustyNesLibretro::default()
+        };
+        core.set_port_device(1, RETRO_DEVICE_LIGHTGUN);
+        // What the first light-gun frame does.
+        core.nes.as_mut().unwrap().set_zapper(1, 10, 10, false);
+        assert!(matches!(
+            core.nes.as_ref().unwrap().expansion_device(1),
+            Some(rustynes_core::InputDevice::Zapper(_))
+        ));
+        core.set_port_device(1, RETRO_DEVICE_JOYPAD);
+        assert!(
+            core.nes.as_ref().unwrap().expansion_device(1).is_none(),
+            "the Zapper must come off the bus when the port becomes a pad"
+        );
+        // Port 0 is untouched by a port-1 change, and ports past the
+        // console's two are recorded without touching the bus.
+        core.set_port_device(3, RETRO_DEVICE_JOYPAD);
+        assert_eq!(core.port_devices[3], RETRO_DEVICE_JOYPAD);
+    }
+
+    #[test]
+    fn the_four_score_is_plugged_in_exactly_while_the_option_is_on() {
+        use rustynes_core::Buttons;
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut nes = Nes::from_rom(rom).expect("nestest loads");
+        apply_pads(
+            &mut nes,
+            [Buttons::A, Buttons::B],
+            Some((Buttons::START, Buttons::UP)),
+        );
+        assert!(nes.four_score(), "players 3-4 need the adapter");
+        assert_eq!(nes.buttons(2), Buttons::START);
+        assert_eq!(nes.buttons(3), Buttons::UP);
+        apply_pads(&mut nes, [Buttons::A, Buttons::B], None);
+        assert!(!nes.four_score(), "turning the option off unplugs it");
+        assert_eq!(nes.buttons(0), Buttons::A);
+    }
+
+    #[test]
+    fn expansion_audio_is_not_clipped() {
+        // The Namco 163 peak measured on `db_n163` (v2.8.1), and the 2A03's
+        // own most negative sample. Neither may reach an `i16` rail; the old
+        // `* 65535` scale sent the first to `i16::MAX`.
+        for peak in [0.8699_f32, -0.8697, -0.3853] {
+            let s = sample_to_i16(peak);
+            assert!(s != i16::MAX && s != i16::MIN, "{peak} clipped to {s}");
+        }
+        // Full scale is 1.0, as on the desktop frontend.
+        assert_eq!(sample_to_i16(1.0), i16::MAX);
+        assert_eq!(sample_to_i16(-1.0), -i16::MAX);
+        assert_eq!(sample_to_i16(0.0), 0);
+        // Saturation, not wraparound, past full scale; NaN is silence.
+        assert_eq!(sample_to_i16(4.0), i16::MAX);
+        assert_eq!(sample_to_i16(-4.0), i16::MIN);
+        assert_eq!(sample_to_i16(f32::NAN), 0);
+    }
+
+    #[test]
+    fn unif_is_an_advertised_extension() {
+        // libretro audit §3.4 (L-3.4b). The core loads UNIF (`rustynes-mappers`
+        // `parse` recognises the `UNIF` magic), but RetroArch filters its file
+        // browser by `valid_extensions`, so `.unf` / `.unif` images were hidden.
+        let info = RustyNesLibretro::default().get_info();
+        let exts = info.valid_extensions.to_str().expect("ASCII");
+        let exts: Vec<&str> = exts.split('|').collect();
+        for ext in ["nes", "fds", "unf", "unif"] {
+            assert!(exts.contains(&ext), "{ext} missing from {exts:?}");
+        }
+    }
 
     /// A standard `retro_game_info` with only `path` set.
     fn game_at(path: &CStr) -> retro_game_info {

@@ -22,7 +22,7 @@
 
 use super::*;
 use std::os::raw::{c_uint, c_void};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU32, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, Once};
 
 /// The CC0 nestest image: a plain NROM cartridge with 2 KiB of WRAM mapped.
@@ -43,6 +43,23 @@ static LAST_MAP_LEN: AtomicI64 = AtomicI64::new(-1);
 static TRIGGER: AtomicBool = AtomicBool::new(false);
 /// Every line the core wrote through the fake frontend's log interface.
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// `input_poll` calls since the counter was last cleared.
+static POLLS: AtomicU32 = AtomicU32::new(0);
+/// `input_state` calls for `RETRO_DEVICE_JOYPAD` since last cleared.
+static JOYPAD_READS: AtomicU32 = AtomicU32::new(0);
+/// The port of every descriptor in the most recent `SET_INPUT_DESCRIPTORS`.
+static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+/// Keys the core declared with `SET_VARIABLES`.
+static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The value the fake frontend reports for `rustynes_four_score`.
+static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
+/// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
+static VARS_CHANGED: AtomicBool = AtomicBool::new(false);
+
+/// Lock a harness `Mutex`, ignoring poison: every test resets what it reads.
+fn held<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// The fake frontend's `retro_log_printf_t`.
 ///
@@ -99,6 +116,62 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             }
             true
         }
+        // A current frontend: joypads can be read as one bitmask.
+        RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => true,
+        RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS => {
+            let mut ports = Vec::new();
+            let mut d = data.cast::<retro_input_descriptor>().cast_const();
+            // SAFETY: the core passes an array terminated by an entry whose
+            // `description` is null, valid for the duration of the call.
+            unsafe {
+                while !d.is_null() && !(*d).description.is_null() {
+                    ports.push((*d).port);
+                    d = d.add(1);
+                }
+            }
+            *held(&DESCRIBED_PORTS) = ports;
+            true
+        }
+        RETRO_ENVIRONMENT_SET_VARIABLES => {
+            let mut keys = Vec::new();
+            let mut v = data.cast::<retro_variable>().cast_const();
+            // SAFETY: an array terminated by a null `key`, valid for the call.
+            unsafe {
+                while !v.is_null() && !(*v).key.is_null() {
+                    keys.push(CStr::from_ptr((*v).key).to_string_lossy().into_owned());
+                    v = v.add(1);
+                }
+            }
+            *held(&DECLARED_VARS) = keys;
+            true
+        }
+        RETRO_ENVIRONMENT_GET_VARIABLE => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut retro_variable` whose `key` is a
+            // NUL-terminated string; `value` is set to a `'static` literal.
+            unsafe {
+                let var = &mut *data.cast::<retro_variable>();
+                if var.key.is_null() || CStr::from_ptr(var.key) != c"rustynes_four_score" {
+                    return false;
+                }
+                var.value = if FOUR_SCORE_ON.load(SeqCst) {
+                    c"enabled".as_ptr()
+                } else {
+                    c"disabled".as_ptr()
+                };
+            }
+            true
+        }
+        RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut bool`.
+            unsafe { *data.cast::<bool>() = VARS_CHANGED.swap(false, SeqCst) };
+            true
+        }
         RETRO_ENVIRONMENT_SET_MEMORY_MAPS => {
             if data.is_null() {
                 return false;
@@ -120,8 +193,13 @@ unsafe extern "C" fn audio_batch(_: *const i16, frames: usize) -> usize {
     frames
 }
 unsafe extern "C" fn audio_sample(_: i16, _: i16) {}
-unsafe extern "C" fn input_poll() {}
+unsafe extern "C" fn input_poll() {
+    POLLS.fetch_add(1, SeqCst);
+}
 unsafe extern "C" fn input_state(_port: c_uint, device: c_uint, _: c_uint, id: c_uint) -> i16 {
+    if device == RETRO_DEVICE_JOYPAD {
+        JOYPAD_READS.fetch_add(1, SeqCst);
+    }
     i16::from(
         device == RETRO_DEVICE_LIGHTGUN
             && id == RETRO_DEVICE_ID_LIGHTGUN_TRIGGER
@@ -325,6 +403,124 @@ fn messages_reach_the_frontends_log_interface() {
         logged.iter().any(|line| line.starts_with("Loading ")),
         "the load message must reach the frontend's log, got {logged:?}"
     );
+}
+
+/// libretro audit §2.5 (L-2.5). `rust-libretro`'s `retro_run` polls input
+/// before calling `on_run`, and the core polled again; and it read each joypad
+/// with 16 `input_state` calls where one bitmask read does. One frame of a
+/// two-pad console must cost exactly one poll and two joypad reads.
+#[test]
+fn input_is_polled_once_and_read_as_one_bitmask_per_pad() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    POLLS.store(0, SeqCst);
+    JOYPAD_READS.store(0, SeqCst);
+    run_frame();
+    assert_eq!(POLLS.load(SeqCst), 1, "input polled more than once a frame");
+    assert_eq!(
+        JOYPAD_READS.load(SeqCst),
+        2,
+        "one bitmask read per pad on a frontend that supports bitmasks"
+    );
+    unload();
+}
+
+/// Executive-summary claim (L-S1). Only port 0 had input descriptors, so
+/// RetroArch's remap menu had no button names for player 2, for a Vs.
+/// cabinet's second console, or for Four Score players 3 and 4.
+#[test]
+fn every_port_has_input_descriptors() {
+    let _frontend = frontend();
+    let ports = held(&DESCRIBED_PORTS).clone();
+    // Exactly 32: the list must END at a null description. With the
+    // `input_descriptors!` macro's `""` terminator (non-null) a frontend, and
+    // this loop, ran past the array; a count above 32 is that overrun.
+    assert_eq!(
+        ports.len(),
+        32,
+        "4 ports x 8 buttons, then a null terminator"
+    );
+    for port in 0..4 {
+        assert_eq!(
+            ports.iter().filter(|&&p| p == port).count(),
+            8,
+            "port {port} should describe all 8 NES buttons: {ports:?}"
+        );
+    }
+}
+
+/// Executive-summary claim (L-S1). The core models the Four Score adapter
+/// (`Nes::set_four_score`), but nothing in the libretro core could enable it,
+/// so four-player games were two-player in RetroArch. A core option turns it
+/// on, and then players 3 and 4 are read every frame.
+#[test]
+fn the_four_score_option_reads_players_three_and_four() {
+    let _frontend = frontend();
+    assert!(
+        held(&DECLARED_VARS)
+            .iter()
+            .any(|k| k == "rustynes_four_score"),
+        "the core must declare the Four Score option"
+    );
+    FOUR_SCORE_ON.store(true, SeqCst);
+    VARS_CHANGED.store(true, SeqCst);
+    assert!(load(NESTEST, true));
+    JOYPAD_READS.store(0, SeqCst);
+    run_frame();
+    let with_four_score = JOYPAD_READS.load(SeqCst);
+    FOUR_SCORE_ON.store(false, SeqCst);
+    VARS_CHANGED.store(true, SeqCst);
+    JOYPAD_READS.store(0, SeqCst);
+    run_frame();
+    let without = JOYPAD_READS.load(SeqCst);
+    unload();
+    assert_eq!(with_four_score, 4, "Four Score on: all four pads are read");
+    assert_eq!(without, 2, "Four Score off again: two pads, as before");
+}
+
+/// A UNIF image of the committed CC0 nestest cartridge, built here rather than
+/// read from a fixture.
+///
+/// v2.8.1's first version of the UNIF test included a `.unif` from
+/// `tests/roms/nes-test-roms/`, which is gitignored: it existed on the machine
+/// that wrote the test and nowhere else, so CI could not compile it (Copilot,
+/// #557). Building the image from nestest needs no third-party file. Layout per
+/// `rustynes_mappers::unif`: the 32-byte header (`UNIF`, revision, zeros),
+/// then `MAPR` (the board name, NUL-terminated), `PRG0`, `CHR0` and `MIRR`.
+fn nestest_as_unif() -> &'static [u8] {
+    const PRG: usize = 16 * 1024;
+    const CHR: usize = 8 * 1024;
+    let prg = &NESTEST[16..16 + PRG];
+    let chr = &NESTEST[16 + PRG..16 + PRG + CHR];
+    let mut unif = Vec::new();
+    unif.extend_from_slice(b"UNIF");
+    unif.extend_from_slice(&7u32.to_le_bytes());
+    unif.extend_from_slice(&[0; 24]);
+    for (id, data) in [
+        (b"MAPR", &b"NES-NROM-128\0"[..]),
+        (b"PRG0", prg),
+        (b"CHR0", chr),
+        (b"MIRR", &[NESTEST[6] & 1][..]),
+    ] {
+        unif.extend_from_slice(id);
+        unif.extend_from_slice(&u32::try_from(data.len()).expect("small").to_le_bytes());
+        unif.extend_from_slice(data);
+    }
+    // Leaked once per test run: `load` hands the frontend a `'static` buffer.
+    Box::leak(unif.into_boxed_slice())
+}
+
+/// libretro audit §3.4 (L-3.4b). The core declares `unf|unif` from v2.8.1;
+/// this pins that it also LOADS one through the C ABI, so it does not declare
+/// a format its load path refuses.
+#[test]
+fn a_unif_image_loads_through_the_c_abi() {
+    let unif = nestest_as_unif();
+    let _frontend = frontend();
+    assert!(unif.starts_with(b"UNIF"), "the image is a UNIF container");
+    assert!(load(unif, false), "a UNIF image must load");
+    run_frame();
+    unload();
 }
 
 /// libretro audit §2.1 and §2.2 (L-2.1, L-2.2). `retro_serialize_size` is read

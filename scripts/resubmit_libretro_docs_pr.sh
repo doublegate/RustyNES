@@ -24,7 +24,7 @@ echo "Opening new Pull Request against libretro/docs..."
 gh pr create \
     --repo libretro/docs \
     --head "${USER_LOGIN}:feat/add-rustynes-core-v2" \
-    --base master
+    --base master \
     --title "docs: Add RustyNES core documentation page" \
     --body "This PR adds the standard documentation page for the new RustyNES core and hooks it into the \`mkdocs.yml\` navigation tree under the Nintendo Entertainment System section.
 

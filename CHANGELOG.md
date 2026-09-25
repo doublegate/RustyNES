@@ -26,6 +26,48 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-09-25 - "Gasket" (the libretro core fits the frontends around it)
+
+The second release of the v2.8.x line, and the last of its libretro work:
+every row of the libretro audit ledger now has a verdict and evidence.
+Emulation does not change (AccuracyCoin 144/144, nestest, every golden); the
+libretro core's audio is about 6 dB quieter, on purpose.
+
+### The libretro core's build, input and metadata
+
+- **The libretro `Makefile` does what its callers ask.** `make PREFIX=/usr/local`
+  no longer breaks the copy (the file prefix is now `LIB_PREFIX`),
+  `platform=win` builds the Windows target instead of the host's, `DEBUG=1`
+  builds and copies the debug core, and the copy follows `CARGO_TARGET_DIR`.
+  Each was reproduced with `make -n` first and is pinned by a test.
+- **The core declares UNIF.** It always loaded `.unf` / `.unif`, but its
+  `retro_get_system_info` and its `.info` said only `nes|fds`. The copy of the
+  `.info` RetroArch downloads lives in libretro-super and still says `nes|fds`
+  until the upstream sync at v3.0.0 (maintainer decision, 2026-09-22).
+- **`scripts/resubmit_libretro_docs_pr.sh` passes its title and body to `gh`.**
+  A missing line continuation had split the command in two.
+- **Four-player games work in RetroArch.** A new core option,
+  `rustynes_four_score`, plugs in the Four Score adapter and reads players 3
+  and 4; the core modelled the adapter but nothing could turn it on.
+- **Switching a port from the Zapper back to a controller works.** The gun
+  stayed on the bus, so the controller on that port did nothing.
+- **Every port has button names, and the list ends where RetroArch expects.**
+  Only player 1 was described, and the list ended with an empty string instead
+  of the null libretro specifies, so RetroArch read past its end.
+- **Input is read once per frame, one call per pad.** The core polled a second
+  time and read each pad with sixteen calls where one bitmask read does.
+- **Expansion audio no longer clips in the libretro core.** It mapped `0.5` to
+  full scale, and Namco 163 audio reaches about `0.87`, so it hard-clipped
+  where the desktop plays it clean. Full scale is now `1.0`, as on the
+  desktop, which makes the libretro core about 6 dB quieter.
+- **The audit's three performance proposals were measured and rejected**: the
+  serialize allocation it described does not happen (the allocator reuses the
+  block), and neither a one-pass blit nor a vectorised audio loop is faster.
+  The numbers are in `docs/performance.md`.
+- **`docs/libretro/` describes the core as it is.** The architecture and
+  implementation pages still described the retired dot-lockstep scheduler, the
+  old audio math and port-1-only input; both are rewritten against the code.
+
 ## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
 
 The first release of the v2.8.x line: the libretro audit's findings about the

@@ -1,11 +1,11 @@
 # Software Information
 display_name = "Nintendo - NES / Famicom (RustyNES)"
 authors = "DoubleGate"
-supported_extensions = "nes|fds"
+supported_extensions = "nes|fds|unf|unif"
 corename = "RustyNES"
 license = "GPLv3+"
 permissions = ""
-display_version = "v2.8.0"
+display_version = "v2.8.1"
 categories = "Emulator"
 
 # Hardware Information

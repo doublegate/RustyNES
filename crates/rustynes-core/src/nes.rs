@@ -1369,9 +1369,15 @@ impl Nes {
         }
     }
 
-    /// Drain accumulated audio samples (host sample rate, normalized
-    /// `[0.0, ~1.0]`).  Call once per frame from the frontend's audio thread
-    /// or batch driver.
+    /// Drain accumulated audio samples at the host sample rate. Call once per
+    /// frame from the frontend's audio thread or batch driver.
+    ///
+    /// The samples are **bipolar and DC-blocked**, not the mixer's raw
+    /// `[0.0, ~1.0]`: measured over 900 frames (v2.8.1), the 2A03 alone spans
+    /// about `-0.385..0.223` with a zero mean, and expansion audio reaches
+    /// further (a Namco 163 channel, `+/-0.870`). Nothing measured passes
+    /// `+/-1.0`, so a frontend converting to `i16` should put full scale at
+    /// `1.0`. This comment said `[0.0, ~1.0]` until v2.8.1.
     pub fn drain_audio(&mut self) -> Vec<f32> {
         self.bus.drain_audio()
     }

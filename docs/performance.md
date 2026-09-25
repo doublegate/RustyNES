@@ -985,6 +985,61 @@ borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
 
+### v2.8.1 — the libretro audit's three performance proposals (decision: all REJECTED; one premise refuted)
+
+The libretro audit (§2.3, §2.6, §2.7) proposed three changes to the core's
+per-frame and per-serialize work. Each was measured alone against the same
+baseline, with the output hashed to prove it byte-identical before any
+number was read.
+
+**The probe.** A temporary `#[ignore]` test in the C-ABI harness
+(`crates/rustynes-libretro/src/abi_tests.rs`, removed after measuring) loads
+`nestest.nes` and drives 3,000 frames through the exported `retro_*`
+functions, optionally serializing after each. The fake frontend FNV-hashes
+every video frame and audio batch it is handed. Release build with
+`CARGO_PROFILE_RELEASE_PANIC=unwind`, as the core ships. `perf stat -e
+instructions:u` is load-insensitive and repeats to within a few hundred
+instructions in 126.8 G; `cycles:u` was taken as interleaved A/B pairs
+because instruction counts hide `memcpy` (a `rep movsb` is one instruction),
+which is exactly what two of the proposals touch. Load average 3 to 10 during
+the runs, from other sessions.
+
+**§2.3, the serialize allocation — premise REFUTED, ceiling bounded.** The
+audit said the ~250 KB PPU snapshot buffer allocated per `retro_serialize`
+caused "119 MB/sec" of allocator churn and mmap traffic. Measured: 3,000
+serializes add **185 page faults** in total (611 → 796), because glibc raises
+its mmap threshold after the first large free and reuses the block, and
+**~6,600 user instructions per call**. The real cost is copying: timed alone,
+a hot-cache serialize takes **~19 µs** (19,146 / 18,947 / 19,619 ns over three
+runs of 20,000 calls). That is ~0.5% of a 3.95 ms frame for one-frame
+run-ahead **even if serialize cost nothing**, and removing the redundant copy
+would recover only part of it at the price of changing the save-state writer
+in the core crates. Not pursued.
+
+**§2.6, the two-pass blit — REJECTED, two candidates.** The current path is
+`extend_from_slice` (a `memcpy`) then an in-place R/B swap. Both candidates
+were byte-identical (frame hash `5b40a334fa3cbcd9` on every run):
+
+| Candidate | `instructions:u` | `cycles:u`, interleaved with the base |
+| --- | --- | --- |
+| base | 126,806,379,594 | 59.56 / 59.59 / 59.58 / 59.68 G |
+| one pass, mask-and-shift per `u32` | 126,644,978,850 (-0.127%) | 61.13 / 60.49 / 60.14 / 60.10 G (**+1.0% to +2.6%**) |
+| one pass, `swap_bytes().rotate_right(8)` | 126,086,259,413 (-0.57%) | +0.36% / +1.09% / -0.29% (mixed sign) |
+
+Fewer instructions, more or unchanged cycles: the `memcpy` plus a
+vectorised swap is already faster than a per-pixel loop that must also read.
+The `compose_dual` zero-fill was left too: the probe cannot reach the Vs.
+`DualSystem` path without a commercial dump, and nothing is adopted unmeasured.
+
+**§2.7, the scalar audio `push` — REJECTED.** `extend` over a `flat_map`
+instead of two `push`es per sample: byte-identical (audio hash
+`0d86ff7dfb0f17d1`), -35 M instructions (-0.028%), and cycles
+-0.04% / +0.35% / +0.29% / +1.14% across four interleaved pairs. No gain.
+
+**What v2.8.1 did change in this path** is correctness, not speed: the audio
+scale (`sample_to_i16`, full scale at `1.0` instead of `0.5`, because expansion
+audio clipped), which costs nothing measurable.
+
 ### v2.8.0 — the libretro core built with `panic = "unwind"` (decision: ADOPTED; the cost is ~0.1% of instructions)
 
 The libretro core must unwind for its panic containment to exist (libretro

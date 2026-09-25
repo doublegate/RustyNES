@@ -20,6 +20,25 @@ endif
 # `libretro-cross` gate. The desktop and wasm builds keep aborting.
 export CARGO_PROFILE_RELEASE_PANIC ?= unwind
 
+# `win` is what the auto-detection above assigns on MinGW, and what callers
+# commonly pass; the target table below is keyed on `windows`. Fold the two
+# so `platform=win` builds the Windows target instead of the host's (libretro
+# audit §3.1, v2.8.1).
+# `override` is required: a command-line `platform=win` outranks any plain
+# assignment in this file, so without it the fold is silently ignored.
+ifeq ($(platform),win)
+	override platform := windows
+endif
+
+# `make DEBUG=1` builds and copies the unoptimised core.
+ifeq ($(DEBUG),1)
+	PROFILE_DIR := debug
+	PROFILE_FLAG :=
+else
+	PROFILE_DIR := release
+	PROFILE_FLAG := --release
+endif
+
 # Map Libretro platforms to Rust target triples
 RUST_TARGET :=
 CARGO_CMD := cargo build -p rustynes-libretro
@@ -77,48 +96,55 @@ ifneq ($(RUST_TARGET),)
 endif
 endif
 
-# Target directory is relative to the workspace root
-TARGET_DIR := ../../target
+# Cargo's output directory: `CARGO_TARGET_DIR` when the caller sets it (a
+# container build, a shared cache), else the workspace `target/`. A relative
+# `CARGO_TARGET_DIR` resolves against this directory for Cargo and for the
+# copy alike, because both run here.
+TARGET_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),../../target)
 ifneq ($(RUST_TARGET),)
 	OUT_DIR := $(TARGET_DIR)/$(RUST_TARGET)
 else
 	OUT_DIR := $(TARGET_DIR)
 endif
 
-# Native extension routing
+# Native extension routing. `LIB_PREFIX` is the library FILE prefix (`lib`,
+# or nothing for a DLL, which Cargo names without one). It was called `PREFIX`
+# until v2.8.1, which a packager's `make PREFIX=/usr/local` silently overrode,
+# turning the copy into `target/release//usr/localrustynes.so`.
 ifeq ($(platform),osx)
     EXT := dylib
-    PREFIX := lib
+    LIB_PREFIX := lib
 else ifeq ($(platform),ios)
     EXT := a
-    PREFIX := lib
+    LIB_PREFIX := lib
 else ifeq ($(platform),tvos)
     EXT := a
-    PREFIX := lib
+    LIB_PREFIX := lib
 else ifeq ($(platform),libnx)
     EXT := a
-    PREFIX := lib
-else ifeq ($(platform),win)
-    EXT := dll
-    PREFIX :=
+    LIB_PREFIX := lib
 else ifeq ($(platform),windows)
     EXT := dll
-    PREFIX :=
+    LIB_PREFIX :=
 else
     EXT := so
-    PREFIX := lib
+    LIB_PREFIX := lib
 endif
 
-all: release
+# `all` follows `DEBUG`; `build` and `release` stay available by name.
+all:
+	$(CARGO_CMD) $(PROFILE_FLAG)
+	cp $(OUT_DIR)/$(PROFILE_DIR)/$(LIB_PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
+	@echo "Copied $(PROFILE_DIR) core to rustynes_libretro.$(EXT)"
 
 build:
 	$(CARGO_CMD)
-	cp $(OUT_DIR)/debug/$(PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
+	cp $(OUT_DIR)/debug/$(LIB_PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
 	@echo "Copied debug core to rustynes_libretro.$(EXT)"
 
 release:
 	$(CARGO_CMD) --release
-	cp $(OUT_DIR)/release/$(PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
+	cp $(OUT_DIR)/release/$(LIB_PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
 	@echo "Copied release core to rustynes_libretro.$(EXT)"
 
 clean:
