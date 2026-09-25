@@ -12,6 +12,14 @@ ifeq ($(platform),)
 	endif
 endif
 
+# v2.8.0 (libretro audit L-1.1): the core UNWINDS on panic. The workspace
+# `[profile.release]` aborts, which makes every `catch_unwind` in the core dead
+# code: a panic anywhere would end the frontend (RetroArch) with no save. Cargo
+# cannot set `panic` per package, so the override is the profile environment
+# variable, set here, in `.gitlab-ci.yml`'s `.core-defs`, and in the GitHub
+# `libretro-cross` gate. The desktop and wasm builds keep aborting.
+export CARGO_PROFILE_RELEASE_PANIC ?= unwind
+
 # Map Libretro platforms to Rust target triples
 RUST_TARGET :=
 CARGO_CMD := cargo build -p rustynes-libretro

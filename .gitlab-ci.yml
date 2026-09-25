@@ -64,6 +64,12 @@
 .core-defs:
   variables:
     CORENAME: rustynes
+    # v2.8.0 (libretro audit L-1.1): build the core with `panic = "unwind"`.
+    # `[profile.release]` aborts, which turns the core's `catch_unwind` guards
+    # into dead code, so a panic would take RetroArch down with it. Cargo has no
+    # per-package `panic`, hence the profile environment variable; every job
+    # here extends `.core-defs`, and GitLab merges `variables` across `extends`.
+    CARGO_PROFILE_RELEASE_PANIC: "unwind"
 
 # Shared `before_script` for the jobs whose upstream template defines none
 # (Windows, Linux, and all four Android). See the post-mortem above.
