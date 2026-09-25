@@ -55,6 +55,9 @@ cycle-accurate core later replaced.
   serialize allocation it described does not happen (the allocator reuses the
   block), and neither a one-pass blit nor a vectorised audio loop is faster.
   The numbers are in `docs/performance.md`.
+- **`docs/libretro/` describes the core as it is.** The architecture and
+  implementation pages still described the retired dot-lockstep scheduler, the
+  old audio math and port-1-only input; both are rewritten against the code.
 
 ## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
 

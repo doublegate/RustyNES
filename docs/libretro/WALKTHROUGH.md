@@ -1,5 +1,12 @@
 # RustyNES Libretro Core - Implementation Walkthrough
 
+> **Historical record** of the core's first implementation, kept as written.
+> It is not the current specification: several details have since changed
+> (the standard `retro_game_info` load path, v2.8.0; four-port input, the
+> audio scale and the `Makefile`, v2.8.1). For current behaviour read
+> [`architecture.md`](architecture.md) and
+> [`implementation_specifics.md`](implementation_specifics.md).
+
 The `rustynes-libretro` crate has been fully implemented, providing a cycle-accurate NES emulation core for the RetroArch ecosystem.
 
 ## Accomplishments

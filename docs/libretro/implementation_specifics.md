@@ -1,73 +1,79 @@
 # RustyNES Libretro Core Implementation Specifics
 
-This document defines the strict, code-level integration parameters governing geometry negotiation, execution loops, and IO translation between the Libretro C ABI and `rustynes-core`.
+The code-level contract between the libretro C ABI and `rustynes-core`, as
+implemented in `crates/rustynes-libretro/src/lib.rs`. Where a claim here has a
+test, the test is named; the tests are the spec.
 
-## System Initialization and Environment Negotiation
+## System Information (`retro_get_system_info`)
 
-Before execution, RetroArch extracts core metadata via `retro_get_system_info`.
+* **Library name and version:** `"RustyNES"` + `env!("CARGO_PKG_VERSION")`.
+* **Extensions:** `nes|fds|unf|unif` — iNES / NES 2.0, Famicom Disk System,
+  and UNIF (converted to NES 2.0 by `rustynes-mappers`). Must equal the
+  `.info`'s `supported_extensions` (`libretro_info_audit`).
+* **`need_fullpath = false`:** the frontend normally loads the game and passes
+  its bytes.
 
-* **Library Name & Version:** `"RustyNES"` + `env!("CARGO_PKG_VERSION")`.
-* **VFS Offload:** `need_fullpath = false` ensures RetroArch reads the ROM into a RAM buffer (`*const c_void`), passing it directly to `rustynes-libretro`, completely bypassing the need for `std::fs` operations on the core side.
+## Environment Negotiation (`on_set_environment`)
 
-### Environment Handshakes (`on_set_environment`)
-
-The core must configure specific frontend states during initialization:
-
-* **Format Negotiated:** XRGB8888 (32-bit).
-* **Format Emitted:** The `rustynes-core` native PPU rendering produces RGBA8. To satisfy the Libretro XRGB8888 standard, the `rustynes-libretro` bridge explicitly swizzles the red and blue channels (`chunk.swap(0, 2)`) on a per-pixel basis during the framebuffer copy before dispatching to `retro_video_refresh_t`.
-* **Framebuffer Size:** Strictly 256x240 pixels. No dynamic overscan cropping is exposed at the libretro API boundary, ensuring uniform frame cadence.
-* **Input Descriptors:** `RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS` maps underlying Libretro `JOYPAD` constants to human-readable strings (e.g., "NES A Button") to populate the RetroArch control remapping menu.
+* **Log interface:** `GET_LOG_INTERFACE`. Every message goes to the frontend's
+  log (format fixed at `"%s"`), or to stderr when it has none.
+* **Pixel format:** XRGB8888.
+* **Input descriptors:** all eight buttons on all four ports, from a `'static`
+  table terminated by a **null** description, as libretro.h specifies
+  (`every_port_has_input_descriptors`). `rust-libretro`'s `input_descriptors!`
+  macro terminates with `""` instead, which RetroArch reads past; it is not
+  used.
+* **Controller info:** ports 1-2 offer the NES controller or the Zapper;
+  ports 3-4 the controller only (Four Score players, or a Vs. cabinet's second
+  console).
+* **Core option:** `rustynes_four_score` (`disabled|enabled`), declared with
+  `SET_VARIABLES` and read in `on_options_changed`.
+* **Disk control:** registered, for FDS side swapping.
 
 ## Game Loading (`retro_load_game`)
 
-The core receives `data: &[u8]` from the frontend.
+1. `GET_GAME_INFO_EXT` first, when the frontend answers with data: it carries
+   the original extension even for an in-memory load.
+2. Otherwise the standard `retro_game_info`: its `data`, or the file at its
+   `path`. An EXT answer with no data falls through to this.
+3. A Famicom Disk System image is recognised by a `.fds` extension **or** its
+   signature (`FDS\x1A`, or a raw side's `\x01*NINTENDO-HVC*`) and loaded with
+   `disksys.rom` from the system directory; everything else goes to
+   `Emu::from_rom`.
+4. A parse error returns `false` to the frontend.
 
-* Call `rustynes_core::Nes::from_rom(data)`.
-* If a `RomError` is encountered (e.g., invalid iNES header), the FFI wrapper must catch it and return `false` to the frontend, preventing a hard crash.
+## The Frame (`retro_run`)
 
-## Synchronous Execution Loop (`on_run`)
+### Input
 
-The `retro_run` hook fires exactly once per video frame. All operations inside this loop must be zero-allocation (no `String` creation, no dynamic `Vec` allocations) to prevent GC pauses or heap fragmentation micro-stutters.
+`rust-libretro` polls the frontend before `on_run`; the core does not poll
+again. Each pad is one `input_state` call (`RETRO_DEVICE_ID_JOYPAD_MASK`),
+falling back to per-button reads on a frontend without bitmasks
+(`input_is_polled_once_and_read_as_one_bitmask_per_pad`). Ports 1-2 are
+players 1-2; with the Four Score option, ports 3-4 are players 3-4. A port set
+to `RETRO_DEVICE_LIGHTGUN` drives the Zapper, and switching it back to a
+controller unplugs the Zapper.
 
-### Input Polling and Bitmasking
+### Video
 
-1. Invoke `retro_input_poll()` to flush host hardware USB/Bluetooth queues.
-2. Query `retro_input_state()` for Port 1 and Port 2.
-3. Map the booleans into `rustynes_core::Buttons`:
+`run_frame()`, then the RGBA8 framebuffer is copied and its R and B bytes
+swapped to XRGB8888 (`memcpy` + an in-place swap; two one-pass rewrites were
+measured slower or no faster, `docs/performance.md` §v2.8.1). 256x240, pitch
+1024 bytes; a Vs. `DualSystem` cabinet presents 512x240, pitch 2048.
 
-   ```rust
-   let mut btns = rustynes_core::Buttons::empty();
-   if ctx.get_joypad_bit(0, JoypadButton::A) { btns.insert(Buttons::A); }
-   if ctx.get_joypad_bit(0, JoypadButton::B) { btns.insert(Buttons::B); }
-   // ... map Select, Start, Up, Down, Left, Right ...
-   nes.set_controller_state(0, btns); // Adjust per actual Nes API for Joypads
-   ```
+### Audio
 
-### Video Rendering & Geometry
+Mono `f32` samples are drained per frame, converted by `sample_to_i16` with
+**full scale at `1.0`**, duplicated to stereo, and sent in one
+`audio_sample_batch` call. The samples are bipolar and DC-blocked; the 2A03
+spans about `-0.385..0.223` and expansion audio reaches further (Namco 163,
+`+/-0.870`), so `1.0` is the scale at which nothing clips
+(`expansion_audio_is_not_clipped`). The frontend's dynamic rate control
+resamples. While RetroArch fast-forwards, the conversion is skipped.
 
-Invoke `nes.run_frame()`, which yields an `&[u8]`.
+## Save States (`retro_serialize` / `retro_unserialize`)
 
-* **Geometry Calculation:** Standard NTSC NES output is `width: 256`, `height: 240`.
-* **Pitch Alignment:** Libretro defines pitch as the exact byte-width of one scanline. For 32-bit `XRGB8888`, pitch is `256 * 4 = 1024` bytes.
-* **Callback Dispatch:** Pass the buffer pointer, width, height, and pitch directly to `retro_video_refresh_callback`.
-* **Frame Duplication Optimization:** During fast-forward sequences where the emulator state may not visually change, passing a `NULL` pointer instructs RetroArch to duplicate the previous frame, saving massive host GPU bandwidth.
-
-### Audio Synchronization & Batching
-
-RustyNES outputs `f32` audio samples normalized to `[0.0, ~1.0]` (or `[-1.0, 1.0]`).
-Libretro requires interleaved stereo `i16` delivered in a single batch (avoiding mutex starvation associated with single-sample callbacks).
-
-1. `let f32_samples = nes.drain_audio();`
-2. Clear the persistent `self.audio_buffer` (capacity pre-allocated to ~2000 i16s).
-3. **Conversion Math:**
-   For a normalized `[0.0, 1.0]` float, map it to `[-32768, 32767]`:
-
-   ```rust
-   for &sample in &f32_samples {
-       let scaled = (sample * 65535.0 - 32768.0).clamp(-32768.0, 32767.0) as i16;
-       self.audio_buffer.push(scaled); // Left channel (mono duplicate)
-       self.audio_buffer.push(scaled); // Right channel (mono duplicate)
-   }
-   ```
-
-4. Dispatch the slice via `retro_set_audio_sample_batch`. The frontend's dynamic resampler handles fractional timing slips automatically.
+`retro_serialize_size` is the loaded state's size plus room for the largest
+expansion device on both ports, because RetroArch reads it once and a Zapper
+plugged in later grows the state. The unused tail is zero-filled, and the
+save-state reader treats an all-zero tail as padding.
