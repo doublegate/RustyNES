@@ -11,11 +11,17 @@
 //! has bit 7 set resets the shift register and ORs the control register
 //! with `$0C` (forcing PRG mode 3 = "fix last bank @ $C000").
 //!
-//! Consecutive-write bug: real hardware inhibits the register from accepting
-//! a second write on the CPU cycle immediately following an accepted write.
-//! Bill & Ted's Excellent Adventure relies on this. We track the cycle
-//! counter via [`Mapper::notify_cpu_cycle`] and drop writes that fall on the
-//! cycle right after another accepted write.
+//! Consecutive-write bug: on real hardware the serial port ignores the DATA
+//! bit of a write that lands on the CPU cycle immediately after another
+//! serial-port write, whether that earlier write was accepted or itself
+//! ignored (nesdev: it "ignores every write after the first"). A write with
+//! bit 7 set is never ignored: the reset takes effect on any cycle. A
+//! read-modify-write instruction's two back-to-back writes are the case that
+//! matters: Bill & Ted's Excellent Adventure relies on the second data write
+//! being dropped, and Shinsenden on a reset in that second write landing. We
+//! track the cycle counter via [`Mapper::notify_cpu_cycle`]. Until v2.8.2 the
+//! reset was filtered too (RTL audit R-3.5a, which found the `MiSTer` core right
+//! and this implementation wrong).
 //!
 //! The default revision when the cartridge header lacks an NES 2.0 submapper
 //! byte is **Sharp** (project policy: Star Trek: 25th Anniversary requires
