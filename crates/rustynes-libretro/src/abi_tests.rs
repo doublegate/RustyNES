@@ -41,6 +41,31 @@ static EXT_INFO: AtomicPtr<RetroGameInfoExt> = AtomicPtr::new(std::ptr::null_mut
 static LAST_MAP_LEN: AtomicI64 = AtomicI64::new(-1);
 /// Whether the fake light gun on every port reports its trigger held.
 static TRIGGER: AtomicBool = AtomicBool::new(false);
+/// Every line the core wrote through the fake frontend's log interface.
+static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The fake frontend's `retro_log_printf_t`.
+///
+/// libretro declares it variadic, and stable Rust cannot DEFINE a variadic
+/// function, so this is a fixed-arity stand-in for the one shape the core
+/// calls: `(level, "[RustyNES] %s\n", text)`. It is handed out only on x86_64,
+/// where both the System V and the Windows x64 conventions pass those three
+/// arguments in the same registers whether or not the callee is variadic; on
+/// other targets the fake frontend refuses the command instead.
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" fn log_printf(
+    _level: retro_log_level,
+    fmt: *const std::ffi::c_char,
+    text: *const std::ffi::c_char,
+) {
+    // SAFETY: the core passes two NUL-terminated strings valid for the call.
+    let (fmt, text) = unsafe { (CStr::from_ptr(fmt), CStr::from_ptr(text)) };
+    assert_eq!(fmt, c"[RustyNES] %s\n", "the format must stay a fixed %s");
+    LOGGED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(text.to_string_lossy().into_owned());
+}
 
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
@@ -52,6 +77,26 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // SAFETY: the core passes a `*mut *const RetroGameInfoExt` for this
             // command, and `info` is a leaked `Box` that is never freed.
             unsafe { *data.cast::<*const RetroGameInfoExt>() = info };
+            true
+        }
+        #[cfg(target_arch = "x86_64")]
+        RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut retro_log_callback`. The
+            // transmute gives the fixed-arity `log_printf` the variadic type
+            // libretro declares; see its doc for why that holds on x86_64.
+            unsafe {
+                (*data.cast::<retro_log_callback>()).log = Some(std::mem::transmute::<
+                    unsafe extern "C" fn(
+                        retro_log_level,
+                        *const std::ffi::c_char,
+                        *const std::ffi::c_char,
+                    ),
+                    unsafe extern "C" fn(retro_log_level, *const std::ffi::c_char, ...),
+                >(log_printf));
+            }
             true
         }
         RETRO_ENVIRONMENT_SET_MEMORY_MAPS => {
@@ -143,6 +188,47 @@ fn load(rom: &'static [u8], answer_ext: bool) -> bool {
     unsafe { rust_libretro::retro_load_game(&raw const game) }
 }
 
+/// The nestest image on disk, for loads that pass only a path.
+const NESTEST_PATH: &CStr = match CStr::from_bytes_with_nul(
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/roms/nestest/nestest.nes\0"
+    )
+    .as_bytes(),
+) {
+    Ok(path) => path,
+    Err(_) => panic!("the path literal carries its own NUL"),
+};
+
+/// Load as a frontend that answers `GET_GAME_INFO_EXT` with a path but no
+/// data, and passes the standard `retro_game_info` the same way.
+fn load_path_only(path: &'static CStr) -> bool {
+    let ext = Box::new(RetroGameInfoExt {
+        full_path: path.as_ptr(),
+        archive_path: std::ptr::null(),
+        archive_file: std::ptr::null(),
+        dir: std::ptr::null(),
+        name: std::ptr::null(),
+        ext: c"nes".as_ptr(),
+        meta_data: std::ptr::null(),
+        data: std::ptr::null(),
+        size: 0,
+        file_in_archive: false,
+        persistent_data: false,
+    });
+    // Leaked on purpose: the frontend owns this for the rest of the process.
+    EXT_INFO.store(Box::into_raw(ext), SeqCst);
+    SUPPORT_EXT.store(true, SeqCst);
+    let game = retro_game_info {
+        path: path.as_ptr(),
+        data: std::ptr::null(),
+        size: 0,
+        meta: std::ptr::null(),
+    };
+    // SAFETY: `game` and the path outlive the call.
+    unsafe { rust_libretro::retro_load_game(&raw const game) }
+}
+
 fn unload() {
     // SAFETY: a plain lifecycle call with no arguments.
     unsafe { rust_libretro::retro_unload_game() };
@@ -201,6 +287,44 @@ fn a_frontend_without_game_info_ext_still_loads_the_game() {
     );
     run_frame();
     unload();
+}
+
+/// Review on #556 (agy). A frontend that answers `GET_GAME_INFO_EXT` with a
+/// path and no data got an error, although the standard `retro_game_info`
+/// it also passes names a file the core can read. The unusable EXT answer is
+/// now treated as no answer.
+#[test]
+fn an_ext_answer_without_data_falls_back_to_the_game_path() {
+    let _frontend = frontend();
+    assert!(
+        load_path_only(NESTEST_PATH),
+        "an EXT answer with no data must fall through to retro_game_info::path"
+    );
+    run_frame();
+    unload();
+}
+
+/// Review on #556 (agy). Every message the core writes goes to the frontend's
+/// log interface when it offers one; before, all of them went to stderr,
+/// which `RetroArch` does not put in its own log.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn messages_reach_the_frontends_log_interface() {
+    let _frontend = frontend();
+    LOGGED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+    assert!(load(NESTEST, true));
+    unload();
+    let logged = LOGGED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        logged.iter().any(|line| line.starts_with("Loading ")),
+        "the load message must reach the frontend's log, got {logged:?}"
+    );
 }
 
 /// libretro audit §2.1 and §2.2 (L-2.1, L-2.2). `retro_serialize_size` is read
@@ -326,6 +450,11 @@ fn the_core_works_again_after_deinit_and_init() {
     // SAFETY: plain lifecycle calls, in the order a frontend makes them.
     unsafe {
         rust_libretro::retro_deinit();
+        // libretro.h: `retro_set_environment` comes before `retro_init`, and
+        // a frontend re-initialising a loaded library repeats it. It is also
+        // where the core re-fetches the log interface `retro_deinit` cleared,
+        // so leaving it out would make the log test depend on test order.
+        rust_libretro::retro_set_environment(Some(environment));
         rust_libretro::retro_init();
     }
     assert!(load(NESTEST, true));

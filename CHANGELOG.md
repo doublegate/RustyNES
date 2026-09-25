@@ -73,7 +73,9 @@ load.
   opaque byte, so nothing else reached the core. The binding is now vendored
   with that struct written by hand (`vendor/rust-libretro-sys`, MIT, credited
   in `NOTICE`), and a frontend that refuses the command loads through the
-  standard struct: its data, or the file at its path.
+  standard struct: its data, or the file at its path. A frontend that answers
+  the command with a path but no data now takes the same route instead of
+  getting an error.
 - **An internal error in the libretro core no longer closes RetroArch.** A
   panic anywhere in a frame crossed into RetroArch and aborted it, with no
   chance to write a battery save. The core is now built to unwind, and every
@@ -84,6 +86,10 @@ load.
   from the crate `Makefile`, the libretro buildbot and CI; a direct
   `cargo build --release` still aborts, so it now warns at build time and the
   core says so in RetroArch's log when a game loads.
+- **The libretro core writes to RetroArch's log.** Its messages (loads, parse
+  failures, rejected cheats, a contained panic, the abort warning) went to
+  stderr, which RetroArch does not put in its own log. They now go through
+  libretro's log interface, and to stderr only when a frontend offers none.
 - **A C-ABI test harness for the libretro core.** The core's tests now drive the
   exported `retro_*` functions as a frontend does, which is how the four fixes
   above were pinned red first.

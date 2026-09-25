@@ -273,6 +273,14 @@ pub struct RustyNesLibretro {
     /// [`Self::contained`].
     poisoned: bool,
 
+    /// The frontend's log function (`RETRO_ENVIRONMENT_GET_LOG_INTERFACE`),
+    /// fetched in `on_set_environment` and valid until `retro_deinit`. `None`
+    /// when the frontend offers none; [`Self::log`] then writes to stderr, as
+    /// libretro.h asks of a core without the interface. Before v2.8.0 every
+    /// message went to stderr, which a frontend such as `RetroArch` does not
+    /// put in its own log (agy, #556).
+    log_printf: retro_log_printf_t,
+
     /// Which libretro device the frontend has assigned to each of the four
     /// ports, as told to us by `retro_set_controller_port_device`.
     ///
@@ -307,6 +315,7 @@ impl Default for RustyNesLibretro {
             serialize_buffer: Vec::new(),
             memory_maps_registered: false,
             poisoned: false,
+            log_printf: None,
             // Every port starts as a joypad, which is what the frontend assumes
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
@@ -470,13 +479,39 @@ impl RustyNesLibretro {
         // refuses every emulation call until the game is unloaded.
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))).unwrap_or_else(|_| {
             self.poisoned = true;
-            eprintln!(
-                "[RustyNES] internal error in {what}; emulation stopped for this game. \
+            self.log(
+                retro_log_level::RETRO_LOG_ERROR,
+                &format!(
+                    "internal error in {what}; emulation stopped for this game. \
                      Its memory stays readable, so battery saves can still be written. \
                      Reload the game to continue."
+                ),
             );
             fallback
         })
+    }
+
+    /// Write one line to the frontend's log, or to stderr when it has none.
+    ///
+    /// The frontend's function is C `printf`: the format is fixed at `"%s"`,
+    /// so no byte of `msg` is read as a conversion specifier, and `msg` itself
+    /// is only ever the one argument that conversion consumes.
+    fn log(&self, level: retro_log_level, msg: &str) {
+        let Some(printf) = self.log_printf else {
+            eprintln!("[RustyNES] {msg}");
+            return;
+        };
+        // An interior NUL would end the C string early; replace it instead of
+        // losing the rest of the message.
+        let Ok(text) = CString::new(msg.replace('\0', "?")) else {
+            return;
+        };
+        // SAFETY: `printf` is the frontend's `retro_log_printf_t`, obtained
+        // from `GET_LOG_INTERFACE` and valid until `retro_deinit`, which clears
+        // it. The format is a static NUL-terminated literal whose only
+        // conversion is one `%s`, matched by exactly one argument: `text`, a
+        // NUL-terminated string that outlives the call.
+        unsafe { printf(level, c"[RustyNES] %s\n".as_ptr(), text.as_ptr()) };
     }
 
     /// `retro_load_game`, run inside [`Self::contained`] by `on_load_game`.
@@ -535,15 +570,15 @@ impl RustyNesLibretro {
         // `rust-libretro-sys` binding reduced `retro_game_info` to one opaque
         // byte, so `game` carried nothing (fixed in the vendored copy under
         // `vendor/rust-libretro-sys`), and such a frontend could not load at all.
+        //
+        // A frontend that answers `GET_GAME_INFO_EXT` but leaves `data` null
+        // (a path-only load, which `need_fullpath = false` says it should not
+        // do) is treated as not having answered: the standard path can still
+        // read the file from `retro_game_info::path` (agy, #556). Before, that
+        // frontend got an error and no game.
+        let ext_info = ext_info.filter(|e| !e.data.is_null() && e.size != 0);
         let (rom_data, is_fds) = if let Some(ext_info) = ext_info {
-            if ext_info.data.is_null() || ext_info.size == 0 {
-                return Err(
-                    "GET_GAME_INFO_EXT supplied no data (need_fullpath is false, \
-                            so the frontend should have loaded the game into memory)"
-                        .into(),
-                );
-            }
-            // SAFETY: `data` is non-null and `size` non-zero (checked above). The
+            // SAFETY: `data` is non-null and `size` non-zero (the filter above). The
             // libretro spec guarantees it references `size` contiguous bytes owned
             // by the frontend for the duration of this call.
             let rom =
@@ -567,9 +602,9 @@ impl RustyNesLibretro {
             let is_fds = standard_game_is_fds(&game, &rom);
             (rom, is_fds)
         };
-        eprintln!(
-            "[RustyNES] Loading {} bytes (FDS: {is_fds}).",
-            rom_data.len()
+        self.log(
+            retro_log_level::RETRO_LOG_INFO,
+            &format!("Loading {} bytes (FDS: {is_fds}).", rom_data.len()),
         );
 
         let emu = if is_fds {
@@ -588,7 +623,10 @@ impl RustyNesLibretro {
             match Nes::from_disk(&rom_data, &bios) {
                 Ok(nes) => Emu::Single(Box::new(nes)),
                 Err(e) => {
-                    eprintln!("[RustyNES] Failed to parse FDS disk image: {e:?}");
+                    self.log(
+                        retro_log_level::RETRO_LOG_ERROR,
+                        &format!("Failed to parse FDS disk image: {e:?}"),
+                    );
                     return Err(format!("Failed to load FDS disk: {e:?}").into());
                 }
             }
@@ -602,7 +640,10 @@ impl RustyNesLibretro {
             match Emu::from_rom(&rom_data) {
                 Ok(e) => e,
                 Err(e) => {
-                    eprintln!("[RustyNES] Failed to parse ROM: {e:?}");
+                    self.log(
+                        retro_log_level::RETRO_LOG_ERROR,
+                        &format!("Failed to parse ROM: {e:?}"),
+                    );
                     return Err(format!("Failed to load ROM: {e:?}").into());
                 }
             }
@@ -629,7 +670,10 @@ impl RustyNesLibretro {
                 self.serialize_size = tmp.len() + rustynes_core::SAVE_STATE_DEVICE_HEADROOM;
                 self.nes = Some(nes);
                 self.dual = None;
-                eprintln!("[RustyNES] Loaded single-console cart.");
+                self.log(
+                    retro_log_level::RETRO_LOG_INFO,
+                    "Loaded single-console cart.",
+                );
             }
             Emu::Dual(dual) => {
                 // The dual snapshot is a self-describing blob of both consoles; size it
@@ -639,7 +683,10 @@ impl RustyNesLibretro {
                 self.serialize_size = dual.snapshot().len();
                 self.dual = Some(dual);
                 self.nes = None;
-                eprintln!("[RustyNES] Loaded Vs. DualSystem cabinet (512x240 side-by-side).");
+                self.log(
+                    retro_log_level::RETRO_LOG_INFO,
+                    "Loaded Vs. DualSystem cabinet (512x240 side-by-side).",
+                );
             }
         }
         self.register_memory_maps(ctx);
@@ -1083,10 +1130,19 @@ impl Core for RustyNesLibretro {
             let generic_ctx: GenericContext = (&*ctx).into();
             let cb = *generic_ctx.environment_callback();
 
+            // Route the core's messages into the frontend's log. A frontend
+            // that refuses the command leaves `log_printf` as `None`, and
+            // `Self::log` falls back to stderr.
+            self.log_printf = rust_libretro::environment::get_log_callback(cb)
+                .ok()
+                .flatten()
+                .and_then(|c| c.log);
+
             // XRGB8888 is preferred by RustyNES because it maps well to standard 32-bit GPU textures.
             if !rust_libretro::environment::set_pixel_format(cb, PixelFormat::XRGB8888) {
-                eprintln!(
-                    "[RustyNES] Error: Frontend rejected XRGB8888 pixel format. Colors will be broken."
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    "Frontend rejected XRGB8888 pixel format. Colors will be broken.",
                 );
             }
 
@@ -1151,10 +1207,11 @@ impl Core for RustyNesLibretro {
         // `build.rs` warns at build time; this says so in the frontend's log,
         // where a crash report would be read.
         if cfg!(panic = "abort") {
-            eprintln!(
-                "[RustyNES] warning: this core was built with panic = \"abort\"; an internal \
-                 error will close the frontend. Build it with `make` in crates/rustynes-libretro \
-                 or CARGO_PROFILE_RELEASE_PANIC=unwind."
+            self.log(
+                retro_log_level::RETRO_LOG_WARN,
+                "this core was built with panic = \"abort\"; an internal error will close \
+                 the frontend. Build it with `make` in crates/rustynes-libretro or \
+                 CARGO_PROFILE_RELEASE_PANIC=unwind.",
             );
         }
         self.contained(
@@ -1240,6 +1297,8 @@ impl Core for RustyNesLibretro {
         self.nes = None;
         self.dual = None;
         self.poisoned = false;
+        // The log interface is valid only until `retro_deinit`.
+        self.log_printf = None;
         self.genie_cheats.clear();
         self.serialize_size = 0;
         self.audio_buffer = Vec::new();
@@ -1484,7 +1543,10 @@ impl Core for RustyNesLibretro {
     ) {
         self.contained("retro_cheat_set", (), |core| {
             let Ok(code_str) = code.to_str() else {
-                eprintln!("[RustyNES] Ignoring non-UTF8 cheat code at index {index}.");
+                core.log(
+                    retro_log_level::RETRO_LOG_WARN,
+                    &format!("Ignoring non-UTF8 cheat code at index {index}."),
+                );
                 return;
             };
             if enabled {
@@ -1503,7 +1565,10 @@ impl Core for RustyNesLibretro {
                 if applied {
                     core.genie_cheats.insert(index, code_str.to_owned());
                 } else {
-                    eprintln!("[RustyNES] Rejected Game Genie code {code_str:?} at index {index}.");
+                    core.log(
+                        retro_log_level::RETRO_LOG_WARN,
+                        &format!("Rejected Game Genie code {code_str:?} at index {index}."),
+                    );
                 }
             } else if let Some(old_code) = core.genie_cheats.remove(&index)
                 && let Some(nes) = core.active_nes_mut()
@@ -1533,6 +1598,7 @@ retro_core!(RustyNesLibretro {
     serialize_buffer: Vec::new(),
     memory_maps_registered: false,
     poisoned: false,
+    log_printf: None,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
     genie_cheats: BTreeMap::new(),
 });
