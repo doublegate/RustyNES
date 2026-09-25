@@ -499,7 +499,10 @@ impl<'a> Iterator for SectionIter<'a> {
         // `retro_serialize_size`, which reserves room for expansion devices;
         // without this, whether its own state loaded back depended on the
         // padding length mod 9. Any non-zero byte in the tail still reaches the
-        // header parse below and errors as before.
+        // header parse below and errors as before. Cost: `all` stops at the
+        // first non-zero byte, which at a section boundary is the tag's first
+        // byte, so this reads one byte per section and walks only genuine
+        // padding in full -- not the whole remaining blob on every call.
         if self.src[self.pos..].iter().all(|&b| b == 0) {
             self.pos = self.src.len();
             return None;

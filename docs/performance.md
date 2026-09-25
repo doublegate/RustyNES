@@ -1017,7 +1017,11 @@ Both builds produce the same frames (the runner's output checksum is identical
 per ROM). Unwinding adds about 0.1% of instructions, the unwind-table and
 landing-pad bookkeeping; the cycle deltas have opposite signs on the two ROMs
 and sit inside the load's noise, and the one usable timing run shows nothing.
-The binary is 4.4% larger (1,729,512 → 1,805,904 bytes for the runner). This
+The runner binary is 4.4% larger (1,729,512 → 1,805,904 bytes); the shipped
+artifact, the libretro core itself (`librustynes.so`, Linux x86_64, release,
+fat LTO), is **5.15% larger** (1,871,632 → 1,968,072 bytes), measured by
+building it both ways (review on #556 caught the runner figure being quoted as
+the core's). This
 is a correctness change, not an optimisation, so the adoption rule for
 optimisations does not apply; a tenth of a percent is the recorded price of
 RetroArch surviving a panic. Desktop, web and mobile builds are unchanged.

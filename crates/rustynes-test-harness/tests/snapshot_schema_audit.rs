@@ -812,6 +812,66 @@ fn touches_field(src: &str, field: &str) -> bool {
     false
 }
 
+/// Does `src` contain `prefix` + `field` at a word boundary on the right?
+/// The same boundary rule as [`touches_field`], for a receiver other than
+/// `self` (the encoder reads the fields through a local `s`).
+fn touches_field_via(src: &str, prefix: &str, field: &str) -> bool {
+    let needle = format!("{prefix}{field}");
+    let mut from = 0;
+    while let Some(hit) = src[from..].find(&needle) {
+        let after = from + hit + needle.len();
+        let next = src[after..].chars().next();
+        if !next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return true;
+        }
+        from = after;
+    }
+    false
+}
+
+#[test]
+fn every_bus_misc_state_field_is_encoded_and_decoded() {
+    // Review on #556 (CodeRabbit). The `LockstepBus` entry audits the bus
+    // struct against `bus_misc_state` / `set_bus_misc_state`, the accessors
+    // that move fields in and out of `BusMiscState`. That proves a field
+    // reaches the transfer struct; it does not prove `encode_bus` WRITES it or
+    // `decode_bus` READS it back, which is where `internal_data_bus` was
+    // missing before v2.8.0. This closes the second half: every
+    // `BusMiscState` field must be read as `s.<field>` in `encode_bus`. The
+    // decode side needs no name check, because a struct literal that omits a
+    // field does not compile; the one way to skip a field there is a `..`
+    // struct-update base, which this forbids. (A decoder that names a field
+    // but feeds it a constant is a value error, caught by the round-trip
+    // tests such as `internal_data_bus_round_trips_through_save_state`.)
+    let src = include_str!("../../rustynes-core/src/bus_snapshot.rs").replace('\r', "");
+    let fields = struct_fields(&src, "BusMiscState");
+    assert!(
+        fields.iter().any(|f| f == "internal_data_bus") && fields.len() > 10,
+        "BusMiscState field extraction looks wrong: {fields:?}"
+    );
+    let enc_start = src.find("pub fn encode_bus(").expect("encode_bus");
+    let enc = &src[enc_start..];
+    let enc = &enc[..enc.find("\n}\n").expect("end of encode_bus")];
+    let dec_start = src
+        .find("bus.set_bus_misc_state(BusMiscState {")
+        .expect("decode_bus's BusMiscState literal");
+    let dec = &src[dec_start..];
+    let dec = &dec[..dec.find("});").expect("end of the literal")];
+    let not_encoded: Vec<_> = fields
+        .iter()
+        .filter(|f| !touches_field_via(enc, "s.", f))
+        .collect();
+    assert!(
+        not_encoded.is_empty(),
+        "BusMiscState fields encode_bus never writes: {not_encoded:?}"
+    );
+    assert!(
+        !dec.contains(".."),
+        "decode_bus's BusMiscState literal uses a `..` base, so a field can be \
+         skipped without a compile error"
+    );
+}
+
 #[test]
 fn every_chip_field_is_serialized_or_explicitly_excluded() {
     for chip in CHIPS {

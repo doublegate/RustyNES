@@ -305,8 +305,13 @@ libretro-build-ios-arm64:
 #      the template and `CARGO_UNSTABLE_BUILD_STD` cannot override it (the
 #      CLI `-Z` flag wins), so the job had to force `panic = "unwind"` via
 #      `CARGO_PROFILE_RELEASE_PANIC`. The prebuilt std ships `panic_abort`,
-#      so the profile is now honoured as written and tvOS matches every
-#      other platform.
+#      so that workaround is gone -- but since v2.8.0 the same variable is
+#      set to `unwind` for EVERY job by `.core-defs` (libretro audit L-1.1),
+#      deliberately, so tvOS builds the unwinding core like every other
+#      platform. `panic_abort` being available does not make the abort
+#      profile effective here. The tvOS link is exercised only by the
+#      buildbot: `cargo check` above does not link, and this machine has no
+#      Apple SDK to run `cargo build` for it.
 #   3. `-C ar`. Refreshing to a current nightly then failed with
 #      `error: `-C ar`: this option has been removed`. The build image
 #      injects `-Car=<path>,Clink-arg=...` into every Apple job, and that

@@ -10,7 +10,8 @@ Report against the latest release or `main`.
 | Version       | Supported | Notes |
 | ------------- | --------- | ----- |
 | main          | Yes       | Where fixes land first |
-| 2.7.x         | Yes       | The current line |
+| 2.8.x         | Yes       | The current line |
+| 2.7.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.6.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.5.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.4.x         | Partial   | Fixes are shipped forward into the current line, not backported |
