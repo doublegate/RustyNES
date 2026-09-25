@@ -26,6 +26,23 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### RTL robustness on the MiSTer core (v2.8.3, in progress)
+
+- **Every reset in the MiSTer core is released on the clock that uses it.**
+  The console, the save controller and the SDRAM path cleared asynchronously
+  from sources unrelated to their clocks (the SDRAM path from the PLL's lock
+  signal directly), so a release near a clock edge could let part of the
+  design start a cycle before the rest, and the timing analysis could not
+  check it. A synchroniser per clock now releases each reset on an edge. A
+  module gate checks the release against the old wiring, which it shows
+  releasing between edges.
+- **Four comments in the core's RTL said something false, and are
+  corrected**: the power-on CPU/PPU lead ("measured as 2" beside the correct
+  value, 1), the claim that PAL is "a parameter change", a pipeline depth of
+  zero that cannot be built, and a superseded plan cited as current. A block
+  indented as if gated by the PPU's dot enable, which it is not, is
+  re-indented.
+
 ## [2.8.2] - 2026-09-25 - "Solder" (the MiSTer core's on-die RTL, corrected against the oracle and the wiki)
 
 The third release of the v2.8.x line and its first RTL release: the RTL
