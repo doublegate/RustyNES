@@ -862,7 +862,9 @@ calls, perfectly predicted branches and store-buffer-absorbed stores cost
 nothing on the critical path.
 
 **A combined bound is a bound on the SUM**, and review on #553 rightly pointed
-out that offsetting effects could hide an individual gain. Six of the seven are
+out that offsetting effects could hide an individual gain. (v2.7.6 then
+measured the six deletions one at a time as well; all six are zero individually,
+see the next section.) Six of the seven are
 deletions of work, which cannot make the core slower except through code
 layout; the seventh, IMP-04, is a rewrite that could move either way. So IMP-04
 was also run alone, twice:
@@ -981,6 +983,82 @@ unreleased `main`: the newest published release, 0.32.2, supports read-only
 borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
+
+### v2.7.6 — the six v2.7.5 deletions measured one at a time (decision: all REJECTED as performance; IMP-06 kept as an assertion)
+
+The combined ceiling above bounds the SUM of seven changes, and six of them
+were never measured alone: §3.1 A, B and C, the IMP-06 stores, §3.5b and §3.6.
+The v2.7.5 argument for trusting the sum was that a deletion cannot make the
+core slower except through code layout. That is reasoning, not a measurement,
+and it has two holes: layout effects are the same size as the gains being
+looked for, so one item's gain could hide behind another's layout loss; and a
+benchmark can fail to reach the code at all, which is exactly how IMP-07 sat
+inside the combined zero. So each was re-run alone (maintainer request,
+2026-09-24).
+
+**Method.** Each probe applied by itself to `main` (`0eb48bc`), exactly as in
+the combined tree; `scripts/perf/ab_check.sh`, `AB_MEASUREMENT_TIME=25`, two
+independent runs each, i9-10850K, load average 1.5–3.0 (another session and
+Syncthing were running; every run carries its A/B/A control). **Reach:** every
+probe removes work on a path the stock benches execute on every CPU cycle, every
+PPU dot or every `$4020+` read; IMP-06's stores are on the fast dot path, which
+`nestest_fast` reaches and `flowing_palette` (rendering disabled) does not.
+**Output:** each probe was hashed over 180 frames of framebuffer, audio and the
+final cycle count on both bench ROMs, on both dot paths, against the unprobed
+build: **all six are byte-identical** on these workloads.
+
+Each cell is the candidate's change against the reference, with the A/B/A
+control in brackets:
+
+| item | run | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| §3.1 A | 1 | −0.12% (−0.09%) | −0.05% (+0.17%) | +0.00% (−0.13%) | −0.26% (−0.01%) |
+| §3.1 A | 2 | +0.26% (+1.89%) | +0.04% (+2.04%) | +0.41% (−0.22%) | +1.93% (+0.10%) |
+| §3.1 B | 1 | −0.23% (−0.27%) | −0.17% (−0.06%) | −0.14% (−0.26%) | +0.24% (+0.06%) |
+| §3.1 B | 2 | +5.46% (+0.64%) | +0.04% (−0.07%) | +0.39% (−0.20%) | −0.32% (−1.19%) |
+| §3.1 C | 1 | +0.13% (−0.12%) | −0.05% (+0.09%) | +0.27% (−0.21%) | −0.20% (−0.03%) |
+| §3.1 C | 2 | +1.49% (−0.23%) | +1.81% (+0.54%) | +0.56% (−0.60%) | −2.18% (−2.43%) |
+| IMP−06 stores | 1 | −0.01% (−0.22%) | +0.97% (+0.52%) | +0.51% (+0.84%) | +0.02% (−0.03%) |
+| IMP−06 stores | 2 | −0.49% (−0.39%) | +0.99% (+0.30%) | +0.40% (+1.06%) | +0.25% (+1.97%) |
+| §3.5b | 1 | −0.18% (−0.27%) | +0.07% (+0.02%) | −0.16% (−0.41%) | +0.05% (−0.22%) |
+| §3.5b | 2 | −0.12% (−0.20%) | +0.26% (−0.06%) | +0.36% (−0.05%) | +0.47% (+0.03%) |
+| §3.6 | 1 | −0.07% (−0.18%) | −0.11% (+0.23%) | −0.29% (−0.09%) | −0.04% (+0.12%) |
+| §3.6 | 2 | −0.01% (+0.06%) | +0.08% (−0.03%) | −0.05% (−0.04%) | +0.28% (+0.21%) |
+
+Nothing reproduces. No workload is faster than its control by a consistent
+margin in both runs; where a cell stands out it is SLOWER, and in the other run
+it is not (A's `flowing_palette_fast` −0.26% in run 1, +1.93% in run 2; B's
+`nestest` −0.23%, then +5.46%; C's two exact-path workloads flat, then +1.5% and
++1.8%).
+Those are the layout and background-load effects the method exists to catch,
+and none of them points toward a gain. **All six: zero, individually.**
+
+What the per-item look found beyond the timing:
+
+- **§3.1 C's work is dead, not merely cheap.** Deleting `sample_nmi_edge` from
+  all three PPU catch-up loops disables the edge detector, and the output did
+  not move. The detector fills `nmi_edge_latch`, and the only reader of that
+  latch is `poll_nmi`, one of the bus methods deprecated in v2.7.5 with no
+  caller since v2.0.0: the live CPU detects the NMI edge itself from
+  `nmi_level()`. §3.1 B is the same kind of thing (a check on an accumulator
+  that only a unit-test path feeds). Both belong to the pre-v2.0.0 machinery
+  whose removal, with the deprecated trait methods that read it, is decided at
+  v2.9.0 (ADR 0041); removing the internals alone would leave `poll_nmi`
+  answering wrongly.
+- **IMP-06's stores are no-ops, and are now an assertion.** The fast render
+  path re-wrote three rendering-history fields to `true` that the guard in
+  `tick` already requires to be `true`. The writes are replaced by a
+  `debug_assert!` of that invariant, which is byte-identical in release and
+  checked in every debug and test build. No ROM in the corpus reaches the
+  violating state (deleting every history term from the guard left
+  `fast_dotloop_diff` green, because `mask_write_delay == 0` alone keeps such
+  dots off the fast path), so the assertion is pinned by a unit test that enters
+  the fast body with a lagging history and requires the panic; restoring the
+  old stores turns that test red.
+- **§3.5b and §3.6 are byte-identical here only because the workloads never
+  mute a pulse or read an unmapped address**; the probes delete correct
+  behaviour and are ceilings, not candidates. Their cost, the part a ceiling
+  measures, is paid on every call either way.
 
 ### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
 

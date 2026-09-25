@@ -26,6 +26,27 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Performance record: the v2.7.5 deletions measured one at a time
+
+- **Six performance proposals that v2.7.5 bounded only together are now each
+  measured alone: all six are zero.** v2.7.5 applied seven of the core audit's
+  proposals in one tree and measured the combined ceiling. That bounds their sum,
+  and one proposal's gain could hide behind another's code-layout loss, so
+  §3.1 A, B and C, the IMP-06 stores, §3.5b and §3.6 were each re-run alone,
+  twice, with the A/B/A control. None is faster than its control in both runs,
+  and every probe's output is byte-identical to the unprobed build. The numbers
+  are in `docs/performance.md` §v2.7.6.
+- **The fast render path checks its rendering history instead of re-writing
+  it.** Three stores in `tick_visible_render_fast` wrote `true` into fields the
+  path's entry guard already requires to be `true`. They are now a
+  `debug_assert!` of that invariant: byte-identical in release, checked in every
+  debug and test build, and pinned by a unit test, because no ROM in the corpus
+  reaches a state that violates it.
+- Recorded, not changed: the per-dot NMI edge sampling (§3.1 C) feeds a latch
+  that only the deprecated `poll_nmi` reads, and the DMA drain check (§3.1 B)
+  guards an accumulator only a unit-test path feeds. Both go with the
+  pre-v2.0.0 methods whose removal is decided at v2.9.0.
+
 ### Libretro buildbot (contributed by @WizzardSK, #554)
 
 - **The macOS RetroArch cores build again.** Both macOS buildbot jobs had
