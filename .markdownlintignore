@@ -8,6 +8,7 @@ ref-proj/
 target/
 
 # Vendored / upstream content (not authored here — keep pristine, don't lint)
+vendor/
 crates/rustynes-test-harness/golden/tricnes/
 tests/roms/audio-tests/UPSTREAM_README.md
 tests/roms/holy_mapperel/README.md

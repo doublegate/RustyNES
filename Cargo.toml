@@ -41,7 +41,7 @@ members = [
 # Excluding it is what makes that impossible rather than merely unlikely. Its
 # own tests and lints run from explicit invocations in CI; see
 # `.github/workflows/ci.yml`.
-exclude = ["crates/rustynes-cosim"]
+exclude = ["crates/rustynes-cosim", "vendor/rust-libretro-sys"]
 # The libretro buildbot's shared CI templates run a bare, unscoped
 # `cargo build --release --target <triple>` from the repo root (no `-p`,
 # no `--manifest-path` — the script is centrally maintained and can't be
@@ -313,3 +313,9 @@ panic = "unwind"
 # with the oracle suite anyway when benchmarking with it.
 [profile.release-native]
 inherits = "release"
+
+# v2.8.0 (libretro audit L-1.2): a patched copy of `rust-libretro-sys` 0.3.2,
+# whose generated `retro_game_info` was an opaque one-byte struct, so the core
+# never received the frontend's game. See `vendor/rust-libretro-sys/VENDORED.md`.
+[patch.crates-io]
+rust-libretro-sys = { path = "vendor/rust-libretro-sys" }

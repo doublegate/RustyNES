@@ -58,13 +58,16 @@ cycle-accurate core later replaced.
   memory descriptors until the core itself is unloaded, so after closing a
   game its cheat search and RetroAchievements held pointers into freed memory.
   The core now replaces them with an empty map before freeing the console.
+- **The libretro core loads from any libretro frontend.** It required
+  `GET_GAME_INFO_EXT`, an optional command, because the binding it uses
+  (`rust-libretro-sys` 0.3.2) reduced the standard `retro_game_info` to an
+  opaque byte, so nothing else reached the core. The binding is now vendored
+  with that struct written by hand (`vendor/rust-libretro-sys`, MIT, credited
+  in `NOTICE`), and a frontend that refuses the command loads through the
+  standard struct: its data, or the file at its path.
 - **A C-ABI test harness for the libretro core.** The core's tests now drive the
-  exported `retro_*` functions as a frontend does, which is how the two fixes
-  above were pinned red first. One test stays red and ignored: loading through
-  the standard `retro_game_info`, which cannot be fixed in this repository as it stands:
-  `rust-libretro` 0.3.2 hands the core an opaque one-byte `retro_game_info`, so
-  a frontend's `path`, `data` and `size` never arrive. Fixing it means patching
-  that binding, which is the maintainer's decision.
+  exported `retro_*` functions as a frontend does, which is how the three fixes
+  above were pinned red first.
 
 ## [2.7.6] - 2026-09-24 - "Recount" (the v2.7.5 deletions measured one at a time)
 

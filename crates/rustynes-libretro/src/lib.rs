@@ -691,6 +691,53 @@ impl RustyNesLibretro {
     }
 }
 
+/// The bytes of a game passed through the standard `retro_game_info`.
+///
+/// `need_fullpath` is false, so a frontend normally loads the file and passes
+/// `data`; one that passes only `path` is served by reading the file here,
+/// which libretro.h permits. Every pointer is checked before use.
+fn standard_game_bytes(game: &retro_game_info) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if !game.data.is_null() && game.size > 0 {
+        // SAFETY: `data` is non-null and `size` non-zero (checked above), and
+        // libretro.h guarantees `size` readable bytes for the duration of
+        // `retro_load_game`, which is the only caller.
+        let bytes = unsafe { std::slice::from_raw_parts(game.data.cast::<u8>(), game.size) };
+        return Ok(bytes.to_vec());
+    }
+    let path =
+        standard_game_path(game).ok_or("the frontend supplied neither game data nor a path")?;
+    std::fs::read(&path).map_err(|e| format!("could not read {path}: {e}").into())
+}
+
+/// The `path` of a standard `retro_game_info`, when present and valid UTF-8.
+fn standard_game_path(game: &retro_game_info) -> Option<String> {
+    if game.path.is_null() {
+        return None;
+    }
+    // SAFETY: `path` is non-null (checked above); libretro.h defines it as a
+    // NUL-terminated UTF-8 string valid for the duration of `retro_load_game`.
+    unsafe { CStr::from_ptr(game.path) }
+        .to_str()
+        .ok()
+        .map(str::to_owned)
+}
+
+/// Whether a game passed through the standard `retro_game_info` is a Famicom
+/// Disk System image.
+///
+/// By the path's extension when there is one, as the `GET_GAME_INFO_EXT` path
+/// does. With no path, by content: the two forms the FDS loader accepts are
+/// the fwNES container (`"FDS\x1A"`) and a raw side, which opens with the
+/// disk-info block `\x01*NINTENDO-HVC*`.
+fn standard_game_is_fds(game: &retro_game_info, rom: &[u8]) -> bool {
+    if let Some(path) = standard_game_path(game) {
+        return std::path::Path::new(&path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"));
+    }
+    rom.starts_with(b"FDS\x1A") || rom.get(..15) == Some(b"\x01*NINTENDO-HVC*".as_slice())
+}
+
 impl Core for RustyNesLibretro {
     fn get_info(&self) -> SystemInfo {
         SystemInfo {
@@ -857,7 +904,7 @@ impl Core for RustyNesLibretro {
 
     fn on_load_game(
         &mut self,
-        _game: Option<retro_game_info>,
+        game: Option<retro_game_info>,
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
@@ -900,33 +947,52 @@ impl Core for RustyNesLibretro {
             } else {
                 None
             }
-        }
-        .ok_or("Frontend does not support get_game_info_ext")?;
-
-        let rom_data = if ext_info.data.is_null() {
-            return Err("ext_info data pointer is NULL. The frontend did not load the ROM into memory (need_fullpath is false).".into());
-        } else {
-            eprintln!("[RustyNES] ext_info data is valid. Size: {}", ext_info.size);
-            // SAFETY: `data` is non-null (checked above). The libretro spec guarantees
-            // the pointer references a valid, contiguous byte slice of exactly `size`
-            // bytes, owned by the frontend for the duration of this call.
-            let slice =
-                unsafe { std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size) };
-            slice.to_vec()
         };
 
-        // `ext_info.ext` reflects the original file extension even when the ROM was
-        // handed to us as an in-memory buffer (need_fullpath is false). Route `.fds`
-        // disk images to the dedicated FDS constructor: `Emu::from_rom` only parses
-        // iNES/NES 2.0 cartridge headers, so without this branch FDS loading silently
-        // fails despite `valid_extensions` advertising it.
-        // SAFETY: `ext_info.ext` is either null or a valid, NUL-terminated,
-        // frontend-owned C string for the duration of this call, per the same
-        // `RetroGameInfoExt` contract already relied on above for `data`/`size`.
-        let is_fds = (!ext_info.ext.is_null())
-            && unsafe { CStr::from_ptr(ext_info.ext) }
-                .to_str()
-                .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds"));
+        // Two load paths (libretro audit §1.2). `GET_GAME_INFO_EXT` first: it
+        // carries the original extension even for an in-memory load, which is
+        // how `.fds` images are routed. A frontend that refuses it gets the
+        // standard `retro_game_info` path, which libretro.h requires every
+        // frontend to supply. Before v2.8.0 that second path did not exist: the
+        // `rust-libretro-sys` binding reduced `retro_game_info` to one opaque
+        // byte, so `game` carried nothing (fixed in the vendored copy under
+        // `vendor/rust-libretro-sys`), and such a frontend could not load at all.
+        let (rom_data, is_fds) = if let Some(ext_info) = ext_info {
+            if ext_info.data.is_null() || ext_info.size == 0 {
+                return Err(
+                    "GET_GAME_INFO_EXT supplied no data (need_fullpath is false, \
+                            so the frontend should have loaded the game into memory)"
+                        .into(),
+                );
+            }
+            // SAFETY: `data` is non-null and `size` non-zero (checked above). The
+            // libretro spec guarantees it references `size` contiguous bytes owned
+            // by the frontend for the duration of this call.
+            let rom =
+                unsafe { std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size) }
+                    .to_vec();
+            // `ext_info.ext` reflects the original file extension even when the
+            // ROM was handed to us as an in-memory buffer. Route `.fds` disk images
+            // to the dedicated FDS constructor: `Emu::from_rom` only parses iNES /
+            // NES 2.0 cartridge headers.
+            // SAFETY: `ext_info.ext` is either null or a valid, NUL-terminated,
+            // frontend-owned C string for the duration of this call, per the same
+            // `RetroGameInfoExt` contract relied on above for `data`/`size`.
+            let is_fds = (!ext_info.ext.is_null())
+                && unsafe { CStr::from_ptr(ext_info.ext) }
+                    .to_str()
+                    .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds"));
+            (rom, is_fds)
+        } else {
+            let game = game.ok_or("the frontend supplied no game and no GET_GAME_INFO_EXT")?;
+            let rom = standard_game_bytes(&game)?;
+            let is_fds = standard_game_is_fds(&game, &rom);
+            (rom, is_fds)
+        };
+        eprintln!(
+            "[RustyNES] Loading {} bytes (FDS: {is_fds}).",
+            rom_data.len()
+        );
 
         let emu = if is_fds {
             let generic_ctx: GenericContext = (&*ctx).into();

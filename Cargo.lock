@@ -4164,8 +4164,6 @@ dependencies = [
 [[package]]
 name = "rust-libretro-sys"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cbdb106ca97d195be38097412623e1e89926fa3de9f3af995145f6fa0c958c6"
 dependencies = [
  "bindgen",
  "libc",

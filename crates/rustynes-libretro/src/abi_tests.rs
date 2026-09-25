@@ -112,22 +112,6 @@ fn frontend() -> MutexGuard<'static, ()> {
     guard
 }
 
-/// libretro.h's `struct retro_game_info`, laid out as a frontend passes it.
-///
-/// Defined here because `rust-libretro-sys` 0.3.2 cannot express it: libretro.h
-/// forward-declares `struct retro_game_info;` (line 2879) before the definition
-/// (line 3661), and bindgen emits an opaque one-byte placeholder
-/// (`_address: u8`). `rust_libretro::retro_load_game` then copies that byte
-/// into `Option<retro_game_info>`, so the `game` argument a core receives
-/// carries no path, data or size at all.
-#[repr(C)]
-struct StdGameInfo {
-    path: *const std::os::raw::c_char,
-    data: *const c_void,
-    size: usize,
-    meta: *const std::os::raw::c_char,
-}
-
 /// Load `rom` as a frontend would, answering `GET_GAME_INFO_EXT` or not.
 fn load(rom: &'static [u8], answer_ext: bool) -> bool {
     let ext = Box::new(RetroGameInfoExt {
@@ -146,15 +130,17 @@ fn load(rom: &'static [u8], answer_ext: bool) -> bool {
     // Leaked on purpose: the frontend owns this for the rest of the process.
     EXT_INFO.store(Box::into_raw(ext), SeqCst);
     SUPPORT_EXT.store(answer_ext, SeqCst);
-    let game = StdGameInfo {
+    // The real struct, which the vendored `rust-libretro-sys` defines by hand:
+    // the crates.io binding reduced it to one opaque byte (libretro audit L-1.2,
+    // `vendor/rust-libretro-sys/VENDORED.md`).
+    let game = retro_game_info {
         path: std::ptr::null(),
         data: rom.as_ptr().cast(),
         size: rom.len(),
         meta: std::ptr::null(),
     };
-    // SAFETY: `StdGameInfo` has libretro.h's `struct retro_game_info` layout
-    // (see its doc), and `game` and the ROM bytes outlive the call.
-    unsafe { rust_libretro::retro_load_game(std::ptr::from_ref(&game).cast()) }
+    // SAFETY: `game` and the ROM bytes outlive the call.
+    unsafe { rust_libretro::retro_load_game(&raw const game) }
 }
 
 fn unload() {
@@ -201,8 +187,12 @@ fn set_port(port: c_uint, device: c_uint) {
 /// `GET_GAME_INFO_EXT`, and the core must still load from the `game` it was
 /// handed. Before v2.8.0 it returned "Frontend does not support
 /// get_game_info_ext" and loaded nothing.
+///
+/// Two defects stood behind that, and this test needs both fixed: the core had
+/// no fallback, and the `rust-libretro-sys` binding reduced `retro_game_info` to
+/// an opaque byte, so there was nothing to fall back to. The binding is now a
+/// vendored, patched copy.
 #[test]
-#[ignore = "red: blocked on rust-libretro 0.3.2, whose opaque retro_game_info hands the core no path/data/size; needs the maintainer's vendor-or-upstream decision (libretro ledger L-1.2)"]
 fn a_frontend_without_game_info_ext_still_loads_the_game() {
     let _frontend = frontend();
     assert!(
