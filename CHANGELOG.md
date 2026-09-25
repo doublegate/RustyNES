@@ -42,7 +42,11 @@ load.
   section data. The libretro core is about to reserve headroom in
   `retro_serialize_size`, and before this a padded copy of its own state loaded
   or failed depending on the padding length mod 9. Every section tag is now
-  pinned to four printable bytes, the invariant the rule rests on.
+  pinned to four printable bytes, the invariant the rule rests on. A zero
+  byte where a tag would start is therefore rejected unless everything after
+  it is padding: nine zero bytes used to read as an empty section, so a crafted
+  state of many of them made the padding check quadratic. No save this
+  project writes contains one.
 - **The 2A03's internal data bus is saved.** It is a separate latch from the
   external open bus (a DMC fetch drives only the external one), and it was
   missing from the `BUS` section, so a restore kept the running machine's

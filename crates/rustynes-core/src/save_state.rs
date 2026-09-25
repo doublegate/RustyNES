@@ -22,7 +22,7 @@
 //! Determinism: every `snapshot()` for a given `(seed, ROM, input sequence)`
 //! produces bit-identical bytes. Loading is order-independent.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use thiserror::Error;
 
 /// Magic header bytes — first 8 bytes of every `.rns` file.
@@ -499,13 +499,30 @@ impl<'a> Iterator for SectionIter<'a> {
         // `retro_serialize_size`, which reserves room for expansion devices;
         // without this, whether its own state loaded back depended on the
         // padding length mod 9. Any non-zero byte in the tail still reaches the
-        // header parse below and errors as before. Cost: `all` stops at the
-        // first non-zero byte, which at a section boundary is the tag's first
-        // byte, so this reads one byte per section and walks only genuine
-        // padding in full -- not the whole remaining blob on every call.
-        if self.src[self.pos..].iter().all(|&b| b == 0) {
+        // header parse below and errors as before. Cost: the scan below runs
+        // only when a tag would start with a zero byte, which no written tag
+        // does, and at most once, because either outcome ends the iteration.
+        //
+        // And a zero byte where a tag starts is never a section, padding or
+        // not (review on #556, CodeRabbit): without this, nine zero bytes
+        // framed as an empty zero-tagged section, which restore skips as an
+        // unknown tag, so a crafted blob of such headers followed by one
+        // non-zero byte re-ran the scan above once per header -- quadratic.
+        // Now the scan runs at most once: the tail is padding, or the blob is
+        // rejected here.
+        if self.src[self.pos] == 0 {
+            let at = self.pos;
             self.pos = self.src.len();
-            return None;
+            if self.src[at..].iter().all(|&b| b == 0) {
+                return None;
+            }
+            return Some(Err(SnapshotError::SectionInvalid {
+                tag: String::from("(zero)"),
+                reason: format!(
+                    "a section tag cannot start with a zero byte (offset {at}), and the \
+                     bytes after it are not all padding"
+                ),
+            }));
         }
         // tag(4) + version(1) + len(4) = 9-byte section header.
         if self.src.len() - self.pos < 9 {
@@ -558,6 +575,7 @@ pub fn write_header(out: &mut Vec<u8>, rom_hash_tag: [u8; ROM_HASH_TAG_LEN]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn header_round_trip() {
@@ -681,6 +699,36 @@ mod tests {
                 "section tag {t:?} must be four printable ASCII bytes"
             );
         }
+    }
+
+    #[test]
+    fn section_iter_rejects_zero_tagged_headers_in_one_step() {
+        // Review on #556 (CodeRabbit). Nine zero bytes used to frame an empty
+        // section with tag 00 00 00 00, which restore skips as unknown; with
+        // the padding rule, a blob of many such headers ending in one non-zero
+        // byte re-scanned the zero run once per header. A zero byte where a
+        // tag starts is now rejected on the spot, so the iterator yields one
+        // error and stops, however many headers follow.
+        let mut blob = Vec::new();
+        write_section(&mut blob, *b"AAAA", 1, &[1, 2, 3]);
+        let real = blob.len();
+        blob.resize(real + 9 * 10_000, 0);
+        blob.push(0x5A);
+        let items: Vec<_> = SectionIter::new(&blob).collect();
+        assert_eq!(items.len(), 2, "the real section, then exactly one error");
+        assert!(items[0].is_ok());
+        match &items[1] {
+            Err(SnapshotError::SectionInvalid { reason, .. }) => assert!(
+                reason.contains(&format!("offset {real}")),
+                "the error names where the zero tag starts: {reason}"
+            ),
+            other => panic!("expected SectionInvalid, got {other:?}"),
+        }
+        // A single zero-tagged header followed by a real section, which the
+        // old iterator skipped past, is rejected the same way.
+        let mut blob = vec![0_u8; 9];
+        write_section(&mut blob, *b"AAAA", 1, &[1]);
+        assert!(SectionIter::new(&blob).next().is_some_and(|r| r.is_err()));
     }
 
     #[test]
