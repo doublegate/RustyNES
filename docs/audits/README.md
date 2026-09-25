@@ -83,5 +83,6 @@ ADR 0037 reference firewall.
 | REFUTED | The code does not do what the finding says; evidence given. Closed. |
 | NOT A DEFECT | Accurate description, but the behaviour is deliberate or correct. Closed. |
 | REJECTED FIX | The defect is real but the recommended fix breaks a project rule; a different fix is recorded. |
+| INVERTED | The two implementations disagree as the finding says, but the documentation shows the audited side is right and the other one wrong, so the fix lands on the other side (first used for R-3.5a, v2.8.2). |
 | UNTRIAGED | Not yet read against the code. Nothing is planned on an untriaged finding. |
 | FIXED | Closed by the PR in the ledger row, with the red-first test named. |
