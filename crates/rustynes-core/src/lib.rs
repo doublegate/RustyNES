@@ -73,6 +73,7 @@ pub use bus::DEFAULT_SAMPLE_RATE;
 pub use bus::LockstepBus;
 #[cfg(feature = "debug-hooks")]
 pub use bus::{AccessRec, EventBpKind, EventBreakHit, EventKind, EventRec, InterruptRec};
+pub use bus_snapshot::{EXPANSION_DEVICE_MAX_LEN, SAVE_STATE_DEVICE_HEADROOM};
 pub use controller::{Buttons, Controller};
 pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 pub use genie::{GenieCode, GenieError};

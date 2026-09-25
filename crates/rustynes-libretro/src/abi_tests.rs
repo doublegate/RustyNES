@@ -220,7 +220,6 @@ fn a_frontend_without_game_info_ext_still_loads_the_game() {
 /// (the buffer is pre-filled with 0xAA to prove it), and the padded buffer
 /// restores.
 #[test]
-#[ignore = "red until the v2.8.0 serialize_size headroom and zeroed tail land (libretro ledger L-2.1)"]
 fn save_states_fit_with_a_zapper_on_both_ports_and_restore_padded() {
     let _frontend = frontend();
     assert!(load(NESTEST, true));
@@ -256,7 +255,6 @@ fn save_states_fit_with_a_zapper_on_both_ports_and_restore_padded() {
 /// them with an empty map first; RetroArch's handler frees the old
 /// descriptors before reading the new count, so the empty map clears them.
 #[test]
-#[ignore = "red until the v2.8.0 unload-time SET_MEMORY_MAPS deregistration lands (libretro ledger L-1.3)"]
 fn unloading_withdraws_the_memory_maps() {
     let _frontend = frontend();
     assert!(load(NESTEST, true));

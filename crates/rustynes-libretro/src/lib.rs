@@ -258,6 +258,10 @@ pub struct RustyNesLibretro {
     /// Pre-allocated buffer for snapshot serialization.
     serialize_buffer: Vec<u8>,
 
+    /// Whether `register_memory_maps` handed the frontend descriptors that
+    /// `on_unload_game` must withdraw before the console is dropped.
+    memory_maps_registered: bool,
+
     /// Which libretro device the frontend has assigned to each of the four
     /// ports, as told to us by `retro_set_controller_port_device`.
     ///
@@ -290,6 +294,7 @@ impl Default for RustyNesLibretro {
             video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
             serialize_size: 0,
             serialize_buffer: Vec::new(),
+            memory_maps_registered: false,
             // Every port starts as a joypad, which is what the frontend assumes
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
@@ -959,23 +964,34 @@ impl Core for RustyNesLibretro {
             }
         };
 
-        // Save state sizes in RustyNES are strictly deterministic for a given ROM image.
-        // We evaluate the snapshot footprint once during initialization to satisfy
-        // libretro's serialization size querying contract. Clear whichever emulator
-        // shape a prior load left behind so the two Options stay mutually exclusive.
+        // The frontend reads `retro_serialize_size` once and sizes every
+        // save-state, rewind and run-ahead buffer from it, so the answer must
+        // cover the largest snapshot this game can produce, not the one it
+        // produces now. A single console's snapshot grows when an expansion
+        // device attaches: a port reads "unplugged" (1 byte) until the host
+        // plugs in, e.g., a Zapper, which `set_zapper` does lazily on the first
+        // `retro_run` after the frontend selects the light gun. Measuring at
+        // load therefore under-sized the buffer and every later save failed
+        // (libretro audit §2.1). The headroom covers both ports at the largest
+        // device encoding; `on_serialize` zeroes whatever it does not use, and
+        // `SectionIter` reads a zero tail as padding. Clear whichever emulator
+        // shape a prior load left behind so the two Options stay mutually
+        // exclusive.
         match emu {
             Emu::Single(nes) => {
                 let nes = *nes;
                 let mut tmp = Vec::new();
                 nes.snapshot_core_into(&mut tmp);
-                self.serialize_size = tmp.len();
+                self.serialize_size = tmp.len() + rustynes_core::SAVE_STATE_DEVICE_HEADROOM;
                 self.nes = Some(nes);
                 self.dual = None;
                 eprintln!("[RustyNES] Loaded single-console cart.");
             }
             Emu::Dual(dual) => {
                 // The dual snapshot is a self-describing blob of both consoles; size it
-                // once here (it is deterministic for a given ROM, like the single case).
+                // once here. No headroom: the dual path never attaches an expansion
+                // device (a Vs. cabinet has no light gun, and `run_dual` never calls
+                // `set_zapper`), so its size cannot grow after load.
                 self.serialize_size = dual.snapshot().len();
                 self.dual = Some(dual);
                 self.nes = None;
@@ -983,6 +999,7 @@ impl Core for RustyNesLibretro {
             }
         }
         self.register_memory_maps(ctx);
+        self.memory_maps_registered = true;
         Ok(())
     }
 
@@ -1056,7 +1073,28 @@ impl Core for RustyNesLibretro {
     /// `serialize_size` is zeroed for the same reason — reporting the previous
     /// game's snapshot size while no game is loaded invites the frontend to size
     /// a buffer against a cartridge that is gone.
-    fn on_unload_game(&mut self, _ctx: &mut UnloadGameContext) {
+    fn on_unload_game(&mut self, ctx: &mut UnloadGameContext) {
+        // Withdraw the memory maps BEFORE the console they point into is
+        // dropped (libretro audit §1.3). RetroArch keeps registered descriptors
+        // until the whole core is torn down (`runloop_system_info_free`, reached
+        // from `uninit_libretro_symbols`), not when content closes, so without
+        // this its cheat search and RetroAchievements keep raw pointers into
+        // freed WRAM / SRAM / CIRAM. An empty map clears them: RetroArch's
+        // `SET_MEMORY_MAPS` handler frees the previous descriptors before it
+        // reads the new count.
+        if std::mem::take(&mut self.memory_maps_registered) {
+            let empty = retro_memory_map {
+                descriptors: std::ptr::null(),
+                num_descriptors: 0,
+            };
+            // SAFETY: `ctx` carries the frontend's own environment callback,
+            // valid for the duration of `retro_unload_game`. `empty` names no
+            // descriptors, so no pointer in it is read.
+            unsafe {
+                let cb = *ctx.environment_callback();
+                rust_libretro::environment::set_memory_maps(cb, empty);
+            }
+        }
         self.nes = None;
         self.dual = None;
         self.genie_cheats.clear();
@@ -1133,11 +1171,15 @@ impl Core for RustyNesLibretro {
         } else {
             return false;
         }
-        if slice.len() >= self.serialize_buffer.len() {
-            slice[..self.serialize_buffer.len()].copy_from_slice(&self.serialize_buffer);
-            return true;
-        }
-        false
+        let Some((payload, tail)) = slice.split_at_mut_checked(self.serialize_buffer.len()) else {
+            return false;
+        };
+        payload.copy_from_slice(&self.serialize_buffer);
+        // Zero the headroom `retro_serialize_size` reserves (see
+        // `on_load_game`). The frontend's buffer may be reused and hold anything,
+        // and `SectionIter` recognises padding only by its being all zero.
+        tail.fill(0);
+        true
     }
 
     fn on_unserialize(&mut self, slice: &mut [u8], _ctx: &mut UnserializeContext) -> bool {
@@ -1289,6 +1331,7 @@ retro_core!(RustyNesLibretro {
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,
     serialize_buffer: Vec::new(),
+    memory_maps_registered: false,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
     genie_cheats: BTreeMap::new(),
 });

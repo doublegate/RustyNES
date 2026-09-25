@@ -48,11 +48,20 @@ cycle-accurate core later replaced.
   other 48 are classified with written reasons: configuration, host input,
   Vs. DualSystem wiring the wrapper re-drives, per-cycle scratch, telemetry, and
   two fields of the pre-v2.0.0 DMA path that only deprecated methods read.
+- **The libretro core's save states work with a Zapper plugged in.** RetroArch
+  sizes every save-state, rewind and run-ahead buffer from the one
+  `retro_serialize_size` the core reports at load, and a Zapper attached later
+  grew the state past it, so every save after selecting the light gun failed.
+  The core now reserves room for the largest expansion device on both ports
+  and zeroes what it does not use.
+- **Unloading a game withdraws its memory maps.** RetroArch keeps a core's
+  memory descriptors until the core itself is unloaded, so after closing a
+  game its cheat search and RetroAchievements held pointers into freed memory.
+  The core now replaces them with an empty map before freeing the console.
 - **A C-ABI test harness for the libretro core.** The core's tests now drive the
-  exported `retro_*` functions as a frontend does. Three tests are red and
-  ignored until their fixes land: memory maps withdrawn on unload, save states
-  that fit with a Zapper plugged in, and loading through the standard
-  `retro_game_info`. The last cannot be fixed in this repository as it stands:
+  exported `retro_*` functions as a frontend does, which is how the two fixes
+  above were pinned red first. One test stays red and ignored: loading through
+  the standard `retro_game_info`, which cannot be fixed in this repository as it stands:
   `rust-libretro` 0.3.2 hands the core an opaque one-byte `retro_game_info`, so
   a frontend's `path`, `data` and `size` never arrive. Fixing it means patching
   that binding, which is the maintainer's decision.

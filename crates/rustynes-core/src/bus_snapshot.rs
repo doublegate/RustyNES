@@ -22,6 +22,26 @@ use alloc::vec::Vec;
 /// Schema version for the BUS section payload.
 pub const BUS_SECTION_VERSION: u8 = 1;
 
+/// Largest encoding of one port's expansion device in the BUS section.
+///
+/// The tag byte plus that device's fields. The Family BASIC / Subor keyboards
+/// and the SNES mouse are the largest, at 14 bytes; an unplugged port is the
+/// 1-byte tag alone.
+pub const EXPANSION_DEVICE_MAX_LEN: usize = 14;
+
+/// How much a snapshot can grow after it is first measured.
+///
+/// Devices attach lazily: a port reads "unplugged" (1 byte) until the host
+/// plugs a device in, and the largest device then takes
+/// [`EXPANSION_DEVICE_MAX_LEN`]. Two ports, so twice the difference.
+///
+/// v2.8.0 (libretro audit §2.1): the libretro core adds this to the
+/// `retro_serialize_size` it reports at load, because the frontend sizes its
+/// save-state, rewind and run-ahead buffers from that one answer, and a Zapper
+/// plugged in mid-game otherwise made every later save fail. The padding it
+/// leaves is zeroed and read back as padding (`save_state::SectionIter`).
+pub const SAVE_STATE_DEVICE_HEADROOM: usize = 2 * (EXPANSION_DEVICE_MAX_LEN - 1);
+
 /// Encode the bus's own state (RAM, controllers, DMA, edge latches, cycle).
 pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     let mut w = BinWriter::with_capacity(0x900);
@@ -639,4 +659,76 @@ pub struct BusMiscState {
     /// W3-Stage-4: R1 substrate master clocks consumed by bus-side DMA
     /// cycles not yet folded into `Cpu::master_clock`.
     pub dma_mc_consumed: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input_device::{
+        BandaiHyperShotState, KonamiHyperShotState, PowerPadState, SnesMouseState,
+    };
+    use alloc::vec;
+
+    /// One of every device, named by an exhaustive `match` so that adding an
+    /// `InputDevice` variant fails to compile here until its encoding is
+    /// checked against [`EXPANSION_DEVICE_MAX_LEN`].
+    fn every_device() -> Vec<InputDevice> {
+        let all = vec![
+            InputDevice::Zapper(ZapperState::from_parts(0, 0, false, false)),
+            InputDevice::Vaus(VausState::from_parts(0, false, 0, false)),
+            InputDevice::PowerPad(PowerPadState::from_parts(0, 0, 0, false)),
+            InputDevice::SnesMouse(SnesMouseState::from_parts(
+                0, 0, false, false, 0, 0, 0, false,
+            )),
+            InputDevice::FamilyKeyboard(FamilyKeyboardState::from_parts(
+                [0; 9], 0, false, false, false,
+            )),
+            InputDevice::FamilyTrainer(PowerPadState::from_parts(0, 0, 0, false)),
+            InputDevice::SuborKeyboard(FamilyKeyboardState::from_parts(
+                [0; 9], 0, false, false, false,
+            )),
+            InputDevice::KonamiHyperShot(KonamiHyperShotState::from_parts(0, false, false)),
+            InputDevice::BandaiHyperShot(BandaiHyperShotState::from_parts(0, false)),
+        ];
+        for d in &all {
+            match d {
+                InputDevice::Zapper(_)
+                | InputDevice::Vaus(_)
+                | InputDevice::PowerPad(_)
+                | InputDevice::SnesMouse(_)
+                | InputDevice::FamilyKeyboard(_)
+                | InputDevice::FamilyTrainer(_)
+                | InputDevice::SuborKeyboard(_)
+                | InputDevice::KonamiHyperShot(_)
+                | InputDevice::BandaiHyperShot(_) => {}
+            }
+        }
+        all
+    }
+
+    fn encoded_len(device: Option<&InputDevice>) -> usize {
+        let mut w = BinWriter::with_capacity(32);
+        encode_expansion_device(&mut w, device);
+        w.into_vec().len()
+    }
+
+    #[test]
+    fn no_expansion_device_encodes_past_the_documented_maximum() {
+        assert_eq!(
+            encoded_len(None),
+            1,
+            "an unplugged port is the tag byte alone"
+        );
+        let largest = every_device()
+            .iter()
+            .map(|d| encoded_len(Some(d)))
+            .max()
+            .expect("at least one device");
+        assert_eq!(
+            largest, EXPANSION_DEVICE_MAX_LEN,
+            "EXPANSION_DEVICE_MAX_LEN must be the largest device encoding exactly: \
+             larger and the libretro core's save-state buffer is too small, smaller \
+             and it is merely wasteful but the documented figure is wrong"
+        );
+    }
 }
