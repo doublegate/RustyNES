@@ -863,8 +863,9 @@ nothing on the critical path.
 
 **A combined bound is a bound on the SUM**, and review on #553 rightly pointed
 out that offsetting effects could hide an individual gain. (v2.7.6 then
-measured the six deletions one at a time as well; all six are zero individually,
-see the next section.) Six of the seven are
+measured the six deletions one at a time as well: five are zero individually,
+and §3.5b, which neither this probe nor the first individual run ever reached,
+bounds at about 0.2%; see the next section.) Six of the seven are
 deletions of work, which cannot make the core slower except through code
 layout; the seventh, IMP-04, is a rewrite that could move either way. So IMP-04
 was also run alone, twice:
@@ -999,10 +1000,12 @@ inside the combined zero. So each was re-run alone (maintainer request,
 **Method.** Each probe applied by itself to `main` (`0eb48bc`), exactly as in
 the combined tree; `scripts/perf/ab_check.sh`, `AB_MEASUREMENT_TIME=25`, two
 independent runs each, i9-10850K, load average 1.5–3.0 (another session and
-Syncthing were running; every run carries its A/B/A control). **Reach:** every
-probe removes work on a path the stock benches execute on every CPU cycle, every
-PPU dot or every `$4020+` read; IMP-06's stores are on the fast dot path, which
-`nestest_fast` reaches and `flowing_palette` (rendering disabled) does not.
+Syncthing were running; every run carries its A/B/A control). **Reach:** five
+probes remove work on a path the stock benches execute on every CPU cycle, every
+PPU dot or every `$4020+` read (§3.6's check, counted: 24,832 calls a frame on
+`nestest`, 3,968 on `flowing_palette`); IMP-06's stores are on the fast dot path,
+which `nestest_fast` reaches and `flowing_palette` (rendering disabled) does not.
+**§3.5b is the exception, and the table's §3.5b rows measure nothing**: see below.
 **Output:** each probe was hashed over 180 frames of framebuffer, audio and the
 final cycle count on both bench ROMs, on both dot paths, against the unprobed
 build: **all six are byte-identical** on these workloads.
@@ -1018,8 +1021,8 @@ control in brackets:
 | §3.1 B | 2 | +5.46% (+0.64%) | +0.04% (−0.07%) | +0.39% (−0.20%) | −0.32% (−1.19%) |
 | §3.1 C | 1 | +0.13% (−0.12%) | −0.05% (+0.09%) | +0.27% (−0.21%) | −0.20% (−0.03%) |
 | §3.1 C | 2 | +1.49% (−0.23%) | +1.81% (+0.54%) | +0.56% (−0.60%) | −2.18% (−2.43%) |
-| IMP−06 stores | 1 | −0.01% (−0.22%) | +0.97% (+0.52%) | +0.51% (+0.84%) | +0.02% (−0.03%) |
-| IMP−06 stores | 2 | −0.49% (−0.39%) | +0.99% (+0.30%) | +0.40% (+1.06%) | +0.25% (+1.97%) |
+| IMP-06 stores | 1 | −0.01% (−0.22%) | +0.97% (+0.52%) | +0.51% (+0.84%) | +0.02% (−0.03%) |
+| IMP-06 stores | 2 | −0.49% (−0.39%) | +0.99% (+0.30%) | +0.40% (+1.06%) | +0.25% (+1.97%) |
 | §3.5b | 1 | −0.18% (−0.27%) | +0.07% (+0.02%) | −0.16% (−0.41%) | +0.05% (−0.22%) |
 | §3.5b | 2 | −0.12% (−0.20%) | +0.26% (−0.06%) | +0.36% (−0.05%) | +0.47% (+0.03%) |
 | §3.6 | 1 | −0.07% (−0.18%) | −0.11% (+0.23%) | −0.29% (−0.09%) | −0.04% (+0.12%) |
@@ -1031,7 +1034,39 @@ it is not (A's `flowing_palette_fast` −0.26% in run 1, +1.93% in run 2; B's
 `nestest` −0.23%, then +5.46%; C's two exact-path workloads flat, then +1.5% and
 +1.8%).
 Those are the layout and background-load effects the method exists to catch,
-and none of them points toward a gain. **All six: zero, individually.**
+and none of them points toward a gain. **Five are zero, individually.**
+
+**§3.5b was never reached, here or in v2.7.5.** `Pulse::output` tests
+`length.count == 0` first and short-circuits, and both bench ROMs are silent:
+counted, `muted()` ran **0 times per frame** on each. So the combined v2.7.5
+probe and the rows above deleted code that never executed. CodeRabbit's review
+of #555 asked for the §3.5b conclusion to be qualified; checking what the probe
+reached is what showed it had measured nothing. A scan of the committed ROMs for
+a workload that does reach it found several at 59,561 calls a frame (both
+pulses, every CPU cycle); `spritecans.nes` (music plus sprites) was used, in a
+temporary `run_frame` bench on the fast dot path, as a manual A/B/A pinned to
+cores 2-5, 25 s per measurement:
+
+| run | ceiling (check deleted) | control |
+| --- | ---: | ---: |
+| 1 | −0.10% (p = 0.02) | +0.05% (p = 0.11) |
+| 2 | −0.14% (p = 0.01) | +0.08% (p = 0.17) |
+
+A real ceiling, reproduced, of about 0.2% against the controls. The ceiling
+deletes correct behaviour, so the question is whether a correct change takes
+it. The cheapest byte-identical one tests the duty step before the sweep check
+(the three predicates are pure, so their order cannot change the result, and a
+low duty step is 50-87.5% of samples):
+
+| run | candidate (duty step first) | control |
+| --- | ---: | ---: |
+| 1 | +0.67% (p = 0.02) | −1.25% |
+| 2 | +0.67% (p = 0.00) | +0.47% |
+
+**Slower in both runs.** The remaining option, caching the sweep target, would
+add a field kept in step with four register paths and the save state, for at
+most the 0.2% the ceiling allows. **§3.5b: REJECTED**, now on a measurement that
+reaches it.
 
 What the per-item look found beyond the timing:
 
@@ -1055,10 +1090,12 @@ What the per-item look found beyond the timing:
   dots off the fast path), so the assertion is pinned by a unit test that enters
   the fast body with a lagging history and requires the panic; restoring the
   old stores turns that test red.
-- **§3.5b and §3.6 are byte-identical here only because the workloads never
-  mute a pulse or read an unmapped address**; the probes delete correct
-  behaviour and are ceilings, not candidates. Their cost, the part a ceiling
-  measures, is paid on every call either way.
+- **§3.6's probe deletes correct behaviour**, and is byte-identical here only
+  because these workloads never read an unmapped address. It is a ceiling, not a
+  candidate; its cost, the call, is paid on every cartridge read either way, and
+  the ceiling on that is zero. (This bullet first said the same of §3.5b. That
+  was wrong: §3.5b's check is not paid at all when a pulse is silent, which is
+  why the bench never reached it; see above.)
 
 ### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
 

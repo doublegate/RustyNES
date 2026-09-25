@@ -674,13 +674,13 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.7.6 "Recount"** (2026-09-24) — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, and all six are zero; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets. Built on **v2.7.5 "Tally"** (2026-09-24) — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused ApuBus trait are deprecated; and the core and frontend ledgers have no open row.
+RustyNES's current release is **v2.7.6 "Recount"** (2026-09-24) — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, where the benchmarks reach them: five are zero, and the sixth, the pulse sweep-mute check, bounds at about 0.2%, and the cheap byte-identical way to take it measured slower; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets. Built on **v2.7.5 "Tally"** (2026-09-24) — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused ApuBus trait are deprecated; and the core and frontend ledgers have no open row.
 
 v2.7.6 changes no emulation behaviour (its one code change is a debug
 assertion), and the accuracy numbers below were re-measured on its release
 tree anyway: AccuracyCoin 144/144 and nestest pass, and the full
 `--features test-roms` suite passes 2,722 tests. It measures alone the six
-performance proposals v2.7.5 bounded only together (all six zero,
+performance proposals v2.7.5 bounded only together (five zero, one worth at most 0.2%,
 `docs/performance.md`), and ships the contributed libretro buildbot fixes.
 v2.7.5 closed the v2.7.x audit line: the core and frontend ledgers have no
 open row. Desktop, Android and iOS all keep battery

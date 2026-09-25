@@ -30,7 +30,10 @@ cycle-accurate core later replaced.
 
 A measurement release between the v2.7.x and v2.8.x audit lines. v2.7.5
 bounded six of the core audit's performance proposals only together; each is
-now measured alone, and all six are zero. One of them, three stores that
+now measured alone, on a workload that reaches it: five are zero, and the
+sixth is worth at most about 0.2%, and the cheap byte-identical way to
+take it measured slower. One
+of them, three stores that
 re-wrote values the code already guarantees, is now an assertion of that
 guarantee. It also ships the
 libretro buildbot work contributed in #554. No emulation behaviour changes:
@@ -39,13 +42,23 @@ the one code change is byte-identical in release builds.
 ### Performance record: the v2.7.5 deletions measured one at a time
 
 - **Six performance proposals that v2.7.5 bounded only together are now each
-  measured alone: all six are zero.** v2.7.5 applied seven of the core audit's
+  measured alone: five are zero.** v2.7.5 applied seven of the core audit's
   proposals in one tree and measured the combined ceiling. That bounds their sum,
   and one proposal's gain could hide behind another's code-layout loss, so
   §3.1 A, B and C, the IMP-06 stores, §3.5b and §3.6 were each re-run alone,
-  twice, with the A/B/A control. None is faster than its control in both runs,
-  and every probe's output is byte-identical to the unprobed build. The numbers
-  are in `docs/performance.md` §v2.7.6.
+  twice, with the A/B/A control. Five are no faster than their controls in
+  either run.
+- **The sixth, the pulse sweep-mute check (§3.5b), had never been measured.**
+  The benchmark ROMs are silent, and `Pulse::output` stops at the empty length
+  counter before it reaches the check: counted, it ran 0 times per frame, in
+  v2.7.5's combined probe and in this release's first run alike. On
+  `spritecans.nes`, whose pulses run every CPU cycle (59,561 calls per frame),
+  deleting the check is 0.10% and 0.14% faster in two runs against flat
+  controls: a real ceiling of about 0.2%. The byte-identical way to take it,
+  testing the duty step before the check, measured 0.67% slower in both runs,
+  and caching the sweep target would add state to four register paths and the
+  save state for at most 0.2%. Rejected, with the numbers in
+  `docs/performance.md` §v2.7.6.
 - **The fast render path checks its rendering history instead of re-writing
   it.** Three stores in `tick_visible_render_fast` wrote `true` into fields the
   path's entry guard already requires to be `true`. They are now a
