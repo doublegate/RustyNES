@@ -547,6 +547,24 @@ fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons 
     bt
 }
 
+/// Convert one mixer sample to the frontend's `i16`, with `1.0` at full scale.
+///
+/// The mixer's output is bipolar and DC-blocked. Measured over 900 frames of
+/// the bbbradsmith `db_*` ROMs (v2.8.1): the 2A03 alone spans about
+/// `-0.385..0.223`, and a Namco 163 channel reaches `+/-0.870`. Until v2.8.1
+/// this scaled by `65535`, putting full scale at `0.5` on the premise that the
+/// output stays inside `[-0.5, 0.5]`; that holds for the 2A03 and not for
+/// expansion audio, so `db_n163` hard-clipped 14,017 samples here while the
+/// desktop frontend, which hands the same `f32`s to the audio device, played
+/// them clean. Full scale at `1.0` is the desktop's scale: nothing measured
+/// clips, and the libretro core is about 6 dB quieter than before.
+#[inline]
+fn sample_to_i16(sample: f32) -> i16 {
+    // The clamp keeps a stray out-of-range sample (or a NaN, which `as`
+    // maps to 0) from wrapping; it is saturation, not normal operation.
+    (sample * 32767.0).clamp(-32768.0, 32767.0) as i16
+}
+
 /// Hand one frame's pad state to a single console: players 1-2 always, and
 /// players 3-4 with the Four Score adapter plugged in exactly when `extra` is
 /// present (the `rustynes_four_score` option). Unplugging it again restores
@@ -992,8 +1010,7 @@ impl RustyNesLibretro {
         // only ever allocates if a future change enlarges `audio_float_buffer`.
         self.audio_buffer.reserve(produced * 2);
         for &sample in &self.audio_float_buffer[..produced] {
-            // RustyNES APU outputs bipolar ~[-0.5, 0.5], so we scale by 65535.0.
-            let s16 = (sample * 65535.0).clamp(-32768.0, 32767.0) as i16;
+            let s16 = sample_to_i16(sample);
             // Duplicate the sample for stereo interleaving (Left, Right).
             self.audio_buffer.push(s16);
             self.audio_buffer.push(s16);
@@ -1849,6 +1866,25 @@ mod tests {
         apply_pads(&mut nes, [Buttons::A, Buttons::B], None);
         assert!(!nes.four_score(), "turning the option off unplugs it");
         assert_eq!(nes.buttons(0), Buttons::A);
+    }
+
+    #[test]
+    fn expansion_audio_is_not_clipped() {
+        // The Namco 163 peak measured on `db_n163` (v2.8.1), and the 2A03's
+        // own most negative sample. Neither may reach an `i16` rail; the old
+        // `* 65535` scale sent the first to `i16::MAX`.
+        for peak in [0.8699_f32, -0.8697, -0.3853] {
+            let s = sample_to_i16(peak);
+            assert!(s != i16::MAX && s != i16::MIN, "{peak} clipped to {s}");
+        }
+        // Full scale is 1.0, as on the desktop frontend.
+        assert_eq!(sample_to_i16(1.0), i16::MAX);
+        assert_eq!(sample_to_i16(-1.0), -i16::MAX);
+        assert_eq!(sample_to_i16(0.0), 0);
+        // Saturation, not wraparound, past full scale; NaN is silence.
+        assert_eq!(sample_to_i16(4.0), i16::MAX);
+        assert_eq!(sample_to_i16(-4.0), i16::MIN);
+        assert_eq!(sample_to_i16(f32::NAN), 0);
     }
 
     #[test]

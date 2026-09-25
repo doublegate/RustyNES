@@ -47,6 +47,14 @@ cycle-accurate core later replaced.
   of the null libretro specifies, so RetroArch read past its end.
 - **Input is read once per frame, one call per pad.** The core polled a second
   time and read each pad with sixteen calls where one bitmask read does.
+- **Expansion audio no longer clips in the libretro core.** It mapped `0.5` to
+  full scale, and Namco 163 audio reaches about `0.87`, so it hard-clipped
+  where the desktop plays it clean. Full scale is now `1.0`, as on the
+  desktop, which makes the libretro core about 6 dB quieter.
+- **The audit's three performance proposals were measured and rejected**: the
+  serialize allocation it described does not happen (the allocator reuses the
+  block), and neither a one-pass blit nor a vectorised audio loop is faster.
+  The numbers are in `docs/performance.md`.
 
 ## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
 
