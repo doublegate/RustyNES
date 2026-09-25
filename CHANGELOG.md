@@ -79,7 +79,8 @@ load.
   in `NOTICE`), and a frontend that refuses the command loads through the
   standard struct: its data, or the file at its path. A frontend that answers
   the command with a path but no data now takes the same route instead of
-  getting an error.
+  getting an error. An FDS image is recognised by its signature as well as
+  by a `.fds` extension, so one behind a path without that extension loads.
 - **An internal error in the libretro core no longer closes RetroArch.** A
   panic anywhere in a frame crossed into RetroArch and aborted it, with no
   chance to write a battery save. The core is now built to unwind, and every

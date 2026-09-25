@@ -601,10 +601,14 @@ impl RustyNesLibretro {
             // SAFETY: `ext_info.ext` is either null or a valid, NUL-terminated,
             // frontend-owned C string for the duration of this call, per the same
             // `RetroGameInfoExt` contract relied on above for `data`/`size`.
-            let is_fds = (!ext_info.ext.is_null())
+            //
+            // The signature is the fallback here too, so both load paths
+            // classify the same bytes the same way (see `has_fds_signature`).
+            let is_fds = ((!ext_info.ext.is_null())
                 && unsafe { CStr::from_ptr(ext_info.ext) }
                     .to_str()
-                    .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds"));
+                    .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds")))
+                || has_fds_signature(&rom);
             (rom, is_fds)
         } else {
             let game = game.ok_or("the frontend supplied no game and no GET_GAME_INFO_EXT")?;
@@ -1015,20 +1019,31 @@ fn standard_game_path(game: &retro_game_info) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Whether a game passed through the standard `retro_game_info` is a Famicom
-/// Disk System image.
-///
-/// By the path's extension when there is one, as the `GET_GAME_INFO_EXT` path
-/// does. With no path, by content: the two forms the FDS loader accepts are
-/// the fwNES container (`"FDS\x1A"`) and a raw side, which opens with the
-/// disk-info block `\x01*NINTENDO-HVC*`.
-fn standard_game_is_fds(game: &retro_game_info, rom: &[u8]) -> bool {
-    if let Some(path) = standard_game_path(game) {
-        return std::path::Path::new(&path)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"));
-    }
+/// Whether `rom` carries a Famicom Disk System signature: the fwNES container
+/// header (`"FDS\x1A"`) or a raw side, which opens with the disk-info block
+/// `\x01*NINTENDO-HVC*`. These are the two forms the FDS loader accepts. An
+/// iNES / NES 2.0 image always opens with `"NES\x1A"`, so it can match
+/// neither, and trusting the signature over a missing or wrong extension
+/// cannot misroute a cartridge.
+fn has_fds_signature(rom: &[u8]) -> bool {
     rom.starts_with(b"FDS\x1A") || rom.get(..15) == Some(b"\x01*NINTENDO-HVC*".as_slice())
+}
+
+/// Whether a game passed through the standard `retro_game_info` is a Famicom
+/// Disk System image: a `.fds` path, or the FDS signature in the bytes.
+///
+/// The signature is checked whenever the extension does not already say FDS,
+/// including when a path is present: a frontend may pass a path with no
+/// extension, such as a temporary file extracted from an archive (agy, #556).
+/// Before, any path at all decided by extension alone, and such an image was
+/// handed to the iNES parser and refused.
+fn standard_game_is_fds(game: &retro_game_info, rom: &[u8]) -> bool {
+    let fds_extension = standard_game_path(game).is_some_and(|path| {
+        std::path::Path::new(&path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"))
+    });
+    fds_extension || has_fds_signature(rom)
 }
 
 impl Core for RustyNesLibretro {
@@ -1619,6 +1634,47 @@ mod abi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A standard `retro_game_info` with only `path` set.
+    fn game_at(path: &CStr) -> retro_game_info {
+        retro_game_info {
+            path: path.as_ptr(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        }
+    }
+
+    #[test]
+    fn fds_images_are_recognised_by_signature_even_behind_a_path() {
+        // Review on #556 (agy). A path without the `.fds` extension used to
+        // decide "not FDS" before the bytes were looked at, so an FDS image
+        // behind an extension-less path (an extracted temp file) went to the
+        // iNES parser and was refused.
+        let fwnes = b"FDS\x1A\x01\0\0\0\0\0\0\0\0\0\0\0";
+        let raw_side = b"\x01*NINTENDO-HVC*\0\0\0";
+        let ines = b"NES\x1A\x02\x01\0\0\0\0\0\0\0\0\0\0";
+        for path in [c"/tmp/extracted", c"/roms/game.nes", c"/roms/game.bin"] {
+            let game = game_at(path);
+            assert!(standard_game_is_fds(&game, fwnes), "{path:?}: fwNES header");
+            assert!(standard_game_is_fds(&game, raw_side), "{path:?}: raw side");
+            assert!(
+                !standard_game_is_fds(&game, ines),
+                "{path:?}: iNES stays iNES"
+            );
+        }
+        // The extension still decides on its own when it says FDS.
+        assert!(standard_game_is_fds(&game_at(c"/roms/game.FDS"), ines));
+        // No path at all: the signature alone, as before.
+        let no_path = retro_game_info {
+            path: std::ptr::null(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        };
+        assert!(standard_game_is_fds(&no_path, fwnes));
+        assert!(!standard_game_is_fds(&no_path, ines));
+    }
 
     /// Historical value: the literal this core hardcoded into
     /// `retro_get_system_av_info` for every cartridge, regardless of region.
