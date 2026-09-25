@@ -4224,13 +4224,27 @@ impl Ppu {
         // `if render_line { tick_oam_corruption(rendering) }` does here.
         self.tick_oam_corruption(true);
 
-        // Rendering-edge bookkeeping the NEXT dot's gate consumes. Both are
-        // already `true` (guard), but the general path assigns them every dot,
-        // so keep the writes to stay byte-identical across a fast→general dot
-        // boundary.
-        self.prev_rendering_enabled = true;
-        self.rendering_enabled_delayed = true;
-        self.rendering_enabled_delayed2 = true;
+        // Rendering-edge bookkeeping the NEXT dot's gate consumes. The general
+        // path assigns all three every dot (`delayed2 <- delayed <- rendering`,
+        // `prev <- rendering`); here the guard in `tick` has already required
+        // `prev_rendering_enabled`, `rendering_enabled_delayed`,
+        // `rendering_enabled_delayed2` and `mask.rendering_enabled()`, so each
+        // assignment would write the value the field already holds, and the
+        // state a fast→general dot boundary hands on is the same either way.
+        //
+        // Until v2.7.6 this block re-wrote them to `true`. Stated as the
+        // invariant instead, so a future change to the guard that stops
+        // guaranteeing it fails here in every debug and test build rather than
+        // having the stores silently paper over it. Measured on its own in
+        // v2.7.6 (core audit IMP-06, `docs/performance.md`): deleting the
+        // stores is byte-identical and moves nothing, so this is a statement of
+        // the invariant, not an optimisation.
+        debug_assert!(
+            self.prev_rendering_enabled
+                && self.rendering_enabled_delayed
+                && self.rendering_enabled_delayed2,
+            "fast render path entered without a stably-enabled rendering history"
+        );
 
         // Sprite-evaluation FSM (visible scanline) + isolated OAM data-bus model.
         self.tick_sprite_eval_per_dot();
@@ -8519,5 +8533,31 @@ mod tests {
         p.shift_bg();
         assert_eq!(p.at_shift_lo, p.bg_shift_lo, "lockstep after shift_bg");
         assert_eq!(p.at_shift_hi, p.bg_shift_hi, "lockstep after shift_bg");
+    }
+
+    /// v2.7.6 (core audit IMP-06) — the fast render path's history invariant
+    /// is checked, not re-imposed.
+    ///
+    /// The fast body used to write `true` into the three rendering-history
+    /// fields, which the guard in `tick` already requires. Those writes were
+    /// replaced by a `debug_assert!`. This test enters the fast body with a
+    /// history that lags the mask (the first dot after an enable) and requires
+    /// the assertion to fire. It has to be a direct unit test: no ROM in the
+    /// corpus can reach this state, because the guard's `mask_write_delay`
+    /// term alone keeps such dots off the fast path. Deleting every history
+    /// term from the guard left `fast_dotloop_diff` green, which is why the
+    /// assertion is pinned here rather than through it.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(
+        expected = "fast render path entered without a stably-enabled rendering history"
+    )]
+    fn fast_render_path_asserts_its_rendering_history() {
+        let (mut p, mut bus) = fresh_ppu();
+        p.dot = 1;
+        p.prev_rendering_enabled = false;
+        p.rendering_enabled_delayed = true;
+        p.rendering_enabled_delayed2 = true;
+        p.tick_visible_render_fast(&mut bus);
     }
 }

@@ -1,10 +1,10 @@
 # RustyNES Documentation Index
 
-**RustyNES version:** v1.8.8 "Atlas" (on the cycle-accurate v1.0.0 core)
+**RustyNES version:** see the "Current release" line in [`STATUS.md`](STATUS.md)
+(deliberately not repeated here: this line named v1.8.8 until v2.7.6).
 
 This index maps the `docs/` tree for RustyNES — the cycle-accurate
-NES/Famicom emulator (current release **v1.8.8 "Atlas"** on the v1.0.0 production
-core; the Android platform line). The single source of truth for test pass counts,
+NES/Famicom emulator. The single source of truth for the current release, test pass counts,
 mapper coverage, feature flags, and version policy is [`STATUS.md`](STATUS.md).
 
 ---

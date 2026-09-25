@@ -1,7 +1,8 @@
 # RustyNES Development TODO Tracker
 
-**RustyNES version:** v1.8.8 "Atlas" (latest in the Android platform train on the v1.0.0 production core)
-**Project Status:** Released — v1.8.8 "Atlas" shipped; v1.8.9 in development.
+**RustyNES version and status:** see [`ROADMAP.md`](ROADMAP.md) and
+[`../docs/STATUS.md`](../docs/STATUS.md) (deliberately not repeated here: these
+lines named v1.8.8 until v2.7.6).
 
 ---
 

@@ -2,13 +2,13 @@
 
 **Document Version:** 2.0.4
 **Last Updated:** 2026-09-24
-**Project Status:** v2.7.5 "Tally" released — every audit claim closed with a measurement or a reason, the sixth and last release of the v2.7.x audit line. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
+**Project Status:** v2.7.6 "Recount" released — the v2.7.5 deletions measured one at a time, a measurement release between the v2.7.x and v2.8.x audit lines. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
 
 ---
 
 ## Where we are
 
-RustyNES is well past v1.0.0. The current release is **v2.7.5 "Tally"** — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused `ApuBus` trait are deprecated; and the core and frontend ledgers have no open row. Built on **v2.7.4 "Pocket"** — the mobile apps survive what a phone does to them: an internal error no longer closes the Android or iOS app, battery saves persist on both, the apps pause and give up audio when they should, and saves are written so a dying phone keeps the last good one. **No hardware has run any bitstream.**
+RustyNES is well past v1.0.0. The current release is **v2.7.6 "Recount"** — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, where the benchmarks reach them: five are zero, and the sixth, the pulse sweep-mute check, bounds at about 0.2%, and the cheap byte-identical way to take it measured slower; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets. Built on **v2.7.5 "Tally"** — every audit claim closed with a measurement or a reason: the core audit's twelve performance proposals were closed, eleven of them by measurement, and one adopted (the audio buffer keeps its capacity between frames); 18 dead bus methods and the unused `ApuBus` trait are deprecated; and the core and frontend ledgers have no open row. **No hardware has run any bitstream.**
 
 **This root ROADMAP is a historical snapshot of the v1.0.0 cut.** For the authoritative, current forward roadmap see **[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)**; for the authoritative current-state pass counts and platform matrix see **[`docs/STATUS.md`](docs/STATUS.md)**; for the full per-release history see **[`CHANGELOG.md`](CHANGELOG.md)**. Many of the "post-1.0 directions" listed further down (mobile, Lua scripting, TAS editor, Vs. DualSystem, HD packs, hosted netplay) have since shipped — the tables below record what was **done at v1.0.0**, not the current feature set.
 
