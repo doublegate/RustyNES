@@ -26,7 +26,14 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### The libretro core's build and metadata (v2.8.1, in progress)
+## [2.8.1] - 2026-09-25 - "Gasket" (the libretro core fits the frontends around it)
+
+The second release of the v2.8.x line, and the last of its libretro work:
+every row of the libretro audit ledger now has a verdict and evidence.
+Emulation does not change (AccuracyCoin 144/144, nestest, every golden); the
+libretro core's audio is about 6 dB quieter, on purpose.
+
+### The libretro core's build, input and metadata
 
 - **The libretro `Makefile` does what its callers ask.** `make PREFIX=/usr/local`
   no longer breaks the copy (the file prefix is now `LIB_PREFIX`),

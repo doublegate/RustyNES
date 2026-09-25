@@ -2,13 +2,13 @@
 
 **Document Version:** 2.0.4
 **Last Updated:** 2026-09-24
-**Project Status:** v2.8.0 "Bulkhead" released — the libretro core stops a fault at its own boundary, the first release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
+**Project Status:** v2.8.1 "Gasket" released — the libretro core fits the frontends around it, closing the libretro audit. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
 
 ---
 
 ## Where we are
 
-RustyNES is well past v1.0.0. The current release is **v2.8.0 "Bulkhead"** — the libretro core stops a fault at its own boundary: an internal error no longer closes RetroArch, save states survive plugging in a Zapper, closing a game withdraws its memory maps, the core loads from any libretro frontend, and the save state now carries the 2A03 internal data bus. Built on **v2.7.6 "Recount"** — the v2.7.5 deletions measured one at a time: the six performance proposals v2.7.5 bounded only together were each measured alone, where the benchmarks reach them: five are zero, and the sixth, the pulse sweep-mute check, bounds at about 0.2%, and the cheap byte-identical way to take it measured slower; the fast render path now asserts a rendering-history invariant it used to re-write; and the libretro buildbot builds macOS again and gains 32-bit Windows, 32-bit Linux and webOS targets. **No hardware has run any bitstream.**
+RustyNES is well past v1.0.0. The current release is **v2.8.1 "Gasket"** — the libretro core fits the frontends around it: four-player games work through a Four Score option, a controller works again after its port leaves the Zapper, RetroArch no longer reads past the core's input-descriptor list, expansion audio no longer clips, UNIF images are offered, and the Makefile honours PREFIX, platform=win, DEBUG and CARGO_TARGET_DIR. Built on **v2.8.0 "Bulkhead"** — the libretro core stops a fault at its own boundary: an internal error no longer closes RetroArch, save states survive plugging in a Zapper, closing a game withdraws its memory maps, the core loads from any libretro frontend, and the save state now carries the 2A03 internal data bus. **No hardware has run any bitstream.**
 
 **This root ROADMAP is a historical snapshot of the v1.0.0 cut.** For the authoritative, current forward roadmap see **[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)**; for the authoritative current-state pass counts and platform matrix see **[`docs/STATUS.md`](docs/STATUS.md)**; for the full per-release history see **[`CHANGELOG.md`](CHANGELOG.md)**. Many of the "post-1.0 directions" listed further down (mobile, Lua scripting, TAS editor, Vs. DualSystem, HD packs, hosted netplay) have since shipped — the tables below record what was **done at v1.0.0**, not the current feature set.
 
