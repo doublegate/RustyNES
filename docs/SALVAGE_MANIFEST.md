@@ -173,3 +173,33 @@ so nothing here is walked by `release_anchor_audit.rs` or markdownlint.
 | 4 flagged git dirs | 2.3 MB, 12 MB, 2.3 MB, 1.4 MB | `ac-src`, `ac`, `tri` are clean upstream clones at exactly the vendored commits (`46199ae4`, `94f1b117`) with **0 uncommitted entries** each; `/tmp/dummy_repo` is not this project's. Nothing to hand-salvage. |
 | Foreign agent scratch | 11,994 matches, 213 groups | Other projects (MARM-Stack 5,856; TarsGPT 3,524; Grok-Bot 1,913; Sawdust 402). The one tree that could plausibly hold misfiled RustyNES work — the workspace-root slug `-home-parobek-Code` — was opened by name: 9 files, all homelab config. |
 | Weak matches | 1,249 files, ~511 MB `data` + 864 logs | Type+recency only; presumed-regenerable bulk. |
+
+## 2026-09-25 — tmp-salvage (move, curated: measurement evidence only)
+
+Post-v2.7.6 sweep. `salvage.py --coverage` reached **140,932 files** and proposed
+**60,636 candidates**, 59,430 of them in this session's own agent scratch. By
+maintainer choice **one directory was claimed** and moved (not copied):
+`rustynes-perf-evidence-v2.7.6`, **48 files / 153 KB**, staged from the scratch
+so that it lands as one unit. The move reported 1 moved, 0 duplicates, 0 errors.
+
+This section was **written by hand after the script's own entry was lost**: an
+overwrite of this file in the same session (restoring the committed copy to
+unblock a rebase, with a backup that had not in fact been written) discarded
+it. The facts below are from the dry-run and execution output, not memory.
+
+### Claimed (1 directory, 48 files)
+
+| Source | Destination | Notes |
+|---|---|---|
+| staged `rustynes-perf-evidence-v2.7.6/` | `salvaged/rustynes-perf-evidence-v2.7.6/` | The inputs and outputs behind `docs/performance.md` §v2.7.5 and §v2.7.6. `v2.7.5/`: the combined ceiling-probe diff, the IMP-04 / IMP-05 / palette candidates, the IMP-07 frame-then-drain bench and their `ab_check.sh` logs. `individual/`: the v2.7.6 harness (`probe.py`, `drive.sh`, `summ.py`), 12 `ab_check` logs, 7 output hashes, the §3.5b re-measurement on `spritecans.nes` (`pulse_bench.rs`, both A/B/A scripts and logs), and the 2,722-pass `test-roms` log. A `README.md` explains each part. |
+
+### Found and deliberately NOT claimed
+
+| Group | Size | Why not |
+|---|---|---|
+| Regenerable scratch bulk | ~3.3 GB | A Python venv (171 MB), two cargo target trees (0.8 GB, 1.8 GB), nine built mkdocs sites, the libretro buildbot zips (already attached to the v2.7.5 release), and ROM trace dumps. |
+| PR bodies, review replies, commit-message drafts | small | Already published: each is the `-F` input to a PR, reply or commit that landed on #553-#555. |
+| `/tmp/crates_diff.patch` | 20 KB | A WIP diff of `crates/` that applies in neither direction: superseded by what shipped in v2.7.5. |
+| `/tmp/test_fix1.rs`, workspace-root task outputs, the holy-mapperel `hm02` one-line Python fix | small | Not chosen by the maintainer. `hm02` is a scratch clone whose only change is `collections.Sequence` becoming `collections.abc.Sequence`. |
+| `/tmp/agy_env.txt` | 6 KB | An environment dump with lines matching token / key patterns. Never offered for the repository tree. |
+| Foreign agent scratch | 545 matches, MARM-Stack | Another project's. |
