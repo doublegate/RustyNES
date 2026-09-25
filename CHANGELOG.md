@@ -36,6 +36,12 @@ cycle-accurate core later replaced.
   check it. A synchroniser per clock now releases each reset on an edge. A
   module gate checks the release against the old wiring, which it shows
   releasing between edges.
+- **The MiSTer core's CPU is about 4% smaller.** Two constructs the RTL
+  audit flagged, the fetch-time opcode decode and a redundant address adder,
+  were rewritten only after the fit report showed a real saving, each
+  compiled on its own: 1,031.4 to 987.3 ALMs, against placement noise of
+  about 2. Both are exact, by construction or by an exhaustive check. The
+  audit's estimate (about 500 logic elements) was an order of magnitude high.
 - **Four comments in the core's RTL said something false, and are
   corrected**: the power-on CPU/PPU lead ("measured as 2" beside the correct
   value, 1), the claim that PAL is "a parameter change", a pipeline depth of
