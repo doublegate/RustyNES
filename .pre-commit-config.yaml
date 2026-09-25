@@ -31,6 +31,7 @@ repos:
             |ref-proj/
             |crates/rustynes-test-harness/golden/tricnes/
             |crates/rustynes-cheevos/vendor/
+            |vendor/
             |tests/roms/
             |assets/RustyNES_Icon/OFL\.txt$
           )

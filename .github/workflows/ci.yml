@@ -868,7 +868,12 @@ jobs:
       # its platform SDK, and every #91899 failure was compile-time. The
       # buildbot remains the authority on linking; this is the early-warning
       # gate for target availability, dependency portability, and MSRV drift.
+      # v2.8.0: the libretro core is built with `panic = "unwind"` on every
+      # path (crate Makefile, `.gitlab-ci.yml` `.core-defs`), so check it the
+      # same way; `std`'s `panic_unwind` must exist for each of these triples.
       - run: cargo check --release -p rustynes-libretro --target ${{ matrix.target }}
+        env:
+          CARGO_PROFILE_RELEASE_PANIC: unwind
 
   bench:
     name: frame-time regression gate

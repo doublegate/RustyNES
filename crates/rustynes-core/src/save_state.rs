@@ -22,7 +22,7 @@
 //! Determinism: every `snapshot()` for a given `(seed, ROM, input sequence)`
 //! produces bit-identical bytes. Loading is order-independent.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use thiserror::Error;
 
 /// Magic header bytes — first 8 bytes of every `.rns` file.
@@ -491,6 +491,39 @@ impl<'a> Iterator for SectionIter<'a> {
         if self.pos >= self.src.len() {
             return None;
         }
+        // v2.8.0 (libretro audit §2.2) -- an all-zero tail is padding, not a
+        // section. No tag this format writes contains a zero byte (every tag is
+        // four printable ASCII characters, `write_section`'s only callers use
+        // `tag::*` literals), so a run of zeros that reaches the end of the blob
+        // cannot begin a section. The libretro core pads to its advertised
+        // `retro_serialize_size`, which reserves room for expansion devices;
+        // without this, whether its own state loaded back depended on the
+        // padding length mod 9. Any non-zero byte in the tail still reaches the
+        // header parse below and errors as before. Cost: the scan below runs
+        // only when a tag would start with a zero byte, which no written tag
+        // does, and at most once, because either outcome ends the iteration.
+        //
+        // And a zero byte where a tag starts is never a section, padding or
+        // not (review on #556, CodeRabbit): without this, nine zero bytes
+        // framed as an empty zero-tagged section, which restore skips as an
+        // unknown tag, so a crafted blob of such headers followed by one
+        // non-zero byte re-ran the scan above once per header -- quadratic.
+        // Now the scan runs at most once: the tail is padding, or the blob is
+        // rejected here.
+        if self.src[self.pos] == 0 {
+            let at = self.pos;
+            self.pos = self.src.len();
+            if self.src[at..].iter().all(|&b| b == 0) {
+                return None;
+            }
+            return Some(Err(SnapshotError::SectionInvalid {
+                tag: String::from("(zero)"),
+                reason: format!(
+                    "a section tag cannot start with a zero byte (offset {at}), and the \
+                     bytes after it are not all padding"
+                ),
+            }));
+        }
         // tag(4) + version(1) + len(4) = 9-byte section header.
         if self.src.len() - self.pos < 9 {
             let at = self.pos;
@@ -542,6 +575,7 @@ pub fn write_header(out: &mut Vec<u8>, rom_hash_tag: [u8; ROM_HASH_TAG_LEN]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn header_round_trip() {
@@ -619,6 +653,113 @@ mod tests {
             assert!(it.next().is_none(), "{name}: and the iterator then ENDS");
             // The skip-errors caller terminates and sees only the good section.
             assert_eq!(SectionIter::new(blob).flatten().count(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn section_iter_ends_at_an_all_zero_tail() {
+        // v2.8.0 (libretro audit §2.2). A libretro frontend hands
+        // `retro_unserialize` a buffer of `retro_serialize_size` bytes, and the
+        // core reserves headroom there for expansion devices, so a state the
+        // core wrote comes back followed by zeros. No section tag is ever
+        // zero (every tag is four printable ASCII bytes), so a tail that is
+        // zero from here to the end cannot be the start of a section: it is
+        // padding, and the blob has ended.
+        //
+        // Before this, 1-8 zero bytes read as a truncated header (`Eof`), a
+        // multiple of 9 read as empty sections named "\0\0\0\0", and any other
+        // count errored after those -- so whether a padded state loaded
+        // depended on the padding length mod 9.
+        let mut good = Vec::new();
+        write_section(&mut good, *b"AAAA", 1, &[1, 2, 3]);
+        write_section(&mut good, *b"BBBB", 7, &[4, 5, 6, 7, 8]);
+        for pad in 1..=64 {
+            let mut padded = good.clone();
+            padded.resize(good.len() + pad, 0);
+            let sections: Vec<_> = SectionIter::new(&padded)
+                .collect::<Result<_, _>>()
+                .unwrap_or_else(|e| panic!("{pad} zero bytes of padding: {e:?}"));
+            assert_eq!(
+                sections.len(),
+                2,
+                "{pad} zero bytes: exactly the real sections"
+            );
+            assert_eq!(&sections[1].tag, b"BBBB");
+        }
+    }
+
+    #[test]
+    fn no_section_tag_contains_a_zero_byte() {
+        // The invariant the all-zero-tail rule rests on. A tag with a zero byte
+        // in it could, at the end of a blob, be mistaken for padding; pinned
+        // here so a new tag cannot quietly break it.
+        for t in [tag::CPU, tag::PPU, tag::APU, tag::MAP, tag::BUS, tag::THM] {
+            assert!(
+                t.iter().all(|b| b.is_ascii_graphic() || *b == b' '),
+                "section tag {t:?} must be four printable ASCII bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn section_iter_rejects_zero_tagged_headers_in_one_step() {
+        // Review on #556 (CodeRabbit). Nine zero bytes used to frame an empty
+        // section with tag 00 00 00 00, which restore skips as unknown; with
+        // the padding rule, a blob of many such headers ending in one non-zero
+        // byte re-scanned the zero run once per header. A zero byte where a
+        // tag starts is now rejected on the spot, so the iterator yields one
+        // error and stops, however many headers follow.
+        let mut blob = Vec::new();
+        write_section(&mut blob, *b"AAAA", 1, &[1, 2, 3]);
+        let real = blob.len();
+        blob.resize(real + 9 * 10_000, 0);
+        blob.push(0x5A);
+        let items: Vec<_> = SectionIter::new(&blob).collect();
+        assert_eq!(items.len(), 2, "the real section, then exactly one error");
+        assert!(items[0].is_ok());
+        match &items[1] {
+            Err(SnapshotError::SectionInvalid { reason, .. }) => assert!(
+                reason.contains(&format!("offset {real}")),
+                "the error names where the zero tag starts: {reason}"
+            ),
+            other => panic!("expected SectionInvalid, got {other:?}"),
+        }
+        // A single zero-tagged header followed by a real section, which the
+        // old iterator skipped past, is rejected the same way.
+        let mut blob = vec![0_u8; 9];
+        write_section(&mut blob, *b"AAAA", 1, &[1]);
+        assert!(SectionIter::new(&blob).next().is_some_and(|r| r.is_err()));
+    }
+
+    #[test]
+    fn section_iter_still_rejects_a_tail_that_is_not_all_zero() {
+        // The other half: padding is recognised by being ENTIRELY zero, so a
+        // tail with one non-zero byte, wherever it falls (first byte, last
+        // byte, past a section-sized run of zeros), is still parsed as section
+        // data. The iterator yields at least one item past the real section for
+        // it -- an error, or, where the bytes happen to form a well-framed
+        // header, an unknown-tag section that callers ignore, exactly as
+        // before this change. What it must never do is end silently.
+        let mut good = Vec::new();
+        write_section(&mut good, *b"AAAA", 1, &[1, 2, 3]);
+        for (len, at) in [(1, 0), (8, 7), (20, 0), (20, 19), (40, 25)] {
+            let mut tail = good.clone();
+            tail.resize(good.len() + len, 0);
+            tail[good.len() + at] = 0x5A;
+            assert!(
+                SectionIter::new(&tail).count() > 1,
+                "a {len}-byte tail with a non-zero byte at {at} must not read as padding"
+            );
+        }
+        // And the short cases, which cannot frame a header, are errors.
+        for (len, at) in [(1, 0), (8, 7), (8, 0)] {
+            let mut tail = good.clone();
+            tail.resize(good.len() + len, 0);
+            tail[good.len() + at] = 0x5A;
+            assert!(
+                SectionIter::new(&tail).any(|s| s.is_err()),
+                "a {len}-byte non-zero tail is a truncated header"
+            );
         }
     }
 

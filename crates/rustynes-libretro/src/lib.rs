@@ -80,6 +80,12 @@ use rustynes_core::{Emu, Nes, Region, VsDualSystem};
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 
+/// Test-only switch: the next `retro_run` panics inside the frame, so the
+/// C-ABI harness can drive a real panic through [`RustyNesLibretro::contained`].
+#[cfg(test)]
+pub(crate) static INJECT_PANIC_IN_RUN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// NES native framebuffer width in pixels (one console).
 const NES_W: usize = 256;
 /// NES native framebuffer height in pixels.
@@ -258,6 +264,23 @@ pub struct RustyNesLibretro {
     /// Pre-allocated buffer for snapshot serialization.
     serialize_buffer: Vec<u8>,
 
+    /// Whether `register_memory_maps` handed the frontend descriptors that
+    /// `on_unload_game` must withdraw before the console is dropped.
+    memory_maps_registered: bool,
+
+    /// Set when a panic was caught inside an emulation callback; every later
+    /// emulation callback is then inert until the game is unloaded. See
+    /// [`Self::contained`].
+    poisoned: bool,
+
+    /// The frontend's log function (`RETRO_ENVIRONMENT_GET_LOG_INTERFACE`),
+    /// fetched in `on_set_environment` and valid until `retro_deinit`. `None`
+    /// when the frontend offers none; [`Self::log`] then writes to stderr, as
+    /// libretro.h asks of a core without the interface. Before v2.8.0 every
+    /// message went to stderr, which a frontend such as `RetroArch` does not
+    /// put in its own log (agy, #556).
+    log_printf: retro_log_printf_t,
+
     /// Which libretro device the frontend has assigned to each of the four
     /// ports, as told to us by `retro_set_controller_port_device`.
     ///
@@ -290,6 +313,9 @@ impl Default for RustyNesLibretro {
             video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
             serialize_size: 0,
             serialize_buffer: Vec::new(),
+            memory_maps_registered: false,
+            poisoned: false,
+            log_printf: None,
             // Every port starts as a joypad, which is what the frontend assumes
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
@@ -422,6 +448,266 @@ fn blit_scanline_rgba_to_xrgb(dst: &mut [u8], src: &[u8]) {
 }
 
 impl RustyNesLibretro {
+    /// Run `f`, stopping a panic at this layer (libretro audit §1.1).
+    ///
+    /// Every `Core` callback that runs emulation goes through here. A panic
+    /// that reached the `extern "C"` boundary would abort the whole frontend,
+    /// taking RetroArch down with no chance to write a battery save; caught
+    /// here, it marks the core **poisoned** instead, and every later emulation
+    /// callback returns `fallback` without running.
+    ///
+    /// Poisoned, not dropped. The frontend holds raw pointers into this
+    /// console's WRAM, SRAM and CIRAM (the memory maps and
+    /// `retro_get_memory_data`), so dropping the console here would turn a
+    /// panic into a use-after-free. It stays allocated, readable and inert
+    /// until `retro_unload_game` withdraws the maps and frees it; the battery
+    /// save is still there to be written. The next `retro_load_game` clears
+    /// the poison.
+    ///
+    /// This is live only because the libretro core is built with
+    /// `panic = "unwind"` (crate `Makefile`, `.gitlab-ci.yml`, the
+    /// `libretro-cross` gate). Under the workspace's release `panic = "abort"`
+    /// the panic would end the process before `catch_unwind` saw it, which is
+    /// what a direct `cargo build --release` produces: `build.rs` warns then,
+    /// and `on_load_game` logs it.
+    fn contained<R>(&mut self, what: &str, fallback: R, f: impl FnOnce(&mut Self) -> R) -> R {
+        if self.poisoned {
+            return fallback;
+        }
+        // `AssertUnwindSafe`: after a caught panic nothing reads the
+        // half-updated state except through the poisoned guard above, which
+        // refuses every emulation call until the game is unloaded.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))).unwrap_or_else(
+            |payload| {
+                self.poisoned = true;
+                // The panic's own message, when it carries one (`panic!` with a
+                // literal gives `&str`, with arguments `String`), so the report in
+                // the frontend's log names the fault and not only the callback.
+                let cause = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("no message");
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!(
+                        "internal error in {what} ({cause}); emulation stopped for this game. \
+                     Its memory stays readable, so battery saves can still be written. \
+                     Reload the game to continue."
+                    ),
+                );
+                fallback
+            },
+        )
+    }
+
+    /// Write one line to the frontend's log, or to stderr when it has none.
+    ///
+    /// The frontend's function is C `printf`: the format is fixed at `"%s"`,
+    /// so no byte of `msg` is read as a conversion specifier, and `msg` itself
+    /// is only ever the one argument that conversion consumes.
+    fn log(&self, level: retro_log_level, msg: &str) {
+        let Some(printf) = self.log_printf else {
+            eprintln!("[RustyNES] {msg}");
+            return;
+        };
+        // An interior NUL would end the C string early; replace it instead of
+        // losing the rest of the message.
+        let Ok(text) = CString::new(msg.replace('\0', "?")) else {
+            return;
+        };
+        // SAFETY: `printf` is the frontend's `retro_log_printf_t`, obtained
+        // from `GET_LOG_INTERFACE` and valid until `retro_deinit`, which clears
+        // it. The format is a static NUL-terminated literal whose only
+        // conversion is one `%s`, matched by exactly one argument: `text`, a
+        // NUL-terminated string that outlives the call.
+        unsafe { printf(level, c"[RustyNES] %s\n".as_ptr(), text.as_ptr()) };
+    }
+
+    /// `retro_load_game`, run inside [`Self::contained`] by `on_load_game`.
+    fn load_game(
+        &mut self,
+        game: Option<retro_game_info>,
+        ctx: &mut LoadGameContext,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
+        //
+        // Split into the smallest unsafe regions the type system allows, so the
+        // early return is no longer buried inside a block evaluated as an
+        // expression. (Review on #423 proposed lifting the callback extraction out
+        // entirely; that is not possible -- `environment_callback` is itself an
+        // `unsafe fn`, so it needs a block of its own. Trying it is what
+        // established that, and the suggestion is right about the shape.)
+        let generic_ctx: GenericContext = (&*ctx).into();
+
+        // SAFETY: `ctx` is the live `LoadGameContext` the frontend passed into
+        // this call, so the environment callback it carries is the frontend's own
+        // and is valid for the duration of `on_load_game`. Reading it performs no
+        // dereference of its own.
+        let cb = unsafe { generic_ctx.environment_callback() };
+        let Some(cb) = cb else {
+            return Err("libretro frontend supplied no environment callback".into());
+        };
+        let mut ptr: *const RetroGameInfoExt = std::ptr::null();
+
+        // SAFETY: `cb` is a valid function pointer supplied by the libretro frontend
+        // via the environment context. If the callback returns true, the spec guarantees
+        // `ptr` is set to a valid, aligned, frontend-owned `RetroGameInfoExt` whose
+        // lifetime is at least as long as this `on_load_game` invocation.
+        // `as_ref()` returns `None` if `ptr` remains null (a spec-violating frontend
+        // that returns `true` without setting the pointer), ensuring we never produce
+        // a reference from an invalid address.
+        //
+        // The note sits above the `unsafe` token rather than inside the block so
+        // `clippy::undocumented_unsafe_blocks` can see it; the lint reads only the
+        // lines immediately preceding the block.
+        let ext_info = unsafe {
+            if cb(
+                rust_libretro::sys::RETRO_ENVIRONMENT_GET_GAME_INFO_EXT,
+                std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),
+            ) {
+                ptr.as_ref()
+            } else {
+                None
+            }
+        };
+
+        // Two load paths (libretro audit §1.2). `GET_GAME_INFO_EXT` first: it
+        // carries the original extension even for an in-memory load, which is
+        // how `.fds` images are routed. A frontend that refuses it gets the
+        // standard `retro_game_info` path, which libretro.h requires every
+        // frontend to supply. Before v2.8.0 that second path did not exist: the
+        // `rust-libretro-sys` binding reduced `retro_game_info` to one opaque
+        // byte, so `game` carried nothing (fixed in the vendored copy under
+        // `vendor/rust-libretro-sys`), and such a frontend could not load at all.
+        //
+        // A frontend that answers `GET_GAME_INFO_EXT` but leaves `data` null
+        // (a path-only load, which `need_fullpath = false` says it should not
+        // do) is treated as not having answered: the standard path can still
+        // read the file from `retro_game_info::path` (agy, #556). Before, that
+        // frontend got an error and no game.
+        let ext_info = ext_info.filter(|e| !e.data.is_null() && e.size != 0);
+        let (rom_data, is_fds) = if let Some(ext_info) = ext_info {
+            // SAFETY: `data` is non-null and `size` non-zero (the filter above). The
+            // libretro spec guarantees it references `size` contiguous bytes owned
+            // by the frontend for the duration of this call.
+            let rom =
+                unsafe { std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size) }
+                    .to_vec();
+            // `ext_info.ext` reflects the original file extension even when the
+            // ROM was handed to us as an in-memory buffer. Route `.fds` disk images
+            // to the dedicated FDS constructor: `Emu::from_rom` only parses iNES /
+            // NES 2.0 cartridge headers.
+            // SAFETY: `ext_info.ext` is either null or a valid, NUL-terminated,
+            // frontend-owned C string for the duration of this call, per the same
+            // `RetroGameInfoExt` contract relied on above for `data`/`size`.
+            //
+            // The signature is the fallback here too, so both load paths
+            // classify the same bytes the same way (see `has_fds_signature`).
+            let is_fds = ((!ext_info.ext.is_null())
+                && unsafe { CStr::from_ptr(ext_info.ext) }
+                    .to_str()
+                    .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds")))
+                || has_fds_signature(&rom);
+            (rom, is_fds)
+        } else {
+            let game = game.ok_or("the frontend supplied no game and no GET_GAME_INFO_EXT")?;
+            let rom = standard_game_bytes(&game)?;
+            let is_fds = standard_game_is_fds(&game, &rom);
+            (rom, is_fds)
+        };
+        self.log(
+            retro_log_level::RETRO_LOG_INFO,
+            &format!("Loading {} bytes (FDS: {is_fds}).", rom_data.len()),
+        );
+
+        let emu = if is_fds {
+            let generic_ctx: GenericContext = (&*ctx).into();
+            let bios_dir = generic_ctx
+                .get_system_directory()
+                .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
+            let bios_path = bios_dir.join("disksys.rom");
+            let bios = std::fs::read(&bios_path).map_err(|e| {
+                format!(
+                    "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
+                     frontend's system directory to boot Famicom Disk System games)",
+                    bios_path.display()
+                )
+            })?;
+            match Nes::from_disk(&rom_data, &bios) {
+                Ok(nes) => Emu::Single(Box::new(nes)),
+                Err(e) => {
+                    self.log(
+                        retro_log_level::RETRO_LOG_ERROR,
+                        &format!("Failed to parse FDS disk image: {e:?}"),
+                    );
+                    return Err(format!("Failed to load FDS disk: {e:?}").into());
+                }
+            }
+        } else {
+            // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
+            // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
+            // the SHA-keyed `vs_db`), else a standard single `Nes`. This is the SAME
+            // detection the desktop frontend uses, so the libretro core presents dual
+            // cabinets identically (two consoles side-by-side) instead of booting a
+            // single console that would hang waiting on its cross-wired partner.
+            match Emu::from_rom(&rom_data) {
+                Ok(e) => e,
+                Err(e) => {
+                    self.log(
+                        retro_log_level::RETRO_LOG_ERROR,
+                        &format!("Failed to parse ROM: {e:?}"),
+                    );
+                    return Err(format!("Failed to load ROM: {e:?}").into());
+                }
+            }
+        };
+
+        // The frontend reads `retro_serialize_size` once and sizes every
+        // save-state, rewind and run-ahead buffer from it, so the answer must
+        // cover the largest snapshot this game can produce, not the one it
+        // produces now. A single console's snapshot grows when an expansion
+        // device attaches: a port reads "unplugged" (1 byte) until the host
+        // plugs in, e.g., a Zapper, which `set_zapper` does lazily on the first
+        // `retro_run` after the frontend selects the light gun. Measuring at
+        // load therefore under-sized the buffer and every later save failed
+        // (libretro audit §2.1). The headroom covers both ports at the largest
+        // device encoding; `on_serialize` zeroes whatever it does not use, and
+        // `SectionIter` reads a zero tail as padding. Clear whichever emulator
+        // shape a prior load left behind so the two Options stay mutually
+        // exclusive.
+        match emu {
+            Emu::Single(nes) => {
+                let nes = *nes;
+                let mut tmp = Vec::new();
+                nes.snapshot_core_into(&mut tmp);
+                self.serialize_size = tmp.len() + rustynes_core::SAVE_STATE_DEVICE_HEADROOM;
+                self.nes = Some(nes);
+                self.dual = None;
+                self.log(
+                    retro_log_level::RETRO_LOG_INFO,
+                    "Loaded single-console cart.",
+                );
+            }
+            Emu::Dual(dual) => {
+                // The dual snapshot is a self-describing blob of both consoles; size it
+                // once here. No headroom: the dual path never attaches an expansion
+                // device (a Vs. cabinet has no light gun, and `run_dual` never calls
+                // `set_zapper`), so its size cannot grow after load.
+                self.serialize_size = dual.snapshot().len();
+                self.dual = Some(dual);
+                self.nes = None;
+                self.log(
+                    retro_log_level::RETRO_LOG_INFO,
+                    "Loaded Vs. DualSystem cabinet (512x240 side-by-side).",
+                );
+            }
+        }
+        self.register_memory_maps(ctx);
+        self.memory_maps_registered = true;
+        Ok(())
+    }
+
     /// The single `Nes` that RetroAchievements / cheats / disk-control / memory-maps
     /// target: the single-console instance, or the MAIN console of a loaded Vs.
     /// `DualSystem` cabinet. Factored out of `get_memory_data`/`get_memory_size` (which
@@ -581,7 +867,16 @@ impl RustyNesLibretro {
         // mutable borrow of `self.nes` below.
         let zapper_ports = self.lightgun_ports();
         {
-            let nes = self.nes.as_mut().expect("run_single: nes present");
+            let Some(nes) = self.nes.as_mut() else {
+                return;
+            };
+            // Test-only: stands in for an internal error inside a frame, so the
+            // C-ABI harness can prove `contained` stops it at this layer.
+            #[cfg(test)]
+            assert!(
+                !INJECT_PANIC_IN_RUN.swap(false, std::sync::atomic::Ordering::SeqCst),
+                "injected by the C-ABI harness"
+            );
             nes.set_buttons(0, b0);
             nes.set_buttons(1, b1);
             // A Zapper occupies a port INSTEAD of a joypad, but the joypad write
@@ -604,19 +899,20 @@ impl RustyNesLibretro {
             nes.run_frame();
         }
         self.video_buffer.clear();
-        self.video_buffer
-            .extend_from_slice(self.nes.as_ref().expect("nes present").framebuffer());
+        let Some(nes) = self.nes.as_ref() else {
+            return;
+        };
+        self.video_buffer.extend_from_slice(nes.framebuffer());
         for chunk in self.video_buffer.chunks_exact_mut(4) {
             chunk.swap(0, 2); // RGBA8 → XRGB8888 (in-memory B G R X).
         }
         ctx.draw_frame(&self.video_buffer, NES_W as u32, NES_H as u32, NES_W * 4);
 
         self.audio_float_buffer.resize(4096, 0.0);
-        let produced = self
-            .nes
-            .as_mut()
-            .expect("nes present")
-            .drain_audio_into(&mut self.audio_float_buffer);
+        let Some(nes) = self.nes.as_mut() else {
+            return;
+        };
+        let produced = nes.drain_audio_into(&mut self.audio_float_buffer);
         if !Self::is_fastforwarding(ctx) {
             self.push_audio(ctx, produced);
         }
@@ -637,7 +933,9 @@ impl RustyNesLibretro {
             joypad_to_buttons(ctx, 3),
         ];
         {
-            let dual = self.dual.as_mut().expect("run_dual: dual present");
+            let Some(dual) = self.dual.as_mut() else {
+                return;
+            };
             for (port, btn) in buttons.into_iter().enumerate() {
                 dual.set_buttons(port, btn);
             }
@@ -648,10 +946,10 @@ impl RustyNesLibretro {
 
         // Main console audio (the presented stream).
         self.audio_float_buffer.resize(4096, 0.0);
-        let produced = self
-            .dual
-            .as_mut()
-            .expect("dual present")
+        let Some(dual) = self.dual.as_mut() else {
+            return;
+        };
+        let produced = dual
             .main_mut()
             .drain_audio_into(&mut self.audio_float_buffer);
         if !Self::is_fastforwarding(ctx) {
@@ -662,7 +960,9 @@ impl RustyNesLibretro {
         // drain it into a small stack scratch, looping until a partial fill signals
         // the ring is empty. Stack-allocated, so no heap traffic on the hot path.
         let mut scratch = [0.0f32; 1024];
-        let dual = self.dual.as_mut().expect("dual present");
+        let Some(dual) = self.dual.as_mut() else {
+            return;
+        };
         while dual.sub_mut().drain_audio_into(&mut scratch) == scratch.len() {}
     }
 
@@ -672,7 +972,9 @@ impl RustyNesLibretro {
     fn compose_dual(&mut self) {
         self.video_buffer.clear();
         self.video_buffer.resize(DUAL_W * NES_H * 4, 0);
-        let dual = self.dual.as_ref().expect("compose_dual: dual present");
+        let Some(dual) = self.dual.as_ref() else {
+            return;
+        };
         let main = dual.main_framebuffer();
         let sub = dual.sub_framebuffer();
         for y in 0..NES_H {
@@ -684,6 +986,64 @@ impl RustyNesLibretro {
             blit_scanline_rgba_to_xrgb(right, &sub[src..src + NES_W * 4]);
         }
     }
+}
+
+/// The bytes of a game passed through the standard `retro_game_info`.
+///
+/// `need_fullpath` is false, so a frontend normally loads the file and passes
+/// `data`; one that passes only `path` is served by reading the file here,
+/// which libretro.h permits. Every pointer is checked before use.
+fn standard_game_bytes(game: &retro_game_info) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if !game.data.is_null() && game.size > 0 {
+        // SAFETY: `data` is non-null and `size` non-zero (checked above), and
+        // libretro.h guarantees `size` readable bytes for the duration of
+        // `retro_load_game`, which is the only caller.
+        let bytes = unsafe { std::slice::from_raw_parts(game.data.cast::<u8>(), game.size) };
+        return Ok(bytes.to_vec());
+    }
+    let path =
+        standard_game_path(game).ok_or("the frontend supplied neither game data nor a path")?;
+    std::fs::read(&path).map_err(|e| format!("could not read {path}: {e}").into())
+}
+
+/// The `path` of a standard `retro_game_info`, when present and valid UTF-8.
+fn standard_game_path(game: &retro_game_info) -> Option<String> {
+    if game.path.is_null() {
+        return None;
+    }
+    // SAFETY: `path` is non-null (checked above); libretro.h defines it as a
+    // NUL-terminated UTF-8 string valid for the duration of `retro_load_game`.
+    unsafe { CStr::from_ptr(game.path) }
+        .to_str()
+        .ok()
+        .map(str::to_owned)
+}
+
+/// Whether `rom` carries a Famicom Disk System signature: the fwNES container
+/// header (`"FDS\x1A"`) or a raw side, which opens with the disk-info block
+/// `\x01*NINTENDO-HVC*`. These are the two forms the FDS loader accepts. An
+/// iNES / NES 2.0 image always opens with `"NES\x1A"`, so it can match
+/// neither, and trusting the signature over a missing or wrong extension
+/// cannot misroute a cartridge.
+fn has_fds_signature(rom: &[u8]) -> bool {
+    rom.starts_with(b"FDS\x1A") || rom.get(..15) == Some(b"\x01*NINTENDO-HVC*".as_slice())
+}
+
+/// Whether a game passed through the standard `retro_game_info` is a Famicom
+/// Disk System image: a `.fds` path, or the FDS signature in the bytes.
+///
+/// The signature is checked whenever the extension does not already say FDS,
+/// including when a path is present: a frontend may pass a path with no
+/// extension, such as a temporary file extracted from an archive (agy, #556).
+/// Before, any path at all decided by extension alone, and such an image was
+/// handed to the iNES parser and refused.
+fn standard_game_is_fds(game: &retro_game_info, rom: &[u8]) -> bool {
+    let fds_extension = standard_game_path(game).is_some_and(|path| {
+        std::path::Path::new(&path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"))
+    });
+    fds_extension || has_fds_signature(rom)
 }
 
 impl Core for RustyNesLibretro {
@@ -795,10 +1155,19 @@ impl Core for RustyNesLibretro {
             let generic_ctx: GenericContext = (&*ctx).into();
             let cb = *generic_ctx.environment_callback();
 
+            // Route the core's messages into the frontend's log. A frontend
+            // that refuses the command leaves `log_printf` as `None`, and
+            // `Self::log` falls back to stderr.
+            self.log_printf = rust_libretro::environment::get_log_callback(cb)
+                .ok()
+                .flatten()
+                .and_then(|c| c.log);
+
             // XRGB8888 is preferred by RustyNES because it maps well to standard 32-bit GPU textures.
             if !rust_libretro::environment::set_pixel_format(cb, PixelFormat::XRGB8888) {
-                eprintln!(
-                    "[RustyNES] Error: Frontend rejected XRGB8888 pixel format. Colors will be broken."
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    "Frontend rejected XRGB8888 pixel format. Colors will be broken.",
                 );
             }
 
@@ -852,149 +1221,42 @@ impl Core for RustyNesLibretro {
 
     fn on_load_game(
         &mut self,
-        _game: Option<retro_game_info>,
+        game: Option<retro_game_info>,
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
-        //
-        // Split into the smallest unsafe regions the type system allows, so the
-        // early return is no longer buried inside a block evaluated as an
-        // expression. (Review on #423 proposed lifting the callback extraction out
-        // entirely; that is not possible -- `environment_callback` is itself an
-        // `unsafe fn`, so it needs a block of its own. Trying it is what
-        // established that, and the suggestion is right about the shape.)
-        let generic_ctx: GenericContext = (&*ctx).into();
-
-        // SAFETY: `ctx` is the live `LoadGameContext` the frontend passed into
-        // this call, so the environment callback it carries is the frontend's own
-        // and is valid for the duration of `on_load_game`. Reading it performs no
-        // dereference of its own.
-        let cb = unsafe { generic_ctx.environment_callback() };
-        let Some(cb) = cb else {
-            return Err("libretro frontend supplied no environment callback".into());
-        };
-        let mut ptr: *const RetroGameInfoExt = std::ptr::null();
-
-        // SAFETY: `cb` is a valid function pointer supplied by the libretro frontend
-        // via the environment context. If the callback returns true, the spec guarantees
-        // `ptr` is set to a valid, aligned, frontend-owned `RetroGameInfoExt` whose
-        // lifetime is at least as long as this `on_load_game` invocation.
-        // `as_ref()` returns `None` if `ptr` remains null (a spec-violating frontend
-        // that returns `true` without setting the pointer), ensuring we never produce
-        // a reference from an invalid address.
-        //
-        // The note sits above the `unsafe` token rather than inside the block so
-        // `clippy::undocumented_unsafe_blocks` can see it; the lint reads only the
-        // lines immediately preceding the block.
-        let ext_info = unsafe {
-            if cb(
-                rust_libretro::sys::RETRO_ENVIRONMENT_GET_GAME_INFO_EXT,
-                std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),
-            ) {
-                ptr.as_ref()
-            } else {
-                None
-            }
+        // A new game starts unpoisoned: a panic in the previous one says
+        // nothing about this one.
+        self.poisoned = false;
+        // A core built outside the supported paths (a bare `cargo build
+        // --release`, whose workspace profile aborts) cannot contain a panic.
+        // `build.rs` warns at build time; this says so in the frontend's log,
+        // where a crash report would be read.
+        if cfg!(panic = "abort") {
+            self.log(
+                retro_log_level::RETRO_LOG_WARN,
+                "this core was built with panic = \"abort\"; an internal error will close \
+                 the frontend. Build it with `make` in crates/rustynes-libretro or \
+                 CARGO_PROFILE_RELEASE_PANIC=unwind.",
+            );
         }
-        .ok_or("Frontend does not support get_game_info_ext")?;
-
-        let rom_data = if ext_info.data.is_null() {
-            return Err("ext_info data pointer is NULL. The frontend did not load the ROM into memory (need_fullpath is false).".into());
-        } else {
-            eprintln!("[RustyNES] ext_info data is valid. Size: {}", ext_info.size);
-            // SAFETY: `data` is non-null (checked above). The libretro spec guarantees
-            // the pointer references a valid, contiguous byte slice of exactly `size`
-            // bytes, owned by the frontend for the duration of this call.
-            let slice =
-                unsafe { std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size) };
-            slice.to_vec()
-        };
-
-        // `ext_info.ext` reflects the original file extension even when the ROM was
-        // handed to us as an in-memory buffer (need_fullpath is false). Route `.fds`
-        // disk images to the dedicated FDS constructor: `Emu::from_rom` only parses
-        // iNES/NES 2.0 cartridge headers, so without this branch FDS loading silently
-        // fails despite `valid_extensions` advertising it.
-        // SAFETY: `ext_info.ext` is either null or a valid, NUL-terminated,
-        // frontend-owned C string for the duration of this call, per the same
-        // `RetroGameInfoExt` contract already relied on above for `data`/`size`.
-        let is_fds = (!ext_info.ext.is_null())
-            && unsafe { CStr::from_ptr(ext_info.ext) }
-                .to_str()
-                .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds"));
-
-        let emu = if is_fds {
-            let generic_ctx: GenericContext = (&*ctx).into();
-            let bios_dir = generic_ctx
-                .get_system_directory()
-                .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
-            let bios_path = bios_dir.join("disksys.rom");
-            let bios = std::fs::read(&bios_path).map_err(|e| {
-                format!(
-                    "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
-                     frontend's system directory to boot Famicom Disk System games)",
-                    bios_path.display()
-                )
-            })?;
-            match Nes::from_disk(&rom_data, &bios) {
-                Ok(nes) => Emu::Single(Box::new(nes)),
-                Err(e) => {
-                    eprintln!("[RustyNES] Failed to parse FDS disk image: {e:?}");
-                    return Err(format!("Failed to load FDS disk: {e:?}").into());
-                }
-            }
-        } else {
-            // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
-            // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
-            // the SHA-keyed `vs_db`), else a standard single `Nes`. This is the SAME
-            // detection the desktop frontend uses, so the libretro core presents dual
-            // cabinets identically (two consoles side-by-side) instead of booting a
-            // single console that would hang waiting on its cross-wired partner.
-            match Emu::from_rom(&rom_data) {
-                Ok(e) => e,
-                Err(e) => {
-                    eprintln!("[RustyNES] Failed to parse ROM: {e:?}");
-                    return Err(format!("Failed to load ROM: {e:?}").into());
-                }
-            }
-        };
-
-        // Save state sizes in RustyNES are strictly deterministic for a given ROM image.
-        // We evaluate the snapshot footprint once during initialization to satisfy
-        // libretro's serialization size querying contract. Clear whichever emulator
-        // shape a prior load left behind so the two Options stay mutually exclusive.
-        match emu {
-            Emu::Single(nes) => {
-                let nes = *nes;
-                let mut tmp = Vec::new();
-                nes.snapshot_core_into(&mut tmp);
-                self.serialize_size = tmp.len();
-                self.nes = Some(nes);
-                self.dual = None;
-                eprintln!("[RustyNES] Loaded single-console cart.");
-            }
-            Emu::Dual(dual) => {
-                // The dual snapshot is a self-describing blob of both consoles; size it
-                // once here (it is deterministic for a given ROM, like the single case).
-                self.serialize_size = dual.snapshot().len();
-                self.dual = Some(dual);
-                self.nes = None;
-                eprintln!("[RustyNES] Loaded Vs. DualSystem cabinet (512x240 side-by-side).");
-            }
-        }
-        self.register_memory_maps(ctx);
-        Ok(())
+        self.contained(
+            "retro_load_game",
+            Err("internal error while loading the game".into()),
+            |core| core.load_game(game, ctx),
+        )
     }
 
     fn on_run(&mut self, ctx: &mut RunContext, _delta_us: Option<i64>) {
         // Two mutually-exclusive shapes: a single console, or a Vs. DualSystem
         // cabinet. The dual branch steps both consoles and presents a 512x240
         // side-by-side image; otherwise the classic single-console 256x240 path runs.
-        if self.dual.is_some() {
-            self.run_dual(ctx);
-        } else if self.nes.is_some() {
-            self.run_single(ctx);
-        }
+        self.contained("retro_run", (), |core| {
+            if core.dual.is_some() {
+                core.run_dual(ctx);
+            } else if core.nes.is_some() {
+                core.run_single(ctx);
+            }
+        });
     }
 
     /// Record the device the frontend assigned to a port.
@@ -1032,16 +1294,42 @@ impl Core for RustyNesLibretro {
     /// across a front-panel reset on real hardware; RetroArch likewise keeps
     /// cheats applied across a restart.
     fn on_reset(&mut self, _ctx: &mut ResetContext) {
-        if let Some(dual) = self.dual.as_mut() {
-            // One cabinet, one RESET line: a Vs. DualSystem's two consoles share
-            // the cabinet's reset, so resetting only `main` would desynchronize
-            // the pair — and they are cross-wired, so a desynchronized cabinet is
-            // not a state the hardware can be in.
-            dual.main_mut().reset();
-            dual.sub_mut().reset();
-        } else if let Some(nes) = self.nes.as_mut() {
-            nes.reset();
-        }
+        self.contained("retro_reset", (), |core| {
+            if let Some(dual) = core.dual.as_mut() {
+                // One cabinet, one RESET line: a Vs. DualSystem's two consoles share
+                // the cabinet's reset, so resetting only `main` would desynchronize
+                // the pair — and they are cross-wired, so a desynchronized cabinet is
+                // not a state the hardware can be in.
+                dual.main_mut().reset();
+                dual.sub_mut().reset();
+            } else if let Some(nes) = core.nes.as_mut() {
+                nes.reset();
+            }
+        });
+    }
+
+    /// Release everything the core holds when the frontend shuts it down.
+    ///
+    /// `rust-libretro` keeps the core in a process-global instance that it
+    /// never frees (libretro audit §1.4), so the default no-op here left the
+    /// video, audio and snapshot buffers allocated until the process exited,
+    /// even after `retro_deinit`. They are released here; a later
+    /// `retro_init` + `retro_load_game` grows them again. A game is normally
+    /// unloaded first, so the consoles are already gone; dropping them again is
+    /// a no-op, kept so a frontend that skips `retro_unload_game` still frees
+    /// them.
+    fn on_deinit(&mut self, _ctx: &mut DeinitContext) {
+        self.nes = None;
+        self.dual = None;
+        self.poisoned = false;
+        // The log interface is valid only until `retro_deinit`.
+        self.log_printf = None;
+        self.genie_cheats.clear();
+        self.serialize_size = 0;
+        self.audio_buffer = Vec::new();
+        self.audio_float_buffer = Vec::new();
+        self.video_buffer = Vec::new();
+        self.serialize_buffer = Vec::new();
     }
 
     /// Drop the loaded cartridge and every piece of per-game state with it.
@@ -1056,7 +1344,28 @@ impl Core for RustyNesLibretro {
     /// `serialize_size` is zeroed for the same reason — reporting the previous
     /// game's snapshot size while no game is loaded invites the frontend to size
     /// a buffer against a cartridge that is gone.
-    fn on_unload_game(&mut self, _ctx: &mut UnloadGameContext) {
+    fn on_unload_game(&mut self, ctx: &mut UnloadGameContext) {
+        // Withdraw the memory maps BEFORE the console they point into is
+        // dropped (libretro audit §1.3). RetroArch keeps registered descriptors
+        // until the whole core is torn down (`runloop_system_info_free`, reached
+        // from `uninit_libretro_symbols`), not when content closes, so without
+        // this its cheat search and RetroAchievements keep raw pointers into
+        // freed WRAM / SRAM / CIRAM. An empty map clears them: RetroArch's
+        // `SET_MEMORY_MAPS` handler frees the previous descriptors before it
+        // reads the new count.
+        if std::mem::take(&mut self.memory_maps_registered) {
+            let empty = retro_memory_map {
+                descriptors: std::ptr::null(),
+                num_descriptors: 0,
+            };
+            // SAFETY: `ctx` carries the frontend's own environment callback,
+            // valid for the duration of `retro_unload_game`. `empty` names no
+            // descriptors, so no pointer in it is read.
+            unsafe {
+                let cb = *ctx.environment_callback();
+                rust_libretro::environment::set_memory_maps(cb, empty);
+            }
+        }
         self.nes = None;
         self.dual = None;
         self.genie_cheats.clear();
@@ -1122,33 +1431,42 @@ impl Core for RustyNesLibretro {
     }
 
     fn on_serialize(&mut self, slice: &mut [u8], _ctx: &mut SerializeContext) -> bool {
-        // Generates the deterministic binary blob representing the console hardware
-        // state. Single console → `snapshot_core_into`; a Vs. DualSystem cabinet →
-        // `VsDualSystem::snapshot` (a self-describing blob of BOTH consoles).
-        if let Some(nes) = self.nes.as_ref() {
-            self.serialize_buffer.clear();
-            nes.snapshot_core_into(&mut self.serialize_buffer);
-        } else if let Some(dual) = self.dual.as_ref() {
-            self.serialize_buffer = dual.snapshot();
-        } else {
-            return false;
-        }
-        if slice.len() >= self.serialize_buffer.len() {
-            slice[..self.serialize_buffer.len()].copy_from_slice(&self.serialize_buffer);
-            return true;
-        }
-        false
+        self.contained("retro_serialize", false, |core| {
+            // Generates the deterministic binary blob representing the console hardware
+            // state. Single console → `snapshot_core_into`; a Vs. DualSystem cabinet →
+            // `VsDualSystem::snapshot` (a self-describing blob of BOTH consoles).
+            if let Some(nes) = core.nes.as_ref() {
+                core.serialize_buffer.clear();
+                nes.snapshot_core_into(&mut core.serialize_buffer);
+            } else if let Some(dual) = core.dual.as_ref() {
+                core.serialize_buffer = dual.snapshot();
+            } else {
+                return false;
+            }
+            let Some((payload, tail)) = slice.split_at_mut_checked(core.serialize_buffer.len())
+            else {
+                return false;
+            };
+            payload.copy_from_slice(&core.serialize_buffer);
+            // Zero the headroom `retro_serialize_size` reserves (see
+            // `on_load_game`). The frontend's buffer may be reused and hold anything,
+            // and `SectionIter` recognises padding only by its being all zero.
+            tail.fill(0);
+            true
+        })
     }
 
     fn on_unserialize(&mut self, slice: &mut [u8], _ctx: &mut UnserializeContext) -> bool {
-        // Restores the cycle-accurate lockstep hardware state from the serialized blob.
-        if let Some(nes) = self.nes.as_mut() {
-            return nes.restore_quiet(slice).is_ok();
-        }
-        if let Some(dual) = self.dual.as_mut() {
-            return dual.restore(slice).is_ok();
-        }
-        false
+        self.contained("retro_unserialize", false, |core| {
+            // Restores the cycle-accurate lockstep hardware state from the serialized blob.
+            if let Some(nes) = core.nes.as_mut() {
+                return nes.restore_quiet(slice).is_ok();
+            }
+            if let Some(dual) = core.dual.as_mut() {
+                return dual.restore(slice).is_ok();
+            }
+            false
+        })
     }
 
     // --- Disk control (FDS multi-side swap) ---------------------------------------
@@ -1160,25 +1478,27 @@ impl Core for RustyNesLibretro {
     // `on_set_environment`.
 
     fn on_set_eject_state(&mut self, ejected: bool) -> bool {
-        let Some(nes) = self.active_nes_mut() else {
-            return false;
-        };
-        // Cartridge builds report 0 sides; `Nes::set_disk_side` is a safe no-op
-        // for them (the `Mapper` trait's default impl), so this can't panic
-        // either way, but reporting `false` for non-disk content is more
-        // honest than silently no-op-ing and claiming success.
-        if nes.disk_side_count() == 0 {
-            return false;
-        }
-        if ejected {
-            nes.set_disk_side(None);
-        } else {
-            // Re-insert whichever side was last active, defaulting to side 0 (Side A)
-            // if the disk had never been inserted this session.
-            let side = nes.inserted_disk_side().unwrap_or(0);
-            nes.set_disk_side(Some(side));
-        }
-        true
+        self.contained("set_eject_state", false, |core| {
+            let Some(nes) = core.active_nes_mut() else {
+                return false;
+            };
+            // Cartridge builds report 0 sides; `Nes::set_disk_side` is a safe no-op
+            // for them (the `Mapper` trait's default impl), so this can't panic
+            // either way, but reporting `false` for non-disk content is more
+            // honest than silently no-op-ing and claiming success.
+            if nes.disk_side_count() == 0 {
+                return false;
+            }
+            if ejected {
+                nes.set_disk_side(None);
+            } else {
+                // Re-insert whichever side was last active, defaulting to side 0 (Side A)
+                // if the disk had never been inserted this session.
+                let side = nes.inserted_disk_side().unwrap_or(0);
+                nes.set_disk_side(Some(side));
+            }
+            true
+        })
     }
 
     fn on_get_eject_state(&mut self) -> bool {
@@ -1193,14 +1513,16 @@ impl Core for RustyNesLibretro {
     }
 
     fn on_set_image_index(&mut self, index: u32) -> bool {
-        let Some(nes) = self.active_nes_mut() else {
-            return false;
-        };
-        if (index as usize) >= nes.disk_side_count() {
-            return false;
-        }
-        nes.set_disk_side(Some(index as usize));
-        true
+        self.contained("set_image_index", false, |core| {
+            let Some(nes) = core.active_nes_mut() else {
+                return false;
+            };
+            if (index as usize) >= nes.disk_side_count() {
+                return false;
+            }
+            nes.set_disk_side(Some(index as usize));
+            true
+        })
     }
 
     fn on_get_num_images(&mut self) -> u32 {
@@ -1244,40 +1566,50 @@ impl Core for RustyNesLibretro {
         code: &CStr,
         _ctx: &mut CheatSetContext,
     ) {
-        let Ok(code_str) = code.to_str() else {
-            eprintln!("[RustyNES] Ignoring non-UTF8 cheat code at index {index}.");
-            return;
-        };
-        if enabled {
-            // A frontend may re-toggle/edit the code at an already-active slot
-            // without disabling it first; remove whatever code was previously
-            // applied at this index so it doesn't stay active alongside the new
-            // one (both would otherwise patch the ROM simultaneously).
-            if let Some(old_code) = self.genie_cheats.remove(&index)
-                && let Some(nes) = self.active_nes_mut()
+        self.contained("retro_cheat_set", (), |core| {
+            let Ok(code_str) = code.to_str() else {
+                core.log(
+                    retro_log_level::RETRO_LOG_WARN,
+                    &format!("Ignoring non-UTF8 cheat code at index {index}."),
+                );
+                return;
+            };
+            if enabled {
+                // A frontend may re-toggle/edit the code at an already-active slot
+                // without disabling it first; remove whatever code was previously
+                // applied at this index so it doesn't stay active alongside the new
+                // one (both would otherwise patch the ROM simultaneously).
+                if let Some(old_code) = core.genie_cheats.remove(&index)
+                    && let Some(nes) = core.active_nes_mut()
+                {
+                    nes.remove_genie_code(&old_code);
+                }
+                let applied = core
+                    .active_nes_mut()
+                    .is_some_and(|nes| nes.add_genie_code(code_str).is_ok());
+                if applied {
+                    core.genie_cheats.insert(index, code_str.to_owned());
+                } else {
+                    core.log(
+                        retro_log_level::RETRO_LOG_WARN,
+                        &format!("Rejected Game Genie code {code_str:?} at index {index}."),
+                    );
+                }
+            } else if let Some(old_code) = core.genie_cheats.remove(&index)
+                && let Some(nes) = core.active_nes_mut()
             {
                 nes.remove_genie_code(&old_code);
             }
-            let applied = self
-                .active_nes_mut()
-                .is_some_and(|nes| nes.add_genie_code(code_str).is_ok());
-            if applied {
-                self.genie_cheats.insert(index, code_str.to_owned());
-            } else {
-                eprintln!("[RustyNES] Rejected Game Genie code {code_str:?} at index {index}.");
-            }
-        } else if let Some(old_code) = self.genie_cheats.remove(&index)
-            && let Some(nes) = self.active_nes_mut()
-        {
-            nes.remove_genie_code(&old_code);
-        }
+        });
     }
 
     fn on_cheat_reset(&mut self, _ctx: &mut CheatResetContext) {
-        self.genie_cheats.clear();
-        if let Some(nes) = self.active_nes_mut() {
-            nes.clear_genie_codes();
-        }
+        self.contained("retro_cheat_reset", (), |core| {
+            core.genie_cheats.clear();
+            if let Some(nes) = core.active_nes_mut() {
+                nes.clear_genie_codes();
+            }
+        });
     }
 }
 
@@ -1289,13 +1621,60 @@ retro_core!(RustyNesLibretro {
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,
     serialize_buffer: Vec::new(),
+    memory_maps_registered: false,
+    poisoned: false,
+    log_printf: None,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
     genie_cheats: BTreeMap::new(),
 });
 
 #[cfg(test)]
+mod abi_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A standard `retro_game_info` with only `path` set.
+    fn game_at(path: &CStr) -> retro_game_info {
+        retro_game_info {
+            path: path.as_ptr(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        }
+    }
+
+    #[test]
+    fn fds_images_are_recognised_by_signature_even_behind_a_path() {
+        // Review on #556 (agy). A path without the `.fds` extension used to
+        // decide "not FDS" before the bytes were looked at, so an FDS image
+        // behind an extension-less path (an extracted temp file) went to the
+        // iNES parser and was refused.
+        let fwnes = b"FDS\x1A\x01\0\0\0\0\0\0\0\0\0\0\0";
+        let raw_side = b"\x01*NINTENDO-HVC*\0\0\0";
+        let ines = b"NES\x1A\x02\x01\0\0\0\0\0\0\0\0\0\0";
+        for path in [c"/tmp/extracted", c"/roms/game.nes", c"/roms/game.bin"] {
+            let game = game_at(path);
+            assert!(standard_game_is_fds(&game, fwnes), "{path:?}: fwNES header");
+            assert!(standard_game_is_fds(&game, raw_side), "{path:?}: raw side");
+            assert!(
+                !standard_game_is_fds(&game, ines),
+                "{path:?}: iNES stays iNES"
+            );
+        }
+        // The extension still decides on its own when it says FDS.
+        assert!(standard_game_is_fds(&game_at(c"/roms/game.FDS"), ines));
+        // No path at all: the signature alone, as before.
+        let no_path = retro_game_info {
+            path: std::ptr::null(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        };
+        assert!(standard_game_is_fds(&no_path, fwnes));
+        assert!(!standard_game_is_fds(&no_path, ines));
+    }
 
     /// Historical value: the literal this core hardcoded into
     /// `retro_get_system_av_info` for every cartridge, regardless of region.

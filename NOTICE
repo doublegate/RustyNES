@@ -146,7 +146,24 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
 * blip_buf -- band-limited synthesis, basis of crates/rustynes-apu/src/blip.rs.
       Copyright (c) Shay Green (Blargg) -- LGPL-2.1-or-later (GPLv3-compatible)
 
-The MIT License text (for emu2413, TriCNES, rcheevos):
+* rust-libretro-sys 0.3.2 -- libretro bindings, vendored with a patch at
+  vendor/rust-libretro-sys/ (v2.8.0): the generated `retro_game_info` is
+  replaced by a hand-written one, because bindgen reduced it to an opaque byte
+  and cores could not read the game a frontend loads. The patch is described
+  in vendor/rust-libretro-sys/VENDORED.md; the upstream LICENSE is vendored
+  alongside. The included libretro.h / libretro_vulkan.h carry their own MIT
+  notices (The RetroArch team).
+  https://github.com/max-m/rust-libretro
+      Copyright 2022 Maximilian Mader -- MIT
+  Its vulkan/ directory (vulkan.h, vulkan_core.h, vk_platform.h) is the
+  Khronos Vulkan headers, read by bindgen at build time only:
+  https://github.com/KhronosGroup/Vulkan-Headers
+      Copyright (c) 2014-2018 The Khronos Group Inc. -- Apache-2.0
+      (GPLv3-compatible; the licence text is at
+      https://www.apache.org/licenses/LICENSE-2.0, and each header carries
+      its notice)
+
+The MIT License text (for emu2413, TriCNES, rcheevos, rust-libretro-sys):
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal

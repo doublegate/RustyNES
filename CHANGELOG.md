@@ -26,6 +26,80 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
+
+The first release of the v2.8.x line: the libretro audit's findings about the
+boundary between the RustyNES core and RetroArch, each shown failing in a new
+C-ABI test harness before it was fixed. Emulation behaviour does not change:
+AccuracyCoin 144/144, nestest and every golden are as before. The save state
+gains one byte (the internal data bus), and states from earlier releases still
+load.
+
+### Save states and the libretro boundary
+
+- **A save state followed by zero padding now loads.** `SectionIter` ends at a
+  tail that is zero to the end of the blob; any non-zero byte is still read as
+  section data. The libretro core is about to reserve headroom in
+  `retro_serialize_size`, and before this a padded copy of its own state loaded
+  or failed depending on the padding length mod 9. Every section tag is now
+  pinned to four printable bytes, the invariant the rule rests on. A zero
+  byte where a tag would start is therefore rejected unless everything after
+  it is padding: nine zero bytes used to read as an empty section, so a crafted
+  state of many of them made the padding check quadratic. No save this
+  project writes contains one.
+- **The 2A03's internal data bus is saved.** It is a separate latch from the
+  external open bus (a DMC fetch drives only the external one), and it was
+  missing from the `BUS` section, so a restore kept the running machine's
+  value. Appended under the trailing-default rule: a state written before this
+  release loads with it equal to the open bus. Measured beforehand: a stale
+  value never changed a frame on three ROMs over 1,500 restores, because the
+  next opcode fetch overwrites it first, so this completes the state rather
+  than fixing an observed desync.
+- **The save-state schema audit now covers the bus.** `snapshot_schema_audit`
+  checked the CPU, PPU, APU and OPLL, never `LockstepBus`. Added, it failed with
+  49 bus fields unaccounted for. One was a real gap (the internal data bus). The
+  other 48 are classified with written reasons: configuration, host input,
+  Vs. DualSystem wiring the wrapper re-drives, per-cycle scratch, telemetry, and
+  two fields of the pre-v2.0.0 DMA path that only deprecated methods read.
+- **The libretro core's save states work with a Zapper plugged in.** RetroArch
+  sizes every save-state, rewind and run-ahead buffer from the one
+  `retro_serialize_size` the core reports at load, and a Zapper attached later
+  grew the state past it, so every save after selecting the light gun failed.
+  The core now reserves room for the largest expansion device on both ports
+  and zeroes what it does not use.
+- **Unloading a game withdraws its memory maps.** RetroArch keeps a core's
+  memory descriptors until the core itself is unloaded, so after closing a
+  game its cheat search and RetroAchievements held pointers into freed memory.
+  The core now replaces them with an empty map before freeing the console.
+- **The libretro core loads from any libretro frontend.** It required
+  `GET_GAME_INFO_EXT`, an optional command, because the binding it uses
+  (`rust-libretro-sys` 0.3.2) reduced the standard `retro_game_info` to an
+  opaque byte, so nothing else reached the core. The binding is now vendored
+  with that struct written by hand (`vendor/rust-libretro-sys`, MIT, credited
+  in `NOTICE`), and a frontend that refuses the command loads through the
+  standard struct: its data, or the file at its path. A frontend that answers
+  the command with a path but no data now takes the same route instead of
+  getting an error. An FDS image is recognised by its signature as well as
+  by a `.fds` extension, so one behind a path without that extension loads.
+- **An internal error in the libretro core no longer closes RetroArch.** A
+  panic anywhere in a frame crossed into RetroArch and aborted it, with no
+  chance to write a battery save. The core is now built to unwind, and every
+  callback that runs emulation stops a panic at its own boundary: the game
+  stops, RetroArch keeps running, and the game's memory stays readable so its
+  battery save can still be written. Reloading the game continues. The core
+  also frees its buffers when RetroArch shuts it down. The unwind setting comes
+  from the crate `Makefile`, the libretro buildbot and CI; a direct
+  `cargo build --release` still aborts, so it now warns at build time and the
+  core says so in RetroArch's log when a game loads.
+- **The libretro core writes to RetroArch's log.** Its messages (loads, parse
+  failures, rejected cheats, a contained panic, the abort warning) went to
+  stderr, which RetroArch does not put in its own log. They now go through
+  libretro's log interface, and to stderr only when a frontend offers none.
+  A contained panic is logged with its own message.
+- **A C-ABI test harness for the libretro core.** The core's tests now drive the
+  exported `retro_*` functions as a frontend does, which is how the four fixes
+  above were pinned red first.
+
 ## [2.7.6] - 2026-09-24 - "Recount" (the v2.7.5 deletions measured one at a time)
 
 A measurement release between the v2.7.x and v2.8.x audit lines. v2.7.5

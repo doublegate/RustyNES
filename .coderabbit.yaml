@@ -107,6 +107,7 @@ reviews:
     - "!to-dos/archive/**"
     - "!Cargo.lock"
     - "!crates/rustynes-cheevos/vendor/**"
+    - "!vendor/**"
   path_instructions:
     - path: "crates/rustynes-cpu/**"
       instructions: >
