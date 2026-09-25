@@ -2,7 +2,7 @@
 
 **Document Version:** 2.0.4
 **Last Updated:** 2026-09-24
-**Project Status:** v2.8.2 "Solder" released — the MiSTer core's on-die RTL, corrected against the oracle and the wiki, the first RTL release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
+**Project Status:** v2.8.2 "Solder" released — the MiSTer core's on-die RTL, corrected against the oracle and the wiki, the first RTL release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is planned for v3.0.0.
 
 ---
 
