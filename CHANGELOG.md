@@ -37,6 +37,16 @@ cycle-accurate core later replaced.
   `.unif`, but advertised only `nes|fds`, so RetroArch's file browser hid them.
 - **`scripts/resubmit_libretro_docs_pr.sh` passes its title and body to `gh`.**
   A missing line continuation had split the command in two.
+- **Four-player games work in RetroArch.** A new core option,
+  `rustynes_four_score`, plugs in the Four Score adapter and reads players 3
+  and 4; the core modelled the adapter but nothing could turn it on.
+- **Switching a port from the Zapper back to a controller works.** The gun
+  stayed on the bus, so the controller on that port did nothing.
+- **Every port has button names, and the list ends where RetroArch expects.**
+  Only player 1 was described, and the list ended with an empty string instead
+  of the null libretro specifies, so RetroArch read past its end.
+- **Input is read once per frame, one call per pad.** The core polled a second
+  time and read each pad with sixteen calls where one bitmask read does.
 
 ## [2.8.0] - 2026-09-25 - "Bulkhead" (the libretro core stops a fault at its own boundary)
 
