@@ -1034,7 +1034,19 @@ it is not (A's `flowing_palette_fast` −0.26% in run 1, +1.93% in run 2; B's
 `nestest` −0.23%, then +5.46%; C's two exact-path workloads flat, then +1.5% and
 +1.8%).
 Those are the layout and background-load effects the method exists to catch,
-and none of them points toward a gain. **Five are zero, individually.**
+and none of them points toward a gain. **Five are zero, individually** --
+meaning zero within what this method can resolve, which is worth stating as a
+number rather than leaving "zero" to read as "none". On this loaded desktop the
+order-bias controls moved by under 0.6% on most workloads and by up to 2.4% on
+a few (A run 2, C run 2, IMP-06), which is why each candidate is read against
+its own control and never alone. Read that way, a real effect below roughly
+half a percent on these workloads cannot be excluded from these runs. The
+method's sensitivity at that scale is demonstrated rather than assumed:
+the same A/B/A procedure, pointed at a path the workload does execute (§3.5b on
+`spritecans.nes`, below), resolved a 0.10% and a 0.14% ceiling at p <= 0.02
+against flat controls. The five deletions produced nothing of that kind on paths
+the benches demonstrably execute (§3.6's counted, the rest per cycle or per
+dot).
 
 **§3.5b was never reached, here or in v2.7.5.** `Pulse::output` tests
 `length.count == 0` first and short-circuits, and both bench ROMs are silent:
