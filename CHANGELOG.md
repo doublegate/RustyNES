@@ -26,6 +26,37 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Save states and the libretro boundary (v2.8.0, in progress)
+
+- **A save state followed by zero padding now loads.** `SectionIter` ends at a
+  tail that is zero to the end of the blob; any non-zero byte is still read as
+  section data. The libretro core is about to reserve headroom in
+  `retro_serialize_size`, and before this a padded copy of its own state loaded
+  or failed depending on the padding length mod 9. Every section tag is now
+  pinned to four printable bytes, the invariant the rule rests on.
+- **The 2A03's internal data bus is saved.** It is a separate latch from the
+  external open bus (a DMC fetch drives only the external one), and it was
+  missing from the `BUS` section, so a restore kept the running machine's
+  value. Appended under the trailing-default rule: a state written before this
+  release loads with it equal to the open bus. Measured beforehand: a stale
+  value never changed a frame on three ROMs over 1,500 restores, because the
+  next opcode fetch overwrites it first, so this completes the state rather
+  than fixing an observed desync.
+- **The save-state schema audit now covers the bus.** `snapshot_schema_audit`
+  checked the CPU, PPU, APU and OPLL, never `LockstepBus`. Added, it failed with
+  49 bus fields unaccounted for. One was a real gap (the internal data bus). The
+  other 48 are classified with written reasons: configuration, host input,
+  Vs. DualSystem wiring the wrapper re-drives, per-cycle scratch, telemetry, and
+  two fields of the pre-v2.0.0 DMA path that only deprecated methods read.
+- **A C-ABI test harness for the libretro core.** The core's tests now drive the
+  exported `retro_*` functions as a frontend does. Three tests are red and
+  ignored until their fixes land: memory maps withdrawn on unload, save states
+  that fit with a Zapper plugged in, and loading through the standard
+  `retro_game_info`. The last cannot be fixed in this repository as it stands:
+  `rust-libretro` 0.3.2 hands the core an opaque one-byte `retro_game_info`, so
+  a frontend's `path`, `data` and `size` never arrive. Fixing it means patching
+  that binding, which is the maintainer's decision.
+
 ## [2.7.6] - 2026-09-24 - "Recount" (the v2.7.5 deletions measured one at a time)
 
 A measurement release between the v2.7.x and v2.8.x audit lines. v2.7.5

@@ -1294,6 +1294,9 @@ retro_core!(RustyNesLibretro {
 });
 
 #[cfg(test)]
+mod abi_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
