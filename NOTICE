@@ -155,6 +155,13 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   notices (The RetroArch team).
   https://github.com/max-m/rust-libretro
       Copyright 2022 Maximilian Mader -- MIT
+  Its vulkan/ directory (vulkan.h, vulkan_core.h, vk_platform.h) is the
+  Khronos Vulkan headers, read by bindgen at build time only:
+  https://github.com/KhronosGroup/Vulkan-Headers
+      Copyright (c) 2014-2018 The Khronos Group Inc. -- Apache-2.0
+      (GPLv3-compatible; the licence text is at
+      https://www.apache.org/licenses/LICENSE-2.0, and each header carries
+      its notice)
 
 The MIT License text (for emu2413, TriCNES, rcheevos, rust-libretro-sys):
 

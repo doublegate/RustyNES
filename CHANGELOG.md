@@ -80,7 +80,10 @@ load.
   callback that runs emulation stops a panic at its own boundary: the game
   stops, RetroArch keeps running, and the game's memory stays readable so its
   battery save can still be written. Reloading the game continues. The core
-  also frees its buffers when RetroArch shuts it down.
+  also frees its buffers when RetroArch shuts it down. The unwind setting comes
+  from the crate `Makefile`, the libretro buildbot and CI; a direct
+  `cargo build --release` still aborts, so it now warns at build time and the
+  core says so in RetroArch's log when a game loads.
 - **A C-ABI test harness for the libretro core.** The core's tests now drive the
   exported `retro_*` functions as a frontend does, which is how the four fixes
   above were pinned red first.

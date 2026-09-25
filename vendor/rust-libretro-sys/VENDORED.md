@@ -4,7 +4,10 @@ Upstream: <https://github.com/max-m/rust-libretro> (`rust-libretro-sys/`),
 crates.io `rust-libretro-sys` 0.3.2 (2023-02-27, the last release; the
 repository has not been pushed since). License: MIT, `LICENSE` in this
 directory, copied from the upstream repository. `libretro.h` and
-`libretro_vulkan.h` carry their own MIT notices.
+`libretro_vulkan.h` carry their own MIT notices. The `vulkan/` headers
+(`vulkan.h`, `vulkan_core.h`, `vk_platform.h`) are the Khronos Vulkan headers
+under Apache-2.0, with each file's notice intact; `NOTICE` at the repository
+root credits them.
 
 Wired in through `[patch.crates-io]` in the workspace `Cargo.toml`, and kept
 out of the workspace (`exclude`) so this project's lints and formatting do not

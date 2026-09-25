@@ -458,7 +458,9 @@ impl RustyNesLibretro {
     /// This is live only because the libretro core is built with
     /// `panic = "unwind"` (crate `Makefile`, `.gitlab-ci.yml`, the
     /// `libretro-cross` gate). Under the workspace's release `panic = "abort"`
-    /// the panic would end the process before `catch_unwind` saw it.
+    /// the panic would end the process before `catch_unwind` saw it, which is
+    /// what a direct `cargo build --release` produces: `build.rs` warns then,
+    /// and `on_load_game` logs it.
     fn contained<R>(&mut self, what: &str, fallback: R, f: impl FnOnce(&mut Self) -> R) -> R {
         if self.poisoned {
             return fallback;
@@ -1144,6 +1146,17 @@ impl Core for RustyNesLibretro {
         // A new game starts unpoisoned: a panic in the previous one says
         // nothing about this one.
         self.poisoned = false;
+        // A core built outside the supported paths (a bare `cargo build
+        // --release`, whose workspace profile aborts) cannot contain a panic.
+        // `build.rs` warns at build time; this says so in the frontend's log,
+        // where a crash report would be read.
+        if cfg!(panic = "abort") {
+            eprintln!(
+                "[RustyNES] warning: this core was built with panic = \"abort\"; an internal \
+                 error will close the frontend. Build it with `make` in crates/rustynes-libretro \
+                 or CARGO_PROFILE_RELEASE_PANIC=unwind."
+            );
+        }
         self.contained(
             "retro_load_game",
             Err("internal error while loading the game".into()),
