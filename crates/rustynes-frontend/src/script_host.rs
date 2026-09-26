@@ -375,7 +375,9 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
             }
             CommCmd::MmfWrite { name, data } => {
                 if let Ok(mut m) = mmf.lock() {
-                    m.insert(name, data);
+                    // NF-03: a write that would take the map past its budget
+                    // is dropped, like any other fire-and-forget request.
+                    let _ = mmf_store(&mut m, name, data);
                 }
             }
             CommCmd::MmfRead { id, name, len } => {
@@ -396,6 +398,30 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
             _ => {}
         }
     }
+}
+
+/// v2.9.0 re-audit NF-03 — the most bytes (names plus data) the host-owned
+/// memory-mapped-file map may hold. The map lives as long as the worker, so
+/// unlike a per-frame queue it never empties by itself: before this cap a
+/// script writing distinct names grew it without bound. Each write is also
+/// capped by the engine at `MAX_COMM_PAYLOAD_BYTES` (1 MiB).
+const MAX_MMF_BYTES: usize = 16 * 1024 * 1024;
+
+/// v2.9.0 re-audit NF-03 — the most names the MMF map may hold.
+const MAX_MMF_NAMES: usize = 256;
+
+/// Store `data` under `name` if the map stays within [`MAX_MMF_BYTES`] and
+/// [`MAX_MMF_NAMES`]; overwriting a name reuses its share. Returns whether it
+/// was stored.
+fn mmf_store(map: &mut HashMap<String, Vec<u8>>, name: String, data: Vec<u8>) -> bool {
+    let held: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
+    let old = map.get(&name).map(|v| name.len() + v.len());
+    let next = held - old.unwrap_or(0) + name.len() + data.len();
+    if next > MAX_MMF_BYTES || (old.is_none() && map.len() >= MAX_MMF_NAMES) {
+        return false;
+    }
+    map.insert(name, data);
+    true
 }
 
 /// Attempt to (re)connect the outbound TCP socket to the `RUSTYNES_COMM_TCP`
@@ -515,6 +541,29 @@ mod tests {
                 data: vec![]
             })
         );
+    }
+
+    /// v2.9.0 re-audit NF-03: the MMF map outlives every frame, so it has its
+    /// own budget. 32 distinct 1 MiB writes must not all be kept.
+    #[test]
+    fn the_mmf_map_is_bounded() {
+        let mut map = HashMap::new();
+        let mut kept = 0;
+        for i in 0..32 {
+            if mmf_store(&mut map, format!("m{i}"), vec![0u8; 1024 * 1024]) {
+                kept += 1;
+            }
+        }
+        let held: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
+        assert!(held <= MAX_MMF_BYTES, "the map holds {held} bytes");
+        assert!(kept < 32, "a full map refuses");
+        // Overwriting a kept name reuses its share.
+        assert!(mmf_store(&mut map, "m0".into(), vec![1u8; 1024 * 1024]));
+        let mut names = HashMap::new();
+        for i in 0..=MAX_MMF_NAMES {
+            mmf_store(&mut names, format!("n{i}"), Vec::new());
+        }
+        assert_eq!(names.len(), MAX_MMF_NAMES, "the name count is capped");
     }
 
     /// A one-shot local HTTP server. Answers every connection with `response`

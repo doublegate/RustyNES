@@ -37,7 +37,10 @@
 
 use mlua::{Function, Lua, RegistryKey, Table, Value};
 
-use crate::types::{MAX_QUEUED_CMDS, TasCellDecor, TasCmd, TasSnapshot};
+// v2.9.0 re-audit NF-03: every string this surface copies to the host (a
+// marker, a branch annotation, a cell's text or icon key) is clipped with
+// `clip_host_text`, so the count-capped queue is byte-bounded too.
+use crate::types::{MAX_QUEUED_CMDS, TasCellDecor, TasCmd, TasSnapshot, clip_host_text};
 use crate::{Shared, SharedFlag};
 
 /// All shared engine-side state backing the `tastudio` Lua table. Held by the
@@ -279,7 +282,9 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &SharedFlag) -> mlua:
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         Some(TasCmd::SetPlaybackFrame(n as usize))
                     }
-                    Value::String(s) => Some(TasCmd::SetPlaybackMarker(s.to_string_lossy())),
+                    Value::String(s) => Some(TasCmd::SetPlaybackMarker(clip_host_text(
+                        s.to_string_lossy(),
+                    ))),
                     _ => None,
                 };
                 if let Some(cmd) = cmd {
@@ -306,7 +311,13 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &SharedFlag) -> mlua:
         "setmarker",
         lua.create_function(move |_, (_this, frame, text): (Value, usize, String)| {
             if !locked.get() {
-                push_capped(&cmds, TasCmd::SetMarker { frame, text });
+                push_capped(
+                    &cmds,
+                    TasCmd::SetMarker {
+                        frame,
+                        text: clip_host_text(text),
+                    },
+                );
             }
             Ok(())
         })?,
@@ -389,7 +400,13 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &SharedFlag) -> mlua:
         "setbranchtext",
         lua.create_function(move |_, (_this, index, text): (Value, usize, String)| {
             if !locked.get() {
-                push_capped(&cmds, TasCmd::SetBranchText { index, text });
+                push_capped(
+                    &cmds,
+                    TasCmd::SetBranchText {
+                        index,
+                        text: clip_host_text(text),
+                    },
+                );
             }
             Ok(())
         })?,
@@ -443,13 +460,13 @@ pub fn query_cell(
     // text -> string.
     for cb in text_fns {
         if let Some(s) = cb.call::<Option<String>>((f, column))? {
-            decor.text = Some(s);
+            decor.text = Some(clip_host_text(s));
         }
     }
     // icon -> string key.
     for cb in icon_fns {
         if let Some(s) = cb.call::<Option<String>>((f, column))? {
-            decor.icon = Some(s);
+            decor.icon = Some(clip_host_text(s));
         }
     }
     Ok(decor)

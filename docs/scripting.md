@@ -112,6 +112,25 @@ closes it on the native backend:
   across a 145-case parity test; two error texts differ, and are listed in the
   module docs. gsub's output buffer is host memory, so it is capped at the
   64 MiB heap limit and fails with Lua's own "not enough memory".
+- **Strings copied to the host are bounded (re-audit NF-03).** The 64 MiB limit
+  covers the Lua heap, but a string a script hands to the host is copied out of
+  it: 128 `emu.drawText` calls with one 8 MiB string held 1 GiB of host memory,
+  and `userdata.set` the same, persistently. Every copy out of Lua now has a
+  bound, set by how long the host keeps it:
+
+  | Copy | Bound | Over it |
+  | --- | --- | --- |
+  | `emu.drawText` text; `client.opentool` / `addcheat` / `removecheat`; `tastudio` markers, branch text, cell text and icon keys | 4 KiB each (the log-line cap), so with the 8,192-per-frame count cap each queue holds at most 32 MiB | clipped |
+  | one `comm.*` request (URL plus body or payload) | 1 MiB | Lua error |
+  | the `comm.*` outbound queue, between host drains | 16 MiB | not queued; `httpGet` / `httpPost` / `ws_open` / `mmfRead` return 0 |
+  | the host's memory-mapped-file map | 16 MiB and 256 names | write dropped |
+  | a `userdata` key / value | 4 KiB / 1 MiB | Lua error |
+  | the `userdata` store | 16 MiB and 65,536 keys | Lua error |
+
+  Each queue has its own bound rather than sharing one pool, because hosts
+  drain different queues (mobile drains only the log), and a shared pool would
+  let an undrained queue starve the others. A restored `userdata` store obeys
+  the same limits; an entry that does not fit is skipped.
 
 ## Loading a script
 

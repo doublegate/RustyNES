@@ -44,7 +44,10 @@ use piccolo::{Callback, CallbackReturn, Closure, Executor, Fuel, Lua, Table, Val
 use rustynes_core::Nes;
 
 use crate::backend::VmBackend;
-use crate::types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError};
+use crate::types::{
+    ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_HOST_TEXT_BYTES, MAX_QUEUED_CMDS,
+    ScriptError, clip_host_text,
+};
 
 /// A buffered `emu.write(addr, val)` (applied to the live `Nes` after the
 /// frame's callbacks run). Kept separate from `ControlCmd` because the host
@@ -366,7 +369,18 @@ impl PiccoloBackend {
                     let (x, y, text, color) = stack
                         .consume::<(i64, i64, piccolo::String, Option<i64>)>(ctx)
                         .map_or((0, 0, String::new(), None), |(x, y, s, c)| {
-                            (x, y, String::from_utf8_lossy(s.as_bytes()).into_owned(), c)
+                            // v2.9.0 re-audit NF-03: the draw queue is host
+                            // memory, so the text is clipped as on mlua. The
+                            // bytes are cut first (no full-length copy), then
+                            // the decoded text, which a lossy decode can grow.
+                            let b = s.as_bytes();
+                            let b = &b[..b.len().min(MAX_HOST_TEXT_BYTES)];
+                            (
+                                x,
+                                y,
+                                clip_host_text(String::from_utf8_lossy(b).into_owned()),
+                                c,
+                            )
                         });
                     push_capped(
                         &draws,

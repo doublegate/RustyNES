@@ -18,11 +18,14 @@ use rustynes_core::Nes;
 use crate::backend::VmBackend;
 use crate::tastudio::{self, TasState};
 use crate::types::{
-    ClientCmd, ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError,
-    TasCellDecor, TasCmd, TasSnapshot,
+    ClientCmd, ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS,
+    MAX_USERDATA_BYTES, MAX_USERDATA_KEY_BYTES, MAX_USERDATA_KEYS, MAX_USERDATA_VALUE_BYTES,
+    ScriptError, TasCellDecor, TasCmd, TasSnapshot, clip_host_text,
 };
 #[cfg(feature = "script-ipc")]
 use crate::types::{CommCmd, CommResult};
+#[cfg(feature = "script-ipc")]
+use crate::types::{MAX_COMM_PAYLOAD_BYTES, MAX_COMM_QUEUE_BYTES};
 use crate::{Shared, SharedCounter, SharedFlag};
 
 /// The budget abort's message. One constant, because the host and the tests
@@ -90,6 +93,47 @@ fn push_capped<T>(q: &Shared<Vec<T>>, cmd: T) {
     if q.len() < MAX_QUEUED_CMDS {
         q.push(cmd);
     }
+}
+
+/// v2.9.0 re-audit NF-03 — the host bytes a `comm.*` request carries.
+#[cfg(feature = "script-ipc")]
+const fn comm_payload_bytes(cmd: &CommCmd) -> usize {
+    match cmd {
+        CommCmd::SocketSend(data) => data.len(),
+        CommCmd::HttpGet { url, .. } | CommCmd::WsOpen { url, .. } => url.len(),
+        CommCmd::HttpPost { url, body, .. } => url.len() + body.len(),
+        CommCmd::WsSend(text) => text.len(),
+        CommCmd::WsClose => 0,
+        CommCmd::MmfWrite { name, data } => name.len() + data.len(),
+        CommCmd::MmfRead { name, .. } => name.len(),
+    }
+}
+
+/// v2.9.0 re-audit NF-03 — queue a `comm.*` request, charging its payload to
+/// the outbound queue's byte budget (`held`, refunded by `drain_comm`).
+///
+/// A request over `MAX_COMM_PAYLOAD_BYTES` is a script error and raises one.
+/// A request that fits but finds the queue full (by count or by bytes) is not
+/// queued, and `false` comes back so the id-returning verbs can return 0, the
+/// "not queued" answer they already give under a locked session.
+#[cfg(feature = "script-ipc")]
+fn push_comm(q: &Shared<Vec<CommCmd>>, held: &SharedCounter, cmd: CommCmd) -> mlua::Result<bool> {
+    let bytes = comm_payload_bytes(&cmd);
+    if bytes > MAX_COMM_PAYLOAD_BYTES {
+        return Err(mlua::Error::RuntimeError(format!(
+            "comm: a request of {bytes} bytes exceeds the {MAX_COMM_PAYLOAD_BYTES}-byte limit"
+        )));
+    }
+    let mut q = q.borrow_mut();
+    #[allow(clippy::cast_possible_truncation)] // bounded by MAX_COMM_QUEUE_BYTES.
+    let total = held.get() as usize + bytes;
+    if q.len() >= MAX_QUEUED_CMDS || total > MAX_COMM_QUEUE_BYTES {
+        return Ok(false);
+    }
+    q.push(cmd);
+    drop(q);
+    held.set(total as u64);
+    Ok(true)
 }
 
 /// Side-effect-free read of `len` CPU-space bytes starting at `addr` (wrapping
@@ -299,6 +343,13 @@ pub struct MluaBackend {
     /// across runs via [`MluaBackend::userdata_snapshot`] /
     /// [`MluaBackend::userdata_restore`].
     userdata: Shared<HashMap<String, String>>,
+    /// v2.9.0 re-audit NF-03 — bytes (keys plus values) the `userdata.*`
+    /// store holds, charged against `MAX_USERDATA_BYTES`.
+    userdata_bytes: SharedCounter,
+    /// v2.9.0 re-audit NF-03 — payload bytes queued in [`Self::comm_out`],
+    /// charged against `MAX_COMM_QUEUE_BYTES` and refunded by `drain_comm`.
+    #[cfg(feature = "script-ipc")]
+    comm_held: SharedCounter,
     /// v1.7.0 "Forge" E1 — host-mediated `comm.*` IPC requests issued this frame
     /// (drained by the host, which owns every connection). Gated like
     /// `emu.write`: a locked session never queues one. Only present (and only
@@ -445,13 +496,15 @@ impl MluaBackend {
             "drawText",
             self.lua.create_function(
                 move |_, (x, y, text, color): (i32, i32, String, Option<u32>)| {
+                    // NF-03: the queue is host memory; clip each text so the
+                    // per-frame count cap also bounds its bytes.
                     push_capped(
                         &draws,
                         DrawCmd::Text {
                             x,
                             y,
                             color: color.unwrap_or(0xFFFF_FFFF),
-                            text,
+                            text: clip_host_text(text),
                         },
                     );
                     Ok(())
@@ -840,7 +893,7 @@ impl MluaBackend {
         client.set(
             "opentool",
             self.lua.create_function(move |_, name: String| {
-                push_capped(&q, ClientCmd::OpenTool(name));
+                push_capped(&q, ClientCmd::OpenTool(clip_host_text(name)));
                 Ok(())
             })?,
         )?;
@@ -921,7 +974,7 @@ impl MluaBackend {
             "addcheat",
             self.lua.create_function(move |_, code: String| {
                 if !locked.get() {
-                    push_capped(&q, ClientCmd::AddCheat(code));
+                    push_capped(&q, ClientCmd::AddCheat(clip_host_text(code)));
                 }
                 Ok(())
             })?,
@@ -932,7 +985,7 @@ impl MluaBackend {
             "removecheat",
             self.lua.create_function(move |_, code: String| {
                 if !locked.get() {
-                    push_capped(&q, ClientCmd::RemoveCheat(code));
+                    push_capped(&q, ClientCmd::RemoveCheat(clip_host_text(code)));
                 }
                 Ok(())
             })?,
@@ -949,12 +1002,47 @@ impl MluaBackend {
     fn install_userdata_table(&self) -> Result<(), ScriptError> {
         let userdata = self.lua.create_table()?;
 
+        // v2.9.0 re-audit NF-03 — the store is persistent host memory (and is
+        // written to disk), so it has a standing budget: per-key and per-value
+        // caps, a byte total and a key count. Over any of them the set is
+        // REFUSED with an error rather than dropped, so a script learns its
+        // value was not kept. Overwriting a key reuses that key's share.
         let kv = self.userdata.clone();
+        let held = self.userdata_bytes.clone();
         userdata.set(
             "set",
             self.lua
                 .create_function(move |_, (key, value): (String, String)| {
-                    kv.borrow_mut().insert(key, value);
+                    let refuse = |why: String| Err(mlua::Error::RuntimeError(why));
+                    if key.len() > MAX_USERDATA_KEY_BYTES {
+                        return refuse(format!(
+                            "userdata.set: a key of {} bytes exceeds the {MAX_USERDATA_KEY_BYTES}-byte limit",
+                            key.len()
+                        ));
+                    }
+                    if value.len() > MAX_USERDATA_VALUE_BYTES {
+                        return refuse(format!(
+                            "userdata.set: a value of {} bytes exceeds the {MAX_USERDATA_VALUE_BYTES}-byte limit",
+                            value.len()
+                        ));
+                    }
+                    let mut kv = kv.borrow_mut();
+                    let old = kv.get(&key).map(|v| key.len() + v.len());
+                    if old.is_none() && kv.len() >= MAX_USERDATA_KEYS {
+                        return refuse(format!(
+                            "userdata.set: the store is full ({MAX_USERDATA_KEYS} keys)"
+                        ));
+                    }
+                    #[allow(clippy::cast_possible_truncation)] // bounded by the cap.
+                    let total = held.get() as usize - old.unwrap_or(0) + key.len() + value.len();
+                    if total > MAX_USERDATA_BYTES {
+                        return refuse(format!(
+                            "userdata.set: the store is full ({MAX_USERDATA_BYTES} bytes)"
+                        ));
+                    }
+                    kv.insert(key, value);
+                    drop(kv);
+                    held.set(total as u64);
                     Ok(())
                 })?,
         )?;
@@ -971,10 +1059,15 @@ impl MluaBackend {
                 .create_function(move |_, key: String| Ok(kv.borrow().contains_key(&key)))?,
         )?;
         let kv = self.userdata.clone();
+        let held = self.userdata_bytes.clone();
         userdata.set(
             "remove",
             self.lua.create_function(move |_, key: String| {
-                Ok(kv.borrow_mut().remove(&key).is_some())
+                let removed = kv.borrow_mut().remove(&key);
+                if let Some(v) = &removed {
+                    held.set(held.get().saturating_sub((key.len() + v.len()) as u64));
+                }
+                Ok(removed.is_some())
             })?,
         )?;
         let kv = self.userdata.clone();
@@ -1013,18 +1106,24 @@ impl MluaBackend {
             id
         };
 
+        // v2.9.0 re-audit NF-03: every verb queues through `push_comm`, which
+        // charges its payload to the outbound queue's byte budget. The
+        // fire-and-forget verbs drop a request the full queue refuses (as the
+        // count cap always did); the id verbs return 0 for it.
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         comm.set(
             "socketServerSend",
             self.lua.create_function(move |_, data: mlua::LuaString| {
                 if !locked.get() {
-                    push_capped(&out, CommCmd::SocketSend(data.as_bytes().to_vec()));
+                    push_comm(&out, &held, CommCmd::SocketSend(data.as_bytes().to_vec()))?;
                 }
                 Ok(())
             })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         let mk = alloc_id.clone();
         comm.set(
@@ -1034,11 +1133,15 @@ impl MluaBackend {
                     return Ok(0u64);
                 }
                 let id = mk();
-                push_capped(&out, CommCmd::HttpGet { id, url });
-                Ok(id)
+                Ok(if push_comm(&out, &held, CommCmd::HttpGet { id, url })? {
+                    id
+                } else {
+                    0
+                })
             })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         let mk = alloc_id.clone();
         comm.set(
@@ -1049,11 +1152,17 @@ impl MluaBackend {
                         return Ok(0u64);
                     }
                     let id = mk();
-                    push_capped(&out, CommCmd::HttpPost { id, url, body });
-                    Ok(id)
+                    Ok(
+                        if push_comm(&out, &held, CommCmd::HttpPost { id, url, body })? {
+                            id
+                        } else {
+                            0
+                        },
+                    )
                 })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         let mk = alloc_id.clone();
         comm.set(
@@ -1063,51 +1172,59 @@ impl MluaBackend {
                     return Ok(0u64);
                 }
                 let id = mk();
-                push_capped(&out, CommCmd::WsOpen { id, url });
-                Ok(id)
+                Ok(if push_comm(&out, &held, CommCmd::WsOpen { id, url })? {
+                    id
+                } else {
+                    0
+                })
             })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         comm.set(
             "ws_send",
             self.lua.create_function(move |_, text: String| {
                 if !locked.get() {
-                    push_capped(&out, CommCmd::WsSend(text));
+                    push_comm(&out, &held, CommCmd::WsSend(text))?;
                 }
                 Ok(())
             })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         comm.set(
             "ws_close",
             self.lua.create_function(move |_, ()| {
                 if !locked.get() {
-                    push_capped(&out, CommCmd::WsClose);
+                    push_comm(&out, &held, CommCmd::WsClose)?;
                 }
                 Ok(())
             })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         comm.set(
             "mmfWrite",
             self.lua
                 .create_function(move |_, (name, data): (String, mlua::LuaString)| {
                     if !locked.get() {
-                        push_capped(
+                        push_comm(
                             &out,
+                            &held,
                             CommCmd::MmfWrite {
                                 name,
                                 data: data.as_bytes().to_vec(),
                             },
-                        );
+                        )?;
                     }
                     Ok(())
                 })?,
         )?;
         let out = self.comm_out.clone();
+        let held = self.comm_held.clone();
         let locked = self.writes_locked.clone();
         let mk = alloc_id;
         comm.set(
@@ -1118,8 +1235,13 @@ impl MluaBackend {
                         return Ok(0u64);
                     }
                     let id = mk();
-                    push_capped(&out, CommCmd::MmfRead { id, name, len });
-                    Ok(id)
+                    Ok(
+                        if push_comm(&out, &held, CommCmd::MmfRead { id, name, len })? {
+                            id
+                        } else {
+                            0
+                        },
+                    )
                 })?,
         )?;
 
@@ -1379,6 +1501,9 @@ impl VmBackend for MluaBackend {
             script_data_folder: Shared::new(None),
             clients: Shared::new(Vec::new()),
             userdata: Shared::new(HashMap::new()),
+            userdata_bytes: SharedCounter::new(0),
+            #[cfg(feature = "script-ipc")]
+            comm_held: SharedCounter::new(0),
             #[cfg(feature = "script-ipc")]
             comm_out: Shared::new(Vec::new()),
             #[cfg(feature = "script-ipc")]
@@ -2192,7 +2317,10 @@ impl VmBackend for MluaBackend {
 
     #[cfg(feature = "script-ipc")]
     fn drain_comm(&self) -> Vec<CommCmd> {
-        std::mem::take(&mut self.comm_out.borrow_mut())
+        // The whole queue leaves, so its whole byte charge is refunded.
+        let out = std::mem::take(&mut *self.comm_out.borrow_mut());
+        self.comm_held.set(0);
+        out
     }
 
     #[cfg(feature = "script-ipc")]
@@ -2219,11 +2347,27 @@ impl VmBackend for MluaBackend {
     }
 
     fn userdata_restore(&self, pairs: &[(String, String)]) {
+        // NF-03: a restored store obeys the same budget as `userdata.set`
+        // (a file written by an older build, or edited by hand, may not). An
+        // entry that does not fit is skipped; a later duplicate key replaces
+        // an earlier one, as `insert` always did.
         let mut kv = self.userdata.borrow_mut();
         kv.clear();
+        let mut total = 0usize;
         for (k, v) in pairs {
+            if k.len() > MAX_USERDATA_KEY_BYTES || v.len() > MAX_USERDATA_VALUE_BYTES {
+                continue;
+            }
+            let old = kv.get(k).map(|o| k.len() + o.len());
+            let next = total - old.unwrap_or(0) + k.len() + v.len();
+            if next > MAX_USERDATA_BYTES || (old.is_none() && kv.len() >= MAX_USERDATA_KEYS) {
+                continue;
+            }
             kv.insert(k.clone(), v.clone());
+            total = next;
         }
+        drop(kv);
+        self.userdata_bytes.set(total as u64);
     }
 }
 

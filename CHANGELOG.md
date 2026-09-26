@@ -145,6 +145,14 @@ cycle-accurate core later replaced.
   across a 145-case comparison. The matcher is derived from Lua 5.4's
   MIT-licensed `lstrlib.c`, recorded in `NOTICE` and
   `docs/originality-and-provenance.md` (v2.9.0 re-audit NF-02).
+- **A Lua script can no longer exhaust host memory through the strings it
+  hands the host.** The 64 MiB script heap limit did not cover copies made
+  into host memory: repeating `emu.drawText` or `userdata.set` with one large
+  string held a gigabyte after 128 calls. Overlay, `client.*` and `tastudio.*`
+  strings are clipped to 4 KiB; a `comm.*` request is limited to 1 MiB and
+  its outbound queue to 16 MiB; the memory-mapped-file map to 16 MiB; and
+  `userdata.*` to 1 MiB per value and 16 MiB in all, with an error when a
+  value is refused (v2.9.0 re-audit NF-03).
 
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 

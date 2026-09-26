@@ -927,6 +927,111 @@ mod tests {
         assert_eq!(eng.drain_log(), vec!["hi!", "true", "false"]);
     }
 
+    /// v2.9.0 re-audit NF-03: SEC-02 capped the Lua heap and #551 capped the
+    /// log, but every other string a script copies into HOST memory was
+    /// unbounded: 128 `emu.drawText` calls of one 8 MiB string held 1 GiB of
+    /// host memory. Each text is now clipped like a log line, so a frame's
+    /// draw queue is bounded by `MAX_QUEUED_CMDS` x `MAX_HOST_TEXT_BYTES`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn host_draw_text_is_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "local s = string.rep('t', 8 * 1024 * 1024) \
+             for i = 1, 128 do emu.drawText(0, 0, s) end",
+        )
+        .expect("loads");
+        let draws = eng.drain_draws();
+        assert_eq!(draws.len(), 128);
+        let bytes: usize = draws
+            .iter()
+            .map(|d| match d {
+                DrawCmd::Text { text, .. } => text.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            bytes <= 128 * crate::types::MAX_HOST_TEXT_BYTES,
+            "the host holds {bytes} bytes of draw text"
+        );
+    }
+
+    /// NF-03, the persistent half: `userdata.*` values live for the whole
+    /// session (and are written to disk), so its budget never refills by
+    /// itself. 128 keys of an 8 MiB value held 1 GiB. A value over the
+    /// per-value cap is refused with an error, and the store as a whole
+    /// stops at `MAX_USERDATA_BYTES`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn host_userdata_is_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("userdata.set('big', string.rep('u', 8 * 1024 * 1024))")
+            .expect_err("an 8 MiB value is refused");
+        assert!(err.to_string().contains("userdata"), "{err}");
+        eng.load(
+            "local s = string.rep('u', 1024 * 1024 - 16) \
+             for i = 1, 128 do pcall(userdata.set, tostring(i), s) end \
+             emu.log(tostring(pcall(userdata.set, 'more', s)))",
+        )
+        .expect("loads");
+        let held: usize = eng
+            .userdata_snapshot()
+            .iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum();
+        assert!(
+            held <= crate::types::MAX_USERDATA_BYTES,
+            "the store holds {held} bytes"
+        );
+        assert_eq!(eng.drain_log(), vec!["false"], "the full store refuses");
+        // Overwriting a key reuses its share; removing frees it.
+        eng.load("userdata.remove('1') userdata.set('1', 'x') userdata.set('1', 'y')")
+            .expect("a freed share is reusable");
+    }
+
+    /// NF-03: `comm.*` payloads are copied into the host's outbound queue.
+    /// Over the per-request cap a request is refused with an error; past the
+    /// queue's byte budget it is not queued, and the id-returning verbs say
+    /// so by returning 0 (as they do under a locked session).
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn host_comm_payloads_are_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("comm.httpPost('http://example.com/', string.rep('p', 8 * 1024 * 1024))")
+            .expect_err("an 8 MiB body is refused");
+        assert!(err.to_string().contains("comm"), "{err}");
+        eng.load(
+            "local s = string.rep('p', 1024 * 1024 - 64) \
+             local zero = 0 \
+             for i = 1, 128 do \
+               if comm.httpPost('http://example.com/', s) == 0 then zero = zero + 1 end \
+               comm.mmfWrite('m', s) \
+             end \
+             emu.log(tostring(zero > 0))",
+        )
+        .expect("loads");
+        let held: usize = eng
+            .drain_comm()
+            .iter()
+            .map(|c| match c {
+                CommCmd::HttpPost { url, body, .. } => url.len() + body.len(),
+                CommCmd::MmfWrite { name, data } => name.len() + data.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            held <= crate::types::MAX_COMM_QUEUE_BYTES,
+            "the host queue holds {held} bytes"
+        );
+        assert_eq!(eng.drain_log(), vec!["true"], "a refused request says 0");
+        // The budget refills once the host drains the queue.
+        eng.load("emu.log(tostring(comm.httpPost('http://example.com/', 'x') ~= 0))")
+            .expect("loads");
+        assert_eq!(eng.drain_log(), vec!["true"]);
+    }
+
     /// The cut lands on a character boundary: 'é' is two bytes, and 4096 is
     /// even, so an odd offset forces the step back (a mid-char `truncate`
     /// panics).
