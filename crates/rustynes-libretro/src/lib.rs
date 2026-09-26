@@ -1757,6 +1757,16 @@ impl Core for RustyNesLibretro {
 
     fn on_serialize(&mut self, slice: &mut [u8], _ctx: &mut SerializeContext) -> bool {
         self.contained("retro_serialize", false, |core| {
+            // libretro.h: "If failed, or size is lower than
+            // retro_serialize_size(), it should return false". The state is
+            // usually smaller than the size reported (that includes the
+            // expansion-device headroom), so "the state fits" is not the
+            // test; until v2.9.0 it was, and a buffer up to 26 bytes short
+            // succeeded (libretro re-audit NL-10). Checked before the
+            // snapshot so a refused call costs nothing.
+            if slice.len() < core.serialize_size {
+                return false;
+            }
             // Generates the deterministic binary blob representing the console hardware
             // state. Single console → `snapshot_core_into`; a Vs. DualSystem cabinet →
             // `VsDualSystem::snapshot` (a self-describing blob of BOTH consoles).

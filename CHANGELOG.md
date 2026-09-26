@@ -46,6 +46,10 @@ cycle-accurate core later replaced.
   System's `$6000-$DFFF`), the whole buffer is also reachable in its own
   `SRAM` address space for cheat searches and achievements, and volatile RAM
   is no longer flagged as save RAM.
+- **`retro_serialize` refuses a buffer smaller than the size it reported**,
+  as libretro.h asks. It succeeded whenever the state itself fitted, which it
+  usually does with 26 bytes to spare. Frontends pass the reported size, so
+  nothing changes for them.
 
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 

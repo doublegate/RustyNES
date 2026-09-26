@@ -847,3 +847,29 @@ impl From<&Desc> for DescView {
         }
     }
 }
+
+/// libretro re-audit NL-10. libretro.h, `retro_serialize`: "If failed, or
+/// size is lower than retro_serialize_size(), it should return false". The
+/// core succeeded whenever the state itself fitted, and the state is usually
+/// 26 bytes smaller than the reported size (the expansion-device headroom),
+/// so a buffer one byte short still returned true.
+#[test]
+fn serialize_refuses_a_buffer_smaller_than_it_asked_for() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    run_frame();
+    let size = serialize_size();
+    let mut short = vec![0_u8; size - 1];
+    let refused = !serialize(&mut short);
+    let mut exact = vec![0_u8; size];
+    let accepted = serialize(&mut exact);
+    unload();
+    assert!(
+        refused,
+        "a buffer below retro_serialize_size must be refused"
+    );
+    assert!(
+        accepted,
+        "a buffer of exactly retro_serialize_size must work"
+    );
+}
