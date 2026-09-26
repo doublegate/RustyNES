@@ -14,9 +14,11 @@
 //! - `Nes::restore_quiet` — the full restore into a live `Nes`, which decodes
 //!   every section (CPU/PPU/APU/mapper/WRAM/…) and their bounded length fields.
 //!
-//! The base `Nes` is a synthesized minimal NROM so a *structurally valid* fuzz
-//! case can actually reach the per-section decoders (not just bounce off the
-//! magic check).
+//! The base `Nes` is a synthesized minimal cartridge so a *structurally valid*
+//! fuzz case can actually reach the per-section decoders (not just bounce off
+//! the magic check). Until v2.9.0 it was always NROM; bits 1-3 of the first
+//! input byte now pick one of eight mappers (`BASES`), so the `MAP ` decoders
+//! are in reach as well.
 //!
 //! # Why the target runs the machine, and patches a real snapshot (v2.7.0)
 //!
@@ -53,16 +55,56 @@
 use libfuzzer_sys::fuzz_target;
 use rustynes_core::{Nes, parse_header};
 
-/// A minimal iNES NROM (16 KiB PRG that spins in an infinite loop + 8 KiB CHR),
-/// enough to construct a real `Nes` whose `restore` path can be exercised.
-fn synth_nrom() -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(16 + 16 * 1024 + 8 * 1024);
+/// The base machines a patch-mode case can start from: `(mapper, 16 KiB PRG
+/// banks, 8 KiB CHR-ROM banks)`, CHR count 0 meaning 8 KiB of CHR-RAM.
+///
+/// v2.9.0 (re-audit NC-02): until then the only base was NROM, whose `MAP `
+/// section is almost empty, so the mapper-state decoders -- where the
+/// re-audit found a GTROM bank restored unvalidated and then indexed on the
+/// next fetch, and a BS-5 DIP that overflowed a shift -- were unreachable
+/// from this target. Index 0 is the original NROM, byte-identical, so every
+/// pre-v2.9.0 input with mode bits 1-3 clear means what it meant. The rest
+/// are a spread of mapper-state shapes: MMC1 (serial shift register), MMC3
+/// (scanline IRQ), MMC5 (the largest state), VRC6 (expansion audio + CPU-cycle
+/// IRQ), FME-7 (CPU-cycle IRQ + 5B audio), GTROM (the NC-02 board), BS-5 (the
+/// NC-06 board). FDS is absent because it needs a BIOS image.
+const BASES: [(u16, u8, u8); 8] = [
+    (0, 1, 1),
+    (1, 8, 2),
+    (4, 8, 8),
+    (5, 8, 8),
+    (24, 8, 8),
+    (69, 8, 8),
+    (111, 8, 0),
+    (286, 8, 8),
+];
+
+/// A minimal cartridge image for `mapper` whose program spins in an infinite
+/// loop after starting the APU and rendering -- enough to construct a real
+/// `Nes` whose `restore` path can be exercised. For NROM (`synth(0, 1, 1)`)
+/// this is exactly the image the target used before v2.9.0.
+///
+/// The program and all three vectors are written into EVERY 16 KiB bank, so
+/// it runs whatever each mapper powers up with at `$C000-$FFFF`. A mapper
+/// number above 255 gets a NES 2.0 header.
+fn synth(mapper: u16, prg16: u8, chr8: u8) -> Vec<u8> {
+    let prg_len = usize::from(prg16) * 16 * 1024;
+    let chr_len = usize::from(chr8) * 8 * 1024;
+    let mut bytes = Vec::with_capacity(16 + prg_len + chr_len);
     bytes.extend_from_slice(b"NES\x1A");
-    bytes.push(1); // 1 x 16 KiB PRG
-    bytes.push(1); // 1 x 8 KiB CHR
-    bytes.push(0);
-    bytes.push(0);
-    bytes.extend_from_slice(&[0u8; 8]);
+    bytes.push(prg16);
+    bytes.push(chr8);
+    let [lo, hi] = mapper.to_le_bytes();
+    bytes.push((lo & 0x0F) << 4);
+    if hi == 0 {
+        bytes.push(lo & 0xF0);
+        bytes.extend_from_slice(&[0u8; 8]);
+    } else {
+        // NES 2.0: byte 8 low nibble = mapper bits 8-11; byte 11 = 8 KiB
+        // CHR-RAM when there is no CHR-ROM.
+        bytes.push((lo & 0xF0) | 0x08);
+        bytes.extend_from_slice(&[hi & 0x0F, 0, 0, if chr8 == 0 { 7 } else { 0 }, 0, 0, 0, 0]);
+    }
     let mut prg = vec![0u8; 16 * 1024];
     // Reset vector -> $C000. The program starts all four tone channels, turns
     // rendering on, then spins in a `JMP` forever. Both halves matter to what
@@ -108,8 +150,10 @@ fn synth_nrom() -> Vec<u8> {
     prg[len - 5] = 0xC0; // reset high
     prg[len - 2] = 0x00; // IRQ  low
     prg[len - 1] = 0xC0; // IRQ  high
-    bytes.extend_from_slice(&prg);
-    bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+    for _ in 0..prg16 {
+        bytes.extend_from_slice(&prg);
+    }
+    bytes.extend_from_slice(&vec![0u8; chr_len]);
     bytes
 }
 
@@ -120,8 +164,11 @@ fn synth_nrom() -> Vec<u8> {
 /// `run_frame` per case measured ~15 executions per second.
 const STEPS_AFTER_RESTORE: usize = 120;
 
-/// The base snapshot, and where its framebuffer sits inside it.
+/// The base snapshot, the image it came from, and where its framebuffer sits
+/// inside it.
 struct Base {
+    /// The cartridge image; each case restores into a fresh `Nes` built from it.
+    rom: Vec<u8>,
     /// A real `.rns` snapshot of the base machine, taken on scanline 0 so that
     /// the steps after a restore land on the sprite-heavy lines 1-3.
     blob: Vec<u8>,
@@ -138,10 +185,14 @@ struct Base {
 /// section among it -- which is exactly how the first version of this patch
 /// mode left every IMP-02 field unreachable (caught in review on #546).
 /// Pixels are output, not state, and corrupting them exercises nothing.
-fn base() -> &'static Base {
-    static BASE: std::sync::OnceLock<Base> = std::sync::OnceLock::new();
-    BASE.get_or_init(|| {
-        let mut nes = Nes::from_rom(&synth_nrom()).expect("synthetic NROM loads");
+fn base(index: usize) -> &'static Base {
+    static BASE: [std::sync::OnceLock<Base>; BASES.len()] =
+        [const { std::sync::OnceLock::new() }; BASES.len()];
+    BASE[index].get_or_init(|| {
+        let (mapper, prg16, chr8) = BASES[index];
+        let rom = synth(mapper, prg16, chr8);
+        let mut nes = Nes::from_rom(&rom)
+            .unwrap_or_else(|e| panic!("synthetic mapper-{mapper} image loads: {e}"));
         for _ in 0..3 {
             nes.run_frame();
         }
@@ -167,7 +218,7 @@ fn base() -> &'static Base {
             blob.len() - fb.len() <= 1 << 24,
             "every non-framebuffer byte must stay reachable by a 24-bit offset"
         );
-        Base { blob, fb }
+        Base { rom, blob, fb }
     })
 }
 
@@ -175,10 +226,12 @@ fuzz_target!(|data: &[u8]| {
     let Some((&mode, rest)) = data.split_first() else {
         return;
     };
+    // Bits 1-3 of the mode byte pick the base machine (`BASES`); both modes
+    // restore into that machine, so raw inputs reach its mapper decoder too.
+    let base = base(usize::from(mode >> 1) % BASES.len());
     let patched;
     let state: &[u8] = if mode & 1 == 0 {
         // Patch mode: `(offset u24 LE, value)` quads over a real snapshot.
-        let base = base();
         let mut s = base.blob.clone();
         let state_len = s.len() - base.fb.len();
         for p in rest.chunks_exact(4) {
@@ -202,15 +255,16 @@ fuzz_target!(|data: &[u8]| {
     // 2. Whole-container thumbnail walk (header + every section length prefix).
     let _ = Nes::extract_thumbnail(state);
 
-    // 3. Full restore into a live NROM Nes. A malformed state must return an
-    //    error and leave the Nes usable, not panic or corrupt memory. A state
-    //    that is ACCEPTED must then run: the snapshot crashes the core audit
-    //    found all panic on the first tick after restore, not during it.
-    if let Ok(mut nes) = Nes::from_rom(&synth_nrom()) {
-        if nes.restore_quiet(state).is_ok() {
-            for _ in 0..STEPS_AFTER_RESTORE {
-                nes.step_instruction();
-            }
+    // 3. Full restore into a live Nes of the base's mapper. A malformed state
+    //    must return an error and leave the Nes usable, not panic or corrupt
+    //    memory. A state that is ACCEPTED must then run: the snapshot crashes
+    //    the core audit found all panic on the first tick after restore, not
+    //    during it. Since v2.9.0 a REJECTED one runs too: a failed restore
+    //    promises the machine is unchanged, so it must keep running.
+    if let Ok(mut nes) = Nes::from_rom(&base.rom) {
+        let _ = nes.restore_quiet(state);
+        for _ in 0..STEPS_AFTER_RESTORE {
+            nes.step_instruction();
         }
     }
 });
