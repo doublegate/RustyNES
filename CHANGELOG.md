@@ -79,6 +79,13 @@ cycle-accurate core later replaced.
   `disk_control`, `memory_descriptors` and `input_descriptors` from the
   core's source. This is the repository's copy; the one RetroArch downloads
   from `libretro-super` is updated at v3.0.0.
+- **Measured, not changed: writing a Vs. `DualSystem` cabinet's save state
+  costs 6 to 20 times what it would without the thumbnails**, because it
+  includes both consoles' thumbnails in a fresh buffer on every call;
+  recorded in `docs/performance.md` for a change in the core, where the
+  project's A/B rule can judge it. `docs/libretro/architecture.md` no longer claims the
+  core never allocates per call, and records the Makefile's
+  `platform=libnx` mapping as probably unbuildable (not attempted).
 - **Disk Control names the sides of a Famicom Disk System disk.** The core
   computed "Side A" / "Side B" labels but registered only the original
   disk-control interface, which has no labels, so RetroArch showed bare
