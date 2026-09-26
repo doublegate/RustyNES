@@ -163,7 +163,17 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
       https://www.apache.org/licenses/LICENSE-2.0, and each header carries
       its notice)
 
-The MIT License text (for emu2413, TriCNES, rcheevos, rust-libretro-sys):
+* Lua 5.4.9 -- the pattern matcher and the string.find / match / gmatch /
+  gsub drivers of lstrlib.c, re-expressed in Rust with step metering in
+  crates/rustynes-script/src/lua_pattern.rs (v2.9.0, re-audit NF-02), so a
+  script's pattern matching is charged to the sandbox's instruction budget.
+  Read from the copy the mlua crate vendors (lua-src 551.0.2). Lua itself is
+  also linked, unmodified, into builds with the optional `scripting` feature.
+  https://www.lua.org/
+      Copyright (C) 1994-2026 Lua.org, PUC-Rio -- MIT
+
+The MIT License text (for emu2413, TriCNES, rcheevos, rust-libretro-sys,
+Lua):
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal

@@ -83,6 +83,7 @@ distributing the combined work under GPL-3.0-or-later.
 | `crates/rustynes-mappers/src/unif.rs` | Mesen2; FCEUX | `UnifLoader.cpp` + `unif.cpp` board-name tables | GPL-3.0-or-later / GPL-2.0-or-later |
 | `crates/rustynes-frontend/src/debugger/source_map.rs` | Mesen2 | `DbgImporter` / `NesDbgImporter` | GPL-3.0-or-later |
 | `crates/rustynes-test-harness/src/bin/pgo_trainer.rs` | Mesen2 | `PGOHelper` corpus-sweep harness | GPL-3.0-or-later |
+| `crates/rustynes-script/src/lua_pattern.rs` | Lua 5.4.9 (not an emulator; v2.9.0, re-audit NF-02) | `lstrlib.c` pattern matcher (`match` and its helpers) and the `str_find_aux` / `gmatch` / `str_gsub` drivers, followed function for function so the script sandbox's step-metered replacement matches Lua exactly; read from the copy mlua vendors (`lua-src` 551.0.2) | MIT |
 
 This list is maintained as the derivation is audited further; if additional
 GPL-derived code is found, it is added here and in `NOTICE` rather than reworded

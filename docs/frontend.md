@@ -2223,7 +2223,8 @@ The sandbox's limits, and the audits that set them, are listed in
 can swallow (SEC-03), a 64 MiB Lua heap (SEC-02), and, from v2.9.0, no `__gc`
 finalizers (re-audit NF-01), because Lua runs a finalizer with the budget hook
 switched off, under the emulator lock, and again on **Stop** when the engine is
-dropped.
+dropped; and pattern matching charged to the same budget (re-audit NF-02),
+because Lua's C matcher backtracks with no VM instruction for the hook to see.
 
 ## In-app Documentation (v1.5.0 "Lens" Workstream I10, native; overhauled in v1.7.0 beta.5 #53)
 

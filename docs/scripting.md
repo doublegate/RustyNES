@@ -97,6 +97,21 @@ closes it on the native backend:
   any metatable that carries a `__gc` key. That is sufficient because Lua arms a
   finalizer only if `__gc` is present when `setmetatable` runs; adding it to the
   metatable afterwards is inert, and a test pins that.
+- **Pattern matching is under the budget (re-audit NF-02).** `string.find`,
+  `string.match`, `string.gmatch` and `string.gsub` were single C calls, and the
+  budget hook only fires between VM instructions. Lua patterns backtrack, so
+  `string.rep('a', 3000):find('.-.-.-.-b')` did roughly n^4 steps with no VM
+  instruction at all and hung the app. The four functions (and the `s:find(...)`
+  method form, which resolves through the same `string` table) are now a Rust
+  re-expression of Lua 5.4's own matcher (`lua_pattern.rs`, derived from Lua's
+  MIT-licensed `lstrlib.c` and declared as such) that counts its steps and
+  charges them to the frame's instruction budget; an exhausted budget raises the
+  same uncatchable abort as a runaway loop. One step is charged per pattern item
+  tried and per repetition, and linear work (a plain `find`'s scan, gsub output)
+  at one step per 64 bytes. Results and error messages match the C library
+  across a 145-case parity test; two error texts differ, and are listed in the
+  module docs. gsub's output buffer is host memory, so it is capped at the
+  64 MiB heap limit and fails with Lua's own "not enough memory".
 
 ## Loading a script
 

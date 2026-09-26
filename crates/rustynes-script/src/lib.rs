@@ -89,6 +89,13 @@ use mlua_backend::MluaBackend as Backend;
 #[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
 mod tastudio;
 
+// v2.9.0 re-audit NF-02 — a step-metered replacement for Lua's
+// `string.find` / `match` / `gmatch` / `gsub`, whose C implementations ran
+// outside the instruction budget. Derived from Lua 5.4's `lstrlib.c` (MIT);
+// see the file's provenance header.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+mod lua_pattern;
+
 // v1.8.6 — `Send`-ify the mlua backend so the mobile UniFFI bridge
 // (`rustynes-mobile`, an `Arc`-shared object that requires `Send + Sync`) can
 // hold a `ScriptEngine`. mlua's `Lua` becomes `Send` with its `send` feature
@@ -858,6 +865,50 @@ mod tests {
             .expect("adding __gc afterwards is inert, not an error");
             drop(eng);
         });
+    }
+
+    /// v2.9.0 re-audit NF-02: `string.find` / `match` / `gmatch` / `gsub` ran
+    /// in C, where the count hook cannot fire, and Lua patterns backtrack:
+    /// this `find` is roughly n^4 C steps on a 3,000-byte subject, with zero
+    /// VM instructions, and hung the host under its emulator lock. Every
+    /// matcher (and the method form, via the string metatable) must now stop
+    /// on the budget, uncatchably, like a runaway loop.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_pathological_pattern_hits_the_budget() {
+        for script in [
+            "local s = string.rep('a', 3000) return s:find('.-.-.-.-b')",
+            "local s = string.rep('a', 3000) return string.match(s, '.-.-.-.-b')",
+            "local s = string.rep('a', 3000) for _ in s:gmatch('.-.-.-.-b') do end",
+            "local s = string.rep('a', 3000) return (s:gsub('.-.-.-.-b', ''))",
+            "local s = string.rep('a', 3000) while true do pcall(string.find, s, '.-.-.-.-b') end",
+        ] {
+            let r = within(10, move || {
+                let mut eng = ScriptEngine::new().expect("engine");
+                eng.set_instruction_budget(100_000);
+                eng.load(script).map_err(|e| e.to_string())
+            });
+            let err = r.expect_err(script);
+            assert!(err.contains("budget"), "{script}: {err}");
+        }
+    }
+
+    /// NF-02: the metered matcher is the one scripts see, method form
+    /// included, and it still matches like Lua's own (the full parity table
+    /// lives in `lua_pattern.rs`).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn string_patterns_still_work_in_the_sandbox() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "emu.log(('key=val'):match('(%w+)=(%w+)')) \
+             emu.log(select(2, ('a,b,c'):gsub(',', ';'))) \
+             local t = {} for w in ('x y z'):gmatch('%a') do t[#t + 1] = w end \
+             emu.log(table.concat(t)) \
+             emu.log(tostring(pcall(string.find, 'x', '[')))",
+        )
+        .expect("loads");
+        assert_eq!(eng.drain_log(), vec!["key\tval", "2", "xyz", "false"]);
     }
 
     /// NF-01: an ordinary metatable still works, and a `__gc` key is refused

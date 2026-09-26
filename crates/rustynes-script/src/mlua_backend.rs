@@ -28,7 +28,7 @@ use crate::{Shared, SharedCounter, SharedFlag};
 /// The budget abort's message. One constant, because the host and the tests
 /// recognise the abort by it, and the uncatchable re-raise must match the
 /// hook's own error.
-const BUDGET_EXCEEDED: &str = "script exceeded the per-frame instruction budget";
+pub const BUDGET_EXCEEDED: &str = "script exceeded the per-frame instruction budget";
 
 /// v2.7.3 (frontend audit SEC-02) — the script VM's heap ceiling, 64 MiB. Far
 /// above any legitimate script's working set (a full RAM mirror plus the
@@ -1388,6 +1388,20 @@ impl VmBackend for MluaBackend {
         };
         engine.install_prelude()?;
         engine.install_platform_tables()?;
+        // v2.9.0 re-audit NF-02 — replace the C pattern matchers with the
+        // step-metered ones, charged to the same counter, budget and trip flag
+        // as the VM hook. Before `install_budget_guards`: the gsub driver calls
+        // replacement functions through the ORIGINAL `pcall`, and captures it
+        // here. Its output buffer is host memory, capped at the heap limit.
+        crate::lua_pattern::install(
+            &engine.lua,
+            &crate::lua_pattern::Meter {
+                count: engine.instr_count.clone(),
+                budget: engine.budget.clone(),
+                tripped: engine.budget_tripped.clone(),
+            },
+            SCRIPT_MEMORY_LIMIT,
+        )?;
         engine.install_budget_guards()?;
         engine.install_gc_guard()?;
         Ok(engine)

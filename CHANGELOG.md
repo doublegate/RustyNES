@@ -137,6 +137,14 @@ cycle-accurate core later replaced.
   the emulator lock, and pressing Stop, which closes the script, froze it
   again. `setmetatable` now refuses a metatable carrying `__gc` (v2.9.0
   re-audit NF-01).
+- **Lua pattern matching can no longer run past the instruction budget.**
+  `string.find`, `match`, `gmatch` and `gsub` ran in C, where the budget
+  cannot look, and a backtracking pattern such as `.-.-.-.-b` on a 3,000-byte
+  string hung the app. They are now a Rust version of Lua's own matcher that
+  charges its work to the budget; results and error messages match Lua's
+  across a 145-case comparison. The matcher is derived from Lua 5.4's
+  MIT-licensed `lstrlib.c`, recorded in `NOTICE` and
+  `docs/originality-and-provenance.md` (v2.9.0 re-audit NF-02).
 
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
