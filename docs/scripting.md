@@ -125,7 +125,10 @@ closes it on the native backend:
   at one step per 64 bytes. Results and error messages match the C library
   across a 145-case parity test; two error texts differ, and are listed in the
   module docs. gsub's output buffer is host memory, so it is capped at the
-  64 MiB heap limit and fails with Lua's own "not enough memory".
+  64 MiB heap limit and fails with Lua's own "not enough memory". The cap is
+  checked before every append, not only between matches: until review on #561
+  one replacement string full of `%0` escapes could grow the buffer far past
+  it within a single match (`gsub_output_never_passes_the_cap`).
 - **Strings copied to the host are bounded (re-audit NF-03).** The 64 MiB limit
   covers the Lua heap, but a string a script hands to the host is copied out of
   it: 128 `emu.drawText` calls with one 8 MiB string held 1 GiB of host memory,

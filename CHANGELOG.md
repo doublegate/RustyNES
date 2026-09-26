@@ -61,6 +61,12 @@ run any bitstream.**
   pending save is written first; the file then stays untouched until the ROM
   is reloaded. Mobile reports the pre-movie RAM to the host for the same
   span.
+- **Netplay peers start from the same save RAM again.** The session start is a
+  power cycle, which this release made keep battery RAM, so each peer began
+  with its own `.sav` and a game that read its save would desync. Desktop,
+  browser and mobile sessions now start from cleared save RAM, as every peer
+  did before v2.9.0, kept off the `.sav` like a movie; a spectator now gets
+  the cold boot its documentation always promised.
 
 ### HD packs and patches
 
@@ -70,7 +76,9 @@ run any bitstream.**
 - **HD packs are bounded in every input**: `hires.txt` at 32 MiB (a 509 KiB zip
   used to reach 533 MiB), HD-audio tracks at 15 minutes each and 512 MiB of
   decoded audio per pack, and a file named by several declarations is decoded
-  once (four declarations of one long track reached 2.6 GiB).
+  once (four declarations of one long track reached 2.6 GiB). The source
+  audio held before resampling has its own 512 MiB ceiling, so a 384 kHz
+  track can no longer hold 1.4 GB on its way to being refused.
 - **A BPS patch can no longer grow the ROM without bound**: a 27-byte patch
   beside a ROM took the loader to 1 GiB before failing.
 
@@ -204,12 +212,13 @@ run any bitstream.**
 
 ### Mappers
 
-- **Seven multicart boards no longer crash on an undersized ROM.** Mappers
+- **Eleven multicart boards no longer crash on an undersized ROM.** Mappers
   46, 57, 58, 61, 62, 202 and 212 accepted a PRG-ROM smaller than their
   32 KiB window (an undersized dump or a header typo) and then crashed the
-  emulator on the first fetch in 32 KiB mode. The smaller ROM now mirrors
-  in the window, as the hardware does. Every image that ran before runs
-  identically.
+  emulator on the first fetch in 32 KiB mode; mappers 51, 104, 290 and 301
+  did the same in a 16 KiB window with an 8 KiB ROM. The smaller ROM now
+  mirrors in the window, as the hardware does. Every image that ran before
+  runs identically.
 
 ### Lua scripting
 
@@ -226,7 +235,10 @@ run any bitstream.**
   charges its work to the budget; results and error messages match Lua's
   across a 145-case comparison. The matcher is derived from Lua 5.4's
   MIT-licensed `lstrlib.c`, recorded in `NOTICE` and
-  `docs/originality-and-provenance.md` (v2.9.0 re-audit NF-02).
+  `docs/originality-and-provenance.md` (v2.9.0 re-audit NF-02). `gsub`'s
+  output is capped at every append, so one replacement string full of `%0`
+  escapes can no longer grow it far past the heap limit within a single
+  match.
 - **A Lua script can no longer exhaust host memory through the strings it
   hands the host.** The 64 MiB script heap limit did not cover copies made
   into host memory: repeating `emu.drawText` or `userdata.set` with one large

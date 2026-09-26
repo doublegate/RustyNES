@@ -624,7 +624,7 @@ struct Inner {
     /// and playback loads the movie's own; the host writes `battery_ram` to the
     /// `.sav` whenever it differs from its last write, so without this the
     /// movie's RAM -- zeros, for a power-on movie -- replaced the player's
-    /// save (Copilot on #561; the desktop's `EmuCore::start_movie_session` is
+    /// save (Copilot on #561; the desktop's `EmuCore::start_sandboxed_session` is
     /// the same rule).
     battery_held: Option<Vec<u8>>,
     /// Active HD-pack compositor (v1.8.5), if a pack is loaded. `composite_hd_frame`
@@ -2467,8 +2467,13 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
         ConnectionState::Synced => {
             // CRITICAL for cross-peer determinism: power-cycle to the cold boot
             // so the session's frame-0 checkpoint matches on every peer (see the
-            // desktop `netplay_ui::tick_connecting`).
-            g.nes.power_cycle();
+            // desktop `netplay_ui::tick_connecting`). v2.9.0: with cleared save
+            // RAM too -- a power cycle now keeps battery RAM, and each peer's
+            // own save would differ (CodeRabbit on #561) -- and with the
+            // player's save held, so the session's RAM never reaches the host's
+            // `.sav` (`Inner::battery_held`).
+            NesController::hold_battery(g);
+            rustynes_core::power_on_for_movie(&mut g.nes);
             let transport = conn.into_transport();
             let config = SessionConfig {
                 local_player: u8::from(!is_host), // host = 0 (P1), joiner = 1 (P2).

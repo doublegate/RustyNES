@@ -978,13 +978,10 @@ fn gsub(
                 pos = e;
                 lastmatch = Some(e);
             } else if pos < src.len() {
-                out.push(src[pos]); // otherwise skip one character
+                push_out(&mut out, &src[pos..=pos], ctx.max_out)?; // skip one character
                 pos += 1;
             } else {
                 break; // end of subject
-            }
-            if out.len() > ctx.max_out {
-                return Err(CallError::Lua(mlua::Error::MemoryError(String::new())));
             }
             if anchor {
                 break;
@@ -993,10 +990,7 @@ fn gsub(
     }
     charge.flush()?;
     let result = if changed {
-        out.extend_from_slice(&src[pos..]);
-        if out.len() > ctx.max_out {
-            return Err(CallError::Lua(mlua::Error::MemoryError(String::new())));
-        }
+        push_out(&mut out, &src[pos..], ctx.max_out)?;
         Value::String(lua.create_string(&out)?)
     } else {
         Value::String(src_s) // no changes: the original string
@@ -1018,7 +1012,7 @@ fn add_value(
 ) -> Result<bool, CallError> {
     let value = match repl {
         Repl::Str(news) => {
-            add_s(ms, out, s, e, &news.as_bytes())?;
+            add_s(ms, out, s, e, &news.as_bytes(), ctx.max_out)?;
             return Ok(true);
         }
         Repl::Func(f) => {
@@ -1040,8 +1034,8 @@ fn add_value(
     };
     match value {
         Value::Nil | Value::Boolean(false) => {
-            out.extend_from_slice(&ms.src[s..e]); // keep the original text
             ms.charge.bytes(e - s)?;
+            push_out(out, &ms.src[s..e], ctx.max_out)?; // keep the original text
             Ok(false)
         }
         v @ (Value::String(_) | Value::Integer(_) | Value::Number(_)) => {
@@ -1050,7 +1044,7 @@ fn add_value(
                 .ok_or_else(|| PatError::msg("invalid replacement value (a number)"))?;
             let text = text.as_bytes();
             ms.charge.bytes(text.len())?;
-            out.extend_from_slice(&text);
+            push_out(out, &text, ctx.max_out)?;
             Ok(true)
         }
         other => Err(CallError::Pat(PatError::msg(format!(
@@ -1080,32 +1074,60 @@ fn protected(
     if ok { Ok(v) } else { Err(CallError::Raised(v)) }
 }
 
-/// `add_s`: expand a replacement string (`%0`-`%9`, `%%`).
+#[cfg(test)]
+std::thread_local! {
+    /// The largest gsub output buffer seen on this thread, for the test that
+    /// the cap holds at every append rather than only between matches.
+    static OUT_PEAK: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+/// Append `bytes` to gsub's output, or fail the way Lua's own buffer does
+/// ("not enough memory") if that would take it past `max_out`.
+///
+/// Every append goes through here. Until review on #561 the cap was checked
+/// only after each match's replacement had been appended, so one expansion
+/// of a replacement string full of `%0` escapes grew the buffer far past it:
+/// a 1 MiB match and `('%0'):rep(1000)` reached about 64 MiB of host memory
+/// before the step budget stopped it, and more under a raised budget
+/// (`CodeRabbit`). Checked before the copy, the buffer never exceeds the cap.
+fn push_out(out: &mut Vec<u8>, bytes: &[u8], max_out: usize) -> Result<(), CallError> {
+    if out.len().saturating_add(bytes.len()) > max_out {
+        return Err(CallError::Lua(mlua::Error::MemoryError(String::new())));
+    }
+    out.extend_from_slice(bytes);
+    #[cfg(test)]
+    OUT_PEAK.with(|p| p.set(p.get().max(out.len())));
+    Ok(())
+}
+
+/// `add_s`: expand a replacement string (`%0`-`%9`, `%%`). Each piece is
+/// charged, then appended through [`push_out`].
 fn add_s(
     ms: &mut MatchState<'_, '_>,
     out: &mut Vec<u8>,
     start: usize,
     end: usize,
     news: &[u8],
+    max_out: usize,
 ) -> Result<(), CallError> {
     ms.charge.bytes(news.len())?;
     let mut from = 0usize;
     while let Some(off) = news[from..].iter().position(|&b| b == L_ESC) {
-        out.extend_from_slice(&news[from..from + off]);
+        push_out(out, &news[from..from + off], max_out)?;
         let at = from + off + 1; // the character after the escape
         let next = news.get(at).copied().unwrap_or(0);
         if next == L_ESC {
-            out.push(L_ESC);
+            push_out(out, &[L_ESC], max_out)?;
         } else if next == b'0' {
-            out.extend_from_slice(&ms.src[start..end]);
             ms.charge.bytes(end - start)?;
+            push_out(out, &ms.src[start..end], max_out)?;
         } else if next.is_ascii_digit() {
             match ms.get_onecapture(usize::from(next - b'1'), Some((start, end)))? {
                 Cap::Str(lo, hi) => {
-                    out.extend_from_slice(&ms.src[lo..hi]);
                     ms.charge.bytes(hi - lo)?;
+                    push_out(out, &ms.src[lo..hi], max_out)?;
                 }
-                Cap::Pos(pos) => out.extend_from_slice(pos.to_string().as_bytes()),
+                Cap::Pos(pos) => push_out(out, pos.to_string().as_bytes(), max_out)?,
             }
         } else {
             return Err(CallError::Pat(PatError::msg(
@@ -1114,8 +1136,7 @@ fn add_s(
         }
         from = at + 1;
     }
-    out.extend_from_slice(&news[from.min(news.len())..]);
-    Ok(())
+    push_out(out, &news[from.min(news.len())..], max_out)
 }
 
 /// The Lua side of the calling convention (see the module docs). Runs once
@@ -1483,5 +1504,27 @@ mod tests {
             .exec()
             .expect_err("4 MiB of output exceeds a 1 MiB cap");
         assert!(err.to_string().contains("not enough memory"), "{err}");
+    }
+
+    /// Review on #561: the cap holds at every append, not only between
+    /// matches. One match of a 64 KiB subject, replaced by 64 copies of
+    /// `%0`, is 4 MiB in a single `add_s`; under a 1 MiB cap the buffer must
+    /// never pass 1 MiB on the way to the error.
+    #[test]
+    fn gsub_output_never_passes_the_cap() {
+        let lua = Lua::new();
+        install(&lua, &open_meter(), 1 << 20).expect("install");
+        let cap = (1usize << 20).saturating_sub(lua.used_memory());
+        OUT_PEAK.with(|p| p.set(0));
+        let err = lua
+            .load("return string.gsub(string.rep('a', 65536), '.+', string.rep('%0', 64))")
+            .exec()
+            .expect_err("4 MiB of output exceeds a 1 MiB cap");
+        assert!(err.to_string().contains("not enough memory"), "{err}");
+        let peak = OUT_PEAK.with(core::cell::Cell::get);
+        assert!(
+            peak <= cap,
+            "the buffer reached {peak} bytes against a {cap}-byte cap"
+        );
     }
 }

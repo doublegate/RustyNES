@@ -314,7 +314,12 @@ impl BrowserNetplay {
         // rollback session's frame-0 checkpoint is identical on every peer.
         // Without this, the first checksum (frame == checksum_interval) trips a
         // desync immediately.
-        nes.power_cycle();
+        //
+        // v2.9.0: with cleared save RAM as well. A power cycle keeps battery
+        // RAM since v2.9.0, and each peer's own save would differ (CodeRabbit
+        // on #561). The browser build keeps no `.sav`, so there is nothing
+        // else to protect here.
+        rustynes_core::power_on_for_movie(nes);
         let transport = WebRtcMeshTransport::new(channels);
         let mut cfg = self.config;
         cfg.local_player = slot;

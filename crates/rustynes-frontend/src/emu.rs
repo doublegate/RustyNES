@@ -1758,15 +1758,17 @@ impl EmuCore {
         }
     }
 
-    /// v2.9.0 — start a movie session that replaces the cartridge's battery
-    /// RAM, without letting that RAM reach the `.sav`.
+    /// v2.9.0 — start a session whose save RAM is not the player's: a
+    /// movie, `TAStudio`, or netplay. The session replaces the cartridge's
+    /// battery RAM, and that RAM must not reach the `.sav`.
     ///
-    /// A power-on movie starts from CLEARED save RAM
-    /// ([`rustynes_core::power_on_for_movie`]), and playing any movie loads
-    /// the RAM the movie starts from. Both change the live save RAM, and the
-    /// periodic writer compares only "live vs last write", so the next
-    /// comparison wrote the movie's RAM -- zeros, for a power-on movie -- over
-    /// the player's save (Copilot on #561).
+    /// A power-on movie and a netplay session start from CLEARED save RAM
+    /// ([`rustynes_core::power_on_for_movie`]; netplay needs every peer to
+    /// start equal, and each peer's own save would differ), and playing any
+    /// movie loads the RAM the movie starts from. All of them change the live
+    /// save RAM, and the periodic writer compares only "live vs last write",
+    /// so the next comparison wrote the session's RAM -- zeros, for a power-on
+    /// start -- over the player's save (Copilot and `CodeRabbit` on #561).
     ///
     /// So: write any pending change first (the game's own progress up to now
     /// is the player's), run `start`, and if it reports that the session
@@ -1777,24 +1779,48 @@ impl EmuCore {
     ///
     /// Returns what `start` returned. On wasm32 there is no battery file and
     /// this is `start(self)`.
-    pub fn start_movie_session(&mut self, start: impl FnOnce(&mut Self) -> bool) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        self.flush_battery(true);
+    pub fn start_sandboxed_session(&mut self, start: impl FnOnce(&mut Self) -> bool) -> bool {
+        self.flush_battery_now();
         let began = start(self);
-        #[cfg(not(target_arch = "wasm32"))]
-        if began && self.battery.take().is_some() {
-            eprintln!(
-                "rustynes: battery saving paused for this movie session; \
-                 reload the ROM to resume"
-            );
+        if began {
+            self.release_battery_for_session();
         }
         began
+    }
+
+    /// v2.9.0 — write the battery RAM now if it changed. The first half of
+    /// [`Self::start_sandboxed_session`], for a session whose start happens
+    /// somewhere else: netplay's power-on happens inside the netplay tick once
+    /// the handshake completes, so the app calls this on every connecting tick
+    /// (no emulation runs then, so only the first call can find a change).
+    // Empty on wasm32 (no `.sav` there), where clippy would have it `const`;
+    // the native body writes a file.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
+    pub fn flush_battery_now(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_battery(true);
+    }
+
+    /// v2.9.0 — stop persisting the cartridge's battery RAM for the rest of
+    /// this ROM session, WITHOUT writing it: the live RAM now belongs to a
+    /// session. The second half of [`Self::start_sandboxed_session`].
+    // Empty on wasm32 (no `.sav` there), where clippy would have it `const`;
+    // the native body writes a file.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
+    pub fn release_battery_for_session(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.battery.take().is_some() {
+            eprintln!(
+                "rustynes: battery saving paused for this session (movie, TAStudio \
+                 or netplay); reload the ROM to resume"
+            );
+        }
     }
 
     /// v2.7.3 (FE-01) — write the battery RAM now if it changed, under the
     /// caller's lock. Used by [`Self::detach_battery`], where the write must
     /// land before the `Nes` it copies from is replaced, and by
-    /// [`Self::start_movie_session`], before a movie replaces it.
+    /// [`Self::start_sandboxed_session`], before a movie replaces it.
     #[cfg(not(target_arch = "wasm32"))]
     fn flush_battery(&mut self, force: bool) {
         let (Some(save), Some(nes)) = (self.battery.as_mut(), self.nes.as_ref()) else {
@@ -2313,7 +2339,7 @@ mod tests {
 
     /// Copilot on #561: starting a power-on movie cleared the live save RAM,
     /// and the next periodic comparison wrote those zeros over the `.sav`.
-    /// Through [`EmuCore::start_movie_session`] the file keeps the game's
+    /// Through [`EmuCore::start_sandboxed_session`] the file keeps the game's
     /// save, and no later comparison has anything to write.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
@@ -2329,7 +2355,7 @@ mod tests {
         // Not yet flushed: the session start must write it first.
         assert!(!path.exists());
 
-        let began = core.start_movie_session(|core| {
+        let began = core.start_sandboxed_session(|core| {
             rustynes_core::power_on_for_movie(core.nes.as_mut().unwrap());
             true
         });
@@ -2362,7 +2388,7 @@ mod tests {
         let mut core = EmuCore::new();
         core.set_nes(Nes::from_rom(&battery_rom()).unwrap());
         assert!(core.attach_battery(Some(dir.path())).is_none());
-        assert!(!core.start_movie_session(|_| false));
+        assert!(!core.start_sandboxed_session(|_| false));
         assert!(core.battery.is_some());
     }
 }

@@ -28,10 +28,12 @@ ledger gains a **v2.9.0 re-audit** section.
 | Libretro | [`v2.9.0-libretro-reaudit.md`](v2.9.0-libretro-reaudit.md) | 23 | 0 | 10 (NL-01..NL-10) |
 | RTL | [`v2.9.0-rtl-reaudit.md`](v2.9.0-rtl-reaudit.md) | 26 | 0 | 12 (NR-01..NR-12) |
 
-Two more came from the release's own work rather than a report, and are in the
+Three more came from the release's own work rather than a report, and are in the
 ledgers under their scope: a Power Cycle that erased the battery save (frontend),
-and the off-die build's permanent reset under `bootcore=` (RTL, the SuperStation
-One audit). The same caution applies to these reports as to the first four: each
+TAStudio anchoring on the running game while exporting a power-on movie (frontend,
+NF-10), and the off-die build's permanent reset under `bootcore=` (RTL, the
+SuperStation One audit). Review of the release PRs found more; those are recorded
+in the ledgers too, attributed to the review. The same caution applies to these reports as to the first four: each
 claim was re-derived before it was acted on.
 
 ## What these reports are

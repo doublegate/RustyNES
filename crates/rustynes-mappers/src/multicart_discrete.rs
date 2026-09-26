@@ -3407,7 +3407,12 @@ impl DiscreteMapper {
     fn prg_16k(&self, bank: usize, addr: u16) -> u8 {
         let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
         let bank = bank % count;
-        self.prg_rom[bank * PRG_BANK_16K + (addr as usize & 0x3FFF)]
+        // v2.9.0 (review on #561): modulo the ROM length, as `prg_32k` does
+        // since NC-01. The constructor accepts any multiple of 8 KiB, and an
+        // 8 KiB image clamps `count` to 1 and leaves the window's upper half
+        // past the end; an 8 KiB part mirrors there. The identity for every
+        // image whose window fits.
+        self.prg_rom[(bank * PRG_BANK_16K + (addr as usize & 0x3FFF)) % self.prg_rom.len()]
     }
 
     fn prg_32k(&self, bank: usize, addr: u16) -> u8 {

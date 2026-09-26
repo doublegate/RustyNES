@@ -2776,8 +2776,8 @@ impl App {
             // front is clearer than emitting one that gets silently dropped.
             let attest = self.config.input.run_ahead == 0;
             // v2.9.0 — the recording starts from cleared save RAM, which must
-            // not reach the `.sav` (`EmuCore::start_movie_session`).
-            guard.start_movie_session(|emu| {
+            // not reach the `.sav` (`EmuCore::start_sandboxed_session`).
+            guard.start_sandboxed_session(|emu| {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
@@ -2854,8 +2854,8 @@ impl App {
         }
         let total = movie.len();
         // v2.9.0 — the seek replaces the save RAM with the movie's, which
-        // must not reach the `.sav` (`EmuCore::start_movie_session`).
-        let began = guard.start_movie_session(|emu| {
+        // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
+        let began = guard.start_sandboxed_session(|emu| {
             let Some(nes) = emu.nes.as_mut() else {
                 return false;
             };
@@ -2982,9 +2982,9 @@ impl App {
         let total = movie.len();
         {
             let mut guard = self.emu.lock();
-            // v2.9.0 — see `EmuCore::start_movie_session`.
+            // v2.9.0 — see `EmuCore::start_sandboxed_session`.
             let mut seek_error = None;
-            let began = guard.start_movie_session(|emu| {
+            let began = guard.start_sandboxed_session(|emu| {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
@@ -3392,15 +3392,12 @@ impl App {
             .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active);
         #[cfg(not(target_arch = "wasm32"))]
         let netplay_active = self.netplay.is_active();
-        let busy = {
-            let emu = self.emu.lock();
-            if netplay_active {
-                Some("leave netplay")
-            } else if emu.movie.is_playing() || emu.movie.is_recording() {
-                Some("stop the movie")
-            } else {
-                None
-            }
+        let busy = if netplay_active {
+            Some("leave netplay")
+        } else if self.replay_interaction_locked() {
+            Some("stop the movie")
+        } else {
+            None
         };
         if let Some(what) = busy {
             self.ui.set_status(StatusMessage::info(format!(
@@ -3410,12 +3407,13 @@ impl App {
         }
         let channel_mask = self.config.audio.channel_mask;
         let channel_gain = self.config.audio.channel_gain;
+        let debugger = &mut self.debugger;
         let editor = {
             let mut guard = self.emu.lock();
             let mut editor = None;
             // v2.9.0 — the power-on clears the save RAM, which must not reach
-            // the `.sav` (`EmuCore::start_movie_session`).
-            guard.start_movie_session(|emu| {
+            // the `.sav` (`EmuCore::start_sandboxed_session`).
+            guard.start_sandboxed_session(|emu| {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false; // no ROM loaded — nothing to anchor on
                 };
@@ -3435,6 +3433,15 @@ impl App {
                 // does (output-only; defaults are byte-identical).
                 nes.set_apu_channel_mask(channel_mask);
                 nes.set_apu_channel_gain(channel_gain);
+                // The rest of what `do_power_cycle` does after a cold boot
+                // (CodeRabbit on #561): re-apply the enabled Game Genie codes,
+                // which the rebuilt console no longer carries, or the Cheats
+                // panel shows codes the core does not apply; and drop the
+                // stale call stack and access counters.
+                if let Some(debugger) = debugger.as_mut() {
+                    debugger.reapply_genie_codes(nes);
+                    debugger.reset_debug_telemetry();
+                }
                 // A cold boot restarts the session timeline and the pacing, as
                 // `do_power_cycle` and a power-on recording do.
                 emu.history.clear();
@@ -6930,7 +6937,27 @@ impl App {
         // is sent: the gated bits are what cross the wire + are stored in the
         // rollback ring, so both peers replay them verbatim (deterministic).
         let local = crate::emu::apply_turbo(raw_local, nes.frame(), turbo_mask, turbo_period);
+        // v2.9.0 — the session starts from cleared save RAM (see
+        // `NetplayUi::tick_connecting`), which must not reach the `.sav`. The
+        // power-on happens INSIDE the tick that completes the handshake, so
+        // write any pending save on every connecting tick (nothing emulates
+        // then, so only the first can find a change) and release the file the
+        // moment the session exists (`EmuCore::start_sandboxed_session`'s two
+        // halves, split across the tick).
+        let connecting = self.netplay.phase() == crate::netplay_ui::NetplayPhase::Connecting;
+        if connecting {
+            emu.flush_battery_now();
+        }
+        let Some(nes) = emu.nes.as_mut() else {
+            return;
+        };
         let tick = self.netplay.tick(nes, local);
+        if connecting && self.netplay.phase() == crate::netplay_ui::NetplayPhase::InGame {
+            emu.release_battery_for_session();
+        }
+        let Some(nes) = emu.nes.as_mut() else {
+            return;
+        };
 
         // Push the freshly produced frame's audio, mirroring the single-player
         // path. Only on an actual produced frame (a connecting / stalled / error
@@ -7136,6 +7163,21 @@ impl App {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
                         self.netplay.start_spectate(addr, rom_hash);
+                        // v2.9.0 — the cold boot `start_spectate`'s doc has always
+                        // promised and nothing performed: the players' timeline
+                        // starts at a power-on with cleared save RAM, and a
+                        // spectator running mid-game from its own save would
+                        // replay their inputs against a different console
+                        // (found following CodeRabbit on #561). Kept off the
+                        // `.sav` like every other such session.
+                        if self.netplay.phase() == crate::netplay_ui::NetplayPhase::Spectating {
+                            self.emu.lock().start_sandboxed_session(|emu| {
+                                emu.nes.as_mut().is_some_and(|nes| {
+                                    rustynes_core::power_on_for_movie(nes);
+                                    true
+                                })
+                            });
+                        }
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }

@@ -65,6 +65,19 @@ const MAX_TRACK_SECONDS: u64 = 15 * 60;
 /// pass it is inert, and a file named by several declarations costs once.
 const MAX_PACK_AUDIO_SAMPLES: u64 = (512 << 20) / 4;
 
+/// The most SOURCE samples one decode may hold before it is resampled: the
+/// same 512 MiB of `f32` as the pack's output budget (review on #561).
+///
+/// The output budget converts to a source ceiling at the stream's own rate,
+/// so a source ABOVE the output rate may hold more samples than the output
+/// will, and [`MAX_TRACK_SECONDS`] is in seconds, not bytes: at the highest
+/// accepted source rate (384 kHz) fifteen minutes is 345.6 M samples, about
+/// 1.38 GB, all allocated before a single sample is resampled or refused
+/// (`CodeRabbit`). This makes the peak absolute. At 48 kHz it is 46 minutes
+/// and never binds; at 384 kHz it refuses a track longer than about 5.8
+/// minutes, which is the price of accepting that rate at all.
+const MAX_SOURCE_SAMPLES: u64 = MAX_PACK_AUDIO_SAMPLES;
+
 /// The CPU-space address of the HD-pack audio-control register (Mesen).
 pub const HD_AUDIO_CONTROL: u16 = 0x4100;
 
@@ -171,15 +184,21 @@ pub fn source_rate_supported(rate: u32) -> bool {
 /// game audio it mixes with already rides the frontend's Hermite DRC stage.
 #[must_use]
 pub fn decode_ogg_to_mono(bytes: &[u8], out_rate: u32) -> Option<Vec<f32>> {
-    decode_ogg_capped(bytes, out_rate, u64::MAX)
+    decode_ogg_capped(bytes, out_rate, u64::MAX, MAX_SOURCE_SAMPLES)
 }
 
 /// [`decode_ogg_to_mono`] with a ceiling of `max_out_samples` OUTPUT samples
 /// (v2.9.0, NF-05). It is converted to a source-sample ceiling at the stream's
-/// own rate, and also capped at [`MAX_TRACK_SECONDS`], so a stream that cannot
-/// fit is refused as soon as it passes the ceiling -- before the rest of it is
-/// decoded or any of it resampled.
-fn decode_ogg_capped(bytes: &[u8], out_rate: u32, max_out_samples: u64) -> Option<Vec<f32>> {
+/// own rate, and also capped at [`MAX_TRACK_SECONDS`] and at `max_src_samples`
+/// ([`MAX_SOURCE_SAMPLES`] outside tests), so a stream that cannot fit is
+/// refused as soon as it passes the ceiling -- before the rest of it is decoded
+/// or any of it resampled.
+fn decode_ogg_capped(
+    bytes: &[u8],
+    out_rate: u32,
+    max_out_samples: u64,
+    max_src_samples: u64,
+) -> Option<Vec<f32>> {
     use lewton::inside_ogg::OggStreamReader;
 
     let mut reader = OggStreamReader::new(std::io::Cursor::new(bytes)).ok()?;
@@ -194,7 +213,9 @@ fn decode_ogg_capped(bytes: &[u8], out_rate: u32, max_out_samples: u64) -> Optio
         .checked_div(u64::from(out_rate.max(1)))
         .unwrap_or(0)
         .saturating_add(1);
-    let cap = by_budget.min(u64::from(src_rate) * MAX_TRACK_SECONDS);
+    let cap = by_budget
+        .min(u64::from(src_rate) * MAX_TRACK_SECONDS)
+        .min(max_src_samples);
     let channels = usize::from(reader.ident_hdr.audio_channels).max(1);
 
     let mut mono: Vec<f32> = Vec::new();
@@ -547,7 +568,9 @@ fn decode_tracks_capped(
                     // filter then catches the resampler's rounding.
                     let pcm = sanitize_audio_name(&d.file)
                         .and_then(|safe| std::fs::read(dir.join(safe)).ok())
-                        .and_then(|bytes| decode_ogg_capped(&bytes, out_rate, remaining))
+                        .and_then(|bytes| {
+                            decode_ogg_capped(&bytes, out_rate, remaining, MAX_SOURCE_SAMPLES)
+                        })
                         .filter(|pcm| pcm.len() as u64 <= remaining);
                     pcm.map_or_else(
                         || Arc::clone(&empty),
@@ -585,15 +608,27 @@ mod tests {
         // output cap of half that must refuse it; one above it must not. The
         // same at a 8 kHz output (no resampling), so the conversion between
         // the two rates is what is being tested, not one fixed ratio.
-        assert!(decode_ogg_capped(SILENCE_1S_8K, 48_000, 24_000).is_none());
-        assert!(decode_ogg_capped(SILENCE_1S_8K, 8_000, 4_000).is_none());
-        assert!(decode_ogg_capped(SILENCE_1S_8K, 8_000, 8_000).is_some());
-        let pcm = decode_ogg_capped(SILENCE_1S_8K, 48_000, 48_000).expect("decodes");
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 48_000, 24_000, MAX_SOURCE_SAMPLES).is_none());
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 8_000, 4_000, MAX_SOURCE_SAMPLES).is_none());
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 8_000, 8_000, MAX_SOURCE_SAMPLES).is_some());
+        let pcm =
+            decode_ogg_capped(SILENCE_1S_8K, 48_000, 48_000, MAX_SOURCE_SAMPLES).expect("decodes");
         assert!(
             (47_000..=48_000).contains(&pcm.len()),
             "{} samples",
             pcm.len()
         );
+    }
+
+    /// Review on #561 — the source buffer has an absolute ceiling of its own.
+    /// Downsampling 8 kHz to 1 kHz, an output budget of 1,000 samples admits
+    /// 8,001 source samples, which is the whole fixture; a source ceiling of
+    /// 4,000 must refuse it anyway, because the output budget says nothing
+    /// about how much source is held before resampling.
+    #[test]
+    fn the_source_buffer_has_its_own_ceiling() {
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 1_000, 1_000, u64::MAX).is_some());
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 1_000, 1_000, 4_000).is_none());
     }
 
     /// NF-05 — a file declared N times is decoded ONCE and shared, and the

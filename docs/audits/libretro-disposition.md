@@ -37,7 +37,11 @@ as it has been since the MiSTer core became the priority.
 
 Report: [`v2.9.0-libretro-reaudit.md`](v2.9.0-libretro-reaudit.md) (a Claude
 subagent, read-only; it drove the built core through a throwaway C-ABI harness
-and ran all 900 images under `tests/roms` through the wrapper's calls).
+and ran all 900 images under `tests/roms` through the wrapper's calls). Its line 6
+says "No emulator or core source was opened"; it does cite RustyNES's own core
+(`crates/rustynes-core/src/nes.rs:249-258`), so read that as "no THIRD-PARTY
+emulator or core source" -- the firewall's meaning. The report stays verbatim
+(review on #561).
 
 **Rows above: 23 re-verified; all HOLD, 0 REGRESSED.** L-1.5 is strengthened (the
 label hazard it accepts cannot be reached: only the basic disk interface was

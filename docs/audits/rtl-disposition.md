@@ -55,7 +55,9 @@ subagent (maintainer decision 2026-09-26: "Claude subagents only"), read-only,
 against the sibling at `8d0f80c`. Same caution as the original: every claim
 below was re-derived before it was acted on.
 
-**Rows above: 26 re-verified; 24 HOLD, 1 CHANGED (R-4.6), 0 REGRESSED.** R-4.6's
+**Rows above: 26 re-verified; 25 HOLD, 1 CHANGED (R-4.6), 0 REGRESSED.** (The
+report says "24 HOLD" twice, at its lines 41 and 198; its own table has 25, and
+this ledger copied the slip until review on #561. The report stays verbatim.) R-4.6's
 output constraints hold; its recorded input HOLD figure (+12.822 ns) was not
 physical, which is NR-02 below. R-3.4a-d held but rested on gates nothing ran,
 which is NR-01. Figures that drifted (R-2.4, R-3.1a, R-4.1) are updated in the

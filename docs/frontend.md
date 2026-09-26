@@ -2140,7 +2140,7 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   file, and **the movie session stops the file being written**: a movie's RAM
   is the movie's, not the player's. The desktop writes any pending change
   first, then unbinds the `.sav` until the ROM is reloaded
-  (`EmuCore::start_movie_session`, used by power-on recording, playback, movie
+  (`EmuCore::start_sandboxed_session`, used by power-on recording, playback, movie
   import and TAStudio); the mobile bridge keeps reporting the RAM from before
   the session through `battery_ram` until the next `load_rom`. Before this, the
   writer compared only "live vs last write", so the cleared RAM was written
