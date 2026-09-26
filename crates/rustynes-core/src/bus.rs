@@ -1227,11 +1227,28 @@ impl LockstepBus {
         // cycled from different running states would desync. The existing `cart`
         // metadata (incl. any post-load `set_vs_ppu_type` override) is kept; only
         // the mapper is replaced. FDS (`rom_bytes == None`) keeps its mapper.
-        // This also clears battery PRG-RAM (a battery-pull); RustyNES does not
-        // persist standard battery saves to disk, so nothing on-disk is lost.
+        //
+        // v2.9.0 — battery-backed PRG-RAM SURVIVES, as it does on a console.
+        // Until v2.9.0 the rebuild cleared it too ("a battery-pull"), which was
+        // harmless while RustyNES persisted no battery saves; from v2.7.3 the
+        // desktop writes the live RAM to a `.sav` whenever it changes, so a
+        // Power Cycle wrote zeros over the player's save. Volatile PRG-RAM and
+        // CHR-RAM are still cleared. A power-on MOVIE wants cleared save RAM
+        // and asks for it explicitly (`movie::power_on_for_movie`).
+        let battery_ram: Option<Vec<u8>> =
+            self.cart.has_battery.then(|| self.mapper.sram().to_vec());
         if let Some(bytes) = self.rom_bytes.take() {
             if let Ok((_cart, mapper)) = rustynes_mappers::parse(&bytes) {
                 self.mapper = mapper;
+                if let Some(saved) = battery_ram.as_deref() {
+                    let fresh = self.mapper.sram_mut();
+                    // Same ROM, same board: the sizes match. Guarded anyway,
+                    // since a mismatch would mean the rebuild is not the board
+                    // the RAM came from, and copying into it would be wrong.
+                    if fresh.len() == saved.len() {
+                        fresh.copy_from_slice(saved);
+                    }
+                }
                 // v2.8.0 Phase 4 — re-cache the capability flags for the
                 // fresh mapper instance (same type, same flags, but keep
                 // the invariant mechanical).

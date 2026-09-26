@@ -1160,7 +1160,9 @@ impl NesController {
     /// the recording starts from the same state a replay reconstructs).
     pub fn movie_record_from_power_on(&self) {
         let mut g = self.lock();
-        g.nes.power_cycle();
+        // v2.9.0 — cleared cartridge RAM as well, the state playback
+        // reconstructs; see `rustynes_core::power_on_for_movie`.
+        rustynes_core::power_on_for_movie(&mut g.nes);
         g.playback = None;
         g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
     }

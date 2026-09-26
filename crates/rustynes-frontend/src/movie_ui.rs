@@ -139,8 +139,9 @@ impl MovieUi {
         self.recorder.is_some()
     }
 
-    /// Start recording from `nes`'s fresh power-on. Power-cycles `nes` so
-    /// the recording starts from the exact state a replay reconstructs.
+    /// Start recording from `nes`'s fresh power-on. Power-cycles `nes` and
+    /// clears its cartridge RAM (v2.9.0, `rustynes_core::power_on_for_movie`)
+    /// so the recording starts from the exact state a replay reconstructs.
     /// Stops any in-progress playback. No-op if already recording.
     ///
     /// v2.3.2 "Lucid": `attest` arms a replay attestation, so the saved `.rnm`
@@ -152,7 +153,9 @@ impl MovieUi {
             return;
         }
         self.playback = None;
-        nes.power_cycle();
+        // v2.9.0 — a power cycle AND cleared cartridge RAM, the state playback
+        // reconstructs (`Movie::seek_to_start`); see `power_on_for_movie`.
+        rustynes_core::power_on_for_movie(nes);
         let mut rec = MovieRecorder::power_on(nes);
         if attest {
             rec.enable_attestation();
@@ -343,6 +346,21 @@ mod tests {
         assert_eq!(ui.mode(), MovieMode::Idle);
         assert!(!ui.is_playing());
         assert!(!ui.is_recording());
+    }
+
+    /// v2.9.0 — recording a power-on movie starts from cleared battery RAM,
+    /// the state `Movie::seek_to_start` reconstructs on playback. Before, a
+    /// loaded `.sav` was recorded against and then missing on another machine
+    /// (or present on playback when it was absent at record time).
+    #[test]
+    fn recording_from_power_on_clears_battery_ram() {
+        let mut rom = synth_nrom();
+        rom[6] |= 0x02; // battery-backed PRG-RAM
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.sram_mut().fill(0xC3); // a loaded .sav
+        let mut ui = MovieUi::default();
+        ui.start_recording_power_on(&mut nes, false);
+        assert!(nes.sram().iter().all(|&b| b == 0));
     }
 
     #[test]

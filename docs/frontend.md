@@ -2084,11 +2084,24 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   starts a new file; the old one is kept.
 - **Loading a save state** restores the save RAM it captured, and the next
   comparison writes that to the `.sav`, as on a console.
-- **Known limitation: power-on movies.** `StartPoint::PowerOn` playback
-  power-cycles the console, which does not clear cartridge RAM. That was already
-  true within a session. With `.sav` loading it is also true across launches, so
-  a power-on movie recorded without a save can diverge where a `.sav` exists.
-  Not changed here; recorded for a later decision.
+- **A Power Cycle keeps the save (v2.9.0).** `Nes::power_cycle` keeps
+  battery-backed RAM, as a console does, and still clears volatile PRG-RAM and
+  CHR-RAM. Until v2.9.0 it rebuilt the mapper with ALL cartridge RAM cleared, so
+  from v2.7.3 a Power Cycle (F3 or the menu) made the next comparison write zeros
+  over the `.sav`. Pinned by `a_power_cycle_keeps_the_save`.
+- **Power-on movies start from cleared save RAM (v2.9.0, maintainer
+  decision).** Recording and playing a `StartPoint::PowerOn` movie goes through
+  `rustynes_core::power_on_for_movie`: a power cycle, then cartridge RAM zeroed,
+  which is what a fresh load with no `.sav` holds. A movie therefore replays the
+  same way whether or not a save exists. The emulator's copy is cleared, not the
+  file; if the movie runs to the game's own save routine, the next comparison
+  writes that, exactly as the game would.
+
+  *Correction:* v2.7.3 recorded this as a known limitation, saying playback
+  "power-cycles the console, which does not clear cartridge RAM". That was
+  wrong in the other direction: the power cycle did clear it, battery RAM
+  included, which is the Power Cycle defect above. A power-on movie never
+  inherited a loaded `.sav`; a Power Cycle erased one.
 - Not persisted: a Vs. `DualSystem` cabinet (none of the four boards has a
   battery), the web build (no filesystem store), and mobile (v2.7.4).
 

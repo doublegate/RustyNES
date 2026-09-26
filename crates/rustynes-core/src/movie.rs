@@ -644,7 +644,8 @@ impl Movie {
     /// Rewind a running emulator to this movie's start point, ready to replay
     /// from frame 0.
     ///
-    /// For [`StartPoint::PowerOn`] this power-cycles `nes`. For
+    /// For [`StartPoint::PowerOn`] this power-cycles `nes` and clears its
+    /// cartridge RAM ([`power_on_for_movie`]). For
     /// [`StartPoint::SaveState`] it restores the embedded snapshot. In both
     /// cases the ROM hash is checked against the movie's recorded hash.
     ///
@@ -658,7 +659,7 @@ impl Movie {
             return Err(MovieError::RomMismatch);
         }
         match &self.start {
-            StartPoint::PowerOn => nes.power_cycle(),
+            StartPoint::PowerOn => power_on_for_movie(nes),
             StartPoint::SaveState(blob) => nes.restore(blob)?,
         }
         Ok(())
@@ -766,11 +767,37 @@ pub struct MovieRecorder {
     attestation: Option<AttestationBuilder>,
 }
 
+/// v2.9.0 — the state every [`StartPoint::PowerOn`] movie starts from.
+///
+/// A power cycle, then cartridge RAM zeroed: what a fresh load with no save
+/// file holds (every board allocates it zeroed).
+///
+/// # Why this is not just `power_cycle`
+///
+/// From v2.9.0 [`Nes::power_cycle`] KEEPS battery-backed RAM, as a console
+/// does. Before, it rebuilt the mapper with all cartridge RAM cleared, which
+/// made a Power Cycle erase the player's `.sav` once the desktop began
+/// persisting saves (v2.7.3). A power-on movie still has to start from clean
+/// save RAM -- the maintainer's decision of 2026-09-26, `TASVideos`'
+/// convention -- or it would replay differently with and without a save. So
+/// hosts call this before [`MovieRecorder::power_on`], and
+/// [`Movie::seek_to_start`] calls it on playback.
+///
+/// Only the emulator's copy is cleared. The `.sav` file on disk is untouched,
+/// but a host that persists save RAM will write the cleared contents back if
+/// the movie session runs long enough to reach the game's own save routine --
+/// the same as that routine running during the movie. FDS disk sides are not
+/// cartridge RAM and are not reset by this.
+pub fn power_on_for_movie(nes: &mut Nes) {
+    nes.power_cycle();
+    nes.sram_mut().fill(0);
+}
+
 impl MovieRecorder {
     /// Begin recording a movie that starts from a fresh power-on of the ROM
-    /// `nes` is running. The caller is responsible for power-cycling `nes`
-    /// before the first captured frame so the recording starts from the same
-    /// state a replay will reconstruct.
+    /// `nes` is running. The caller is responsible for calling
+    /// [`power_on_for_movie`] on `nes` before the first captured frame so the
+    /// recording starts from the same state a replay will reconstruct.
     #[must_use]
     pub const fn power_on(nes: &Nes) -> Self {
         Self {
@@ -1380,6 +1407,53 @@ mod tests {
                 FrameInput::new(p1, p2)
             })
             .collect()
+    }
+
+    /// v2.9.0 (maintainer decision 2026-09-26) — a power-on movie starts from
+    /// cleared cartridge RAM. `power_cycle` keeps cartridge RAM, as a console
+    /// keeps a battery save; since v2.7.3 the desktop also loads a `.sav` into
+    /// it at ROM load, so a power-on movie recorded without a save diverged on
+    /// a machine that had one. Seeking to a `PowerOn` start must therefore
+    /// leave cartridge RAM exactly as a fresh load with no save does: zeroed.
+    /// `synth_nrom` with the header's battery bit set. The battery matters:
+    /// `power_cycle` keeps battery-backed RAM (v2.9.0) and clears volatile
+    /// RAM, so only a battery cart can show whether the MOVIE clears it.
+    fn synth_nrom_battery() -> Vec<u8> {
+        let mut rom = synth_nrom();
+        rom[6] |= 0x02;
+        rom
+    }
+
+    #[test]
+    fn seeking_a_power_on_movie_clears_cartridge_ram() {
+        let mut nes = Nes::from_rom(&synth_nrom_battery()).unwrap();
+        assert!(nes.has_battery());
+        assert!(!nes.sram().is_empty(), "NROM exposes its PRG-RAM");
+        nes.sram_mut().fill(0xA5); // a loaded .sav, or a previous session
+        let movie = Movie {
+            region: nes.region(),
+            rom_sha256: *nes.rom_sha256(),
+            start: StartPoint::PowerOn,
+            frames: synthetic_inputs(1),
+            rerecord_count: 0,
+            attestation: None,
+        };
+        movie.seek_to_start(&mut nes).unwrap();
+        assert!(nes.sram().iter().all(|&b| b == 0), "cartridge RAM cleared");
+    }
+
+    /// The same rule on the RECORDING side: `power_on_for_movie` is what a
+    /// host calls before `MovieRecorder::power_on`, so what is recorded and
+    /// what `seek_to_start` reconstructs are the same state.
+    #[test]
+    fn power_on_for_movie_matches_a_fresh_load() {
+        let fresh = Nes::from_rom(&synth_nrom_battery()).unwrap();
+        let mut nes = Nes::from_rom(&synth_nrom_battery()).unwrap();
+        nes.sram_mut().fill(0x5A);
+        nes.power_cycle();
+        assert_eq!(nes.sram()[0], 0x5A, "a plain power cycle keeps battery RAM");
+        power_on_for_movie(&mut nes);
+        assert_eq!(nes.sram(), fresh.sram());
     }
 
     #[test]

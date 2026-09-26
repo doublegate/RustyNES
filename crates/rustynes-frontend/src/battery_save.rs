@@ -341,6 +341,34 @@ mod tests {
         assert_eq!(&again.sram()[..2], written.as_slice(), "the save came back");
     }
 
+    /// v2.9.0 — a power cycle (F3, the menu's Power Cycle) must not erase the
+    /// save. `Bus::power_cycle` rebuilt the mapper, which zeroed battery
+    /// PRG-RAM ("a battery-pull", its comment said, written when `RustyNES`
+    /// persisted no battery saves). From v2.7.3 the writer compares the live
+    /// RAM with the last write, found the zeros different, and wrote them over
+    /// the `.sav`. A console keeps battery RAM across power-off; so must this.
+    #[test]
+    fn a_power_cycle_keeps_the_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut nes = Nes::from_rom(&rom(true)).unwrap();
+        let mut save = BatterySave::attach(&mut nes, dir.path()).unwrap().unwrap();
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        assert!(save.flush(&nes, true).unwrap());
+        let saved = std::fs::read(save.path()).unwrap();
+        assert_eq!(saved[0], 0xA5, "the program's save reached the file");
+
+        nes.power_cycle();
+        assert_eq!(nes.sram()[0], 0xA5, "battery RAM survives the power cycle");
+        let _ = save.flush(&nes, true).unwrap();
+        assert_eq!(
+            std::fs::read(save.path()).unwrap(),
+            saved,
+            "the file still holds the save"
+        );
+    }
+
     #[test]
     fn a_cart_without_a_battery_leaves_no_file() {
         let dir = tempfile::tempdir().unwrap();
