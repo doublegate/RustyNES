@@ -1169,6 +1169,110 @@ impl RustyNesLibretro {
     }
 }
 
+/// Hand the frontend the disk-control interface: the extended one (with
+/// side labels) when it reports interface version 1 or later, else the v0
+/// one (libretro re-audit NL-07).
+///
+/// Until v2.9.0 only v0 was registered (`enable_disk_control_interface`),
+/// and v0 has no `get_image_label`, so the "Side A" / "Side B" labels never
+/// reached a frontend. `rust-libretro`'s own extended registration is not
+/// used, because its label callback copies the label with no terminating
+/// NUL and no null check on the buffer (libretro audit L-1.5); the label
+/// entry below is [`disk_image_label`] instead, and every other entry is
+/// `rust-libretro`'s trampoline, exactly as the v0 path registers it.
+///
+/// `set_initial_image` and `get_image_path` are left NULL, which libretro.h
+/// allows ("Optional - may be NULL"). With both present the frontend records
+/// the last side used and asks for it at the next load; an FDS game boots
+/// from side A, and a single `.fds` container has no per-side file path to
+/// check the request against, so the core declines that feature.
+///
+/// # Safety
+///
+/// `cb` must be the frontend's environment callback, valid for the call.
+unsafe fn register_disk_control(cb: retro_environment_t) {
+    // SAFETY: the caller guarantees `cb`. Both calls pass structs of
+    // `extern "C"` function pointers that live for the process; the
+    // frontend copies the struct during the call.
+    unsafe {
+        if rust_libretro::environment::get_disk_control_interface_version(cb) >= 1
+            && rust_libretro::environment::set_disk_control_ext_interface(
+                cb,
+                retro_disk_control_ext_callback {
+                    set_eject_state: Some(rust_libretro::retro_set_eject_state_callback),
+                    get_eject_state: Some(rust_libretro::retro_get_eject_state_callback),
+                    get_image_index: Some(rust_libretro::retro_get_image_index_callback),
+                    set_image_index: Some(rust_libretro::retro_set_image_index_callback),
+                    get_num_images: Some(rust_libretro::retro_get_num_images_callback),
+                    replace_image_index: Some(rust_libretro::retro_replace_image_index_callback),
+                    add_image_index: Some(rust_libretro::retro_add_image_index_callback),
+                    set_initial_image: None,
+                    get_image_path: None,
+                    get_image_label: Some(disk_image_label),
+                },
+            )
+        {
+            return;
+        }
+        rust_libretro::environment::set_disk_control_interface(
+            cb,
+            retro_disk_control_callback {
+                set_eject_state: Some(rust_libretro::retro_set_eject_state_callback),
+                get_eject_state: Some(rust_libretro::retro_get_eject_state_callback),
+                get_image_index: Some(rust_libretro::retro_get_image_index_callback),
+                set_image_index: Some(rust_libretro::retro_set_image_index_callback),
+                get_num_images: Some(rust_libretro::retro_get_num_images_callback),
+                replace_image_index: Some(rust_libretro::retro_replace_image_index_callback),
+                add_image_index: Some(rust_libretro::retro_add_image_index_callback),
+            },
+        );
+    }
+}
+
+/// The label of FDS side `index`: "Side A" to "Side Z", then "Side 27" and
+/// so on. `index` comes from the frontend, so it is bounded rather than
+/// added to `b'A'` (which would overflow `u8` past 'Z').
+fn side_label(index: u32) -> String {
+    match u8::try_from(index) {
+        Ok(i) if i < 26 => format!("Side {}", char::from(b'A' + i)),
+        _ => format!("Side {}", index.saturating_add(1)),
+    }
+}
+
+/// `retro_get_image_label_t` for the extended disk-control interface.
+///
+/// libretro.h: returns `false` if `index` is invalid (`>= get_num_images()`)
+/// or the label is otherwise unavailable. The label is written as a C
+/// string, truncated to `len - 1` bytes so the terminating NUL always fits.
+/// A null or zero-length buffer is refused without a write.
+unsafe extern "C" fn disk_image_label(
+    index: std::os::raw::c_uint,
+    label: *mut std::os::raw::c_char,
+    len: usize,
+) -> bool {
+    if label.is_null() || len == 0 {
+        return false;
+    }
+    // SAFETY: `rust-libretro`'s own trampoline, the one registered as
+    // `get_num_images` beside this function. It reads the core instance,
+    // which exists: this function is only reachable through the interface
+    // `on_set_environment` registered on that instance, and a frontend
+    // calls disk control between, never during, other core calls.
+    let sides = unsafe { rust_libretro::retro_get_num_images_callback() };
+    if index >= sides {
+        return false;
+    }
+    let text = side_label(index);
+    let n = text.len().min(len - 1);
+    // SAFETY: `label` is non-null and, per libretro.h, valid for `len`
+    // bytes of writes for the duration of the call; `n + 1 <= len`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), label.cast::<u8>(), n);
+        *label.add(n) = 0;
+    }
+    true
+}
+
 /// Where a cartridge's PRG-RAM appears on the CPU bus: the 8 KiB window
 /// `$6000-$7FFF`.
 const PRG_RAM_WINDOW: usize = 0x2000;
@@ -1543,7 +1647,7 @@ impl Core for RustyNesLibretro {
             // Register the disk-control callback trampolines (on_set_eject_state,
             // on_get_image_index, etc. below) so RetroArch's Quick Menu → Disk
             // Control surfaces FDS multi-side swapping.
-            generic_ctx.enable_disk_control_interface();
+            register_disk_control(cb);
 
             if !self.options_declared {
                 self.options_declared = Self::declare_core_options(cb);
@@ -1846,8 +1950,9 @@ impl Core for RustyNesLibretro {
     // Backed entirely by `Nes::disk_side_count`/`inserted_disk_side`/`set_disk_side`
     // (the same API the desktop frontend's F9 disk-swap keybind uses) — no cartridge
     // build ever reports more than 0 sides, so these are no-ops outside FDS. Callback
-    // trampolines are registered once via `enable_disk_control_interface()` in
-    // `on_set_environment`.
+    // trampolines are registered by `register_disk_control` from
+    // `on_set_environment` (the extended interface, with side labels, when the
+    // frontend supports it).
 
     fn on_set_eject_state(&mut self, ejected: bool) -> bool {
         self.contained("set_eject_state", false, |core| {
@@ -1902,26 +2007,10 @@ impl Core for RustyNesLibretro {
             .map_or(0, |nes| nes.disk_side_count() as u32)
     }
 
-    fn on_get_image_path(&mut self, _index: u32) -> Option<CString> {
-        // No real per-side file paths exist for a single multi-side `.fds` container.
-        None
-    }
-
-    fn on_get_image_label(&mut self, index: u32) -> Option<CString> {
-        // Synthesize "Side A" / "Side B" / ... labels for the Quick Menu. No FDS
-        // image realistically has more than a handful of sides, but `index` is
-        // frontend-supplied, so bound it explicitly rather than let `b'A' + index`
-        // overflow `u8` (a debug-build panic, a silent wrap in release) for any
-        // value past 'Z'.
-        if let Ok(index_u8) = u8::try_from(index)
-            && index_u8 < 26
-        {
-            let letter = char::from(b'A' + index_u8);
-            CString::new(format!("Side {letter}")).ok()
-        } else {
-            CString::new(format!("Side {}", index.saturating_add(1))).ok()
-        }
-    }
+    // No `on_get_image_path` / `on_get_image_label`: the extended interface
+    // registers its own label callback, `disk_image_label`, and no path
+    // callback (see `register_disk_control`), so `rust-libretro`'s trampolines
+    // for those two are never handed to a frontend.
 
     // --- Cheats (native Game Genie) ------------------------------------------------
     //

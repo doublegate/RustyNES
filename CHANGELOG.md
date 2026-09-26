@@ -55,6 +55,11 @@ cycle-accurate core later replaced.
   process, so a frontend that keeps the library loaded and initialises it a
   second time was never told the option exists. It is now declared once per
   initialisation.
+- **Disk Control names the sides of a Famicom Disk System disk.** The core
+  computed "Side A" / "Side B" labels but registered only the original
+  disk-control interface, which has no labels, so RetroArch showed bare
+  numbers. It now registers the extended interface when the frontend offers
+  it, with a label callback that always terminates the string it writes.
 
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 

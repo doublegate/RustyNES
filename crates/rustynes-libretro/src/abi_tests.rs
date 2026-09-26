@@ -54,6 +54,71 @@ static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// How many times the core has called `SET_VARIABLES`.
 static SET_VARIABLES_CALLS: AtomicU32 = AtomicU32::new(0);
+/// The disk-control interface version the fake frontend reports.
+static DISK_VERSION: AtomicU32 = AtomicU32::new(1);
+/// `SET_DISK_CONTROL_INTERFACE` (v0) calls since last cleared.
+static DISK_V0_SETS: AtomicU32 = AtomicU32::new(0);
+/// `SET_DISK_CONTROL_EXT_INTERFACE` calls since last cleared.
+static DISK_EXT_SETS: AtomicU32 = AtomicU32::new(0);
+/// The callbacks of the most recent `SET_DISK_CONTROL_EXT_INTERFACE`.
+static DISK_EXT: Mutex<Option<DiskExt>> = Mutex::new(None);
+
+/// The parts of a `retro_disk_control_ext_callback` the tests call or check.
+#[derive(Clone, Copy)]
+struct DiskExt {
+    get_num_images: retro_get_num_images_t,
+    get_image_label: retro_get_image_label_t,
+    get_image_path: retro_get_image_path_t,
+    set_initial_image: retro_set_initial_image_t,
+}
+
+/// The synthetic 8 KiB FDS BIOS: `JMP $E000` at the reset vector, `RTI` for
+/// NMI and IRQ. Enough to construct and run an FDS console; the real
+/// `disksys.rom` is Nintendo's and is never committed.
+fn synthetic_bios() -> Vec<u8> {
+    let mut bios = vec![0u8; 0x2000];
+    bios[..3].copy_from_slice(&[0x4C, 0x00, 0xE0]); // $E000: JMP $E000
+    bios[0x10] = 0x40; // $E010: RTI
+    bios[0x1FFA..].copy_from_slice(&[0x10, 0xE0, 0x00, 0xE0, 0x10, 0xE0]);
+    bios
+}
+
+/// A fwNES disk image with `sides` sides, each opening with the disk-info
+/// block signature (the only part the loader requires).
+fn synthetic_disk(sides: u8) -> &'static [u8] {
+    const SIDE: usize = 65_500;
+    let mut disk = vec![0u8; 16 + usize::from(sides) * SIDE];
+    disk[..4].copy_from_slice(b"FDS\x1A");
+    disk[4] = sides;
+    for s in 0..usize::from(sides) {
+        let base = 16 + s * SIDE;
+        disk[base] = 0x01;
+        disk[base + 1..base + 15].copy_from_slice(b"*NINTENDO-HVC*");
+    }
+    Box::leak(disk.into_boxed_slice())
+}
+
+/// The fake frontend's directories, created once per test process under the
+/// OS temporary directory, with the synthetic BIOS in the system one. The C
+/// strings are what `GET_*_DIRECTORY` hand out; they live for the process.
+struct Dirs {
+    system: std::ffi::CString,
+}
+
+fn dirs() -> &'static Dirs {
+    static DIRS: std::sync::OnceLock<Dirs> = std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let root =
+            std::env::temp_dir().join(format!("rustynes-libretro-abi-{}", std::process::id()));
+        let system = root.join("system");
+        std::fs::create_dir_all(&system).expect("create the system directory");
+        std::fs::write(system.join("disksys.rom"), synthetic_bios()).expect("write the BIOS");
+        let c = |p: &std::path::Path| {
+            std::ffi::CString::new(p.to_str().expect("UTF-8 temp path")).expect("no NUL")
+        };
+        Dirs { system: c(&system) }
+    })
+}
 /// The value the fake frontend reports for `rustynes_four_score`.
 static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
 /// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
@@ -131,6 +196,9 @@ fn copy_descriptors(map: &retro_memory_map) -> Vec<Desc> {
     descs
 }
 
+// One arm per environment command the fake frontend answers: the whole
+// frontend's behaviour in one table reads better than split across helpers.
+#[allow(clippy::too_many_lines)]
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
         RETRO_ENVIRONMENT_GET_GAME_INFO_EXT => {
@@ -165,6 +233,44 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         // A current frontend: joypads can be read as one bitmask.
         RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => true,
+        RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut *const c_char`; the string is
+            // a process-lifetime `CString`.
+            unsafe { *data.cast::<*const std::ffi::c_char>() = dirs().system.as_ptr() };
+            true
+        }
+        RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut c_uint`.
+            unsafe { *data.cast::<c_uint>() = DISK_VERSION.load(SeqCst) };
+            true
+        }
+        RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
+            DISK_V0_SETS.fetch_add(1, SeqCst);
+            true
+        }
+        RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
+            if data.is_null() || DISK_VERSION.load(SeqCst) == 0 {
+                return false;
+            }
+            // SAFETY: the core passes a `*const retro_disk_control_ext_callback`
+            // valid for the call; the function pointers in it are the core's
+            // own `extern "C"` functions and live for the process.
+            let ext = unsafe { &*data.cast::<retro_disk_control_ext_callback>() };
+            *held(&DISK_EXT) = Some(DiskExt {
+                get_num_images: ext.get_num_images,
+                get_image_label: ext.get_image_label,
+                get_image_path: ext.get_image_path,
+                set_initial_image: ext.set_initial_image,
+            });
+            DISK_EXT_SETS.fetch_add(1, SeqCst);
+            true
+        }
         RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS => {
             let mut ports = Vec::new();
             let mut d = data.cast::<retro_input_descriptor>().cast_const();
@@ -281,6 +387,7 @@ fn frontend() -> MutexGuard<'static, ()> {
     });
     SUPPORT_EXT.store(true, SeqCst);
     TRIGGER.store(false, SeqCst);
+    DISK_VERSION.store(1, SeqCst);
     guard
 }
 
@@ -915,4 +1022,79 @@ fn core_options_are_declared_again_after_deinit_and_init() {
         after_repeat, after_cycle,
         "a repeated set_environment within one cycle declares nothing new"
     );
+}
+
+/// Re-send the environment, as a frontend does, with the disk-control
+/// counters cleared first.
+fn resend_environment() {
+    DISK_V0_SETS.store(0, SeqCst);
+    DISK_EXT_SETS.store(0, SeqCst);
+    *held(&DISK_EXT) = None;
+    // SAFETY: a plain lifecycle call; repeating it is permitted.
+    unsafe { rust_libretro::retro_set_environment(Some(environment)) };
+}
+
+/// Ask the registered `get_image_label` for side `index` into a `len`-byte
+/// buffer pre-filled with `0xFF`, and return what it reported and wrote.
+fn label(ext: DiskExt, index: c_uint, len: usize) -> (bool, Vec<u8>) {
+    let get = ext.get_image_label.expect("get_image_label is registered");
+    let mut buf = vec![0xFF_u8; len.max(1)];
+    // SAFETY: `buf` is valid for `len` bytes of writes for the call.
+    let ok = unsafe { get(index, buf.as_mut_ptr().cast(), len) };
+    (ok, buf)
+}
+
+/// libretro re-audit NL-07. The core registered only the v0 disk-control
+/// interface, which has no `get_image_label`, so the "Side A" / "Side B"
+/// labels it computes never reached a frontend even when that frontend
+/// reported the extended interface. With the extended interface, the labels
+/// must arrive NUL-terminated (the `rust-libretro` label copy wrote no
+/// terminator: libretro audit L-1.5), a short buffer must be truncated
+/// rather than overrun, and an index past the last side must be refused.
+/// `set_initial_image` and `get_image_path` stay NULL, so the frontend does
+/// not try to boot a remembered side (an FDS game boots from side A).
+#[test]
+fn disk_labels_reach_a_frontend_with_the_extended_interface() {
+    let _frontend = frontend();
+    resend_environment();
+    assert_eq!(
+        DISK_EXT_SETS.load(SeqCst),
+        1,
+        "version 1: the extended interface"
+    );
+    assert_eq!(DISK_V0_SETS.load(SeqCst), 0, "and not the v0 one as well");
+    let ext = held(&DISK_EXT).expect("the extended callbacks were handed over");
+    assert!(ext.set_initial_image.is_none() && ext.get_image_path.is_none());
+
+    assert!(load(synthetic_disk(2), true), "a two-sided disk loads");
+    let sides = ext.get_num_images.expect("get_num_images is registered");
+    // SAFETY: a plain query through the registered callback.
+    assert_eq!(unsafe { sides() }, 2);
+    let (ok, buf) = label(ext, 0, 32);
+    assert!(ok);
+    assert_eq!(CStr::from_bytes_until_nul(&buf).ok(), Some(c"Side A"));
+    let (ok, buf) = label(ext, 1, 32);
+    assert!(ok);
+    assert_eq!(CStr::from_bytes_until_nul(&buf).ok(), Some(c"Side B"));
+    let (ok, buf) = label(ext, 0, 4);
+    assert!(ok, "a short buffer gets a truncated label");
+    assert_eq!(&buf[..4], b"Sid\0", "truncated, and still terminated");
+    assert!(
+        !label(ext, 2, 32).0,
+        "index 2 of a two-sided disk is invalid"
+    );
+    assert!(
+        !label(ext, 0, 0).0,
+        "a zero-length buffer cannot hold a label"
+    );
+    let get = ext.get_image_label.expect("registered");
+    // SAFETY: a null buffer, which the callback must refuse without writing.
+    assert!(!unsafe { get(0, std::ptr::null_mut(), 32) });
+    unload();
+
+    // A frontend without the extended interface still gets the v0 one.
+    DISK_VERSION.store(0, SeqCst);
+    resend_environment();
+    assert_eq!(DISK_V0_SETS.load(SeqCst), 1, "version 0: the v0 interface");
+    assert_eq!(DISK_EXT_SETS.load(SeqCst), 0);
 }
