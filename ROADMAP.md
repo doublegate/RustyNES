@@ -1,7 +1,7 @@
 # RustyNES Development Roadmap
 
 **Document Version:** 2.0.4
-**Last Updated:** 2026-09-24
+**Last Updated:** 2026-09-25
 **Project Status:** v2.8.3 "Rivet" released — the MiSTer core's reset, area and comments, measured, the second RTL release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is planned for v3.0.0.
 
 ---
