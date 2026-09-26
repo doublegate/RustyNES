@@ -55,6 +55,14 @@ cycle-accurate core later replaced.
   process, so a frontend that keeps the library loaded and initialises it a
   second time was never told the option exists. It is now declared once per
   initialisation.
+- **Famicom Disk System games keep their in-game saves.** A Disk System game
+  saves by writing to the disk, and the libretro core never wrote the disk
+  back out, so every save was lost when the game closed. The written disk
+  now goes to the frontend's save directory as
+  `RustyNES/<hash>.fds.sav`, a second after the game writes it and again
+  when the game closes, and it is loaded in place of the original next
+  time. The file is the same as the desktop frontend's `.fds.sav`, so a save
+  can be moved between them.
 - **Disk Control names the sides of a Famicom Disk System disk.** The core
   computed "Side A" / "Side B" labels but registered only the original
   disk-control interface, which has no labels, so RetroArch showed bare

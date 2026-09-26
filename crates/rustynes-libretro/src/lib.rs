@@ -45,6 +45,9 @@
 //! - **FDS**: `.fds` disk images are routed to [`rustynes_core::Nes::from_disk`] (looking
 //!   up `disksys.rom` in the frontend's system directory), and multi-side disk swapping is
 //!   exposed through libretro's disk-control interface (`on_set_eject_state` et al.).
+//!   A disk the game writes to is kept in the frontend's save directory as
+//!   `RustyNES/<hash>.fds.sav` and booted in place of the original next time
+//!   (`persist_fds_disk`, `restore_fds_disk`).
 //! - **Cheats**: Native Game Genie code application via `on_cheat_set`/`on_cheat_reset`,
 //!   backed by [`rustynes_core::Nes::add_genie_code`] (excluded from serialized state, so
 //!   it never affects save-state/netplay/TAS determinism).
@@ -395,6 +398,15 @@ pub struct RustyNesLibretro {
     /// (libretro re-audit NL-05; see [`Self::declare_core_options`]).
     options_declared: bool,
 
+    /// The save file for the loaded FDS disk's in-game saves, or `None` for
+    /// a cartridge or a frontend with no save directory (libretro re-audit
+    /// NL-03; see [`Self::persist_fds_disk`]).
+    fds_save_path: Option<std::path::PathBuf>,
+
+    /// Frames left before a dirty FDS disk is written (see
+    /// [`Self::tick_fds_flush`]); 0 while the disk is clean.
+    fds_flush_countdown: u32,
+
     /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
     /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
     /// serialized state, matching `Nes::add_genie_code`'s own contract, so
@@ -426,6 +438,8 @@ impl Default for RustyNesLibretro {
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
             four_score: false,
             options_declared: false,
+            fds_save_path: None,
+            fds_flush_countdown: 0,
             genie_cheats: BTreeMap::new(),
         }
     }
@@ -746,6 +760,11 @@ impl RustyNesLibretro {
         game: Option<retro_game_info>,
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // libretro.h requires `retro_unload_game` between two loads, which
+        // already wrote the previous disk; a frontend that skips it still
+        // keeps the previous game's disk saves.
+        self.persist_fds_disk();
+        self.fds_save_path = None;
         // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
         //
         // Split into the smallest unsafe regions the type system allows, so the
@@ -837,29 +856,12 @@ impl RustyNesLibretro {
             &format!("Loading {} bytes (FDS: {is_fds}).", rom_data.len()),
         );
 
+        // Where this game's FDS disk writes persist; set only for an FDS load.
+        let mut fds_save = None;
         let emu = if is_fds {
-            let generic_ctx: GenericContext = (&*ctx).into();
-            let bios_dir = generic_ctx
-                .get_system_directory()
-                .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
-            let bios_path = bios_dir.join("disksys.rom");
-            let bios = std::fs::read(&bios_path).map_err(|e| {
-                format!(
-                    "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
-                     frontend's system directory to boot Famicom Disk System games)",
-                    bios_path.display()
-                )
-            })?;
-            match Nes::from_disk(&rom_data, &bios) {
-                Ok(nes) => Emu::Single(Box::new(nes)),
-                Err(e) => {
-                    self.log(
-                        retro_log_level::RETRO_LOG_ERROR,
-                        &format!("Failed to parse FDS disk image: {e:?}"),
-                    );
-                    return Err(format!("Failed to load FDS disk: {e:?}").into());
-                }
-            }
+            let (nes, path) = self.load_fds(&rom_data, ctx)?;
+            fds_save = path;
+            Emu::Single(Box::new(nes))
         } else {
             // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
             // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
@@ -921,7 +923,165 @@ impl RustyNesLibretro {
         }
         self.register_memory_maps(ctx);
         self.memory_maps_registered = true;
+        self.fds_save_path = fds_save;
+        self.fds_flush_countdown = 0;
         Ok(())
+    }
+
+    /// Build an FDS console for `disk`: read `disksys.rom` from the
+    /// frontend's system directory, and boot the disk's saved image from the
+    /// save directory when there is one. Returns the console and the path its
+    /// disk saves go to (`None` without a save directory).
+    fn load_fds(
+        &self,
+        disk: &[u8],
+        ctx: &mut LoadGameContext,
+    ) -> Result<(Nes, Option<std::path::PathBuf>), Box<dyn std::error::Error>> {
+        let generic_ctx: GenericContext = (&*ctx).into();
+        let bios_dir = generic_ctx
+            .get_system_directory()
+            .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
+        let bios_path = bios_dir.join("disksys.rom");
+        let bios = std::fs::read(&bios_path).map_err(|e| {
+            format!(
+                "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
+                 frontend's system directory to boot Famicom Disk System games)",
+                bios_path.display()
+            )
+        })?;
+        let pristine = match Nes::from_disk(disk, &bios) {
+            Ok(nes) => nes,
+            Err(e) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!("Failed to parse FDS disk image: {e:?}"),
+                );
+                return Err(format!("Failed to load FDS disk: {e:?}").into());
+            }
+        };
+        // The disk's in-game saves (libretro re-audit NL-03). Keyed by the
+        // ORIGINAL image's hash, so the key survives the image changing as
+        // the game writes to it.
+        let save_dir = generic_ctx
+            .get_save_directory()
+            .map(std::path::Path::to_path_buf);
+        let path = fds_save_path(save_dir.as_deref(), pristine.rom_sha256());
+        let nes = self.restore_fds_disk(pristine, path.as_deref(), &bios);
+        Ok((nes, path))
+    }
+
+    /// Build the FDS console from the disk's saved image when one exists,
+    /// else keep `pristine` (libretro re-audit NL-03).
+    ///
+    /// The saved image is the whole writable disk as the game last left it
+    /// (`Nes::disk_image_bytes`), so booting from it carries every in-game
+    /// save forward. A file that no longer parses is reported and ignored:
+    /// the pristine disk boots, and the next flush replaces the bad file.
+    /// Building from it before the first `retro_run` means nothing has
+    /// pointed into the console yet, unlike a `SAVE_RAM` buffer the
+    /// frontend would fill after `retro_load_game`.
+    fn restore_fds_disk(&self, pristine: Nes, path: Option<&std::path::Path>, bios: &[u8]) -> Nes {
+        let Some(path) = path else {
+            self.log(
+                retro_log_level::RETRO_LOG_WARN,
+                "the frontend has no save directory; this disk's in-game saves will not \
+                 be kept when the game is closed",
+            );
+            return pristine;
+        };
+        let saved = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return pristine,
+            Err(e) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!("could not read the disk save {}: {e}", path.display()),
+                );
+                return pristine;
+            }
+        };
+        match Nes::from_disk(&saved, bios) {
+            Ok(nes) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_INFO,
+                    &format!("restored the disk's saves from {}", path.display()),
+                );
+                nes
+            }
+            Err(e) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!(
+                        "the disk save {} is unreadable ({e:?}); booting the original disk",
+                        path.display()
+                    ),
+                );
+                pristine
+            }
+        }
+    }
+
+    /// Write the FDS disk to its save file if the game has written to it
+    /// since the last write (libretro re-audit NL-03).
+    ///
+    /// Written whole and atomically (a temporary file, then a rename), so a
+    /// crash mid-write leaves the previous save rather than half of one.
+    /// The dirty flag is cleared only after the rename succeeds, so a failed
+    /// write is retried at the next opportunity. A no-op for a cartridge or
+    /// a clean disk.
+    ///
+    /// Runs even on a poisoned core, like the battery RAM the frontend still
+    /// reads after a contained panic (libretro audit L-1.1): the disk image
+    /// is the player's save. The read is itself guarded, because this runs
+    /// from `retro_unload_game` and `retro_deinit`, which are not inside
+    /// [`Self::contained`].
+    fn persist_fds_disk(&mut self) {
+        let Some(path) = self.fds_save_path.clone() else {
+            return;
+        };
+        let Some(nes) = self.nes.as_ref() else {
+            return;
+        };
+        let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            nes.disk_is_dirty().then(|| nes.disk_image_bytes())
+        }));
+        let Ok(Some(image)) = image else {
+            return;
+        };
+        match write_file_atomically(&path, &image) {
+            Ok(()) => {
+                if let Some(nes) = self.nes.as_mut() {
+                    nes.clear_disk_dirty();
+                }
+            }
+            Err(e) => self.log(
+                retro_log_level::RETRO_LOG_ERROR,
+                &format!("could not save the disk to {}: {e}", path.display()),
+            ),
+        }
+    }
+
+    /// Once a frame: write the FDS disk [`FDS_FLUSH_FRAMES`] frames after
+    /// the game first dirties it, so a save survives a crash or a frontend
+    /// that never unloads, without writing the file on every frame of a
+    /// disk-write sequence (which spans many frames).
+    fn tick_fds_flush(&mut self) {
+        if self.fds_save_path.is_none() {
+            return;
+        }
+        let dirty = self.nes.as_ref().is_some_and(Nes::disk_is_dirty);
+        if !dirty {
+            self.fds_flush_countdown = 0;
+            return;
+        }
+        if self.fds_flush_countdown == 0 {
+            self.fds_flush_countdown = FDS_FLUSH_FRAMES;
+            return;
+        }
+        self.fds_flush_countdown -= 1;
+        if self.fds_flush_countdown == 0 {
+            self.persist_fds_disk();
+        }
     }
 
     /// The single `Nes` that RetroAchievements / cheats / disk-control / memory-maps
@@ -1079,6 +1239,8 @@ impl RustyNesLibretro {
             // video copy disjoint from the audio drain.
             nes.run_frame();
         }
+        // An FDS disk the game has written to is saved a second later.
+        self.tick_fds_flush();
         self.video_buffer.clear();
         let Some(nes) = self.nes.as_ref() else {
             return;
@@ -1167,6 +1329,48 @@ impl RustyNesLibretro {
             blit_scanline_rgba_to_xrgb(right, &sub[src..src + NES_W * 4]);
         }
     }
+}
+
+/// Frames between the game first writing to an FDS disk and the disk being
+/// written to its save file: one second at 60 Hz. A disk-write sequence
+/// spans many frames, so writing on every dirty frame would rewrite the
+/// whole image dozens of times per in-game save.
+const FDS_FLUSH_FRAMES: u32 = 60;
+
+/// The save file for the FDS disk whose ORIGINAL image hashes to `sha256`:
+/// `<save directory>/RustyNES/<sha256 in hex>.fds.sav`. `None` without a
+/// save directory.
+///
+/// The name and contents match the desktop frontend's `.fds.sav`
+/// (`<data dir>/fds-saves/<hex>.fds.sav`, the headerless image from
+/// `Nes::disk_image_bytes`), so a save can be copied between the two. The
+/// hash of the original image, not of the current one, is the key: the
+/// image changes every time the game saves.
+fn fds_save_path(
+    save_dir: Option<&std::path::Path>,
+    sha256: &[u8; 32],
+) -> Option<std::path::PathBuf> {
+    use std::fmt::Write as _;
+    let mut hex = String::with_capacity(64);
+    for byte in sha256 {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    save_dir.map(|dir| dir.join("RustyNES").join(format!("{hex}.fds.sav")))
+}
+
+/// Write `bytes` to `path` via a temporary file in the same directory and a
+/// rename, creating the directory first. A crash mid-write leaves the old
+/// file, not a truncated one; the rename replaces an existing file on every
+/// platform `std` supports.
+fn write_file_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Hand the frontend the disk-control interface: the extended one (with
@@ -1767,6 +1971,10 @@ impl Core for RustyNesLibretro {
     /// a no-op, kept so a frontend that skips `retro_unload_game` still frees
     /// them.
     fn on_deinit(&mut self, _ctx: &mut DeinitContext) {
+        // A frontend that skips `retro_unload_game` still keeps the disk's
+        // saves.
+        self.persist_fds_disk();
+        self.fds_save_path = None;
         self.nes = None;
         self.dual = None;
         self.poisoned = false;
@@ -1817,6 +2025,11 @@ impl Core for RustyNesLibretro {
                 rust_libretro::environment::set_memory_maps(cb, empty);
             }
         }
+        // Write the FDS disk's in-game saves before the console goes
+        // (libretro re-audit NL-03). Before v2.9.0 nothing did, and a disk
+        // save was lost when the game closed.
+        self.persist_fds_disk();
+        self.fds_save_path = None;
         self.nes = None;
         self.dual = None;
         self.genie_cheats.clear();
@@ -2088,6 +2301,8 @@ retro_core!(RustyNesLibretro {
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
     four_score: false,
     options_declared: false,
+    fds_save_path: None,
+    fds_flush_countdown: 0,
     genie_cheats: BTreeMap::new(),
 });
 

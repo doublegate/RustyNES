@@ -72,14 +72,63 @@ struct DiskExt {
     set_initial_image: retro_set_initial_image_t,
 }
 
-/// The synthetic 8 KiB FDS BIOS: `JMP $E000` at the reset vector, `RTI` for
-/// NMI and IRQ. Enough to construct and run an FDS console; the real
-/// `disksys.rom` is Nintendo's and is never committed.
+/// What the synthetic BIOS writes over side A's disk-info block: the block
+/// code and signature unchanged (so the image still parses), then this
+/// marker, then zeros to the block's 56 bytes.
+const DISK_MARKER: &[u8] = b"RUSTYNES-NL03-DISK-SAVE";
+
+/// The synthetic 8 KiB FDS BIOS (the real `disksys.rom` is Nintendo's and is
+/// never committed). At reset it saves to the disk the way a game does,
+/// through the drive registers, and then idles:
+///
+/// ```text
+/// $E000  LDA #$01 / STA $4023     disk I/O on
+///        LDA #$00 / STA $4024     byte for head position 0
+///        LDA #$60 / STA $4025     write mode, motor on, CRC control
+///        LDX #200                 heads 1-200: the lead-in gap (not stored)
+/// gap:   BIT $4030 / BPL gap      wait for the byte-transfer flag
+///        LDA #$00 / STA $4024 / DEX / BNE gap
+///        LDY #0                   heads 201-256: the disk-info block
+/// pay:   BIT $4030 / BPL pay
+///        LDA $E100,Y / STA $4024 / INY / CPY #56 / BNE pay
+/// last:  BIT $4030 / BPL last     the last byte is on the disk
+///        LDA #$00 / STA $4023     disk I/O off
+/// idle:  JMP idle
+/// $E080  RTI                      NMI / IRQ
+/// $E100  the 56-byte block: $01 "*NINTENDO-HVC*" DISK_MARKER, zeros
+/// ```
+///
+/// The drive stores the byte in `$4024` at each head position and sets
+/// `$4030` bit 7; writing `$4024` clears it. After a 50,000-cycle spin-up and
+/// 257 bytes at 149 cycles each the write is done within three frames. The
+/// wire layout (a 200-byte lead-in gap, the `$80` start mark at 200, the
+/// first block's payload from 201) is `rustynes-mappers`' `fds.rs`.
 fn synthetic_bios() -> Vec<u8> {
     let mut bios = vec![0u8; 0x2000];
-    bios[..3].copy_from_slice(&[0x4C, 0x00, 0xE0]); // $E000: JMP $E000
-    bios[0x10] = 0x40; // $E010: RTI
-    bios[0x1FFA..].copy_from_slice(&[0x10, 0xE0, 0x00, 0xE0, 0x10, 0xE0]);
+    let program: [u8; 0x3D] = [
+        0xA9, 0x01, 0x8D, 0x23, 0x40, // LDA #$01, STA $4023
+        0xA9, 0x00, 0x8D, 0x24, 0x40, // LDA #$00, STA $4024
+        0xA9, 0x60, 0x8D, 0x25, 0x40, // LDA #$60, STA $4025
+        0xA2, 0xC8, // $E00F LDX #200
+        0x2C, 0x30, 0x40, 0x10, 0xFB, // $E011 BIT $4030, BPL $E011
+        0xA9, 0x00, 0x8D, 0x24, 0x40, // LDA #$00, STA $4024
+        0xCA, 0xD0, 0xF3, // DEX, BNE $E011
+        0xA0, 0x00, // $E01E LDY #0
+        0x2C, 0x30, 0x40, 0x10, 0xFB, // $E020 BIT $4030, BPL $E020
+        0xB9, 0x00, 0xE1, 0x8D, 0x24, 0x40, // LDA $E100,Y, STA $4024
+        0xC8, 0xC0, 0x38, 0xD0, 0xF0, // INY, CPY #56, BNE $E020
+        0x2C, 0x30, 0x40, 0x10, 0xFB, // $E030 BIT $4030, BPL $E030
+        0xA9, 0x00, 0x8D, 0x23, 0x40, // LDA #$00, STA $4023
+        0x4C, 0x3A, 0xE0, // $E03A JMP $E03A
+    ];
+    bios[..program.len()].copy_from_slice(&program);
+    bios[0x80] = 0x40; // $E080: RTI
+    let block = &mut bios[0x100..0x100 + 56];
+    block[0] = 0x01;
+    block[1..15].copy_from_slice(b"*NINTENDO-HVC*");
+    block[15..15 + DISK_MARKER.len()].copy_from_slice(DISK_MARKER);
+    // NMI $E080, RESET $E000, IRQ $E080.
+    bios[0x1FFA..].copy_from_slice(&[0x80, 0xE0, 0x00, 0xE0, 0x80, 0xE0]);
     bios
 }
 
@@ -103,20 +152,29 @@ fn synthetic_disk(sides: u8) -> &'static [u8] {
 /// strings are what `GET_*_DIRECTORY` hand out; they live for the process.
 struct Dirs {
     system: std::ffi::CString,
+    save: std::ffi::CString,
+    save_path: std::path::PathBuf,
 }
 
 fn dirs() -> &'static Dirs {
     static DIRS: std::sync::OnceLock<Dirs> = std::sync::OnceLock::new();
     DIRS.get_or_init(|| {
-        let root =
-            std::env::temp_dir().join(format!("rustynes-libretro-abi-{}", std::process::id()));
+        let root = std::env::temp_dir()
+            .join("RustyNES")
+            .join(format!("libretro-abi-{}", std::process::id()));
         let system = root.join("system");
+        let save = root.join("saves");
         std::fs::create_dir_all(&system).expect("create the system directory");
+        std::fs::create_dir_all(&save).expect("create the save directory");
         std::fs::write(system.join("disksys.rom"), synthetic_bios()).expect("write the BIOS");
         let c = |p: &std::path::Path| {
             std::ffi::CString::new(p.to_str().expect("UTF-8 temp path")).expect("no NUL")
         };
-        Dirs { system: c(&system) }
+        Dirs {
+            system: c(&system),
+            save: c(&save),
+            save_path: save,
+        }
     })
 }
 /// The value the fake frontend reports for `rustynes_four_score`.
@@ -240,6 +298,14 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // SAFETY: the core passes a `*mut *const c_char`; the string is
             // a process-lifetime `CString`.
             unsafe { *data.cast::<*const std::ffi::c_char>() = dirs().system.as_ptr() };
+            true
+        }
+        RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: as for the system directory.
+            unsafe { *data.cast::<*const std::ffi::c_char>() = dirs().save.as_ptr() };
             true
         }
         RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION => {
@@ -1097,4 +1163,89 @@ fn disk_labels_reach_a_frontend_with_the_extended_interface() {
     resend_environment();
     assert_eq!(DISK_V0_SETS.load(SeqCst), 1, "version 0: the v0 interface");
     assert_eq!(DISK_EXT_SETS.load(SeqCst), 0);
+}
+
+/// Serialize the loaded game into a fresh buffer of the reported size.
+fn state() -> Vec<u8> {
+    let mut buf = vec![0_u8; serialize_size()];
+    assert!(serialize(&mut buf), "serialize");
+    buf
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// libretro re-audit NL-03. An FDS game saves by writing to its disk, and
+/// nothing in the libretro core ever read the written disk back out, so
+/// every in-game save was lost when the game closed. The synthetic BIOS
+/// writes a marker into side A through the drive registers, exactly as a
+/// game's save routine does. The written disk must reach
+/// `<save dir>/RustyNES/<hash of the original image>.fds.sav` when the game
+/// is unloaded, and again a second after a write while it runs; and the next
+/// load of the same (original) image must boot the saved disk. The FDS
+/// snapshot carries the disk contents, so a save state shows which disk is
+/// in the drive.
+#[test]
+fn fds_disk_writes_survive_closing_the_game() {
+    let _frontend = frontend();
+    let disk = synthetic_disk(1);
+    let sha = Nes::from_disk(disk, &synthetic_bios())
+        .expect("synthetic disk")
+        .rom_sha256()
+        .iter()
+        .fold(String::new(), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{b:02x}");
+            s
+        });
+    let file = dirs()
+        .save_path
+        .join("RustyNES")
+        .join(format!("{sha}.fds.sav"));
+    let _ = std::fs::remove_file(&file);
+    let written = |file: &std::path::Path| {
+        std::fs::read(file)
+            .ok()
+            .is_some_and(|b| b.get(15..15 + DISK_MARKER.len()) == Some(DISK_MARKER))
+    };
+
+    // A clean boot: nothing written yet.
+    assert!(load(disk, true));
+    assert!(
+        !contains(&state(), DISK_MARKER),
+        "the original disk is clean"
+    );
+    // Unloading after the write: the disk is saved.
+    for _ in 0..5 {
+        run_frame();
+    }
+    assert!(contains(&state(), DISK_MARKER), "the BIOS wrote the disk");
+    assert!(!file.exists(), "not yet: the write is under a second old");
+    unload();
+    assert!(
+        written(&file),
+        "unloading must save the written disk to {}",
+        file.display()
+    );
+
+    // While running: a second after the write, without unloading.
+    std::fs::remove_file(&file).expect("remove the save");
+    assert!(load(disk, true));
+    for _ in 0..70 {
+        run_frame();
+    }
+    assert!(
+        written(&file),
+        "a written disk must be saved within a second"
+    );
+    unload();
+
+    // The next boot of the original image boots the saved disk. No frame
+    // runs, so the BIOS has not written anything this time.
+    assert!(load(disk, true));
+    let restored = contains(&state(), DISK_MARKER);
+    unload();
+    assert!(restored, "the saved disk must be the one in the drive");
+    let _ = std::fs::remove_file(&file);
 }
