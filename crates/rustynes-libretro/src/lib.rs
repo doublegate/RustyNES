@@ -300,6 +300,13 @@ static CORE_VARIABLES: CoreVariables = CoreVariables([
 /// and SRAM are registered under. See `register_memory_maps`.
 const PPU_ADDRSPACE: &CStr = c"PPU";
 
+/// Named address space holding the whole cartridge PRG-RAM buffer, byte `n`
+/// at address `n`, when it is larger than the CPU's 8 KiB window (libretro
+/// re-audit NL-06; see `memory_descriptors`). libretro.h forbids a name that
+/// is another space's name plus hex digits; `S`, `R` and `M` are not hex
+/// digits, so it cannot be mistaken for an address in the blank space.
+const SRAM_ADDRSPACE: &CStr = c"SRAM";
+
 /// The central libretro core structure for RustyNES.
 ///
 /// This struct holds the underlying cycle-accurate `Nes` emulator instance alongside
@@ -931,58 +938,19 @@ impl RustyNesLibretro {
         self.active_nes().map(Nes::region)
     }
 
-    /// Register `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for WRAM, PRG-RAM/SRAM
-    /// (when battery-backed), and PPU nametable VRAM. This is the memory-inspection path
-    /// RetroAchievements' `rcheevos` prefers over the legacy `get_memory_data`/`_size`
-    /// pointer API (kept below, unchanged, since RetroArch's own `.srm` persistence goes
-    /// through it regardless — this is additive, not a replacement). The descriptor
-    /// pointers are the SAME fixed-size, constructed-once allocations the legacy path
-    /// already exposes, so reusing them here is exactly as safe.
+    /// Register `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for WRAM, the
+    /// cartridge's PRG-RAM, and PPU nametable VRAM (see [`memory_descriptors`]).
+    /// This is the memory-inspection path RetroAchievements' `rcheevos` prefers
+    /// over the legacy `get_memory_data`/`_size` pointer API, which stays
+    /// alongside it because RetroArch's own `.srm` persistence goes through that
+    /// path. The descriptor pointers are the SAME fixed-size, constructed-once
+    /// allocations the legacy path exposes, so reusing them here is exactly as
+    /// safe.
     fn register_memory_maps(&mut self, ctx: &mut LoadGameContext) {
         let Some(nes) = self.active_nes_mut() else {
             return;
         };
-        let mut descriptors = Vec::with_capacity(3);
-        descriptors.push(retro_memory_descriptor {
-            flags: u64::from(RETRO_MEMDESC_SYSTEM_RAM),
-            ptr: nes.wram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
-            offset: 0,
-            start: 0x0000,
-            select: 0,
-            disconnect: 0,
-            len: nes.wram_mut().len(),
-            addrspace: std::ptr::null(),
-        });
-        let sram_len = nes.sram_mut().len();
-        if sram_len > 0 {
-            descriptors.push(retro_memory_descriptor {
-                flags: u64::from(RETRO_MEMDESC_SAVE_RAM),
-                ptr: nes.sram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
-                offset: 0,
-                start: 0x6000,
-                select: 0,
-                disconnect: 0,
-                len: sram_len,
-                addrspace: std::ptr::null(),
-            });
-        }
-        // Nametable RAM (CIRAM) lives on the PPU's own internal address bus, not
-        // the CPU's: on the CPU bus, $2000-$2007 are the PPU MMIO registers
-        // (PPUCTRL/PPUMASK/etc.), not video RAM. Registering this under the
-        // blank/default (CPU) address space at $2000 would therefore be
-        // misleading, so it gets its own named "PPU" address space instead —
-        // the same convention `libretro.h` documents for other genuinely
-        // separate buses (e.g. the SNES SPC700 audio coprocessor's "S" space).
-        descriptors.push(retro_memory_descriptor {
-            flags: u64::from(RETRO_MEMDESC_VIDEO_RAM),
-            ptr: nes.vram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
-            offset: 0,
-            start: 0x2000,
-            select: 0,
-            disconnect: 0,
-            len: nes.vram_mut().len(),
-            addrspace: PPU_ADDRSPACE.as_ptr(),
-        });
+        let descriptors = memory_descriptors(nes);
         let map = retro_memory_map {
             descriptors: descriptors.as_ptr(),
             num_descriptors: descriptors.len() as std::os::raw::c_uint,
@@ -1168,6 +1136,162 @@ impl RustyNesLibretro {
             blit_scanline_rgba_to_xrgb(left, &main[src..src + NES_W * 4]);
             blit_scanline_rgba_to_xrgb(right, &sub[src..src + NES_W * 4]);
         }
+    }
+}
+
+/// Where a cartridge's PRG-RAM appears on the CPU bus: the 8 KiB window
+/// `$6000-$7FFF`.
+const PRG_RAM_WINDOW: usize = 0x2000;
+
+/// The Famicom Disk System's RAM adapter maps 32 KiB at `$6000-$DFFF`.
+const FDS_RAM_WINDOW: usize = 0x8000;
+
+/// The `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for one console.
+///
+/// * **WRAM**: 2 KiB at `$0000`, `SYSTEM_RAM`.
+/// * **PRG-RAM**: the cartridge RAM (`Nes::sram`), when there is any, in
+///   two views (libretro re-audit NL-02, NL-06):
+///   - the CPU's own window at `$6000`: 8 KiB (32 KiB, to `$DFFF`, for the
+///     FDS), or the whole buffer when it is smaller. Until v2.9.0 this was
+///     one descriptor `{start: $6000, select: 0, len: sram_len}` for every
+///     size, so a 64 KiB buffer claimed `$6000-$15FFF` (past the 16-bit bus),
+///     a 32 KiB one claimed PRG-ROM at `$8000-$DFFF`, and a 73,728-byte one
+///     broke libretro.h's rule that `select == 0` needs a power-of-two `len`.
+///     The window shows the buffer's first bytes, which is what `$6000-$7FFF`
+///     reads on these boards until they switch banks; a descriptor is
+///     registered once at load and cannot follow a bank switch, so a board
+///     that banks its RAM is shown bank 0 here, as before;
+///   - when the buffer is larger than the window, the WHOLE buffer in its own
+///     `"SRAM"` address space, byte `n` at address `n`, so a cheat search or
+///     an achievement reaches the banks the window does not show.
+///
+///   Both are cut into aligned power-of-two pieces by [`push_aligned`].
+///
+///   Both views carry `SAVE_RAM` only when the header declares a battery
+///   (`Nes::has_battery`); volatile work RAM is described with no flag, so it
+///   stays visible and is not mistaken for a save.
+/// * **CIRAM**: nametable RAM on the PPU's own bus, in a named `"PPU"` space.
+///
+/// Every descriptor points at the same fixed-size buffer the legacy
+/// `retro_get_memory_data` path exposes, and libretro.h's "the same byte, the
+/// same pointer" rule holds because both PRG-RAM views use the buffer's base
+/// with an `offset`.
+fn memory_descriptors(nes: &mut Nes) -> Vec<retro_memory_descriptor> {
+    let mut descriptors = Vec::with_capacity(5);
+    let wram = nes.wram_mut();
+    descriptors.push(retro_memory_descriptor {
+        flags: u64::from(RETRO_MEMDESC_SYSTEM_RAM),
+        ptr: wram.as_mut_ptr().cast::<std::os::raw::c_void>(),
+        offset: 0,
+        start: 0x0000,
+        select: 0,
+        disconnect: 0,
+        len: wram.len(),
+        addrspace: std::ptr::null(),
+    });
+
+    let is_fds = nes.disk_side_count() > 0;
+    let flags = if nes.has_battery() {
+        u64::from(RETRO_MEMDESC_SAVE_RAM)
+    } else {
+        0
+    };
+    let sram = nes.sram_mut();
+    let sram_len = sram.len();
+    if sram_len > 0 {
+        let ptr = sram.as_mut_ptr().cast::<std::os::raw::c_void>();
+        let cpu_window = if is_fds {
+            FDS_RAM_WINDOW
+        } else {
+            PRG_RAM_WINDOW
+        };
+        let cpu_len = sram_len.min(cpu_window);
+        push_aligned(
+            &mut descriptors,
+            flags,
+            ptr,
+            0x6000,
+            cpu_len,
+            std::ptr::null(),
+        );
+        if sram_len > cpu_len {
+            push_aligned(
+                &mut descriptors,
+                flags,
+                ptr,
+                0,
+                sram_len,
+                SRAM_ADDRSPACE.as_ptr(),
+            );
+        }
+    }
+
+    // Nametable RAM (CIRAM) lives on the PPU's own internal address bus, not
+    // the CPU's: on the CPU bus, $2000-$2007 are the PPU MMIO registers
+    // (PPUCTRL/PPUMASK/etc.), not video RAM. Registering this under the
+    // blank/default (CPU) address space at $2000 would therefore be
+    // misleading, so it gets its own named "PPU" address space instead —
+    // the same convention `libretro.h` documents for other genuinely
+    // separate buses (e.g. the SNES SPC700 audio coprocessor's "S" space).
+    let vram = nes.vram_mut();
+    descriptors.push(retro_memory_descriptor {
+        flags: u64::from(RETRO_MEMDESC_VIDEO_RAM),
+        ptr: vram.as_mut_ptr().cast::<std::os::raw::c_void>(),
+        offset: 0,
+        start: 0x2000,
+        select: 0,
+        disconnect: 0,
+        len: vram.len(),
+        addrspace: PPU_ADDRSPACE.as_ptr(),
+    });
+    descriptors
+}
+
+/// Describe buffer bytes `0..len` (from `ptr`) at addresses
+/// `start..start + len` of `addrspace`, as descriptors each a power of two
+/// long and starting on a multiple of their own length.
+///
+/// libretro.h requires a power-of-two `len` whenever `select` is zero, and
+/// with `select` zero the frontend has to work out which addresses a
+/// descriptor claims from `start` and `len` alone. A region that is aligned
+/// to its own length is unambiguous under any reading of that rule; an
+/// unaligned one (the FDS's 32 KiB at `$6000`) is not. So the range is cut at
+/// its largest aligned power-of-two pieces: `$6000 + 32 KiB` becomes 8 KiB at
+/// `$6000`, 16 KiB at `$8000` and 8 KiB at `$C000`, and a 73,728-byte buffer
+/// at 0 becomes 64 KiB at 0 and 8 KiB at 65,536. Every piece points at the
+/// buffer's base with an `offset`, which libretro.h asks for ("the same byte,
+/// the same pointer").
+fn push_aligned(
+    out: &mut Vec<retro_memory_descriptor>,
+    flags: u64,
+    ptr: *mut std::os::raw::c_void,
+    start: usize,
+    len: usize,
+    addrspace: *const std::os::raw::c_char,
+) {
+    let mut done = 0;
+    while done < len {
+        let addr = start + done;
+        // The largest power of two that both divides `addr` (alignment) and
+        // fits in what is left. `addr == 0` is aligned to anything.
+        let by_alignment = if addr == 0 {
+            usize::MAX
+        } else {
+            1_usize << addr.trailing_zeros()
+        };
+        let by_length = 1_usize << (len - done).ilog2();
+        let piece = by_alignment.min(by_length);
+        out.push(retro_memory_descriptor {
+            flags,
+            ptr,
+            offset: done,
+            start: addr,
+            select: 0,
+            disconnect: 0,
+            len: piece,
+            addrspace,
+        });
+        done += piece;
     }
 }
 
@@ -1581,7 +1705,20 @@ impl Core for RustyNesLibretro {
             return std::ptr::null_mut();
         };
         match id {
+            // Only battery-backed RAM is save RAM (libretro re-audit NL-02).
+            // RetroArch writes whatever this returns to a `.srm` and loads it
+            // back after `retro_load_game`, so exposing volatile work RAM here
+            // gave a cartridge without a battery a save the hardware never
+            // had, restored on every boot. Several boards expose RAM through
+            // `sram()` whatever the header says (NROM always has 8 KiB; MMC1
+            // and MMC3 allocate by default), so `sram()` being non-empty is not
+            // the question; `has_battery()` is, as it is for the desktop's
+            // `.sav`. An FDS image has no battery either: its saves live on
+            // the disk image, not in the RAM adapter's 32 KiB.
             RETRO_MEMORY_SAVE_RAM => {
+                if !nes.has_battery() {
+                    return std::ptr::null_mut();
+                }
                 let sram = nes.sram_mut();
                 if sram.is_empty() {
                     std::ptr::null_mut()
@@ -1605,7 +1742,9 @@ impl Core for RustyNesLibretro {
             return 0;
         };
         match id {
-            RETRO_MEMORY_SAVE_RAM => nes.sram().len(),
+            // Battery-backed RAM only; see `get_memory_data`. Without a
+            // battery this falls through to the `_ => 0` arm.
+            RETRO_MEMORY_SAVE_RAM if nes.has_battery() => nes.sram().len(),
             RETRO_MEMORY_SYSTEM_RAM => nes.wram().len(),
             RETRO_MEMORY_VIDEO_RAM => nes.vram().len(),
             _ => 0,
@@ -1821,6 +1960,215 @@ mod abi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fields of a `retro_memory_descriptor` that libretro.h puts rules
+    /// on, copied out so a check can run after the frontend call returns.
+    #[derive(Clone, Debug)]
+    pub struct DescView {
+        pub ptr: usize,
+        pub offset: usize,
+        pub start: usize,
+        pub select: usize,
+        pub len: usize,
+        pub addrspace: String,
+    }
+
+    /// Check every rule libretro.h puts on the descriptors this core
+    /// registers for save or work RAM of `sram_len` bytes (libretro re-audit
+    /// NL-06). Shared by the C-ABI test and the corpus sweep below.
+    pub fn assert_descriptor_shape(descs: &[DescView], sram_len: usize, is_fds: bool) {
+        for d in descs {
+            // libretro.h, `select`: "Can be zero, in which case each byte is
+            // assumed mapped exactly once. In this case, 'len' must be a
+            // power of two."
+            if d.select == 0 {
+                assert!(
+                    d.len.is_power_of_two(),
+                    "select 0 needs a power-of-two len: {d:?} (sram {sram_len})"
+                );
+                assert_eq!(
+                    d.start % d.len,
+                    0,
+                    "a power-of-two region must start on a multiple of its length: {d:?}"
+                );
+            }
+        }
+        if sram_len == 0 {
+            return;
+        }
+        let first = descs
+            .iter()
+            .find(|d| d.addrspace.is_empty() && d.start == 0x6000)
+            .unwrap_or_else(|| panic!("no $6000 window for {sram_len} bytes: {descs:?}"));
+        let ptr = first.ptr;
+        // The CPU sees an 8 KiB window at $6000-$7FFF (FDS: 32 KiB at
+        // $6000-$DFFF). Nothing may claim $8000 and up on a cartridge, which
+        // is PRG-ROM, and the window is contiguous from $6000.
+        let (window, ceiling) = if is_fds {
+            (0x8000, 0xE000)
+        } else {
+            (0x2000, 0x8000)
+        };
+        let cpu_len = sram_len.min(window);
+        let mut cpu: Vec<&DescView> = descs
+            .iter()
+            .filter(|d| d.addrspace.is_empty() && d.ptr == ptr)
+            .collect();
+        cpu.sort_by_key(|d| d.start);
+        let mut next = 0x6000;
+        for d in &cpu {
+            assert_eq!(
+                d.start, next,
+                "the $6000 window has a gap or overlap: {cpu:?}"
+            );
+            assert_eq!(
+                d.offset,
+                d.start - 0x6000,
+                "address $6000+n is byte n: {d:?}"
+            );
+            next += d.len;
+        }
+        assert_eq!(
+            next,
+            0x6000 + cpu_len,
+            "window length for {sram_len} bytes: {cpu:?}"
+        );
+        assert!(
+            next <= ceiling,
+            "the window overruns ${ceiling:04X}: {cpu:?}"
+        );
+        // A buffer larger than the window is reachable in full, each byte
+        // exactly once, in the named SRAM space.
+        let mut chunks: Vec<&DescView> = descs.iter().filter(|d| d.addrspace == "SRAM").collect();
+        if sram_len > cpu_len {
+            chunks.sort_by_key(|d| d.start);
+            let mut next = 0;
+            for c in &chunks {
+                assert_eq!(
+                    c.start, next,
+                    "the SRAM space has a gap or overlap: {chunks:?}"
+                );
+                assert_eq!(c.offset, c.start, "SRAM address n is buffer byte n: {c:?}");
+                assert_eq!(c.ptr, ptr, "one chip, one pointer (libretro.h)");
+                next += c.len;
+            }
+            assert_eq!(
+                next, sram_len,
+                "the SRAM space covers the whole buffer: {chunks:?}"
+            );
+        } else {
+            assert!(
+                chunks.is_empty(),
+                "the window already shows it all: {chunks:?}"
+            );
+        }
+    }
+
+    fn views(descs: &[retro_memory_descriptor]) -> Vec<DescView> {
+        descs
+            .iter()
+            .map(|d| DescView {
+                ptr: d.ptr as usize,
+                offset: d.offset,
+                start: d.start,
+                select: d.select,
+                len: d.len,
+                addrspace: if d.addrspace.is_null() {
+                    String::new()
+                } else {
+                    // SAFETY: every non-null `addrspace` this crate sets is a
+                    // `'static` C string literal.
+                    unsafe { CStr::from_ptr(d.addrspace) }
+                        .to_string_lossy()
+                        .into_owned()
+                },
+            })
+            .collect()
+    }
+
+    /// Check one console's descriptors against libretro.h and the battery
+    /// rule; `what` names the image in a failure.
+    fn check_console(nes: &mut Nes, what: &str) {
+        let sram_len = nes.sram().len();
+        let is_fds = nes.disk_side_count() > 0;
+        let battery = nes.has_battery();
+        let descs = memory_descriptors(nes);
+        assert_descriptor_shape(&views(&descs), sram_len, is_fds);
+        for d in &descs {
+            let save = d.flags & u64::from(RETRO_MEMDESC_SAVE_RAM) != 0;
+            assert!(
+                !save || battery,
+                "{what}: SAVE_RAM flag without a battery ({sram_len} bytes)"
+            );
+        }
+    }
+
+    fn walk_nes(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_nes(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("nes"))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// libretro re-audit NL-02 and NL-06, over every `.nes` image under
+    /// `tests/roms` (the committed CC0 corpus in CI; locally also any dumps
+    /// in the gitignored `external/`), plus the FDS RAM adapter and the three
+    /// synthetic MMC1 sizes the C-ABI test uses. Each console's descriptors
+    /// must satisfy libretro.h and carry `SAVE_RAM` only with a battery.
+    #[test]
+    fn every_image_gets_legal_prg_ram_descriptors() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/roms");
+        let mut paths = Vec::new();
+        walk_nes(&root, &mut paths);
+        assert!(
+            paths.len() > 100,
+            "the corpus was not found at {}",
+            root.display()
+        );
+        let mut checked = 0;
+        for path in &paths {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            // Some corpus images are deliberately malformed; a parse panic is
+            // not what this test is about.
+            let Ok(Ok(emu)) = std::panic::catch_unwind(|| Emu::from_rom(&bytes)) else {
+                continue;
+            };
+            let what = path.display().to_string();
+            match emu {
+                Emu::Single(mut nes) => check_console(&mut nes, &what),
+                Emu::Dual(mut dual) => check_console(dual.main_mut(), &what),
+            }
+            checked += 1;
+        }
+        assert!(checked > 100, "only {checked} images loaded");
+
+        // The FDS RAM adapter: 32 KiB really is mapped at $6000-$DFFF, and
+        // an FDS image has no battery.
+        let mut bios = vec![0u8; 0x2000];
+        bios[0x1FFC] = 0x00;
+        bios[0x1FFD] = 0xE0;
+        let mut disk = vec![0u8; 16 + 65_500];
+        disk[..4].copy_from_slice(b"FDS\x1A");
+        disk[4] = 1;
+        disk[16] = 0x01;
+        disk[17..31].copy_from_slice(b"*NINTENDO-HVC*");
+        let mut fds = Nes::from_disk(&disk, &bios).expect("synthetic disk loads");
+        assert_eq!(fds.sram().len(), 0x8000, "the RAM adapter's 32 KiB");
+        // `check_console` asserts the window runs $6000-$DFFF in full.
+        check_console(&mut fds, "synthetic FDS");
+    }
 
     #[test]
     fn switching_a_port_away_from_the_zapper_unplugs_it() {

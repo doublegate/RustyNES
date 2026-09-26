@@ -8,7 +8,11 @@ Traditionally, achievement networks like `rcheevos` utilize `READ_CORE_RAM` func
 `RustyNesLibretro::register_memory_maps` (`crates/rustynes-libretro/src/lib.rs`) bypasses this via `RETRO_ENVIRONMENT_SET_MEMORY_MAPS`, called at the end of `on_load_game` on the `LoadGameContext` (this hook is only available there and on `InitContext` — **not** on `SetEnvironmentContext`, since the memory pointers aren't known until a ROM is loaded). It exposes an array of `retro_memory_descriptor` structures:
 
 * **Work RAM (WRAM):** Maps address range `$0000 - $07FF` in the blank/default (6502 CPU) address space. Flagged as `RETRO_MEMDESC_SYSTEM_RAM`.
-* **Save RAM (SRAM):** Maps address range `$6000 - $7FFF` in the same CPU address space, when non-empty (battery-backed carts only). Flagged as `RETRO_MEMDESC_SAVE_RAM`.
+* **Cartridge PRG-RAM:** whenever the cartridge has any (`Nes::sram` is non-empty), in two views (v2.9.0, libretro re-audit NL-02 / NL-06; `memory_descriptors` in `lib.rs`):
+  * the CPU's window at `$6000 - $7FFF` in the same CPU address space (the FDS RAM adapter: `$6000 - $DFFF`), holding the buffer's first 8 KiB (32 KiB for the FDS), or all of it when it is smaller. A descriptor is registered once at load and cannot follow a bank switch, so a board that banks its RAM shows bank 0 here;
+  * when the buffer is larger than that window, the whole buffer in a named `"SRAM"` address space, byte `n` at address `n`, so a cheat search or an achievement can reach every bank.
+
+  Both views are cut into power-of-two pieces that start on a multiple of their own length, as libretro.h requires of a descriptor with `select == 0`. Until v2.9.0 there was one descriptor `{start: $6000, select: 0, len: <buffer size>}`: a 64 KiB buffer claimed `$6000 - $15FFF`, past the 16-bit bus; a 32 KiB one claimed PRG-ROM at `$8000 - $DFFF`; and a 73,728-byte one was not a power of two at all. The pieces are flagged `RETRO_MEMDESC_SAVE_RAM` **only when the header declares a battery** (`Nes::has_battery`); volatile work RAM carries no flag. This line used to say "battery-backed carts only" while every non-empty buffer was flagged.
 * **Video RAM (VRAM):** Maps address range `$2000 - $2FFF`, flagged as `RETRO_MEMDESC_VIDEO_RAM` — but in a **named `"PPU"` address space**, not the blank/default one, since nametable RAM (CIRAM) lives on the PPU's own internal bus. On the CPU's real bus, `$2000-$2007` are the PPU MMIO registers (PPUCTRL/PPUMASK/etc.), not video RAM; registering the VRAM pointer under the default CPU space at that range would misrepresent it. This mirrors the convention `libretro.h` documents for other genuinely separate buses (e.g. the SNES SPC700 audio coprocessor's `"S"` address space).
 
 The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path is kept alongside this, unchanged — RetroArch's own `.srm` persistence goes through it regardless, so the descriptor registration is additive, not a replacement. Both paths expose the MAIN console's memory in Vs. `DualSystem` mode (see `RustyNesLibretro::active_nes_mut`/`active_nes`).
@@ -16,10 +20,11 @@ The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path i
 ## SRAM and Virtual File System (VFS) Offloading
 
 As `rustynes-core` is `no_std`, it possesses no ability to interact with the host OS filesystem (`std::fs`), making native `.srm` (battery save) file writing impossible.
-**Solution:** The FFI wrapper exposes the active cartridge's SRAM pointer via `retro_get_memory_data(RETRO_MEMORY_SAVE_RAM)`.
+**Solution:** The FFI wrapper exposes the active cartridge's SRAM pointer via `retro_get_memory_data(RETRO_MEMORY_SAVE_RAM)`, **when the cartridge header declares a battery** (`Nes::has_battery`, the same gate the desktop frontend's `.sav` uses). Otherwise `RETRO_MEMORY_SAVE_RAM` reports size 0 and a null pointer (v2.9.0, libretro re-audit NL-02). Several boards expose RAM through `Nes::sram` whatever the header says (NROM always has 8 KiB; MMC1 and MMC3 allocate by default), so before v2.9.0, 581 images of the local test corpus without a battery handed RetroArch a `.srm`, and their work RAM came back on the next boot where the console would have powered on without it. An FDS image has no battery either; its in-game saves live on the disk image.
 
 * RetroArch automatically manages the lifecycle. Upon game load, the frontend injects data from the host's `.srm` file directly into this pointer.
 * Upon shutdown (`retro_deinit`), RetroArch reads the pointer and flushes the data to the disk.
+* A `.srm` a pre-v2.9.0 core wrote for a cartridge without a battery is no longer used: with a size of 0 there is nothing to load it into and nothing to write, so the file stays on disk untouched (inferred from the `libretro.h` contract, not traced in RetroArch's source). A game whose header wrongly omits the battery bit loses its save the same way on the desktop; the fix is the header.
 
 This architectural inversion ensures compatibility with RetroArch Cloud Sync, mobile sandboxes (iOS/Android), and cross-platform save transfers without touching native filesystem APIs.
 

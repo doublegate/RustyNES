@@ -26,6 +26,27 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### The libretro core
+
+- **Only a cartridge with a battery gets a `.srm`.** The core handed
+  RetroArch its PRG-RAM as save RAM whenever there was any, and several
+  boards have RAM whatever the header says (NROM always has 8 KiB; MMC1 and
+  MMC3 allocate it by default): 581 images in the local test corpus had no
+  battery and still got a `.srm`, and their work RAM came back on the next
+  boot where the console would have started without it. Save RAM now
+  follows the header's battery bit, as the desktop's `.sav` does. **A `.srm`
+  an older core wrote for a battery-less game is no longer read or updated**;
+  it stays on disk. A game whose header wrongly omits the battery bit stops
+  saving the same way it does on the desktop, and the fix is the header.
+- **The memory map describes cartridge RAM the way libretro.h asks.** RAM
+  larger than 8 KiB was described as one block starting at `$6000`, so
+  64 KiB claimed addresses past the 16-bit bus, 32 KiB claimed the game's
+  ROM at `$8000-$DFFF`, and 73,728 bytes broke the rule that such a block be
+  a power of two long. The CPU window is now `$6000-$7FFF` (the Disk
+  System's `$6000-$DFFF`), the whole buffer is also reachable in its own
+  `SRAM` address space for cheat searches and achievements, and volatile RAM
+  is no longer flagged as save RAM.
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die

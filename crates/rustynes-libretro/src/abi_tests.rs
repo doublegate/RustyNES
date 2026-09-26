@@ -21,6 +21,7 @@
 //! build their own `RustyNesLibretro` and never touch the global instance.
 
 use super::*;
+use crate::tests::DescView;
 use std::os::raw::{c_uint, c_void};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU32, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, Once};
@@ -55,6 +56,21 @@ static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
 /// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
 static VARS_CHANGED: AtomicBool = AtomicBool::new(false);
+/// The descriptors of the most recent `SET_MEMORY_MAPS`, copied out.
+static LAST_MAP: Mutex<Vec<Desc>> = Mutex::new(Vec::new());
+
+/// One `retro_memory_descriptor`, copied out of a `SET_MEMORY_MAPS` call so
+/// a test can inspect it after the call returns.
+#[derive(Clone, Debug)]
+struct Desc {
+    flags: u64,
+    ptr: usize,
+    offset: usize,
+    start: usize,
+    select: usize,
+    len: usize,
+    addrspace: String,
+}
 
 /// Lock a harness `Mutex`, ignoring poison: every test resets what it reads.
 fn held<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -82,6 +98,35 @@ unsafe extern "C" fn log_printf(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(text.to_string_lossy().into_owned());
+}
+
+/// Copy the descriptors of a `SET_MEMORY_MAPS` call out of the core's
+/// memory, which is only valid for the duration of the call.
+fn copy_descriptors(map: &retro_memory_map) -> Vec<Desc> {
+    let mut descs = Vec::new();
+    for i in 0..map.num_descriptors as usize {
+        // SAFETY: `descriptors` holds `num_descriptors` entries for the
+        // duration of the call; a count of zero never reads it.
+        let d = unsafe { &*map.descriptors.add(i) };
+        let addrspace = if d.addrspace.is_null() {
+            String::new()
+        } else {
+            // SAFETY: a non-null `addrspace` is a NUL-terminated name.
+            unsafe { CStr::from_ptr(d.addrspace) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        descs.push(Desc {
+            flags: d.flags,
+            ptr: d.ptr as usize,
+            offset: d.offset,
+            start: d.start,
+            select: d.select,
+            len: d.len,
+            addrspace,
+        });
+    }
+    descs
 }
 
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
@@ -180,6 +225,7 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // command, valid for the duration of the call.
             let map = unsafe { &*data.cast::<retro_memory_map>() };
             LAST_MAP_LEN.store(i64::from(map.num_descriptors), SeqCst);
+            *held(&LAST_MAP) = copy_descriptors(map);
             true
         }
         // Every other command is refused, which is what a minimal frontend
@@ -674,4 +720,130 @@ fn the_core_works_again_after_deinit_and_init() {
     let mut buf = vec![0_u8; serialize_size()];
     assert!(serialize(&mut buf));
     unload();
+}
+
+/// A copy of nestest with its header edited by `edit`, leaked so `load` can
+/// hand the frontend a `'static` buffer (one small leak per test).
+fn nestest_with(edit: impl FnOnce(&mut Vec<u8>)) -> &'static [u8] {
+    let mut rom = NESTEST.to_vec();
+    edit(&mut rom);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// nestest's PRG and CHR under an MMC1 NES 2.0 header whose byte 10 is
+/// `prg_ram_byte` (low nibble volatile, high nibble battery-backed PRG-RAM,
+/// each `64 << n` bytes), with the battery bit when `battery`. `0x7A` gives
+/// 64 KiB + 8 KiB = 73,728 bytes, the size three commercial MMC1 dumps
+/// expose (libretro re-audit NL-06); `0x0A` gives 64 KiB; `0x09` 32 KiB.
+fn mmc1_with_prg_ram(prg_ram_byte: u8, battery: bool) -> &'static [u8] {
+    let prg = &NESTEST[16..16 + 16 * 1024];
+    let chr = &NESTEST[16 + 16 * 1024..16 + 24 * 1024];
+    let mut rom = vec![0u8; 16];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 8; // 128 KiB PRG: nestest's 16 KiB, eight times
+    rom[5] = 1; // 8 KiB CHR
+    rom[6] = 0x10 | if battery { 0x02 } else { 0 }; // mapper 1
+    rom[7] = 0x08; // NES 2.0
+    rom[10] = prg_ram_byte;
+    for _ in 0..8 {
+        rom.extend_from_slice(prg);
+    }
+    rom.extend_from_slice(chr);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The CPU-space (blank `addrspace`) descriptor that starts at `$6000`.
+fn cpu_window(descs: &[Desc]) -> Option<Desc> {
+    descs
+        .iter()
+        .find(|d| d.addrspace.is_empty() && d.start == 0x6000)
+        .cloned()
+}
+
+fn memory_size(id: c_uint) -> usize {
+    // SAFETY: a plain query.
+    unsafe { rust_libretro::retro_get_memory_size(id) }
+}
+
+fn memory_data(id: c_uint) -> *mut c_void {
+    // SAFETY: a plain query; the pointer is only compared, never dereferenced.
+    unsafe { rust_libretro::retro_get_memory_data(id) }
+}
+
+/// libretro re-audit NL-02. RetroArch writes `RETRO_MEMORY_SAVE_RAM` to a
+/// `.srm` and loads it back after `retro_load_game`, so exposing work RAM
+/// without a battery gave 581 images of the local corpus a save file the
+/// hardware never had, and restored stale RAM on the next boot. nestest's
+/// header has no battery bit: it must expose no save RAM, and no descriptor
+/// may carry the `SAVE_RAM` flag. With the bit set, the same 8 KiB is save RAM.
+#[test]
+fn save_ram_is_exposed_only_for_a_battery_backed_cartridge() {
+    let _frontend = frontend();
+
+    assert!(load(NESTEST, true));
+    let descs = held(&LAST_MAP).clone();
+    let (size, data) = (
+        memory_size(RETRO_MEMORY_SAVE_RAM),
+        memory_data(RETRO_MEMORY_SAVE_RAM),
+    );
+    unload();
+    assert_eq!(size, 0, "a cartridge without a battery has no save RAM");
+    assert!(data.is_null(), "and no save-RAM pointer");
+    assert!(
+        descs
+            .iter()
+            .all(|d| d.flags & u64::from(RETRO_MEMDESC_SAVE_RAM) == 0),
+        "no descriptor may be flagged SAVE_RAM: {descs:?}"
+    );
+    // The work RAM stays visible to cheats and RetroAchievements, as plain
+    // memory at $6000.
+    let window = cpu_window(&descs).expect("volatile PRG-RAM is still described at $6000");
+    assert_eq!(window.len, 0x2000);
+
+    let battery = nestest_with(|rom| rom[6] |= 0x02);
+    assert!(load(battery, true));
+    let descs = held(&LAST_MAP).clone();
+    let size = memory_size(RETRO_MEMORY_SAVE_RAM);
+    let data = memory_data(RETRO_MEMORY_SAVE_RAM);
+    unload();
+    assert_eq!(size, 0x2000, "a battery-backed cartridge exposes its 8 KiB");
+    assert!(!data.is_null());
+    let window = cpu_window(&descs).expect("save RAM is described at $6000");
+    assert_ne!(
+        window.flags & u64::from(RETRO_MEMDESC_SAVE_RAM),
+        0,
+        "and flagged as save RAM"
+    );
+}
+
+/// libretro re-audit NL-06. The save-RAM descriptor was
+/// `{start: $6000, select: 0, len: sram_len}` whatever the size: 64 KiB
+/// claimed `$6000-$15FFF`, past the 16-bit bus; 32 KiB claimed PRG-ROM at
+/// `$8000-$DFFF`; and 73,728 bytes broke libretro.h's power-of-two rule.
+/// Driven through the C ABI at all three sizes.
+#[test]
+fn save_ram_descriptors_have_the_shape_libretro_h_requires() {
+    let _frontend = frontend();
+    for (byte10, expect) in [(0x7A_u8, 73_728_usize), (0x0A, 65_536), (0x09, 32_768)] {
+        let rom = mmc1_with_prg_ram(byte10, true);
+        assert!(load(rom, true), "the synthetic MMC1 image loads");
+        let descs: Vec<DescView> = held(&LAST_MAP).iter().map(DescView::from).collect();
+        let size = memory_size(RETRO_MEMORY_SAVE_RAM);
+        unload();
+        assert_eq!(size, expect, "the whole buffer stays save RAM for the .srm");
+        crate::tests::assert_descriptor_shape(&descs, expect, false);
+    }
+}
+
+impl From<&Desc> for DescView {
+    fn from(d: &Desc) -> Self {
+        Self {
+            ptr: d.ptr,
+            offset: d.offset,
+            start: d.start,
+            select: d.select,
+            len: d.len,
+            addrspace: d.addrspace.clone(),
+        }
+    }
 }
