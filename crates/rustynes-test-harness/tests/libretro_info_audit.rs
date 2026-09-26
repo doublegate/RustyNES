@@ -192,3 +192,70 @@ fn libretro_info_supported_extensions_are_the_ones_the_core_loads() {
          wrong, then re-sync `libretro/libretro-super`."
     );
 }
+
+/// The libretro core's source, for the source-derived checks below.
+fn core_source() -> String {
+    std::fs::read_to_string(workspace_root().join("crates/rustynes-libretro/src/lib.rs"))
+        .expect("read rustynes-libretro/src/lib.rs")
+}
+
+/// Capability flags must say what the core does (libretro re-audit NL-04).
+///
+/// `UPSTREAM_SYNC.md` listed the capability flags as "assert by hand", and
+/// by hand is how they drifted twice: `disk_control` was `false` for months
+/// while the Disk Control interface was wired (fixed in v2.2.4), and
+/// `core_options` was `false` from v2.8.1, when the Four Score option was
+/// declared through `SET_VARIABLES`, until v2.9.0. Each flag here is derived
+/// from the environment call that implements it, in the core's own source:
+/// a flag is `"true"` exactly when the call is there.
+#[test]
+fn libretro_info_capability_flags_match_the_core() {
+    let info = info_file();
+    let src = core_source();
+    for (flag, needles) in [
+        (
+            "core_options",
+            &["set_variables(", "set_core_options_v2("][..],
+        ),
+        (
+            "disk_control",
+            &[
+                "set_disk_control_interface(",
+                "set_disk_control_ext_interface(",
+            ][..],
+        ),
+        ("memory_descriptors", &["set_memory_maps("][..]),
+        ("input_descriptors", &["set_input_descriptors("][..]),
+    ] {
+        let implemented = needles.iter().any(|n| src.contains(n));
+        let advertised = field(&info, flag);
+        assert_eq!(
+            advertised,
+            if implemented { "true" } else { "false" },
+            "`rustynes_libretro.info` says {flag} = \"{advertised}\", but the core \
+             {} ({needles:?}). Fix the `.info`; the upstream copy follows at the \
+             next sync (docs/libretro/UPSTREAM_SYNC.md).",
+            if implemented {
+                "implements it"
+            } else {
+                "does not"
+            }
+        );
+    }
+}
+
+/// The `description` must not advertise what the core no longer is (libretro
+/// re-audit NL-04). v2.0.0 "Timebase" retired the lockstep scheduler at
+/// PPU-dot resolution; `architecture.md` was corrected in v2.8.1 (L-3.5b),
+/// and the `.info` went on saying it.
+#[test]
+fn libretro_info_description_names_no_retired_design() {
+    let description = field(&info_file(), "description");
+    for retired in ["lockstep", "PPU-dot resolution", "dot-lockstep"] {
+        assert!(
+            !description.contains(retired),
+            "`rustynes_libretro.info` description still says \"{retired}\"; the \
+             scheduler it describes was retired in v2.0.0 (ADR 0002 / ADR 0029)"
+        );
+    }
+}

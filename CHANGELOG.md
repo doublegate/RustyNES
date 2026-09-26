@@ -72,6 +72,13 @@ cycle-accurate core later replaced.
   acceptor 2; ports 3-4 for a cabinet's second console) and R is the service
   button; the input descriptors name them while a Vs. game is loaded.
   Setting the DIP switches by hand is not available yet.
+- **The core's `.info` says it has core options, and no longer describes the
+  retired scheduler.** `core_options` was `"false"` although the Four Score
+  option has existed since v2.8.1, and the description still named the
+  scheduler v2.0.0 replaced. The `.info` audit now derives `core_options`,
+  `disk_control`, `memory_descriptors` and `input_descriptors` from the
+  core's source. This is the repository's copy; the one RetroArch downloads
+  from `libretro-super` is updated at v3.0.0.
 - **Disk Control names the sides of a Famicom Disk System disk.** The core
   computed "Side A" / "Side B" labels but registered only the original
   disk-control interface, which has no labels, so RetroArch showed bare
