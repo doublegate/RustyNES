@@ -26,6 +26,59 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
+
+The fifth and last release of the v2.8.x line: the MiSTer core's off-die
+(SDRAM) build, which v3.0.0 ships as its secondary bitstream. The emulator
+does not change. Both bitstreams are cut at fitter seed 5, chosen by a sweep
+of both builds at the line's close (on-die +0.414 ns setup / +0.078 ns hold,
+off-die +0.270 / +0.081). **No hardware has run any bitstream.**
+
+### The MiSTer core
+
+- **The SDRAM controller's power-up sequence follows the datasheet.** It
+  raised the clock enable on the same edge as its first command, which the
+  part ignores because it samples the clock enable one cycle earlier. The
+  controller now issues a no-op first. The SDRAM model the co-simulation
+  uses could not see this, so the model now registers the clock enable the
+  way the part does and flags a command it would ignore.
+- **Reads work at CAS latency 3.** The controller held the read mask high
+  while waiting for data, which masks the data at CAS latency 3 (the
+  shipped clock uses latency 2, where it happened not to matter). The model
+  now applies the read mask with the part's latency; before the fix every
+  read at latency 3 returned zero.
+- **The SDRAM controller reads data on the edge the part presents it.**
+  The co-simulation's SDRAM model delivered read data one clock later than
+  the datasheet, and the controller was written to match, so every test
+  passed while real hardware would have read after the part had released
+  the bus. The timing analysis found it once the SDRAM pins had
+  constraints: the read-data capture failed by 11 ns. The model now follows
+  the datasheet, the controller samples a clock earlier (reads are one clock
+  faster), and the constraints say which edge captures the data.
+- **The SDRAM arbiter returns the right byte, and cannot lose a write.** A
+  request arriving while the same source was being served changed which
+  byte of the answer it received, and a write strobe on the cycle the
+  arbiter reported "not busy" could be dropped. Both have a gate that failed
+  before the fix. The second is not reachable from today's cartridge path,
+  and is fixed so it cannot become reachable.
+- **The SDRAM pins have timing constraints** (provisional, from the
+  documented AS4C32M16SB datasheet until the SuperStation One's part is
+  read at v2.9.2), and the constraints file no longer claims the framework
+  constrains them.
+- **The off-die bitstream builds without editing source**:
+  `scripts/build-offdie.sh` in the sibling, and `OFFDIE=1
+  scripts/seed-sweep.sh` for its seed sweep. An off-die bitstream holds the
+  console in reset when no SDRAM is detected, and bring-up gains a MemTest
+  gate before it.
+- **The MiSTer core's co-simulation ladder runs from a clean checkout, all
+  of it.** v2.8.3 said so and was wrong: its first gate checks each golden
+  against the ROM it came from, and 19 of those ROMs are built by later
+  rungs. The gate now builds every generator's output itself. Two ROMs long
+  recorded as unreproducible are accounted for: one is a generator program
+  nothing had built under its name, and the other, genuinely hand-made, is
+  now committed. From a clean checkout the ladder reads 165 passed, 0
+  failed, 1 expected failure, with nothing skipped.
+
 ## [2.8.3] - 2026-09-25 - "Rivet" (the MiSTer core's reset, area and comments, measured)
 
 The fourth release of the v2.8.x line: the RTL audit's robustness rows for
