@@ -522,7 +522,8 @@ impl Default for RustyNesLibretro {
 
 impl CoreOptions for RustyNesLibretro {
     /// Deliberately empty: the options are declared by
-    /// [`RustyNesLibretro::declare_core_options`] from `on_set_environment`.
+    /// `RustyNesLibretro::declare_core_options` (private, so not linked) from
+    /// `on_set_environment`.
     ///
     /// `rust-libretro` calls this hook only on the FIRST
     /// `retro_set_environment` the process ever sees, and its instance is
