@@ -674,12 +674,13 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs whole from a fresh checkout. Built on **v2.8.2 "Solder"** (2026-09-25) — the MiSTer core's on-die RTL, corrected against the oracle and the wiki: an MMC3 IRQ acknowledge is no longer lost to a same-edge counter clock, SNROM's battery RAM obeys its CHR-line enable, the triangle and noise drop a reload landing on a length clock, a `$2002` read leaves the byte it returned on the data bus, and the emulator's MMC1 no longer ignores a reset written on the cycle after another write.
+RustyNES's current release is **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces). Built on **v2.8.2 "Solder"** (2026-09-25) — the MiSTer core's on-die RTL, corrected against the oracle and the wiki: an MMC3 IRQ acknowledge is no longer lost to a same-edge counter clock, SNROM's battery RAM obeys its CHR-line enable, the triangle and noise drop a reload landing on a length clock, a `$2002` read leaves the byte it returned on the data bus, and the emulator's MMC1 no longer ignores a reset written on the cycle after another write.
 
 v2.8.3 is the second RTL release of the v2.8.x audit line: the MiSTer core's
 resets now release on the clock that uses them, its CPU is about 4% smaller,
 four false comments in its RTL are corrected, and its co-simulation ladder runs
-whole from a fresh checkout. The emulator does not change; the accuracy
+from a fresh checkout (164 of its 165 gates; the last needs a hand-built
+ROM). The emulator does not change; the accuracy
 numbers below were measured on v2.8.2's tree, the last that changed it:
 AccuracyCoin 144/144 and nestest pass, and the full `--features test-roms`
 suite passes 2,756 tests. **No hardware has run any bitstream.** v2.8.2

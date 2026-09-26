@@ -55,12 +55,16 @@ has run any bitstream.**
   zero that cannot be built, and a superseded plan cited as current. A block
   indented as if gated by the PPU's dot enable, which it is not, is
   re-indented.
-- **The MiSTer core's co-simulation ladder runs whole from a fresh
-  checkout.** Run from a clean tree it silently skipped 19 gates (two
-  third-party batteries looked in the wrong directory, and the mapper ROMs
-  were never built), and the provenance check failed on two goldens whose
-  ROMs are built later in the run. Each is fixed, and no gate reports a pass
-  without saying what it compared.
+- **The MiSTer core's co-simulation ladder runs from a fresh checkout.**
+  Run from a clean tree it silently skipped 19 gates (two third-party
+  batteries looked in the wrong directory, and the mapper ROMs were never
+  built), and the provenance check failed on two goldens whose ROMs are
+  built later in the run. Each is fixed: from a clean tree the ladder now
+  reads 164 passed, 0 failed, 1 expected failure, and its one skip is a gate
+  whose hand-built ROM no generator produces (it passes where that ROM
+  exists, so 165 in all). No gate reports a pass without saying what it
+  compared, and every reset input in the core is checked to come from a
+  synchroniser.
 
 ## [2.8.2] - 2026-09-25 - "Solder" (the MiSTer core's on-die RTL, corrected against the oracle and the wiki)
 
