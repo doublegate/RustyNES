@@ -312,6 +312,11 @@ const SRAM_ADDRSPACE: &CStr = c"SRAM";
 /// This struct holds the underlying cycle-accurate `Nes` emulator instance alongside
 /// the operational buffers necessary to interface with libretro's batch APIs. It is
 /// statically instantiated via the `retro_core!` macro.
+// The flags are independent facts about the libretro session (maps
+// registered, poisoned, Four Score option, options declared), each set and
+// cleared at its own lifecycle point; folding them into a state enum would
+// invent combinations the lifecycle does not have.
+#[allow(clippy::struct_excessive_bools)]
 pub struct RustyNesLibretro {
     /// The cycle-accurate RustyNES core instance (single-console carts).
     ///
@@ -384,6 +389,12 @@ pub struct RustyNesLibretro {
     /// the adapter can read its signature bits.
     four_score: bool,
 
+    /// Whether the core options have been declared (`SET_VARIABLES`) since
+    /// the last `retro_deinit`. Cleared there, so each init cycle declares
+    /// them once, from the first `retro_set_environment` of the cycle
+    /// (libretro re-audit NL-05; see [`Self::declare_core_options`]).
+    options_declared: bool,
+
     /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
     /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
     /// serialized state, matching `Nes::add_genie_code`'s own contract, so
@@ -414,27 +425,24 @@ impl Default for RustyNesLibretro {
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
             four_score: false,
+            options_declared: false,
             genie_cheats: BTreeMap::new(),
         }
     }
 }
 
 impl CoreOptions for RustyNesLibretro {
-    /// Declare the core's options. Only one exists: the Four Score adapter,
-    /// which a user must be able to plug in for four-player games (libretro
-    /// audit summary, L-S1). The legacy `SET_VARIABLES` form is enough for a
-    /// two-value switch and every frontend supports it.
-    fn set_core_options(&self, ctx: &SetEnvironmentContext) -> bool {
-        // SAFETY: the context carries the frontend's environment callback for
-        // the duration of `retro_set_environment`; `CORE_VARIABLES` is a
-        // `'static`, null-key-terminated array.
-        unsafe {
-            let generic_ctx: GenericContext = ctx.into();
-            rust_libretro::environment::set_variables(
-                *generic_ctx.environment_callback(),
-                &CORE_VARIABLES.0,
-            )
-        }
+    /// Deliberately empty: the options are declared by
+    /// [`RustyNesLibretro::declare_core_options`] from `on_set_environment`.
+    ///
+    /// `rust-libretro` calls this hook only on the FIRST
+    /// `retro_set_environment` the process ever sees, and its instance is
+    /// never reset (libretro audit L-1.4), so a frontend that keeps the
+    /// library loaded across `retro_deinit` + `retro_init` got no
+    /// `SET_VARIABLES` the second time (libretro re-audit NL-05). Declaring
+    /// here as well would declare twice on the first call.
+    fn set_core_options(&self, _ctx: &SetEnvironmentContext) -> bool {
+        true
     }
 }
 
@@ -685,6 +693,28 @@ impl RustyNesLibretro {
                 fallback
             },
         )
+    }
+
+    /// Declare the core's options with `SET_VARIABLES`; `true` when the
+    /// frontend accepted them.
+    ///
+    /// Only one exists: the Four Score adapter, which a user must be able to
+    /// plug in for four-player games (libretro audit summary, L-S1). The
+    /// legacy `SET_VARIABLES` form is enough for a two-value switch and every
+    /// frontend supports it. libretro.h asks for the first declaration "as
+    /// early as possible (ideally in retro_set_environment)" and allows later
+    /// ones as long as the number of options does not change; this core
+    /// declares once per init cycle (libretro re-audit NL-05).
+    ///
+    /// # Safety
+    ///
+    /// `cb` must be the frontend's environment callback, valid for the
+    /// duration of the call (as it is inside `retro_set_environment`).
+    unsafe fn declare_core_options(cb: retro_environment_t) -> bool {
+        // SAFETY: the caller guarantees `cb`; `CORE_VARIABLES` is a
+        // `'static`, null-key-terminated array, and the frontend keeps the
+        // pointers.
+        unsafe { rust_libretro::environment::set_variables(cb, &CORE_VARIABLES.0) }
     }
 
     /// Write one line to the frontend's log, or to stderr when it has none.
@@ -1514,6 +1544,10 @@ impl Core for RustyNesLibretro {
             // on_get_image_index, etc. below) so RetroArch's Quick Menu → Disk
             // Control surfaces FDS multi-side swapping.
             generic_ctx.enable_disk_control_interface();
+
+            if !self.options_declared {
+                self.options_declared = Self::declare_core_options(cb);
+            }
         }
     }
 
@@ -1634,6 +1668,9 @@ impl Core for RustyNesLibretro {
         self.poisoned = false;
         // The log interface is valid only until `retro_deinit`.
         self.log_printf = None;
+        // The next init cycle declares the core options again: the frontend
+        // may have dropped them with this one (libretro re-audit NL-05).
+        self.options_declared = false;
         self.genie_cheats.clear();
         self.serialize_size = 0;
         self.audio_buffer = Vec::new();
@@ -1961,6 +1998,7 @@ retro_core!(RustyNesLibretro {
     log_printf: None,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
     four_score: false,
+    options_declared: false,
     genie_cheats: BTreeMap::new(),
 });
 

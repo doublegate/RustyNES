@@ -50,6 +50,11 @@ cycle-accurate core later replaced.
   as libretro.h asks. It succeeded whenever the state itself fitted, which it
   usually does with 26 bytes to spare. Frontends pass the reported size, so
   nothing changes for them.
+- **The Four Score option survives a restart of the core.** The core
+  declared its options only on the first `retro_set_environment` of the
+  process, so a frontend that keeps the library loaded and initialises it a
+  second time was never told the option exists. It is now declared once per
+  initialisation.
 
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 

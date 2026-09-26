@@ -96,7 +96,12 @@ Per `docs/guides/cheat-codes.md` in `libretro/docs`, RetroArch has two independe
   `input_descriptors!` macro ends with `""`, which RetroArch's
   `for (; desc->description; desc++)` reads past.
 * **Four Score.** The `rustynes_four_score` core option plugs the adapter in;
-  ports 3-4 then carry players 3-4. Off by default, as on the console.
+  ports 3-4 then carry players 3-4. Off by default, as on the console. The
+  options are declared (`SET_VARIABLES`) from `on_set_environment`, once per
+  init cycle: `rust-libretro`'s own hook runs only on the first
+  `retro_set_environment` the process sees, so until v2.9.0 a frontend that
+  kept the library loaded across `retro_deinit` + `retro_init` was never
+  told about the option again (libretro re-audit NL-05).
 * **Zapper.** Selecting "NES Zapper" on port 1 or 2 attaches the light gun on
   the next frame; selecting "NES Controller" again unplugs it. (Until v2.8.1
   the gun stayed on the bus and the controller on that port did nothing.)

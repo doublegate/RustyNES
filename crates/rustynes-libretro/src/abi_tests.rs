@@ -52,6 +52,8 @@ static JOYPAD_READS: AtomicU32 = AtomicU32::new(0);
 static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// Keys the core declared with `SET_VARIABLES`.
 static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// How many times the core has called `SET_VARIABLES`.
+static SET_VARIABLES_CALLS: AtomicU32 = AtomicU32::new(0);
 /// The value the fake frontend reports for `rustynes_four_score`.
 static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
 /// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
@@ -188,6 +190,7 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 }
             }
             *held(&DECLARED_VARS) = keys;
+            SET_VARIABLES_CALLS.fetch_add(1, SeqCst);
             true
         }
         RETRO_ENVIRONMENT_GET_VARIABLE => {
@@ -871,5 +874,45 @@ fn serialize_refuses_a_buffer_smaller_than_it_asked_for() {
     assert!(
         accepted,
         "a buffer of exactly retro_serialize_size must work"
+    );
+}
+
+/// libretro re-audit NL-05. `rust-libretro` declares core options only on the
+/// first `retro_set_environment` the process ever sees, and its instance is
+/// never reset (L-1.4). A frontend that keeps the library loaded, calls
+/// `retro_deinit`, and starts again with `retro_set_environment` +
+/// `retro_init` got no `SET_VARIABLES`, so a frontend that drops its option
+/// set at deinit had no Four Score option in the second session. Each
+/// init cycle must declare the options once; a repeated
+/// `retro_set_environment` inside one cycle does not need to.
+#[test]
+fn core_options_are_declared_again_after_deinit_and_init() {
+    let _frontend = frontend();
+    let before = SET_VARIABLES_CALLS.load(SeqCst);
+    // SAFETY: plain lifecycle calls, in the order a frontend that reuses a
+    // loaded library makes them (libretro.h: set_environment before init).
+    unsafe {
+        rust_libretro::retro_deinit();
+        rust_libretro::retro_set_environment(Some(environment));
+        rust_libretro::retro_init();
+    }
+    let after_cycle = SET_VARIABLES_CALLS.load(SeqCst);
+    // SAFETY: as above; a second environment inside the same cycle.
+    unsafe { rust_libretro::retro_set_environment(Some(environment)) };
+    let after_repeat = SET_VARIABLES_CALLS.load(SeqCst);
+    assert_eq!(
+        after_cycle,
+        before + 1,
+        "a new init cycle must declare the core options"
+    );
+    assert!(
+        held(&DECLARED_VARS)
+            .iter()
+            .any(|k| k == "rustynes_four_score"),
+        "and the declaration must carry the Four Score option"
+    );
+    assert_eq!(
+        after_repeat, after_cycle,
+        "a repeated set_environment within one cycle declares nothing new"
     );
 }
