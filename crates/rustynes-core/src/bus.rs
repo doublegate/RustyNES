@@ -822,6 +822,19 @@ impl LockstepBus {
     /// CPU cycles: generous against anything the machine produces, and it
     /// bounds the first catch-up at a few hundred dots.
     pub(crate) fn check_restored_clocks(&self, master_clock: u64) -> Result<(), SnapshotError> {
+        // v2.9.0 (re-audit NC-04): the skew alone is not enough; see
+        // [`Self::RESTORED_CLOCK_MAX`]. Checking the larger of the two is
+        // enough to bound both, since they are then also within the skew.
+        let highest = master_clock.max(self.ppu_clock);
+        if highest > Self::RESTORED_CLOCK_MAX {
+            return Err(SnapshotError::SectionInvalid {
+                tag: "BUS ".into(),
+                reason: format!(
+                    "master clock {highest} exceeds the {} a real machine can reach",
+                    Self::RESTORED_CLOCK_MAX
+                ),
+            });
+        }
         let skew = master_clock.abs_diff(self.ppu_clock);
         if skew > Self::RESTORED_CLOCK_SKEW_MAX {
             return Err(SnapshotError::SectionInvalid {
@@ -837,6 +850,25 @@ impl LockstepBus {
 
     /// Largest CPU/PPU master-clock skew [`Self::check_restored_clocks`] accepts.
     pub(crate) const RESTORED_CLOCK_SKEW_MAX: u64 = 1024;
+
+    /// Largest absolute master clock [`Self::check_restored_clocks`] accepts,
+    /// for either clock: 2^62.
+    ///
+    /// v2.9.0 (re-audit NC-04). The skew bound alone let a crafted state put
+    /// BOTH clocks just below 2^64; the CPU's `wrapping_add` then took its
+    /// clock back to a small value within a frame while the PPU's stayed high,
+    /// and `run_ppu_to`'s `ppu_clock + div <= target` never held again — the
+    /// frozen-PPU state F-05 exists to reject.
+    ///
+    /// Why 2^62. It must sit far above anything a real machine reaches and far
+    /// enough below 2^64 that no run from an accepted state can wrap. The
+    /// fastest master clock is NTSC/Dendy's ~21.477 MHz (PAL's is slower), so
+    /// 2^62 master clocks is ~2.1e11 s, about **6,800 years** of continuous
+    /// emulation — no genuine state can be refused. The remaining headroom to
+    /// the wrap is 3 x 2^62, about **20,000 years** more from the worst
+    /// accepted state, so the catch-up loop's addition cannot overflow either.
+    /// A power of two keeps the bound legible in a hex dump of a rejected blob.
+    pub(crate) const RESTORED_CLOCK_MAX: u64 = 1 << 62;
 
     /// Test seam: move the PPU clock so a snapshot carries a chosen skew.
     #[cfg(test)]

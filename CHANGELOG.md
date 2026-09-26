@@ -104,6 +104,10 @@ cycle-accurate core later replaced.
 - **A Vs. DualSystem cabinet restores both consoles or neither.** A state
   whose second console was rejected left the first one restored, so the two
   screens ran from different moments.
+- **A crafted save state can no longer freeze the picture.** A state whose
+  clocks sat just below the largest value they can hold loaded, then wrapped
+  within a frame and stopped the PPU for good. States with clocks beyond
+  what 6,800 years of emulation would reach are now refused.
 
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 

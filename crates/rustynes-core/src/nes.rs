@@ -3119,6 +3119,80 @@ mod tests {
         }
     }
 
+    /// v2.9.0 re-audit NC-04: the clock check bounds the ABSOLUTE clocks, not
+    /// only their skew.
+    ///
+    /// F-05's check accepted any pair within `RESTORED_CLOCK_SKEW_MAX` of each
+    /// other, so a crafted state with BOTH clocks ~20,000 master clocks below
+    /// 2^64 loaded. The CPU advances with `wrapping_add`, so its clock wrapped
+    /// to a small value within a frame while the PPU's stayed near 2^64, and
+    /// the catch-up loop (`while ppu_clock + div <= target`) never ran again:
+    /// the frame counter froze, NMI never fired — the exact state F-05 set out
+    /// to reject. Both clocks are shifted by the same amount here, so the skew
+    /// is the running machine's own and only the new ceiling can reject it.
+    #[test]
+    fn restored_clocks_near_the_top_of_u64_are_rejected() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.run_frame();
+        nes.run_frame();
+        let master = nes.cpu.master_clock();
+        let ppu = nes.bus().ppu_clock_for_test();
+
+        // Shift both clocks by `shift` and return the snapshot. The CPU clock
+        // has no setter, so its bytes are patched inside the CPU section's
+        // body, where they must occur exactly once.
+        let shifted = |nes: &mut Nes, shift: u64| {
+            nes.bus_mut().set_ppu_clock_for_test(ppu + shift);
+            let mut blob = nes.snapshot();
+            let (_h, body_off) = save_state::parse_header(&blob).unwrap();
+            let cpu_body_off = {
+                let s = save_state::SectionIter::new(&blob[body_off..])
+                    .map(Result::unwrap)
+                    .find(|s| s.tag == save_state::tag::CPU)
+                    .unwrap();
+                s.body.as_ptr() as usize - blob.as_ptr() as usize
+            };
+            let needle = master.to_le_bytes();
+            let hits: Vec<usize> = (cpu_body_off..blob.len() - 8)
+                .filter(|&o| blob[o..o + 8] == needle)
+                .collect();
+            assert_eq!(hits.len(), 1, "master_clock must occur once: {hits:?}");
+            blob[hits[0]..hits[0] + 8].copy_from_slice(&(master + shift).to_le_bytes());
+            nes.bus_mut().set_ppu_clock_for_test(ppu);
+            blob
+        };
+
+        let ceiling = LockstepBus::RESTORED_CLOCK_MAX;
+        for (label, shift, ok) in [
+            ("unshifted", 0, true),
+            (
+                "a century of emulation",
+                100 * 365 * 86_400 * 21_477_272,
+                true,
+            ),
+            ("at the ceiling", ceiling - master.max(ppu), true),
+            ("past the ceiling", ceiling - master.max(ppu) + 1, false),
+            (
+                "20,000 master clocks below 2^64",
+                u64::MAX - 20_000 - master,
+                false,
+            ),
+        ] {
+            let blob = shifted(&mut nes, shift);
+            let mut fresh = Nes::from_rom(&rom).unwrap();
+            let got = fresh.restore_quiet(&blob);
+            assert_eq!(got.is_ok(), ok, "{label}: {got:?}");
+            if ok {
+                // An accepted state must actually run: the frame counter moves.
+                let f = fresh.frame();
+                fresh.run_frame();
+                fresh.run_frame();
+                assert!(fresh.frame() > f, "{label}: the PPU stopped");
+            }
+        }
+    }
+
     #[test]
     fn nes_cart_4016_read_is_byte_identical_with_and_without_vs_inputs() {
         // On a normal NES cart the Vs. DIP/coin/service overlay is a no-op, so

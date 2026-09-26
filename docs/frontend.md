@@ -2069,6 +2069,12 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
   NC-05). `VsDualSystem::restore` applied main and then sub, so a rejected sub
   block left main on the file's timeline. Main is now snapshotted first and
   rolled back if the sub block fails.
+- **The restored clocks are bounded absolutely, not only against each
+  other** (v2.9.0, NC-04). v2.7.0 (F-05) rejects a CPU master clock and PPU
+  clock more than 1,024 master clocks apart. A crafted state with both just
+  below 2^64 passed that, then the CPU clock wrapped and the PPU never ticked
+  again. Either clock above 2^62 is now refused: about 6,800 years of
+  emulation at the NTSC master clock, with 20,000 more before a wrap.
 - **The header's ROM hash tag is not checked on restore, by decision**
   (v2.9.0, NL-01). The tag is the first bytes of the SHA-256 of the whole
   file *including* its iNES header, so a check would reject every legitimate
