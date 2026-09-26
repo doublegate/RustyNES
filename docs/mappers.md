@@ -705,6 +705,14 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
     image whose window fits. Pinned by `tests/undersized_prg.rs`. Validate a
     board's reads against the ROM length, not against the bank count: a count
     clamped with `.max(1)` is still a count of banks that do not exist.
+12. **`load_state` must refuse any value the board's own registers cannot
+    produce** (v2.9.0, re-audit NC-02 / NC-06 / NC-07). A field a fetch or
+    clock uses unmasked, restored raw, passes the load and fails on the next
+    tick, after the restore's rollback can help. Three were found: GTROM
+    (111) banks (an index panic), the BS-5 (286) DIP setting, which must be
+    one of its four (a shift overflow in `1 << (dip + 4)`), and the FDS audio
+    cycle prescaler, which must be 0-15 (an add overflow). Validate before
+    assigning, and return `MapperError::Invalid`.
 
 ## Test plan
 

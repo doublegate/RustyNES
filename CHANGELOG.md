@@ -112,6 +112,11 @@ cycle-accurate core later replaced.
   the emulator.** Its bank numbers were loaded unchecked, so the load
   succeeded and the next frame crashed. A state naming a bank the board does
   not have is now rejected, and the game keeps running.
+- **Two more save-state fields are checked on load**: the mapper 286 (BS-5)
+  DIP setting, which must be one of the board's four, and the FDS sound
+  channel's cycle counter, which must be 0-15. Out-of-range values crashed
+  debug builds on the next write or cycle and were silently wrong in
+  release.
 
 ### Mappers
 
