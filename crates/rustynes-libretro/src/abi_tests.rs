@@ -862,6 +862,75 @@ fn registered_memory_stays_put_across_a_restore() {
     unload();
 }
 
+/// Set the version byte of the LAST `CPU ` section in a serialized state. In
+/// a single-console state that is the console's CPU section; in a dual
+/// cabinet's container it is the SUB console's, which is decoded after the
+/// main console has been applied.
+fn reject_last_cpu_section(state: &mut [u8]) {
+    let at = state
+        .windows(4)
+        .rposition(|w| w == b"CPU ")
+        .expect("a CPU section");
+    state[at + 4] = state[at + 4].wrapping_add(1);
+}
+
+/// Serialize, run on, try to unserialize the EARLY state with its last CPU
+/// section rejected, and report (the call's result, whether a fresh serialize
+/// equals the one taken just before the call).
+fn a_rejected_unserialize(rom: &'static [u8]) -> (bool, bool) {
+    assert!(load(rom, true));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let size = serialize_size();
+    let mut early = vec![0_u8; size];
+    assert!(serialize(&mut early));
+    for _ in 0..50 {
+        run_frame();
+    }
+    let mut reference = vec![0_u8; size];
+    assert!(serialize(&mut reference));
+    reject_last_cpu_section(&mut early);
+    let accepted = unserialize(&early);
+    let mut after = vec![0_u8; size];
+    assert!(serialize(&mut after));
+    unload();
+    (accepted, after == reference)
+}
+
+/// v2.9.0 re-audit NL-01 (core NC-03 / NC-05). `retro_unserialize` receives
+/// every state a user loads — a slot file, a state from an older core, a
+/// corrupt one — and routed it through `Nes::restore_quiet`, which had no
+/// rollback: a state rejected at its CPU section returned `false` and left
+/// the bus, PPU, APU and mapper from the file under the running game's CPU,
+/// and RetroArch kept emulating that machine. For the Vs. `DualSystem`
+/// cabinet a rejected SUB block left the main console restored. Both must
+/// now return `false` AND leave the machine exactly as it was.
+#[test]
+fn a_rejected_unserialize_leaves_the_machine_as_it_was() {
+    let _frontend = frontend();
+    let (accepted, unchanged) = a_rejected_unserialize(NESTEST);
+    assert!(
+        !accepted,
+        "a state with a rejected CPU section must not load"
+    );
+    assert!(unchanged, "a rejected unserialize changed the console");
+
+    // nestest's PRG/CHR under a NES 2.0 Vs. DualSystem header (console type
+    // Vs. System, byte-13 hardware type 5), as the re-audit's demonstration
+    // built it. Leaked: `load` hands the bytes to the core as a frontend would.
+    let mut dual = NESTEST.to_vec();
+    dual[7] = 0x08 | 0x01;
+    dual[13] = 0x50;
+    let dual: &'static [u8] = Box::leak(dual.into_boxed_slice());
+    let (accepted, unchanged) = a_rejected_unserialize(dual);
+    assert!(
+        !accepted,
+        "a dual state with a rejected sub block must not load"
+    );
+    assert!(unchanged, "a rejected dual unserialize changed the cabinet");
+}
+
 /// libretro audit §1.1 (L-1.1). A panic inside a frame used to cross the
 /// `extern "C"` boundary and abort the frontend: in this test process it would
 /// abort the test binary, which is what the mutation that removes

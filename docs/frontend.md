@@ -2050,9 +2050,33 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
   applies the bus sections before it checks the CPU section, so before v2.7.4 a
   blob rejected at the CPU stage left the bus from the blob and the CPU from the
   running game. A user-driven restore now snapshots the running machine first
-  and puts it back on any failure. `restore_quiet` (run-ahead and netplay
-  rollback, which only ever restore snapshots the core just wrote) skips the
-  backup, because it is the per-frame hot path.
+  and puts it back on any failure.
+- **The quiet path is all-or-nothing too** (v2.9.0, re-audit NC-03 / NL-01).
+  v2.7.4 wrote here that "`restore_quiet` (run-ahead and netplay rollback,
+  which only ever restore snapshots the core just wrote) skips the backup,
+  because it is the per-frame hot path". The premise was false: the libretro
+  core sends every `retro_unserialize` through `restore_quiet`, including a
+  user's Load State, a state from an older core and a corrupt file, and the
+  re-audit showed a rejected CPU section leaving the bus, PPU, APU and mapper
+  from the rejected file under the running game's CPU. Both paths now take
+  the backup, as a THM-less `snapshot_core_into` into a buffer pooled on the
+  `Nes`, so the steady state allocates nothing for it. Measured roughly on
+  nestest (release, a heavily loaded machine, not an A/B): the backup is about
+  22 µs against about 850 µs for the restore itself, well under 1% of a
+  frame. `restore` and `restore_quiet` now differ only in the rewind ring and
+  the timeline generation.
+- **A Vs. `DualSystem` restore is atomic across both consoles** (v2.9.0,
+  NC-05). `VsDualSystem::restore` applied main and then sub, so a rejected sub
+  block left main on the file's timeline. Main is now snapshotted first and
+  rolled back if the sub block fails.
+- **The header's ROM hash tag is not checked on restore, by decision**
+  (v2.9.0, NL-01). The tag is the first bytes of the SHA-256 of the whole
+  file *including* its iNES header, so a check would reject every legitimate
+  state after a header-only fix to the same dump (a corrected mapper number,
+  mirroring or battery bit). `Nes::restore` has always documented loading
+  from a different ROM as allowed; the per-section validation is what keeps
+  a foreign state from crashing the core. A PRG+CHR-keyed tag would make the
+  check possible and is a format change for the maintainer to weigh.
 
 ## Battery saves (`.sav`, native, v2.7.3)
 

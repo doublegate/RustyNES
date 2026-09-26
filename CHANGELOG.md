@@ -92,6 +92,19 @@ cycle-accurate core later replaced.
   numbers. It now registers the extended interface when the frontend offers
   it, with a label callback that always terminates the string it writes.
 
+### Save states
+
+- **A save state that fails to load leaves the game exactly as it was, in
+  RetroArch too.** v2.7.4 made a failed load all-or-nothing on the path the
+  desktop's Load State uses, but not on the one the libretro core uses for
+  every `retro_unserialize`. There, a state rejected partway (for example
+  one written by another core version) reported failure and left the
+  picture, sound, mapper and RAM from the file running under the old game's
+  CPU. Both paths now put the machine back.
+- **A Vs. DualSystem cabinet restores both consoles or neither.** A state
+  whose second console was rejected left the first one restored, so the two
+  screens ran from different moments.
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die
