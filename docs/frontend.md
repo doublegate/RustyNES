@@ -1366,12 +1366,14 @@ the default (no-device) input path stays byte-identical:
   hardens detection against sub-pixel aim error and PPU edge noise while
   remaining a deterministic, pure function of the presented framebuffer (no
   save-state change). The finer ~19-26-scanline photodiode temporal hold is
-  below the per-frame sample resolution of the default model; supported
-  light-gun titles re-poll every frame, so frame-granular aperture sampling
-  suffices for them.
+  below the per-frame sample resolution of the frame-granular model, which is
+  why that model is no longer the default (below).
 
-  **v2.2.3 A3 — the beam-relative temporal model (opt-in).** That refinement has
-  now landed as `Nes::set_zapper_temporal_light`, **default off**. With it on,
+  **v2.2.3 A3 — the beam-relative temporal model, default ON since v2.3.6.**
+  That refinement landed as `Nes::set_zapper_temporal_light`, shipped off in
+  v2.2.3-v2.3.5 and promoted to the default in v2.3.6 (`LockstepBus::new`
+  initialises it `true`; the core rustdoc on `set_zapper_temporal_light` says
+  so). With it on,
   the light bit is derived from where the CRT beam is at the moment of the
   `$4016`/`$4017` read rather than from the completed frame: dark before the
   beam paints the aim row (this frame has not drawn it yet), lit for the
@@ -1387,10 +1389,21 @@ the default (no-device) input path stays byte-identical:
   aperture rows *below* the beam still hold the previous frame's pixels, which
   is exactly what the sensor sees.
 
-  It stays opt-in because there is **no pass/fail light-gun test ROM** to
-  adjudicate it. Promoting it would change output with no oracle able to confirm
-  the change is an improvement — the project's standing bar (`docs/testing-strategy.md`)
-  is that an accuracy change is oracle-proven or default-off.
+  **Why it was promoted (v2.3.6).** Until v2.9.0 this section still read "It
+  stays opt-in because there is **no pass/fail light-gun test ROM** to
+  adjudicate it. Promoting it would change output with no oracle able to
+  confirm the change is an improvement" — three releases after the promotion
+  (re-audit NC-08; the core audit's §4.7 had corrected the rustdoc and missed
+  this page). The reasoning was also wrong on its own terms: the premise that
+  "supported light-gun titles re-poll every frame, so frame-granular aperture
+  sampling suffices" was false, and the game itself was the oracle. *Duck
+  Hunt* requires the gun to see nothing for one frame and a bright spot in the
+  next; the frame model, which answers every read in frame N with frame N-1,
+  gave it the exact inverse, so the shot was discarded before hit-testing and
+  **nothing could ever be hit**. Measured on the same ROM, aim and inputs: the
+  frame model scores 000000 with the duck still flying, the beam-relative model
+  000500 with the duck hit. `set_zapper_temporal_light(false)` restores the
+  frame-granular behaviour.
 
 **Browser save-states + movies (wasm)** (v1.4.0 Workstream E). The browser
 build reaches native QoL parity for two persistence features:
