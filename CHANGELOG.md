@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-26 - "Survey" (every audit re-checked, and the SuperStation One surveyed)
+
 The first release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
 **every audit re-checked, and the SuperStation One surveyed.** All four audit
 scopes were re-run against the tree the v2.7.x and v2.8.x lines left: 139 ledger

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.8.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,19 +674,20 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
+RustyNES's current release is **v2.9.0 "Survey"** (2026-09-26) — every audit re-checked, and the SuperStation One surveyed: a Power Cycle no longer erases your save, the off-die MiSTer build boots without the menu core, and 39 new audit findings are fixed or dispositioned. Built on **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
 
-v2.8.4 closes the v2.8.x audit line with the MiSTer core's off-die (SDRAM)
-build, v3.0.0's secondary bitstream: its SDRAM reads now happen on the clock
-edge the memory presents them (the model and controller shared a one-clock
-error that only the new SDRAM timing constraints exposed), both builds are
-swept across five fitter seeds and pinned at seed 5, and the co-simulation
-ladder runs all 165 gates from a clean checkout. The SDRAM constraints are
-provisional until the SuperStation One's memory is read at v2.9.2. The
-emulator does not change; the accuracy numbers below were measured on
-v2.8.2's tree, the last that changed it: AccuracyCoin 144/144 and nestest
-pass, and the full `--features test-roms` suite passes 2,756 tests. **No
-hardware has run any bitstream.** v2.8.3 released every reset on the clock
+v2.9.0 re-ran all four audits against the tree v2.7.x and v2.8.x left: 139
+ledger rows re-verified with none regressed, and 39 new findings fixed or
+dispositioned (`docs/audits/`). The worst: a Power Cycle erased the battery
+save, a crafted HD pack or BPS patch could crash the app or exhaust memory,
+Lua scripts could escape their instruction budget through finalizers and
+pattern matching, a failed save-state load (every RetroArch load among them)
+could leave a half-restored machine, and the off-die MiSTer build lost ROM
+bytes and hung under `bootcore=`. AccuracyCoin 144/144 and nestest pass, the
+full `--features test-roms` suite passes 2,802 tests, and the co-simulation
+passes 171 gates on-die and 172 off-die with one expected failure each. **No
+hardware has run any bitstream.** v2.8.4 closed the v2.8.x line with the
+MiSTer core's off-die (SDRAM) build, v3.0.0's secondary bitstream. v2.8.3 released every reset on the clock
 that uses it and made the CPU about 4% smaller, v2.8.2
 corrected the core's on-die RTL (and found the emulator's MMC1 wrong),
 v2.8.1 closed the libretro half of the line, and v2.8.0
