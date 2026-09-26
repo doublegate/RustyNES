@@ -43,6 +43,14 @@ does not change. **No hardware has run any bitstream.**
   shipped clock uses latency 2, where it happened not to matter). The model
   now applies the read mask with the part's latency; before the fix every
   read at latency 3 returned zero.
+- **The SDRAM controller reads data on the edge the part presents it.**
+  The co-simulation's SDRAM model delivered read data one clock later than
+  the datasheet, and the controller was written to match, so every test
+  passed while real hardware would have read after the part had released
+  the bus. The timing analysis found it once the SDRAM pins had
+  constraints: the read-data capture failed by 11 ns. The model now follows
+  the datasheet, the controller samples a clock earlier (reads are one clock
+  faster), and the constraints say which edge captures the data.
 - **The SDRAM arbiter returns the right byte, and cannot lose a write.** A
   request arriving while the same source was being served changed which
   byte of the answer it received, and a write strobe on the cycle the
