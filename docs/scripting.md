@@ -86,6 +86,18 @@ limits (frontend audit SEC-02 / SEC-03):
 - **The heap is capped at 64 MiB.** An allocation past it fails with a Lua
   memory error rather than exhausting the host.
 
+The v2.9.0 re-audit found more code the budget could not reach, and v2.9.0
+closes it on the native backend:
+
+- **No `__gc` finalizers (re-audit NF-01).** Lua 5.4 runs a `__gc` metamethod
+  with debug hooks switched off, so the budget hook never fires inside one, and
+  a finalizer runs in whatever GC step reaches it (under the emulator lock) and
+  again when the engine is closed (on **Stop**). An endless finalizer froze the
+  app, and pressing Stop froze it again. `setmetatable` now raises an error for
+  any metatable that carries a `__gc` key. That is sufficient because Lua arms a
+  finalizer only if `__gc` is present when `setmetatable` runs; adding it to the
+  metatable afterwards is inert, and a test pins that.
+
 ## Loading a script
 
 Open the console: **Debug → Lua Script** (or the toolbar "Lua" checkbox in the

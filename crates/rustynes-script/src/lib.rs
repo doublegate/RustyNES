@@ -783,6 +783,99 @@ mod tests {
         assert!(lines[0].ends_with(" [truncated]"), "the cut is marked");
     }
 
+    /// Run `f` on its own thread and wait at most `secs` for it to return.
+    ///
+    /// The v2.9.0 re-audit's hangs (NF-01, NF-02) are loops the budget hook
+    /// cannot see, so a test that simply called the engine would never finish
+    /// on a regressed tree: the run would stall instead of failing. Here a hang
+    /// is a FAILURE after `secs`. The runaway thread is abandoned, and dies with
+    /// the test process.
+    #[cfg(not(feature = "script-wasm"))]
+    fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(secs))
+            .unwrap_or_else(|e| panic!("did not return within {secs} s ({e:?}): a hang"))
+    }
+
+    /// v2.9.0 re-audit NF-01: Lua 5.4 runs a `__gc` finalizer with debug hooks
+    /// switched off, so the budget hook never fires inside one. A finalizer
+    /// runs during any GC step (so inside `load` / `on_frame`, under the
+    /// host's emulator lock) and at `lua_close` (so when the engine is dropped,
+    /// which the desktop does on Stop). An endless finalizer hung both.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_gc_finalizer_cannot_hang_a_load() {
+        let r = within(10, || {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            eng.load(
+                "setmetatable({}, {__gc = function() while true do end end}) \
+                 for i = 1, 20000 do local t = {} end",
+            )
+            .map_err(|e| e.to_string())
+        });
+        let err = r.expect_err("a metatable carrying __gc is refused");
+        assert!(err.contains("__gc"), "{err}");
+    }
+
+    /// NF-01, the `lua_close` half: dropping the engine runs every pending
+    /// finalizer, with no hook at all, on whichever thread drops it.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn dropping_an_engine_cannot_run_a_script_finalizer() {
+        within(10, || {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            let _ = eng.load("keep = setmetatable({}, {__gc = function() while true do end end})");
+            drop(eng);
+        });
+    }
+
+    /// NF-01: the fix refuses `__gc` at `setmetatable` time only. That is
+    /// sufficient because Lua marks an object for finalization only when its
+    /// metatable already carries `__gc` as `setmetatable` runs (Lua 5.4 manual
+    /// §2.5.3). This pins that claim rather than trusting it: a `__gc` added to
+    /// the metatable afterwards, even on the table that is then collected and
+    /// on the engine that is then closed, must never run.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_gc_field_added_after_setmetatable_is_never_honoured() {
+        within(10, || {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            eng.load(
+                "local mt = {} \
+                 keep = setmetatable({}, mt) \
+                 local t = setmetatable({}, mt) \
+                 mt.__gc = function() while true do end end \
+                 rawset(mt, '__gc', mt.__gc) \
+                 t = nil \
+                 for i = 1, 20000 do local x = {} end",
+            )
+            .expect("adding __gc afterwards is inert, not an error");
+            drop(eng);
+        });
+    }
+
+    /// NF-01: an ordinary metatable still works, and a `__gc` key is refused
+    /// whatever its value (Lua marks for finalization on the key's presence).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn setmetatable_still_works_without_gc() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "local t = setmetatable({}, {__index = function(_, k) return k .. '!' end}) \
+             emu.log(t.hi) \
+             emu.log(tostring(getmetatable(t) ~= nil)) \
+             emu.log(tostring(pcall(setmetatable, {}, {__gc = true})))",
+        )
+        .expect("loads");
+        assert_eq!(eng.drain_log(), vec!["hi!", "true", "false"]);
+    }
+
     /// The cut lands on a character boundary: 'é' is two bytes, and 4096 is
     /// even, so an odd offset forces the step back (a mid-char `truncate`
     /// panics).

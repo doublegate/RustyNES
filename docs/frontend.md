@@ -2218,6 +2218,13 @@ full `emu` API (memory access, CPU state, `onFrame` / `onExec` / `onRead` /
 [scripting.md](scripting.md); `examples/scripts/` ships `hud.lua` and
 `ram_watch.lua`.
 
+The sandbox's limits, and the audits that set them, are listed in
+[scripting.md](scripting.md): a per-frame instruction budget that no catcher
+can swallow (SEC-03), a 64 MiB Lua heap (SEC-02), and, from v2.9.0, no `__gc`
+finalizers (re-audit NF-01), because Lua runs a finalizer with the budget hook
+switched off, under the emulator lock, and again on **Stop** when the engine is
+dropped.
+
 ## In-app Documentation (v1.5.0 "Lens" Workstream I10, native; overhauled in v1.7.0 beta.5 #53)
 
 **Help -> Documentation** opens a searchable egui manual

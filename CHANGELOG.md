@@ -127,6 +127,17 @@ cycle-accurate core later replaced.
   in the window, as the hardware does. Every image that ran before runs
   identically.
 
+||||||| parent of 30a7f002 (fix(script): refuse __gc metatables, which run outside the budget)
+
+### Security
+
+- **A Lua script can no longer install a `__gc` finalizer.** Lua runs a
+  finalizer with its debug hooks switched off, so the per-frame instruction
+  budget could not stop one: an endless finalizer froze the app while it held
+  the emulator lock, and pressing Stop, which closes the script, froze it
+  again. `setmetatable` now refuses a metatable carrying `__gc` (v2.9.0
+  re-audit NF-01).
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die

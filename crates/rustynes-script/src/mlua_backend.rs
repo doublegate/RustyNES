@@ -1205,6 +1205,51 @@ impl MluaBackend {
         Ok(())
     }
 
+    /// v2.9.0 re-audit NF-01 — refuse any metatable that carries `__gc`.
+    ///
+    /// Lua 5.4 calls a `__gc` finalizer with debug hooks switched off (the
+    /// collector clears the state's `allowhook` for the call), so the budget
+    /// hook that bounds every other piece of script code never fires inside
+    /// one. A finalizer runs in whichever GC step the collector reaches it —
+    /// that is, inside `load` / `on_frame`, which the host runs under its
+    /// emulator lock — and again at `lua_close`, when the engine is dropped.
+    /// `setmetatable({}, {__gc = function() while true do end end})` therefore
+    /// froze the desktop app, and pressing Stop (which drops the engine) froze
+    /// the UI thread instead. No budget design can reach code the VM runs with
+    /// hooks off, so the capability itself is removed.
+    ///
+    /// Refusing at `setmetatable` time is sufficient: Lua marks an object for
+    /// finalization only if its metatable holds a `__gc` field when
+    /// `setmetatable` is called (manual §2.5.3), and it looks that field up
+    /// raw, so neither a later `mt.__gc = f` / `rawset` nor an `__index` on the
+    /// metatable can arm one (`a_gc_field_added_after_setmetatable_is_never_honoured`
+    /// pins this). The key's presence is what counts, not its value, so any
+    /// `__gc` key is refused. The other routes to a metatable are closed
+    /// already: `debug` (with `debug.setmetatable`) is never loaded, and
+    /// `setmetatable` is the only base function that sets one; mlua's own
+    /// userdata finalizers are Rust `Drop`s, not script code.
+    ///
+    /// Like [`Self::install_budget_guards`], the original is captured as an
+    /// upvalue at VM creation, before any user code exists to keep a reference
+    /// to it.
+    fn install_gc_guard(&self) -> Result<(), ScriptError> {
+        self.lua
+            .load(
+                r"
+                local raw_setmetatable, raw_rawget, raw_type = setmetatable, rawget, type
+                setmetatable = function(t, mt)
+                    if raw_type(mt) == 'table' and raw_rawget(mt, '__gc') ~= nil then
+                        error('setmetatable: __gc metamethods are not allowed in the script sandbox', 2)
+                    end
+                    return raw_setmetatable(t, mt)
+                end
+                ",
+            )
+            .set_name("=gc-guard")
+            .exec()?;
+        Ok(())
+    }
+
     /// Install the per-frame instruction-budget hook (and reset the counter).
     fn arm_hook(&self) -> Result<(), ScriptError> {
         self.instr_count.set(0);
@@ -1344,6 +1389,7 @@ impl VmBackend for MluaBackend {
         engine.install_prelude()?;
         engine.install_platform_tables()?;
         engine.install_budget_guards()?;
+        engine.install_gc_guard()?;
         Ok(engine)
     }
 
