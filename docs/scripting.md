@@ -70,6 +70,20 @@ The runaway-loop guard is shared in spirit: piccolo's `Fuel` is fed the same
 per-frame instruction budget (`DEFAULT_INSTRUCTION_BUDGET`, 1,000,000), and
 exhaustion surfaces as a `ScriptError::Budget`.
 
+**The piccolo backend has no heap limit (v2.9.0 re-audit NF-09).** The 64 MiB
+limit below (SEC-02) is native-only. piccolo 0.3.3 allocates through a
+`gc-arena` 0.5.3 arena that reports how much it holds (`Lua::gc_metrics()`) but
+offers no limit, no fallible allocation and no allocator hook, so an allocation
+cannot be refused: a script that keeps growing a string (piccolo has no
+`string.rep`, but `..` allocates) can exhaust the browser tab's memory. A
+check of the reported total between small fuel slices could abort such a
+script after the fact; it is not built, and would be weaker than SEC-02, not
+equal to it. The exposure is the user's own tab, with an experimental,
+off-by-default feature. The host-queue bounds do apply (the log and draw count
+caps, and the 4 KiB `drawText` clip from NF-03); the NF-01 and NF-02 holes do
+not exist here, since piccolo runs no `__gc` finalizers and has no C pattern
+functions.
+
 On the native (mlua) backend, v2.7.3 closed three ways around the sandbox's
 limits (frontend audit SEC-02 / SEC-03):
 

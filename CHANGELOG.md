@@ -163,6 +163,15 @@ cycle-accurate core later replaced.
   100 ms, and the request queue is limited to 256 entries, refusing the
   excess as a failed request instead of blocking (v2.9.0 re-audit NF-08).
 
+### Documentation
+
+- **The experimental wasm Lua backend's missing heap limit is documented.**
+  The 64 MiB script heap limit applies to the native backend only; the
+  browser backend's VM (piccolo) offers no way to refuse an allocation.
+  `docs/scripting.md`, `docs/frontend.md` and the backend's own module docs
+  now say so, rather than implying the limit covers both (v2.9.0 re-audit
+  NF-09).
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die

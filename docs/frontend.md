@@ -2229,7 +2229,12 @@ and a bound on every string a script copies into host memory (overlay text,
 `comm.*` payloads and queue, the MMF map, `userdata.*`), which the Lua heap
 limit does not reach (re-audit NF-03). With `script-ipc`, **Stop** also drops
 the IPC host, cancelling the stopped script's `comm.*` backlog, and the host's
-bounded queue never blocks the frame thread (re-audit NF-08).
+bounded queue never blocks the frame thread (re-audit NF-08). These limits
+are the native (mlua) backend's. The experimental wasm backend (piccolo,
+`script-wasm`) shares the fuel budget and the host-queue caps but has **no heap
+limit**: SEC-02 does not cover it, because piccolo's arena offers no way to
+refuse an allocation (re-audit NF-09; the detail is in
+[scripting.md](scripting.md) and `piccolo_backend.rs`).
 
 ## In-app Documentation (v1.5.0 "Lens" Workstream I10, native; overhauled in v1.7.0 beta.5 #53)
 
