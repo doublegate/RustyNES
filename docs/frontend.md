@@ -2097,6 +2097,14 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   file; if the movie runs to the game's own save routine, the next comparison
   writes that, exactly as the game would.
 
+  **TAStudio opens at power-on (v2.9.0, NF-10, maintainer decision).** A
+  `TAStudio` project exports as a power-on movie, so opening the panel now
+  restarts the game through the same `power_on_for_movie` and anchors frame 0
+  there (`TasEditor::new_from_power_on`). It used to anchor on the running game,
+  so a project started mid-game exported a movie that replayed from power-on
+  instead; `the_frame0_anchor_is_the_state_the_exported_movie_starts_from` pins
+  it.
+
   *Correction:* v2.7.3 recorded this as a known limitation, saying playback
   "power-cycles the console, which does not clear cartridge RAM". That was
   wrong in the other direction: the power cycle did clear it, battery RAM

@@ -3330,9 +3330,14 @@ impl App {
     }
 
     /// v1.6.0 "Studio" A2 — lazily start a `TAStudio` session when the window is
-    /// first opened on a loaded ROM. The current emulator state becomes the
-    /// project's frame-0 anchor (non-destructive: we do not power-cycle the
-    /// running game). No-op if a session is already active or no ROM is loaded.
+    /// first opened on a loaded ROM. No-op if a session is already active or no
+    /// ROM is loaded.
+    ///
+    /// v2.9.0 (NF-10, maintainer decision): the project's frame-0 anchor is a
+    /// clean POWER-ON, so opening the panel restarts the game. Until v2.9.0 the
+    /// running state became the anchor ("non-destructive: we do not power-cycle
+    /// the running game"), while the project still exported as a power-on movie,
+    /// which then replayed from somewhere other than what was edited.
     fn ensure_tas_editor(&mut self) {
         use crate::debugger::DebuggerOverlay;
         // Greenzone budget + keyframe spacing for the editing session. 256 MiB
@@ -3348,12 +3353,36 @@ impl App {
             return; // no overlay to host it, or a session already exists
         }
         let editor = {
-            let guard = self.emu.lock();
-            let Some(nes) = guard.nes.as_ref() else {
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            let Some(nes) = emu.nes.as_mut() else {
                 return; // no ROM loaded — nothing to anchor on
             };
-            crate::tastudio::TasEditor::new(nes, TAS_GREENZONE_BUDGET, TAS_CAPTURE_INTERVAL)
+            // v2.9.0 NF-10 (maintainer decision): anchor on a clean power-on,
+            // the state the project's exported power-on movie starts from.
+            // Until v2.9.0 this anchored on the RUNNING game, so an export
+            // replayed from somewhere other than what was edited. Opening the
+            // panel therefore restarts the game, like starting a recording.
+            let editor = crate::tastudio::TasEditor::new_from_power_on(
+                nes,
+                TAS_GREENZONE_BUDGET,
+                TAS_CAPTURE_INTERVAL,
+            );
+            // The power cycle rebuilt the APU at its defaults; re-push the
+            // user's per-channel mute mask and gain, as `do_power_cycle` does
+            // (output-only; defaults are byte-identical).
+            nes.set_apu_channel_mask(self.config.audio.channel_mask);
+            nes.set_apu_channel_gain(self.config.audio.channel_gain);
+            // A cold boot restarts the session timeline and the pacing, as
+            // `do_power_cycle` and a power-on recording do.
+            emu.history.clear();
+            emu.reset_lag_frames();
+            emu.next_frame_time = Some(Instant::now());
+            editor
         };
+        eprintln!("rustynes: TAStudio opened -- the console restarted from power-on (frame 0)");
+        #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+        self.reset_ra();
         if let Some(d) = self.debugger.as_mut() {
             d.set_tas_editor(editor);
         }

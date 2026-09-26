@@ -256,6 +256,22 @@ impl TasEditor {
         }
     }
 
+    /// v2.9.0 NF-10 — bring `nes` to the power-on state every
+    /// [`StartPoint::PowerOn`] movie starts from
+    /// ([`rustynes_core::power_on_for_movie`]) and anchor a new editor on it.
+    ///
+    /// What the app opens `TAStudio` with. [`Self::new`] anchors on whatever
+    /// state it is handed, and [`Self::to_movie`] always exports a power-on
+    /// movie, so anchoring on a game in progress -- which the app did until
+    /// v2.9.0 -- exported a movie that could not replay what was edited. The
+    /// cost is that opening the panel restarts the game (maintainer decision,
+    /// 2026-09-26).
+    #[must_use]
+    pub fn new_from_power_on(nes: &mut Nes, budget_bytes: usize, capture_interval: usize) -> Self {
+        rustynes_core::power_on_for_movie(nes);
+        Self::new(nes, budget_bytes, capture_interval)
+    }
+
     /// Bump the TAS re-record tally (saturating). Called by each input-log edit.
     const fn bump_rerecord(&mut self) {
         self.rerecord_count = self.rerecord_count.saturating_add(1);
@@ -799,6 +815,38 @@ mod tests {
     /// Review finding — the edit `revision` bumps on every snapshot-relevant
     /// mutation and stays put when nothing changed, so the host can skip the
     /// per-frame snapshot rebuild for an idle editor.
+    /// v2.9.0 NF-10 (maintainer decision: anchor on power-on). A `TAStudio`
+    /// project exports as a `StartPoint::PowerOn` movie (`to_movie`), so its
+    /// frame-0 anchor must BE the power-on state -- the state
+    /// `Movie::seek_to_start` reconstructs. The app used to anchor on the
+    /// running game, so a project opened mid-game exported a movie that
+    /// replayed from somewhere else entirely.
+    #[test]
+    fn the_frame0_anchor_is_the_state_the_exported_movie_starts_from() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        for _ in 0..30 {
+            nes.run_frame(); // a game already in progress
+        }
+        let ed = TasEditor::new_from_power_on(&mut nes, 1 << 20, 16);
+        let (frame, anchor) = ed
+            .greenzone
+            .nearest_at_or_before(0)
+            .expect("frame 0 is anchored");
+        assert_eq!(frame, 0);
+
+        let movie = ed.to_movie(nes.region(), *nes.rom_sha256());
+        let mut replay = Nes::from_rom(&rom).unwrap();
+        for _ in 0..7 {
+            replay.run_frame(); // a different history, which the seek must erase
+        }
+        movie.seek_to_start(&mut replay).unwrap();
+        assert!(
+            anchor == replay.snapshot(),
+            "frame 0 is where the movie starts"
+        );
+    }
+
     #[test]
     fn revision_tracks_snapshot_relevant_mutations() {
         let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
