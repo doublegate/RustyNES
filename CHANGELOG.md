@@ -26,7 +26,14 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### RTL robustness on the MiSTer core (v2.8.3, in progress)
+## [2.8.3] - 2026-09-25 - "Rivet" (the MiSTer core's reset, area and comments, measured)
+
+The fourth release of the v2.8.x line: the RTL audit's robustness rows for
+the MiSTer core. The emulator does not change. The core's bitstream is
+re-cut at fitter seed 4 (+0.443 ns setup / +0.046 ns hold). **No hardware
+has run any bitstream.**
+
+### The MiSTer core
 
 - **Every reset in the MiSTer core is released on the clock that uses it.**
   The console, the save controller and the SDRAM path cleared asynchronously
@@ -48,6 +55,12 @@ cycle-accurate core later replaced.
   zero that cannot be built, and a superseded plan cited as current. A block
   indented as if gated by the PPU's dot enable, which it is not, is
   re-indented.
+- **The MiSTer core's co-simulation ladder runs whole from a fresh
+  checkout.** Run from a clean tree it silently skipped 19 gates (two
+  third-party batteries looked in the wrong directory, and the mapper ROMs
+  were never built), and the provenance check failed on two goldens whose
+  ROMs are built later in the run. Each is fixed, and no gate reports a pass
+  without saying what it compared.
 
 ## [2.8.2] - 2026-09-25 - "Solder" (the MiSTer core's on-die RTL, corrected against the oracle and the wiki)
 

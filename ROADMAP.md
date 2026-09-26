@@ -2,13 +2,13 @@
 
 **Document Version:** 2.0.4
 **Last Updated:** 2026-09-24
-**Project Status:** v2.8.2 "Solder" released — the MiSTer core's on-die RTL, corrected against the oracle and the wiki, the first RTL release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is planned for v3.0.0.
+**Project Status:** v2.8.3 "Rivet" released — the MiSTer core's reset, area and comments, measured, the second RTL release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is planned for v3.0.0.
 
 ---
 
 ## Where we are
 
-RustyNES is well past v1.0.0. The current release is **v2.8.2 "Solder"** — the MiSTer core's on-die RTL, corrected against the oracle and the wiki: an MMC3 IRQ acknowledge is no longer lost to a same-edge counter clock, SNROM's battery RAM obeys its CHR-line enable, the triangle and noise drop a reload landing on a length clock, a `$2002` read leaves the byte it returned on the data bus, and the emulator's MMC1 no longer ignores a reset written on the cycle after another write. Built on **v2.8.1 "Gasket"** — the libretro core fits the frontends around it: four-player games work through a Four Score option, a controller works again after its port leaves the Zapper, RetroArch no longer reads past the core's input-descriptor list, expansion audio no longer clips, the core declares UNIF images, and the Makefile honours PREFIX, platform=win, DEBUG and CARGO_TARGET_DIR. **No hardware has run any bitstream.**
+RustyNES is well past v1.0.0. The current release is **v2.8.3 "Rivet"** — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs whole from a fresh checkout. Built on **v2.8.2 "Solder"** — the MiSTer core's on-die RTL, corrected against the oracle and the wiki: an MMC3 IRQ acknowledge is no longer lost to a same-edge counter clock, SNROM's battery RAM obeys its CHR-line enable, the triangle and noise drop a reload landing on a length clock, a `$2002` read leaves the byte it returned on the data bus, and the emulator's MMC1 no longer ignores a reset written on the cycle after another write. **No hardware has run any bitstream.**
 
 **This root ROADMAP is a historical snapshot of the v1.0.0 cut.** For the authoritative, current forward roadmap see **[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)**; for the authoritative current-state pass counts and platform matrix see **[`docs/STATUS.md`](docs/STATUS.md)**; for the full per-release history see **[`CHANGELOG.md`](CHANGELOG.md)**. Many of the "post-1.0 directions" listed further down (mobile, Lua scripting, TAS editor, Vs. DualSystem, HD packs, hosted netplay) have since shipped — the tables below record what was **done at v1.0.0**, not the current feature set.
 
