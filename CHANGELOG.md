@@ -26,6 +26,81 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+The first release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
+**every audit re-checked, and the SuperStation One surveyed.** All four audit
+scopes were re-run against the tree the v2.7.x and v2.8.x lines left: 139 ledger
+rows re-verified, **none regressed**, and 39 new findings, each fixed red-first
+or dispositioned in its ledger (`docs/audits/`). Two more defects were found by
+the release's own work, the worst of them a Power Cycle that erased the player's
+save. Emulation output does not change: the full `--features test-roms` suite
+passes 2,802 tests with AccuracyCoin 144/144 and nestest 0-diff. **No hardware has
+run any bitstream.**
+
+### Saves and movies
+
+- **A Power Cycle no longer erases your save.** Power-cycling (F3, or the
+  menu) rebuilt the cartridge with all of its RAM cleared, battery included;
+  since v2.7.3 the desktop writes that RAM to the `.sav` whenever it changes,
+  so the next write replaced the player's save with zeros. Mobile, which
+  persists saves since v2.7.4, had the same defect. Battery-backed RAM now
+  survives a power cycle, as it does on a console.
+- **Power-on movies start from cleared save RAM** (maintainer decision), so a
+  movie replays the same whether or not a save exists. Recording and playback
+  both go through `rustynes_core::power_on_for_movie`. v2.7.3's note that
+  power-on movies "inherit a loaded `.sav`" was wrong in the other direction
+  and is corrected in `docs/frontend.md`.
+- **Opening TAStudio restarts the game from power-on** (maintainer decision).
+  A project exports as a power-on movie, but the editor anchored its frame 0
+  on the running game, so an export replayed from somewhere else.
+
+### HD packs and patches
+
+- **A malformed `<overscan>` line can no longer crash the app** on every frame
+  (`<overscan>300,0,0,0` indexed past the framebuffer; the desktop release
+  aborts on a panic). Margins that leave no frame are refused.
+- **HD packs are bounded in every input**: `hires.txt` at 32 MiB (a 509 KiB zip
+  used to reach 533 MiB), HD-audio tracks at 15 minutes each and 512 MiB of
+  decoded audio per pack, and a file named by several declarations is decoded
+  once (four declarations of one long track reached 2.6 GiB).
+- **A BPS patch can no longer grow the ROM without bound**: a 27-byte patch
+  beside a ROM took the loader to 1 GiB before failing.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **The off-die build boots without the menu core.** The HPS reports the SDRAM
+  size only if the menu core measured it since power-on, so a `bootcore=`
+  autoboot left the off-die build in reset forever. The core now tests the
+  memory itself when the HPS has not answered (`rtl/sdram_probe.sv`), with
+  patterns an empty socket cannot pass.
+- **The off-die ROM download no longer loses bytes.** At full rate the bridge
+  lost 164 of 512 bytes without reporting them; it now makes the HPS wait
+  (`ioctl_wait`) and loses none, including bytes sent during the memory's
+  power-up.
+- **The SDRAM read timing is checked at the right edge.** A hold constraint
+  put the check one clock early, reporting +12.8 ns where the real margin is
+  +1.18 ns; the path is now reported by name after every off-die compile and
+  a non-physical hold slack fails.
+- **NES 2.0 headers are read correctly, and images the build cannot hold are
+  refused** with an OSD message: a correct NES 2.0 image of mapper 71 was
+  accepted as mapper 7, and a 512 KiB game loaded on the die with its upper
+  half over its lower. MMC1 over 256 KiB (SUROM) and trainer images are
+  refused too.
+- **The SDRAM module gates run in the ladder and CI** (they ran nowhere), the
+  top level is width-linted in both build configurations, and four stale
+  comments on the SDRAM path are corrected.
+- **SuperStation One:** this core needs its own `yc.txt` line,
+  `RustyNES_60.1=183251937963` (its video clock is 6x the colour subcarrier,
+  not the NES core's 12x); `docs/HARDWARE_TESTING.md` now says so, with
+  corrected DIP, encoder, scandoubler and power guidance.
+
+### Decisions recorded
+
+- **[ADR 0042](docs/adr/0042-v3-removes-the-v2-7-5-deprecations-and-the-dead-nmi-edge-detector.md):
+  v3.0.0 removes** the items v2.7.5 deprecated and the dead NMI edge detector,
+  whose fields are in the `.rns` BUS section, **and renames `LockstepBus`**.
+  Nothing is removed in v2.9.x.
+- The v2.7.4 mobile device checklist moves to its own release, v2.9.3.
+
 ### The libretro core
 
 - **Only a cartridge with a battery gets a `.srm`.** The core handed
@@ -127,9 +202,7 @@ cycle-accurate core later replaced.
   in the window, as the hardware does. Every image that ran before runs
   identically.
 
-||||||| parent of 30a7f002 (fix(script): refuse __gc metatables, which run outside the budget)
-
-### Security
+### Lua scripting
 
 - **A Lua script can no longer install a `__gc` finalizer.** Lua runs a
   finalizer with its debug hooks switched off, so the per-frame instruction
@@ -154,16 +227,12 @@ cycle-accurate core later replaced.
   `userdata.*` to 1 MiB per value and 16 MiB in all, with an error when a
   value is refused (v2.9.0 re-audit NF-03).
 
-### Fixed
-
 - **Stopping a Lua script stops its network requests.** With `script-ipc`,
   a stopped script's queued `comm.*` requests kept going out, and loading
   the next script could freeze the window for 20 seconds per request still
   queued. Stop now cancels the backlog, dropping the IPC host waits at most
   100 ms, and the request queue is limited to 256 entries, refusing the
   excess as a failed request instead of blocking (v2.9.0 re-audit NF-08).
-
-### Documentation
 
 - **The experimental wasm Lua backend's missing heap limit is documented.**
   The 64 MiB script heap limit applies to the native backend only; the
