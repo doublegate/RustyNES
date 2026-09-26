@@ -54,3 +54,35 @@ citations of `AGENTS.md`.
 | F-08 | Kaiser KS202 (mapper 56) `$6000-$7FFF` work RAM was read-only (not in the report) | FIXED | Found by `prg_ram_window_open_bus.rs`: the read path served `wram`, but no write path existed, so the game's work RAM stayed zero. `nesdev_wiki/INES_Mapper_056`: "8 KB PRG RAM bank (not battery backed!)". Write path added; `sram()` stays empty by design (no battery), recorded in the battery sweep's exceptions. Mutation CAUGHT | v2.7.2 | |
 | F-09 | Kaiser KS7032 (mapper 142) `$6000-$7FFF` modelled as RAM-or-ROM on register 4 bit 2 (not in the report) | OPEN | `nesdev_wiki/INES_Mapper_142` gives that window an 8 KiB switchable PRG-ROM bank selected by register 4. The model reads a zero work RAM there until register 4 bit 2 selects ROM. A modelling divergence rather than open bus; left for a release that can check it against a game. Named in `prg_ram_window_open_bus.rs`'s allow-list so it cannot pass silently | TBD | |
 | F-10 | Five boards' documented `$6000-$7FFF` RAM missing from the model (not in the report) | FIXED | Exposed by comparing the commercial-ROM suite on `main` and on the §5.5 change: games on mappers 156, 177, 227, 241 and 245 changed behaviour, and all five wiki pages document RAM there that the model never had (writes vanished; reads were a made-up `$00`, then open bus). Added, 8 KiB each: 156 ("8 KiB RAM"), 177 and 245 (battery-backed, always the save), 241 ("can be battery-backed", the save when the header says so), 227 (only the battery-backed FW-01 variant has it, so it exists only with a battery header). Each saves its RAM as an appended block; a pre-v2.7.2 blob loads with it zeroed (`tests/documented_wram.rs`). The battery sweep's reach rose from 43 to 51 images. **Not done:** the other MMC3 clones whose boards document WRAM (mapper 52's 7-in-1) put board registers in the same window; that overlap needs its own decode | v2.7.2 | |
+
+## v2.9.0 re-audit
+
+Report: [`v2.9.0-core-reaudit.md`](v2.9.0-core-reaudit.md) (a Claude subagent,
+read-only; probes built outside the repository against the crates by path).
+
+**Rows above: 39 re-verified; all HOLD, 0 REGRESSED, 0 CHANGED.** Items the
+re-audit raised about held rows: §3.1 / §4.2-§4.4 (the dead NMI-edge machinery,
+`ApuBus`, the 18 deprecated `Bus` methods, and the `LockstepBus` name) are
+DECIDED by [ADR 0042](../adr/0042-v3-removes-the-v2-7-5-deprecations-and-the-dead-nmi-edge-detector.md):
+removed / renamed at v3.0.0. §6.2's review is recorded above. F-09 stays OPEN.
+F-05's clock check was bypassable (NC-04 below).
+
+The fixes were made by a Claude subagent in a worktree and fast-forwarded; each
+was shown red first and mutation-checked (commit bodies carry the evidence).
+
+| id | finding | verdict | evidence | release | commit |
+|---|---|---|---|---|---|
+| NC-03 | A failed QUIET restore left a half-applied machine (libretro routes every user load through it) | FIXED | `restore_inner` takes the rollback backup on both paths (a pooled `restore_backup`, no thumbnail). Red: `a_failed_quiet_restore_leaves_the_machine_untouched` (stale CPU version, clock skew); libretro `a_rejected_unserialize_leaves_the_machine_as_it_was` (single + dual). Backup ~22 us against ~850 us for the restore (loaded host; not an ab_check A/B). The ROM-hash check was decided AGAINST: the tag hashes the whole file including the header, so it would reject a legitimate state after a header-only fix | v2.9.0 | `c7c895eb` |
+| NC-05 | Vs. `DualSystem` restore not atomic across its two consoles | FIXED | Main is snapshotted first and rolled back if the sub block fails. Red: `a_dual_restore_with_a_rejected_sub_block_changes_neither_console` (main left at cycle 148,905) | v2.9.0 | `c7c895eb` |
+| NC-04 | Both clocks near `u64::MAX` passed F-05's skew check and froze the PPU | FIXED | `RESTORED_CLOCK_MAX = 1<<62` on the larger clock (~6,800 years of NTSC master clock, ~20,000 more before a wrap). Red: "at the ceiling: the PPU stopped" | v2.9.0 | `15a42a98` |
+| NC-01 | Multicarts 46, 57, 58, 61, 62, 202, 212 indexed past an undersized PRG-ROM | FIXED | The six 32 KiB-window sites index modulo `prg_rom.len()` (identity for every image that fits). Red: `tests/undersized_prg.rs` failed on exactly the audit's set; Provenance header untouched | v2.9.0 | `cfac3574` |
+| NC-02 | GTROM (111) accepted any bank values from a save state, then panicked | FIXED | All three banks validated before any is assigned; red at mapper and whole-machine level | v2.9.0 | `6510976a` |
+| NC-06 | Mapper 286 DIP unbounded on restore (debug-build shift overflow) | FIXED | DIP must be 0-3 (the four settings on nesdev's mapper 286 page, fetched: not in the vendored wiki). Tests assert load-time rejection; the debug panic itself was not reproduced by them | v2.9.0 | `c1b1c05a` |
+| NC-07 | FDS audio prescaler unbounded on restore | FIXED | Must be < 16, checked before assignment; `fds.rs`'s Provenance header untouched | v2.9.0 | `c1b1c05a` |
+| NC-08 | `docs/frontend.md` called the Zapper light model opt-in | FIXED (docs) | Default-on since v2.3.6, confirmed in code; old sentence quoted | v2.9.0 | `dfdeca84` |
+| — | The `save_state` fuzz target reached only an NROM machine | FIXED | Eight base machines (NROM, MMC1, MMC3, MMC5, VRC6, FME-7, GTROM, BS-5). Positive control: against the NC-02 mutant a 300 s run found nothing, while replaying single-byte `0xFF` patches over the GTROM base crashed at once -- "reachable is not found", recorded in `docs/agents/measurement-discipline.md`. 240 s clean on the fixed tree | v2.9.0 | `af777583` |
+| — | Power Cycle zeroed battery RAM (desktop and mobile then persisted the zeros) | FIXED | See the frontend ledger; the defect was in `Bus::power_cycle` | v2.9.0 | `5d5fd231` |
+
+Not done: the dual restore still allocates its main backup per call (with NL-09
+at v2.9.1). The `vs_dualsystem` ROM suite needs local dumps; only the synthetic
+dual suite exercised the dual path here.
