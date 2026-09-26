@@ -65,7 +65,7 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 | Version | Scope | Plan |
 |---------|-------|------|
 | v2.8.x | The **libretro and RTL audits**: FFI safety and build fixes in the libretro core; RTL correctness and robustness; the off-die SDRAM build; one seed sweep per build at the line's close | [`v2.8.x-libretro-rtl-audit-plan.md`](to-dos/plans/v2.8.x-libretro-rtl-audit-plan.md) |
-| v2.9.x | **Re-audit, optimise, and the board**: the audits re-run against the fixed tree, final seed sweeps, the release-candidate `.rbf` pair, and the bring-up on the SuperStation One | [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) |
+| v2.9.x | **Re-audit, optimise, and the board**: the audits re-run against the fixed tree, final seed sweeps, the release-candidate `.rbf` pair, the bring-up on the SuperStation One, and (v2.9.3) the v2.7.4 mobile device checklist | [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) |
 | v3.0.0 | **The SuperStation One core**: the first hardware-verified FPGA bitstream. On-die `.rbf` as the headline, off-die as a labelled secondary; a MAJOR bump under [ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md) | [`v3.0.0-superstation-core-plan.md`](to-dos/plans/v3.0.0-superstation-core-plan.md) |
 
 ### Post-1.0 release line (v1.1.0 → current)
