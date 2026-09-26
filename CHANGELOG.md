@@ -108,6 +108,10 @@ cycle-accurate core later replaced.
   clocks sat just below the largest value they can hold loaded, then wrapped
   within a frame and stopped the PPU for good. States with clocks beyond
   what 6,800 years of emulation would reach are now refused.
+- **A corrupt GTROM (mapper 111) save state is refused instead of crashing
+  the emulator.** Its bank numbers were loaded unchecked, so the load
+  succeeded and the next frame crashed. A state naming a bank the board does
+  not have is now rejected, and the game keeps running.
 
 ### Mappers
 

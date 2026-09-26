@@ -3779,6 +3779,57 @@ mod tests {
         out
     }
 
+    /// `blob` with byte `at` of its `MAP ` section's body set to `value`.
+    fn with_map_byte(blob: &[u8], at: usize, value: u8) -> Vec<u8> {
+        let (_h, body_off) = save_state::parse_header(blob).unwrap();
+        let mut out = blob[..body_off].to_vec();
+        for s in save_state::SectionIter::new(&blob[body_off..]) {
+            let s = s.unwrap();
+            if s.tag == save_state::tag::MAP {
+                let mut body = s.body.to_vec();
+                body[at] = value;
+                save_state::write_section(&mut out, s.tag, s.version, &body);
+            } else {
+                save_state::write_section(&mut out, s.tag, s.version, s.body);
+            }
+        }
+        out
+    }
+
+    /// v2.9.0 re-audit NC-02, at the whole-machine level: a GTROM (mapper 111)
+    /// state carrying a bank the board cannot hold is refused by
+    /// `Nes::restore`, and the machine keeps running. Before, `restore`
+    /// returned `Ok(())` and the next CPU fetch from `$8000` panicked
+    /// (`homebrew_boards.rs:570`, index 8,372,319 into 32 KiB in the
+    /// re-audit's probe) — after the restore, so its rollback could not help.
+    #[test]
+    fn a_gtrom_state_with_an_impossible_bank_is_refused_and_the_game_runs_on() {
+        let mut rom = synth_nrom(32, 0);
+        rom[6] = 0xF0; // mapper low nibble F
+        rom[7] = 0x60; // mapper high nibble 6: 0x6F = 111
+        let mut donor = Nes::from_rom(&rom).expect("GTROM image");
+        donor.run_frame();
+        donor.run_frame();
+        let good = donor.snapshot();
+        // MAP body: version, prg_bank, chr_bank, nt_bank, ...
+        for (at, value) in [(1, 0xFF), (2, 0xFF), (3, 0xFF)] {
+            let bad = with_map_byte(&good, at, value);
+            let mut nes = Nes::from_rom(&rom).unwrap();
+            nes.run_frame();
+            let before = nes.snapshot();
+            assert!(
+                nes.restore(&bad).is_err(),
+                "MAP byte {at} = {value:#04x} must be refused"
+            );
+            assert!(
+                nes.snapshot() == before,
+                "a refused load changed the machine"
+            );
+            nes.run_frame();
+            nes.run_frame();
+        }
+    }
+
     /// v2.9.0 re-audit NC-03 / NL-01: the QUIET restore is all-or-nothing too.
     ///
     /// v2.7.4 gave only the loud path a rollback, on the premise that a quiet

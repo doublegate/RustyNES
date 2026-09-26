@@ -344,7 +344,7 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 | 94 | — | UN1ROM (Senjou no Ookami) | — | — | landed (v1.3.0 / S8) | 16K PRG bank (data bits 4-2, bus conflict) + fixed last bank at `$C000`; CHR-RAM. |
 | 101 | — | Jaleco JF-10 CHR latch | — | — | landed (v1.3.0 / S8) | Fixed 32K PRG; 8K CHR bank latched via a write to the `$6000-$7FFF` window. |
 | 107 | — | Magic Dragon | — | — | landed (v1.3.0 / S8) | One `$8000-$FFFF` latch: 32K PRG = data>>1, 8K CHR = data. |
-| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8) | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + 4-screen nametable RAM with a bank-select bit; LED bit ignored. |
+| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8) | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + 4-screen nametable RAM with a bank-select bit; LED bit ignored. Since v2.9.0 (re-audit NC-02) a save state whose PRG, CHR or nametable bank is one the register cannot produce is refused; before, it loaded and the next fetch panicked. |
 | 143 | — | Sachen TCA01 | — | — | landed (v1.3.0 / S8) | NROM-128 (mirrored) + a simple protection read at `$4020-$5FFF` returning `(~addr & 0x3F) \| 0x40`. |
 | 177 | — | Hengedianzi | — | — | landed (v1.3.0 / S8) | 32K PRG + mirroring bit (bit 5) from one `$8000-$FFFF` latch; CHR-RAM. |
 | 179 | — | Hengedianzi variant | — | — | landed (v1.3.0 / S8) | 32K PRG via `$5000-$5FFF` (data>>1) + mirroring bit (bit 0) via `$8000-$FFFF`; CHR-RAM. |
