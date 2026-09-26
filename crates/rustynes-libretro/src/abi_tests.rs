@@ -50,10 +50,23 @@ static POLLS: AtomicU32 = AtomicU32::new(0);
 static JOYPAD_READS: AtomicU32 = AtomicU32::new(0);
 /// The port of every descriptor in the most recent `SET_INPUT_DESCRIPTORS`.
 static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+/// `(port, id, description)` of every descriptor in the most recent
+/// `SET_INPUT_DESCRIPTORS`.
+static DESCRIBED: Mutex<Vec<(u32, u32, String)>> = Mutex::new(Vec::new());
 /// Keys the core declared with `SET_VARIABLES`.
 static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// How many times the core has called `SET_VARIABLES`.
 static SET_VARIABLES_CALLS: AtomicU32 = AtomicU32::new(0);
+/// Whether the fake video callback copies each frame into `LAST_FRAME`
+/// (off by default: most tests do not look at the picture).
+static KEEP_FRAME: AtomicBool = AtomicBool::new(false);
+/// The last frame presented, as tightly packed XRGB8888 rows.
+static LAST_FRAME: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// The RetroPad buttons held on each port, as a `RETRO_DEVICE_ID_JOYPAD_MASK`
+/// bitmask (bit n = `RETRO_DEVICE_ID_JOYPAD_*` n).
+static PADS: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
+
 /// The disk-control interface version the fake frontend reports.
 static DISK_VERSION: AtomicU32 = AtomicU32::new(1);
 /// `SET_DISK_CONTROL_INTERFACE` (v0) calls since last cleared.
@@ -339,16 +352,20 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS => {
             let mut ports = Vec::new();
+            let mut named = Vec::new();
             let mut d = data.cast::<retro_input_descriptor>().cast_const();
             // SAFETY: the core passes an array terminated by an entry whose
             // `description` is null, valid for the duration of the call.
             unsafe {
                 while !d.is_null() && !(*d).description.is_null() {
                     ports.push((*d).port);
+                    let text = CStr::from_ptr((*d).description).to_string_lossy();
+                    named.push(((*d).port, (*d).id, text.into_owned()));
                     d = d.add(1);
                 }
             }
             *held(&DESCRIBED_PORTS) = ports;
+            *held(&DESCRIBED) = named;
             true
         }
         RETRO_ENVIRONMENT_SET_VARIABLES => {
@@ -409,7 +426,21 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     }
 }
 
-unsafe extern "C" fn video(_: *const c_void, _: c_uint, _: c_uint, _: usize) {}
+unsafe extern "C" fn video(data: *const c_void, width: c_uint, height: c_uint, pitch: usize) {
+    if !KEEP_FRAME.load(SeqCst) || data.is_null() {
+        return;
+    }
+    let len = pitch * height as usize;
+    // SAFETY: libretro.h: `data` holds `height` rows of `pitch` bytes for
+    // the duration of the call; only `width * 4` bytes of each row are
+    // pixels (XRGB8888), and all of it is readable.
+    let frame = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len) };
+    let mut out = Vec::with_capacity(width as usize * 4 * height as usize);
+    for row in frame.chunks(pitch) {
+        out.extend_from_slice(&row[..width as usize * 4]);
+    }
+    *held(&LAST_FRAME) = out;
+}
 unsafe extern "C" fn audio_batch(_: *const i16, frames: usize) -> usize {
     frames
 }
@@ -417,9 +448,14 @@ unsafe extern "C" fn audio_sample(_: i16, _: i16) {}
 unsafe extern "C" fn input_poll() {
     POLLS.fetch_add(1, SeqCst);
 }
-unsafe extern "C" fn input_state(_port: c_uint, device: c_uint, _: c_uint, id: c_uint) -> i16 {
+unsafe extern "C" fn input_state(port: c_uint, device: c_uint, _: c_uint, id: c_uint) -> i16 {
     if device == RETRO_DEVICE_JOYPAD {
         JOYPAD_READS.fetch_add(1, SeqCst);
+        if id == RETRO_DEVICE_ID_JOYPAD_MASK {
+            let mask = PADS.get(port as usize).map_or(0, |p| p.load(SeqCst));
+            // The bitmask is 16 bits wide; libretro returns it as `int16_t`.
+            return (mask as u16).cast_signed();
+        }
     }
     i16::from(
         device == RETRO_DEVICE_LIGHTGUN
@@ -454,6 +490,10 @@ fn frontend() -> MutexGuard<'static, ()> {
     SUPPORT_EXT.store(true, SeqCst);
     TRIGGER.store(false, SeqCst);
     DISK_VERSION.store(1, SeqCst);
+    for pad in &PADS {
+        pad.store(0, SeqCst);
+    }
+    KEEP_FRAME.store(false, SeqCst);
     guard
 }
 
@@ -1248,4 +1288,220 @@ fn fds_disk_writes_survive_closing_the_game() {
     unload();
     assert!(restored, "the saved disk must be the one in the drive");
     let _ = std::fs::remove_file(&file);
+}
+
+/// A 16 KiB NROM Vs. System cartridge (NES 2.0, console type 1) whose
+/// program copies `$4016` to `$0000` and `$4017` to `$0001` forever, so the
+/// coin, service and DIP bits the Vs. panel drives are visible in WRAM.
+/// `dual` marks it a Vs. `DualSystem` board (byte 13 hardware type 5).
+///
+/// ```text
+/// $C000  LDA #$01 / STA $4016 / LDA #$00 / STA $4016   strobe the pads
+///        LDA $4016 / STA $00 / LDA $4017 / STA $01
+///        JMP $C000
+/// ```
+fn vs_probe_rom(dual: bool) -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1; // 16 KiB PRG
+    rom[5] = 1; // 8 KiB CHR
+    rom[7] = 0x08 | 0x01; // NES 2.0, Vs. System
+    rom[13] = if dual { 0x50 } else { 0x00 };
+    let program = [
+        0xA9, 0x01, 0x8D, 0x16, 0x40, 0xA9, 0x00, 0x8D, 0x16, 0x40, // strobe
+        0xAD, 0x16, 0x40, 0x85, 0x00, // LDA $4016, STA $00
+        0xAD, 0x17, 0x40, 0x85, 0x01, // LDA $4017, STA $01
+        0x4C, 0x00, 0xC0, // JMP $C000
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    // NMI, RESET, IRQ -> $C000 (the PRG is mirrored at $8000 and $C000).
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The first two bytes of the loaded game's (main console's) WRAM.
+fn wram_head() -> (u8, u8) {
+    let ram = system_ram().cast::<u8>();
+    assert!(!ram.is_null());
+    // SAFETY: WRAM is 2 KiB and stays allocated while the game is loaded.
+    unsafe { (*ram, *ram.add(1)) }
+}
+
+const L: u32 = 1 << RETRO_DEVICE_ID_JOYPAD_L;
+const R: u32 = 1 << RETRO_DEVICE_ID_JOYPAD_R;
+
+/// libretro re-audit NL-08. The core modelled the Vs. System coin acceptors
+/// and service button (`Nes::insert_coin`, `set_vs_service`), and the
+/// desktop bound them to keys, but no libretro input reached them: a Vs.
+/// game waiting for a credit could not be given one. RetroPad L now drops a
+/// coin (port 1: acceptor 1, port 2: acceptor 2) as a pulse of a few frames,
+/// however long it is held, and R holds the service button; both are named
+/// in the input descriptors while a Vs. cartridge is loaded.
+#[test]
+fn vs_system_coins_and_service_reach_the_game() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(false), true));
+    let named = held(&DESCRIBED).clone();
+    run_frame();
+    let (idle, _) = wram_head();
+    assert_eq!(
+        idle & 0x64,
+        0,
+        "no coin and no service at rest: {idle:#04x}"
+    );
+
+    PADS[0].store(L, SeqCst);
+    run_frame();
+    let (coin, _) = wram_head();
+    for _ in 0..6 {
+        run_frame();
+    }
+    let (held_long, _) = wram_head();
+    PADS[0].store(0, SeqCst);
+    PADS[1].store(L, SeqCst);
+    run_frame();
+    let (coin2, _) = wram_head();
+    PADS[1].store(0, SeqCst);
+    for _ in 0..6 {
+        run_frame();
+    }
+    PADS[0].store(R, SeqCst);
+    run_frame();
+    let (service, _) = wram_head();
+    PADS[0].store(0, SeqCst);
+    run_frame();
+    let (released, _) = wram_head();
+    unload();
+    let described_after_unload = held(&DESCRIBED).clone();
+
+    assert_ne!(
+        coin & 0x20,
+        0,
+        "port 1 L drops a coin in acceptor 1: {coin:#04x}"
+    );
+    assert_eq!(
+        held_long & 0x20,
+        0,
+        "a coin is a pulse, not a level: {held_long:#04x}"
+    );
+    assert_ne!(
+        coin2 & 0x40,
+        0,
+        "port 2 L drops a coin in acceptor 2: {coin2:#04x}"
+    );
+    assert_ne!(service & 0x04, 0, "port 1 R holds service: {service:#04x}");
+    assert_eq!(released & 0x04, 0, "and releases it: {released:#04x}");
+    for (port, id) in [
+        (0, RETRO_DEVICE_ID_JOYPAD_L),
+        (1, RETRO_DEVICE_ID_JOYPAD_L),
+        (0, RETRO_DEVICE_ID_JOYPAD_R),
+    ] {
+        assert!(
+            named.iter().any(|(p, i, _)| *p == port && *i == id),
+            "port {port} id {id} must be described for a Vs. cartridge: {named:?}"
+        );
+    }
+    assert!(
+        described_after_unload
+            .iter()
+            .all(|(_, id, _)| *id != RETRO_DEVICE_ID_JOYPAD_L),
+        "the Vs. names go away with the cartridge"
+    );
+}
+
+/// The same inputs on a Vs. `DualSystem` cabinet: ports 1-2 are the main
+/// console's panel (acceptors 1-2, service), ports 3-4 the sub console's.
+/// The main console's WRAM is the one the frontend sees.
+#[test]
+fn vs_dual_system_coins_reach_the_main_console() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(true), true));
+    run_frame();
+    PADS[0].store(L, SeqCst);
+    run_frame();
+    let (coin, _) = wram_head();
+    PADS[0].store(0, SeqCst);
+    // A coin on the SUB console's panel does not reach the main one.
+    for _ in 0..6 {
+        run_frame();
+    }
+    PADS[2].store(L, SeqCst);
+    run_frame();
+    let (sub_coin, _) = wram_head();
+    unload();
+    assert_ne!(coin & 0x20, 0, "port 1 L: main acceptor 1: {coin:#04x}");
+    assert_eq!(
+        sub_coin & 0x60,
+        0,
+        "port 3 L is the sub console's: {sub_coin:#04x}"
+    );
+}
+
+/// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).
+fn oracle_frame(mut nes: Nes, frames: u32) -> Vec<u8> {
+    for _ in 0..frames {
+        nes.run_frame();
+    }
+    let mut out = nes.framebuffer().to_vec();
+    for px in out.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    out
+}
+
+/// libretro re-audit NL-08, the palette through the load path. The core
+/// loaded Vs. dumps through `Emu::from_rom` alone, so an iNES 1.0 dump
+/// rendered with the parser's default 2C03 palette instead of the one the
+/// Vs. database names. For the first single-console dump under `tests/roms`
+/// that the database lists with a different PPU, the frame the core presents
+/// after `FRAMES` frames must equal a console built with the database
+/// applied, and differ from one without it. The committed corpus has no Vs.
+/// dump, so in CI this finds none and checks nothing; locally it runs on the
+/// gitignored `external/` dumps.
+#[test]
+fn a_vs_dump_in_the_database_renders_with_its_palette() {
+    const FRAMES: u32 = 300;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/roms");
+    let mut paths = Vec::new();
+    crate::tests::walk_nes(&root, &mut paths);
+    paths.sort();
+    let pick = paths.iter().find_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
+        let nes = Nes::from_rom(&bytes).ok()?;
+        let entry = rustynes_core::vs_db::lookup(nes.rom_sha256())?;
+        (!entry.dual_system && nes.is_vs_system()).then_some((path.clone(), bytes, entry))
+    });
+    let Some((path, bytes, entry)) = pick else {
+        eprintln!("no Vs. database dump under tests/roms; skipped");
+        return;
+    };
+    let with_db = {
+        let mut nes = Nes::from_rom(&bytes).expect("loads");
+        nes.set_vs_ppu_type(entry.vs_ppu_type);
+        nes.set_vs_dip(entry.vs_dip);
+        oracle_frame(nes, FRAMES)
+    };
+    let without = oracle_frame(Nes::from_rom(&bytes).expect("loads"), FRAMES);
+
+    let _frontend = frontend();
+    KEEP_FRAME.store(true, SeqCst);
+    assert!(load(Box::leak(bytes.into_boxed_slice()), true));
+    for _ in 0..FRAMES {
+        run_frame();
+    }
+    let presented = held(&LAST_FRAME).clone();
+    unload();
+    KEEP_FRAME.store(false, SeqCst);
+
+    assert_ne!(
+        with_db,
+        without,
+        "{}: pick a dump whose palette differs",
+        path.display()
+    );
+    assert!(
+        presented == with_db,
+        "{}: the core must present the database's palette",
+        path.display()
+    );
 }

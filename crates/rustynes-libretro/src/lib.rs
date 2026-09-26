@@ -242,15 +242,66 @@ const NES_BUTTONS: [(u32, &CStr); 8] = [
 ///   pointer, so until v2.8.1 RetroArch read past the end of this core's
 ///   array until it happened on a null (found while adding ports 2-4).
 /// * **It is `'static`.** RetroArch keeps the description pointers.
-struct InputDescriptors([retro_input_descriptor; 33]);
+struct InputDescriptors<const N: usize>([retro_input_descriptor; N]);
 
 // SAFETY: plain integers and pointers to `'static` C string literals, built
 // once at compile time and never mutated.
-unsafe impl Sync for InputDescriptors {}
+unsafe impl<const N: usize> Sync for InputDescriptors<N> {}
 
-static INPUT_DESCRIPTORS: InputDescriptors = InputDescriptors(all_port_descriptors());
+/// The standard table: eight buttons on each of four ports.
+static INPUT_DESCRIPTORS: InputDescriptors<33> = InputDescriptors(port_descriptors(&[]));
 
-const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
+/// The Vs. System panel inputs of a single-console Vs. cartridge (libretro
+/// re-audit NL-08; see [`VsPanel`]): RetroPad L on ports 1 and 2 drops a
+/// coin in acceptor 1 and 2, and R on port 1 is the service button.
+const VS_SINGLE_EXTRAS: [(u32, u32, &CStr); 3] = [
+    (0, RETRO_DEVICE_ID_JOYPAD_L, c"Vs. Insert Coin (acceptor 1)"),
+    (1, RETRO_DEVICE_ID_JOYPAD_L, c"Vs. Insert Coin (acceptor 2)"),
+    (0, RETRO_DEVICE_ID_JOYPAD_R, c"Vs. Service"),
+];
+
+/// A Vs. `DualSystem` cabinet's two panels: ports 1-2 are the main
+/// console's (as for a single cartridge), ports 3-4 the sub console's.
+const VS_DUAL_EXTRAS: [(u32, u32, &CStr); 6] = [
+    (
+        0,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (main, acceptor 1)",
+    ),
+    (
+        1,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (main, acceptor 2)",
+    ),
+    (0, RETRO_DEVICE_ID_JOYPAD_R, c"Vs. Service (main)"),
+    (
+        2,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (sub, acceptor 1)",
+    ),
+    (
+        3,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (sub, acceptor 2)",
+    ),
+    (2, RETRO_DEVICE_ID_JOYPAD_R, c"Vs. Service (sub)"),
+];
+
+/// The standard table plus the single-cartridge Vs. panel.
+static VS_SINGLE_DESCRIPTORS: InputDescriptors<36> =
+    InputDescriptors(port_descriptors(&VS_SINGLE_EXTRAS));
+
+/// The standard table plus both Vs. `DualSystem` panels.
+static VS_DUAL_DESCRIPTORS: InputDescriptors<39> =
+    InputDescriptors(port_descriptors(&VS_DUAL_EXTRAS));
+
+/// Eight NES buttons on each of four ports, then `extras`, then the
+/// null-description terminator. `N` must be `32 + extras.len() + 1`: the
+/// `assert!` below makes any other `N` a compile error in the `static`
+/// initialisers, so the terminator is always the last entry.
+const fn port_descriptors<const N: usize>(
+    extras: &[(u32, u32, &'static CStr)],
+) -> [retro_input_descriptor; N] {
     let terminator = retro_input_descriptor {
         port: 0,
         device: 0,
@@ -258,7 +309,7 @@ const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
         id: 0,
         description: std::ptr::null(),
     };
-    let mut out = [terminator; 33];
+    let mut out = [terminator; N];
     let mut port = 0;
     while port < 4 {
         let mut b = 0;
@@ -274,6 +325,18 @@ const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
         }
         port += 1;
     }
+    let mut e = 0;
+    while e < extras.len() {
+        out[4 * NES_BUTTONS.len() + e] = retro_input_descriptor {
+            port: extras[e].0,
+            device: RETRO_DEVICE_JOYPAD,
+            index: 0,
+            id: extras[e].1,
+            description: extras[e].2.as_ptr(),
+        };
+        e += 1;
+    }
+    assert!(N == 4 * NES_BUTTONS.len() + extras.len() + 1);
     out
 }
 
@@ -407,6 +470,13 @@ pub struct RustyNesLibretro {
     /// [`Self::tick_fds_flush`]); 0 while the disk is clean.
     fds_flush_countdown: u32,
 
+    /// The Vs. System coin and service inputs (libretro re-audit NL-08).
+    vs_panel: VsPanel,
+
+    /// Whether the input descriptors currently name the Vs. panel, so
+    /// unloading (or loading a non-Vs. game) sends the standard table back.
+    vs_descriptors: bool,
+
     /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
     /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
     /// serialized state, matching `Nes::add_genie_code`'s own contract, so
@@ -440,6 +510,11 @@ impl Default for RustyNesLibretro {
             options_declared: false,
             fds_save_path: None,
             fds_flush_countdown: 0,
+            vs_panel: VsPanel {
+                coin_down: [false; 4],
+                coin_frames: 0,
+            },
+            vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
     }
@@ -542,12 +617,23 @@ fn poll_zapper(ctx: &mut RunContext, nes: &mut Nes, port: u32) {
 /// sixteen per-button reads only when the frontend cannot report bitmasks.
 /// Until v2.8.1 it was always the sixteen (libretro audit §2.5).
 fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons {
+    nes_buttons(read_joypad(ctx, port))
+}
+
+/// The whole RetroPad on `port`, in one `input_state` call (see
+/// [`joypad_to_buttons`]). The Vs. System panel reads L and R from it too, so
+/// a Vs. cartridge costs no extra frontend call.
+fn read_joypad(ctx: &mut RunContext, port: u32) -> JoypadState {
     // SAFETY: `get_joypad_bitmask` is `unsafe` only because `rust-libretro`
     // marks every "unstable" environment command that way. Its body calls the
     // frontend's `input_state` callback, which `ctx` holds valid for the
     // duration of `on_run`, exactly as the safe `get_joypad_state` does, and
     // falls back to that function when the frontend reports no bitmask support.
-    let jp = unsafe { ctx.get_joypad_bitmask(port, 0) };
+    unsafe { ctx.get_joypad_bitmask(port, 0) }
+}
+
+/// The NES pad buttons in a RetroPad state.
+fn nes_buttons(jp: JoypadState) -> rustynes_core::Buttons {
     let mut bt = rustynes_core::Buttons::empty();
     if jp.contains(JoypadState::A) {
         bt |= rustynes_core::Buttons::A;
@@ -574,6 +660,137 @@ fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons 
         bt |= rustynes_core::Buttons::RIGHT;
     }
     bt
+}
+
+/// Frames a Vs. System coin stays latched after RetroPad L is pressed: the
+/// desktop frontend's `VS_COIN_HOLD_FRAMES`. The core documents the real
+/// coin switch as closing for 40-70 ms (`Nes::insert_coin`); three frames is
+/// 50 ms at 60 Hz.
+const VS_COIN_HOLD_FRAMES: u8 = 3;
+
+/// What one frame of the Vs. System panel does (libretro re-audit NL-08).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct VsPanelFrame {
+    /// Release every latched coin before this frame (`clear_coin`).
+    clear_coins: bool,
+    /// Acceptors to latch a coin on this frame: for a single cartridge 0-1,
+    /// for a `DualSystem` cabinet 0-1 main and 2-3 sub
+    /// (`VsDualSystem::insert_coin`).
+    insert: [bool; 4],
+    /// The service button of panel 0 (main) and 1 (a cabinet's sub).
+    service: [bool; 2],
+}
+
+/// The Vs. System coin and service inputs, on the RetroPad (libretro
+/// re-audit NL-08).
+///
+/// The core models the coin acceptors and the service button
+/// (`Nes::insert_coin` / `clear_coin` / `set_vs_service`, read back through
+/// `$4016`), and the desktop binds them to keys, but until v2.9.0 no libretro
+/// input reached them, so a Vs. game waiting for a credit could not be given
+/// one. The mapping, named in the input descriptors while a Vs. cartridge is
+/// loaded (`VS_SINGLE_EXTRAS` / `VS_DUAL_EXTRAS`):
+///
+/// * **L** on port `n` drops a coin in acceptor `n` (ports 1-2: the main
+///   console's acceptors 1-2; ports 3-4: a cabinet's sub console's). L is
+///   free on a NES pad, and one button per player keeps each player's coin
+///   on their own controller.
+/// * **R** on port 1 (and port 3 for a cabinet's sub console) holds the
+///   service button while held.
+///
+/// A coin is a pulse, not a level: pressing L latches it for
+/// [`VS_COIN_HOLD_FRAMES`] frames however long L is held, as the desktop
+/// does, because a coin switch that stayed closed is not something a game
+/// counts as coins.
+#[derive(Clone, Copy, Debug, Default)]
+struct VsPanel {
+    /// Whether L was down on each port last frame (edge detection).
+    coin_down: [bool; 4],
+    /// Frames until the latched coins are released; 0 when none is latched.
+    coin_frames: u8,
+}
+
+impl VsPanel {
+    /// Advance one frame given the four RetroPads; `ports` is how many of
+    /// them carry a Vs. panel (2 for a single cartridge, 4 for a cabinet).
+    fn step(&mut self, pads: [JoypadState; 4], ports: usize) -> VsPanelFrame {
+        let mut frame = VsPanelFrame::default();
+        if self.coin_frames > 0 {
+            self.coin_frames -= 1;
+            frame.clear_coins = self.coin_frames == 0;
+        }
+        for (port, pad) in pads.iter().enumerate().take(ports) {
+            let down = pad.contains(JoypadState::L);
+            if down && !self.coin_down[port] {
+                frame.insert[port] = true;
+                self.coin_frames = VS_COIN_HOLD_FRAMES;
+                // A new coin extends the pulse; nothing is cleared this frame.
+                frame.clear_coins = false;
+            }
+            self.coin_down[port] = down;
+        }
+        frame.service[0] = pads[0].contains(JoypadState::R);
+        frame.service[1] = ports > 2 && pads[2].contains(JoypadState::R);
+        frame
+    }
+
+    /// Apply a frame to a single Vs. console (acceptors 0-1, service 0).
+    const fn apply_single(frame: VsPanelFrame, nes: &mut Nes) {
+        if frame.clear_coins {
+            nes.clear_coin();
+        }
+        if frame.insert[0] {
+            nes.insert_coin(0);
+        }
+        if frame.insert[1] {
+            nes.insert_coin(1);
+        }
+        nes.set_vs_service(frame.service[0]);
+    }
+
+    /// Apply a frame to a Vs. `DualSystem` cabinet (acceptors 0-3,
+    /// service panels 0-1).
+    fn apply_dual(frame: VsPanelFrame, dual: &mut VsDualSystem) {
+        if frame.clear_coins {
+            dual.clear_coin();
+        }
+        for (acceptor, insert) in (0u8..).zip(frame.insert) {
+            if insert {
+                dual.insert_coin(acceptor);
+            }
+        }
+        dual.set_vs_service(0, frame.service[0]);
+        dual.set_vs_service(1, frame.service[1]);
+    }
+}
+
+/// Apply the Vs. System per-game database to a freshly loaded console
+/// (libretro re-audit NL-08), as the desktop's `apply_vs_db` does.
+///
+/// iNES 1.0 Vs. dumps carry no PPU type, so the parser gives every one the
+/// 2C03 palette; many Vs. games used a 2C04 whose colour table differs, and
+/// the SHA-keyed [`rustynes_core::vs_db`] supplies the right one. Before
+/// v2.9.0 the libretro core loaded through `Emu::from_rom` alone, which uses
+/// the database only to recognise a `DualSystem` cabinet, so every Vs. dump
+/// in the database rendered in the wrong colours (7 of 7 local dumps
+/// measured by the re-audit). The database's factory DIP-switch setting is
+/// applied too; the desktop lets a config file override it, which this core
+/// has no equivalent of (a DIP core option is not implemented).
+///
+/// Both setters are no-ops on a cartridge that is not a Vs. System, and the
+/// palette changes only the colour table the PPU emits through, never game
+/// logic.
+fn apply_vs_database(nes: &mut Nes) {
+    apply_vs_entry(nes, rustynes_core::vs_db::lookup(nes.rom_sha256()));
+}
+
+/// The database step of [`apply_vs_database`], split out so a test can hand
+/// it an entry without a commercial dump.
+const fn apply_vs_entry(nes: &mut Nes, entry: Option<rustynes_core::vs_db::VsDbEntry>) {
+    if let Some(entry) = entry {
+        nes.set_vs_ppu_type(entry.vs_ppu_type);
+        nes.set_vs_dip(entry.vs_dip);
+    }
 }
 
 /// Convert one mixer sample to the frontend's `i16`, with `1.0` at full scale.
@@ -896,7 +1113,8 @@ impl RustyNesLibretro {
         // exclusive.
         match emu {
             Emu::Single(nes) => {
-                let nes = *nes;
+                let mut nes = *nes;
+                apply_vs_database(&mut nes);
                 let mut tmp = Vec::new();
                 nes.snapshot_core_into(&mut tmp);
                 self.serialize_size = tmp.len() + rustynes_core::SAVE_STATE_DEVICE_HEADROOM;
@@ -907,7 +1125,11 @@ impl RustyNesLibretro {
                     "Loaded single-console cart.",
                 );
             }
-            Emu::Dual(dual) => {
+            Emu::Dual(mut dual) => {
+                // Both consoles are the same board; the desktop applies the
+                // database to both too.
+                apply_vs_database(dual.main_mut());
+                apply_vs_database(dual.sub_mut());
                 // The dual snapshot is a self-describing blob of both consoles; size it
                 // once here. No headroom: the dual path never attaches an expansion
                 // device (a Vs. cabinet has no light gun, and `run_dual` never calls
@@ -925,7 +1147,42 @@ impl RustyNesLibretro {
         self.memory_maps_registered = true;
         self.fds_save_path = fds_save;
         self.fds_flush_countdown = 0;
+        self.vs_panel = VsPanel::default();
+        let vs_table: Option<&'static [retro_input_descriptor]> = if self.dual.is_some() {
+            Some(&VS_DUAL_DESCRIPTORS.0)
+        } else if self.nes.as_ref().is_some_and(Nes::is_vs_system) {
+            Some(&VS_SINGLE_DESCRIPTORS.0)
+        } else {
+            None
+        };
+        let generic_ctx: GenericContext = (&*ctx).into();
+        // SAFETY: `ctx` is the live `LoadGameContext`; its environment
+        // callback is the frontend's own, valid for this call.
+        let cb = unsafe { *generic_ctx.environment_callback() };
+        self.describe_inputs(cb, vs_table);
         Ok(())
+    }
+
+    /// Name the inputs: `vs` (the standard table plus a Vs. panel) for a Vs.
+    /// cartridge, else the standard table if a Vs. one was sent before
+    /// (libretro re-audit NL-08). libretro.h allows `SET_INPUT_DESCRIPTORS`
+    /// "at any time"; every table is `'static`, because RetroArch keeps the
+    /// description pointers.
+    fn describe_inputs(
+        &mut self,
+        cb: retro_environment_t,
+        vs: Option<&'static [retro_input_descriptor]>,
+    ) {
+        let table: &'static [retro_input_descriptor] = match vs {
+            Some(table) => table,
+            None if self.vs_descriptors => &INPUT_DESCRIPTORS.0,
+            None => return,
+        };
+        // SAFETY: `cb` is the frontend's environment callback, valid for the
+        // current call (the caller's context); `table` is a `'static`,
+        // null-description-terminated array.
+        unsafe { rust_libretro::environment::set_input_descriptors(cb, table) };
+        self.vs_descriptors = vs.is_some();
     }
 
     /// Build an FDS console for `disk`: read `disksys.rom` from the
@@ -1201,17 +1458,29 @@ impl RustyNesLibretro {
         //
         // Port 0 → Player 1, Port 1 → Player 2; with the Four Score option,
         // ports 2 and 3 → Players 3 and 4.
-        let b0 = joypad_to_buttons(ctx, 0);
-        let b1 = joypad_to_buttons(ctx, 1);
+        let jp0 = read_joypad(ctx, 0);
+        let jp1 = read_joypad(ctx, 1);
+        let pads = [nes_buttons(jp0), nes_buttons(jp1)];
         let four_score = self.four_score;
         let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
         let zapper_ports = self.lightgun_ports();
+        // A Vs. System cartridge's coin and service inputs, from L and R on
+        // ports 1-2 (see `VsPanel`); nothing for any other cartridge.
+        let vs = if self.nes.as_ref().is_some_and(Nes::is_vs_system) {
+            let none = JoypadState::empty();
+            Some(self.vs_panel.step([jp0, jp1, none, none], 2))
+        } else {
+            None
+        };
         {
             let Some(nes) = self.nes.as_mut() else {
                 return;
             };
+            if let Some(frame) = vs {
+                VsPanel::apply_single(frame, nes);
+            }
             // Test-only: stands in for an internal error inside a frame, so the
             // C-ABI harness can prove `contained` stops it at this layer.
             #[cfg(test)]
@@ -1219,7 +1488,7 @@ impl RustyNesLibretro {
                 !INJECT_PANIC_IN_RUN.swap(false, std::sync::atomic::Ordering::SeqCst),
                 "injected by the C-ABI harness"
             );
-            apply_pads(nes, [b0, b1], b34);
+            apply_pads(nes, pads, b34);
             // A Zapper occupies a port INSTEAD of a joypad, but the joypad write
             // above is harmless and deliberate: the Zapper's own byte is assembled
             // by `set_zapper`, and leaving the pad state written keeps a port that
@@ -1269,18 +1538,21 @@ impl RustyNesLibretro {
     fn run_dual(&mut self, ctx: &mut RunContext) {
         // Input was already polled by `retro_run`; see `run_single`.
         // Ports 0/1 drive the MAIN console's P1/P2; ports 2/3 the SUB console's.
-        let buttons = [
-            joypad_to_buttons(ctx, 0),
-            joypad_to_buttons(ctx, 1),
-            joypad_to_buttons(ctx, 2),
-            joypad_to_buttons(ctx, 3),
+        let pads = [
+            read_joypad(ctx, 0),
+            read_joypad(ctx, 1),
+            read_joypad(ctx, 2),
+            read_joypad(ctx, 3),
         ];
+        // Both panels of the cabinet: coins and service on L and R.
+        let vs = self.vs_panel.step(pads, 4);
         {
             let Some(dual) = self.dual.as_mut() else {
                 return;
             };
-            for (port, btn) in buttons.into_iter().enumerate() {
-                dual.set_buttons(port, btn);
+            VsPanel::apply_dual(vs, dual);
+            for (port, pad) in pads.into_iter().enumerate() {
+                dual.set_buttons(port, nes_buttons(pad));
             }
             dual.run_frame();
         }
@@ -2025,6 +2297,10 @@ impl Core for RustyNesLibretro {
                 rust_libretro::environment::set_memory_maps(cb, empty);
             }
         }
+        // A Vs. cartridge's coin and service names go with it.
+        // SAFETY: as above, the frontend's callback for this call.
+        let cb = unsafe { *ctx.environment_callback() };
+        self.describe_inputs(cb, None);
         // Write the FDS disk's in-game saves before the console goes
         // (libretro re-audit NL-03). Before v2.9.0 nothing did, and a disk
         // save was lost when the game closed.
@@ -2303,6 +2579,11 @@ retro_core!(RustyNesLibretro {
     options_declared: false,
     fds_save_path: None,
     fds_flush_countdown: 0,
+    vs_panel: VsPanel {
+        coin_down: [false; 4],
+        coin_frames: 0,
+    },
+    vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });
 
@@ -2455,7 +2736,7 @@ mod tests {
         }
     }
 
-    fn walk_nes(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    pub fn walk_nes(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -2472,10 +2753,92 @@ mod tests {
         }
     }
 
+    /// libretro re-audit NL-08. A Vs. database entry sets the PPU palette
+    /// and the DIP switches. nestest re-headed as a Vs. System cartridge
+    /// (NES 2.0 console type 1, byte 13 PPU type 0 = the 2C03 an iNES 1.0
+    /// Vs. dump defaults to) stands in for a commercial dump, and a 2C04
+    /// entry must change the picture it renders; no entry changes nothing.
+    #[test]
+    fn a_vs_database_entry_sets_the_palette_and_the_dips() {
+        use rustynes_core::rustynes_mappers::VsPpuType;
+        use rustynes_core::vs_db::VsDbEntry;
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        rom[7] = 0x09; // NES 2.0, Vs. System
+        rom[13] = 0x00;
+        let entry = VsDbEntry {
+            vs_dip: 0xA5,
+            vs_ppu_type: VsPpuType::Rp2C04_0001,
+            dual_system: false,
+        };
+        let mut plain = Nes::from_rom(&rom).expect("loads");
+        let mut none = Nes::from_rom(&rom).expect("loads");
+        let mut db = Nes::from_rom(&rom).expect("loads");
+        assert!(db.is_vs_system());
+        apply_vs_entry(&mut none, None);
+        apply_vs_entry(&mut db, Some(entry));
+        assert_eq!(db.vs_dip(), 0xA5, "the database's DIP switches");
+        for _ in 0..30 {
+            plain.run_frame();
+            none.run_frame();
+            db.run_frame();
+        }
+        assert_eq!(
+            plain.framebuffer(),
+            none.framebuffer(),
+            "no entry: no change"
+        );
+        assert_ne!(
+            plain.framebuffer(),
+            db.framebuffer(),
+            "a 2C04 entry must change the colours from the 2C03 default"
+        );
+    }
+
+    /// libretro re-audit NL-08, on real dumps where they exist: every image
+    /// under `tests/roms` whose SHA-256 is in the Vs. database must get that
+    /// entry's DIP switches from [`apply_vs_database`] (the palette half is
+    /// pinned above). The committed corpus has no Vs. dump, so in CI this
+    /// finds none and checks nothing; locally the gitignored `external/`
+    /// dumps exercise the lookup.
+    #[test]
+    fn database_listed_vs_dumps_get_their_entry() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/roms");
+        let mut paths = Vec::new();
+        walk_nes(&root, &mut paths);
+        let mut found = 0;
+        for path in &paths {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let Ok(Ok(emu)) = std::panic::catch_unwind(|| Emu::from_rom(&bytes)) else {
+                continue;
+            };
+            let (mut single, mut dual);
+            let nes: &mut Nes = match emu {
+                Emu::Single(nes) => {
+                    single = nes;
+                    &mut single
+                }
+                Emu::Dual(pair) => {
+                    dual = pair;
+                    dual.main_mut()
+                }
+            };
+            let Some(entry) = rustynes_core::vs_db::lookup(nes.rom_sha256()) else {
+                continue;
+            };
+            nes.set_vs_dip(!entry.vs_dip);
+            apply_vs_database(nes);
+            assert_eq!(nes.vs_dip(), entry.vs_dip, "{}", path.display());
+            found += 1;
+        }
+        eprintln!("Vs. database dumps checked: {found}");
+    }
+
     /// libretro re-audit NL-02 and NL-06, over every `.nes` image under
     /// `tests/roms` (the committed CC0 corpus in CI; locally also any dumps
-    /// in the gitignored `external/`), plus the FDS RAM adapter and the three
-    /// synthetic MMC1 sizes the C-ABI test uses. Each console's descriptors
+    /// in the gitignored `external/`), plus the FDS RAM adapter (the three
+    /// synthetic MMC1 sizes are the C-ABI test's). Each console's descriptors
     /// must satisfy libretro.h and carry `SAVE_RAM` only with a battery.
     #[test]
     fn every_image_gets_legal_prg_ram_descriptors() {

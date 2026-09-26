@@ -63,6 +63,15 @@ cycle-accurate core later replaced.
   when the game closes, and it is loaded in place of the original next
   time. The file is the same as the desktop frontend's `.fds.sav`, so a save
   can be moved between them.
+- **Vs. System games get their colours, their DIP switches, coins and a
+  service button.** The core used the Vs. database only to recognise the
+  two-screen cabinets, so a Vs. dump without the newer header rendered in
+  the default 2C03 colours instead of its own PPU's, and no RetroPad input
+  could insert a coin. The database's palette and factory DIP switches are
+  now applied at load, RetroPad L drops a coin (port 1 acceptor 1, port 2
+  acceptor 2; ports 3-4 for a cabinet's second console) and R is the service
+  button; the input descriptors name them while a Vs. game is loaded.
+  Setting the DIP switches by hand is not available yet.
 - **Disk Control names the sides of a Famicom Disk System disk.** The core
   computed "Side A" / "Side B" labels but registered only the original
   disk-control interface, which has no labels, so RetroArch showed bare

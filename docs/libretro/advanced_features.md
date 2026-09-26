@@ -72,6 +72,25 @@ The deterministic `no_std` core is untouched — this is purely a parallel
 present/serialize branch in the FFI wrapper, exactly mirroring the desktop
 frontend's `emu.dual` branch.
 
+## Vs. System palette, DIP switches, coins and service (v2.9.0, libretro re-audit NL-08)
+
+Every Vs. System cartridge, single or `DualSystem`:
+
+* **Palette and DIP switches.** After loading, the core looks the image's SHA-256 up in `rustynes_core::vs_db` and applies the entry's PPU type (the colour table) and factory DIP-switch setting, to both consoles of a cabinet — what the desktop's `apply_vs_db` does. An iNES 1.0 Vs. dump names no PPU, so the parser defaults it to the 2C03; until v2.9.0 the libretro core used the database only to recognise a cabinet, and every listed dump rendered in the 2C03's colours (7 of 7 local dumps measured by the re-audit). The desktop lets a config file override the DIP switches; the libretro core has no such option (see below).
+* **Coins and service on the RetroPad**, named in the input descriptors only while a Vs. cartridge is loaded (the standard table is sent back at unload):
+
+  | RetroPad | Single cartridge | `DualSystem` cabinet |
+  | --- | --- | --- |
+  | Port 1 L | coin, acceptor 1 | main console, acceptor 1 |
+  | Port 2 L | coin, acceptor 2 | main console, acceptor 2 |
+  | Port 1 R | service (held) | main console's service |
+  | Port 3 L | — | sub console, acceptor 1 |
+  | Port 4 L | — | sub console, acceptor 2 |
+  | Port 3 R | — | sub console's service |
+
+  A coin is a pulse: pressing L latches it for three frames (the desktop's `VS_COIN_HOLD_FRAMES`, 50 ms; the core documents the real switch as 40-70 ms) however long L is held. L and R are free on a NES pad, and each player's coin is on their own controller. Before v2.9.0 no libretro input reached the coin acceptors or the service button at all.
+* **Not done: user-set DIP switches.** The database default is applied; a core option to change the switches is not implemented. Eight switches do not fit the one-list-per-option `SET_VARIABLES` form without either eight options or a 256-value list, and the core-options v2 form this would want is not used by this core yet.
+
 ## Famicom Disk System (FDS) Loading & Disk Control (implemented)
 
 Standard NES ROMs (`.nes`) bundle all data in a single file. The Famicom Disk System requires two distinct components: the `.fds` disk image and the `disksys.rom` BIOS.
