@@ -695,6 +695,16 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
     levels. Keep mapper audio behind explicit state and tests so future PAL,
     Famicom adapter, or front-loader mix options can be added without changing
     mapper banking behavior.
+11. **A PRG window larger than the PRG-ROM mirrors it** (v2.9.0, re-audit
+    NC-01). Mappers 46, 57, 58, 61, 62, 202 and 212 accept an image smaller
+    than their 32 KiB window (16 KiB, or an odd count of 16 KiB banks for 202
+    and 212), and the window's index ran past the end: a panic on the first
+    fetch from `$C000-$FFFF` in 32 KiB mode. The index is now taken modulo the
+    ROM length, as MMC3 always did, which is what a smaller part does on
+    hardware with its missing address lines. It is the identity for every
+    image whose window fits. Pinned by `tests/undersized_prg.rs`. Validate a
+    board's reads against the ROM length, not against the bank count: a count
+    clamped with `.max(1)` is still a count of banks that do not exist.
 
 ## Test plan
 

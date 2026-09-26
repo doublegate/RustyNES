@@ -109,6 +109,15 @@ cycle-accurate core later replaced.
   within a frame and stopped the PPU for good. States with clocks beyond
   what 6,800 years of emulation would reach are now refused.
 
+### Mappers
+
+- **Seven multicart boards no longer crash on an undersized ROM.** Mappers
+  46, 57, 58, 61, 62, 202 and 212 accepted a PRG-ROM smaller than their
+  32 KiB window (an undersized dump or a header typo) and then crashed the
+  emulator on the first fetch in 32 KiB mode. The smaller ROM now mirrors
+  in the window, as the hardware does. Every image that ran before runs
+  identically.
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die
