@@ -1,4 +1,4 @@
-# 42. v3.0.0 removes the v2.7.5 deprecations and the dead NMI edge detector
+# 42. v3.0.0 removes the v2.7.5 deprecations and the dead NMI edge detector, and renames `LockstepBus`
 
 Date: 2026-09-26
 
@@ -54,6 +54,15 @@ MAJOR under ADR 0041's new-deliverable-class trigger.
 It is done at v3.0.0, not before: a v2.9.x release is MINOR, and removing public
 items is an API break.
 
+**`LockstepBus` is renamed in the same break** (maintainer decision, 2026-09-26,
+raised by the v2.9.0 core re-audit). The name describes the pre-v2.0.0
+dot-lockstep scheduler that ADR 0002 / ADR 0029 retired; AGENTS.md already has
+to explain that it "predates v2.0.0". The new name is chosen at v3.0.0 (for
+example `Bus` or `SystemBus`; `rustynes_cpu::Bus` is the trait it implements, so
+a collision has to be avoided). It is one more item in a release that already
+breaks the API, and it stops the type's name describing a design that no longer
+exists.
+
 ## Consequences
 
 - **An API break**, with a CHANGELOG migration note as `VERSION-PLAN.md`
@@ -68,6 +77,7 @@ items is an API break.
   the goldens plus AccuracyCoin and nestest.
 - **Docs to update at v3.0.0**: `docs/scheduler.md`, `docs/performance.md`,
   `docs/apu-2a03.md`, `AGENTS.md`'s Bus paragraph, the core ledger rows, and the
-  reason strings in `snapshot_schema_audit.rs`.
+  reason strings in `snapshot_schema_audit.rs` -- and every mention of
+  `LockstepBus`, which the rename touches across the workspace.
 - **No provenance record changes**: none of the affected files carries a
   `// Provenance:` header.

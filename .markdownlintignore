@@ -22,3 +22,9 @@ to-dos/archive/
 # that fed them — reference, not maintained prose, kept exactly as authored
 # (like ref-docs/).
 to-dos/plans/
+
+# The v2.9.0 re-audit reports: AI-written audit records kept EXACTLY as the
+# agents wrote them (docs/audits/README.md -- a report states findings, the
+# ledger beside it records what was done). Lint-fixing them would mean editing
+# the record; their ledgers are linted like any living doc.
+docs/audits/v2.9.0-*-reaudit.md
