@@ -2765,18 +2765,25 @@ impl App {
                 return;
             }
             let mut guard = self.emu.lock();
-            let emu = &mut *guard;
-            let Some(nes) = emu.nes.as_mut() else {
+            if guard.nes.is_none() {
                 eprintln!("rustynes: movie record: no ROM loaded");
                 return;
-            };
+            }
             // v2.3.2 "Lucid" — arm a replay attestation unless run-ahead is on.
             // Run-ahead presents the frame N ahead of the persistent timeline
             // while a verification replay re-derives persistent frames, so an
             // attestation recorded under it could never verify. Refusing up
             // front is clearer than emitting one that gets silently dropped.
             let attest = self.config.input.run_ahead == 0;
-            emu.movie.start_recording_power_on(nes, attest);
+            // v2.9.0 — the recording starts from cleared save RAM, which must
+            // not reach the `.sav` (`EmuCore::start_movie_session`).
+            guard.start_movie_session(|emu| {
+                let Some(nes) = emu.nes.as_mut() else {
+                    return false;
+                };
+                emu.movie.start_recording_power_on(nes, attest);
+                true
+            });
             if !attest {
                 eprintln!(
                     "rustynes: movie attestation skipped (run-ahead is enabled; \
@@ -2784,7 +2791,7 @@ impl App {
                 );
             }
             // Reset frame pacing so the power-cycle's first frame is due now.
-            emu.next_frame_time = Some(Instant::now());
+            guard.next_frame_time = Some(Instant::now());
             eprintln!("rustynes: movie recording started (power-on)");
         }
     }
@@ -2841,20 +2848,30 @@ impl App {
             );
         }
         let mut guard = self.emu.lock();
-        let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_mut() else {
+        if guard.nes.is_none() {
             eprintln!("rustynes: movie play: no ROM loaded");
-            return;
-        };
-        if let Err(e) = movie.seek_to_start(nes) {
-            eprintln!("rustynes: movie seek failed (wrong ROM?): {e}");
             return;
         }
         let total = movie.len();
-        emu.movie.start_playback(movie);
+        // v2.9.0 — the seek replaces the save RAM with the movie's, which
+        // must not reach the `.sav` (`EmuCore::start_movie_session`).
+        let began = guard.start_movie_session(|emu| {
+            let Some(nes) = emu.nes.as_mut() else {
+                return false;
+            };
+            if let Err(e) = movie.seek_to_start(nes) {
+                eprintln!("rustynes: movie seek failed (wrong ROM?): {e}");
+                return false;
+            }
+            emu.movie.start_playback(movie);
+            true
+        });
+        if !began {
+            return;
+        }
         // The seek (power-cycle or restore) reset emulator state; restart
         // the frame clock so the first replayed frame is due now.
-        emu.next_frame_time = Some(Instant::now());
+        guard.next_frame_time = Some(Instant::now());
         eprintln!(
             "rustynes: movie playback started ({total} frames) from {}",
             path.display()
@@ -2965,19 +2982,29 @@ impl App {
         let total = movie.len();
         {
             let mut guard = self.emu.lock();
-            let emu = &mut *guard;
-            let Some(nes) = emu.nes.as_mut() else {
-                return;
-            };
-            if let Err(e) = movie.seek_to_start(nes) {
+            // v2.9.0 — see `EmuCore::start_movie_session`.
+            let mut seek_error = None;
+            let began = guard.start_movie_session(|emu| {
+                let Some(nes) = emu.nes.as_mut() else {
+                    return false;
+                };
+                if let Err(e) = movie.seek_to_start(nes) {
+                    seek_error = Some(e);
+                    return false;
+                }
+                emu.movie.start_playback(movie);
+                true
+            });
+            if !began {
                 drop(guard);
-                self.ui.set_status(StatusMessage::info(format!(
-                    "Movie import failed (wrong ROM?): {e}"
-                )));
+                if let Some(e) = seek_error {
+                    self.ui.set_status(StatusMessage::info(format!(
+                        "Movie import failed (wrong ROM?): {e}"
+                    )));
+                }
                 return;
             }
-            emu.movie.start_playback(movie);
-            emu.next_frame_time = Some(Instant::now());
+            guard.next_frame_time = Some(Instant::now());
         }
         self.ui.set_status(StatusMessage::success(format!(
             "Movie playing ({total} frames)"
@@ -3352,32 +3379,72 @@ impl App {
         {
             return; // no overlay to host it, or a session already exists
         }
+        // v2.9.0 — opening the panel power-cycles the console, so it must not
+        // happen under a session that owns the timeline. A movie being played
+        // or recorded would continue from a state it never recorded, and a
+        // netplay peer would desync on the spot (Copilot on #561). Recording
+        // and playback already refuse to start under netplay; this is the same
+        // rule for the one path that also resets the console.
+        #[cfg(target_arch = "wasm32")]
+        let netplay_active = self
+            .browser_netplay
+            .as_ref()
+            .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active);
+        #[cfg(not(target_arch = "wasm32"))]
+        let netplay_active = self.netplay.is_active();
+        let busy = {
+            let emu = self.emu.lock();
+            if netplay_active {
+                Some("leave netplay")
+            } else if emu.movie.is_playing() || emu.movie.is_recording() {
+                Some("stop the movie")
+            } else {
+                None
+            }
+        };
+        if let Some(what) = busy {
+            self.ui.set_status(StatusMessage::info(format!(
+                "TAStudio restarts the game from power-on; {what} first"
+            )));
+            return;
+        }
+        let channel_mask = self.config.audio.channel_mask;
+        let channel_gain = self.config.audio.channel_gain;
         let editor = {
             let mut guard = self.emu.lock();
-            let emu = &mut *guard;
-            let Some(nes) = emu.nes.as_mut() else {
-                return; // no ROM loaded — nothing to anchor on
+            let mut editor = None;
+            // v2.9.0 — the power-on clears the save RAM, which must not reach
+            // the `.sav` (`EmuCore::start_movie_session`).
+            guard.start_movie_session(|emu| {
+                let Some(nes) = emu.nes.as_mut() else {
+                    return false; // no ROM loaded — nothing to anchor on
+                };
+                // v2.9.0 NF-10 (maintainer decision): anchor on a clean
+                // power-on, the state the project's exported power-on movie
+                // starts from. Until v2.9.0 this anchored on the RUNNING game,
+                // so an export replayed from somewhere other than what was
+                // edited. Opening the panel therefore restarts the game, like
+                // starting a recording.
+                editor = Some(crate::tastudio::TasEditor::new_from_power_on(
+                    nes,
+                    TAS_GREENZONE_BUDGET,
+                    TAS_CAPTURE_INTERVAL,
+                ));
+                // The power cycle rebuilt the APU at its defaults; re-push the
+                // user's per-channel mute mask and gain, as `do_power_cycle`
+                // does (output-only; defaults are byte-identical).
+                nes.set_apu_channel_mask(channel_mask);
+                nes.set_apu_channel_gain(channel_gain);
+                // A cold boot restarts the session timeline and the pacing, as
+                // `do_power_cycle` and a power-on recording do.
+                emu.history.clear();
+                emu.reset_lag_frames();
+                emu.next_frame_time = Some(Instant::now());
+                true
+            });
+            let Some(editor) = editor else {
+                return;
             };
-            // v2.9.0 NF-10 (maintainer decision): anchor on a clean power-on,
-            // the state the project's exported power-on movie starts from.
-            // Until v2.9.0 this anchored on the RUNNING game, so an export
-            // replayed from somewhere other than what was edited. Opening the
-            // panel therefore restarts the game, like starting a recording.
-            let editor = crate::tastudio::TasEditor::new_from_power_on(
-                nes,
-                TAS_GREENZONE_BUDGET,
-                TAS_CAPTURE_INTERVAL,
-            );
-            // The power cycle rebuilt the APU at its defaults; re-push the
-            // user's per-channel mute mask and gain, as `do_power_cycle` does
-            // (output-only; defaults are byte-identical).
-            nes.set_apu_channel_mask(self.config.audio.channel_mask);
-            nes.set_apu_channel_gain(self.config.audio.channel_gain);
-            // A cold boot restarts the session timeline and the pacing, as
-            // `do_power_cycle` and a power-on recording do.
-            emu.history.clear();
-            emu.reset_lag_frames();
-            emu.next_frame_time = Some(Instant::now());
             editor
         };
         eprintln!("rustynes: TAStudio opened -- the console restarted from power-on (frame 0)");

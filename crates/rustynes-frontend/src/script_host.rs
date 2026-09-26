@@ -452,6 +452,9 @@ fn worker_loop(
     // map. A real OS shared-memory backing is a maintainer follow-up; this gives
     // a deterministic, dependency-free host-owned MMF surface today.
     let mmf: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+    // Whether a refused MMF write has been reported (once per worker, so a
+    // script retrying every frame does not flood stderr; agy on #561).
+    let mut mmf_refusal_reported = false;
 
     while let Ok(cmd) = job_rx.recv() {
         // NF-08: once the host is dropped, the backlog is abandoned, not run.
@@ -506,8 +509,16 @@ fn worker_loop(
             CommCmd::MmfWrite { name, data } => {
                 if let Ok(mut m) = mmf.lock() {
                     // NF-03: a write that would take the map past its budget
-                    // is dropped, like any other fire-and-forget request.
-                    let _ = mmf_store(&mut m, name, data);
+                    // is dropped, like any other fire-and-forget request, and
+                    // reported once so a script author can see why.
+                    if !mmf_store(&mut m, name, data) && !mmf_refusal_reported {
+                        mmf_refusal_reported = true;
+                        eprintln!(
+                            "rustynes: script memory-mapped file write refused: the map \
+                             holds at most {MAX_MMF_NAMES} names and {} MiB",
+                            MAX_MMF_BYTES >> 20
+                        );
+                    }
                 }
             }
             CommCmd::MmfRead { id, name, len } => {

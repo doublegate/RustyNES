@@ -54,6 +54,13 @@ run any bitstream.**
 - **Opening TAStudio restarts the game from power-on** (maintainer decision).
   A project exports as a power-on movie, but the editor anchored its frame 0
   on the running game, so an export replayed from somewhere else.
+  It refuses to open while a movie plays or records, or under netplay.
+- **A movie no longer writes its save RAM over the player's `.sav`.** Starting
+  a power-on movie, playing or importing one, or opening TAStudio replaces the
+  save RAM, and the writer would have saved that at its next comparison. Any
+  pending save is written first; the file then stays untouched until the ROM
+  is reloaded. Mobile reports the pre-movie RAM to the host for the same
+  span.
 
 ### HD packs and patches
 

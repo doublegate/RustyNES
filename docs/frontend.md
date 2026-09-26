@@ -2137,8 +2137,21 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   `rustynes_core::power_on_for_movie`: a power cycle, then cartridge RAM zeroed,
   which is what a fresh load with no `.sav` holds. A movie therefore replays the
   same way whether or not a save exists. The emulator's copy is cleared, not the
-  file; if the movie runs to the game's own save routine, the next comparison
-  writes that, exactly as the game would.
+  file, and **the movie session stops the file being written**: a movie's RAM
+  is the movie's, not the player's. The desktop writes any pending change
+  first, then unbinds the `.sav` until the ROM is reloaded
+  (`EmuCore::start_movie_session`, used by power-on recording, playback, movie
+  import and TAStudio); the mobile bridge keeps reporting the RAM from before
+  the session through `battery_ram` until the next `load_rom`. Before this, the
+  writer compared only "live vs last write", so the cleared RAM was written
+  over the save at the next comparison (Copilot on #561). A movie that fails
+  to start (another ROM's) changes nothing and saving continues. Pinned by
+  `a_power_on_movie_does_not_overwrite_the_save` (desktop) and
+  `a_power_on_movie_does_not_reach_the_save` (mobile).
+
+  TAStudio refuses to open while a movie is playing or recording, or under
+  netplay: it power-cycles the console, which would continue the movie from a
+  state it never recorded, or desync the peer.
 
   **TAStudio opens at power-on (v2.9.0, NF-10, maintainer decision).** A
   `TAStudio` project exports as a power-on movie, so opening the panel now

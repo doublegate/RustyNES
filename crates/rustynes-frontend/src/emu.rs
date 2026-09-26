@@ -1758,9 +1758,43 @@ impl EmuCore {
         }
     }
 
+    /// v2.9.0 — start a movie session that replaces the cartridge's battery
+    /// RAM, without letting that RAM reach the `.sav`.
+    ///
+    /// A power-on movie starts from CLEARED save RAM
+    /// ([`rustynes_core::power_on_for_movie`]), and playing any movie loads
+    /// the RAM the movie starts from. Both change the live save RAM, and the
+    /// periodic writer compares only "live vs last write", so the next
+    /// comparison wrote the movie's RAM -- zeros, for a power-on movie -- over
+    /// the player's save (Copilot on #561).
+    ///
+    /// So: write any pending change first (the game's own progress up to now
+    /// is the player's), run `start`, and if it reports that the session
+    /// began, stop persisting this cartridge. The `.sav` then keeps exactly
+    /// what the game had written; reloading the ROM binds it again. If
+    /// `start` reports failure (a movie for another ROM, a refused save
+    /// state), the console is unchanged and saving continues.
+    ///
+    /// Returns what `start` returned. On wasm32 there is no battery file and
+    /// this is `start(self)`.
+    pub fn start_movie_session(&mut self, start: impl FnOnce(&mut Self) -> bool) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_battery(true);
+        let began = start(self);
+        #[cfg(not(target_arch = "wasm32"))]
+        if began && self.battery.take().is_some() {
+            eprintln!(
+                "rustynes: battery saving paused for this movie session; \
+                 reload the ROM to resume"
+            );
+        }
+        began
+    }
+
     /// v2.7.3 (FE-01) — write the battery RAM now if it changed, under the
-    /// caller's lock. Used only by [`Self::detach_battery`], where the write
-    /// must land before the `Nes` it copies from is replaced.
+    /// caller's lock. Used by [`Self::detach_battery`], where the write must
+    /// land before the `Nes` it copies from is replaced, and by
+    /// [`Self::start_movie_session`], before a movie replaces it.
     #[cfg(not(target_arch = "wasm32"))]
     fn flush_battery(&mut self, force: bool) {
         let (Some(save), Some(nes)) = (self.battery.as_mut(), self.nes.as_ref()) else {
@@ -2257,5 +2291,78 @@ mod tests {
         // An absurdly high speed is capped (period stays non-trivial).
         core.speed = 1_000.0;
         assert!(core.effective_frame_duration() > Duration::ZERO);
+    }
+
+    // ---- v2.9.0: a movie session must not write its RAM over the .sav ------
+
+    /// NROM with the battery bit: writes `$A5` to `$6000`, then loops.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn battery_rom() -> Vec<u8> {
+        let mut v = b"NES\x1A".to_vec();
+        v.extend_from_slice(&[1, 1, 0x02, 0]);
+        v.resize(16, 0);
+        let mut prg = vec![0xEAu8; 0x4000];
+        // C000: LDA #$A5 / STA $6000 / JMP $C005
+        prg[..8].copy_from_slice(&[0xA9, 0xA5, 0x8D, 0x00, 0x60, 0x4C, 0x05, 0xC0]);
+        prg[0x3FFC] = 0x00;
+        prg[0x3FFD] = 0xC0;
+        v.extend_from_slice(&prg);
+        v.extend(core::iter::repeat_n(0u8, 0x2000));
+        v
+    }
+
+    /// Copilot on #561: starting a power-on movie cleared the live save RAM,
+    /// and the next periodic comparison wrote those zeros over the `.sav`.
+    /// Through [`EmuCore::start_movie_session`] the file keeps the game's
+    /// save, and no later comparison has anything to write.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_power_on_movie_does_not_overwrite_the_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&battery_rom()).unwrap());
+        assert!(core.attach_battery(Some(dir.path())).is_none());
+        let path = core.battery.as_ref().unwrap().path().to_path_buf();
+        for _ in 0..3 {
+            core.nes.as_mut().unwrap().run_frame();
+        }
+        // Not yet flushed: the session start must write it first.
+        assert!(!path.exists());
+
+        let began = core.start_movie_session(|core| {
+            rustynes_core::power_on_for_movie(core.nes.as_mut().unwrap());
+            true
+        });
+        assert!(began);
+        assert_eq!(
+            core.nes.as_ref().unwrap().sram()[0],
+            0,
+            "the movie starts cleared"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap()[0],
+            0xA5,
+            "the game's save was written first"
+        );
+        for _ in 0..crate::battery_save::CHECK_PERIOD_FRAMES * 2 {
+            assert!(
+                core.battery_due_write().is_none(),
+                "nothing may reach the .sav"
+            );
+        }
+        assert_eq!(std::fs::read(&path).unwrap()[0], 0xA5, "the save survived");
+    }
+
+    /// A session that fails to start (a movie for another ROM) changes nothing,
+    /// so the cartridge keeps saving.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_movie_that_does_not_start_leaves_saving_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&battery_rom()).unwrap());
+        assert!(core.attach_battery(Some(dir.path())).is_none());
+        assert!(!core.start_movie_session(|_| false));
+        assert!(core.battery.is_some());
     }
 }

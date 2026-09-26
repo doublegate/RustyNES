@@ -1635,15 +1635,32 @@ fn fds_save_path(
 /// rename, creating the directory first. A crash mid-write leaves the old
 /// file, not a truncated one; the rename replaces an existing file on every
 /// platform `std` supports.
+///
+/// The data is `sync_all`ed before the rename (agy on #561). `fs::write`
+/// leaves it in the page cache, and a filesystem may commit the rename's
+/// directory entry before the data, so a power loss just after the rename
+/// could leave an empty `.fds.sav` in place of the old one -- the outcome the
+/// temporary file exists to prevent. A failed write removes the temporary
+/// file rather than leaving it beside the save.
 fn write_file_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = std::path::PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    let written = std::fs::File::create(&tmp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// Hand the frontend the disk-control interface: the extended one (with
