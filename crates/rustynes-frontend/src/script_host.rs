@@ -29,7 +29,8 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -237,40 +238,131 @@ fn http_config(
 /// The host side of the `comm.*` bridge: owns the worker thread + the result
 /// inbox the host pumps back into the engine each frame.
 pub struct ScriptHost {
-    /// Outbound jobs to the worker (`None` is never sent; the worker exits when
-    /// this sender drops).
-    job_tx: Sender<CommCmd>,
+    /// Outbound jobs to the worker, BOUNDED at [`COMM_QUEUE_DEPTH`] (v2.9.0
+    /// re-audit NF-08). The worker exits when this sender drops.
+    job_tx: SyncSender<CommCmd>,
     /// Results the worker produced (drained each frame and pushed to the engine).
     result_rx: Receiver<CommResult>,
-    /// The worker thread handle (joined on drop).
+    /// Set by `Drop`: the worker abandons its backlog at the next job boundary.
+    cancel: Arc<AtomicBool>,
+    /// The worker thread handle (joined, or detached after a grace, on drop).
     worker: Option<JoinHandle<()>>,
 }
+
+/// v2.9.0 re-audit NF-08 — how many `comm.*` requests may wait for the worker.
+///
+/// The queue was an unbounded `mpsc::channel`, and each HTTP request can take
+/// up to the agent's 20 s timeout, so a script could queue a backlog that
+/// outlived it by hours. 256 is far more than a script polling a service
+/// needs in flight, and bounds the backlog's memory to 256 requests of at most
+/// 1 MiB each (the engine's per-request cap, NF-03). A full queue REFUSES the
+/// request rather than blocking: `submit` runs on the frame thread, which must
+/// never wait on the network.
+pub const COMM_QUEUE_DEPTH: usize = 256;
+
+/// v2.9.0 re-audit NF-08 — how long `Drop` waits for the worker before
+/// detaching it. An idle worker, or one between jobs, sees the closed channel
+/// or the cancel flag at once; only a worker inside a network call outlives
+/// it, and that call is bounded by its own timeout (the MOB-04 precedent,
+/// `rustynes-netplay`'s `join_or_detach`).
+const DROP_GRACE: Duration = Duration::from_millis(100);
 
 impl ScriptHost {
     /// Spawn the IPC worker thread.
     #[must_use]
     pub fn new() -> Self {
-        let (job_tx, job_rx) = channel::<CommCmd>();
+        Self::spawn(None)
+    }
+
+    /// Spawn with an explicit HTTP allowlist instead of reading
+    /// `RUSTYNES_COMM_HTTP_ALLOW`, so a test can reach a loopback listener
+    /// without mutating the process environment (which other tests share).
+    #[cfg(all(test, feature = "script-ipc"))]
+    fn with_allowlist(allow: Vec<String>) -> Self {
+        Self::spawn(Some(allow))
+    }
+
+    fn spawn(allow: Option<Vec<String>>) -> Self {
+        let (job_tx, job_rx) = sync_channel::<CommCmd>(COMM_QUEUE_DEPTH);
         let (result_tx, result_rx) = channel::<CommResult>();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
         let worker = std::thread::Builder::new()
             .name("script-ipc".to_string())
-            .spawn(move || worker_loop(&job_rx, &result_tx))
+            .spawn(move || worker_loop(&job_rx, &result_tx, &worker_cancel, allow))
             .ok();
         Self {
             job_tx,
             result_rx,
+            cancel,
             worker,
         }
     }
 
-    /// Hand a marshalled, host-owned IPC request to the worker. Fire-and-forget;
-    /// any reply arrives later via [`Self::drain_results`]. The caller (the
-    /// frontend pump) only ever forwards `CommCmd`s the engine produced AFTER
-    /// the `set_writes_locked` gate, so a locked session never reaches here.
-    pub fn submit(&self, cmd: CommCmd) {
-        // A send error means the worker died; drop the command (the next frame's
-        // results drain simply yields nothing).
-        let _ = self.job_tx.send(cmd);
+    /// Hand a marshalled, host-owned IPC request to the worker. Any reply
+    /// arrives later via [`Self::drain_results`]. The caller (the frontend
+    /// pump) only ever forwards `CommCmd`s the engine produced AFTER the
+    /// `set_writes_locked` gate, so a locked session never reaches here.
+    ///
+    /// # Errors
+    ///
+    /// Never blocks. When the queue already holds [`COMM_QUEUE_DEPTH`]
+    /// requests, or the worker has died, the request is handed back; the
+    /// caller tells the script with [`Self::refusal`].
+    pub fn submit(&self, cmd: CommCmd) -> Result<(), CommCmd> {
+        self.job_tx.try_send(cmd).map_err(|e| match e {
+            TrySendError::Full(c) | TrySendError::Disconnected(c) => c,
+        })
+    }
+
+    /// Submit a frame's `comm.*` requests (v2.9.0 re-audit NF-08). A request
+    /// the full queue refuses is answered at once with [`Self::refusal`],
+    /// pushed straight into `engine`, so the script sees a failed request
+    /// rather than one that never completes. Returns a console note when any
+    /// were refused (one line per frame, not one per request).
+    #[must_use]
+    pub fn forward(
+        &self,
+        cmds: Vec<CommCmd>,
+        engine: &rustynes_script::ScriptEngine,
+    ) -> Option<String> {
+        let mut refused = 0usize;
+        for cmd in cmds {
+            if let Err(cmd) = self.submit(cmd) {
+                refused += 1;
+                if let Some(r) = Self::refusal(&cmd) {
+                    engine.push_comm_result(r);
+                }
+            }
+        }
+        (refused > 0).then(|| {
+            format!("[comm: {refused} request(s) refused: {COMM_QUEUE_DEPTH} already queued]")
+        })
+    }
+
+    /// The failure a script sees for a request [`Self::submit`] refused: the
+    /// same values a transport failure produces (`status = 0` / an empty
+    /// buffer / a closed socket), so a script handles both one way. `None`
+    /// for the fire-and-forget verbs, which have no reply to carry it.
+    #[must_use]
+    pub const fn refusal(cmd: &CommCmd) -> Option<CommResult> {
+        match *cmd {
+            CommCmd::HttpGet { id, .. } | CommCmd::HttpPost { id, .. } => Some(CommResult::Http {
+                id,
+                status: 0,
+                body: String::new(),
+            }),
+            CommCmd::MmfRead { id, .. } => Some(CommResult::Mmf {
+                id,
+                data: Vec::new(),
+            }),
+            CommCmd::WsOpen { id, .. } => Some(CommResult::WsState {
+                id,
+                open: false,
+                message: None,
+            }),
+            _ => None,
+        }
     }
 
     /// Drain every result the worker produced since the last call (non-blocking).
@@ -292,28 +384,62 @@ impl Default for ScriptHost {
 }
 
 impl Drop for ScriptHost {
+    /// v2.9.0 re-audit NF-08. Before, this dropped the sender and joined. But
+    /// `mpsc` delivers every buffered job before it reports disconnection, so
+    /// the worker ran the whole backlog first: a stopped script's requests
+    /// kept going out, and the join blocked the dropping thread (the UI
+    /// thread, on Reload) for up to 20 s per queued request. Now the cancel
+    /// flag makes the worker abandon the backlog at the next job boundary,
+    /// and the join is bounded: a worker still inside a network call after
+    /// [`DROP_GRACE`] is detached. That is safe because it owns everything it
+    /// touches (its agent, socket and MMF map, its end of both channels, and
+    /// its clone of the flag) and calls back into nothing; it exits when the
+    /// call returns, bounded by the agent's timeout.
     fn drop(&mut self) {
-        // Dropping `job_tx` ends the worker's `recv` loop; join so the thread is
-        // cleaned up deterministically.
+        self.cancel.store(true, Ordering::Relaxed);
         if let Some(h) = self.worker.take() {
             // The sender is a field, so it is still alive here; replace it with a
-            // detached channel to drop the original and unblock the worker.
-            let (dead_tx, _dead_rx) = channel::<CommCmd>();
+            // detached channel to drop the original and unblock an idle worker.
+            let (dead_tx, _dead_rx) = sync_channel::<CommCmd>(0);
             let _ = std::mem::replace(&mut self.job_tx, dead_tx);
-            let _ = h.join();
+            join_or_detach(h, DROP_GRACE);
         }
     }
 }
 
+/// Join `worker` if it finishes within `grace`; otherwise let it go (dropping
+/// the handle detaches the thread). Returns whether it joined.
+fn join_or_detach(worker: JoinHandle<()>, grace: Duration) -> bool {
+    let deadline = Instant::now() + grace;
+    while !worker.is_finished() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let _ = worker.join();
+    true
+}
+
 /// The worker loop: own the connections, do the blocking I/O, ship results back.
 /// Exits when the job sender is dropped (host `ScriptHost::drop`).
-fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
+fn worker_loop(
+    job_rx: &Receiver<CommCmd>,
+    result_tx: &Sender<CommResult>,
+    cancel: &AtomicBool,
+    allow: Option<Vec<String>>,
+) {
     // Host-owned connection state — the script can NEVER name any of these
     // handles; it only ever sees the marshalled `CommResult` values below.
+    // `allow` is `Some` only from the test constructor; production reads the
+    // user's environment.
     #[cfg(feature = "script-ipc")]
-    let agent = http_agent(parse_allowlist(
-        &std::env::var(HTTP_ALLOW_ENV).unwrap_or_default(),
-    ));
+    let agent =
+        http_agent(allow.unwrap_or_else(|| {
+            parse_allowlist(&std::env::var(HTTP_ALLOW_ENV).unwrap_or_default())
+        }));
+    #[cfg(not(feature = "script-ipc"))]
+    let _ = allow;
     // A single outbound TCP socket (`socketServerSend`) — lazily connected to the
     // host's configured endpoint via the env override (off-by-default; an
     // unconfigured host simply drops the byte stream). Kept host-side.
@@ -328,6 +454,10 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
     let mmf: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
 
     while let Ok(cmd) = job_rx.recv() {
+        // NF-08: once the host is dropped, the backlog is abandoned, not run.
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         match cmd {
             CommCmd::SocketSend(data) => {
                 if tcp.is_none() {
@@ -490,12 +620,14 @@ mod tests {
         host.submit(CommCmd::MmfWrite {
             name: "frame".to_string(),
             data: vec![1, 2, 3, 4, 5],
-        });
+        })
+        .expect("queued");
         host.submit(CommCmd::MmfRead {
             id: 7,
             name: "frame".to_string(),
             len: 3,
-        });
+        })
+        .expect("queued");
         // Poll briefly for the worker to produce the result.
         let mut got = None;
         for _ in 0..200 {
@@ -525,7 +657,8 @@ mod tests {
             id: 1,
             name: "nope".to_string(),
             len: 16,
-        });
+        })
+        .expect("queued");
         let mut got = None;
         for _ in 0..200 {
             if let Some(r) = host.drain_results().into_iter().next() {
@@ -564,6 +697,128 @@ mod tests {
             mmf_store(&mut names, format!("n{i}"), Vec::new());
         }
         assert_eq!(names.len(), MAX_MMF_NAMES, "the name count is capped");
+    }
+
+    /// A local listener that accepts every connection and never answers,
+    /// holding each socket open, so an HTTP request to it blocks until the
+    /// agent's 20 s timeout.
+    #[cfg(feature = "script-ipc")]
+    fn silent_server() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            // Kept only so the sockets stay open (a dropped stream would
+            // close the connection and let the request fail fast).
+            #[allow(clippy::collection_is_never_read)]
+            let mut held = Vec::new();
+            for stream in listener.incoming().flatten() {
+                held.push(stream);
+            }
+        });
+        port
+    }
+
+    /// v2.9.0 re-audit NF-08: `Drop` joined the worker, and `mpsc` delivers
+    /// every buffered job before reporting disconnection, so dropping a host
+    /// with a backlog of slow requests blocked the dropping thread (the UI
+    /// thread, on Reload) for up to 20 s per request, while a STOPPED
+    /// script's requests kept going out. Dropping must now return promptly.
+    /// Timed on its own thread: a regression fails at 10 s, it never stalls.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn dropping_a_host_with_a_slow_backlog_returns_promptly() {
+        let port = silent_server();
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        for id in 1..=10 {
+            let _ = host.submit(CommCmd::HttpGet {
+                id,
+                url: format!("http://127.0.0.1:{port}/"),
+            });
+        }
+        // Let the worker enter the first (blocking) request.
+        std::thread::sleep(Duration::from_millis(200));
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let t = Instant::now();
+            drop(host);
+            let _ = tx.send(t.elapsed());
+        });
+        let took = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("drop did not return within 10 s: it waits on the backlog");
+        assert!(took < Duration::from_secs(1), "drop took {took:?}");
+    }
+
+    /// NF-08, the other half: a stopped script's backlog must stop going out.
+    /// A listener that answers each request after 300 ms counts connections;
+    /// ten requests are queued and the host dropped mid-way through the
+    /// first. Without the cancel flag the detached worker would keep working
+    /// through all ten (one every 300 ms).
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn dropping_a_host_abandons_its_backlog() {
+        use std::io::Read;
+        use std::sync::atomic::AtomicUsize;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                std::thread::sleep(Duration::from_millis(300));
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            }
+        });
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        for id in 1..=10 {
+            host.submit(CommCmd::HttpGet {
+                id,
+                url: format!("http://127.0.0.1:{port}/"),
+            })
+            .expect("queued");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        drop(host);
+        std::thread::sleep(Duration::from_millis(1500));
+        let n = hits.load(Ordering::SeqCst);
+        assert!(n <= 2, "{n} requests went out after the host was dropped");
+    }
+
+    /// NF-08: the queue is bounded, and a full one refuses at once instead of
+    /// blocking the frame thread. The refusal reads as a transport failure.
+    #[cfg(feature = "script-ipc")]
+    #[test]
+    fn a_full_queue_refuses_without_blocking() {
+        let port = silent_server();
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        let t = Instant::now();
+        let mut refused = Vec::new();
+        for id in 1..=(COMM_QUEUE_DEPTH as u64 + 10) {
+            if let Err(cmd) = host.submit(CommCmd::HttpGet {
+                id,
+                url: format!("http://127.0.0.1:{port}/"),
+            }) {
+                refused.push(cmd);
+            }
+        }
+        assert!(t.elapsed() < Duration::from_secs(1), "submit blocked");
+        assert!(!refused.is_empty(), "a full queue refuses");
+        let first = &refused[0];
+        let CommCmd::HttpGet { id, .. } = *first else {
+            panic!("refused an HttpGet")
+        };
+        assert_eq!(
+            ScriptHost::refusal(first),
+            Some(CommResult::Http {
+                id,
+                status: 0,
+                body: String::new()
+            })
+        );
+        assert_eq!(ScriptHost::refusal(&CommCmd::WsClose), None);
     }
 
     /// A one-shot local HTTP server. Answers every connection with `response`

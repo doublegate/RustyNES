@@ -154,6 +154,15 @@ cycle-accurate core later replaced.
   `userdata.*` to 1 MiB per value and 16 MiB in all, with an error when a
   value is refused (v2.9.0 re-audit NF-03).
 
+### Fixed
+
+- **Stopping a Lua script stops its network requests.** With `script-ipc`,
+  a stopped script's queued `comm.*` requests kept going out, and loading
+  the next script could freeze the window for 20 seconds per request still
+  queued. Stop now cancels the backlog, dropping the IPC host waits at most
+  100 ms, and the request queue is limited to 256 entries, refusing the
+  excess as a failed request instead of blocking (v2.9.0 re-audit NF-08).
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die

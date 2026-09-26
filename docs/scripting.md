@@ -131,6 +131,16 @@ closes it on the native backend:
   drain different queues (mobile drains only the log), and a shared pool would
   let an undrained queue starve the others. A restored `userdata` store obeys
   the same limits; an entry that does not fit is skipped.
+- **Stop stops the `comm.*` backlog (re-audit NF-08, `script-ipc`).** The
+  desktop's IPC worker queue was unbounded and survived **Stop**; each HTTP
+  request can take up to 20 s, so a stopped script's requests kept going out,
+  and the next load blocked the window while the old worker drained them.
+  **Stop** now drops the IPC host, which cancels its backlog at the next request
+  boundary and waits at most 100 ms for a request in flight (it is then left to
+  finish on its own, bounded by its timeout). The queue holds at most 256
+  requests; a request refused because it is full is answered at once as a
+  transport failure (`status = 0` / an empty buffer / a closed socket) and the
+  console notes it, and the frame thread never waits on it.
 
 ## Loading a script
 

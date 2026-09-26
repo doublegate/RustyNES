@@ -5305,7 +5305,8 @@ impl App {
         }
 
         // Drain engine-side buffers (no `Nes` access) outside the lock (M2).
-        let log = engine.drain_log();
+        #[allow(unused_mut)] // appended to only under `script-ipc` (NF-08).
+        let mut log = engine.drain_log();
         let controls = engine.drain_controls();
         let draws = engine.drain_draws();
         // v1.7.0 "Forge" E2 — the `client.*` automation verbs this frame.
@@ -5317,10 +5318,12 @@ impl App {
         #[cfg(feature = "script-ipc")]
         {
             let comm = engine.drain_comm();
-            if let Some(host) = self.script_host.as_ref() {
-                for cmd in comm {
-                    host.submit(cmd);
-                }
+            // v2.9.0 re-audit NF-08: never blocks; a refused request is
+            // answered as a failed one, and the console says why.
+            if let Some(host) = self.script_host.as_ref()
+                && let Some(note) = host.forward(comm, engine)
+            {
+                log.push(note);
             }
         }
 
@@ -5797,6 +5800,14 @@ impl App {
             }
             ScriptAction::Stop => {
                 self.script = None;
+                // v2.9.0 re-audit NF-08: a stopped script's `comm.*` backlog
+                // must stop too. Dropping the host cancels it (bounded: a
+                // request in flight is detached, not waited for); before,
+                // the host outlived the script until the next load.
+                #[cfg(feature = "script-ipc")]
+                {
+                    self.script_host = None;
+                }
                 self.script_draws.clear();
                 if let Some(dbg) = self.debugger.as_mut() {
                     let p = dbg.script_panel();
