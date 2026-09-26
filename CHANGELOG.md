@@ -26,9 +26,13 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
+
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die
 (SDRAM) build, which v3.0.0 ships as its secondary bitstream. The emulator
-does not change. **No hardware has run any bitstream.**
+does not change. Both bitstreams are cut at fitter seed 5, chosen by a sweep
+of both builds at the line's close (on-die +0.414 ns setup / +0.078 ns hold,
+off-die +0.270 / +0.081). **No hardware has run any bitstream.**
 
 ### The MiSTer core
 
@@ -66,6 +70,14 @@ does not change. **No hardware has run any bitstream.**
   scripts/seed-sweep.sh` for its seed sweep. An off-die bitstream holds the
   console in reset when no SDRAM is detected, and bring-up gains a MemTest
   gate before it.
+- **The MiSTer core's co-simulation ladder runs from a clean checkout, all
+  of it.** v2.8.3 said so and was wrong: its first gate checks each golden
+  against the ROM it came from, and 19 of those ROMs are built by later
+  rungs. The gate now builds every generator's output itself. Two ROMs long
+  recorded as unreproducible are accounted for: one is a generator program
+  nothing had built under its name, and the other, genuinely hand-made, is
+  now committed. From a clean checkout the ladder reads 165 passed, 0
+  failed, 1 expected failure, with nothing skipped.
 
 ## [2.8.3] - 2026-09-25 - "Rivet" (the MiSTer core's reset, area and comments, measured)
 

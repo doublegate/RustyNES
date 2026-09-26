@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.8.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.8.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,16 +674,20 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces). Built on **v2.8.2 "Solder"** (2026-09-25) — the MiSTer core's on-die RTL, corrected against the oracle and the wiki: an MMC3 IRQ acknowledge is no longer lost to a same-edge counter clock, SNROM's battery RAM obeys its CHR-line enable, the triangle and noise drop a reload landing on a length clock, a `$2002` read leaves the byte it returned on the data bus, and the emulator's MMC1 no longer ignores a reset written on the cycle after another write.
+RustyNES's current release is **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
 
-v2.8.3 is the second RTL release of the v2.8.x audit line: the MiSTer core's
-resets now release on the clock that uses them, its CPU is about 4% smaller,
-four false comments in its RTL are corrected, and its co-simulation ladder runs
-from a fresh checkout (164 of its 165 gates; the last needs a hand-built
-ROM). The emulator does not change; the accuracy
-numbers below were measured on v2.8.2's tree, the last that changed it:
-AccuracyCoin 144/144 and nestest pass, and the full `--features test-roms`
-suite passes 2,756 tests. **No hardware has run any bitstream.** v2.8.2
+v2.8.4 closes the v2.8.x audit line with the MiSTer core's off-die (SDRAM)
+build, v3.0.0's secondary bitstream: its SDRAM reads now happen on the clock
+edge the memory presents them (the model and controller shared a one-clock
+error that only the new SDRAM timing constraints exposed), both builds are
+swept across five fitter seeds and pinned at seed 5, and the co-simulation
+ladder runs all 165 gates from a clean checkout. The SDRAM constraints are
+provisional until the SuperStation One's memory is read at v2.9.2. The
+emulator does not change; the accuracy numbers below were measured on
+v2.8.2's tree, the last that changed it: AccuracyCoin 144/144 and nestest
+pass, and the full `--features test-roms` suite passes 2,756 tests. **No
+hardware has run any bitstream.** v2.8.3 released every reset on the clock
+that uses it and made the CPU about 4% smaller, v2.8.2
 corrected the core's on-die RTL (and found the emulator's MMC1 wrong),
 v2.8.1 closed the libretro half of the line, and v2.8.0
 made the libretro core unwind and contain a panic at its own boundary, and

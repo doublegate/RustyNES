@@ -1,14 +1,14 @@
 # RustyNES Development Roadmap
 
 **Document Version:** 2.0.4
-**Last Updated:** 2026-09-25
-**Project Status:** v2.8.3 "Rivet" released — the MiSTer core's reset, area and comments, measured, the second RTL release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is planned for v3.0.0.
+**Last Updated:** 2026-09-26
+**Project Status:** v2.8.4 "Tether" released — the MiSTer core's SDRAM build, made trustworthy, the last release of the v2.8.x audit line. **No hardware has run any bitstream**; the SuperStation One core is planned for v3.0.0.
 
 ---
 
 ## Where we are
 
-RustyNES is well past v1.0.0. The current release is **v2.8.3 "Rivet"** — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces). Built on **v2.8.2 "Solder"** — the MiSTer core's on-die RTL, corrected against the oracle and the wiki: an MMC3 IRQ acknowledge is no longer lost to a same-edge counter clock, SNROM's battery RAM obeys its CHR-line enable, the triangle and noise drop a reload landing on a length clock, a `$2002` read leaves the byte it returned on the data bus, and the emulator's MMC1 no longer ignores a reset written on the cycle after another write. **No hardware has run any bitstream.**
+RustyNES is well past v1.0.0. The current release is **v2.8.4 "Tether"** — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces). **No hardware has run any bitstream.**
 
 **This root ROADMAP is a historical snapshot of the v1.0.0 cut.** For the authoritative, current forward roadmap see **[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)**; for the authoritative current-state pass counts and platform matrix see **[`docs/STATUS.md`](docs/STATUS.md)**; for the full per-release history see **[`CHANGELOG.md`](CHANGELOG.md)**. Many of the "post-1.0 directions" listed further down (mobile, Lua scripting, TAS editor, Vs. DualSystem, HD packs, hosted netplay) have since shipped — the tables below record what was **done at v1.0.0**, not the current feature set.
 
