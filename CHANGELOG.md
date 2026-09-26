@@ -26,6 +26,39 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+The fifth and last release of the v2.8.x line: the MiSTer core's off-die
+(SDRAM) build, which v3.0.0 ships as its secondary bitstream. The emulator
+does not change. **No hardware has run any bitstream.**
+
+### The MiSTer core
+
+- **The SDRAM controller's power-up sequence follows the datasheet.** It
+  raised the clock enable on the same edge as its first command, which the
+  part ignores because it samples the clock enable one cycle earlier. The
+  controller now issues a no-op first. The SDRAM model the co-simulation
+  uses could not see this, so the model now registers the clock enable the
+  way the part does and flags a command it would ignore.
+- **Reads work at CAS latency 3.** The controller held the read mask high
+  while waiting for data, which masks the data at CAS latency 3 (the
+  shipped clock uses latency 2, where it happened not to matter). The model
+  now applies the read mask with the part's latency; before the fix every
+  read at latency 3 returned zero.
+- **The SDRAM arbiter returns the right byte, and cannot lose a write.** A
+  request arriving while the same source was being served changed which
+  byte of the answer it received, and a write strobe on the cycle the
+  arbiter reported "not busy" could be dropped. Both have a gate that failed
+  before the fix. The second is not reachable from today's cartridge path,
+  and is fixed so it cannot become reachable.
+- **The SDRAM pins have timing constraints** (provisional, from the
+  documented AS4C32M16SB datasheet until the SuperStation One's part is
+  read at v2.9.2), and the constraints file no longer claims the framework
+  constrains them.
+- **The off-die bitstream builds without editing source**:
+  `scripts/build-offdie.sh` in the sibling, and `OFFDIE=1
+  scripts/seed-sweep.sh` for its seed sweep. An off-die bitstream holds the
+  console in reset when no SDRAM is detected, and bring-up gains a MemTest
+  gate before it.
+
 ## [2.8.3] - 2026-09-25 - "Rivet" (the MiSTer core's reset, area and comments, measured)
 
 The fourth release of the v2.8.x line: the RTL audit's robustness rows for
