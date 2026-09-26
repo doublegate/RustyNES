@@ -1642,6 +1642,14 @@ fn fds_save_path(
 /// could leave an empty `.fds.sav` in place of the old one -- the outcome the
 /// temporary file exists to prevent. A failed write removes the temporary
 /// file rather than leaving it beside the save.
+///
+/// On Unix the parent directory is synced after the rename (agy on #561), as
+/// the desktop's `write_atomic` does: the rename is a directory change, and
+/// without it the new entry may not survive a power loss. A filesystem that
+/// does not offer a directory `fsync` (`EINVAL`, `ENOTSUP`, `EBADF`) is not a
+/// failure. Any other error is returned even though the file was replaced,
+/// which here only leaves the disk marked dirty, so the next flush writes it
+/// again.
 fn write_file_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     if let Some(dir) = path.parent() {
@@ -1660,7 +1668,26 @@ fn write_file_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Resul
     }
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
-    })
+    })?;
+    #[cfg(unix)]
+    {
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        match std::fs::File::open(dir).and_then(|d| d.sync_all()) {
+            Err(e)
+                if !matches!(
+                    e.kind(),
+                    std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported
+                ) && e.raw_os_error() != Some(libc::EBADF) =>
+            {
+                return Err(e);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Hand the frontend the disk-control interface: the extended one (with
