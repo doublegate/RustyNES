@@ -62,7 +62,11 @@ hardware core.
 4. **v3.0.0 may also carry a real API break**, if it is worth carrying. v2.7.5
    deprecates the dead surface the core audit located: the unused `Cpu::Bus`
    methods and the orphaned `ApuBus`. Whether v3.0.0 removes them is decided at
-   v2.9.0 and recorded there. **No save-state break is planned.** The additive
+   v2.9.0 and recorded there. **No save-state break is planned.** *(Amended
+   2026-09-26 by [ADR 0042](0042-v3-removes-the-v2-7-5-deprecations-and-the-dead-nmi-edge-detector.md):
+   the maintainer decided v3.0.0 removes them together with the dead NMI edge
+   detector, whose two fields are in the `.rns` BUS section, so the BUS section
+   does change at v3.0.0.)* The additive
    `internal_data_bus` snapshot section in v2.8.0 follows ADR 0028's rules and does
    not break cross-version loading within the v2 epoch.
 5. **Nothing is renamed retroactively.** v2.6.21-v2.6.23 shipped with release bodies

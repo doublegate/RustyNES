@@ -24,10 +24,11 @@ lines before it act on the four audits in
 
 | Plan | Release | Status |
 |---|---|---|
-| [`v2.7.x-core-frontend-audit-plan.md`](v2.7.x-core-frontend-audit-plan.md) | v2.7.x — the core and frontend audits | **In progress** |
+| [`v2.7.x-core-frontend-audit-plan.md`](v2.7.x-core-frontend-audit-plan.md) | v2.7.x — the core and frontend audits | Shipped |
 | [`v2.7.0-palisade-plan.md`](v2.7.0-palisade-plan.md) | v2.7.0 "Palisade" — untrusted save-state input stops at the boundary; the pulse-1 sweep clamp | **Shipped** |
-| [`v2.8.x-libretro-rtl-audit-plan.md`](v2.8.x-libretro-rtl-audit-plan.md) | v2.8.x — the libretro and RTL audits, and the off-die build | Planned |
-| [`v2.9.x-final-audit-and-hardware-plan.md`](v2.9.x-final-audit-and-hardware-plan.md) | v2.9.x — re-audit, optimise, and the bring-up on the board | Planned |
+| [`v2.8.x-libretro-rtl-audit-plan.md`](v2.8.x-libretro-rtl-audit-plan.md) | v2.8.x — the libretro and RTL audits, and the off-die build | Shipped |
+| [`v2.9.x-final-audit-and-hardware-plan.md`](v2.9.x-final-audit-and-hardware-plan.md) | v2.9.x — re-audit, optimise, and the bring-up on the board | **In progress** |
+| [`v2.9.0-survey-plan.md`](v2.9.0-survey-plan.md) | v2.9.0 "Survey" — every audit re-checked, the SuperStation One surveyed, the v3.0.0 API decision (ADR 0042) | **In progress** |
 | [`v3.0.0-superstation-core-plan.md`](v3.0.0-superstation-core-plan.md) | v3.0.0 — the hardware-verified FPGA core | Planned |
 | [`v2.7.0-shakedown-plan.md`](v2.7.0-shakedown-plan.md) | v2.7.0 "Shakedown" — the board session as first planned | **Superseded** by ADR 0041; strands A–F carried into the v2.9.x plan |
 | [`v2.7.0-mister-core-plan.md`](v2.7.0-mister-core-plan.md) | v2.5.1 → v2.7.0 — the MiSTer core ladder | **Superseded** by ADR 0041 |

@@ -1,0 +1,73 @@
+# 42. v3.0.0 removes the v2.7.5 deprecations and the dead NMI edge detector
+
+Date: 2026-09-26
+
+## Status
+
+Accepted. Decided by the maintainer at v2.9.0, the point
+[ADR 0041](0041-hardware-release-is-v3.0.0.md) reserved for it. Amends ADR 0041
+item 4, whose "No save-state break is planned" no longer holds for the BUS
+section. Leaves ADR 0003 and ADR 0028 in force: this is a MAJOR-release change of
+the kind ADR 0003's policy already allows.
+
+## Context
+
+v2.7.5 "Tally" deprecated the dead surface the core audit located (core ledger
+§3.1, §4.2-§4.4). Measured at v2.9.0:
+
+- **19 items, all `since = "2.7.5"`**: 18 methods on `rustynes_cpu::Bus`
+  (`crates/rustynes-cpu/src/bus.rs`: the `poll_nmi` / `poll_irq` family, the
+  pre-v2.0.0 per-phase and DMA-step hooks, the DMC-overlap hooks) and the
+  `rustynes_apu::ApuBus` trait. No `Bus` / `CpuBus` type aliases exist; the core
+  ledger declined that suggestion.
+- **Zero callers.** The only calls are two inside the trait's own default bodies.
+  The 18 overrides (16 in `LockstepBus`, 2 in test stubs used only by ignored
+  tests) are dead with them. `ApuBus` has no implementor.
+- **No external surface.** No crate is published to crates.io, and none of the
+  items is reachable through the libretro core, the UniFFI mobile bridge, the
+  Lua API or the wasm build. They are nameable only as `rustynes_core::rustynes_cpu::Bus`
+  and `rustynes_core::rustynes_apu::ApuBus`, through whole-crate re-exports.
+- **A trial removal** in a scratch copy (6 files, about 510 lines, plus the
+  54-line `dmc_dma_step_impl` that becomes dead) compiled and passed clippy, the
+  no_std build, the chip tests, AccuracyCoin, nestest, the DMA pins, the
+  save-state and visual-regression suites and the snapshot-schema audit. The
+  full `test-roms` suite, the frontend feature clippy set and the wasm gates were
+  not run on it.
+- **The NMI edge detector is the entangled part.** `sample_nmi_edge` runs in the
+  live PPU catch-up loop but feeds only the deprecated `poll_nmi`
+  (`docs/performance.md` says to remove them together). Its two fields,
+  `nmi_edge_latch` and `last_nmi_level`, are written into the `.rns` BUS section
+  (`bus_snapshot.rs`, `BUS_SECTION_VERSION` 1). Removing it changes the save-state
+  layout; removing only the methods would not.
+- **Also dead and not deprecated**: `oam_dma_overlap_cycle`, whose only call site
+  is inside a deprecated override, and the fields `dmc_step_was_get` (becomes
+  write-only) and `dma_total` (read only by `oam_dma_overlap_cycle`). The v2.7.5
+  count of "18 dead methods" was therefore a lower bound.
+
+## Decision
+
+**v3.0.0 removes all of it**: the 19 deprecated items and their overrides,
+`dmc_dma_step_impl`, the NMI edge detector and its two fields, and the other dead
+code the removal exposes. The version number is already paid for: v3.0.0 is
+MAJOR under ADR 0041's new-deliverable-class trigger.
+
+It is done at v3.0.0, not before: a v2.9.x release is MINOR, and removing public
+items is an API break.
+
+## Consequences
+
+- **An API break**, with a CHANGELOG migration note as `VERSION-PLAN.md`
+  requires. The note is short, because nothing in the project called these items.
+- **A BUS-section format change**: `BUS_SECTION_VERSION` 1 -> 2, the two fields
+  gone. **How older `.rns` files load is decided at v3.0.0**, with this fact on
+  the table: the two fields feed only the removed `poll_nmi`, so a v3.0.0 reader
+  could accept a version-1 BUS section by reading and discarding them, losing
+  nothing that affects emulation. The alternative is ADR 0003's clean rejection
+  with a clear error, as v2.0.0 did (ADR 0028). Either way, emulation output must
+  not change: the removed code is unreachable, and the gate is byte-identity on
+  the goldens plus AccuracyCoin and nestest.
+- **Docs to update at v3.0.0**: `docs/scheduler.md`, `docs/performance.md`,
+  `docs/apu-2a03.md`, `AGENTS.md`'s Bus paragraph, the core ledger rows, and the
+  reason strings in `snapshot_schema_audit.rs`.
+- **No provenance record changes**: none of the affected files carries a
+  `// Provenance:` header.
