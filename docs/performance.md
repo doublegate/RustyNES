@@ -985,6 +985,52 @@ borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
 
+### v2.9.0 — the Vs. `DualSystem` serialize (libretro re-audit NL-09; decision: NOT CHANGED, measured, handed to the core)
+
+The re-audit found that a cabinet's `retro_serialize` builds its state with
+`VsDualSystem::snapshot`, which takes the full `Nes::snapshot` of both
+consoles **including the THM thumbnail** and returns a fresh ~645 KB `Vec`
+on every call, where a single console uses `snapshot_core_into` (no
+thumbnail) into a pooled buffer. It measured a serialize + unserialize pair
+at 740 µs against 159 µs, one run.
+
+**The probe** (session scratchpad, not committed): a release binary against
+`rustynes-core` that builds the synthetic cabinet (nestest with NES 2.0 byte
+13 = `0x50`, which reaches the `DualSystem` path without a commercial dump,
+contrary to the v2.8.1 note below), runs 60 frames, then times, in six
+interleaved rounds of 400 calls: the current `dual.snapshot()`; a candidate
+that writes both consoles' `snapshot_core_into` into pooled buffers and
+assembles the container into a pooled `Vec` (its latch byte is a
+placeholder: it measures the cost of the shape, it is not a restorable
+blob); and one single-console `snapshot_core_into`. Serialize only: the
+restore side is being changed for NL-01 and was left alone. The host was
+loaded by other sessions (load average 9 to 15 in `uptime`), so the absolute
+numbers are high and noisy; the ratio is the finding.
+
+| Run | `dual.snapshot()` per call | candidate per call | single `snapshot_core_into` |
+| --- | --- | --- | --- |
+| 1 (six rounds) | 428 µs to 1,630 µs (645,529 B) | 54 µs to 78 µs (522,615 B) | 18 µs to 24 µs (261,300 B) |
+| 2 (six rounds) | 314 µs to 465 µs | 46 µs to 50 µs | 15 µs to 17 µs |
+
+Every round of both runs has the same sign, by a factor of 6 to 20: the
+thumbnails and the fresh allocation are most of a cabinet's serialize, and
+the candidate is about three single-console snapshots, as expected for two
+consoles plus one extra copy.
+
+**Why no code changed.** The adoption rule in `scripts/perf/ab_check.sh`
+adjudicates the `full_frame` workloads only; a serialize-only change does not
+move them, so the rule cannot be applied as written, and nothing here claims
+it was met. The change also belongs in `rustynes-core` (a
+`VsDualSystem::snapshot_into` that writes both consoles without the THM
+section into a caller's buffer), on the same type whose `restore` the NL-01
+fix is making all-or-nothing; it should be made there, with a restore
+round-trip test, and with a serialize workload added to the A/B tooling so
+the rule can judge it. It affects the four `DualSystem` titles only.
+
+**The documentation half of NL-09** was true and is corrected:
+`docs/libretro/architecture.md` said the buffers are "sized once so the frame
+loop does not allocate", while the cabinet serialize allocates on every call.
+
 ### v2.8.1 — the libretro audit's three performance proposals (decision: all REJECTED; one premise refuted)
 
 The libretro audit (§2.3, §2.6, §2.7) proposed three changes to the core's

@@ -1118,6 +1118,18 @@ impl FdsAudio {
                 got: src.len(),
             });
         }
+        // v2.9.0 (re-audit NC-07): the prescaler counts 0..=15 between wave /
+        // modulation clocks (`clock` increments it, then resets at 16). A raw
+        // restored value past that overflowed the increment (`0xFF`, a panic
+        // under overflow checks) or delayed a clock by up to 240 cycles in
+        // release. Checked before the tail assigns anything. The byte sits
+        // before the two flag bytes that end the tail.
+        let prescaler = src[Self::TAIL_LEN - 3];
+        if prescaler >= 16 {
+            return Err(MapperError::Invalid(format!(
+                "FDS audio prescaler {prescaler} is outside 0-15"
+            )));
+        }
         let mut off = 0;
         self.wavetable.copy_from_slice(&src[off..off + 64]);
         off += 64;
@@ -3398,6 +3410,57 @@ mod tests {
         assert_eq!(fresh.audio.cycle_prescaler, fds.audio.cycle_prescaler);
         // Re-serialize: byte-identical.
         assert_eq!(fresh.save_state(), blob);
+    }
+
+    /// v2.9.0 re-audit NC-07: the audio `cycle_prescaler` is bounded on
+    /// restore. It counts CPU cycles 0..=15 between wave/modulation clocks,
+    /// and `clock` does `+= 1` then compares `>= 16`; restored raw, `0xFF`
+    /// overflowed that add on the next cycle (a panic under overflow checks,
+    /// which the re-audit's `fdsprobe` hit at state offset 41,108) and any
+    /// value 16..=254 delayed one clock by up to 240 cycles in release.
+    /// Checked through the whole device's `load_state`, at the byte's real
+    /// position: `TAIL_LEN - 3` in the audio tail (two flag bytes follow).
+    #[test]
+    fn a_restored_audio_prescaler_outside_0_to_15_is_rejected() {
+        let mut fds = make_device(1);
+        enable_sound_io(&mut fds);
+        // A distinctive wavetable, so the audio tail can be found in the blob.
+        fds.cpu_write(0x4089, 0x80);
+        for i in 0..64u16 {
+            fds.cpu_write(0x4040 + i, ((i * 5 + 7) as u8) & 0x3F);
+        }
+        fds.cpu_write(0x4089, 0x00);
+        let blob = fds.save_state();
+        let mut tail = Vec::new();
+        fds.audio.write_tail(&mut tail);
+        let hits: Vec<usize> = (0..=blob.len() - tail.len())
+            .filter(|&o| blob[o..o + tail.len()] == tail[..])
+            .collect();
+        assert_eq!(hits.len(), 1, "the audio tail must occur once: {hits:?}");
+        let at = hits[0] + FdsAudio::TAIL_LEN - 3;
+        assert_eq!(
+            blob[at], fds.audio.cycle_prescaler,
+            "fixture: prescaler offset"
+        );
+
+        for value in [16u8, 0x80, 0xFF] {
+            let mut bad = blob.clone();
+            bad[at] = value;
+            let mut fresh = make_device(1);
+            assert!(
+                matches!(fresh.load_state(&bad), Err(MapperError::Invalid(_))),
+                "prescaler {value:#04x} must be rejected"
+            );
+        }
+        for value in 0..16u8 {
+            let mut ok = blob.clone();
+            ok[at] = value;
+            let mut fresh = make_device(1);
+            fresh.load_state(&ok).unwrap();
+            for _ in 0..64 {
+                fresh.notify_cpu_cycle();
+            }
+        }
     }
 
     #[test]

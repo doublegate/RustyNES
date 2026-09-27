@@ -344,7 +344,7 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 | 94 | — | UN1ROM (Senjou no Ookami) | — | — | landed (v1.3.0 / S8) | 16K PRG bank (data bits 4-2, bus conflict) + fixed last bank at `$C000`; CHR-RAM. |
 | 101 | — | Jaleco JF-10 CHR latch | — | — | landed (v1.3.0 / S8) | Fixed 32K PRG; 8K CHR bank latched via a write to the `$6000-$7FFF` window. |
 | 107 | — | Magic Dragon | — | — | landed (v1.3.0 / S8) | One `$8000-$FFFF` latch: 32K PRG = data>>1, 8K CHR = data. |
-| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8) | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + 4-screen nametable RAM with a bank-select bit; LED bit ignored. |
+| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8) | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + 4-screen nametable RAM with a bank-select bit; LED bit ignored. Since v2.9.0 (re-audit NC-02) a save state whose PRG, CHR or nametable bank is one the register cannot produce is refused; before, it loaded and the next fetch panicked. |
 | 143 | — | Sachen TCA01 | — | — | landed (v1.3.0 / S8) | NROM-128 (mirrored) + a simple protection read at `$4020-$5FFF` returning `(~addr & 0x3F) \| 0x40`. |
 | 177 | — | Hengedianzi | — | — | landed (v1.3.0 / S8) | 32K PRG + mirroring bit (bit 5) from one `$8000-$FFFF` latch; CHR-RAM. |
 | 179 | — | Hengedianzi variant | — | — | landed (v1.3.0 / S8) | 32K PRG via `$5000-$5FFF` (data>>1) + mirroring bit (bit 0) via `$8000-$FFFF`; CHR-RAM. |
@@ -695,6 +695,24 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
     levels. Keep mapper audio behind explicit state and tests so future PAL,
     Famicom adapter, or front-loader mix options can be added without changing
     mapper banking behavior.
+11. **A PRG window larger than the PRG-ROM mirrors it** (v2.9.0, re-audit
+    NC-01). Mappers 46, 57, 58, 61, 62, 202 and 212 accept an image smaller
+    than their 32 KiB window (16 KiB, or an odd count of 16 KiB banks for 202
+    and 212), and the window's index ran past the end: a panic on the first
+    fetch from `$C000-$FFFF` in 32 KiB mode. The index is now taken modulo the
+    ROM length, as MMC3 always did, which is what a smaller part does on
+    hardware with its missing address lines. It is the identity for every
+    image whose window fits. Pinned by `tests/undersized_prg.rs`. Validate a
+    board's reads against the ROM length, not against the bank count: a count
+    clamped with `.max(1)` is still a count of banks that do not exist.
+12. **`load_state` must refuse any value the board's own registers cannot
+    produce** (v2.9.0, re-audit NC-02 / NC-06 / NC-07). A field a fetch or
+    clock uses unmasked, restored raw, passes the load and fails on the next
+    tick, after the restore's rollback can help. Three were found: GTROM
+    (111) banks (an index panic), the BS-5 (286) DIP setting, which must be
+    one of its four (a shift overflow in `1 << (dip + 4)`), and the FDS audio
+    cycle prescaler, which must be 0-15 (an add overflow). Validate before
+    assigning, and return `MapperError::Invalid`.
 
 ## Test plan
 

@@ -404,7 +404,15 @@ impl NetplayUi {
                 // phase) so the session's frame-0 checkpoint is byte-identical on
                 // every peer; otherwise the first confirmed-frame checksum trips
                 // a desync immediately.
-                nes.power_cycle();
+                //
+                // v2.9.0: with cleared save RAM as well, which is what this start
+                // gave every peer until v2.9.0 made a power cycle keep battery
+                // RAM. Each peer's own `.sav` differs, and the checksum hashes
+                // the frame, not the RAM, so the difference would surface only
+                // once the game read its save (CodeRabbit on #561). The app
+                // keeps that cleared RAM off the `.sav`
+                // (`EmuCore::release_battery_for_session`).
+                rustynes_core::power_on_for_movie(nes);
                 // Hand the bound + handshaken transport to a fresh session.
                 let transport = conn.into_transport();
                 let session = RollbackSession::new(self.config, transport, self.rom_hash);
@@ -689,6 +697,53 @@ mod tests {
         }
         assert_ne!(host.phase(), NetplayPhase::Error, "host did not error");
         assert_ne!(join.phase(), NetplayPhase::Error, "joiner did not error");
+    }
+
+    /// v2.9.0 (`CodeRabbit` on #561): v2.9.0 made a power cycle keep battery
+    /// RAM, and the session start was a power cycle, so two peers holding
+    /// different saves began the "identical" cold boot with different save
+    /// RAM. The frame checksum hashes the picture, not the RAM, so nothing
+    /// would notice until the game read its save. Both must enter the session
+    /// with the same save RAM: cleared, as every peer had before v2.9.0.
+    #[test]
+    fn two_peers_with_different_saves_start_equal() {
+        let mut rom = synth_nrom();
+        rom[6] |= 0x02; // the battery bit: NROM's work RAM becomes a save
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let probe = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let host_addr = probe.local_addr().unwrap();
+        drop(probe);
+        let mut host = NetplayUi::default();
+        host.start_host(host_addr.port(), 2, hash);
+        let mut join = NetplayUi::default();
+        join.start_join(host_addr, hash);
+
+        let mut nes_host = Nes::from_rom(&rom).unwrap();
+        let mut nes_join = Nes::from_rom(&rom).unwrap();
+        assert!(nes_host.has_battery());
+        nes_host.sram_mut().fill(0x11);
+        nes_join.sram_mut().fill(0x22);
+
+        let mut rounds = 0;
+        while !(host.phase() == NetplayPhase::InGame && join.phase() == NetplayPhase::InGame)
+            && rounds < 500
+        {
+            host.tick(&mut nes_host, Buttons::empty());
+            join.tick(&mut nes_join, Buttons::empty());
+            rounds += 1;
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(host.phase(), NetplayPhase::InGame);
+        assert_eq!(join.phase(), NetplayPhase::InGame);
+        assert_eq!(
+            nes_host.sram(),
+            nes_join.sram(),
+            "the peers start with one save RAM"
+        );
+        assert!(
+            nes_host.sram().iter().all(|&b| b == 0),
+            "cleared, as before v2.9.0"
+        );
     }
 
     /// v1.7.0 H8 — starting a spectator binds cleanly, enters the read-only

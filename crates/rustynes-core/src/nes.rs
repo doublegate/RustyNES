@@ -129,6 +129,10 @@ pub struct Nes {
     /// v2.8.0 Phase 3 — reused scratch for the per-frame rewind capture
     /// (kills the ~320 KiB snapshot allocation per frame).
     rewind_snap_buf: Vec<u8>,
+    /// v2.9.0 (re-audit NC-03) — reused scratch for the rollback backup every
+    /// restore takes before it mutates anything (see `restore_inner`). Pooled
+    /// because the quiet path runs once per frame under run-ahead.
+    restore_backup: Vec<u8>,
     /// Optional per-CPU-instruction boot trace (Session-12 observability).
     /// Gated on the `cpu-boot-trace` cargo feature so the default build
     /// pays no memory or codegen cost. See
@@ -290,6 +294,7 @@ impl Nes {
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
+            restore_backup: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
             #[cfg(feature = "debug-hooks")]
@@ -330,6 +335,7 @@ impl Nes {
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
+            restore_backup: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
             #[cfg(feature = "debug-hooks")]
@@ -399,6 +405,7 @@ impl Nes {
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
+            restore_backup: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
             #[cfg(feature = "debug-hooks")]
@@ -461,6 +468,7 @@ impl Nes {
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
+            restore_backup: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
             #[cfg(feature = "debug-hooks")]
@@ -2181,9 +2189,19 @@ impl Nes {
     /// only a sanity check), but the result is undefined unless the chip
     /// section bodies are appropriate for the running mapper.
     ///
+    /// The header's ROM hash tag is NOT compared with the running ROM, by
+    /// decision (v2.9.0 re-audit NL-01): the tag is the leading bytes of the
+    /// SHA-256 of the whole file INCLUDING its iNES header, so checking it
+    /// would reject every legitimate state after a header-only correction of
+    /// the same dump (a fixed mapper number, mirroring bit or battery flag),
+    /// and the paragraph above has always allowed a load from a different
+    /// ROM. The section-level validation is what keeps a foreign state from
+    /// crashing the core; see `docs/frontend.md` § "Save state files".
+    ///
     /// # Errors
     ///
-    /// Returns [`SnapshotError`] for malformed inputs.
+    /// Returns [`SnapshotError`] for malformed inputs; the machine is then
+    /// unchanged.
     pub fn restore(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
         self.restore_inner(data, true)
     }
@@ -2216,31 +2234,48 @@ impl Nes {
         if clear_rewind {
             self.timeline_generation = self.timeline_generation.wrapping_add(1);
         }
-        // v2.7.4 (frontend audit MOB-08) — a user-driven load is all-or-nothing.
-        // The stages below mutate as they go (the bus sections first, then the
-        // CPU), so a blob rejected at the CPU stage used to leave the bus from
-        // the blob and the CPU from the running game: a machine that was
-        // neither, which the next frame emulated. A loud restore therefore
-        // snapshots the running machine first and puts it back on failure.
-        // Quiet restores skip the backup: they are run-ahead's and netplay's
-        // per-frame rollbacks, the hot path, and only ever restore snapshots
-        // this core just wrote, which cannot fail these checks.
-        let backup = clear_rewind.then(|| self.snapshot());
-        if let Err(e) = self.apply_snapshot(data) {
-            if let Some(backup) = backup {
-                // Our own fresh snapshot always restores (the round-trip
-                // invariant every save-state test pins); if it somehow did not,
-                // the original error is still the one worth reporting. The
-                // core has no logger (`no_std`), so the invariant is asserted
-                // in debug and test builds rather than silently assumed.
-                let rolled_back = self.apply_snapshot(&backup);
-                debug_assert!(
-                    rolled_back.is_ok(),
-                    "rolling back to this core's own snapshot failed: {rolled_back:?}"
-                );
-            }
-            return Err(e);
+        // v2.7.4 (frontend audit MOB-08) — a load is all-or-nothing. The stages
+        // in `apply_snapshot` mutate as they go (the bus sections first, then
+        // the CPU, then the clock check), so a blob rejected at a later stage
+        // used to leave the earlier stages from the blob and the rest from the
+        // running game: a machine that was neither, which the next frame
+        // emulated. So the running machine is snapshotted first and put back
+        // on failure.
+        //
+        // v2.9.0 (re-audit NC-03 / NL-01) — on BOTH paths. v2.7.4 skipped the
+        // backup for quiet restores, on the stated premise that they "only ever
+        // restore snapshots this core just wrote, which cannot fail these
+        // checks". That premise was false: the libretro core routes EVERY
+        // `retro_unserialize` through `restore_quiet` — a user's Load State, a
+        // state written by an older core, a netplay peer's state, a truncated
+        // or corrupt file — and the re-audit demonstrated a rejected CPU
+        // section leaving the bus, PPU, APU and mapper from the rejected file
+        // under the running game's CPU. The premise is also unenforceable: the
+        // quiet/loud split is about the REWIND RING (same timeline or not), and
+        // nothing about that choice says the bytes are trusted.
+        //
+        // The backup is the THM-less `snapshot_core_into` (the thumbnail is
+        // ignored on restore) into a buffer pooled on the `Nes`, so the hot
+        // path — run-ahead's and netplay's per-frame rollbacks — pays one
+        // state copy and no allocation for the buffer in steady state. The
+        // measured cost is recorded in `docs/frontend.md` § "Save state files".
+        let mut backup = core::mem::take(&mut self.restore_backup);
+        self.snapshot_core_into(&mut backup);
+        let applied = self.apply_snapshot(data);
+        if applied.is_err() {
+            // Our own fresh snapshot always restores (the round-trip
+            // invariant every save-state test pins); if it somehow did not,
+            // the original error is still the one worth reporting. The core
+            // has no logger (`no_std`), so the invariant is asserted in debug
+            // and test builds rather than silently assumed.
+            let rolled_back = self.apply_snapshot(&backup);
+            debug_assert!(
+                rolled_back.is_ok(),
+                "rolling back to this core's own snapshot failed: {rolled_back:?}"
+            );
         }
+        self.restore_backup = backup;
+        applied?;
         // Loading invalidates the rewind ring (the new state is unrelated
         // to what was buffered before).
         if clear_rewind && let Some(r) = &mut self.rewind {
@@ -2297,7 +2332,8 @@ impl Nes {
 
     /// The mutating stages of a restore: the bus sections, then the CPU
     /// section, then the cross-section clock check. Not atomic by itself; see
-    /// the backup in [`Self::restore_inner`].
+    /// the backup in [`Self::restore_inner`], which both public restore paths
+    /// go through.
     fn apply_snapshot(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
         // Restore bus first — it consumes BUS / PPU / APU / MAP sections.
         self.bus.restore(data)?;
@@ -2341,9 +2377,15 @@ impl Nes {
     /// before. User-driven loads (save-state slots) keep using
     /// [`Self::restore`], which invalidates the ring.
     ///
+    /// "Quiet" says nothing about whether the bytes are trusted: the libretro
+    /// core routes every `retro_unserialize` here, including user state files.
+    /// Since v2.9.0 a rejected blob therefore leaves the machine exactly as it
+    /// was, on this path as on [`Self::restore`].
+    ///
     /// # Errors
     ///
-    /// Returns [`SnapshotError`] for malformed inputs.
+    /// Returns [`SnapshotError`] for malformed inputs; the machine is then
+    /// unchanged.
     pub fn restore_quiet(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
         self.restore_inner(data, false)
     }
@@ -3077,6 +3119,80 @@ mod tests {
         }
     }
 
+    /// v2.9.0 re-audit NC-04: the clock check bounds the ABSOLUTE clocks, not
+    /// only their skew.
+    ///
+    /// F-05's check accepted any pair within `RESTORED_CLOCK_SKEW_MAX` of each
+    /// other, so a crafted state with BOTH clocks ~20,000 master clocks below
+    /// 2^64 loaded. The CPU advances with `wrapping_add`, so its clock wrapped
+    /// to a small value within a frame while the PPU's stayed near 2^64, and
+    /// the catch-up loop (`while ppu_clock + div <= target`) never ran again:
+    /// the frame counter froze, NMI never fired — the exact state F-05 set out
+    /// to reject. Both clocks are shifted by the same amount here, so the skew
+    /// is the running machine's own and only the new ceiling can reject it.
+    #[test]
+    fn restored_clocks_near_the_top_of_u64_are_rejected() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.run_frame();
+        nes.run_frame();
+        let master = nes.cpu.master_clock();
+        let ppu = nes.bus().ppu_clock_for_test();
+
+        // Shift both clocks by `shift` and return the snapshot. The CPU clock
+        // has no setter, so its bytes are patched inside the CPU section's
+        // body, where they must occur exactly once.
+        let shifted = |nes: &mut Nes, shift: u64| {
+            nes.bus_mut().set_ppu_clock_for_test(ppu + shift);
+            let mut blob = nes.snapshot();
+            let (_h, body_off) = save_state::parse_header(&blob).unwrap();
+            let cpu_body_off = {
+                let s = save_state::SectionIter::new(&blob[body_off..])
+                    .map(Result::unwrap)
+                    .find(|s| s.tag == save_state::tag::CPU)
+                    .unwrap();
+                s.body.as_ptr() as usize - blob.as_ptr() as usize
+            };
+            let needle = master.to_le_bytes();
+            let hits: Vec<usize> = (cpu_body_off..blob.len() - 8)
+                .filter(|&o| blob[o..o + 8] == needle)
+                .collect();
+            assert_eq!(hits.len(), 1, "master_clock must occur once: {hits:?}");
+            blob[hits[0]..hits[0] + 8].copy_from_slice(&(master + shift).to_le_bytes());
+            nes.bus_mut().set_ppu_clock_for_test(ppu);
+            blob
+        };
+
+        let ceiling = LockstepBus::RESTORED_CLOCK_MAX;
+        for (label, shift, ok) in [
+            ("unshifted", 0, true),
+            (
+                "a century of emulation",
+                100 * 365 * 86_400 * 21_477_272,
+                true,
+            ),
+            ("at the ceiling", ceiling - master.max(ppu), true),
+            ("past the ceiling", ceiling - master.max(ppu) + 1, false),
+            (
+                "20,000 master clocks below 2^64",
+                u64::MAX - 20_000 - master,
+                false,
+            ),
+        ] {
+            let blob = shifted(&mut nes, shift);
+            let mut fresh = Nes::from_rom(&rom).unwrap();
+            let got = fresh.restore_quiet(&blob);
+            assert_eq!(got.is_ok(), ok, "{label}: {got:?}");
+            if ok {
+                // An accepted state must actually run: the frame counter moves.
+                let f = fresh.frame();
+                fresh.run_frame();
+                fresh.run_frame();
+                assert!(fresh.frame() > f, "{label}: the PPU stopped");
+            }
+        }
+    }
+
     #[test]
     fn nes_cart_4016_read_is_byte_identical_with_and_without_vs_inputs() {
         // On a normal NES cart the Vs. DIP/coin/service overlay is a no-op, so
@@ -3642,6 +3758,139 @@ mod tests {
         }
         assert!(nes.restore(&rejected).is_err());
         assert_eq!(nes.snapshot(), before, "a failed load changed the machine");
+        // And it still runs as the same machine.
+        nes.run_frame();
+    }
+
+    /// `blob` with the version byte of its `CPU ` section decremented: a
+    /// well-framed state that every stage before the CPU one accepts.
+    fn with_stale_cpu_version(blob: &[u8]) -> Vec<u8> {
+        let (_h, body_off) = save_state::parse_header(blob).unwrap();
+        let mut out = blob[..body_off].to_vec();
+        for s in save_state::SectionIter::new(&blob[body_off..]) {
+            let s = s.unwrap();
+            let version = if s.tag == save_state::tag::CPU {
+                s.version - 1
+            } else {
+                s.version
+            };
+            save_state::write_section(&mut out, s.tag, version, s.body);
+        }
+        out
+    }
+
+    /// `blob` with byte `at` of its `MAP ` section's body set to `value`.
+    fn with_map_byte(blob: &[u8], at: usize, value: u8) -> Vec<u8> {
+        let (_h, body_off) = save_state::parse_header(blob).unwrap();
+        let mut out = blob[..body_off].to_vec();
+        for s in save_state::SectionIter::new(&blob[body_off..]) {
+            let s = s.unwrap();
+            if s.tag == save_state::tag::MAP {
+                let mut body = s.body.to_vec();
+                body[at] = value;
+                save_state::write_section(&mut out, s.tag, s.version, &body);
+            } else {
+                save_state::write_section(&mut out, s.tag, s.version, s.body);
+            }
+        }
+        out
+    }
+
+    /// v2.9.0 re-audit NC-02, at the whole-machine level: a GTROM (mapper 111)
+    /// state carrying a bank the board cannot hold is refused by
+    /// `Nes::restore`, and the machine keeps running. Before, `restore`
+    /// returned `Ok(())` and the next CPU fetch from `$8000` panicked
+    /// (`homebrew_boards.rs:570`, index 8,372,319 into 32 KiB in the
+    /// re-audit's probe) — after the restore, so its rollback could not help.
+    #[test]
+    fn a_gtrom_state_with_an_impossible_bank_is_refused_and_the_game_runs_on() {
+        let mut rom = synth_nrom(32, 0);
+        rom[6] = 0xF0; // mapper low nibble F
+        rom[7] = 0x60; // mapper high nibble 6: 0x6F = 111
+        let mut donor = Nes::from_rom(&rom).expect("GTROM image");
+        donor.run_frame();
+        donor.run_frame();
+        let good = donor.snapshot();
+        // MAP body: version, prg_bank, chr_bank, nt_bank, ...
+        for (at, value) in [(1, 0xFF), (2, 0xFF), (3, 0xFF)] {
+            let bad = with_map_byte(&good, at, value);
+            let mut nes = Nes::from_rom(&rom).unwrap();
+            nes.run_frame();
+            let before = nes.snapshot();
+            assert!(
+                nes.restore(&bad).is_err(),
+                "MAP byte {at} = {value:#04x} must be refused"
+            );
+            assert!(
+                nes.snapshot() == before,
+                "a refused load changed the machine"
+            );
+            nes.run_frame();
+            nes.run_frame();
+        }
+    }
+
+    /// v2.9.0 re-audit NC-03 / NL-01: the QUIET restore is all-or-nothing too.
+    ///
+    /// v2.7.4 gave only the loud path a rollback, on the premise that a quiet
+    /// restore "only ever restore[s] snapshots this core just wrote, which
+    /// cannot fail these checks". libretro breaks that premise: every
+    /// `retro_unserialize` -- a user's Load State, a state from an older core,
+    /// a corrupt file -- goes through `restore_quiet`. The re-audit's probe
+    /// showed a rejected CPU section leaving the bus, PPU, APU and mapper from
+    /// the rejected file (frame 3000) under the running game's CPU (frame 5).
+    ///
+    /// Two rejection points are pinned, because they fail at different depths:
+    /// the CPU section's version (after all four bus sections applied) and the
+    /// cross-section clock check (after the CPU applied as well). Both must
+    /// leave the machine byte-identical and the rewind ring untouched.
+    #[test]
+    fn a_failed_quiet_restore_leaves_the_machine_untouched() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        nes.enable_rewind_with(2 * 1024 * 1024, 1);
+        nes.run_frame();
+        nes.run_frame();
+        let earlier = nes.snapshot();
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let before = nes.snapshot();
+        let ring_before = nes.rewind.as_ref().map(RewindRing::len);
+        assert_ne!(
+            earlier, before,
+            "the fixture must change state between frames"
+        );
+
+        // A CPU/PPU clock skew the clock check rejects, carried by an
+        // otherwise valid EARLIER state: every section decodes, so this fails
+        // at the very last stage.
+        let skewed = {
+            let mut other = Nes::from_rom(&rom).unwrap();
+            other.run_frame();
+            other.run_frame();
+            let far = other.cpu.master_clock() + (1 << 40);
+            other.bus_mut().set_ppu_clock_for_test(far);
+            other.snapshot()
+        };
+
+        for (label, blob) in [
+            ("stale CPU version", with_stale_cpu_version(&earlier)),
+            ("CPU/PPU clock skew", skewed),
+        ] {
+            assert!(nes.restore_quiet(&blob).is_err(), "{label}: must reject");
+            // `assert!` rather than `assert_eq!`: a failure would otherwise
+            // print two ~300 KB byte arrays.
+            assert!(
+                nes.snapshot() == before,
+                "{label}: a failed quiet restore changed the machine"
+            );
+            assert_eq!(
+                nes.rewind.as_ref().map(RewindRing::len),
+                ring_before,
+                "{label}: a quiet restore must leave the rewind ring alone"
+            );
+        }
         // And it still runs as the same machine.
         nes.run_frame();
     }

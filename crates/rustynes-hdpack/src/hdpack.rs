@@ -545,7 +545,7 @@ impl HdPack {
     /// `budget` is the decoded RGBA bytes the whole pack may hold
     /// ([`MAX_HD_PACK_BYTES`] outside tests); see [`decode_png`].
     fn load_folder(dir: &Path, mut budget: u64) -> Option<Self> {
-        let hires = std::fs::read_to_string(dir.join("hires.txt")).ok()?;
+        let hires = read_hires(std::fs::File::open(dir.join("hires.txt")).ok()?)?;
         let parsed = parse_hires(&hires);
         let mut images = Vec::with_capacity(parsed.image_names.len());
         for name in &parsed.image_names {
@@ -579,12 +579,7 @@ impl HdPack {
             .parent()
             .map(std::path::Path::to_path_buf)
             .unwrap_or_default();
-        let hires = {
-            let mut e = archive.by_name(&hires_name).ok()?;
-            let mut s = String::new();
-            e.read_to_string(&mut s).ok()?;
-            s
-        };
+        let hires = read_hires(archive.by_name(&hires_name).ok()?)?;
         let parsed = parse_hires(&hires);
         let mut images = Vec::with_capacity(parsed.image_names.len());
         for name in &parsed.image_names {
@@ -853,6 +848,25 @@ fn sanitize_image_name(name: &str) -> Option<&str> {
 /// most a few MiB. Mirrors `app.rs::extract_rom_from_zip`'s cap: both the
 /// declared size AND the actual read are bounded, since the declared size can lie.
 const MAX_HD_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// v2.9.0 NF-04 — the most bytes of `hires.txt` either loader reads. The rule
+/// file was the one pack input with no bound: images were capped per entry and
+/// per pack, but a 509 KiB zip whose `hires.txt` inflated to 512 MiB took the
+/// loader to ~533 MiB. 32 MiB is roughly half a million rule lines, far past
+/// any published pack. A file over it is refused, not truncated: a truncated
+/// rule file would load as a different, partial pack.
+const MAX_HIRES_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Read a `hires.txt` stream, refusing one over [`MAX_HIRES_BYTES`] or not
+/// UTF-8. Reads at most one byte past the cap, whatever size the source claims.
+fn read_hires(r: impl std::io::Read) -> Option<String> {
+    let mut buf = Vec::new();
+    r.take(MAX_HIRES_BYTES + 1).read_to_end(&mut buf).ok()?;
+    if buf.len() as u64 > MAX_HIRES_BYTES {
+        return None;
+    }
+    String::from_utf8(buf).ok()
+}
 
 fn read_zip_entry<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
@@ -1133,8 +1147,14 @@ fn parse_hires(src: &str) -> ParsedHires {
                     .split(',')
                     .filter_map(|s| s.trim().parse::<u32>().ok())
                     .collect();
+                // v2.9.0 NF-06 — only margins that leave at least one pixel
+                // each way; anything else is ignored like any other malformed
+                // line (see `overscan_is_valid`).
                 if nums.len() == 4 {
-                    overscan = [nums[0], nums[1], nums[2], nums[3]];
+                    let ov = [nums[0], nums[1], nums[2], nums[3]];
+                    if overscan_is_valid(ov) {
+                        overscan = ov;
+                    }
                 }
             }
             // v1.8.9 — `<fallback>tileIndex,fallbackTileIndex` (hex). Routes an
@@ -1772,15 +1792,34 @@ pub struct HdCompositor {
     frame_scroll: (i32, i32),
 }
 
+/// v2.9.0 NF-06 — whether `<overscan>` margins `[top, right, bottom, left]`
+/// leave a frame: `top + bottom < 240` and `left + right < 256`, with the
+/// additions checked (four `u32`s from a text file can overflow one). Under
+/// this rule `crop_w`/`crop_h` are at least 1 and `origin + crop` never passes
+/// the frame edge, which is what `HdCompositor::composite` indexes by.
+const fn overscan_is_valid([top, right, bottom, left]: [u32; 4]) -> bool {
+    matches!(top.checked_add(bottom), Some(v) if v < NES_H)
+        && matches!(left.checked_add(right), Some(h) if h < NES_W)
+}
+
 impl HdCompositor {
     /// Build a compositor for a loaded pack.
     #[must_use]
     pub fn new(pack: HdPack) -> Self {
         let scale = pack.scale();
-        // `<overscan>` = [top, right, bottom, left]; crop, clamped to >= 1 cell.
-        let [top, right, bottom, left] = pack.overscan;
-        let crop_w = NES_W.saturating_sub(left + right).max(1);
-        let crop_h = NES_H.saturating_sub(top + bottom).max(1);
+        // `<overscan>` = [top, right, bottom, left]. The parser refuses margins
+        // that leave no frame, but `overscan` is a plain field, so this checks
+        // again rather than trusting how the pack was built: an invalid crop
+        // is treated as no crop. Before v2.9.0 (NF-06) the crop was clamped to
+        // one pixel while the ORIGIN was kept as given, so `composite` indexed
+        // past the end of the framebuffer.
+        let [top, right, bottom, left] = if overscan_is_valid(pack.overscan) {
+            pack.overscan
+        } else {
+            [0; 4]
+        };
+        let crop_w = NES_W - (left + right);
+        let crop_h = NES_H - (top + bottom);
         let out_w = crop_w * scale;
         let out_h = crop_h * scale;
         Self {
@@ -2784,6 +2823,58 @@ mod tests {
         assert_eq!(capped, Some(2), "the third image is over the pack budget");
     }
 
+    /// v2.9.0 re-audit NF-04 — `hires.txt` is read with a cap, in both loaders.
+    /// Before the fix the images were capped but the rule file was not: a
+    /// 509 KiB zip inflating to 512 MiB took the loader's peak memory to
+    /// ~533 MiB. Here a valid pack is padded one byte past the cap with a
+    /// comment line the parser ignores, so an uncapped loader still LOADS it
+    /// (the red state) and a capped one refuses it.
+    #[test]
+    fn an_oversized_hires_txt_is_refused_in_zip_and_folder() {
+        use std::fmt::Write as _;
+        use std::io::Write as _;
+        let mut hires = String::from("<ver>106\n<scale>2\n<img>t0.png\n");
+        writeln!(hires, "<tile>0,{ZERO_TILE_DATA},0F162736,0,0,1,N").unwrap();
+        let exact = hires.clone();
+        hires.push('#');
+        let pad = usize::try_from(MAX_HIRES_BYTES).unwrap() + 1 - hires.len();
+        hires.push_str(&" ".repeat(pad));
+        assert_eq!(hires.len() as u64, MAX_HIRES_BYTES + 1);
+
+        let zip_of = |text: &str| {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("hires.txt", opts).unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+            zip.start_file("t0.png", opts).unwrap();
+            zip.write_all(&gray_png(64, 64)).unwrap();
+            zip.finish().unwrap().into_inner()
+        };
+        let bomb = zip_of(&hires);
+        assert!(bomb.len() < 256 * 1024, "the attack file is small");
+        assert!(
+            HdPack::load_from_zip_bytes(&bomb).is_none(),
+            "zip: over the cap"
+        );
+        assert!(
+            HdPack::load_from_zip_bytes(&zip_of(&exact)).is_some(),
+            "zip: control"
+        );
+
+        let dir =
+            std::env::temp_dir().join(format!("rustynes-hdpack-hires-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("t0.png"), gray_png(64, 64)).unwrap();
+        std::fs::write(dir.join("hires.txt"), &hires).unwrap();
+        let over = HdPack::load_folder(&dir, MAX_HD_PACK_BYTES).is_some();
+        std::fs::write(dir.join("hires.txt"), &exact).unwrap();
+        let control = HdPack::load_folder(&dir, MAX_HD_PACK_BYTES).is_some();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!over, "folder: over the cap");
+        assert!(control, "folder: control");
+    }
+
     #[test]
     fn the_png_budget_bounds_are_exact() {
         assert!(png_dimensions_allowed(4096, 4096));
@@ -2883,6 +2974,50 @@ mod tests {
         pack.overscan = [8, 16, 8, 16];
         let comp = HdCompositor::new(pack);
         assert_eq!(comp.dimensions(), ((256 - 32) * 2, (240 - 16) * 2));
+    }
+
+    /// v2.9.0 re-audit NF-06 — an `<overscan>` whose margins leave no frame
+    /// is refused at parse time. `300,0,0,0` used to be kept as given; the
+    /// compositor then clamped the crop to one pixel while leaving the origin
+    /// at row 300, and indexed past the end of the framebuffer on the first
+    /// frame (`range start index 307200 out of range for slice of length
+    /// 245760`) -- an abort in the desktop release build, a poisoned bridge
+    /// mutex on mobile.
+    #[test]
+    fn an_overscan_that_crops_away_the_frame_is_refused() {
+        for line in [
+            "<overscan>300,0,0,0\n",        // top alone past the frame
+            "<overscan>120,0,120,0\n",      // top + bottom == 240: nothing left
+            "<overscan>0,128,0,128\n",      // left + right == 256
+            "<overscan>0,4294967295,0,1\n", // left + right overflows u32
+        ] {
+            assert_eq!(parse_hires(line).overscan, [0; 4], "{line:?} kept");
+        }
+        // The largest legal crop still parses.
+        assert_eq!(
+            parse_hires("<overscan>119,127,120,128\n").overscan,
+            [119, 127, 120, 128]
+        );
+    }
+
+    /// NF-06, second line of defence: a pack whose `overscan` field was set
+    /// directly (it is a plain field, so parsing is not the only way in) must
+    /// not make the compositor index outside the frame.
+    #[test]
+    fn the_compositor_never_indexes_outside_the_frame() {
+        for ov in [
+            [300, 0, 0, 0],
+            [0, 0, 0, 300],
+            [0, u32::MAX, 0, 1],
+            [239, 0, 1, 0],
+        ] {
+            let mut pack = pack_with_condition(ConditionKind::HMirror);
+            pack.overscan = ov;
+            let mut comp = HdCompositor::new(pack);
+            let (fb, ts) = one_tile_scene(0x0000);
+            let wm = WatchedMemory::new();
+            let _ = comp.composite(&fb, &ts, &wm, |_| 0);
+        }
     }
 
     #[test]

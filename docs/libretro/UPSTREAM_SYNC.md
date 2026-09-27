@@ -86,8 +86,10 @@ Treat a change to any of these as requiring an upstream sync:
 | `license` | yes | yes (Author/License) | yes — vs `[workspace.package]` |
 | `display_version` | yes | no | yes — vs `[workspace.package]` |
 | `supported_extensions` | yes | yes (Extensions) | yes — vs the core's `retro_get_system_info` |
-| `disk_control`, `savestate`, `cheats`, `core_options`, and the other capability flags | yes | yes (Features table) | no — assert by hand against the crate |
-| mapper count / `description` | yes | no | no |
+| `core_options`, `disk_control`, `memory_descriptors`, `input_descriptors` | yes | yes (Features table) | yes (v2.9.0) — each vs the environment call that implements it in the core's source |
+| `savestate`, `cheats`, and the other capability flags | yes | yes (Features table) | no — assert by hand against the crate |
+| `description` | yes | no | partly (v2.9.0) — rejects the retired scheduler's wording; the rest by hand |
+| mapper count | yes | no | no |
 | `firmware*`, `database` | yes | yes (Databases / BIOS) | no |
 
 The audited rows fail the test suite the moment they drift. The unaudited rows
@@ -95,7 +97,12 @@ are the ones to check by hand at release time — capability flags especially, s
 advertising a capability the core lacks is worse than omitting one it has. That
 exact defect shipped once already: `disk_control` was `false` while the FDS Disk
 Control interface had been wired for months, hiding multi-disk swapping from
-RetroArch's Quick Menu until v2.2.4 corrected it.
+RetroArch's Quick Menu until v2.2.4 corrected it. The same class shipped a
+second time: `core_options` stayed `false` from v2.8.1, when the Four Score
+option was declared, until the v2.9.0 libretro re-audit (NL-04), which is
+why `libretro_info_audit` now derives the four flags above from the source.
+That v2.9.0 fix is to this repository's `.info` only; the `libretro-super`
+copy follows at the v3.0.0 sync (ADR 0041).
 
 #### iOS / iPadOS / tvOS availability is a THIRD repo, and a hardcoded list
 

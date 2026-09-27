@@ -2765,18 +2765,25 @@ impl App {
                 return;
             }
             let mut guard = self.emu.lock();
-            let emu = &mut *guard;
-            let Some(nes) = emu.nes.as_mut() else {
+            if guard.nes.is_none() {
                 eprintln!("rustynes: movie record: no ROM loaded");
                 return;
-            };
+            }
             // v2.3.2 "Lucid" — arm a replay attestation unless run-ahead is on.
             // Run-ahead presents the frame N ahead of the persistent timeline
             // while a verification replay re-derives persistent frames, so an
             // attestation recorded under it could never verify. Refusing up
             // front is clearer than emitting one that gets silently dropped.
             let attest = self.config.input.run_ahead == 0;
-            emu.movie.start_recording_power_on(nes, attest);
+            // v2.9.0 — the recording starts from cleared save RAM, which must
+            // not reach the `.sav` (`EmuCore::start_sandboxed_session`).
+            guard.start_sandboxed_session(|emu| {
+                let Some(nes) = emu.nes.as_mut() else {
+                    return false;
+                };
+                emu.movie.start_recording_power_on(nes, attest);
+                true
+            });
             if !attest {
                 eprintln!(
                     "rustynes: movie attestation skipped (run-ahead is enabled; \
@@ -2784,7 +2791,7 @@ impl App {
                 );
             }
             // Reset frame pacing so the power-cycle's first frame is due now.
-            emu.next_frame_time = Some(Instant::now());
+            guard.next_frame_time = Some(Instant::now());
             eprintln!("rustynes: movie recording started (power-on)");
         }
     }
@@ -2841,20 +2848,30 @@ impl App {
             );
         }
         let mut guard = self.emu.lock();
-        let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_mut() else {
+        if guard.nes.is_none() {
             eprintln!("rustynes: movie play: no ROM loaded");
-            return;
-        };
-        if let Err(e) = movie.seek_to_start(nes) {
-            eprintln!("rustynes: movie seek failed (wrong ROM?): {e}");
             return;
         }
         let total = movie.len();
-        emu.movie.start_playback(movie);
+        // v2.9.0 — the seek replaces the save RAM with the movie's, which
+        // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
+        let began = guard.start_sandboxed_session(|emu| {
+            let Some(nes) = emu.nes.as_mut() else {
+                return false;
+            };
+            if let Err(e) = movie.seek_to_start(nes) {
+                eprintln!("rustynes: movie seek failed (wrong ROM?): {e}");
+                return false;
+            }
+            emu.movie.start_playback(movie);
+            true
+        });
+        if !began {
+            return;
+        }
         // The seek (power-cycle or restore) reset emulator state; restart
         // the frame clock so the first replayed frame is due now.
-        emu.next_frame_time = Some(Instant::now());
+        guard.next_frame_time = Some(Instant::now());
         eprintln!(
             "rustynes: movie playback started ({total} frames) from {}",
             path.display()
@@ -2965,19 +2982,29 @@ impl App {
         let total = movie.len();
         {
             let mut guard = self.emu.lock();
-            let emu = &mut *guard;
-            let Some(nes) = emu.nes.as_mut() else {
-                return;
-            };
-            if let Err(e) = movie.seek_to_start(nes) {
+            // v2.9.0 — see `EmuCore::start_sandboxed_session`.
+            let mut seek_error = None;
+            let began = guard.start_sandboxed_session(|emu| {
+                let Some(nes) = emu.nes.as_mut() else {
+                    return false;
+                };
+                if let Err(e) = movie.seek_to_start(nes) {
+                    seek_error = Some(e);
+                    return false;
+                }
+                emu.movie.start_playback(movie);
+                true
+            });
+            if !began {
                 drop(guard);
-                self.ui.set_status(StatusMessage::info(format!(
-                    "Movie import failed (wrong ROM?): {e}"
-                )));
+                if let Some(e) = seek_error {
+                    self.ui.set_status(StatusMessage::info(format!(
+                        "Movie import failed (wrong ROM?): {e}"
+                    )));
+                }
                 return;
             }
-            emu.movie.start_playback(movie);
-            emu.next_frame_time = Some(Instant::now());
+            guard.next_frame_time = Some(Instant::now());
         }
         self.ui.set_status(StatusMessage::success(format!(
             "Movie playing ({total} frames)"
@@ -3330,9 +3357,14 @@ impl App {
     }
 
     /// v1.6.0 "Studio" A2 — lazily start a `TAStudio` session when the window is
-    /// first opened on a loaded ROM. The current emulator state becomes the
-    /// project's frame-0 anchor (non-destructive: we do not power-cycle the
-    /// running game). No-op if a session is already active or no ROM is loaded.
+    /// first opened on a loaded ROM. No-op if a session is already active or no
+    /// ROM is loaded.
+    ///
+    /// v2.9.0 (NF-10, maintainer decision): the project's frame-0 anchor is a
+    /// clean POWER-ON, so opening the panel restarts the game. Until v2.9.0 the
+    /// running state became the anchor ("non-destructive: we do not power-cycle
+    /// the running game"), while the project still exported as a power-on movie,
+    /// which then replayed from somewhere other than what was edited.
     fn ensure_tas_editor(&mut self) {
         use crate::debugger::DebuggerOverlay;
         // Greenzone budget + keyframe spacing for the editing session. 256 MiB
@@ -3347,13 +3379,84 @@ impl App {
         {
             return; // no overlay to host it, or a session already exists
         }
-        let editor = {
-            let guard = self.emu.lock();
-            let Some(nes) = guard.nes.as_ref() else {
-                return; // no ROM loaded — nothing to anchor on
-            };
-            crate::tastudio::TasEditor::new(nes, TAS_GREENZONE_BUDGET, TAS_CAPTURE_INTERVAL)
+        // v2.9.0 — opening the panel power-cycles the console, so it must not
+        // happen under a session that owns the timeline. A movie being played
+        // or recorded would continue from a state it never recorded, and a
+        // netplay peer would desync on the spot (Copilot on #561). Recording
+        // and playback already refuse to start under netplay; this is the same
+        // rule for the one path that also resets the console.
+        #[cfg(target_arch = "wasm32")]
+        let netplay_active = self
+            .browser_netplay
+            .as_ref()
+            .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active);
+        #[cfg(not(target_arch = "wasm32"))]
+        let netplay_active = self.netplay.is_active();
+        let busy = if netplay_active {
+            Some("leave netplay")
+        } else if self.replay_interaction_locked() {
+            Some("stop the movie")
+        } else {
+            None
         };
+        if let Some(what) = busy {
+            self.ui.set_status(StatusMessage::info(format!(
+                "TAStudio restarts the game from power-on; {what} first"
+            )));
+            return;
+        }
+        let channel_mask = self.config.audio.channel_mask;
+        let channel_gain = self.config.audio.channel_gain;
+        let debugger = &mut self.debugger;
+        let editor = {
+            let mut guard = self.emu.lock();
+            let mut editor = None;
+            // v2.9.0 — the power-on clears the save RAM, which must not reach
+            // the `.sav` (`EmuCore::start_sandboxed_session`).
+            guard.start_sandboxed_session(|emu| {
+                let Some(nes) = emu.nes.as_mut() else {
+                    return false; // no ROM loaded — nothing to anchor on
+                };
+                // v2.9.0 NF-10 (maintainer decision): anchor on a clean
+                // power-on, the state the project's exported power-on movie
+                // starts from. Until v2.9.0 this anchored on the RUNNING game,
+                // so an export replayed from somewhere other than what was
+                // edited. Opening the panel therefore restarts the game, like
+                // starting a recording.
+                editor = Some(crate::tastudio::TasEditor::new_from_power_on(
+                    nes,
+                    TAS_GREENZONE_BUDGET,
+                    TAS_CAPTURE_INTERVAL,
+                ));
+                // The power cycle rebuilt the APU at its defaults; re-push the
+                // user's per-channel mute mask and gain, as `do_power_cycle`
+                // does (output-only; defaults are byte-identical).
+                nes.set_apu_channel_mask(channel_mask);
+                nes.set_apu_channel_gain(channel_gain);
+                // The rest of what `do_power_cycle` does after a cold boot
+                // (CodeRabbit on #561): re-apply the enabled Game Genie codes,
+                // which the rebuilt console no longer carries, or the Cheats
+                // panel shows codes the core does not apply; and drop the
+                // stale call stack and access counters.
+                if let Some(debugger) = debugger.as_mut() {
+                    debugger.reapply_genie_codes(nes);
+                    debugger.reset_debug_telemetry();
+                }
+                // A cold boot restarts the session timeline and the pacing, as
+                // `do_power_cycle` and a power-on recording do.
+                emu.history.clear();
+                emu.reset_lag_frames();
+                emu.next_frame_time = Some(Instant::now());
+                true
+            });
+            let Some(editor) = editor else {
+                return;
+            };
+            editor
+        };
+        eprintln!("rustynes: TAStudio opened -- the console restarted from power-on (frame 0)");
+        #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+        self.reset_ra();
         if let Some(d) = self.debugger.as_mut() {
             d.set_tas_editor(editor);
         }
@@ -5276,7 +5379,8 @@ impl App {
         }
 
         // Drain engine-side buffers (no `Nes` access) outside the lock (M2).
-        let log = engine.drain_log();
+        #[allow(unused_mut)] // appended to only under `script-ipc` (NF-08).
+        let mut log = engine.drain_log();
         let controls = engine.drain_controls();
         let draws = engine.drain_draws();
         // v1.7.0 "Forge" E2 — the `client.*` automation verbs this frame.
@@ -5288,10 +5392,12 @@ impl App {
         #[cfg(feature = "script-ipc")]
         {
             let comm = engine.drain_comm();
-            if let Some(host) = self.script_host.as_ref() {
-                for cmd in comm {
-                    host.submit(cmd);
-                }
+            // v2.9.0 re-audit NF-08: never blocks; a refused request is
+            // answered as a failed one, and the console says why.
+            if let Some(host) = self.script_host.as_ref()
+                && let Some(note) = host.forward(comm, engine)
+            {
+                log.push(note);
             }
         }
 
@@ -5768,6 +5874,14 @@ impl App {
             }
             ScriptAction::Stop => {
                 self.script = None;
+                // v2.9.0 re-audit NF-08: a stopped script's `comm.*` backlog
+                // must stop too. Dropping the host cancels it (bounded: a
+                // request in flight is detached, not waited for); before,
+                // the host outlived the script until the next load.
+                #[cfg(feature = "script-ipc")]
+                {
+                    self.script_host = None;
+                }
                 self.script_draws.clear();
                 if let Some(dbg) = self.debugger.as_mut() {
                     let p = dbg.script_panel();
@@ -6823,7 +6937,27 @@ impl App {
         // is sent: the gated bits are what cross the wire + are stored in the
         // rollback ring, so both peers replay them verbatim (deterministic).
         let local = crate::emu::apply_turbo(raw_local, nes.frame(), turbo_mask, turbo_period);
+        // v2.9.0 — the session starts from cleared save RAM (see
+        // `NetplayUi::tick_connecting`), which must not reach the `.sav`. The
+        // power-on happens INSIDE the tick that completes the handshake, so
+        // write any pending save on every connecting tick (nothing emulates
+        // then, so only the first can find a change) and release the file the
+        // moment the session exists (`EmuCore::start_sandboxed_session`'s two
+        // halves, split across the tick).
+        let connecting = self.netplay.phase() == crate::netplay_ui::NetplayPhase::Connecting;
+        if connecting {
+            emu.flush_battery_now();
+        }
+        let Some(nes) = emu.nes.as_mut() else {
+            return;
+        };
         let tick = self.netplay.tick(nes, local);
+        if connecting && self.netplay.phase() == crate::netplay_ui::NetplayPhase::InGame {
+            emu.release_battery_for_session();
+        }
+        let Some(nes) = emu.nes.as_mut() else {
+            return;
+        };
 
         // Push the freshly produced frame's audio, mirroring the single-player
         // path. Only on an actual produced frame (a connecting / stalled / error
@@ -7029,6 +7163,21 @@ impl App {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
                         self.netplay.start_spectate(addr, rom_hash);
+                        // v2.9.0 — the cold boot `start_spectate`'s doc has always
+                        // promised and nothing performed: the players' timeline
+                        // starts at a power-on with cleared save RAM, and a
+                        // spectator running mid-game from its own save would
+                        // replay their inputs against a different console
+                        // (found following CodeRabbit on #561). Kept off the
+                        // `.sav` like every other such session.
+                        if self.netplay.phase() == crate::netplay_ui::NetplayPhase::Spectating {
+                            self.emu.lock().start_sandboxed_session(|emu| {
+                                emu.nes.as_mut().is_some_and(|nes| {
+                                    rustynes_core::power_on_for_movie(nes);
+                                    true
+                                })
+                            });
+                        }
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }

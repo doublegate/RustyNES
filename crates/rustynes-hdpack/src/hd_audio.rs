@@ -48,7 +48,35 @@
 //! CI); the parse, the `$4100` trigger edge logic, and the mixer buffering are
 //! unit-tested, and audible playback is a maintainer manual-check item.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+
+/// v2.9.0 re-audit NF-05 — the longest track decoded, in seconds of SOURCE
+/// audio. Decoding had no bound at all: a 315 KiB OGG of an hour of 8 kHz
+/// silence decodes to 172.8 M samples at 48 kHz (691 MB of `f32`), and the
+/// audit's four declarations of it reached 2.6 GiB on the winit thread. Fifteen
+/// minutes is several loops of any NES soundtrack; a longer track is REFUSED
+/// (the rule is inert) rather than cut off mid-piece.
+const MAX_TRACK_SECONDS: u64 = 15 * 60;
+
+/// NF-05 — every track of one pack together, in decoded output samples: 512 MiB
+/// of `f32`, about 46 minutes of 48 kHz mono. A declaration whose decode would
+/// pass it is inert, and a file named by several declarations costs once.
+const MAX_PACK_AUDIO_SAMPLES: u64 = (512 << 20) / 4;
+
+/// The most SOURCE samples one decode may hold before it is resampled: the
+/// same 512 MiB of `f32` as the pack's output budget (review on #561).
+///
+/// The output budget converts to a source ceiling at the stream's own rate,
+/// so a source ABOVE the output rate may hold more samples than the output
+/// will, and [`MAX_TRACK_SECONDS`] is in seconds, not bytes: at the highest
+/// accepted source rate (384 kHz) fifteen minutes is 345.6 M samples, about
+/// 1.38 GB, all allocated before a single sample is resampled or refused
+/// (`CodeRabbit`). This makes the peak absolute. At 48 kHz it is 46 minutes
+/// and never binds; at 384 kHz it refuses a track longer than about 5.8
+/// minutes, which is the price of accepting that rate at all.
+const MAX_SOURCE_SAMPLES: u64 = MAX_PACK_AUDIO_SAMPLES;
 
 /// The CPU-space address of the HD-pack audio-control register (Mesen).
 pub const HD_AUDIO_CONTROL: u16 = 0x4100;
@@ -80,8 +108,10 @@ pub struct HdAudioTrack {
     /// writes to `$4100` to select the track.
     pub track: u8,
     /// Decoded mono PCM at the mixer's output sample rate. Empty if the file
-    /// failed to decode (the rule is then inert).
-    pub pcm: Vec<f32>,
+    /// failed to decode, or was refused by the duration cap or the pack budget
+    /// (the rule is then inert). Shared (`Arc`) between every declaration that
+    /// names the same file, so a file declared N times is decoded once (NF-05).
+    pub pcm: Arc<[f32]>,
 }
 
 /// A parsed (but not yet decoded) `<bgm>`/`<sfx>` declaration.
@@ -154,6 +184,21 @@ pub fn source_rate_supported(rate: u32) -> bool {
 /// game audio it mixes with already rides the frontend's Hermite DRC stage.
 #[must_use]
 pub fn decode_ogg_to_mono(bytes: &[u8], out_rate: u32) -> Option<Vec<f32>> {
+    decode_ogg_capped(bytes, out_rate, u64::MAX, MAX_SOURCE_SAMPLES)
+}
+
+/// [`decode_ogg_to_mono`] with a ceiling of `max_out_samples` OUTPUT samples
+/// (v2.9.0, NF-05). It is converted to a source-sample ceiling at the stream's
+/// own rate, and also capped at [`MAX_TRACK_SECONDS`] and at `max_src_samples`
+/// ([`MAX_SOURCE_SAMPLES`] outside tests), so a stream that cannot fit is
+/// refused as soon as it passes the ceiling -- before the rest of it is decoded
+/// or any of it resampled.
+fn decode_ogg_capped(
+    bytes: &[u8],
+    out_rate: u32,
+    max_out_samples: u64,
+    max_src_samples: u64,
+) -> Option<Vec<f32>> {
     use lewton::inside_ogg::OggStreamReader;
 
     let mut reader = OggStreamReader::new(std::io::Cursor::new(bytes)).ok()?;
@@ -161,6 +206,16 @@ pub fn decode_ogg_to_mono(bytes: &[u8], out_rate: u32) -> Option<Vec<f32>> {
     if !source_rate_supported(src_rate) {
         return None;
     }
+    // out = src * out_rate / src_rate, so src <= max_out * src_rate / out_rate.
+    // One sample of slack for the resampler's rounding.
+    let by_budget = max_out_samples
+        .saturating_mul(u64::from(src_rate))
+        .checked_div(u64::from(out_rate.max(1)))
+        .unwrap_or(0)
+        .saturating_add(1);
+    let cap = by_budget
+        .min(u64::from(src_rate) * MAX_TRACK_SECONDS)
+        .min(max_src_samples);
     let channels = usize::from(reader.ident_hdr.audio_channels).max(1);
 
     let mut mono: Vec<f32> = Vec::new();
@@ -178,6 +233,9 @@ pub fn decode_ogg_to_mono(bytes: &[u8], out_rate: u32) -> Option<Vec<f32>> {
             }
             #[allow(clippy::cast_precision_loss)] // channel count is tiny.
             mono.push(acc / channels as f32);
+        }
+        if mono.len() as u64 > cap {
+            return None;
         }
     }
     if mono.is_empty() {
@@ -482,13 +540,47 @@ pub fn decode_tracks_from_folder(
     decls: &[HdAudioDecl],
     out_rate: u32,
 ) -> Vec<HdAudioTrack> {
+    decode_tracks_capped(dir, decls, out_rate, MAX_PACK_AUDIO_SAMPLES)
+}
+
+/// [`decode_tracks_from_folder`] with an explicit pack budget in output
+/// samples (v2.9.0, NF-05). Each distinct file is decoded once and shared by
+/// every declaration naming it, and charged once; a decode that would pass the
+/// remaining budget is refused and leaves that rule inert. A refused or failed
+/// file is remembered too, so it is not decoded again for its next declaration.
+fn decode_tracks_capped(
+    dir: &Path,
+    decls: &[HdAudioDecl],
+    out_rate: u32,
+    budget: u64,
+) -> Vec<HdAudioTrack> {
+    let mut remaining = budget;
+    let mut decoded: HashMap<&str, Arc<[f32]>> = HashMap::new();
+    let empty: Arc<[f32]> = Arc::from(Vec::new());
     decls
         .iter()
         .map(|d| {
-            let pcm = sanitize_audio_name(&d.file)
-                .and_then(|safe| std::fs::read(dir.join(safe)).ok())
-                .and_then(|bytes| decode_ogg_to_mono(&bytes, out_rate))
-                .unwrap_or_default();
+            let pcm = decoded
+                .entry(d.file.as_str())
+                .or_insert_with(|| {
+                    // Decoding stops as soon as the stream passes what is left
+                    // of the budget, rather than after it was fully built; the
+                    // filter then catches the resampler's rounding.
+                    let pcm = sanitize_audio_name(&d.file)
+                        .and_then(|safe| std::fs::read(dir.join(safe)).ok())
+                        .and_then(|bytes| {
+                            decode_ogg_capped(&bytes, out_rate, remaining, MAX_SOURCE_SAMPLES)
+                        })
+                        .filter(|pcm| pcm.len() as u64 <= remaining);
+                    pcm.map_or_else(
+                        || Arc::clone(&empty),
+                        |pcm| {
+                            remaining -= pcm.len() as u64;
+                            Arc::from(pcm)
+                        },
+                    )
+                })
+                .clone();
             HdAudioTrack {
                 kind: d.kind,
                 album: d.album,
@@ -502,6 +594,74 @@ pub fn decode_tracks_from_folder(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One second of 8 kHz mono silence, Vorbis, generated with ffmpeg
+    /// (`anullsrc`, `-fflags +bitexact`). No content, so nothing to license.
+    const SILENCE_1S_8K: &[u8] = include_bytes!("../tests/fixtures/silence-1s-8k.ogg");
+
+    /// v2.9.0 re-audit NF-05 — a track longer than the duration cap is refused
+    /// (inert), not decoded without bound. The audit's 315 KiB OGG of one hour
+    /// of 8 kHz silence, declared four times, decoded to 2.6 GiB of PCM.
+    #[test]
+    fn a_track_over_the_duration_cap_is_refused() {
+        // The fixture is 8,000 source samples, 48,000 at the output rate. An
+        // output cap of half that must refuse it; one above it must not. The
+        // same at a 8 kHz output (no resampling), so the conversion between
+        // the two rates is what is being tested, not one fixed ratio.
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 48_000, 24_000, MAX_SOURCE_SAMPLES).is_none());
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 8_000, 4_000, MAX_SOURCE_SAMPLES).is_none());
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 8_000, 8_000, MAX_SOURCE_SAMPLES).is_some());
+        let pcm =
+            decode_ogg_capped(SILENCE_1S_8K, 48_000, 48_000, MAX_SOURCE_SAMPLES).expect("decodes");
+        assert!(
+            (47_000..=48_000).contains(&pcm.len()),
+            "{} samples",
+            pcm.len()
+        );
+    }
+
+    /// Review on #561 — the source buffer has an absolute ceiling of its own.
+    /// Downsampling 8 kHz to 1 kHz, an output budget of 1,000 samples admits
+    /// 8,001 source samples, which is the whole fixture; a source ceiling of
+    /// 4,000 must refuse it anyway, because the output budget says nothing
+    /// about how much source is held before resampling.
+    #[test]
+    fn the_source_buffer_has_its_own_ceiling() {
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 1_000, 1_000, u64::MAX).is_some());
+        assert!(decode_ogg_capped(SILENCE_1S_8K, 1_000, 1_000, 4_000).is_none());
+    }
+
+    /// NF-05 — a file declared N times is decoded ONCE and shared, and the
+    /// pack's total PCM is bounded: a declaration past the budget is inert.
+    #[test]
+    fn a_file_declared_twice_is_decoded_once_and_the_pack_is_bounded() {
+        let dir =
+            std::env::temp_dir().join(format!("rustynes-hdaudio-dedupe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.ogg"), SILENCE_1S_8K).unwrap();
+        std::fs::write(dir.join("b.ogg"), SILENCE_1S_8K).unwrap();
+        let decl = |track: u8, file: &str| HdAudioDecl {
+            kind: TrackKind::Bgm,
+            album: 0,
+            track,
+            file: file.to_string(),
+        };
+        let decls = [decl(0, "a.ogg"), decl(1, "a.ogg"), decl(2, "b.ogg")];
+
+        let all = decode_tracks_capped(&dir, &decls, 48_000, u64::MAX);
+        assert_eq!(all.len(), 3);
+        assert!(!all[0].pcm.is_empty());
+        assert!(Arc::ptr_eq(&all[0].pcm, &all[1].pcm), "one decode, shared");
+        assert!(!Arc::ptr_eq(&all[0].pcm, &all[2].pcm), "a different file");
+
+        // A budget of one track's samples: a.ogg fits (both its declarations
+        // share it, so they cost once), b.ogg is past the budget and inert.
+        let one = all[0].pcm.len() as u64;
+        let capped = decode_tracks_capped(&dir, &decls, 48_000, one);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!capped[0].pcm.is_empty() && !capped[1].pcm.is_empty());
+        assert!(capped[2].pcm.is_empty(), "over the pack budget");
+    }
 
     #[test]
     fn parses_bgm_three_field() {
@@ -571,13 +731,13 @@ mod tests {
                 kind: TrackKind::Bgm,
                 album: 0,
                 track: 1,
-                pcm: vec![0.5, 0.5, 0.5, 0.5],
+                pcm: vec![0.5, 0.5, 0.5, 0.5].into(),
             },
             HdAudioTrack {
                 kind: TrackKind::Sfx,
                 album: 0,
                 track: 2,
-                pcm: vec![0.25, 0.25],
+                pcm: vec![0.25, 0.25].into(),
             },
         ];
         HdAudioMixer::new(tracks, 48_000).unwrap()
@@ -589,7 +749,7 @@ mod tests {
             kind: TrackKind::Bgm,
             album: 0,
             track: 1,
-            pcm: Vec::new(),
+            pcm: Vec::new().into(),
         }];
         assert!(HdAudioMixer::new(tracks, 48_000).is_none());
     }

@@ -8,7 +8,11 @@ Traditionally, achievement networks like `rcheevos` utilize `READ_CORE_RAM` func
 `RustyNesLibretro::register_memory_maps` (`crates/rustynes-libretro/src/lib.rs`) bypasses this via `RETRO_ENVIRONMENT_SET_MEMORY_MAPS`, called at the end of `on_load_game` on the `LoadGameContext` (this hook is only available there and on `InitContext` — **not** on `SetEnvironmentContext`, since the memory pointers aren't known until a ROM is loaded). It exposes an array of `retro_memory_descriptor` structures:
 
 * **Work RAM (WRAM):** Maps address range `$0000 - $07FF` in the blank/default (6502 CPU) address space. Flagged as `RETRO_MEMDESC_SYSTEM_RAM`.
-* **Save RAM (SRAM):** Maps address range `$6000 - $7FFF` in the same CPU address space, when non-empty (battery-backed carts only). Flagged as `RETRO_MEMDESC_SAVE_RAM`.
+* **Cartridge PRG-RAM:** whenever the cartridge has any (`Nes::sram` is non-empty), in two views (v2.9.0, libretro re-audit NL-02 / NL-06; `memory_descriptors` in `lib.rs`):
+  * the CPU's window at `$6000 - $7FFF` in the same CPU address space (the FDS RAM adapter: `$6000 - $DFFF`), holding the buffer's first 8 KiB (32 KiB for the FDS), or all of it when it is smaller. A descriptor is registered once at load and cannot follow a bank switch, so a board that banks its RAM shows bank 0 here;
+  * when the buffer is larger than that window, the whole buffer in a named `"SRAM"` address space, byte `n` at address `n`, so a cheat search or an achievement can reach every bank.
+
+  Both views are cut into power-of-two pieces that start on a multiple of their own length, as libretro.h requires of a descriptor with `select == 0`. Until v2.9.0 there was one descriptor `{start: $6000, select: 0, len: <buffer size>}`: a 64 KiB buffer claimed `$6000 - $15FFF`, past the 16-bit bus; a 32 KiB one claimed PRG-ROM at `$8000 - $DFFF`; and a 73,728-byte one was not a power of two at all. The pieces are flagged `RETRO_MEMDESC_SAVE_RAM` **only when the header declares a battery** (`Nes::has_battery`); volatile work RAM carries no flag. This line used to say "battery-backed carts only" while every non-empty buffer was flagged.
 * **Video RAM (VRAM):** Maps address range `$2000 - $2FFF`, flagged as `RETRO_MEMDESC_VIDEO_RAM` — but in a **named `"PPU"` address space**, not the blank/default one, since nametable RAM (CIRAM) lives on the PPU's own internal bus. On the CPU's real bus, `$2000-$2007` are the PPU MMIO registers (PPUCTRL/PPUMASK/etc.), not video RAM; registering the VRAM pointer under the default CPU space at that range would misrepresent it. This mirrors the convention `libretro.h` documents for other genuinely separate buses (e.g. the SNES SPC700 audio coprocessor's `"S"` address space).
 
 The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path is kept alongside this, unchanged — RetroArch's own `.srm` persistence goes through it regardless, so the descriptor registration is additive, not a replacement. Both paths expose the MAIN console's memory in Vs. `DualSystem` mode (see `RustyNesLibretro::active_nes_mut`/`active_nes`).
@@ -16,10 +20,11 @@ The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path i
 ## SRAM and Virtual File System (VFS) Offloading
 
 As `rustynes-core` is `no_std`, it possesses no ability to interact with the host OS filesystem (`std::fs`), making native `.srm` (battery save) file writing impossible.
-**Solution:** The FFI wrapper exposes the active cartridge's SRAM pointer via `retro_get_memory_data(RETRO_MEMORY_SAVE_RAM)`.
+**Solution:** The FFI wrapper exposes the active cartridge's SRAM pointer via `retro_get_memory_data(RETRO_MEMORY_SAVE_RAM)`, **when the cartridge header declares a battery** (`Nes::has_battery`, the same gate the desktop frontend's `.sav` uses). Otherwise `RETRO_MEMORY_SAVE_RAM` reports size 0 and a null pointer (v2.9.0, libretro re-audit NL-02). Several boards expose RAM through `Nes::sram` whatever the header says (NROM always has 8 KiB; MMC1 and MMC3 allocate by default), so before v2.9.0, 581 images of the local test corpus without a battery handed RetroArch a `.srm`, and their work RAM came back on the next boot where the console would have powered on without it. An FDS image has no battery either; its in-game saves live on the disk image.
 
 * RetroArch automatically manages the lifecycle. Upon game load, the frontend injects data from the host's `.srm` file directly into this pointer.
 * Upon shutdown (`retro_deinit`), RetroArch reads the pointer and flushes the data to the disk.
+* A `.srm` a pre-v2.9.0 core wrote for a cartridge without a battery is no longer used: with a size of 0 there is nothing to load it into and nothing to write, so the file stays on disk untouched (inferred from the `libretro.h` contract, not traced in RetroArch's source). A game whose header wrongly omits the battery bit loses its save the same way on the desktop; the fix is the header.
 
 This architectural inversion ensures compatibility with RetroArch Cloud Sync, mobile sandboxes (iOS/Android), and cross-platform save transfers without touching native filesystem APIs.
 
@@ -30,7 +35,7 @@ To support this, `rustynes-libretro` relies on the deterministic serialization e
 
 1. **`retro_serialize_size` Permanency:** The FFI wrapper must return a static, unchanging byte-size integer post-ROM-load. Dynamic save-state resizing will immediately fault RetroArch, as the frontend pre-allocates contiguous memory pools for rollback frames based on this initial size query.
 2. **Implementation:**
-   * `on_serialize(buffer: &mut [u8])`: `Nes::snapshot_core_into` writes the state into the core's reusable `serialize_buffer`, which is copied to the front of the frontend's buffer; the rest is zero-filled. The reported size is the state at load plus room for the largest expansion device on both ports (`SAVE_STATE_DEVICE_HEADROOM`, v2.8.0), because a Zapper plugged in later grows the state and RetroArch never asks again.
+   * `on_serialize(buffer: &mut [u8])`: `Nes::snapshot_core_into` writes the state into the core's reusable `serialize_buffer`, which is copied to the front of the frontend's buffer; the rest is zero-filled. The reported size is the state at load plus room for the largest expansion device on both ports (`SAVE_STATE_DEVICE_HEADROOM`, v2.8.0), because a Zapper plugged in later grows the state and RetroArch never asks again. A buffer smaller than that reported size is refused (`false`), as libretro.h asks, even when the state itself would fit; until v2.9.0 it succeeded whenever the state fitted (libretro re-audit NL-10).
    * `on_unserialize(buffer: &[u8])`: `Nes::restore_quiet` reads the sections and stops at the all-zero tail, which the save-state reader treats as padding. A tag position holding a zero byte is rejected unless everything after it is padding, so a crafted state cannot make the scan quadratic.
 3. **Fast-Forward Optimization (`get_fastforwarding`, implemented):** `RustyNesLibretro::is_fastforwarding` queries this each frame in `run_single`/`run_dual` and skips the `push_audio` call (the `f32`→`i16` interleave plus the `batch_audio_samples` FFI push) while fast-forwarding. This is a modest, honest win, not a large one: `rustynes-core` has no mixer-bypass API, so the dominant cost — APU synthesis inside `run_frame()` — is not skipped; only the presentation-side audio conversion/push is.
 
@@ -67,6 +72,25 @@ The deterministic `no_std` core is untouched — this is purely a parallel
 present/serialize branch in the FFI wrapper, exactly mirroring the desktop
 frontend's `emu.dual` branch.
 
+## Vs. System palette, DIP switches, coins and service (v2.9.0, libretro re-audit NL-08)
+
+Every Vs. System cartridge, single or `DualSystem`:
+
+* **Palette and DIP switches.** After loading, the core looks the image's SHA-256 up in `rustynes_core::vs_db` and applies the entry's PPU type (the colour table) and factory DIP-switch setting, to both consoles of a cabinet — what the desktop's `apply_vs_db` does. An iNES 1.0 Vs. dump names no PPU, so the parser defaults it to the 2C03; until v2.9.0 the libretro core used the database only to recognise a cabinet, and every listed dump rendered in the 2C03's colours (7 of 7 local dumps measured by the re-audit). The desktop lets a config file override the DIP switches; the libretro core has no such option (see below).
+* **Coins and service on the RetroPad**, named in the input descriptors only while a Vs. cartridge is loaded (the standard table is sent back at unload):
+
+  | RetroPad | Single cartridge | `DualSystem` cabinet |
+  | --- | --- | --- |
+  | Port 1 L | coin, acceptor 1 | main console, acceptor 1 |
+  | Port 2 L | coin, acceptor 2 | main console, acceptor 2 |
+  | Port 1 R | service (held) | main console's service |
+  | Port 3 L | — | sub console, acceptor 1 |
+  | Port 4 L | — | sub console, acceptor 2 |
+  | Port 3 R | — | sub console's service |
+
+  A coin is a pulse: pressing L latches it for three frames (the desktop's `VS_COIN_HOLD_FRAMES`, 50 ms; the core documents the real switch as 40-70 ms) however long L is held. L and R are free on a NES pad, and each player's coin is on their own controller. Before v2.9.0 no libretro input reached the coin acceptors or the service button at all.
+* **Not done: user-set DIP switches.** The database default is applied; a core option to change the switches is not implemented. Eight switches do not fit the one-list-per-option `SET_VARIABLES` form without either eight options or a 256-value list, and the core-options v2 form this would want is not used by this core yet.
+
 ## Famicom Disk System (FDS) Loading & Disk Control (implemented)
 
 Standard NES ROMs (`.nes`) bundle all data in a single file. The Famicom Disk System requires two distinct components: the `.fds` disk image and the `disksys.rom` BIOS.
@@ -75,7 +99,19 @@ Standard NES ROMs (`.nes`) bundle all data in a single file. The Famicom Disk Sy
 
 **The standard load path (v2.8.0).** A frontend that refuses `GET_GAME_INFO_EXT` now loads through the standard `retro_game_info` that `retro_load_game` receives: its `data` and `size` when the frontend loaded the file, or the file at `path` when it did not. FDS routing follows a `.fds` extension **or** the image's own signature (`"FDS\x1A"` or a raw side's `\x01*NINTENDO-HVC*`), whether or not a path is present: a frontend may pass an extracted temporary file whose name has no extension (review on #556). An iNES image opens with `"NES\x1A"` and can match neither. This path could not exist before: the crates.io `rust-libretro-sys` 0.3.2 binding reduced `retro_game_info` to an opaque one-byte struct, so the core received nothing from it (the reason `GET_GAME_INFO_EXT` was required, recorded in `WALKTHROUGH.md`). The workspace now uses a patched, vendored copy, `vendor/rust-libretro-sys` (see its `VENDORED.md`).
 
-**Multi-side disk swap.** Once loaded, the disk-control trait overrides (`on_set_eject_state`, `on_get_eject_state`, `on_get_image_index`, `on_set_image_index`, `on_get_num_images`, `on_get_image_path`/`on_get_image_label`) are backed by `Nes::disk_side_count`/`inserted_disk_side`/`set_disk_side` — the same API the desktop frontend's F9 disk-swap keybind uses. The callback trampolines are registered once via `GenericContext::enable_disk_control_interface()` in `on_set_environment`, surfacing swap/eject in RetroArch's Quick Menu → Disk Control. `on_get_image_path`/`on_get_image_label` synthesize "Side A"/"Side B" labels since no real per-side file paths exist for a single multi-side `.fds` container; `on_replace_image_index`/`on_add_image_index` are left at their default no-ops for the same reason.
+**In-game saves (v2.9.0, libretro re-audit NL-03).** An FDS game saves by writing to the disk, not to battery RAM, and until v2.9.0 nothing in the libretro core read the written disk back out: every in-game save was lost when the game closed. The core now keeps the written disk in the frontend's save directory (`RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY`) as `RustyNES/<SHA-256 of the original image>.fds.sav`, the headerless image `Nes::disk_image_bytes` produces — the same name and contents as the desktop frontend's `fds-saves/<hex>.fds.sav`, so a save can be copied between them.
+
+* **When it is written:** a second (60 frames) after the game first writes to the disk, so a crash loses at most that second; when the game is unloaded; at `retro_deinit`; and before another game loads. Written through a temporary file and a rename, so a failed write leaves the previous save; the disk's dirty flag is cleared only after the rename succeeds.
+* **When it is read:** at `retro_load_game`, before the console is built. A save that no longer parses is reported in the log and the original disk boots.
+* **Why not `RETRO_MEMORY_SAVE_RAM`:** libretro.h points a core whose save data is "too complex for a single memory buffer" at the save directory, and the disk is: it is not a live buffer (`disk_image_bytes` builds it on demand from the drive's state), and RetroArch fills a `SAVE_RAM` buffer only after `retro_load_game` returns, which would force the console to be rebuilt after the memory maps had been handed out. Reading the save first avoids both. The RAM adapter's 32 KiB is not a save and is no longer exposed as one (NL-02).
+* **Without a save directory** (a frontend that returns none) the core logs that the disk's saves will not be kept, and runs as before.
+
+**Multi-side disk swap.** Once loaded, the disk-control trait overrides (`on_set_eject_state`, `on_get_eject_state`, `on_get_image_index`, `on_set_image_index`, `on_get_num_images`) are backed by `Nes::disk_side_count`/`inserted_disk_side`/`set_disk_side` — the same API the desktop frontend's F9 disk-swap keybind uses. `register_disk_control`, called from `on_set_environment`, surfaces swap/eject in RetroArch's Quick Menu → Disk Control:
+
+* When the frontend reports disk-control interface version 1 or later (`GET_DISK_CONTROL_INTERFACE_VERSION`), the core registers the **extended** interface (`SET_DISK_CONTROL_EXT_INTERFACE`), whose `get_image_label` names each side "Side A", "Side B", and so on. Otherwise it registers the v0 interface, which has no labels. Until v2.9.0 only v0 was registered, so the labels this paragraph described never reached a frontend (libretro re-audit NL-07).
+* The label callback is the core's own `disk_image_label`, not `rust-libretro`'s trampoline: that one copies the label with no terminating NUL and no null check on the buffer (libretro audit L-1.5). `disk_image_label` refuses a null or zero-length buffer and an index past the last side, truncates to fit, and always terminates.
+* `set_initial_image` and `get_image_path` are NULL, which libretro.h allows. With both present the frontend remembers the last side and asks for it at the next load; an FDS game boots from side A, and a single `.fds` container has no per-side file path to check such a request against.
+* `on_replace_image_index`/`on_add_image_index` stay at their default no-ops: the sides come from one container and cannot be replaced one at a time.
 
 ## Cheats: RetroArch-handled (implemented since the legacy memory API) and Native (Game Genie, implemented)
 
@@ -91,7 +127,12 @@ Per `docs/guides/cheat-codes.md` in `libretro/docs`, RetroArch has two independe
   `input_descriptors!` macro ends with `""`, which RetroArch's
   `for (; desc->description; desc++)` reads past.
 * **Four Score.** The `rustynes_four_score` core option plugs the adapter in;
-  ports 3-4 then carry players 3-4. Off by default, as on the console.
+  ports 3-4 then carry players 3-4. Off by default, as on the console. The
+  options are declared (`SET_VARIABLES`) from `on_set_environment`, once per
+  init cycle: `rust-libretro`'s own hook runs only on the first
+  `retro_set_environment` the process sees, so until v2.9.0 a frontend that
+  kept the library loaded across `retro_deinit` + `retro_init` was never
+  told about the option again (libretro re-audit NL-05).
 * **Zapper.** Selecting "NES Zapper" on port 1 or 2 attaches the light gun on
   the next frame; selecting "NES Controller" again unplugs it. (Until v2.8.1
   the gun stayed on the bus and the controller on that port did nothing.)

@@ -392,6 +392,14 @@ pub fn apply_bps(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, PatchError> {
         let data = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
         let command = data & 0b11;
         let length = usize::try_from((data >> 2) + 1).map_err(|_| oor())?;
+        // v2.9.0 NF-07 — every action writes exactly `length` bytes, so this
+        // one check keeps `out.len() <= target_size` as a loop invariant and
+        // bounds the allocation by the (already capped) declared size. Without
+        // it `TargetCopy` could grow the output without limit: its own bounds
+        // check chases a cursor the growing output always stays ahead of.
+        if length > target_size - out.len() {
+            return Err(oor());
+        }
 
         match command {
             // SourceRead: copy `length` bytes from the source at the current
@@ -764,6 +772,42 @@ mod tests {
 
         let out = apply_bps(&src, &patch).expect("bps applies");
         assert_eq!(out, target);
+    }
+
+    /// v2.9.0 re-audit NF-07 — no action may grow the output past the declared
+    /// target size. The declared size was capped (`MAX_PATCH_OUTPUT`) and then
+    /// compared only AFTER the action stream, and `TargetCopy`'s bounds check
+    /// (`cursor >= out.len()`) can never fire while the output grows under the
+    /// cursor: a 27-byte patch declaring a 16-byte target copied 2^30 bytes
+    /// (1 GiB peak) before failing, and 2^40 would run until OOM. Such a patch
+    /// is auto-applied when it sits beside the ROM it was built for.
+    ///
+    /// The observable is where it fails: at the action, as out of range —
+    /// not at the end, as a wrong target size, after building 64 MiB here.
+    #[test]
+    fn bps_an_action_cannot_outgrow_the_declared_target() {
+        let src = vec![0xAAu8; 16];
+        let mut patch = Vec::new();
+        patch.extend_from_slice(b"BPS1");
+        write_len(src.len(), &mut patch);
+        write_len(16, &mut patch); // declared target: 16 bytes
+        write_vuint(0, &mut patch);
+        write_vuint(1, &mut patch); // TargetRead 1 (cmd 1, length 1)
+        patch.push(0x55);
+        write_vuint(((1u64 << 26) - 1) << 2 | 3, &mut patch); // TargetCopy 64 Mi
+        write_vuint(0, &mut patch); // from output[0]
+        push_le_u32(crc32(&src), &mut patch);
+        push_le_u32(0, &mut patch);
+        let patch_crc = crc32(&patch);
+        push_le_u32(patch_crc, &mut patch);
+
+        assert!(
+            matches!(
+                apply_bps(&src, &patch),
+                Err(PatchError::OffsetOutOfRange { .. })
+            ),
+            "refused at the action, before the output outgrew the target"
+        );
     }
 
     #[test]

@@ -822,6 +822,19 @@ impl LockstepBus {
     /// CPU cycles: generous against anything the machine produces, and it
     /// bounds the first catch-up at a few hundred dots.
     pub(crate) fn check_restored_clocks(&self, master_clock: u64) -> Result<(), SnapshotError> {
+        // v2.9.0 (re-audit NC-04): the skew alone is not enough; see
+        // [`Self::RESTORED_CLOCK_MAX`]. Checking the larger of the two is
+        // enough to bound both, since they are then also within the skew.
+        let highest = master_clock.max(self.ppu_clock);
+        if highest > Self::RESTORED_CLOCK_MAX {
+            return Err(SnapshotError::SectionInvalid {
+                tag: "BUS ".into(),
+                reason: format!(
+                    "master clock {highest} exceeds the {} a real machine can reach",
+                    Self::RESTORED_CLOCK_MAX
+                ),
+            });
+        }
         let skew = master_clock.abs_diff(self.ppu_clock);
         if skew > Self::RESTORED_CLOCK_SKEW_MAX {
             return Err(SnapshotError::SectionInvalid {
@@ -837,6 +850,25 @@ impl LockstepBus {
 
     /// Largest CPU/PPU master-clock skew [`Self::check_restored_clocks`] accepts.
     pub(crate) const RESTORED_CLOCK_SKEW_MAX: u64 = 1024;
+
+    /// Largest absolute master clock [`Self::check_restored_clocks`] accepts,
+    /// for either clock: 2^62.
+    ///
+    /// v2.9.0 (re-audit NC-04). The skew bound alone let a crafted state put
+    /// BOTH clocks just below 2^64; the CPU's `wrapping_add` then took its
+    /// clock back to a small value within a frame while the PPU's stayed high,
+    /// and `run_ppu_to`'s `ppu_clock + div <= target` never held again — the
+    /// frozen-PPU state F-05 exists to reject.
+    ///
+    /// Why 2^62. It must sit far above anything a real machine reaches and far
+    /// enough below 2^64 that no run from an accepted state can wrap. The
+    /// fastest master clock is NTSC/Dendy's ~21.477 MHz (PAL's is slower), so
+    /// 2^62 master clocks is ~2.1e11 s, about **6,800 years** of continuous
+    /// emulation — no genuine state can be refused. The remaining headroom to
+    /// the wrap is 3 x 2^62, about **20,000 years** more from the worst
+    /// accepted state, so the catch-up loop's addition cannot overflow either.
+    /// A power of two keeps the bound legible in a hex dump of a rejected blob.
+    pub(crate) const RESTORED_CLOCK_MAX: u64 = 1 << 62;
 
     /// Test seam: move the PPU clock so a snapshot carries a chosen skew.
     #[cfg(test)]
@@ -1227,11 +1259,28 @@ impl LockstepBus {
         // cycled from different running states would desync. The existing `cart`
         // metadata (incl. any post-load `set_vs_ppu_type` override) is kept; only
         // the mapper is replaced. FDS (`rom_bytes == None`) keeps its mapper.
-        // This also clears battery PRG-RAM (a battery-pull); RustyNES does not
-        // persist standard battery saves to disk, so nothing on-disk is lost.
+        //
+        // v2.9.0 — battery-backed PRG-RAM SURVIVES, as it does on a console.
+        // Until v2.9.0 the rebuild cleared it too ("a battery-pull"), which was
+        // harmless while RustyNES persisted no battery saves; from v2.7.3 the
+        // desktop writes the live RAM to a `.sav` whenever it changes, so a
+        // Power Cycle wrote zeros over the player's save. Volatile PRG-RAM and
+        // CHR-RAM are still cleared. A power-on MOVIE wants cleared save RAM
+        // and asks for it explicitly (`movie::power_on_for_movie`).
+        let battery_ram: Option<Vec<u8>> =
+            self.cart.has_battery.then(|| self.mapper.sram().to_vec());
         if let Some(bytes) = self.rom_bytes.take() {
             if let Ok((_cart, mapper)) = rustynes_mappers::parse(&bytes) {
                 self.mapper = mapper;
+                if let Some(saved) = battery_ram.as_deref() {
+                    let fresh = self.mapper.sram_mut();
+                    // Same ROM, same board: the sizes match. Guarded anyway,
+                    // since a mismatch would mean the rebuild is not the board
+                    // the RAM came from, and copying into it would be wrong.
+                    if fresh.len() == saved.len() {
+                        fresh.copy_from_slice(saved);
+                    }
+                }
                 // v2.8.0 Phase 4 — re-cache the capability flags for the
                 // fresh mapper instance (same type, same flags, but keep
                 // the invariant mechanical).

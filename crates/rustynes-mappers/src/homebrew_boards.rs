@@ -640,9 +640,24 @@ impl Mapper for Gtrom111 {
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
-        self.prg_bank = data[1];
-        self.chr_bank = data[2];
-        self.nt_bank = data[3];
+        // v2.9.0 (re-audit NC-02): validate before assigning anything. The
+        // fetch paths index with these banks unmasked (`cpu_read`,
+        // `chr_offset`, `nt_offset`), so a corrupt value loaded cleanly and
+        // panicked on the next fetch, after the restore had returned `Ok`.
+        // These are exactly the values `update_register` can produce: a PRG
+        // bank below the 32 KiB bank count, and 0 or 1 for the CHR-RAM and
+        // nametable banks.
+        let prg_banks = self.prg_rom.len() / PRG_BANK_32K;
+        let (prg_bank, chr_bank, nt_bank) = (data[1], data[2], data[3]);
+        if usize::from(prg_bank) >= prg_banks || chr_bank > 1 || nt_bank > 1 {
+            return Err(MapperError::Invalid(format!(
+                "mapper 111 state banks PRG {prg_bank} / CHR {chr_bank} / NT {nt_bank} \
+                 exceed the board ({prg_banks} PRG banks, 2 CHR, 2 NT)"
+            )));
+        }
+        self.prg_bank = prg_bank;
+        self.chr_bank = chr_bank;
+        self.nt_bank = nt_bank;
         let mut cursor = 4;
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
@@ -1300,6 +1315,41 @@ mod tests {
         assert_eq!(m2.cpu_read(0x8000), 3);
         assert_eq!(m2.ppu_read(0x0001), 0xAA);
         assert_eq!(m2.nametable_fetch(0x2001), Some(0xBB));
+    }
+
+    /// v2.9.0 re-audit NC-02: a restored bank the board cannot hold is
+    /// rejected, not stored. `load_state` assigned `prg_bank`, `chr_bank` and
+    /// `nt_bank` raw from the blob and the fetch paths use them unmasked, so a
+    /// corrupt `.rns` (or RetroArch `.state`) for a GTROM game loaded cleanly
+    /// and panicked on the next CPU fetch from `$8000` — too late for the
+    /// restore's rollback to help. `update_register` can only produce a PRG
+    /// bank below the 32 KiB bank count and 0/1 for the other two.
+    #[test]
+    fn m111_load_state_rejects_banks_the_board_cannot_hold() {
+        let mut m = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+        m.cpu_write(0x5000, 0b0011_0011); // PRG 3, CHR 1, NT 1
+        let good = m.save_state();
+        for (byte, value) in [(1, 8), (1, 0xFF), (2, 2), (2, 0xFF), (3, 2), (3, 0xFF)] {
+            let mut bad = good.clone();
+            bad[byte] = value;
+            let mut m2 = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+            assert!(
+                matches!(m2.load_state(&bad), Err(MapperError::Invalid(_))),
+                "byte {byte} = {value:#04x} must be rejected"
+            );
+        }
+        // Every value the register can produce still loads.
+        for (byte, max) in [(1, 7), (2, 1), (3, 1)] {
+            for value in 0..=max {
+                let mut ok = good.clone();
+                ok[byte] = value;
+                let mut m2 = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+                m2.load_state(&ok).unwrap();
+                let _ = m2.cpu_read(0xFFFF);
+                let _ = m2.ppu_read(0x1FFF);
+                let _ = m2.nametable_fetch(0x2FFF);
+            }
+        }
     }
 
     #[test]

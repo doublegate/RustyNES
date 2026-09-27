@@ -422,7 +422,11 @@ impl Mapper for Multicart61 {
         } else {
             let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
             let bank = ((self.prg_page >> 1) as usize) % count;
-            self.prg_rom[bank * PRG_BANK_32K + win]
+            // v2.9.0 (re-audit NC-01): modulo the ROM length. A 16 KiB image
+            // clamps `count` to 1, and bank 0's 32 KiB window then runs past
+            // the end; a smaller part in a larger window mirrors on hardware.
+            // The identity for every image whose window fits.
+            self.prg_rom[(bank * PRG_BANK_32K + win) % self.prg_rom.len()]
         }
     }
 
@@ -579,7 +583,8 @@ impl Mapper for Multicart62 {
         } else {
             let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
             let bank = ((self.prg_page >> 1) as usize) % count;
-            self.prg_rom[bank * PRG_BANK_32K + win]
+            // v2.9.0 (re-audit NC-01): modulo the ROM length, as mapper 61.
+            self.prg_rom[(bank * PRG_BANK_32K + win) % self.prg_rom.len()]
         }
     }
 
@@ -1062,7 +1067,12 @@ impl Mapper for Multicart202 {
                     // 32 KiB bank (page >> 1) spread across the whole window.
                     let lo16 = ((self.page >> 1) << 1) as usize % count;
                     let off = addr as usize - 0x8000;
-                    self.prg_rom[lo16 * PRG_BANK_16K + off]
+                    // v2.9.0 (re-audit NC-01): modulo the ROM length. An odd
+                    // 16 KiB bank count (e.g. 80 KiB: `lo16` 4 of 5) or a
+                    // 16 KiB image puts the window's second half past the
+                    // end; a smaller part mirrors on hardware. The identity
+                    // for every image whose window fits.
+                    self.prg_rom[(lo16 * PRG_BANK_16K + off) % self.prg_rom.len()]
                 } else {
                     // 16 KiB mode: same page mirrored at $8000 and $C000.
                     let bank = (self.page as usize) % count;
@@ -1430,7 +1440,9 @@ impl Mapper for Multicart212 {
                 if self.prg_32k_mode {
                     let lo16 = ((self.page >> 1) << 1) as usize % count;
                     let off = addr as usize - 0x8000;
-                    self.prg_rom[lo16 * PRG_BANK_16K + off]
+                    // v2.9.0 (re-audit NC-01): modulo the ROM length, as
+                    // mapper 202 (48 and 80 KiB images reach past the end).
+                    self.prg_rom[(lo16 * PRG_BANK_16K + off) % self.prg_rom.len()]
                 } else {
                     let bank = (self.page as usize) % count;
                     let off = (addr as usize - 0x8000) & (PRG_BANK_16K - 1);
@@ -1926,7 +1938,9 @@ impl Mapper for Multicart58 {
         if self.prg32_mode {
             let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
             let bank = (((self.prg_bank & 0x06) >> 1) as usize) % count;
-            self.prg_rom[bank * PRG_BANK_32K + (addr as usize - 0x8000)]
+            // v2.9.0 (re-audit NC-01): modulo the ROM length, so a 16 KiB
+            // image mirrors in the 32 KiB window instead of indexing past it.
+            self.prg_rom[(bank * PRG_BANK_32K + (addr as usize - 0x8000)) % self.prg_rom.len()]
         } else {
             let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
             let bank = (self.prg_bank as usize) % count;
@@ -3393,13 +3407,22 @@ impl DiscreteMapper {
     fn prg_16k(&self, bank: usize, addr: u16) -> u8 {
         let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
         let bank = bank % count;
-        self.prg_rom[bank * PRG_BANK_16K + (addr as usize & 0x3FFF)]
+        // v2.9.0 (review on #561): modulo the ROM length, as `prg_32k` does
+        // since NC-01. The constructor accepts any multiple of 8 KiB, and an
+        // 8 KiB image clamps `count` to 1 and leaves the window's upper half
+        // past the end; an 8 KiB part mirrors there. The identity for every
+        // image whose window fits.
+        self.prg_rom[(bank * PRG_BANK_16K + (addr as usize & 0x3FFF)) % self.prg_rom.len()]
     }
 
     fn prg_32k(&self, bank: usize, addr: u16) -> u8 {
         let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
         let bank = bank % count;
-        self.prg_rom[bank * PRG_BANK_32K + (addr as usize & 0x7FFF)]
+        // v2.9.0 (re-audit NC-01): modulo the ROM length. Mappers 46 and 57
+        // accept a 16 KiB image, which clamps `count` to 1 and leaves bank 0's
+        // window 16 KiB past the end; the part mirrors on hardware. The
+        // identity for every image whose window fits.
+        self.prg_rom[(bank * PRG_BANK_32K + (addr as usize & 0x7FFF)) % self.prg_rom.len()]
     }
 
     fn prg_8k(&self, bank: usize, addr: u16) -> u8 {

@@ -26,6 +26,248 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-26 - "Survey" (every audit re-checked, and the SuperStation One surveyed)
+
+The first release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
+**every audit re-checked, and the SuperStation One surveyed.** All four audit
+scopes were re-run against the tree the v2.7.x and v2.8.x lines left: 139 ledger
+rows re-verified, **none regressed**, and 39 new findings, each fixed red-first
+or dispositioned in its ledger (`docs/audits/`). Two more defects were found by
+the release's own work, the worst of them a Power Cycle that erased the player's
+save. Emulation output does not change: the full `--features test-roms` suite
+passes 2,811 tests with AccuracyCoin 144/144 and nestest 0-diff. **No hardware has
+run any bitstream.**
+
+### Saves and movies
+
+- **A Power Cycle no longer erases your save.** Power-cycling (F3, or the
+  menu) rebuilt the cartridge with all of its RAM cleared, battery included;
+  since v2.7.3 the desktop writes that RAM to the `.sav` whenever it changes,
+  so the next write replaced the player's save with zeros. Mobile, which
+  persists saves since v2.7.4, had the same defect. Battery-backed RAM now
+  survives a power cycle, as it does on a console.
+- **Power-on movies start from cleared save RAM** (maintainer decision), so a
+  movie replays the same whether or not a save exists. Recording and playback
+  both go through `rustynes_core::power_on_for_movie`. v2.7.3's note that
+  power-on movies "inherit a loaded `.sav`" was wrong in the other direction
+  and is corrected in `docs/frontend.md`.
+- **Opening TAStudio restarts the game from power-on** (maintainer decision).
+  A project exports as a power-on movie, but the editor anchored its frame 0
+  on the running game, so an export replayed from somewhere else.
+  It refuses to open while a movie plays or records, or under netplay.
+- **A movie no longer writes its save RAM over the player's `.sav`.** Starting
+  a power-on movie, playing or importing one, or opening TAStudio replaces the
+  save RAM, and the writer would have saved that at its next comparison. Any
+  pending save is written first; the file then stays untouched until the ROM
+  is reloaded. Mobile reports the pre-movie RAM to the host for the same
+  span.
+- **Netplay peers start from the same save RAM again.** The session start is a
+  power cycle, which this release made keep battery RAM, so each peer began
+  with its own `.sav` and a game that read its save would desync. Desktop,
+  browser and mobile sessions now start from cleared save RAM, as every peer
+  did before v2.9.0, kept off the `.sav` like a movie; a spectator now gets
+  the cold boot its documentation always promised.
+
+### HD packs and patches
+
+- **A malformed `<overscan>` line can no longer crash the app** on every frame
+  (`<overscan>300,0,0,0` indexed past the framebuffer; the desktop release
+  aborts on a panic). Margins that leave no frame are refused.
+- **HD packs are bounded in every input**: `hires.txt` at 32 MiB (a 509 KiB zip
+  used to reach 533 MiB), HD-audio tracks at 15 minutes each and 512 MiB of
+  decoded audio per pack, and a file named by several declarations is decoded
+  once (four declarations of one long track reached 2.6 GiB). The source
+  audio held before resampling has its own 512 MiB ceiling, so a 384 kHz
+  track can no longer hold 1.4 GB on its way to being refused.
+- **A BPS patch can no longer grow the ROM without bound**: a 27-byte patch
+  beside a ROM took the loader to 1 GiB before failing.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **The off-die build boots without the menu core.** The HPS reports the SDRAM
+  size only if the menu core measured it since power-on, so a `bootcore=`
+  autoboot left the off-die build in reset forever. The core now tests the
+  memory itself when the HPS has not answered (`rtl/sdram_probe.sv`), with
+  patterns an empty socket cannot pass.
+- **The off-die build refuses a 32 MB SDRAM board.** Its controller drives
+  ten column bits, a 32 MB board's 256 Mbit part has nine, and the cartridge
+  spans the tenth, so on that board it would have read back aliased. Both the
+  HPS-reported size (now 64 MB or more) and the probe (whose two addresses
+  now differ only in that bit) refuse it. The SuperStation One's 128 MB is
+  unaffected. Found in review.
+- **The off-die ROM download no longer loses bytes.** At full rate the bridge
+  lost 164 of 512 bytes without reporting them; it now makes the HPS wait
+  (`ioctl_wait`) and loses none, including bytes sent during the memory's
+  power-up.
+- **The SDRAM read timing is checked at the right edge.** A hold constraint
+  put the check one clock early, reporting +12.8 ns where the real margin is
+  +1.18 ns; the path is now reported by name after every off-die compile and
+  a non-physical hold slack fails.
+- **NES 2.0 headers are read correctly, and images the build cannot hold are
+  refused** with an OSD message: a correct NES 2.0 image of mapper 71 was
+  accepted as mapper 7, and a 512 KiB game loaded on the die with its upper
+  half over its lower. MMC1 over 256 KiB (SUROM) and trainer images are
+  refused too.
+- **The SDRAM module gates run in the ladder and CI** (they ran nowhere), the
+  top level is width-linted in both build configurations, and four stale
+  comments on the SDRAM path are corrected.
+- **SuperStation One:** this core needs its own `yc.txt` line,
+  `RustyNES_60.1=183251937963` (its video clock is 6x the colour subcarrier,
+  not the NES core's 12x); `docs/HARDWARE_TESTING.md` now says so, with
+  corrected DIP, encoder, scandoubler and power guidance.
+
+### Decisions recorded
+
+- **[ADR 0042](docs/adr/0042-v3-removes-the-v2-7-5-deprecations-and-the-dead-nmi-edge-detector.md):
+  v3.0.0 removes** the items v2.7.5 deprecated and the dead NMI edge detector,
+  whose fields are in the `.rns` BUS section, **and renames `LockstepBus`**.
+  Nothing is removed in v2.9.x.
+- The v2.7.4 mobile device checklist moves to its own release, v2.9.3.
+
+### The libretro core
+
+- **Only a cartridge with a battery gets a `.srm`.** The core handed
+  RetroArch its PRG-RAM as save RAM whenever there was any, and several
+  boards have RAM whatever the header says (NROM always has 8 KiB; MMC1 and
+  MMC3 allocate it by default): 581 images in the local test corpus had no
+  battery and still got a `.srm`, and their work RAM came back on the next
+  boot where the console would have started without it. Save RAM now
+  follows the header's battery bit, as the desktop's `.sav` does. **A `.srm`
+  an older core wrote for a battery-less game is no longer read or updated**;
+  it stays on disk. A game whose header wrongly omits the battery bit stops
+  saving the same way it does on the desktop, and the fix is the header.
+- **The memory map describes cartridge RAM the way libretro.h asks.** RAM
+  larger than 8 KiB was described as one block starting at `$6000`, so
+  64 KiB claimed addresses past the 16-bit bus, 32 KiB claimed the game's
+  ROM at `$8000-$DFFF`, and 73,728 bytes broke the rule that such a block be
+  a power of two long. The CPU window is now `$6000-$7FFF` (the Disk
+  System's `$6000-$DFFF`), the whole buffer is also reachable in its own
+  `SRAM` address space for cheat searches and achievements, and volatile RAM
+  is no longer flagged as save RAM.
+- **`retro_serialize` refuses a buffer smaller than the size it reported**,
+  as libretro.h asks. It succeeded whenever the state itself fitted, which it
+  usually does with 26 bytes to spare. Frontends pass the reported size, so
+  nothing changes for them.
+- **The Four Score option survives a restart of the core.** The core
+  declared its options only on the first `retro_set_environment` of the
+  process, so a frontend that keeps the library loaded and initialises it a
+  second time was never told the option exists. It is now declared once per
+  initialisation.
+- **Famicom Disk System games keep their in-game saves.** A Disk System game
+  saves by writing to the disk, and the libretro core never wrote the disk
+  back out, so every save was lost when the game closed. The written disk
+  now goes to the frontend's save directory as
+  `RustyNES/<hash>.fds.sav`, a second after the game writes it and again
+  when the game closes, and it is loaded in place of the original next
+  time. The file is the same as the desktop frontend's `.fds.sav`, so a save
+  can be moved between them.
+- **Vs. System games get their colours, their DIP switches, coins and a
+  service button.** The core used the Vs. database only to recognise the
+  two-screen cabinets, so a Vs. dump without the newer header rendered in
+  the default 2C03 colours instead of its own PPU's, and no RetroPad input
+  could insert a coin. The database's palette and factory DIP switches are
+  now applied at load, RetroPad L drops a coin (port 1 acceptor 1, port 2
+  acceptor 2; ports 3-4 for a cabinet's second console) and R is the service
+  button; the input descriptors name them while a Vs. game is loaded.
+  Setting the DIP switches by hand is not available yet.
+- **The core's `.info` says it has core options, and no longer describes the
+  retired scheduler.** `core_options` was `"false"` although the Four Score
+  option has existed since v2.8.1, and the description still named the
+  scheduler v2.0.0 replaced. The `.info` audit now derives `core_options`,
+  `disk_control`, `memory_descriptors` and `input_descriptors` from the
+  core's source. This is the repository's copy; the one RetroArch downloads
+  from `libretro-super` is updated at v3.0.0.
+- **Measured, not changed: writing a Vs. `DualSystem` cabinet's save state
+  costs 6 to 20 times what it would without the thumbnails**, because it
+  includes both consoles' thumbnails in a fresh buffer on every call;
+  recorded in `docs/performance.md` for a change in the core, where the
+  project's A/B rule can judge it. `docs/libretro/architecture.md` no longer claims the
+  core never allocates per call, and records the Makefile's
+  `platform=libnx` mapping as probably unbuildable (not attempted).
+- **Disk Control names the sides of a Famicom Disk System disk.** The core
+  computed "Side A" / "Side B" labels but registered only the original
+  disk-control interface, which has no labels, so RetroArch showed bare
+  numbers. It now registers the extended interface when the frontend offers
+  it, with a label callback that always terminates the string it writes.
+
+### Save states
+
+- **A save state that fails to load leaves the game exactly as it was, in
+  RetroArch too.** v2.7.4 made a failed load all-or-nothing on the path the
+  desktop's Load State uses, but not on the one the libretro core uses for
+  every `retro_unserialize`. There, a state rejected partway (for example
+  one written by another core version) reported failure and left the
+  picture, sound, mapper and RAM from the file running under the old game's
+  CPU. Both paths now put the machine back.
+- **A Vs. DualSystem cabinet restores both consoles or neither.** A state
+  whose second console was rejected left the first one restored, so the two
+  screens ran from different moments.
+- **A crafted save state can no longer freeze the picture.** A state whose
+  clocks sat just below the largest value they can hold loaded, then wrapped
+  within a frame and stopped the PPU for good. States with clocks beyond
+  what 6,800 years of emulation would reach are now refused.
+- **A corrupt GTROM (mapper 111) save state is refused instead of crashing
+  the emulator.** Its bank numbers were loaded unchecked, so the load
+  succeeded and the next frame crashed. A state naming a bank the board does
+  not have is now rejected, and the game keeps running.
+- **Two more save-state fields are checked on load**: the mapper 286 (BS-5)
+  DIP setting, which must be one of the board's four, and the FDS sound
+  channel's cycle counter, which must be 0-15. Out-of-range values crashed
+  debug builds on the next write or cycle and were silently wrong in
+  release.
+
+### Mappers
+
+- **Eleven multicart boards no longer crash on an undersized ROM.** Mappers
+  46, 57, 58, 61, 62, 202 and 212 accepted a PRG-ROM smaller than their
+  32 KiB window (an undersized dump or a header typo) and then crashed the
+  emulator on the first fetch in 32 KiB mode; mappers 51, 104, 290 and 301
+  did the same in a 16 KiB window with an 8 KiB ROM. The smaller ROM now
+  mirrors in the window, as the hardware does. Every image that ran before
+  runs identically.
+
+### Lua scripting
+
+- **A Lua script can no longer install a `__gc` finalizer.** Lua runs a
+  finalizer with its debug hooks switched off, so the per-frame instruction
+  budget could not stop one: an endless finalizer froze the app while it held
+  the emulator lock, and pressing Stop, which closes the script, froze it
+  again. `setmetatable` now refuses a metatable carrying `__gc` (v2.9.0
+  re-audit NF-01).
+- **Lua pattern matching can no longer run past the instruction budget.**
+  `string.find`, `match`, `gmatch` and `gsub` ran in C, where the budget
+  cannot look, and a backtracking pattern such as `.-.-.-.-b` on a 3,000-byte
+  string hung the app. They are now a Rust version of Lua's own matcher that
+  charges its work to the budget; results and error messages match Lua's
+  across a 145-case comparison. The matcher is derived from Lua 5.4's
+  MIT-licensed `lstrlib.c`, recorded in `NOTICE` and
+  `docs/originality-and-provenance.md` (v2.9.0 re-audit NF-02). `gsub`'s
+  output is capped at every append, so one replacement string full of `%0`
+  escapes can no longer grow it far past the heap limit within a single
+  match.
+- **A Lua script can no longer exhaust host memory through the strings it
+  hands the host.** The 64 MiB script heap limit did not cover copies made
+  into host memory: repeating `emu.drawText` or `userdata.set` with one large
+  string held a gigabyte after 128 calls. Overlay, `client.*` and `tastudio.*`
+  strings are clipped to 4 KiB; a `comm.*` request is limited to 1 MiB and
+  its outbound queue to 16 MiB; the memory-mapped-file map to 16 MiB; and
+  `userdata.*` to 1 MiB per value and 16 MiB in all, with an error when a
+  value is refused (v2.9.0 re-audit NF-03).
+
+- **Stopping a Lua script stops its network requests.** With `script-ipc`,
+  a stopped script's queued `comm.*` requests kept going out, and loading
+  the next script could freeze the window for 20 seconds per request still
+  queued. Stop now cancels the backlog, dropping the IPC host waits at most
+  100 ms, and the request queue is limited to 256 entries, refusing the
+  excess as a failed request instead of blocking (v2.9.0 re-audit NF-08).
+
+- **The experimental wasm Lua backend's missing heap limit is documented.**
+  The 64 MiB script heap limit applies to the native backend only; the
+  browser backend's VM (piccolo) offers no way to refuse an allocation.
+  `docs/scripting.md`, `docs/frontend.md` and the backend's own module docs
+  now say so, rather than implying the limit covers both (v2.9.0 re-audit
+  NF-09).
+
 ## [2.8.4] - 2026-09-26 - "Tether" (the MiSTer core's SDRAM build, made trustworthy)
 
 The fifth and last release of the v2.8.x line: the MiSTer core's off-die

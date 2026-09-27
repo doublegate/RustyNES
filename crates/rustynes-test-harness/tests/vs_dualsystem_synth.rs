@@ -243,3 +243,53 @@ fn dual_snapshot_round_trips_on_synthetic_cart() {
         "sub framebuffers diverged after restore"
     );
 }
+
+/// v2.9.0 re-audit NC-05 / NL-01b: a dual restore is all-or-nothing across
+/// BOTH consoles.
+///
+/// Each `Nes::restore` rolls itself back on failure, but the cabinet applied
+/// main and then sub, so a valid main block followed by a rejected sub block
+/// left main on the file's timeline and sub on the running one — a cabinet
+/// split across two timelines, sharing a WRAM that is re-converged only on
+/// the success path. libretro reaches this through `retro_unserialize` for
+/// the four `DualSystem` boards. The sub console's `CPU ` section is the LAST
+/// one in the container, so bumping its version byte makes exactly the sub
+/// block fail after the main block has been applied.
+#[test]
+fn a_dual_restore_with_a_rejected_sub_block_changes_neither_console() {
+    let mut dual = run_handshake();
+    let early = dual.snapshot();
+    for _ in 0..10 {
+        dual.run_frame();
+    }
+    let before = dual.snapshot();
+    assert!(
+        early != before,
+        "the fixture must change state between frames"
+    );
+
+    let mut bad = early;
+    let at = bad
+        .windows(4)
+        .rposition(|w| w == b"CPU ")
+        .expect("the sub console's CPU section");
+    bad[at + 4] = bad[at + 4].wrapping_add(1);
+
+    assert!(
+        dual.restore(&bad).is_err(),
+        "the sub block must be rejected"
+    );
+    // `assert!` rather than `assert_eq!`: a failure would otherwise print two
+    // ~600 KB byte arrays.
+    assert!(
+        dual.snapshot() == before,
+        "a rejected dual restore changed the cabinet (main {} / sub {})",
+        dual.main().cycle(),
+        dual.sub().cycle()
+    );
+    // And the pair still runs, with the protocol state intact.
+    dual.run_frame();
+    let (main, sub) = dual.split_mut();
+    assert_eq!(markers(main), [0x11, 0x22, 0x33, 0x44, 0x00]);
+    assert_eq!(markers(sub), [0x11, 0x22, 0x33, 0x44, 0x00]);
+}

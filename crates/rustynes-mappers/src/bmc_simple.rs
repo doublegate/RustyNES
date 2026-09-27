@@ -464,6 +464,18 @@ impl Mapper for SimpleBmc {
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
+        // v2.9.0 (re-audit NC-06): the BS-5 DIP has four settings (bits 4-7
+        // of the `$A000` AND mask, nesdev mapper 286), decoded as
+        // `1 << (dip + 4)`. A raw restored value of 12 or more overflowed that
+        // shift on the next `$A000` write (a panic under overflow checks, a
+        // wrong decode in release). Checked before anything is assigned. No
+        // board sets it to anything but 0 today, and no other board reads it.
+        let dip = data[scratch - 2];
+        if dip > 3 {
+            return Err(MapperError::Invalid(format!(
+                "mapper state DIP setting {dip} is not one of the board's four (0-3)"
+            )));
+        }
         let rd = |c: usize| {
             u32::from_le_bytes([data[c], data[c + 1], data[c + 2], data[c + 3]]) as usize
         };
@@ -684,5 +696,42 @@ mod tests {
         let mut m2 = new_m286(synth_prg_8k(16), synth_chr_2k(16), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.ppu_read(0x0000), m.ppu_read(0x0000));
+    }
+
+    /// v2.9.0 re-audit NC-06: the BS-5 DIP value is bounded on restore.
+    ///
+    /// The DIP picks which of A4-A7 gates the `$A000` PRG write (nesdev: "The
+    /// AND mask to which the PRG-ROM select responds is determined in bits 4-7
+    /// by a DIP switch", four settings), decoded as `1 << (dip + 4)`. It was
+    /// restored raw, so a corrupt state with `dip >= 12` made the next `$A000`
+    /// write overflow the shift (or the add, at `0xFF`) — a panic in every
+    /// build with overflow checks (dev, test, fuzz), and a silently wrong
+    /// decode in release. Offset 48 is `dip` in the state layout
+    /// (version + 12 + 16 + 16 + three registers).
+    #[test]
+    fn bs5_load_state_rejects_a_dip_the_board_cannot_have() {
+        const DIP: usize = 1 + 12 + 16 + 16 + 3;
+        let m = new_m286(synth_prg_8k(16), synth_chr_2k(16), Mirroring::Vertical).unwrap();
+        let good = m.save_state();
+        assert_eq!(good[DIP], 0, "fixture: the DIP defaults to setting #1");
+        for dip in [4u8, 12, 0x41, 0x80, 0xFF] {
+            let mut bad = good.clone();
+            bad[DIP] = dip;
+            let mut m2 = new_m286(synth_prg_8k(16), synth_chr_2k(16), Mirroring::Vertical).unwrap();
+            assert!(
+                matches!(m2.load_state(&bad), Err(MapperError::Invalid(_))),
+                "DIP {dip:#04x} must be rejected"
+            );
+        }
+        // Each of the four real settings loads and gates on its own line.
+        for dip in 0..=3u8 {
+            let mut ok = good.clone();
+            ok[DIP] = dip;
+            let mut m2 = new_m286(synth_prg_8k(16), synth_chr_2k(16), Mirroring::Vertical).unwrap();
+            m2.load_state(&ok).unwrap();
+            for a in 0xA000..=0xAFFFu16 {
+                m2.cpu_write(a, 0);
+            }
+        }
     }
 }

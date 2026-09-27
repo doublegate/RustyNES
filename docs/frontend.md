@@ -1366,12 +1366,14 @@ the default (no-device) input path stays byte-identical:
   hardens detection against sub-pixel aim error and PPU edge noise while
   remaining a deterministic, pure function of the presented framebuffer (no
   save-state change). The finer ~19-26-scanline photodiode temporal hold is
-  below the per-frame sample resolution of the default model; supported
-  light-gun titles re-poll every frame, so frame-granular aperture sampling
-  suffices for them.
+  below the per-frame sample resolution of the frame-granular model, which is
+  why that model is no longer the default (below).
 
-  **v2.2.3 A3 — the beam-relative temporal model (opt-in).** That refinement has
-  now landed as `Nes::set_zapper_temporal_light`, **default off**. With it on,
+  **v2.2.3 A3 — the beam-relative temporal model, default ON since v2.3.6.**
+  That refinement landed as `Nes::set_zapper_temporal_light`, shipped off in
+  v2.2.3-v2.3.5 and promoted to the default in v2.3.6 (`LockstepBus::new`
+  initialises it `true`; the core rustdoc on `set_zapper_temporal_light` says
+  so). With it on,
   the light bit is derived from where the CRT beam is at the moment of the
   `$4016`/`$4017` read rather than from the completed frame: dark before the
   beam paints the aim row (this frame has not drawn it yet), lit for the
@@ -1387,10 +1389,21 @@ the default (no-device) input path stays byte-identical:
   aperture rows *below* the beam still hold the previous frame's pixels, which
   is exactly what the sensor sees.
 
-  It stays opt-in because there is **no pass/fail light-gun test ROM** to
-  adjudicate it. Promoting it would change output with no oracle able to confirm
-  the change is an improvement — the project's standing bar (`docs/testing-strategy.md`)
-  is that an accuracy change is oracle-proven or default-off.
+  **Why it was promoted (v2.3.6).** Until v2.9.0 this section still read "It
+  stays opt-in because there is **no pass/fail light-gun test ROM** to
+  adjudicate it. Promoting it would change output with no oracle able to
+  confirm the change is an improvement" — three releases after the promotion
+  (re-audit NC-08; the core audit's §4.7 had corrected the rustdoc and missed
+  this page). The reasoning was also wrong on its own terms: the premise that
+  "supported light-gun titles re-poll every frame, so frame-granular aperture
+  sampling suffices" was false, and the game itself was the oracle. *Duck
+  Hunt* requires the gun to see nothing for one frame and a bright spot in the
+  next; the frame model, which answers every read in frame N with frame N-1,
+  gave it the exact inverse, so the shot was discarded before hit-testing and
+  **nothing could ever be hit**. Measured on the same ROM, aim and inputs: the
+  frame model scores 000000 with the duck still flying, the beam-relative model
+  000500 with the duck hit. `set_zapper_temporal_light(false)` restores the
+  frame-granular behaviour.
 
 **Browser save-states + movies (wasm)** (v1.4.0 Workstream E). The browser
 build reaches native QoL parity for two persistence features:
@@ -2050,9 +2063,39 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
   applies the bus sections before it checks the CPU section, so before v2.7.4 a
   blob rejected at the CPU stage left the bus from the blob and the CPU from the
   running game. A user-driven restore now snapshots the running machine first
-  and puts it back on any failure. `restore_quiet` (run-ahead and netplay
-  rollback, which only ever restore snapshots the core just wrote) skips the
-  backup, because it is the per-frame hot path.
+  and puts it back on any failure.
+- **The quiet path is all-or-nothing too** (v2.9.0, re-audit NC-03 / NL-01).
+  v2.7.4 wrote here that "`restore_quiet` (run-ahead and netplay rollback,
+  which only ever restore snapshots the core just wrote) skips the backup,
+  because it is the per-frame hot path". The premise was false: the libretro
+  core sends every `retro_unserialize` through `restore_quiet`, including a
+  user's Load State, a state from an older core and a corrupt file, and the
+  re-audit showed a rejected CPU section leaving the bus, PPU, APU and mapper
+  from the rejected file under the running game's CPU. Both paths now take
+  the backup, as a THM-less `snapshot_core_into` into a buffer pooled on the
+  `Nes`, so the steady state allocates nothing for it. Measured roughly on
+  nestest (release, a heavily loaded machine, not an A/B): the backup is about
+  22 µs against about 850 µs for the restore itself, well under 1% of a
+  frame. `restore` and `restore_quiet` now differ only in the rewind ring and
+  the timeline generation.
+- **A Vs. `DualSystem` restore is atomic across both consoles** (v2.9.0,
+  NC-05). `VsDualSystem::restore` applied main and then sub, so a rejected sub
+  block left main on the file's timeline. Main is now snapshotted first and
+  rolled back if the sub block fails.
+- **The restored clocks are bounded absolutely, not only against each
+  other** (v2.9.0, NC-04). v2.7.0 (F-05) rejects a CPU master clock and PPU
+  clock more than 1,024 master clocks apart. A crafted state with both just
+  below 2^64 passed that, then the CPU clock wrapped and the PPU never ticked
+  again. Either clock above 2^62 is now refused: about 6,800 years of
+  emulation at the NTSC master clock, with 20,000 more before a wrap.
+- **The header's ROM hash tag is not checked on restore, by decision**
+  (v2.9.0, NL-01). The tag is the first bytes of the SHA-256 of the whole
+  file *including* its iNES header, so a check would reject every legitimate
+  state after a header-only fix to the same dump (a corrected mapper number,
+  mirroring or battery bit). `Nes::restore` has always documented loading
+  from a different ROM as allowed; the per-section validation is what keeps
+  a foreign state from crashing the core. A PRG+CHR-keyed tag would make the
+  check possible and is a format change for the maintainer to weigh.
 
 ## Battery saves (`.sav`, native, v2.7.3)
 
@@ -2084,11 +2127,45 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   starts a new file; the old one is kept.
 - **Loading a save state** restores the save RAM it captured, and the next
   comparison writes that to the `.sav`, as on a console.
-- **Known limitation: power-on movies.** `StartPoint::PowerOn` playback
-  power-cycles the console, which does not clear cartridge RAM. That was already
-  true within a session. With `.sav` loading it is also true across launches, so
-  a power-on movie recorded without a save can diverge where a `.sav` exists.
-  Not changed here; recorded for a later decision.
+- **A Power Cycle keeps the save (v2.9.0).** `Nes::power_cycle` keeps
+  battery-backed RAM, as a console does, and still clears volatile PRG-RAM and
+  CHR-RAM. Until v2.9.0 it rebuilt the mapper with ALL cartridge RAM cleared, so
+  from v2.7.3 a Power Cycle (F3 or the menu) made the next comparison write zeros
+  over the `.sav`. Pinned by `a_power_cycle_keeps_the_save`.
+- **Power-on movies start from cleared save RAM (v2.9.0, maintainer
+  decision).** Recording and playing a `StartPoint::PowerOn` movie goes through
+  `rustynes_core::power_on_for_movie`: a power cycle, then cartridge RAM zeroed,
+  which is what a fresh load with no `.sav` holds. A movie therefore replays the
+  same way whether or not a save exists. The emulator's copy is cleared, not the
+  file, and **the movie session stops the file being written**: a movie's RAM
+  is the movie's, not the player's. The desktop writes any pending change
+  first, then unbinds the `.sav` until the ROM is reloaded
+  (`EmuCore::start_sandboxed_session`, used by power-on recording, playback, movie
+  import and TAStudio); the mobile bridge keeps reporting the RAM from before
+  the session through `battery_ram` until the next `load_rom`. Before this, the
+  writer compared only "live vs last write", so the cleared RAM was written
+  over the save at the next comparison (Copilot on #561). A movie that fails
+  to start (another ROM's) changes nothing and saving continues. Pinned by
+  `a_power_on_movie_does_not_overwrite_the_save` (desktop) and
+  `a_power_on_movie_does_not_reach_the_save` (mobile).
+
+  TAStudio refuses to open while a movie is playing or recording, or under
+  netplay: it power-cycles the console, which would continue the movie from a
+  state it never recorded, or desync the peer.
+
+  **TAStudio opens at power-on (v2.9.0, NF-10, maintainer decision).** A
+  `TAStudio` project exports as a power-on movie, so opening the panel now
+  restarts the game through the same `power_on_for_movie` and anchors frame 0
+  there (`TasEditor::new_from_power_on`). It used to anchor on the running game,
+  so a project started mid-game exported a movie that replayed from power-on
+  instead; `the_frame0_anchor_is_the_state_the_exported_movie_starts_from` pins
+  it.
+
+  *Correction:* v2.7.3 recorded this as a known limitation, saying playback
+  "power-cycles the console, which does not clear cartridge RAM". That was
+  wrong in the other direction: the power cycle did clear it, battery RAM
+  included, which is the Power Cycle defect above. A power-on movie never
+  inherited a loaded `.sav`; a Power Cycle erased one.
 - Not persisted: a Vs. `DualSystem` cabinet (none of the four boards has a
   battery), the web build (no filesystem store), and mobile (v2.7.4).
 
@@ -2153,6 +2230,24 @@ full `emu` API (memory access, CPU state, `onFrame` / `onExec` / `onRead` /
 `onWrite` callbacks, control, and overlay draw) is documented in
 [scripting.md](scripting.md); `examples/scripts/` ships `hud.lua` and
 `ram_watch.lua`.
+
+The sandbox's limits, and the audits that set them, are listed in
+[scripting.md](scripting.md): a per-frame instruction budget that no catcher
+can swallow (SEC-03), a 64 MiB Lua heap (SEC-02), and, from v2.9.0, no `__gc`
+finalizers (re-audit NF-01), because Lua runs a finalizer with the budget hook
+switched off, under the emulator lock, and again on **Stop** when the engine is
+dropped; and pattern matching charged to the same budget (re-audit NF-02),
+because Lua's C matcher backtracks with no VM instruction for the hook to see;
+and a bound on every string a script copies into host memory (overlay text,
+`comm.*` payloads and queue, the MMF map, `userdata.*`), which the Lua heap
+limit does not reach (re-audit NF-03). With `script-ipc`, **Stop** also drops
+the IPC host, cancelling the stopped script's `comm.*` backlog, and the host's
+bounded queue never blocks the frame thread (re-audit NF-08). These limits
+are the native (mlua) backend's. The experimental wasm backend (piccolo,
+`script-wasm`) shares the fuel budget and the host-queue caps but has **no heap
+limit**: SEC-02 does not cover it, because piccolo's arena offers no way to
+refuse an allocation (re-audit NF-09; the detail is in
+[scripting.md](scripting.md) and `piccolo_backend.rs`).
 
 ## In-app Documentation (v1.5.0 "Lens" Workstream I10, native; overhauled in v1.7.0 beta.5 #53)
 

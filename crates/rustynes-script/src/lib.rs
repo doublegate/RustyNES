@@ -89,6 +89,13 @@ use mlua_backend::MluaBackend as Backend;
 #[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
 mod tastudio;
 
+// v2.9.0 re-audit NF-02 — a step-metered replacement for Lua's
+// `string.find` / `match` / `gmatch` / `gsub`, whose C implementations ran
+// outside the instruction budget. Derived from Lua 5.4's `lstrlib.c` (MIT);
+// see the file's provenance header.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+mod lua_pattern;
+
 // v1.8.6 — `Send`-ify the mlua backend so the mobile UniFFI bridge
 // (`rustynes-mobile`, an `Arc`-shared object that requires `Send + Sync`) can
 // hold a `ScriptEngine`. mlua's `Lua` becomes `Send` with its `send` feature
@@ -781,6 +788,248 @@ mod tests {
             lines[0].len()
         );
         assert!(lines[0].ends_with(" [truncated]"), "the cut is marked");
+    }
+
+    /// Run `f` on its own thread and wait at most `secs` for it to return.
+    ///
+    /// The v2.9.0 re-audit's hangs (NF-01, NF-02) are loops the budget hook
+    /// cannot see, so a test that simply called the engine would never finish
+    /// on a regressed tree: the run would stall instead of failing. Here a hang
+    /// is a FAILURE after `secs`. The runaway thread is abandoned, and dies with
+    /// the test process.
+    #[cfg(not(feature = "script-wasm"))]
+    fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(secs))
+            .unwrap_or_else(|e| panic!("did not return within {secs} s ({e:?}): a hang"))
+    }
+
+    /// v2.9.0 re-audit NF-01: Lua 5.4 runs a `__gc` finalizer with debug hooks
+    /// switched off, so the budget hook never fires inside one. A finalizer
+    /// runs during any GC step (so inside `load` / `on_frame`, under the
+    /// host's emulator lock) and at `lua_close` (so when the engine is dropped,
+    /// which the desktop does on Stop). An endless finalizer hung both.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_gc_finalizer_cannot_hang_a_load() {
+        let r = within(10, || {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            eng.load(
+                "setmetatable({}, {__gc = function() while true do end end}) \
+                 for i = 1, 20000 do local t = {} end",
+            )
+            .map_err(|e| e.to_string())
+        });
+        let err = r.expect_err("a metatable carrying __gc is refused");
+        assert!(err.contains("__gc"), "{err}");
+    }
+
+    /// NF-01, the `lua_close` half: dropping the engine runs every pending
+    /// finalizer, with no hook at all, on whichever thread drops it.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn dropping_an_engine_cannot_run_a_script_finalizer() {
+        within(10, || {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            let _ = eng.load("keep = setmetatable({}, {__gc = function() while true do end end})");
+            drop(eng);
+        });
+    }
+
+    /// NF-01: the fix refuses `__gc` at `setmetatable` time only. That is
+    /// sufficient because Lua marks an object for finalization only when its
+    /// metatable already carries `__gc` as `setmetatable` runs (Lua 5.4 manual
+    /// §2.5.3). This pins that claim rather than trusting it: a `__gc` added to
+    /// the metatable afterwards, even on the table that is then collected and
+    /// on the engine that is then closed, must never run.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_gc_field_added_after_setmetatable_is_never_honoured() {
+        within(10, || {
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_instruction_budget(100_000);
+            eng.load(
+                "local mt = {} \
+                 keep = setmetatable({}, mt) \
+                 local t = setmetatable({}, mt) \
+                 mt.__gc = function() while true do end end \
+                 rawset(mt, '__gc', mt.__gc) \
+                 t = nil \
+                 for i = 1, 20000 do local x = {} end",
+            )
+            .expect("adding __gc afterwards is inert, not an error");
+            drop(eng);
+        });
+    }
+
+    /// v2.9.0 re-audit NF-02: `string.find` / `match` / `gmatch` / `gsub` ran
+    /// in C, where the count hook cannot fire, and Lua patterns backtrack:
+    /// this `find` is roughly n^4 C steps on a 3,000-byte subject, with zero
+    /// VM instructions, and hung the host under its emulator lock. Every
+    /// matcher (and the method form, via the string metatable) must now stop
+    /// on the budget, uncatchably, like a runaway loop.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn a_pathological_pattern_hits_the_budget() {
+        for script in [
+            "local s = string.rep('a', 3000) return s:find('.-.-.-.-b')",
+            "local s = string.rep('a', 3000) return string.match(s, '.-.-.-.-b')",
+            "local s = string.rep('a', 3000) for _ in s:gmatch('.-.-.-.-b') do end",
+            "local s = string.rep('a', 3000) return (s:gsub('.-.-.-.-b', ''))",
+            "local s = string.rep('a', 3000) while true do pcall(string.find, s, '.-.-.-.-b') end",
+        ] {
+            let r = within(10, move || {
+                let mut eng = ScriptEngine::new().expect("engine");
+                eng.set_instruction_budget(100_000);
+                eng.load(script).map_err(|e| e.to_string())
+            });
+            let err = r.expect_err(script);
+            assert!(err.contains("budget"), "{script}: {err}");
+        }
+    }
+
+    /// NF-02: the metered matcher is the one scripts see, method form
+    /// included, and it still matches like Lua's own (the full parity table
+    /// lives in `lua_pattern.rs`).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn string_patterns_still_work_in_the_sandbox() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "emu.log(('key=val'):match('(%w+)=(%w+)')) \
+             emu.log(select(2, ('a,b,c'):gsub(',', ';'))) \
+             local t = {} for w in ('x y z'):gmatch('%a') do t[#t + 1] = w end \
+             emu.log(table.concat(t)) \
+             emu.log(tostring(pcall(string.find, 'x', '[')))",
+        )
+        .expect("loads");
+        assert_eq!(eng.drain_log(), vec!["key\tval", "2", "xyz", "false"]);
+    }
+
+    /// NF-01: an ordinary metatable still works, and a `__gc` key is refused
+    /// whatever its value (Lua marks for finalization on the key's presence).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn setmetatable_still_works_without_gc() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "local t = setmetatable({}, {__index = function(_, k) return k .. '!' end}) \
+             emu.log(t.hi) \
+             emu.log(tostring(getmetatable(t) ~= nil)) \
+             emu.log(tostring(pcall(setmetatable, {}, {__gc = true})))",
+        )
+        .expect("loads");
+        assert_eq!(eng.drain_log(), vec!["hi!", "true", "false"]);
+    }
+
+    /// v2.9.0 re-audit NF-03: SEC-02 capped the Lua heap and #551 capped the
+    /// log, but every other string a script copies into HOST memory was
+    /// unbounded: 128 `emu.drawText` calls of one 8 MiB string held 1 GiB of
+    /// host memory. Each text is now clipped like a log line, so a frame's
+    /// draw queue is bounded by `MAX_QUEUED_CMDS` x `MAX_HOST_TEXT_BYTES`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn host_draw_text_is_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "local s = string.rep('t', 8 * 1024 * 1024) \
+             for i = 1, 128 do emu.drawText(0, 0, s) end",
+        )
+        .expect("loads");
+        let draws = eng.drain_draws();
+        assert_eq!(draws.len(), 128);
+        let bytes: usize = draws
+            .iter()
+            .map(|d| match d {
+                DrawCmd::Text { text, .. } => text.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            bytes <= 128 * crate::types::MAX_HOST_TEXT_BYTES,
+            "the host holds {bytes} bytes of draw text"
+        );
+    }
+
+    /// NF-03, the persistent half: `userdata.*` values live for the whole
+    /// session (and are written to disk), so its budget never refills by
+    /// itself. 128 keys of an 8 MiB value held 1 GiB. A value over the
+    /// per-value cap is refused with an error, and the store as a whole
+    /// stops at `MAX_USERDATA_BYTES`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn host_userdata_is_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("userdata.set('big', string.rep('u', 8 * 1024 * 1024))")
+            .expect_err("an 8 MiB value is refused");
+        assert!(err.to_string().contains("userdata"), "{err}");
+        eng.load(
+            "local s = string.rep('u', 1024 * 1024 - 16) \
+             for i = 1, 128 do pcall(userdata.set, tostring(i), s) end \
+             emu.log(tostring(pcall(userdata.set, 'more', s)))",
+        )
+        .expect("loads");
+        let held: usize = eng
+            .userdata_snapshot()
+            .iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum();
+        assert!(
+            held <= crate::types::MAX_USERDATA_BYTES,
+            "the store holds {held} bytes"
+        );
+        assert_eq!(eng.drain_log(), vec!["false"], "the full store refuses");
+        // Overwriting a key reuses its share; removing frees it.
+        eng.load("userdata.remove('1') userdata.set('1', 'x') userdata.set('1', 'y')")
+            .expect("a freed share is reusable");
+    }
+
+    /// NF-03: `comm.*` payloads are copied into the host's outbound queue.
+    /// Over the per-request cap a request is refused with an error; past the
+    /// queue's byte budget it is not queued, and the id-returning verbs say
+    /// so by returning 0 (as they do under a locked session).
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn host_comm_payloads_are_bounded() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("comm.httpPost('http://example.com/', string.rep('p', 8 * 1024 * 1024))")
+            .expect_err("an 8 MiB body is refused");
+        assert!(err.to_string().contains("comm"), "{err}");
+        eng.load(
+            "local s = string.rep('p', 1024 * 1024 - 64) \
+             local zero = 0 \
+             for i = 1, 128 do \
+               if comm.httpPost('http://example.com/', s) == 0 then zero = zero + 1 end \
+               comm.mmfWrite('m', s) \
+             end \
+             emu.log(tostring(zero > 0))",
+        )
+        .expect("loads");
+        let held: usize = eng
+            .drain_comm()
+            .iter()
+            .map(|c| match c {
+                CommCmd::HttpPost { url, body, .. } => url.len() + body.len(),
+                CommCmd::MmfWrite { name, data } => name.len() + data.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            held <= crate::types::MAX_COMM_QUEUE_BYTES,
+            "the host queue holds {held} bytes"
+        );
+        assert_eq!(eng.drain_log(), vec!["true"], "a refused request says 0");
+        // The budget refills once the host drains the queue.
+        eng.load("emu.log(tostring(comm.httpPost('http://example.com/', 'x') ~= 0))")
+            .expect("loads");
+        assert_eq!(eng.drain_log(), vec!["true"]);
     }
 
     /// The cut lands on a character boundary: 'é' is two bytes, and 4096 is

@@ -545,6 +545,15 @@ jobs:
       # every PR rather than only on a full run.
       - if: runner.os == 'Linux'
         run: cargo test -p rustynes-mappers --no-default-features
+      # v2.9.0 — the same gap, for `av-record`. The `full` clippy step in `lint`
+      # has always LINTED it, and nothing ran it: `src/av_record.rs` is compiled
+      # only with the feature, so its 13 tests, and the av-record-gated paths in
+      # `app.rs`, `emu.rs` and `ui_shell.rs`, were invisible to every test job.
+      # Measured before adding this: 614 lib tests pass with the feature on.
+      # The whole lib rather than the one module, because the gated code is
+      # spread across four files. Linux only, for the same reason as above.
+      - if: runner.os == 'Linux'
+        run: cargo test -p rustynes-frontend --lib --features av-record
 
   test-roms:
     name: test (test-roms feature)

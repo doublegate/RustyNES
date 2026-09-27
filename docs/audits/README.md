@@ -12,6 +12,30 @@ records what was done with every finding.
 | Libretro core | [`libretro-audit-report.md`](libretro-audit-report.md) | [`libretro-disposition.md`](libretro-disposition.md) | v2.8.x |
 | `RustyNES_MiSTer` RTL | [`rtl-audit-report.md`](rtl-audit-report.md) | [`rtl-disposition.md`](rtl-disposition.md) | v2.8.x |
 
+## The v2.9.0 re-audit
+
+v2.9.0 re-ran all four scopes against the tree the v2.7.x and v2.8.x lines left
+(maintainer decision 2026-09-26: Claude subagents, one per scope, read-only).
+Each agent re-verified every ledger row against the current code and then looked
+for new defects. Their reports are committed beside the originals, verbatim
+(except one trailing space the repository's whitespace hook trimmed), and each
+ledger gains a **v2.9.0 re-audit** section.
+
+| Scope | Report | Rows re-verified | Regressed | New findings |
+| --- | --- | --- | --- | --- |
+| Core | [`v2.9.0-core-reaudit.md`](v2.9.0-core-reaudit.md) | 39 | 0 | 8 (NC-01..NC-08) |
+| Frontend | [`v2.9.0-frontend-reaudit.md`](v2.9.0-frontend-reaudit.md) | 51 | 0 | 9 (NF-01..NF-09) |
+| Libretro | [`v2.9.0-libretro-reaudit.md`](v2.9.0-libretro-reaudit.md) | 23 | 0 | 10 (NL-01..NL-10) |
+| RTL | [`v2.9.0-rtl-reaudit.md`](v2.9.0-rtl-reaudit.md) | 26 | 0 | 12 (NR-01..NR-12) |
+
+Three more came from the release's own work rather than a report, and are in the
+ledgers under their scope: a Power Cycle that erased the battery save (frontend),
+TAStudio anchoring on the running game while exporting a power-on movie (frontend,
+NF-10), and the off-die build's permanent reset under `bootcore=` (RTL, the
+SuperStation One audit). Review of the release PRs found more; those are recorded
+in the ledgers too, attributed to the review. The same caution applies to these reports as to the first four: each
+claim was re-derived before it was acted on.
+
 ## What these reports are
 
 They were **written by an AI agent** (the Antigravity CLI, `agy`) and committed in

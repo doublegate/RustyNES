@@ -70,6 +70,20 @@ The runaway-loop guard is shared in spirit: piccolo's `Fuel` is fed the same
 per-frame instruction budget (`DEFAULT_INSTRUCTION_BUDGET`, 1,000,000), and
 exhaustion surfaces as a `ScriptError::Budget`.
 
+**The piccolo backend has no heap limit (v2.9.0 re-audit NF-09).** The 64 MiB
+limit below (SEC-02) is native-only. piccolo 0.3.3 allocates through a
+`gc-arena` 0.5.3 arena that reports how much it holds (`Lua::gc_metrics()`) but
+offers no limit, no fallible allocation and no allocator hook, so an allocation
+cannot be refused: a script that keeps growing a string (piccolo has no
+`string.rep`, but `..` allocates) can exhaust the browser tab's memory. A
+check of the reported total between small fuel slices could abort such a
+script after the fact; it is not built, and would be weaker than SEC-02, not
+equal to it. The exposure is the user's own tab, with an experimental,
+off-by-default feature. The host-queue bounds do apply (the log and draw count
+caps, and the 4 KiB `drawText` clip from NF-03); the NF-01 and NF-02 holes do
+not exist here, since piccolo runs no `__gc` finalizers and has no C pattern
+functions.
+
 On the native (mlua) backend, v2.7.3 closed three ways around the sandbox's
 limits (frontend audit SEC-02 / SEC-03):
 
@@ -85,6 +99,65 @@ limits (frontend audit SEC-02 / SEC-03):
   coroutine.
 - **The heap is capped at 64 MiB.** An allocation past it fails with a Lua
   memory error rather than exhausting the host.
+
+The v2.9.0 re-audit found more code the budget could not reach, and v2.9.0
+closes it on the native backend:
+
+- **No `__gc` finalizers (re-audit NF-01).** Lua 5.4 runs a `__gc` metamethod
+  with debug hooks switched off, so the budget hook never fires inside one, and
+  a finalizer runs in whatever GC step reaches it (under the emulator lock) and
+  again when the engine is closed (on **Stop**). An endless finalizer froze the
+  app, and pressing Stop froze it again. `setmetatable` now raises an error for
+  any metatable that carries a `__gc` key. That is sufficient because Lua arms a
+  finalizer only if `__gc` is present when `setmetatable` runs; adding it to the
+  metatable afterwards is inert, and a test pins that.
+- **Pattern matching is under the budget (re-audit NF-02).** `string.find`,
+  `string.match`, `string.gmatch` and `string.gsub` were single C calls, and the
+  budget hook only fires between VM instructions. Lua patterns backtrack, so
+  `string.rep('a', 3000):find('.-.-.-.-b')` did roughly n^4 steps with no VM
+  instruction at all and hung the app. The four functions (and the `s:find(...)`
+  method form, which resolves through the same `string` table) are now a Rust
+  re-expression of Lua 5.4's own matcher (`lua_pattern.rs`, derived from Lua's
+  MIT-licensed `lstrlib.c` and declared as such) that counts its steps and
+  charges them to the frame's instruction budget; an exhausted budget raises the
+  same uncatchable abort as a runaway loop. One step is charged per pattern item
+  tried and per repetition, and linear work (a plain `find`'s scan, gsub output)
+  at one step per 64 bytes. Results and error messages match the C library
+  across a 145-case parity test; two error texts differ, and are listed in the
+  module docs. gsub's output buffer is host memory, so it is capped at the
+  64 MiB heap limit and fails with Lua's own "not enough memory". The cap is
+  checked before every append, not only between matches: until review on #561
+  one replacement string full of `%0` escapes could grow the buffer far past
+  it within a single match (`gsub_output_never_passes_the_cap`).
+- **Strings copied to the host are bounded (re-audit NF-03).** The 64 MiB limit
+  covers the Lua heap, but a string a script hands to the host is copied out of
+  it: 128 `emu.drawText` calls with one 8 MiB string held 1 GiB of host memory,
+  and `userdata.set` the same, persistently. Every copy out of Lua now has a
+  bound, set by how long the host keeps it:
+
+  | Copy | Bound | Over it |
+  | --- | --- | --- |
+  | `emu.drawText` text; `client.opentool` / `addcheat` / `removecheat`; `tastudio` markers, branch text, cell text and icon keys | 4 KiB each (the log-line cap), so with the 8,192-per-frame count cap each queue holds at most 32 MiB | clipped |
+  | one `comm.*` request (URL plus body or payload) | 1 MiB | Lua error |
+  | the `comm.*` outbound queue, between host drains | 16 MiB | not queued; `httpGet` / `httpPost` / `ws_open` / `mmfRead` return 0 |
+  | the host's memory-mapped-file map | 16 MiB and 256 names | write dropped |
+  | a `userdata` key / value | 4 KiB / 1 MiB | Lua error |
+  | the `userdata` store | 16 MiB and 65,536 keys | Lua error |
+
+  Each queue has its own bound rather than sharing one pool, because hosts
+  drain different queues (mobile drains only the log), and a shared pool would
+  let an undrained queue starve the others. A restored `userdata` store obeys
+  the same limits; an entry that does not fit is skipped.
+- **Stop stops the `comm.*` backlog (re-audit NF-08, `script-ipc`).** The
+  desktop's IPC worker queue was unbounded and survived **Stop**; each HTTP
+  request can take up to 20 s, so a stopped script's requests kept going out,
+  and the next load blocked the window while the old worker drained them.
+  **Stop** now drops the IPC host, which cancels its backlog at the next request
+  boundary and waits at most 100 ms for a request in flight (it is then left to
+  finish on its own, bounded by its timeout). The queue holds at most 256
+  requests; a request refused because it is full is answered at once as a
+  transport failure (`status = 0` / an empty buffer / a closed socket) and the
+  console notes it, and the frame thread never waits on it.
 
 ## Loading a script
 

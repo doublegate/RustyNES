@@ -31,6 +31,17 @@ wrapper crate `rustynes-libretro` builds with
    aborting.
 4. **`no_std` preserved** — `rustynes-core` is a path dependency with
    `default-features = false`; the wrapper uses `std` for the host side only.
+5. **`platform=libnx` in the crate `Makefile` is OPEN, and probably cannot
+   build** (v2.9.0 re-audit, L-3.2 side note; checked by reading, not by
+   building). It maps to `aarch64-nintendo-switch-freestanding`, a tier-3
+   target: `rustc --print target-list` knows it, `rustup target list` offers
+   no `rust-std` for it, and a `*-freestanding` target has no `std`, while
+   this wrapper needs `std` (`std::fs` for the FDS BIOS and disk saves,
+   `CString`, `std::panic::catch_unwind`). Not attempted: a nightly
+   `-Zbuild-std` build, which is the only way to try it. The libretro
+   buildbot never reads the Makefile's platform table and has no Rust
+   template for the Switch (`.gitlab-ci.yml` header), so no shipped build is
+   affected; the mapping is left as it is and the buildbot matrix unchanged.
 
 ## The Abstraction Layer (`rust-libretro`)
 
@@ -60,15 +71,24 @@ reports the loaded cartridge's region in `retro_get_system_av_info`).
   cabinet boards (two cross-wired consoles, presented side by side at
   512x240). Exactly one is `Some` while a game is loaded (`Emu::from_rom`
   decides).
-* **Buffers:** reusable video, audio and serialize buffers, sized once so the
-  frame loop does not allocate.
+* **Buffers:** reusable video, audio and serialize buffers, sized once, so a
+  `retro_run` does not allocate in steady state. Three exceptions, all
+  measured or bounded: a Vs. `DualSystem` cabinet's `retro_serialize` builds
+  a fresh ~645 KB state on every call (`VsDualSystem::snapshot`; the v2.9.0
+  re-audit NL-09, recorded in `docs/performance.md`, not changed); a
+  single console's serialize grows the pooled buffer only on the first call;
+  and an FDS game that has written to its disk has the image built once, a
+  second after the write, to save it (`persist_fds_disk`).
 * **Containment:** every callback that runs emulation goes through
   `contained`, which stops a panic there, logs it through the frontend, and
   marks the core poisoned. The console is kept, not dropped, because the
   frontend holds pointers into its memory.
-* **Frontend memory:** WRAM, battery RAM and nametable RAM are handed to
-  RetroArch through `SET_MEMORY_MAPS` (cheats, RetroAchievements) and are
-  withdrawn with an empty map before the console is dropped on unload.
+* **Frontend memory:** WRAM, the cartridge's PRG-RAM and nametable RAM are
+  handed to RetroArch through `SET_MEMORY_MAPS` (cheats, RetroAchievements)
+  and are withdrawn with an empty map before the console is dropped on
+  unload. PRG-RAM is flagged, and exposed as `RETRO_MEMORY_SAVE_RAM` for the
+  `.srm`, only when the header declares a battery (v2.9.0;
+  `advanced_features.md`).
 
 ### 3. The Emulation Engine (`rustynes-core`)
 

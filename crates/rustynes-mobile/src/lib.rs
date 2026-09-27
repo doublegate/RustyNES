@@ -618,6 +618,15 @@ struct Inner {
     /// Active TAS playback: the loaded movie + the next frame index. While set,
     /// `run_frame` drives input from the movie instead of the host masks.
     playback: Option<(rustynes_core::Movie, usize)>,
+    /// v2.9.0 — the battery RAM as it stood when a movie session replaced it,
+    /// which [`NesController::battery_ram`] reports instead of the live RAM
+    /// until the next `load_rom`. A power-on movie starts from cleared save RAM
+    /// and playback loads the movie's own; the host writes `battery_ram` to the
+    /// `.sav` whenever it differs from its last write, so without this the
+    /// movie's RAM -- zeros, for a power-on movie -- replaced the player's
+    /// save (Copilot on #561; the desktop's `EmuCore::start_sandboxed_session` is
+    /// the same rule).
+    battery_held: Option<Vec<u8>>,
     /// Active HD-pack compositor (v1.8.5), if a pack is loaded. `composite_hd_frame`
     /// runs it over the current frame's snapshots.
     hd_pack: Option<rustynes_hdpack::hdpack::HdCompositor>,
@@ -694,6 +703,20 @@ pub struct NesController {
 }
 
 impl NesController {
+    /// v2.9.0 — what [`Inner::battery_held`] should hold for the current
+    /// cartridge: a copy of its battery RAM, or `None` without a battery.
+    fn held_battery(g: &Inner) -> Option<Vec<u8>> {
+        g.nes.has_battery().then(|| g.nes.sram().to_vec())
+    }
+
+    /// v2.9.0 — start holding the save for a movie session, unless one is
+    /// already held (a second session must not hold the first one's RAM).
+    fn hold_battery(g: &mut Inner) {
+        if g.battery_held.is_none() {
+            g.battery_held = Self::held_battery(g);
+        }
+    }
+
     /// Lock the inner state, recovering from a poisoned mutex so a panic on one
     /// call can never wedge the whole FFI surface.
     ///
@@ -812,6 +835,7 @@ impl NesController {
                 sample_rate,
                 recorder: None,
                 playback: None,
+                battery_held: None,
                 hd_pack: None,
                 script: None,
                 ra: None,
@@ -846,6 +870,7 @@ impl NesController {
         // A new cartridge invalidates any in-flight movie + HD-pack + script.
         g.recorder = None;
         g.playback = None;
+        g.battery_held = None;
         g.hd_pack = None;
         g.script = None;
         // A new cartridge ends any in-flight netplay session (the peers would
@@ -1045,13 +1070,17 @@ impl NesController {
     /// There is no dirty flag: the host compares with the bytes it last wrote,
     /// as the desktop does, and writes on a difference (and at ROM unload and
     /// when the app stops).
+    ///
+    /// v2.9.0: while a movie session holds the save (see `Inner::battery_held`),
+    /// this is the RAM from before the session, so the movie's RAM never
+    /// reaches the `.sav`.
     pub fn battery_ram(&self) -> Vec<u8> {
         let g = self.lock();
-        let out = if g.nes.has_battery() {
-            g.nes.sram().to_vec()
-        } else {
-            Vec::new()
-        };
+        let out = g
+            .battery_held
+            .clone()
+            .or_else(|| Self::held_battery(&g))
+            .unwrap_or_default();
         drop(g);
         out
     }
@@ -1160,7 +1189,12 @@ impl NesController {
     /// the recording starts from the same state a replay reconstructs).
     pub fn movie_record_from_power_on(&self) {
         let mut g = self.lock();
-        g.nes.power_cycle();
+        // v2.9.0 — the session replaces the save RAM; keep reporting the
+        // player's (`Inner::battery_held`).
+        Self::hold_battery(&mut g);
+        // v2.9.0 — cleared cartridge RAM as well, the state playback
+        // reconstructs; see `rustynes_core::power_on_for_movie`.
+        rustynes_core::power_on_for_movie(&mut g.nes);
         g.playback = None;
         g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
     }
@@ -1201,11 +1235,17 @@ impl NesController {
         // check never blocks playback and never touches the deterministic core.
         let pre_timebase = rustynes_core::recorded_before_v2_timebase(&bytes).is_ok_and(|v| v);
         let mut g = self.lock();
+        // v2.9.0 — held only if the seek succeeds: a refused seek (another
+        // ROM, a bad start state) leaves the console, and saving, unchanged.
+        let before = g.battery_held.is_none().then(|| Self::held_battery(&g));
         movie
             .seek_to_start(&mut g.nes)
             .map_err(|e| MobileError::Movie {
                 reason: e.to_string(),
             })?;
+        if let Some(before) = before {
+            g.battery_held = before;
+        }
         if pre_timebase {
             // v2.0.3: queue the machine-readable code, not the pre-baked English.
             // The default drain ([`Self::drain_warnings`]) maps it straight back to the
@@ -2427,8 +2467,13 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
         ConnectionState::Synced => {
             // CRITICAL for cross-peer determinism: power-cycle to the cold boot
             // so the session's frame-0 checkpoint matches on every peer (see the
-            // desktop `netplay_ui::tick_connecting`).
-            g.nes.power_cycle();
+            // desktop `netplay_ui::tick_connecting`). v2.9.0: with cleared save
+            // RAM too -- a power cycle now keeps battery RAM, and each peer's
+            // own save would differ (CodeRabbit on #561) -- and with the
+            // player's save held, so the session's RAM never reaches the host's
+            // `.sav` (`Inner::battery_held`).
+            NesController::hold_battery(g);
+            rustynes_core::power_on_for_movie(&mut g.nes);
             let transport = conn.into_transport();
             let config = SessionConfig {
                 local_player: u8::from(!is_host), // host = 0 (P1), joiner = 1 (P2).
@@ -2731,6 +2776,56 @@ mod tests {
         assert_eq!(next.battery_ram()[0], 0, "power-on RAM is not the save");
         next.load_battery_ram(saved.clone()).expect("load the save");
         assert_eq!(next.battery_ram(), saved);
+    }
+
+    /// v2.9.0 (Copilot on #561): a power-on movie starts from cleared save
+    /// RAM, and the host writes `battery_ram` whenever it changes, so the
+    /// zeros replaced the player's save. For the rest of the session the
+    /// bridge reports the RAM from before the movie; a new ROM ends that.
+    #[test]
+    fn a_power_on_movie_does_not_reach_the_save() {
+        let ctrl = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
+        for _ in 0..3 {
+            ctrl.step_frame();
+        }
+        let save = ctrl.battery_ram();
+        assert_eq!(save[0], 0xA5);
+        ctrl.movie_record_from_power_on();
+        assert_eq!(
+            ctrl.battery_ram(),
+            save,
+            "the movie's cleared RAM is not reported"
+        );
+        let movie = ctrl.movie_stop_recording();
+        ctrl.movie_play(movie).expect("play");
+        ctrl.step_frame();
+        assert_eq!(
+            ctrl.battery_ram(),
+            save,
+            "still the player's save after playback"
+        );
+
+        ctrl.load_rom(battery_nrom(true), DEFAULT_SAMPLE_RATE)
+            .expect("reload");
+        assert_eq!(
+            ctrl.battery_ram()[0],
+            0,
+            "a new cartridge reports its own RAM"
+        );
+    }
+
+    /// A movie that cannot start leaves the console, and saving, unchanged.
+    #[test]
+    fn a_refused_movie_leaves_the_save_live() {
+        let ctrl = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
+        let other = NesController::new(battery_nrom(false), DEFAULT_SAMPLE_RATE).expect("load");
+        other.movie_record_from_power_on();
+        let foreign = other.movie_stop_recording();
+        assert!(ctrl.movie_play(foreign).is_err(), "a movie for another ROM");
+        for _ in 0..3 {
+            ctrl.step_frame();
+        }
+        assert_eq!(ctrl.battery_ram()[0], 0xA5, "the live RAM is reported");
     }
 
     /// A cartridge without the battery bit has nothing to persist, even though

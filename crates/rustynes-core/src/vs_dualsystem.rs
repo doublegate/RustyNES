@@ -358,7 +358,8 @@ impl VsDualSystem {
     /// # Errors
     ///
     /// Returns [`SnapshotError`] on a bad container or when either nested
-    /// console snapshot fails to restore.
+    /// console snapshot fails to restore. Both consoles are then unchanged
+    /// (since v2.9.0; before it a rejected sub block left main restored).
     pub fn restore(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
         // A malformed dual container reports as an unsupported format with
         // the container version we could read (0 when even the header is
@@ -392,8 +393,30 @@ impl VsDualSystem {
         };
         let main_block = read_block(&mut cursor)?;
         let sub_block = read_block(&mut cursor)?;
+        // v2.9.0 (re-audit NC-05 / NL-01b) — all-or-nothing across BOTH
+        // consoles. Each `Nes::restore` is atomic on its own (a rejected block
+        // leaves that console untouched), but the pair was not: a valid main
+        // block followed by a rejected sub block left main on the file's
+        // timeline and sub on the running one, a cabinet from two timelines
+        // whose shared WRAM is re-converged only on the success path below.
+        // So main is snapshotted before it is restored and put back if the sub
+        // block fails. The rollback is `restore_quiet` because the timeline
+        // generation was already bumped (and main's rewind ring cleared) by
+        // the loud restore that succeeded; neither can be un-done, and neither
+        // is emulated state. A console's own snapshot always restores (the
+        // round-trip invariant the save-state tests pin), asserted in debug
+        // builds as `Nes::restore` does for its own backup.
+        let mut main_backup = Vec::new();
+        self.main.snapshot_core_into(&mut main_backup);
         self.main.restore(main_block)?;
-        self.sub.restore(sub_block)?;
+        if let Err(e) = self.sub.restore(sub_block) {
+            let rolled_back = self.main.restore_quiet(&main_backup);
+            debug_assert!(
+                rolled_back.is_ok(),
+                "rolling the main console back to its own snapshot failed: {rolled_back:?}"
+            );
+            return Err(e);
+        }
         // Re-derive the wrapper latch + re-drive the cross-console signals
         // (the buses' transient comms fields are not serialized; the wrapper
         // owns the authoritative copies).

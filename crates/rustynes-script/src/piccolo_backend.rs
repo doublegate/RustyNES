@@ -36,6 +36,34 @@
 //!   the core's exec / access logs and a hot per-event Lua re-entry that this
 //!   first experimental cut does not wire up.
 //! - `emu.onNmi` / `emu.onIrq` — the per-interrupt replay, same rationale.
+//!
+//! ## No heap limit (v2.9.0 re-audit NF-09) — a known gap
+//!
+//! The native backend caps the script heap at 64 MiB (frontend audit SEC-02,
+//! `Lua::set_memory_limit`): an allocation past it fails with a Lua memory
+//! error. **This backend has no equivalent, and SEC-02 does not cover it.**
+//! piccolo 0.3.3 allocates through a `gc-arena` 0.5.3 arena, which exposes
+//! only *observation* — `Lua::gc_metrics()` returns `Metrics`, whose
+//! `total_allocation()` reports the bytes held — and no limit, no fallible
+//! allocation and no allocator hook. So an allocation cannot be refused, and
+//! a script can grow its heap until the browser tab runs out of memory (for
+//! example by doubling a string with `..` in a loop: piccolo's `string`
+//! library has no `rep`, but concatenation allocates, and thirty doublings fit
+//! comfortably in one frame's fuel).
+//!
+//! What could be built on `Metrics`, and was not in v2.9.0: [`PiccoloBackend::drive`]
+//! could step the executor in small fuel slices and abort with an error once
+//! `total_allocation()` passes a limit. That bounds the heap *after the fact*
+//! (one slice's worth of allocation can land first) rather than refusing the
+//! allocation, so it is weaker than SEC-02, not parity with it.
+//!
+//! The exposure is small: `script-wasm` is experimental and off by default, it
+//! runs only a script the user loads into their own tab, and the harm is that
+//! tab. What IS shared with the native backend: the per-frame fuel budget, and
+//! the host-queue bounds (the log / draw count caps and, since v2.9.0 NF-03,
+//! the 4 KiB `drawText` clip). The native `__gc` (NF-01) and C-pattern (NF-02)
+//! holes do not exist here: piccolo implements neither `__gc` finalizers nor
+//! C-level pattern functions.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -44,7 +72,10 @@ use piccolo::{Callback, CallbackReturn, Closure, Executor, Fuel, Lua, Table, Val
 use rustynes_core::Nes;
 
 use crate::backend::VmBackend;
-use crate::types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError};
+use crate::types::{
+    ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_HOST_TEXT_BYTES, MAX_QUEUED_CMDS,
+    ScriptError, clip_host_text,
+};
 
 /// A buffered `emu.write(addr, val)` (applied to the live `Nes` after the
 /// frame's callbacks run). Kept separate from `ControlCmd` because the host
@@ -366,7 +397,18 @@ impl PiccoloBackend {
                     let (x, y, text, color) = stack
                         .consume::<(i64, i64, piccolo::String, Option<i64>)>(ctx)
                         .map_or((0, 0, String::new(), None), |(x, y, s, c)| {
-                            (x, y, String::from_utf8_lossy(s.as_bytes()).into_owned(), c)
+                            // v2.9.0 re-audit NF-03: the draw queue is host
+                            // memory, so the text is clipped as on mlua. The
+                            // bytes are cut first (no full-length copy), then
+                            // the decoded text, which a lossy decode can grow.
+                            let b = s.as_bytes();
+                            let b = &b[..b.len().min(MAX_HOST_TEXT_BYTES)];
+                            (
+                                x,
+                                y,
+                                clip_host_text(String::from_utf8_lossy(b).into_owned()),
+                                c,
+                            )
                         });
                     push_capped(
                         &draws,

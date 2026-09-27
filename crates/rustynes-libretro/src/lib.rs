@@ -45,6 +45,9 @@
 //! - **FDS**: `.fds` disk images are routed to [`rustynes_core::Nes::from_disk`] (looking
 //!   up `disksys.rom` in the frontend's system directory), and multi-side disk swapping is
 //!   exposed through libretro's disk-control interface (`on_set_eject_state` et al.).
+//!   A disk the game writes to is kept in the frontend's save directory as
+//!   `RustyNES/<hash>.fds.sav` and booted in place of the original next time
+//!   (`persist_fds_disk`, `restore_fds_disk`).
 //! - **Cheats**: Native Game Genie code application via `on_cheat_set`/`on_cheat_reset`,
 //!   backed by [`rustynes_core::Nes::add_genie_code`] (excluded from serialized state, so
 //!   it never affects save-state/netplay/TAS determinism).
@@ -239,15 +242,66 @@ const NES_BUTTONS: [(u32, &CStr); 8] = [
 ///   pointer, so until v2.8.1 RetroArch read past the end of this core's
 ///   array until it happened on a null (found while adding ports 2-4).
 /// * **It is `'static`.** RetroArch keeps the description pointers.
-struct InputDescriptors([retro_input_descriptor; 33]);
+struct InputDescriptors<const N: usize>([retro_input_descriptor; N]);
 
 // SAFETY: plain integers and pointers to `'static` C string literals, built
 // once at compile time and never mutated.
-unsafe impl Sync for InputDescriptors {}
+unsafe impl<const N: usize> Sync for InputDescriptors<N> {}
 
-static INPUT_DESCRIPTORS: InputDescriptors = InputDescriptors(all_port_descriptors());
+/// The standard table: eight buttons on each of four ports.
+static INPUT_DESCRIPTORS: InputDescriptors<33> = InputDescriptors(port_descriptors(&[]));
 
-const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
+/// The Vs. System panel inputs of a single-console Vs. cartridge (libretro
+/// re-audit NL-08; see [`VsPanel`]): RetroPad L on ports 1 and 2 drops a
+/// coin in acceptor 1 and 2, and R on port 1 is the service button.
+const VS_SINGLE_EXTRAS: [(u32, u32, &CStr); 3] = [
+    (0, RETRO_DEVICE_ID_JOYPAD_L, c"Vs. Insert Coin (acceptor 1)"),
+    (1, RETRO_DEVICE_ID_JOYPAD_L, c"Vs. Insert Coin (acceptor 2)"),
+    (0, RETRO_DEVICE_ID_JOYPAD_R, c"Vs. Service"),
+];
+
+/// A Vs. `DualSystem` cabinet's two panels: ports 1-2 are the main
+/// console's (as for a single cartridge), ports 3-4 the sub console's.
+const VS_DUAL_EXTRAS: [(u32, u32, &CStr); 6] = [
+    (
+        0,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (main, acceptor 1)",
+    ),
+    (
+        1,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (main, acceptor 2)",
+    ),
+    (0, RETRO_DEVICE_ID_JOYPAD_R, c"Vs. Service (main)"),
+    (
+        2,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (sub, acceptor 1)",
+    ),
+    (
+        3,
+        RETRO_DEVICE_ID_JOYPAD_L,
+        c"Vs. Insert Coin (sub, acceptor 2)",
+    ),
+    (2, RETRO_DEVICE_ID_JOYPAD_R, c"Vs. Service (sub)"),
+];
+
+/// The standard table plus the single-cartridge Vs. panel.
+static VS_SINGLE_DESCRIPTORS: InputDescriptors<36> =
+    InputDescriptors(port_descriptors(&VS_SINGLE_EXTRAS));
+
+/// The standard table plus both Vs. `DualSystem` panels.
+static VS_DUAL_DESCRIPTORS: InputDescriptors<39> =
+    InputDescriptors(port_descriptors(&VS_DUAL_EXTRAS));
+
+/// Eight NES buttons on each of four ports, then `extras`, then the
+/// null-description terminator. `N` must be `32 + extras.len() + 1`: the
+/// `assert!` below makes any other `N` a compile error in the `static`
+/// initialisers, so the terminator is always the last entry.
+const fn port_descriptors<const N: usize>(
+    extras: &[(u32, u32, &'static CStr)],
+) -> [retro_input_descriptor; N] {
     let terminator = retro_input_descriptor {
         port: 0,
         device: 0,
@@ -255,7 +309,7 @@ const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
         id: 0,
         description: std::ptr::null(),
     };
-    let mut out = [terminator; 33];
+    let mut out = [terminator; N];
     let mut port = 0;
     while port < 4 {
         let mut b = 0;
@@ -271,6 +325,18 @@ const fn all_port_descriptors() -> [retro_input_descriptor; 33] {
         }
         port += 1;
     }
+    let mut e = 0;
+    while e < extras.len() {
+        out[4 * NES_BUTTONS.len() + e] = retro_input_descriptor {
+            port: extras[e].0,
+            device: RETRO_DEVICE_JOYPAD,
+            index: 0,
+            id: extras[e].1,
+            description: extras[e].2.as_ptr(),
+        };
+        e += 1;
+    }
+    assert!(N == 4 * NES_BUTTONS.len() + extras.len() + 1);
     out
 }
 
@@ -300,11 +366,23 @@ static CORE_VARIABLES: CoreVariables = CoreVariables([
 /// and SRAM are registered under. See `register_memory_maps`.
 const PPU_ADDRSPACE: &CStr = c"PPU";
 
+/// Named address space holding the whole cartridge PRG-RAM buffer, byte `n`
+/// at address `n`, when it is larger than the CPU's 8 KiB window (libretro
+/// re-audit NL-06; see `memory_descriptors`). libretro.h forbids a name that
+/// is another space's name plus hex digits; `S`, `R` and `M` are not hex
+/// digits, so it cannot be mistaken for an address in the blank space.
+const SRAM_ADDRSPACE: &CStr = c"SRAM";
+
 /// The central libretro core structure for RustyNES.
 ///
 /// This struct holds the underlying cycle-accurate `Nes` emulator instance alongside
 /// the operational buffers necessary to interface with libretro's batch APIs. It is
 /// statically instantiated via the `retro_core!` macro.
+// The flags are independent facts about the libretro session (maps
+// registered, poisoned, Four Score option, options declared), each set and
+// cleared at its own lifecycle point; folding them into a state enum would
+// invent combinations the lifecycle does not have.
+#[allow(clippy::struct_excessive_bools)]
 pub struct RustyNesLibretro {
     /// The cycle-accurate RustyNES core instance (single-console carts).
     ///
@@ -377,6 +455,28 @@ pub struct RustyNesLibretro {
     /// the adapter can read its signature bits.
     four_score: bool,
 
+    /// Whether the core options have been declared (`SET_VARIABLES`) since
+    /// the last `retro_deinit`. Cleared there, so each init cycle declares
+    /// them once, from the first `retro_set_environment` of the cycle
+    /// (libretro re-audit NL-05; see [`Self::declare_core_options`]).
+    options_declared: bool,
+
+    /// The save file for the loaded FDS disk's in-game saves, or `None` for
+    /// a cartridge or a frontend with no save directory (libretro re-audit
+    /// NL-03; see [`Self::persist_fds_disk`]).
+    fds_save_path: Option<std::path::PathBuf>,
+
+    /// Frames left before a dirty FDS disk is written (see
+    /// [`Self::tick_fds_flush`]); 0 while the disk is clean.
+    fds_flush_countdown: u32,
+
+    /// The Vs. System coin and service inputs (libretro re-audit NL-08).
+    vs_panel: VsPanel,
+
+    /// Whether the input descriptors currently name the Vs. panel, so
+    /// unloading (or loading a non-Vs. game) sends the standard table back.
+    vs_descriptors: bool,
+
     /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
     /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
     /// serialized state, matching `Nes::add_genie_code`'s own contract, so
@@ -407,27 +507,32 @@ impl Default for RustyNesLibretro {
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
             four_score: false,
+            options_declared: false,
+            fds_save_path: None,
+            fds_flush_countdown: 0,
+            vs_panel: VsPanel {
+                coin_down: [false; 4],
+                coin_frames: 0,
+            },
+            vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
     }
 }
 
 impl CoreOptions for RustyNesLibretro {
-    /// Declare the core's options. Only one exists: the Four Score adapter,
-    /// which a user must be able to plug in for four-player games (libretro
-    /// audit summary, L-S1). The legacy `SET_VARIABLES` form is enough for a
-    /// two-value switch and every frontend supports it.
-    fn set_core_options(&self, ctx: &SetEnvironmentContext) -> bool {
-        // SAFETY: the context carries the frontend's environment callback for
-        // the duration of `retro_set_environment`; `CORE_VARIABLES` is a
-        // `'static`, null-key-terminated array.
-        unsafe {
-            let generic_ctx: GenericContext = ctx.into();
-            rust_libretro::environment::set_variables(
-                *generic_ctx.environment_callback(),
-                &CORE_VARIABLES.0,
-            )
-        }
+    /// Deliberately empty: the options are declared by
+    /// `RustyNesLibretro::declare_core_options` (private, so not linked) from
+    /// `on_set_environment`.
+    ///
+    /// `rust-libretro` calls this hook only on the FIRST
+    /// `retro_set_environment` the process ever sees, and its instance is
+    /// never reset (libretro audit L-1.4), so a frontend that keeps the
+    /// library loaded across `retro_deinit` + `retro_init` got no
+    /// `SET_VARIABLES` the second time (libretro re-audit NL-05). Declaring
+    /// here as well would declare twice on the first call.
+    fn set_core_options(&self, _ctx: &SetEnvironmentContext) -> bool {
+        true
     }
 }
 
@@ -513,12 +618,23 @@ fn poll_zapper(ctx: &mut RunContext, nes: &mut Nes, port: u32) {
 /// sixteen per-button reads only when the frontend cannot report bitmasks.
 /// Until v2.8.1 it was always the sixteen (libretro audit §2.5).
 fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons {
+    nes_buttons(read_joypad(ctx, port))
+}
+
+/// The whole RetroPad on `port`, in one `input_state` call (see
+/// [`joypad_to_buttons`]). The Vs. System panel reads L and R from it too, so
+/// a Vs. cartridge costs no extra frontend call.
+fn read_joypad(ctx: &mut RunContext, port: u32) -> JoypadState {
     // SAFETY: `get_joypad_bitmask` is `unsafe` only because `rust-libretro`
     // marks every "unstable" environment command that way. Its body calls the
     // frontend's `input_state` callback, which `ctx` holds valid for the
     // duration of `on_run`, exactly as the safe `get_joypad_state` does, and
     // falls back to that function when the frontend reports no bitmask support.
-    let jp = unsafe { ctx.get_joypad_bitmask(port, 0) };
+    unsafe { ctx.get_joypad_bitmask(port, 0) }
+}
+
+/// The NES pad buttons in a RetroPad state.
+fn nes_buttons(jp: JoypadState) -> rustynes_core::Buttons {
     let mut bt = rustynes_core::Buttons::empty();
     if jp.contains(JoypadState::A) {
         bt |= rustynes_core::Buttons::A;
@@ -545,6 +661,137 @@ fn joypad_to_buttons(ctx: &mut RunContext, port: u32) -> rustynes_core::Buttons 
         bt |= rustynes_core::Buttons::RIGHT;
     }
     bt
+}
+
+/// Frames a Vs. System coin stays latched after RetroPad L is pressed: the
+/// desktop frontend's `VS_COIN_HOLD_FRAMES`. The core documents the real
+/// coin switch as closing for 40-70 ms (`Nes::insert_coin`); three frames is
+/// 50 ms at 60 Hz.
+const VS_COIN_HOLD_FRAMES: u8 = 3;
+
+/// What one frame of the Vs. System panel does (libretro re-audit NL-08).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct VsPanelFrame {
+    /// Release every latched coin before this frame (`clear_coin`).
+    clear_coins: bool,
+    /// Acceptors to latch a coin on this frame: for a single cartridge 0-1,
+    /// for a `DualSystem` cabinet 0-1 main and 2-3 sub
+    /// (`VsDualSystem::insert_coin`).
+    insert: [bool; 4],
+    /// The service button of panel 0 (main) and 1 (a cabinet's sub).
+    service: [bool; 2],
+}
+
+/// The Vs. System coin and service inputs, on the RetroPad (libretro
+/// re-audit NL-08).
+///
+/// The core models the coin acceptors and the service button
+/// (`Nes::insert_coin` / `clear_coin` / `set_vs_service`, read back through
+/// `$4016`), and the desktop binds them to keys, but until v2.9.0 no libretro
+/// input reached them, so a Vs. game waiting for a credit could not be given
+/// one. The mapping, named in the input descriptors while a Vs. cartridge is
+/// loaded (`VS_SINGLE_EXTRAS` / `VS_DUAL_EXTRAS`):
+///
+/// * **L** on port `n` drops a coin in acceptor `n` (ports 1-2: the main
+///   console's acceptors 1-2; ports 3-4: a cabinet's sub console's). L is
+///   free on a NES pad, and one button per player keeps each player's coin
+///   on their own controller.
+/// * **R** on port 1 (and port 3 for a cabinet's sub console) holds the
+///   service button while held.
+///
+/// A coin is a pulse, not a level: pressing L latches it for
+/// [`VS_COIN_HOLD_FRAMES`] frames however long L is held, as the desktop
+/// does, because a coin switch that stayed closed is not something a game
+/// counts as coins.
+#[derive(Clone, Copy, Debug, Default)]
+struct VsPanel {
+    /// Whether L was down on each port last frame (edge detection).
+    coin_down: [bool; 4],
+    /// Frames until the latched coins are released; 0 when none is latched.
+    coin_frames: u8,
+}
+
+impl VsPanel {
+    /// Advance one frame given the four RetroPads; `ports` is how many of
+    /// them carry a Vs. panel (2 for a single cartridge, 4 for a cabinet).
+    fn step(&mut self, pads: [JoypadState; 4], ports: usize) -> VsPanelFrame {
+        let mut frame = VsPanelFrame::default();
+        if self.coin_frames > 0 {
+            self.coin_frames -= 1;
+            frame.clear_coins = self.coin_frames == 0;
+        }
+        for (port, pad) in pads.iter().enumerate().take(ports) {
+            let down = pad.contains(JoypadState::L);
+            if down && !self.coin_down[port] {
+                frame.insert[port] = true;
+                self.coin_frames = VS_COIN_HOLD_FRAMES;
+                // A new coin extends the pulse; nothing is cleared this frame.
+                frame.clear_coins = false;
+            }
+            self.coin_down[port] = down;
+        }
+        frame.service[0] = pads[0].contains(JoypadState::R);
+        frame.service[1] = ports > 2 && pads[2].contains(JoypadState::R);
+        frame
+    }
+
+    /// Apply a frame to a single Vs. console (acceptors 0-1, service 0).
+    const fn apply_single(frame: VsPanelFrame, nes: &mut Nes) {
+        if frame.clear_coins {
+            nes.clear_coin();
+        }
+        if frame.insert[0] {
+            nes.insert_coin(0);
+        }
+        if frame.insert[1] {
+            nes.insert_coin(1);
+        }
+        nes.set_vs_service(frame.service[0]);
+    }
+
+    /// Apply a frame to a Vs. `DualSystem` cabinet (acceptors 0-3,
+    /// service panels 0-1).
+    fn apply_dual(frame: VsPanelFrame, dual: &mut VsDualSystem) {
+        if frame.clear_coins {
+            dual.clear_coin();
+        }
+        for (acceptor, insert) in (0u8..).zip(frame.insert) {
+            if insert {
+                dual.insert_coin(acceptor);
+            }
+        }
+        dual.set_vs_service(0, frame.service[0]);
+        dual.set_vs_service(1, frame.service[1]);
+    }
+}
+
+/// Apply the Vs. System per-game database to a freshly loaded console
+/// (libretro re-audit NL-08), as the desktop's `apply_vs_db` does.
+///
+/// iNES 1.0 Vs. dumps carry no PPU type, so the parser gives every one the
+/// 2C03 palette; many Vs. games used a 2C04 whose colour table differs, and
+/// the SHA-keyed [`rustynes_core::vs_db`] supplies the right one. Before
+/// v2.9.0 the libretro core loaded through `Emu::from_rom` alone, which uses
+/// the database only to recognise a `DualSystem` cabinet, so every Vs. dump
+/// in the database rendered in the wrong colours (7 of 7 local dumps
+/// measured by the re-audit). The database's factory DIP-switch setting is
+/// applied too; the desktop lets a config file override it, which this core
+/// has no equivalent of (a DIP core option is not implemented).
+///
+/// Both setters are no-ops on a cartridge that is not a Vs. System, and the
+/// palette changes only the colour table the PPU emits through, never game
+/// logic.
+fn apply_vs_database(nes: &mut Nes) {
+    apply_vs_entry(nes, rustynes_core::vs_db::lookup(nes.rom_sha256()));
+}
+
+/// The database step of [`apply_vs_database`], split out so a test can hand
+/// it an entry without a commercial dump.
+const fn apply_vs_entry(nes: &mut Nes, entry: Option<rustynes_core::vs_db::VsDbEntry>) {
+    if let Some(entry) = entry {
+        nes.set_vs_ppu_type(entry.vs_ppu_type);
+        nes.set_vs_dip(entry.vs_dip);
+    }
 }
 
 /// Convert one mixer sample to the frontend's `i16`, with `1.0` at full scale.
@@ -680,6 +927,28 @@ impl RustyNesLibretro {
         )
     }
 
+    /// Declare the core's options with `SET_VARIABLES`; `true` when the
+    /// frontend accepted them.
+    ///
+    /// Only one exists: the Four Score adapter, which a user must be able to
+    /// plug in for four-player games (libretro audit summary, L-S1). The
+    /// legacy `SET_VARIABLES` form is enough for a two-value switch and every
+    /// frontend supports it. libretro.h asks for the first declaration "as
+    /// early as possible (ideally in retro_set_environment)" and allows later
+    /// ones as long as the number of options does not change; this core
+    /// declares once per init cycle (libretro re-audit NL-05).
+    ///
+    /// # Safety
+    ///
+    /// `cb` must be the frontend's environment callback, valid for the
+    /// duration of the call (as it is inside `retro_set_environment`).
+    unsafe fn declare_core_options(cb: retro_environment_t) -> bool {
+        // SAFETY: the caller guarantees `cb`; `CORE_VARIABLES` is a
+        // `'static`, null-key-terminated array, and the frontend keeps the
+        // pointers.
+        unsafe { rust_libretro::environment::set_variables(cb, &CORE_VARIABLES.0) }
+    }
+
     /// Write one line to the frontend's log, or to stderr when it has none.
     ///
     /// The frontend's function is C `printf`: the format is fixed at `"%s"`,
@@ -709,6 +978,11 @@ impl RustyNesLibretro {
         game: Option<retro_game_info>,
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // libretro.h requires `retro_unload_game` between two loads, which
+        // already wrote the previous disk; a frontend that skips it still
+        // keeps the previous game's disk saves.
+        self.persist_fds_disk();
+        self.fds_save_path = None;
         // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
         //
         // Split into the smallest unsafe regions the type system allows, so the
@@ -800,29 +1074,12 @@ impl RustyNesLibretro {
             &format!("Loading {} bytes (FDS: {is_fds}).", rom_data.len()),
         );
 
+        // Where this game's FDS disk writes persist; set only for an FDS load.
+        let mut fds_save = None;
         let emu = if is_fds {
-            let generic_ctx: GenericContext = (&*ctx).into();
-            let bios_dir = generic_ctx
-                .get_system_directory()
-                .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
-            let bios_path = bios_dir.join("disksys.rom");
-            let bios = std::fs::read(&bios_path).map_err(|e| {
-                format!(
-                    "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
-                     frontend's system directory to boot Famicom Disk System games)",
-                    bios_path.display()
-                )
-            })?;
-            match Nes::from_disk(&rom_data, &bios) {
-                Ok(nes) => Emu::Single(Box::new(nes)),
-                Err(e) => {
-                    self.log(
-                        retro_log_level::RETRO_LOG_ERROR,
-                        &format!("Failed to parse FDS disk image: {e:?}"),
-                    );
-                    return Err(format!("Failed to load FDS disk: {e:?}").into());
-                }
-            }
+            let (nes, path) = self.load_fds(&rom_data, ctx)?;
+            fds_save = path;
+            Emu::Single(Box::new(nes))
         } else {
             // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
             // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
@@ -857,7 +1114,8 @@ impl RustyNesLibretro {
         // exclusive.
         match emu {
             Emu::Single(nes) => {
-                let nes = *nes;
+                let mut nes = *nes;
+                apply_vs_database(&mut nes);
                 let mut tmp = Vec::new();
                 nes.snapshot_core_into(&mut tmp);
                 self.serialize_size = tmp.len() + rustynes_core::SAVE_STATE_DEVICE_HEADROOM;
@@ -868,7 +1126,11 @@ impl RustyNesLibretro {
                     "Loaded single-console cart.",
                 );
             }
-            Emu::Dual(dual) => {
+            Emu::Dual(mut dual) => {
+                // Both consoles are the same board; the desktop applies the
+                // database to both too.
+                apply_vs_database(dual.main_mut());
+                apply_vs_database(dual.sub_mut());
                 // The dual snapshot is a self-describing blob of both consoles; size it
                 // once here. No headroom: the dual path never attaches an expansion
                 // device (a Vs. cabinet has no light gun, and `run_dual` never calls
@@ -884,7 +1146,200 @@ impl RustyNesLibretro {
         }
         self.register_memory_maps(ctx);
         self.memory_maps_registered = true;
+        self.fds_save_path = fds_save;
+        self.fds_flush_countdown = 0;
+        self.vs_panel = VsPanel::default();
+        let vs_table: Option<&'static [retro_input_descriptor]> = if self.dual.is_some() {
+            Some(&VS_DUAL_DESCRIPTORS.0)
+        } else if self.nes.as_ref().is_some_and(Nes::is_vs_system) {
+            Some(&VS_SINGLE_DESCRIPTORS.0)
+        } else {
+            None
+        };
+        let generic_ctx: GenericContext = (&*ctx).into();
+        // SAFETY: `ctx` is the live `LoadGameContext`; its environment
+        // callback is the frontend's own, valid for this call.
+        let cb = unsafe { *generic_ctx.environment_callback() };
+        self.describe_inputs(cb, vs_table);
         Ok(())
+    }
+
+    /// Name the inputs: `vs` (the standard table plus a Vs. panel) for a Vs.
+    /// cartridge, else the standard table if a Vs. one was sent before
+    /// (libretro re-audit NL-08). libretro.h allows `SET_INPUT_DESCRIPTORS`
+    /// "at any time"; every table is `'static`, because RetroArch keeps the
+    /// description pointers.
+    fn describe_inputs(
+        &mut self,
+        cb: retro_environment_t,
+        vs: Option<&'static [retro_input_descriptor]>,
+    ) {
+        let table: &'static [retro_input_descriptor] = match vs {
+            Some(table) => table,
+            None if self.vs_descriptors => &INPUT_DESCRIPTORS.0,
+            None => return,
+        };
+        // SAFETY: `cb` is the frontend's environment callback, valid for the
+        // current call (the caller's context); `table` is a `'static`,
+        // null-description-terminated array.
+        unsafe { rust_libretro::environment::set_input_descriptors(cb, table) };
+        self.vs_descriptors = vs.is_some();
+    }
+
+    /// Build an FDS console for `disk`: read `disksys.rom` from the
+    /// frontend's system directory, and boot the disk's saved image from the
+    /// save directory when there is one. Returns the console and the path its
+    /// disk saves go to (`None` without a save directory).
+    fn load_fds(
+        &self,
+        disk: &[u8],
+        ctx: &mut LoadGameContext,
+    ) -> Result<(Nes, Option<std::path::PathBuf>), Box<dyn std::error::Error>> {
+        let generic_ctx: GenericContext = (&*ctx).into();
+        let bios_dir = generic_ctx
+            .get_system_directory()
+            .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
+        let bios_path = bios_dir.join("disksys.rom");
+        let bios = std::fs::read(&bios_path).map_err(|e| {
+            format!(
+                "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
+                 frontend's system directory to boot Famicom Disk System games)",
+                bios_path.display()
+            )
+        })?;
+        let pristine = match Nes::from_disk(disk, &bios) {
+            Ok(nes) => nes,
+            Err(e) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!("Failed to parse FDS disk image: {e:?}"),
+                );
+                return Err(format!("Failed to load FDS disk: {e:?}").into());
+            }
+        };
+        // The disk's in-game saves (libretro re-audit NL-03). Keyed by the
+        // ORIGINAL image's hash, so the key survives the image changing as
+        // the game writes to it.
+        let save_dir = generic_ctx
+            .get_save_directory()
+            .map(std::path::Path::to_path_buf);
+        let path = fds_save_path(save_dir.as_deref(), pristine.rom_sha256());
+        let nes = self.restore_fds_disk(pristine, path.as_deref(), &bios);
+        Ok((nes, path))
+    }
+
+    /// Build the FDS console from the disk's saved image when one exists,
+    /// else keep `pristine` (libretro re-audit NL-03).
+    ///
+    /// The saved image is the whole writable disk as the game last left it
+    /// (`Nes::disk_image_bytes`), so booting from it carries every in-game
+    /// save forward. A file that no longer parses is reported and ignored:
+    /// the pristine disk boots, and the next flush replaces the bad file.
+    /// Building from it before the first `retro_run` means nothing has
+    /// pointed into the console yet, unlike a `SAVE_RAM` buffer the
+    /// frontend would fill after `retro_load_game`.
+    fn restore_fds_disk(&self, pristine: Nes, path: Option<&std::path::Path>, bios: &[u8]) -> Nes {
+        let Some(path) = path else {
+            self.log(
+                retro_log_level::RETRO_LOG_WARN,
+                "the frontend has no save directory; this disk's in-game saves will not \
+                 be kept when the game is closed",
+            );
+            return pristine;
+        };
+        let saved = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return pristine,
+            Err(e) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!("could not read the disk save {}: {e}", path.display()),
+                );
+                return pristine;
+            }
+        };
+        match Nes::from_disk(&saved, bios) {
+            Ok(nes) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_INFO,
+                    &format!("restored the disk's saves from {}", path.display()),
+                );
+                nes
+            }
+            Err(e) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_ERROR,
+                    &format!(
+                        "the disk save {} is unreadable ({e:?}); booting the original disk",
+                        path.display()
+                    ),
+                );
+                pristine
+            }
+        }
+    }
+
+    /// Write the FDS disk to its save file if the game has written to it
+    /// since the last write (libretro re-audit NL-03).
+    ///
+    /// Written whole and atomically (a temporary file, then a rename), so a
+    /// crash mid-write leaves the previous save rather than half of one.
+    /// The dirty flag is cleared only after the rename succeeds, so a failed
+    /// write is retried at the next opportunity. A no-op for a cartridge or
+    /// a clean disk.
+    ///
+    /// Runs even on a poisoned core, like the battery RAM the frontend still
+    /// reads after a contained panic (libretro audit L-1.1): the disk image
+    /// is the player's save. The read is itself guarded, because this runs
+    /// from `retro_unload_game` and `retro_deinit`, which are not inside
+    /// [`Self::contained`].
+    fn persist_fds_disk(&mut self) {
+        let Some(path) = self.fds_save_path.clone() else {
+            return;
+        };
+        let Some(nes) = self.nes.as_ref() else {
+            return;
+        };
+        let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            nes.disk_is_dirty().then(|| nes.disk_image_bytes())
+        }));
+        let Ok(Some(image)) = image else {
+            return;
+        };
+        match write_file_atomically(&path, &image) {
+            Ok(()) => {
+                if let Some(nes) = self.nes.as_mut() {
+                    nes.clear_disk_dirty();
+                }
+            }
+            Err(e) => self.log(
+                retro_log_level::RETRO_LOG_ERROR,
+                &format!("could not save the disk to {}: {e}", path.display()),
+            ),
+        }
+    }
+
+    /// Once a frame: write the FDS disk [`FDS_FLUSH_FRAMES`] frames after
+    /// the game first dirties it, so a save survives a crash or a frontend
+    /// that never unloads, without writing the file on every frame of a
+    /// disk-write sequence (which spans many frames).
+    fn tick_fds_flush(&mut self) {
+        if self.fds_save_path.is_none() {
+            return;
+        }
+        let dirty = self.nes.as_ref().is_some_and(Nes::disk_is_dirty);
+        if !dirty {
+            self.fds_flush_countdown = 0;
+            return;
+        }
+        if self.fds_flush_countdown == 0 {
+            self.fds_flush_countdown = FDS_FLUSH_FRAMES;
+            return;
+        }
+        self.fds_flush_countdown -= 1;
+        if self.fds_flush_countdown == 0 {
+            self.persist_fds_disk();
+        }
     }
 
     /// The single `Nes` that RetroAchievements / cheats / disk-control / memory-maps
@@ -931,58 +1386,19 @@ impl RustyNesLibretro {
         self.active_nes().map(Nes::region)
     }
 
-    /// Register `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for WRAM, PRG-RAM/SRAM
-    /// (when battery-backed), and PPU nametable VRAM. This is the memory-inspection path
-    /// RetroAchievements' `rcheevos` prefers over the legacy `get_memory_data`/`_size`
-    /// pointer API (kept below, unchanged, since RetroArch's own `.srm` persistence goes
-    /// through it regardless — this is additive, not a replacement). The descriptor
-    /// pointers are the SAME fixed-size, constructed-once allocations the legacy path
-    /// already exposes, so reusing them here is exactly as safe.
+    /// Register `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for WRAM, the
+    /// cartridge's PRG-RAM, and PPU nametable VRAM (see [`memory_descriptors`]).
+    /// This is the memory-inspection path RetroAchievements' `rcheevos` prefers
+    /// over the legacy `get_memory_data`/`_size` pointer API, which stays
+    /// alongside it because RetroArch's own `.srm` persistence goes through that
+    /// path. The descriptor pointers are the SAME fixed-size, constructed-once
+    /// allocations the legacy path exposes, so reusing them here is exactly as
+    /// safe.
     fn register_memory_maps(&mut self, ctx: &mut LoadGameContext) {
         let Some(nes) = self.active_nes_mut() else {
             return;
         };
-        let mut descriptors = Vec::with_capacity(3);
-        descriptors.push(retro_memory_descriptor {
-            flags: u64::from(RETRO_MEMDESC_SYSTEM_RAM),
-            ptr: nes.wram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
-            offset: 0,
-            start: 0x0000,
-            select: 0,
-            disconnect: 0,
-            len: nes.wram_mut().len(),
-            addrspace: std::ptr::null(),
-        });
-        let sram_len = nes.sram_mut().len();
-        if sram_len > 0 {
-            descriptors.push(retro_memory_descriptor {
-                flags: u64::from(RETRO_MEMDESC_SAVE_RAM),
-                ptr: nes.sram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
-                offset: 0,
-                start: 0x6000,
-                select: 0,
-                disconnect: 0,
-                len: sram_len,
-                addrspace: std::ptr::null(),
-            });
-        }
-        // Nametable RAM (CIRAM) lives on the PPU's own internal address bus, not
-        // the CPU's: on the CPU bus, $2000-$2007 are the PPU MMIO registers
-        // (PPUCTRL/PPUMASK/etc.), not video RAM. Registering this under the
-        // blank/default (CPU) address space at $2000 would therefore be
-        // misleading, so it gets its own named "PPU" address space instead —
-        // the same convention `libretro.h` documents for other genuinely
-        // separate buses (e.g. the SNES SPC700 audio coprocessor's "S" space).
-        descriptors.push(retro_memory_descriptor {
-            flags: u64::from(RETRO_MEMDESC_VIDEO_RAM),
-            ptr: nes.vram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
-            offset: 0,
-            start: 0x2000,
-            select: 0,
-            disconnect: 0,
-            len: nes.vram_mut().len(),
-            addrspace: PPU_ADDRSPACE.as_ptr(),
-        });
+        let descriptors = memory_descriptors(nes);
         let map = retro_memory_map {
             descriptors: descriptors.as_ptr(),
             num_descriptors: descriptors.len() as std::os::raw::c_uint,
@@ -1043,17 +1459,29 @@ impl RustyNesLibretro {
         //
         // Port 0 → Player 1, Port 1 → Player 2; with the Four Score option,
         // ports 2 and 3 → Players 3 and 4.
-        let b0 = joypad_to_buttons(ctx, 0);
-        let b1 = joypad_to_buttons(ctx, 1);
+        let jp0 = read_joypad(ctx, 0);
+        let jp1 = read_joypad(ctx, 1);
+        let pads = [nes_buttons(jp0), nes_buttons(jp1)];
         let four_score = self.four_score;
         let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
         let zapper_ports = self.lightgun_ports();
+        // A Vs. System cartridge's coin and service inputs, from L and R on
+        // ports 1-2 (see `VsPanel`); nothing for any other cartridge.
+        let vs = if self.nes.as_ref().is_some_and(Nes::is_vs_system) {
+            let none = JoypadState::empty();
+            Some(self.vs_panel.step([jp0, jp1, none, none], 2))
+        } else {
+            None
+        };
         {
             let Some(nes) = self.nes.as_mut() else {
                 return;
             };
+            if let Some(frame) = vs {
+                VsPanel::apply_single(frame, nes);
+            }
             // Test-only: stands in for an internal error inside a frame, so the
             // C-ABI harness can prove `contained` stops it at this layer.
             #[cfg(test)]
@@ -1061,7 +1489,7 @@ impl RustyNesLibretro {
                 !INJECT_PANIC_IN_RUN.swap(false, std::sync::atomic::Ordering::SeqCst),
                 "injected by the C-ABI harness"
             );
-            apply_pads(nes, [b0, b1], b34);
+            apply_pads(nes, pads, b34);
             // A Zapper occupies a port INSTEAD of a joypad, but the joypad write
             // above is harmless and deliberate: the Zapper's own byte is assembled
             // by `set_zapper`, and leaving the pad state written keeps a port that
@@ -1081,6 +1509,8 @@ impl RustyNesLibretro {
             // video copy disjoint from the audio drain.
             nes.run_frame();
         }
+        // An FDS disk the game has written to is saved a second later.
+        self.tick_fds_flush();
         self.video_buffer.clear();
         let Some(nes) = self.nes.as_ref() else {
             return;
@@ -1109,18 +1539,21 @@ impl RustyNesLibretro {
     fn run_dual(&mut self, ctx: &mut RunContext) {
         // Input was already polled by `retro_run`; see `run_single`.
         // Ports 0/1 drive the MAIN console's P1/P2; ports 2/3 the SUB console's.
-        let buttons = [
-            joypad_to_buttons(ctx, 0),
-            joypad_to_buttons(ctx, 1),
-            joypad_to_buttons(ctx, 2),
-            joypad_to_buttons(ctx, 3),
+        let pads = [
+            read_joypad(ctx, 0),
+            read_joypad(ctx, 1),
+            read_joypad(ctx, 2),
+            read_joypad(ctx, 3),
         ];
+        // Both panels of the cabinet: coins and service on L and R.
+        let vs = self.vs_panel.step(pads, 4);
         {
             let Some(dual) = self.dual.as_mut() else {
                 return;
             };
-            for (port, btn) in buttons.into_iter().enumerate() {
-                dual.set_buttons(port, btn);
+            VsPanel::apply_dual(vs, dual);
+            for (port, pad) in pads.into_iter().enumerate() {
+                dual.set_buttons(port, nes_buttons(pad));
             }
             dual.run_frame();
         }
@@ -1168,6 +1601,352 @@ impl RustyNesLibretro {
             blit_scanline_rgba_to_xrgb(left, &main[src..src + NES_W * 4]);
             blit_scanline_rgba_to_xrgb(right, &sub[src..src + NES_W * 4]);
         }
+    }
+}
+
+/// Frames between the game first writing to an FDS disk and the disk being
+/// written to its save file: one second at 60 Hz. A disk-write sequence
+/// spans many frames, so writing on every dirty frame would rewrite the
+/// whole image dozens of times per in-game save.
+const FDS_FLUSH_FRAMES: u32 = 60;
+
+/// The save file for the FDS disk whose ORIGINAL image hashes to `sha256`:
+/// `<save directory>/RustyNES/<sha256 in hex>.fds.sav`. `None` without a
+/// save directory.
+///
+/// The name and contents match the desktop frontend's `.fds.sav`
+/// (`<data dir>/fds-saves/<hex>.fds.sav`, the headerless image from
+/// `Nes::disk_image_bytes`), so a save can be copied between the two. The
+/// hash of the original image, not of the current one, is the key: the
+/// image changes every time the game saves.
+fn fds_save_path(
+    save_dir: Option<&std::path::Path>,
+    sha256: &[u8; 32],
+) -> Option<std::path::PathBuf> {
+    use std::fmt::Write as _;
+    let mut hex = String::with_capacity(64);
+    for byte in sha256 {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    save_dir.map(|dir| dir.join("RustyNES").join(format!("{hex}.fds.sav")))
+}
+
+/// Write `bytes` to `path` via a temporary file in the same directory and a
+/// rename, creating the directory first. A crash mid-write leaves the old
+/// file, not a truncated one; the rename replaces an existing file on every
+/// platform `std` supports.
+///
+/// The data is `sync_all`ed before the rename (agy on #561). `fs::write`
+/// leaves it in the page cache, and a filesystem may commit the rename's
+/// directory entry before the data, so a power loss just after the rename
+/// could leave an empty `.fds.sav` in place of the old one -- the outcome the
+/// temporary file exists to prevent. A failed write removes the temporary
+/// file rather than leaving it beside the save.
+///
+/// On Unix the parent directory is synced after the rename (agy on #561), as
+/// the desktop's `write_atomic` does: the rename is a directory change, and
+/// without it the new entry may not survive a power loss. A filesystem that
+/// does not offer a directory `fsync` (`EINVAL`, `ENOTSUP`, `EBADF`) is not a
+/// failure. Any other error is returned even though the file was replaced,
+/// which here only leaves the disk marked dirty, so the next flush writes it
+/// again.
+fn write_file_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    let written = std::fs::File::create(&tmp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })?;
+    #[cfg(unix)]
+    {
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        match std::fs::File::open(dir).and_then(|d| d.sync_all()) {
+            Err(e)
+                if !matches!(
+                    e.kind(),
+                    std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported
+                ) && e.raw_os_error() != Some(libc::EBADF) =>
+            {
+                return Err(e);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Hand the frontend the disk-control interface: the extended one (with
+/// side labels) when it reports interface version 1 or later, else the v0
+/// one (libretro re-audit NL-07).
+///
+/// Until v2.9.0 only v0 was registered (`enable_disk_control_interface`),
+/// and v0 has no `get_image_label`, so the "Side A" / "Side B" labels never
+/// reached a frontend. `rust-libretro`'s own extended registration is not
+/// used, because its label callback copies the label with no terminating
+/// NUL and no null check on the buffer (libretro audit L-1.5); the label
+/// entry below is [`disk_image_label`] instead, and every other entry is
+/// `rust-libretro`'s trampoline, exactly as the v0 path registers it.
+///
+/// `set_initial_image` and `get_image_path` are left NULL, which libretro.h
+/// allows ("Optional - may be NULL"). With both present the frontend records
+/// the last side used and asks for it at the next load; an FDS game boots
+/// from side A, and a single `.fds` container has no per-side file path to
+/// check the request against, so the core declines that feature.
+///
+/// # Safety
+///
+/// `cb` must be the frontend's environment callback, valid for the call.
+unsafe fn register_disk_control(cb: retro_environment_t) {
+    // SAFETY: the caller guarantees `cb`. Both calls pass structs of
+    // `extern "C"` function pointers that live for the process; the
+    // frontend copies the struct during the call.
+    unsafe {
+        if rust_libretro::environment::get_disk_control_interface_version(cb) >= 1
+            && rust_libretro::environment::set_disk_control_ext_interface(
+                cb,
+                retro_disk_control_ext_callback {
+                    set_eject_state: Some(rust_libretro::retro_set_eject_state_callback),
+                    get_eject_state: Some(rust_libretro::retro_get_eject_state_callback),
+                    get_image_index: Some(rust_libretro::retro_get_image_index_callback),
+                    set_image_index: Some(rust_libretro::retro_set_image_index_callback),
+                    get_num_images: Some(rust_libretro::retro_get_num_images_callback),
+                    replace_image_index: Some(rust_libretro::retro_replace_image_index_callback),
+                    add_image_index: Some(rust_libretro::retro_add_image_index_callback),
+                    set_initial_image: None,
+                    get_image_path: None,
+                    get_image_label: Some(disk_image_label),
+                },
+            )
+        {
+            return;
+        }
+        rust_libretro::environment::set_disk_control_interface(
+            cb,
+            retro_disk_control_callback {
+                set_eject_state: Some(rust_libretro::retro_set_eject_state_callback),
+                get_eject_state: Some(rust_libretro::retro_get_eject_state_callback),
+                get_image_index: Some(rust_libretro::retro_get_image_index_callback),
+                set_image_index: Some(rust_libretro::retro_set_image_index_callback),
+                get_num_images: Some(rust_libretro::retro_get_num_images_callback),
+                replace_image_index: Some(rust_libretro::retro_replace_image_index_callback),
+                add_image_index: Some(rust_libretro::retro_add_image_index_callback),
+            },
+        );
+    }
+}
+
+/// The label of FDS side `index`: "Side A" to "Side Z", then "Side 27" and
+/// so on. `index` comes from the frontend, so it is bounded rather than
+/// added to `b'A'` (which would overflow `u8` past 'Z').
+fn side_label(index: u32) -> String {
+    match u8::try_from(index) {
+        Ok(i) if i < 26 => format!("Side {}", char::from(b'A' + i)),
+        _ => format!("Side {}", index.saturating_add(1)),
+    }
+}
+
+/// `retro_get_image_label_t` for the extended disk-control interface.
+///
+/// libretro.h: returns `false` if `index` is invalid (`>= get_num_images()`)
+/// or the label is otherwise unavailable. The label is written as a C
+/// string, truncated to `len - 1` bytes so the terminating NUL always fits.
+/// A null or zero-length buffer is refused without a write.
+unsafe extern "C" fn disk_image_label(
+    index: std::os::raw::c_uint,
+    label: *mut std::os::raw::c_char,
+    len: usize,
+) -> bool {
+    if label.is_null() || len == 0 {
+        return false;
+    }
+    // SAFETY: `rust-libretro`'s own trampoline, the one registered as
+    // `get_num_images` beside this function. It reads the core instance,
+    // which exists: this function is only reachable through the interface
+    // `on_set_environment` registered on that instance, and a frontend
+    // calls disk control between, never during, other core calls.
+    let sides = unsafe { rust_libretro::retro_get_num_images_callback() };
+    if index >= sides {
+        return false;
+    }
+    let text = side_label(index);
+    let n = text.len().min(len - 1);
+    // SAFETY: `label` is non-null and, per libretro.h, valid for `len`
+    // bytes of writes for the duration of the call; `n + 1 <= len`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), label.cast::<u8>(), n);
+        *label.add(n) = 0;
+    }
+    true
+}
+
+/// Where a cartridge's PRG-RAM appears on the CPU bus: the 8 KiB window
+/// `$6000-$7FFF`.
+const PRG_RAM_WINDOW: usize = 0x2000;
+
+/// The Famicom Disk System's RAM adapter maps 32 KiB at `$6000-$DFFF`.
+const FDS_RAM_WINDOW: usize = 0x8000;
+
+/// The `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for one console.
+///
+/// * **WRAM**: 2 KiB at `$0000`, `SYSTEM_RAM`.
+/// * **PRG-RAM**: the cartridge RAM (`Nes::sram`), when there is any, in
+///   two views (libretro re-audit NL-02, NL-06):
+///   - the CPU's own window at `$6000`: 8 KiB (32 KiB, to `$DFFF`, for the
+///     FDS), or the whole buffer when it is smaller. Until v2.9.0 this was
+///     one descriptor `{start: $6000, select: 0, len: sram_len}` for every
+///     size, so a 64 KiB buffer claimed `$6000-$15FFF` (past the 16-bit bus),
+///     a 32 KiB one claimed PRG-ROM at `$8000-$DFFF`, and a 73,728-byte one
+///     broke libretro.h's rule that `select == 0` needs a power-of-two `len`.
+///     The window shows the buffer's first bytes, which is what `$6000-$7FFF`
+///     reads on these boards until they switch banks; a descriptor is
+///     registered once at load and cannot follow a bank switch, so a board
+///     that banks its RAM is shown bank 0 here, as before;
+///   - when the buffer is larger than the window, the WHOLE buffer in its own
+///     `"SRAM"` address space, byte `n` at address `n`, so a cheat search or
+///     an achievement reaches the banks the window does not show.
+///
+///   Both are cut into aligned power-of-two pieces by [`push_aligned`].
+///
+///   Both views carry `SAVE_RAM` only when the header declares a battery
+///   (`Nes::has_battery`); volatile work RAM is described with no flag, so it
+///   stays visible and is not mistaken for a save.
+/// * **CIRAM**: nametable RAM on the PPU's own bus, in a named `"PPU"` space.
+///
+/// Every descriptor points at the same fixed-size buffer the legacy
+/// `retro_get_memory_data` path exposes, and libretro.h's "the same byte, the
+/// same pointer" rule holds because both PRG-RAM views use the buffer's base
+/// with an `offset`.
+fn memory_descriptors(nes: &mut Nes) -> Vec<retro_memory_descriptor> {
+    let mut descriptors = Vec::with_capacity(5);
+    let wram = nes.wram_mut();
+    descriptors.push(retro_memory_descriptor {
+        flags: u64::from(RETRO_MEMDESC_SYSTEM_RAM),
+        ptr: wram.as_mut_ptr().cast::<std::os::raw::c_void>(),
+        offset: 0,
+        start: 0x0000,
+        select: 0,
+        disconnect: 0,
+        len: wram.len(),
+        addrspace: std::ptr::null(),
+    });
+
+    let is_fds = nes.disk_side_count() > 0;
+    let flags = if nes.has_battery() {
+        u64::from(RETRO_MEMDESC_SAVE_RAM)
+    } else {
+        0
+    };
+    let sram = nes.sram_mut();
+    let sram_len = sram.len();
+    if sram_len > 0 {
+        let ptr = sram.as_mut_ptr().cast::<std::os::raw::c_void>();
+        let cpu_window = if is_fds {
+            FDS_RAM_WINDOW
+        } else {
+            PRG_RAM_WINDOW
+        };
+        let cpu_len = sram_len.min(cpu_window);
+        push_aligned(
+            &mut descriptors,
+            flags,
+            ptr,
+            0x6000,
+            cpu_len,
+            std::ptr::null(),
+        );
+        if sram_len > cpu_len {
+            push_aligned(
+                &mut descriptors,
+                flags,
+                ptr,
+                0,
+                sram_len,
+                SRAM_ADDRSPACE.as_ptr(),
+            );
+        }
+    }
+
+    // Nametable RAM (CIRAM) lives on the PPU's own internal address bus, not
+    // the CPU's: on the CPU bus, $2000-$2007 are the PPU MMIO registers
+    // (PPUCTRL/PPUMASK/etc.), not video RAM. Registering this under the
+    // blank/default (CPU) address space at $2000 would therefore be
+    // misleading, so it gets its own named "PPU" address space instead —
+    // the same convention `libretro.h` documents for other genuinely
+    // separate buses (e.g. the SNES SPC700 audio coprocessor's "S" space).
+    let vram = nes.vram_mut();
+    descriptors.push(retro_memory_descriptor {
+        flags: u64::from(RETRO_MEMDESC_VIDEO_RAM),
+        ptr: vram.as_mut_ptr().cast::<std::os::raw::c_void>(),
+        offset: 0,
+        start: 0x2000,
+        select: 0,
+        disconnect: 0,
+        len: vram.len(),
+        addrspace: PPU_ADDRSPACE.as_ptr(),
+    });
+    descriptors
+}
+
+/// Describe buffer bytes `0..len` (from `ptr`) at addresses
+/// `start..start + len` of `addrspace`, as descriptors each a power of two
+/// long and starting on a multiple of their own length.
+///
+/// libretro.h requires a power-of-two `len` whenever `select` is zero, and
+/// with `select` zero the frontend has to work out which addresses a
+/// descriptor claims from `start` and `len` alone. A region that is aligned
+/// to its own length is unambiguous under any reading of that rule; an
+/// unaligned one (the FDS's 32 KiB at `$6000`) is not. So the range is cut at
+/// its largest aligned power-of-two pieces: `$6000 + 32 KiB` becomes 8 KiB at
+/// `$6000`, 16 KiB at `$8000` and 8 KiB at `$C000`, and a 73,728-byte buffer
+/// at 0 becomes 64 KiB at 0 and 8 KiB at 65,536. Every piece points at the
+/// buffer's base with an `offset`, which libretro.h asks for ("the same byte,
+/// the same pointer").
+fn push_aligned(
+    out: &mut Vec<retro_memory_descriptor>,
+    flags: u64,
+    ptr: *mut std::os::raw::c_void,
+    start: usize,
+    len: usize,
+    addrspace: *const std::os::raw::c_char,
+) {
+    let mut done = 0;
+    while done < len {
+        let addr = start + done;
+        // The largest power of two that both divides `addr` (alignment) and
+        // fits in what is left. `addr == 0` is aligned to anything.
+        let by_alignment = if addr == 0 {
+            usize::MAX
+        } else {
+            1_usize << addr.trailing_zeros()
+        };
+        let by_length = 1_usize << (len - done).ilog2();
+        let piece = by_alignment.min(by_length);
+        out.push(retro_memory_descriptor {
+            flags,
+            ptr,
+            offset: done,
+            start: addr,
+            select: 0,
+            disconnect: 0,
+            len: piece,
+            addrspace,
+        });
+        done += piece;
     }
 }
 
@@ -1389,7 +2168,11 @@ impl Core for RustyNesLibretro {
             // Register the disk-control callback trampolines (on_set_eject_state,
             // on_get_image_index, etc. below) so RetroArch's Quick Menu → Disk
             // Control surfaces FDS multi-side swapping.
-            generic_ctx.enable_disk_control_interface();
+            register_disk_control(cb);
+
+            if !self.options_declared {
+                self.options_declared = Self::declare_core_options(cb);
+            }
         }
     }
 
@@ -1505,11 +2288,18 @@ impl Core for RustyNesLibretro {
     /// a no-op, kept so a frontend that skips `retro_unload_game` still frees
     /// them.
     fn on_deinit(&mut self, _ctx: &mut DeinitContext) {
+        // A frontend that skips `retro_unload_game` still keeps the disk's
+        // saves.
+        self.persist_fds_disk();
+        self.fds_save_path = None;
         self.nes = None;
         self.dual = None;
         self.poisoned = false;
         // The log interface is valid only until `retro_deinit`.
         self.log_printf = None;
+        // The next init cycle declares the core options again: the frontend
+        // may have dropped them with this one (libretro re-audit NL-05).
+        self.options_declared = false;
         self.genie_cheats.clear();
         self.serialize_size = 0;
         self.audio_buffer = Vec::new();
@@ -1552,6 +2342,15 @@ impl Core for RustyNesLibretro {
                 rust_libretro::environment::set_memory_maps(cb, empty);
             }
         }
+        // A Vs. cartridge's coin and service names go with it.
+        // SAFETY: as above, the frontend's callback for this call.
+        let cb = unsafe { *ctx.environment_callback() };
+        self.describe_inputs(cb, None);
+        // Write the FDS disk's in-game saves before the console goes
+        // (libretro re-audit NL-03). Before v2.9.0 nothing did, and a disk
+        // save was lost when the game closed.
+        self.persist_fds_disk();
+        self.fds_save_path = None;
         self.nes = None;
         self.dual = None;
         self.genie_cheats.clear();
@@ -1581,7 +2380,20 @@ impl Core for RustyNesLibretro {
             return std::ptr::null_mut();
         };
         match id {
+            // Only battery-backed RAM is save RAM (libretro re-audit NL-02).
+            // RetroArch writes whatever this returns to a `.srm` and loads it
+            // back after `retro_load_game`, so exposing volatile work RAM here
+            // gave a cartridge without a battery a save the hardware never
+            // had, restored on every boot. Several boards expose RAM through
+            // `sram()` whatever the header says (NROM always has 8 KiB; MMC1
+            // and MMC3 allocate by default), so `sram()` being non-empty is not
+            // the question; `has_battery()` is, as it is for the desktop's
+            // `.sav`. An FDS image has no battery either: its saves live on
+            // the disk image, not in the RAM adapter's 32 KiB.
             RETRO_MEMORY_SAVE_RAM => {
+                if !nes.has_battery() {
+                    return std::ptr::null_mut();
+                }
                 let sram = nes.sram_mut();
                 if sram.is_empty() {
                     std::ptr::null_mut()
@@ -1605,7 +2417,9 @@ impl Core for RustyNesLibretro {
             return 0;
         };
         match id {
-            RETRO_MEMORY_SAVE_RAM => nes.sram().len(),
+            // Battery-backed RAM only; see `get_memory_data`. Without a
+            // battery this falls through to the `_ => 0` arm.
+            RETRO_MEMORY_SAVE_RAM if nes.has_battery() => nes.sram().len(),
             RETRO_MEMORY_SYSTEM_RAM => nes.wram().len(),
             RETRO_MEMORY_VIDEO_RAM => nes.vram().len(),
             _ => 0,
@@ -1618,6 +2432,16 @@ impl Core for RustyNesLibretro {
 
     fn on_serialize(&mut self, slice: &mut [u8], _ctx: &mut SerializeContext) -> bool {
         self.contained("retro_serialize", false, |core| {
+            // libretro.h: "If failed, or size is lower than
+            // retro_serialize_size(), it should return false". The state is
+            // usually smaller than the size reported (that includes the
+            // expansion-device headroom), so "the state fits" is not the
+            // test; until v2.9.0 it was, and a buffer up to 26 bytes short
+            // succeeded (libretro re-audit NL-10). Checked before the
+            // snapshot so a refused call costs nothing.
+            if slice.len() < core.serialize_size {
+                return false;
+            }
             // Generates the deterministic binary blob representing the console hardware
             // state. Single console → `snapshot_core_into`; a Vs. DualSystem cabinet →
             // `VsDualSystem::snapshot` (a self-describing blob of BOTH consoles).
@@ -1660,8 +2484,9 @@ impl Core for RustyNesLibretro {
     // Backed entirely by `Nes::disk_side_count`/`inserted_disk_side`/`set_disk_side`
     // (the same API the desktop frontend's F9 disk-swap keybind uses) — no cartridge
     // build ever reports more than 0 sides, so these are no-ops outside FDS. Callback
-    // trampolines are registered once via `enable_disk_control_interface()` in
-    // `on_set_environment`.
+    // trampolines are registered by `register_disk_control` from
+    // `on_set_environment` (the extended interface, with side labels, when the
+    // frontend supports it).
 
     fn on_set_eject_state(&mut self, ejected: bool) -> bool {
         self.contained("set_eject_state", false, |core| {
@@ -1716,26 +2541,10 @@ impl Core for RustyNesLibretro {
             .map_or(0, |nes| nes.disk_side_count() as u32)
     }
 
-    fn on_get_image_path(&mut self, _index: u32) -> Option<CString> {
-        // No real per-side file paths exist for a single multi-side `.fds` container.
-        None
-    }
-
-    fn on_get_image_label(&mut self, index: u32) -> Option<CString> {
-        // Synthesize "Side A" / "Side B" / ... labels for the Quick Menu. No FDS
-        // image realistically has more than a handful of sides, but `index` is
-        // frontend-supplied, so bound it explicitly rather than let `b'A' + index`
-        // overflow `u8` (a debug-build panic, a silent wrap in release) for any
-        // value past 'Z'.
-        if let Ok(index_u8) = u8::try_from(index)
-            && index_u8 < 26
-        {
-            let letter = char::from(b'A' + index_u8);
-            CString::new(format!("Side {letter}")).ok()
-        } else {
-            CString::new(format!("Side {}", index.saturating_add(1))).ok()
-        }
-    }
+    // No `on_get_image_path` / `on_get_image_label`: the extended interface
+    // registers its own label callback, `disk_image_label`, and no path
+    // callback (see `register_disk_control`), so `rust-libretro`'s trampolines
+    // for those two are never handed to a frontend.
 
     // --- Cheats (native Game Genie) ------------------------------------------------
     //
@@ -1812,6 +2621,14 @@ retro_core!(RustyNesLibretro {
     log_printf: None,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
     four_score: false,
+    options_declared: false,
+    fds_save_path: None,
+    fds_flush_countdown: 0,
+    vs_panel: VsPanel {
+        coin_down: [false; 4],
+        coin_frames: 0,
+    },
+    vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });
 
@@ -1821,6 +2638,297 @@ mod abi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fields of a `retro_memory_descriptor` that libretro.h puts rules
+    /// on, copied out so a check can run after the frontend call returns.
+    #[derive(Clone, Debug)]
+    pub struct DescView {
+        pub ptr: usize,
+        pub offset: usize,
+        pub start: usize,
+        pub select: usize,
+        pub len: usize,
+        pub addrspace: String,
+    }
+
+    /// Check every rule libretro.h puts on the descriptors this core
+    /// registers for save or work RAM of `sram_len` bytes (libretro re-audit
+    /// NL-06). Shared by the C-ABI test and the corpus sweep below.
+    pub fn assert_descriptor_shape(descs: &[DescView], sram_len: usize, is_fds: bool) {
+        for d in descs {
+            // libretro.h, `select`: "Can be zero, in which case each byte is
+            // assumed mapped exactly once. In this case, 'len' must be a
+            // power of two."
+            if d.select == 0 {
+                assert!(
+                    d.len.is_power_of_two(),
+                    "select 0 needs a power-of-two len: {d:?} (sram {sram_len})"
+                );
+                assert_eq!(
+                    d.start % d.len,
+                    0,
+                    "a power-of-two region must start on a multiple of its length: {d:?}"
+                );
+            }
+        }
+        if sram_len == 0 {
+            return;
+        }
+        let first = descs
+            .iter()
+            .find(|d| d.addrspace.is_empty() && d.start == 0x6000)
+            .unwrap_or_else(|| panic!("no $6000 window for {sram_len} bytes: {descs:?}"));
+        let ptr = first.ptr;
+        // The CPU sees an 8 KiB window at $6000-$7FFF (FDS: 32 KiB at
+        // $6000-$DFFF). Nothing may claim $8000 and up on a cartridge, which
+        // is PRG-ROM, and the window is contiguous from $6000.
+        let (window, ceiling) = if is_fds {
+            (0x8000, 0xE000)
+        } else {
+            (0x2000, 0x8000)
+        };
+        let cpu_len = sram_len.min(window);
+        let mut cpu: Vec<&DescView> = descs
+            .iter()
+            .filter(|d| d.addrspace.is_empty() && d.ptr == ptr)
+            .collect();
+        cpu.sort_by_key(|d| d.start);
+        let mut next = 0x6000;
+        for d in &cpu {
+            assert_eq!(
+                d.start, next,
+                "the $6000 window has a gap or overlap: {cpu:?}"
+            );
+            assert_eq!(
+                d.offset,
+                d.start - 0x6000,
+                "address $6000+n is byte n: {d:?}"
+            );
+            next += d.len;
+        }
+        assert_eq!(
+            next,
+            0x6000 + cpu_len,
+            "window length for {sram_len} bytes: {cpu:?}"
+        );
+        assert!(
+            next <= ceiling,
+            "the window overruns ${ceiling:04X}: {cpu:?}"
+        );
+        // A buffer larger than the window is reachable in full, each byte
+        // exactly once, in the named SRAM space.
+        let mut chunks: Vec<&DescView> = descs.iter().filter(|d| d.addrspace == "SRAM").collect();
+        if sram_len > cpu_len {
+            chunks.sort_by_key(|d| d.start);
+            let mut next = 0;
+            for c in &chunks {
+                assert_eq!(
+                    c.start, next,
+                    "the SRAM space has a gap or overlap: {chunks:?}"
+                );
+                assert_eq!(c.offset, c.start, "SRAM address n is buffer byte n: {c:?}");
+                assert_eq!(c.ptr, ptr, "one chip, one pointer (libretro.h)");
+                next += c.len;
+            }
+            assert_eq!(
+                next, sram_len,
+                "the SRAM space covers the whole buffer: {chunks:?}"
+            );
+        } else {
+            assert!(
+                chunks.is_empty(),
+                "the window already shows it all: {chunks:?}"
+            );
+        }
+    }
+
+    fn views(descs: &[retro_memory_descriptor]) -> Vec<DescView> {
+        descs
+            .iter()
+            .map(|d| DescView {
+                ptr: d.ptr as usize,
+                offset: d.offset,
+                start: d.start,
+                select: d.select,
+                len: d.len,
+                addrspace: if d.addrspace.is_null() {
+                    String::new()
+                } else {
+                    // SAFETY: every non-null `addrspace` this crate sets is a
+                    // `'static` C string literal.
+                    unsafe { CStr::from_ptr(d.addrspace) }
+                        .to_string_lossy()
+                        .into_owned()
+                },
+            })
+            .collect()
+    }
+
+    /// Check one console's descriptors against libretro.h and the battery
+    /// rule; `what` names the image in a failure.
+    fn check_console(nes: &mut Nes, what: &str) {
+        let sram_len = nes.sram().len();
+        let is_fds = nes.disk_side_count() > 0;
+        let battery = nes.has_battery();
+        let descs = memory_descriptors(nes);
+        assert_descriptor_shape(&views(&descs), sram_len, is_fds);
+        for d in &descs {
+            let save = d.flags & u64::from(RETRO_MEMDESC_SAVE_RAM) != 0;
+            assert!(
+                !save || battery,
+                "{what}: SAVE_RAM flag without a battery ({sram_len} bytes)"
+            );
+        }
+    }
+
+    pub fn walk_nes(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_nes(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("nes"))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// libretro re-audit NL-08. A Vs. database entry sets the PPU palette
+    /// and the DIP switches. nestest re-headed as a Vs. System cartridge
+    /// (NES 2.0 console type 1, byte 13 PPU type 0 = the 2C03 an iNES 1.0
+    /// Vs. dump defaults to) stands in for a commercial dump, and a 2C04
+    /// entry must change the picture it renders; no entry changes nothing.
+    #[test]
+    fn a_vs_database_entry_sets_the_palette_and_the_dips() {
+        use rustynes_core::rustynes_mappers::VsPpuType;
+        use rustynes_core::vs_db::VsDbEntry;
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        rom[7] = 0x09; // NES 2.0, Vs. System
+        rom[13] = 0x00;
+        let entry = VsDbEntry {
+            vs_dip: 0xA5,
+            vs_ppu_type: VsPpuType::Rp2C04_0001,
+            dual_system: false,
+        };
+        let mut plain = Nes::from_rom(&rom).expect("loads");
+        let mut none = Nes::from_rom(&rom).expect("loads");
+        let mut db = Nes::from_rom(&rom).expect("loads");
+        assert!(db.is_vs_system());
+        apply_vs_entry(&mut none, None);
+        apply_vs_entry(&mut db, Some(entry));
+        assert_eq!(db.vs_dip(), 0xA5, "the database's DIP switches");
+        for _ in 0..30 {
+            plain.run_frame();
+            none.run_frame();
+            db.run_frame();
+        }
+        assert_eq!(
+            plain.framebuffer(),
+            none.framebuffer(),
+            "no entry: no change"
+        );
+        assert_ne!(
+            plain.framebuffer(),
+            db.framebuffer(),
+            "a 2C04 entry must change the colours from the 2C03 default"
+        );
+    }
+
+    /// libretro re-audit NL-08, on real dumps where they exist: every image
+    /// under `tests/roms` whose SHA-256 is in the Vs. database must get that
+    /// entry's DIP switches from [`apply_vs_database`] (the palette half is
+    /// pinned above). The committed corpus has no Vs. dump, so in CI this
+    /// finds none and checks nothing; locally the gitignored `external/`
+    /// dumps exercise the lookup.
+    #[test]
+    fn database_listed_vs_dumps_get_their_entry() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/roms");
+        let mut paths = Vec::new();
+        walk_nes(&root, &mut paths);
+        let mut found = 0;
+        for path in &paths {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let Ok(Ok(emu)) = std::panic::catch_unwind(|| Emu::from_rom(&bytes)) else {
+                continue;
+            };
+            let (mut single, mut dual);
+            let nes: &mut Nes = match emu {
+                Emu::Single(nes) => {
+                    single = nes;
+                    &mut single
+                }
+                Emu::Dual(pair) => {
+                    dual = pair;
+                    dual.main_mut()
+                }
+            };
+            let Some(entry) = rustynes_core::vs_db::lookup(nes.rom_sha256()) else {
+                continue;
+            };
+            nes.set_vs_dip(!entry.vs_dip);
+            apply_vs_database(nes);
+            assert_eq!(nes.vs_dip(), entry.vs_dip, "{}", path.display());
+            found += 1;
+        }
+        eprintln!("Vs. database dumps checked: {found}");
+    }
+
+    /// libretro re-audit NL-02 and NL-06, over every `.nes` image under
+    /// `tests/roms` (the committed CC0 corpus in CI; locally also any dumps
+    /// in the gitignored `external/`), plus the FDS RAM adapter (the three
+    /// synthetic MMC1 sizes are the C-ABI test's). Each console's descriptors
+    /// must satisfy libretro.h and carry `SAVE_RAM` only with a battery.
+    #[test]
+    fn every_image_gets_legal_prg_ram_descriptors() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/roms");
+        let mut paths = Vec::new();
+        walk_nes(&root, &mut paths);
+        assert!(
+            paths.len() > 100,
+            "the corpus was not found at {}",
+            root.display()
+        );
+        let mut checked = 0;
+        for path in &paths {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            // Some corpus images are deliberately malformed; a parse panic is
+            // not what this test is about.
+            let Ok(Ok(emu)) = std::panic::catch_unwind(|| Emu::from_rom(&bytes)) else {
+                continue;
+            };
+            let what = path.display().to_string();
+            match emu {
+                Emu::Single(mut nes) => check_console(&mut nes, &what),
+                Emu::Dual(mut dual) => check_console(dual.main_mut(), &what),
+            }
+            checked += 1;
+        }
+        assert!(checked > 100, "only {checked} images loaded");
+
+        // The FDS RAM adapter: 32 KiB really is mapped at $6000-$DFFF, and
+        // an FDS image has no battery.
+        let mut bios = vec![0u8; 0x2000];
+        bios[0x1FFC] = 0x00;
+        bios[0x1FFD] = 0xE0;
+        let mut disk = vec![0u8; 16 + 65_500];
+        disk[..4].copy_from_slice(b"FDS\x1A");
+        disk[4] = 1;
+        disk[16] = 0x01;
+        disk[17..31].copy_from_slice(b"*NINTENDO-HVC*");
+        let mut fds = Nes::from_disk(&disk, &bios).expect("synthetic disk loads");
+        assert_eq!(fds.sram().len(), 0x8000, "the RAM adapter's 32 KiB");
+        // `check_console` asserts the window runs $6000-$DFFF in full.
+        check_console(&mut fds, "synthetic FDS");
+    }
 
     #[test]
     fn switching_a_port_away_from_the_zapper_unplugs_it() {

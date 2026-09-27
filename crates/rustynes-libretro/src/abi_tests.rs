@@ -21,6 +21,7 @@
 //! build their own `RustyNesLibretro` and never touch the global instance.
 
 use super::*;
+use crate::tests::DescView;
 use std::os::raw::{c_uint, c_void};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU32, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, Once};
@@ -49,12 +50,165 @@ static POLLS: AtomicU32 = AtomicU32::new(0);
 static JOYPAD_READS: AtomicU32 = AtomicU32::new(0);
 /// The port of every descriptor in the most recent `SET_INPUT_DESCRIPTORS`.
 static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+/// `(port, id, description)` of every descriptor in the most recent
+/// `SET_INPUT_DESCRIPTORS`.
+static DESCRIBED: Mutex<Vec<(u32, u32, String)>> = Mutex::new(Vec::new());
 /// Keys the core declared with `SET_VARIABLES`.
 static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// How many times the core has called `SET_VARIABLES`.
+static SET_VARIABLES_CALLS: AtomicU32 = AtomicU32::new(0);
+/// Whether the fake video callback copies each frame into `LAST_FRAME`
+/// (off by default: most tests do not look at the picture).
+static KEEP_FRAME: AtomicBool = AtomicBool::new(false);
+/// The last frame presented, as tightly packed XRGB8888 rows.
+static LAST_FRAME: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// The RetroPad buttons held on each port, as a `RETRO_DEVICE_ID_JOYPAD_MASK`
+/// bitmask (bit n = `RETRO_DEVICE_ID_JOYPAD_*` n).
+static PADS: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
+
+/// The disk-control interface version the fake frontend reports.
+static DISK_VERSION: AtomicU32 = AtomicU32::new(1);
+/// `SET_DISK_CONTROL_INTERFACE` (v0) calls since last cleared.
+static DISK_V0_SETS: AtomicU32 = AtomicU32::new(0);
+/// `SET_DISK_CONTROL_EXT_INTERFACE` calls since last cleared.
+static DISK_EXT_SETS: AtomicU32 = AtomicU32::new(0);
+/// The callbacks of the most recent `SET_DISK_CONTROL_EXT_INTERFACE`.
+static DISK_EXT: Mutex<Option<DiskExt>> = Mutex::new(None);
+
+/// The parts of a `retro_disk_control_ext_callback` the tests call or check.
+#[derive(Clone, Copy)]
+struct DiskExt {
+    get_num_images: retro_get_num_images_t,
+    get_image_label: retro_get_image_label_t,
+    get_image_path: retro_get_image_path_t,
+    set_initial_image: retro_set_initial_image_t,
+}
+
+/// What the synthetic BIOS writes over side A's disk-info block: the block
+/// code and signature unchanged (so the image still parses), then this
+/// marker, then zeros to the block's 56 bytes.
+const DISK_MARKER: &[u8] = b"RUSTYNES-NL03-DISK-SAVE";
+
+/// The synthetic 8 KiB FDS BIOS (the real `disksys.rom` is Nintendo's and is
+/// never committed). At reset it saves to the disk the way a game does,
+/// through the drive registers, and then idles:
+///
+/// ```text
+/// $E000  LDA #$01 / STA $4023     disk I/O on
+///        LDA #$00 / STA $4024     byte for head position 0
+///        LDA #$60 / STA $4025     write mode, motor on, CRC control
+///        LDX #200                 heads 1-200: the lead-in gap (not stored)
+/// gap:   BIT $4030 / BPL gap      wait for the byte-transfer flag
+///        LDA #$00 / STA $4024 / DEX / BNE gap
+///        LDY #0                   heads 201-256: the disk-info block
+/// pay:   BIT $4030 / BPL pay
+///        LDA $E100,Y / STA $4024 / INY / CPY #56 / BNE pay
+/// last:  BIT $4030 / BPL last     the last byte is on the disk
+///        LDA #$00 / STA $4023     disk I/O off
+/// idle:  JMP idle
+/// $E080  RTI                      NMI / IRQ
+/// $E100  the 56-byte block: $01 "*NINTENDO-HVC*" DISK_MARKER, zeros
+/// ```
+///
+/// The drive stores the byte in `$4024` at each head position and sets
+/// `$4030` bit 7; writing `$4024` clears it. After a 50,000-cycle spin-up and
+/// 257 bytes at 149 cycles each the write is done within three frames. The
+/// wire layout (a 200-byte lead-in gap, the `$80` start mark at 200, the
+/// first block's payload from 201) is `rustynes-mappers`' `fds.rs`.
+fn synthetic_bios() -> Vec<u8> {
+    let mut bios = vec![0u8; 0x2000];
+    let program: [u8; 0x3D] = [
+        0xA9, 0x01, 0x8D, 0x23, 0x40, // LDA #$01, STA $4023
+        0xA9, 0x00, 0x8D, 0x24, 0x40, // LDA #$00, STA $4024
+        0xA9, 0x60, 0x8D, 0x25, 0x40, // LDA #$60, STA $4025
+        0xA2, 0xC8, // $E00F LDX #200
+        0x2C, 0x30, 0x40, 0x10, 0xFB, // $E011 BIT $4030, BPL $E011
+        0xA9, 0x00, 0x8D, 0x24, 0x40, // LDA #$00, STA $4024
+        0xCA, 0xD0, 0xF3, // DEX, BNE $E011
+        0xA0, 0x00, // $E01E LDY #0
+        0x2C, 0x30, 0x40, 0x10, 0xFB, // $E020 BIT $4030, BPL $E020
+        0xB9, 0x00, 0xE1, 0x8D, 0x24, 0x40, // LDA $E100,Y, STA $4024
+        0xC8, 0xC0, 0x38, 0xD0, 0xF0, // INY, CPY #56, BNE $E020
+        0x2C, 0x30, 0x40, 0x10, 0xFB, // $E030 BIT $4030, BPL $E030
+        0xA9, 0x00, 0x8D, 0x23, 0x40, // LDA #$00, STA $4023
+        0x4C, 0x3A, 0xE0, // $E03A JMP $E03A
+    ];
+    bios[..program.len()].copy_from_slice(&program);
+    bios[0x80] = 0x40; // $E080: RTI
+    let block = &mut bios[0x100..0x100 + 56];
+    block[0] = 0x01;
+    block[1..15].copy_from_slice(b"*NINTENDO-HVC*");
+    block[15..15 + DISK_MARKER.len()].copy_from_slice(DISK_MARKER);
+    // NMI $E080, RESET $E000, IRQ $E080.
+    bios[0x1FFA..].copy_from_slice(&[0x80, 0xE0, 0x00, 0xE0, 0x80, 0xE0]);
+    bios
+}
+
+/// A fwNES disk image with `sides` sides, each opening with the disk-info
+/// block signature (the only part the loader requires).
+fn synthetic_disk(sides: u8) -> &'static [u8] {
+    const SIDE: usize = 65_500;
+    let mut disk = vec![0u8; 16 + usize::from(sides) * SIDE];
+    disk[..4].copy_from_slice(b"FDS\x1A");
+    disk[4] = sides;
+    for s in 0..usize::from(sides) {
+        let base = 16 + s * SIDE;
+        disk[base] = 0x01;
+        disk[base + 1..base + 15].copy_from_slice(b"*NINTENDO-HVC*");
+    }
+    Box::leak(disk.into_boxed_slice())
+}
+
+/// The fake frontend's directories, created once per test process under the
+/// OS temporary directory, with the synthetic BIOS in the system one. The C
+/// strings are what `GET_*_DIRECTORY` hand out; they live for the process.
+struct Dirs {
+    system: std::ffi::CString,
+    save: std::ffi::CString,
+    save_path: std::path::PathBuf,
+}
+
+fn dirs() -> &'static Dirs {
+    static DIRS: std::sync::OnceLock<Dirs> = std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let root = std::env::temp_dir()
+            .join("RustyNES")
+            .join(format!("libretro-abi-{}", std::process::id()));
+        let system = root.join("system");
+        let save = root.join("saves");
+        std::fs::create_dir_all(&system).expect("create the system directory");
+        std::fs::create_dir_all(&save).expect("create the save directory");
+        std::fs::write(system.join("disksys.rom"), synthetic_bios()).expect("write the BIOS");
+        let c = |p: &std::path::Path| {
+            std::ffi::CString::new(p.to_str().expect("UTF-8 temp path")).expect("no NUL")
+        };
+        Dirs {
+            system: c(&system),
+            save: c(&save),
+            save_path: save,
+        }
+    })
+}
 /// The value the fake frontend reports for `rustynes_four_score`.
 static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
 /// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
 static VARS_CHANGED: AtomicBool = AtomicBool::new(false);
+/// The descriptors of the most recent `SET_MEMORY_MAPS`, copied out.
+static LAST_MAP: Mutex<Vec<Desc>> = Mutex::new(Vec::new());
+
+/// One `retro_memory_descriptor`, copied out of a `SET_MEMORY_MAPS` call so
+/// a test can inspect it after the call returns.
+#[derive(Clone, Debug)]
+struct Desc {
+    flags: u64,
+    ptr: usize,
+    offset: usize,
+    start: usize,
+    select: usize,
+    len: usize,
+    addrspace: String,
+}
 
 /// Lock a harness `Mutex`, ignoring poison: every test resets what it reads.
 fn held<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -84,6 +238,38 @@ unsafe extern "C" fn log_printf(
         .push(text.to_string_lossy().into_owned());
 }
 
+/// Copy the descriptors of a `SET_MEMORY_MAPS` call out of the core's
+/// memory, which is only valid for the duration of the call.
+fn copy_descriptors(map: &retro_memory_map) -> Vec<Desc> {
+    let mut descs = Vec::new();
+    for i in 0..map.num_descriptors as usize {
+        // SAFETY: `descriptors` holds `num_descriptors` entries for the
+        // duration of the call; a count of zero never reads it.
+        let d = unsafe { &*map.descriptors.add(i) };
+        let addrspace = if d.addrspace.is_null() {
+            String::new()
+        } else {
+            // SAFETY: a non-null `addrspace` is a NUL-terminated name.
+            unsafe { CStr::from_ptr(d.addrspace) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        descs.push(Desc {
+            flags: d.flags,
+            ptr: d.ptr as usize,
+            offset: d.offset,
+            start: d.start,
+            select: d.select,
+            len: d.len,
+            addrspace,
+        });
+    }
+    descs
+}
+
+// One arm per environment command the fake frontend answers: the whole
+// frontend's behaviour in one table reads better than split across helpers.
+#[allow(clippy::too_many_lines)]
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
         RETRO_ENVIRONMENT_GET_GAME_INFO_EXT => {
@@ -118,18 +304,68 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         // A current frontend: joypads can be read as one bitmask.
         RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => true,
+        RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut *const c_char`; the string is
+            // a process-lifetime `CString`.
+            unsafe { *data.cast::<*const std::ffi::c_char>() = dirs().system.as_ptr() };
+            true
+        }
+        RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: as for the system directory.
+            unsafe { *data.cast::<*const std::ffi::c_char>() = dirs().save.as_ptr() };
+            true
+        }
+        RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION => {
+            if data.is_null() {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut c_uint`.
+            unsafe { *data.cast::<c_uint>() = DISK_VERSION.load(SeqCst) };
+            true
+        }
+        RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
+            DISK_V0_SETS.fetch_add(1, SeqCst);
+            true
+        }
+        RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
+            if data.is_null() || DISK_VERSION.load(SeqCst) == 0 {
+                return false;
+            }
+            // SAFETY: the core passes a `*const retro_disk_control_ext_callback`
+            // valid for the call; the function pointers in it are the core's
+            // own `extern "C"` functions and live for the process.
+            let ext = unsafe { &*data.cast::<retro_disk_control_ext_callback>() };
+            *held(&DISK_EXT) = Some(DiskExt {
+                get_num_images: ext.get_num_images,
+                get_image_label: ext.get_image_label,
+                get_image_path: ext.get_image_path,
+                set_initial_image: ext.set_initial_image,
+            });
+            DISK_EXT_SETS.fetch_add(1, SeqCst);
+            true
+        }
         RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS => {
             let mut ports = Vec::new();
+            let mut named = Vec::new();
             let mut d = data.cast::<retro_input_descriptor>().cast_const();
             // SAFETY: the core passes an array terminated by an entry whose
             // `description` is null, valid for the duration of the call.
             unsafe {
                 while !d.is_null() && !(*d).description.is_null() {
                     ports.push((*d).port);
+                    let text = CStr::from_ptr((*d).description).to_string_lossy();
+                    named.push(((*d).port, (*d).id, text.into_owned()));
                     d = d.add(1);
                 }
             }
             *held(&DESCRIBED_PORTS) = ports;
+            *held(&DESCRIBED) = named;
             true
         }
         RETRO_ENVIRONMENT_SET_VARIABLES => {
@@ -143,6 +379,7 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 }
             }
             *held(&DECLARED_VARS) = keys;
+            SET_VARIABLES_CALLS.fetch_add(1, SeqCst);
             true
         }
         RETRO_ENVIRONMENT_GET_VARIABLE => {
@@ -180,6 +417,7 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // command, valid for the duration of the call.
             let map = unsafe { &*data.cast::<retro_memory_map>() };
             LAST_MAP_LEN.store(i64::from(map.num_descriptors), SeqCst);
+            *held(&LAST_MAP) = copy_descriptors(map);
             true
         }
         // Every other command is refused, which is what a minimal frontend
@@ -188,7 +426,21 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     }
 }
 
-unsafe extern "C" fn video(_: *const c_void, _: c_uint, _: c_uint, _: usize) {}
+unsafe extern "C" fn video(data: *const c_void, width: c_uint, height: c_uint, pitch: usize) {
+    if !KEEP_FRAME.load(SeqCst) || data.is_null() {
+        return;
+    }
+    let len = pitch * height as usize;
+    // SAFETY: libretro.h: `data` holds `height` rows of `pitch` bytes for
+    // the duration of the call; only `width * 4` bytes of each row are
+    // pixels (XRGB8888), and all of it is readable.
+    let frame = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len) };
+    let mut out = Vec::with_capacity(width as usize * 4 * height as usize);
+    for row in frame.chunks(pitch) {
+        out.extend_from_slice(&row[..width as usize * 4]);
+    }
+    *held(&LAST_FRAME) = out;
+}
 unsafe extern "C" fn audio_batch(_: *const i16, frames: usize) -> usize {
     frames
 }
@@ -196,9 +448,14 @@ unsafe extern "C" fn audio_sample(_: i16, _: i16) {}
 unsafe extern "C" fn input_poll() {
     POLLS.fetch_add(1, SeqCst);
 }
-unsafe extern "C" fn input_state(_port: c_uint, device: c_uint, _: c_uint, id: c_uint) -> i16 {
+unsafe extern "C" fn input_state(port: c_uint, device: c_uint, _: c_uint, id: c_uint) -> i16 {
     if device == RETRO_DEVICE_JOYPAD {
         JOYPAD_READS.fetch_add(1, SeqCst);
+        if id == RETRO_DEVICE_ID_JOYPAD_MASK {
+            let mask = PADS.get(port as usize).map_or(0, |p| p.load(SeqCst));
+            // The bitmask is 16 bits wide; libretro returns it as `int16_t`.
+            return (mask as u16).cast_signed();
+        }
     }
     i16::from(
         device == RETRO_DEVICE_LIGHTGUN
@@ -232,6 +489,11 @@ fn frontend() -> MutexGuard<'static, ()> {
     });
     SUPPORT_EXT.store(true, SeqCst);
     TRIGGER.store(false, SeqCst);
+    DISK_VERSION.store(1, SeqCst);
+    for pad in &PADS {
+        pad.store(0, SeqCst);
+    }
+    KEEP_FRAME.store(false, SeqCst);
     guard
 }
 
@@ -600,6 +862,75 @@ fn registered_memory_stays_put_across_a_restore() {
     unload();
 }
 
+/// Set the version byte of the LAST `CPU ` section in a serialized state. In
+/// a single-console state that is the console's CPU section; in a dual
+/// cabinet's container it is the SUB console's, which is decoded after the
+/// main console has been applied.
+fn reject_last_cpu_section(state: &mut [u8]) {
+    let at = state
+        .windows(4)
+        .rposition(|w| w == b"CPU ")
+        .expect("a CPU section");
+    state[at + 4] = state[at + 4].wrapping_add(1);
+}
+
+/// Serialize, run on, try to unserialize the EARLY state with its last CPU
+/// section rejected, and report (the call's result, whether a fresh serialize
+/// equals the one taken just before the call).
+fn a_rejected_unserialize(rom: &'static [u8]) -> (bool, bool) {
+    assert!(load(rom, true));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let size = serialize_size();
+    let mut early = vec![0_u8; size];
+    assert!(serialize(&mut early));
+    for _ in 0..50 {
+        run_frame();
+    }
+    let mut reference = vec![0_u8; size];
+    assert!(serialize(&mut reference));
+    reject_last_cpu_section(&mut early);
+    let accepted = unserialize(&early);
+    let mut after = vec![0_u8; size];
+    assert!(serialize(&mut after));
+    unload();
+    (accepted, after == reference)
+}
+
+/// v2.9.0 re-audit NL-01 (core NC-03 / NC-05). `retro_unserialize` receives
+/// every state a user loads — a slot file, a state from an older core, a
+/// corrupt one — and routed it through `Nes::restore_quiet`, which had no
+/// rollback: a state rejected at its CPU section returned `false` and left
+/// the bus, PPU, APU and mapper from the file under the running game's CPU,
+/// and RetroArch kept emulating that machine. For the Vs. `DualSystem`
+/// cabinet a rejected SUB block left the main console restored. Both must
+/// now return `false` AND leave the machine exactly as it was.
+#[test]
+fn a_rejected_unserialize_leaves_the_machine_as_it_was() {
+    let _frontend = frontend();
+    let (accepted, unchanged) = a_rejected_unserialize(NESTEST);
+    assert!(
+        !accepted,
+        "a state with a rejected CPU section must not load"
+    );
+    assert!(unchanged, "a rejected unserialize changed the console");
+
+    // nestest's PRG/CHR under a NES 2.0 Vs. DualSystem header (console type
+    // Vs. System, byte-13 hardware type 5), as the re-audit's demonstration
+    // built it. Leaked: `load` hands the bytes to the core as a frontend would.
+    let mut dual = NESTEST.to_vec();
+    dual[7] = 0x08 | 0x01;
+    dual[13] = 0x50;
+    let dual: &'static [u8] = Box::leak(dual.into_boxed_slice());
+    let (accepted, unchanged) = a_rejected_unserialize(dual);
+    assert!(
+        !accepted,
+        "a dual state with a rejected sub block must not load"
+    );
+    assert!(unchanged, "a rejected dual unserialize changed the cabinet");
+}
+
 /// libretro audit §1.1 (L-1.1). A panic inside a frame used to cross the
 /// `extern "C"` boundary and abort the frontend: in this test process it would
 /// abort the test binary, which is what the mutation that removes
@@ -674,4 +1005,572 @@ fn the_core_works_again_after_deinit_and_init() {
     let mut buf = vec![0_u8; serialize_size()];
     assert!(serialize(&mut buf));
     unload();
+}
+
+/// A copy of nestest with its header edited by `edit`, leaked so `load` can
+/// hand the frontend a `'static` buffer (one small leak per test).
+fn nestest_with(edit: impl FnOnce(&mut Vec<u8>)) -> &'static [u8] {
+    let mut rom = NESTEST.to_vec();
+    edit(&mut rom);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// nestest's PRG and CHR under an MMC1 NES 2.0 header whose byte 10 is
+/// `prg_ram_byte` (low nibble volatile, high nibble battery-backed PRG-RAM,
+/// each `64 << n` bytes), with the battery bit when `battery`. `0x7A` gives
+/// 64 KiB + 8 KiB = 73,728 bytes, the size three commercial MMC1 dumps
+/// expose (libretro re-audit NL-06); `0x0A` gives 64 KiB; `0x09` 32 KiB.
+fn mmc1_with_prg_ram(prg_ram_byte: u8, battery: bool) -> &'static [u8] {
+    let prg = &NESTEST[16..16 + 16 * 1024];
+    let chr = &NESTEST[16 + 16 * 1024..16 + 24 * 1024];
+    let mut rom = vec![0u8; 16];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 8; // 128 KiB PRG: nestest's 16 KiB, eight times
+    rom[5] = 1; // 8 KiB CHR
+    rom[6] = 0x10 | if battery { 0x02 } else { 0 }; // mapper 1
+    rom[7] = 0x08; // NES 2.0
+    rom[10] = prg_ram_byte;
+    for _ in 0..8 {
+        rom.extend_from_slice(prg);
+    }
+    rom.extend_from_slice(chr);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The CPU-space (blank `addrspace`) descriptor that starts at `$6000`.
+fn cpu_window(descs: &[Desc]) -> Option<Desc> {
+    descs
+        .iter()
+        .find(|d| d.addrspace.is_empty() && d.start == 0x6000)
+        .cloned()
+}
+
+fn memory_size(id: c_uint) -> usize {
+    // SAFETY: a plain query.
+    unsafe { rust_libretro::retro_get_memory_size(id) }
+}
+
+fn memory_data(id: c_uint) -> *mut c_void {
+    // SAFETY: a plain query; the pointer is only compared, never dereferenced.
+    unsafe { rust_libretro::retro_get_memory_data(id) }
+}
+
+/// libretro re-audit NL-02. RetroArch writes `RETRO_MEMORY_SAVE_RAM` to a
+/// `.srm` and loads it back after `retro_load_game`, so exposing work RAM
+/// without a battery gave 581 images of the local corpus a save file the
+/// hardware never had, and restored stale RAM on the next boot. nestest's
+/// header has no battery bit: it must expose no save RAM, and no descriptor
+/// may carry the `SAVE_RAM` flag. With the bit set, the same 8 KiB is save RAM.
+#[test]
+fn save_ram_is_exposed_only_for_a_battery_backed_cartridge() {
+    let _frontend = frontend();
+
+    assert!(load(NESTEST, true));
+    let descs = held(&LAST_MAP).clone();
+    let (size, data) = (
+        memory_size(RETRO_MEMORY_SAVE_RAM),
+        memory_data(RETRO_MEMORY_SAVE_RAM),
+    );
+    unload();
+    assert_eq!(size, 0, "a cartridge without a battery has no save RAM");
+    assert!(data.is_null(), "and no save-RAM pointer");
+    assert!(
+        descs
+            .iter()
+            .all(|d| d.flags & u64::from(RETRO_MEMDESC_SAVE_RAM) == 0),
+        "no descriptor may be flagged SAVE_RAM: {descs:?}"
+    );
+    // The work RAM stays visible to cheats and RetroAchievements, as plain
+    // memory at $6000.
+    let window = cpu_window(&descs).expect("volatile PRG-RAM is still described at $6000");
+    assert_eq!(window.len, 0x2000);
+
+    let battery = nestest_with(|rom| rom[6] |= 0x02);
+    assert!(load(battery, true));
+    let descs = held(&LAST_MAP).clone();
+    let size = memory_size(RETRO_MEMORY_SAVE_RAM);
+    let data = memory_data(RETRO_MEMORY_SAVE_RAM);
+    unload();
+    assert_eq!(size, 0x2000, "a battery-backed cartridge exposes its 8 KiB");
+    assert!(!data.is_null());
+    let window = cpu_window(&descs).expect("save RAM is described at $6000");
+    assert_ne!(
+        window.flags & u64::from(RETRO_MEMDESC_SAVE_RAM),
+        0,
+        "and flagged as save RAM"
+    );
+}
+
+/// libretro re-audit NL-06. The save-RAM descriptor was
+/// `{start: $6000, select: 0, len: sram_len}` whatever the size: 64 KiB
+/// claimed `$6000-$15FFF`, past the 16-bit bus; 32 KiB claimed PRG-ROM at
+/// `$8000-$DFFF`; and 73,728 bytes broke libretro.h's power-of-two rule.
+/// Driven through the C ABI at all three sizes.
+#[test]
+fn save_ram_descriptors_have_the_shape_libretro_h_requires() {
+    let _frontend = frontend();
+    for (byte10, expect) in [(0x7A_u8, 73_728_usize), (0x0A, 65_536), (0x09, 32_768)] {
+        let rom = mmc1_with_prg_ram(byte10, true);
+        assert!(load(rom, true), "the synthetic MMC1 image loads");
+        let descs: Vec<DescView> = held(&LAST_MAP).iter().map(DescView::from).collect();
+        let size = memory_size(RETRO_MEMORY_SAVE_RAM);
+        unload();
+        assert_eq!(size, expect, "the whole buffer stays save RAM for the .srm");
+        crate::tests::assert_descriptor_shape(&descs, expect, false);
+    }
+}
+
+impl From<&Desc> for DescView {
+    fn from(d: &Desc) -> Self {
+        Self {
+            ptr: d.ptr,
+            offset: d.offset,
+            start: d.start,
+            select: d.select,
+            len: d.len,
+            addrspace: d.addrspace.clone(),
+        }
+    }
+}
+
+/// libretro re-audit NL-10. libretro.h, `retro_serialize`: "If failed, or
+/// size is lower than retro_serialize_size(), it should return false". The
+/// core succeeded whenever the state itself fitted, and the state is usually
+/// 26 bytes smaller than the reported size (the expansion-device headroom),
+/// so a buffer one byte short still returned true.
+#[test]
+fn serialize_refuses_a_buffer_smaller_than_it_asked_for() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    run_frame();
+    let size = serialize_size();
+    let mut short = vec![0_u8; size - 1];
+    let refused = !serialize(&mut short);
+    let mut exact = vec![0_u8; size];
+    let accepted = serialize(&mut exact);
+    unload();
+    assert!(
+        refused,
+        "a buffer below retro_serialize_size must be refused"
+    );
+    assert!(
+        accepted,
+        "a buffer of exactly retro_serialize_size must work"
+    );
+}
+
+/// libretro re-audit NL-05. `rust-libretro` declares core options only on the
+/// first `retro_set_environment` the process ever sees, and its instance is
+/// never reset (L-1.4). A frontend that keeps the library loaded, calls
+/// `retro_deinit`, and starts again with `retro_set_environment` +
+/// `retro_init` got no `SET_VARIABLES`, so a frontend that drops its option
+/// set at deinit had no Four Score option in the second session. Each
+/// init cycle must declare the options once; a repeated
+/// `retro_set_environment` inside one cycle does not need to.
+#[test]
+fn core_options_are_declared_again_after_deinit_and_init() {
+    let _frontend = frontend();
+    let before = SET_VARIABLES_CALLS.load(SeqCst);
+    // SAFETY: plain lifecycle calls, in the order a frontend that reuses a
+    // loaded library makes them (libretro.h: set_environment before init).
+    unsafe {
+        rust_libretro::retro_deinit();
+        rust_libretro::retro_set_environment(Some(environment));
+        rust_libretro::retro_init();
+    }
+    let after_cycle = SET_VARIABLES_CALLS.load(SeqCst);
+    // SAFETY: as above; a second environment inside the same cycle.
+    unsafe { rust_libretro::retro_set_environment(Some(environment)) };
+    let after_repeat = SET_VARIABLES_CALLS.load(SeqCst);
+    assert_eq!(
+        after_cycle,
+        before + 1,
+        "a new init cycle must declare the core options"
+    );
+    assert!(
+        held(&DECLARED_VARS)
+            .iter()
+            .any(|k| k == "rustynes_four_score"),
+        "and the declaration must carry the Four Score option"
+    );
+    assert_eq!(
+        after_repeat, after_cycle,
+        "a repeated set_environment within one cycle declares nothing new"
+    );
+}
+
+/// Re-send the environment, as a frontend does, with the disk-control
+/// counters cleared first.
+fn resend_environment() {
+    DISK_V0_SETS.store(0, SeqCst);
+    DISK_EXT_SETS.store(0, SeqCst);
+    *held(&DISK_EXT) = None;
+    // SAFETY: a plain lifecycle call; repeating it is permitted.
+    unsafe { rust_libretro::retro_set_environment(Some(environment)) };
+}
+
+/// Ask the registered `get_image_label` for side `index` into a `len`-byte
+/// buffer pre-filled with `0xFF`, and return what it reported and wrote.
+fn label(ext: DiskExt, index: c_uint, len: usize) -> (bool, Vec<u8>) {
+    let get = ext.get_image_label.expect("get_image_label is registered");
+    let mut buf = vec![0xFF_u8; len.max(1)];
+    // SAFETY: `buf` is valid for `len` bytes of writes for the call.
+    let ok = unsafe { get(index, buf.as_mut_ptr().cast(), len) };
+    (ok, buf)
+}
+
+/// libretro re-audit NL-07. The core registered only the v0 disk-control
+/// interface, which has no `get_image_label`, so the "Side A" / "Side B"
+/// labels it computes never reached a frontend even when that frontend
+/// reported the extended interface. With the extended interface, the labels
+/// must arrive NUL-terminated (the `rust-libretro` label copy wrote no
+/// terminator: libretro audit L-1.5), a short buffer must be truncated
+/// rather than overrun, and an index past the last side must be refused.
+/// `set_initial_image` and `get_image_path` stay NULL, so the frontend does
+/// not try to boot a remembered side (an FDS game boots from side A).
+#[test]
+fn disk_labels_reach_a_frontend_with_the_extended_interface() {
+    let _frontend = frontend();
+    resend_environment();
+    assert_eq!(
+        DISK_EXT_SETS.load(SeqCst),
+        1,
+        "version 1: the extended interface"
+    );
+    assert_eq!(DISK_V0_SETS.load(SeqCst), 0, "and not the v0 one as well");
+    let ext = held(&DISK_EXT).expect("the extended callbacks were handed over");
+    assert!(ext.set_initial_image.is_none() && ext.get_image_path.is_none());
+
+    assert!(load(synthetic_disk(2), true), "a two-sided disk loads");
+    let sides = ext.get_num_images.expect("get_num_images is registered");
+    // SAFETY: a plain query through the registered callback.
+    assert_eq!(unsafe { sides() }, 2);
+    let (ok, buf) = label(ext, 0, 32);
+    assert!(ok);
+    assert_eq!(CStr::from_bytes_until_nul(&buf).ok(), Some(c"Side A"));
+    let (ok, buf) = label(ext, 1, 32);
+    assert!(ok);
+    assert_eq!(CStr::from_bytes_until_nul(&buf).ok(), Some(c"Side B"));
+    let (ok, buf) = label(ext, 0, 4);
+    assert!(ok, "a short buffer gets a truncated label");
+    assert_eq!(&buf[..4], b"Sid\0", "truncated, and still terminated");
+    assert!(
+        !label(ext, 2, 32).0,
+        "index 2 of a two-sided disk is invalid"
+    );
+    assert!(
+        !label(ext, 0, 0).0,
+        "a zero-length buffer cannot hold a label"
+    );
+    let get = ext.get_image_label.expect("registered");
+    // SAFETY: a null buffer, which the callback must refuse without writing.
+    assert!(!unsafe { get(0, std::ptr::null_mut(), 32) });
+    unload();
+
+    // A frontend without the extended interface still gets the v0 one.
+    DISK_VERSION.store(0, SeqCst);
+    resend_environment();
+    assert_eq!(DISK_V0_SETS.load(SeqCst), 1, "version 0: the v0 interface");
+    assert_eq!(DISK_EXT_SETS.load(SeqCst), 0);
+}
+
+/// Serialize the loaded game into a fresh buffer of the reported size.
+fn state() -> Vec<u8> {
+    let mut buf = vec![0_u8; serialize_size()];
+    assert!(serialize(&mut buf), "serialize");
+    buf
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// libretro re-audit NL-03. An FDS game saves by writing to its disk, and
+/// nothing in the libretro core ever read the written disk back out, so
+/// every in-game save was lost when the game closed. The synthetic BIOS
+/// writes a marker into side A through the drive registers, exactly as a
+/// game's save routine does. The written disk must reach
+/// `<save dir>/RustyNES/<hash of the original image>.fds.sav` when the game
+/// is unloaded, and again a second after a write while it runs; and the next
+/// load of the same (original) image must boot the saved disk. The FDS
+/// snapshot carries the disk contents, so a save state shows which disk is
+/// in the drive.
+#[test]
+fn fds_disk_writes_survive_closing_the_game() {
+    let _frontend = frontend();
+    let disk = synthetic_disk(1);
+    let sha = Nes::from_disk(disk, &synthetic_bios())
+        .expect("synthetic disk")
+        .rom_sha256()
+        .iter()
+        .fold(String::new(), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{b:02x}");
+            s
+        });
+    let file = dirs()
+        .save_path
+        .join("RustyNES")
+        .join(format!("{sha}.fds.sav"));
+    let _ = std::fs::remove_file(&file);
+    let written = |file: &std::path::Path| {
+        std::fs::read(file)
+            .ok()
+            .is_some_and(|b| b.get(15..15 + DISK_MARKER.len()) == Some(DISK_MARKER))
+    };
+
+    // A clean boot: nothing written yet.
+    assert!(load(disk, true));
+    assert!(
+        !contains(&state(), DISK_MARKER),
+        "the original disk is clean"
+    );
+    // Unloading after the write: the disk is saved.
+    for _ in 0..5 {
+        run_frame();
+    }
+    assert!(contains(&state(), DISK_MARKER), "the BIOS wrote the disk");
+    assert!(!file.exists(), "not yet: the write is under a second old");
+    unload();
+    assert!(
+        written(&file),
+        "unloading must save the written disk to {}",
+        file.display()
+    );
+
+    // While running: a second after the write, without unloading.
+    std::fs::remove_file(&file).expect("remove the save");
+    assert!(load(disk, true));
+    for _ in 0..70 {
+        run_frame();
+    }
+    assert!(
+        written(&file),
+        "a written disk must be saved within a second"
+    );
+    unload();
+
+    // The next boot of the original image boots the saved disk. No frame
+    // runs, so the BIOS has not written anything this time.
+    assert!(load(disk, true));
+    let restored = contains(&state(), DISK_MARKER);
+    unload();
+    assert!(restored, "the saved disk must be the one in the drive");
+    let _ = std::fs::remove_file(&file);
+}
+
+/// A 16 KiB NROM Vs. System cartridge (NES 2.0, console type 1) whose
+/// program copies `$4016` to `$0000` and `$4017` to `$0001` forever, so the
+/// coin, service and DIP bits the Vs. panel drives are visible in WRAM.
+/// `dual` marks it a Vs. `DualSystem` board (byte 13 hardware type 5).
+///
+/// ```text
+/// $C000  LDA #$01 / STA $4016 / LDA #$00 / STA $4016   strobe the pads
+///        LDA $4016 / STA $00 / LDA $4017 / STA $01
+///        JMP $C000
+/// ```
+fn vs_probe_rom(dual: bool) -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1; // 16 KiB PRG
+    rom[5] = 1; // 8 KiB CHR
+    rom[7] = 0x08 | 0x01; // NES 2.0, Vs. System
+    rom[13] = if dual { 0x50 } else { 0x00 };
+    let program = [
+        0xA9, 0x01, 0x8D, 0x16, 0x40, 0xA9, 0x00, 0x8D, 0x16, 0x40, // strobe
+        0xAD, 0x16, 0x40, 0x85, 0x00, // LDA $4016, STA $00
+        0xAD, 0x17, 0x40, 0x85, 0x01, // LDA $4017, STA $01
+        0x4C, 0x00, 0xC0, // JMP $C000
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    // NMI, RESET, IRQ -> $C000 (the PRG is mirrored at $8000 and $C000).
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The first two bytes of the loaded game's (main console's) WRAM.
+fn wram_head() -> (u8, u8) {
+    let ram = system_ram().cast::<u8>();
+    assert!(!ram.is_null());
+    // SAFETY: WRAM is 2 KiB and stays allocated while the game is loaded.
+    unsafe { (*ram, *ram.add(1)) }
+}
+
+const L: u32 = 1 << RETRO_DEVICE_ID_JOYPAD_L;
+const R: u32 = 1 << RETRO_DEVICE_ID_JOYPAD_R;
+
+/// libretro re-audit NL-08. The core modelled the Vs. System coin acceptors
+/// and service button (`Nes::insert_coin`, `set_vs_service`), and the
+/// desktop bound them to keys, but no libretro input reached them: a Vs.
+/// game waiting for a credit could not be given one. RetroPad L now drops a
+/// coin (port 1: acceptor 1, port 2: acceptor 2) as a pulse of a few frames,
+/// however long it is held, and R holds the service button; both are named
+/// in the input descriptors while a Vs. cartridge is loaded.
+#[test]
+fn vs_system_coins_and_service_reach_the_game() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(false), true));
+    let named = held(&DESCRIBED).clone();
+    run_frame();
+    let (idle, _) = wram_head();
+    assert_eq!(
+        idle & 0x64,
+        0,
+        "no coin and no service at rest: {idle:#04x}"
+    );
+
+    PADS[0].store(L, SeqCst);
+    run_frame();
+    let (coin, _) = wram_head();
+    for _ in 0..6 {
+        run_frame();
+    }
+    let (held_long, _) = wram_head();
+    PADS[0].store(0, SeqCst);
+    PADS[1].store(L, SeqCst);
+    run_frame();
+    let (coin2, _) = wram_head();
+    PADS[1].store(0, SeqCst);
+    for _ in 0..6 {
+        run_frame();
+    }
+    PADS[0].store(R, SeqCst);
+    run_frame();
+    let (service, _) = wram_head();
+    PADS[0].store(0, SeqCst);
+    run_frame();
+    let (released, _) = wram_head();
+    unload();
+    let described_after_unload = held(&DESCRIBED).clone();
+
+    assert_ne!(
+        coin & 0x20,
+        0,
+        "port 1 L drops a coin in acceptor 1: {coin:#04x}"
+    );
+    assert_eq!(
+        held_long & 0x20,
+        0,
+        "a coin is a pulse, not a level: {held_long:#04x}"
+    );
+    assert_ne!(
+        coin2 & 0x40,
+        0,
+        "port 2 L drops a coin in acceptor 2: {coin2:#04x}"
+    );
+    assert_ne!(service & 0x04, 0, "port 1 R holds service: {service:#04x}");
+    assert_eq!(released & 0x04, 0, "and releases it: {released:#04x}");
+    for (port, id) in [
+        (0, RETRO_DEVICE_ID_JOYPAD_L),
+        (1, RETRO_DEVICE_ID_JOYPAD_L),
+        (0, RETRO_DEVICE_ID_JOYPAD_R),
+    ] {
+        assert!(
+            named.iter().any(|(p, i, _)| *p == port && *i == id),
+            "port {port} id {id} must be described for a Vs. cartridge: {named:?}"
+        );
+    }
+    assert!(
+        described_after_unload
+            .iter()
+            .all(|(_, id, _)| *id != RETRO_DEVICE_ID_JOYPAD_L),
+        "the Vs. names go away with the cartridge"
+    );
+}
+
+/// The same inputs on a Vs. `DualSystem` cabinet: ports 1-2 are the main
+/// console's panel (acceptors 1-2, service), ports 3-4 the sub console's.
+/// The main console's WRAM is the one the frontend sees.
+#[test]
+fn vs_dual_system_coins_reach_the_main_console() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(true), true));
+    run_frame();
+    PADS[0].store(L, SeqCst);
+    run_frame();
+    let (coin, _) = wram_head();
+    PADS[0].store(0, SeqCst);
+    // A coin on the SUB console's panel does not reach the main one.
+    for _ in 0..6 {
+        run_frame();
+    }
+    PADS[2].store(L, SeqCst);
+    run_frame();
+    let (sub_coin, _) = wram_head();
+    unload();
+    assert_ne!(coin & 0x20, 0, "port 1 L: main acceptor 1: {coin:#04x}");
+    assert_eq!(
+        sub_coin & 0x60,
+        0,
+        "port 3 L is the sub console's: {sub_coin:#04x}"
+    );
+}
+
+/// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).
+fn oracle_frame(mut nes: Nes, frames: u32) -> Vec<u8> {
+    for _ in 0..frames {
+        nes.run_frame();
+    }
+    let mut out = nes.framebuffer().to_vec();
+    for px in out.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    out
+}
+
+/// libretro re-audit NL-08, the palette through the load path. The core
+/// loaded Vs. dumps through `Emu::from_rom` alone, so an iNES 1.0 dump
+/// rendered with the parser's default 2C03 palette instead of the one the
+/// Vs. database names. For the first single-console dump under `tests/roms`
+/// that the database lists with a different PPU, the frame the core presents
+/// after `FRAMES` frames must equal a console built with the database
+/// applied, and differ from one without it. The committed corpus has no Vs.
+/// dump, so in CI this finds none and checks nothing; locally it runs on the
+/// gitignored `external/` dumps.
+#[test]
+fn a_vs_dump_in_the_database_renders_with_its_palette() {
+    const FRAMES: u32 = 300;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/roms");
+    let mut paths = Vec::new();
+    crate::tests::walk_nes(&root, &mut paths);
+    paths.sort();
+    let pick = paths.iter().find_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
+        let nes = Nes::from_rom(&bytes).ok()?;
+        let entry = rustynes_core::vs_db::lookup(nes.rom_sha256())?;
+        (!entry.dual_system && nes.is_vs_system()).then_some((path.clone(), bytes, entry))
+    });
+    let Some((path, bytes, entry)) = pick else {
+        eprintln!("no Vs. database dump under tests/roms; skipped");
+        return;
+    };
+    let with_db = {
+        let mut nes = Nes::from_rom(&bytes).expect("loads");
+        nes.set_vs_ppu_type(entry.vs_ppu_type);
+        nes.set_vs_dip(entry.vs_dip);
+        oracle_frame(nes, FRAMES)
+    };
+    let without = oracle_frame(Nes::from_rom(&bytes).expect("loads"), FRAMES);
+
+    let _frontend = frontend();
+    KEEP_FRAME.store(true, SeqCst);
+    assert!(load(Box::leak(bytes.into_boxed_slice()), true));
+    for _ in 0..FRAMES {
+        run_frame();
+    }
+    let presented = held(&LAST_FRAME).clone();
+    unload();
+    KEEP_FRAME.store(false, SeqCst);
+
+    assert_ne!(
+        with_db,
+        without,
+        "{}: pick a dump whose palette differs",
+        path.display()
+    );
+    assert!(
+        presented == with_db,
+        "{}: the core must present the database's palette",
+        path.display()
+    );
 }

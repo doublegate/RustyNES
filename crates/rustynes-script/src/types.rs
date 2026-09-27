@@ -35,6 +35,77 @@ pub const MAX_QUEUED_CMDS: usize = 8192;
 /// [`MAX_QUEUED_CMDS`] line cap it bounds a frame's log at 32 MiB.
 pub const MAX_LOG_LINE_BYTES: usize = 4096;
 
+// v2.9.0 re-audit NF-03 — the host-memory budget.
+//
+// SEC-02 capped the Lua heap at 64 MiB, but a string a script hands to the
+// host is COPIED out of that heap into host memory, where the limit does not
+// reach: one 8 MiB Lua string passed 128 times held 1 GiB of host memory. So
+// every copy out of Lua is bounded here, in one of three ways, chosen by how
+// long the host keeps the copy:
+//
+// - Short strings that the host drains every frame (overlay text, `client.*`
+//   and `tastudio.*` names and labels, cell decorations) are clipped to
+//   `MAX_HOST_TEXT_BYTES`, the log-line precedent. With the per-frame count
+//   cap that bounds each queue at 8,192 x 4 KiB = 32 MiB per frame, the same
+//   bound the log has had since #551. Each queue is bounded on its own rather
+//   than sharing one pool, because hosts drain different queues (mobile drains
+//   only the log): a shared pool would let an undrained queue starve the rest.
+// - `comm.*` payloads are legitimately large (an HTTP body), so a request over
+//   `MAX_COMM_PAYLOAD_BYTES` is refused with an error, and the outbound queue
+//   is charged its bytes against `MAX_COMM_QUEUE_BYTES`, refunded when the host
+//   drains it.
+// - `userdata.*` is persistent (it outlives the frame and is written to disk),
+//   so it has a standing budget: per-key and per-value caps, a total, and a key
+//   count, all refused with an error so a script learns its data was not kept.
+//
+// The caps sit far above any legitimate script (a HUD string is tens of
+// bytes; a userdata value a few KiB) and far below any host's memory.
+
+/// Longest overlay / `client.*` / `tastudio.*` string kept, in bytes. Clipped
+/// on a character boundary (no marker: these are names and labels, not
+/// messages). Equal to [`MAX_LOG_LINE_BYTES`].
+pub const MAX_HOST_TEXT_BYTES: usize = MAX_LOG_LINE_BYTES;
+
+/// Largest single `comm.*` request (URL plus body / payload), in bytes. A
+/// larger one raises a Lua error.
+#[cfg(feature = "script-ipc")]
+pub const MAX_COMM_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+/// Most `comm.*` payload bytes the outbound queue may hold between host
+/// drains. A request past it is not queued (id verbs return 0).
+#[cfg(feature = "script-ipc")]
+pub const MAX_COMM_QUEUE_BYTES: usize = 16 * 1024 * 1024;
+
+// The `userdata.*` store exists on the native (mlua) backend only.
+
+/// Longest `userdata.*` key, in bytes.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+pub const MAX_USERDATA_KEY_BYTES: usize = MAX_LOG_LINE_BYTES;
+
+/// Longest `userdata.*` value, in bytes.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+pub const MAX_USERDATA_VALUE_BYTES: usize = 1024 * 1024;
+
+/// Most bytes (keys plus values) the `userdata.*` store may hold.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+pub const MAX_USERDATA_BYTES: usize = 16 * 1024 * 1024;
+
+/// Most keys the `userdata.*` store may hold.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+pub const MAX_USERDATA_KEYS: usize = 65_536;
+
+/// Clip `text` to [`MAX_HOST_TEXT_BYTES`] on a character boundary.
+pub fn clip_host_text(mut text: String) -> String {
+    if text.len() > MAX_HOST_TEXT_BYTES {
+        let mut cut = MAX_HOST_TEXT_BYTES;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+    }
+    text
+}
+
 /// Clip `line` to [`MAX_LOG_LINE_BYTES`], appending ` [truncated]` when cut.
 pub fn clip_log_line(mut line: String) -> String {
     if line.len() > MAX_LOG_LINE_BYTES {
