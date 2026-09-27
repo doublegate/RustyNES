@@ -985,6 +985,63 @@ borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
 
+### v2.9.1 — the Vs. `DualSystem` serialize, adopted; and `ab_check.sh` compared the reference with itself
+
+**Decision: `VsDualSystem::snapshot_into` ADOPTED (serialize −88.9% and
+−88.5%); a pooled restore backup REJECTED (no change beyond drift).** This is
+the change the v2.9.0 section below handed to the core.
+
+**The change.** `VsDualSystem::snapshot_into(&mut self, out)` writes the same
+`RVSD` container as `snapshot`, but each console block is a
+`snapshot_core_into` blob (no `THM` thumbnail section), passed through one scratch
+buffer pooled on the cabinet (a console's encoder clears the buffer it is
+given, so blocks cannot be encoded in place), into the caller's reused buffer.
+The libretro core's `retro_serialize` and its `serialize_size` use it;
+`snapshot` keeps its thumbnails for the desktop's slot picker. Pinned by
+`snapshot_into_round_trips_into_a_fresh_cabinet` (fresh-cabinet restore,
+byte-identical re-serialize, 30 frames cycle- and framebuffer-identical) and
+`a_valid_restore_after_a_rejected_one_still_lands`; writing the two consoles in
+the wrong order is caught.
+
+**The tooling it needed.** `ab_check.sh` gained `--target <bench>`, and
+`benches/snapshot_restore.rs` gained `vs_dual_serialize` / `vs_dual_restore`,
+named for the job so the reference (commit `1430961b`, the old
+`snapshot`/`restore`) and the candidate compare the same work.
+
+**Then the first A/B said "no change", and it was the tool.** Both sides
+measured ~380 µs. The bench binary in `target/` still carried the deleted
+reference worktree's `CARGO_MANIFEST_DIR`, and a working-tree `cargo bench`
+"finished in 0.11s" compiling nothing. Both sides shared one
+`CARGO_TARGET_DIR`; cargo names a workspace member's artifacts by a hash of
+its path relative to the workspace root, so the two trees collide, and
+freshness is by mtime, so a working tree edited before the run looked newer
+than nothing and the candidate ran the reference's binary. Fixed: the
+reference builds into its own target directory, and `CRITERION_HOME` is pinned
+so the baseline is still found.
+
+**Consequence for the record: every earlier code-mode (`--base`) result in this
+file is UNVERIFIED** until re-measured, since its candidate may have been the
+reference. Feature-flag A/Bs (`--features`, same tree) were not affected. Some
+earlier code-mode results show consistent, significant differences (v2.7.5's
+IMP-07, −0.89% at p = 0.00 twice) that a self-comparison does not obviously
+produce, so this is not a claim that they are wrong, only that this tool did
+not establish them.
+
+**The A/B, fixed tool, two independent runs** (i9-10850K, CPUs 2-5 pinned;
+another session was running tests, load 5-11):
+
+| run | serialize candidate | serialize control | restore candidate | restore control |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | **45.2 µs, −88.9%** (p = 0.00) | −7.1% | 302 µs, −12.2% | −11.1% |
+| 2 | **44.0 µs, −88.5%** (p = 0.00) | −4.2% | 291 µs, −10.6% | −10.9% |
+
+The controls drift negative: the reference is measured straight after its own
+compile, the bias `docs/agents/perf-and-panels.md` already records. Serialize
+clears that drift by an order of magnitude in both runs; restore moves by
+exactly its control both times, so the pooled backup buffer (one ~250 KB
+allocation per restore) is not where a cabinet restore's time goes. Two full
+console restores are. It was reverted.
+
 ### v2.9.0 — the Vs. `DualSystem` serialize (libretro re-audit NL-09; decision: NOT CHANGED, measured, handed to the core)
 
 The re-audit found that a cabinet's `retro_serialize` builds its state with

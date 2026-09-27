@@ -110,12 +110,29 @@ cleanup() {
 trap cleanup EXIT
 
 export CARGO_TARGET_DIR="${repo_root}/target"
+# THE REFERENCE BUILDS INTO ITS OWN TARGET DIRECTORY (v2.9.1). Until then both
+# sides shared `${repo_root}/target`, and that silently made every code A/B
+# compare the REFERENCE WITH ITSELF. Cargo names a workspace member's artifacts
+# by a hash of its path RELATIVE TO THE WORKSPACE ROOT, so the throwaway
+# worktree and the working tree produce the same file names, and freshness is
+# judged by mtime: a working tree edited before the run is older than the
+# reference build, so the candidate `cargo bench` reports it fresh and runs the
+# reference's binary. Found on NL-09, whose candidate measured identical to its
+# reference; the binary still carried the deleted worktree's
+# CARGO_MANIFEST_DIR, and cargo "finished in 0.11s" without compiling the
+# working tree at all. Feature-flag A/Bs (same tree) were never affected.
+#
+# criterion keeps baselines under `$CRITERION_HOME` (default: the target
+# directory), so it is pinned to ONE place for both sides, or the candidate
+# could not find the reference's `ab_ref` baseline.
+REF_TARGET_DIR="${work}/target-ref"
+export CRITERION_HOME="${repo_root}/target/criterion"
 
 bench_args=()
 [[ -n "${BENCH_FILTER}" ]] && bench_args+=("${BENCH_FILTER}")
 bench_args+=(--warm-up-time "${WARMUP}" --measurement-time "${MEASUREMENT_TIME}")
 
-echo "==> Adoption A/B  (bar: >3% faster, whole interval, p < 0.05)"
+echo "==> Adoption A/B  (the evidence rule is printed at the end)"
 echo "    target    : ${BENCH_TARGET}"
 echo "    reference : ${base_sha:0:12} (${BASE_REF})"
 if [[ -n "${FEATURES}" ]]; then
@@ -139,7 +156,8 @@ else
     git worktree add --detach "${work}/base" "${base_sha}" >/dev/null
     (
         cd "${work}/base"
-        "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
+        CARGO_TARGET_DIR="${REF_TARGET_DIR}" \
+            "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
             "${bench_args[@]}" --save-baseline ab_ref
     ) >/dev/null
 fi
@@ -179,7 +197,8 @@ if [[ -n "${FEATURES}" ]]; then
 else
     (
         cd "${work}/base"
-        "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
+        CARGO_TARGET_DIR="${REF_TARGET_DIR}" \
+            "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
             "${bench_args[@]}" --baseline ab_ref
     ) 2>&1 \
         | grep -E "^[a-z][a-z0-9_]*|change:|Performance has|No change" \

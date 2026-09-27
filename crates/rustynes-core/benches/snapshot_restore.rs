@@ -168,16 +168,22 @@ fn warmed_dual() -> VsDualSystem {
 }
 
 /// NL-09: the cabinet's serialize and restore, as the libretro core runs
-/// them. `VsDualSystem::snapshot` built both consoles' full snapshots
-/// (thumbnails included) and a third buffer holding both, on every call.
+/// them. Until v2.9.1 that was `VsDualSystem::snapshot`, which built both
+/// consoles' full snapshots (thumbnails included) and a third buffer holding
+/// both, on every call; it is now `snapshot_into` a reused buffer.
 fn bench_dual(c: &mut Criterion) {
     c.bench_function("vs_dual_serialize", |b| {
-        let dual = warmed_dual();
-        b.iter(|| black_box(dual.snapshot().len()));
+        let mut dual = warmed_dual();
+        let mut buf = Vec::new();
+        b.iter(|| {
+            dual.snapshot_into(&mut buf);
+            black_box(buf.len());
+        });
     });
     c.bench_function("vs_dual_restore", |b| {
         let mut dual = warmed_dual();
-        let blob = dual.snapshot();
+        let mut blob = Vec::new();
+        dual.snapshot_into(&mut blob);
         b.iter(|| {
             dual.restore(black_box(&blob)).expect("restore round-trips");
         });

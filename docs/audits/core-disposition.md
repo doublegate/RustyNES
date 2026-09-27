@@ -84,6 +84,7 @@ was shown red first and mutation-checked (commit bodies carry the evidence).
 | — | The `save_state` fuzz target reached only an NROM machine | FIXED | Eight base machines (NROM, MMC1, MMC3, MMC5, VRC6, FME-7, GTROM, BS-5). Positive control: against the NC-02 mutant a 300 s run found nothing, while replaying single-byte `0xFF` patches over the GTROM base crashed at once -- "reachable is not found", recorded in `docs/agents/measurement-discipline.md`. 240 s clean on the fixed tree | v2.9.0 | `af777583` |
 | — | Power Cycle zeroed battery RAM (desktop and mobile then persisted the zeros) | FIXED | See the frontend ledger; the defect was in `Bus::power_cycle` | v2.9.0 | `5d5fd231` |
 
-Not done: the dual restore still allocates its main backup per call (with NL-09
-at v2.9.1). The `vs_dualsystem` ROM suite needs local dumps; only the synthetic
+Not done, by measurement: the dual restore still allocates its main backup per
+call. v2.9.1 pooled it and the A/B moved by exactly its order-bias drift in both
+runs, so it was reverted (`docs/performance.md` v2.9.1). The `vs_dualsystem` ROM suite needs local dumps; only the synthetic
 dual suite exercised the dual path here.

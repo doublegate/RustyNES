@@ -64,7 +64,8 @@ both screens, matching the desktop frontend.
 * **Audio:** only the **MAIN** console's audio is played (one stream, as on
   desktop); the SUB console's APU ring is drained-and-discarded to keep it bounded.
 * **Save states + memory maps:** dual state serializes through
-  `VsDualSystem::snapshot`/`restore` (a self-describing blob of both consoles, with
+  `VsDualSystem::snapshot_into`/`restore` (a self-describing blob of both consoles, without
+  the desktop's slot thumbnails since v2.9.1, and with
   the same static-size permanency the single path guarantees); the RA / cheat
   memory maps expose the **MAIN** console.
 

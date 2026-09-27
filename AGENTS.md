@@ -210,7 +210,7 @@ what a session needs before it knows what it is doing.
 | reading a result — what it does and does not prove | [`docs/agents/measurement-discipline.md`](docs/agents/measurement-discipline.md) | 18 |
 | the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 13 |
 | a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 2 |
-| a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 6 |
+| a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 7 |
 
 **Read the file, not a summary of it.** Each bullet carries its own evidence —
 the command that was run, the number it returned, the mutation that caught it —

@@ -37,7 +37,7 @@
 //!   `retro_get_memory_data`/`_size` pointer API and the modern
 //!   `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptor registration RetroAchievements'
 //!   `rcheevos` prefers. Save states serialize statically sized binary blobs natively
-//!   through `Nes::snapshot_core_into` (single console) or `VsDualSystem::snapshot`
+//!   through `Nes::snapshot_core_into` (single console) or `VsDualSystem::snapshot_into`
 //!   (dual cabinet) — this is also what RetroArch's own generic rollback netplay and
 //!   movie/rewind features ride on; RustyNES's bespoke `rustynes-netplay` P2P crate is
 //!   intentionally NOT linked into this core, since it would be redundant with (and
@@ -1135,7 +1135,11 @@ impl RustyNesLibretro {
                 // once here. No headroom: the dual path never attaches an expansion
                 // device (a Vs. cabinet has no light gun, and `run_dual` never calls
                 // `set_zapper`), so its size cannot grow after load.
-                self.serialize_size = dual.snapshot().len();
+                // v2.9.1 (NL-09): sized with the same thumbnail-free encoder
+                // `on_serialize` uses, which is smaller than `snapshot()`.
+                let mut sizing = Vec::new();
+                dual.snapshot_into(&mut sizing);
+                self.serialize_size = sizing.len();
                 self.dual = Some(dual);
                 self.nes = None;
                 self.log(
@@ -2444,12 +2448,13 @@ impl Core for RustyNesLibretro {
             }
             // Generates the deterministic binary blob representing the console hardware
             // state. Single console → `snapshot_core_into`; a Vs. DualSystem cabinet →
-            // `VsDualSystem::snapshot` (a self-describing blob of BOTH consoles).
+            // `VsDualSystem::snapshot_into` (a self-describing blob of BOTH consoles,
+            // without thumbnails, into the same reused buffer -- v2.9.1, NL-09).
             if let Some(nes) = core.nes.as_ref() {
                 core.serialize_buffer.clear();
                 nes.snapshot_core_into(&mut core.serialize_buffer);
-            } else if let Some(dual) = core.dual.as_ref() {
-                core.serialize_buffer = dual.snapshot();
+            } else if let Some(dual) = core.dual.as_mut() {
+                dual.snapshot_into(&mut core.serialize_buffer);
             } else {
                 return false;
             }
