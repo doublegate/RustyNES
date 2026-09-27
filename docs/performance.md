@@ -1033,8 +1033,8 @@ REJECTIONS**, because a self-comparison reports exactly "no change": the v2.7.5
 probe table and the v2.7.6 deletion probes above ("zero" each) were code-mode
 `ab_check.sh` runs. Feature-flag A/Bs (`--features`, same tree) were not
 affected, and neither were manual A/B/A runs made within one tree -- v2.7.5's
-adopted IMP-07 (−0.89%) was one of those. Re-measuring the rejected proposals
-with the fixed tool is recorded in the v2.9.x plan.
+adopted IMP-07 (−0.89%) was one of those. The rejected proposals are
+re-measured with the fixed tool in the next section.
 
 **The A/B, fixed tool, two independent runs** (i9-10850K, CPUs 2-5 pinned;
 another session was running tests, load 5-11):
@@ -1050,6 +1050,123 @@ clears that drift by an order of magnitude in both runs; restore moves by
 exactly its control both times, so the pooled backup buffer (one ~250 KB
 allocation per restore) is not where a cabinet restore's time goes. Two full
 console restores are. It was reverted.
+
+### v2.9.1 — the code-mode rejections, re-measured with the fixed tool
+
+**Decision: three verdicts overturned, none adopted in v2.9.1.** The dead NMI
+edge detector's per-dot call is a real 4-5% on palette-heavy frames and goes
+at v3.0.0 with ADR 0042 (maintainer decision). Two ceilings recorded as "zero"
+are not zero. Everything else rejected before is still rejected, now on
+evidence. PALETTE_CANDIDATE_RESULT
+
+**Method.** Every earlier rejection whose candidate could be rebuilt was
+re-run with the fixed `ab_check.sh` (both sides in fresh target directories),
+two independent runs each, `AB_MEASUREMENT_TIME=25`, CPUs 2-5 pinned, each run
+started only once the one-minute load average was below 1.5 (the recorded load
+is in the table). Patches: v2.7.6's `individual/probe.py` search-and-replace
+strings verbatim (A, B, C, S36), v2.7.5's salvaged diffs (IMP04, PAL, IMP05),
+and four rebuilt from this file's prose because no code survived (G7, G8, G2,
+D6). IMP06 is now only the `bg_reload_render` store: v2.7.6 deleted the other
+three as redundant. The raw logs and scripts are kept locally under the
+gitignored `salvaged/`.
+
+Each cell is the candidate's change, with the order-bias control (the
+reference re-benched against itself, last) in brackets. Negative is faster.
+
+| item | run | load | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| §3.1 A (divider constant) | 1 | 0.95 | −0.51% [+0.26%] | +3.10% [−0.66%] | +4.18% [−0.14%] | +2.77% [−0.31%] |
+| | 2 | 0.64 | −1.33% [−0.49%] | −0.39% [−0.63%] | −0.82% [−0.40%] | −1.04% [−0.24%] |
+| §3.1 B (`take_dma_mc_consumed` fold) | 1 | 1.46 | +1.18% [−0.58%] | −0.74% [−0.61%] | +1.41% [−0.23%] | +0.10% [+0.02%] |
+| | 2 | 0.68 | +1.74% [−0.33%] | +0.15% [−0.22%] | +1.45% [−0.64%] | −0.66% [−0.20%] |
+| **§3.1 C (NMI detector call)** | 1 | 1.17 | −1.02% [−0.64%] | **−4.54%** [−0.13%] | −1.11% [−0.94%] | **−4.09%** [+0.80%] |
+| | 2 | 1.22 | −1.30% [−0.54%] | **−4.73%** [−0.47%] | −0.73% [+0.05%] | **−4.61%** [−0.34%] |
+| IMP-06 (`bg_reload_render` store) | 1 | 0.69 | +2.14% [−0.17%] | +0.02% [−0.51%] | +1.38% [−0.94%] | −0.15% [−0.57%] |
+| | 2 | 1.32 | +2.63% [+0.03%] | −0.02% [−0.24%] | +1.16% [−0.32%] | −0.32% [−0.24%] |
+| **§3.6 (unmapped-read check, ceiling)** | 1 | 1.34 | **−2.68%** [−0.14%] | −0.82% [−0.65%] | **−2.48%** [−0.35%] | −0.27% [+0.64%] |
+| | 2 | 1.35 | **−2.21%** [−0.37%] | −0.61% [−0.15%] | **−1.52%** [−0.23%] | −0.88% [−0.68%] |
+| IMP-04 (branchless `set_nz`) | 1 | 1.35 | +0.37% [−0.31%] | −1.03% [+0.91%] | +1.05% [+2.37%] | −2.90% [+2.60%] |
+| | 2 | 1.09 | +0.31% [−0.49%] | −2.27% [−0.53%] | +1.02% [−0.45%] | −1.47% [+0.35%] |
+| **IMP-06 palette (mirror deleted, ceiling)** | 1 | 1.28 | −0.62% [−0.54%] | **−4.77%** [−0.22%] | +0.14% [+0.00%] | **−4.41%** [+0.80%] |
+| | 2 | 0.72 | −1.02% [−0.23%] | **−4.09%** [+0.26%] | +0.30% [−0.23%] | **−4.40%** [−0.31%] |
+| IMP-05 (`#[cold]` DMA path) | 1 | 0.71 | +0.97% [−0.73%] | −0.63% [+0.17%] | +1.45% [−0.27%] | −0.39% [+0.29%] |
+| | 2 | 1.24 | +1.77% [+0.00%] | −1.17% [−0.23%] | +1.33% [−0.53%] | −0.06% [+0.65%] |
+| G7 (`#[inline]` on two bus fns) | 1 | 1.40 | −0.35% [−0.11%] | +0.12% [−0.36%] | +1.94% [+0.55%] | +0.77% [+0.87%] |
+| | 2 | 0.65 | +1.83% [−0.45%] | +3.03% [−0.49%] | +4.09% [+0.13%] | +0.42% [+0.34%] |
+| G8 (`oam`/`ciram` as arrays) | 1 | 0.70 | −0.48% [+0.22%] | −0.29% [−0.21%] | +5.79% [−0.26%] | −0.24% [−0.37%] |
+| | 2 | 0.77 | −0.98% [−0.76%] | −0.23% [−0.80%] | +6.10% [−0.31%] | −0.40% [−0.95%] |
+| G2 (`#[repr(C)]` on `Ppu`) | 1 | 0.75 | −2.43% [−0.37%] | −1.07% [+0.38%] | +0.41% [+0.31%] | −1.22% [−0.42%] |
+| | 2 | 1.47 | −2.32% [−0.71%] | −1.92% [−0.74%] | +0.03% [+0.05%] | −1.53% [−0.06%] |
+| D6 (compare before store) | 1 | 1.45 | −0.23% [+0.04%] | +1.69% [−0.23%] | +0.83% [+0.19%] | +1.57% [−0.28%] |
+| | 2 | 1.04 | +0.33% [−0.26%] | +1.46% [−0.78%] | +1.07% [−0.19%] | +2.25% [−0.13%] |
+
+**Reading it against the rule** (reproduced, one sign across workloads, the
+shipped `_fast` variants move, the control small beside the effect):
+
+- **§3.1 C is real**: −4.1% to −4.7% on both palette workloads in both runs,
+  against controls within ±0.8%, and −0.7% to −1.3% on `nestest`. The call runs
+  on every PPU dot and feeds only the deprecated `poll_nmi`. v2.7.6 measured it
+  as "zero" with the defective tool. It is not adopted here: removing the call
+  changes what the deprecated `poll_nmi` reports and what two `.rns` fields
+  hold, in a MINOR release, and ADR 0042 already removes the detector, its
+  fields and `poll_nmi` together at v3.0.0 (maintainer decision, 2026-09-27).
+- **Two ceilings are not zero.** Deleting the palette mirror outright is
+  −4.1% to −4.8% on the palette workloads. Skipping the unmapped-read check is
+  −1.5% to −2.7% on the `nestest` pair. Both probes are INCORRECT code, so
+  neither is adoptable, but each says a correct candidate under it has room.
+  v2.7.5 closed both on "the ceiling is zero".
+- **G2 (`#[repr(C)]`) is not adopted.** The exact-path `nestest` gain
+  reproduces (−2.4%, −2.3%), but of the two shipped `_fast` workloads only
+  `flowing_palette_fast` moves (−1.2%, −1.5%) while `nestest_fast` stays at its
+  control. It also freezes `Ppu`'s field order as a performance input, a cost
+  this rule does not weigh. Recorded as a lead, not a result.
+- **Rejected again, now on evidence**: A and IMP-04 change sign between
+  workloads; B, IMP-06's store, IMP-05, G7, G8 and D6 are SLOWER on at least one
+  workload in both runs (G8's `nestest_fast` +5.8% and +6.1%, reproducibly).
+
+**The correct candidates under the two ceilings** (same method; built for
+v2.9.1, maintainer request for §3.6). Each is byte-identical by construction:
+
+- **CAP** (§3.6): a defaulted `Mapper::prg_window_can_float()` capability,
+  `false` on every board, cached by the bus beside `mapper_caps`; while it is
+  `false` the bus answers `$8000-$FFFF` without the virtual
+  `cpu_read_unmapped` call. An audit of all 32 overrides found none that
+  reports a `$8000-$FFFF` hole, and a sweep test over every mapper number plus
+  FDS and NSF (with MMC1, FDS and bus-helper mutants each caught) enforced it.
+- **PALTAB**: `palette_index` as a 32-entry `const` fold table.
+- **PALARITH**: the same fold without a branch,
+  `idx & !((((idx & 0x13) == 0x10) as usize) << 4)`.
+
+| candidate | run | load | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CAP | 1 | 1.13 | −1.78% [−1.63%] | +0.36% [−0.71%] | +0.63% [−0.03%] | +1.13% [+0.08%] |
+| | 2 | 1.21 | −1.20% [−0.97%] | +0.32% [−0.21%] | +0.58% [−0.05%] | −0.01% [−0.50%] |
+| PALTAB | 1 | 0.72 | −0.37% [−0.28%] | −0.82% [−0.31%] | +0.67% [+0.17%] | −1.10% [−0.37%] |
+| | 2 | 0.76 | +0.17% [+0.67%] | −0.31% [−0.12%] | +0.74% [+0.06%] | −0.91% [−0.13%] |
+| PALARITH | 1 | 0.81 | −1.28% [−1.69%] | −1.60% [−0.38%] | +1.09% [−0.34%] | −1.60% [−0.49%] |
+| | 2 | 1.43 | −0.18% [+0.03%] | −1.39% [−0.35%] | +0.23% [−0.29%] | −1.06% [+0.12%] |
+
+**All three REJECTED, for the same reason: `nestest_fast`, the shipped path,
+is slower in both runs** (net of its control +0.6% for CAP, +0.5% to +0.7%
+for PALTAB, +0.5% to +1.4% for PALARITH), while the palette workloads gain at
+most about 1.2%. A mixed sign is a rejection, not an average. CAP run 1 began
+as other applications were being closed and the MARM service was stopped
+mid-run; its `nestest` control moved −1.63%, which is where its −1.78% came
+from, and run 2 agrees with it net of the control, so no third run was needed.
+
+**What the gap says.** The ceilings deleted work outright (−2.2% to −2.7% on
+`nestest` for §3.6, −4.1% to −4.8% on the palette workloads for the mirror);
+the correct candidates keep a test in the same place and recover little of it.
+For §3.6 the ceiling removed the whole unmapped branch, including the
+`$4020-$7FFF` path, so the read could be simplified around it; the capability
+keeps that branch and adds one on the cached flag. The candidates are kept,
+with their tests, in the gitignored `salvaged/` evidence for whoever next
+takes a lead from this table.
+
+**Not re-measured, and so still unverified.** v2.3.1's G3, G4, G5, G6 and G9,
+and v2.3.6's D1 and D3, survive only as prose too loose to rebuild the exact
+candidate (D1's guard reads every DMC field its skipped blocks branch on; D3's cache has a setter).
+Their rejections were code-mode `ab_check.sh` runs and stand as UNVERIFIED.
 
 ### v2.9.0 — the Vs. `DualSystem` serialize (libretro re-audit NL-09; decision: NOT CHANGED, measured, handed to the core)
 

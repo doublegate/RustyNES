@@ -81,3 +81,20 @@ exists.
   `LockstepBus`, which the rename touches across the workspace.
 - **No provenance record changes**: none of the affected files carries a
   `// Provenance:` header.
+
+## Amendment (2026-09-27, v2.9.1): the detector has a measured cost
+
+The "unreachable, so emulation cannot change" argument above was about
+correctness. v2.9.1 adds a cost: re-measured with the fixed `ab_check.sh`,
+dropping the per-dot `sample_nmi_edge` call is **−4.1% to −4.7%** on both
+palette workloads and **−0.7% to −1.3%** on `nestest`, in two independent runs
+with order-bias controls within ±0.8% (`docs/performance.md` §v2.9.1). v2.7.6
+had recorded this probe as "zero" with a tool that compared the old code with
+itself.
+
+The maintainer kept the removal at v3.0.0 rather than pulling the call's
+removal into v2.9.1 (2026-09-27): doing it early would change what the
+deprecated `poll_nmi` reports and what the two `.rns` fields hold in a MINOR
+release. The decision above is unchanged. What changes is the gate at v3.0.0:
+besides byte-identity, the removal should show this speed-up in an `ab_check.sh`
+run, or the difference be explained.
