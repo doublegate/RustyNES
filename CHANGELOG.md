@@ -26,6 +26,75 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-09-27 - "Hone" (what the optimisation bars measure, and what clears them)
+
+The second release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
+**optimisation that clears the bars, and a bar that had not been measuring.**
+The tool this project uses to accept or reject a performance change,
+`scripts/perf/ab_check.sh`, had been timing the old code on both sides of every
+code-change comparison. That is fixed, proven with a deliberate slowdown, and
+the rejections it had produced are re-measured. Emulation output does not
+change: the full `--features test-roms` suite passes 2,812 tests with
+AccuracyCoin 144/144 and nestest 0-diff. **No hardware has run any bitstream.**
+
+### Performance
+
+- **`ab_check.sh` compared the old code with itself.** Both sides built into
+  one cargo target directory. Cargo names a workspace member's build by its
+  path relative to the workspace root, so the reference worktree and the
+  working tree collided, and the candidate ran the reference's binary. Run
+  against a candidate that deliberately did its work twice, the old script
+  reported "no change"; the fixed one reports +146%. Each side now builds
+  into a fresh directory of its own on every run.
+- **Saving a two-screen Vs. cabinet is about 9x faster** (−88.9% and −88.5%
+  on two runs), which is RetroArch's per-frame cost for rewind and run-ahead
+  on those games. `VsDualSystem::snapshot_into` writes into a buffer the
+  caller reuses. A pooled buffer for the matching restore measured no change
+  and was not kept.
+- **Every earlier rejection that could be rebuilt was measured again**, twelve
+  in all, two runs each on a quiet host. Three verdicts were wrong. Dropping
+  the per-dot call to the dead NMI edge detector is 4.1% to 4.7% faster on
+  palette-heavy frames; it is removed at v3.0.0 with the detector and its
+  save-state fields (ADR 0042, maintainer decision), since doing it now would
+  change a deprecated method and two save-state fields in a minor release.
+  Two "the ceiling is zero" results were not zero, so correct candidates were
+  built under both: a per-mapper capability that skips the unmapped-read check
+  for PRG reads, and two branch-free palette mirrors. All three are rejected:
+  each makes the default `nestest_fast` path slower in both runs. The rest stay
+  rejected, now on evidence. Full tables in `docs/performance.md`.
+
+### The MiSTer core ([`RustyNES_MiSTer`](https://github.com/doublegate/RustyNES_MiSTer))
+
+- **The off-die build keeps CHR and PRG in different SDRAM banks** (NR-08),
+  so a program read no longer closes the row a pattern fetch has open. Over
+  one rendering workload the memory's row closes fell from 132,235 to 24,880.
+  The worst pattern fetch fell from 20 to 18 cycles (budget 22). The worst
+  program read stayed at 22 of 24: a refresh closes every bank, so the access
+  after it misses wherever the data lives.
+- **The co-simulation ladder runs every gate in one pass.** The 16-ROM
+  instruction battery read its ROMs from a directory the pinned oracle copy
+  lacks, and had to be run by hand; it now reads them from the tracked tree.
+  On-die 171 passed, 0 failed, 1 expected failure; off-die 172 / 0 / 1.
+- **The timing check reads the SDRAM clock from the constraints** instead of
+  a constant, and checks that the console clock is exactly four SDRAM clocks.
+- **The final seed sweep, and a reproducible build.** Eight fitter seeds per
+  build, all sixteen closing timing. The pin moves from 5 to **2**, which has
+  the most on-die margin on both measures: +0.542 ns setup, +0.115 ns hold.
+  Off-die it gives +0.193 / +0.080, with the SDRAM read at +0.447 setup and
+  +1.184 hold. Two clean compiles of each build are byte-identical (on-die
+  md5 `aa0e45d9...`, off-die `c378b7f0...`).
+
+### Plans
+
+- The v2.9.x plan lists fourteen candidates for the SuperStation One's SDRAM
+  and DDR3 (S1-S14), with where each would run and when. S1 is NR-08 above.
+  **S2, a scheduled SDRAM arbiter, waits until after v3.0.0**: it would not
+  remove the refresh bound without also scheduling refresh, and nothing
+  before v3.0.0 adds memory traffic. The plan's "zero margin" for the CPU was
+  v2.6.16's figure; the tree measures a margin of 2 cycles.
+- `VERSION-PLAN.md` states what "public API" means for SemVer here: the
+  `rustynes-core` API plus the `.rns` and `.rnm` formats.
+
 ## [2.9.0] - 2026-09-26 - "Survey" (every audit re-checked, and the SuperStation One surveyed)
 
 The first release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):

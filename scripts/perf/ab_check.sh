@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ab_check.sh — adjudicate ONE optimization against the >3% adoption bar.
+# ab_check.sh — adjudicate ONE optimization against the evidence-quality
+# adoption rule it prints at the end (not an effect-size bar; see below).
 #
 # Companion to `bench_relative_check.sh`, and deliberately a different tool
 # answering a different question:
@@ -10,8 +11,8 @@
 #                            statistics for that: the question is whether ONE
 #                            delta could be noise.
 #
-#   ab_check.sh (this)       Adoption decision. "Is this change worth keeping at
-#                            the >3% bar?" That is a question about the MEAN of
+#   ab_check.sh (this)       Adoption decision. "Is this change a reproduced,
+#                            real gain?" That is a question about the MEAN of
 #                            ~100 samples, where the confidence interval governs
 #                            and the standard error falls as CV/sqrt(n). Applying
 #                            the 3xCV rule here demands a quiet host no desktop
@@ -25,7 +26,9 @@
 # ## What it compares
 #
 # The WORKING TREE against a reference (default HEAD), back to back on the same
-# host, sharing one target dir. The reference is built in a throwaway git
+# host, each side built into a FRESH target directory of its own (until v2.9.1
+# they shared one, and the candidate ran the reference's binary -- see the
+# comment at the build step). The reference is built in a throwaway git
 # worktree -- never a `git checkout`, so uncommitted work is never touched even
 # if the run dies. Optionally applies extra cargo features to the candidate side
 # only, which is how a default-OFF feature flag is adjudicated (G1 used exactly
@@ -37,6 +40,7 @@
 #   scripts/perf/ab_check.sh --base HEAD~1
 #   scripts/perf/ab_check.sh --features ppu-idle-line-fast   # flag A/B, same tree
 #   scripts/perf/ab_check.sh --bench nes_run_frame_nestest   # one workload
+#   scripts/perf/ab_check.sh --target snapshot_restore --bench vs_dual   # another bench target
 #   AB_MEASUREMENT_TIME=20 scripts/perf/ab_check.sh          # tighter intervals
 #
 # CPU pinning (`taskset`) is applied when available: measured on this project's
@@ -65,6 +69,12 @@ repo_root="$(pwd)"
 BASE_REF="HEAD"
 FEATURES=""
 BENCH_FILTER=""
+# The criterion bench TARGET (a `[[bench]]` in rustynes-core). `full_frame` is
+# the frame-cost workloads the adoption rule was written for. Until v2.9.1 it
+# was the only target this script could run, which is why v2.9.0 could record
+# the dual cabinet's serialize cost (NL-09) but not adjudicate a fix for it: a
+# serialize change does not move a frame.
+BENCH_TARGET="full_frame"
 MEASUREMENT_TIME="${AB_MEASUREMENT_TIME:-10}"
 WARMUP="${AB_WARMUP_TIME:-2}"
 
@@ -73,6 +83,7 @@ while [[ $# -gt 0 ]]; do
         --base) BASE_REF="$2"; shift 2 ;;
         --features) FEATURES="$2"; shift 2 ;;
         --bench) BENCH_FILTER="$2"; shift 2 ;;
+        --target) BENCH_TARGET="$2"; shift 2 ;;
         -h|--help) sed -n '2,60p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -101,13 +112,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export CARGO_TARGET_DIR="${repo_root}/target"
+# BOTH SIDES BUILD INTO FRESH TARGET DIRECTORIES OF THEIR OWN (v2.9.1): the
+# candidate into `${work}/target-cand` (the reference into `target-ref`, below).
+# The candidate used to build into `${repo_root}/target`, and after the
+# reference fix below it still ran a STALE binary: an earlier run of the old
+# script had left same-named artifacts there, newer than the working tree, and
+# cargo reported them fresh. A fresh directory per run cannot inherit anything.
+# It costs one full build per side per run, which the reference already paid.
+export CARGO_TARGET_DIR="${work}/target-cand"
+# THE REFERENCE BUILDS INTO ITS OWN TARGET DIRECTORY (v2.9.1). Until then both
+# sides shared `${repo_root}/target`, and that silently made every code A/B
+# compare the REFERENCE WITH ITSELF. Cargo names a workspace member's artifacts
+# by a hash of its path RELATIVE TO THE WORKSPACE ROOT, so the throwaway
+# worktree and the working tree produce the same file names, and freshness is
+# judged by mtime: a working tree edited before the run is older than the
+# reference build, so the candidate `cargo bench` reports it fresh and runs the
+# reference's binary. Found on NL-09, whose candidate measured identical to its
+# reference; the binary still carried the deleted worktree's
+# CARGO_MANIFEST_DIR, and cargo "finished in 0.11s" without compiling the
+# working tree at all. Feature-flag A/Bs (same tree) were never affected.
+#
+# criterion keeps baselines under `$CRITERION_HOME` (default: the target
+# directory), so it is pinned to ONE place for both sides, or the candidate
+# could not find the reference's `ab_ref` baseline.
+REF_TARGET_DIR="${work}/target-ref"
+export CRITERION_HOME="${repo_root}/target/criterion"
 
 bench_args=()
 [[ -n "${BENCH_FILTER}" ]] && bench_args+=("${BENCH_FILTER}")
 bench_args+=(--warm-up-time "${WARMUP}" --measurement-time "${MEASUREMENT_TIME}")
 
-echo "==> Adoption A/B  (bar: >3% faster, whole interval, p < 0.05)"
+echo "==> Adoption A/B  (the evidence rule is printed at the end)"
+echo "    target    : ${BENCH_TARGET}"
 echo "    reference : ${base_sha:0:12} (${BASE_REF})"
 if [[ -n "${FEATURES}" ]]; then
     echo "    candidate : same tree + features '${FEATURES}'"
@@ -123,14 +159,15 @@ echo
 # reference is the working tree too; only a code A/B needs the worktree.
 if [[ -n "${FEATURES}" ]]; then
     echo "==> Benching reference (flag off)"
-    "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+    "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
         "${bench_args[@]}" --save-baseline ab_ref >/dev/null
 else
     echo "==> Benching reference (${base_sha:0:12}) in a throwaway worktree"
     git worktree add --detach "${work}/base" "${base_sha}" >/dev/null
     (
         cd "${work}/base"
-        "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+        CARGO_TARGET_DIR="${REF_TARGET_DIR}" \
+            "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
             "${bench_args[@]}" --save-baseline ab_ref
     ) >/dev/null
 fi
@@ -140,9 +177,9 @@ echo "==> Benching candidate, compared against the reference"
 echo
 feat_args=()
 [[ -n "${FEATURES}" ]] && feat_args+=(--features "${FEATURES}")
-"${PIN[@]}" cargo bench -p rustynes-core "${feat_args[@]}" --bench full_frame -- \
+"${PIN[@]}" cargo bench -p rustynes-core "${feat_args[@]}" --bench "${BENCH_TARGET}" -- \
     "${bench_args[@]}" --baseline ab_ref 2>&1 \
-    | grep -E "^nes_run_frame|time:|change:|Performance has|No change" \
+    | grep -E "^[a-z][a-z0-9_]*|time:|change:|Performance has|No change" \
     | sed 's/^/  /'
 
 # ---- ORDER-BIAS CONTROL (A/B/A) -------------------------------------------
@@ -163,17 +200,18 @@ echo
 echo "==> Order-bias control: re-benching the REFERENCE against itself, last"
 echo
 if [[ -n "${FEATURES}" ]]; then
-    "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+    "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
         "${bench_args[@]}" --baseline ab_ref 2>&1 \
-        | grep -E "^nes_run_frame|change:|Performance has|No change" \
+        | grep -E "^[a-z][a-z0-9_]*|change:|Performance has|No change" \
         | sed 's/^/  /'
 else
     (
         cd "${work}/base"
-        "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+        CARGO_TARGET_DIR="${REF_TARGET_DIR}" \
+            "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
             "${bench_args[@]}" --baseline ab_ref
     ) 2>&1 \
-        | grep -E "^nes_run_frame|change:|Performance has|No change" \
+        | grep -E "^[a-z][a-z0-9_]*|change:|Performance has|No change" \
         | sed 's/^/  /'
 fi
 

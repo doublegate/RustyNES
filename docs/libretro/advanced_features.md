@@ -64,13 +64,17 @@ both screens, matching the desktop frontend.
 * **Audio:** only the **MAIN** console's audio is played (one stream, as on
   desktop); the SUB console's APU ring is drained-and-discarded to keep it bounded.
 * **Save states + memory maps:** dual state serializes through
-  `VsDualSystem::snapshot`/`restore` (a self-describing blob of both consoles, with
+  `VsDualSystem::snapshot_into`/`restore` (a self-describing blob of both consoles, without
+  the desktop's slot thumbnails since v2.9.1, and with
   the same static-size permanency the single path guarantees); the RA / cheat
   memory maps expose the **MAIN** console.
 
-The deterministic `no_std` core is untouched — this is purely a parallel
-present/serialize branch in the FFI wrapper, exactly mirroring the desktop
-frontend's `emu.dual` branch.
+The present path is a parallel branch in the FFI wrapper, mirroring the
+desktop frontend's `emu.dual` branch. Serialization is not only the wrapper's:
+since v2.9.1 it calls `VsDualSystem::snapshot_into`, which lives in the
+`no_std` core with its pooled scratch buffer (`rustynes-core`,
+`vs_dualsystem.rs`), because writing both consoles into one reused buffer is a
+core operation, not an FFI one.
 
 ## Vs. System palette, DIP switches, coins and service (v2.9.0, libretro re-audit NL-08)
 

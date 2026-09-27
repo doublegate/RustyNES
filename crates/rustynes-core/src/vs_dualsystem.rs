@@ -87,6 +87,12 @@ pub struct VsDualSystem {
     /// instruction on a `DualSystem` cart, so a per-call heap allocation
     /// here would be a real hot-path cost, not a theoretical one.
     comms_scratch: Vec<(u16, u8)>,
+    /// v2.9.1 (NL-09) — one console's snapshot on its way into the cabinet's
+    /// container, reused by [`Self::snapshot_into`]. A console's encoder
+    /// clears the buffer it is given (it writes its own header first), so the
+    /// two blocks cannot be encoded straight into the container; they pass
+    /// through this instead. Not state: never serialized, never compared.
+    block_scratch: Vec<u8>,
 }
 
 impl VsDualSystem {
@@ -140,6 +146,7 @@ impl VsDualSystem {
             main_bit1: false,
             sub_bit1: false,
             comms_scratch: Vec::new(),
+            block_scratch: Vec::new(),
         };
         // Cabinet wiring: mark the sub half (its $4016 bit 7 reads 0x80;
         // its mapper banks the second PRG half + upper CHR pages — the two
@@ -353,7 +360,39 @@ impl VsDualSystem {
         out
     }
 
-    /// Restore a dual-system snapshot produced by [`Self::snapshot`].
+    /// v2.9.1 (libretro re-audit NL-09) — [`Self::snapshot`] without the two
+    /// consoles' `THM ` thumbnails, encoded into a caller-owned buffer that is
+    /// reused across calls. The libretro core's `retro_serialize` path.
+    ///
+    /// Same container, same layout, and it restores through [`Self::restore`]
+    /// like a full snapshot: each console block is a
+    /// [`Nes::snapshot_core_into`] blob, and `THM ` is optional by format. What
+    /// it drops is the work nobody on this path reads. [`Self::snapshot`]
+    /// builds a 128x120 RGBA thumbnail per console (the desktop's slot picker
+    /// shows one; `RetroArch` never does), then a fresh buffer per console and a
+    /// third for the container, about 645 KB allocated on every call. v2.9.0
+    /// measured that at 314-1,630 us per call against 46-78 us for this shape
+    /// (`docs/performance.md`); the A/B that adopted it is recorded there.
+    ///
+    /// `&mut self` only for the pooled scratch buffer; nothing emulated
+    /// changes.
+    pub fn snapshot_into(&mut self, out: &mut Vec<u8>) {
+        out.clear();
+        out.extend_from_slice(&SNAPSHOT_MAGIC);
+        out.extend_from_slice(&SNAPSHOT_VERSION.to_le_bytes());
+        out.push(u8::from(self.main_bit1) | (u8::from(self.sub_bit1) << 1));
+        let mut scratch = core::mem::take(&mut self.block_scratch);
+        for console in [&self.main, &self.sub] {
+            console.snapshot_core_into(&mut scratch);
+            #[allow(clippy::cast_possible_truncation)] // a console snapshot is ~260 KB
+            out.extend_from_slice(&(scratch.len() as u32).to_le_bytes());
+            out.extend_from_slice(&scratch);
+        }
+        self.block_scratch = scratch;
+    }
+
+    /// Restore a dual-system snapshot produced by [`Self::snapshot`] or
+    /// [`Self::snapshot_into`].
     ///
     /// # Errors
     ///
@@ -406,6 +445,12 @@ impl VsDualSystem {
         // is emulated state. A console's own snapshot always restores (the
         // round-trip invariant the save-state tests pin), asserted in debug
         // builds as `Nes::restore` does for its own backup.
+        //
+        // v2.9.1 (NL-09): a pooled backup buffer here was measured and
+        // REJECTED -- the restore A/B moved by exactly its order-bias control
+        // in both runs (-12.2% vs -11.1%, -10.6% vs -10.9%), so the one
+        // allocation per restore is not where the time goes. Two full console
+        // restores are.
         let mut main_backup = Vec::new();
         self.main.snapshot_core_into(&mut main_backup);
         self.main.restore(main_block)?;

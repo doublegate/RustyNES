@@ -293,3 +293,88 @@ fn a_dual_restore_with_a_rejected_sub_block_changes_neither_console() {
     assert_eq!(markers(main), [0x11, 0x22, 0x33, 0x44, 0x00]);
     assert_eq!(markers(sub), [0x11, 0x22, 0x33, 0x44, 0x00]);
 }
+
+/// v2.9.1 (libretro re-audit NL-09): `snapshot_into`, the thumbnail-free
+/// serialize into a reused buffer, restores a fresh cabinet to exactly the
+/// state `snapshot` would, and serializing the restored cabinet gives the same
+/// bytes back. The libretro core's `retro_serialize` uses it for the four
+/// `DualSystem` boards, so a blob it writes is one `RetroArch` hands back.
+#[test]
+fn snapshot_into_round_trips_into_a_fresh_cabinet() {
+    let mut a = run_handshake();
+    let mut blob = Vec::new();
+    a.snapshot_into(&mut blob);
+    assert!(
+        blob.len() < a.snapshot().len(),
+        "no thumbnails: {} bytes against {}",
+        blob.len(),
+        a.snapshot().len()
+    );
+
+    let mut b = VsDualSystem::from_rom(&build_dual_rom()).expect("fresh cabinet");
+    b.restore(&blob).expect("snapshot_into output must restore");
+    let mut again = Vec::new();
+    b.snapshot_into(&mut again);
+    assert!(
+        blob == again,
+        "re-serializing the restored cabinet changed the bytes"
+    );
+
+    let (bm, bs) = b.split_mut();
+    assert_eq!(markers(bm), [0x11, 0x22, 0x33, 0x44, 0x00]);
+    assert_eq!(markers(bs), [0x11, 0x22, 0x33, 0x44, 0x00]);
+    for _ in 0..30 {
+        a.run_frame();
+        b.run_frame();
+    }
+    assert_eq!(a.main().cycle(), b.main().cycle(), "main cycle diverged");
+    assert_eq!(a.sub().cycle(), b.sub().cycle(), "sub cycle diverged");
+    assert!(
+        a.main_framebuffer() == b.main_framebuffer(),
+        "main framebuffers diverged"
+    );
+    assert!(
+        a.sub_framebuffer() == b.sub_framebuffer(),
+        "sub framebuffers diverged"
+    );
+
+    // The reused buffer carries nothing from the previous call: serializing a
+    // different state into the same buffer gives exactly that state's bytes.
+    a.snapshot_into(&mut blob);
+    let mut fresh = Vec::new();
+    a.snapshot_into(&mut fresh);
+    assert!(
+        blob == fresh,
+        "a reused buffer kept bytes from the last call"
+    );
+}
+
+/// v2.9.1 (NL-09): a rejected restore, even twice, leaves the cabinet able to
+/// take a valid one exactly. Written for a pooled backup buffer that the A/B
+/// then rejected; kept because a restore after a rejected restore is the path
+/// `RetroArch` takes when a user retries a bad state file.
+#[test]
+fn a_valid_restore_after_a_rejected_one_still_lands() {
+    let mut dual = run_handshake();
+    let mut early = Vec::new();
+    dual.snapshot_into(&mut early);
+    for _ in 0..10 {
+        dual.run_frame();
+    }
+    let mut bad = early.clone();
+    let at = bad
+        .windows(4)
+        .rposition(|w| w == b"CPU ")
+        .expect("the sub console's CPU section");
+    bad[at + 4] = bad[at + 4].wrapping_add(1);
+    for _ in 0..2 {
+        assert!(
+            dual.restore(&bad).is_err(),
+            "the sub block must be rejected"
+        );
+    }
+    dual.restore(&early).expect("the valid blob restores");
+    let mut now = Vec::new();
+    dual.snapshot_into(&mut now);
+    assert!(now == early, "the valid restore did not land exactly");
+}

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,7 +674,19 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.9.0 "Survey"** (2026-09-26) — every audit re-checked, and the SuperStation One surveyed: a Power Cycle no longer erases your save, the off-die MiSTer build boots without the menu core, and 39 new audit findings are fixed or dispositioned. Built on **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
+RustyNES's current release is **v2.9.1 "Hone"** (2026-09-27) — what the optimisation bars measure, and what clears them: the A/B tool had been timing the old code on both sides of every code comparison and is fixed, a two-screen Vs. cabinet saves about 9x faster, the off-die MiSTer build keeps CHR in its own SDRAM bank, and both bitstreams are pinned at fitter seed 2 and rebuild byte-identically. Built on **v2.9.0 "Survey"** (2026-09-26) — every audit re-checked, and the SuperStation One surveyed: a Power Cycle no longer erases your save, the off-die MiSTer build boots without the menu core, and 39 new audit findings are fixed or dispositioned. Built on **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
+
+v2.9.1 is the optimisation release, and it began by fixing the tool that
+judges optimisations: `scripts/perf/ab_check.sh` had been timing the old code
+on both sides of every code comparison. Every earlier rejection that could be
+rebuilt was measured again; three verdicts were wrong, and the dead NMI edge
+detector's per-dot call, 4-5% on palette-heavy frames, goes at v3.0.0 with the
+rest of that code. A two-screen Vs. cabinet now saves about 9x faster. The
+MiSTer core keeps CHR and PRG in separate SDRAM banks off-die, runs its whole
+co-simulation ladder in one pass (171 gates on-die, 172 off-die, one expected
+failure each), and pins fitter seed 2 after an eight-seed sweep of each build,
+with two clean compiles of each byte-identical. The full `--features
+test-roms` suite passes 2,812 tests.
 
 v2.9.0 re-ran all four audits against the tree v2.7.x and v2.8.x left: 139
 ledger rows re-verified with none regressed, and 39 new findings fixed or

@@ -14,11 +14,17 @@
 //!   rendering load for the run-ahead probe.
 //! - `holy_mapperel M4_P128K_CR8K.nes` (MMC3 + 8 KiB PRG-RAM + 8 KiB CHR-RAM,
 //!   zlib) — the realistic upper end: bank registers + both RAMs serialize.
+//!
+//! v2.9.1 (NL-09) — and a Vs. `DualSystem` cabinet, whose save-state path is
+//! what the libretro core calls for every `retro_serialize` and
+//! `retro_unserialize` of one of the four `DualSystem` titles. Named for the
+//! JOB, not the method (`vs_dual_serialize`, `vs_dual_restore`), so an A/B
+//! across the change that replaced the method compares the same work.
 
 use std::path::PathBuf;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use rustynes_core::Nes;
+use rustynes_core::{Nes, VsDualSystem};
 use std::hint::black_box;
 
 fn rom_path(rel: &str) -> PathBuf {
@@ -130,9 +136,64 @@ fn bench_rom(c: &mut Criterion, label: &str, rel: &str) {
     });
 }
 
+/// A minimal `DualSystem` cabinet image: NES 2.0, mapper 99, Vs. hardware type
+/// 5 (`DualSystem`), 64 KiB PRG (both CPUs' halves) and 8 KiB CHR-RAM. Each
+/// half's reset vector points at a `JMP` to itself, so both consoles run
+/// indefinitely with the state a real cabinet carries (two full machines plus
+/// the shared WRAM); the content of that state does not change the work a
+/// serialize does, only its bytes.
+fn dual_cabinet_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 16 + 0x10000];
+    rom[0..4].copy_from_slice(b"NES\x1a");
+    rom[4] = 0x04; // 4 x 16 KiB PRG
+    rom[6] = 0x30; // mapper 99, low nibble
+    rom[7] = 0x69; // mapper 99 high nibble | NES 2.0 | Vs. System
+    rom[11] = 0x07; // CHR-RAM: 64 << 7 = 8 KiB
+    rom[13] = 0x50; // Vs. hardware type 5 (DualSystem)
+    for half in [0usize, 0x8000] {
+        let prg = &mut rom[16 + half..16 + half + 0x8000];
+        prg[0..3].copy_from_slice(&[0x4C, 0x00, 0x80]); // $8000: JMP $8000
+        prg[0x7FFA..0x8000].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+    }
+    rom
+}
+
+/// A cabinet run past power-on, as a game in progress would be.
+fn warmed_dual() -> VsDualSystem {
+    let mut dual = VsDualSystem::from_rom(&dual_cabinet_rom()).expect("cabinet image parses");
+    for _ in 0..60 {
+        dual.run_frame();
+    }
+    dual
+}
+
+/// NL-09: the cabinet's serialize and restore, as the libretro core runs
+/// them. Until v2.9.1 that was `VsDualSystem::snapshot`, which built both
+/// consoles' full snapshots (thumbnails included) and a third buffer holding
+/// both, on every call; it is now `snapshot_into` a reused buffer.
+fn bench_dual(c: &mut Criterion) {
+    c.bench_function("vs_dual_serialize", |b| {
+        let mut dual = warmed_dual();
+        let mut buf = Vec::new();
+        b.iter(|| {
+            dual.snapshot_into(&mut buf);
+            black_box(buf.len());
+        });
+    });
+    c.bench_function("vs_dual_restore", |b| {
+        let mut dual = warmed_dual();
+        let mut blob = Vec::new();
+        dual.snapshot_into(&mut blob);
+        b.iter(|| {
+            dual.restore(black_box(&blob)).expect("restore round-trips");
+        });
+    });
+}
+
 fn bench_snapshot_restore(c: &mut Criterion) {
     bench_rom(c, "flowing_palette", "assorted/flowing_palette.nes");
     bench_rom(c, "mmc3", "holy_mapperel/M4_P128K_CR8K.nes");
+    bench_dual(c);
 }
 
 criterion_group!(benches, bench_snapshot_restore);

@@ -931,6 +931,40 @@ fn a_rejected_unserialize_leaves_the_machine_as_it_was() {
     assert!(unchanged, "a rejected dual unserialize changed the cabinet");
 }
 
+/// v2.9.1 (NL-09): a Vs. `DualSystem` state now leaves `retro_serialize`
+/// through `VsDualSystem::snapshot_into`. The test above only shows a state
+/// being REFUSED; this one shows the frontend's own state coming back. Save
+/// at frame 10, run 50 more, load the save, and a fresh save must equal it
+/// byte for byte. Both consoles run the same program here, so this proves the
+/// container's framing and lengths, not the order of the two blocks -- the
+/// core's `snapshot_into_round_trips_into_a_fresh_cabinet` owns that.
+#[test]
+fn a_dual_cabinet_state_round_trips_through_the_abi() {
+    let _frontend = frontend();
+    let mut dual = NESTEST.to_vec();
+    dual[7] = 0x08 | 0x01;
+    dual[13] = 0x50;
+    let dual: &'static [u8] = Box::leak(dual.into_boxed_slice());
+    assert!(load(dual, true));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let size = serialize_size();
+    let mut saved = vec![0_u8; size];
+    assert!(serialize(&mut saved));
+    for _ in 0..50 {
+        run_frame();
+    }
+    assert!(unserialize(&saved), "the cabinet's own state must load");
+    let mut again = vec![0_u8; size];
+    assert!(serialize(&mut again));
+    unload();
+    assert!(
+        saved == again,
+        "a loaded dual state must serialize back to itself"
+    );
+}
+
 /// libretro audit §1.1 (L-1.1). A panic inside a frame used to cross the
 /// `extern "C"` boundary and abort the frontend: in this test process it would
 /// abort the test binary, which is what the mutation that removes

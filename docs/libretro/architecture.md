@@ -73,9 +73,11 @@ reports the loaded cartridge's region in `retro_get_system_av_info`).
   decides).
 * **Buffers:** reusable video, audio and serialize buffers, sized once, so a
   `retro_run` does not allocate in steady state. Three exceptions, all
-  measured or bounded: a Vs. `DualSystem` cabinet's `retro_serialize` builds
-  a fresh ~645 KB state on every call (`VsDualSystem::snapshot`; the v2.9.0
-  re-audit NL-09, recorded in `docs/performance.md`, not changed); a
+  measured or bounded: a Vs. `DualSystem` cabinet's serialize reuses the same
+  buffer through `VsDualSystem::snapshot_into` since v2.9.1 (NL-09; it built
+  a fresh ~645 KB state with thumbnails on every call before, about 8x
+  slower, `docs/performance.md`), and a dual RESTORE still allocates one
+  console's backup per call, measured as no cost worth pooling; a
   single console's serialize grows the pooled buffer only on the first call;
   and an FDS game that has written to its disk has the image built once, a
   second after the write, to save it (`persist_fds_disk`).
