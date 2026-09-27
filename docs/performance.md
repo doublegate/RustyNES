@@ -1057,7 +1057,8 @@ console restores are. It was reverted.
 edge detector's per-dot call is a real 4-5% on palette-heavy frames and goes
 at v3.0.0 with ADR 0042 (maintainer decision). Two ceilings recorded as "zero"
 are not zero. Everything else rejected before is still rejected, now on
-evidence. PALETTE_CANDIDATE_RESULT
+evidence. Correct candidates were then built under both ceilings; all three
+are rejected (below).
 
 **Method.** Every earlier rejection whose candidate could be rebuilt was
 re-run with the fixed `ab_check.sh` (both sides in fresh target directories),

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ab_check.sh — adjudicate ONE optimization against the >3% adoption bar.
+# ab_check.sh — adjudicate ONE optimization against the evidence-quality
+# adoption rule it prints at the end (not an effect-size bar; see below).
 #
 # Companion to `bench_relative_check.sh`, and deliberately a different tool
 # answering a different question:
@@ -10,8 +11,8 @@
 #                            statistics for that: the question is whether ONE
 #                            delta could be noise.
 #
-#   ab_check.sh (this)       Adoption decision. "Is this change worth keeping at
-#                            the >3% bar?" That is a question about the MEAN of
+#   ab_check.sh (this)       Adoption decision. "Is this change a reproduced,
+#                            real gain?" That is a question about the MEAN of
 #                            ~100 samples, where the confidence interval governs
 #                            and the standard error falls as CV/sqrt(n). Applying
 #                            the 3xCV rule here demands a quiet host no desktop
@@ -25,7 +26,9 @@
 # ## What it compares
 #
 # The WORKING TREE against a reference (default HEAD), back to back on the same
-# host, sharing one target dir. The reference is built in a throwaway git
+# host, each side built into a FRESH target directory of its own (until v2.9.1
+# they shared one, and the candidate ran the reference's binary -- see the
+# comment at the build step). The reference is built in a throwaway git
 # worktree -- never a `git checkout`, so uncommitted work is never touched even
 # if the run dies. Optionally applies extra cargo features to the candidate side
 # only, which is how a default-OFF feature flag is adjudicated (G1 used exactly
