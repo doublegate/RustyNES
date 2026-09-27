@@ -167,6 +167,7 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 - Public-API and save-state-format breaks are MAJOR bumps and must be documented in `CHANGELOG.md` with a migration note. A MAJOR bump for a new deliverable class carries no break by itself; any break it also carries still needs its migration note.
 - Save-state cross-version compatibility is best-effort (tagged per-chip sections with a version byte); the on-disk `.rnm` movie format and the public `rustynes-core` API are the stable surfaces.
+- **What "public API" means here** (written down at v2.9.0's review, which found it unwritten). The SemVer surface is the public API of `rustynes-core`, including the chip-crate types it re-exports, together with the `.rns` and `.rnm` formats. Every other crate's public items are internal to this repository and may change in any release: `rustynes-frontend`, `rustynes-hdpack`, `rustynes-script`, `rustynes-ra`, `rustynes-mobile`, `rustynes-libretro` and the rest. That holds because no crate here is published to crates.io, so nothing outside this workspace resolves against them. Their consumers are this repository's own binaries and apps. What the libretro core exposes is the libretro C ABI, which is libretro's contract, not ours. Such changes are still recorded in `CHANGELOG.md` when a user could notice them. This states the existing practice: v2.3.3, a PATCH, changed a frontend `pub fn` signature and deleted a public frontend field, and v2.9.0 changed `HdAudioTrack::pcm` and `ScriptHost::submit`.
 
 ## Accuracy milestones (met)
 
