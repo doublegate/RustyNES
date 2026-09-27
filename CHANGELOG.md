@@ -35,7 +35,7 @@ rows re-verified, **none regressed**, and 39 new findings, each fixed red-first
 or dispositioned in its ledger (`docs/audits/`). Two more defects were found by
 the release's own work, the worst of them a Power Cycle that erased the player's
 save. Emulation output does not change: the full `--features test-roms` suite
-passes 2,802 tests with AccuracyCoin 144/144 and nestest 0-diff. **No hardware has
+passes 2,811 tests with AccuracyCoin 144/144 and nestest 0-diff. **No hardware has
 run any bitstream.**
 
 ### Saves and movies
@@ -89,6 +89,12 @@ run any bitstream.**
   autoboot left the off-die build in reset forever. The core now tests the
   memory itself when the HPS has not answered (`rtl/sdram_probe.sv`), with
   patterns an empty socket cannot pass.
+- **The off-die build refuses a 32 MB SDRAM board.** Its controller drives
+  ten column bits, a 32 MB board's 256 Mbit part has nine, and the cartridge
+  spans the tenth, so on that board it would have read back aliased. Both the
+  HPS-reported size (now 64 MB or more) and the probe (whose two addresses
+  now differ only in that bit) refuse it. The SuperStation One's 128 MB is
+  unaffected. Found in review.
 - **The off-die ROM download no longer loses bytes.** At full rate the bridge
   lost 164 of 512 bytes without reporting them; it now makes the HPS wait
   (`ioctl_wait`) and loses none, including bytes sent during the memory's

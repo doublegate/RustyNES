@@ -684,7 +684,7 @@ Lua scripts could escape their instruction budget through finalizers and
 pattern matching, a failed save-state load (every RetroArch load among them)
 could leave a half-restored machine, and the off-die MiSTer build lost ROM
 bytes and hung under `bootcore=`. AccuracyCoin 144/144 and nestest pass, the
-full `--features test-roms` suite passes 2,802 tests, and the co-simulation
+full `--features test-roms` suite passes 2,811 tests, and the co-simulation
 passes 171 gates on-die and 172 off-die with one expected failure each. **No
 hardware has run any bitstream.** v2.8.4 closed the v2.8.x line with the
 MiSTer core's off-die (SDRAM) build, v3.0.0's secondary bitstream. v2.8.3 released every reset on the clock
