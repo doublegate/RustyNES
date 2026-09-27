@@ -37,6 +37,7 @@
 #   scripts/perf/ab_check.sh --base HEAD~1
 #   scripts/perf/ab_check.sh --features ppu-idle-line-fast   # flag A/B, same tree
 #   scripts/perf/ab_check.sh --bench nes_run_frame_nestest   # one workload
+#   scripts/perf/ab_check.sh --target snapshot_restore --bench vs_dual   # another bench target
 #   AB_MEASUREMENT_TIME=20 scripts/perf/ab_check.sh          # tighter intervals
 #
 # CPU pinning (`taskset`) is applied when available: measured on this project's
@@ -65,6 +66,12 @@ repo_root="$(pwd)"
 BASE_REF="HEAD"
 FEATURES=""
 BENCH_FILTER=""
+# The criterion bench TARGET (a `[[bench]]` in rustynes-core). `full_frame` is
+# the frame-cost workloads the adoption rule was written for. Until v2.9.1 it
+# was the only target this script could run, which is why v2.9.0 could record
+# the dual cabinet's serialize cost (NL-09) but not adjudicate a fix for it: a
+# serialize change does not move a frame.
+BENCH_TARGET="full_frame"
 MEASUREMENT_TIME="${AB_MEASUREMENT_TIME:-10}"
 WARMUP="${AB_WARMUP_TIME:-2}"
 
@@ -73,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --base) BASE_REF="$2"; shift 2 ;;
         --features) FEATURES="$2"; shift 2 ;;
         --bench) BENCH_FILTER="$2"; shift 2 ;;
+        --target) BENCH_TARGET="$2"; shift 2 ;;
         -h|--help) sed -n '2,60p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -108,6 +116,7 @@ bench_args=()
 bench_args+=(--warm-up-time "${WARMUP}" --measurement-time "${MEASUREMENT_TIME}")
 
 echo "==> Adoption A/B  (bar: >3% faster, whole interval, p < 0.05)"
+echo "    target    : ${BENCH_TARGET}"
 echo "    reference : ${base_sha:0:12} (${BASE_REF})"
 if [[ -n "${FEATURES}" ]]; then
     echo "    candidate : same tree + features '${FEATURES}'"
@@ -123,14 +132,14 @@ echo
 # reference is the working tree too; only a code A/B needs the worktree.
 if [[ -n "${FEATURES}" ]]; then
     echo "==> Benching reference (flag off)"
-    "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+    "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
         "${bench_args[@]}" --save-baseline ab_ref >/dev/null
 else
     echo "==> Benching reference (${base_sha:0:12}) in a throwaway worktree"
     git worktree add --detach "${work}/base" "${base_sha}" >/dev/null
     (
         cd "${work}/base"
-        "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+        "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
             "${bench_args[@]}" --save-baseline ab_ref
     ) >/dev/null
 fi
@@ -140,9 +149,9 @@ echo "==> Benching candidate, compared against the reference"
 echo
 feat_args=()
 [[ -n "${FEATURES}" ]] && feat_args+=(--features "${FEATURES}")
-"${PIN[@]}" cargo bench -p rustynes-core "${feat_args[@]}" --bench full_frame -- \
+"${PIN[@]}" cargo bench -p rustynes-core "${feat_args[@]}" --bench "${BENCH_TARGET}" -- \
     "${bench_args[@]}" --baseline ab_ref 2>&1 \
-    | grep -E "^nes_run_frame|time:|change:|Performance has|No change" \
+    | grep -E "^[a-z][a-z0-9_]*|time:|change:|Performance has|No change" \
     | sed 's/^/  /'
 
 # ---- ORDER-BIAS CONTROL (A/B/A) -------------------------------------------
@@ -163,17 +172,17 @@ echo
 echo "==> Order-bias control: re-benching the REFERENCE against itself, last"
 echo
 if [[ -n "${FEATURES}" ]]; then
-    "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+    "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
         "${bench_args[@]}" --baseline ab_ref 2>&1 \
-        | grep -E "^nes_run_frame|change:|Performance has|No change" \
+        | grep -E "^[a-z][a-z0-9_]*|change:|Performance has|No change" \
         | sed 's/^/  /'
 else
     (
         cd "${work}/base"
-        "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+        "${PIN[@]}" cargo bench -p rustynes-core --bench "${BENCH_TARGET}" -- \
             "${bench_args[@]}" --baseline ab_ref
     ) 2>&1 \
-        | grep -E "^nes_run_frame|change:|Performance has|No change" \
+        | grep -E "^[a-z][a-z0-9_]*|change:|Performance has|No change" \
         | sed 's/^/  /'
 fi
 
