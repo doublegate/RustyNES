@@ -1019,13 +1019,22 @@ than nothing and the candidate ran the reference's binary. Fixed: the
 reference builds into its own target directory, and `CRITERION_HOME` is pinned
 so the baseline is still found.
 
+**Proven, not inferred.** The old script (as of `1430961b`) was run against a
+candidate whose serialize bench deliberately did the work TWICE: it reported
+"No change in performance detected", 46.0 µs on both sides. The fixed script,
+on the same candidate, reported **+146% (p = 0.00)**. The fix needed a second
+step to get there: the candidate side, still building into `target/`, then ran
+a stale binary the old script had left there. Both sides now build into fresh
+directories of their own on every run.
+
 **Consequence for the record: every earlier code-mode (`--base`) result in this
-file is UNVERIFIED** until re-measured, since its candidate may have been the
-reference. Feature-flag A/Bs (`--features`, same tree) were not affected. Some
-earlier code-mode results show consistent, significant differences (v2.7.5's
-IMP-07, −0.89% at p = 0.00 twice) that a self-comparison does not obviously
-produce, so this is not a claim that they are wrong, only that this tool did
-not establish them.
+file is UNVERIFIED** until re-measured. **The ones most at risk are the
+REJECTIONS**, because a self-comparison reports exactly "no change": the v2.7.5
+probe table and the v2.7.6 deletion probes above ("zero" each) were code-mode
+`ab_check.sh` runs. Feature-flag A/Bs (`--features`, same tree) were not
+affected, and neither were manual A/B/A runs made within one tree -- v2.7.5's
+adopted IMP-07 (−0.89%) was one of those. Re-measuring the rejected proposals
+with the fixed tool is recorded in the v2.9.x plan.
 
 **The A/B, fixed tool, two independent runs** (i9-10850K, CPUs 2-5 pinned;
 another session was running tests, load 5-11):

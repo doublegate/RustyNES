@@ -109,7 +109,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export CARGO_TARGET_DIR="${repo_root}/target"
+# BOTH SIDES BUILD INTO FRESH TARGET DIRECTORIES OF THEIR OWN (v2.9.1): the
+# candidate into `${work}/target-cand` (the reference into `target-ref`, below).
+# The candidate used to build into `${repo_root}/target`, and after the
+# reference fix below it still ran a STALE binary: an earlier run of the old
+# script had left same-named artifacts there, newer than the working tree, and
+# cargo reported them fresh. A fresh directory per run cannot inherit anything.
+# It costs one full build per side per run, which the reference already paid.
+export CARGO_TARGET_DIR="${work}/target-cand"
 # THE REFERENCE BUILDS INTO ITS OWN TARGET DIRECTORY (v2.9.1). Until then both
 # sides shared `${repo_root}/target`, and that silently made every code A/B
 # compare the REFERENCE WITH ITSELF. Cargo names a workspace member's artifacts
