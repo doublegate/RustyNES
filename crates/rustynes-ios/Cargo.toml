@@ -39,7 +39,7 @@ log = "0.4"
 # CoreAudio. The render path (Workstream B) hands the SwiftUI `MTKView`'s
 # `CAMetalLayer` to wgpu and draws the NES picture with an 8:7-PAR letterbox
 # blit; the audio path (Workstream C) opens a cpal CoreAudio output stream fed
-# by a lock-free ring. Same wgpu major (29) + cpal (0.18) the desktop frontend
+# by a lock-free ring. Same wgpu major (30) + cpal (0.18) the desktop frontend
 # uses; `raw-window-handle` 0.6 builds the `UiKit` handle wgpu needs.
 [target.'cfg(target_os = "ios")'.dependencies]
 wgpu = "30"

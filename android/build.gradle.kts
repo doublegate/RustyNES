@@ -4,7 +4,8 @@
 // (Android 16) support — AGP 8.x maxes out at API 35 (it would only build 36 via
 // the `android.suppressUnsupportedCompileSdk` escape hatch). AGP 9.2 requires
 // Gradle 9.4.1 OR LATER + JDK 17; the wrapper was moved to 9.7.1 in the v2.6.3
-// dependency refresh, which is a floor being cleared rather than a pin changing.
+// dependency refresh and to 9.8.0 in the 2026-09-28 one (#570) -- a floor being
+// cleared rather than a pin changing.
 //
 // AGP 9 ships *built-in Kotlin* (it bundles the Kotlin Gradle plugin), so the
 // standalone `org.jetbrains.kotlin.android` plugin is dropped here and in :app —

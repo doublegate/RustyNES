@@ -121,8 +121,10 @@ impl MetalGfx {
         idesc.backends = wgpu::Backends::METAL;
         let instance = wgpu::Instance::new(idesc);
 
-        // wgpu 29 has no `CoreAnimationLayer` variant on the public
-        // `SurfaceTargetUnsafe`; use `RawHandle` with a `UiKit` window handle
+        // wgpu 29 had no `CoreAnimationLayer` variant on the public
+        // `SurfaceTargetUnsafe`. wgpu 30 has one (behind `cfg(metal)`), but this
+        // path is kept: it is the one that has run on devices, and a switch is a
+        // change no host here can compile. So: `RawHandle` with a `UiKit` window handle
         // built from the `UIView` pointer (wgpu-hal reads `view.layer`, the
         // `CAMetalLayer`). This mirrors the Android `RawHandle` + `AndroidNdk`
         // path exactly.
@@ -592,7 +594,8 @@ impl MetalGfx {
             },
         );
 
-        // wgpu 29 returns the `CurrentSurfaceTexture` enum, not a `Result`.
+        // Since wgpu 29, `get_current_texture` returns the `CurrentSurfaceTexture`
+        // enum, not a `Result` (unchanged in 30).
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

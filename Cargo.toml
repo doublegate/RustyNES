@@ -165,51 +165,33 @@ winit = "0.30"
 # wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
 # No effect on native builds. WebGPU-primary is on by default.
 #
-# PINNED AT 29 BY THE egui TIER BELOW, not by anything wgpu does. `egui-wgpu`
-# 0.35 requires it, so 29 -> 30 cannot land ahead of egui 0.36.
+# MOVES WITH THE egui TIER BELOW: `egui-wgpu` 0.36 requires wgpu 30, and a graph
+# holding two wgpu majors fails every device/queue handoff, so wgpu, naga and
+# egui are one atomic bump.
 wgpu = { version = "30", features = ["webgl"] }
 cpal = "0.18"
 # ---------------------------------------------------------------------------
-# egui / egui-wgpu / egui-winit are HELD AT 0.35. Do not let Dependabot or a
-# `cargo update --aggressive` take them to 0.36 — it does not compile for wasm,
-# and RustyNES ships a wasm demo:
+# egui / egui-wgpu / egui-winit 0.36 -- with egui-winit VENDORED (2026-09-28).
+#
+# egui-winit 0.36.2, the newest release, does not compile for wasm32, and
+# RustyNES ships a wasm demo:
 #
 #   error[E0407]: method `bytes` is not a member of trait `egui::DroppedFile`
-#     --> egui-winit-0.36.1/src/dropped_file.rs:19:5
 #
-# egui 0.36 made `DroppedFile` a trait split by target — `bytes_async` on wasm
-# (a browser can only read a dropped file asynchronously), `bytes` on native.
-# `egui-winit`'s `NativeFile` impl provides `path` + `bytes` with NO cfg gate,
-# on a type holding a `PathBuf` that calls `std::fs::read`. On wasm it therefore
-# implements a method the trait does not declare and omits the one it does.
+# egui 0.36 declares `DroppedFile::bytes` only off wasm (a browser reads a
+# dropped file asynchronously), while egui-winit's `NativeFile` implements it
+# unconditionally. Upstream fixed it on `main` (PR #8516) without a release.
+# From 2026-09-12 to 2026-09-28 this tier was HELD at 0.35 for that reason; the
+# maintainer then asked for every major bump, so `vendor/egui-winit/` carries the
+# crates.io 0.36.2 package with a three-site `cfg(not(target_arch = "wasm32"))`
+# guard, wired through `[patch.crates-io]` at the end of this file. A git-rev
+# patch was not an option: `deny.toml` denies git sources.
 #
-# Nothing here can route around it: `mod dropped_file;` is unconditional in
-# egui-winit's `lib.rs`, so the module compiles on wasm whatever we do. The fix
-# is a one-line cfg upstream, and no release carries it.
-#
-# RE-MEASURED 2026-09-12 against 0.36.2 (released 2026-09-08), because an
-# exclusion has to be re-checked at the commit that ships it rather than at the
-# one that wrote it. STILL BLOCKED, and checked the cheap way: a three-line
-# scratch crate depending on `egui-winit = "0.36.2"` with THIS project's exact
-# feature set fails `cargo check --target wasm32-unknown-unknown` with the same
-# `error[E0407]: method \`bytes\` is not a member of trait \`egui::DroppedFile\``.
-# egui-winit 0.36.2's `NativeFile` still implements `bytes()` with no cfg gate.
-# Reproducing it in isolation costs two minutes and needs no migration, so do
-# that before touching this repository at the next attempt.
-#
-# RE-CONFIRMED INDEPENDENTLY 2026-09-12 at the v2.6.19 dependency refresh, by
-# exactly that scratch-crate route: `egui-winit = "0.36.2"` with this project's
-# feature set fails `cargo check --target wasm32-unknown-unknown` with the same
-# E0407, and the NATIVE control on the same crate compiles clean -- so the
-# failure is the wasm cfg gap and not a broken probe. 0.36.2 is still the latest
-# stable. The advice above is also worth heeding literally: cherry-picking the
-# preserved branch onto a current tree conflicts in `Cargo.toml`, `Cargo.lock`
-# and an unrelated workflow, and was abandoned in favour of the two-minute
-# check, which answered the question on its own.
-#
-# The complete migration, native-green, is preserved on
-# `chore/egui-0.36-wgpu-30-blocked`. Note it is based on a pre-v2.3.2 tree, so
-# it is a reference for the five API deltas rather than something to cherry-pick.
+# REMOVE THE VENDORED COPY the day crates.io carries an egui-winit newer than
+# 0.36.2 that compiles for wasm32 with the feature set below: delete
+# `vendor/egui-winit/`, its `[patch.crates-io]` line and its `exclude` entry, and
+# re-run both wasm clippy gates. Steps and the patch itself:
+# `vendor/egui-winit/VENDORED.md`.
 # ---------------------------------------------------------------------------
 egui = "0.36"
 egui-wgpu = "0.36"
