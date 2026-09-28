@@ -338,7 +338,7 @@ dependencies {
     // one on the next line. A comment that duplicates a pin drifts from it.
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
-    implementation("androidx.core:core-ktx:1.19.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     // v1.8.8 "Atlas" (Workstream B): per-app language. AppCompat 1.6.0+ supplies the
     // back-compat AppCompatDelegate.setApplicationLocales (delegating to the platform
     // LocaleManager on API 33+, and a manual override on API 24..32). MainActivity must
