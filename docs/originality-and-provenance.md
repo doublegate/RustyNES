@@ -40,7 +40,7 @@ Authoritative companions: [`NOTICE`](../NOTICE) (the legal attribution file),
 
 ---
 
-## 1. What is derived from GPL-licensed emulators
+## 1. What is derived from other emulators and libraries
 
 The table below is the honest derivation record, rebuilt from the in-source
 comments as they stood **before** the v2.2.5 rewording (recoverable from the git
@@ -50,10 +50,13 @@ the agent's reach** per the reference firewall — see
 `docs/ai-emulator-provenance-guardrails.md`; the citations name each upstream
 project + file so the record stands without the local clone). Each
 row is code in RustyNES that was ported, adapted, or closely modeled from the named
-GPL emulator — not merely behavior observed and reimplemented from documentation.
-"Source license" is the license the upstream file carries; because every upstream
-here is GPL-2.0-**or-later** or GPL-3.0-**or-later**, all of it is compatible with
-distributing the combined work under GPL-3.0-or-later.
+upstream — not merely behavior observed and reimplemented from documentation. Most
+upstreams here are GPL emulators; some are permissively licensed (emu2413 and
+TriCNES under MIT, ares under BSD-2-Clause / Apache-2.0) and one is LGPL
+(blip_buf). "Upstream license" is the license the upstream file carries. Every one
+is compatible with distributing the combined work under GPL-3.0-or-later: the GPL
+upstreams are GPL-2.0-**or-later** or GPL-3.0-**or-later**, and the permissive and
+LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 
 | RustyNES file | Derived from | Upstream source | Upstream license |
 | --- | --- | --- | --- |

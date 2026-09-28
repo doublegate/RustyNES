@@ -139,3 +139,6 @@ ADR 0037 reference firewall.
 | INVERTED | The two implementations disagree as the finding says, but the documentation shows the audited side is right and the other one wrong, so the fix lands on the other side (first used for R-3.5a, v2.8.2). |
 | UNTRIAGED | Not yet read against the code. Nothing is planned on an untriaged finding. |
 | FIXED | Closed by the PR in the ledger row, with the red-first test named. |
+| CHANGED, UNVERIFIED | The code changed, but no gate on this machine can run it (first used for the Swift halves of AUD-10 and AUD-14, v2.9.2). Not FIXED until its named check -- a device-checklist row -- has run. |
+| DEFERRED | Real, and decided for a later release; the row names who decided and when. |
+| DECLINED | A real suggestion not taken; the row gives the reason. |
