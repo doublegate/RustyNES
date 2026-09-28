@@ -460,7 +460,7 @@ impl<T: Transport> RollbackSession<T> {
     /// (saturating). See the constant for the derivation. Anything later is
     /// dropped before it can size an allocation.
     ///
-    /// Capped one short of `u32::MAX`: [`ensure_frame`](Self::ensure_frame)
+    /// Capped one short of `u32::MAX`: the private `ensure_frame`
     /// sizes its tables as `frame as usize + 1`, which overflows a 32-bit
     /// `usize` at `u32::MAX`, and saturation alone would let the window reach
     /// exactly that frame. Unreachable in play (the clock would have to run
