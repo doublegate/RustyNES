@@ -32,6 +32,20 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
+/// Version byte this board writes in its mapper save-state section.
+///
+/// **v1** (through v2.9.1) carried the PRG and CHR bank registers, the
+/// variant, the 8 KiB PRG-RAM and the 2 KiB nametable RAM. The 8 KiB CHR-RAM
+/// -- which every BNROM board has, *Deadly Towers* among them -- was left
+/// out, and the `.rns` container has no other section that carries cartridge
+/// RAM, so every save-state load, rewind step, run-ahead frame and netplay
+/// rollback kept the running game's tiles instead of the saved ones (the
+/// v2.9.2 cartridge-RAM sweep; the same omission core audit AUD-02 found on
+/// the Konami VRC boards). **v2** appends the CHR-RAM when present.
+/// `load_state` accepts both; a v1 blob leaves the CHR-RAM untouched, which is
+/// the old behaviour.
+const M34_SECTION_VERSION: u8 = 2;
+
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
     let local = (addr as usize) & (NAMETABLE_SIZE - 1);
@@ -194,8 +208,9 @@ impl Mapper for M34 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(8 + self.prg_ram.len() + self.vram.len());
-        out.push(1u8);
+        let mut out =
+            Vec::with_capacity(8 + self.prg_ram.len() + self.vram.len() + self.ram_block_len());
+        out.push(M34_SECTION_VERSION);
         out.push(self.prg_bank);
         out.push(self.chr_bank_lo);
         out.push(self.chr_bank_hi);
@@ -205,19 +220,29 @@ impl Mapper for M34 {
         });
         out.extend_from_slice(&self.prg_ram);
         out.extend_from_slice(&self.vram);
+        // --- v2 tail: the CHR-RAM, if any (see `M34_SECTION_VERSION`) ---
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr);
+        }
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 5 + self.prg_ram.len() + self.vram.len();
+        let version = data.first().copied().unwrap_or(0);
+        // Both READABLE versions, as literals: v1 (no CHR-RAM) and v2 (+ it).
+        let ram_len = match version {
+            1 => 0,
+            2 => self.ram_block_len(),
+            other => return Err(MapperError::UnsupportedVersion(other)),
+        };
+        // The whole length is validated before the first field is written.
+        let core_len = 5 + self.prg_ram.len() + self.vram.len();
+        let expected = core_len + ram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != 1 {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
         self.chr_bank_lo = data[2];
@@ -231,8 +256,22 @@ impl Mapper for M34 {
         self.prg_ram
             .copy_from_slice(&data[cur..cur + self.prg_ram.len()]);
         cur += self.prg_ram.len();
-        self.vram.copy_from_slice(&data[cur..cur + self.vram.len()]);
+        self.vram.copy_from_slice(&data[cur..core_len]);
+        // A v1 blob stops here and leaves the CHR-RAM as it is -- the
+        // pre-v2.9.2 behaviour, so an old save loads exactly as it always did.
+        if version >= 2 && self.chr_is_ram {
+            self.chr.copy_from_slice(&data[core_len..]);
+        }
         Ok(())
+    }
+}
+
+impl M34 {
+    /// Bytes the v2 tail adds: the 8 KiB CHR-RAM when the cartridge has no
+    /// CHR-ROM (every BNROM board), else nothing. Derived from the loaded ROM,
+    /// so a save and its load (same ROM, checked by the `.rns` hash tag) agree.
+    fn ram_block_len(&self) -> usize {
+        if self.chr_is_ram { self.chr.len() } else { 0 }
     }
 }
 
@@ -298,5 +337,84 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), 2, "NINA-001 CHR lo bank via $7FFE");
         m.cpu_write(0x7FFF, 3);
         assert_eq!(m.ppu_read(0x1000), 3, "NINA-001 CHR hi bank via $7FFF");
+    }
+
+    /// v2.9.2 cartridge-RAM sweep: the section carries the 8 KiB CHR-RAM of
+    /// a board with no CHR-ROM. The whole-machine pin is
+    /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`.
+    #[test]
+    fn m34_save_state_carries_chr_ram() {
+        let mut m = M34::new(
+            synth(8),
+            Box::new([]),
+            Mirroring::Vertical,
+            M34Variant::Bnrom,
+        )
+        .unwrap();
+        m.chr[0x0000] = 0x11;
+        m.chr[0x1FFF] = 0x22;
+        let blob = m.save_state();
+        let mut m2 = M34::new(
+            synth(8),
+            Box::new([]),
+            Mirroring::Vertical,
+            M34Variant::Bnrom,
+        )
+        .unwrap();
+        m2.load_state(&blob).expect("round-trip");
+        assert_eq!(m2.chr[0x0000], 0x11);
+        assert_eq!(m2.chr[0x1FFF], 0x22);
+    }
+
+    /// A v1 blob (no CHR-RAM tail, written through v2.9.1) still loads and
+    /// leaves the CHR-RAM as it was -- the old behaviour, not a wipe.
+    #[test]
+    fn m34_v1_blob_loads_and_leaves_chr_ram_untouched() {
+        let mut m = M34::new(
+            synth(8),
+            Box::new([]),
+            Mirroring::Vertical,
+            M34Variant::Bnrom,
+        )
+        .unwrap();
+        m.prg_bank = 1;
+        let core_len = 5 + m.prg_ram.len() + m.vram.len();
+        let mut v1 = m.save_state()[..core_len].to_vec();
+        v1[0] = 1;
+        let mut m2 = M34::new(
+            synth(8),
+            Box::new([]),
+            Mirroring::Vertical,
+            M34Variant::Bnrom,
+        )
+        .unwrap();
+        m2.chr[0x0123] = 0x77;
+        m2.load_state(&v1).expect("a v1 blob must still load");
+        assert_eq!(m2.prg_bank, 1, "v1 core fields restored");
+        assert_eq!(m2.chr[0x0123], 0x77, "v1 load must not touch CHR-RAM");
+    }
+
+    /// A v2 blob one byte short (inside the CHR-RAM tail) is rejected.
+    #[test]
+    fn m34_truncated_chr_ram_tail_is_rejected() {
+        let m = M34::new(
+            synth(8),
+            Box::new([]),
+            Mirroring::Vertical,
+            M34Variant::Bnrom,
+        )
+        .unwrap();
+        let blob = m.save_state();
+        let mut m2 = M34::new(
+            synth(8),
+            Box::new([]),
+            Mirroring::Vertical,
+            M34Variant::Bnrom,
+        )
+        .unwrap();
+        let err = m2
+            .load_state(&blob[..blob.len() - 1])
+            .expect_err("a truncated v2 blob must be rejected");
+        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
     }
 }

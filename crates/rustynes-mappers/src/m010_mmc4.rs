@@ -31,6 +31,21 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
+/// Version byte this board writes in its mapper save-state section.
+///
+/// **v1** (through v2.9.1) carried the PRG bank, the four CHR bank registers,
+/// both latches, the mirroring and the 2 KiB nametable RAM -- and nothing
+/// else. The 8 KiB PRG-RAM at `$6000-$7FFF` (the *Fire Emblem* battery save
+/// RAM) and, on a cartridge with no CHR-ROM, the 8 KiB CHR-RAM were left out,
+/// and the `.rns` container has no other section that carries cartridge RAM
+/// -- so every save-state load, rewind step, run-ahead frame and netplay
+/// rollback kept whatever RAM the running game held instead of the saved one
+/// (the v2.9.2 cartridge-RAM sweep; the same omission core audit AUD-02 found
+/// on the Konami VRC boards). **v2** appends the PRG-RAM, then the CHR-RAM
+/// when present. `load_state` accepts both; a v1 blob leaves the RAM
+/// untouched, which is the old behaviour.
+const MMC4_SECTION_VERSION: u8 = 2;
+
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
     let local = (addr as usize) & (NAMETABLE_SIZE - 1);
@@ -240,8 +255,8 @@ impl Mapper for Mmc4 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(16 + self.vram.len());
-        out.push(1u8);
+        let mut out = Vec::with_capacity(16 + self.vram.len() + self.ram_block_len());
+        out.push(MMC4_SECTION_VERSION);
         out.push(self.prg_bank);
         out.push(self.chr_lo_fd);
         out.push(self.chr_lo_fe);
@@ -251,19 +266,30 @@ impl Mapper for Mmc4 {
         out.push(u8::from(self.latch_hi_fe));
         out.push(self.mirroring as u8);
         out.extend_from_slice(&self.vram);
+        // --- v2 tail: the on-cart RAM (see `MMC4_SECTION_VERSION`) ---
+        out.extend_from_slice(&self.prg_ram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr_rom);
+        }
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 9 + self.vram.len();
+        let version = data.first().copied().unwrap_or(0);
+        // Both READABLE versions, as literals: v1 (no RAM) and v2 (+ RAM).
+        let ram_len = match version {
+            1 => 0,
+            2 => self.ram_block_len(),
+            other => return Err(MapperError::UnsupportedVersion(other)),
+        };
+        // The whole length is validated before the first field is written.
+        let core_len = 9 + self.vram.len();
+        let expected = core_len + ram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != 1 {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
         self.chr_lo_fd = data[2];
@@ -281,7 +307,95 @@ impl Mapper for Mmc4 {
             5 => Mirroring::MapperControlled,
             other => return Err(MapperError::Invalid(format!("mirroring {other}"))),
         };
-        self.vram.copy_from_slice(&data[9..9 + self.vram.len()]);
+        self.vram.copy_from_slice(&data[9..core_len]);
+        // A v1 blob stops here and leaves the RAM as it is -- the pre-v2.9.2
+        // behaviour, so an old save loads exactly as it always did.
+        if version >= 2 {
+            let (prg, chr) = data[core_len..].split_at(self.prg_ram.len());
+            self.prg_ram.copy_from_slice(prg);
+            if self.chr_is_ram {
+                self.chr_rom.copy_from_slice(chr);
+            }
+        }
         Ok(())
+    }
+}
+
+impl Mmc4 {
+    /// Bytes the v2 tail adds: the 8 KiB PRG-RAM, plus the 8 KiB CHR-RAM
+    /// when the cartridge has no CHR-ROM. Derived from the loaded ROM, so a
+    /// save and its load (same ROM, checked by the `.rns` hash tag) agree.
+    fn ram_block_len(&self) -> usize {
+        self.prg_ram.len()
+            + if self.chr_is_ram {
+                self.chr_rom.len()
+            } else {
+                0
+            }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synth_prg(banks_16k: usize) -> Box<[u8]> {
+        vec![0u8; banks_16k * PRG_BANK_16K].into_boxed_slice()
+    }
+
+    fn synth_chr_4k(banks: usize) -> Box<[u8]> {
+        let mut v = vec![0u8; banks * CHR_BANK_4K];
+        for b in 0..banks {
+            v[b * CHR_BANK_4K] = b as u8;
+        }
+        v.into_boxed_slice()
+    }
+
+    /// v2.9.2 cartridge-RAM sweep: the section carries the 8 KiB PRG-RAM
+    /// (the battery save RAM) and, on a board with no CHR-ROM, the 8 KiB
+    /// CHR-RAM. The whole-machine pin is
+    /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`.
+    #[test]
+    fn mmc4_save_state_carries_prg_ram_and_chr_ram() {
+        let mut m = Mmc4::new(synth_prg(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x6000, 0x5A);
+        m.cpu_write(0x7FFF, 0xA5);
+        m.chr_rom[0x0000] = 0x11;
+        m.chr_rom[0x1FFF] = 0x22;
+        let blob = m.save_state();
+        let mut m2 = Mmc4::new(synth_prg(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).expect("round-trip");
+        assert_eq!(m2.cpu_read(0x6000), 0x5A);
+        assert_eq!(m2.cpu_read(0x7FFF), 0xA5);
+        assert_eq!(m2.chr_rom[0x0000], 0x11);
+        assert_eq!(m2.chr_rom[0x1FFF], 0x22);
+    }
+
+    /// A v1 blob (no RAM tail, written through v2.9.1) still loads and leaves
+    /// the RAM as it was -- the old behaviour, not a wipe.
+    #[test]
+    fn mmc4_v1_blob_loads_and_leaves_ram_untouched() {
+        let mut m = Mmc4::new(synth_prg(8), synth_chr_4k(8), Mirroring::Vertical).unwrap();
+        m.cpu_write(0xA000, 3);
+        let core_len = 9 + m.vram.len();
+        let mut v1 = m.save_state()[..core_len].to_vec();
+        v1[0] = 1;
+        let mut m2 = Mmc4::new(synth_prg(8), synth_chr_4k(8), Mirroring::Vertical).unwrap();
+        m2.cpu_write(0x6123, 0x77);
+        m2.load_state(&v1).expect("a v1 blob must still load");
+        assert_eq!(m2.prg_bank, 3, "v1 core fields restored");
+        assert_eq!(m2.cpu_read(0x6123), 0x77, "v1 load must not touch RAM");
+    }
+
+    /// A v2 blob one byte short (inside the RAM tail) is rejected.
+    #[test]
+    fn mmc4_truncated_ram_tail_is_rejected() {
+        let m = Mmc4::new(synth_prg(8), synth_chr_4k(8), Mirroring::Vertical).unwrap();
+        let blob = m.save_state();
+        let mut m2 = Mmc4::new(synth_prg(8), synth_chr_4k(8), Mirroring::Vertical).unwrap();
+        let err = m2
+            .load_state(&blob[..blob.len() - 1])
+            .expect_err("a truncated v2 blob must be rejected");
+        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
     }
 }

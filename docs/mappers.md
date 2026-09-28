@@ -114,15 +114,32 @@ after every older field: VRC2 and VRC4 write section v2, VRC6 v3 (after its
 audio tail), and VRC7 v3 without `mapper-audio` / v4 with it (after the
 synthesizer tail, so the version still says whether that tail is present).
 Every older version still loads and leaves the RAM as it was, the old
-behaviour. Pinned end to end by `vrc_boards_snapshot_carries_prg_ram` and
-`vrc_boards_snapshot_carries_chr_ram` in `crates/rustynes-core/src/nes.rs`,
-which snapshot a whole `Nes`, scribble the RAM and restore.
+behaviour.
 
-A sweep of iNES mappers 0-255 with the same shape of test, run while triaging
-AUD-02, found the same omission on boards outside the VRC family, which v2.9.2
-does not change: PRG-RAM on **10** (MMC4), and CHR-RAM on **9**, **10**, **11**,
-**19**, **34**, **69**, **75** and **151**. Those are open, for the v2.9.2 audit
-disposition to place; nothing here claims them fixed.
+A sweep of every mapper id with the same shape of test, run while triaging
+AUD-02, found the same omission on boards outside the VRC family: PRG-RAM on
+**10** (MMC4), and CHR-RAM on **9**, **10**, **11**, **19**, **34**, **69**,
+**75** and **151**. v2.9.2 fixes them the same way, a versioned tail after every
+older field: MMC2 (9), MMC4 (10), Color Dreams (11), mapper 34 and VRC1 (75,
+and 151, which forwards its section to the VRC1 core) write section v2, FME-7
+(69) v3 (after its 5B audio tail) and Namco 163 (19) v4 (after its v3
+`chr_ram_disable` / `ciram_owned` bytes). Every older version still loads and
+leaves the RAM as it was; a new-version blob of the wrong length is refused
+before any field is written.
+
+The sweep is now a standing test,
+`every_board_snapshot_carries_cartridge_ram` in
+`crates/rustynes-core/src/nes.rs`, which replaces the two VRC-only pins. It
+walks every mapper id 0-4095 that `parse` builds (NES 2.0 under all 16
+submappers, and iNES 1.0 for 0-255), each with and without CHR-ROM, snapshots
+a whole `Nes`, scribbles the RAM with its complement and restores. PRG-RAM is
+checked through `sram()` on the whole buffer, or through the `$6000-$7FFF`
+window when a board keeps RAM there without exposing it; CHR-RAM through PPU
+`$0000-$1FFF`. It also asserts the boards above stay among those checked, so a
+regression in the probes cannot pass by checking nothing. Two limits: RAM
+behind a board-specific enable that `sram()` does not expose is not reached,
+and CHR-RAM beyond the 8 KiB mapped at power-on is checked only on its visible
+part.
 
 **A board with nothing at `$6000-$7FFF` floats there (v2.7.2).** The CPU bus
 keeps an open-bus latch, and a mapper reports an undriven address through

@@ -543,7 +543,7 @@ mod tests {
 
     /// Core audit v2.9.2 AUD-02: the section carries the 8 KiB PRG-RAM and,
     /// on a CHR-RAM board, the 8 KiB CHR-RAM. The core-level pin is
-    /// `rustynes_core::nes::tests::vrc_boards_snapshot_carries_prg_ram`.
+    /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`.
     #[test]
     fn vrc4_save_state_carries_prg_ram_and_chr_ram() {
         let mut m = Vrc4::new(synth(8), Box::new([]), 21, 0, Mirroring::Vertical).unwrap();

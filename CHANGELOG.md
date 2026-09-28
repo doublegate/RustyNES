@@ -38,9 +38,23 @@ cycle-accurate core later replaced.
   Densetsu*, *Madara*, *Lagrange Point* and the rest drifted out of step with
   the restored machine. The sections now carry both (VRC2 and VRC4 section v2,
   VRC6 v3, VRC7 v3/v4); save states written by earlier releases still load
-  and leave the RAM as it was. A whole-machine sweep while fixing this found
-  the same gap on mapper 10 (MMC4) PRG-RAM and on CHR-RAM for mappers 9, 10,
-  11, 19, 34, 69, 75 and 151, which this entry does not fix.
+  and leave the RAM as it was.
+- **MMC4 games keep their battery RAM, and eight more boards their CHR-RAM,
+  across a save state** (the v2.9.2 cartridge-RAM sweep that followed core
+  audit AUD-02). The `.rns` format carries cartridge RAM only inside the
+  mapper's own section, and mapper 10 (MMC4) left its 8 KiB of `$6000-$7FFF`
+  PRG-RAM out of it, so the save RAM of *Fire Emblem* and *Fire Emblem Gaiden*
+  drifted out of step with a restored machine on every save-state load,
+  rewind step, run-ahead frame and netplay rollback. Mappers 9 (MMC2), 10,
+  11 (Color Dreams), 19 (Namco 163), 34 (BNROM / NINA-001), 69 (Sunsoft
+  FME-7), 75 (VRC1) and 151 (Konami VS) did the same with their 8 KiB of
+  CHR-RAM on a cartridge without CHR-ROM, which every BNROM board is
+  (*Deadly Towers*). The sections now carry it (MMC2, MMC4, Color Dreams,
+  mapper 34 and VRC1/151 section v2, FME-7 v3, Namco 163 v4); save states
+  written by earlier releases still load and leave the RAM as it was, and a
+  truncated new one is refused. A whole-machine test now sweeps every mapper
+  id the cartridge parser builds, under every submapper and with and without
+  CHR-ROM, and fails on any board whose RAM a snapshot does not restore.
 - **A crafted FDS save state can no longer crash the 32-bit builds** (core
   audit v2.9.2 AUD-01). The disk tail's side count was multiplied by the side
   size unchecked; on `wasm32`, `armv7` and `i686` a count of 2^30 wraps that
