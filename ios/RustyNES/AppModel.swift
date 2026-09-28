@@ -499,11 +499,13 @@ final class AppModel: ObservableObject {
     /// other ports are their pad mask alone.
     private func pushInput(port: Int) {
         guard let emulator else { return }
-        if port == 0 {
-            emulator.setButtons(port: 0, mask: touchMask | padMasks[0])
-        } else {
-            emulator.setButtons(port: UInt32(port), mask: padMasks[port])
-        }
+        // AUD-10: opposing directions are cancelled on the COMBINED mask, as the
+        // desktop does per player -- the touch pad cleans its own union, but a
+        // touch direction plus the opposite on a hardware pad would otherwise
+        // still reach the core. (CodeRabbit on #563.)
+        var m = NesButtonMask(bits: port == 0 ? touchMask | padMasks[0] : padMasks[port])
+        m.cancelOpposingDirections()
+        emulator.setButtons(port: UInt32(port), mask: m.bits)
     }
 
     // MARK: - Settings application

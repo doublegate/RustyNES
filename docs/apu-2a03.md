@@ -325,8 +325,9 @@ external open-bus latch used by cartridge or PPU register accesses.
 
 **Bit 5 is open bus, from the CPU's internal data bus** (`internal_data_bus` in
 `crates/rustynes-core/src/bus.rs`): nesdev's APU page says the value "comes from
-the last cycle that did not read `$4015`". Every CPU read and write sets that
-latch, including a read of an address nothing decodes, where the CPU latches the
+the last cycle that did not read `$4015`". Every CPU write, and every CPU read
+other than `$4015` itself, sets that latch (the `$4015` read returns before the
+latch is assigned, which is what keeps bit 5 on the older value), including a read of an address nothing decodes, where the CPU latches the
 floating value it sees. A DMC DMA fetch drives only the external bus
 (AccuracyCoin `Internal Data Bus` Test 2), and so does an OAM-DMA put while the
 6502 bus is parked in `$4000-$401F` (`oam_dma_put`), so after either the two

@@ -210,19 +210,20 @@ final class EmulatorCore {
         // single-player and the netplay paths push, so it runs first.
         recoverAudioIfNeeded()
 
-        // AUD-14: advance frame-paced host input (turbo) BEFORE the frame, so any
-        // mask it pushes (`setButtons` -> the bridge's atomics / `_localMask`) is
-        // latched by this frame on both paths below.
-        onFrameWillRun?()
-
         // Netplay (v1.9.6): while a session is active the rollback core owns pacing,
         // so the loop advances via `npAdvanceFrame` instead of `runFrame` (calling
         // `runFrame` would advance the core a second time and desync rollback). Handled
         // entirely in `tickNetplay`; the single-player path below is skipped.
+        // `tickNetplay` also paces turbo, from the frames it actually produces.
         if controller.npIsActive() {
             tickNetplay(gfx: gfx)
             return
         }
+
+        // AUD-14: advance frame-paced host input (turbo) BEFORE the frame, so any
+        // mask it pushes (`setButtons` -> the bridge's atomics / `_localMask`) is
+        // latched by this frame. `runFrame` below always produces one.
+        onFrameWillRun?()
 
         // TAStudio (v1.9.9): when a scripted playback is active, inject this
         // frame's P1 mask before advancing. No-op otherwise (live input path).
@@ -331,9 +332,17 @@ final class EmulatorCore {
         let result = controller.npAdvanceFrame(localMask: localMask)
         guard result.producedFrame else {
             // Stall / connecting / error: keep the audio ring from backing up, no present.
+            // Turbo does not advance either: no emulated frame ran.
             _ = controller.drainAudio()
             return
         }
+
+        // AUD-14: turbo is paced by EMULATED frames, and whether this tick produces
+        // one is only known after `npAdvanceFrame` returns. So the phase advances
+        // here, after a produced frame, and the mask it pushes is latched by the
+        // next one -- a connecting or time-sync-stalled session no longer moves the
+        // pulse. (Copilot on #563.)
+        onFrameWillRun?()
 
         // The just-produced frame, read without advancing the core again.
         let index = controller.indexFramebufferBytes()

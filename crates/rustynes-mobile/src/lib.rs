@@ -3453,6 +3453,10 @@ mod tests {
         ctrl.run_frame();
         ctrl.run_frame();
         assert!(ctrl.frame() > cycled, "a power cycle thaws the machine");
+        assert!(
+            !ctrl.composite_hd_frame().is_empty(),
+            "the HD path composites again after a fresh start"
+        );
     }
 
     #[test]

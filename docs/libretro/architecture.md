@@ -80,8 +80,10 @@ reports the loaded cartridge's region in `retro_get_system_av_info`).
   console's backup per call, measured as no cost worth pooling; and an FDS
   game that has written to its disk has the image built once, a second after
   the write, to save it (`persist_fds_disk`). The serialize buffer is filled
-  at load by the snapshot that sizes `retro_serialize_size`, with the
-  expansion-device headroom reserved, so no `retro_serialize` grows it: until
+  at load by the snapshot that sizes `retro_serialize_size` -- for a single
+  console with the expansion-device headroom reserved; a Vs. cabinet attaches
+  no device, so its size is the snapshot's exact length -- so no
+  `retro_serialize` grows it: until
   v2.9.2 the first one did, during the first run-ahead or rollback frame
   (audit AUD-17). A cabinet's 512x240 image is composed over the previous
   frame's, every byte rewritten, with no per-frame zero-fill (AUD-19).

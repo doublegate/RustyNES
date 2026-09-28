@@ -3770,12 +3770,12 @@ mod tests {
         SweepBoot::Refused(last)
     }
 
-    /// Byte `i` of the sweep's position-dependent pattern, `salt` keeping
+    /// Byte `i` of the sweep's position-dependent pattern, `seed` keeping
     /// the PRG and CHR patterns distinct. Position-dependent so a shifted,
     /// truncated or aliased copy cannot pass for the real thing.
-    fn sweep_pattern(i: usize, salt: u8) -> u8 {
+    fn sweep_pattern(i: usize, seed: u8) -> u8 {
         let le = i.to_le_bytes();
-        le[0] ^ salt ^ le[1].rotate_left(3)
+        le[0] ^ seed ^ le[1].rotate_left(3)
     }
 
     /// Where a probe found RAM.
