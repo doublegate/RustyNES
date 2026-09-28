@@ -77,10 +77,14 @@ reports the loaded cartridge's region in `retro_get_system_av_info`).
   buffer through `VsDualSystem::snapshot_into` since v2.9.1 (NL-09; it built
   a fresh ~645 KB state with thumbnails on every call before, about 8x
   slower, `docs/performance.md`), and a dual RESTORE still allocates one
-  console's backup per call, measured as no cost worth pooling; a
-  single console's serialize grows the pooled buffer only on the first call;
-  and an FDS game that has written to its disk has the image built once, a
-  second after the write, to save it (`persist_fds_disk`).
+  console's backup per call, measured as no cost worth pooling; and an FDS
+  game that has written to its disk has the image built once, a second after
+  the write, to save it (`persist_fds_disk`). The serialize buffer is filled
+  at load by the snapshot that sizes `retro_serialize_size`, with the
+  expansion-device headroom reserved, so no `retro_serialize` grows it: until
+  v2.9.2 the first one did, during the first run-ahead or rollback frame
+  (audit AUD-17). A cabinet's 512x240 image is composed over the previous
+  frame's, every byte rewritten, with no per-frame zero-fill (AUD-19).
 * **Containment:** every callback that runs emulation goes through
   `contained`, which stops a panic there, logs it through the frontend, and
   marks the core poisoned. The console is kept, not dropped, because the
@@ -88,7 +92,9 @@ reports the loaded cartridge's region in `retro_get_system_av_info`).
 * **Frontend memory:** WRAM, the cartridge's PRG-RAM and nametable RAM are
   handed to RetroArch through `SET_MEMORY_MAPS` (cheats, RetroAchievements)
   and are withdrawn with an empty map before the console is dropped on
-  unload. PRG-RAM is flagged, and exposed as `RETRO_MEMORY_SAVE_RAM` for the
+  unload, or at `retro_deinit` for a frontend that skips `retro_unload_game`
+  (v2.9.2, audit AUD-16; after an unload deinit sends nothing). PRG-RAM is
+  flagged, and exposed as `RETRO_MEMORY_SAVE_RAM` for the
   `.srm`, only when the header declares a battery (v2.9.0;
   `advanced_features.md`).
 

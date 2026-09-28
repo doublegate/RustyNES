@@ -26,6 +26,28 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **libretro: memory maps are withdrawn at `retro_deinit` too** (v2.9.2 audit
+  AUD-16). libretro.h has `retro_unload_game` "Called before retro_deinit", and
+  RetroArch does so, but the core already caters for a frontend that skips it
+  (it still writes the FDS disk and drops the console). On that path the console
+  was freed while the frontend still held the memory-map descriptors pointing
+  into it; they are now replaced with an empty map first. After a normal unload
+  `retro_deinit` makes no extra call.
+
+### Performance
+
+- **libretro: the first save state no longer allocates** (AUD-17). The snapshot
+  that measures `retro_serialize_size` at load now goes into the buffer
+  `retro_serialize` reuses, with the Zapper headroom reserved, so the first
+  run-ahead or rollback frame no longer grows it from nothing (about 260 KB,
+  645 KB for a Vs. cabinet). No serialize reallocates it, Zappers included.
+- **libretro: a Vs. `DualSystem` cabinet frame is no longer zero-filled before
+  it is drawn** (AUD-19). Every byte of the 512x240 image is rewritten each
+  frame, so the 491,520-byte clear was dead work; the presented image is
+  unchanged (pinned for stale, wrong-length and empty buffers).
+
 ## [2.9.1] - 2026-09-27 - "Hone" (what the optimisation bars measure, and what clears them)
 
 The second release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
