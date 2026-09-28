@@ -42,9 +42,31 @@ log() { printf '[agy-review] %s\n' "$*" >&2; }
 # general helper used throughout the script -- the marker is a comment, so its position
 # changes nothing about where the function is defined.
 have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
-AGY_ERROR_RE='^[[:space:]]*Error:.*(Eligibility check failed|UNAVAILABLE|unavailable|RESOURCE_EXHAUSTED|INTERNAL|DEADLINE_EXCEEDED|code [45][0-9]{2})'
-# Captures longer than this are assumed to be real reviews even if they open with an error line:
-# a genuine review is thousands of bytes, a bare backend error is a couple of hundred.
+# Any `Error:` on line 1 of a short capture -- NOT an enumeration of known backend messages.
+#
+# This was previously a list: Eligibility check failed | UNAVAILABLE | RESOURCE_EXHAUSTED |
+# INTERNAL | DEADLINE_EXCEEDED | code 4xx/5xx. That list is unmaintainable by construction,
+# and it failed exactly as you would expect. Observed on CyberChef-MCP PR #72, where agy posted
+# this as its entire review and the `review` check went GREEN:
+#
+#     ## Antigravity review (Gemini via Ultra)
+#
+#     Error: timeout waiting for response
+#
+# A timeout is not in the list, so the guard let it through -- reproducing the precise failure
+# the guard exists to prevent, one signature later. Enumerating failure modes only ever catches
+# the ones already seen.
+#
+# Inverted: treat ANY leading `Error:` as a failure. The false-positive protection does not come
+# from the message text at all, and never did -- it comes from the two conditions below, which
+# are unchanged: the error must be on LINE 1, and the whole capture must be under
+# AGY_ERROR_MAX_BYTES. The load-bearing half is the LINE 1 anchor: a review does not *open*
+# with a bare "Error:" line, however short it is.
+AGY_ERROR_RE='^[[:space:]]*Error:'
+# Secondary safety net, not the primary discriminator. A backend failure IS the whole capture and
+# is a couple of hundred bytes; the cap only ensures that if a review ever did open with an
+# "Error:" line, length alone keeps it from being discarded. Reviews shorter than this exist, so
+# the cap is deliberately generous rather than a claim about minimum review length.
 AGY_ERROR_MAX_BYTES="${AGY_ERROR_MAX_BYTES:-2000}"
 # `head -n 1`, not `head -n 5`. grep matches line-by-line, so scanning five lines
 # means "any of the first five lines is an error line" -- which would discard a short,
@@ -70,6 +92,16 @@ backend_outage_should_fail() {
   [ "${1:-0}" -gt 0 ] || return 1
   ! have_text "$2"
 }
+
+# agy's own --print-timeout marker. When the turn is still running at the timeout, agy does NOT
+# fail: it exits 0 and prints `[agy] print timeout after 5m0s with turn in progress; returning
+# partial output`, alone or after whatever it had written so far. That capture is non-empty, so
+# `have_text` passed it and it was posted AS the review -- a truncated review, or a bare timeout
+# notice, under a green check. Measured 2026-09-28 (agy 1.2.12): a 10 s timeout on a long prompt
+# exits 0 with exactly that line as the whole 78-byte capture. Anchored at a line start so a
+# review that merely quotes the message mid-sentence is not discarded.
+AGY_TIMEOUT_RE='^\[agy\] print timeout after '
+print_timeout_present() { [ -s "$1" ] && grep -qE "$AGY_TIMEOUT_RE" "$1"; }
 # <<< SELFTEST-EXTRACT
 # Guarding against a leak of agy's interactive Google OAuth login flow. When agy's cached
 # session lapses on the runner, `--print` emits the login prompt (a live OAuth URL + "paste the
@@ -115,7 +147,55 @@ AGY_BIN="${AGY_BIN:-agy}"
 command -v "$AGY_BIN" >/dev/null 2>&1 || AGY_BIN="$HOME/.local/bin/agy"
 AGY_MODEL="${AGY_MODEL:-}"                 # empty = agy's configured default (Gemini 3.x Pro)
 AGY_EFFORT="${AGY_EFFORT:-high}"           # low|medium|high
+# Base timeout for a normal review. Scaled up for a large diff further down -- see
+# `scale_timeout_for_diff`. Set AGY_PRINT_TIMEOUT explicitly to pin it and skip the scaling.
+AGY_PRINT_TIMEOUT_EXPLICIT="${AGY_PRINT_TIMEOUT:+set}"
 AGY_PRINT_TIMEOUT="${AGY_PRINT_TIMEOUT:-5m}"
+# Seconds of budget per MiB of diff handed to agy, on top of the base. Reading a 1.6 MB patch and
+# reasoning over it is not work a five-minute budget can absorb, and the failure is indistinguishable
+# from a backend outage: `Error: timeout waiting for response`, three times, with no review.
+AGY_TIMEOUT_SECONDS_PER_MIB="${AGY_TIMEOUT_SECONDS_PER_MIB:-240}"
+AGY_PRINT_TIMEOUT_MAX_SECONDS="${AGY_PRINT_TIMEOUT_MAX_SECONDS:-1800}"
+
+# Both of the above reach `$(( ... ))`, so both are validated before they get there.
+# >>> SELFTEST-EXTRACT: numeric env validation
+# Validate and canonicalise a numeric setting that will reach an arithmetic expansion.
+#
+# @param $1 name of the variable to validate, assigned in place.
+# @param $2 default to fall back to when the value is not a non-negative decimal integer.
+#
+# Two hazards, and the honest status of each is different -- so they are recorded separately
+# rather than under one "unsafe input" heading.
+#
+#  1. Bash arithmetic recursively expands variable CONTENTS as a name, so `$(( V ))` with V=a and
+#     a=5 yields 5, at any depth. Contents that are a command substitution are NOT executed on
+#     bash 5.3 (measured here): they reach the parser as a literal and are refused with
+#     "arithmetic syntax error: operand expected". This was reported in review as a CWE-78, and an
+#     earlier version of this comment asserted the execution -- WRONGLY, from a nested-quoting
+#     artefact in the test that ran it. It does not reproduce. What is left is still worth
+#     refusing: a value naming another variable silently means something other than what it says.
+#  2. Digits-only is not sufficient on its own. `09` is all digits, and bash reads the leading
+#     zero as OCTAL:
+#         $(( 1000000 * 09 / 1048576 ))   ->  value too great for base
+#     So a *valid* setting takes the script down under `set -e`. That one is demonstrated, not
+#     theoretical, and is the reason this function exists. Canonicalising to base 10 here, once,
+#     means no downstream `$(( ))` has to remember `10#`.
+# The locals are `_nne_`-prefixed because this function assigns THROUGH A NAME the caller supplies.
+# Plain `name`/`val` locals shadow a caller variable of the same name, and the failure is silent --
+# `normalise_numeric_env val 240` reads and writes the local, leaving the caller's `val` untouched.
+# Verified: with unprefixed locals, `val=07; normalise_numeric_env val 240` leaves val as `07`.
+normalise_numeric_env() {
+  local _nne_name="$1" _nne_default="$2" _nne_val="${!1}"
+  case "$_nne_val" in
+    ""|*[!0-9]*)
+      log "$_nne_name ('$_nne_val') is not a non-negative integer; using the default ($_nne_default)"
+      printf -v "$_nne_name" '%s' "$_nne_default" ;;
+    *) printf -v "$_nne_name" '%s' "$(( 10#$_nne_val ))" ;;   # digits-only, verified above
+  esac
+}
+# <<< SELFTEST-EXTRACT
+normalise_numeric_env AGY_TIMEOUT_SECONDS_PER_MIB   240
+normalise_numeric_env AGY_PRINT_TIMEOUT_MAX_SECONDS 1800
 AGY_DIFF_MODE="${AGY_DIFF_MODE:-auto}"     # auto|inline|file. A diff is passed to agy either inlined
                                            # in the --print prompt, or written to a FILE agy reads with
                                            # its own tools. `auto` inlines a diff that fits under the
@@ -130,9 +210,15 @@ MAX_PROMPT_BYTES="${MAX_PROMPT_BYTES:-125000}" # hard ceiling on the INLINED pro
                                            # Linux). Over it, execve fails with E2BIG before agy even
                                            # starts. In `auto` mode this is the inline/file threshold;
                                            # it also backstops the assembled prompt in every mode.
-ARG_SIZE_CEILING=128000                     # hard cap: a configured MAX_PROMPT_BYTES above the
+ARG_SIZE_CEILING=120000                     # hard cap: a configured MAX_PROMPT_BYTES above the
                                            # MAX_ARG_STRLEN-derived safe bound would defeat the guard
                                            # and re-expose E2BIG, so clamp any override down to it.
+                                           # 120000, not 128000: MAX_ARG_STRLEN is 131072, and the
+                                           # prompt is not the only thing execve must fit - argv[0],
+                                           # the other flags and the whole environment count against
+                                           # the limit too. A ceiling 3 KB under it left no room for
+                                           # them, so a large environment could still hit E2BIG on a
+                                           # prompt the guard had just declared safe.
 # Require a POSITIVE integer at or below the ceiling. The `-gt 0` half is load-bearing, not
 # cosmetic: a negative override (e.g. MAX_PROMPT_BYTES=-1) satisfies `-le "$ARG_SIZE_CEILING"`,
 # so without it the clamp is skipped and the `head -c "$MAX_PROMPT_BYTES"` prompt cap below runs
@@ -174,6 +260,18 @@ MAX_BODY_BYTES="${MAX_BODY_BYTES:-60000}"
 # (an HTML comment, invisible when rendered) in a PR comment and have this bot edit it. Only
 # ever touch our own bot's comments. `first` picks the OLDEST match, so if duplicates exist
 # from an older version of this script, the canonical thread is the one that keeps growing.
+#
+# COUPLING, stated because it is invisible otherwise: the `github-actions[bot]` login pin assumes
+# the review is posted with `GITHUB_TOKEN` from Actions, which is the only path the workflow has.
+# Move this to a GitHub App or a PAT and the filter stops finding its own comments — it will post
+# a fresh review every round instead of editing one, and the archive stops accumulating.
+#
+# Do not "fix" that in advance by dropping the login and matching on `.user.type == "Bot"` plus the
+# marker. Under a PAT the comment's type is `"User"`, not `"Bot"`, so that clause fails in the same
+# scenario; and the marker is an HTML comment, so any bot that quotes or summarises a PR comment
+# carries it along, which would let this script PATCH over ANOTHER bot's comment. Losing a review
+# that way is worse than posting a duplicate. Change this filter when the auth changes, not before,
+# and match on whatever identity the new credential actually presents.
 # >>> SELFTEST-EXTRACT: ours-comment filter
 SELECT_OURS_JQ='[ .[]
   | select(.user.type == "Bot" and .user.login == "github-actions[bot]")
@@ -185,6 +283,57 @@ readonly SELECT_OURS_JQ
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
+# Does $1 actually hold write access to this repository?
+#
+# `author_association` is NOT a permission check, which is the trap this replaces. It is a
+# relationship label: a user granted only the *Triage* role reports as COLLABORATOR while
+# holding no write access at all, and OWNER/MEMBER describe org membership rather than
+# repository rights. On a self-hosted runner — someone's actual workstation — "may this
+# person schedule execution here" has to be answered by the permissions API, not inferred
+# from a label that was never meant to answer it.
+#
+# Fails CLOSED: any API error, missing token, or unrecognised role denies. A reviewer that
+# stops running is a visible annoyance; one that runs for the wrong person is not.
+#
+# But fail-closed makes the error TEXT load-bearing, which is why stderr is captured and logged
+# rather than sent to /dev/null. Denying and swallowing the reason makes two very different
+# situations look identical in the log: "this person genuinely has no write access" (working as
+# intended, one user affected) and "the token lost its scope / the API is rate-limited" (the
+# reviewer is now dead for EVERYONE and nothing says so). The first is a decision; the second is
+# an outage wearing a decision's clothes, and it would sit undiagnosed until someone noticed
+# reviews had quietly stopped.
+agy_has_write_access() {
+  _login="${1:-}"
+  [ -n "$_login" ] || { log "no login to check for write access"; return 1; }
+  _perm_err="$(mktemp)"
+  # URL-encode the login before it becomes a path segment, the same way
+  # base_ref is handled below. GitHub logins are restricted in practice, but
+  # this value arrives from event payload rather than from us, and an unexpected
+  # character would corrupt the path and fail into the error branch as if the
+  # user simply had no write access - a silent wrong answer on a permission
+  # check, which is the worst place to have one.
+  _login_enc="$(jq -rn --arg v "$_login" '$v|@uri')"
+  if _perm="$(gh api "repos/${REPO}/collaborators/${_login_enc}/permission" \
+                --jq '.permission // empty' 2>"$_perm_err")"; then
+    rm -f "$_perm_err"
+  else
+    # Redacted before logging. gh does not echo credentials in its error text today, but this
+    # log lands in a PUBLIC Actions log, and "today" is not a property worth betting a token on.
+    log "permission lookup for '${_login}' FAILED: $(tr '\n' ' ' < "$_perm_err" \
+          | sed -E 's/(gh[pousr]|github_pat)_[A-Za-z0-9_]+/<redacted-token>/g' \
+          | cut -c1-400)"
+    log "denying by default. A 404 here is an ordinary non-collaborator; a 401/403 or a rate"
+    log "limit means the token is the problem and EVERY review will skip until it is fixed."
+    rm -f "$_perm_err"
+    return 1
+  fi
+  case "$_perm" in
+    admin|maintain|write) return 0 ;;
+    *) log "user '${_login}' has repository permission '${_perm:-<none>}'; write required"
+       return 1 ;;
+  esac
+}
+
 # --- resolve the PR number from the triggering event --------------------------
 case "${GITHUB_EVENT_NAME:-}" in
   pull_request|pull_request_target)
@@ -193,26 +342,33 @@ case "${GITHUB_EVENT_NAME:-}" in
   issue_comment)
     is_pr="$(jq -r '.issue.pull_request // empty' "$GITHUB_EVENT_PATH")"
     body="$(jq -r '.comment.body // ""' "$GITHUB_EVENT_PATH")"
-    assoc="$(jq -r '.comment.author_association // ""' "$GITHUB_EVENT_PATH")"
+    commenter="$(jq -r '.comment.user.login // ""' "$GITHUB_EVENT_PATH")"
     [ -n "$is_pr" ] || { log "comment is not on a PR; skipping"; exit 0; }
     case "$body" in
       /agy-review*) : ;;
       *) log "comment is not an /agy-review command; skipping"; exit 0 ;;
     esac
-    # Defense in depth: the workflow `if:` already gates on author_association, but this
-    # script is also runnable by hand and by any future caller, so re-check here that the
-    # commenter has write access. A stranger's `/agy-review` must never schedule an agy
-    # run on the self-hosted host — losing this to a workflow-only gate would be silent.
-    case "$assoc" in
-      OWNER|MEMBER|COLLABORATOR) : ;;
-      *) log "comment author association '$assoc' lacks write access; skipping"; exit 0 ;;
-    esac
+    # THE authoritative permission gate, not defence in depth. The workflow `if:` can only
+    # filter on `author_association`, which the payload carries but which does not answer the
+    # question being asked (see `agy_has_write_access`). Treat that `if:` as a cheap
+    # pre-filter that avoids booting a runner for obvious strangers, and settle the actual
+    # decision here, where an API call is possible. A stranger's `/agy-review` must never
+    # schedule an agy run on the self-hosted host.
+    agy_has_write_access "$commenter" \
+      || { log "commenter '${commenter}' lacks write access; skipping"; exit 0; }
     PR="$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")"
     ;;
   *)
     PR="${1:-}"
     [ -n "$PR" ] || { log "unknown event; pass a PR number as \$1"; exit 1; }
     ;;
+esac
+# $PR is interpolated into API paths, refspecs (`refs/agy/pr-${PR}`) and a `gh` invocation, so it
+# is validated once here rather than trusted at each of those sites. From an event payload it is a
+# jq-parsed number and safe; from the `*)` branch above it is `$1`, i.e. whatever a hand-run or a
+# future caller passed. "Practically safe" is a property of today's callers, not of the variable.
+case "$PR" in
+  ''|*[!0-9]*) log "invalid PR number '${PR}'; expected digits only"; exit 1 ;;
 esac
 log "reviewing ${REPO}#${PR}"
 
@@ -227,13 +383,52 @@ auth_failed=0
 service_errors=0
 # Set when the large-diff fallback below creates refs/agy/* so the trap can remove them.
 agy_refs_created=
+# Set by the AGY_DRY_RUN block so cleanup KEEPS the two artefacts dry-run exists to expose. The
+# whole point of dry run is "let me look at the assembled prompt", and the EXIT trap fires on the
+# `exit 0` at the end of that block -- so it deleted the prompt on the way out, every time.
+# Everything else is still removed; only these two are spared, and their paths are printed.
+keep_artifacts=
 cleanup() {
-  rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file" "$agy_diff_file"
+  # Built as an argv ARRAY rather than as `rm -f ${v:+"$v"} ...`.
+  #
+  # The problem being solved is the EMPTY operand: `rm -f ""` is silent and exits 0 on GNU
+  # coreutils -- which is why an unconditional `rm -f "$unset_var"` never surfaced on the Linux
+  # runner -- but BSD/macOS `rm` writes "No such file or directory" to stderr for it.
+  #
+  # A note for the next reader, because this was raised in review and the intuition is wrong:
+  # `rm -f ${v:+"$v"}` does NOT word-split. Bash honours the quotes inside the `:+` alternate
+  # word, so a path with a space or a glob character survives as one operand. Verified:
+  #
+  #     v='a*b';    rm -f ${v:+"$v"}   ->   + rm -f 'a*b'      (siblings axxb, ayb untouched)
+  #     v='a file'; rm -f ${v:+"$v"}   ->   one operand        (siblings a, file untouched)
+  #
+  # The array is used anyway, for a reason the expansion form genuinely does not cover: it lets
+  # `--` terminate option parsing, so a temp path that begins with `-` is treated as a path
+  # rather than as flags. An array element is also one word by construction, which does not
+  # depend on knowing that `:+` quoting rule.
+  local keep_set="${keep_artifacts:-}"
+  local -a doomed=()
+  local f
+  # `${v:-}` on every name, even though all of them are pre-declared at the top of the script and
+  # cannot be unset here. Belt-and-braces on purpose: this is an EXIT trap, so if a future edit
+  # ever moves the trap above the pre-declarations, the failure would be an `unbound variable`
+  # abort DURING cleanup -- temp files left behind, and a confusing error masking the real exit
+  # cause. The pre-declaration stays and is still the actual guarantee; this is the cheap second
+  # line for a function that only ever runs while something else is going wrong.
+  for f in "${diff_file:-}" "${diff_err:-}" "${meta_file:-}" "${out_file:-}" "${raw:-}" "${body_file:-}"; do
+    [ -n "$f" ] && doomed+=("$f")
+  done
+  if [ -z "$keep_set" ]; then
+    for f in "${prompt_file:-}" "${agy_diff_file:-}"; do
+      [ -n "$f" ] && doomed+=("$f")
+    done
+  fi
+  [ ${#doomed[@]} -gt 0 ] && rm -f -- "${doomed[@]}"
   # Remove the gitignored diff-handoff scratch dir once its file is gone. `rmdir` only unlinks an
   # empty dir, so a concurrent run's file (a different $$) is never clobbered; a non-empty dir is
   # gitignored and harmless if left behind.
-  [ -n "$agy_work_dir" ] && rmdir "$agy_work_dir" 2>/dev/null || true
-  if [ -n "$agy_refs_created" ] && [ -n "${PR:-}" ]; then
+  [ -n "${agy_work_dir:-}" ] && [ -z "$keep_set" ] && rmdir "${agy_work_dir}" 2>/dev/null || true
+  if [ -n "${agy_refs_created:-}" ] && [ -n "${PR:-}" ]; then
     git update-ref -d "refs/agy/pr-${PR}" 2>/dev/null || true
     git update-ref -d "refs/agy/base-${PR}" 2>/dev/null || true
   fi
@@ -281,7 +476,8 @@ esac
 # read-only bytes that become prompt text and are never executed. So the fallback
 # does not widen the trust boundary the workflow already sets: whatever governs
 # whether a given PR's diff is allowed to reach agy at all (the workflow `if:`
-# author-association gate; see the trust model at the agy invocation below) is
+# pre-filter plus `agy_has_write_access` above; see the trust model at the agy
+# invocation below) is
 # unchanged, and this only changes HOW an already-permitted diff is obtained when
 # it is too large for the API. `refs/agy/*` are private namespaces (cannot clobber
 # a real branch) and are removed on exit. Auth goes through `http.extraheader` for
@@ -320,9 +516,19 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
     # `bearer` is what Actions' GITHUB_TOKEN accepts; a personal token from
     # `gh auth token` is rejected ("remote: invalid credentials"), so a hand-run
     # falls through to git's ambient credentials. Neither path persists anything.
+    #
+    # The header is supplied through GIT_CONFIG_* (git >= 2.31), NOT `git -c`. Identical
+    # config, different exposure: `git -c "http.extraheader=...bearer $TOKEN"` puts the token
+    # in the process's argv, and `/proc/<pid>/cmdline` is WORLD-READABLE on Linux — any
+    # concurrent job or any local process can read it for the lifetime of the fetch. This
+    # runner is a shared workstation, so that window is real. `/proc/<pid>/environ` is
+    # restricted to the same UID, so moving the secret from argv to the environment is what
+    # actually closes it. Do not "simplify" this back to `git -c`.
     if [ -n "${GH_TOKEN:-}" ] \
-       && git -c "http.extraheader=AUTHORIZATION: bearer ${GH_TOKEN}" fetch --no-tags --quiet \
-              origin "${fetch_refspecs[@]}" 2>/dev/null; then
+       && GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="http.extraheader" \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer ${GH_TOKEN}" \
+          git fetch --no-tags --quiet origin "${fetch_refspecs[@]}" 2>/dev/null; then
       :
     elif git fetch --no-tags --quiet origin "${fetch_refspecs[@]}"; then
       log "fetched PR refs using git's ambient credentials (token header not accepted)"
@@ -343,12 +549,16 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
     merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || true)"
     if [ -z "$merge_base" ]; then
       head_sha="$(jq -r '.headRefOid // empty' "$meta_file")"
-      # Percent-encode the branch name for the URL path. NOT for the `/` in a
-      # `<type>/<short-desc>` branch -- GitHub's compare endpoint accepts those
-      # raw, verified against a real slashed branch, returning the same SHA
-      # either way. It is for `%` and `#`, which git permits in a ref name and
-      # which a URL does not survive: `%` starts an escape and `#` truncates the
-      # path at the fragment. Both would fail silently into the `|| true`.
+      # Percent-encode the branch name for the URL path. `@uri` encodes EVERY reserved
+      # character, `/` included -- `ci/foo` becomes `ci%2Ffoo`, verified with
+      # `jq -rn --arg v 'ci/foo' '$v|@uri'`. GitHub's compare endpoint resolves the
+      # escaped form back to the branch, so a `<type>/<short-desc>` name works either
+      # way and the encoding is harmless there.
+      #
+      # It is NOT harmless to skip: `%` and `#` are legal in a git ref name and a raw
+      # URL does not survive them -- `%` starts an escape sequence and `#` truncates
+      # the path at the fragment. Either would fail silently into the `|| true` below,
+      # which is exactly the class of bug this whole path exists to avoid.
       base_enc="$(jq -rn --arg v "$base_ref" '$v|@uri')"
       api_base="$(gh api "repos/${REPO}/compare/${base_enc}...${head_sha}" \
                     --jq '.merge_base_commit.sha' 2>/dev/null || true)"
@@ -375,6 +585,15 @@ fi
 if ! have_text "$diff_file"; then log "empty diff; nothing to review"; exit 0; fi
 
 truncated=""
+# `head -c` is a BYTE cut and can slice a multi-byte UTF-8 sequence in half. That is accepted, not
+# overlooked: the UTF-8 scrub further down (`iconv -c`, python3 fallback) removes any partial
+# sequence before the prompt reaches agy, so the split never escapes this file.
+#
+# A line-aware cut would avoid creating the split, but cannot honour a byte ceiling — and the
+# ceiling is the actual constraint, since this bounds what is handed to a model with a hard context
+# limit. One minified-asset line in a diff can exceed the whole budget by itself, so "cut at a line
+# boundary" degenerates to either overshooting the cap or emitting nothing. Exact where the limit is
+# real, tolerant where the damage is already handled.
 if [ "$(wc -c < "$diff_file")" -gt "$MAX_DIFF_BYTES" ]; then
   head -c "$MAX_DIFF_BYTES" "$diff_file" > "$diff_file.cut" && mv "$diff_file.cut" "$diff_file"
   truncated=$'\n\n> Note: the diff exceeded '"${MAX_DIFF_BYTES}"$' bytes and was truncated for this review.'
@@ -515,8 +734,92 @@ if [ -n "${AGY_DRY_RUN:-}" ]; then
     log "prompt: $(wc -c < "$prompt_file") bytes (diff inlined, $(wc -c < "$diff_file") bytes)"
   fi
   cat "$prompt_file"
+  # Keep the prompt (and the on-disk diff handoff, if used) so they can actually be inspected --
+  # see `keep_artifacts` at the cleanup trap. Paths go to stderr so a `> prompt.txt` redirect of
+  # stdout still captures only the prompt.
+  keep_artifacts=1
+  log "kept for inspection: $prompt_file${agy_diff_file:+ and $agy_diff_file}"
+  log "(remove them yourself; every other temp file was cleaned up as usual)"
   exit 0
 fi
+
+# Scale the timeout with the size of the diff agy actually has to read.
+#
+# A fixed 5m is right for an ordinary PR and hopeless for a release merge. Observed on
+# CyberChef-MCP#83 -- 323 files, 39,856 lines, 1.6 MB handed off as a file -- where agy hit the
+# 5m ceiling on all three attempts, twice in a row, at 5m01s each time. The job then failed with
+# `Error: timeout waiting for response`, which is INDISTINGUISHABLE from a backend outage: the
+# guard did its job and refused to post a fake review, but nothing told the reader that the cause
+# was diff size rather than an outage.
+#
+# Deliberately keyed on the diff handed to agy, not on the PR's file count: what costs time is the
+# bytes it must read and reason over.
+#
+# An explicit AGY_PRINT_TIMEOUT wins, so a caller can still pin it.
+
+# >>> SELFTEST-EXTRACT: duration parser
+# Parse a duration ("90", "90s", "5m", "1h") to seconds. Echoes nothing and returns 1 if the value
+# is not one of those forms -- deliberately, so a caller can decide, rather than feeding a
+# non-numeric token into an arithmetic expansion where `$(( 1x + 60 ))` is a SYNTAX ERROR that
+# takes the whole script down under `set -e`.
+duration_to_seconds() {
+  local v="$1" n unit
+  case "$v" in
+    *[!0-9smh]*|"") return 1 ;;                      # stray characters, or empty
+    *h) n="${v%h}"; unit=3600 ;;
+    *m) n="${v%m}"; unit=60 ;;
+    *s) n="${v%s}"; unit=1 ;;
+    *)  n="$v";     unit=1 ;;
+  esac
+  case "$n" in ""|*[!0-9]*) return 1 ;; esac         # "m" alone, or "1m2s"
+  # `10#` forces base 10. Without it bash reads a leading zero as OCTAL, so a perfectly valid
+  # `08m` dies with "value too great for base" -- and `010s` would silently mean 8 seconds.
+  printf '%s\n' $(( 10#$n * unit ))
+}
+# <<< SELFTEST-EXTRACT
+
+# >>> SELFTEST-EXTRACT: diff-size scaling
+# Kept below the duration-parser block, not beside the other constants: SELFTEST-EXTRACT ranges
+# end at the first closing marker, so a block declared around this one would be truncated at the
+# parser's `<<<` and silently extract without the function under test.
+readonly BYTES_PER_MIB=$(( 1024 * 1024 ))
+
+# Raise --print-timeout in proportion to the diff agy has to read.
+#
+# @param $1 size of the diff handed to agy, in bytes. Passed explicitly rather than read from the
+#           enclosing scope, so the function's inputs are visible at the call site.
+scale_timeout_for_diff() {
+  local bytes="${1:-0}"       # explicit default rather than leaning on `$(( ))` treating "" as 0
+  # Whitespace is stripped BEFORE validating, not after: some `wc` implementations pad their count,
+  # and " 1619782 " is not digits-only, so validating first would quietly fall back to 0 and
+  # disable the scaling entirely -- a silent no-op, which is worse than the crash being guarded
+  # against. Then the same guard the settings get, so a non-numeric value falls back rather than
+  # becoming a syntax error in the expansion below.
+  bytes="${bytes//[[:space:]]/}"
+  normalise_numeric_env bytes 0
+  [ -z "$AGY_PRINT_TIMEOUT_EXPLICIT" ] || { log "AGY_PRINT_TIMEOUT set explicitly ($AGY_PRINT_TIMEOUT); not scaling"; return 0; }
+
+  # Computed from BYTES, not from truncated whole MiB: `mib = bytes / 1048576` in integer
+  # arithmetic gives a 1.99 MiB diff exactly one MiB of extra budget, which is the wrong side to
+  # round on for the case this exists to fix.
+  local extra=$(( bytes * AGY_TIMEOUT_SECONDS_PER_MIB / BYTES_PER_MIB ))
+  [ "$extra" -gt 0 ] || return 0        # rounds to nothing: keep the base budget untouched
+
+  local base_s
+  if ! base_s="$(duration_to_seconds "$AGY_PRINT_TIMEOUT")"; then
+    log "AGY_PRINT_TIMEOUT ('$AGY_PRINT_TIMEOUT') is not a recognised duration; leaving it alone"
+    return 0
+  fi
+
+  local scaled=$(( base_s + extra ))
+  # Ceiling, so a pathological diff cannot pin the self-hosted runner for an hour.
+  [ "$scaled" -gt "$AGY_PRINT_TIMEOUT_MAX_SECONDS" ] && scaled="$AGY_PRINT_TIMEOUT_MAX_SECONDS"
+
+  AGY_PRINT_TIMEOUT="${scaled}s"
+  log "diff is ${bytes} bytes; raised --print-timeout to ${AGY_PRINT_TIMEOUT} (base ${base_s}s + ${extra}s)"
+}
+# <<< SELFTEST-EXTRACT
+scale_timeout_for_diff "$diff_bytes"
 
 # --- run agy headless, under a PTY (works around agy issue #76: -p drops --------
 #     stdout when stdout is not a TTY, e.g. piped/redirected/subprocess) ---------
@@ -629,6 +932,15 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
     service_errors=$(( ${service_errors:-0} + 1 ))
   fi
 
+  # A timed-out turn is a partial review at best. Discard it and retry: posting half a review as
+  # if it were the whole one is the failure the service-error guard exists to prevent, one cause
+  # later. Counted like backend errors, so the final log line names the real cause.
+  if print_timeout_present "$out_file"; then
+    log "agy hit its print timeout (${AGY_PRINT_TIMEOUT}) before finishing (attempt ${attempt}/${AGY_RETRIES}); discarding the partial output"
+    : > "$out_file"
+    print_timeouts=$(( ${print_timeouts:-0} + 1 ))
+  fi
+
   have_text "$out_file" && break
   if [ "$attempt" -lt "$AGY_RETRIES" ]; then
     delay=$(( AGY_RETRY_DELAY * attempt ))
@@ -636,7 +948,12 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
     sleep "$delay"
   fi
 done
-exec 9>&- 2>/dev/null || true    # release the agy lock so the next queued job proceeds
+# Release the agy lock so the next queued job proceeds. NO redirection on this `exec`: a bare
+# `exec` applies its redirections to the rest of the SCRIPT, so the `2>/dev/null` that used to be
+# here sent every later `log` line (they write to stderr) to /dev/null -- "posted", "updated",
+# and every failure cause alike. A healthy run and a silent crash looked identical in CI for as
+# long as that line existed (found 2026-09-28 on RustyNES #563). Closing an fd needs no guard.
+exec 9>&-
 
 # Lapsed-auth abort takes precedence over the generic empty-output path: it is a specific,
 # actionable cause (re-auth agy on the runner), not a transient backend blip, and we already
@@ -658,6 +975,9 @@ if backend_outage_should_fail "${service_errors:-0}" "$out_file"; then
 fi
 
 if ! have_text "$out_file"; then
+  if [ "${print_timeouts:-0}" -gt 0 ]; then
+    log "agy hit its print timeout (${AGY_PRINT_TIMEOUT}) on ${print_timeouts} of ${AGY_RETRIES} attempt(s) and produced no complete review. Raise AGY_PRINT_TIMEOUT for this repository's diffs, then re-run with '/agy-review'."
+  fi
   log "no review output after ${AGY_RETRIES} attempt(s). Check $LOG and confirm 'agy -p \"hi\"' works for this user."
   # Surface agy's stderr into the job log. RUNNER_TEMP is wiped between jobs, so a bare
   # `exit 1` otherwise leaves the real cause invisible in CI (E2BIG, auth, backend, ...).
@@ -708,7 +1028,16 @@ fi
 # costs only the archive, never the review.
 prior_id=""
 prior_body_file="$(mktemp)"
-if prior_json="$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate 2>/dev/null)"; then
+# `--paginate` emits one top-level JSON array PER PAGE, concatenated — not one merged array.
+# jq then runs the filter once per array, so `[ ... ] | first | .id` yields one id per page
+# that matches rather than one id overall. On a thread short enough to fit a single page that
+# is invisible; past 30 comments, if a fallback POST has ever left a second marked comment
+# behind, `prior_id` becomes multi-line, `--argjson id` rejects it, and the in-place edit
+# silently degrades into a duplicate post — exactly on the long threads where the archive
+# matters most. `jq -s add` merges the pages into the single array the filter assumes.
+# (`gh api --slurp` does this too, but only on gh >= 2.42; this works on any version.)
+if prior_json="$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate 2>/dev/null \
+                  | jq -s 'add // []' 2>/dev/null)"; then
   prior_id="$(printf '%s' "$prior_json" | jq -r --arg marker "$MARKER" "$SELECT_OURS_JQ" 2>/dev/null || true)"
   if [ -n "$prior_id" ] && [ "$prior_id" != "null" ]; then
     printf '%s' "$prior_json" \
@@ -754,14 +1083,18 @@ if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
   done
 
   {
-    printf '\n%s\n' "$AGY_ARCHIVE_START"
+    # Order matters. The `<details>` wrapper and the dropped-round note sit OUTSIDE the
+    # start/end sentinels, so `agy_body_archive` extracts only the rounds themselves. With
+    # the wrapper inside, every run re-captured it and nested another layer around it.
+    printf '\n%s\n' "$AGY_ARCHIVE_SECTION"
     if [ "$dropped" -gt 0 ]; then
       printf '<sub>%d earlier round(s) dropped to stay under GitHub'"'"'s comment size limit.</sub>\n\n' "$dropped"
     fi
     printf '<details>\n<summary><b>Earlier review rounds</b> (newest first)</summary>\n\n'
+    printf '%s\n' "$AGY_ARCHIVE_START"
     cat "$archived_file"
-    printf '\n</details>\n'
     printf '%s\n' "$AGY_ARCHIVE_END"
+    printf '\n</details>\n'
   } >> "$body_file"
   rm -f "$archived_file"
 

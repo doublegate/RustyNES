@@ -25,6 +25,18 @@
 AGY_ARCHIVE_START='<!-- agy-archive-start -->'
 AGY_ARCHIVE_END='<!-- agy-archive-end -->'
 
+# Marks where the archive SECTION begins -- i.e. the `<details>` wrapper, which sits OUTSIDE
+# the start/end sentinels.
+#
+# Why a third sentinel rather than reusing AGY_ARCHIVE_START for both jobs: the two boundaries
+# are not the same boundary. `agy_body_head` needs "where does the newest round stop", which is
+# before the wrapper; `agy_body_archive` needs "where do the accumulated rounds begin", which is
+# after it. Conflating them put the wrapper inside the extracted region, so every run captured
+# the previous wrapper and nested a new one around it -- the archive grew a fresh `<details>`
+# layer per round and `agy_drop_oldest_round` then tore holes in it. Measured on a real PR at
+# round six: seven "Earlier review rounds" wrappers, 15 `<details>` against 13 `</details>`.
+AGY_ARCHIVE_SECTION='<!-- agy-archive-section -->'
+
 # The newest round of a comment body: everything after the marker, before the archive.
 #
 # `awk` matching WHOLE LINES rather than `sed` with a pattern, because a review body
@@ -32,7 +44,12 @@ AGY_ARCHIVE_END='<!-- agy-archive-end -->'
 # match a line that merely mentions one.
 agy_body_head() {
   local marker="$1"
-  awk -v s="$AGY_ARCHIVE_START" '$0 == s { exit } { print }' \
+  # Stops at the SECTION sentinel, not the start sentinel: the `<details>` wrapper lives
+  # between the two, and capturing it here would append a stray opener to the newest round.
+  # Falls back to the start sentinel so a body written before the section sentinel existed
+  # still splits correctly.
+  awk -v s="$AGY_ARCHIVE_START" -v sec="$AGY_ARCHIVE_SECTION" \
+      '$0 == sec { exit } $0 == s { exit } { print }' \
     | grep -v -F -x "$marker" || true
 }
 
@@ -41,10 +58,43 @@ agy_body_head() {
 # The `$0 == e` test comes FIRST so a body whose archive is empty yields nothing rather than
 # emitting its own end sentinel.
 agy_body_archive() {
-  awk -v s="$AGY_ARCHIVE_START" -v e="$AGY_ARCHIVE_END" '
+  # Emits only whole rounds: inside the sentinels, output starts at the FIRST round mark.
+  #
+  # That skip is also the migration path. Bodies written before the wrapper moved out have a
+  # `<details>`/`<summary>` pair and possibly a "N earlier round(s) dropped" note sitting
+  # inside the sentinels ahead of the first round; starting at the round mark discards them,
+  # so a corrupted archive heals on its first pass instead of needing a manual edit. The
+  # matching stray `</details>` is dropped by the tail filter below for the same reason.
+  awk -v s="$AGY_ARCHIVE_START" -v e="$AGY_ARCHIVE_END" -v r="$AGY_ROUND_MARK" '
     $0 == e { inside = 0 }
-    inside  { print }
-    $0 == s { inside = 1 }' || true
+    inside  { buf[n++] = $0; if (first < 0 && $0 == r) first = n - 1 }
+    $0 == s { inside = 1 }
+    BEGIN   { first = -1; n = 0 }
+    END {
+      # With round marks present, start at the first one: that discards a wrapper captured
+      # by an older layout. With NONE present the archive predates round marks entirely, so
+      # emit it verbatim -- dropping it would silently destroy the review history, which is
+      # a worse failure than the nesting this guards against.
+      start = (first >= 0) ? first : 0
+      for (i = start; i < n; i++) print buf[i]
+    }' \
+  | awk 'BEGIN { n = 0 }
+         { line[n++] = $0 }
+         END {
+           # Trim a trailing wrapper close (plus any blank lines before it) left by a
+           # pre-migration body. A legitimate round always ends with its own </details>
+           # followed by nothing, so only ONE trailing close is ever removed here.
+           while (n > 0 && line[n-1] == "") n--
+           if (n > 0 && line[n-1] == "</details>") {
+             closes = 0; opens = 0
+             for (i = 0; i < n; i++) {
+               if (line[i] ~ /^<details>/) opens++
+               if (line[i] == "</details>") closes++
+             }
+             if (closes > opens) n--
+           }
+           for (i = 0; i < n; i++) print line[i]
+         }' || true
 }
 
 # Delimits one archived round. Emitted by the caller ahead of each round's `<details>`.

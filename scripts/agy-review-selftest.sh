@@ -2,8 +2,15 @@
 #
 # agy-review-selftest.sh -- guards the comment-selection logic in `agy-review.sh`.
 #
-# Why this exists: that filter decides which PR comments the bot DELETES, and it has been wrong
-# twice, both times invisibly.
+# Why this exists: that filter decides which existing comment the bot EDITS IN PLACE — the one
+# whose body carries the archive of every prior review round. Pick the wrong one and a round is
+# overwritten; pick none and the round is orphaned as a duplicate post. It has been wrong twice,
+# both times invisibly.
+#
+# The two histories below are from the earlier design, which posted a fresh comment and deleted
+# the previous one. That design is gone — nothing is deleted now — but the failures are recorded
+# verbatim because they are what the fixtures are shaped to catch, and both remain reachable
+# against an edit-in-place filter for the same underlying reasons.
 #
 #   1. The just-posted comment was not reliably excluded. `new_comment_id` came from re-querying
 #      the comment list, which races GitHub's read replication; on a miss the exclusion became
@@ -46,10 +53,15 @@ extract_filter() {
     | sed "1s/^SELECT_OURS_JQ='//; \$s/'\$//"
 }
 
+# The extracted blocks are eval'd without the rest of agy-review.sh, so any helper they call has
+# to exist here. `normalise_numeric_env` logs its fallback; keep that off the checks' stdout.
+log() { :; }
+
 # Every marked block must exist and be sourceable. A renamed or unbalanced marker would
 # otherwise extract EMPTY, and an empty guard sources fine and asserts nothing -- the same
 # absence-reads-as-agreement failure the markers were adopted to prevent.
-for guard in "service-error guard" "oauth guard" "ours-comment filter"; do
+for guard in "service-error guard" "oauth guard" "ours-comment filter" "duration parser" \
+             "numeric env validation" "diff-size scaling"; do
   blk="$(extract_block "$guard")"
   [ -n "$blk" ] || { echo "FAIL: SELFTEST-EXTRACT block '$guard' is missing or empty" >&2; exit 1; }
   printf '%s\n' "$blk" | bash -n - 2>/dev/null \
@@ -274,6 +286,18 @@ check "a heading MENTIONING an error mid-line is not caught" "NOMATCH" \
 check "a leading-whitespace error is still caught" "MATCH" \
   "$(se '   Error: UNAVAILABLE (code 503)')"
 
+# REGRESSION, observed on CyberChef-MCP PR #72. The guard used to enumerate known backend
+# signatures (UNAVAILABLE, RESOURCE_EXHAUSTED, DEADLINE_EXCEEDED, code 4xx/5xx...). A timeout is
+# none of those, so agy posted this as its entire review and the `review` check went GREEN --
+# reproducing the exact failure the guard exists to prevent, one signature later.
+check "a TIMEOUT error is caught (was not, before the guard stopped enumerating)" "MATCH" \
+  "$(se 'Error: timeout waiting for response')"
+
+# The general form: any leading `Error:` is a failure, whatever follows it. Enumerating failure
+# modes only ever catches the ones already seen, so the guard no longer tries.
+check "an unfamiliar error signature is caught" "MATCH" \
+  "$(se 'Error: something nobody has seen before')"
+
 # The size cap is what separates "the error IS the whole capture" from "a review mentions one".
 long="Error: UNAVAILABLE (code 503) $(head -c 3000 /dev/zero | tr '\0' 'x')"
 check "a long capture opening with an error is not caught" "NOMATCH" "$(se "$long")"
@@ -289,6 +313,112 @@ check "outage + a review   -> do not fail"  "1" \
   "$(backend_outage_should_fail 2 "$TMPD/review"; echo $?)"
 check "no outage + no review -> not THIS guard's job" "1" \
   "$(backend_outage_should_fail 0 "$TMPD/empty"; echo $?)"
+
+
+# --- duration parser ---------------------------------------------------------------------------
+# The point is the REJECTIONS. A value that is not a duration must be refused, not fed into an
+# arithmetic expansion: `$(( 1x + 60 ))` is a SYNTAX ERROR that takes the whole script down under
+# `set -e`, which would turn a mis-set variable into a reviewer that never runs.
+check "duration: bare seconds"     "90"   "$(duration_to_seconds 90)"
+check "duration: explicit seconds" "90"   "$(duration_to_seconds 90s)"
+check "duration: minutes"          "300"  "$(duration_to_seconds 5m)"
+check "duration: hours"            "3600" "$(duration_to_seconds 1h)"
+check "duration: leading zero minutes"  "480" "$(duration_to_seconds 08m)"
+check "duration: leading zero seconds"  "9"   "$(duration_to_seconds 09s)"
+# 10, not 8. That IS the fix: without `10#` bash reads the leading zero as octal, so this would
+# silently mean 8 seconds -- a wrong answer rather than an error, which is the worse of the two.
+check "duration: leading zero bare"     "10"  "$(duration_to_seconds 010)"
+for bad in m s "" 1m2s 5x -3 " 5m" 5M; do
+  check "duration: rejects '$bad'" "1" "$(duration_to_seconds "$bad" >/dev/null 2>&1; echo $?)"
+done
+
+# --- numeric env validation ---------------------------------------------------------------------
+# These values reach `$(( ... ))`. Two separate ways that goes wrong, and digits-only catches only
+# one of them -- which is exactly how the octal case survived the first version of this guard.
+nne() {                                    # run the real function, echo what the variable became
+  local v="$1"; local T="$v"
+  normalise_numeric_env T 240 >/dev/null 2>&1 || echo "CRASHED"
+  printf '%s' "$T"
+}
+check "numeric env: plain integer passes through"   "300"  "$(nne 300)"
+check "numeric env: zero is a legal setting"        "0"    "$(nne 0)"
+# 9, not a crash and not 8: `09` is all digits, so the digits-only check admits it, and bash then
+# reads the leading zero as OCTAL. This is the case the digits-only check alone did NOT cover.
+check "numeric env: leading zero canonicalises"     "9"    "$(nne 09)"
+check "numeric env: many leading zeros"             "8"    "$(nne 0008)"
+check "numeric env: empty falls back"               "240"  "$(nne "")"
+check "numeric env: non-numeric falls back"         "240"  "$(nne 30s)"
+check "numeric env: negative falls back"            "240"  "$(nne -1800)"
+# Bash arithmetic recursively expands variable CONTENTS as a name, so a value that names another
+# variable silently evaluates to that one's value. It must never reach `$(( ))` at all.
+check "numeric env: a variable name falls back"     "240"  "$(nne a_name)"
+# Asserted on STDERR, not on the returned value: reaching `$(( ))` with a non-numeric value emits
+# a bash arithmetic error there, so an empty stderr is positive evidence that it never got that
+# far. Mutation-checked -- deleting the digits-only case above makes THIS check fail with
+# "value too great for base", which is what a guard's test is supposed to do.
+#
+# The previous version of this check grepped for a command-substitution payload and was VACUOUS:
+# it passed under a deliberately broken guard, because the helper's own `2>&1 >/dev/null` had
+# already swallowed the evidence. Kept as a note because a test that cannot fail is worse than
+# no test -- it reads as coverage.
+check "numeric env: a non-numeric value never reaches arithmetic" "" \
+  "$( { T=a_name; normalise_numeric_env T 240; } 2>&1 >/dev/null || true )"
+# It assigns THROUGH a caller-supplied name, so its own locals must not collide with one. With
+# plain `name`/`default`/`val` locals these two silently no-op -- the function reads and writes its
+# own local and the caller's variable is never touched. Verified as a real failure before fixing.
+name=09; normalise_numeric_env name 240
+check "numeric env: a caller variable named 'name' is not shadowed" "9" "$name"
+val=07;  normalise_numeric_env val 240
+check "numeric env: a caller variable named 'val' is not shadowed"  "7" "$val"
+default=08; normalise_numeric_env default 240
+check "numeric env: a caller variable named 'default' is not shadowed" "8" "$default"
+
+# --- diff-size scaling -------------------------------------------------------------------------
+# The argument is stripped of whitespace BEFORE validation, so a padded `wc` count still scales.
+# Validating first would fall back to 0 and silently disable the scaling -- a no-op is worse here
+# than the crash, because the symptom is the timeout this whole feature exists to prevent.
+sc() { AGY_PRINT_TIMEOUT="5m"; scale_timeout_for_diff "$1"; printf '%s' "$AGY_PRINT_TIMEOUT"; }
+AGY_PRINT_TIMEOUT_EXPLICIT=""; AGY_TIMEOUT_SECONDS_PER_MIB=240; AGY_PRINT_TIMEOUT_MAX_SECONDS=1800
+check "scaling: 1.6 MB gets a real raise"        "670s"  "$(sc 1619782)"
+check "scaling: a padded count still scales"     "670s"  "$(sc '  1619782  ')"
+check "scaling: a huge diff hits the ceiling"    "1800s" "$(sc 20000000)"
+check "scaling: no argument leaves the base"     "5m"    "$(sc '')"
+check "scaling: junk leaves the base"            "5m"    "$(sc junk)"
+AGY_PRINT_TIMEOUT_EXPLICIT=set
+check "scaling: an explicit timeout is not touched" "5m" "$(sc 20000000)"
+AGY_PRINT_TIMEOUT_EXPLICIT=""
+
+# And the value it produces must survive the arithmetic it exists to feed.
+T=09; normalise_numeric_env T 240
+# 9. Feeding the RAW `09` to the same expansion dies "value too great for base" under `set -e`,
+# which is the crash this canonicalisation exists to prevent -- asserted directly below.
+check "numeric env: canonical value is arithmetic-safe" "9" \
+  "$(bash -c 'set -e; echo $(( 1048576 * '"$T"' / 1048576 ))' 2>/dev/null || echo CRASHED)"
+check "numeric env: the RAW value would have crashed"   "CRASHED" \
+  "$(bash -c 'set -e; echo $(( 1048576 * 09 / 1048576 ))' 2>/dev/null || echo CRASHED)"
+
+# --- the print-timeout guard -------------------------------------------------------------
+# agy exits 0 on its own --print-timeout and prints a notice, alone or after a partial review.
+# `have_text` passed that, so a truncated review was posted as the whole one (2026-09-28).
+pt() { printf '%s' "$1" > "$TMPD/cap"; print_timeout_present "$TMPD/cap" && echo MATCH || echo NOMATCH; }
+check "a bare timeout notice is caught" "MATCH" \
+  "$(pt '[agy] print timeout after 5m0s with turn in progress; returning partial output')"
+check "a partial review ending in the notice is caught" "MATCH" \
+  "$(pt "$(printf '## Review\n\nSome findings\n[agy] print timeout after 5m0s with turn in progress; returning partial output\n')")"
+check "a review quoting the notice mid-line is not caught" "NOMATCH" \
+  "$(pt 'The log showed [agy] print timeout after 5m0s once.')"
+check "an empty capture is not a timeout" "NOMATCH" "$(pt '')"
+
+# --- no `exec` may redirect to /dev/null -------------------------------------------------
+# A redirection on a bare `exec` applies to the rest of the script. `exec 9>&- 2>/dev/null`
+# after the retry loop sent every later `log` line (stderr) to /dev/null, so a posted review, an
+# updated one and every failure looked identical in CI: nothing logged, green check.
+if grep -nE '^[[:space:]]*exec[[:space:]][^#]*>[[:space:]]*/dev/null' "$SCRIPT_DIR/agy-review.sh" >/dev/null; then
+  echo "  FAIL  an \`exec\` redirects to /dev/null (silences every later log line)"
+  fails=$((fails + 1))
+else
+  echo "  ok    no \`exec\` redirects to /dev/null"
+fi
 
 if [ "$fails" -ne 0 ]; then
   echo "$fails check(s) failed" >&2
