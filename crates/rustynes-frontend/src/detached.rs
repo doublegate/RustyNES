@@ -337,7 +337,13 @@ impl DetachedManager {
         queue: &wgpu::Queue,
         prepared: PreparedDetachedFrame,
     ) {
+        let mut prepared = prepared;
         let Some(w) = self.windows.get_mut(&id) else {
+            // The window closed between phase 1 and phase 2, and its renderer
+            // went with it: nothing can receive these textures. egui 0.36's
+            // `TexturesDelta` asserts (debug builds) that it is empty when
+            // dropped, so discard it explicitly rather than let it trip.
+            prepared.textures_delta.clear();
             return;
         };
         let ctx = w.state.egui_ctx().clone();
@@ -352,11 +358,15 @@ impl DetachedManager {
         // blank or garbled for the rest of its life, long after the transient
         // surface error cleared. Uploading first costs nothing on the happy path
         // and makes a skipped present merely a dropped frame.
-        for (tid, image) in prepared.textures_delta.set {
-            w.renderer.update_texture(device, queue, tid, &image);
-        }
+        crate::debugger::upload_texture_sets(
+            &mut w.renderer,
+            device,
+            queue,
+            &mut prepared.textures_delta,
+        );
+        let texture_frees = crate::debugger::take_texture_frees(&mut prepared.textures_delta);
 
-        // Acquire the swapchain image (wgpu 29 `CurrentSurfaceTexture` enum), with
+        // Acquire the swapchain image (wgpu `CurrentSurfaceTexture` enum), with
         // the same reconfigure-on-lost / skip-otherwise policy as `Gfx`. Frees are
         // deferred to the end so a bail-out cannot drop a texture the next frame
         // still references.
@@ -365,11 +375,11 @@ impl DetachedManager {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 w.surface.configure(device, &w.config);
-                Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+                Self::free_textures(&mut w.renderer, texture_frees);
                 return;
             }
             _ => {
-                Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+                Self::free_textures(&mut w.renderer, texture_frees);
                 return;
             }
         };
@@ -414,9 +424,10 @@ impl DetachedManager {
                 .forget_lifetime();
             w.renderer.render(&mut rp, &clipped, &screen_desc);
         }
-        Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+        Self::free_textures(&mut w.renderer, texture_frees);
         queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30: presenting moved from `SurfaceTexture::present` to the queue.
+        queue.present(frame);
     }
 
     /// Release the textures egui retired this frame.

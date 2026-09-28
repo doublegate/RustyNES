@@ -137,6 +137,12 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   the original cross-reference; its source is vendored with attribution. See
   docs/originality-and-provenance.md sec. 4 and ADR 0030.
 
+* egui-winit 0.36.2 -- winit integration for egui, vendored with a three-site
+  wasm32 build fix at vendor/egui-winit/ (see its VENDORED.md) until a fixed
+  release is published.
+  https://github.com/emilk/egui
+      Copyright (c) 2018-2021 Emil Ernerfeldt -- MIT OR Apache-2.0
+
 * rcheevos v12.3.0 -- RetroAchievements client runtime, vendored at
   crates/rustynes-cheevos/vendor/rcheevos/ (compiled only under the optional
   `retroachievements` feature).

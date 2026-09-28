@@ -143,6 +143,9 @@ impl MetalGfx {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                // wgpu 30: fingerprinting mitigation for hosts exposing wgpu to
+                // untrusted content; off (the `Default`) so real limits are kept.
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|e| format!("request_adapter: {e}"))?;
@@ -178,6 +181,9 @@ impl MetalGfx {
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
+            // wgpu 30: `Auto` reproduces wgpu's historical colour-space choice,
+            // so the displayed image is unchanged.
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
 
@@ -638,7 +644,8 @@ impl MetalGfx {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30: presenting moved from `SurfaceTexture::present` to the queue.
+        self.queue.present(frame);
     }
 
     /// Upload + present one HD-pack composited RGBA frame at `w`×`h` (v1.9.5).
@@ -788,6 +795,7 @@ impl MetalGfx {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30: presenting moved from `SurfaceTexture::present` to the queue.
+        self.queue.present(frame);
     }
 }

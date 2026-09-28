@@ -53,7 +53,6 @@ allow = [
     "ISC",           # ISC License (similar to MIT) - used by inotify, libloading
     "Zlib",          # zlib License (permissive) - used by slotmap
     # Public-domain-equivalent (OSI/FSF, permissive)
-    "CC0-1.0",       # Creative Commons Zero - used by hexf-parse (<- naga <- wgpu)
     "CDLA-Permissive-2.0",  # Community Data License Permissive 2.0 - used by webpki-roots (<- ureq <- rustynes-cheevos)
     # Weak copyleft licenses (OSI approved, FSF Free/Libre, file-level copyleft)
     "MPL-2.0",       # Mozilla Public License 2.0 - used by option-ext, resvg, usvg

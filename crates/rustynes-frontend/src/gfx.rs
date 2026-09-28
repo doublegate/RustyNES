@@ -255,8 +255,14 @@ impl GpuTimer {
             flag.store(true, std::sync::atomic::Ordering::Release);
             let buf_for_cb = buf.clone();
             buf.slice(..).map_async(wgpu::MapMode::Read, move |res| {
-                if res.is_ok() {
-                    let data = buf_for_cb.slice(..).get_mapped_range();
+                // wgpu 30: `get_mapped_range` returns a `Result`. This is a
+                // telemetry sample, so a failed range skips the sample rather
+                // than taking the process down for a timing number.
+                let range = res
+                    .is_ok()
+                    .then(|| buf_for_cb.slice(..).get_mapped_range().ok())
+                    .flatten();
+                if let Some(data) = range {
                     let t0 = u64::from_le_bytes(data[0..8].try_into().expect("8 bytes"));
                     let t1 = u64::from_le_bytes(data[8..16].try_into().expect("8 bytes"));
                     drop(data);
@@ -472,6 +478,11 @@ impl Gfx {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                // wgpu 30: a fingerprinting mitigation for hosts that expose wgpu
+                // to untrusted content. Off (the `Default`): bucketing would
+                // round this adapter's real limits down, and RustyNES renders
+                // only its own content.
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|_| GfxError::NoAdapter)?;
@@ -601,6 +612,10 @@ impl Gfx {
             present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
+            // wgpu 30: `Auto` is the documented default, supported for every
+            // format `SurfaceCapabilities::formats` lists, and it reproduces
+            // wgpu's historical choice -- so the displayed image is unchanged.
+            color_space: wgpu::SurfaceColorSpace::Auto,
             // v2.8.0 Phase 2 — configurable swapchain depth (`[graphics]
             // max_frame_latency`): 1 = lowest display latency, 2 = slack.
             desired_maximum_frame_latency: max_frame_latency.clamp(1, 2),
@@ -866,6 +881,10 @@ impl Gfx {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode,
             view_formats: vec![],
+            // wgpu 30: `Auto` is the documented default, supported for every
+            // format `SurfaceCapabilities::formats` lists, and it reproduces
+            // wgpu's historical choice -- so the displayed image is unchanged.
+            color_space: wgpu::SurfaceColorSpace::Auto,
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&self.device, &config);
@@ -1362,7 +1381,8 @@ impl Gfx {
         if let Some(t) = &mut self.gpu_timer {
             t.after_submit();
         }
-        frame.present();
+        // wgpu 30: presenting moved from `SurfaceTexture::present` to the queue.
+        self.queue.present(frame);
         Ok(())
     }
 
@@ -1487,7 +1507,8 @@ impl Gfx {
             (self.config.width, self.config.height),
         );
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30: presenting moved from `SurfaceTexture::present` to the queue.
+        self.queue.present(frame);
         Ok(())
     }
 
@@ -1677,7 +1698,8 @@ impl Gfx {
             (self.config.width, self.config.height),
         );
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30: presenting moved from `SurfaceTexture::present` to the queue.
+        self.queue.present(frame);
         Ok(())
     }
 
