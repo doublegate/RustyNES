@@ -117,7 +117,8 @@ Every older version still loads and leaves the RAM as it was, the old
 behaviour.
 
 A sweep of every mapper id with the same shape of test, run while triaging
-AUD-02, found the same omission on boards outside the VRC family: PRG-RAM on
+AUD-02, found the same omission on boards beyond the VRC2/4/6/7 set it had
+fixed, VRC1 among them: PRG-RAM on
 **10** (MMC4), and CHR-RAM on **9**, **10**, **11**, **19**, **34**, **69**,
 **75** and **151**. v2.9.2 fixes them the same way, a versioned tail after every
 older field: MMC2 (9), MMC4 (10), Color Dreams (11), mapper 34 and VRC1 (75,

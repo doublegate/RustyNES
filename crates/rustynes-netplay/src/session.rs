@@ -459,12 +459,25 @@ impl<T: Transport> RollbackSession<T> {
     /// `input_delay + max_rollback_frames` plus [`MAX_SESSION_FRAME_LOOKAHEAD`]
     /// (saturating). See the constant for the derivation. Anything later is
     /// dropped before it can size an allocation.
+    ///
+    /// Capped one short of `u32::MAX`: [`ensure_frame`](Self::ensure_frame)
+    /// sizes its tables as `frame as usize + 1`, which overflows a 32-bit
+    /// `usize` at `u32::MAX`, and saturation alone would let the window reach
+    /// exactly that frame. Unreachable in play (the clock would have to run
+    /// for over two years at 60 fps), but this is the guard, so it holds at
+    /// its own endpoint.
     #[must_use]
     pub const fn max_accepted_frame(&self) -> u32 {
-        self.current_frame
+        let window = self
+            .current_frame
             .saturating_add(self.config.input_delay)
             .saturating_add(self.config.max_rollback_frames)
-            .saturating_add(MAX_SESSION_FRAME_LOOKAHEAD)
+            .saturating_add(MAX_SESSION_FRAME_LOOKAHEAD);
+        if window == u32::MAX {
+            u32::MAX - 1
+        } else {
+            window
+        }
     }
 
     /// Grow the per-frame vectors so index `frame` is addressable.
@@ -1095,6 +1108,22 @@ mod tests {
     /// The window edge, pinned both ways: the last accepted frame is folded
     /// into history (so legitimate far-ahead traffic survives), the next one is
     /// dropped. Mutating the comparison in either direction fails one half.
+    #[test]
+    fn lookahead_window_never_reaches_u32_max() {
+        // `ensure_frame` computes `frame as usize + 1`, which overflows on a
+        // 32-bit `usize` for `frame == u32::MAX`. The window saturates, so a
+        // session near the end of the frame space must still cap it one short
+        // (Copilot on #563). Unreachable in play -- the clock would have to
+        // run for over two years at 60 fps -- but the bound is the guard, so
+        // it must hold at its own endpoint.
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (link, _peer) = MemoryTransport::pair(LinkConditions::PERFECT, 12);
+        let mut session = RollbackSession::new(SessionConfig::default(), link, hash);
+        session.current_frame = u32::MAX - 3;
+        assert_eq!(session.max_accepted_frame(), u32::MAX - 1);
+    }
+
     #[test]
     fn lookahead_window_edge_is_inclusive() {
         let rom = synth_nrom();
