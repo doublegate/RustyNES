@@ -86,6 +86,10 @@ pub struct RememberedLatency {
 /// config (no Four Score tables / flag) loads unchanged: `four_score`
 /// defaults off and the P3/P4 maps stay dormant until the toggle is
 /// enabled.
+// Four independent persisted user toggles (Four Score, turbo A, turbo B,
+// opposing directions), not the states of one machine; an enum would merge
+// unrelated settings.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputConfig {
     /// Player 1 keyboard mapping.
@@ -184,6 +188,20 @@ pub struct InputConfig {
     /// state (clamped to >= 1; default 2, ≈ 15 Hz at 60 fps). Lower = faster.
     #[serde(default = "default_turbo_period")]
     pub turbo_period: u32,
+    /// v2.9.2 (audit AUD-08) — let opposing D-pad directions reach the console
+    /// together. `false` (the default) applies neutral SOCD cleaning to live
+    /// keyboard / gamepad / on-screen-pad input: Up + Down held together reads
+    /// as neither, and so does Left + Right, which is what a real NES pad's
+    /// rocking cross can produce. Keyboards and hitboxes can press both, and
+    /// many games misbehave when they see it. `true` passes both bits through,
+    /// for players who rely on the raw combination.
+    ///
+    /// Only LIVE physical input is cleaned: movie playback, `TAStudio`,
+    /// Lua-injected input and the input a netplay peer sends are left exactly as
+    /// recorded, so a movie or a remote player's stream replays bit-for-bit.
+    /// `#[serde(default)]`, so a config without the key loads as cleaned.
+    #[serde(default)]
+    pub allow_opposing_directions: bool,
     /// v1.5.0 "Lens" Workstream D4 — SNES-mouse reported sensitivity (0 = low,
     /// 1 = medium, 2 = high). This is the 2-bit field the mouse sends in its
     /// serial report (some titles read + cycle it). Default `0` (low) matches
@@ -416,6 +434,7 @@ impl Default for InputConfig {
             turbo_a: false,
             turbo_b: false,
             turbo_period: default_turbo_period(),
+            allow_opposing_directions: false,
             mouse_sensitivity: 0,
             pointer_scale: default_pointer_scale(),
             power_pad_layout: PowerPadLayout::default(),

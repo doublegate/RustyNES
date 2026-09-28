@@ -140,4 +140,20 @@ mod tests {
         assert_eq!(m.cpu_read(0x8000), m2.cpu_read(0x8000));
         assert_eq!(m.current_mirroring(), m2.current_mirroring());
     }
+
+    /// v2.9.2 cartridge-RAM sweep: mapper 151 forwards its section to the
+    /// VRC1 core, so a board with no CHR-ROM carries its CHR-RAM through the
+    /// wrapper too. The whole-machine pin is
+    /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`.
+    #[test]
+    fn save_state_carries_chr_ram() {
+        let mut m = KonamiVs::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m.ppu_write(0x0000, 0x11);
+        m.ppu_write(0x0FFF, 0x22);
+        let blob = m.save_state();
+        let mut m2 = KonamiVs::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).expect("round-trip");
+        assert_eq!(m2.ppu_read(0x0000), 0x11);
+        assert_eq!(m2.ppu_read(0x0FFF), 0x22);
+    }
 }

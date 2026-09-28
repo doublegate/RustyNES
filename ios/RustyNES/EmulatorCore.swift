@@ -76,6 +76,13 @@ final class EmulatorCore {
     /// Suppress audio push without tearing the sink down (a user mute toggle).
     var isMuted = false
 
+    /// v2.9.2 (audit AUD-14): called once per console frame, on the main thread,
+    /// just before the frame runs (single-player and netplay alike), so per-frame
+    /// host work -- the hardware-gamepad turbo pulse -- is paced by emulated
+    /// frames, not the wall clock. Not called while paused (`tick()` returns
+    /// early). Set by `AppModel` when it opens a game. UNCOMPILED at v2.9.2.
+    var onFrameWillRun: (() -> Void)?
+
     /// The live P1 (port 0) controller mask, cached from `setButtons` so the netplay
     /// frame loop can feed it to `npAdvanceFrame(localMask:)` (v1.9.6). The bridge
     /// maps this peer's local mask onto its own player slot internally (host = P1,
@@ -207,10 +214,16 @@ final class EmulatorCore {
         // so the loop advances via `npAdvanceFrame` instead of `runFrame` (calling
         // `runFrame` would advance the core a second time and desync rollback). Handled
         // entirely in `tickNetplay`; the single-player path below is skipped.
+        // `tickNetplay` also paces turbo, from the frames it actually produces.
         if controller.npIsActive() {
             tickNetplay(gfx: gfx)
             return
         }
+
+        // AUD-14: advance frame-paced host input (turbo) BEFORE the frame, so any
+        // mask it pushes (`setButtons` -> the bridge's atomics / `_localMask`) is
+        // latched by this frame. `runFrame` below always produces one.
+        onFrameWillRun?()
 
         // TAStudio (v1.9.9): when a scripted playback is active, inject this
         // frame's P1 mask before advancing. No-op otherwise (live input path).
@@ -319,9 +332,17 @@ final class EmulatorCore {
         let result = controller.npAdvanceFrame(localMask: localMask)
         guard result.producedFrame else {
             // Stall / connecting / error: keep the audio ring from backing up, no present.
+            // Turbo does not advance either: no emulated frame ran.
             _ = controller.drainAudio()
             return
         }
+
+        // AUD-14: turbo is paced by EMULATED frames, and whether this tick produces
+        // one is only known after `npAdvanceFrame` returns. So the phase advances
+        // here, after a produced frame, and the mask it pushes is latched by the
+        // next one -- a connecting or time-sync-stalled session no longer moves the
+        // pulse. (Copilot on #563.)
+        onFrameWillRun?()
 
         // The just-produced frame, read without advancing the core again.
         let index = controller.indexFramebufferBytes()

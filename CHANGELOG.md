@@ -26,6 +26,170 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-09-28 - "Candidate" (the full audit acted on, and the release-candidate pair)
+
+The third release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
+**a fifth audit, triaged finding by finding, and the bitstream pair the board
+session runs.** The maintainer added a 32-finding AI-written audit of both
+repositories; every finding has a verdict and its evidence in
+[`docs/audits/v2.9.2-full-audit-disposition.md`](docs/audits/v2.9.2-full-audit-disposition.md),
+and 16 of the 32 are fixed, most pinned by a test that failed first. The
+largest find was not in the report: a sweep written for one of its findings
+showed that save states dropped the cartridge RAM of twelve board families. **Emulation output
+changes in one place** (an unmapped cartridge read now updates the CPU's
+internal data bus); AccuracyCoin 144/144 and nestest 0-diff hold, and the full
+`--features test-roms` suite passes 2,867 tests. Save states grow on the fixed
+boards and stay loadable across versions. **No hardware has run any bitstream**;
+v2.9.2's bitstreams are what the SuperStation One session runs.
+
+### MiSTer core
+
+- **The CPU no longer loses an NMI whose pulse falls inside a DMA** (AUD-24).
+  The /NMI edge detector ran on the DMA-stalled clock enable, so an NMI raised
+  and cleared during an OAM DMA was never seen; on the 2A03 the detector keeps
+  sampling while RDY holds the CPU. A new gate, `dmanmi074`, differed from the
+  oracle in 156,031 of 357,820 cycles before the fix and in none after.
+- **`make build-fast` no longer leaves the project file modified** (AUD-31), so
+  a fast iteration build cannot block the next release build. `make clean`
+  removes the off-die build and sweep logs too (AUD-32), and `release-rbf.sh`
+  attaches the off-die bitstream alongside the on-die one.
+- **New gates for claims that were refuted:** the arbiter's overrun report
+  (AUD-21) and a monitor that fails the run if an SDRAM refresh interval is ever
+  lost (AUD-23; the longest wait measured is 10 cycles of a 654-cycle interval).
+- **A board kit**: `tools/stage_board_kit.sh` stages the Tier 1 corpus, the
+  launchers, both bitstreams and the md5s the session checks against, and the
+  bring-up log gains the off-die rows.
+- The sibling's oracle pin moves to v2.9.1; all 117 golden stems regenerate
+  byte for byte.
+- **Both builds re-swept**, eight seeds each at one build date, all sixteen
+  closing; the pin stays at seed 2 (on-die +0.510 / +0.108 ns, off-die
+  +0.390 / +0.081 ns). Two clean compiles of each build are byte-identical.
+  The co-simulation ladder is 173 passed / 0 failed / 1 expected failure
+  on-die and 174 / 0 / 1 off-die, nothing skipped.
+
+### Fixed
+
+- **Konami VRC2, VRC4, VRC6 and VRC7 games keep their cartridge RAM across a
+  save state** (core audit v2.9.2 AUD-02). The `.rns` format carries cartridge
+  RAM only inside the mapper's own section, and these boards (mappers 21-26
+  and 85) left their 8 KiB of `$6000-$7FFF` PRG-RAM out of it, and their 8 KiB
+  of CHR-RAM on a cartridge without CHR-ROM. Every save-state load, rewind
+  step, run-ahead frame and netplay rollback therefore kept the RAM the
+  running game held instead of the saved one: the working RAM of *Akumajou
+  Densetsu*, *Madara*, *Lagrange Point* and the rest drifted out of step with
+  the restored machine. The sections now carry both (VRC2 and VRC4 section v2,
+  VRC6 v3, VRC7 v3/v4); save states written by earlier releases still load
+  and leave the RAM as it was.
+- **MMC4 games keep their battery RAM, and eight more boards their CHR-RAM,
+  across a save state** (the v2.9.2 cartridge-RAM sweep that followed core
+  audit AUD-02). The `.rns` format carries cartridge RAM only inside the
+  mapper's own section, and mapper 10 (MMC4) left its 8 KiB of `$6000-$7FFF`
+  PRG-RAM out of it, so the save RAM of *Fire Emblem* and *Fire Emblem Gaiden*
+  drifted out of step with a restored machine on every save-state load,
+  rewind step, run-ahead frame and netplay rollback. Mappers 9 (MMC2), 10,
+  11 (Color Dreams), 19 (Namco 163), 34 (BNROM / NINA-001), 69 (Sunsoft
+  FME-7), 75 (VRC1) and 151 (Konami VS) did the same with their 8 KiB of
+  CHR-RAM on a cartridge without CHR-ROM, which every BNROM board is
+  (*Deadly Towers*). The sections now carry it (MMC2, MMC4, Color Dreams,
+  mapper 34 and VRC1/151 section v2, FME-7 v3, Namco 163 v4); save states
+  written by earlier releases still load and leave the RAM as it was, and a
+  truncated new one is refused. A whole-machine test now sweeps every mapper
+  id the cartridge parser builds, under every submapper and with and without
+  CHR-ROM, and fails on any board whose RAM a snapshot does not restore.
+- **A crafted FDS save state can no longer crash the 32-bit builds** (core
+  audit v2.9.2 AUD-01). The disk tail's side count was multiplied by the side
+  size unchecked; on `wasm32`, `armv7` and `i686` a count of 2^30 wraps that
+  size to zero, so a blob with no disk data passed the length check and the
+  restore then read past its end. The arithmetic is checked now. 64-bit
+  builds were never affected: there the product cannot overflow and the
+  length check rejected the blob.
+- **An unmapped cartridge read now updates the CPU's internal data bus**, like
+  every other read (core audit v2.9.2 AUD-03). `$4015` bit 5 comes from that
+  latch, and after a DMC DMA fetch or a parked OAM-DMA put had moved the
+  external bus alone, a read of an undecoded `$4020-$FFFF` address left it on
+  an older value. AccuracyCoin stays 144/144 and nestest 0-diff.
+- **libretro: memory maps are withdrawn at `retro_deinit` too** (v2.9.2 audit
+  AUD-16). libretro.h has `retro_unload_game` "Called before retro_deinit", and
+  RetroArch does so, but the core already caters for a frontend that skips it
+  (it still writes the FDS disk and drops the console). On that path the console
+  was freed while the frontend still held the memory-map descriptors pointing
+  into it; they are now replaced with an empty map first. After a normal unload
+  `retro_deinit` makes no extra call.
+
+### Netplay
+
+- **A peer can no longer make a session allocate memory it names** (full audit
+  AUD-06). The frame number on a received input or checksum sized six
+  per-frame tables with no limit, so one datagram with `frame = u32::MAX` asked
+  for about four billion entries in each: an out-of-memory abort on 64-bit, a
+  `usize` overflow on wasm32. A frame more than `MAX_SESSION_FRAME_LOOKAHEAD`
+  (1024) plus this peer's input delay and rollback window past the current
+  frame is now dropped before it touches a table. A well-behaved peer runs at
+  most 14 frames ahead with the default settings, and inputs are resent until
+  acknowledged, so no real traffic is lost; a hostile peer can force at most
+  about 115 KiB. The spectator had this bound already; the players' session
+  did not.
+- **Joining a second room on the signaling server leaves the first** (AUD-13).
+  The server simply re-pointed the client, which stayed in its old room as a
+  ghost: that room could never empty, and its peers kept offering to a client
+  that had gone. A join or quick match now leaves the current room exactly as
+  a disconnect does, telling the peers left behind. A client re-joining its
+  own room no longer takes a second slot in it.
+
+### Desktop input
+
+- **Unplugging a gamepad releases what it was holding and frees its port**
+  (AUD-07). A pad pulled out mid-press left its buttons and stick direction
+  held on the console, and never gave its player port back; since gilrs gives
+  a different device a new id, four pads coming and going filled every port
+  until restart.
+- **Opposing directions cancel** (AUD-08, a behaviour change, on by default
+  by the maintainer's decision). A real NES
+  pad's D-pad cannot press Up and Down, or Left and Right, together; a
+  keyboard, hitbox or worn pad can, and games glitch on it. Live input is now
+  cleaned to neutral on each axis: both opposites held reads as neither, and
+  input without an opposition is unchanged. **Settings → Input → Allow
+  opposing directions** (`[input] allow_opposing_directions`) turns it off.
+  Movie playback, TAStudio, Lua and netplay peers' input are never cleaned, so
+  recordings replay exactly as written. `docs/frontend.md` §Input.
+
+### Mobile
+
+- **A panic while compositing an HD-pack frame no longer reaches the app**
+  (AUD-11). `composite_hd_frame` runs once a frame whenever a pack is loaded,
+  walks pack data the user supplied, and was the one per-frame bridge call
+  outside the v2.7.4 containment, so a panic in it was a `try!` abort on iOS.
+  It is now contained like the frame paths: one warning, and the game freezes
+  until it is reopened, power cycled or a state is loaded.
+- **Android's Bisqwit NTSC filter no longer allocates a frame buffer every
+  frame** (AUD-12). The palette-index frame is copied into a buffer the
+  renderer keeps, as the RGBA frame already was, instead of a new 120 KiB
+  `Vec` on each of 60 frames a second. The picture is unchanged.
+- **Two fingers on the on-screen D-pad no longer press opposite directions**
+  (AUD-09 Android, AUD-10 iOS). Each finger could only ever select one side of
+  an axis, but a resting thumb and a sliding one could select both. Each
+  player's COMBINED input -- touch, hardware pad and, on Android, keyboard -- is
+  now cleaned to neutral, as on the desktop; mobile has no switch to turn it
+  off yet.
+- **iOS gamepad turbo is paced by emulated frames** (AUD-14). A wall-clock
+  30 Hz timer flipped it, so it kept pulsing while the game was paused and fell
+  out of step when the display link ran several frames in one callback. It now
+  flips every two console frames, the same rate at 60 fps. The iOS changes are
+  uncompiled here and join the device checklist
+  (`docs/mobile-v2.7.4-device-checklist.md`, rows A13-A15 and I16-I19).
+
+### Performance
+
+- **libretro: the first save state no longer allocates** (AUD-17). The snapshot
+  that measures `retro_serialize_size` at load now goes into the buffer
+  `retro_serialize` reuses, with the Zapper headroom reserved, so the first
+  run-ahead or rollback frame no longer grows it from nothing (about 260 KB,
+  645 KB for a Vs. cabinet). No serialize reallocates it, Zappers included.
+- **libretro: a Vs. `DualSystem` cabinet frame is no longer zero-filled before
+  it is drawn** (AUD-19). Every byte of the 512x240 image is rewritten each
+  frame, so the 491,520-byte clear was dead work; the presented image is
+  unchanged (pinned for stale, wrong-length and empty buffers).
+
 ## [2.9.1] - 2026-09-27 - "Hone" (what the optimisation bars measure, and what clears them)
 
 The second release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):

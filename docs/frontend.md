@@ -1288,8 +1288,16 @@ or via the in-app rebind modal in the debugger overlay):
 | Right | `ArrowRight` | `D` |
 
 Gamepads: `gilrs` maps standard button layouts. South = A, East = B,
-Back = Select, Start = Start, dpad = dpad. Routed to Player 1 alongside
-the keyboard.
+Back = Select, Start = Start, dpad = dpad. Each physical pad is assigned a
+player port the first time it sends an event: the first pad drives Player 1
+(alongside the keyboard), the second Player 2, the third and fourth Players 3
+and 4 (Four Score); a fifth concurrent pad is ignored. **Unplugging a pad**
+(v2.9.2, audit AUD-07) releases every button and stick direction it was holding
+and frees its port, so nothing stays latched on the console and the next pad
+plugged in takes the freed port (a pad reconnected before any other appears gets
+its old port back). Before v2.9.2 a disconnect did neither: held bits stuck
+until the pad reappeared, and because gilrs gives a different device a new id,
+four distinct pads coming and going filled every port for the rest of the run.
 
 System hotkeys (rebindable via `[input.system]`):
 
@@ -1319,6 +1327,26 @@ applied where input meets the NES — in `EmuCore::latch` and on the local input
 in both netplay paths — so the gated bits are what get latched / recorded /
 sent: deterministic and rollback / TAS / netplay-safe. The native and
 `wasm-winit` paths apply it; the lightweight `wasm-canvas` embed does not.
+
+**Opposing directions / SOCD** (`[input] allow_opposing_directions`, Settings →
+Input "Allow opposing directions", v2.9.2, audit AUD-08). A real NES pad's
+D-pad is one rocking cross and cannot report Up and Down, or Left and Right, at
+the same time; a keyboard, hitbox or worn pad can, and games that never expected
+the combination glitch on it. By default (`false`) live input is **neutrally
+cleaned**: both halves of an opposed axis drop to neither, each axis on its own
+(Up + Left + Right reads as Up), and every other bit passes through, so input
+with no opposition is bit-identical to before. The union of all live sources is
+cleaned, not each source alone: `InputState::player` cleans keyboard + gamepad +
+stick together, and `App::frame_inputs` cleans again after folding in the
+on-screen virtual pad (native) or the browser touch overlay and Gamepad API
+(`wasm-winit`); the pure rule is `input::socd_neutral`. Setting the option to
+`true` passes both bits through. **Only live physical input is cleaned.** Movie
+playback, TAStudio, Lua `setInput` overrides and the inputs netplay peers send
+are applied after (or instead of) the live latch and never pass through the
+cleaner, so recorded and remote streams replay exactly as written. A movie
+*recorded* with cleaning on records what the console saw, the cleaned mask. The
+local player's netplay input is live input and is cleaned before it is sent.
+The lightweight `wasm-canvas` embed has no settings and does not clean.
 
 **NES Power Pad.** The Power Pad / Family Fun Fitness mat is selectable as the
 player-2 expansion device (Settings → Input "Port 2 device"). Its 12 mat

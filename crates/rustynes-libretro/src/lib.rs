@@ -89,6 +89,14 @@ use std::ffi::{CStr, CString};
 pub(crate) static INJECT_PANIC_IN_RUN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Test-only counter: `retro_serialize` calls whose snapshot outgrew
+/// `serialize_buffer`, i.e. reallocated it during gameplay (v2.9.2 audit
+/// AUD-17). The C-ABI harness cannot see the core's fields, so
+/// `on_serialize` reports the capacity change here.
+#[cfg(test)]
+pub(crate) static SERIALIZE_BUFFER_GROWTHS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 /// NES native framebuffer width in pixels (one console).
 const NES_W: usize = 256;
 /// NES native framebuffer height in pixels.
@@ -1099,26 +1107,13 @@ impl RustyNesLibretro {
             }
         };
 
-        // The frontend reads `retro_serialize_size` once and sizes every
-        // save-state, rewind and run-ahead buffer from it, so the answer must
-        // cover the largest snapshot this game can produce, not the one it
-        // produces now. A single console's snapshot grows when an expansion
-        // device attaches: a port reads "unplugged" (1 byte) until the host
-        // plugs in, e.g., a Zapper, which `set_zapper` does lazily on the first
-        // `retro_run` after the frontend selects the light gun. Measuring at
-        // load therefore under-sized the buffer and every later save failed
-        // (libretro audit §2.1). The headroom covers both ports at the largest
-        // device encoding; `on_serialize` zeroes whatever it does not use, and
-        // `SectionIter` reads a zero tail as padding. Clear whichever emulator
-        // shape a prior load left behind so the two Options stay mutually
-        // exclusive.
+        // Clear whichever emulator shape a prior load left behind so the two
+        // Options stay mutually exclusive; `size_serialize_buffer` then
+        // answers `retro_serialize_size` for whichever one is loaded.
         match emu {
             Emu::Single(nes) => {
                 let mut nes = *nes;
                 apply_vs_database(&mut nes);
-                let mut tmp = Vec::new();
-                nes.snapshot_core_into(&mut tmp);
-                self.serialize_size = tmp.len() + rustynes_core::SAVE_STATE_DEVICE_HEADROOM;
                 self.nes = Some(nes);
                 self.dual = None;
                 self.log(
@@ -1131,15 +1126,6 @@ impl RustyNesLibretro {
                 // database to both too.
                 apply_vs_database(dual.main_mut());
                 apply_vs_database(dual.sub_mut());
-                // The dual snapshot is a self-describing blob of both consoles; size it
-                // once here. No headroom: the dual path never attaches an expansion
-                // device (a Vs. cabinet has no light gun, and `run_dual` never calls
-                // `set_zapper`), so its size cannot grow after load.
-                // v2.9.1 (NL-09): sized with the same thumbnail-free encoder
-                // `on_serialize` uses, which is smaller than `snapshot()`.
-                let mut sizing = Vec::new();
-                dual.snapshot_into(&mut sizing);
-                self.serialize_size = sizing.len();
                 self.dual = Some(dual);
                 self.nes = None;
                 self.log(
@@ -1148,6 +1134,7 @@ impl RustyNesLibretro {
                 );
             }
         }
+        self.size_serialize_buffer();
         self.register_memory_maps(ctx);
         self.memory_maps_registered = true;
         self.fds_save_path = fds_save;
@@ -1166,6 +1153,51 @@ impl RustyNesLibretro {
         let cb = unsafe { *generic_ctx.environment_callback() };
         self.describe_inputs(cb, vs_table);
         Ok(())
+    }
+
+    /// Answer `retro_serialize_size` for the console `load_game` just
+    /// installed, and leave `serialize_buffer` ready for `on_serialize`.
+    ///
+    /// The frontend reads `retro_serialize_size` once and sizes every
+    /// save-state, rewind and run-ahead buffer from it, so the answer must
+    /// cover the largest snapshot this game can produce, not the one it
+    /// produces now. A single console's snapshot grows when an expansion
+    /// device attaches: a port reads "unplugged" (1 byte) until the host
+    /// plugs in, e.g., a Zapper, which `set_zapper` does lazily on the first
+    /// `retro_run` after the frontend selects the light gun. Measuring at
+    /// load therefore under-sized the buffer and every later save failed
+    /// (libretro audit §2.1). The headroom covers both ports at the largest
+    /// device encoding; `on_serialize` zeroes whatever it does not use, and
+    /// `SectionIter` reads a zero tail as padding.
+    ///
+    /// A Vs. `DualSystem` cabinet's snapshot is a self-describing blob of
+    /// both consoles and gets no headroom: the dual path never attaches an
+    /// expansion device (a Vs. cabinet has no light gun, and `run_dual` never
+    /// calls `set_zapper`), so its size cannot grow after load. Since v2.9.1
+    /// (NL-09) it is sized with the same thumbnail-free encoder `on_serialize`
+    /// uses, which is smaller than `snapshot()`.
+    ///
+    /// The sizing snapshot goes into `serialize_buffer` itself, the buffer
+    /// `on_serialize` reuses, rather than a throwaway `Vec` (v2.9.2 audit
+    /// AUD-17). The encoder is the one `on_serialize` calls, so the size is
+    /// unchanged; what changes is that the first `retro_serialize` -- the
+    /// first frame of run-ahead or rollback netplay -- no longer grows the
+    /// buffer from nothing during gameplay (about 260 KB; 645 KB for a
+    /// cabinet). The single console also reserves the device headroom, so a
+    /// Zapper attached later does not reallocate it either. Pinned by
+    /// `abi_tests::no_serialize_reallocates_the_buffer_sized_at_load`.
+    fn size_serialize_buffer(&mut self) {
+        use rustynes_core::SAVE_STATE_DEVICE_HEADROOM as HEADROOM;
+        if let Some(nes) = self.nes.as_ref() {
+            self.serialize_buffer.clear();
+            nes.snapshot_core_into(&mut self.serialize_buffer);
+            self.serialize_size = self.serialize_buffer.len() + HEADROOM;
+            self.serialize_buffer.reserve(HEADROOM);
+        } else if let Some(dual) = self.dual.as_mut() {
+            // `snapshot_into` clears the buffer itself.
+            dual.snapshot_into(&mut self.serialize_buffer);
+            self.serialize_size = self.serialize_buffer.len();
+        }
     }
 
     /// Name the inputs: `vs` (the standard table plus a Vs. panel) for a Vs.
@@ -1188,6 +1220,33 @@ impl RustyNesLibretro {
         // null-description-terminated array.
         unsafe { rust_libretro::environment::set_input_descriptors(cb, table) };
         self.vs_descriptors = vs.is_some();
+    }
+
+    /// Hand the frontend an empty memory map if `register_memory_maps`
+    /// gave it descriptors, so it holds no pointer into a console about to
+    /// be dropped (libretro audit §1.3).
+    ///
+    /// Called from `on_unload_game`, and from `on_deinit` for a frontend
+    /// that skips `retro_unload_game` (v2.9.2 audit AUD-16). libretro.h says
+    /// `retro_unload_game` is "Called before retro_deinit", so a conforming
+    /// frontend reaches `on_deinit` with the flag already cleared and this
+    /// sends nothing; the core already tolerates the skipping frontend for
+    /// the FDS disk save and the console drop, and without this that path
+    /// freed WRAM / SRAM / CIRAM with the descriptors still registered.
+    /// An empty map clears them in RetroArch: its `SET_MEMORY_MAPS` handler
+    /// frees the previous descriptors before it reads the new count.
+    fn withdraw_memory_maps(&mut self, cb: retro_environment_t) {
+        if !std::mem::take(&mut self.memory_maps_registered) {
+            return;
+        }
+        let empty = retro_memory_map {
+            descriptors: std::ptr::null(),
+            num_descriptors: 0,
+        };
+        // SAFETY: `cb` is the frontend's environment callback, valid for the
+        // current `retro_unload_game` / `retro_deinit` call (the caller's
+        // context). `empty` names no descriptors, so no pointer in it is read.
+        unsafe { rust_libretro::environment::set_memory_maps(cb, empty) };
     }
 
     /// Build an FDS console for `disk`: read `disksys.rom` from the
@@ -1588,10 +1647,21 @@ impl RustyNesLibretro {
 
     /// Compose the dual cabinet's two framebuffers into `video_buffer` as a 512x240
     /// XRGB8888 image (MAIN on the left, SUB on the right). Pre-sized once so the
-    /// per-frame `resize` never reallocates.
+    /// `resize` never reallocates.
+    ///
+    /// The scanline loop writes all four bytes of every pixel in both halves
+    /// of every row, so nothing the buffer held before survives. It is
+    /// therefore sized only when its length is wrong (the first dual frame
+    /// after a single-console one, or after `retro_unload_game` cleared it),
+    /// not cleared and zero-filled every frame: that was 491,520 bytes of
+    /// zeros per frame, all overwritten (v2.9.2 audit AUD-19; pinned by
+    /// `compose_dual_overwrites_every_byte_whatever_the_buffer_held`).
     fn compose_dual(&mut self) {
-        self.video_buffer.clear();
-        self.video_buffer.resize(DUAL_W * NES_H * 4, 0);
+        const LEN: usize = DUAL_W * NES_H * 4;
+        if self.video_buffer.len() != LEN {
+            self.video_buffer.clear();
+            self.video_buffer.resize(LEN, 0);
+        }
         let Some(dual) = self.dual.as_ref() else {
             return;
         };
@@ -2290,8 +2360,16 @@ impl Core for RustyNesLibretro {
     /// `retro_init` + `retro_load_game` grows them again. A game is normally
     /// unloaded first, so the consoles are already gone; dropping them again is
     /// a no-op, kept so a frontend that skips `retro_unload_game` still frees
-    /// them.
-    fn on_deinit(&mut self, _ctx: &mut DeinitContext) {
+    /// them. Such a frontend also still holds the memory maps, which are
+    /// withdrawn before the consoles go (v2.9.2 audit AUD-16); after a
+    /// `retro_unload_game` there is nothing left to withdraw and no
+    /// environment call is made.
+    fn on_deinit(&mut self, ctx: &mut DeinitContext) {
+        // SAFETY: `ctx` carries the frontend's own environment callback,
+        // valid for the duration of `retro_deinit`; reading it performs no
+        // dereference of its own.
+        let cb = unsafe { *ctx.environment_callback() };
+        self.withdraw_memory_maps(cb);
         // A frontend that skips `retro_unload_game` still keeps the disk's
         // saves.
         self.persist_fds_disk();
@@ -2332,23 +2410,14 @@ impl Core for RustyNesLibretro {
         // this its cheat search and RetroAchievements keep raw pointers into
         // freed WRAM / SRAM / CIRAM. An empty map clears them: RetroArch's
         // `SET_MEMORY_MAPS` handler frees the previous descriptors before it
-        // reads the new count.
-        if std::mem::take(&mut self.memory_maps_registered) {
-            let empty = retro_memory_map {
-                descriptors: std::ptr::null(),
-                num_descriptors: 0,
-            };
-            // SAFETY: `ctx` carries the frontend's own environment callback,
-            // valid for the duration of `retro_unload_game`. `empty` names no
-            // descriptors, so no pointer in it is read.
-            unsafe {
-                let cb = *ctx.environment_callback();
-                rust_libretro::environment::set_memory_maps(cb, empty);
-            }
-        }
-        // A Vs. cartridge's coin and service names go with it.
-        // SAFETY: as above, the frontend's callback for this call.
+        // reads the new count. See [`Self::withdraw_memory_maps`].
+        //
+        // SAFETY: `ctx` carries the frontend's own environment callback,
+        // valid for the duration of `retro_unload_game`; reading it performs
+        // no dereference of its own.
         let cb = unsafe { *ctx.environment_callback() };
+        self.withdraw_memory_maps(cb);
+        // A Vs. cartridge's coin and service names go with it.
         self.describe_inputs(cb, None);
         // Write the FDS disk's in-game saves before the console goes
         // (libretro re-audit NL-03). Before v2.9.0 nothing did, and a disk
@@ -2450,6 +2519,8 @@ impl Core for RustyNesLibretro {
             // state. Single console → `snapshot_core_into`; a Vs. DualSystem cabinet →
             // `VsDualSystem::snapshot_into` (a self-describing blob of BOTH consoles,
             // without thumbnails, into the same reused buffer -- v2.9.1, NL-09).
+            #[cfg(test)]
+            let capacity = core.serialize_buffer.capacity();
             if let Some(nes) = core.nes.as_ref() {
                 core.serialize_buffer.clear();
                 nes.snapshot_core_into(&mut core.serialize_buffer);
@@ -2457,6 +2528,10 @@ impl Core for RustyNesLibretro {
                 dual.snapshot_into(&mut core.serialize_buffer);
             } else {
                 return false;
+            }
+            #[cfg(test)]
+            if core.serialize_buffer.capacity() != capacity {
+                SERIALIZE_BUFFER_GROWTHS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             let Some((payload, tail)) = slice.split_at_mut_checked(core.serialize_buffer.len())
             else {
@@ -3209,6 +3284,75 @@ mod tests {
             [false, true, false, false],
             "only the assigned port should read as a light gun"
         );
+    }
+
+    /// v2.9.2 audit AUD-15 claimed `disk_image_label` could unwind a panic
+    /// out of `side_label` into the frontend. `side_label` is total over
+    /// `u32`: `b'A' + i` is taken only for `i < 26`, and the numbered form
+    /// saturates at `u32::MAX`. Pinned at the edges, where an overflow or an
+    /// out-of-range `char` would be.
+    #[test]
+    fn side_label_is_total_at_its_edges() {
+        for (index, label) in [
+            (0, "Side A"),
+            (25, "Side Z"),
+            (26, "Side 27"),
+            (255, "Side 256"),
+            (256, "Side 257"),
+            (u32::MAX, &*format!("Side {}", u32::MAX)),
+        ] {
+            assert_eq!(side_label(index), label, "index {index}");
+        }
+    }
+
+    /// v2.9.2 audit AUD-19. `compose_dual` writes every byte of the 512x240
+    /// image, so it no longer zero-fills `video_buffer` before composing
+    /// each frame; it only sizes the buffer when its length is wrong. The
+    /// composed image must therefore be the same whatever the buffer held
+    /// before: stale bytes of the right length (the steady state, which is
+    /// no longer zeroed), a single console's frame (the wrong length), or
+    /// nothing. The expected image is built here from the two framebuffers
+    /// directly, left MAIN and right SUB, each pixel RGBA to XRGB8888.
+    #[test]
+    fn compose_dual_overwrites_every_byte_whatever_the_buffer_held() {
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        // A NES 2.0 Vs. DualSystem header (console type Vs. System, byte-13
+        // hardware type 5), as the C-ABI cabinet tests build it.
+        rom[7] = 0x08 | 0x01;
+        rom[13] = 0x50;
+        let Ok(Emu::Dual(mut dual)) = Emu::from_rom(&rom) else {
+            panic!("the header must make a DualSystem cabinet");
+        };
+        for _ in 0..3 {
+            dual.run_frame();
+        }
+        let mut expected = Vec::with_capacity(DUAL_W * NES_H * 4);
+        for y in 0..NES_H {
+            for fb in [dual.main_framebuffer(), dual.sub_framebuffer()] {
+                for px in fb[y * NES_W * 4..(y + 1) * NES_W * 4].chunks_exact(4) {
+                    expected.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+                }
+            }
+        }
+        let mut core = RustyNesLibretro {
+            dual: Some(dual),
+            ..RustyNesLibretro::default()
+        };
+        for (what, stale) in [
+            (
+                "stale bytes of the right length",
+                vec![0xAA; DUAL_W * NES_H * 4],
+            ),
+            ("a single console's frame", vec![0x55; NES_W * NES_H * 4]),
+            ("an empty buffer", Vec::new()),
+        ] {
+            core.video_buffer = stale;
+            core.compose_dual();
+            assert!(
+                core.video_buffer == expected,
+                "composed over {what}: the image differs"
+            );
+        }
     }
 
     /// The declared audio rate must be the rate the APU is actually built with.

@@ -32,6 +32,20 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
+/// Version byte this board writes in its mapper save-state section. Shared by
+/// mapper 151 (Konami VS), which wraps this core and forwards its section.
+///
+/// **v1** (through v2.9.1) carried the three PRG banks, the CHR bank
+/// registers, the mirroring and the 2 KiB nametable RAM. On a cartridge with
+/// no CHR-ROM the 8 KiB CHR-RAM was left out, and the `.rns` container has no
+/// other section that carries cartridge RAM -- so every save-state load,
+/// rewind step, run-ahead frame and netplay rollback kept the running game's
+/// CHR-RAM instead of the saved one (the v2.9.2 cartridge-RAM sweep; the same
+/// omission core audit AUD-02 found on the other Konami VRC boards). **v2**
+/// appends the CHR-RAM when present. `load_state` accepts both; a v1 blob
+/// leaves the CHR-RAM untouched, which is the old behaviour.
+const VRC1_SECTION_VERSION: u8 = 2;
+
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
     let local = (addr as usize) & (NAMETABLE_SIZE - 1);
@@ -177,8 +191,8 @@ impl Mapper for Vrc1 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(16 + self.vram.len());
-        out.push(1u8);
+        let mut out = Vec::with_capacity(16 + self.vram.len() + self.ram_block_len());
+        out.push(VRC1_SECTION_VERSION);
         out.extend_from_slice(&self.prg_banks);
         out.push(self.chr_lo);
         out.push(self.chr_hi);
@@ -186,19 +200,29 @@ impl Mapper for Vrc1 {
         out.push(self.chr_hi_msb);
         out.push(self.mirroring as u8);
         out.extend_from_slice(&self.vram);
+        // --- v2 tail: the CHR-RAM, if any (see `VRC1_SECTION_VERSION`) ---
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr_rom);
+        }
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 9 + self.vram.len();
+        let version = data.first().copied().unwrap_or(0);
+        // Both READABLE versions, as literals: v1 (no RAM) and v2 (+ RAM).
+        let ram_len = match version {
+            1 => 0,
+            2 => self.ram_block_len(),
+            other => return Err(MapperError::UnsupportedVersion(other)),
+        };
+        // The whole length is validated before the first field is written.
+        let core_len = 9 + self.vram.len();
+        let expected = core_len + ram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != 1 {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_banks.copy_from_slice(&data[1..4]);
         self.chr_lo = data[4];
@@ -214,8 +238,26 @@ impl Mapper for Vrc1 {
             5 => Mirroring::MapperControlled,
             other => return Err(MapperError::Invalid(format!("mirroring {other}"))),
         };
-        self.vram.copy_from_slice(&data[9..9 + self.vram.len()]);
+        self.vram.copy_from_slice(&data[9..core_len]);
+        // A v1 blob stops here and leaves the CHR-RAM as it is -- the
+        // pre-v2.9.2 behaviour, so an old save loads exactly as it always did.
+        if version >= 2 && self.chr_is_ram {
+            self.chr_rom.copy_from_slice(&data[core_len..]);
+        }
         Ok(())
+    }
+}
+
+impl Vrc1 {
+    /// Bytes the v2 tail adds: the 8 KiB CHR-RAM when the cartridge has no
+    /// CHR-ROM, else nothing. Derived from the loaded ROM, so a save and its
+    /// load (same ROM, checked by the `.rns` hash tag) agree.
+    fn ram_block_len(&self) -> usize {
+        if self.chr_is_ram {
+            self.chr_rom.len()
+        } else {
+            0
+        }
     }
 }
 
@@ -246,5 +288,48 @@ mod tests {
         assert_eq!(m.cpu_read(0x8000), 3);
         // $E000 is fixed last bank.
         assert_eq!(m.cpu_read(0xE000), 7);
+    }
+
+    /// v2.9.2 cartridge-RAM sweep: the section carries the 8 KiB CHR-RAM of
+    /// a board with no CHR-ROM. The whole-machine pin is
+    /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`.
+    #[test]
+    fn vrc1_save_state_carries_chr_ram() {
+        let mut m = Vrc1::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m.chr_rom[0x0000] = 0x11;
+        m.chr_rom[0x1FFF] = 0x22;
+        let blob = m.save_state();
+        let mut m2 = Vrc1::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).expect("round-trip");
+        assert_eq!(m2.chr_rom[0x0000], 0x11);
+        assert_eq!(m2.chr_rom[0x1FFF], 0x22);
+    }
+
+    /// A v1 blob (no CHR-RAM tail, written through v2.9.1) still loads and
+    /// leaves the CHR-RAM as it was -- the old behaviour, not a wipe.
+    #[test]
+    fn vrc1_v1_blob_loads_and_leaves_chr_ram_untouched() {
+        let mut m = Vrc1::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x8000, 3);
+        let core_len = 9 + m.vram.len();
+        let mut v1 = m.save_state()[..core_len].to_vec();
+        v1[0] = 1;
+        let mut m2 = Vrc1::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        m2.chr_rom[0x0123] = 0x77;
+        m2.load_state(&v1).expect("a v1 blob must still load");
+        assert_eq!(m2.prg_banks[0], 3, "v1 core fields restored");
+        assert_eq!(m2.chr_rom[0x0123], 0x77, "v1 load must not touch CHR-RAM");
+    }
+
+    /// A v2 blob one byte short (inside the CHR-RAM tail) is rejected.
+    #[test]
+    fn vrc1_truncated_chr_ram_tail_is_rejected() {
+        let m = Vrc1::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        let blob = m.save_state();
+        let mut m2 = Vrc1::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        let err = m2
+            .load_state(&blob[..blob.len() - 1])
+            .expect_err("a truncated v2 blob must be rejected");
+        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
     }
 }

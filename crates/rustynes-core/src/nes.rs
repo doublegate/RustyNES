@@ -3659,6 +3659,414 @@ mod tests {
         assert_eq!(fnv_hash(nes.framebuffer()), fb_hash_before);
     }
 
+    // ---------------------------------------------------------------------
+    // Cartridge-RAM save-state sweep (core audit v2.9.2 AUD-02 and its
+    // follow-up).
+    //
+    // The `.rns` container has no SRAM section: the `MAP ` section is the
+    // mapper's own `save_state` blob and nothing else, so cartridge RAM
+    // survives a save-state load, rewind step, run-ahead frame or netplay
+    // rollback ONLY if the board writes it into that blob. AUD-02 found the
+    // Konami VRC boards leaving theirs out; a one-off sweep then found the
+    // same omission on boards outside that family. These tests are that sweep
+    // made durable: they walk EVERY mapper id `rustynes_mappers::parse`
+    // constructs, so a board added later is checked the day it lands rather
+    // than the day its RAM goes missing in someone's rewind.
+    // ---------------------------------------------------------------------
+
+    use alloc::{boxed::Box, string::String};
+
+    /// How a sweep image's header is encoded.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum SweepHeader {
+        /// iNES 1.0 (mapper ids 0-255 only). The parser defaults an iNES 1.0
+        /// cart to 8 KiB PRG-RAM and, with no CHR-ROM, 8 KiB CHR-RAM.
+        Ines1,
+        /// NES 2.0 with this submapper, declaring 8 KiB battery PRG-NVRAM and,
+        /// with no CHR-ROM, 8 KiB CHR-RAM. Covers ids 256-4095 and every
+        /// submapper-selected variant of the lower ids.
+        Nes2 { submapper: u8 },
+    }
+
+    /// Synthetic cartridge image for mapper `mapper_id`: `prg_kib` KiB PRG,
+    /// `chr_kib` KiB CHR-ROM (`0` = none, so the board allocates CHR-RAM),
+    /// battery flag set so boards that gate `sram()` on the battery bit
+    /// expose their `$6000-$7FFF` RAM. Every 8 KiB PRG bank ends in a vector
+    /// table pointing at a `JMP $E000` idle loop, so whichever bank a board
+    /// maps at `$E000` on power-on, the CPU spins harmlessly.
+    fn synth_board_rom(
+        mapper_id: u16,
+        header: SweepHeader,
+        prg_kib: usize,
+        chr_kib: usize,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(16 + (prg_kib + chr_kib) * 1024);
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(u8::try_from(prg_kib / 16).expect("PRG size fits the header"));
+        bytes.push(u8::try_from(chr_kib / 8).expect("CHR size fits the header"));
+        let [id_lo, id_hi] = mapper_id.to_le_bytes();
+        bytes.push(((id_lo & 0x0F) << 4) | 0x02); // flags6: battery
+        match header {
+            SweepHeader::Ines1 => {
+                assert_eq!(id_hi, 0, "iNES 1.0 carries 8-bit mapper ids only");
+                bytes.push(id_lo & 0xF0); // flags7: mapper high nibble
+                bytes.extend_from_slice(&[0u8; 8]);
+            }
+            SweepHeader::Nes2 { submapper } => {
+                bytes.push((id_lo & 0xF0) | 0x08); // flags7: NES 2.0 marker
+                bytes.push((submapper << 4) | (id_hi & 0x0F)); // byte 8
+                bytes.push(0); // byte 9: ROM size MSBs
+                bytes.push(0x70); // byte 10: 8 KiB (64 << 7) battery PRG-NVRAM
+                bytes.push(if chr_kib == 0 { 0x07 } else { 0x00 }); // byte 11: CHR-RAM
+                bytes.extend_from_slice(&[0u8; 4]); // bytes 12-15: NTSC, no Vs.
+            }
+        }
+        let mut prg = vec![0u8; prg_kib * 1024];
+        for bank in prg.chunks_mut(8 * 1024) {
+            bank[0] = 0x4C; // JMP $E000
+            bank[1] = 0x00;
+            bank[2] = 0xE0;
+            let len = bank.len();
+            for v in [len - 6, len - 4, len - 2] {
+                bank[v] = 0x00;
+                bank[v + 1] = 0xE0;
+            }
+        }
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; chr_kib * 1024]);
+        bytes
+    }
+
+    /// Result of trying to build one sweep configuration.
+    enum SweepBoot {
+        /// `parse` does not know the mapper id at all.
+        Unsupported,
+        /// Built with the first image shape the board accepted.
+        Built(Box<Nes>),
+        /// The id is known but no image shape was accepted (last error).
+        Refused(String),
+    }
+
+    /// Build `mapper_id` under `header`, trying the image shapes in turn
+    /// until the board's constructor accepts one. Most boards take the first
+    /// (128 KiB PRG, the shape AUD-02's VRC pins used); a board with a fixed
+    /// PRG size (NROM's 16/32 KiB, a 32 KiB-only discrete board) takes a later
+    /// one. RAM sizes come from the header, not the ROM size, so the shape
+    /// does not change what RAM the board allocates.
+    fn sweep_boot(mapper_id: u16, header: SweepHeader, chr_ram: bool) -> SweepBoot {
+        const PRG_KIB: [usize; 8] = [128, 32, 512, 256, 64, 16, 1024, 2048];
+        const CHR_ROM_KIB: [usize; 5] = [128, 8, 256, 512, 1024];
+        let chr_shapes: &[usize] = if chr_ram { &[0] } else { &CHR_ROM_KIB };
+        let mut last = String::new();
+        for &prg in &PRG_KIB {
+            for &chr in chr_shapes {
+                match Nes::from_rom(&synth_board_rom(mapper_id, header, prg, chr)) {
+                    Ok(nes) => return SweepBoot::Built(Box::new(nes)),
+                    Err(RomError::UnsupportedMapper(_)) => return SweepBoot::Unsupported,
+                    Err(e) => last = alloc::format!("{prg} KiB PRG / {chr} KiB CHR: {e}"),
+                }
+            }
+        }
+        SweepBoot::Refused(last)
+    }
+
+    /// Byte `i` of the sweep's position-dependent pattern, `seed` keeping
+    /// the PRG and CHR patterns distinct. Position-dependent so a shifted,
+    /// truncated or aliased copy cannot pass for the real thing.
+    fn sweep_pattern(i: usize, seed: u8) -> u8 {
+        let le = i.to_le_bytes();
+        le[0] ^ seed ^ le[1].rotate_left(3)
+    }
+
+    /// Where a probe found RAM.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum RamSite {
+        /// PRG-RAM exposed through `Mapper::sram` (the whole buffer).
+        PrgSram,
+        /// PRG-RAM reachable at `$6000-$7FFF` but NOT exposed through
+        /// `sram()` -- checked through the CPU window instead.
+        PrgWindow,
+        /// Writable CHR memory reachable at PPU `$0000-$1FFF`.
+        ChrRam,
+    }
+
+    /// Describe the mismatch between two equal-length buffers, or `None`.
+    fn sweep_diff(want: &[u8], got: &[u8]) -> Option<String> {
+        let bad = want.iter().zip(got).filter(|(a, b)| a != b).count();
+        let first = want.iter().zip(got).position(|(a, b)| a != b)?;
+        Some(alloc::format!(
+            "{bad} of {} bytes differ, first at +{first:#06x} (want {:#04x}, got {:#04x})",
+            want.len(),
+            want[first],
+            got[first]
+        ))
+    }
+
+    /// PRG-RAM round trip through the whole-machine snapshot. Returns the
+    /// site probed (`None` when the board has no PRG-RAM the probe can reach)
+    /// and the mismatch, if any.
+    ///
+    /// A board that exposes `sram()` is checked on the whole buffer, so RAM
+    /// the CPU window cannot currently see (an unmapped page of a 32 KiB
+    /// board, say) is covered too. A board that does not is probed at
+    /// `$6000-$7FFF`: write the pattern, and if at least 2 KiB of it reads
+    /// back (the smallest cartridge RAM; a mirrored 2 KiB part returns only
+    /// its last alias), treat it as RAM and round-trip the window.
+    fn sweep_prg_ram(nes: &mut Nes) -> (Option<RamSite>, Option<String>) {
+        if !nes.sram().is_empty() {
+            for (i, b) in nes.sram_mut().iter_mut().enumerate() {
+                *b = sweep_pattern(i, 0xA5);
+            }
+            let want = nes.sram().to_vec();
+            let blob = nes.snapshot();
+            // Scribble with the complement, so every byte differs from what
+            // the snapshot must bring back.
+            for b in nes.sram_mut() {
+                *b = !*b;
+            }
+            if let Err(e) = nes.restore(&blob) {
+                return (
+                    Some(RamSite::PrgSram),
+                    Some(alloc::format!("restore: {e:?}")),
+                );
+            }
+            return (Some(RamSite::PrgSram), sweep_diff(&want, nes.sram()));
+        }
+        let window = 0x6000u16..0x8000;
+        for a in window.clone() {
+            nes.bus
+                .mapper
+                .cpu_write(a, sweep_pattern(usize::from(a - 0x6000), 0xA5));
+        }
+        // Snapshot BEFORE reading back: the read below and the one after the
+        // restore then both start from the snapshot's state, so a board whose
+        // reads move state cannot make a correct restore look wrong.
+        let blob = nes.snapshot();
+        let want: Vec<u8> = window.clone().map(|a| nes.bus.mapper.cpu_read(a)).collect();
+        let echoed = want
+            .iter()
+            .enumerate()
+            .filter(|&(i, &b)| b == sweep_pattern(i, 0xA5))
+            .count();
+        if echoed < 0x800 {
+            return (None, None);
+        }
+        for (a, w) in window.clone().zip(&want) {
+            nes.bus.mapper.cpu_write(a, !w);
+        }
+        if let Err(e) = nes.restore(&blob) {
+            return (
+                Some(RamSite::PrgWindow),
+                Some(alloc::format!("restore: {e:?}")),
+            );
+        }
+        let got: Vec<u8> = window.map(|a| nes.bus.mapper.cpu_read(a)).collect();
+        (Some(RamSite::PrgWindow), sweep_diff(&want, &got))
+    }
+
+    /// CHR-RAM round trip through the whole-machine snapshot, through PPU
+    /// `$0000-$1FFF` (there is no raw CHR accessor on `Mapper`). Returns
+    /// `None` for the site when fewer than 1 KiB of the pattern reads back,
+    /// i.e. the board has no writable CHR (a CHR-ROM board).
+    ///
+    /// Only the 8 KiB the power-on banking maps is checked; a board with more
+    /// CHR-RAM than that is checked on its visible part. Every write lands
+    /// before the snapshot and every read after it, from the same state on
+    /// both sides: MMC2 and MMC4 flip their CHR latches on PPU reads of
+    /// `$0FD8`/`$0FE8`, so a read sequence started from different latch
+    /// states would compare different banks and fail a correct restore.
+    fn sweep_chr_ram(nes: &mut Nes) -> (Option<RamSite>, Option<String>) {
+        for a in 0u16..0x2000 {
+            nes.bus
+                .mapper
+                .ppu_write(a, sweep_pattern(usize::from(a), 0x3C));
+        }
+        let blob = nes.snapshot();
+        let want: Vec<u8> = (0u16..0x2000).map(|a| nes.bus.debug_peek_ppu(a)).collect();
+        let echoed = want
+            .iter()
+            .enumerate()
+            .filter(|&(i, &b)| b == sweep_pattern(i, 0x3C))
+            .count();
+        if echoed < 0x400 {
+            return (None, None);
+        }
+        for (a, w) in (0u16..0x2000).zip(&want) {
+            nes.bus.mapper.ppu_write(a, !w);
+        }
+        if let Err(e) = nes.restore(&blob) {
+            return (
+                Some(RamSite::ChrRam),
+                Some(alloc::format!("restore: {e:?}")),
+            );
+        }
+        let got: Vec<u8> = (0u16..0x2000).map(|a| nes.bus.debug_peek_ppu(a)).collect();
+        (Some(RamSite::ChrRam), sweep_diff(&want, &got))
+    }
+
+    /// Mapper ids `parse` knows but cannot build under ANY sweep
+    /// configuration, each with the reason. A board on this list is excluded
+    /// from the sweep by name, never silently.
+    const SWEEP_UNBUILDABLE: &[(u16, &str)] = &[];
+
+    /// The sweep's `--nocapture` report: what was checked where, which built
+    /// boards had no RAM the probes could reach, and which configurations a
+    /// board refused (a CHR-ROM-only board refusing a CHR-RAM image, a
+    /// fixed-size board refusing the larger PRG shapes). Printed, not
+    /// asserted, so a reader can see the sweep's reach on every run.
+    fn sweep_print_report(
+        supported: &alloc::collections::BTreeSet<u16>,
+        built: &alloc::collections::BTreeSet<u16>,
+        checked: &alloc::collections::BTreeMap<u16, alloc::collections::BTreeSet<RamSite>>,
+        refusals: &alloc::collections::BTreeMap<u16, Vec<String>>,
+    ) {
+        let no_ram: Vec<u16> = built
+            .iter()
+            .copied()
+            .filter(|m| !checked.contains_key(m))
+            .collect();
+        std::println!(
+            "cartridge-RAM sweep: {} supported ids, {} built, {} with RAM checked",
+            supported.len(),
+            built.len(),
+            checked.len()
+        );
+        for site in [RamSite::PrgSram, RamSite::PrgWindow, RamSite::ChrRam] {
+            let ids: Vec<u16> = checked
+                .iter()
+                .filter(|(_, s)| s.contains(&site))
+                .map(|(m, _)| *m)
+                .collect();
+            std::println!("  {site:?} ({}): {ids:?}", ids.len());
+        }
+        std::println!("  no RAM reachable ({}): {no_ram:?}", no_ram.len());
+        for (m, why) in refusals {
+            std::println!(
+                "  mapper {m}: {} configuration(s) refused, e.g. {}",
+                why.len(),
+                why[0]
+            );
+        }
+    }
+
+    /// Core audit v2.9.2 AUD-02 and its follow-up: every board's PRG-RAM and
+    /// CHR-RAM must survive a whole-machine `snapshot` / `restore`.
+    ///
+    /// Sweeps every mapper id 0-4095 (NES 2.0, all 16 submappers; iNES 1.0
+    /// too for 0-255), each with CHR-ROM and with CHR-RAM. For every
+    /// configuration that builds it fills the board's RAM with a pattern,
+    /// snapshots the `Nes`, scribbles the RAM with the complement, restores
+    /// and compares. Supersedes the VRC-only pins AUD-02 added
+    /// (`vrc_boards_snapshot_carries_{prg,chr}_ram`), and asserts those
+    /// boards are still among the ones checked, so the sweep can never pass
+    /// by checking less.
+    ///
+    /// Outside the sweep by construction, not by omission: the FDS (mapper
+    /// 20) and NSF players do not come through `parse` (they load through
+    /// `Nes::from_disk` / `Nes::from_nsf`), and both write their RAM into
+    /// their own blobs (the `save_state` of `fds.rs` and `nsf.rs`).
+    ///
+    /// What it cannot see: PRG-RAM a board neither exposes through `sram()`
+    /// nor maps at `$6000-$7FFF` at power-on (RAM behind a board-specific
+    /// enable register), and CHR-RAM beyond the 8 KiB visible at power-on.
+    /// The `--nocapture` output lists which boards were checked where.
+    #[test]
+    fn every_board_snapshot_carries_cartridge_ram() {
+        use alloc::collections::{BTreeMap, BTreeSet};
+
+        let mut supported: BTreeSet<u16> = BTreeSet::new();
+        let mut built: BTreeSet<u16> = BTreeSet::new();
+        let mut checked: BTreeMap<u16, BTreeSet<RamSite>> = BTreeMap::new();
+        let mut failures: BTreeMap<(u16, RamSite), Vec<String>> = BTreeMap::new();
+        let mut refusals: BTreeMap<u16, Vec<String>> = BTreeMap::new();
+
+        for mapper_id in 0u16..4096 {
+            let mut headers = Vec::new();
+            if mapper_id < 256 {
+                headers.push(SweepHeader::Ines1);
+            }
+            headers.extend((0u8..16).map(|submapper| SweepHeader::Nes2 { submapper }));
+            'headers: for header in headers {
+                for chr_ram in [false, true] {
+                    let mut nes = match sweep_boot(mapper_id, header, chr_ram) {
+                        // An unknown id: no other header builds it either.
+                        SweepBoot::Unsupported => break 'headers,
+                        SweepBoot::Refused(e) => {
+                            supported.insert(mapper_id);
+                            refusals
+                                .entry(mapper_id)
+                                .or_default()
+                                .push(alloc::format!("{header:?} chr_ram={chr_ram}: {e}"));
+                            continue;
+                        }
+                        SweepBoot::Built(nes) => nes,
+                    };
+                    supported.insert(mapper_id);
+                    built.insert(mapper_id);
+                    let tag = alloc::format!("{header:?} chr_ram={chr_ram}");
+                    for (site, fail) in [sweep_prg_ram(&mut nes), sweep_chr_ram(&mut nes)] {
+                        let Some(site) = site else { continue };
+                        checked.entry(mapper_id).or_default().insert(site);
+                        if let Some(fail) = fail {
+                            failures
+                                .entry((mapper_id, site))
+                                .or_default()
+                                .push(alloc::format!("{tag}: {fail}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        sweep_print_report(&supported, &built, &checked, &refusals);
+
+        // Nothing is skipped silently: an id that never built is either on
+        // the explicit list, with its reason, or a failure.
+        let unbuildable: Vec<u16> = supported.difference(&built).copied().collect();
+        let listed: Vec<u16> = SWEEP_UNBUILDABLE.iter().map(|&(m, _)| m).collect();
+        assert_eq!(
+            unbuildable, listed,
+            "mapper ids that no sweep configuration builds must be listed in \
+             SWEEP_UNBUILDABLE with a reason: {refusals:?}"
+        );
+
+        // The sweep must keep covering what AUD-02 pinned by name (PRG-RAM on
+        // the VRC boards 21-26/73/85, CHR-RAM on 21-26/85) and the boards its
+        // follow-up fixed, or a regression in the probes could pass by
+        // checking nothing.
+        for m in [10u16, 21, 22, 23, 24, 25, 26, 73, 85] {
+            assert!(
+                checked
+                    .get(&m)
+                    .is_some_and(|s| s.contains(&RamSite::PrgSram)),
+                "mapper {m}: PRG-RAM no longer checked through sram()"
+            );
+        }
+        for m in [
+            9u16, 10, 11, 19, 21, 22, 23, 24, 25, 26, 34, 69, 75, 85, 151,
+        ] {
+            assert!(
+                checked
+                    .get(&m)
+                    .is_some_and(|s| s.contains(&RamSite::ChrRam)),
+                "mapper {m}: CHR-RAM no longer checked"
+            );
+        }
+
+        let report: Vec<String> = failures
+            .iter()
+            .map(|((m, site), v)| {
+                alloc::format!("mapper {m} {site:?}: {} config(s), e.g. {}", v.len(), v[0])
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "cartridge RAM not restored from the snapshot on {} board/site pair(s):\n{}",
+            failures.len(),
+            report.join("\n")
+        );
+    }
+
     #[test]
     fn snapshot_is_deterministic_across_two_runs() {
         let rom = synth_nrom(16, 8);

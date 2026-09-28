@@ -40,6 +40,8 @@ static SUPPORT_EXT: AtomicBool = AtomicBool::new(true);
 static EXT_INFO: AtomicPtr<RetroGameInfoExt> = AtomicPtr::new(std::ptr::null_mut());
 /// Descriptor count of the most recent `SET_MEMORY_MAPS`, or -1 before any.
 static LAST_MAP_LEN: AtomicI64 = AtomicI64::new(-1);
+/// How many times the core has called `SET_MEMORY_MAPS`.
+static MAP_SETS: AtomicU32 = AtomicU32::new(0);
 /// Whether the fake light gun on every port reports its trigger held.
 static TRIGGER: AtomicBool = AtomicBool::new(false);
 /// Every line the core wrote through the fake frontend's log interface.
@@ -417,6 +419,7 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // command, valid for the duration of the call.
             let map = unsafe { &*data.cast::<retro_memory_map>() };
             LAST_MAP_LEN.store(i64::from(map.num_descriptors), SeqCst);
+            MAP_SETS.fetch_add(1, SeqCst);
             *held(&LAST_MAP) = copy_descriptors(map);
             true
         }
@@ -490,6 +493,7 @@ fn frontend() -> MutexGuard<'static, ()> {
     SUPPORT_EXT.store(true, SeqCst);
     TRIGGER.store(false, SeqCst);
     DISK_VERSION.store(1, SeqCst);
+    SERIALIZE_BUFFER_GROWTHS.store(0, SeqCst);
     for pad in &PADS {
         pad.store(0, SeqCst);
     }
@@ -1039,6 +1043,100 @@ fn the_core_works_again_after_deinit_and_init() {
     let mut buf = vec![0_u8; serialize_size()];
     assert!(serialize(&mut buf));
     unload();
+}
+
+/// `retro_deinit` then the calls a frontend reusing the library makes before
+/// its next load, so the shared core is usable by the next test.
+fn deinit_and_reinit() {
+    // SAFETY: plain lifecycle calls, in the order libretro.h documents
+    // (`retro_set_environment` before `retro_init`).
+    unsafe {
+        rust_libretro::retro_deinit();
+        rust_libretro::retro_set_environment(Some(environment));
+        rust_libretro::retro_init();
+    }
+    for port in 0..4 {
+        set_port(port, RETRO_DEVICE_JOYPAD);
+    }
+}
+
+/// v2.9.2 audit AUD-16. libretro.h says `retro_unload_game` is "Called
+/// before retro_deinit", but `on_deinit` already caters for a frontend that
+/// skips it (it writes the FDS disk and drops the consoles). That path freed
+/// WRAM / SRAM / CIRAM while the frontend still held the memory-map
+/// descriptors pointing into them, the use-after-free `on_unload_game`
+/// withdraws the maps to prevent (L-1.3). A conforming frontend, which
+/// unloads first, must see no extra `SET_MEMORY_MAPS` at deinit.
+#[test]
+fn deinit_without_unload_withdraws_the_memory_maps() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    assert!(
+        LAST_MAP_LEN.load(SeqCst) >= 2,
+        "loading registers at least WRAM and CIRAM"
+    );
+    deinit_and_reinit();
+    let left = LAST_MAP_LEN.load(SeqCst);
+
+    // The conforming order: unload withdraws, deinit sends nothing more.
+    assert!(load(NESTEST, true));
+    unload();
+    let sets = MAP_SETS.load(SeqCst);
+    deinit_and_reinit();
+    let sets_at_deinit = MAP_SETS.load(SeqCst) - sets;
+
+    assert_eq!(
+        left, 0,
+        "retro_deinit without retro_unload_game must leave the frontend holding no descriptors"
+    );
+    assert_eq!(
+        sets_at_deinit, 0,
+        "after retro_unload_game, retro_deinit has nothing left to withdraw"
+    );
+}
+
+/// v2.9.2 audit AUD-17. `retro_serialize_size` is answered from a snapshot
+/// taken at load, and that snapshot used to go into a throwaway `Vec`, so the
+/// first `retro_serialize` -- the first run-ahead or rollback frame -- grew
+/// `serialize_buffer` from nothing (about 260 KB, 645 KB for a cabinet)
+/// during gameplay. Sized into `serialize_buffer` itself, with the
+/// expansion-device headroom reserved, no serialize reallocates it: not the
+/// first, and not after a Zapper grows the state on both ports.
+#[test]
+fn no_serialize_reallocates_the_buffer_sized_at_load() {
+    let _frontend = frontend();
+    let growths = || SERIALIZE_BUFFER_GROWTHS.load(SeqCst);
+
+    assert!(load(NESTEST, true));
+    let before = growths();
+    let _ = state();
+    let first = growths() - before;
+    for port in 0..2 {
+        set_port(port, RETRO_DEVICE_LIGHTGUN);
+    }
+    run_frame(); // attaches both Zappers: the largest single-console state
+    let _ = state();
+    let with_zappers = growths() - before - first;
+    unload();
+
+    let mut dual = NESTEST.to_vec();
+    dual[7] = 0x08 | 0x01;
+    dual[13] = 0x50;
+    assert!(load(Box::leak(dual.into_boxed_slice()), true));
+    let before = growths();
+    let _ = state();
+    let dual_first = growths() - before;
+    unload();
+
+    assert_eq!(first, 0, "the first serialize reallocated serialize_buffer");
+    assert_eq!(
+        with_zappers, 0,
+        "a Zapper on both ports outgrew the reserved headroom"
+    );
+    assert_eq!(
+        dual_first, 0,
+        "a cabinet's first serialize reallocated serialize_buffer"
+    );
 }
 
 /// A copy of nestest with its header edited by `edit`, leaked so `load` can

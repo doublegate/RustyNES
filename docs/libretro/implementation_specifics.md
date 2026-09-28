@@ -59,7 +59,9 @@ controller unplugs the Zapper.
 `run_frame()`, then the RGBA8 framebuffer is copied and its R and B bytes
 swapped to XRGB8888 (`memcpy` + an in-place swap; two one-pass rewrites were
 measured slower or no faster, `docs/performance.md` §v2.8.1). 256x240, pitch
-1024 bytes; a Vs. `DualSystem` cabinet presents 512x240, pitch 2048.
+1024 bytes; a Vs. `DualSystem` cabinet presents 512x240, pitch 2048, composed
+straight into the reused buffer (`compose_dual`, which rewrites every byte, so
+it is not zero-filled first; v2.9.2 audit AUD-19).
 
 ### Audio
 
@@ -73,7 +75,12 @@ resamples. While RetroArch fast-forwards, the conversion is skipped.
 
 ## Save States (`retro_serialize` / `retro_unserialize`)
 
-`retro_serialize_size` is the loaded state's size plus room for the largest
-expansion device on both ports, because RetroArch reads it once and a Zapper
-plugged in later grows the state. The unused tail is zero-filled, and the
-save-state reader treats an all-zero tail as padding.
+For a single console, `retro_serialize_size` is the loaded state's size plus
+room for the largest expansion device on both ports, because RetroArch reads it
+once and a Zapper plugged in later grows the state. A Vs. `DualSystem` cabinet
+gets no headroom: it never attaches an expansion device, so its size is the
+snapshot's exact length and cannot grow after load. The unused tail is zero-filled, and the
+save-state reader treats an all-zero tail as padding. The snapshot that
+measures the size at load is taken into the buffer `retro_serialize` reuses,
+with that headroom reserved for a single console, so no serialize reallocates it (v2.9.2 audit
+AUD-17; `no_serialize_reallocates_the_buffer_sized_at_load`).

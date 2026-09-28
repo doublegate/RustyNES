@@ -596,6 +596,27 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
             }
         });
 
+        // v2.9.2 (audit AUD-08) — SOCD policy for live input. Off (the
+        // default) cancels Up + Down and Left + Right to neutral, as a real
+        // NES pad's rocking cross does; on passes both through. Flagging
+        // `bindings_dirty` routes the value into the live `InputState` via the
+        // app's reload path. Movies, TAStudio, Lua and netplay peers' input
+        // are never cleaned, whatever this says.
+        ui.separator();
+        if ui
+            .checkbox(
+                &mut config.input.allow_opposing_directions,
+                "Allow opposing directions (Up+Down, Left+Right)",
+            )
+            .on_hover_text(
+                "Off: holding opposite directions together reads as neither, as on a \
+                 real NES pad. On: both reach the game (some games glitch on it).",
+            )
+            .changed()
+        {
+            state.bindings_dirty = true;
+        }
+
         // v2.1.0 — non-standard device on the player-2 port ($4017).
         // Selecting one routes through the app's reload path
         // (`sync_expansion_device`). Mouse drives aim/position; left

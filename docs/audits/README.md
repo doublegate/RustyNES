@@ -36,6 +36,35 @@ SuperStation One audit). Review of the release PRs found more; those are recorde
 in the ledgers too, attributed to the review. The same caution applies to these reports as to the first four: each
 claim was re-derived before it was acted on.
 
+## The v2.9.2 full audit
+
+A fifth report, added by the maintainer on 2026-09-27: one AI-written audit of
+both repositories, 32 findings (AUD-01..AUD-32), kept exactly as supplied in
+[`v2.9.2-full-audit-report.md`](v2.9.2-full-audit-report.md) (moved here from
+`docs/full-audit-report.md`; the only change is the repository's whitespace hook
+trimming a single-space line, line 1275). Every finding is triaged in
+[`v2.9.2-full-audit-disposition.md`](v2.9.2-full-audit-disposition.md) under the
+same rules as the others: a Rust defect is trusted once a test fails on it, and
+every RTL claim and number is re-derived. The work is v2.9.2's
+([plan](../../to-dos/plans/v2.9.2-candidate-plan.md)).
+
+**Calibration, 2026-09-27.** This report read the Rust code well and the RTL
+less well. The pattern held for the fifth time:
+
+- **Rust:** 16 of 20 findings are real: all nine netplay, frontend and mobile
+  findings, four of five core findings (AUD-04 deferred to v3.0.0), and three
+  of six libretro findings. The framing was often wrong even where the defect
+  was real. AUD-01's overflow exists only on 32-bit, and its OOM does not exist
+  at all. AUD-12's allocation is on the native heap, not the JVM heap. AUD-16's
+  "the spec permits it" is contradicted by libretro.h. Two of its patches were
+  a no-op at the cited location (AUD-10) or dropped a needed notice (AUD-13).
+- **RTL and build:** 3 of 12 real. AUD-24, the NMI edge detector frozen
+  during DMA, is the one design defect; the ladder had never exercised it.
+  AUD-31 and AUD-32 are Makefile defects. Three claims were refuted outright,
+  and the rest are design limits, board questions or framework conventions.
+- **Its best result was indirect.** AUD-02's sweep found the same save-state
+  RAM gap on nine boards the report never named (row AUD-02b).
+
 ## What these reports are
 
 They were **written by an AI agent** (the Antigravity CLI, `agy`) and committed in
@@ -110,3 +139,6 @@ ADR 0037 reference firewall.
 | INVERTED | The two implementations disagree as the finding says, but the documentation shows the audited side is right and the other one wrong, so the fix lands on the other side (first used for R-3.5a, v2.8.2). |
 | UNTRIAGED | Not yet read against the code. Nothing is planned on an untriaged finding. |
 | FIXED | Closed by the PR in the ledger row, with the red-first test named. |
+| CHANGED, UNVERIFIED | The code changed, but no gate on this machine can run it (first used for the Swift halves of AUD-10 and AUD-14, v2.9.2). Not FIXED until its named check -- a device-checklist row -- has run. |
+| DEFERRED | Real, and decided for a later release; the row names who decided and when. |
+| DECLINED | A real suggestion not taken; the row gives the reason. |

@@ -634,11 +634,17 @@ class EmulatorHandle {
     }
 
     private fun applyPort(port: Int) {
-        val mask = if (port == 0) {
-            touchMask or gamepadMasks[0] or keyboardMask
-        } else {
-            gamepadMasks[port]
-        }
+        // AUD-09: opposing directions are cancelled on the COMBINED mask, as the
+        // desktop does per player. The touch pad cleans its own union, but a touch
+        // direction plus the opposite on a pad or keyboard would otherwise still
+        // reach the core. (CodeRabbit on #563.)
+        val mask = socdNeutral(
+            if (port == 0) {
+                touchMask or gamepadMasks[0] or keyboardMask
+            } else {
+                gamepadMasks[port]
+            },
+        )
         controller?.setButtons(port.toUInt(), mask.toUByte())
     }
 
@@ -652,7 +658,7 @@ class EmulatorHandle {
      *  `local_mask` netplay feeds to `npAdvanceFrame` (where the bridge owns the
      *  latch, so `setButtons` is not the input path). Synchronized against the
      *  touch/key updaters. */
-    fun p1Mask(): Int = synchronized(this) { touchMask or gamepadMasks[0] or keyboardMask }
+    fun p1Mask(): Int = synchronized(this) { socdNeutral(touchMask or gamepadMasks[0] or keyboardMask) }
 
     private fun keyboardKeyToBit(keyCode: Int): Int? = when (keyCode) {
         KeyEvent.KEYCODE_ENTER -> NesBit.START

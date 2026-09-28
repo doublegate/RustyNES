@@ -604,24 +604,39 @@ const MAX_PADS: usize = 4;
 /// distinct id drives player 2; the third / fourth drive players 3 / 4
 /// (Four Score, v1.7.0); further pads are ignored. Per-device assignment
 /// keeps four players on four pads without a device-picker UI.
+///
+/// Keyed by the pad's `usize` identity (`usize::from(gilrs::GamepadId)`)
+/// rather than the opaque `GamepadId` itself: gilrs offers no constructor
+/// for an id, so keying by its integer form is what lets the unit tests
+/// drive connect / disconnect cycles without hardware.
 #[derive(Debug, Clone, Default)]
 struct PadAssignment {
-    /// Ids assigned to players 0..=3, in first-seen order. A `None` slot
-    /// is still free.
-    ids: [Option<gilrs::GamepadId>; MAX_PADS],
+    /// Pad identities assigned to players 0..=3, in first-seen order. A
+    /// `None` slot is still free.
+    ids: [Option<usize>; MAX_PADS],
 }
 
 impl PadAssignment {
-    /// Resolve a gamepad id to a player index (0..=3), assigning the
+    /// Resolve a pad identity to a player index (0..=3), assigning the
     /// next free port on first sight. Returns `None` once all four ports
     /// are taken by other devices.
-    fn player_for(&mut self, id: gilrs::GamepadId) -> Option<usize> {
+    fn player_for(&mut self, id: usize) -> Option<usize> {
         if let Some(i) = self.ids.iter().position(|&slot| slot == Some(id)) {
             return Some(i);
         }
         let free = self.ids.iter().position(Option::is_none)?;
         self.ids[free] = Some(id);
         Some(free)
+    }
+
+    /// Free the port held by pad `id` (on disconnect), returning the player
+    /// index it drove, or `None` if it held no port. The freed port goes to
+    /// the next pad seen, so a pad that reconnects before another one appears
+    /// gets its old port back.
+    fn release(&mut self, id: usize) -> Option<usize> {
+        let player = self.ids.iter().position(|&slot| slot == Some(id))?;
+        self.ids[player] = None;
+        Some(player)
     }
 }
 
@@ -633,6 +648,9 @@ impl PadAssignment {
 /// any binding (keyboard or pad) wakes the corresponding NES bit. P3/P4
 /// (v1.7.0, Four Score) are inert unless the adapter is enabled in the
 /// app, which decides whether to push them to `nes.set_buttons(2/3, ..)`.
+// Independent held-key flags (rewind, fast-forward, microphone) plus one
+// mirrored setting (opposing directions), not the states of one machine.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct InputState {
     /// Currently-held keyboard buttons, indexed by player (0..=3).
@@ -672,6 +690,41 @@ pub struct InputState {
     /// only surfaces it when driven, so `false` (default) keeps `$4016`
     /// byte-identical.
     microphone: bool,
+    /// v2.9.2 (audit AUD-08) — mirror of
+    /// [`InputConfig::allow_opposing_directions`]: when `false` (the default)
+    /// [`Self::player`] and [`Self::clean_directions`] apply neutral SOCD
+    /// cleaning. Refreshed by [`Self::reload_bindings`].
+    allow_opposing_directions: bool,
+}
+
+/// Neutral SOCD (simultaneous opposing cardinal directions) cleaning.
+///
+/// Up + Down together become neither, and Left + Right together become
+/// neither. Every other bit, including a lone direction, passes through
+/// untouched.
+///
+/// A real NES pad's D-pad is one rocking cross, so it cannot report both
+/// halves of an axis at once; a keyboard, hitbox or worn third-party pad can,
+/// and games that never expected the combination misbehave on it (walking
+/// through walls, corrupted movement state). "Neutral" is the conservative
+/// resolution: it never invents a direction the player is not holding, and it
+/// treats the two axes independently, so Up + Left + Right reads as Up.
+///
+/// Applied only to live physical input (see
+/// [`InputConfig::allow_opposing_directions`]); recorded, scripted and
+/// remote input never pass through here.
+#[must_use]
+pub const fn socd_neutral(b: Buttons) -> Buttons {
+    let mut out = b.bits();
+    let vertical = Buttons::UP.bits() | Buttons::DOWN.bits();
+    let horizontal = Buttons::LEFT.bits() | Buttons::RIGHT.bits();
+    if out & vertical == vertical {
+        out &= !vertical;
+    }
+    if out & horizontal == horizontal {
+        out &= !horizontal;
+    }
+    Buttons::from_bits_truncate(out)
 }
 
 /// v1.1.0 beta.1 (T-110-B1) — default keyboard mapping for the 12 Power Pad mat
@@ -841,6 +894,7 @@ impl InputState {
             konami_hyper_shot: 0,
             bandai_hyper_shot: 0,
             microphone: false,
+            allow_opposing_directions: false,
         }
     }
 
@@ -848,7 +902,9 @@ impl InputState {
     /// maps).
     #[must_use]
     pub fn from_config(cfg: &InputConfig) -> Self {
-        Self::new(KeyBindings::from_config(cfg), gamepad_maps_from_config(cfg))
+        let mut s = Self::new(KeyBindings::from_config(cfg), gamepad_maps_from_config(cfg));
+        s.allow_opposing_directions = cfg.allow_opposing_directions;
+        s
     }
 
     /// Rebuild the keyboard + gamepad maps from a (possibly edited)
@@ -857,6 +913,27 @@ impl InputState {
     pub fn reload_bindings(&mut self, cfg: &InputConfig) {
         self.bindings = KeyBindings::from_config(cfg);
         self.gamepad_maps = gamepad_maps_from_config(cfg);
+        self.allow_opposing_directions = cfg.allow_opposing_directions;
+    }
+
+    /// Apply the configured SOCD policy to a live-input mask: [`socd_neutral`]
+    /// unless [`InputConfig::allow_opposing_directions`] is set. For callers
+    /// that fold another live source (the on-screen pad, browser touch or
+    /// Gamepad API) onto [`Self::player`]'s output, so the combination is
+    /// cleaned too. Idempotent.
+    #[must_use]
+    pub const fn clean_directions(&self, b: Buttons) -> Buttons {
+        if self.allow_opposing_directions {
+            b
+        } else {
+            socd_neutral(b)
+        }
+    }
+
+    /// [`Self::clean_directions`] over all four ports' masks.
+    #[must_use]
+    pub fn clean_all_directions(&self, ports: [Buttons; MAX_PADS]) -> [Buttons; MAX_PADS] {
+        ports.map(|b| self.clean_directions(b))
     }
 
     /// Default bindings (matches the legacy hardcoded layout).
@@ -869,13 +946,20 @@ impl InputState {
     }
 
     /// Currently-held buttons for `player` (0..=3): keyboard OR gamepad
-    /// OR stick. Out-of-range indices return [`Buttons::empty`].
+    /// OR stick, with opposing directions cleaned per
+    /// [`Self::clean_directions`] (AUD-08). The union is formed first, so an
+    /// opposition split across two sources is caught. Out-of-range indices
+    /// return [`Buttons::empty`].
     #[must_use]
     pub fn player(&self, player: usize) -> Buttons {
         if player >= MAX_PADS {
             return Buttons::empty();
         }
-        self.keyboard_buttons[player] | self.gamepad_buttons[player] | self.gamepad_axis[player]
+        self.clean_directions(
+            self.keyboard_buttons[player]
+                | self.gamepad_buttons[player]
+                | self.gamepad_axis[player],
+        )
     }
 
     /// v1.1.0 beta.1 (T-110-B1) — the current Power Pad mat button mask
@@ -940,6 +1024,24 @@ impl InputState {
     /// digital bits; left-stick deflection past the deadzone drives the
     /// D-pad.
     pub fn handle_gamepad_event(&mut self, id: gilrs::GamepadId, event: &gilrs::EventType) {
+        self.handle_pad_event(usize::from(id), event);
+    }
+
+    /// [`Self::handle_gamepad_event`] keyed by the pad's integer identity
+    /// (`usize::from(GamepadId)`), so the assignment logic is unit-testable
+    /// without a physical device.
+    fn handle_pad_event(&mut self, id: usize, event: &gilrs::EventType) {
+        // AUD-07 (v2.9.2 full audit): a disconnected pad sends no release
+        // events, so drop every bit it held and free its port. Handled before
+        // `player_for`, which would otherwise hand an unknown pad's disconnect
+        // a port of its own.
+        if matches!(event, gilrs::EventType::Disconnected) {
+            if let Some(player) = self.pad_assignment.release(id) {
+                self.gamepad_buttons[player] = Buttons::empty();
+                self.gamepad_axis[player] = Buttons::empty();
+            }
+            return;
+        }
         let Some(player) = self.pad_assignment.player_for(id) else {
             return;
         };
@@ -1165,6 +1267,114 @@ mod tests {
         s.handle_key(k, e);
         assert!(!s.player1().contains(Buttons::UP));
         assert!(s.player1().contains(Buttons::LEFT));
+    }
+
+    /// AUD-08 (v2.9.2 full audit): with the default config, opposing
+    /// directions held on the keyboard cancel to neutral, per axis, and the
+    /// rest of the pad is untouched.
+    #[test]
+    fn opposing_keys_cancel_to_neutral_by_default() {
+        let mut s = InputState::with_defaults();
+        for key in [
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::ArrowUp,
+            KeyCode::KeyZ,
+        ] {
+            let (k, e) = down(key);
+            s.handle_key(k, e);
+        }
+        assert_eq!(
+            s.player1(),
+            Buttons::UP | Buttons::A,
+            "Left + Right cancel; Up and A stay"
+        );
+        let (k, e) = down(KeyCode::ArrowDown);
+        s.handle_key(k, e);
+        assert_eq!(s.player1(), Buttons::A, "Up + Down cancel too");
+        // Releasing one side restores the other.
+        let (k, e) = up(KeyCode::ArrowRight);
+        s.handle_key(k, e);
+        assert_eq!(s.player1(), Buttons::LEFT | Buttons::A);
+    }
+
+    /// AUD-08: the opposition is judged on the combined live mask, so a
+    /// direction on the keyboard and its opposite on a pad (or its stick)
+    /// cancel as well.
+    #[test]
+    fn opposing_directions_across_sources_cancel() {
+        use gilrs::{Axis, Button};
+        let mut s = InputState::with_defaults();
+        let (k, e) = down(KeyCode::ArrowLeft);
+        s.handle_key(k, e);
+        s.set_gamepad_button(0, Button::DPadRight, true);
+        assert!(s.player1().is_empty(), "keyboard Left + pad Right");
+        s.set_gamepad_button(0, Button::DPadRight, false);
+        s.set_gamepad_axis(0, Axis::LeftStickX, 0.9);
+        assert!(s.player1().is_empty(), "keyboard Left + stick Right");
+        // A mask folded in from another live source is cleaned the same way.
+        assert_eq!(
+            s.clean_directions(Buttons::UP | Buttons::DOWN | Buttons::B),
+            Buttons::B
+        );
+        // ...on every port (`App::frame_inputs` cleans the folded array).
+        let opposed = Buttons::LEFT | Buttons::RIGHT | Buttons::START;
+        assert_eq!(s.clean_all_directions([opposed; 4]), [Buttons::START; 4]);
+    }
+
+    /// AUD-08: the opt-out passes the raw combination through, and the
+    /// setting follows a live config reload.
+    #[test]
+    fn allow_opposing_directions_passes_both_through() {
+        let mut cfg = InputConfig {
+            allow_opposing_directions: true,
+            ..InputConfig::default()
+        };
+        let mut s = InputState::from_config(&cfg);
+        for key in [KeyCode::ArrowLeft, KeyCode::ArrowRight] {
+            let (k, e) = down(key);
+            s.handle_key(k, e);
+        }
+        assert_eq!(s.player1(), Buttons::LEFT | Buttons::RIGHT);
+        assert_eq!(
+            s.clean_directions(Buttons::UP | Buttons::DOWN),
+            Buttons::UP | Buttons::DOWN
+        );
+        cfg.allow_opposing_directions = false;
+        s.reload_bindings(&cfg);
+        assert!(s.player1().is_empty(), "reload re-enables cleaning");
+    }
+
+    /// AUD-08: `socd_neutral` over every 8-bit mask: opposites never survive,
+    /// non-direction bits never change, and a mask with no opposition is
+    /// returned unchanged (so ordinary play is bit-identical).
+    #[test]
+    fn socd_neutral_is_exhaustively_correct() {
+        let ud = Buttons::UP | Buttons::DOWN;
+        let lr = Buttons::LEFT | Buttons::RIGHT;
+        for bits in 0..=u8::MAX {
+            let b = Buttons::from_bits_truncate(bits);
+            let c = socd_neutral(b);
+            assert!(!c.contains(ud) && !c.contains(lr), "{b:?} -> {c:?}");
+            assert_eq!(
+                c - ud - lr,
+                b - ud - lr,
+                "non-direction bits changed for {b:?}"
+            );
+            if !b.contains(ud) && !b.contains(lr) {
+                assert_eq!(c, b, "an unopposed mask must pass through");
+            }
+            if b.contains(ud) {
+                assert!(!c.intersects(ud), "{b:?}: both vertical bits drop");
+            } else {
+                assert_eq!(c & ud, b & ud);
+            }
+            if b.contains(lr) {
+                assert!(!c.intersects(lr), "{b:?}: both horizontal bits drop");
+            } else {
+                assert_eq!(c & lr, b & lr);
+            }
+        }
     }
 
     #[test]
@@ -1476,6 +1686,69 @@ mod tests {
         // covered structurally by the per-player helper tests below.)
         let a = PadAssignment::default();
         assert!(a.ids.iter().all(Option::is_none));
+    }
+
+    /// AUD-07 (v2.9.2 full audit): unplugging a pad mid-press must release
+    /// every NES bit it held — digital buttons AND stick directions — instead
+    /// of leaving them latched on the console forever.
+    #[test]
+    fn pad_disconnect_releases_held_buttons() {
+        use gilrs::{Axis, Button, EventType};
+        let mut s = InputState::with_defaults();
+        // Pad 7 appears and is assigned P1; it holds A and the stick left.
+        s.handle_pad_event(7, &EventType::Connected);
+        s.set_gamepad_button(0, Button::South, true);
+        s.set_gamepad_axis(0, Axis::LeftStickX, -0.9);
+        assert!(s.player1().contains(Buttons::A | Buttons::LEFT));
+
+        s.handle_pad_event(7, &EventType::Disconnected);
+        assert!(
+            s.player1().is_empty(),
+            "a disconnected pad left {:?} held",
+            s.player1()
+        );
+    }
+
+    /// AUD-07: a disconnected pad must free its port. gilrs gives a
+    /// different device (a different UUID) a NEW id, so without a release the
+    /// four ports filled with dead ids after four distinct pads had come and
+    /// gone, and every later pad was ignored until restart.
+    #[test]
+    fn pad_disconnect_frees_the_port_for_the_next_pad() {
+        use gilrs::EventType;
+        let mut s = InputState::with_defaults();
+        for id in 0..10 {
+            s.handle_pad_event(id, &EventType::Connected);
+            assert_eq!(
+                s.pad_assignment.ids[0],
+                Some(id),
+                "pad #{id} should take the free P1 port"
+            );
+            s.handle_pad_event(id, &EventType::Disconnected);
+            assert!(
+                s.pad_assignment.ids.iter().all(Option::is_none),
+                "pad #{id}'s disconnect should free its port"
+            );
+        }
+    }
+
+    /// AUD-07: a disconnect for a pad that holds no port (never seen, or
+    /// already released) must not claim one, and must not disturb the pads
+    /// that are still connected.
+    #[test]
+    fn pad_disconnect_of_unknown_pad_changes_nothing() {
+        use gilrs::{Button, EventType};
+        let mut s = InputState::with_defaults();
+        s.handle_pad_event(3, &EventType::Connected);
+        s.handle_pad_event(4, &EventType::Connected);
+        s.set_gamepad_button(1, Button::Start, true);
+        s.handle_pad_event(99, &EventType::Disconnected);
+        assert_eq!(s.pad_assignment.ids, [Some(3), Some(4), None, None]);
+        assert!(s.player2().contains(Buttons::START));
+        // Unplugging P1 leaves P2 (still connected) untouched.
+        s.handle_pad_event(3, &EventType::Disconnected);
+        assert_eq!(s.pad_assignment.ids, [None, Some(4), None, None]);
+        assert!(s.player2().contains(Buttons::START));
     }
 
     #[test]

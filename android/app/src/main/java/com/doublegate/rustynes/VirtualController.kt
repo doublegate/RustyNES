@@ -120,6 +120,11 @@ fun VirtualController(
                     }
                     var m = 0
                     for (pos in active.values) m = m or hitTest(pos.x, pos.y, w, h)
+                    // v2.9.2 (audit AUD-09): one finger cannot press opposite
+                    // directions (hitTest derives them from one offset), but two
+                    // fingers on the D-pad can -- a resting thumb plus a sliding
+                    // one -- and a real NES pad's rocking cross never reports that.
+                    m = socdNeutral(m)
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
                         if (m and mask.inv() != 0) tick(vibrator, hapticLevel)
@@ -171,6 +176,23 @@ internal fun tick(vibrator: Vibrator?, level: HapticLevel) {
         VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)
     }
     runCatching { v.vibrate(effect) }
+}
+
+/**
+ * Neutral SOCD (simultaneous opposing cardinal directions) cleaning, v2.9.2 (audit
+ * AUD-09): Up + Down together become neither, and so do Left + Right, each axis on
+ * its own; every other bit (a lone direction, A/B/Select/Start) passes through. The
+ * same rule as the desktop's `input::socd_neutral`. Applied to the on-screen pad's
+ * combined multi-touch mask only -- movie playback, Lua and netplay peers' input
+ * never pass through here.
+ */
+internal fun socdNeutral(mask: Int): Int {
+    var m = mask
+    val vertical = NesBit.UP or NesBit.DOWN
+    val horizontal = NesBit.LEFT or NesBit.RIGHT
+    if (m and vertical == vertical) m = m and vertical.inv()
+    if (m and horizontal == horizontal) m = m and horizontal.inv()
+    return m
 }
 
 // --- hit testing (regions derived from the same fractional geometry as the art) ---

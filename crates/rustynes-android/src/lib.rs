@@ -275,8 +275,14 @@ mod android {
 
         /// `NativeRenderer.nativeSetIndexFrame(handle, idx, phase)` — upload the
         /// palette-index frame (`256*240*2` LE `u16` bytes) + the NTSC phase for the
-        /// Bisqwit pass. Only called while that filter is active, so the per-frame
-        /// `convert_byte_array` copy is off the common path.
+        /// Bisqwit pass. Only called while that filter is active.
+        ///
+        /// v2.9.2 (audit AUD-12): the bytes are copied straight into the
+        /// renderer's reused `index_buf` (`get_region`), as `nativeRender` does for
+        /// the RGBA frame. It used `convert_byte_array`, which allocated a fresh
+        /// 120 KiB `Vec` on the native heap every frame the filter was on (the
+        /// audit's "JVM GC churn" framing is wrong: the allocation was Rust's, not
+        /// the JVM's). A wrong-sized array or a JNI error still drops the frame.
         ///
         /// # Safety
         /// `handle` must be a live value returned by `nativeInitSurface`.
@@ -292,19 +298,27 @@ mod android {
                 if handle == 0 {
                     return;
                 }
-                // On a JNI error `LogErrorAndDefault` yields an empty `Vec`; an empty
-                // index frame is never valid, so skip it (drop the frame).
-                let bytes = env
-                    .with_env(|env| -> jni::errors::Result<Vec<u8>> {
-                        env.convert_byte_array(&idx)
-                    })
-                    .resolve::<LogErrorAndDefault>();
-                if bytes.is_empty() {
-                    return;
-                }
                 // SAFETY: live handle (see `nativeResize`).
                 let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-                gfx.set_index_frame(&bytes, phase.max(0) as u8);
+                // Copy the Java `byte[]` straight into the reused index buffer (no
+                // per-frame `Vec`). Same shape as `nativeRender`: the `gfx` borrow is
+                // scoped to this block; `false` => length mismatch / JNI error
+                // (`LogErrorAndDefault` yields `false`), so the frame is dropped
+                // exactly as the old empty-`Vec` / wrong-length paths dropped it.
+                let copied = {
+                    let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(gfx.index_buf_mut());
+                    env.with_env(|env| -> jni::errors::Result<bool> {
+                        if idx.len(env)? != buf_i8.len() {
+                            return Ok(false);
+                        }
+                        idx.get_region(env, 0, buf_i8)?;
+                        Ok(true)
+                    })
+                    .resolve::<LogErrorAndDefault>()
+                };
+                if copied {
+                    gfx.commit_index_frame(phase.max(0) as u8);
+                }
             })
         }
 

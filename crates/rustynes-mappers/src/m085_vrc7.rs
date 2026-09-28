@@ -51,13 +51,26 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 /// Version byte this board writes in its mapper save-state section.
 ///
-/// **v1** (through v2.3.6) carried banking, IRQ, mirroring, PRG-RAM and the
-/// *shadow* OPLL register bytes. **v2** (v2.3.7) appends the live synthesizer,
-/// closing the save-state audio-continuity gap recorded in
-/// `docs/accuracy-ledger.md`. `load_state` accepts both.
+/// **v1** (through v2.3.6) carried banking, IRQ, mirroring, the PRG-RAM
+/// *enable* bit and the *shadow* OPLL register bytes. **v2** (v2.3.7) appends
+/// the live synthesizer, closing the save-state audio-continuity gap recorded
+/// in `docs/accuracy-ledger.md`.
+///
+/// Neither carried the RAM itself. This comment said until v2.9.2 that v1
+/// carried "PRG-RAM"; it carried only the enable bit, and the `.rns`
+/// container has no other section that carries cartridge RAM, so every
+/// save-state load, rewind step, run-ahead frame and netplay rollback kept the
+/// 8 KiB PRG-RAM (and, on a CHR-RAM cartridge such as *Lagrange Point*, the
+/// 8 KiB CHR-RAM) the running game held instead of the saved one (core audit
+/// v2.9.2 AUD-02). **v3** is v1 plus a RAM tail -- the PRG-RAM, then the
+/// CHR-RAM when present -- and **v4** is v2 plus the same RAM tail, placed
+/// after the synthesizer tail so every older offset is unchanged. Two new
+/// numbers rather than one keep the audio tail's presence encoded in the
+/// version, exactly as v1/v2 already do. `load_state` accepts all four; a
+/// v1/v2 blob leaves the RAM untouched, which is the old behaviour.
 ///
 /// A build without `mapper-audio` has no synthesizer to describe, so it writes
-/// **v1** and, on load, validates a v2 tail's length and ignores its contents.
+/// **v3** and, on load, validates a v2/v4 tail's length and ignores its contents.
 /// That keeps the cross-build property this crate's feature documentation
 /// promises — an audio build's save still loads in a no-audio build, and a
 /// no-audio build's save still loads everywhere.
@@ -71,9 +84,9 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// and only the first varies by feature. Pinned by
 /// `vrc7_load_state_accepts_a_v2_blob_on_every_build`.
 #[cfg(feature = "mapper-audio")]
-const VRC7_SECTION_VERSION: u8 = 2;
+const VRC7_SECTION_VERSION: u8 = 4;
 #[cfg(not(feature = "mapper-audio"))]
-const VRC7_SECTION_VERSION: u8 = 1;
+const VRC7_SECTION_VERSION: u8 = 3;
 
 /// Bytes the v2 tail adds after the VRAM: `opll_clock_counter` (2),
 /// `last_opll_sample` (2), and the self-versioned OPLL blob.
@@ -599,9 +612,11 @@ impl Mapper for Vrc7 {
         // it there — a no-audio build would otherwise over-allocate ~1.3 KiB on
         // every save for a tail it never writes.
         #[cfg(feature = "mapper-audio")]
-        let mut out = Vec::with_capacity(scalar_len + self.vram.len() + VRC7_V2_TAIL_LEN);
+        let mut out = Vec::with_capacity(
+            scalar_len + self.vram.len() + VRC7_V2_TAIL_LEN + self.ram_block_len(),
+        );
         #[cfg(not(feature = "mapper-audio"))]
-        let mut out = Vec::with_capacity(scalar_len + self.vram.len());
+        let mut out = Vec::with_capacity(scalar_len + self.vram.len() + self.ram_block_len());
         out.push(VRC7_SECTION_VERSION); // version
         out.push(self.prg_0);
         out.push(self.prg_1);
@@ -627,6 +642,11 @@ impl Mapper for Vrc7 {
             out.extend_from_slice(&self.opll_clock_counter.to_le_bytes());
             out.extend_from_slice(&self.last_opll_sample.to_le_bytes());
             out.extend_from_slice(&self.opll.snapshot());
+        }
+        // --- v3/v4 tail: the on-cart RAM, after the synthesizer tail ---
+        out.extend_from_slice(&self.prg_ram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr_rom);
         }
         out
     }
@@ -656,8 +676,25 @@ impl Mapper for Vrc7 {
         // comment on `VRC7_SECTION_VERSION` claimed. What a build can write and
         // what it must accept are different sets; only the first varies by
         // feature. Caught in review by two independent bots.
-        if version != 1 && version != 2 {
+        if !matches!(version, 1..=4) {
             return Err(MapperError::UnsupportedVersion(version));
+        }
+        // Which optional tails this version carries. v2/v4 have the
+        // synthesizer tail; v3/v4 have the RAM tail, after it.
+        let has_audio_tail = version == 2 || version == 4;
+        let ram_len = if version >= 3 {
+            self.ram_block_len()
+        } else {
+            0
+        };
+        let audio_len = if has_audio_tail { VRC7_V2_TAIL_LEN } else { 0 };
+        // v3/v4 are strict about the whole length, validated before anything
+        // is written. (v1/v2 keep their original checks below.)
+        if version >= 3 && data.len() != core_expected + audio_len + ram_len {
+            return Err(MapperError::Truncated {
+                expected: core_expected + audio_len + ram_len,
+                got: data.len(),
+            });
         }
 
         // VALIDATE EVERYTHING BEFORE MUTATING ANYTHING.
@@ -677,7 +714,7 @@ impl Mapper for Vrc7 {
         // Caught in review; the truncation test missed it because it asserted on
         // the return value and never on the target.
         #[cfg(feature = "mapper-audio")]
-        let staged_opll = if version >= 2 {
+        let staged_opll = if has_audio_tail {
             let tail = &data[core_expected..];
             if tail.len() < VRC7_V2_TAIL_LEN {
                 return Err(MapperError::Truncated {
@@ -686,7 +723,9 @@ impl Mapper for Vrc7 {
                 });
             }
             let mut opll = self.opll.clone();
-            opll.restore(&tail[4..])
+            // Bounded to the synthesizer's own bytes: a v4 blob continues with
+            // the RAM tail, which is not the OPLL's to read.
+            opll.restore(&tail[4..VRC7_V2_TAIL_LEN])
                 .map_err(|e| MapperError::Invalid(format!("VRC7 OPLL state: {e}")))?;
             Some((
                 u16::from_le_bytes(tail[0..2].try_into().expect("length checked above")),
@@ -707,7 +746,7 @@ impl Mapper for Vrc7 {
         // wrap to a huge value and silently ACCEPT a truncated blob rather than
         // panicking. Not worth leaving a correctness proof spread across two
         // distant statements to save an addition.
-        if version >= 2 && data.len() < core_expected + VRC7_V2_TAIL_LEN {
+        if has_audio_tail && data.len() < core_expected + VRC7_V2_TAIL_LEN {
             return Err(MapperError::Truncated {
                 expected: core_expected + VRC7_V2_TAIL_LEN,
                 got: data.len(),
@@ -759,7 +798,34 @@ impl Mapper for Vrc7 {
             self.last_opll_sample = sample;
             self.opll = opll;
         }
+        // --- v3/v4 tail: the on-cart RAM ---
+        //
+        // A v1/v2 blob stops before it and leaves the RAM as it is -- the
+        // pre-v2.9.2 behaviour, so an old save loads as it always did. The
+        // length was proven exact above, before the first write.
+        if ram_len != 0 {
+            let ram_off = core_expected + audio_len;
+            let (prg, chr) = data[ram_off..].split_at(self.prg_ram.len());
+            self.prg_ram.copy_from_slice(prg);
+            if self.chr_is_ram {
+                self.chr_rom.copy_from_slice(chr);
+            }
+        }
         Ok(())
+    }
+}
+
+impl Vrc7 {
+    /// Bytes the v3/v4 tail adds: the 8 KiB PRG-RAM, plus the 8 KiB CHR-RAM
+    /// when the cartridge has no CHR-ROM. Derived from the loaded ROM, so a
+    /// save and its load (same ROM, checked by the `.rns` hash tag) agree.
+    fn ram_block_len(&self) -> usize {
+        self.prg_ram.len()
+            + if self.chr_is_ram {
+                self.chr_rom.len()
+            } else {
+                0
+            }
     }
 }
 
@@ -1182,7 +1248,7 @@ mod tests {
         let _ = run_capture(&mut source, 20_000);
 
         let blob = source.save_state();
-        assert_eq!(blob[0], 2, "a mapper-audio build must write section v2");
+        assert_eq!(blob[0], 4, "a mapper-audio build must write section v4");
 
         let expected = run_capture(&mut source, 4_000);
         assert!(
@@ -1191,7 +1257,7 @@ mod tests {
         );
 
         let mut restored = vrc7_default();
-        restored.load_state(&blob).expect("v2 blob must load");
+        restored.load_state(&blob).expect("v4 blob must load");
         let got = run_capture(&mut restored, 4_000);
 
         assert_eq!(
@@ -1242,15 +1308,22 @@ mod tests {
         let mut source = vrc7_default();
         source.cpu_write(0x8000, 5);
 
-        // On a `mapper-audio` build `save_state` already emits v2. On a no-audio
-        // build it emits v1 with no tail, so synthesize the v2 shape: the load
-        // path validates that tail's LENGTH on every build and reads its
-        // CONTENTS only where there is a synthesizer, so zeros are correct here.
+        // Synthesize the v2 shape from the current (v3/v4) writer: the core,
+        // then the synthesizer tail, and no RAM tail. On a `mapper-audio` build
+        // the writer's own synthesizer tail is kept; a no-audio build writes
+        // none, so zeros stand in -- the load path validates that tail's LENGTH
+        // on every build and reads its CONTENTS only where there is a
+        // synthesizer, so zeros are correct there.
+        let core_len = 91 + source.vram.len();
         #[cfg(feature = "mapper-audio")]
-        let blob = source.save_state();
+        let blob = {
+            let mut b = source.save_state()[..core_len + VRC7_V2_TAIL_LEN].to_vec();
+            b[0] = 2;
+            b
+        };
         #[cfg(not(feature = "mapper-audio"))]
         let blob = {
-            let mut b = source.save_state();
+            let mut b = source.save_state()[..core_len].to_vec();
             b[0] = 2;
             b.resize(b.len() + VRC7_V2_TAIL_LEN, 0);
             b
@@ -1299,6 +1372,65 @@ mod tests {
             target.save_state(),
             pristine,
             "a rejected load mutated the mapper: load_state is not atomic"
+        );
+    }
+
+    /// Core audit v2.9.2 AUD-02: the section carries the 8 KiB PRG-RAM and,
+    /// on a CHR-RAM board, the 8 KiB CHR-RAM. The core-level pin is
+    /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`; this
+    /// one covers the CHR-RAM half on the board that ships with it.
+    #[test]
+    fn vrc7_save_state_carries_prg_ram_and_chr_ram() {
+        let mut source = Vrc7::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        source.cpu_write(0xE000, 0x40); // $E000 bit 6: PRG-RAM enable
+        source.cpu_write(0x6000, 0x5A);
+        source.cpu_write(0x7FFF, 0xA5);
+        source.ppu_write(0x0000, 0x11);
+        source.ppu_write(0x1FFF, 0x22);
+        let blob = source.save_state();
+
+        let mut target = Vrc7::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        target.load_state(&blob).expect("round-trip");
+        assert_eq!(target.cpu_read(0x6000), 0x5A);
+        assert_eq!(target.cpu_read(0x7FFF), 0xA5);
+        assert_eq!(target.ppu_read(0x0000), 0x11);
+        assert_eq!(target.ppu_read(0x1FFF), 0x22);
+    }
+
+    /// Every blob written before v2.9.2 (v1/v2, no RAM tail) still loads, and
+    /// leaves the RAM exactly as it was -- the old behaviour, not a wipe.
+    #[test]
+    fn vrc7_pre_ram_tail_blob_loads_and_leaves_ram_untouched() {
+        let source = vrc7_default();
+        let core_len = 91 + source.vram.len();
+        let mut v1 = source.save_state()[..core_len].to_vec();
+        v1[0] = 1;
+        let mut target = vrc7_default();
+        target.cpu_write(0xE000, 0x40);
+        target.cpu_write(0x6123, 0x77);
+        target.load_state(&v1).expect("a v1 blob must still load");
+        target.cpu_write(0xE000, 0x40);
+        assert_eq!(target.cpu_read(0x6123), 0x77, "v1 load must not touch RAM");
+    }
+
+    /// A v3/v4 blob one byte short (inside the RAM tail) is rejected before
+    /// anything is written.
+    #[test]
+    fn vrc7_truncated_ram_tail_is_rejected_atomically() {
+        let mut source = vrc7_default();
+        source.cpu_write(0x8000, 5);
+        let blob = source.save_state();
+        let mut target = vrc7_default();
+        target.cpu_write(0x8000, 3);
+        let pristine = target.save_state();
+        let err = target
+            .load_state(&blob[..blob.len() - 1])
+            .expect_err("a truncated RAM tail must be rejected");
+        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
+        assert_eq!(
+            target.save_state(),
+            pristine,
+            "a rejected load mutated the mapper"
         );
     }
 }

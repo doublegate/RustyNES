@@ -161,10 +161,22 @@ final class GameControllerManager: ObservableObject {
     private var managed: [Managed] = []
     private var observers: [NSObjectProtocol] = []
 
-    // Turbo (auto-fire) toggling: a single shared 30 Hz timer flips the phase, and
-    // any port with turbo bits held re-emits so its A/B pulses.
-    private var turboTimer: Timer?
+    // Turbo (auto-fire) toggling, paced by EMULATED frames (v2.9.2, audit AUD-14):
+    // `advanceTurboFrame()` runs once per console frame, just before it runs (from
+    // `EmulatorCore.tick()` via `onFrameWillRun`), and flips the phase every
+    // `turboFramesPerPhase` frames; any port with turbo bits held re-emits so its
+    // A/B pulses. Until v2.9.2 a wall-clock 30 Hz `Timer` flipped it, so the
+    // pulse kept running while the game was paused, and a catch-up burst of
+    // several frames in one display-link callback saw a single phase -- the pulse
+    // drifted against the frames it was meant to alternate. The desktop keys its
+    // turbo on the frame counter the same way (`emu::apply_turbo`). UNCOMPILED at
+    // v2.9.2 (no Swift toolchain on the Linux build host) -- device checklist.
+    private var turboActive = false
     private var turboPhase = false
+    private var turboFrameCount = 0
+    /// Frames per on/off half-cycle: 2 = the old 30 Hz toggle at 60 fps (A held
+    /// for two frames, released for two).
+    private static let turboFramesPerPhase = 2
 
     private let remapKey = "controller.remap"
     private let portsKey = "controller.ports"
@@ -194,8 +206,9 @@ final class GameControllerManager: ObservableObject {
     func stop() {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers.removeAll()
-        turboTimer?.invalidate()
-        turboTimer = nil
+        turboActive = false
+        turboPhase = false
+        turboFrameCount = 0
     }
 
     deinit { stop() }
@@ -338,29 +351,37 @@ final class GameControllerManager: ObservableObject {
         onMaskChanged?(UInt32(m.port), bits)
     }
 
-    // MARK: Turbo timer
+    // MARK: Turbo (frame-paced)
 
+    /// Arm or disarm the turbo pulse as turbo buttons are pressed and released.
+    /// Arming starts a fresh half-cycle (phase off, count zero), which is what the
+    /// old timer did on creation; disarming settles every port back to its plain
+    /// held mask.
     private func updateTurboTimer() {
         let anyTurbo = managed.contains { $0.turbo.bits != 0 }
-        if anyTurbo, turboTimer == nil {
-            // Schedule on the MAIN run loop in `.common` mode (not the implicit
-            // `scheduledTimer`, which binds to the calling thread's run loop in
-            // `.default` mode): GameController handlers can be delivered off-main,
-            // and `.default` mode pauses the turbo pulse during UI tracking.
-            let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.turboPhase.toggle()
-                for m in self.managed where m.turbo.bits != 0 { self.emit(m) }
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            turboTimer = timer
-        } else if !anyTurbo, turboTimer != nil {
-            turboTimer?.invalidate()
-            turboTimer = nil
+        if anyTurbo, !turboActive {
+            turboActive = true
+            turboFrameCount = 0
+        } else if !anyTurbo, turboActive {
+            turboActive = false
+            turboFrameCount = 0
             turboPhase = false
             // Settle every port back to its plain held mask.
             managed.forEach { emit($0) }
         }
+    }
+
+    /// Advance the turbo pulse by one emulated frame (AUD-14). Called by
+    /// `EmulatorCore.tick()` on the main thread, before each console frame runs, so
+    /// a paused game (no ticks) holds the pulse and a catch-up burst advances it
+    /// once per frame. A no-op while no turbo button is held.
+    func advanceTurboFrame() {
+        guard turboActive else { return }
+        turboFrameCount += 1
+        guard turboFrameCount >= Self.turboFramesPerPhase else { return }
+        turboFrameCount = 0
+        turboPhase.toggle()
+        for m in managed where m.turbo.bits != 0 { emit(m) }
     }
 
     // MARK: UI mirror + persistence
