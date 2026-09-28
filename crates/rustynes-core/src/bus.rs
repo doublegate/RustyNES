@@ -4048,26 +4048,36 @@ impl LockstepBus {
             }
             0x4020..=0xFFFF => {
                 if self.mapper.cpu_read_unmapped(addr) {
-                    // Unmapped read: bus stays at the floating-latch
-                    // value (per nesdev "Open bus behavior"). Don't
-                    // overwrite `open_bus` — return early.
-                    self.last_read_addr = addr;
-                    return self.open_bus;
-                }
-                // The Game Genie physically substitutes the byte on the
-                // cartridge bus, so the (possibly substituted) value is what
-                // the CPU sees AND what latches onto `open_bus` below.
-                let raw = self.mapper.cpu_read(addr);
-                // Register-window reads may drive only some data bits; the
-                // rest keep the floating latch (v2.7.2, core audit §4.5).
-                // Limited to `$4020-$5FFF`, so PRG fetches pay nothing.
-                let raw = if addr < 0x6000 {
-                    let driven = self.mapper.cpu_read_driven_mask(addr);
-                    (self.open_bus & !driven) | (raw & driven)
+                    // Unmapped read: nothing drives the bus, so the CPU sees
+                    // the floating-latch value (nesdev "Open bus behavior":
+                    // "all it sees on its data inputs is whatever was left to
+                    // float"). It falls through like the undecoded
+                    // `$4000-$401F` arm above: `open_bus` is rewritten with the
+                    // value it already holds, and -- the point -- the CPU's
+                    // internal bus latches it, so a following `$4015` read's
+                    // bit 5 comes from THIS cycle ("the last cycle that did
+                    // not read $4015", nesdev APU). Until v2.9.2 this arm
+                    // returned early and skipped that update, which is visible
+                    // only after something has moved the external bus alone --
+                    // a DMC DMA fetch, or an OAM-DMA put with the 6502 bus
+                    // parked in `$4000-$401F` (core audit v2.9.2 AUD-03).
+                    self.open_bus
                 } else {
-                    raw
-                };
-                self.apply_genie(addr, raw)
+                    // The Game Genie physically substitutes the byte on the
+                    // cartridge bus, so the (possibly substituted) value is
+                    // what the CPU sees AND what latches onto `open_bus` below.
+                    let raw = self.mapper.cpu_read(addr);
+                    // Register-window reads may drive only some data bits; the
+                    // rest keep the floating latch (v2.7.2, core audit §4.5).
+                    // Limited to `$4020-$5FFF`, so PRG fetches pay nothing.
+                    let raw = if addr < 0x6000 {
+                        let driven = self.mapper.cpu_read_driven_mask(addr);
+                        (self.open_bus & !driven) | (raw & driven)
+                    } else {
+                        raw
+                    };
+                    self.apply_genie(addr, raw)
+                }
             }
         };
         self.last_read_addr = addr;
@@ -5590,6 +5600,63 @@ mod four_score_tests {
             restored.four_score_pending(),
             [true, false],
             "the adapter resumed without the edge it owed"
+        );
+    }
+
+    /// Core audit v2.9.2 AUD-03. A CPU read of an address nothing decodes
+    /// (`$5000` on NROM) returns the floating bus value, and the CPU latches
+    /// that value like any other read: `nesdev_wiki/Open_bus_behavior.xhtml`
+    /// ("when the CPU reads an address that no circuit decodes, all it sees on
+    /// its data inputs is whatever was left to float on the data bus"). The
+    /// `$4015` read's bit 5 then comes from it: `nesdev_wiki/APU.xhtml`
+    /// ("Bit 5 is open bus ... the open bus value comes from the last cycle
+    /// that did not read `$4015`").
+    ///
+    /// The two latches differ only after something drives the external bus
+    /// alone: a DMC DMA fetch (`AccuracyCoin` `Internal Data Bus` Test 2), or
+    /// an OAM-DMA put with the 6502 bus parked in `$4000-$401F`. So: a CPU
+    /// read leaves both at `$00`, a DMC fetch floats `$20` onto the external
+    /// bus, the CPU reads the undecoded `$5000` (and sees `$20`), then reads
+    /// `$4015`. The last non-`$4015` cycle carried `$20`, so bit 5 is set.
+    /// Before the fix the unmapped arm returned early and skipped the
+    /// internal-bus update, so bit 5 still came from the `$00` read before
+    /// the DMC fetch -- unlike the `$4000-$401F` undecoded arm, which always
+    /// updated it.
+    #[test]
+    fn an_unmapped_cartridge_read_latches_the_floating_value_onto_the_internal_bus() {
+        let mut rom = Vec::with_capacity(16 + 0x4000 + 0x2000);
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(1); // 16 KiB PRG
+        rom.push(1); // 8 KiB CHR
+        rom.extend_from_slice(&[0u8; 10]);
+        let mut prg = [0u8; 0x4000];
+        prg[0] = 0x20; // $C000 (and $8000): the DMC sample byte
+        rom.extend_from_slice(&prg);
+        rom.extend_from_slice(&[0u8; 0x2000]);
+        let mut bus = LockstepBus::new(&rom).expect("synthetic NROM parses");
+        assert!(
+            bus.mapper.cpu_read_unmapped(0x5000),
+            "fixture: $5000 floats"
+        );
+
+        bus.ram[0] = 0x00;
+        assert_eq!(bus.raw_cpu_read(0x0000), 0x00);
+        // A DMC DMA sample fetch, as `dmc_dma_step_impl` performs it.
+        bus.in_dmc_dma = true;
+        assert_eq!(bus.dmc_dma_read(0xC000, 0x8000), 0x20);
+        bus.in_dmc_dma = false;
+        assert_eq!(bus.open_bus, 0x20, "the DMC fetch drove the external bus");
+        assert_eq!(bus.internal_data_bus, 0x00, "but not the internal one");
+
+        assert_eq!(bus.raw_cpu_read(0x5000), 0x20, "the undecoded read floats");
+        assert_eq!(
+            bus.internal_data_bus, 0x20,
+            "the CPU latched the floating value it read"
+        );
+        assert_eq!(
+            bus.raw_cpu_read(0x4015) & 0x20,
+            0x20,
+            "$4015 bit 5 comes from the last non-$4015 cycle: the $5000 read"
         );
     }
 

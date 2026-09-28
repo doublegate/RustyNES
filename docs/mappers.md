@@ -101,6 +101,29 @@ loop can only check boards whose RAM a blind write sweep reaches — 43 of 296
 images at v2.7.1 — and prints the rest; RAM gated behind a board-specific enable
 is not checked by it.
 
+**A save state carries cartridge RAM only through the mapper's own blob.**
+The `.rns` container has no SRAM section: the `MAP` section is the mapper's
+`save_state` bytes and nothing else, so a board that leaves its PRG-RAM or CHR-RAM out of
+that blob loses it on every save-state load, rewind step, run-ahead frame and
+netplay rollback — the restored machine keeps the RAM the running game held.
+Until v2.9.2 the Konami VRC2, VRC4, VRC6 and VRC7 boards (mappers 21-26 and 85)
+did exactly that (core audit v2.9.2 AUD-02; VRC7's own version comment claimed
+its v1 blob carried PRG-RAM, when it carried only the enable bit). They now
+append the 8 KiB PRG-RAM, then the 8 KiB CHR-RAM on a board without CHR-ROM,
+after every older field: VRC2 and VRC4 write section v2, VRC6 v3 (after its
+audio tail), and VRC7 v3 without `mapper-audio` / v4 with it (after the
+synthesizer tail, so the version still says whether that tail is present).
+Every older version still loads and leaves the RAM as it was, the old
+behaviour. Pinned end to end by `vrc_boards_snapshot_carries_prg_ram` and
+`vrc_boards_snapshot_carries_chr_ram` in `crates/rustynes-core/src/nes.rs`,
+which snapshot a whole `Nes`, scribble the RAM and restore.
+
+A sweep of iNES mappers 0-255 with the same shape of test, run while triaging
+AUD-02, found the same omission on boards outside the VRC family, which v2.9.2
+does not change: PRG-RAM on **10** (MMC4), and CHR-RAM on **9**, **10**, **11**,
+**19**, **34**, **69**, **75** and **151**. Those are open, for the v2.9.2 audit
+disposition to place; nothing here claims them fixed.
+
 **A board with nothing at `$6000-$7FFF` floats there (v2.7.2).** The CPU bus
 keeps an open-bus latch, and a mapper reports an undriven address through
 `cpu_read_unmapped`. The trait default now treats `$6000-$7FFF` as unmapped
@@ -178,6 +201,20 @@ the disk **medium** as a synthesized byte-stream wire image, not just the raw
 
 All FDS timing is deterministic cycle arithmetic (no wall-clock / analog jitter),
 so the determinism contract and save-state round-trip hold.
+
+**The save-state disk tail sizes itself with checked arithmetic (v2.9.2).** The
+v3/v4 tail carries its own side count as a `u32`, and the loader validates the
+blob's exact length as `count * 65500` plus the fixed fields. On a 64-bit host
+that product cannot overflow, so a hostile count only fails the length check. On
+the 32-bit targets RustyNES ships (`wasm32`, `armv7`, `i686`) it wrapped: a count
+of `2^30` wraps the side region to zero bytes, so a crafted blob with no side
+data passed the check and the restore loop sliced past its end, a panic in every
+profile (core audit v2.9.2 AUD-01). The product and sum are now checked and a
+count that overflows `usize` is rejected; no separate cap is needed, because a
+count that fits must still match the blob's own length exactly. Pinned by
+`fds::tests::load_state_rejects_a_side_count_whose_length_wraps_on_32_bit`,
+which is red only when the mapper tests run on a 32-bit target — the host suite
+and the host-run `save_state` fuzz target could not see this.
 
 ## Mapper coverage matrix (Phase 4 status)
 

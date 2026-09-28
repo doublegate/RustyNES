@@ -28,6 +28,31 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Konami VRC2, VRC4, VRC6 and VRC7 games keep their cartridge RAM across a
+  save state** (core audit v2.9.2 AUD-02). The `.rns` format carries cartridge
+  RAM only inside the mapper's own section, and these boards (mappers 21-26
+  and 85) left their 8 KiB of `$6000-$7FFF` PRG-RAM out of it, and their 8 KiB
+  of CHR-RAM on a cartridge without CHR-ROM. Every save-state load, rewind
+  step, run-ahead frame and netplay rollback therefore kept the RAM the
+  running game held instead of the saved one: the working RAM of *Akumajou
+  Densetsu*, *Madara*, *Lagrange Point* and the rest drifted out of step with
+  the restored machine. The sections now carry both (VRC2 and VRC4 section v2,
+  VRC6 v3, VRC7 v3/v4); save states written by earlier releases still load
+  and leave the RAM as it was. A whole-machine sweep while fixing this found
+  the same gap on mapper 10 (MMC4) PRG-RAM and on CHR-RAM for mappers 9, 10,
+  11, 19, 34, 69, 75 and 151, which this entry does not fix.
+- **A crafted FDS save state can no longer crash the 32-bit builds** (core
+  audit v2.9.2 AUD-01). The disk tail's side count was multiplied by the side
+  size unchecked; on `wasm32`, `armv7` and `i686` a count of 2^30 wraps that
+  size to zero, so a blob with no disk data passed the length check and the
+  restore then read past its end. The arithmetic is checked now. 64-bit
+  builds were never affected: there the product cannot overflow and the
+  length check rejected the blob.
+- **An unmapped cartridge read now updates the CPU's internal data bus**, like
+  every other read (core audit v2.9.2 AUD-03). `$4015` bit 5 comes from that
+  latch, and after a DMC DMA fetch or a parked OAM-DMA put had moved the
+  external bus alone, a read of an undecoded `$4020-$FFFF` address left it on
+  an older value. AccuracyCoin stays 144/144 and nestest 0-diff.
 - **libretro: memory maps are withdrawn at `retro_deinit` too** (v2.9.2 audit
   AUD-16). libretro.h has `retro_unload_game` "Called before retro_deinit", and
   RetroArch does so, but the core already caters for a frontend that skips it

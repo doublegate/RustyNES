@@ -44,6 +44,24 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
+/// Version byte this board writes in its mapper save-state section.
+///
+/// **v1** carried the banking, mirroring and IRQ registers and the 2 KiB
+/// nametable RAM. **v2** appended the expansion-audio tail
+/// ([`VRC6_AUDIO_TAIL_LEN`] bytes). Neither carried the 8 KiB PRG-RAM at
+/// `$6000-$7FFF` nor, on a CHR-RAM cartridge, the 8 KiB CHR-RAM, and the
+/// `.rns` container has no other section that carries cartridge RAM -- so
+/// every save-state load, rewind step, run-ahead frame and netplay rollback
+/// kept whatever RAM the running game held instead of the saved one (core
+/// audit v2.9.2 AUD-02). **v3** (v2.9.2) appends the PRG-RAM, then the
+/// CHR-RAM when present, after the audio tail. `load_state` accepts all
+/// three; a v1/v2 blob leaves the RAM untouched, which is the old behaviour.
+const VRC6_SECTION_VERSION: u8 = 3;
+
+/// Bytes of the v2 audio tail: `audio_ctrl` (1) + two pulses (7 each) + the
+/// sawtooth (8).
+const VRC6_AUDIO_TAIL_LEN: usize = 1 + 7 + 7 + 8;
+
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
     let local = (addr as usize) & (NAMETABLE_SIZE - 1);
@@ -617,8 +635,11 @@ impl Mapper for Vrc6 {
         //   + timer_lo(1) + timer_hi(1) + step(1) + acc(1) = 8 bytes.
         // Header: audio_ctrl(1).
         // Total audio tail = 1 + 7 + 7 + 8 = 23 bytes.
-        let mut out = Vec::with_capacity(48 + self.vram.len() + 23);
-        out.push(2u8); // version
+        // v3: appends the on-cart RAM after the audio tail; see
+        // `VRC6_SECTION_VERSION`.
+        let mut out =
+            Vec::with_capacity(48 + self.vram.len() + VRC6_AUDIO_TAIL_LEN + self.ram_block_len());
+        out.push(VRC6_SECTION_VERSION);
         out.push(self.prg_16);
         out.push(self.prg_8);
         out.extend_from_slice(&self.chr);
@@ -637,6 +658,11 @@ impl Mapper for Vrc6 {
         Self::write_pulse(&mut out, &self.pulse1);
         Self::write_pulse(&mut out, &self.pulse2);
         Self::write_saw(&mut out, &self.saw);
+        // RAM tail (v3).
+        out.extend_from_slice(&self.prg_ram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr_rom);
+        }
         out
     }
 
@@ -650,8 +676,22 @@ impl Mapper for Vrc6 {
             });
         }
         let version = data[0];
-        if !(1..=2).contains(&version) {
+        if !(1..=3).contains(&version) {
             return Err(MapperError::UnsupportedVersion(version));
+        }
+        // v3 is strict: core + the full audio tail + the RAM tail, exactly.
+        // (v2 tolerated a short audio tail, below; v3 cannot, because the RAM
+        // tail's offset depends on the audio tail being all there.) Validated
+        // before the first field is written.
+        let tail_off = core_expected;
+        if version == 3 {
+            let expected = tail_off + VRC6_AUDIO_TAIL_LEN + self.ram_block_len();
+            if data.len() != expected {
+                return Err(MapperError::Truncated {
+                    expected,
+                    got: data.len(),
+                });
+            }
         }
         self.prg_16 = data[1];
         self.prg_8 = data[2];
@@ -682,9 +722,8 @@ impl Mapper for Vrc6 {
         // v2 tail (optional even when version == 2, in case the writer is
         // shorter than expected): audio state. v1 blobs end here; the audio
         // state stays at defaults.
-        if version == 2 {
-            let tail_off = 23 + self.vram.len();
-            if data.len() < tail_off + 23 {
+        if version >= 2 {
+            if data.len() < tail_off + VRC6_AUDIO_TAIL_LEN {
                 // Not strict: a v2 blob shorter than 23 audio bytes is
                 // accepted; remaining fields default-initialize. This keeps
                 // forward-compat consistent with ADR-0003.
@@ -695,7 +734,31 @@ impl Mapper for Vrc6 {
             Self::read_pulse(&data[tail_off + 8..tail_off + 15], &mut self.pulse2);
             Self::read_saw(&data[tail_off + 15..tail_off + 23], &mut self.saw);
         }
+        // v3 RAM tail. v1/v2 blobs stop before it and leave the RAM as it is
+        // -- the pre-v2.9.2 behaviour, so an old save loads as it always did.
+        if version >= 3 {
+            let ram_off = tail_off + VRC6_AUDIO_TAIL_LEN;
+            let (prg, chr) = data[ram_off..].split_at(self.prg_ram.len());
+            self.prg_ram.copy_from_slice(prg);
+            if self.chr_is_ram {
+                self.chr_rom.copy_from_slice(chr);
+            }
+        }
         Ok(())
+    }
+}
+
+impl Vrc6 {
+    /// Bytes the v3 tail adds: the 8 KiB PRG-RAM, plus the 8 KiB CHR-RAM
+    /// when the cartridge has no CHR-ROM. Derived from the loaded ROM, so a
+    /// save and its load (same ROM, checked by the `.rns` hash tag) agree.
+    fn ram_block_len(&self) -> usize {
+        self.prg_ram.len()
+            + if self.chr_is_ram {
+                self.chr_rom.len()
+            } else {
+                0
+            }
     }
 }
 
@@ -859,17 +922,20 @@ mod tests {
     }
 
     #[test]
-    fn vrc6_save_state_v2_round_trips_audio() {
+    fn vrc6_save_state_round_trips_audio() {
         let mut m = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
         m.cpu_write(0x9000, 0x8F);
         m.cpu_write(0x9001, 0x12);
         m.cpu_write(0x9002, 0x83);
         m.cpu_write(0xB000, 0x07);
         let blob = m.save_state();
-        assert_eq!(blob[0], 2, "save_state must bump to version 2");
+        assert_eq!(
+            blob[0], VRC6_SECTION_VERSION,
+            "save_state writes the current version"
+        );
 
         let mut m2 = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
-        m2.load_state(&blob).expect("v2 round-trip");
+        m2.load_state(&blob).expect("round-trip");
         assert_eq!(m2.pulse1.ctrl, 0x8F);
         assert_eq!(m2.pulse1.period, 0x312);
         assert!(m2.pulse1.enabled);
@@ -882,10 +948,10 @@ mod tests {
         // defaults to silence (channels disabled, ctrl/period zero).
         let m = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
         let mut blob = m.save_state();
-        // Synthesize a "v1 blob" by truncating the audio tail (last 23 bytes)
-        // and rewriting the version byte from 2 -> 1.
-        let tail = 23;
-        blob.truncate(blob.len() - tail);
+        // Synthesize a "v1 blob": the core only (no audio tail, no RAM tail)
+        // with the version byte rewritten to 1.
+        let core_len = 23 + m.vram.len();
+        blob.truncate(core_len);
         blob[0] = 1;
         let mut m2 = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
         m2.cpu_write(0x9000, 0xFF); // perturb pre-load
@@ -897,5 +963,54 @@ mod tests {
         // newer-section state, the caller is responsible for an explicit
         // reset/power-cycle if they want a clean slate.
         assert_eq!(m2.pulse1.ctrl, 0xFF);
+    }
+
+    /// Core audit v2.9.2 AUD-02: the section carries the 8 KiB PRG-RAM and,
+    /// on a CHR-RAM board, the 8 KiB CHR-RAM. The core-level pin is
+    /// `rustynes_core::nes::tests::vrc_boards_snapshot_carries_prg_ram`.
+    #[test]
+    fn vrc6_save_state_carries_prg_ram_and_chr_ram() {
+        let mut m = Vrc6::new(synth(8), Box::new([]), 24, Mirroring::Vertical).unwrap();
+        m.cpu_write(0x6000, 0x5A);
+        m.cpu_write(0x7FFF, 0xA5);
+        m.ppu_write(0x0000, 0x11);
+        // Inside 1 KiB slot 0 (bank 0 at power-on), so the read path's
+        // banking and the write path agree whatever the registers hold.
+        m.ppu_write(0x03FF, 0x22);
+        let blob = m.save_state();
+        let mut m2 = Vrc6::new(synth(8), Box::new([]), 24, Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).expect("round-trip");
+        assert_eq!(m2.cpu_read(0x6000), 0x5A);
+        assert_eq!(m2.cpu_read(0x7FFF), 0xA5);
+        assert_eq!(m2.ppu_read(0x0000), 0x11);
+        assert_eq!(m2.ppu_read(0x03FF), 0x22);
+    }
+
+    /// A v2 blob (core + audio tail, written through v2.9.1) still loads,
+    /// restores the audio, and leaves the RAM as it was.
+    #[test]
+    fn vrc6_v2_blob_loads_and_leaves_ram_untouched() {
+        let mut m = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
+        m.cpu_write(0x9000, 0x8F);
+        let core_len = 23 + m.vram.len();
+        let mut v2 = m.save_state()[..core_len + VRC6_AUDIO_TAIL_LEN].to_vec();
+        v2[0] = 2;
+        let mut m2 = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
+        m2.cpu_write(0x6123, 0x77);
+        m2.load_state(&v2).expect("a v2 blob must still load");
+        assert_eq!(m2.pulse1.ctrl, 0x8F, "v2 audio tail restored");
+        assert_eq!(m2.cpu_read(0x6123), 0x77, "v2 load must not touch RAM");
+    }
+
+    /// A v3 blob one byte short (inside the RAM tail) is rejected.
+    #[test]
+    fn vrc6_truncated_ram_tail_is_rejected() {
+        let m = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
+        let blob = m.save_state();
+        let mut m2 = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
+        let err = m2
+            .load_state(&blob[..blob.len() - 1])
+            .expect_err("a truncated v3 blob must be rejected");
+        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
     }
 }

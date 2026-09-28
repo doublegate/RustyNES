@@ -3659,6 +3659,106 @@ mod tests {
         assert_eq!(fnv_hash(nes.framebuffer()), fb_hash_before);
     }
 
+    /// Synthetic iNES 1.0 image for mapper `mapper_id`: 128 KiB PRG, 128 KiB
+    /// CHR-ROM, battery flag set (so the board keeps its `$6000-$7FFF` RAM
+    /// and `sram()` exposes it). Every 8 KiB PRG bank ends in a vector table
+    /// pointing at a `JMP $E000` idle loop, so whichever bank a board maps at
+    /// `$E000` on power-on, the CPU spins harmlessly.
+    fn synth_mapper_rom(mapper_id: u8) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(16 + 256 * 1024);
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(8); // 8 x 16 KiB PRG
+        bytes.push(16); // 16 x 8 KiB CHR
+        bytes.push(((mapper_id & 0x0F) << 4) | 0x02); // flags6: battery
+        bytes.push(mapper_id & 0xF0); // flags7: mapper high nibble
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 128 * 1024];
+        for bank in prg.chunks_mut(8 * 1024) {
+            bank[0] = 0x4C; // JMP $E000
+            bank[1] = 0x00;
+            bank[2] = 0xE0;
+            let len = bank.len();
+            for v in [len - 6, len - 4, len - 2] {
+                bank[v] = 0x00;
+                bank[v + 1] = 0xE0;
+            }
+        }
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 128 * 1024]);
+        bytes
+    }
+
+    /// Core audit v2.9.2 AUD-02: the whole-machine snapshot must carry a
+    /// board's `$6000-$7FFF` PRG-RAM. There is no separate SRAM section in
+    /// the `.rns` container -- the `MAP ` section (the mapper's own
+    /// `save_state` blob) is the only place cartridge RAM can travel -- so a
+    /// mapper that leaves it out loses the game's working RAM on every
+    /// save-state load, rewind step, run-ahead frame and netplay rollback.
+    ///
+    /// Covers every Konami VRC board the registry builds: VRC4 (21/23/25),
+    /// VRC2 (22), VRC6 (24/26), VRC3 (73, the control -- it already
+    /// serialized its RAM) and VRC7 (85). VRC1 (75) has no PRG-RAM.
+    #[test]
+    fn vrc_boards_snapshot_carries_prg_ram() {
+        for mapper_id in [21u8, 22, 23, 24, 25, 26, 73, 85] {
+            let rom = synth_mapper_rom(mapper_id);
+            let mut nes = Nes::from_rom(&rom)
+                .unwrap_or_else(|e| panic!("mapper {mapper_id}: parse + boot: {e:?}"));
+            assert!(
+                !nes.sram().is_empty(),
+                "mapper {mapper_id}: board exposes PRG-RAM"
+            );
+            nes.run_frame();
+            // A position-dependent pattern, so a shifted or truncated copy
+            // cannot pass.
+            for (i, b) in nes.sram_mut().iter_mut().enumerate() {
+                let le = i.to_le_bytes();
+                *b = le[0] ^ 0xA5 ^ le[1];
+            }
+            let want = nes.sram().to_vec();
+            let blob = nes.snapshot();
+            nes.sram_mut().fill(0x00);
+            nes.restore(&blob)
+                .unwrap_or_else(|e| panic!("mapper {mapper_id}: restore: {e:?}"));
+            assert!(
+                nes.sram() == want.as_slice(),
+                "mapper {mapper_id}: PRG-RAM not restored from the snapshot"
+            );
+        }
+    }
+
+    /// Companion to [`vrc_boards_snapshot_carries_prg_ram`]: a VRC board built
+    /// with CHR-RAM (no CHR-ROM in the image -- *Lagrange Point* on VRC7 is the
+    /// commercial case) must carry that 8 KiB through the snapshot too. Found
+    /// while triaging AUD-02; the same omission, one field over.
+    #[test]
+    fn vrc_boards_snapshot_carries_chr_ram() {
+        for mapper_id in [21u8, 22, 23, 24, 25, 26, 85] {
+            let mut rom = synth_mapper_rom(mapper_id);
+            rom[5] = 0; // no CHR-ROM: the board allocates 8 KiB CHR-RAM
+            rom.truncate(16 + 128 * 1024);
+            let mut nes = Nes::from_rom(&rom)
+                .unwrap_or_else(|e| panic!("mapper {mapper_id}: parse + boot: {e:?}"));
+            nes.run_frame();
+            for a in 0u16..0x2000 {
+                let [lo, hi] = a.to_le_bytes();
+                nes.bus.mapper.ppu_write(a, lo ^ 0x3C ^ hi);
+            }
+            let want: Vec<u8> = (0u16..0x2000).map(|a| nes.bus.debug_peek_ppu(a)).collect();
+            let blob = nes.snapshot();
+            for a in 0u16..0x2000 {
+                nes.bus.mapper.ppu_write(a, 0);
+            }
+            nes.restore(&blob)
+                .unwrap_or_else(|e| panic!("mapper {mapper_id}: restore: {e:?}"));
+            let got: Vec<u8> = (0u16..0x2000).map(|a| nes.bus.debug_peek_ppu(a)).collect();
+            assert!(
+                got == want,
+                "mapper {mapper_id}: CHR-RAM not restored from the snapshot"
+            );
+        }
+    }
+
     #[test]
     fn snapshot_is_deterministic_across_two_runs() {
         let rom = synth_nrom(16, 8);

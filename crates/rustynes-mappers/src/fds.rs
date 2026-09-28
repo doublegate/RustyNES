@@ -2046,9 +2046,28 @@ impl Fds {
         off += 4;
         // Validate the full length now that the side count is known. v4 appends
         // the continuous head-seek tail after the v3 fields.
+        //
+        // Checked arithmetic (core audit v2.9.2 AUD-01). The count is untrusted
+        // and `usize` is 32 bits on the wasm32 / armv7 / i686 targets RustyNES
+        // ships, where `saved_sides * FDS_SIDE_LEN` wraps: a count of 2^30 wraps
+        // the side region to zero bytes, so a blob with no side data passed the
+        // exact-length check below and the restore loop then sliced past its
+        // end (a panic in every profile; in `dev` the overflow check panicked
+        // first). No separate cap is needed: the blob is already in memory, so
+        // any count whose length does not fit in `usize` cannot describe it, and
+        // any count that does fit must match `data.len()` exactly. The bound on
+        // `saved_sides` is therefore the blob's own length, on every target.
         let v4_extra = if version >= 4 { FDS_V4_TAIL_LEN } else { 0 };
-        let expected =
-            base + FdsAudio::TAIL_LEN + 4 + saved_sides * FDS_SIDE_LEN + 4 + 4 + 1 + v4_extra;
+        let expected = saved_sides
+            .checked_mul(FDS_SIDE_LEN)
+            .and_then(|sides_len| {
+                sides_len.checked_add(base + FdsAudio::TAIL_LEN + 4 + 4 + 4 + 1 + v4_extra)
+            })
+            .ok_or_else(|| {
+                MapperError::Invalid(format!(
+                    "FDS save-state side count {saved_sides} overflows the address space"
+                ))
+            })?;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -2065,7 +2084,9 @@ impl Fds {
                 .copy_from_slice(&data[off..off + FDS_SIDE_LEN]);
             off += FDS_SIDE_LEN;
         }
-        // Skip any extra saved sides we have no local slot for.
+        // Skip any extra saved sides we have no local slot for. Cannot overflow:
+        // the checked length above proved `saved_sides * FDS_SIDE_LEN` fits
+        // inside `data.len()`.
         off += (saved_sides - restore) * FDS_SIDE_LEN;
         let inserted = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
         off += 4;
@@ -3111,6 +3132,45 @@ mod tests {
             fds.load_state(&[FDS_SAVE_VERSION, 0, 0]),
             Err(MapperError::Truncated { .. })
         ));
+    }
+
+    /// Core audit v2.9.2 AUD-01. The v3/v4 disk tail declares its own side
+    /// count as a `u32`, and the loader sizes the tail as `sides * FDS_SIDE_LEN`.
+    ///
+    /// On a 64-bit host that product cannot overflow (`u32::MAX * 65500` is
+    /// about 2.8e14), so a hostile count only makes the expected length absurd
+    /// and the exact-length check rejects it. On a 32-bit target (`wasm32`,
+    /// `armv7`, `i686` -- all shipped: the web build, Android, the libretro
+    /// buildbot) `usize` is 32 bits and the product wraps. `65500 = 4 * 16375`,
+    /// so a count of `2^30` wraps the side region to exactly zero bytes: a blob
+    /// carrying NO side data then passes the length check, the restore loop
+    /// copies `min(2^30, local_sides)` sides out of it, and the first copy
+    /// slices past the end of the blob -- a panic in every build profile (in
+    /// a `dev` build the multiplication's overflow check panics first). A save
+    /// state is untrusted input: a file on disk, or a netplay peer's state.
+    ///
+    /// Red on `i686` before the fix; green on 64-bit either way, which is the
+    /// point of recording it -- the host test suite could not see this.
+    #[test]
+    fn load_state_rejects_a_side_count_whose_length_wraps_on_32_bit() {
+        let mut fds = make_device(2);
+        let blob = fds.save_state();
+        assert_eq!(blob[0], 4, "fixture assumes the v4 layout");
+        let base = 1 + fds.prg_ram.len() + fds.chr_ram.len() + 4 + 4 + 2 + 2 + 4 + 4 + 2;
+        let sides_at = base + FdsAudio::TAIL_LEN;
+        // inserted(4) + insert_not_ready(4) + disk_flags(1) + the v4 tail.
+        let trailer = 4 + 4 + 1 + FDS_V4_TAIL_LEN;
+        for hostile in [1u32 << 30, (1u32 << 30) + 1, 3u32 << 30, u32::MAX] {
+            let mut crafted = blob[..sides_at].to_vec();
+            crafted.extend_from_slice(&hostile.to_le_bytes());
+            crafted.extend_from_slice(&blob[blob.len() - trailer..]);
+            assert!(
+                fds.load_state(&crafted).is_err(),
+                "side count {hostile:#x} with no side data must be rejected"
+            );
+        }
+        // The legitimate blob still loads after all that.
+        fds.load_state(&blob).expect("the genuine blob still loads");
     }
 
     #[test]

@@ -323,6 +323,24 @@ Implementation: `blip_buf-rs` crate or hand-rolled equivalent (~200 LOC).
 When refining open-bus behavior, do not assume `$4015` reads update the same
 external open-bus latch used by cartridge or PPU register accesses.
 
+**Bit 5 is open bus, from the CPU's internal data bus** (`internal_data_bus` in
+`crates/rustynes-core/src/bus.rs`): nesdev's APU page says the value "comes from
+the last cycle that did not read `$4015`". Every CPU read and write sets that
+latch, including a read of an address nothing decodes, where the CPU latches the
+floating value it sees. A DMC DMA fetch drives only the external bus
+(AccuracyCoin `Internal Data Bus` Test 2), and so does an OAM-DMA put while the
+6502 bus is parked in `$4000-$401F` (`oam_dma_put`), so after either the two
+latches differ. Until v2.9.2 an undecoded **cartridge-space** read (`$4020-$FFFF`)
+returned early and skipped the internal update, while the undecoded
+`$4000-$401F` arm always made it; after either of those that left bit 5 on an
+older value (core audit v2.9.2 AUD-03). Pinned by
+`an_unmapped_cartridge_read_latches_the_floating_value_onto_the_internal_bus`.
+Through the ordinary instruction stream this is not observable, since
+`LDA $4015`'s own operand fetches overwrite the latch first; the paths that can
+see it are the OAM-DMA reads with the 6502 bus parked in `$4000-$401F`, whose
+`$4015` mirror composes bit 5 in the same cycle as an undecoded source read.
+AccuracyCoin stays 144/144 and nestest 0-diff with the change.
+
 ## Edge cases and gotchas
 
 1. **DMC DMA stalls CPU mid-instruction.** Per `ref-docs/research-report.md` §DMA, halt only on read cycles. The 2A03 register-readout bug (extra reads of `$2007`, `$4015`-`$4017` while halted) must be reproduced — required by `dmc_dma_during_read4`.
