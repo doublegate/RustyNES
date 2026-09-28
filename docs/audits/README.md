@@ -48,6 +48,23 @@ same rules as the others: a Rust defect is trusted once a test fails on it, and
 every RTL claim and number is re-derived. The work is v2.9.2's
 ([plan](../../to-dos/plans/v2.9.2-candidate-plan.md)).
 
+**Calibration, 2026-09-27.** This report read the Rust code well and the RTL
+less well. The pattern held for the fifth time:
+
+- **Rust:** 16 of 20 findings are real: all nine netplay, frontend and mobile
+  findings, four of five core findings (AUD-04 deferred to v3.0.0), and three
+  of six libretro findings. The framing was often wrong even where the defect
+  was real. AUD-01's overflow exists only on 32-bit, and its OOM does not exist
+  at all. AUD-12's allocation is on the native heap, not the JVM heap. AUD-16's
+  "the spec permits it" is contradicted by libretro.h. Two of its patches were
+  a no-op at the cited location (AUD-10) or dropped a needed notice (AUD-13).
+- **RTL and build:** 3 of 12 real. AUD-24, the NMI edge detector frozen
+  during DMA, is the one design defect; the ladder had never exercised it.
+  AUD-31 and AUD-32 are Makefile defects. Three claims were refuted outright,
+  and the rest are design limits, board questions or framework conventions.
+- **Its best result was indirect.** AUD-02's sweep found the same save-state
+  RAM gap on nine boards the report never named (row AUD-02b).
+
 ## What these reports are
 
 They were **written by an AI agent** (the Antigravity CLI, `agy`) and committed in
