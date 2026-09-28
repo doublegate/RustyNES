@@ -26,6 +26,47 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-09-28 - "Candidate" (the full audit acted on, and the release-candidate pair)
+
+The third release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
+**a fifth audit, triaged finding by finding, and the bitstream pair the board
+session runs.** The maintainer added a 32-finding AI-written audit of both
+repositories; every finding has a verdict and its evidence in
+[`docs/audits/v2.9.2-full-audit-disposition.md`](docs/audits/v2.9.2-full-audit-disposition.md),
+and 16 of the 32 are fixed, most pinned by a test that failed first. The
+largest find was not in the report: a sweep written for one of its findings
+showed that save states dropped the cartridge RAM of twelve board families. **Emulation output
+changes in one place** (an unmapped cartridge read now updates the CPU's
+internal data bus); AccuracyCoin 144/144 and nestest 0-diff hold, and the full
+`--features test-roms` suite passes 2,867 tests. Save states grow on the fixed
+boards and stay loadable across versions. **No hardware has run any bitstream**;
+v2.9.2's bitstreams are what the SuperStation One session runs.
+
+### MiSTer core
+
+- **The CPU no longer loses an NMI whose pulse falls inside a DMA** (AUD-24).
+  The /NMI edge detector ran on the DMA-stalled clock enable, so an NMI raised
+  and cleared during an OAM DMA was never seen; on the 2A03 the detector keeps
+  sampling while RDY holds the CPU. A new gate, `dmanmi074`, differed from the
+  oracle in 156,031 of 357,820 cycles before the fix and in none after.
+- **`make build-fast` no longer leaves the project file modified** (AUD-31), so
+  a fast iteration build cannot block the next release build. `make clean`
+  removes the off-die build and sweep logs too (AUD-32), and `release-rbf.sh`
+  attaches the off-die bitstream alongside the on-die one.
+- **New gates for claims that were refuted:** the arbiter's overrun report
+  (AUD-21) and a monitor that fails the run if an SDRAM refresh interval is ever
+  lost (AUD-23; the longest wait measured is 10 cycles of a 654-cycle interval).
+- **A board kit**: `tools/stage_board_kit.sh` stages the Tier 1 corpus, the
+  launchers, both bitstreams and the md5s the session checks against, and the
+  bring-up log gains the off-die rows.
+- The sibling's oracle pin moves to v2.9.1; all 117 golden stems regenerate
+  byte for byte.
+- **Both builds re-swept**, eight seeds each at one build date, all sixteen
+  closing; the pin stays at seed 2 (on-die +0.510 / +0.108 ns, off-die
+  +0.390 / +0.081 ns). Two clean compiles of each build are byte-identical.
+  The co-simulation ladder is 173 passed / 0 failed / 1 expected failure
+  on-die and 174 / 0 / 1 off-die, nothing skipped.
+
 ### Fixed
 
 - **Konami VRC2, VRC4, VRC6 and VRC7 games keep their cartridge RAM across a
@@ -102,7 +143,8 @@ cycle-accurate core later replaced.
   held on the console, and never gave its player port back; since gilrs gives
   a different device a new id, four pads coming and going filled every port
   until restart.
-- **Opposing directions cancel** (AUD-08, a behaviour change). A real NES
+- **Opposing directions cancel** (AUD-08, a behaviour change, on by default
+  by the maintainer's decision). A real NES
   pad's D-pad cannot press Up and Down, or Left and Right, together; a
   keyboard, hitbox or worn pad can, and games glitch on it. Live input is now
   cleaned to neutral on each axis: both opposites held reads as neither, and
@@ -125,8 +167,10 @@ cycle-accurate core later replaced.
   `Vec` on each of 60 frames a second. The picture is unchanged.
 - **Two fingers on the on-screen D-pad no longer press opposite directions**
   (AUD-09 Android, AUD-10 iOS). Each finger could only ever select one side of
-  an axis, but a resting thumb and a sliding one could select both; the
-  combined touch mask is now cleaned to neutral, as on the desktop.
+  an axis, but a resting thumb and a sliding one could select both. Each
+  player's COMBINED input -- touch, hardware pad and, on Android, keyboard -- is
+  now cleaned to neutral, as on the desktop; mobile has no switch to turn it
+  off yet.
 - **iOS gamepad turbo is paced by emulated frames** (AUD-14). A wall-clock
   30 Hz timer flipped it, so it kept pulsing while the game was paused and fell
   out of step when the display link ran several frames in one callback. It now
