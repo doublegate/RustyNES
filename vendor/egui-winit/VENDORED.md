@@ -46,6 +46,23 @@ else differs from the crates.io package:
 Native behaviour is unchanged: on every non-wasm target the three gated items
 compile exactly as upstream wrote them.
 
+## Unsafe code
+
+The package has two `unsafe` blocks, both upstream's and left as written:
+adding this project's `// SAFETY:` comments would break the byte-for-byte
+promise above. Neither is compiled into any RustyNES build (checked
+2026-09-28 with `cargo tree -e features -i egui-winit`):
+
+- `src/clipboard.rs`, `smithay_clipboard::Clipboard::new` on the Wayland
+  display pointer, exists only with the `clipboard` feature. RustyNES builds
+  with `default-features = false` and enables `links`, `wayland` and `x11`,
+  not `clipboard`.
+- `src/safe_area.rs` is `#[cfg(target_os = "ios")]`, and the iOS app does not
+  use egui-winit (it is SwiftUI over `rustynes-ios`).
+
+If either becomes reachable, for example by enabling `clipboard`, review it
+then, not before.
+
 ## Removing it
 
 When crates.io carries an `egui-winit` newer than 0.36.2 that compiles for
