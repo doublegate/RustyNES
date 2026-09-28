@@ -616,20 +616,23 @@ impl Relay {
         };
         let mut actions = Vec::new();
         if let Some(room) = self.rooms.get_mut(&room_code) {
+            // Announce only a slot the client actually held. The room map and
+            // the slot list are kept in step by join and leave, so a miss is a
+            // broken invariant -- and the old `unwrap_or(0)` then told every
+            // remaining peer that slot 0 (the host) had left.
             let departed_slot = room
                 .slots
                 .iter()
                 .position(|&c| c == client)
-                .and_then(|i| u8::try_from(i).ok())
-                .unwrap_or(0);
+                .and_then(|i| u8::try_from(i).ok());
             room.slots.retain(|&c| c != client);
-            for &peer in &room.slots {
-                actions.push(Action::Send {
-                    to: peer,
-                    msg: SignalMessage::PeerLeft {
-                        slot: departed_slot,
-                    },
-                });
+            if let Some(slot) = departed_slot {
+                for &peer in &room.slots {
+                    actions.push(Action::Send {
+                        to: peer,
+                        msg: SignalMessage::PeerLeft { slot },
+                    });
+                }
             }
             if room.slots.is_empty() {
                 self.rooms.remove(&room_code);
@@ -1282,6 +1285,32 @@ mod tests {
     /// Before the fix `client_room` was simply overwritten, so the client sat
     /// in room A's `slots` forever: A could never empty, and its peers kept
     /// offering to a ghost.
+    /// A client the room map places in a room whose slots do not list it is
+    /// a broken invariant (join and leave keep the two in step). Leaving must
+    /// then tell the remaining peers NOTHING rather than announce that slot 0
+    /// left, which would make every one of them drop the host's peer.
+    /// (Antigravity on #563, round 2.)
+    #[test]
+    fn leaving_a_room_that_does_not_list_the_client_announces_nothing() {
+        let mut relay = Relay::new();
+        let _ = relay.handle(1, join("a", "h"));
+        let _ = relay.handle(2, join("a", "h"));
+        // Break the invariant directly: client 3 is mapped to "a" but holds
+        // no slot in it.
+        relay.client_room.insert(3, "a".to_string());
+        let acts = relay.disconnect(3);
+        assert!(
+            acts.is_empty(),
+            "no PeerLeft for a slot nobody vacated: {acts:?}"
+        );
+        // (`open_rooms` lists only joinable rooms, and "a" is full at 2 of 2.)
+        assert_eq!(
+            relay.rooms.get("a").map(|r| r.slots.clone()),
+            Some(vec![1, 2]),
+            "the room keeps both real players"
+        );
+    }
+
     #[test]
     fn joining_a_second_room_leaves_the_first() {
         let mut relay = Relay::new();
