@@ -74,6 +74,7 @@ int rc_hash_buffered_file(char hash[33], uint32_t console_id, const rc_hash_iter
   int rc_hash_lynx(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_nes(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_n64(char hash[33], const rc_hash_iterator_t* iterator);
+  int rc_hash_neogeo_cart(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_nintendo_ds(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_pce(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_scv(char hash[33], const rc_hash_iterator_t* iterator);
@@ -94,6 +95,7 @@ int rc_hash_buffered_file(char hash[33], uint32_t console_id, const rc_hash_iter
   int rc_hash_psx(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_ps2(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_psp(char hash[33], const rc_hash_iterator_t* iterator);
+  int rc_hash_ps3(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_sega_cd(char hash[33], const rc_hash_iterator_t* iterator);
   int rc_hash_wii(char hash[33], const rc_hash_iterator_t* iterator);
 #endif

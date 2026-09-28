@@ -143,7 +143,7 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   https://github.com/emilk/egui
       Copyright (c) 2018-2021 Emil Ernerfeldt -- MIT OR Apache-2.0
 
-* rcheevos v12.3.0 -- RetroAchievements client runtime, vendored at
+* rcheevos v12.5.0 -- RetroAchievements client runtime, vendored at
   crates/rustynes-cheevos/vendor/rcheevos/ (compiled only under the optional
   `retroachievements` feature).
   https://github.com/RetroAchievements/rcheevos

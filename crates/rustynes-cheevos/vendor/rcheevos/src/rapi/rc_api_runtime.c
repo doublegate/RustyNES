@@ -113,7 +113,6 @@ static int rc_api_process_fetch_game_data_achievements(rc_api_response_t* respon
   const char* last_author = "";
   const char* last_author_field = "";
   size_t last_author_len = 0;
-  uint32_t timet;
   size_t len;
 
   rc_json_field_t achievement_fields[] = {
@@ -141,7 +140,7 @@ static int rc_api_process_fetch_game_data_achievements(rc_api_response_t* respon
   while (rc_json_get_array_entry_object(achievement_fields, sizeof(achievement_fields) / sizeof(achievement_fields[0]), &iterator)) {
     if (!rc_json_get_required_unum(&achievement->id, response, &achievement_fields[0], "ID"))
       return RC_MISSING_VALUE;
-    if (!rc_json_get_required_string(&achievement->title, response, &achievement_fields[1], "Title"))
+    if (!rc_json_get_required_string(&achievement->title, response, &achievement_fields[1], "Title") || !achievement->title)
       return RC_MISSING_VALUE;
     if (!rc_json_get_required_string(&achievement->description, response, &achievement_fields[2], "Description"))
       return RC_MISSING_VALUE;
@@ -181,12 +180,10 @@ static int rc_api_process_fetch_game_data_achievements(rc_api_response_t* respon
       }
     }
 
-    if (!rc_json_get_required_unum(&timet, response, &achievement_fields[8], "Created"))
+    if (!rc_json_get_required_timet(&achievement->created, response, &achievement_fields[8], "Created"))
       return RC_MISSING_VALUE;
-    achievement->created = (time_t)timet;
-    if (!rc_json_get_required_unum(&timet, response, &achievement_fields[9], "Modified"))
+    if (!rc_json_get_required_timet(&achievement->updated, response, &achievement_fields[9], "Modified"))
       return RC_MISSING_VALUE;
-    achievement->updated = (time_t)timet;
 
     if (rc_json_field_string_matches(&achievement_fields[10], ""))
       achievement->type = RC_ACHIEVEMENT_TYPE_STANDARD;
@@ -200,16 +197,18 @@ static int rc_api_process_fetch_game_data_achievements(rc_api_response_t* respon
       achievement->type = RC_ACHIEVEMENT_TYPE_STANDARD;
 
     /* legacy support : if title contains[m], change type to missable and remove[m] from title */
-    if (memcmp(achievement->title, "[m]", 3) == 0) {
+    /* since we're comparing a suffix, calculate the length in case it contains null bytes */
+    len = strlen(achievement->title);
+    if (len >= 3 && memcmp(achievement->title, "[m]", 3) == 0) {
       len = 3;
       while (achievement->title[len] == ' ')
         ++len;
       achievement->title += len;
       achievement->type = RC_ACHIEVEMENT_TYPE_MISSABLE;
     }
-    else if (achievement_fields[1].value_end && memcmp(achievement_fields[1].value_end - 4, "[m]", 3) == 0) {
-      len = strlen(achievement->title) - 3;
-      while (achievement->title[len - 1] == ' ')
+    else if (len >= 3 && memcmp(achievement->title + len - 3, "[m]", 3) == 0) {
+      len -= 3;
+      while (len > 0 && achievement->title[len - 1] == ' ')
         --len;
       ((char*)achievement->title)[len] = '\0';
       achievement->type = RC_ACHIEVEMENT_TYPE_MISSABLE;

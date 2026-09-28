@@ -104,6 +104,10 @@ pub struct rc_client_user_t {
     pub score_softcore: u32,
     pub num_unread_messages: u32,
     pub avatar_url: *const c_char,
+    /// rcheevos 12.4+ (`time_t`, 8 bytes on the targets we build, as for
+    /// [`rc_client_user_game_summary_t`]). Appended by upstream, so earlier
+    /// fields keep their offsets; `abi_guard` pins the struct size per target.
+    pub avatar_last_updated: i64,
 }
 
 /// `rc_client_user_game_summary_t`. `time_t` is 8 bytes on the targets we build.
