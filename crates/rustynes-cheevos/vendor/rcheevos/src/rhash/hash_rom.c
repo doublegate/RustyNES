@@ -35,7 +35,18 @@ int rc_hash_arcade(char hash[33], const rc_hash_iterator_t* iterator)
   const char* filename = rc_path_get_filename(iterator->path);
   const char* ext = rc_path_get_extension(filename);
   char buffer[128]; /* realistically, this should never need more than ~32 characters */
-  size_t filename_length = ext - filename - 1;
+  size_t filename_length;
+
+  if (!*ext) {
+    /* some emulators will receive a path to the extracted romset instead of a compressed romset.
+     * for those emulators, `iterator->path` will be a folder, and therefore won't have an extension to ignore.
+     * we can assume the folder name is the same as the romset archive name and try to hash it.
+     * since we're not actually hashing the contents of the archive, this is safe to do.
+     * */
+    return rc_hash_buffer(hash, (uint8_t*)filename, strlen(filename), iterator);
+  }
+
+  filename_length = ext - filename - 1;
 
   /* fbneo supports loading subsystems by using specific folder names.
    * if one is found, include it in the hash.
@@ -295,6 +306,92 @@ int rc_hash_n64(char hash[33], const rc_hash_iterator_t* iterator)
   free(buffer);
 
   return rc_hash_finalize(iterator, &md5, hash);
+}
+
+int rc_hash_neogeo_cart(char hash[33], const rc_hash_iterator_t* iterator)
+{
+  /* The first 4096 bytes of a .neo file are a header: a magic number, the
+   * sizes of the ROM sections, and metadata text fields (name, manufacturer,
+   * genre, ...). The text fields can differ between conversion tools, so the
+   * header cannot participate in the hash. The decrypted, concatenated ROM
+   * data starts at byte 4096 and is deterministic for a given romset - hash
+   * only that.
+   * https://github.com/libretro/geolith-libretro (src/geo_neo.c)
+   */
+  const size_t header_size = 4096;
+  const size_t chunk_size = 65536;
+  md5_state_t md5;
+  uint8_t* buffer;
+  uint8_t header[4];
+  int64_t size;
+  void* file_handle;
+  size_t remaining;
+  int result = 0;
+
+  if (iterator->buffer) {
+    if (iterator->buffer_size < header_size ||
+        memcmp(iterator->buffer, "NEO\1", 4) != 0)
+      return rc_hash_iterator_error(iterator, "Not a valid .neo file");
+
+    rc_hash_iterator_verbose(iterator, "Ignoring NEO header");
+    return rc_hash_unheadered_iterator_buffer(hash, iterator, header_size);
+  }
+
+  file_handle = rc_file_open(iterator, iterator->path);
+  if (!file_handle)
+    return rc_hash_iterator_error(iterator, "Could not open file");
+
+  rc_file_seek(iterator, file_handle, 0, SEEK_SET);
+  if (rc_file_read(iterator, file_handle, header, 4) != 4 ||
+      memcmp(header, "NEO\1", 4) != 0) {
+    rc_file_close(iterator, file_handle);
+    return rc_hash_iterator_error(iterator, "Not a valid .neo file");
+  }
+
+  rc_file_seek(iterator, file_handle, 0, SEEK_END);
+  size = rc_file_tell(iterator, file_handle);
+  if (size <= (int64_t)header_size) {
+    rc_file_close(iterator, file_handle);
+    return rc_hash_iterator_error(iterator, "Not a valid .neo file");
+  }
+  size -= (int64_t)header_size;
+
+  if (size > MAX_BUFFER_SIZE) {
+    rc_hash_iterator_verbose_formatted(iterator, "Hashing first %u bytes (of %u bytes) of %s after 4096 byte header",
+      MAX_BUFFER_SIZE, (unsigned)size, rc_path_get_filename(iterator->path));
+    remaining = MAX_BUFFER_SIZE;
+  }
+  else {
+    rc_hash_iterator_verbose_formatted(iterator, "Hashing %s (%u bytes after 4096 byte header)",
+      rc_path_get_filename(iterator->path), (unsigned)size);
+    remaining = (size_t)size;
+  }
+
+  md5_init(&md5);
+
+  buffer = (uint8_t*)malloc(chunk_size);
+  if (!buffer) {
+    rc_file_close(iterator, file_handle);
+    return rc_hash_iterator_error(iterator, "Could not allocate temporary buffer");
+  }
+
+  rc_file_seek(iterator, file_handle, (int64_t)header_size, SEEK_SET);
+  while (remaining >= chunk_size) {
+    rc_file_read(iterator, file_handle, buffer, (int)chunk_size);
+    md5_append(&md5, buffer, (int)chunk_size);
+    remaining -= chunk_size;
+  }
+
+  if (remaining > 0) {
+    rc_file_read(iterator, file_handle, buffer, (int)remaining);
+    md5_append(&md5, buffer, (int)remaining);
+  }
+
+  free(buffer);
+  result = rc_hash_finalize(iterator, &md5, hash);
+
+  rc_file_close(iterator, file_handle);
+  return result;
 }
 
 int rc_hash_nintendo_ds(char hash[33], const rc_hash_iterator_t* iterator)

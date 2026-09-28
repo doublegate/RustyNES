@@ -26,6 +26,42 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Dependencies
+
+- **Every dependency brought to its newest release, major and minor**, and the
+  five open Dependabot updates (#564, #566, #567, #568, #569) taken in the same
+  change. Nothing is held back that could be moved:
+  - **egui 0.35 -> 0.36 with wgpu 29 -> 30 and naga 29 -> 30**, which must move
+    together. `egui-winit` 0.36.2, still the newest release, does not compile for
+    the web build (`E0407` on `DroppedFile::bytes`); upstream has fixed it but not
+    released the fix, so `vendor/egui-winit/` carries the published 0.36.2 with a
+    three-site `wasm32` guard, wired through `[patch.crates-io]` as
+    `rust-libretro-sys` already is (`vendor/egui-winit/VENDORED.md`). It is
+    removed the day a fixed release ships. The wgpu 30 API changes (present on
+    the queue, surface colour space, adapter limit buckets, a fallible mapped
+    range) keep the picture and limits exactly as before.
+  - egui 0.36 hands each texture several ordered updates per frame and asserts
+    that a frame's texture updates are never dropped unapplied. Every update is
+    now applied in order, and a detached tool window that closes between
+    building its frame and drawing it discards its updates explicitly.
+  - **rcheevos 12.3.0 -> 12.5.0** (RetroAchievements). One mirrored struct grew a
+    field (`rc_client_user_t.avatar_last_updated`); the size guard caught it
+    before anything ran.
+  - The RetroAchievements structs' `time_t` fields (`unlock_time`, the
+    beaten and completed times, and the new `avatar_last_updated`) were
+    declared as a fixed 64-bit integer. `time_t` is 32 bits on 32-bit Android
+    (armeabi-v7a, an opt-in ABI) and 32-bit Linux, so there every later field
+    was misplaced. They now use the target's own `time_t`; the size guard,
+    run as i686 Linux, failed before the change (84 against 80 bytes) and
+    passes after it.
+  - bitflags 2.13, realfft 3.5, libc 0.2.189, wasm-bindgen 0.2.129 (and the
+    Trunk CLI pin with it), UniFFI 0.32.2, thiserror 2.0.21, cc 1.5.1 and every
+    compatible lockfile update; Gradle 9.8.0 (wrapper and distribution
+    checksums verified against Gradle's own), androidx core-ktx 1.19.1;
+    setup-gradle 6.4.0 and install-action 2.87.21.
+  - `bincode` is removed rather than bumped: nothing in the workspace used it,
+    and 3.0.0 is a `compile_error!` tombstone that cannot build.
+
 ## [2.9.2] - 2026-09-28 - "Candidate" (the full audit acted on, and the release-candidate pair)
 
 The third release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):

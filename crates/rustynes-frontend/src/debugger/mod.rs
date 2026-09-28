@@ -624,6 +624,38 @@ pub fn detached_refresh(id: &'static str) -> DetachedRefresh {
     }
 }
 
+/// egui 0.36 — apply every texture update in `delta`, leaving its `set` empty.
+///
+/// Two changes in egui 0.36 make this a function rather than a one-line loop.
+/// `TexturesDelta::set` is now `HashMap<TextureId, SmallVec<[ImageDelta; 1]>>`:
+/// one id can carry several ORDERED deltas in one frame (a whole upload, then
+/// partial patches), and every one must be applied in order -- taking only the
+/// first would drop partial updates and leave stale texels on screen. And
+/// `TexturesDelta` now implements `Drop`, which forbids moving its fields out and
+/// `debug_assert!`s that the delta is empty when dropped, so the map is taken
+/// with `mem::take`, which also leaves it in the empty state it must end in.
+pub(crate) fn upload_texture_sets(
+    renderer: &mut egui_wgpu::Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    delta: &mut egui::TexturesDelta,
+) {
+    for (id, images) in std::mem::take(&mut delta.set) {
+        for image in &images {
+            renderer.update_texture(device, queue, id, image);
+        }
+    }
+}
+
+/// egui 0.36 — take the textures `delta` retires, leaving its `free` empty.
+///
+/// `TexturesDelta::free` became a `HashSet`; the renderer frees them one at a
+/// time, so the order is immaterial. Returned as a `Vec` for callers that defer
+/// the frees past a render. See [`upload_texture_sets`] for why this takes.
+pub(crate) fn take_texture_frees(delta: &mut egui::TexturesDelta) -> Vec<egui::TextureId> {
+    std::mem::take(&mut delta.free).into_iter().collect()
+}
+
 /// v2.3.0 "Datum II" — the tessellated output of one shell egui pass.
 ///
 /// Carried from [`DebuggerOverlay::run_shell_ui`] (which needs `&mut Nes`, so the
@@ -2944,9 +2976,8 @@ impl DebuggerOverlay {
             size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
             pixels_per_point,
         };
-        for (id, image) in output.textures_delta.set {
-            self.renderer.update_texture(device, queue, id, &image);
-        }
+        let mut textures_delta = output.textures_delta;
+        upload_texture_sets(&mut self.renderer, device, queue, &mut textures_delta);
         self.renderer
             .update_buffers(device, queue, encoder, &clipped, &screen_desc);
         {
@@ -2970,7 +3001,7 @@ impl DebuggerOverlay {
                 .forget_lifetime();
             self.renderer.render(&mut rp, &clipped, &screen_desc);
         }
-        for id in output.textures_delta.free {
+        for id in take_texture_frees(&mut textures_delta) {
             self.renderer.free_texture(&id);
         }
     }
@@ -3174,11 +3205,13 @@ impl DebuggerOverlay {
         queue: &wgpu::Queue,
         prepared: &mut PreparedShell,
     ) -> Vec<egui::TextureId> {
-        let delta = std::mem::take(&mut prepared.textures_delta);
-        for (id, image) in delta.set {
-            self.renderer.update_texture(device, queue, id, &image);
-        }
-        delta.free
+        upload_texture_sets(
+            &mut self.renderer,
+            device,
+            queue,
+            &mut prepared.textures_delta,
+        );
+        take_texture_frees(&mut prepared.textures_delta)
     }
 
     /// v2.7.3 (DESK-01) — apply the frees [`Self::upload_shell_textures`]
@@ -3213,9 +3246,13 @@ impl DebuggerOverlay {
             size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
             pixels_per_point: prepared.pixels_per_point,
         };
-        for (id, image) in prepared.textures_delta.set {
-            self.renderer.update_texture(device, queue, id, &image);
-        }
+        let mut prepared = prepared;
+        upload_texture_sets(
+            &mut self.renderer,
+            device,
+            queue,
+            &mut prepared.textures_delta,
+        );
         self.renderer
             .update_buffers(device, queue, encoder, &prepared.clipped, &screen_desc);
         {
@@ -3240,7 +3277,7 @@ impl DebuggerOverlay {
             self.renderer
                 .render(&mut rp, &prepared.clipped, &screen_desc);
         }
-        for id in prepared.textures_delta.free {
+        for id in take_texture_frees(&mut prepared.textures_delta) {
             self.renderer.free_texture(&id);
         }
     }

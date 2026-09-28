@@ -165,7 +165,7 @@ fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
 /// per RA convention (RA logs it); the rcheevos version comes from the vendored
 /// library via `RCHEEVOS_VERSION` (emitted by `build.rs` from `rc_version.h`),
 /// so it stays correct across a re-vendor. Result, e.g.:
-/// `RustyNES/1.0.0 rcheevos/12.3.0`.
+/// `RustyNES/2.9.2 rcheevos/12.5.0`.
 pub(crate) const RA_USER_AGENT: &str = concat!(
     "RustyNES/",
     env!("CARGO_PKG_VERSION"),

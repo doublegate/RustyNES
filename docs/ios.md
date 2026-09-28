@@ -68,7 +68,9 @@ nursery clippy gates otherwise on.
 
 ### Metal surface — the one platform difference from Android
 
-wgpu 29's public `SurfaceTargetUnsafe` has **no** `CoreAnimationLayer` variant.
+wgpu 29's public `SurfaceTargetUnsafe` had **no** `CoreAnimationLayer` variant.
+wgpu 30 adds one (behind `cfg(metal)`); the shim keeps the `UiKit` path below,
+which is the one that has run on devices, rather than switch uncompiled.
 The shim builds a surface from the **`UIView` pointer** (the SwiftUI `MTKView`, a
 `UIView` whose backing layer is a `CAMetalLayer`) via a raw-window-handle 0.6
 `UiKit` handle:

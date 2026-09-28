@@ -28,7 +28,7 @@ crate-type = ["cdylib", "staticlib"]
 workspace = true
 
 [dependencies]
-libc = "0.2.186"
+libc = "0.2.189"
 # `unstable-env-commands` unlocks `set_memory_maps` (RetroAchievements'
 # preferred memory-descriptor path) and `get_fastforwarding` (used to skip
 # non-essential audio work during RetroArch's rollback-netplay/fast-forward

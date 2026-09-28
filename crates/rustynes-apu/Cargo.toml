@@ -46,7 +46,7 @@ criterion.workspace = true
 # Real-to-complex FFT for the BLEP spectral regression test
 # (`tests/spectral.rs` + `benches/spectral.rs`). Pure-Rust, dev-only —
 # does NOT propagate to consumer builds.
-realfft = "3.4"
+realfft = "3.5"
 
 [[bench]]
 name = "spectral"
