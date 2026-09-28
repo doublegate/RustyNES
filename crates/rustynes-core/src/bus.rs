@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this bus is RustyNES's own, but it incorporates models ported from TriCNES (MIT): the OAM-DMA register-window read (`oam_dma_read_reg_active`) is a direct port of TriCNES's `Fetch` address-bus-window block, and the unified DMA engine's state (`dmc_halt`, `uni_oam_active` / `_halt` / `_aligned` / `_addr`) is modelled on TriCNES's DMA flags. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Lockstep bus for the `Nes` facade.
 //!
 //! Per `docs/scheduler.md` §Bus design: this bus owns CPU RAM, the PPU, the

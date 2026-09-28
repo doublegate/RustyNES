@@ -59,6 +59,7 @@ distributing the combined work under GPL-3.0-or-later.
 | --- | --- | --- | --- |
 | `crates/rustynes-cpu/src/cpu.rs` | Mesen2 | `SyaSxaAxa` unstable-store opcodes, `Core/NES/NesCpu.h` | GPL-3.0-or-later |
 | `crates/rustynes-ppu/src/ppu.rs` | Mesen2 | `ProcessSpriteEvaluation` (`NesPpu.cpp:1015-1141`), `ReadSpriteRam`, the OAM-data-bus / sprite-evaluation read paths | GPL-3.0-or-later |
+| `crates/rustynes-core/src/bus.rs` | TriCNES | the `Fetch` address-bus-window block (`oam_dma_read_reg_active`, a direct port); the DMA flags the unified DMA engine models (`dmc_halt`, `uni_oam_*`) | MIT |
 | `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares BSD-2/Apache-2.0 |
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
 | `crates/rustynes-apu/src/opll.rs` | emu2413 (upstream MIT; Mesen2 vendors it) | `emu2413.{h,cpp}` | MIT |
