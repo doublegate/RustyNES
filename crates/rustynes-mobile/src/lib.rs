@@ -766,6 +766,9 @@ impl NesController {
     /// Only the frame paths are wrapped: they are the calls that execute
     /// emulated cycles, and the ones a host makes sixty times a second, so the
     /// ones where a core defect surfaces. Other methods keep `UniFFI`'s guard.
+    /// v2.9.2 (audit AUD-11) adds the one per-frame call that runs no cycle,
+    /// [`Self::composite_hd_frame`]: it too is made every frame, and it walks
+    /// user-supplied HD-pack data.
     fn contained_frame<T>(
         &self,
         body: impl FnOnce(&Self, &mut Inner) -> T,
@@ -1342,43 +1345,19 @@ impl NesController {
     /// Composite the current frame through the active HD-pack and return the upscaled
     /// RGBA8 bytes (`hdpack_dimensions` w*h*4), or empty if no pack is loaded. Call
     /// after `run_frame`.
+    ///
+    /// v2.9.2 (audit AUD-11) — runs under `contained_frame`, like the
+    /// frame paths. The hosts call it once per frame whenever a pack is loaded,
+    /// it is not a throwing method in the generated bindings, and it walks
+    /// pack data the user supplied; before v2.9.2 a panic in it went through
+    /// `UniFFI`'s own guard, which in Swift is a `try!` that aborts the app.
+    /// Now the panic is caught here, the host is warned once
+    /// ([`HostWarning::RecoveredFromInternalError`]) and the machine freezes
+    /// exactly as after a frame-path panic, returning empty (the host then
+    /// shows the held stock picture) until a fresh start. A frozen machine
+    /// returns empty without compositing.
     pub fn composite_hd_frame(&self) -> Vec<u8> {
-        let mut g = self.lock();
-        if g.hd_pack.is_none() {
-            return Vec::new();
-        }
-        // Snapshot the per-pixel tile source, the CHR (0x0000..0x2000), and the frame.
-        let hd_tiles = g.nes.hd_tile_source().to_vec();
-        let framebuffer = g.nes.framebuffer().to_vec();
-        let mut chr = vec![0u8; 0x2000];
-        for (addr, slot) in (0u16..0x2000).zip(chr.iter_mut()) {
-            *slot = g.nes.peek_ppu(addr);
-        }
-        // Snapshot the pack's watched memory (PPU bus or CPU bus per the tag bit).
-        let watched_addrs = g
-            .hd_pack
-            .as_ref()
-            .map_or_else(Vec::new, |c| c.watched_addresses().to_vec());
-        let mut watched = rustynes_hdpack::hdpack::WatchedMemory::new();
-        for tagged in watched_addrs {
-            let lo = (tagged & 0xFFFF) as u16;
-            let val = if tagged & rustynes_hdpack::hdpack::PPU_MEMORY_MARKER != 0 {
-                g.nes.ppu_bus_peek(lo)
-            } else {
-                g.nes.cpu_bus_peek(lo)
-            };
-            watched.set(tagged, val);
-        }
-        let Some(comp) = g.hd_pack.as_mut() else {
-            return Vec::new();
-        };
-        let out = comp
-            .composite(&framebuffer, &hd_tiles, &watched, |addr| {
-                chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
-            })
-            .to_vec();
-        drop(g);
-        out
+        self.contained_frame(|_, g| composite_hd_locked(g), |_| Vec::new())
     }
 
     /// Load + start a Lua script (the same sandboxed engine the desktop uses).
@@ -2305,6 +2284,45 @@ fn read_bk2_members(bytes: &[u8]) -> Result<(String, String), MobileError> {
     let header = read_member("Header.txt")?;
     let input_log = read_member("Input Log.txt")?;
     Ok((header, input_log))
+}
+
+/// The body of [`NesController::composite_hd_frame`], under the lock (a free
+/// function because the `#[uniffi::export]` impl admits only methods).
+fn composite_hd_locked(g: &mut Inner) -> Vec<u8> {
+    if g.hd_pack.is_none() {
+        return Vec::new();
+    }
+    // Snapshot the per-pixel tile source, the CHR (0x0000..0x2000), and the frame.
+    let hd_tiles = g.nes.hd_tile_source().to_vec();
+    let framebuffer = g.nes.framebuffer().to_vec();
+    let mut chr = vec![0u8; 0x2000];
+    for (addr, slot) in (0u16..0x2000).zip(chr.iter_mut()) {
+        *slot = g.nes.peek_ppu(addr);
+    }
+    // Snapshot the pack's watched memory (PPU bus or CPU bus per the tag bit).
+    let watched_addrs = g
+        .hd_pack
+        .as_ref()
+        .map_or_else(Vec::new, |c| c.watched_addresses().to_vec());
+    let mut watched = rustynes_hdpack::hdpack::WatchedMemory::new();
+    for tagged in watched_addrs {
+        let lo = (tagged & 0xFFFF) as u16;
+        let val = if tagged & rustynes_hdpack::hdpack::PPU_MEMORY_MARKER != 0 {
+            g.nes.ppu_bus_peek(lo)
+        } else {
+            g.nes.cpu_bus_peek(lo)
+        };
+        watched.set(tagged, val);
+    }
+    let Some(comp) = g.hd_pack.as_mut() else {
+        return Vec::new();
+    };
+    #[cfg(test)]
+    injected_frame_fault();
+    comp.composite(&framebuffer, &hd_tiles, &watched, |addr| {
+        chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
+    })
+    .to_vec()
 }
 
 /// Apply movie playback (drive input from the loaded movie) and recording (capture
@@ -3377,6 +3395,64 @@ mod tests {
         ctrl.run_frame();
         assert!(ctrl.frame() > loaded, "a new ROM thaws it");
         let _ = ctrl.drain_warning_codes();
+    }
+
+    /// An HD-pack `.zip` holding only a `hires.txt` with one `<bgm>`
+    /// declaration: the smallest pack `HdPack::load_from_zip_bytes` accepts
+    /// (an audio-only pack is valid), with no image to encode.
+    fn audio_only_hdpack_zip() -> Vec<u8> {
+        use std::io::Write as _;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("hires.txt", opts).expect("entry");
+        zip.write_all(b"<ver>106\n<scale>1\n<bgm>0,1,title.ogg\n")
+            .expect("write");
+        zip.finish().expect("finish").into_inner()
+    }
+
+    /// AUD-11 (v2.9.2 full audit): `composite_hd_frame` is a per-frame call
+    /// the hosts make after `run_frame` whenever a pack is loaded, it is not a
+    /// throwing method in the bindings, and it walks pack data the user
+    /// supplied. A panic in it must be contained like the frame paths': no
+    /// unwind into the host (in Swift, `try!` would abort the app), one
+    /// warning, and the machine frozen until a fresh start.
+    #[test]
+    fn a_panic_while_compositing_an_hd_frame_is_contained() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.load_hdpack_from_zip_bytes(audio_only_hdpack_zip())
+            .expect("an audio-only pack loads");
+        ctrl.run_frame();
+        ctrl.run_frame();
+        assert!(
+            !ctrl.composite_hd_frame().is_empty(),
+            "a loaded pack composites a picture"
+        );
+
+        panic_in_next_frame();
+        let out =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctrl.composite_hd_frame()))
+                .expect("the panic must be contained inside the bridge");
+        assert!(out.is_empty(), "no HD picture from a failed composite");
+        assert_eq!(
+            ctrl.drain_warning_codes(),
+            vec![HostWarning::RecoveredFromInternalError]
+        );
+
+        // Frozen, as after a frame-path panic: no cycle runs, and the HD path
+        // keeps answering (empty, so the host shows the held stock picture).
+        let frozen = ctrl.frame();
+        ctrl.run_frame();
+        assert_eq!(ctrl.frame(), frozen, "no cycle may run after the panic");
+        assert!(ctrl.composite_hd_frame().is_empty());
+        assert!(ctrl.drain_warning_codes().is_empty(), "warned once");
+
+        // A fresh start thaws it.
+        ctrl.power_cycle();
+        let cycled = ctrl.frame();
+        ctrl.run_frame();
+        ctrl.run_frame();
+        assert!(ctrl.frame() > cycled, "a power cycle thaws the machine");
     }
 
     #[test]

@@ -420,6 +420,10 @@ final class MultiTouchPadView: UIView {
                 break
             }
         }
+        // v2.9.2 (audit AUD-10): one touch cannot hit opposite directions
+        // (`hitTest` derives them from one offset), but two fingers on the D-pad
+        // can; cancel the combined mask to neutral, as a real NES pad would.
+        mask.cancelOpposingDirections()
         guard mask.bits != lastBits else { return }
         lastBits = mask.bits
         onMaskChanged?(mask.bits)

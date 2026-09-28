@@ -383,6 +383,24 @@ announced the **same `rom_hash`** (`rom-mismatch` otherwise; `room-full` past
 `max_players`). The pure relay logic is unit-tested for 2-, 3-, and 4-peer rooms
 in `rustynes_netplay::signaling`.
 
+A client is in **at most one room**. A `join` or `quick-match` from a client
+that is already in a room first leaves that room exactly as a disconnect would
+(its remaining peers get `peer-left`, and an emptied room is dropped), then
+joins the new one (v2.9.2, audit AUD-13). Before v2.9.2 the relay only
+re-pointed the client, which stayed in the old room's slots as a ghost: that
+room could never empty, and its peers kept offering to a peer that had gone. A
+client re-joining the room it is in likewise leaves and re-enters it, rather
+than occupying two slots.
+
+**Frame-number bound (players' session).** A received `Input` or `Checksum`
+names a frame, and the rollback session's per-frame tables are grown to reach
+it. `RollbackSession` drops any whose frame is past
+`RollbackSession::max_accepted_frame` = current frame + `input_delay` +
+`max_rollback_frames` + `MAX_SESSION_FRAME_LOOKAHEAD` (1024), so a peer cannot
+choose an allocation size (v2.9.2, audit AUD-06; the derivation of the bound
+is on the constant). The spectator session has carried the same 1024-frame
+bound (`MAX_SPECTATOR_FRAME_LOOKAHEAD`) since it was written.
+
 ### 3.3 Wasm-frontend wiring + lobby (wired)
 
 `rustynes-frontend` has a **wasm-only netplay path** (`wasm_netplay.rs`) that:

@@ -68,6 +68,37 @@ pub const MAX_PLAYERS: usize = 4;
 /// window) are resent.
 const INPUT_RESEND_WINDOW: u32 = 64;
 
+/// How far past this peer's [`current_frame`](RollbackSession::current_frame)
+/// a remote `Input.frame` / `Checksum.frame` may sit before the message is
+/// dropped as implausible (AUD-06, v2.9.2 full audit).
+///
+/// Every per-frame vector in the session is indexed by frame number and grown
+/// on demand, so an unchecked remote frame is an allocation size chosen by the
+/// peer: one datagram carrying `frame = u32::MAX` asked for ~4 G entries in
+/// each of six vectors (an OOM abort on 64-bit, a `usize` overflow on wasm32).
+///
+/// # Why this value
+///
+/// A well-behaved peer cannot get far ahead of us. Its input for frame `f` is
+/// authored `input_delay` frames early, and it stalls once it runs more than
+/// `max_rollback_frames` past its last confirmed frame, which in turn cannot
+/// pass the newest input WE have sent (`our current_frame + input_delay`). So
+/// the furthest frame it can legitimately name is our current frame plus our
+/// `input_delay`, plus its `max_rollback_frames` and its `input_delay`, plus
+/// two: 14 frames with the default config. Checksums are only sent for
+/// confirmed frames, which sit below that. The session config is not
+/// negotiated on the wire, so the peer's values may exceed ours; 1024 frames
+/// (about 17 s at 60 Hz) leaves room for a peer configured roughly 70x past
+/// the defaults, and [`RollbackSession::max_accepted_frame`] adds this peer's
+/// own `input_delay` and `max_rollback_frames` on top so a local config larger
+/// than the constant is never undercut. Each frame costs about 110 bytes across
+/// the six vectors, so the worst a hostile peer can force is about 115 KiB.
+///
+/// Dropping an over-window message is safe: inputs are resent every tick
+/// until acknowledged, so a genuine one arrives again once it is in range.
+/// Mirrors the spectator's `MAX_SPECTATOR_FRAME_LOOKAHEAD` (also 1024).
+pub const MAX_SESSION_FRAME_LOOKAHEAD: u32 = 1024;
+
 /// Errors that abort a netplay session.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -423,7 +454,23 @@ impl<T: Transport> RollbackSession<T> {
         });
     }
 
+    /// The newest frame a remote `Input` or `Checksum` may name and still be
+    /// folded in: [`current_frame`](Self::current_frame) plus this peer's
+    /// `input_delay + max_rollback_frames` plus [`MAX_SESSION_FRAME_LOOKAHEAD`]
+    /// (saturating). See the constant for the derivation. Anything later is
+    /// dropped before it can size an allocation.
+    #[must_use]
+    pub const fn max_accepted_frame(&self) -> u32 {
+        self.current_frame
+            .saturating_add(self.config.input_delay)
+            .saturating_add(self.config.max_rollback_frames)
+            .saturating_add(MAX_SESSION_FRAME_LOOKAHEAD)
+    }
+
     /// Grow the per-frame vectors so index `frame` is addressable.
+    ///
+    /// Callers pass either a locally-derived frame or a remote one that has
+    /// already been checked against [`max_accepted_frame`](Self::max_accepted_frame).
     fn ensure_frame(&mut self, frame: u32) {
         let need = frame as usize + 1;
         if self.history.len() < need {
@@ -588,6 +635,12 @@ impl<T: Transport> RollbackSession<T> {
                     if player >= self.config.num_players || player == lp {
                         continue;
                     }
+                    // Drop a frame past the lookahead window before it can size
+                    // an allocation (AUD-06; see MAX_SESSION_FRAME_LOOKAHEAD).
+                    // A genuine input is resent until acked, so nothing is lost.
+                    if frame > self.max_accepted_frame() {
+                        continue;
+                    }
                     self.ensure_frame(frame);
                     let slot = &mut self.history[frame as usize];
                     let cell = &mut slot.players[player as usize];
@@ -615,6 +668,12 @@ impl<T: Transport> RollbackSession<T> {
                     hash,
                     fb_hash,
                 } => {
+                    // Same window as `Input` (AUD-06). A peer only checksums
+                    // confirmed frames, which are never past our inputs, so a
+                    // legitimate checksum is always well inside it.
+                    if frame > self.max_accepted_frame() {
+                        continue;
+                    }
                     self.ensure_frame(frame);
                     // Record the remote value, then compare if our canonical
                     // hash for that confirmed frame is ready. If not, the
@@ -930,5 +989,161 @@ impl<T: Transport> RollbackSession<T> {
             }
             f += interval;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{LinkConditions, MemoryTransport};
+
+    // A minimal NROM (infinite loop) so a session can advance frames without a
+    // real game. Same fixture as the spectator tests.
+    fn synth_nrom() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(1);
+        bytes.push(1);
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        prg[0] = 0x4C;
+        prg[1] = 0x00;
+        prg[2] = 0xC0;
+        let len = prg.len();
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+        prg[len - 6] = 0x00;
+        prg[len - 5] = 0xC0;
+        prg[len - 2] = 0x00;
+        prg[len - 1] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+        bytes
+    }
+
+    /// The length every per-frame vector must share (they are grown together
+    /// by `ensure_frame`); asserting on all six catches a bound that guarded
+    /// only one call site.
+    fn per_frame_lens<T: Transport>(s: &RollbackSession<T>) -> [usize; 6] {
+        [
+            s.history.len(),
+            s.snapshots.len(),
+            s.local_checksums.len(),
+            s.confirmed_hashes.len(),
+            s.remote_checksums.len(),
+            s.confirmed_entering.len(),
+        ]
+    }
+
+    /// AUD-06 (v2.9.2 full audit): a remote peer's `Input.frame` /
+    /// `Checksum.frame` sized six `Vec`s with no bound, so one datagram with
+    /// `frame = u32::MAX` asked for ~4 G entries per vector (an OOM abort on
+    /// 64-bit; a `usize` overflow on wasm32). A frame past the lookahead window
+    /// must be dropped WITHOUT growing any per-frame vector.
+    #[test]
+    fn remote_frame_beyond_lookahead_is_dropped_without_allocating() {
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (link, mut peer) = MemoryTransport::pair(LinkConditions::PERFECT, 11);
+        let mut session = RollbackSession::new(SessionConfig::default(), link, hash);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        // A moderately far frame first: large enough to be implausible, small
+        // enough (~20 MiB if accepted) that an unguarded build fails the
+        // assertion below instead of aborting the test process.
+        let far = 200_000;
+        peer.send(&NetMessage::Input {
+            player: 1,
+            frame: far,
+            input: 0xFF,
+        });
+        peer.send(&NetMessage::Checksum {
+            frame: far,
+            hash: 1,
+            fb_hash: 2,
+        });
+        session.advance(&mut nes).expect("advance");
+        let bound = session.max_accepted_frame() as usize + 1;
+        for len in per_frame_lens(&session) {
+            assert!(
+                len <= bound,
+                "a remote frame index must not size the per-frame vectors (len = {len}, bound = {bound})"
+            );
+        }
+
+        // The worst case: the largest representable frame, for both message
+        // kinds that carry one.
+        peer.send(&NetMessage::Input {
+            player: 1,
+            frame: u32::MAX,
+            input: 0xFF,
+        });
+        peer.send(&NetMessage::Checksum {
+            frame: u32::MAX,
+            hash: 1,
+            fb_hash: 2,
+        });
+        session.advance(&mut nes).expect("advance");
+        let bound = session.max_accepted_frame() as usize + 1;
+        for len in per_frame_lens(&session) {
+            assert!(len <= bound, "len = {len}, bound = {bound}");
+        }
+    }
+
+    /// The window edge, pinned both ways: the last accepted frame is folded
+    /// into history (so legitimate far-ahead traffic survives), the next one is
+    /// dropped. Mutating the comparison in either direction fails one half.
+    #[test]
+    fn lookahead_window_edge_is_inclusive() {
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (link, mut peer) = MemoryTransport::pair(LinkConditions::PERFECT, 12);
+        let mut session = RollbackSession::new(SessionConfig::default(), link, hash);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        let edge = session.max_accepted_frame();
+        peer.send(&NetMessage::Input {
+            player: 1,
+            frame: edge,
+            input: 0x42,
+        });
+        peer.send(&NetMessage::Input {
+            player: 1,
+            frame: edge + 1,
+            input: 0x24,
+        });
+        // `advance` ingests before it moves the clock, so both frames are
+        // judged against the window computed above.
+        session.advance(&mut nes).expect("advance");
+        let accepted = session.history[edge as usize].players[1];
+        assert!(
+            accepted.confirmed,
+            "the window edge itself must be accepted"
+        );
+        assert_eq!(accepted.input, 0x42);
+        assert_eq!(
+            session.history.len(),
+            edge as usize + 1,
+            "one past the edge must not grow history"
+        );
+    }
+
+    /// The bound must clear everything a well-behaved peer can send: its input
+    /// runs at most `input_delay + max_rollback_frames + 2` frames past ours
+    /// (see `max_accepted_frame`), and it may run a larger config than ours.
+    #[test]
+    fn window_covers_the_protocol_maximum_with_slack() {
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (link, _peer) = MemoryTransport::pair(LinkConditions::PERFECT, 13);
+        let cfg = SessionConfig::default();
+        let session = RollbackSession::new(cfg, link, hash);
+        let protocol_max = 2 * cfg.input_delay + cfg.max_rollback_frames + 2;
+        assert!(session.max_accepted_frame() - session.current_frame() >= protocol_max);
+        assert!(
+            session.max_accepted_frame() - session.current_frame() >= MAX_SESSION_FRAME_LOOKAHEAD
+        );
     }
 }

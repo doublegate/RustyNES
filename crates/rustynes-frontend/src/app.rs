@@ -4262,8 +4262,14 @@ impl App {
         {
             buttons[0] |= self.virtual_pad.mask();
         }
+        // v2.9.2 (audit AUD-08) — `player1()..player4()` are already SOCD-
+        // cleaned, but the folds above can add the opposite of a held
+        // direction (keyboard Left + on-screen Right), so clean the combined
+        // live mask once more. Idempotent; a no-op when the user allows
+        // opposing directions. Movie playback, TAStudio and Lua overrides are
+        // applied later, in `EmuCore::latch`, and never pass through here.
         crate::emu::FrameInputs {
-            buttons,
+            buttons: self.input.clean_all_directions(buttons),
             four_score: self.config.input.four_score,
             // v2.2.0 "Capstone" — Famicom microphone hold-to-talk (native only;
             // no key source on wasm). Byte-identical when released.

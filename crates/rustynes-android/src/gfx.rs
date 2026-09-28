@@ -75,6 +75,12 @@ pub struct AndroidGfx {
     /// Reused framebuffer staging buffer — the JNI copies each frame's bytes in
     /// place (`get_byte_array_region`) instead of allocating a fresh `Vec` per frame.
     frame_buf: Vec<u8>,
+    /// v2.9.2 (audit AUD-12) — reused palette-index staging buffer for the
+    /// Bisqwit pass (filter 4), `NES_W*NES_H*2` bytes. The JNI copies each
+    /// frame's `byte[]` into it in place, as it does for `frame_buf`; until
+    /// v2.9.2 it went through `convert_byte_array`, which allocated a fresh
+    /// 120 KiB `Vec` on the native heap every frame the filter was on.
+    index_buf: Vec<u8>,
     _window: NativeWindow,
 }
 
@@ -409,6 +415,7 @@ impl AndroidGfx {
             params: [0.0; 4],
             ntsc_phase: 0,
             frame_buf: vec![0u8; (NES_W * NES_H * 4) as usize],
+            index_buf: vec![0u8; (NES_W * NES_H * 2) as usize],
             _window: window,
         };
         gfx.write_uniforms();
@@ -482,13 +489,23 @@ impl AndroidGfx {
         &mut self.frame_buf
     }
 
-    /// Upload one 256×240 palette-index frame (`NES_W*NES_H*2` little-endian `u16`
-    /// bytes — `(emphasis << 6) | colour`) plus the NTSC `phase`, for the Bisqwit
-    /// pass. The host calls this each frame only while the Bisqwit filter is active.
-    pub fn set_index_frame(&mut self, idx_bytes: &[u8], phase: u8) {
-        if idx_bytes.len() != (NES_W * NES_H * 2) as usize {
-            return;
-        }
+    /// The reused palette-index staging buffer (AUD-12); the JNI copies the Java
+    /// `byte[]` into this (`get_region`) and then calls
+    /// [`Self::commit_index_frame`]. Length is fixed at `NES_W*NES_H*2`.
+    pub fn index_buf_mut(&mut self) -> &mut [u8] {
+        &mut self.index_buf
+    }
+
+    /// Upload the palette-index frame staged in [`Self::index_buf_mut`]
+    /// (`NES_W*NES_H*2` little-endian `u16` bytes — `(emphasis << 6) | colour`)
+    /// plus the NTSC `phase`, for the Bisqwit pass. The host calls this each
+    /// frame only while the Bisqwit filter is active.
+    ///
+    /// The upload is exactly what `set_index_frame(&bytes, phase)` did before
+    /// v2.9.2; only where the bytes live changed. The length check that used
+    /// to open that function now sits in the JNI, before the copy, with the
+    /// same outcome: a wrong-sized array uploads nothing and leaves the phase.
+    pub fn commit_index_frame(&mut self, phase: u8) {
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.index_texture,
@@ -496,7 +513,7 @@ impl AndroidGfx {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            idx_bytes,
+            &self.index_buf,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(NES_W * 2),

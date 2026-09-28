@@ -76,6 +76,13 @@ final class EmulatorCore {
     /// Suppress audio push without tearing the sink down (a user mute toggle).
     var isMuted = false
 
+    /// v2.9.2 (audit AUD-14): called once per console frame, on the main thread,
+    /// just before the frame runs (single-player and netplay alike), so per-frame
+    /// host work -- the hardware-gamepad turbo pulse -- is paced by emulated
+    /// frames, not the wall clock. Not called while paused (`tick()` returns
+    /// early). Set by `AppModel` when it opens a game. UNCOMPILED at v2.9.2.
+    var onFrameWillRun: (() -> Void)?
+
     /// The live P1 (port 0) controller mask, cached from `setButtons` so the netplay
     /// frame loop can feed it to `npAdvanceFrame(localMask:)` (v1.9.6). The bridge
     /// maps this peer's local mask onto its own player slot internally (host = P1,
@@ -202,6 +209,11 @@ final class EmulatorCore {
         // reset, a device loss) before this frame pushes into it. Both the
         // single-player and the netplay paths push, so it runs first.
         recoverAudioIfNeeded()
+
+        // AUD-14: advance frame-paced host input (turbo) BEFORE the frame, so any
+        // mask it pushes (`setButtons` -> the bridge's atomics / `_localMask`) is
+        // latched by this frame on both paths below.
+        onFrameWillRun?()
 
         // Netplay (v1.9.6): while a session is active the rollback core owns pacing,
         // so the loop advances via `npAdvanceFrame` instead of `runFrame` (calling

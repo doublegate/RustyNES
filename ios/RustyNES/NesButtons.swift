@@ -63,4 +63,18 @@ struct NesButtonMask {
 
     /// Clear all buttons.
     mutating func clear() { bits = 0 }
+
+    /// v2.9.2 (audit AUD-10) -- neutral SOCD (simultaneous opposing cardinal
+    /// directions) cleaning: Up + Down together become neither, and so do
+    /// Left + Right, each axis on its own; every other bit passes through. The
+    /// same rule as the desktop's `input::socd_neutral` and Android's
+    /// `socdNeutral`. A real NES pad's rocking cross cannot report opposites; two
+    /// fingers on the on-screen D-pad can. UNCOMPILED at v2.9.2 (no Swift
+    /// toolchain on the Linux build host) -- see the device checklist.
+    mutating func cancelOpposingDirections() {
+        let vertical = NesButton.up.rawValue | NesButton.down.rawValue
+        let horizontal = NesButton.left.rawValue | NesButton.right.rawValue
+        if bits & vertical == vertical { bits &= ~vertical }
+        if bits & horizontal == horizontal { bits &= ~horizontal }
+    }
 }

@@ -313,6 +313,11 @@ final class AppModel: ObservableObject {
             let data = try await library.romData(for: entry)
             let core = try EmulatorCore(romData: data)
             core.isMuted = muted
+            // v2.9.2 (AUD-14): pace the gamepad turbo pulse by emulated frames.
+            // Captures the manager (a plain class), not `self`, so the closure
+            // touches no main-actor state of this model.
+            let pads = gamepads
+            core.onFrameWillRun = { [weak pads] in pads?.advanceTurboFrame() }
             // v2.7.4 (MOB-05): the outgoing game's final battery write, then the
             // incoming game's `.sav`, loaded before its first frame.
             flushBatteryNow()

@@ -61,6 +61,25 @@ Settings for A6-A7.
 | I14 | MOB-09 | Start a room-code join, then close the game before it connects | Nothing connects afterwards; the next game opens with no netplay session |
 | I15 | MOB-07 | (only if a crash reproduces) | The app stays open, the game freezes, and a message says to reopen it or load a save state |
 
+## v2.9.2 additions (full audit)
+
+The v2.9.2 full audit (`audits/v2.9.2-full-audit-report.md`) added mobile
+changes that join this checklist on the same terms. The Swift changes are
+**uncompiled** (no Swift toolchain on the Linux build host), so B1 is also
+their first compile. The Android ones compile (`:app:testFossDebugUnitTest`,
+which runs `socdNeutral`'s JVM tests, and the `cargo ndk` cross-build), but
+have not run on a device.
+
+| # | Finding | Step | Expect |
+| --- | --- | --- | --- |
+| A13 | AUD-09 | On the on-screen pad, rest one finger on the D-pad's Up arm and press Down with another; then Left and Right the same way | The character does not move (opposites cancel); lifting either finger moves it the other way |
+| A14 | AUD-12 | GPU renderer on, select the Bisqwit NTSC filter, play for a minute | The filtered picture looks as before, with no new stutter |
+| A15 | AUD-11 | Load an HD pack and play for a minute | The HD picture as before |
+| I16 | AUD-10 (Swift, uncompiled) | On the on-screen pad, hold Up with one finger and Down with another; then Left and Right | The character does not move; lifting either finger moves it the other way |
+| I17 | AUD-14 (Swift, uncompiled) | Game controller with a turbo button held: play, then pause from the menu for a few seconds, resume | Turbo fires at about the old rate (15 presses a second at 60 fps); nothing fires while paused; releasing it leaves A/B released |
+| I18 | AUD-14 (Swift, uncompiled) | Netplay with a game controller, turbo held | Turbo reaches the game as it does offline |
+| I19 | AUD-11 | Load an HD pack and play for a minute | The HD picture as before |
+
 ## Record
 
 | Platform | Device / OS | Result | Notes |

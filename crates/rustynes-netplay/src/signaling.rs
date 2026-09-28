@@ -599,6 +599,18 @@ impl Relay {
     /// remaining peers' slots are left compacted.
     #[must_use]
     pub fn disconnect(&mut self, client: ClientId) -> Vec<Action> {
+        self.leave_room(client)
+    }
+
+    /// Remove `client` from whatever room it is in, returning the `PeerLeft`
+    /// notices for the peers that remain (and dropping the room once empty).
+    /// Shared by [`disconnect`](Self::disconnect) and by every room-entry path:
+    /// a client that joins while already in a room leaves the old one first
+    /// (AUD-13, v2.9.2 full audit). Without that, `client_room` was simply
+    /// overwritten and the client stayed in the old room's `slots` as a ghost
+    /// that kept the room alive forever and received its peers' offers. A
+    /// client in no room yields no actions.
+    fn leave_room(&mut self, client: ClientId) -> Vec<Action> {
         let Some(room_code) = self.client_room.remove(&client) else {
             return Vec::new();
         };
@@ -633,12 +645,18 @@ impl Relay {
         rom_hash: &str,
         req_max_players: u8,
     ) -> Vec<Action> {
-        match self.add_to_room(client, room_code, rom_hash, req_max_players) {
-            Ok((slot, max_players, existing_peers)) => {
-                Self::join_actions(client, slot, max_players, &existing_peers, None)
-            }
-            Err(reason) => Self::reject(client, reason),
-        }
+        // Leave any current room first (AUD-13); its peers' `PeerLeft` notices
+        // go out before this join's own actions.
+        let mut actions = self.leave_room(client);
+        actions.extend(
+            match self.add_to_room(client, room_code, rom_hash, req_max_players) {
+                Ok((slot, max_players, existing_peers)) => {
+                    Self::join_actions(client, slot, max_players, &existing_peers, None)
+                }
+                Err(reason) => Self::reject(client, reason),
+            },
+        );
+        actions
     }
 
     /// Reply to a [`SignalMessage::ListRooms`] with the open, joinable rooms —
@@ -665,6 +683,10 @@ impl Relay {
         rom_hash: &str,
         max_players: u8,
     ) -> Vec<Action> {
+        // Leave any current room first (AUD-13), before choosing a target, so
+        // the client can never be matched into the room it is leaving while
+        // still counted in it.
+        let mut actions = self.leave_room(client);
         // Prefer an existing open room for this exact game with a free slot.
         // Scan `self.rooms` directly (not `open_rooms`, which truncates at
         // `MAX_ROOM_LIST`) so matchmaking reaches every joinable room even in a
@@ -681,14 +703,17 @@ impl Relay {
             .map(|(code, _)| code.clone());
 
         let room_code = target.unwrap_or_else(|| self.next_room_code());
-        match self.add_to_room(client, &room_code, rom_hash, max_players) {
-            Ok((slot, max, existing_peers)) => {
-                Self::join_actions(client, slot, max, &existing_peers, Some(room_code))
-            }
-            // A race (the chosen room filled between selection and add) falls
-            // back to a rejection the client can retry — never panics.
-            Err(reason) => Self::reject(client, reason),
-        }
+        actions.extend(
+            match self.add_to_room(client, &room_code, rom_hash, max_players) {
+                Ok((slot, max, existing_peers)) => {
+                    Self::join_actions(client, slot, max, &existing_peers, Some(room_code))
+                }
+                // A race (the chosen room filled between selection and add)
+                // falls back to a rejection the client can retry — never panics.
+                Err(reason) => Self::reject(client, reason),
+            },
+        );
+        actions
     }
 
     /// The shared room-entry primitive: create/lookup the room, enforce capacity
@@ -1249,6 +1274,68 @@ mod tests {
         let acts = relay.disconnect(2);
         assert!(acts.is_empty());
         assert_eq!(relay.room_count(), 0);
+    }
+
+    /// AUD-13 (v2.9.2 full audit): a client that joins a second room on the
+    /// same connection must first leave the first one, exactly as a disconnect
+    /// would (its old peers told `PeerLeft`, the room dropped once empty).
+    /// Before the fix `client_room` was simply overwritten, so the client sat
+    /// in room A's `slots` forever: A could never empty, and its peers kept
+    /// offering to a ghost.
+    #[test]
+    fn joining_a_second_room_leaves_the_first() {
+        let mut relay = Relay::new();
+        let _ = relay.handle(1, join("a", "h"));
+        let _ = relay.handle(2, join("a", "h"));
+        // Client 1 moves to room "b" without disconnecting.
+        let acts = relay.handle(1, join("b", "h"));
+        assert_eq!(
+            acts,
+            vec![
+                Action::Send {
+                    to: 2,
+                    msg: SignalMessage::PeerLeft { slot: 0 }
+                },
+                Action::Send {
+                    to: 1,
+                    msg: SignalMessage::Joined {
+                        slot: 0,
+                        max_players: 2
+                    }
+                },
+            ]
+        );
+        // Room "a" now holds only client 2, so it is joinable and client 2
+        // leaving drops it.
+        let open = relay.open_rooms("");
+        let a = open.iter().find(|r| r.code == "a").expect("room a is open");
+        assert_eq!(a.players, 1);
+        let _ = relay.disconnect(2);
+        assert_eq!(relay.room_count(), 1, "only room b remains");
+        let _ = relay.disconnect(1);
+        assert_eq!(relay.room_count(), 0, "no ghost keeps any room alive");
+    }
+
+    /// The same, through `QuickMatch`, and for a client re-joining the room it
+    /// is already in (which used to give it a second slot in the same room).
+    #[test]
+    fn rejoining_or_quick_matching_never_duplicates_a_client() {
+        let mut relay = Relay::new();
+        let _ = relay.handle(1, join("a", "h"));
+        let _ = relay.handle(1, join("a", "h"));
+        let open = relay.open_rooms("");
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].players, 1, "a re-join must not take a second slot");
+
+        let _ = relay.handle(
+            1,
+            SignalMessage::QuickMatch {
+                rom_hash: "other".into(),
+                max_players: 2,
+            },
+        );
+        let _ = relay.disconnect(1);
+        assert_eq!(relay.room_count(), 0, "no ghost keeps room a alive");
     }
 
     #[test]

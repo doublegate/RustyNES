@@ -61,6 +61,65 @@ cycle-accurate core later replaced.
   into it; they are now replaced with an empty map first. After a normal unload
   `retro_deinit` makes no extra call.
 
+### Netplay
+
+- **A peer can no longer make a session allocate memory it names** (full audit
+  AUD-06). The frame number on a received input or checksum sized six
+  per-frame tables with no limit, so one datagram with `frame = u32::MAX` asked
+  for about four billion entries in each: an out-of-memory abort on 64-bit, a
+  `usize` overflow on wasm32. A frame more than `MAX_SESSION_FRAME_LOOKAHEAD`
+  (1024) plus this peer's input delay and rollback window past the current
+  frame is now dropped before it touches a table. A well-behaved peer runs at
+  most 14 frames ahead with the default settings, and inputs are resent until
+  acknowledged, so no real traffic is lost; a hostile peer can force at most
+  about 115 KiB. The spectator had this bound already; the players' session
+  did not.
+- **Joining a second room on the signaling server leaves the first** (AUD-13).
+  The server simply re-pointed the client, which stayed in its old room as a
+  ghost: that room could never empty, and its peers kept offering to a client
+  that had gone. A join or quick match now leaves the current room exactly as
+  a disconnect does, telling the peers left behind. A client re-joining its
+  own room no longer takes a second slot in it.
+
+### Desktop input
+
+- **Unplugging a gamepad releases what it was holding and frees its port**
+  (AUD-07). A pad pulled out mid-press left its buttons and stick direction
+  held on the console, and never gave its player port back; since gilrs gives
+  a different device a new id, four pads coming and going filled every port
+  until restart.
+- **Opposing directions cancel** (AUD-08, a behaviour change). A real NES
+  pad's D-pad cannot press Up and Down, or Left and Right, together; a
+  keyboard, hitbox or worn pad can, and games glitch on it. Live input is now
+  cleaned to neutral on each axis: both opposites held reads as neither, and
+  input without an opposition is unchanged. **Settings → Input → Allow
+  opposing directions** (`[input] allow_opposing_directions`) turns it off.
+  Movie playback, TAStudio, Lua and netplay peers' input are never cleaned, so
+  recordings replay exactly as written. `docs/frontend.md` §Input.
+
+### Mobile
+
+- **A panic while compositing an HD-pack frame no longer reaches the app**
+  (AUD-11). `composite_hd_frame` runs once a frame whenever a pack is loaded,
+  walks pack data the user supplied, and was the one per-frame bridge call
+  outside the v2.7.4 containment, so a panic in it was a `try!` abort on iOS.
+  It is now contained like the frame paths: one warning, and the game freezes
+  until it is reopened, power cycled or a state is loaded.
+- **Android's Bisqwit NTSC filter no longer allocates a frame buffer every
+  frame** (AUD-12). The palette-index frame is copied into a buffer the
+  renderer keeps, as the RGBA frame already was, instead of a new 120 KiB
+  `Vec` on each of 60 frames a second. The picture is unchanged.
+- **Two fingers on the on-screen D-pad no longer press opposite directions**
+  (AUD-09 Android, AUD-10 iOS). Each finger could only ever select one side of
+  an axis, but a resting thumb and a sliding one could select both; the
+  combined touch mask is now cleaned to neutral, as on the desktop.
+- **iOS gamepad turbo is paced by emulated frames** (AUD-14). A wall-clock
+  30 Hz timer flipped it, so it kept pulsing while the game was paused and fell
+  out of step when the display link ran several frames in one callback. It now
+  flips every two console frames, the same rate at 60 fps. The iOS changes are
+  uncompiled here and join the device checklist
+  (`docs/mobile-v2.7.4-device-checklist.md`, rows A13-A15 and I16-I19).
+
 ### Performance
 
 - **libretro: the first save state no longer allocates** (AUD-17). The snapshot
