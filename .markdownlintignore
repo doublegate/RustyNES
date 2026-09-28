@@ -28,3 +28,6 @@ to-dos/plans/
 # ledger beside it records what was done). Lint-fixing them would mean editing
 # the record; their ledgers are linted like any living doc.
 docs/audits/v2.9.0-*-reaudit.md
+# The v2.9.2 full audit (maintainer-supplied, AI-written), kept exactly as written
+# for the same reason; its ledger is linted.
+docs/audits/v2.9.2-full-audit-report.md

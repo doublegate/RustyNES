@@ -36,6 +36,18 @@ SuperStation One audit). Review of the release PRs found more; those are recorde
 in the ledgers too, attributed to the review. The same caution applies to these reports as to the first four: each
 claim was re-derived before it was acted on.
 
+## The v2.9.2 full audit
+
+A fifth report, added by the maintainer on 2026-09-27: one AI-written audit of
+both repositories, 32 findings (AUD-01..AUD-32), kept exactly as supplied in
+[`v2.9.2-full-audit-report.md`](v2.9.2-full-audit-report.md) (moved here from
+`docs/full-audit-report.md`; the only change is the repository's whitespace hook
+trimming a single-space line, line 1275). Every finding is triaged in
+[`v2.9.2-full-audit-disposition.md`](v2.9.2-full-audit-disposition.md) under the
+same rules as the others: a Rust defect is trusted once a test fails on it, and
+every RTL claim and number is re-derived. The work is v2.9.2's
+([plan](../../to-dos/plans/v2.9.2-candidate-plan.md)).
+
 ## What these reports are
 
 They were **written by an AI agent** (the Antigravity CLI, `agy`) and committed in
