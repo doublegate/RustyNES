@@ -47,6 +47,13 @@ cycle-accurate core later replaced.
   - **rcheevos 12.3.0 -> 12.5.0** (RetroAchievements). One mirrored struct grew a
     field (`rc_client_user_t.avatar_last_updated`); the size guard caught it
     before anything ran.
+  - The RetroAchievements structs' `time_t` fields (`unlock_time`, the
+    beaten and completed times, and the new `avatar_last_updated`) were
+    declared as a fixed 64-bit integer. `time_t` is 32 bits on 32-bit Android
+    (armeabi-v7a, an opt-in ABI) and 32-bit Linux, so there every later field
+    was misplaced. They now use the target's own `time_t`; the size guard,
+    run as i686 Linux, failed before the change (84 against 80 bytes) and
+    passes after it.
   - bitflags 2.13, realfft 3.5, libc 0.2.189, wasm-bindgen 0.2.129 (and the
     Trunk CLI pin with it), UniFFI 0.32.2, thiserror 2.0.21, cc 1.5.1 and every
     compatible lockfile update; Gradle 9.8.0 (wrapper and distribution

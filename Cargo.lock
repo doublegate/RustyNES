@@ -4312,6 +4312,7 @@ name = "rustynes-cheevos"
 version = "2.9.2"
 dependencies = [
  "cc",
+ "libc",
  "ureq",
 ]
 

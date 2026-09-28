@@ -15,6 +15,12 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
+// `time_t` is target-defined: 64-bit on the default desktop / arm64 targets, but
+// 32-bit on 32-bit Android (armeabi-v7a) and 32-bit glibc. A hard-coded `i64`
+// shifted every later field there; `abi_guard` caught it on i686 (84 vs 80
+// bytes for `rc_client_achievement_t`).
+use libc::time_t;
+
 /// Opaque `rc_client_t`.
 #[repr(C)]
 pub struct rc_client_t {
@@ -104,13 +110,12 @@ pub struct rc_client_user_t {
     pub score_softcore: u32,
     pub num_unread_messages: u32,
     pub avatar_url: *const c_char,
-    /// rcheevos 12.4+ (`time_t`, 8 bytes on the targets we build, as for
-    /// [`rc_client_user_game_summary_t`]). Appended by upstream, so earlier
-    /// fields keep their offsets; `abi_guard` pins the struct size per target.
-    pub avatar_last_updated: i64,
+    /// rcheevos 12.4+. Appended by upstream, so earlier fields keep their
+    /// offsets; `abi_guard` pins the struct size per target.
+    pub avatar_last_updated: time_t,
 }
 
-/// `rc_client_user_game_summary_t`. `time_t` is 8 bytes on the targets we build.
+/// `rc_client_user_game_summary_t`.
 #[repr(C)]
 pub struct rc_client_user_game_summary_t {
     pub num_core_achievements: u32,
@@ -119,8 +124,8 @@ pub struct rc_client_user_game_summary_t {
     pub num_unsupported_achievements: u32,
     pub points_core: u32,
     pub points_unlocked: u32,
-    pub beaten_time: i64,
-    pub completed_time: i64,
+    pub beaten_time: time_t,
+    pub completed_time: time_t,
 }
 
 /// `rc_client_achievement_t`.
@@ -133,7 +138,7 @@ pub struct rc_client_achievement_t {
     pub measured_percent: f32,
     pub id: u32,
     pub points: u32,
-    pub unlock_time: i64, // time_t
+    pub unlock_time: time_t,
     pub state: u8,
     pub category: u8,
     pub bucket: u8,
