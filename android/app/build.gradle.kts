@@ -23,8 +23,15 @@ val uniffiGenDir: File = layout.buildDirectory.dir("generated/uniffi").get().asF
 // devices, x86_64 for the emulator / CI smoke test. The *release* variant then
 // packages arm64 only (smallest AAB — see the `release` buildType's abiFilters);
 // the *debug* variant keeps x86_64 so it runs on the emulator. armeabi-v7a is
-// opt-in (see the maintainer defaults).
-val builtAbis = listOf("arm64-v8a", "x86_64")
+// opt-in (see the maintainer defaults): pass `-PrustynesAbis=armeabi-v7a` (a
+// comma-separated list replaces the default) to build and package it, e.g. for
+// a 32-bit device run (docs/mobile-v2.9.3-run-sheet.md, row D5). The release
+// variant's `shipAbi` is unaffected.
+val builtAbis: List<String> =
+    (findProperty("rustynesAbis") as String?)
+        ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+        ?.takeIf { it.isNotEmpty() }
+        ?: listOf("arm64-v8a", "x86_64")
 val shipAbi = "arm64-v8a"
 
 android {

@@ -43,6 +43,23 @@ before installing, so the result belongs to a known build.
 | SHA-256 | `abb1fb4bae39c5e7a1cf60ff3ed2d15b2e4d86f5a1d5fb5e1bff12a3e5ffdfbb` |
 | Size | 67,310,419 bytes |
 
+**For row D5 only**, a 32-bit build: `RustyNES-v2.9.3-pre-foss-debug-armeabi-v7a.apk`,
+built with `cd android && ./gradlew :app:assembleFossDebug
+-PrustynesAbis=armeabi-v7a`. It carries only `lib/armeabi-v7a/` (a 32-bit ARM
+ELF), so it installs on a 32-bit device, and on a 64-bit device that can still
+run 32-bit apps it runs the 32-bit libraries. That is what D5 needs, since the
+main APK would run the 64-bit ones.
+
+| | |
+| --- | --- |
+| SHA-256 | `4e75ff99d81840afe8c7d2887475c906e7330b1708391a2a704144ac2cfd3b21` |
+| Size | 39,375,703 bytes |
+
+Before recording D5, confirm the device ran the 32-bit library:
+`adb shell dumpsys package com.doublegate.rustynes.debug | grep primaryCpuAbi`
+should say `armeabi-v7a`. Many recent 64-bit phones can no longer run 32-bit
+apps at all; on those, record D5 as NOT RUN.
+
 A later commit to the Android app, the Rust core or the bridge makes this
 build stale. Rebuild it and record the new checksum here before the device run.
 
@@ -75,7 +92,7 @@ the rest.
 | D2 | wgpu 30, iOS | Open a game; rotate; background and foreground; change the video filter | The picture appears and returns; colours look as before |
 | D3 | rcheevos 12.5.0, Android | Log in to RetroAchievements in Settings; open a game that has achievements | Login shows the user name and score; the game's achievement list loads |
 | D4 | rcheevos 12.5.0, iOS | As D3 | As D3 |
-| D5 | rcheevos, 32-bit Android (only if an armeabi-v7a device is available; that ABI is opt-in) | As D3 | As D3; this is the platform whose struct layout the `time_t` fix changed |
+| D5 | rcheevos, 32-bit Android | Install the **armeabi-v7a** APK (see The build) and confirm `primaryCpuAbi` is `armeabi-v7a`; then as D3 | As D3; this is the platform whose struct layout the `time_t` fix changed |
 
 ## Android
 
@@ -118,7 +135,7 @@ check (`BuildConfig.DEBUG`), which release builds never run.
 | A15 | AUD-11 | NOT RUN (needs an HD pack) | |
 | D1 | #570 | PASS: covered by A7 (wgpu 30, Vulkan device created on the emulator's goldfish driver) | |
 | D3 | #570 | NOT RUN (needs RetroAchievements credentials) | |
-| D5 | #570 | NOT RUN (x86_64 emulator; needs an armeabi-v7a device) | |
+| D5 | #570 | NOT RUN (x86_64 emulator, which cannot run ARM code; the armeabi-v7a APK is built and checksummed for the device) | |
 
 ## iOS
 
