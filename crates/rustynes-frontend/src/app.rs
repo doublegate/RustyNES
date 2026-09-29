@@ -6339,39 +6339,25 @@ impl App {
     /// v1.1.0 beta.1 (T-110-A3) — load + apply the configured `.pal` palette to the
     /// running core (or clear it when none / unreadable). Called on startup and on
     /// ROM load so a configured palette survives a reload. Native-only (no
-    /// filesystem on wasm); a no-op there.
+    /// filesystem on wasm); a no-op there. Takes `&self`: it reads the config and
+    /// never writes it (see the failure note inside).
     #[cfg_attr(
         target_arch = "wasm32",
-        allow(
-            clippy::unused_self,
-            clippy::missing_const_for_fn,
-            clippy::needless_pass_by_ref_mut
-        )
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
     )]
-    fn apply_palette_from_config(&mut self) {
+    fn apply_palette_from_config(&self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let pal = match self.config.graphics.palette_file.as_ref() {
-                None => None,
-                Some(path) => {
-                    let loaded = std::fs::read(path)
-                        .ok()
-                        .and_then(|b| crate::config::parse_pal(&b));
-                    if loaded.is_none() {
-                        // Don't fail silently: a missing/corrupt `.pal` would
-                        // otherwise leave a phantom filename in the config + UI.
-                        // Surface it and clear the entry so we fall back to the
-                        // built-in palette cleanly.
-                        eprintln!(
-                            "rustynes: palette file {} could not be loaded; using built-in palette",
-                            path.display()
-                        );
-                        self.config.graphics.palette_file = None;
-                        let _ = self.config.save();
-                    }
-                    loaded
-                }
-            };
+            // A load failure falls back to the built-in palette for this
+            // session and says so, but leaves `[graphics] palette_file` as
+            // configured: the failure may be transient (an unmounted drive, a
+            // dropped share), and clearing + saving the config -- what this did
+            // until v2.9.3 -- made it permanent. See `load_pal_file`.
+            let pal = self.config.graphics.palette_file.as_ref().and_then(|path| {
+                crate::config::load_pal_file(path)
+                    .map_err(|reason| eprintln!("rustynes: {reason}; using the built-in palette"))
+                    .ok()
+            });
             let mut guard = self.emu.lock();
             if let Some(nes) = guard.nes.as_mut() {
                 nes.set_custom_palette(pal);
@@ -6385,11 +6371,8 @@ impl App {
     /// when nothing is selected we fall back to `apply_palette_from_config`
     /// (built-in or legacy file). Presentation-only; built-in/unselected is
     /// byte-identical.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        allow(clippy::missing_const_for_fn, clippy::needless_pass_by_ref_mut)
-    )]
-    fn apply_active_palette(&mut self) {
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
+    fn apply_active_palette(&self) {
         // v2.1.2 F1.4 — the generated NTSC palette, when enabled, takes
         // precedence over the named bank + legacy `.pal` + built-in. It is a
         // pure function of the stored params, synthesized fresh here (cheap:

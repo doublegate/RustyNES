@@ -1196,6 +1196,31 @@ pub fn parse_pal(bytes: &[u8]) -> Option<[[u8; 3]; 64]> {
     Some(pal)
 }
 
+/// Read and parse the `.pal` file at `path` for the current session.
+///
+/// Deliberately takes no config: a failure here must not change what the user
+/// configured. A read error can be transient (a network share that dropped, a
+/// USB drive not yet mounted), and until v2.9.3 the caller answered any failure
+/// by clearing `[graphics] palette_file` and saving the config, so the setting
+/// was gone for good (review thread on #39). The caller now falls back to the
+/// built-in palette for this session only and keeps the path.
+///
+/// # Errors
+///
+/// A human-readable reason naming the path: the I/O error, or that the file is
+/// shorter than the 192 bytes a 64-colour palette needs.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_pal_file(path: &std::path::Path) -> Result<[[u8; 3]; 64], String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("palette file {}: {e}", path.display()))?;
+    parse_pal(&bytes).ok_or_else(|| {
+        format!(
+            "palette file {} is {} bytes; a palette needs at least 192",
+            path.display(),
+            bytes.len()
+        )
+    })
+}
+
 /// Audio configuration.
 //
 // Not `Eq`: the v1.0.0 `volume` field is an `f32`, so the section is
@@ -2690,6 +2715,21 @@ mod tests {
         assert_eq!(parse_pal(&bytes).unwrap()[0], [0, 1, 2]);
         // Too short → None.
         assert!(parse_pal(&[0u8; 191]).is_none());
+    }
+
+    #[test]
+    fn load_pal_file_reports_missing_and_short_files_without_touching_config() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("gone.pal");
+        let err = load_pal_file(&missing).unwrap_err();
+        assert!(err.contains("gone.pal"), "{err}");
+        let short = dir.path().join("short.pal");
+        std::fs::write(&short, [0u8; 100]).unwrap();
+        assert!(load_pal_file(&short).unwrap_err().contains("100 bytes"));
+        let good = dir.path().join("good.pal");
+        let bytes: Vec<u8> = (0..192u16).map(|i| (i & 0xFF) as u8).collect();
+        std::fs::write(&good, &bytes).unwrap();
+        assert_eq!(load_pal_file(&good).unwrap()[1], [3, 4, 5]);
     }
 
     #[test]
