@@ -1029,6 +1029,43 @@ mod tests {
     const V3_THROUGH_V11_TAILS: usize =
         V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL + V10_TAIL + V11_TAIL;
 
+    /// v11: `spr_rearm_deferred` is the reason for the epoch, and it is only
+    /// ever `true` across the frame boundary, where every run-ahead and save
+    /// snapshot is taken. The round trip must carry a TRUE value (the default
+    /// `false` would survive an omitted or inverted byte), and a v10 blob must
+    /// upconvert to `false` on the direct `restore` path. Added in v2.9.5 at
+    /// Copilot's review of #575.
+    #[test]
+    fn snapshot_v11_carries_the_deferred_sprite_rearm() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.spr_rearm_deferred = true;
+        let blob = p.snapshot();
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert!(
+            q.spr_rearm_deferred,
+            "a true deferral must survive the round trip"
+        );
+
+        p.spr_rearm_deferred = false;
+        let blob = p.snapshot();
+        q.spr_rearm_deferred = true;
+        q.restore(&blob).unwrap();
+        assert!(
+            !q.spr_rearm_deferred,
+            "a false deferral must overwrite a stale true"
+        );
+
+        // A v10 blob: the current blob minus the one-byte v11 tail.
+        p.spr_rearm_deferred = true;
+        let cur = p.snapshot();
+        let mut v10 = cur[..cur.len() - V11_TAIL].to_vec();
+        v10[0] = 10;
+        q.spr_rearm_deferred = true;
+        q.restore(&v10).expect("v10 blob must upconvert");
+        assert!(!q.spr_rearm_deferred, "a pre-v11 blob restores no deferral");
+    }
+
     #[test]
     fn snapshot_round_trip() {
         let mut p = Ppu::new(PpuRegion::Ntsc);
