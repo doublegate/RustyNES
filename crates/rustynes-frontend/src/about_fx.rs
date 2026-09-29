@@ -180,13 +180,17 @@ pub fn tap() {
 /// Cost model (the work is intentionally kept on the UI thread, not offloaded):
 /// the function returns immediately unless `armed` is set, and `armed` only
 /// flips after a deliberate multi-tap activation — so for every ordinary user
-/// this is a zero-cost early return on every keystroke. Once armed, the heavy
-/// path (the iterated-SHA-256 KDF + decrypt + one-shot resource decode) runs at
-/// most once per *distinct* trailing window (cached in `last_try`): a single
-/// intentional attempt is one KDF, not one per keystroke, and the decode happens
-/// exactly once (on the integrity-checked success). The brief, self-inflicted,
-/// once-per-session hitch that remains does not justify a background-worker
-/// state machine in this otherwise self-contained native-only helper.
+/// this is a zero-cost early return on every keystroke. Once armed, every
+/// keystroke after the first [`TRY_LEN`] characters shifts the trailing window,
+/// so each one runs the heavy path once: one iterated-SHA-256 KDF
+/// ([`ROUNDS`] rounds) and a decrypt attempt. `last_try` only skips a window
+/// identical to the previous one; it does not make an attempt cost one KDF in
+/// total. (Until v2.9.3 this comment said "one KDF, not one per keystroke",
+/// which was wrong: review thread on #83.) The resource decode itself happens
+/// exactly once, on the integrity-checked success. The per-keystroke cost is
+/// paid only by someone who deliberately armed the feature and is typing into
+/// it, and it does not justify a background-worker state machine in this
+/// otherwise self-contained native-only helper.
 pub fn pump(ctx: &egui::Context) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
