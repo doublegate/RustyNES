@@ -67,30 +67,37 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 
 - **Holy Mapperel bank-reachability + IRQ net** (v2.1.5, `crates/rustynes-test-harness/tests/holy_mapperel.rs`, `--features test-roms`): the 17 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) each run to their settled result screen, pinned by an `insta` framebuffer-hash snapshot with settled + non-blank structural guards. Catches silent mapper-detection / bank-layout / RAM-sizing / IRQ regressions the `AccuracyCoin` / blargg suites don't cover; **all 17** detect + reach all banks with detailed code `0000` as of v2.2.3 A2, which closed the last two residuals (the MMC1 WRAM write-protect and the FME-7 open-bus-on-disabled-RAM rows above).
 
-- **`tests/roms/extra/apu`: four failing ROMs no gate has ever seen (surfaced
-  v2.6.2, NOT yet investigated).** Nineteen ROMs sit in that directory
-  referenced by nothing in the workspace. They had been dismissed as
-  audio-output-only on the strength of a `$6000` probe — but `$6000` is unmapped
-  on this vintage and reads back `0`, which is blargg's *success* code, so that
-  probe cannot distinguish "passed" from "not present". It is the same false
-  oracle that made the NTSC `blargg_apu_2005` suite vacuous for five minor
-  releases.
+- **`tests/roms/extra/apu/apu_test_{1..10}`: the `$4017` clock that shares an
+  APU cycle with the sequencer's step (surfaced v2.6.2, CLOSED v2.9.5).**
+  Nineteen ROMs sat in that directory referenced by nothing in the workspace.
+  They had been dismissed as audio-output-only on the strength of a `$6000`
+  probe, but `$6000` is unmapped on this vintage and reads back `0`, which is
+  blargg's *success* code. That probe could not tell "passed" from "not
+  present", the same false oracle that had made the NTSC `blargg_apu_2005`
+  suite vacuous for five minor releases. Re-read with the on-screen decoder:
+  - nine are audio-only;
+  - ten report a verdict, and four of those (`_1`, `_2`, `_5`, `_6`) failed.
 
-  Re-read with the on-screen decoder: nine are genuinely audio-only
-  (`apu_dmc_pitch`, `apu_env`, `apu_lin_ctr`, `apu_noise_pitch`,
-  `apu_phase_reset`, `apu_square_pitch`, `apu_sweep_cutoff`, `apu_sweep_sub`,
-  `apu_triangle_pitch`), and **ten report a verdict** — `apu_test_1` through
-  `apu_test_10`, of which **`_1`, `_2`, `_5` and `_6` report `TEST FAILED`**.
-  They settle in 5-6 frames, are plain NROM with CHR-ROM, render correctly, and
-  their SHA-256s differ from every ROM in `nes-test-roms/apu_test/rom_singles/`,
-  so they are a distinct corpus rather than duplicates of the suite that passes
-  8/8. They carry no title text, so what each tests is not yet known.
+  v2.9.5 read the ten ROMs' code, and they are one program with ten delays. Each
+  loads pulse 1's length counter, spends some of it with `$80` writes to
+  `$4017`, sets a mode, waits almost exactly one sequencer period, writes
+  `$4017` again, and checks whether the length counter reached zero. ROMs 9 and
+  10 show that the sequencer's last half-frame step happens before a reset
+  landing at those deltas. ROMs 1, 2, 5 and 6 then require that a mode-1
+  write's immediate clock, maturing one CPU cycle after that step, adds **no
+  second decrement**; one cycle later (3, 4, 7, 8) it must. The quarter- and
+  half-frame triggers are emitted on APU-cycle boundaries (nesdev wiki, *APU
+  Frame Counter* and its Talk page), so the two are one pulse.
 
-  Recorded rather than acted on: identifying and fixing four APU defects is its
-  own work item with its own risk to AccuracyCoin 141/141 and to byte-identity.
-  What is *not* acceptable is leaving the previous "cannot help" claim standing,
-  because it was reached with a reader that cannot tell a pass from an unmapped
-  address.
+  `FrameCounter::prev_tick_step` suppresses the write's clock when the
+  sequencer fired the same clock on the previous tick. It is derived from the
+  sequencer position, so the save-state format is unchanged. **Pinned by
+  `apu_frame_clock_coincidence.rs`, 10/10.** Before the fix, exactly 1, 2, 5
+  and 6 failed. Each ROM's pass branch was decoded from its own
+  `lda $4015 / and #$01 / beq|bne` rather than trusted from the screen.
+
+  The quarter-frame half of the rule rides the same mechanism, but no ROM here
+  observes envelopes, so it is by construction rather than pinned.
 
 ## Notes
 
@@ -164,12 +171,20 @@ tests code 1 IS the canonical answer.
 | `DMA + $4016 Read` | 2 → **1** | Famicom → NES / AV Famicom | **FIXED v2.6.5** |
 | `Sprites On Scanline 0` | 2 | "RGB PPU Detected" | **open — see below** |
 | `Implicit DMA Abort` | 2 | "pre-1990 CPU" | revision selection |
-| `APU Register Activation` | 2 | second accepted outcome | not investigated |
+| `APU Register Activation` | 2 | the OAM-DMA bus conflict **clocked** the controller ports | **an accepted console variant, closed v2.9.5** |
 | `PPU Read Buffer` | 16 | `$41` = ASCII **`G`** — revision-G PPU | the revision this core models |
 | `Address $2004 behavior` | 16 | `$41` = ASCII **`G`** | the revision this core models |
 | `$93`/`$9F`/`$9B` SHA/SHS | 1 | the test's FIRST success code | a clean pass |
 | `DMA + $2002 Read` | 1 | the test's FIRST success code | a clean pass |
 | `PPU Reset Flag`, `CPU RAM`, `CPU Registers`, `PPU RAM`, `Palette RAM` | 53 | — | **not tests** |
+
+**`APU Register Activation` code 2 is a console variant, not a defect.** Its
+finale reads `$4016` twice and branches on whether the OAM-DMA bus conflict
+clocked the controller port. The routine's own comment says *"This used to be
+an error code, but different consoles behave differently, so let's just print
+if it did or not"*, and it returns code 1 ("OAM DMA Bus Conflict no Clock") or
+code 2 ("OAM DMA Bus Conflict Clocks") as two success codes. Read from upstream
+`AccuracyCoin.asm` (`TEST_APURegActivation_Finale`) in v2.9.5.
 
 **The five "code 53" entries are not tests.** Each routine opens with
 `JSR RTS_If_Running_All_Tests` and its own comment says so: *"This isn't actually
@@ -182,7 +197,46 @@ ASCII `G`, and the ROM writes it as *"Success code 'G', referring to revision G
 PPU (or later) behavior"* — the revision this core models. Its counterpart is
 `$39` = `E` for pre-revision-G.
 
-**`Sprites On Scanline 0` is the one genuinely open item.** The ROM reports
+**`Sprites On Scanline 0` is the one genuinely open item, and v2.9.5 found
+that the paragraph below had the wrong half open.**
+
+The ROM (upstream `AccuracyCoin.asm`, `TEST_Scanline0Sprites`) runs two sets
+of two consecutive frames:
+
+- **`$500`/`$501`:** is there a sprite-zero hit at X=`$80` on scanline 0?
+- **`$502`/`$503`:** is there one at X=0?
+
+The result then says:
+
+- **code 2, "RGB PPU":** both `$500` and `$501` hit;
+- **code 1, composite:** the two sets alternate, `40 00 00 40` or `00 40 40 00`.
+
+So this core already produces the scanline-0 sprite from stale secondary OAM
+(the pre-render line's in-range check reads `261 & 255 = 5`). **What it lacks
+is the alternation.**
+
+The mechanism is stated in the forum thread the ROM cites
+(`forums.nesdev.org/viewtopic.php?t=26291`, from Visual2C02 analysis). The
+sprite shifters are told to start counting on dot 339 and see that signal a dot
+late. When an odd frame skips dot 340 of the pre-render line, every shifter
+therefore starts scanline 0 still in the drawing state. It outputs its first
+pixel at X=0, shifts, and only then begins counting, one dot late. The delayed
+count cancels the extra shift, so pixels 1-7 land where they always do, and
+only the first pixel moves, to X=0.
+
+In this core that is the dot-339 re-arm (`spr_halted = false`) taking effect
+after pixel 0 on a skipped frame. It is one piece of deferred state that lives
+from pre-render dot 339 to scanline-0 dot 1. That span contains the frame
+boundary, which is exactly where save states and run-ahead snapshots are taken,
+so the state must be serialized. `PPU_SNAPSHOT_VERSION` 10 → 11 is a `.rns`
+epoch, because the container compares the PPU section's version for equality
+(ADR 0028). **Placed with v3.0.0**, which already carries a save-state epoch,
+unless the maintainer takes the epoch sooner. Not implemented behind a
+default-off flag, which would ship nothing.
+
+**Superseded, kept for the record (the text before v2.9.5):**
+
+The ROM reports
 "RGB PPU Detected" because this core produces no sprite-zero hit at x=0 on
 scanline 0. A composite 2C02 does, and the ROM cites the mechanism
 (`forums.nesdev.org/viewtopic.php?t=26291`): the pre-render line is treated as
@@ -214,7 +268,7 @@ shipping default; one axis-B lever deferred to a maintainer decision).
 | Group | Count | Tests | Disposition |
 |---|---|---|---|
 | Permanent historical pins | 7 | APU `$4015`-load / reload-arm / `put_cycle` (`apu.rs`), CPU interrupt-dispatch ×3 (`opcodes.rs`), PPU BG-shifter (`ppu.rs`) | Pin **superseded pre-master-clock** unit assertions on mock buses; the master-clock core is the only scheduler, so these legitimately cannot be un-ignored. Real coverage supersedes them: AccuracyCoin 100%, `cpu_interrupts_v2` 5/5 strict, `visual_regression` 7/7 |
-| MMC3 R1/R2 scanline-IRQ | 4 | `mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `/5` #2, `/6` #2 | **CLOSED for the shipping default** (ADR 0002 F5.0, 2026-07-09; refined 2026-07-11) — a ≤1-CPU-cycle differential; **zero production-ROM impact**; 21+ falsified levers, all *tested* levers non-curative. The v2.1.5 A12-phase probe (`mmc3_r1r2_phase_probe`) showed post-access IRQ-clocking rises DO exist on `/5`+`/6` (`irq_post=4`) — one untested axis-B lever (M2-edge low-time filter) is deferred to a maintainer decision. Fail-loud `*_currently_fails` companions stay |
+| MMC3 R1/R2 scanline-IRQ | 4 | `mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `/5` #2, `/6` #2 | **CLOSED for the shipping default** (ADR 0002 F5.0, 2026-07-09; refined 2026-07-11) — a ≤1-CPU-cycle differential; **zero production-ROM impact**; 21+ falsified levers, all *tested* levers non-curative. The v2.1.5 A12-phase probe (`mmc3_r1r2_phase_probe`) showed post-access IRQ-clocking rises DO exist on `/5`+`/6` (`irq_post=4`) — the one untested axis-B lever (the M2-edge low-time filter) was **tried in v2.9.5 and refuted**: thresholds 2, 3 and 4 give an identical failing set and messages, because the smallest low time at an IRQ-clocking rise is 91 CPU cycles on the scanline ROMs (ADR 0002, v2.9.5 update). Fail-loud `*_currently_fails` companions stay |
 | MMC3 NEC-rev-B | 1 | `mmc3_test_2/6-MMC3_alt` | By-design: only one of the two *opposite* silicon revisions can pass; the project defaults to Sharp rev A (sub-ROM 5 passes strictly) |
 | Vs. DualSystem GVS boots | 5 | `vs_dualsystem` boot ×4 + 1 combined-dump diagnostic | Fixture-limited: the staged GVS dumps are the MAME maincpu half only (sub-CPU PRG absent), so boot cannot complete; needs a combined 64 KiB dual dump (see `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`) |
 | Live-network probes | 2 | `stun_probe`, `turn_probe` | Hit live public STUN / TURN servers; `#[ignore]`'d so CI/offline runs stay hermetic — run manually with `--ignored` |

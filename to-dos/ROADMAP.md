@@ -853,6 +853,21 @@ supposed to surface rather than absorb.
 
 ### T-ORACLE-001 — MMC3 IRQ timing (mechanism RETRACTED v2.6.15)
 
+**v2.9.5 "Caliper" measurement, added above the older text.** Two candidate
+causes are now ruled out on this core, and the residual stands:
+
+- **The A12 rise is at dot 260**, the dot the NESdev MMC3 page names ("the IRQ
+  counter should decrement on PPU cycle 260"). `ppu.rs` emits slot 0's sprite
+  pattern fetch, and with it the rise, at `dot == 260`. The fetch placement is
+  not what makes the IRQ late.
+- **The M2-edge low-time filter is refuted.** The smallest low time at an
+  IRQ-clocking rise on this ROM is 91 CPU cycles, and filter thresholds 2-4 give
+  identical results (ADR 0002, v2.9.5 update).
+
+What is left is the sample-point axis that ADR 0002 already searched, and v2.9.5
+does not reopen it. The sibling gate `mapper4mmc3irq065` stays unregistered until
+the oracle moves.
+
 **Owner-facing summary, rewritten v2.6.15.** RustyNES fails
 `mmc3_test_2/4-scanline_timing` at sub-test **3**; the MiSTer co-simulation DUT
 fails at sub-test **12**. On this ROM the DUT is the more accurate of the two,
