@@ -996,11 +996,19 @@ jobs:
           targets=$(cargo +nightly fuzz list)
           n=$(printf '%s\n' "$targets" | grep -c .)
           [ "$n" -ge 8 ] || { echo "::error::expected at least 8 fuzz targets, found $n"; exit 1; }
+          # Run EVERY target even after one crashes, so a single run reports
+          # all of them rather than the first (agy on #574).
+          failed=""
           for t in $targets; do
             echo "::group::$t"
-            cargo +nightly fuzz run "$t" -O --target x86_64-unknown-linux-gnu -- -runs=20000 -seed=1
+            cargo +nightly fuzz run "$t" -O --target x86_64-unknown-linux-gnu -- -runs=20000 -seed=1 \
+              || failed="$failed $t"
             echo "::endgroup::"
           done
+          if [ -n "$failed" ]; then
+            echo "::error::fuzz targets that crashed:$failed"
+            exit 1
+          fi
       - name: Keep any crash input
         if: failure()
         uses: actions/upload-artifact@v7
