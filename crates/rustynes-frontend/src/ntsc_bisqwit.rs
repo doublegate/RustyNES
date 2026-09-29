@@ -302,8 +302,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {{
     let video_phase = i32(u.params.x + 0.5);
     let row = clamp(i32(suv.y * 240.0), 0, 239);
 
-    // Centre signal position for this output pixel (256*8 samples per line).
-    let center = i32(suv.x * 256.0 * 8.0);
+    // Centre signal position for this output pixel (256*8 samples per line),
+    // clamped so the whole FW-sample window stays on the line: taps past
+    // either end read as 0, so an unclamped window at the first and last
+    // columns summed a partial signal and darkened the picture edges.
+    let center = clamp(i32(suv.x * 256.0 * 8.0), FW / 2 - 1, 256 * 8 - 1 - FW / 2);
 
     // Per-row decode phase: phase0 = (startCycle + 7) % 12,
     // startCycle = (videoPhase*4 + row*341*8) % 12.
