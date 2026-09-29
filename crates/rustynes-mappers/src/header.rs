@@ -54,6 +54,18 @@ pub struct Header {
     /// only; the two-CPU/two-PPU emulation is a documented v2.0 deferral
     /// (`docs/audit/vs-dualsystem-design-2026-06-11.md`).
     pub vs_dual_system: bool,
+    /// The full Vs. hardware type (NES 2.0 byte 13 high nibble, 0-15): 0
+    /// normal `UniSystem`, 1-4 `UniSystem` boards with protection ICs, 5-6
+    /// `DualSystem`. `0` unless NES 2.0 and `console_type == VsSystem`.
+    /// Carried so that [`serialize_header`] writes back the byte it read;
+    /// [`Header::vs_dual_system`] is the flag emulation actually consults.
+    pub vs_hardware_type: u8,
+    /// NES 2.0 byte 14 bits 0-1: the number of miscellaneous ROMs. `0` for
+    /// iNES 1.0. Not used by emulation; carried for a faithful round-trip.
+    pub misc_rom_count: u8,
+    /// NES 2.0 byte 15 bits 0-5: the default expansion device. `0` for iNES
+    /// 1.0. Not used by emulation; carried for a faithful round-trip.
+    pub default_expansion_device: u8,
     /// PRG-RAM size in bytes (NES 2.0 byte 10 low nibble; heuristic for iNES 1.0).
     pub prg_ram_size: u32,
     /// CHR-RAM size in bytes (NES 2.0 byte 11 low nibble; heuristic for iNES 1.0).
@@ -157,11 +169,8 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         VsPpuType::None
     };
 
-    // Vs. hardware type (NES 2.0 byte 13 HIGH nibble): types 5 and 6 are the
-    // Vs. DualSystem boards (two CPUs / two PPUs). Detection only — the
-    // dual-console emulation is a documented v2.0 deferral.
-    let vs_dual_system =
-        is_nes2 && console_type == ConsoleType::VsSystem && matches!(h[13] >> 4, 5 | 6);
+    // Vs. hardware types 5 and 6 are the DualSystem boards (two CPUs / PPUs).
+    let (vs_hw, misc_roms, expansion) = nes2_tail_fields(&h, is_nes2, console_type);
 
     // RAM sizes.
     let prg_ram_size = if is_nes2 {
@@ -200,7 +209,10 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         region,
         console_type,
         vs_ppu_type,
-        vs_dual_system,
+        vs_dual_system: matches!(vs_hw, 5 | 6),
+        vs_hardware_type: vs_hw,
+        misc_rom_count: misc_roms,
+        default_expansion_device: expansion,
         prg_ram_size,
         chr_ram_size,
         has_battery,
@@ -305,17 +317,45 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
             Region::Dendy => 3,
         };
         // Byte 13: Vs. System PPU type (low nibble) + Vs. hardware type (high
-        // nibble) when console = Vs. System. We only track the DualSystem bool,
-        // so a dual board re-encodes as hardware type 5 (the bool round-trips
-        // even though the original 5-vs-6 distinction is not retained).
+        // nibble) when console = Vs. System. The parsed hardware type is
+        // written back as read (types 1-4 are UniSystem protection boards, 6
+        // is a DualSystem variant), unless `vs_dual_system` has been changed
+        // since (the header editor's checkbox): setting it on a non-dual type
+        // writes 5, clearing it on a dual type writes 0.
         if h.console_type == ConsoleType::VsSystem {
-            let hi = if h.vs_dual_system { 5 << 4 } else { 0 };
-            out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type) | hi;
+            let hw = match (h.vs_dual_system, h.vs_hardware_type & 0x0F) {
+                (true, t @ (5 | 6)) => t,
+                (true, _) => 5,
+                (false, 5 | 6) => 0,
+                (false, t) => t,
+            };
+            out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type) | (hw << 4);
         }
-        // Bytes 14-15 reserved/extended; left zero.
+        // Byte 14: miscellaneous ROM count; byte 15: default expansion device.
+        out[14] = h.misc_rom_count & 0x03;
+        out[15] = h.default_expansion_device & 0x3F;
     }
 
     out
+}
+
+/// NES 2.0 bytes 13 (high nibble), 14 and 15: the Vs. hardware type (only for
+/// a Vs. System console), the miscellaneous ROM count and the default
+/// expansion device. All zero for iNES 1.0, whose bytes 13-15 are padding.
+const fn nes2_tail_fields(
+    h: &[u8; HEADER_LEN],
+    is_nes2: bool,
+    console: ConsoleType,
+) -> (u8, u8, u8) {
+    if !is_nes2 {
+        return (0, 0, 0);
+    }
+    let hw = if matches!(console, ConsoleType::VsSystem) {
+        h[13] >> 4
+    } else {
+        0
+    };
+    (hw, h[14] & 0x03, h[15] & 0x3F)
 }
 
 // Truncating cast: count is masked to 8 / 4 bits before the cast.
@@ -485,6 +525,45 @@ mod tests {
         let p = parse_header(&h).unwrap();
         assert_eq!(p.chr_size, 0);
         assert_eq!(p.chr_ram_size, 8 * 1024);
+    }
+
+    #[test]
+    fn nes2_round_trip_keeps_byte_13_high_nibble_and_bytes_14_15() {
+        // The debugger header editor writes `serialize_header` output back to
+        // the ROM file, so every byte a parse can read must come back. Before
+        // v2.9.3 the Vs. hardware type (byte 13 high nibble) collapsed to 5 or
+        // 0, losing UniSystem protection types 1-4 and the 5/6 distinction,
+        // and bytes 14-15 were always written as zero.
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x01; // NES 2.0, Vs. System
+        for hw in 0..16u8 {
+            h[13] = (hw << 4) | 0x2; // PPU type 2 (RP2C04-0001)
+            h[14] = 0x02; // two miscellaneous ROMs
+            h[15] = 0x2A; // a default expansion device
+            let out = serialize_header(&parse_header(&h).unwrap());
+            assert_eq!(out[13], h[13], "Vs. hardware type {hw}");
+            assert_eq!(out[14], h[14], "byte 14 (misc ROMs), hw {hw}");
+            assert_eq!(
+                out[15], h[15],
+                "byte 15 (default expansion device), hw {hw}"
+            );
+        }
+    }
+
+    #[test]
+    fn toggling_dual_system_rewrites_only_what_it_must() {
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x01;
+        h[13] = 0x30; // UniSystem with protection type 3
+        let mut p = parse_header(&h).unwrap();
+        assert!(!p.vs_dual_system);
+        p.vs_dual_system = true; // the editor's DualSystem checkbox
+        assert_eq!(serialize_header(&p)[13] >> 4, 5);
+        h[13] = 0x60; // DualSystem type 6 stays 6 while the flag stays set
+        let mut p = parse_header(&h).unwrap();
+        assert_eq!(serialize_header(&p)[13] >> 4, 6);
+        p.vs_dual_system = false;
+        assert_eq!(serialize_header(&p)[13] >> 4, 0);
     }
 
     #[test]

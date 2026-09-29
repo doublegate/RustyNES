@@ -85,8 +85,9 @@ Byte 12 bits 0-1: `00` = NTSC, `01` = PAL, `10` = multi-region, `11` = Dendy. iN
 
 ### Default input device (NES 2.0)
 
-Byte 15 bits 0-5 identify the default expansion or input device. The current
-frontend assumes standard controllers unless mapper or test harness metadata
+Byte 15 bits 0-5 identify the default expansion or input device. It is parsed
+into `Header::default_expansion_device` and written back unchanged, but the
+frontend still assumes standard controllers unless mapper or test harness metadata
 overrides it. Full use of this field belongs with the v1.x expanded-input
 work, especially for Zapper, Four Score, Famicom expansion devices, and
 special controllers.
@@ -116,8 +117,14 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN];   // canonical 16-byte 
 `serialize_header` is the exact inverse of `parse_header` for the standard
 (non-exponent-multiplier) size notation. It re-derives the mapper low/mid/hi
 nibbles, the flags-6/flags-7 bits, the submapper, the standard PRG/CHR unit
-counts, the NES 2.0 region/console/RAM-shift bytes, and the Vs. byte-13 nibbles.
-A round-trip test guards `parse → serialize → parse` equality.
+counts, the NES 2.0 region/console/RAM-shift bytes, both Vs. byte-13 nibbles
+(the full hardware type 0-15, not just DualSystem yes/no) and bytes 14-15
+(miscellaneous ROM count, default expansion device). The header editor writes
+this output back to the ROM file, so a field the parser reads and the
+serializer drops is data loss. Until v2.9.3 that was true of UniSystem
+protection types 1-4 (written as 0), the DualSystem 5/6 distinction (written as
+5), and bytes 14-15 (written as 0). Tests guard `parse → serialize → parse`
+equality and byte-for-byte byte-13/14/15 round-trips for every hardware type.
 
 ## Header editor (v1.7.0 "Forge" Workstream A2, frontend tooling)
 
