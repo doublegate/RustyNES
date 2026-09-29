@@ -653,11 +653,12 @@ impl Apu {
     /// v1.4.0 Workstream C — set the per-channel output gain (a UI mixing
     /// overlay; see [`Apu::channel_gain`]). Index 0 = pulse 1, 1 = pulse 2,
     /// 2 = triangle, 3 = noise, 4 = DMC, 5 = external/mapper audio. Each gain is
-    /// clamped to `0.0..=2.0`. [`CHANNEL_GAIN_UNITY`] (all `1.0`) is the
-    /// determinism-safe default (byte-identical mixer output).
+    /// clamped to `0.0..=2.0`; a NaN (which `f32::clamp` would pass through,
+    /// turning every mixed sample into NaN) becomes unity. [`CHANNEL_GAIN_UNITY`]
+    /// (all `1.0`) is the determinism-safe default (byte-identical mixer output).
     pub fn set_channel_gain(&mut self, gain: [f32; 6]) {
         for (slot, g) in self.channel_gain.iter_mut().zip(gain.iter()) {
-            *slot = g.clamp(0.0, 2.0);
+            *slot = if g.is_nan() { 1.0 } else { g.clamp(0.0, 2.0) };
         }
     }
 
@@ -2342,6 +2343,16 @@ mod tests {
         a.set_channel_gain([3.0, -1.0, 0.5, 1.0, 2.0, 0.0]);
         // 3.0 -> 2.0 (ceiling), -1.0 -> 0.0 (floor), the rest unchanged.
         assert_eq!(a.channel_gain(), [2.0, 0.0, 0.5, 1.0, 2.0, 0.0]);
+    }
+
+    /// A NaN gain (only reachable from a hand-edited config) must not reach the
+    /// mixer: `f32::clamp` passes NaN through, and one NaN term makes the mixed
+    /// sample NaN. It falls back to unity; the infinities already clamp.
+    #[test]
+    fn channel_gain_rejects_nan_and_clamps_infinities() {
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        a.set_channel_gain([f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.0, 1.0, 1.0]);
+        assert_eq!(a.channel_gain(), [1.0, 2.0, 0.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]
