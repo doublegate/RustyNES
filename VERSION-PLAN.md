@@ -19,7 +19,7 @@ v1.0.0 is the **production cut that integrates the cycle-accurate emulation engi
 MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 
-- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028), or the first release of a new deliverable class ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md): the hardware-verified FPGA core, v3.0.0).
+- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028), or the first release of a new deliverable class ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md): the first hardware-verified FPGA core). **v3.0.0 is MAJOR by the first trigger** (ADR 0042's API and save-state breaks) and ships an unverified release-candidate core; the hardware-verified core is a later v3.x release ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
 - **MINOR** — backwards-compatible features (new mappers, new frontend features, new platforms).
 - **PATCH** — backwards-compatible bug fixes and accuracy refinements.
 - **PRERELEASE** — `-alpha.N` / `-beta.N` / `-rc.N` when stabilizing a future minor/major.
@@ -169,7 +169,7 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 - **Bump MINOR** (the middle digit — e.g. `vMAJOR.MINOR.0`) for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything backwards-compatible that adds capability.
 - **Bump PATCH** (the last digit — e.g. `vMAJOR.MINOR.PATCH`) for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior.
-- **Bump MAJOR** (`vMAJOR.0.0`) for either of two things. (1) An incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs). (2) The first release of a **new deliverable class**, verified to the standard that class requires — the first hardware-verified FPGA core is v3.0.0 ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)). A new *host* for the same emulator (mobile, libretro) stays MINOR.
+- **Bump MAJOR** (`vMAJOR.0.0`) for either of two things. (1) An incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs). (2) The first release of a **new deliverable class**, verified to the standard that class requires — the first hardware-verified FPGA core ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)), which [ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) moved from v3.0.0 to a later v3.x. v3.0.0 itself is MAJOR under (1), for ADR 0042's API and save-state breaks. A new *host* for the same emulator (mobile, libretro) stays MINOR.
 
 ### Breaking-change policy
 

@@ -985,13 +985,20 @@ jobs:
         working-directory: fuzz
         run: |
           set -euo pipefail
-          cargo +nightly fuzz build -O
+          # --target is REQUIRED: install-action fetches cargo-fuzz's prebuilt
+          # musl binary, and cargo-fuzz defaults to the triple it was built
+          # for, so without it the first CI run built for
+          # x86_64-unknown-linux-musl, where ASan rejects the static libc and
+          # the musl `core` is not installed. A locally built cargo-fuzz is a
+          # gnu binary, which is why the local run could not see this
+          # (Copilot on #574, from run 36606541264).
+          cargo +nightly fuzz build -O --target x86_64-unknown-linux-gnu
           targets=$(cargo +nightly fuzz list)
           n=$(printf '%s\n' "$targets" | grep -c .)
           [ "$n" -ge 8 ] || { echo "::error::expected at least 8 fuzz targets, found $n"; exit 1; }
           for t in $targets; do
             echo "::group::$t"
-            cargo +nightly fuzz run "$t" -O -- -runs=20000 -seed=1
+            cargo +nightly fuzz run "$t" -O --target x86_64-unknown-linux-gnu -- -runs=20000 -seed=1
             echo "::endgroup::"
           done
       - name: Keep any crash input
