@@ -4,7 +4,7 @@ Every line traces to
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`, which quotes the
 MiSTer-devel wiki fetched 2026-08-23. **Nothing here is from memory.**
 
-The whole list must be complete **by v3.0.0**, which is the submission ([ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) moved it from v2.7.0 on 2026-09-22); it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
+The whole list must be complete **by the hardware-verification release (v3.x)**, which is the submission ([ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) moved it from v2.7.0 to v3.0.0 on 2026-09-22; [ADR 0043](../../docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) moved it after v3.0.0 on 2026-09-29, when v3.0.0 became the API major with an unverified release-candidate core); it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
 items are marked with the release that settled them -- **(now)** for ones true
 before this programme started, **(v2.6.6)** for the layout items the chassis
 release landed -- so the remaining unchecked boxes are the real work rather than

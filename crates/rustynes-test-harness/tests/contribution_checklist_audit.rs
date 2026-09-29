@@ -372,7 +372,7 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
         not_ours.join("\n  ")
     );
     assert!(
-        md.contains("must be complete **by v3.0.0**"),
+        md.contains("must be complete **by the hardware-verification release (v3.x)**"),
         "the checklist no longer states when it must be complete"
     );
 }

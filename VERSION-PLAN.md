@@ -64,8 +64,14 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 
 | Version | Scope | Plan |
 |---------|-------|------|
-| v3.0.0 | **Scope under revision** (2026-09-29). Planned as the SuperStation One core, the first hardware-verified FPGA bitstream, a MAJOR bump under [ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md); the maintainer then moved the board session and the mobile device runs after v3.0.0, so what it ships is open (ADR 0041's 2026-09-29 amendment). ADR 0042's API removals are scheduled for it either way | [`v3.0.0-superstation-core-plan.md`](to-dos/plans/v3.0.0-superstation-core-plan.md) (under revision) |
-| after v3.0.0 | **The hardware work**: the SuperStation One board session on the prepared kit, the mobile device runs on `docs/mobile-v2.9.3-run-sheet.md`, and the fixes each produces | [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F) |
+| v2.9.4 | **Records and CI coverage**: ADR 0043, records drift in both repos, the board kit re-staged, fuzz and feature-gated tests and coverage in CI | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v2.9.5 | **Accuracy**: the four uninvestigated `apu_test` failures, the open AccuracyCoin questions, T-ORACLE-001 (MMC3 IRQ timing), unused test ROMs pinned; the sibling's open ledger rows and blind mutation classes | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v2.9.6 | **Mappers**: popular missing families on the existing MMC3 / FCG / MMC1 cores (37, 47, 12, 74/191/192/194/195, 105, 115/121, 163, 228, 83, 91, 153, ...) and tier promotions | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v2.9.7 | **Targeted platform features, off by default**: FDS/NSF and Vs. DualSystem on mobile and web, web `.sav` persistence, the mobile opposite-direction switch, i18n depth, optional `full` release binaries | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v2.9.8 | **Performance and the SDRAM arbiter**: stale rejections re-measured with the fixed A/B tool; the sibling's slot-scheduled arbiter (S2) and co-simulated OSD options | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v2.9.9 | **Release candidate**: all four audit scopes re-run, the v3.0.0 removals trialled and measured, both bitstreams swept at the RC date | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v3.0.0 | **The API major and a release-candidate core** ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)): ADR 0042's removals, the `LockstepBus` rename, `.rns` BUS section v2; both bitstreams swept and labelled **not hardware-verified**; the libretro `.info` upstream sync | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
+| v3.x | **Hardware verification**: the SuperStation One board session (Strands A-F), the mobile device runs, and the fixes each produces | [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
 
 ### Post-1.0 release line (v1.1.0 → current)
 

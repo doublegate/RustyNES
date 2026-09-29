@@ -26,6 +26,20 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed — release plan
+
+- **v3.0.0 is now the API major with a release-candidate core**
+  ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md),
+  maintainer, 2026-09-29). It carries ADR 0042's removals and ships both MiSTer
+  bitstreams labelled **not hardware-verified**. Hardware verification (the
+  SuperStation One board session and the mobile device runs) becomes a later
+  v3.x release. The line to v3.0.0 is
+  [`to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md):
+  records and CI (v2.9.4), accuracy (v2.9.5), mappers (v2.9.6), targeted
+  platform features (v2.9.7), performance and the SDRAM arbiter (v2.9.8), the
+  release candidate (v2.9.9). The MiSTer contribution checklist's deadline moves
+  with the submission, to the hardware-verification release.
+
 ## [2.9.3] - 2026-09-29 - "Handset" (the old review threads closed, and the mobile run prepared)
 
 The fourth release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):

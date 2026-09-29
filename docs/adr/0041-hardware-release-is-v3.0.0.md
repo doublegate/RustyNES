@@ -119,3 +119,7 @@ decided:
 - the v3.0.0 plan's gate is marked as under revision, not deleted;
 - the board and device work keep their prepared material (the board kit, the
   run sheet, the emulator pre-run) for whenever they run.
+
+**Resolved the same day by [ADR 0043](0043-v3-is-the-api-major-and-a-release-candidate-core.md)**:
+v3.0.0 is the API major with a release-candidate core, not hardware-verified,
+and the hardware work becomes a later v3.x release.
