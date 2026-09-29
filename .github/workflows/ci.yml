@@ -1022,9 +1022,9 @@ jobs:
   # (`--lib`), default features. The integration suites are excluded on
   # purpose: instrumented, the `determinism` suite alone ran past 16 minutes
   # locally before it was stopped, which no per-PR job can afford.
-  # Baseline measured 2026-09-29 on v2.9.3 + this branch: 72.01% of lines
-  # (76.25% of functions, 74.46% of regions), 7.7 min with the build. The
-  # floor sits two points under it; re-reporting the same data with
+  # Baseline on v2.9.4: 71.66% of lines ON THIS RUNNER (76.10% functions,
+  # 74.07% regions); the same tree measured 72.01% locally, so the runner's
+  # number is the one that counts. The floor is 70%; re-reporting the same data with
   # `--fail-under-lines 80` exits 1, so it can fail. Raise the floor when a
   # release raises the number; never lower it to make a PR pass. Recorded in
   # docs/testing-strategy.md.

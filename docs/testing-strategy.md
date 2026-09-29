@@ -219,8 +219,9 @@ fails if any job it aggregates failed):
 - **Coverage (since v2.9.4):** `cargo llvm-cov --workspace --lib
   --fail-under-lines 70`. The scope is the workspace's **lib tests only**; the
   integration suites are too slow instrumented (the `determinism` suite alone ran
-  past 16 minutes). Baseline at v2.9.3 + v2.9.4's changes: **72.01% of lines**
-  (76.25% of functions, 74.46% of regions). The floor sits two points below it.
+  past 16 minutes). Baseline at v2.9.4: **71.66% of lines on the CI runner**
+  (76.10% of functions, 74.07% of regions); the same tree measured 72.01% on the
+  maintainer's machine, so quote the runner's number. The floor is 70%.
   Raise it when a release raises the number; never lower it to make a change
   pass.
 - **Also:** the no_std cross-build, the libretro buildbot targets, and the

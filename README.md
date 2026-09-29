@@ -680,7 +680,7 @@ v2.9.4 changes no emulation behaviour. It records what v3.0.0 now is (the API
 major with a release-candidate core, ADR 0043) and the line of releases that
 leads there. CI now runs tests it had only been linting (63 behind non-default
 features), builds and runs the eight fuzz targets, and fails below 70% line
-coverage of the lib tests (72.01% measured). The records were re-checked
+coverage of the lib tests (71.66% on the CI runner). The records were re-checked
 against the code: the mapper tiers, the store status, the roadmaps and the
 deferred-features catalogue. The OAM-decay model is now recorded as derived from
 Mesen2, as its v2.1.4 commit had said.
