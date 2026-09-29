@@ -64,6 +64,13 @@
 # does not stand alone or the entry needs the battery's preceding state, and
 # both are open questions rather than DUT defects.
 #
+# RE-BLESSED IN v2.9.5: `ppu-misc-sprites-on-scanline-0` records
+# `PassWithCode(1)`, the composite-2C02 outcome, where it recorded
+# `PassWithCode(2)`, "RGB PPU", until then. The core now draws the odd-frame
+# scanline-0 sprite glitch (`docs/ppu-2c02.md`, `spr_rearm_deferred`), so the
+# two frames the ROM compares differ as they do on a composite PPU. The verdict
+# moved because the behaviour did; the ROM, its encoding and its address did not.
+#
 # NOTE ON THE LEGACY `ppu-misc-` PREFIX: several ROMs carry it while living on
 # other pages (`ppu-misc-sprites-on-scanline-0` and
 # `ppu-misc-stale-sprite-shift-regs` are Advanced Sprite Evaluation; `ale-read`
@@ -130,7 +137,7 @@ ppu-misc-2007-stress	18	7	0x048E	$2007 Stress Test	Pass	395	legacy-unrecorded
 ppu-misc-ale-read	18	7	0x0491	ALE + Read	Pass	57	legacy-unrecorded
 ppu-misc-bg-serial-in	18	4	0x0487	BG Serial In	Pass	51	legacy-unrecorded
 ppu-misc-hybrid-addresses	18	8	0x0492	Hybrid Addresses	Pass	57	legacy-unrecorded
-ppu-misc-sprites-on-scanline-0	18	5	0x0484	Sprites On Scanline 0	PassWithCode(2)	36	legacy-unrecorded
+ppu-misc-sprites-on-scanline-0	18	5	0x0484	Sprites On Scanline 0	PassWithCode(1)	36	legacy-unrecorded
 ppu-misc-stale-bg-shift-regs	18	2	0x0483	Stale BG Shift Registers	Pass	87	legacy-unrecorded
 ppu-misc-stale-sprite-shift-regs	18	3	0x048F	Stale Sprite Shift Regs	Pass	147	legacy-unrecorded
 sh-sha-93	9	0	0x0446	$93   SHA indirect,Y	PassWithCode(1)	27	legacy-unrecorded

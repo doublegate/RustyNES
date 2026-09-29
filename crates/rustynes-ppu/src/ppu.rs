@@ -920,6 +920,24 @@ pub struct Ppu {
     /// is byte-identical to the unfixed build, one dot deeper breaks test 2.
     pub(crate) rendering_enabled_delayed2: bool,
 
+    /// The dot-339 sprite re-arm, deferred past scanline 0's first pixel
+    /// because the odd-frame skip removed the dot at which hardware sees it.
+    ///
+    /// v2.9.5. The shifters are told to start counting on dot 339 and see the
+    /// signal a dot late, at 340. When an odd frame skips pre-render dot 340,
+    /// every loaded shifter therefore starts scanline 0 still in the drawing
+    /// state. It outputs its first pixel at X=0 and shifts, then counts one dot
+    /// late, so pixels 1-7 land where they always do and only the first moves
+    /// (`forums.nesdev.org/viewtopic.php?t=26291`, from `Visual2C02` analysis).
+    /// This is what `AccuracyCoin`'s `Sprites On Scanline 0` reads as a
+    /// composite 2C02: code 1, where the missing alternation had read as an
+    /// RGB PPU, code 2.
+    ///
+    /// Set by the skip in `advance_dot` and cleared after pixel 0 in
+    /// `emit_pixel`. It lives across the frame boundary, where run-ahead and
+    /// save states snapshot, so it is serialized (`PPU_SNAPSHOT_VERSION` 11).
+    pub(crate) spr_rearm_deferred: bool,
+
     /// v2.6.18 (`phi2-write-sweep` only): a shared four-stage `$2001` history,
     /// newest first, that each swept consumer gate reads at its OWN depth.
     ///
@@ -1574,6 +1592,7 @@ impl Ppu {
             #[cfg(feature = "phi2-write-sweep")]
             render_gate_prev2: false,
             rendering_enabled_delayed2: false,
+            spr_rearm_deferred: false,
             #[cfg(feature = "phi2-write-sweep")]
             sweep_mask_history: [PpuMask::empty(); 4],
             bg_reload_render: false,
@@ -1967,6 +1986,7 @@ impl Ppu {
         self.prev_rendering_enabled = false;
         self.rendering_enabled_delayed = false;
         self.rendering_enabled_delayed2 = false;
+        self.spr_rearm_deferred = false;
         // The rendering-gate pipeline is the same class of state as the two
         // skip-check stages above and was simply missed. Reset preserves the
         // current dot, so a reset at dot 254 otherwise reaches dot 256 with
@@ -2494,6 +2514,10 @@ impl Ppu {
     /// `cpu_write_register` for `$2004` direct writes — DMA writes always
     /// hit OAM directly per nesdev.
     pub fn oam_dma_write(&mut self, value: u8) {
+        // v2.9.5 (sibling ledger 3.1c): a DMA byte is a `$2004` write, and
+        // "writing any value to any PPU port ... will fill this latch"
+        // (`nesdev_wiki/PPU_registers`). The MiSTer core did this all along.
+        self.touch_open_bus(value);
         self.oam[self.oam_addr as usize] = value;
         // v2.3.2 "Lucid" — every byte of the burst is attributed to the ONE
         // `STA $4014` that triggered it (the LATCHED context, not the live one:
@@ -5142,6 +5166,15 @@ impl Ppu {
                 }
             }
         }
+        // v2.9.5: the re-arm the odd-frame skip deferred takes effect now, after
+        // pixel 0 was drawn and shifted in the drawing state. The counters then
+        // start one dot late, which is what keeps pixels 1-7 in place.
+        if self.spr_rearm_deferred {
+            self.spr_rearm_deferred = false;
+            for i in 0..self.spr_count as usize {
+                self.spr_halted[i] = false;
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -6092,6 +6125,17 @@ impl Ppu {
             self.frame = self.frame.wrapping_add(1);
             self.frame_complete = true;
             self.snapshot_ntsc_phase();
+            // The skipped dot is where the loaded shifters would have seen the
+            // dot-339 re-arm, so it has not happened yet: they enter scanline 0
+            // drawing, and `emit_pixel` releases them after pixel 0 (see
+            // `spr_rearm_deferred`). The skip requires rendering on, so the
+            // 339 re-arm ran for these slots and this puts them back.
+            if self.spr_count > 0 {
+                for i in 0..self.spr_count as usize {
+                    self.spr_halted[i] = true;
+                }
+                self.spr_rearm_deferred = true;
+            }
             self.mask_for_skip_check = self.mask_skip_pipe1;
             self.mask_skip_pipe1 = self.mask;
             return;
@@ -6831,6 +6875,21 @@ mod tests {
     // (non-palette) = all driven; $2002 = `---D DDDD` (bits 7-5 driven); $2007
     // palette = `DD-- ----` (bits 7-6 decay). The $2002 low-5 case is covered by
     // `ppustatus_*` above; this locks the $2007-palette and write-only cases.
+    /// An OAM DMA byte is a `$2004` write, and "writing any value to any PPU
+    /// port ... will fill this latch" (`nesdev_wiki/PPU_registers`, the
+    /// `_io_db` latch). So `$2002`'s low five bits read the last DMA byte.
+    /// v2.9.5, the sibling's `oracle-vs-documentation.md` 3.1c: the `MiSTer`
+    /// core already did this. The oracle did not, and every `AccuracyCoin`
+    /// entry reports the same result either way, `Open Bus` included.
+    #[test]
+    fn oam_dma_byte_fills_the_io_latch() {
+        let (mut p, mut b) = fresh_ppu();
+        p.open_bus = 0x00;
+        p.status = PpuStatus::empty();
+        p.oam_dma_write(0xFF);
+        assert_eq!(p.cpu_read_register(2, &mut b) & 0x1F, 0x1F);
+    }
+
     #[test]
     fn open_bus_refresh_map_2007_palette_and_write_only() {
         // Reading a WRITE-ONLY register drives no bits -> the full decay latch.
