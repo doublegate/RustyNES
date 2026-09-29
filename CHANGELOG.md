@@ -26,6 +26,15 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Provenance
+
+- **The optional OAM-decay model is recorded as derived from Mesen2.** It was
+  written at v2.1.4 (#265) to mirror Mesen2's `ReadSpriteRam` / `WriteSpriteRam`,
+  and its commit said so, but `ppu.rs`'s provenance header, `NOTICE` and
+  `docs/originality-and-provenance.md` Section 1 listed only the sprite-evaluation
+  and OAM-data-bus regions. All three, and the site, now name it. The code is
+  unchanged, and both projects are GPL-3.0-or-later.
+
 ### Changed — release plan
 
 - **v3.0.0 is now the API major with a release-candidate core**

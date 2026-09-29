@@ -377,13 +377,16 @@ Set when a non-transparent pixel of sprite 0 overlaps a non-transparent pixel of
 
 Determined during sprite *rendering*, not evaluation.
 
-### OAM decay (optional, opt-in, default-OFF) (Unreleased, F2.3)
+### OAM decay (optional, opt-in, default-OFF) (v2.1.4, F2.3)
 
 Real 2C02 OAM is dynamic RAM. Sprite evaluation reads every sprite's Y byte each
 rendered scanline, which implicitly refreshes the cell charge; but with rendering
 disabled long enough the un-refreshed rows lose charge and decay to a fixed garbage
 pattern. RustyNES models this exactly like Mesen2 (`NesPpu::ReadSpriteRam` /
 `WriteSpriteRam`, `OamDecayCycleCount = 3000`), gated behind a default-OFF toggle.
+**This model is derived from Mesen2's code, GPL-3.0-or-later**, and is listed in
+`ppu.rs`'s provenance header, `NOTICE` and `docs/originality-and-provenance.md`
+Section 1. That record was missing from v2.1.4 until v2.9.4.
 
 - **Granularity** — one CPU-cycle timestamp per **8-byte row** (32 rows over the
   256-byte OAM), `oam_decay_cycles[addr >> 3]`. The CPU cycle is derived from the

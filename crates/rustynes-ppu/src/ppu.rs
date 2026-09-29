@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Provenance: this PPU contains code derived from Mesen2 (GPL-3.0-or-later): the sprite-evaluation FSM and OAM-data-bus model, `Core/NES/NesPpu.cpp` (`ProcessSpriteEvaluation` / `ReadSpriteRam`); it also incorporates models ported from TriCNES (MIT) — the ALE / octal-latch address-multiplex and the OAM-corruption behavior. See docs/originality-and-provenance.md (Section 1)
+// Provenance: this PPU contains code derived from Mesen2 (GPL-3.0-or-later): the sprite-evaluation FSM and OAM-data-bus model, `Core/NES/NesPpu.cpp` (`ProcessSpriteEvaluation` / `ReadSpriteRam`), and the optional OAM-decay model (`ReadSpriteRam` / `WriteSpriteRam`, `OamDecayCycleCount`; added v2.1.4, disclosed v2.9.4); it also incorporates models ported from TriCNES (MIT) — the ALE / octal-latch address-multiplex and the OAM-corruption behavior. See docs/originality-and-provenance.md (Section 1)
 // and NOTICE for the complete, audited derivation record.
 //! 2C02 PPU core: state, register surface, scanline counter, NMI signaling.
 //!
@@ -286,6 +286,14 @@ pub mod octal_trace {
 const COPY_V_DELAY: u8 = 4;
 
 /// v2.1.4 F2.3 — optional OAM decay threshold, in **CPU cycles**.
+///
+/// Provenance: the OAM-decay model (this constant, the per-row timestamps, the
+/// refresh-on-read/write rule and the decayed-byte pattern in
+/// `oam_decay_on_read`) is **derived from Mesen2's `NesPpu.cpp`**
+/// (`ReadSpriteRam` / `WriteSpriteRam`, `OamDecayCycleCount`),
+/// GPL-3.0-or-later. It was written that way at v2.1.4 (#265, whose commit
+/// says so) and recorded in this file's header, NOTICE and
+/// docs/originality-and-provenance.md (Section 1) only at v2.9.4.
 ///
 /// The 2C02's Object Attribute Memory is dynamic RAM: each row is implicitly
 /// refreshed every time sprite evaluation (or a `$2004` access) reads it during
