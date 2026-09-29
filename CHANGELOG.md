@@ -26,6 +26,40 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mapper 28 (Action 53 multicarts) is rebuilt to the NESdev spec.** PRG banking
+  was wrong for every outer bank size above 32 KiB and in both UNROM modes, the
+  CHR bank register did nothing (the board has 32 KiB of CHR RAM, not 8 KiB),
+  the single-screen select written through D4 was ignored, and the board
+  powered on at the wrong bank, so the `test28` ROM failed its first check. A
+  unit test now checks every mode value, outer bank and inner bank against the
+  wiki's table, row for row. Save states from before still load.
+- **The ROM header editor no longer changes bytes it did not show you.** Saving
+  a header wrote Vs. UniSystem protection types 1-4 back as 0, Vs. DualSystem
+  type 6 as 5, and the NES 2.0 misc-ROM count and default expansion device
+  (bytes 14-15) as 0. Every byte the header parser reads is now written back
+  unchanged.
+- **A palette file that cannot be read no longer erases your palette
+  setting.** A missing or unreadable `.pal` (say, on a drive not yet mounted)
+  used to clear `[graphics] palette_file` and save the config. It now falls
+  back to the built-in palette for that session only and keeps the setting.
+- **NSF bank registers read as open bus.** `$5FF8-$5FFF` are write-only in the
+  NSF spec, but reads there returned 0.
+- **The Bisqwit NTSC filter no longer darkens the picture edges.** Its filter
+  window ran past both ends of the line at the outermost columns.
+- **The debugger's event heatmap keeps its proportions** at wide window sizes,
+  and stops allocating a new buffer every repaint.
+- **A NaN per-channel audio gain** from a hand-edited config falls back to
+  unity instead of turning that channel's output into NaN.
+- The `fds_trace` diagnostic no longer reports a match when the disk-info
+  block it read was cut short.
+
+These came from review threads on PRs #29-#97 that were never answered. All
+244 of those threads were checked against current code in v2.9.3: 234 were
+answered and resolved, and these ten are the findings that turned out to
+still hold.
+
 ### Testing
 
 - **The Android app's own unit tests now run in CI.** The Android workflow
