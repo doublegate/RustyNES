@@ -73,6 +73,7 @@ jobs:
       pull-requests: read
     outputs:
       app: ${{ steps.app.outputs.app }}
+      kotlin: ${{ steps.app.outputs.kotlin }}
     # Draft gate: a PR opened as a draft skips the Android build until it is
     # marked ready, the same rule ci.yml's `setup` applies to its heavy jobs.
     # This workflow is not a required check, so a skip blocks nothing.
@@ -89,9 +90,18 @@ jobs:
         id: app
         if: github.event_name == 'pull_request'
         with:
+          # `kotlin` drives the JVM unit-test job. It is wider than `app`: the
+          # Kotlin tests compile against the UniFFI bindings generated from
+          # rustynes-mobile, and a PR that edits this workflow must run the
+          # gate it edits (#571 did not, and so never exercised the job it
+          # added).
           filters: |
             app:
               - 'android/**'
+            kotlin:
+              - 'android/**'
+              - 'crates/rustynes-mobile/**'
+              - '.github/workflows/android.yml'
 
       # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
       # Android targets (arm64 ships; x86_64 is the emulator/CI ABI), through
@@ -172,11 +182,11 @@ jobs:
     # a mobile behaviour. `preBuild` depends on the cargo-ndk cross-build and the
     # UniFFI binding generation, so this needs the same toolchain as the bundle.
     needs: cross-build
-    # Same scope as the bundle: every `main` push and dispatch, and a PR that
-    # changes the Android app itself.
+    # Every `main` push and dispatch, and a PR that changes the app, the UniFFI
+    # bridge it compiles against, or this workflow (the `kotlin` filter above).
     if: >-
       ${{ github.event_name != 'pull_request'
-      || needs.cross-build.outputs.app == 'true' }}
+      || needs.cross-build.outputs.kotlin == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
