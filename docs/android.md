@@ -1,5 +1,13 @@
 # RustyNES on Android
 
+> **Current distribution (checked 2026-09-29, v2.9.4).** The store-launch
+> targets below (v2.1.0, later v2.2.0 and v2.3.0) were retired and **no store
+> launch has happened**. Android ships as **GitHub-sideload** APKs. A free store
+> listing (Google Play, F-Droid) waits until after the v3.x hardware-verification
+> release, which includes the first device run
+> ([line plan](../to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md), ADR 0043). The
+> paragraph that follows is the 2026-06-23 plan, kept as history.
+>
 > **Release replan (maintainer, 2026-06-23): the Google Play *production* launch is
 > deferred to v2.1.0.** The v1.8.x line keeps shipping as **GitHub-sideload** builds,
 > but the Play production launch is held until after **v2.0.0 "Timebase"** — the

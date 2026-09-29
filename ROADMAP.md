@@ -57,9 +57,9 @@ RustyNES is well past v1.0.0. The current release is **v2.9.3 "Handset"** — th
 
 ## Post-1.0 directions (not committed)
 
-These are candidate directions, not promises or a dated plan. They are ordered roughly by interest, not priority.
+These are candidate directions, not promises or a dated plan. They are ordered roughly by interest, not priority. The Status column is **as of v1.0.0**. Checked at v2.9.4: mobile (Android and iOS), Lua scripting, the TAS editor (TAStudio), Vs. DualSystem (desktop and the libretro core) and the CRT shader stack have all shipped; RetroAchievements allowlisting and hosted netplay infrastructure are still open; the current plan is [`to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md).
 
-| Area | Description | Status |
+| Area | Description | Status at v1.0.0 |
 |------|-------------|--------|
 | **Mobile** | iOS / Android frontends over the existing core | Not started |
 | **Mapper long tail** | Additional and obscure mapper families as compatibility gaps surface | Ongoing, demand-driven |
