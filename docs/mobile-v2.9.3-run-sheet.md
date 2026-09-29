@@ -39,9 +39,9 @@ before installing, so the result belongs to a known build.
 | | |
 | --- | --- |
 | APK | `RustyNES-v2.9.3-pre-foss-debug.apk` (the `fossDebug` variant, application id `com.doublegate.rustynes.debug`, ABIs arm64-v8a and x86_64) |
-| Built from | `2ed51d35` on `feat/v2.9.3-device-checklist`, which is `main` at `d8b02d2f` (#570) plus this release's commits, with a clean tree |
-| SHA-256 | `abb1fb4bae39c5e7a1cf60ff3ed2d15b2e4d86f5a1d5fb5e1bff12a3e5ffdfbb` |
-| Size | 67,310,419 bytes |
+| Built from | `d1283a59` on `feat/v2.9.3-device-checklist` (`main` at `d8b02d2f` plus this release's commits), with a clean tree |
+| SHA-256 | `c4e3543e22d19256279e73cdb866e589a6a2f5f285c4565e8da19d00e4c56f25` |
+| Size | 67,310,835 bytes |
 
 **For row D5 only**, a 32-bit build: `RustyNES-v2.9.3-pre-foss-debug-armeabi-v7a.apk`,
 built with `cd android && ./gradlew :app:assembleFossDebug
@@ -52,8 +52,8 @@ main APK would run the 64-bit ones.
 
 | | |
 | --- | --- |
-| SHA-256 | `4e75ff99d81840afe8c7d2887475c906e7330b1708391a2a704144ac2cfd3b21` |
-| Size | 39,375,703 bytes |
+| SHA-256 | `040eabc9357db05b6a4da36cc6b88da9d9bc9138e1b264956813ad1f32fad5a7` |
+| Size | 39,375,943 bytes |
 
 Before recording D5, confirm the device ran the 32-bit library:
 `adb shell dumpsys package com.doublegate.rustynes.debug | grep primaryCpuAbi`
@@ -100,8 +100,13 @@ EMULATOR is what the `Pixel_8_API_34` emulator showed on this build, before
 the device run. It is never a device result: the device column still needs
 its own entry.
 
-How the emulator column was produced (2026-09-28, Android 14, software GPU):
-the build above was installed over adb and driven with `adb shell input`,
+How the emulator column was produced (2026-09-28, Android 14, software GPU),
+on the earlier build `2ed51d35` (SHA-256 `abb1fb4b...`). The build above adds
+the review-thread fixes (mapper 28, the header serializer, NSF open bus, the
+APU gain guard; the rest is desktop-only or docs). None of them touches the
+lifecycle, audio-focus or renderer paths these rows exercise, so the column
+was not re-run. That earlier build was installed over adb and driven with
+`adb shell input`,
 the app's own deep links (`--es com.doublegate.rustynes.extra.ACTION
 open|resume`) and screenshots. Audio state came from `dumpsys audio`, CPU
 from `top`, and the save files from `run-as`. A1 used
