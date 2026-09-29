@@ -184,40 +184,115 @@ fn main() {
         Some(p) => {
             let got = &side_stream[p..(p + INFO_BLOCK_LEN).min(side_stream.len())];
             println!("disk-info block found at read offset {p}.");
-            let mut diverged = false;
-            for i in 0..INFO_BLOCK_LEN.min(got.len()).min(expected.len()) {
-                if got[i] != expected[i] {
-                    println!(
-                        "  DIVERGENCE at block byte 0x{i:02x}: BIOS read {:02x}, expected {:02x}{}",
-                        got[i],
-                        expected[i],
-                        if i == 0x15 {
-                            "  <- side# (ERR.07 source)"
-                        } else {
-                            ""
-                        }
-                    );
-                    diverged = true;
-                }
-            }
-            if expected.is_empty() || got.is_empty() {
-                // No reference bytes for this side (e.g. an invalid side index):
-                // the byte-compare loop ran zero times, so don't claim a MATCH.
+            let (verdict, diffs) = compare_info_block(got, &expected);
+            for &(i, g, e) in &diffs {
                 println!(
+                    "  DIVERGENCE at block byte 0x{i:02x}: BIOS read {g:02x}, expected {e:02x}{}",
+                    if i == 0x15 {
+                        "  <- side# (ERR.07 source)"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            match verdict {
+                BlockVerdict::NoReference => println!(
                     "  side {swap_to} has no reference disk-info block in the raw .fds \
                      (expected={} got={} bytes); cannot compare.",
                     expected.len(),
                     got.len()
-                );
-            } else if !diverged {
-                println!(
+                ),
+                // The read stream (or the reference) ended mid-block: only a
+                // prefix was compared, so a clean prefix is not a match.
+                BlockVerdict::Truncated { compared } => println!(
+                    "  TRUNCATED: only {compared} of {INFO_BLOCK_LEN} block bytes were \
+                     available (read stream {} bytes, reference {} bytes); \
+                     {} in the compared prefix, but the block cannot be called a match.",
+                    got.len(),
+                    expected.len(),
+                    if diffs.is_empty() {
+                        "no difference"
+                    } else {
+                        "differences"
+                    }
+                ),
+                BlockVerdict::Diverged => {}
+                BlockVerdict::Matches => println!(
                     "  side {swap_to} disk-info block read MATCHES the raw .fds exactly \
                      (side#=0x{:02x}); the ERR.07 side# check is satisfied here — the \
                      mismatch must be against a DIFFERENT expected side# (the BIOS's boot \
                      reset-check expects side 0), not a corrupted read.",
                     got.get(0x15).copied().unwrap_or(0xEE)
-                );
+                ),
             }
         }
+    }
+}
+
+/// How a disk-info block read by the BIOS compares with the raw `.fds`.
+#[derive(Debug, PartialEq, Eq)]
+enum BlockVerdict {
+    /// No reference bytes for this side (an invalid side index): nothing to
+    /// compare against.
+    NoReference,
+    /// All `INFO_BLOCK_LEN` bytes were compared and every one agrees.
+    Matches,
+    /// All `INFO_BLOCK_LEN` bytes were compared and at least one differs.
+    Diverged,
+    /// Fewer than `INFO_BLOCK_LEN` bytes were available on one side, so only
+    /// `compared` bytes were checked. Until v2.9.3 this case printed MATCHES
+    /// whenever that prefix agreed (review thread on #29).
+    Truncated { compared: usize },
+}
+
+/// Compare the block the BIOS read with the reference, returning the verdict
+/// and every differing byte as `(offset, got, expected)`.
+fn compare_info_block(got: &[u8], expected: &[u8]) -> (BlockVerdict, Vec<(usize, u8, u8)>) {
+    if expected.is_empty() || got.is_empty() {
+        return (BlockVerdict::NoReference, Vec::new());
+    }
+    let compared = INFO_BLOCK_LEN.min(got.len()).min(expected.len());
+    let diffs: Vec<(usize, u8, u8)> = (0..compared)
+        .filter(|&i| got[i] != expected[i])
+        .map(|i| (i, got[i], expected[i]))
+        .collect();
+    let verdict = if compared < INFO_BLOCK_LEN {
+        BlockVerdict::Truncated { compared }
+    } else if diffs.is_empty() {
+        BlockVerdict::Matches
+    } else {
+        BlockVerdict::Diverged
+    };
+    (verdict, diffs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockVerdict, INFO_BLOCK_LEN, compare_info_block};
+
+    #[test]
+    fn a_truncated_block_with_a_clean_prefix_is_not_a_match() {
+        let reference = vec![0x5Au8; INFO_BLOCK_LEN];
+        let (v, diffs) = compare_info_block(&reference[..20], &reference);
+        assert_eq!(v, BlockVerdict::Truncated { compared: 20 });
+        assert!(diffs.is_empty());
+    }
+
+    #[test]
+    fn full_blocks_match_or_diverge_and_empty_has_no_reference() {
+        let reference = vec![0x5Au8; INFO_BLOCK_LEN];
+        assert_eq!(
+            compare_info_block(&reference, &reference).0,
+            BlockVerdict::Matches
+        );
+        let mut got = reference.clone();
+        got[0x15] = 1;
+        let (v, diffs) = compare_info_block(&got, &reference);
+        assert_eq!(v, BlockVerdict::Diverged);
+        assert_eq!(diffs, vec![(0x15, 1, 0x5A)]);
+        assert_eq!(
+            compare_info_block(&[], &reference).0,
+            BlockVerdict::NoReference
+        );
     }
 }
