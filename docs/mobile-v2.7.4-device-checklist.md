@@ -1,5 +1,12 @@
 # v2.7.4 "Pocket" — mobile device checklist
 
+> **For v2.9.3, record results in
+> [`mobile-v2.9.3-run-sheet.md`](mobile-v2.9.3-run-sheet.md).** It carries
+> these rows unchanged, adds rows for the dependency refresh, lists what the
+> Android emulator has already shown, and **corrects row A3**: Home with a
+> running game enters picture-in-picture by design, so A3 is tested with the
+> screen turned off instead.
+
 The maintainer runs this on real hardware before the v2.7.4 PR merges (the
 2026-09-22 decision recorded in the
 [frontend ledger](audits/frontend-disposition.md)). It covers what automated
