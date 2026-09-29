@@ -39,8 +39,14 @@ cycle-accurate core later replaced.
   a header wrote Vs. UniSystem protection types 1-4 back as 0, Vs. DualSystem
   type 6 as 5, the extended console type of an Extended-console image (byte 13,
   VT01-VT32 and similar) as 0, and the NES 2.0 misc-ROM count and default
-  expansion device (bytes 14-15) as 0. Every byte the header parser reads is now written back
-  unchanged.
+  expansion device (bytes 14-15) as 0. Every byte the header parser reads is
+  now written back unchanged. To carry those bytes, `rustynes_mappers::Header`
+  gains four public fields: `vs_hardware_type`, `extended_console_type`,
+  `misc_rom_count` and `default_expansion_device`. `rustynes-core` re-exports
+  that crate, so code outside this repository that builds a `Header` with a
+  struct literal must set them. No crate is published to crates.io, and
+  nothing in this workspace builds one that way; the maintainer chose to
+  ship this in the patch release with this note (#571).
 - **A palette file that cannot be read no longer erases your palette
   setting.** A missing or unreadable `.pal` (say, on a drive not yet mounted)
   used to clear `[graphics] palette_file` and save the config. It now falls
