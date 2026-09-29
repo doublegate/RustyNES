@@ -54,22 +54,6 @@ pub struct Header {
     /// only; the two-CPU/two-PPU emulation is a documented v2.0 deferral
     /// (`docs/audit/vs-dualsystem-design-2026-06-11.md`).
     pub vs_dual_system: bool,
-    /// The full Vs. hardware type (NES 2.0 byte 13 high nibble, 0-15): 0
-    /// normal `UniSystem`, 1-4 `UniSystem` boards with protection ICs, 5-6
-    /// `DualSystem`. `0` unless NES 2.0 and `console_type == VsSystem`.
-    /// Carried so that [`serialize_header`] writes back the byte it read;
-    /// [`Header::vs_dual_system`] is the flag emulation actually consults.
-    pub vs_hardware_type: u8,
-    /// NES 2.0 byte 13 low nibble when `console_type == Extended` (VT01-VT32,
-    /// EPSM, decimal-mode famiclone, ...). `0` otherwise. Not used by
-    /// emulation; carried so the header editor does not zero it.
-    pub extended_console_type: u8,
-    /// NES 2.0 byte 14 bits 0-1: the number of miscellaneous ROMs. `0` for
-    /// iNES 1.0. Not used by emulation; carried for a faithful round-trip.
-    pub misc_rom_count: u8,
-    /// NES 2.0 byte 15 bits 0-5: the default expansion device. `0` for iNES
-    /// 1.0. Not used by emulation; carried for a faithful round-trip.
-    pub default_expansion_device: u8,
     /// PRG-RAM size in bytes (NES 2.0 byte 10 low nibble; heuristic for iNES 1.0).
     pub prg_ram_size: u32,
     /// CHR-RAM size in bytes (NES 2.0 byte 11 low nibble; heuristic for iNES 1.0).
@@ -173,7 +157,11 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         VsPpuType::None
     };
 
-    let (vs_hw, ext_console, misc_roms, expansion) = nes2_tail_fields(&h, is_nes2, console_type);
+    // Vs. hardware type (NES 2.0 byte 13 HIGH nibble): types 5 and 6 are the
+    // Vs. DualSystem boards (two CPUs / two PPUs). Detection only — the
+    // dual-console emulation is a documented v2.0 deferral.
+    let vs_dual_system =
+        is_nes2 && console_type == ConsoleType::VsSystem && matches!(h[13] >> 4, 5 | 6);
 
     // RAM sizes.
     let prg_ram_size = if is_nes2 {
@@ -198,6 +186,10 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         0
     };
 
+    // Battery / trainer.
+    let has_battery = (h[6] & 0x02) != 0;
+    let has_trainer = (h[6] & 0x04) != 0;
+
     Ok(Header {
         is_nes2,
         mapper_id,
@@ -208,17 +200,11 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         region,
         console_type,
         vs_ppu_type,
-        // Vs. hardware types 5 and 6 are the DualSystem boards (two CPUs / PPUs).
-        vs_dual_system: matches!(vs_hw, 5 | 6),
-        vs_hardware_type: vs_hw,
-        extended_console_type: ext_console,
-        misc_rom_count: misc_roms,
-        default_expansion_device: expansion,
+        vs_dual_system,
         prg_ram_size,
         chr_ram_size,
-        // Battery / trainer: byte 6 bits 1 and 2.
-        has_battery: (h[6] & 0x02) != 0,
-        has_trainer: (h[6] & 0x04) != 0,
+        has_battery,
+        has_trainer,
         four_screen,
     })
 }
@@ -259,15 +245,125 @@ const fn ram_size_from_shift(shift: u8) -> u32 {
     if shift == 0 { 0 } else { 64u32 << shift }
 }
 
-/// Re-serialize a [`Header`] back to the canonical 16-byte layout.
+/// Re-serialize a [`Header`] into the canonical 16-byte layout, from scratch.
 ///
-/// Used by the round-trip test in T-12-002 / T-12-003.
+/// **Lossy.** Every bit [`Header`] does not model is written as zero: the
+/// Vs. hardware type (byte 13 high nibble; types 1-4 and 6 become 0 or 5), the
+/// extended console type (byte 13 low nibble), bytes 14-15, the PRG-NVRAM and
+/// CHR-NVRAM nibbles of bytes 10-11, the exponent-multiplier size notation,
+/// and every byte past 7 of an iNES 1.0 header. Writing its output over a
+/// ROM file therefore changes bytes the caller never edited. Use
+/// [`serialize_header_preserving`], which starts from the file's own bytes.
+#[must_use]
+#[deprecated(
+    since = "2.9.3",
+    note = "writes every header bit `Header` does not model as zero; use `serialize_header_preserving`"
+)]
+pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
+    canonical_header(h)
+}
+
+/// Write the edits in `h` over `original`, the 16 header bytes `h` was parsed
+/// from, and return the result.
+///
+/// Only the bits of fields whose value differs from `parse_header(original)`
+/// are rewritten; every other bit of `original` comes back unchanged. So an
+/// unedited header round-trips byte for byte, whatever it holds -- Vs.
+/// hardware types 1-4 and 6, an extended console type, bytes 14-15, NVRAM
+/// nibbles, exponent-notation sizes, reserved bits, and the junk some dumpers
+/// left in bytes 8-15 of iNES 1.0 headers. This is what the header editor
+/// writes to disk.
+///
+/// An edited field is written in its canonical encoding, exactly as
+/// [`serialize_header`] would write it: sizes in the standard notation, a
+/// changed PRG-RAM size as a volatile shift in byte 10, and a changed
+/// `vs_dual_system` as hardware type 5 (set) or 0 (cleared). Toggling
+/// `is_nes2` changes what bytes 7-15 mean, so that edit re-encodes the whole
+/// header canonically. So does an `original` that does not parse.
+#[must_use]
+pub fn serialize_header_preserving(h: &Header, original: &[u8; HEADER_LEN]) -> [u8; HEADER_LEN] {
+    let Ok(base) = parse_header(original) else {
+        return canonical_header(h);
+    };
+    if h.is_nes2 != base.is_nes2 {
+        return canonical_header(h);
+    }
+    // Every byte the canonical encoding produces for the edited header; each
+    // changed field copies only its own bits from here.
+    let c = canonical_header(h);
+    let mut out = *original;
+    let mut take = |byte: usize, mask: u8| out[byte] = (out[byte] & !mask) | (c[byte] & mask);
+
+    if h.mapper_id != base.mapper_id {
+        take(6, 0xF0);
+        take(7, 0xF0);
+        if h.is_nes2 {
+            take(8, 0x0F);
+        }
+    }
+    if h.mirroring != base.mirroring {
+        take(6, 0x01);
+    }
+    if h.has_battery != base.has_battery {
+        take(6, 0x02);
+    }
+    if h.has_trainer != base.has_trainer {
+        take(6, 0x04);
+    }
+    if h.four_screen != base.four_screen {
+        take(6, 0x08);
+    }
+    if h.prg_size != base.prg_size {
+        take(4, 0xFF);
+        if h.is_nes2 {
+            take(9, 0x0F);
+        }
+    }
+    if h.chr_size != base.chr_size {
+        take(5, 0xFF);
+        if h.is_nes2 {
+            take(9, 0xF0);
+        }
+    }
+    // Bytes 7 (console bits) and 8-13 carry these fields in NES 2.0 only;
+    // `parse_header` ignores them in iNES 1.0, and so does this.
+    if h.is_nes2 {
+        if h.submapper != base.submapper {
+            take(8, 0xF0);
+        }
+        if h.prg_ram_size != base.prg_ram_size {
+            take(10, 0xFF);
+        }
+        if h.chr_ram_size != base.chr_ram_size {
+            take(11, 0x0F);
+        }
+        if h.region != base.region {
+            take(12, 0x03);
+        }
+        if h.console_type != base.console_type {
+            // Byte 13 means something else for each console type, so a
+            // console change re-encodes it.
+            take(7, 0x03);
+            take(13, 0xFF);
+        } else if h.console_type == ConsoleType::VsSystem {
+            if h.vs_ppu_type != base.vs_ppu_type {
+                take(13, 0x0F);
+            }
+            if h.vs_dual_system != base.vs_dual_system {
+                take(13, 0xF0);
+            }
+        }
+    }
+    out
+}
+
+/// The canonical encoding behind [`serialize_header`] and the edited fields of
+/// [`serialize_header_preserving`].
 // Serialization performs nibble extraction by mask + cast; the truncation is
 // the documented encoding (not a bug), so we allow the cast lints narrowly on
 // this function.
-#[must_use]
 #[allow(clippy::cast_possible_truncation)]
-pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
+fn canonical_header(h: &Header) -> [u8; HEADER_LEN] {
     let mut out = [0u8; HEADER_LEN];
     out[0..4].copy_from_slice(&MAGIC);
 
@@ -294,7 +390,8 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
     out[6] = flags6;
 
     // Flags 7.
-    let mut flags7 = ((h.mapper_id >> 4) as u8) & 0xF0;
+    // Mapper bits 4-7 sit in byte 7's high nibble as-is (no shift).
+    let mut flags7 = (h.mapper_id as u8) & 0xF0;
     if h.is_nes2 {
         flags7 |= 0x08;
         flags7 |= match h.console_type {
@@ -319,56 +416,17 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
             Region::Dendy => 3,
         };
         // Byte 13: Vs. System PPU type (low nibble) + Vs. hardware type (high
-        // nibble) when console = Vs. System. The parsed hardware type is
-        // written back as read (types 1-4 are UniSystem protection boards, 6
-        // is a DualSystem variant), unless `vs_dual_system` has been changed
-        // since (the header editor's checkbox): setting it on a non-dual type
-        // writes 5, clearing it on a dual type writes 0.
+        // nibble) when console = Vs. System. We only track the DualSystem bool,
+        // so a dual board re-encodes as hardware type 5 (the bool round-trips
+        // even though the original 5-vs-6 distinction is not retained).
         if h.console_type == ConsoleType::VsSystem {
-            let hw = match (h.vs_dual_system, h.vs_hardware_type & 0x0F) {
-                (true, t @ (5 | 6)) => t,
-                (true, _) => 5,
-                (false, 5 | 6) => 0,
-                (false, t) => t,
-            };
-            out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type) | (hw << 4);
+            let hi = if h.vs_dual_system { 5 << 4 } else { 0 };
+            out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type) | hi;
         }
-        // Byte 13 for an Extended console: the extended console type (low
-        // nibble); the high nibble is reserved.
-        if h.console_type == ConsoleType::Extended {
-            out[13] = h.extended_console_type & 0x0F;
-        }
-        // Byte 14: miscellaneous ROM count; byte 15: default expansion device.
-        out[14] = h.misc_rom_count & 0x03;
-        out[15] = h.default_expansion_device & 0x3F;
+        // Bytes 14-15 reserved/extended; left zero.
     }
 
     out
-}
-
-/// NES 2.0 bytes 13-15 beyond the Vs. PPU type: the Vs. hardware type (byte 13
-/// high nibble, Vs. System only), the extended console type (byte 13 low
-/// nibble, Extended console only), the miscellaneous ROM count and the default
-/// expansion device. All zero for iNES 1.0, whose bytes 13-15 are padding.
-const fn nes2_tail_fields(
-    h: &[u8; HEADER_LEN],
-    is_nes2: bool,
-    console: ConsoleType,
-) -> (u8, u8, u8, u8) {
-    if !is_nes2 {
-        return (0, 0, 0, 0);
-    }
-    let hw = if matches!(console, ConsoleType::VsSystem) {
-        h[13] >> 4
-    } else {
-        0
-    };
-    let ext = if matches!(console, ConsoleType::Extended) {
-        h[13] & 0x0F
-    } else {
-        0
-    };
-    (hw, ext, h[14] & 0x03, h[15] & 0x3F)
 }
 
 // Truncating cast: count is masked to 8 / 4 bits before the cast.
@@ -416,6 +474,9 @@ const fn ram_shift_for(size: u32) -> u8 {
 }
 
 #[cfg(test)]
+// The pre-v2.9.3 round-trip tests below still exercise the deprecated
+// canonical `serialize_header`, which stays until v3.0.0 (ADR 0042).
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -427,6 +488,254 @@ mod tests {
         h[6] = (mapper << 4) | (flags6 & 0x0F);
         h[7] = mapper & 0xF0;
         h
+    }
+
+    /// A small deterministic PRNG (xorshift64) for header sweeps, so the
+    /// sampled headers are the same on every run.
+    fn next(state: &mut u64) -> u8 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state >> 24).to_le_bytes()[0]
+    }
+
+    fn random_header(state: &mut u64) -> [u8; 16] {
+        let mut h = [0u8; 16];
+        h[..4].copy_from_slice(&MAGIC);
+        for b in &mut h[4..] {
+            *b = next(state);
+        }
+        h
+    }
+
+    #[test]
+    fn preserving_round_trip_is_byte_identical_for_every_parsable_header() {
+        // The header editor writes `serialize_header_preserving` output over
+        // the ROM file, so an unedited header must come back exactly -- every
+        // bit, modelled or not. Bytes 7 and 13 (format, console type, Vs.
+        // PPU / hardware type, extended console type) are swept exhaustively
+        // against sampled values of the rest; then 200,000 fully random
+        // headers cover exponent sizes, NVRAM nibbles, reserved bits and iNES
+        // 1.0 junk in bytes 8-15.
+        let mut state = 0x9E37_79B9_7F4A_7C15;
+        let mut checked = 0u32;
+        let mut check = |h: &[u8; 16]| {
+            if let Ok(parsed) = parse_header(h) {
+                assert_eq!(&serialize_header_preserving(&parsed, h), h, "{h:02x?}");
+                checked += 1;
+            }
+        };
+        for b7 in 0..=255u8 {
+            for b13 in 0..=255u8 {
+                let mut h = random_header(&mut state);
+                h[7] = b7;
+                h[13] = b13;
+                check(&h);
+            }
+        }
+        for _ in 0..200_000 {
+            check(&random_header(&mut state));
+        }
+        // Most random headers parse; a sweep that silently checked nothing
+        // would pass, so say how much it covered.
+        assert!(checked > 200_000, "only {checked} headers parsed");
+    }
+
+    #[test]
+    fn preserving_keeps_byte_13_high_nibble_and_bytes_14_15() {
+        // Before v2.9.3 the editor wrote the canonical encoding, which
+        // collapsed the Vs. hardware type (byte 13 high nibble) to 5 or 0 --
+        // losing UniSystem protection types 1-4 and the 5/6 distinction --
+        // and always wrote bytes 14-15 as zero.
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x01; // NES 2.0, Vs. System
+        h[14] = 0x02; // two miscellaneous ROMs
+        h[15] = 0x2A; // a default expansion device
+        for hw in 0..16u8 {
+            h[13] = (hw << 4) | 0x2; // PPU type 2 (RP2C04-0001)
+            let mut p = parse_header(&h).unwrap();
+            p.has_battery = true; // an unrelated edit
+            let out = serialize_header_preserving(&p, &h);
+            assert_eq!(out[13], h[13], "Vs. hardware type {hw}");
+            assert_eq!(out[14..], h[14..], "bytes 14-15, hw {hw}");
+            assert_eq!(out[6], h[6] | 0x02);
+        }
+    }
+
+    #[test]
+    fn preserving_keeps_the_extended_console_type() {
+        // Console type 3 (Extended): byte 13's LOW nibble is the extended
+        // console type (VT01-VT32, EPSM, ...), which `Header` does not model
+        // (CodeRabbit on #571).
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x03;
+        for ext in 0..16u8 {
+            h[13] = ext;
+            let mut p = parse_header(&h).unwrap();
+            p.mapper_id = 4;
+            let out = serialize_header_preserving(&p, &h);
+            assert_eq!(out[13], ext, "extended console type {ext}");
+            assert_eq!(parse_header(&out).unwrap().mapper_id, 4);
+        }
+    }
+
+    #[test]
+    fn toggling_dual_system_rewrites_only_the_hardware_type() {
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x01;
+        h[13] = 0x32; // UniSystem with protection type 3, PPU type 2
+        let mut p = parse_header(&h).unwrap();
+        assert!(!p.vs_dual_system);
+        p.vs_dual_system = true; // the editor's DualSystem checkbox
+        assert_eq!(serialize_header_preserving(&p, &h)[13], 0x52);
+        h[13] = 0x62; // DualSystem type 6 stays 6 while the flag stays set
+        let mut p = parse_header(&h).unwrap();
+        assert_eq!(serialize_header_preserving(&p, &h)[13], 0x62);
+        p.vs_dual_system = false;
+        assert_eq!(serialize_header_preserving(&p, &h)[13], 0x02);
+    }
+
+    /// Every bit that differs between `a` and `b`, as a 16-byte mask.
+    fn changed(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
+        core::array::from_fn(|i| a[i] ^ b[i])
+    }
+
+    #[test]
+    fn each_edit_rewrites_only_its_own_bits() {
+        // A NES 2.0 Vs. System header with every unmodelled bit set, so a
+        // stray write anywhere shows up in the changed-bit mask.
+        let mut h = [0xFFu8; 16];
+        h[..4].copy_from_slice(&MAGIC);
+        h[4] = 0x02; // 2 x 16 KiB PRG
+        h[5] = 0x01; // 1 x 8 KiB CHR
+        h[6] = 0x10; // mapper 1, horizontal
+        h[7] = 0xF9; // mapper 0xF1 high nibble, NES 2.0, Vs. System
+        h[8] = 0x30; // submapper 3
+        h[9] = 0x00; // standard size notation
+        h[10] = 0x77; // 8 KiB volatile + 8 KiB NV PRG-RAM
+        h[11] = 0x77; // 8 KiB CHR-RAM, 8 KiB CHR-NVRAM
+        h[12] = 0xFD; // PAL, reserved bits set
+        h[13] = 0x31; // hardware type 3, PPU type 1
+        let base = parse_header(&h).unwrap();
+
+        #[allow(clippy::type_complexity)]
+        let edits: [(&str, fn(&mut Header), [u8; 16]); 11] = [
+            (
+                "mapper",
+                |p| p.mapper_id = 0x2A4,
+                mask(&[(6, 0xF0), (7, 0xF0), (8, 0x0F)]),
+            ),
+            (
+                "mirroring",
+                |p| p.mirroring = Mirroring::Vertical,
+                mask(&[(6, 0x01)]),
+            ),
+            ("battery", |p| p.has_battery = true, mask(&[(6, 0x02)])),
+            ("trainer", |p| p.has_trainer = true, mask(&[(6, 0x04)])),
+            (
+                "prg",
+                |p| p.prg_size = 0x123 * PRG_UNIT,
+                mask(&[(4, 0xFF), (9, 0x0F)]),
+            ),
+            (
+                "chr",
+                |p| p.chr_size = 0x201 * CHR_UNIT,
+                mask(&[(5, 0xFF), (9, 0xF0)]),
+            ),
+            ("submapper", |p| p.submapper = 9, mask(&[(8, 0xF0)])),
+            ("prg-ram", |p| p.prg_ram_size = 2048, mask(&[(10, 0xFF)])),
+            ("chr-ram", |p| p.chr_ram_size = 4096, mask(&[(11, 0x0F)])),
+            ("region", |p| p.region = Region::Dendy, mask(&[(12, 0x03)])),
+            ("dual", |p| p.vs_dual_system = true, mask(&[(13, 0xF0)])),
+        ];
+        for (name, edit, allowed) in edits {
+            let mut p = base;
+            edit(&mut p);
+            let out = serialize_header_preserving(&p, &h);
+            let diff = changed(&h, &out);
+            for i in 0..16 {
+                assert_eq!(diff[i] & !allowed[i], 0, "{name}: byte {i} {out:02x?}");
+            }
+            assert_ne!(diff, [0; 16], "{name}: the edit was not written");
+            // And the edit reads back.
+            let back = parse_header(&out).unwrap();
+            assert_eq!(serialize_header_preserving(&p, &out), out, "{name}");
+            assert_eq!(back.mapper_id, p.mapper_id, "{name}");
+            assert_eq!(back.prg_size, p.prg_size, "{name}");
+            assert_eq!(back.chr_size, p.chr_size, "{name}");
+            assert_eq!(back.region, p.region, "{name}");
+            assert_eq!(back.vs_dual_system, p.vs_dual_system, "{name}");
+        }
+    }
+
+    fn mask(bits: &[(usize, u8)]) -> [u8; 16] {
+        let mut m = [0u8; 16];
+        for &(i, b) in bits {
+            m[i] |= b;
+        }
+        m
+    }
+
+    #[test]
+    fn preserving_leaves_nes2_only_fields_alone_on_ines() {
+        // iNES 1.0 bytes 8-15 are not part of the format and often hold a
+        // dumper's signature; edits to NES 2.0-only fields must not touch them.
+        let mut h = ines_header(2, 1, 1, 0);
+        h[7] |= 0x01; // a Vs. bit iNES 1.0 parsing ignores
+        h[8..].copy_from_slice(b"DiskDude");
+        let mut p = parse_header(&h).unwrap();
+        p.region = Region::Pal;
+        p.submapper = 5;
+        p.console_type = ConsoleType::Playchoice10;
+        assert_eq!(serialize_header_preserving(&p, &h), h);
+        p.has_battery = true;
+        let out = serialize_header_preserving(&p, &h);
+        assert_eq!(changed(&h, &out), mask(&[(6, 0x02)]));
+    }
+
+    #[test]
+    fn a_format_change_or_unparsable_original_encodes_canonically() {
+        let h = ines_header(2, 1, 1, 0);
+        let mut p = parse_header(&h).unwrap();
+        p.is_nes2 = true;
+        assert_eq!(serialize_header_preserving(&p, &h), canonical_header(&p));
+        let mut bad = h;
+        bad[0] = b'X';
+        let p = parse_header(&h).unwrap();
+        assert_eq!(serialize_header_preserving(&p, &bad), canonical_header(&p));
+    }
+
+    #[test]
+    fn canonical_encoding_round_trips_every_mapper_id() {
+        // Byte 7's high nibble is mapper bits 4-7. Until v2.9.3 the encoder
+        // wrote bits 8-11 there (`(mapper >> 4) & 0xF0`), so every mapper
+        // from 16 up came back wrong -- mapper 66 (GxROM) as 2 -- and the
+        // header editor wrote that to disk. Found by
+        // `each_edit_rewrites_only_its_own_bits`.
+        for is_nes2 in [false, true] {
+            let top = if is_nes2 { 4095 } else { 255 };
+            for id in 0..=top {
+                let mut h = ines_header(2, 1, 0, 0);
+                if is_nes2 {
+                    h[7] = 0x08;
+                }
+                let mut p = parse_header(&h).unwrap();
+                p.mapper_id = id;
+                let back = parse_header(&canonical_header(&p)).unwrap();
+                assert_eq!(back.mapper_id, id, "nes2={is_nes2}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_console_change_re_encodes_byte_13() {
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x03; // Extended
+        h[13] = 0x0B; // an extended console type
+        let mut p = parse_header(&h).unwrap();
+        p.console_type = ConsoleType::Nes;
+        let out = serialize_header_preserving(&p, &h);
+        assert_eq!((out[7] & 0x03, out[13]), (0, 0));
     }
 
     #[test]
@@ -538,59 +847,6 @@ mod tests {
         let p = parse_header(&h).unwrap();
         assert_eq!(p.chr_size, 0);
         assert_eq!(p.chr_ram_size, 8 * 1024);
-    }
-
-    #[test]
-    fn nes2_round_trip_keeps_byte_13_high_nibble_and_bytes_14_15() {
-        // The debugger header editor writes `serialize_header` output back to
-        // the ROM file, so every byte a parse can read must come back. Before
-        // v2.9.3 the Vs. hardware type (byte 13 high nibble) collapsed to 5 or
-        // 0, losing UniSystem protection types 1-4 and the 5/6 distinction,
-        // and bytes 14-15 were always written as zero.
-        let mut h = ines_header(2, 1, 0, 0);
-        h[7] = 0x08 | 0x01; // NES 2.0, Vs. System
-        for hw in 0..16u8 {
-            h[13] = (hw << 4) | 0x2; // PPU type 2 (RP2C04-0001)
-            h[14] = 0x02; // two miscellaneous ROMs
-            h[15] = 0x2A; // a default expansion device
-            let out = serialize_header(&parse_header(&h).unwrap());
-            assert_eq!(out[13], h[13], "Vs. hardware type {hw}");
-            assert_eq!(out[14], h[14], "byte 14 (misc ROMs), hw {hw}");
-            assert_eq!(
-                out[15], h[15],
-                "byte 15 (default expansion device), hw {hw}"
-            );
-        }
-    }
-
-    #[test]
-    fn nes2_round_trip_keeps_the_extended_console_type() {
-        // Console type 3 (Extended): byte 13's LOW nibble is the extended
-        // console type (VT01-VT32, EPSM, ...). The Vs. fix alone left it written
-        // as zero (CodeRabbit on #571).
-        let mut h = ines_header(2, 1, 0, 0);
-        h[7] = 0x08 | 0x03; // NES 2.0, extended console
-        for ext in 0..16u8 {
-            h[13] = ext;
-            let out = serialize_header(&parse_header(&h).unwrap());
-            assert_eq!(out[13], h[13], "extended console type {ext}");
-        }
-    }
-
-    #[test]
-    fn toggling_dual_system_rewrites_only_what_it_must() {
-        let mut h = ines_header(2, 1, 0, 0);
-        h[7] = 0x08 | 0x01;
-        h[13] = 0x30; // UniSystem with protection type 3
-        let mut p = parse_header(&h).unwrap();
-        assert!(!p.vs_dual_system);
-        p.vs_dual_system = true; // the editor's DualSystem checkbox
-        assert_eq!(serialize_header(&p)[13] >> 4, 5);
-        h[13] = 0x60; // DualSystem type 6 stays 6 while the flag stays set
-        let mut p = parse_header(&h).unwrap();
-        assert_eq!(serialize_header(&p)[13] >> 4, 6);
-        p.vs_dual_system = false;
-        assert_eq!(serialize_header(&p)[13] >> 4, 0);
     }
 
     #[test]

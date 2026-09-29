@@ -98,3 +98,28 @@ deprecated `poll_nmi` reports and what the two `.rns` fields hold in a MINOR
 release. The decision above is unchanged. What changes is the gate at v3.0.0:
 besides byte-identity, the removal should show this speed-up in an `ab_check.sh`
 run, or the difference be explained.
+
+## Amendment (2026-09-29, v2.9.3): `serialize_header` joins the removal list
+
+v2.9.3 found that the header editor wrote headers with
+`rustynes_mappers::serialize_header`, which encodes a `Header` from scratch and
+so zeroes every bit `Header` has no field for (Vs. hardware types 1-4 and 6,
+the extended console type, bytes 14-15, the NVRAM nibbles, iNES 1.0 bytes
+8-15). The first fix added four public fields to `Header`. That is an API break
+by `VERSION-PLAN.md`'s definition: `rustynes-core` re-exports the whole crate,
+and a new field on a struct whose fields are all public breaks struct-literal
+construction. The maintainer replaced it (2026-09-29) with the pattern this ADR
+already applies. v2.9.3 adds `serialize_header_preserving(h, original)`, which
+rewrites only the fields that changed, moves the editor to it, and deprecates
+`serialize_header` with `since = "2.9.3"`.
+
+Two items for v3.0.0, alongside the decision above:
+
+- **Remove `serialize_header`**, and make `canonical_header` its private
+  replacement where a from-scratch encoding is still wanted (the preserving
+  path already uses it for a format change or an unparsable original).
+- **Decide whether `Header` models the remaining bytes**: the Vs. hardware type,
+  the extended console type, bytes 14-15 and the NVRAM split. If it does, mark
+  it `#[non_exhaustive]` in the same break, so later fields stop being API
+  breaks. The editor does not need them either way, since the preserving
+  writer keeps what it does not model.

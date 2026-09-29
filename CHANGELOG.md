@@ -35,18 +35,19 @@ cycle-accurate core later replaced.
   powered on at the wrong bank, so the `test28` ROM failed its first check. A
   unit test now checks every mode value, outer bank and inner bank against the
   wiki's table, row for row. Save states from before still load.
-- **The ROM header editor no longer changes bytes it did not show you.** Saving
-  a header wrote Vs. UniSystem protection types 1-4 back as 0, Vs. DualSystem
-  type 6 as 5, the extended console type of an Extended-console image (byte 13,
-  VT01-VT32 and similar) as 0, and the NES 2.0 misc-ROM count and default
-  expansion device (bytes 14-15) as 0. Every byte the header parser reads is
-  now written back unchanged. To carry those bytes, `rustynes_mappers::Header`
-  gains four public fields: `vs_hardware_type`, `extended_console_type`,
-  `misc_rom_count` and `default_expansion_device`. `rustynes-core` re-exports
-  that crate, so code outside this repository that builds a `Header` with a
-  struct literal must set them. No crate is published to crates.io, and
-  nothing in this workspace builds one that way; the maintainer chose to
-  ship this in the patch release with this note (#571).
+- **The ROM header editor no longer changes bytes you did not edit.** Saving
+  a header re-encoded all 16 bytes from scratch. That wrote Vs. UniSystem
+  protection types 1-4 back as 0 and DualSystem type 6 as 5, zeroed the
+  extended console type of an Extended-console image (byte 13, VT01-VT32 and
+  similar), the NES 2.0 misc-ROM count and default expansion device (bytes
+  14-15) and both NVRAM size nibbles, and cleared anything in iNES 1.0 bytes
+  8-15. It now writes your edits over the bytes the file held, so only the
+  fields you changed are rewritten.
+- **The header editor saved every mapper from 16 up as the wrong mapper.**
+  The header encoder put mapper bits 8-11 where bits 4-7 belong, so, for
+  example, mapper 66 (GxROM) was written as mapper 2. Present since the editor
+  shipped in v1.7.0; the ROMs the emulator loads were never affected, only
+  headers saved from the editor.
 - **A palette file that cannot be read no longer erases your palette
   setting.** A missing or unreadable `.pal` (say, on a drive not yet mounted)
   used to clear `[graphics] palette_file` and save the config. It now falls
@@ -69,6 +70,15 @@ These came from review threads on PRs #29-#97 that were never answered. All
 244 of those threads were checked against current code in v2.9.3: 234 were
 answered and resolved, and these ten are the findings that turned out to
 still hold.
+
+### Deprecated
+
+- `rustynes_mappers::serialize_header` (reachable as
+  `rustynes_core::rustynes_mappers::serialize_header`). It encodes a `Header`
+  from scratch, which zeroes every header bit `Header` has no field for. Use
+  the new `serialize_header_preserving(header, original_bytes)`, which
+  rewrites only the fields that changed. `serialize_header` is removed at
+  v3.0.0 with the other deprecations (ADR 0042).
 
 ### Testing
 

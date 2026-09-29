@@ -1768,10 +1768,11 @@ stack stays `#![no_std]`; AccuracyCoin holds 139/141 (the two newest upstream PP
   shows format / mapper / submapper / mirroring / PRG-CHR sizes / battery /
   trainer / region / console type / RAM sizes (+ Vs. PPU + DualSystem for Vs.
   carts). The editor exposes combo boxes + unit-count fields and, on "Write
-  header to file", re-serializes via the core's canonical `serialize_header` and
-  overwrites the file's first 16 bytes (the ROM body is untouched). Decode +
-  re-encode reuse `parse_header` / `serialize_header`, so the editor can't drift
-  from the loader.
+  header to file", writes the edits over the bytes the file held via the core's
+  `serialize_header_preserving` (since v2.9.3; the canonical `serialize_header`
+  it used before zeroed every bit `Header` does not model) and overwrites the
+  file's first 16 bytes (the ROM body is untouched). Decoding reuses
+  `parse_header`, so the editor can't drift from the loader.
 - **A3 — inline 6502 assembler** (`src/debugger/{cpu_panel,assembler}.rs`). An
   **"Assemble (6502)"** collapsing section (off by default) with an address
   field + a multi-line source box; "Assemble + queue" assembles each line in
