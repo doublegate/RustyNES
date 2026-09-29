@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 /// Returns an empty string for a null pointer. Invalid UTF-8 is replaced
 /// lossily.
 #[must_use]
-pub(crate) fn cstr_to_string(ptr: *const c_char) -> String {
+pub fn cstr_to_string(ptr: *const c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
@@ -21,7 +21,10 @@ pub(crate) fn cstr_to_string(ptr: *const c_char) -> String {
 /// Convert a fixed-size, possibly-NUL-terminated `char[N]` field into an owned
 /// [`String`] (stopping at the first NUL, or using the whole array if none).
 #[must_use]
-pub(crate) fn cchar_arr_to_string(arr: &[c_char]) -> String {
+// `c as u8` reinterprets the C char's bits: `c_char` is `i8` on x86 and `u8` on
+// ARM, and either way the byte is what the string holds.
+#[allow(clippy::cast_sign_loss)]
+pub fn cchar_arr_to_string(arr: &[c_char]) -> String {
     let bytes: Vec<u8> = arr
         .iter()
         .take_while(|&&c| c != 0)

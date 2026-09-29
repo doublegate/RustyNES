@@ -1,6 +1,6 @@
-//! RetroAchievements flat-address -> NES CPU-bus address mapping.
+//! `RetroAchievements` flat-address -> NES CPU-bus address mapping.
 //!
-//! RetroAchievements addresses NES memory as a flat space:
+//! `RetroAchievements` addresses NES memory as a flat space:
 //!   - `0x0000..=0x07FF` -> the 2 KiB system RAM at CPU `$0000..=$07FF`
 //!   - `0x0800..`        -> cartridge save/work RAM, mapped to CPU `$6000..`
 //!     (the 8 KiB WRAM window `$6000..=$7FFF`)
@@ -20,11 +20,15 @@ const NES_WRAM_LEN: u32 = 0x2000;
 /// Base of the cartridge WRAM window on the NES CPU bus.
 const NES_WRAM_BASE: u16 = 0x6000;
 
-/// Translate a RetroAchievements flat address to a NES CPU-bus address.
+/// Translate a `RetroAchievements` flat address to a NES CPU-bus address.
 ///
 /// Returns `None` for addresses that have no NES-bus equivalent.
 #[must_use]
-pub fn ra_addr_to_nes(addr: u32) -> Option<u16> {
+// Both `as u16` casts are bounded by the range check before them (under
+// `RA_SYSTEM_RAM_END` and under `NES_WRAM_LEN`), and `u16::try_from` is not
+// available in a `const fn`.
+#[allow(clippy::cast_possible_truncation)]
+pub const fn ra_addr_to_nes(addr: u32) -> Option<u16> {
     if addr < RA_SYSTEM_RAM_END {
         // System RAM: identity map into $0000..=$07FF.
         Some(addr as u16)

@@ -84,7 +84,7 @@ pub struct rc_api_request_t {
     pub url: *const c_char,
     pub post_data: *const c_char,
     pub content_type: *const c_char,
-    /// Opaque `rc_buffer_t buffer` (rc_buffer_chunk_t + uint8_t[256]).
+    /// Opaque `rc_buffer_t buffer` (`rc_buffer_chunk_t` + `uint8_t`[256]).
     _buffer: [u8; 256 + 4 * std::mem::size_of::<usize>()],
 }
 

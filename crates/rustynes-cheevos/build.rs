@@ -1,6 +1,6 @@
 //! Build script for `rustynes-cheevos`.
 //!
-//! Compiles the vendored RetroAchievements `rcheevos` C library (MIT, under
+//! Compiles the vendored `RetroAchievements` `rcheevos` C library (MIT, under
 //! `vendor/rcheevos/`) into a single static archive linked into this crate.
 //!
 //! On `wasm32` targets the crate body is empty (`#![cfg(not(target_arch =

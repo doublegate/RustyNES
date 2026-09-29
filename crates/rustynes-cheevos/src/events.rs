@@ -27,13 +27,16 @@ pub struct RaScoreboardEntry {
     pub score: String,
 }
 
-/// A safe, owned RetroAchievements event.
-#[derive(Debug, Clone, PartialEq)]
+/// A safe, owned `RetroAchievements` event.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RaEvent {
     /// An achievement was earned by the player.
     AchievementTriggered {
+        /// The achievement's RA ID.
         id: u32,
+        /// The achievement's title.
         title: String,
+        /// The points it is worth.
         points: u32,
         /// The RA media-server URL of the unlocked (color) badge PNG (empty if
         /// rcheevos has not populated it). Used by the frontend to show the
@@ -41,33 +44,56 @@ pub enum RaEvent {
         badge_url: String,
     },
     /// A leaderboard attempt has started.
-    LeaderboardStarted { id: u32, title: String },
+    LeaderboardStarted {
+        /// The leaderboard's RA ID.
+        id: u32,
+        /// The leaderboard's title.
+        title: String,
+    },
     /// A leaderboard attempt failed.
-    LeaderboardFailed { id: u32, title: String },
+    LeaderboardFailed {
+        /// The leaderboard's RA ID.
+        id: u32,
+        /// The leaderboard's title.
+        title: String,
+    },
     /// A leaderboard attempt was submitted.
-    LeaderboardSubmitted { id: u32, title: String },
+    LeaderboardSubmitted {
+        /// The leaderboard's RA ID.
+        id: u32,
+        /// The leaderboard's title.
+        title: String,
+    },
     /// A challenge indicator should be shown (`true`) or hidden (`false`).
     ChallengeIndicator {
+        /// The achievement's RA ID.
         id: u32,
+        /// `true` to show the indicator, `false` to hide it.
         show: bool,
+        /// The badge rcheevos names for the indicator.
         badge_name: String,
     },
     /// A progress indicator should be shown/updated/hidden.
     ProgressIndicator {
         /// `Some(true)` = show, `Some(false)` = hide, `None` = update.
         show: Option<bool>,
+        /// The progress text rcheevos formats for display (e.g. "3/10").
         measured_progress: String,
     },
     /// A leaderboard tracker should be shown/updated/hidden.
     LeaderboardTracker {
+        /// The tracker's ID (rcheevos shares one tracker between leaderboards
+        /// with the same format).
         id: u32,
         /// `Some(true)` = show, `Some(false)` = hide, `None` = update.
         show: Option<bool>,
+        /// The tracker's current value, formatted for display.
         display: String,
     },
     /// A new leaderboard ranking was received after a submission — the data
     /// for the scoreboard popup (your new rank "#N of M" + the top entries).
     LeaderboardScoreboard {
+        /// The RA ID of the leaderboard submitted to.
         leaderboard_id: u32,
         /// The score the player just submitted (formatted).
         submitted_score: String,
@@ -91,9 +117,17 @@ pub enum RaEvent {
     /// The server connection was restored; pending unlocks completed.
     Reconnected,
     /// An API response returned a non-retryable server error.
-    ServerError { msg: String, api: String },
+    ServerError {
+        /// The error message the server returned.
+        msg: String,
+        /// The API call that failed.
+        api: String,
+    },
     /// An event type this wrapper does not model in detail.
-    Other { event_type: u32 },
+    Other {
+        /// The raw `RC_CLIENT_EVENT_*` value.
+        event_type: u32,
+    },
 }
 
 thread_local! {
@@ -106,18 +140,18 @@ fn push_event(ev: RaEvent) {
 }
 
 /// Drain all pending events for the current thread.
-pub(crate) fn drain_events() -> Vec<RaEvent> {
+pub fn drain_events() -> Vec<RaEvent> {
     EVENT_QUEUE.with(|q| q.borrow_mut().drain(..).collect())
 }
 
-/// The `extern "C"` event handler installed on the rc_client. It translates the
+/// The `extern "C"` event handler installed on the `rc_client`. It translates the
 /// borrowed C event into an owned [`RaEvent`] and enqueues it.
 ///
 /// # Safety
 /// `event` is a valid `*const rc_client_event_t` for the duration of the call,
 /// supplied by rcheevos. The union pointers are only dereferenced for the event
 /// types that define them.
-pub(crate) extern "C" fn event_handler_trampoline(
+pub extern "C" fn event_handler_trampoline(
     event: *const ffi::rc_client_event_t,
     _client: *mut ffi::rc_client_t,
 ) {
@@ -136,6 +170,9 @@ pub(crate) extern "C" fn event_handler_trampoline(
 /// # Safety
 /// Caller guarantees `ev` is a valid reference and that any union pointer it
 /// reads is valid for the active event type (rcheevos' contract).
+// One match arm per rcheevos event type; splitting it would scatter a table
+// that reads best as one.
+#[allow(clippy::too_many_lines)]
 fn translate_event(ev: &ffi::rc_client_event_t) -> RaEvent {
     // Helper closures to safely read the union pointers.
     let ach = || -> Option<&ffi::rc_client_achievement_t> {
