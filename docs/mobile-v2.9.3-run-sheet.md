@@ -1,5 +1,11 @@
 # v2.9.3 "Handset" — the mobile run sheet
 
+> **The device run moved after v3.0.0** (maintainer, 2026-09-29). v2.9.3
+> shipped with this sheet prepared and its emulator column filled; the device
+> columns are still empty. When the run happens, rebuild the APKs from that
+> day's `main` and record the new checksums here first, as "The build" below
+> requires.
+
 One sheet for the maintainer's device run. It carries every row of the
 [v2.7.4 checklist](mobile-v2.7.4-device-checklist.md) (A1-A12, I1-I15) and its
 v2.9.2 additions (A13-A15, I16-I19) unchanged, plus rows for what the

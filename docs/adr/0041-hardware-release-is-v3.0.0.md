@@ -99,3 +99,23 @@ hardware core.
   this build targets the DE10-Nano's 5CSEBA6U23. Stock MiSTer cores are reported
   running on the SS1 unmodified, so the build is expected to load, but that is
   confirmed only at v2.9.2's Strand A, on the stock core, before ours is loaded.
+
+## Amendment (2026-09-29, v2.9.3): the hardware work moves after v3.0.0
+
+The maintainer moved three things after v3.0.0 (2026-09-29): the mobile device
+runs (`docs/mobile-v2.9.3-run-sheet.md`), the SuperStation One board session
+(Strands A-F of the v2.9.x plan, on v2.9.2's bitstreams), and the fixes each of
+them produces. v2.9.3 "Handset" shipped without its device run on that basis.
+
+This conflicts with the Decision above, which defines v3.0.0 as the release in
+which a bitstream is **verified on real hardware**, and with the v3.0.0 plan's
+gate (every bring-up row PASS). The two cannot both stand, and this amendment
+does not choose between them. **What v3.0.0 now ships, and under which MAJOR
+trigger, is open for the maintainer.** ADR 0042's API break alone would qualify
+it as MAJOR, so the version number does not force either answer. Until it is
+decided:
+
+- the "no hardware has run any bitstream" anchors stay true and unflipped;
+- the v3.0.0 plan's gate is marked as under revision, not deleted;
+- the board and device work keep their prepared material (the board kit, the
+  run sheet, the emulator pre-run) for whenever they run.
