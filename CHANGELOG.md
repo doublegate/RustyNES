@@ -26,6 +26,19 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.4] - 2026-09-29 - "Plumb" (the records made true, and CI made to run what it only linted)
+
+The fifth release of the v2.9.x line and the first of the line to v3.0.0
+([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
+**No emulation behaviour changes.** It records what v3.0.0 now is, brings the
+records in both repositories back in line with the code, and makes CI run what it
+only linted: 63 feature-gated tests no job had ever run, the eight fuzz targets,
+and a floor under line coverage, which was never measured before (72.01% of the
+lib tests). One provenance record was incomplete and is now complete. The full
+`--features test-roms` suite passes 2,887 tests; AccuracyCoin 144/144 and nestest
+0-diff hold. The MiSTer bitstreams are v2.9.2's, byte for byte, since the RTL is
+unchanged. **No hardware has run any bitstream.**
+
 ### Provenance
 
 - **The optional OAM-decay model is recorded as derived from Mesen2.** It was
