@@ -49,6 +49,38 @@ cycle-accurate core later replaced.
   release candidate (v2.9.9). The MiSTer contribution checklist's deadline moves
   with the submission, to the hardware-verification release.
 
+### Testing
+
+- **CI now runs the tests it used to only lint.** The frontend's lib tests run
+  with `--features full` (659 tests, against 631 with `av-record` alone and 618
+  by default), and the chip crates run their feature-gated tests:
+  `rustynes-core` and `rustynes-ppu` with `debug-hooks,hd-pack` (+13 and +5),
+  `rustynes-apu` with `debug-hooks` (+10), `rustynes-script` with
+  `script-ipc,script-sqlite` (+7). Every one of these tests existed and passed;
+  no job had ever run them.
+- **The eight fuzz targets are built and run in CI**, 20,000 inputs each from a
+  fixed seed, so a failure is reproducible. No workflow built them before, so a
+  target could stop compiling unnoticed. A planted panic fails the job and
+  uploads the crash input.
+- **Line coverage is measured and floored.** A `coverage` job runs
+  `cargo llvm-cov` over the workspace's lib tests and fails below 70% of lines.
+  The baseline is 72.01%. The integration suites are outside its scope, because
+  instrumented they are too slow for a per-change job.
+- **A weekly toolchain canary** builds, lints and tests the workspace on
+  current stable and beta. It never blocks a merge; it shows the cost of moving
+  the 1.96 pin while that cost is small.
+- `rustynes-cheevos` now meets the workspace lint set (`missing_docs`, clippy
+  pedantic and nursery, `undocumented_unsafe_blocks`), which it had never been
+  held to; 92 warnings fixed.
+
+### Documentation
+
+- Current-state claims re-checked against the code: `docs/STATUS.md`'s mapper
+  tiers (174 families: 51 Core, 95 Curated, 28 BestEffort) and test counts, the
+  store status in `docs/android.md` and `docs/ios.md` (no store launch has
+  happened), the roadmap tables, and `to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md`
+  (25 entries found shipped and ticked with evidence).
+
 ## [2.9.3] - 2026-09-29 - "Handset" (the old review threads closed, and the mobile run prepared)
 
 The fourth release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):

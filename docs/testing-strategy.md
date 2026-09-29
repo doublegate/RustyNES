@@ -180,22 +180,53 @@ commit is the missing piece that would automate them.
 
 ## Layer 5 — fuzz testing
 
-`cargo-fuzz` harnesses for:
+Eight `cargo-fuzz` harnesses under `fuzz/fuzz_targets/` (a standalone crate,
+nightly-only because libFuzzer needs it):
 
-- **Cartridge parser**: arbitrary `&[u8]` → `parse()`. Must not panic. Errors typed.
-- **CPU step**: arbitrary RAM contents + arbitrary opcode sequence → `cpu.step_instruction()`. Must not panic; must respect read/write counts.
-- **Mapper writes**: arbitrary write sequences to mapper registers. Must not panic; bank indices stay in range.
+- **`cartridge_parser`**: arbitrary `&[u8]` → `parse()`. Must not panic; errors typed.
+- **`cpu_step`**: arbitrary RAM contents + opcode sequence → one instruction.
+- **`mapper_writes`**: arbitrary write sequences to mapper registers; bank indices
+  stay in range.
+- **`ppu_reg_io`** / **`apu_reg_io`**: arbitrary register reads and writes.
+- **`netplay_message`**: the netplay message and signalling parsers (untrusted
+  network input).
+- **`save_state`** / **`movie`**: the `.rns` and `.rnm` deserialisers (untrusted
+  file input).
+
+**In CI since v2.9.4** (the `fuzz` job in `ci.yml`): all eight are built and each
+runs 20,000 inputs from seed 1, so a failure is reproducible, and a crash input is
+uploaded as an artifact. Before v2.9.4 no workflow built them. Locally:
+`cd fuzz && cargo +nightly fuzz run <target> -O -- -runs=20000 -seed=1`. Under a
+debugger or a sandbox that blocks ptrace, LeakSanitizer cannot start and reports
+every run as a crash; set `ASAN_OPTIONS=detect_leaks=0` there.
 
 ## Layer 6 — CI gating
 
-GitHub Actions workflow (`.github/workflows/ci.yml`):
+`.github/workflows/ci.yml` (the `CI success` job is the one required check; it
+fails if any job it aggregates failed):
 
-- Lint: `cargo fmt --check`, `cargo clippy -- -D warnings`.
-- Build: stable + MSRV (1.75) on Linux, macOS, Windows.
-- Unit tests: `cargo test --workspace`.
-- Test ROM suite: `cargo test --workspace --features test-roms` (gated to avoid pulling 30+ MB of ROMs in default builds).
-- Doc build: `cargo doc --workspace --no-deps`.
-- Optional: nightly run with overflow checks enabled in release mode (catches regressions the fast path hides).
+- **Lint:** `cargo fmt --check`, clippy `-D warnings` for the workspace and every
+  feature set the project enumerates (including `retroachievements`, `full` and
+  both wasm32 builds), rustdoc `-D warnings`.
+- **Tests:** `cargo test --workspace` on Linux (plus macOS and Windows on full
+  runs), on the pinned toolchain (`rust-toolchain.toml`, 1.96). Since v2.9.4 the
+  Linux leg also runs the tests behind non-default features: the frontend with
+  `full`, `rustynes-core` and `rustynes-ppu` with `debug-hooks,hd-pack`,
+  `rustynes-apu` with `debug-hooks`, `rustynes-script` with
+  `script-ipc,script-sqlite`.
+- **Test ROMs:** `cargo test --workspace --features test-roms` in release mode.
+- **Fuzz:** see Layer 5.
+- **Coverage (since v2.9.4):** `cargo llvm-cov --workspace --lib
+  --fail-under-lines 70`. The scope is the workspace's **lib tests only**; the
+  integration suites are too slow instrumented (the `determinism` suite alone ran
+  past 16 minutes). Baseline at v2.9.3 + v2.9.4's changes: **72.01% of lines**
+  (76.25% of functions, 74.46% of regions). The floor sits two points below it.
+  Raise it when a release raises the number; never lower it to make a change
+  pass.
+- **Also:** the no_std cross-build, the libretro buildbot targets, and the
+  frame-time regression gate.
+- **Outside the required check:** `security.yml` (cargo-audit and cargo-deny),
+  and `toolchain-canary.yml` (weekly; stable and beta, never blocking).
 
 ## Test ROM licensing
 
