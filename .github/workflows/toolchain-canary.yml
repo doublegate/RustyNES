@@ -1,0 +1,54 @@
+name: Toolchain canary
+
+# Early warning for toolchain drift, NOT a gate.
+#
+# The project pins Rust 1.96 in rust-toolchain.toml and will stay there until
+# the libretro buildbot image stops passing `-C ar`, which breaks the Apple jobs
+# on 1.97 and later (maintainer decision, 2026-09-28). A pin that holds for
+# months hides every new lint and every deprecation until the day it moves, and
+# then they all arrive at once. This workflow builds, lints and tests the
+# workspace on the current stable and beta once a week, so the cost of moving
+# the pin is visible while it is still small.
+#
+# It never blocks anything: it is a separate workflow (not in CI's `CI success`
+# aggregate), and each leg is `continue-on-error`. A red leg is a note for the
+# next pin move, not a defect in the tree. Added in v2.9.4.
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolchain-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: canary (${{ matrix.toolchain }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy
+          cache-key: canary-${{ matrix.toolchain }}
+      - name: Toolchain in use
+        run: cargo +${{ matrix.toolchain }} --version && rustc +${{ matrix.toolchain }} --version
+      # `+toolchain` overrides rust-toolchain.toml for these commands only.
+      - name: Clippy (workspace, all targets)
+        run: cargo +${{ matrix.toolchain }} clippy --workspace --all-targets -- -D warnings
+      - name: Tests (workspace)
+        run: cargo +${{ matrix.toolchain }} test --workspace

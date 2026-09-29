@@ -19,9 +19,11 @@
 //! - **Native**: `.rnm` files via the `rfd` file dialog (the same dep the
 //!   ROM-open path uses). See `App::movie_save_dialog` /
 //!   `App::movie_open_dialog`.
-//! - **wasm32**: the movie UI is gated off for v1.4.0 (browser file
-//!   download / `IndexedDB` is a follow-up); see the documented TODO in
-//!   `app.rs`. The build still compiles on wasm32 — this module is
+//! - **wasm32** (since v1.6.0 Sprint 4): F6 records from a fresh power-on and
+//!   stopping hands the `.rnm` bytes to a browser download
+//!   (`App::handle_movie_record_toggle_wasm`); a `.rnm` chosen in the browser
+//!   file picker arrives as `AppEvent::MovieLoaded` and plays back. Movies are
+//!   not persisted in browser storage (no `IndexedDB`). This module is
 //!   target-agnostic and holds no native-only types.
 
 use rustynes_core::{Movie, MovieRecorder, Nes};

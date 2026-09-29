@@ -19,6 +19,20 @@
 > **and cited**, and absence means it was never catalogued rather than that it was
 > finished.
 >
+> **Reconciled against `main` at v2.9.3 (2026-09-29) for v2.9.4.** Every open
+> box and `[~]` below was re-checked against the tree, not against the prose;
+> each change carries a dated `(2026-09-29 ...)` annotation naming the file and
+> symbol that was read. Targets for what remains follow the approved line plan,
+> [v2.9.4 → v3.0.0](plans/v2.9.4-to-v3.0.0-line-plan.md) (ADR 0043); an item
+> that plan does not name is marked **unscheduled**. Two findings are worth
+> stating up front. **Most of what was still open had shipped months earlier:**
+> nine §1/§2/§4/§5/§12 entries landed in **v1.8.9 "Backlog"** (2026-06-25) or
+> v1.7.0, and every §9 mobile entry landed in the v1.8.x / v1.9.x trains, so the
+> 2026-08-20 sweep below carried them open without re-reading them. **And that
+> sweep's §11d claim that "no `merge_group` trigger exists in any workflow" was
+> false** — the trigger has been in `.github/workflows/ci.yml` since v1.6.0; what
+> is missing is the queue itself in the repository ruleset.
+>
 > **Swept 2026-08-20, against `main` @ `fdfb2c04` (v2.3.9 "Crucible").** The
 > v2.3.5 → v2.3.9 window was reconciled entry by entry. **Eleven** entries were
 > struck; each carries the evidence inline — a file that exists, a workflow line
@@ -128,6 +142,11 @@
 > Status: the flavor split lands with the mobile finalization train; there is **no
 > fixed store-launch timeline** — any free store listing is a later, unversioned step
 > (ADR 0035).
+>
+> *(2026-09-29: the v2.0.x → v2.1.0 store timeline above did not happen. Both
+> apps still ship as GitHub sideload + TestFlight; app stores and F-Droid are now
+> targeted **after the v3.x hardware release** per the
+> [line plan](plans/v2.9.4-to-v3.0.0-line-plan.md) "After v3.0.0 — External".)*
 
 ---
 
@@ -138,11 +157,20 @@ each but that are **not present in `crates/` on `main`** (verified absent: no
 `virtual_pad`, `basic_bot`, `multi-viewport`, `firmware_manager`, `multi_disk`,
 `batch_runner` symbols). They are slated for beta.5 (the H reach/polish train).
 
-- `[ ]` **Virtual Pad** — a clickable on-screen controller that feeds
+*(2026-09-29: that "verified absent" was true on 2026-06-19 and false four days
+later — every entry below except the A/V-sync half and the named multicart
+bundler shipped in the v1.8.9 "Backlog" beta train.)*
+
+- `[x]` **Virtual Pad** — *(shipped v1.8.9, commit `05d17bd5`;
+  `crates/rustynes-frontend/src/virtual_pad.rs`, `VirtualPad` — a translucent
+  on-screen controller overlay whose held buttons fold into the per-frame
+  input.)* a clickable on-screen controller that feeds
   `SharedInput` (BizHawk parity). Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H9.
   Target: **v1.7.x (beta.5)**. Files: `crates/rustynes-frontend/src/` (new
   input-overlay module) + `SharedInput`.
-- `[ ]` **Input Macros / templates** — record/replay short input macros that feed
+- `[x]` **Input Macros / templates** — *(shipped v1.8.9, commit `b8666971`;
+  `crates/rustynes-frontend/src/input_macros.rs`, `InputMacro` / `MacroBank`,
+  held by the TAStudio panel at `debugger/tastudio_panel.rs`.)* record/replay short input macros that feed
   the TAStudio piano-roll pattern-paint. Source: [v1.7.0](plans/v1.7.0-forge-plan.md)
   H9 (pairs with the v1.6.0 piano-roll). Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/tastudio*` + input layer.
@@ -174,18 +202,30 @@ each but that are **not present in `crates/` on `main`** (verified absent: no
   so the debugger/TAStudio panels can pop out into OS windows. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9. Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/debugger/`.
-- `[ ]` **A/V dump-options depth (codec / sync)** — extend the v1.6.0 `av_record`
+- `[~]` **A/V dump-options depth (codec / sync)** — *(2026-09-29: the CODEC half
+  shipped v1.8.9, commit `a87a732a`: `crates/rustynes-frontend/src/av_record.rs`
+  `VideoCodec` (H.264 / H.265 / VP9) + `AvRecordOptions` (CRF, preset, AAC
+  bitrate). No user-facing A/V-sync control exists — `AvRecordOptions` has no
+  sync field. Remaining: the sync half. Target: **unscheduled**.)* extend the v1.6.0 `av_record`
   ffmpeg tap with codec selection + A/V-sync controls. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9 (`av_record.rs` exists; the depth does
   not). Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/av_record.rs`.
-- `[ ]` **FDS Firmware Manager** — FDS BIOS hash-verify/resolve UI (supports the
+- `[x]` **FDS Firmware Manager** — *(shipped v1.8.9, commit `6b7abfab`;
+  `crates/rustynes-frontend/src/fds_firmware.rs`, `BiosStatus` + `classify()`
+  (8 KiB gate + SHA-256 match), surfaced in `debugger/settings_panel.rs`.)* FDS BIOS hash-verify/resolve UI (supports the
   v1.6.0 FDS-proper work). Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H9.
   Target: **v1.7.x (beta.5)**. Files: frontend FDS handling.
-- `[ ]` **Multi-Disk Bundler** — named FDS / multicart slot management. Source:
+- `[~]` **Multi-Disk Bundler** — *(2026-09-29: the FDS half shipped v1.8.9,
+  commit `2f06b1bc`: an Emulation → Disk Side submenu inserts any side directly
+  (`set_disk_side` in `crates/rustynes-frontend/src/app.rs`, menu in
+  `ui_shell.rs`). No NAMED slot management and nothing for multicarts exists.
+  Remaining: the bundler proper. Target: **unscheduled**.)* named FDS / multicart slot management. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9. Target: **v1.7.x (beta.5)**. Files:
   frontend FDS / cart loader.
-- `[ ]` **Batch Runner (headless)** — consolidate the ad-hoc per-mapper
+- `[x]` **Batch Runner (headless)** — *(shipped v1.8.9, commit `322ef7c6`;
+  `crates/rustynes-test-harness/src/bin/batch_runner.rs` over the reusable
+  `coverage::run_rom_headless` helper in `src/coverage.rs`.)* consolidate the ad-hoc per-mapper
   screenshot/movie-verify scripts into a first-class headless mode (reuses the
   boot-smoke harness + screenshot corpus). Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9 + the Batch-Runner reuse note. Target:
@@ -207,7 +247,11 @@ each but that are **not present in `crates/` on `main`** (verified absent: no
 The v1.7.0 A/B/C/E debugger + scripting workstreams are merged on `main`; what
 remains are the optional/SQLite tails and any beta.5 polish.
 
-- `[ ]` **`userdata.*` SQLite backend (E3 optional)** — the `userdata` KV store is
+- `[x]` **`userdata.*` SQLite backend (E3 optional)** — *(shipped v1.8.9,
+  commit `72c0ff63`; the default-off `script-sqlite` feature in
+  `crates/rustynes-script/Cargo.toml` (bundled `rusqlite`),
+  `crates/rustynes-script/src/userdata_sqlite.rs`, and
+  `userdata_save_sqlite` / `userdata_load_sqlite` in `src/lib.rs`.)* the `userdata` KV store is
   in scope; the optional SQLite-backed persistence was scoped "optional / later"
   by the maintainer. Source: [v1.7.0](plans/v1.7.0-forge-plan.md) E3 + Maintainer
   decisions. Target: **TBD (v1.7.x or later)**. Files: `crates/rustynes-script`.
@@ -234,10 +278,14 @@ remains are the optional/SQLite tails and any beta.5 polish.
   `docs/netplay-webrtc.md` §4 "Pending" → "Verified". Source:
   `docs/netplay-webrtc.md` §4; the long-standing v1.2.0-era **F3** carryover.
   Target: **maintainer-manual**. Files: `deploy/`, `docs/netplay-webrtc.md`,
-  `crates/rustynes-netplay`.
+  `crates/rustynes-netplay`. *(2026-09-29: still open —
+  `docs/netplay-webrtc.md` still reads "live verification pending". Target:
+  **after v3.0.0**, with the hosted netplay signalling in the line plan's
+  "External" list.)*
 - `[M]` **Real cross-NAT UDP traversal** — needs a STUN server + two real NATs;
   unverifiable in CI. Source: `docs/netplay-webrtc.md` §4. Target:
-  **maintainer-manual**.
+  **maintainer-manual**. *(2026-09-29: still open; target **after v3.0.0**
+  with the hosted signalling, as above.)*
 - `[x]` **Spectator netplay (H8)** — *(shipped; v1.8.9 reconcile: complete in
   `crates/rustynes-netplay/src/spectator.rs` — `SpectatorSession<T: Transport>`,
   receive-only, determinism-safe, `MAX_SPECTATOR_FRAME_LOOKAHEAD` DoS bound, unit-tested;
@@ -266,10 +314,23 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
   Source: `docs/cheevos-browser.md` §Auth proxy contract; ADR 0015. Target:
   **maintainer-manual**. Files: `scripts/cheevos/auth-proxy.example.toml`,
   `scripts/cheevos/auth_proxy_stub.py`, `crates/rustynes-frontend/web/cheevos/ra_glue.js`.
+  *(2026-09-29: the service side is code-complete since v2.1.10 — an `ra-proxy`
+  compose service, `deploy/Dockerfile.raproxy`, behind the shared Caddy TLS —
+  but `RA_PROXY_BASE` is still `""` at `ra_glue.js:40`, so no host is live.
+  Target: **after v3.0.0**, external hosting on the same `deploy/` stack as the
+  line plan's hosted netplay signalling.)*
 - `[M]` **Live-browser verify with a real RA account** — no headless path;
   mirrors the v1.2.0 F1/F3 carryovers the maintainer accepted. Source: ADR 0015;
   `docs/cheevos-browser.md` §Status. Target: **maintainer-manual**.
-- `[ ]` **RA HUD completion (H2)** — surface data RustyNES already decodes then
+  *(2026-09-29: still open; follows the proxy deploy above, **after v3.0.0**.)*
+- `[x]` **RA HUD completion (H2)** — *(shipped v1.7.0, commit `f1d17246`, and
+  completed in v1.8.9, commit `822d764b` (the on-screen leaderboard-tracker
+  overlay). Evidence: `crates/rustynes-frontend/src/debugger/cheevos_panel.rs`
+  carries `challenges`, `progress`, `scoreboards: Vec<ScoreboardView>`,
+  `measured_progress` and `rarity`; pause-gating is
+  `RaClient::can_pause` over `rc_client_can_pause` in
+  `crates/rustynes-cheevos/src/client.rs`, called by `App::ra_pause_gate` in
+  `crates/rustynes-frontend/src/app.rs`.)* surface data RustyNES already decodes then
   drops: leaderboard scoreboard (#N of M), progress/challenge indicators,
   progress-bars/buckets/rarity, hardcore **pause-gating** (`rc_client_can_pause`).
   Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H2. Target: **v1.7.x (beta.5)**.
@@ -277,7 +338,8 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 - `[ ]` **Live RA-account allowlisting pass** — the `RustyNES/<ver> rcheevos/<ver>`
   User-Agent is already sent; allowlisting with the RA team is a request, not a
   code change. Source: [ROADMAP](ROADMAP.md) "Beyond v2.0.0". Target:
-  **maintainer-manual**.
+  **maintainer-manual**. *(2026-09-29: still open; the line plan lists
+  "RetroAchievements allowlisting" under **after v3.0.0 — External**.)*
 
 ---
 
@@ -291,7 +353,11 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
   [v1.7.0](plans/v1.7.0-forge-plan.md) H3. Files:
   `crates/rustynes-frontend/src/{audio,audio_dsp,eq}.rs` +
   `crates/rustynes-frontend/src/debugger/settings_panel.rs`.
-- `[ ]` **Full Mesen HD-pack parity** — beyond the shipped `<condition>` /
+- `[x]` **Full Mesen HD-pack parity** — *(shipped v1.8.9 "Backlog", whose
+  CHANGELOG entry records "every Mesen2 HD-pack form now implemented"; the
+  spatial predicates (`TileNearby` / `TileAtPos` / `SpriteNearby` /
+  `SpriteAtPos` / `PositionCheckX/Y`) and palette matching are listed in the
+  module docs of `crates/rustynes-hdpack/src/hdpack.rs`.)* beyond the shipped `<condition>` /
   `<background>` rules + HD audio: neighbor predicates / palette-key matching /
   the remaining Mesen rule set. Source:
   [v1.5.0](plans/v1.5.0-lens-plan.md) + [v1.4.0](plans/v1.4.0-fidelity-plan.md)
@@ -307,6 +373,11 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 - `[M]` **HD-audio (`<bgm>`/`<sfx>` OGG) playback verify** — no audio device in
   CI. Source: CHANGELOG `[Unreleased]`. Target: **maintainer-manual**.
 
+*(2026-09-29: all three `[M]` verifies above are still open and appear nowhere
+in the line plan — **unscheduled**. Note the shipped release binaries omit the
+`av-record` and `hd-pack` features entirely; the plan's v2.9.7 `full` release
+variant is what would put the first two in front of a user at all.)*
+
 ---
 
 ## 6. Accuracy → v2.0.0 "Timebase" (the master-clock rewrite, ADR 0002)
@@ -319,6 +390,11 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 > exact **141/141 (100.00%)** on the RAM decoder — not 139/139 — and has been
 > since **v2.0.3**, and the section's framing of the timebase rewrite as a future
 > release is six weeks and ~20 releases out of date.
+>
+> *(2026-09-29: of that list only **R1** (maintainer decision at v2.9.5) and the
+> sprite-0 stale-shifter item are still open in §6b; R2, R4, R5, the `$2002`
+> race, the `$2007` read and PAL alignment are closed below with evidence. In
+> §6c the CPU-multiplier overclock is the one open build item.)*
 
 All remaining hard-tier accuracy residuals share **one root cause** and converge
 on the v2.0.0 one-clock + every-cycle-bus-access refactor. They are **outside the
@@ -368,8 +444,21 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   timebase **cannot represent** it. **The 17-rollback graveyard / hard target with
   a bounded-effort escape hatch** (fall back to by-design `#[ignore]` rather than
   risk a 16th rollback of the sacred 100%). Site: `tests/m004_mmc3.rs:64,167`. Target:
-  **v2.0.0 (escape-hatch-able)**.
-- `[ ]` **R2 — `mmc3_test_2/4` #2 reload-to-0 cadence + MMC6 variant** — same M2
+  **v2.0.0 (escape-hatch-able)**. *(2026-09-29: the escape hatch was taken.
+  `crates/rustynes-test-harness/tests/mmc3.rs:97` and `:200` carry
+  `#[ignore = "R1 escape-hatched (v2.0.0 beta.3) ... CLOSED by-design-permanent
+  (ADR 0002 F5.0, 2026-07-09)"]`; `tests/m004_mmc3.rs` no longer exists. Left
+  open rather than ticked because the line plan reopens it: whether to try the
+  "M2-edge low-time filter" lever or keep R1 by-design is a maintainer decision
+  at **v2.9.5**.)*
+- `[x]` **R2 — `mmc3_test_2/4` #2 reload-to-0 cadence + MMC6 variant** —
+  *(CLOSED v2.6.15, commit `2f1b3227`, and not as an IRQ-timing fix: both pins,
+  `crates/rustynes-test-harness/tests/mmc3.rs:220` and `:240`, were reclassified
+  `SUPERSEDED ASSERTION` — blargg withdrew the assertion in the successor ROM
+  `mmc3_test_2/5-MMC3`, which PASSES, and the second ROM is the alternate-revision
+  (Crystalis) board this project deliberately does not model. The line plan's
+  v2.9.5 M2-edge decision names R1/R2 together; only R1 is still a timing
+  question.)* same M2
   sub-cycle axis as R1. Site: `tests/m004_mmc3.rs:187,207`. Target: **v2.0.0
   (escape-hatch-able)**.
 - `[x]` **R3 — `apu_reset/len_ctrs_enabled` (FAIL #3)** — *(CLOSED v2.0.0 beta.3,
@@ -380,18 +469,42 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   refactor closed, and conflating the two inflates what the refactor is credited
   with.)* needs A4's cycle-accurate reset. Site: `tests/apu_reset.rs:113`.
   Target: **v2.0.0**.
-- `[ ]` **R4 — `apu_reset/4017_written` (FAIL #3)** — same cycle-accurate-reset
+- `[x]` **R4 — `apu_reset/4017_written` (FAIL #3)** — *(CLOSED v2.0.0 beta.3,
+  Workstream A4, default from beta.4: the cycle-accurate reset re-issues the
+  retained `$4017` value 2 clocked cycles into the reset delay.
+  `apu_reset_4017_written` in `crates/rustynes-test-harness/tests/apu_reset.rs`
+  is a live asserting test, not `#[ignore]`d.)* same cycle-accurate-reset
   axis. Site: `tests/apu_reset.rs:138`. Target: **v2.0.0**.
-- `[ ]` **R5 — DMC reload-DMA span `Y=3` vs hardware `Y=4`** — five-counter parity
+- `[x]` **R5 — DMC reload-DMA span `Y=3` vs hardware `Y=4`** — *(CLOSED, pinned
+  v2.0.0 beta.1, commit `05bfad6a`:
+  `crates/rustynes-test-harness/tests/dma_timing_pin.rs` pins AccuracyCoin
+  `CheckDMATiming` Y = **4** plus the `$50-$5F` DMC-during-OAM landing sweep. Its
+  CHANGELOG entry records that ground-truth measurement found R5 already closed
+  on the shipping core before the rewrite.)* five-counter parity
   drift; falls out naturally once A2+A3 hold. Target: **v2.0.0**.
-- `[ ]` **`$2002` / NMI-suppression sub-cycle race** — part of the same fractional
+- `[x]` **`$2002` / NMI-suppression sub-cycle race** — *(CLOSED before it was
+  listed: `crates/rustynes-test-harness/tests/vbl_nmi_timing.rs` (added v1.7.0,
+  commit `9e880865`) records that `5.nmi_suppression.nes` "already PASSES
+  strictly" and keeps it as a live asserting pin; `ppu_vbl_nmi_06_suppression` in
+  `tests/ppu_vbl_nmi.rs` passes too. The related PPU-register-write half-dot
+  residual is a separate, measured item — `docs/accuracy-ledger.md`
+  "PPU register write placement", slated for measurement in **v2.9.5**.)* part of the same fractional
   timebase; representable only post-rewrite. Source: [v2.0.0
   plan](plans/v2.0.0-master-clock-plan.md) Out-of-scope; ADR 0002. Target:
   **v2.0.0**.
-- `[ ]` **`$2007` rendering blocking-read sub-cycle** — the PPUDATA state-machine
+- `[x]` **`$2007` rendering blocking-read sub-cycle** — *(modelled in the v1.0.0
+  production core: `ppudata_sm_countdown` with the deferred `v`-increment
+  (`ppudata_v_inc_pending`) in `crates/rustynes-ppu/src/ppu.rs`, documented as
+  "verified complete" in `docs/ppu-2c02.md` §PPUDATA; AccuracyCoin
+  `$2007 Stress Test` and, since v2.0.3, `ALE + Read` both pass inside the
+  144/144.)* the PPUDATA state-machine
   reload / `v`-increment glitch. Source: CHANGELOG `[Unreleased]`; ADR 0002.
   Target: **v2.0.0**.
-- `[ ]` **Exact PAL 3.2:1 fractional alignment** — already integer-correct on the
+- `[x]` **Exact PAL 3.2:1 fractional alignment** — *(closed by construction:
+  the master-clock region dividers in `crates/rustynes-core/src/bus.rs`
+  (`region_dividers()`, "NTSC 12/4, PAL 16/5, Dendy 15/5") date from the v1.0.0
+  core and survived v2.0.0 unchanged; `docs/accuracy-ledger.md` records PAL
+  frame-counter timing modelled in v2.1.5 with `pal_apu_tests` 10/10.)* already integer-correct on the
   shipping core; the v2.0.0 plan preserves the dividers exactly (NTSC ÷12/÷4, PAL
   ÷16/÷5). Listed as a residual closed-by-construction. Target: **v2.0.0**.
 - `[ ]` **Sprite-0 stale-shifter / internal-vs-external bus-split** — lowest-value;
@@ -399,6 +512,10 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   single-cycle trace oracle is wired and a real game demands it. Source:
   [v1.5.0](plans/v1.5.0-lens-plan.md); [v2.0.0
   plan](plans/v2.0.0-master-clock-plan.md). Target: **v2.0.0 / leave documented**.
+  *(2026-09-29: still open and still documented —
+  `docs/nesdev-hardware-emulation-checklist.md` "residual stale-shifter cases
+  tracked". Falls in the **v2.9.5** accuracy release by theme, but is not a named
+  item there; the attempt-only-if-a-game-demands-it condition stands.)*
 
 ### 6c. Other v2.0-axis items
 
@@ -409,21 +526,49 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   this. Source: [v1.5.0](plans/v1.5.0-lens-plan.md) D; [v1.7.0
   plan](plans/v1.7.0-forge-plan.md) F3 note; ADR 0002. Target: **v2.0.0**. Files:
   frontend Enhancements settings group; `crates/rustynes-cpu`.
-- `[ ]` **Full Vs. DualSystem dual-core (C)** — second CPU + PPU + bus
+  *(2026-09-29: still open, and the UI is still inert. No CPU-multiplier exists
+  anywhere in the tree. Worse than "staged": the core HAS the F3 hook
+  (`Nes::set_extra_scanlines`, `crates/rustynes-core/src/nes.rs`, pinned by
+  `tests/extra_scanlines.rs`), but nothing in `rustynes-frontend` calls it, so the
+  Settings "Overclock (extra scanlines)" field in
+  `debugger/settings_panel.rs` persists `overclock_scanlines` to `config.toml`
+  and does nothing; `disable_sprite_limit` has no core hook at all. Both are
+  labelled "currently inert" in the UI. Target: **unscheduled**.)*
+- `[x]` **Full Vs. DualSystem dual-core (C)** — *(shipped v2.0.0 "Timebase"
+  beta.5, commit `9fe44a19`: `crates/rustynes-core/src/vs_dualsystem.rs`,
+  `pub enum Emu` (Single / Dual); desktop presentation v2.1.2 (`render_dual` in
+  `crates/rustynes-frontend/src/gfx.rs`, ADR 0032); libretro v2.1.10
+  (`crates/rustynes-libretro/src/lib.rs`). Remaining elsewhere, not in this
+  entry's scope: the desktop dual save state (`T-PS-dual-savestate`) and
+  DualSystem on web and mobile, all **v2.9.7** in the line plan.)* second CPU + PPU + bus
   arbitration, surfaced via an `Emu { Single, Dual }` enum API break. Detection
   shipped (v1.3.0 D2) + a frontend note; full emulation has no committable
   test-ROM oracle. Design: `docs/audit/vs-dualsystem-design-2026-06-11.md`.
   Source: [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) C. Target: **v2.0.0
   (or a v1.x point release — open maintainer decision)**. Files: new
   `crates/rustynes-core/src/vs_dualsystem.rs`.
-- `[ ]` **Breaking-API + save-state v3 cleanup (D)** — CPU section v2→v3, `.rns`
+- `[x]` **Breaking-API + save-state v3 cleanup (D)** — *(shipped v2.0.0 per
+  [ADR 0028](../docs/adr/0028-v2-0-0-save-state-and-movie-format-break.md):
+  `Cpu::restore` rejects any other CPU-section version, `.rns` carries
+  `FORMAT_VERSION = 2` in `crates/rustynes-core/src/save_state.rs`, and `.rnm`
+  warns rather than rejects (`MOVIE_FORMAT_VERSION` 1 → 2). None of the named
+  experiment flags survives in any `Cargo.toml`. The ADR numbers 0016/0017 went
+  to unrelated decisions (script IPC, the HD-pack builder); the break is recorded
+  in ADR 0028 plus the ADR 0002 update. The NEXT API break is
+  v3.0.0 (ADR 0042 / ADR 0043).)* CPU section v2→v3, `.rns`
   `FORMAT_VERSION` bump with clean-reject of v1.x slots (no migration code), `.rnm`
   honest verify-replay break, retire the dead experiment feature flags
   (`cpu-c1-attempt-17-access-reorder`, `ppu-2002-read-end-flags`, the `mc-r1-*` /
   `dmc-get-put-scheduler` stubs), ADRs 0016/0017 + a 0002 update. Source:
   [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) D; ADR 0003. Target:
   **v2.0.0**.
-- `[ ]` **OAM / open-bus DRAM decay** — by-design omission; no game depends.
+- `[x]` **OAM / open-bus DRAM decay** — *(overtaken: the "do not implement"
+  below was reversed. Optional OAM decay shipped v2.1.4 (F2.3), commit
+  `09e91360`, opt-in and default-OFF: `oam_decay_cycles` in
+  `crates/rustynes-ppu/src/ppu.rs`, the `[emulation] oam_decay` toggle in
+  `crates/rustynes-frontend/src/config.rs`, documented in `docs/ppu-2c02.md`
+  §"OAM decay". PPUSTATUS open-bus decay is a documented coarse approximation in
+  the same doc.)* by-design omission; no game depends.
   Document only; do not implement. Source:
   [v1.4.0](plans/v1.4.0-fidelity-plan.md), [v1.5.0](plans/v1.5.0-lens-plan.md).
   Target: **by-design (documented)**.
@@ -457,11 +602,22 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   The long-tail toward the full ~300–370 set continues incrementally. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) G1; [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md)
   E. Target: **v1.7.x → v2.0+**. Files: the per-board `crates/rustynes-mappers/src/mNNN_<board>.rs` modules (these were `sprintN.rs` until the v2.2.3 rename).
-- `[ ]` **Zero-library mappers (no freely-available ROM)** — families 28, 29, 31,
+  *(2026-09-29: breadth is **174 families** (v2.3.4 added 154 and 243). The
+  continuation stays partial; the next batch — 37/47, 12, 44/45/49,
+  74/191/192/194/195, 105, 115/121, 163, 228, 83/91/153 over the existing MMC3
+  and FCG/MMC1 cores — is **v2.9.6** in the line plan.)*
+- `[~]` **Zero-library mappers (no freely-available ROM)** — families 28, 29, 31,
   39, 81, 174, 179 have no freely-available dump, so they have no committed
   screenshots (register-decode unit-tested only). Source: the standing
   mapper-ROM-coverage policy. Target: **backfill via homebrew if available / TBD**.
-  Files: `tests/roms/external/`, `screenshots/`.
+  Files: `tests/roms/external/`, `screenshots/`. *(2026-09-29: partly wrong
+  when written. **28** and **31** have had committed coverage snapshots since
+  v1.6.0 (commit `c286e632`):
+  `crates/rustynes-test-harness/tests/snapshots/external_coverage__mapper_028_Action53_*.snap`
+  and `..._mapper_031_INL_NSF_2a03puritans.snap`, plus
+  `screenshots/besteffort/mapper-031-INL-NSF/`. Still none for **29, 39, 81,
+  174, 179** (`tests/roms/external/mapper-029-RET-CUFROM/` exists but is empty).
+  Target: **v2.9.6** tier promotions, where a legal homebrew ROM exists.)*
 - `[x]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
   are misdetected as m30 (UNROM-512). Not an m30 bug. Source: the blank-boot-fixes
   memory note. Files: `crates/rustynes-mappers`, frontend `game_db`.
@@ -637,6 +793,10 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   mask still confines the X24C01 to seven bits.
 
   Recording all of this so the count stops being folded into "panics".
+
+  *(2026-09-29: still open. `Chu Liu Xiang` still renders no tiles
+  (`docs/mappers.md` "remains open"), and the six header/size mismatches are
+  still unadjudicated. Target: **v2.9.6**, the mapper release.)*
 - `[x]` **`m301` / `m348` UNIF board-map entries** — *(done; verified against the
   tree 2026-08-14, v2.3.4 Workstream D: `unif.rs:246` maps board `"8157"` -> 301
   and `unif.rs:270` maps `"830118C"` -> 348, both covered by the board-map tests
@@ -660,7 +820,8 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   ambitious v1.0.0 bar, redefined down to "production-quality + hardware-accurate"
   and pursued incrementally ever since. Source:
   [v1.0.0 synthesis](plans/v1.0.0-synthesis-plan.md); [ROADMAP](ROADMAP.md).
-  Target: **long-tail / no fixed version**.
+  Target: **long-tail / no fixed version**. *(2026-09-29: unchanged — 174
+  families; **v2.9.6** adds the next batch, the rest stays long-tail.)*
 
 ---
 
@@ -677,6 +838,8 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   `CURRENT_LOCALE` atomic, English (byte-identical default/fallback) + Spanish; wasm-safe.
   Further per-panel string conversion can continue per the established pattern.)* Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H5. Files: `crates/rustynes-frontend/src/i18n.rs`.
+  *(2026-09-29: the framework stays closed; moving the remaining literal strings
+  in the deeper panels to EN/ES is **v2.9.7** in the line plan.)*
 - `[x]` **Web / wasm parity (H6)** — *(shipped; v1.8.9 reconcile: File System Access
   API + `?settings=` in `wasm_io.rs` + `wasm_share.rs`, Gamepad API in `wasm_gamepad.rs`,
   PWA/offline via `crates/rustynes-frontend/web/manifest.webmanifest` +
@@ -692,32 +855,69 @@ Both mobile plans are locked but unstarted (no mobile crates on `main`). Each
 ships a focused MVP and defers the same heavyweight subsystems to a follow-up
 mobile point release.
 
-- `[ ]` **v1.8.0 "Android" MVP** — a hybrid + focused-MVP Android frontend.
+*(2026-09-29: this preamble is three months stale — `rustynes-mobile`,
+`rustynes-android`, `rustynes-ios` and the `android/` + `ios/` apps are all on
+`main`, and every entry below shipped except the Android debugger surface. What
+is genuinely open for mobile is not catalogued here: FDS/NSF loading on the
+bridge, Vs. DualSystem on mobile and the SOCD switch (**v2.9.7**), the device
+run and the iOS first compile (**after v3.0.0**, line plan "Mobile"), and the
+app stores (**after the v3.x hardware release**).)*
+
+- `[x]` **v1.8.0 "Android" MVP** — *(shipped v1.8.0, commit `e83f8d35`:
+  `crates/rustynes-mobile` (UniFFI bridge) + `crates/rustynes-android` (JNI/NDK
+  host) + the Compose app under `android/`; ADR 0024.)* a hybrid + focused-MVP Android frontend.
   Source: [v1.8.0 plan](plans/v1.8.0-android-plan.md). Target: **v1.8.0**.
-- `[ ]` **v1.9.0 iOS / iPadOS MVP** — SwiftUI + Metal over a shared
+- `[x]` **v1.9.0 iOS / iPadOS MVP** — *(shipped v1.9.0 "Sunrise", commit
+  `aecbb1b3`: `crates/rustynes-ios` + the SwiftUI app under `ios/RustyNES/`
+  over the same `rustynes-mobile` bridge; ADR 0026. Interim TestFlight only.)* SwiftUI + Metal over a shared
   `rustynes-mobile` bridge; cross-device `.rns` + battery-SRAM portability is
   in-scope. Source: [v1.9.0 plan](plans/v1.9.0-ios-plan.md). Target: **v1.9.0**.
-- `[ ]` **Mobile Lua scripting** — deferred on both platforms (mlua/ NDK + arm64
+- `[x]` **Mobile Lua scripting** — *(shipped: bridge v1.8.6, commit `f0fde6ea`
+  (`load_script` / `drain_script_log` in `crates/rustynes-mobile/src/lib.rs`
+  over `rustynes-script`); Android host in `android/.../MainActivity.kt`; iOS
+  v1.9.6 "Link", commit `b24a46fe` (`ios/RustyNES/AppModel.swift`).)* deferred on both platforms (mlua/ NDK + arm64
   cross-compile work; gated behind a later increment / "Developer" toggle).
   Source: [v1.8.0](plans/v1.8.0-android-plan.md), [v1.9.0](plans/v1.9.0-ios-plan.md).
   Target: **v1.8.x / v1.9.x**.
-- `[ ]` **Mobile RetroAchievements** — deferred on both (needs a Compose / SwiftUI
+- `[x]` **Mobile RetroAchievements** — *(shipped: bridge v1.8.6, commit
+  `e9d0802b` (`ra_login_password` / `ra_login_token` / `ra_achievement_list` in
+  `crates/rustynes-mobile/src/lib.rs` over the extracted `rustynes-ra`); iOS
+  v1.9.6, `ios/RustyNES/RetroAchievementsModel.swift`.)* deferred on both (needs a Compose / SwiftUI
   OAuth login UI + keychain token + privacy disclosure over the cross-compiled
   rcheevos). Source: [v1.8.0](plans/v1.8.0-android-plan.md),
   [v1.9.0](plans/v1.9.0-ios-plan.md). Target: **v1.8.x / v1.9.x**.
-- `[ ]` **Mobile netplay** — deferred on both; the transport is the blocker (mobile
+- `[x]` **Mobile netplay** — *(shipped: direct-IP / LAN v1.8.6, commit
+  `a9ff2f8e` (`np_join`), and room-code CGNAT/TURN v1.8.7, commit `b44fbf48`
+  (`np_host_room` / `np_join_room`), both in `crates/rustynes-mobile/src/lib.rs`
+  over `rustynes-netplay`'s `netplay-client`; iOS v1.9.6,
+  `ios/RustyNES/NetplayModel.swift`. Live cross-NAT verification is still the
+  §3 `[M]` item.)* deferred on both; the transport is the blocker (mobile
   NAT/CGNAT + iOS background limits) → local Wi-Fi / GameKit / TURN later; ties to
   the desktop TURN carryover in §3. Source:
   [v1.8.0](plans/v1.8.0-android-plan.md), [v1.9.0](plans/v1.9.0-ios-plan.md).
   Target: **v1.8.x / v1.9.x**.
-- `[ ]` **Mobile egui debugger surface** — kept only as an optional sideload
+- `[~]` **Mobile egui debugger surface** — *(2026-09-29: iOS has a native
+  read-only debugger instead of an egui embed — `ios/RustyNES/DebuggerView.swift`
+  (CPU registers, disassembly, RAM hex, step-frame), v1.9.9 "Workshop", commit
+  `70a971bf`. Android has no debugger surface; the egui spike in
+  `crates/rustynes-android/src/lib.rs` was replaced. Remaining: an Android
+  surface, if wanted. Target: **unscheduled**.)* kept only as an optional sideload
   power-user overlay (Android) / a future hybrid embed (iOS), not a first-class
   mobile surface. Source: [v1.8.0](plans/v1.8.0-android-plan.md),
   [v1.9.0](plans/v1.9.0-ios-plan.md). Target: **v1.8.x / v1.9.x**.
-- `[ ]` **iCloud / cross-device save-state sync** — a future note in the iOS plan
+- `[x]` **iCloud / cross-device save-state sync** — *(shipped v1.9.7 "Relay",
+  commit `6c8ac609`: `ios/RustyNES/CloudSaveStateSync.swift`
+  (`CloudSaveStateSync` over the CloudKit private database) plus
+  `CloudConfigSync.swift`.)* a future note in the iOS plan
   (the format is platform-independent; the sync layer is not built). Source:
   [v1.9.0 plan](plans/v1.9.0-ios-plan.md). Target: **TBD**.
-- `[~]` **Host-localizable bridge warnings (warning-code enum)** — the
+- `[x]` **Host-localizable bridge warnings (warning-code enum)** — *(iOS half
+  shipped v2.0.5, commit `2cd53129`: `EmulatorCore.drainWarnings()` in
+  `ios/RustyNES/EmulatorCore.swift` maps each `HostWarning` through
+  `String(localized:)`, with EN + ES entries in
+  `ios/RustyNES/Localizable.xcstrings`. The OPTIONAL desktop/wasm migration named
+  below was never done and is **unscheduled**; the two stay in parity through
+  `HostWarning::message()`.)* the
   `rustynes-mobile` bridge previously handed the host a pre-composed *English*
   advisory string for the pre-v2.0.0 movie/epoch notice (`movie_play` →
   `drain_warnings`). **Bridge + Android DONE (v2.0.3 + v2.0.4):** v2.0.3 added the
@@ -755,6 +955,14 @@ account, or a hosted deploy (all also listed under their theme above).
   CI can't exercise GPU render or egui pointer events. Target: **maintainer-manual**.
 - `[M]` **Snapshot re-bless after blank-boot fixes** — §7. Target:
   **maintainer-manual**.
+
+*(2026-09-29: every `[M]` above is still open. Targets: F1 on-device touch UX
+→ **v3.x hardware-verification release (ADR 0043)** with the other device runs;
+F3 and the browser-RA deploy/verify → **after v3.0.0**, external hosting (line
+plan); the A/V, HD-audio, shader/NTSC, GPU-timing and egui-render verifies →
+**unscheduled**. The snapshot re-bless is a standing chore, not a single item:
+the original re-bless is done (§7, commit `c286e632`) and each future
+broken-boot fix re-blesses its own snapshots, which next applies in **v2.9.6**.)*
 
 ---
 
@@ -801,13 +1009,31 @@ account, or a hosted deploy (all also listed under their theme above).
   itself remains, and no `merge_group` trigger exists in any workflow.)* the
   highest runner-minute saver but higher risk; maintainer decision pending.
   Source: CI-optimization note. Target: **TBD (maintainer decision)**.
-- `[ ]` **`cargo-nextest` adoption** — ~1.3–1.5× test speedup but needs a separate
+  *(CORRECTED 2026-09-29: "no `merge_group` trigger exists in any workflow" was
+  false when written. `.github/workflows/ci.yml:29` has carried `merge_group:`
+  since v1.6.0 (commit `91e634e1`, #120), with a comment that it is inert until
+  the queue is enabled and routes a queued PR to the full four-OS matrix. What
+  is actually missing is the queue: the repository's only ruleset,
+  "Protect (Default)", has `deletion`, `non_fast_forward` and
+  `required_status_checks` rules and no `merge_queue` rule (read via
+  `gh api repos/doublegate/RustyNES/rulesets` on 2026-09-29). So the remaining
+  work is one repository setting, still a maintainer decision. Target:
+  **unscheduled**.)*
+- `[x]` **`cargo-nextest` adoption** — *(REJECTED, WONT-FIX in v1.8.9-beta.1,
+  commit `a4b494cd`. The NOTE on the `test` job in `.github/workflows/ci.yml`
+  records why: nextest runs `cargo metadata --all-features` internally, which
+  this workspace cannot resolve — `scripting` (mlua) and `script-wasm`
+  (piccolo) are mutually exclusive — and it offers no override, so it exits 101
+  before running a test.)* ~1.3–1.5× test speedup but needs a separate
   `cargo test --doc` step and no retries. Source: CI-optimization note. Target:
   **TBD**.
 - `[x]` **`full` native feature alias (#54)** — *(shipped; v1.8.9 reconcile: the `full`
   feature in `crates/rustynes-frontend/Cargo.toml` + the `full-run`/`full-build` aliases in
   `.cargo/config.toml`.)* an umbrella feature for the maximal native build. Source: v1.7.0
   beta.5 carryover. Files: `crates/rustynes-frontend/Cargo.toml`, `.cargo/config.toml`.
+  *(2026-09-29: the alias stays closed; PUBLISHING `full` release binaries
+  beside the default ones is a separate, open item — **v2.9.7**, a maintainer
+  decision in the line plan.)*
 - `[x]` **Re-sync the vendored `100thCoin/AccuracyCoin` test-ROM oracle** — DONE in
   the **v2.0.1 AccuracyCoin re-sync PR**. Re-synced to upstream `main` commit
   `71f57fb` (2026-06-26): re-extracted `SOURCE_CATALOG.tsv` (**144 -> 146 rows /
@@ -869,7 +1095,10 @@ account, or a hosted deploy (all also listed under their theme above).
 
 ## 12. Misc / smaller deferrals
 
-- `[ ]` **NSF waveform visualizer depth** — an NSF waveform *scope* shipped in
+- `[x]` **NSF waveform visualizer depth** — *(shipped v1.8.9-beta.5, commit
+  `86274b38`: a master (mixed) scope and per-channel peak VU meters on top of the
+  v1.5.0 per-channel scope, in
+  `crates/rustynes-frontend/src/debugger/nsf_panel.rs`.)* an NSF waveform *scope* shipped in
   v1.5.0 C; broader eye-candy visualization over the NSF player was noted as a
   lower-priority deferral. Source: [v1.3.0](plans/v1.3.0-bedrock-plan.md). Target:
   **TBD**.

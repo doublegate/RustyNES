@@ -3,16 +3,16 @@
 //! ## Ownership & callback bridging
 //!
 //! `rc_client_t` invokes three C callbacks, all of which run synchronously on
-//! the thread that drove the rc_client call:
+//! the thread that drove the `rc_client` call:
 //!
 //! - **read-memory** (during `do_frame`/`idle`/`reset`/`deserialize`): bridged
 //!   to a caller-supplied `&mut dyn FnMut(u16) -> u8` via a thread-local raw
 //!   pointer installed by a [drop-guard][Guard] for exactly the duration of the
-//!   rc_client call. The trampoline maps the RA flat address to a NES bus
+//!   `rc_client` call. The trampoline maps the RA flat address to a NES bus
 //!   address ([`crate::memory::ra_addr_to_nes`]) and calls the closure.
 //! - **server-call** (whenever rcheevos needs the network): bridged to the
 //!   off-thread [`HttpTransport`] via a thread-local pointer installed for the
-//!   duration of any rc_client call that may issue requests.
+//!   duration of any `rc_client` call that may issue requests.
 //! - **event-handler**: pushes owned [`RaEvent`]s onto a thread-local queue
 //!   (see [`crate::events`]); drained into [`RaClient::take_events`].
 //!
@@ -36,7 +36,7 @@ use crate::util::{cchar_arr_to_string, cstr_to_string};
 // ---------------------------------------------------------------------------
 
 /// The currently-installed memory read closure as a (fat) trait-object
-/// pointer, or `None` when no rc_client call is in flight.
+/// pointer, or `None` when no `rc_client` call is in flight.
 type ReadPtr = Option<*mut dyn FnMut(u16) -> u8>;
 
 thread_local! {
@@ -48,7 +48,7 @@ thread_local! {
 }
 
 /// RAII guard that installs the read closure pointer for the duration of an
-/// rc_client call and restores the previous value on drop (including on
+/// `rc_client` call and restores the previous value on drop (including on
 /// panic/unwind).
 struct ReadGuard {
     prev: ReadPtr,
@@ -62,10 +62,13 @@ impl ReadGuard {
         // `read_trampoline`) while this guard is alive on the same thread, and
         // the guard's Drop restores the previous value, so the dereference can
         // never outlive `'a`.
+        // A transmute, not a cast: `.cast()` needs a sized pointee, and an `as`
+        // cast cannot lengthen a trait object's lifetime bound.
+        #[allow(clippy::transmute_ptr_to_ptr)]
         let ptr: *mut dyn FnMut(u16) -> u8 =
             unsafe { std::mem::transmute::<*mut (dyn FnMut(u16) -> u8 + 'a), _>(ptr) };
         let prev = READ_CLOSURE.with(|c| c.replace(Some(ptr)));
-        ReadGuard { prev }
+        Self { prev }
     }
 }
 
@@ -84,7 +87,7 @@ impl TransportGuard {
     fn new(t: &HttpTransport) -> Self {
         let ptr: *const HttpTransport = t;
         let prev = TRANSPORT.with(|c| c.replace(ptr));
-        TransportGuard { prev }
+        Self { prev }
     }
 }
 
@@ -96,7 +99,7 @@ impl Drop for TransportGuard {
 
 /// Run `f` with the currently-installed transport, if any. Used by the
 /// `server_call` trampoline (in `http.rs`).
-pub(crate) fn with_transport<R>(f: impl FnOnce(&HttpTransport) -> R) -> Option<R> {
+pub fn with_transport<R>(f: impl FnOnce(&HttpTransport) -> R) -> Option<R> {
     let ptr = TRANSPORT.with(Cell::get);
     if ptr.is_null() {
         None
@@ -111,7 +114,7 @@ pub(crate) fn with_transport<R>(f: impl FnOnce(&HttpTransport) -> R) -> Option<R
 ///
 /// # Safety
 /// `buffer` is valid for `num_bytes`. The thread-local closure (if installed)
-/// is valid for the duration of the rc_client call by construction of
+/// is valid for the duration of the `rc_client` call by construction of
 /// [`ReadGuard`].
 extern "C" fn read_trampoline(
     address: u32,
@@ -171,7 +174,7 @@ extern "C" fn completion_trampoline(
             return;
         }
         // SAFETY: reconstitute the Box we leaked in the begin_* call.
-        let cb: Box<CompletionFn> = unsafe { Box::from_raw(userdata as *mut CompletionFn) };
+        let cb: Box<CompletionFn> = unsafe { Box::from_raw(userdata.cast::<CompletionFn>()) };
         let outcome = if result == ffi::RC_OK {
             Ok(())
         } else {
@@ -199,9 +202,13 @@ fn error_string(code: c_int) -> String {
 /// A safe, owned snapshot of one achievement (subset of `rc_client_achievement_t`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaAchievement {
+    /// The achievement's RA ID.
     pub id: u32,
+    /// The achievement's title.
     pub title: String,
+    /// What the player must do to earn it.
     pub description: String,
+    /// The points it is worth.
     pub points: u32,
     /// `RC_CLIENT_ACHIEVEMENT_STATE_*` raw value (0 inactive, 1 active/locked,
     /// 2 unlocked, 3 disabled).
@@ -213,7 +220,11 @@ pub struct RaAchievement {
     pub unlocked: bool,
     /// `RC_CLIENT_ACHIEVEMENT_BUCKET_*` raw value (the bucket it was listed in).
     pub bucket: u8,
+    /// Progress toward a measured achievement, as a percentage (0..=100);
+    /// 0.0 for an achievement with no measured condition.
     pub measured_percent: f32,
+    /// The same progress as rcheevos formats it for display (e.g. "3/10");
+    /// empty when there is none.
     pub measured_progress: String,
     /// The proportion of players (0..=100) who have earned this achievement in
     /// softcore — the "rarity" the HUD shows. 0.0 until the server populates it.
@@ -230,37 +241,51 @@ pub struct RaAchievement {
 }
 
 /// A safe, owned snapshot of one leaderboard (subset of `rc_client_leaderboard_t`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RaLeaderboard {
+    /// The leaderboard's RA ID.
     pub id: u32,
+    /// The leaderboard's title.
     pub title: String,
+    /// What the leaderboard measures.
     pub description: String,
     /// `RC_CLIENT_LEADERBOARD_STATE_*` raw value.
     pub state: u8,
     /// `RC_CLIENT_LEADERBOARD_FORMAT_*` raw value.
     pub format: u8,
+    /// `true` when a lower score ranks higher (e.g. a time).
     pub lower_is_better: bool,
 }
 
 /// A safe, owned snapshot of the user's game progress summary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RaGameSummary {
+    /// Achievements in the game's core (official) set.
     pub num_core_achievements: u32,
+    /// Achievements in the unofficial set.
     pub num_unofficial_achievements: u32,
+    /// Achievements the user has earned.
     pub num_unlocked_achievements: u32,
+    /// Achievements this client cannot evaluate.
     pub num_unsupported_achievements: u32,
+    /// Total points in the core set.
     pub points_core: u32,
+    /// Points the user has earned.
     pub points_unlocked: u32,
 }
 
 /// A safe, owned snapshot of the logged-in user (subset of `rc_client_user_t`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RaUser {
+    /// The name shown to other users.
     pub display_name: String,
+    /// The account name used to log in.
     pub username: String,
     /// The login token (persist this to log in without a password next time).
     pub token: String,
+    /// The user's hardcore score.
     pub score: u32,
+    /// The user's softcore score.
     pub score_softcore: u32,
 }
 
@@ -270,7 +295,7 @@ pub struct RaUser {
 
 /// A safe wrapper owning an `rc_client_t` plus its HTTP transport.
 ///
-/// `RaClient` is **not** `Send`/`Sync`: all rc_client calls and callback
+/// `RaClient` is **not** `Send`/`Sync`: all `rc_client` calls and callback
 /// bridging happen on one thread (the emulator/main thread). The HTTP worker
 /// thread is internal and communicates only through channels.
 pub struct RaClient {
@@ -316,7 +341,7 @@ impl RaClient {
         unsafe {
             ffi::rc_client_set_event_handler(raw, events::event_handler_trampoline);
         }
-        RaClient {
+        Self {
             raw,
             transport,
             _not_send: std::marker::PhantomData,
@@ -401,7 +426,7 @@ impl RaClient {
     pub fn can_pause(&mut self) -> (bool, u32) {
         let mut frames_remaining: u32 = 0;
         // SAFETY: valid client; `frames_remaining` is a valid out-pointer.
-        let ok = unsafe { ffi::rc_client_can_pause(self.raw, &mut frames_remaining) };
+        let ok = unsafe { ffi::rc_client_can_pause(self.raw, &raw mut frames_remaining) };
         if ok != 0 {
             (true, 0)
         } else {
@@ -454,7 +479,7 @@ impl RaClient {
         let n = unsafe {
             ffi::rc_client_get_rich_presence_message(
                 self.raw,
-                buf.as_mut_ptr() as *mut c_char,
+                buf.as_mut_ptr().cast::<c_char>(),
                 buf.len(),
             )
         };
@@ -583,7 +608,7 @@ impl RaClient {
             completed_time: 0,
         };
         // SAFETY: valid client; `s` is a valid out-pointer.
-        unsafe { ffi::rc_client_get_user_game_summary(self.raw, &mut s) };
+        unsafe { ffi::rc_client_get_user_game_summary(self.raw, &raw mut s) };
         RaGameSummary {
             num_core_achievements: s.num_core_achievements,
             num_unofficial_achievements: s.num_unofficial_achievements,
@@ -703,7 +728,7 @@ where
     let boxed: CompletionFn = Box::new(f);
     // Double-box so the fat trait-object pointer fits a thin `*mut c_void`.
     let double: Box<CompletionFn> = Box::new(boxed);
-    Box::into_raw(double) as *mut c_void
+    Box::into_raw(double).cast::<c_void>()
 }
 
 impl Default for RaClient {

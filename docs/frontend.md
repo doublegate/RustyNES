@@ -1107,7 +1107,9 @@ builds stay byte-identical and AccuracyCoin holds 139/141 (the two newest upstre
 ### Internationalization (i18n, v1.7.0 "Forge" Workstream H5)
 
 Frontend-only, additive, English-by-default — with the default locale every
-label is byte-identical to v1.6.0 and AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps). See
+label is byte-identical to v1.6.0. (At v1.7.0 AccuracyCoin held 139/141; the two
+PPU gaps closed at v2.0.3, and the re-synced catalog has held 144/144 since
+v2.6.18.) See
 ADR 0023 for the rationale (why a hand-rolled catalog over Fluent/ICU/`rust-i18n`
 and the wasm size budget).
 

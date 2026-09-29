@@ -9,17 +9,17 @@
 //!
 //! A single worker thread owns a [`ureq::Agent`] and performs the blocking
 //! HTTP. The `server_call` trampoline merely enqueues a [`HttpJob`] (it never
-//! blocks the emulator thread and never touches the rc_client). The worker
+//! blocks the emulator thread and never touches the `rc_client`). The worker
 //! sends each [`HttpCompletion`] back over a channel.
 //!
-//! The rc_client completion callback is **never** invoked on the worker — that
+//! The `rc_client` completion callback is **never** invoked on the worker — that
 //! would re-enter rcheevos from the wrong thread. Instead
 //! [`HttpTransport::poll_completions`] drains the completion channel on the
 //! main thread and invokes each `rc_client_server_callback_t` there, building a
 //! stack [`rc_api_server_response_t`] that borrows the response bytes for the
 //! duration of the call.
 //!
-//! The rc_client callback pointer + `callback_data` are carried as `usize` (raw
+//! The `rc_client` callback pointer + `callback_data` are carried as `usize` (raw
 //! pointer bits) so the job is `Send`; they are only ever dereferenced back on
 //! the main thread in `poll_completions`.
 
@@ -57,7 +57,7 @@ struct HttpCompletion {
 unsafe impl Send for HttpCompletion {}
 
 /// Owns the worker thread and the channels bridging it to the main thread.
-pub(crate) struct HttpTransport {
+pub struct HttpTransport {
     job_tx: Option<Sender<HttpJob>>,
     completion_rx: Receiver<HttpCompletion>,
     worker: Option<JoinHandle<()>>,
@@ -106,13 +106,13 @@ impl HttpTransport {
             let callback_data = done.callback_data as *mut c_void;
 
             let response = ffi::rc_api_server_response_t {
-                body: done.body.as_ptr() as *const std::os::raw::c_char,
+                body: done.body.as_ptr().cast::<std::os::raw::c_char>(),
                 body_length: done.body.len(),
                 http_status_code: done.http_status_code,
             };
             // SAFETY: `cb` is a valid rcheevos completion callback; `response`
             // borrows `done.body` which outlives this call.
-            cb(&response, callback_data);
+            cb(&raw const response, callback_data);
         }
     }
 }
@@ -136,7 +136,7 @@ const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 /// Join `worker` if it finishes within `grace`; otherwise let it go.
 ///
 /// Before v2.7.4 `Drop` joined unconditionally, and a request in flight to an
-/// unreachable RetroAchievements server held the dropping thread (a logout, a
+/// unreachable `RetroAchievements` server held the dropping thread (a logout, a
 /// ROM change; on mobile, the UI thread) for up to the 30 s request timeout.
 /// Detaching is safe: the worker owns its agent and the request; when the
 /// request returns, sending the completion fails because the receiver is gone,
@@ -155,18 +155,18 @@ fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
     true
 }
 
-/// The RetroAchievements client identification string (HTTP `User-Agent`).
+/// The `RetroAchievements` client identification string (HTTP `User-Agent`).
 ///
 /// RA recognizes an emulator by the leading `<Client>/<Version>` token —
 /// here `RustyNES/<crate version>`; an unrecognized client gets the "unknown
 /// emulator" warning and cannot earn hardcore unlocks. Setting this is the
-/// prerequisite for RA to allowlist RustyNES server-side (see docs / the
+/// prerequisite for RA to allowlist `RustyNES` server-side (see docs / the
 /// integration request). The canonical `rcheevos/<version>` clause is appended
 /// per RA convention (RA logs it); the rcheevos version comes from the vendored
 /// library via `RCHEEVOS_VERSION` (emitted by `build.rs` from `rc_version.h`),
 /// so it stays correct across a re-vendor. Result, e.g.:
 /// `RustyNES/2.9.2 rcheevos/12.5.0`.
-pub(crate) const RA_USER_AGENT: &str = concat!(
+pub const RA_USER_AGENT: &str = concat!(
     "RustyNES/",
     env!("CARGO_PKG_VERSION"),
     " rcheevos/",
@@ -201,23 +201,21 @@ fn worker_loop(job_rx: &Receiver<HttpJob>, completion_tx: &Sender<HttpCompletion
 /// `RC_API_SERVER_RESPONSE_CLIENT_ERROR` (-1) with an empty body, which
 /// rcheevos treats as a non-retryable client error.
 fn perform(agent: &ureq::Agent, job: &HttpJob) -> (Vec<u8>, i32) {
-    let result = if let Some(post) = &job.post {
-        agent
-            .post(&job.url)
-            .header("Content-Type", &job.content_type)
-            .send(post.as_slice())
-    } else {
-        agent.get(&job.url).call()
-    };
+    let result = job.post.as_ref().map_or_else(
+        || agent.get(&job.url).call(),
+        |post| {
+            agent
+                .post(&job.url)
+                .header("Content-Type", &job.content_type)
+                .send(post.as_slice())
+        },
+    );
 
     // With `http_status_as_error(false)` a non-2xx response is still `Ok(resp)`, so
     // `read_response` reports the real status + body (e.g. a 401/403/429 JSON body)
     // exactly as RA wants. Only a transport error (DNS, TLS, refused, timeout, ...)
     // lands in the `Err` arm.
-    match result {
-        Ok(resp) => read_response(resp),
-        Err(_) => (Vec::new(), -1),
-    }
+    result.map_or_else(|_| (Vec::new(), -1), read_response)
 }
 
 /// Consume a ureq 3 `Response<Body>`, returning `(body_bytes, http_status_code)`.
@@ -229,14 +227,14 @@ fn read_response(mut resp: ureq::http::Response<ureq::Body>) -> (Vec<u8>, i32) {
     (body, status)
 }
 
-/// The `extern "C"` server-call trampoline installed on the rc_client. It
+/// The `extern "C"` server-call trampoline installed on the `rc_client`. It
 /// enqueues the request onto the worker thread and returns immediately.
 ///
 /// # Safety
 /// `request` is valid for the call. `client` carries our [`crate::client::Inner`]
 /// pointer via `rc_client_get_userdata`, installed in
 /// [`crate::client::RaClient::new`].
-pub(crate) extern "C" fn server_call_trampoline(
+pub extern "C" fn server_call_trampoline(
     request: *const ffi::rc_api_request_t,
     callback: ffi::rc_client_server_callback_t,
     callback_data: *mut c_void,
@@ -291,10 +289,10 @@ mod tests {
     }
     use super::RA_USER_AGENT;
 
-    /// The RetroAchievements User-Agent must identify the client as `RustyNES`
+    /// The `RetroAchievements` User-Agent must identify the client as `RustyNES`
     /// (the token RA allowlists by) with a version, and carry a non-empty
     /// canonical `rcheevos/<version>` clause. Guards against a name/version
-    /// regression (e.g. a stray "RustyNES v2" or a dropped rcheevos version).
+    /// regression (e.g. a stray "`RustyNES` v2" or a dropped rcheevos version).
     #[test]
     fn ra_user_agent_identifies_rustynes_with_versions() {
         // Leading client token: `RustyNES/<version>`, version present (not bare).

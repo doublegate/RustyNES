@@ -552,8 +552,24 @@ jobs:
       # Measured before adding this: 614 lib tests pass with the feature on.
       # The whole lib rather than the one module, because the gated code is
       # spread across four files. Linux only, for the same reason as above.
+      # v2.9.4 — the same gap, closed for every feature that was linted and
+      # never run. `full` is a superset of `av-record`, so it replaces the step
+      # above: it adds `scripting`, `script-ipc`, `hd-pack`, `retroachievements`
+      # and `debug-hooks`. Measured before adding it: 618 frontend lib tests by
+      # default, 631 with `av-record`, 659 with `full` -- 28 that no job ran.
       - if: runner.os == 'Linux'
-        run: cargo test -p rustynes-frontend --lib --features av-record
+        run: cargo test -p rustynes-frontend --lib --features full
+      # The chip crates' own gated tests. Measured default -> with features:
+      # rustynes-core 217 -> 230, rustynes-ppu 104 -> 109 (debug-hooks +
+      # hd-pack), rustynes-apu 166 -> 176 (debug-hooks), rustynes-script
+      # 73 -> 80 (script-ipc + script-sqlite). The test harness gains none from
+      # these features (101 either way), so it is not repeated here.
+      - if: runner.os == 'Linux'
+        run: |
+          cargo test -p rustynes-core --features debug-hooks,hd-pack
+          cargo test -p rustynes-ppu --features debug-hooks,hd-pack
+          cargo test -p rustynes-apu --features debug-hooks
+          cargo test -p rustynes-script --features script-ipc,script-sqlite
 
   test-roms:
     name: test (test-roms feature)
@@ -937,6 +953,100 @@ jobs:
             ${{ github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/bench_relative_check.sh
 
+  # v2.9.4 — the eight fuzz targets under fuzz/ were built by nobody: no
+  # workflow mentioned them, so a target could stop compiling and nothing would
+  # say so. This builds all eight and runs each for a FIXED number of inputs from
+  # a FIXED seed, so a run is reproducible and a failure is a real crash, not a
+  # time-box artifact. It starts from an empty corpus (fuzz/corpus is local).
+  # Measured on the maintainer's machine with the local corpus: ~70 s for all
+  # eight, save_state dominating. A planted panic in the `movie` target failed
+  # the run and wrote a crash artifact, which is what makes this a gate.
+  # libFuzzer needs nightly; the fuzz crate is its own workspace (fuzz/Cargo.toml),
+  # so the project pin in rust-toolchain.toml does not apply to it.
+  fuzz:
+    name: fuzz (8 targets, fixed seed)
+    needs: [changes, setup]
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: nightly
+          apt: "false"
+          cache-key: fuzz
+      - uses: taiki-e/install-action@v2.87.21
+        with:
+          tool: cargo-fuzz
+      - name: Build and run every fuzz target
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          # --target is REQUIRED: install-action fetches cargo-fuzz's prebuilt
+          # musl binary, and cargo-fuzz defaults to the triple it was built
+          # for, so without it the first CI run built for
+          # x86_64-unknown-linux-musl, where ASan rejects the static libc and
+          # the musl `core` is not installed. A locally built cargo-fuzz is a
+          # gnu binary, which is why the local run could not see this
+          # (Copilot on #574, from run 36606541264).
+          cargo +nightly fuzz build -O --target x86_64-unknown-linux-gnu
+          targets=$(cargo +nightly fuzz list)
+          n=$(printf '%s\n' "$targets" | grep -c .)
+          [ "$n" -ge 8 ] || { echo "::error::expected at least 8 fuzz targets, found $n"; exit 1; }
+          # Run EVERY target even after one crashes, so a single run reports
+          # all of them rather than the first (agy on #574).
+          failed=""
+          for t in $targets; do
+            echo "::group::$t"
+            cargo +nightly fuzz run "$t" -O --target x86_64-unknown-linux-gnu -- -runs=20000 -seed=1 \
+              || failed="$failed $t"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::fuzz targets that crashed:$failed"
+            exit 1
+          fi
+      - name: Keep any crash input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
+  # v2.9.4 — line coverage, measured and floored. There was no coverage
+  # measurement at all before this. SCOPE: the workspace's LIB tests
+  # (`--lib`), default features. The integration suites are excluded on
+  # purpose: instrumented, the `determinism` suite alone ran past 16 minutes
+  # locally before it was stopped, which no per-PR job can afford.
+  # Baseline on v2.9.4: 71.66% of lines ON THIS RUNNER (76.10% functions,
+  # 74.07% regions); the same tree measured 72.01% locally, so the runner's
+  # number is the one that counts. The floor is 70%; re-reporting the same data with
+  # `--fail-under-lines 80` exits 1, so it can fail. Raise the floor when a
+  # release raises the number; never lower it to make a PR pass. Recorded in
+  # docs/testing-strategy.md.
+  coverage:
+    name: coverage (lib tests, floor 70%)
+    needs: [changes, setup]
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          components: llvm-tools-preview
+          cache-key: coverage
+      - uses: taiki-e/install-action@v2.87.21
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --lib --summary-only --fail-under-lines 70
+
   # Single summary status — the ONE check to require in branch protection / the
   # merge queue. It runs always (even when a needed job fails or is skipped) and
   # fails iff any job it depends on failed or was cancelled. A *skipped* job
@@ -947,7 +1057,7 @@ jobs:
   ci-success:
     name: CI success
     if: ${{ always() }}
-    needs: [changes, setup, lint, test, test-roms, no_std, wasm, libretro-cross, bench]
+    needs: [changes, setup, lint, test, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage]
     runs-on: ubuntu-26.04
     # Typical: instant. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.

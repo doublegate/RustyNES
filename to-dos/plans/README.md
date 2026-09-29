@@ -31,7 +31,8 @@ lines before it act on the four audits in
 | [`v2.9.0-survey-plan.md`](v2.9.0-survey-plan.md) | v2.9.0 "Survey" — every audit re-checked, the SuperStation One surveyed, the v3.0.0 API decision (ADR 0042) | **Shipped** |
 | [`v2.9.2-candidate-plan.md`](v2.9.2-candidate-plan.md) | v2.9.2 "Candidate" — the full audit (AUD-01..AUD-32) acted on, and the release-candidate `.rbf` pair for the board | Released 2026-09-28 |
 | [`v2.9.3-handset-plan.md`](v2.9.3-handset-plan.md) | v2.9.3 "Handset" — the mobile device checklist, and what can be proven before it | Released 2026-09-29; the device run moved after v3.0.0 |
-| [`v3.0.0-superstation-core-plan.md`](v3.0.0-superstation-core-plan.md) | v3.0.0 — the hardware-verified FPGA core | Planned; **scope under revision** (ADR 0041, 2026-09-29 amendment) |
+| [`v2.9.4-to-v3.0.0-line-plan.md`](v2.9.4-to-v3.0.0-line-plan.md) | v2.9.4 → v3.0.0 — finish the line, then the API major with a release-candidate core (ADR 0043) | **Planned** |
+| [`v3.0.0-superstation-core-plan.md`](v3.0.0-superstation-core-plan.md) | v3.0.0 — the hardware-verified FPGA core, as first planned | **Superseded** by ADR 0043; its bring-up gate moves to the v3.x hardware release |
 | [`v2.7.0-shakedown-plan.md`](v2.7.0-shakedown-plan.md) | v2.7.0 "Shakedown" — the board session as first planned | **Superseded** by ADR 0041; strands A–F carried into the v2.9.x plan |
 | [`v2.7.0-mister-core-plan.md`](v2.7.0-mister-core-plan.md) | v2.5.1 → v2.7.0 — the MiSTer core ladder | **Superseded** by ADR 0041 |
 

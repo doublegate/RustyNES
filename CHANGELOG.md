@@ -26,6 +26,75 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.4] - 2026-09-29 - "Plumb" (the records made true, and CI made to run what it only linted)
+
+The fifth release of the v2.9.x line and the first of the line to v3.0.0
+([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
+**No emulation behaviour changes.** It records what v3.0.0 now is, brings the
+records in both repositories back in line with the code, and makes CI run what it
+only linted: 63 feature-gated tests no job had ever run, the eight fuzz targets,
+and a floor under line coverage, which was never measured before (71.66% of the
+lib tests). One provenance record was incomplete and is now complete. The full
+`--features test-roms` suite passes 2,887 tests; AccuracyCoin 144/144 and nestest
+0-diff hold. The MiSTer bitstreams are v2.9.2's, byte for byte, since the RTL is
+unchanged. **No hardware has run any bitstream.**
+
+### Provenance
+
+- **The optional OAM-decay model is recorded as derived from Mesen2.** It was
+  written at v2.1.4 (#265) to mirror Mesen2's `ReadSpriteRam` / `WriteSpriteRam`,
+  and its commit said so, but `ppu.rs`'s provenance header, `NOTICE` and
+  `docs/originality-and-provenance.md` Section 1 listed only the sprite-evaluation
+  and OAM-data-bus regions. All three, and the site, now name it. The code is
+  unchanged, and both projects are GPL-3.0-or-later.
+
+### Changed — release plan
+
+- **v3.0.0 is now the API major with a release-candidate core**
+  ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md),
+  maintainer, 2026-09-29). It carries ADR 0042's removals and ships both MiSTer
+  bitstreams labelled **not hardware-verified**. Hardware verification (the
+  SuperStation One board session and the mobile device runs) becomes a later
+  v3.x release. The line to v3.0.0 is
+  [`to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md):
+  records and CI (v2.9.4), accuracy (v2.9.5), mappers (v2.9.6), targeted
+  platform features (v2.9.7), performance and the SDRAM arbiter (v2.9.8), the
+  release candidate (v2.9.9). The MiSTer contribution checklist's deadline moves
+  with the submission, to the hardware-verification release.
+
+### Testing
+
+- **CI now runs the tests it used to only lint.** The frontend's lib tests run
+  with `--features full` (659 tests, against 631 with `av-record` alone and 618
+  by default), and the chip crates run their feature-gated tests:
+  `rustynes-core` and `rustynes-ppu` with `debug-hooks,hd-pack` (+13 and +5),
+  `rustynes-apu` with `debug-hooks` (+10), `rustynes-script` with
+  `script-ipc,script-sqlite` (+7). Every one of these tests existed and passed;
+  no job had ever run them.
+- **The eight fuzz targets are built and run in CI**, 20,000 inputs each from a
+  fixed seed, so a failure is reproducible. No workflow built them before, so a
+  target could stop compiling unnoticed. A planted panic fails the job and
+  uploads the crash input.
+- **Line coverage is measured and floored.** A `coverage` job runs
+  `cargo llvm-cov` over the workspace's lib tests and fails below 70% of lines.
+  The baseline is 71.66% on the CI runner (72.01% on a local machine). The
+  integration suites are outside its scope, because
+  instrumented they are too slow for a per-change job.
+- **A weekly toolchain canary** builds, lints and tests the workspace on
+  current stable and beta. It never blocks a merge; it shows the cost of moving
+  the 1.96 pin while that cost is small.
+- `rustynes-cheevos` now meets the workspace lint set (`missing_docs`, clippy
+  pedantic and nursery, `undocumented_unsafe_blocks`), which it had never been
+  held to; 92 warnings fixed.
+
+### Documentation
+
+- Current-state claims re-checked against the code: `docs/STATUS.md`'s mapper
+  tiers (174 families: 51 Core, 95 Curated, 28 BestEffort) and test counts, the
+  store status in `docs/android.md` and `docs/ios.md` (no store launch has
+  happened), the roadmap tables, and `to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md`
+  (25 entries found shipped and ticked with evidence).
+
 ## [2.9.3] - 2026-09-29 - "Handset" (the old review threads closed, and the mobile run prepared)
 
 The fourth release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):

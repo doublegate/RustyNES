@@ -33,6 +33,8 @@ file-by-file table (source file, function, and line references).
   https://github.com/SourMesen/Mesen2
   Derived: CPU unstable-store opcodes (NesCpu.h); the PPU sprite-evaluation FSM
   and OAM-data-bus model (NesPpu.cpp ProcessSpriteEvaluation / ReadSpriteRam);
+  the PPU's optional OAM-decay model (NesPpu.cpp ReadSpriteRam / WriteSpriteRam,
+  OamDecayCycleCount);
   ~15 mapper board implementations (Bandai EEPROM, JY Company, Waixing, Sachen,
   Txc, NTDEC, Kaiser, MMC3 variants, FK23C, CoolBoy, the Vs. DualSystem
   sub-console banking, the VRC7 audio register path, the mapper 244 scramble

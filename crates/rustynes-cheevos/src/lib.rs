@@ -1,5 +1,5 @@
 //! `rustynes-cheevos` — a native-only, safe Rust wrapper around the vendored
-//! RetroAchievements [`rcheevos`](https://github.com/RetroAchievements/rcheevos)
+//! `RetroAchievements` [`rcheevos`](https://github.com/RetroAchievements/rcheevos)
 //! C library (MIT), exposing [`RaClient`].
 //!
 //! The crate links a static build of the `rc_client` runtime (see `build.rs`)
@@ -26,7 +26,7 @@
 //!
 //! ## Threading
 //!
-//! [`RaClient`] is single-threaded (`!Send`/`!Sync`): all rc_client calls and
+//! [`RaClient`] is single-threaded (`!Send`/`!Sync`): all `rc_client` calls and
 //! callback bridging run on the emulator/main thread. An internal HTTP worker
 //! thread performs blocking network I/O and communicates only via channels;
 //! rcheevos completion callbacks are invoked back on the main thread from

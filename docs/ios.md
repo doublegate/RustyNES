@@ -284,7 +284,10 @@ rests on the user lawfully owning the ROM, which is exactly why the rule is
 **user-sourced-ROMs-only, no bundling, no download path, no in-app ROM links, a
 clear in-app ownership notice**. Full strategy + the distribution phasing
 (TestFlight through v1.9.x; App Store + AltStore PAL deferred to **v2.1.0**, joint
-with Android, after the v2.0.0 "Timebase" core rewrite) live in
+with Android, after the v2.0.0 "Timebase" core rewrite — a target since retired:
+as of v2.9.4 no store launch has happened, distribution is **TestFlight**, and a
+free listing waits until after the v3.x hardware-verification release, which
+includes the first device run) live in
 `docs/adr/0027-ios-distribution-and-app-store-compliance.md` and
 `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
@@ -360,7 +363,8 @@ lane** in `fastlane/Fastfile` that stages the build + listing and **does not sub
 preview, real-cert signing, the listing upload, and the App-Review submission are the
 maintainer / v2.0.9 / v2.1.0 closeout. This closes the v2.0.5→v2.0.8 iOS finalization
 window; **v2.0.9** is the joint (Android + iOS) on-device readiness pass, and **v2.1.0**
-the joint store launch.
+the joint store launch. *(History: that launch never happened; see the current
+status above. The fastlane scaffolding remains, dormant.)*
 
 **Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
 iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
