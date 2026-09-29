@@ -21,13 +21,7 @@ use rustynes_mappers::parse;
 
 /// Boards that genuinely drive `$00` somewhere in `$6000-$7FFF` with no RAM,
 /// each with its reason. Empty unless a board's documentation says so.
-const DRIVES_ZERO: &[(u16, &str)] = &[(
-    142,
-    "Kaiser KS7032: the model reads a zero work RAM at $6000 unless register 4 \
-     selects ROM, while nesdev_wiki/INES_Mapper_142 gives that window an 8 KiB \
-     switchable PRG-ROM bank. A modelling divergence, not open bus: core \
-     ledger F-09, left for a release with a game to check it against",
-)];
+const DRIVES_ZERO: &[(u16, &str)] = &[];
 
 fn image(mapper: u16, chr_rom: bool) -> Vec<u8> {
     let chr_units: u8 = if chr_rom { 16 } else { 0 };
