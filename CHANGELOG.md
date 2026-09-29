@@ -26,6 +26,25 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.5] - 2026-09-29 - "Caliper" (every open accuracy item measured, then fixed or closed)
+
+The sixth release of the v2.9.x line and the second of the line to v3.0.0: the
+accuracy release. Every open item in the accuracy ledger and the line plan got
+an outcome with its evidence:
+
+- **four fixes**, each red first: blargg's `apu_test` frame-counter
+  coincidence, the composite 2C02's odd-frame sprite glitch on scanline 0, OAM
+  DMA filling the PPU I/O latch, and KS7032's `$6000` window;
+- **49 committed test ROMs** that no test ran are now gated;
+- **one lever tried and refuted**, the MMC3 M2-edge filter;
+- **the rest closed on documentation** or moved to where they belong.
+
+One fix moves a save-state format: **`.rns` files from v2.9.4 or earlier do not
+load.** The full `--features test-roms` suite passes 2,904 tests.
+AccuracyCoin is 144/144, with `Sprites On Scanline 0` now at the composite
+PPU's code 1, and nestest is 0-diff. The MiSTer RTL is unchanged, so the
+bitstreams are v2.9.2's, byte for byte. **No hardware has run any bitstream.**
+
 ### Fixed — emulation
 
 - **A `$4017` write's clock no longer doubles the sequencer's step in the same
@@ -83,6 +102,24 @@ cycle-accurate core later replaced.
   260, and the filter axis is ruled out.
 - **`.fm2` Four Score P3/P4 import** moves to v3.0.0. It needs `FrameInput` to
   grow two fields, which breaks an exhaustive public struct.
+
+### MiSTer core (co-simulation only; the RTL is unchanged)
+
+- **The PPU I/O-latch decay groups have a stimulus.** `ppudecay075` refreshes
+  bits 0-4 once and then only ever reads `$2002`, so its bus trace shows those
+  bits decay 1,000,000 cycles later while bits 5-7 stay refreshed. The DUT
+  matches on all 1,191,222 cycles. The three decay mutations every earlier ROM
+  left inert are now caught.
+- **The RMW double write is covered.** Both mutations that rung 1 cannot see
+  are caught by the rung-2 bus gate `rmwabsy049`.
+- **Two gated boot goldens were four cycles short** of the window the DUT runs,
+  so the DUT's last four records went unchecked. `ppuregs` and `ppuscroll` are
+  re-cut from the pinned oracle, and a new audit
+  (`tb/check_boot_windows.py`, in CI) keeps the two numbers equal.
+- **The oracle changes above reach the DUT when its pinned oracle moves**, at
+  v2.9.9. The RTL they need (the `$4017` rule, the scanline-0 re-arm) lands
+  there, under that release's seed sweep. The remaining open ledger rows go
+  with them.
 
 ## [2.9.4] - 2026-09-29 - "Plumb" (the records made true, and CI made to run what it only linted)
 
