@@ -2214,6 +2214,34 @@ mod tests {
         }
     }
 
+    /// VRC7 has no rhythm DAC: the `$0E` rhythm bit "is treated as though it
+    /// were always enabled", so only six FM channels are ever audible
+    /// (`nesdev_wiki/VRC7_audio`, *Rhythm Register $0E*). A rhythm-mode write
+    /// therefore changes nothing a VRC7 cartridge can emit. Pinned in v2.9.5,
+    /// which closed the line plan's "OPLL rhythm mode" item on this evidence
+    /// rather than implementing a YM2413 feature the NES never reaches.
+    #[test]
+    fn vrc7_rhythm_register_changes_no_output() {
+        let key_on = |o: &mut Opll| {
+            o.write_reg(0x30, 0x10); // channel 0: instrument 1, full volume
+            o.write_reg(0x10, 0x80);
+            o.write_reg(0x20, 0x15); // key on, block 2
+        };
+        let mut plain = Opll::new(ChipType::Vrc7);
+        let mut rhythm = Opll::new(ChipType::Vrc7);
+        key_on(&mut plain);
+        key_on(&mut rhythm);
+        rhythm.write_reg(0x0E, 0x3F); // rhythm mode + all five drum key-ons
+        let mut nonzero = 0usize;
+        for i in 0..4000 {
+            let (a, b) = (plain.calc(), rhythm.calc());
+            assert_eq!(a, b, "sample {i} differs after a $0E write");
+            nonzero += usize::from(a != 0);
+        }
+        // Not two silent chips agreeing: the keyed note is audible.
+        assert!(nonzero > 0, "the keyed channel produced no output");
+    }
+
     #[test]
     fn register_shadow_round_trips() {
         let mut opll = Opll::new(ChipType::Vrc7);
