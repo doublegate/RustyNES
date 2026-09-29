@@ -39,9 +39,9 @@ before installing, so the result belongs to a known build.
 | | |
 | --- | --- |
 | APK | `RustyNES-v2.9.3-pre-foss-debug.apk` (the `fossDebug` variant, application id `com.doublegate.rustynes.debug`, ABIs arm64-v8a and x86_64) |
-| Built from | `e1cc9192` on `feat/v2.9.3-device-checklist` (`main` at `d8b02d2f` plus this release's commits), with a clean tree |
-| SHA-256 | `7d3b42106d61e420e6eaf1f5da54fbadb3f0e5d26c21e176958cb6fb47f3e300` |
-| Size | 67,311,011 bytes |
+| Built from | `1b4c5885` on `feat/v2.9.3-device-checklist` (`main` at `d8b02d2f` plus this release's commits), with a clean tree |
+| SHA-256 | `01fdc7e8b65b93d4e68f9b6c576baf0e44394cf0b7d0886e9a03bc18d42a8f3a` |
+| Size | 67,310,731 bytes |
 
 **For row D5 only**, a 32-bit build: `RustyNES-v2.9.3-pre-foss-debug-armeabi-v7a.apk`,
 built with `cd android && ./gradlew :app:assembleFossDebug
@@ -52,8 +52,8 @@ main APK would run the 64-bit ones.
 
 | | |
 | --- | --- |
-| SHA-256 | `ea384af65e37b2709b379b2e7c48645ead35a37410789ce344591a0c64db503f` |
-| Size | 39,375,999 bytes |
+| SHA-256 | `3590989ad131889735dd6a4d20bfba02615affddb31dbd832ac4ec9f730a1af4` |
+| Size | 39,375,895 bytes |
 
 Before recording D5, confirm the device ran the 32-bit library:
 `adb shell dumpsys package com.doublegate.rustynes.debug | grep primaryCpuAbi`
@@ -102,9 +102,9 @@ its own entry.
 
 How the emulator column was produced (2026-09-28, Android 14, software GPU),
 on the earlier build `2ed51d35` (SHA-256 `abb1fb4b...`). The build above adds
-the review-thread fixes (mapper 28, the header serializer including the
-extended console type, NSF open bus, the APU gain guard; the rest is
-desktop-only or docs). None of them touches the
+the review-thread fixes (mapper 28, NSF open bus, the APU gain guard, and
+the header writer, which the apps never call; the rest is desktop-only or
+docs). None of them touches the
 lifecycle, audio-focus or renderer paths these rows exercise, so the column
 was not re-run. That earlier build was installed over adb and driven with
 `adb shell input`,
