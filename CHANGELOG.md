@@ -105,7 +105,7 @@ still hold.
   runs `:app:testFossDebugUnitTest` (the Kotlin tests, including the
   opposing-direction cancel added in v2.9.2) on every `main` push and on any
   pull request that changes the app. Until now they had only ever run by hand.
-- **The iOS renderer is compiled on every pull request.**
+- **The iOS renderer is compiled on every pull request that changes code.**
   `scripts/ios-host-typecheck.sh`, already in CI's lint job, now type-checks
   the real `gfx_metal.rs` against the workspace's wgpu. Before this, a wgpu
   change there was first compiled when a release was cut. Rendering itself
