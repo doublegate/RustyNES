@@ -669,6 +669,38 @@ impl Mapper for Gtrom111 {
 }
 
 /// Mapper 28 (Action 53 homebrew multicart).
+///
+/// Implemented from the NESdev wiki "Action 53 mapper" page (vendored at
+/// `nesdev_wiki/output/Action_53_mapper.md`) and pinned to Damian Yerrick's
+/// `test28` ROM (`tests/roms/nes-test-roms/other/test28.nes`).
+///
+/// Four registers are selected through `$5000-$5FFF` (bit 7 = supervisor, bit
+/// 0 = register) and written through `$8000-$FFFF`, with no bus conflicts:
+///
+/// * `$00` CHR bank: bits 0-1 pick one of four 8 KiB banks of the 32 KiB
+///   CHR RAM.
+/// * `$01` inner PRG bank: bits 0-3.
+/// * `$80` mode: bits 0-1 mirroring (0/1 = 1-screen lower/upper, 2 =
+///   vertical, 3 = horizontal), bits 2-3 PRG mode, bits 4-5 outer bank size
+///   (32/64/128/256 KiB).
+/// * `$81` outer PRG bank: all 8 bits.
+///
+/// While mirroring is 1-screen, D4 of a write to `$00` or `$01` replaces
+/// mirroring bit 0 (AxROM's single-screen select); in V/H it is ignored.
+///
+/// PRG resolution follows the wiki's 12-row table: the "o" bits of the 16 KiB
+/// bank number come from the top of the outer register and the "i" bits from
+/// the bottom of the inner register, the number of inner bits growing with the
+/// outer bank size. The fixed half of the UNROM-style modes (`$8000` in mode
+/// 2, `$C000` in mode 3) is resolved as if the size were 32 KiB, so all outer
+/// bits pass straight through. Power-on maps the last 16 KiB at `$C000`; reset
+/// leaves the mapper untouched.
+///
+/// Until v2.9.3 this board shifted the outer bank left instead of masking its
+/// low bits, masked the inner bank to one bit, fixed the wrong half in modes 2
+/// and 3, ignored the CHR bank register and the D4 mirroring write, and
+/// powered on at bank 1 in `$C000` -- so `test28` failed its first check. The
+/// review thread on #97 reported the banking half.
 pub struct Action53M28 {
     prg_rom: Box<[u8]>,
     chr_ram: Box<[u8]>,
@@ -679,6 +711,12 @@ pub struct Action53M28 {
     mode: u8,
     outer_prg: u8,
 }
+
+/// Mapper 28's own save-state section version. Version 2 (v2.9.3) carries the
+/// full 32 KiB of CHR RAM; version 1 carried 8 KiB and still loads, into bank 0.
+const M28_STATE_VERSION: u8 = 2;
+/// CHR RAM on an Action 53 board: four 8 KiB banks.
+const M28_CHR_RAM: usize = 4 * CHR_BANK_8K;
 
 impl Action53M28 {
     /// Construct a new mapper 28 board.
@@ -700,40 +738,66 @@ impl Action53M28 {
         }
         Ok(Self {
             prg_rom,
-            chr_ram: vec![0u8; CHR_BANK_8K].into_boxed_slice(),
+            chr_ram: vec![0u8; M28_CHR_RAM].into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             reg_select: 0,
             chr_reg: 0,
             inner_prg: 0,
+            // Power-on: the wiki specifies only that the last 16 KiB sits at
+            // $C000. Mode 0 (32 KiB, size 32 KiB) with every outer bit set
+            // resolves $C000 to bank `...1_1111_1111`, i.e. the last bank of
+            // any power-of-two ROM once reduced modulo the bank count, and
+            // $8000 to the one before it.
             mode: 0,
-            outer_prg: 0,
+            outer_prg: 0xFF,
         })
     }
 
     /// Resolve the 16 KiB PRG bank serving a CPU address in $8000-$FFFF.
+    ///
+    /// The bank number is `outer << 1 | half`, with its low `size + 1` bits
+    /// replaced by inner-bank bits (the wiki table's "i" positions). For the
+    /// 32 KiB modes the replaced field is `inner << 1 | half`; for the
+    /// switchable half of the UNROM-style modes it is `inner` itself; the
+    /// fixed half keeps `outer << 1 | half` untouched (resolved as size 0).
     fn prg_bank_for(&self, addr: u16) -> usize {
         let count16 = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-        // The outer bank is shifted left by the size mask (bits 4-5 of mode).
-        let size = (self.mode >> 4) & 0x03;
-        let outer = (self.outer_prg as usize) << (size + 1);
+        let size = u32::from((self.mode >> 4) & 0x03);
         let prg_mode = (self.mode >> 2) & 0x03;
         let high = addr >= 0xC000;
-        let inner = self.inner_prg as usize;
+        let half = usize::from(high);
+        let inner = usize::from(self.inner_prg & 0x0F);
+        let outer_bits = (usize::from(self.outer_prg) << 1) | half;
+        // `size + 1` low bits of the bank number come from the inner register.
+        let mask = (1usize << (size + 1)) - 1;
         let bank = match prg_mode {
-            // NROM-256: a 32 KiB bank; the high half is +1.
-            0 | 1 => (outer & !1) | usize::from(high),
-            // UNROM: low half selectable, high half fixed to the outer top.
-            2 => {
-                if high {
-                    outer | 0x01
+            // BNROM / AOROM: one 32 KiB bank.
+            0 | 1 => (outer_bits & !mask) | (((inner << 1) | half) & mask),
+            // UNROM #180: $8000 fixed (resolved as 32 KiB), $C000 switchable.
+            // UNROM #2:   $8000 switchable, $C000 fixed (resolved as 32 KiB).
+            2 | 3 => {
+                let fixed = if prg_mode == 2 { !high } else { high };
+                if fixed {
+                    outer_bits
                 } else {
-                    (outer & !1) | (inner & 0x01)
+                    (outer_bits & !mask) | (inner & mask)
                 }
             }
-            // NROM-128: both halves are the same 16 KiB bank.
-            _ => outer | (inner & 0x01),
+            _ => unreachable!("PRG mode is two bits"),
         };
         bank % count16
+    }
+
+    /// Offset into the 32 KiB CHR RAM for a pattern-table address.
+    fn chr_offset(&self, addr: u16) -> usize {
+        usize::from(self.chr_reg & 0x03) * CHR_BANK_8K + usize::from(addr & 0x1FFF)
+    }
+
+    /// Apply a write's D4 to mirroring bit 0 while the mode is 1-screen.
+    const fn latch_one_screen(&mut self, value: u8) {
+        if self.mode & 0x02 == 0 {
+            self.mode = (self.mode & !0x01) | ((value >> 4) & 0x01);
+        }
     }
 }
 
@@ -755,9 +819,15 @@ impl Mapper for Action53M28 {
         match addr {
             0x5000..=0x5FFF => self.reg_select = value & 0x81,
             0x8000..=0xFFFF => match self.reg_select {
-                0x00 => self.chr_reg = value,
-                0x01 => self.inner_prg = value,
-                0x80 => self.mode = value,
+                0x00 => {
+                    self.chr_reg = value & 0x03;
+                    self.latch_one_screen(value);
+                }
+                0x01 => {
+                    self.inner_prg = value & 0x0F;
+                    self.latch_one_screen(value);
+                }
+                0x80 => self.mode = value & 0x3F,
                 _ => self.outer_prg = value,
             },
             _ => {}
@@ -767,7 +837,7 @@ impl Mapper for Action53M28 {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
             0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
             _ => 0,
         }
@@ -776,7 +846,10 @@ impl Mapper for Action53M28 {
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => self.chr_ram[addr as usize] = value,
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr_ram[off] = value;
+            }
             0x2000..=0x3EFF => {
                 let off = nametable_offset(addr, self.current_mirroring());
                 self.vram[off] = value;
@@ -796,7 +869,7 @@ impl Mapper for Action53M28 {
 
     fn save_state(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(6 + self.vram.len() + self.chr_ram.len());
-        out.push(SAVE_STATE_VERSION);
+        out.push(M28_STATE_VERSION);
         out.push(self.reg_select);
         out.push(self.chr_reg);
         out.push(self.inner_prg);
@@ -808,27 +881,36 @@ impl Mapper for Action53M28 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 6 + self.vram.len() + self.chr_ram.len();
+        // Version 1 (before v2.9.3) carried 8 KiB of CHR RAM; it restores into
+        // bank 0 with the other three banks cleared. Its register bytes mean
+        // the same thing, so only the CHR length differs.
+        let version = *data.first().ok_or(MapperError::Truncated {
+            expected: 1,
+            got: 0,
+        })?;
+        let chr_len = match version {
+            M28_STATE_VERSION => self.chr_ram.len(),
+            1 => CHR_BANK_8K,
+            v => return Err(MapperError::UnsupportedVersion(v)),
+        };
+        let expected = 6 + self.vram.len() + chr_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
         }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
-        }
-        self.reg_select = data[1];
-        self.chr_reg = data[2];
-        self.inner_prg = data[3];
-        self.mode = data[4];
+        self.reg_select = data[1] & 0x81;
+        self.chr_reg = data[2] & 0x03;
+        self.inner_prg = data[3] & 0x0F;
+        self.mode = data[4] & 0x3F;
         self.outer_prg = data[5];
         let mut cursor = 6;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
         cursor += self.vram.len();
-        self.chr_ram
-            .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
+        self.chr_ram.fill(0);
+        self.chr_ram[..chr_len].copy_from_slice(&data[cursor..cursor + chr_len]);
         Ok(())
     }
 }
@@ -1352,25 +1434,135 @@ mod tests {
         }
     }
 
+    /// The NESdev "Action 53 mapper" table (A22-A14 output per mode value and
+    /// outer bank size), transcribed row for row as data. `o` = outer-bank bit
+    /// taken from the TOP of `$81`, `i` = inner-bank bit taken from the
+    /// BOTTOM of `$01`, `0`/`1` = a literal (CPU A14 in the 32 KiB modes).
+    const M28_WIKI_TABLE: [(u8, &str, &str); 12] = [
+        (0x00, "oooooooo0", "oooooooo1"),
+        (0x08, "oooooooo0", "ooooooooi"),
+        (0x0C, "ooooooooi", "oooooooo1"),
+        (0x10, "oooooooi0", "oooooooi1"),
+        (0x18, "oooooooo0", "oooooooii"),
+        (0x1C, "oooooooii", "oooooooo1"),
+        (0x20, "ooooooii0", "ooooooii1"),
+        (0x28, "oooooooo0", "ooooooiii"),
+        (0x2C, "ooooooiii", "oooooooo1"),
+        (0x30, "oooooiii0", "oooooiii1"),
+        (0x38, "oooooooo0", "oooooiiii"),
+        (0x3C, "oooooiiii", "oooooooo1"),
+    ];
+
+    /// Expand one table pattern into a 9-bit bank number.
+    fn m28_expected(pattern: &str, outer: u8, inner: u8) -> usize {
+        let os = pattern.bytes().filter(|&c| c == b'o').count();
+        let is = pattern.bytes().filter(|&c| c == b'i').count();
+        // "o"s are the topmost outer bits, "i"s the bottommost inner bits.
+        let mut o_bits = (0..os).map(|k| (outer >> (7 - k)) & 1);
+        let mut i_bits = (0..is).rev().map(|k| (inner >> k) & 1);
+        pattern.bytes().fold(0usize, |acc, c| {
+            let bit = match c {
+                b'o' => o_bits.next().unwrap(),
+                b'i' => i_bits.next().unwrap(),
+                b'0' => 0,
+                _ => 1,
+            };
+            (acc << 1) | usize::from(bit)
+        })
+    }
+
     #[test]
-    fn m28_nrom128_mode_mirrors_one_bank() {
+    fn m28_prg_banking_matches_every_row_of_the_wiki_table() {
+        // A 512-bank (8 MiB) image, so the modulo in `prg_bank_for` never
+        // wraps and all nine output bits (A22-A14) are compared.
+        let mut m = Action53M28::new(synth_prg_16k(512), &[], Mirroring::Vertical).unwrap();
+        for (mode_base, lo, hi) in M28_WIKI_TABLE {
+            // Each row covers a range of mode values; the table's row value
+            // plus every mirroring setting (and, for the 32 KiB rows, both
+            // PRG-mode encodings 0 and 1) must resolve identically.
+            let variants: &[u8] = if mode_base & 0x0C == 0 {
+                &[0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7]
+            } else {
+                &[0x0, 0x1, 0x2, 0x3]
+            };
+            for &v in variants {
+                m.mode = mode_base | v;
+                for outer in 0..=255u8 {
+                    for inner in 0..16u8 {
+                        m.outer_prg = outer;
+                        m.inner_prg = inner;
+                        assert_eq!(
+                            m.prg_bank_for(0x8000),
+                            m28_expected(lo, outer, inner),
+                            "mode ${:02X} outer ${outer:02X} inner {inner} at $8000",
+                            m.mode
+                        );
+                        assert_eq!(
+                            m.prg_bank_for(0xC000),
+                            m28_expected(hi, outer, inner),
+                            "mode ${:02X} outer ${outer:02X} inner {inner} at $C000",
+                            m.mode
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn m28_powers_on_with_the_last_bank_at_c000() {
+        // test28's first check ("DOES NOT POWER ON WITH LAST BANK IN
+        // $C000-$FFFF"), which the pre-v2.9.3 board failed.
+        let mut m = Action53M28::new(synth_prg_16k(32), &[], Mirroring::Vertical).unwrap();
+        assert_eq!(m.cpu_read(0xC000), 31);
+    }
+
+    #[test]
+    fn m28_chr_register_banks_32k_of_chr_ram() {
         let mut m = Action53M28::new(synth_prg_16k(8), &[], Mirroring::Vertical).unwrap();
-        // mode reg: select reg 0x80, write PRG mode 3 (NROM-128), mirroring V (2),
-        // size mask 0.
+        for bank in 0..4u8 {
+            m.cpu_write(0x5000, 0x00);
+            m.cpu_write(0x8000, bank);
+            m.ppu_write(0x0123, 0xA0 | bank);
+        }
+        for bank in 0..4u8 {
+            m.cpu_write(0x5000, 0x00);
+            m.cpu_write(0x8000, bank);
+            assert_eq!(m.ppu_read(0x0123), 0xA0 | bank, "CHR bank {bank}");
+        }
+    }
+
+    #[test]
+    fn m28_d4_selects_the_single_screen_only_in_one_screen_modes() {
+        let mut m = Action53M28::new(synth_prg_16k(8), &[], Mirroring::Vertical).unwrap();
         m.cpu_write(0x5000, 0x80);
-        m.cpu_write(0x8000, 0b0000_1110); // mode bits 2-3 = 3, mirroring bits 0-1 = 2
-        // inner reg
+        m.cpu_write(0x8000, 0x00); // 1-screen lower
         m.cpu_write(0x5000, 0x01);
-        m.cpu_write(0x8000, 0x01); // inner = 1
-        // outer reg
-        m.cpu_write(0x5000, 0x81);
-        m.cpu_write(0x8000, 0x02); // outer = 2
-        // size mask (mode bits 4-5) = 0 -> outer is shifted left by (size+1)=1,
-        // so outer = 2<<1 = 4. NROM-128 mode: both halves = outer|(inner&1)
-        // = 4|1 = 5.
-        assert_eq!(m.cpu_read(0x8000), 5);
-        assert_eq!(m.cpu_read(0xC000), 5);
+        m.cpu_write(0x8000, 0x10); // inner write with D4 set
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        m.cpu_write(0x5000, 0x00);
+        m.cpu_write(0x8000, 0x00); // CHR write with D4 clear
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+        // Vertical: D4 is ignored.
+        m.cpu_write(0x5000, 0x80);
+        m.cpu_write(0x8000, 0x02);
+        m.cpu_write(0x5000, 0x01);
+        m.cpu_write(0x8000, 0x10);
         assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m28_loads_a_version_1_state_with_8k_of_chr() {
+        let mut m = Action53M28::new(synth_prg_16k(8), &[], Mirroring::Vertical).unwrap();
+        let mut v1 = vec![1u8, 0x81, 0x00, 0x03, 0x0E, 0x02];
+        v1.extend(core::iter::repeat_n(0u8, 2 * NAMETABLE_SIZE));
+        let mut chr = vec![0u8; CHR_BANK_8K];
+        chr[7] = 0x5A;
+        v1.extend_from_slice(&chr);
+        m.load_state(&v1).unwrap();
+        assert_eq!(m.ppu_read(0x0007), 0x5A);
+        assert_eq!(m.mode, 0x0E);
+        assert_eq!(m.outer_prg, 0x02);
     }
 
     #[test]

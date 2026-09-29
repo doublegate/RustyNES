@@ -709,16 +709,15 @@ impl Mapper for NsfMapper {
         // NOT take v2.7.2's "no save RAM -> the window floats" default; it did in
         // the first cut, and a tune's RAM read the bus latch (PR #550).
         {
-            // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
-            // the bus must use our real bytes there (not open bus). Everything else
-            // in that window is unmapped (open bus).
+            // The driver image IS mapped in $4020-$5FFF, so the bus must use our
+            // real bytes there (not open bus). Everything else in that window is
+            // unmapped (open bus) -- including the bank registers $5FF8-$5FFF,
+            // which are write-only: the NSF spec's readable-address list omits
+            // them (v2.9.3; before, they read back as a mapped 0).
             if !(0x4020..=0x5FFF).contains(&addr) {
                 return false;
             }
-            // Driver image and bank registers are always mapped.
-            if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr)
-                || (0x5FF8..=0x5FFF).contains(&addr)
-            {
+            if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr) {
                 return false;
             }
             // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
@@ -917,6 +916,31 @@ mod tests {
         for a in 0x6000u16..=0x7FFF {
             assert!(!m.cpu_read_unmapped(a), "${a:04X} must stay mapped");
             assert_eq!(m.cpu_read(a), pattern(a), "${a:04X}");
+        }
+    }
+
+    /// `$5FF8-$5FFF` are write-only bank registers: the NSF spec's list of
+    /// readable addresses (`nesdev_wiki/output/NSF.md`, "Summary of Addresses")
+    /// omits them, and only lists them as writable "if bankswitching is
+    /// enabled". A read there must float (open bus), bankswitched or not.
+    /// Until v2.9.3 the board reported them mapped and returned 0, so the bus
+    /// latched 0 (review thread on #44).
+    #[test]
+    fn bank_register_window_reads_as_open_bus() {
+        let plain = parse_nsf(&synth_nsf()).expect("valid nsf");
+        let mut f = synth_nsf();
+        f[0x70..0x78].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let banked = parse_nsf(&f).expect("valid bankswitched nsf");
+        assert!(banked.bankswitched);
+        for nsf in [&plain, &banked] {
+            let m = NsfMapper::new(nsf);
+            for a in 0x5FF8u16..=0x5FFF {
+                assert!(
+                    m.cpu_read_unmapped(a),
+                    "${a:04X} (banked={})",
+                    nsf.bankswitched
+                );
+            }
         }
     }
 

@@ -428,18 +428,22 @@ impl Nes {
         })
     }
 
-    /// Build an emulator that plays a classic NSF (`NESM`) music file.
-    ///
-    /// Only the classic `NESM\x1a` container is supported; `NSFe` and
-    /// expansion-chip audio are documented deferrals.
+    /// Build an emulator that plays an NSF-family music file: the classic
+    /// `NESM\x1a` container or the chunked `NSFE` one, told apart by their magic
+    /// in [`rustynes_mappers::parse_nsf`]. Expansion-chip audio declared in the
+    /// header (VRC6, VRC7, FDS, MMC5, N163, 5B) is synthesized by the same cores
+    /// the cartridge boards use. (Until v2.9.3 this comment said `NSFe` and
+    /// expansion audio were deferred, which stopped being true in v2.1.x.)
     ///
     /// NSF files carry a ripped NES sound engine plus an `init`/`play` address
     /// pair, not a PPU program. Construction parses the file, installs a
     /// [`rustynes_mappers::NsfMapper`] (a synthetic 6502 driver + the program
     /// image) as the bus's mapper, and runs the standard cold-boot reset — the
-    /// driver's reset vector calls `init` for the starting song, enables vblank
-    /// NMI, and the ordinary 60 Hz NMI then calls `play` once per frame. Audio
-    /// is produced through the unchanged lockstep loop; there is no video.
+    /// driver's reset vector calls `init` for the starting song. At the standard
+    /// 60 Hz rate the driver enables vblank NMI and the NMI calls `play` once per
+    /// frame; at any other header rate a mapper cycle-timer IRQ calls it
+    /// instead (see `docs/mappers.md`). Audio is produced through the unchanged
+    /// lockstep loop; there is no video.
     ///
     /// Uses the default 44.1 kHz sample rate; see
     /// [`Nes::from_nsf_with_sample_rate`].

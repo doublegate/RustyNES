@@ -26,6 +26,72 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mapper 28 (Action 53 multicarts) is rebuilt to the NESdev spec.** PRG banking
+  was wrong for every outer bank size above 32 KiB and in both UNROM modes, the
+  CHR bank register did nothing (the board has 32 KiB of CHR RAM, not 8 KiB),
+  the single-screen select written through D4 was ignored, and the board
+  powered on at the wrong bank, so the `test28` ROM failed its first check. A
+  unit test now checks every mode value, outer bank and inner bank against the
+  wiki's table, row for row. Save states from before still load.
+- **The ROM header editor no longer changes bytes you did not edit.** Saving
+  a header re-encoded all 16 bytes from scratch. That wrote Vs. UniSystem
+  protection types 1-4 back as 0 and DualSystem type 6 as 5, zeroed the
+  extended console type of an Extended-console image (byte 13, VT01-VT32 and
+  similar), the NES 2.0 misc-ROM count and default expansion device (bytes
+  14-15) and both NVRAM size nibbles, and cleared anything in iNES 1.0 bytes
+  8-15. It now writes your edits over the bytes the file held, so only the
+  fields you changed are rewritten.
+- **The header editor saved every mapper from 16 up as the wrong mapper.**
+  The header encoder put mapper bits 8-11 where bits 4-7 belong, so, for
+  example, mapper 66 (GxROM) was written as mapper 2. Present since the editor
+  shipped in v1.7.0; the ROMs the emulator loads were never affected, only
+  headers saved from the editor.
+- **A palette file that cannot be read no longer erases your palette
+  setting.** A missing or unreadable `.pal` (say, on a drive not yet mounted)
+  used to clear `[graphics] palette_file` and save the config. It now falls
+  back to the built-in palette for that session only and keeps the setting.
+  Loading a palette also reads only the 192 bytes it uses, so a path that
+  names a huge file or a device such as `/dev/zero` can no longer exhaust
+  memory.
+- **NSF bank registers read as open bus.** `$5FF8-$5FFF` are write-only in the
+  NSF spec, but reads there returned 0.
+- **The Bisqwit NTSC filter no longer darkens the picture edges.** Its filter
+  window ran past both ends of the line at the outermost columns.
+- **The debugger's event heatmap keeps its proportions** at wide window sizes,
+  and stops allocating a new buffer every repaint.
+- **A NaN per-channel audio gain** from a hand-edited config falls back to
+  unity instead of turning that channel's output into NaN.
+- The `fds_trace` diagnostic no longer reports a match when the disk-info
+  block it read was cut short.
+
+These came from review threads on PRs #29-#97 that were never answered. All
+244 of those threads were checked against current code in v2.9.3: 234 were
+answered and resolved, and these ten are the findings that turned out to
+still hold.
+
+### Deprecated
+
+- `rustynes_mappers::serialize_header` (reachable as
+  `rustynes_core::rustynes_mappers::serialize_header`). It encodes a `Header`
+  from scratch, which zeroes every header bit `Header` has no field for. Use
+  the new `serialize_header_preserving(header, original_bytes)`, which
+  rewrites only the fields that changed. `serialize_header` is removed at
+  v3.0.0 with the other deprecations (ADR 0042).
+
+### Testing
+
+- **The Android app's own unit tests now run in CI.** The Android workflow
+  runs `:app:testFossDebugUnitTest` (the Kotlin tests, including the
+  opposing-direction cancel added in v2.9.2) on every `main` push and on any
+  pull request that changes the app. Until now they had only ever run by hand.
+- **The iOS renderer is compiled on every pull request.**
+  `scripts/ios-host-typecheck.sh`, already in CI's lint job, now type-checks
+  the real `gfx_metal.rs` against the workspace's wgpu. Before this, a wgpu
+  change there was first compiled when a release was cut. Rendering itself
+  still needs a device.
+
 ### Dependencies
 
 - **Every dependency brought to its newest release, major and minor**, and the
@@ -40,6 +106,10 @@ cycle-accurate core later replaced.
     removed the day a fixed release ships. The wgpu 30 API changes (present on
     the queue, surface colour space, adapter limit buckets, a fallible mapped
     range) keep the picture and limits exactly as before.
+    Measured afterwards on a 120 Hz Wayland desktop (Mailbox): frames are now
+    presented one refresh apart instead of in bunches. The median present
+    interval went from 5.5 to 8.4 ms and the p95 from 15.6 to 10.4-11.4 ms, in
+    two alternating A/B pairs against v2.9.2 (`docs/performance.md`, v2.9.3).
   - egui 0.36 hands each texture several ordered updates per frame and asserts
     that a frame's texture updates are never dropped unapplied. Every update is
     now applied in order, and a detached tool window that closes between

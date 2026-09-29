@@ -59,6 +59,11 @@ pub struct EventPanelState {
     /// The frame the current selection belongs to; when the frame advances the
     /// stale selection is dropped (it would point at an unrelated new event).
     last_frame: Option<u64>,
+    /// The current frame's events, copied out of the core so the painter does
+    /// not hold a borrow of `nes`. Reused across repaints (cleared, refilled)
+    /// instead of allocated per frame; until v2.9.3 every repaint collected a
+    /// fresh `Vec` (review thread on #43).
+    events: Vec<Ev>,
 }
 
 /// Map a `$2000-$2007` (mirrored) PPU register address to its mnemonic.
@@ -130,17 +135,18 @@ pub fn show(
 
             // Flatten the borrow out of `nes` up front.
             let frame = nes.ppu_snapshot().frame;
-            let events: Vec<Ev> = nes
-                .events()
-                .iter()
-                .map(|e| Ev {
-                    kind: e.kind,
-                    scanline: e.scanline,
-                    dot: e.dot,
-                    addr: e.addr,
-                    value: e.value,
-                })
-                .collect();
+            // Taken out of `state` for the duration of the repaint (so `state`
+            // can still be borrowed mutably below) and put back at the end with
+            // its capacity intact.
+            let mut events = core::mem::take(&mut state.events);
+            events.clear();
+            events.extend(nes.events().iter().map(|e| Ev {
+                kind: e.kind,
+                scanline: e.scanline,
+                dot: e.dot,
+                addr: e.addr,
+                value: e.value,
+            }));
 
             ui.horizontal(|ui| {
                 ui.label(format!("Events: {}", events.len()));
@@ -169,19 +175,36 @@ pub fn show(
             if !nes.event_logging() {
                 ui.weak("(enable Record, then run/step a frame)");
             }
+            state.events = events;
         },
     );
+}
+
+/// Tallest the heatmap may get, so the event table below stays visible.
+const HEATMAP_MAX_HEIGHT: f32 = 320.0;
+
+/// The heatmap's size for a given available width: the widest grid that keeps
+/// the DOTS:LINES (341:312) aspect and fits under [`HEATMAP_MAX_HEIGHT`].
+///
+/// When the height cap binds, the width shrinks with it. Until v2.9.3 only the
+/// height was capped, so above about 350 px (including the 700 px default) the
+/// grid stretched horizontally and every dot/scanline cell was mis-proportioned
+/// (review thread on #43).
+fn heatmap_size(avail_width: f32) -> Vec2 {
+    let w = avail_width.max(64.0);
+    let h = w * LINES / DOTS;
+    if h > HEATMAP_MAX_HEIGHT {
+        Vec2::new(HEATMAP_MAX_HEIGHT * DOTS / LINES, HEATMAP_MAX_HEIGHT)
+    } else {
+        Vec2::new(w, h)
+    }
 }
 
 /// Draw the read/write heatmap with hover tooltip + click-to-select.
 #[allow(clippy::many_single_char_names)]
 fn draw_heatmap(ui: &mut egui::Ui, state: &mut EventPanelState, events: &[Ev]) {
-    // Keep the 341:312 aspect inside the available width, capped so the table
-    // below stays visible.
-    let avail = ui.available_size();
-    let w = avail.x.max(64.0);
-    let h = (w * LINES / DOTS).min(320.0);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click());
+    let size = heatmap_size(ui.available_size().x);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 2.0, Color32::from_rgb(0x0C, 0x0C, 0x10));
     p.rect_stroke(
@@ -344,4 +367,25 @@ fn event_table(ui: &mut egui::Ui, state: &mut EventPanelState, events: &[Ev]) {
         });
     // Record the selection so the next repaint can detect a change (scroll-on-change).
     state.previous_selected = state.selected;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DOTS, HEATMAP_MAX_HEIGHT, LINES, heatmap_size};
+
+    #[test]
+    fn heatmap_keeps_its_aspect_when_the_height_cap_binds() {
+        for avail in [64.0_f32, 200.0, 350.0, 700.0, 1600.0] {
+            let s = heatmap_size(avail);
+            assert!(s.y <= HEATMAP_MAX_HEIGHT, "{avail}: height {}", s.y);
+            assert!(s.x <= avail.max(64.0), "{avail}: width {}", s.x);
+            let ratio = s.x / s.y;
+            assert!(
+                (ratio - DOTS / LINES).abs() < 1e-4,
+                "{avail}: ratio {ratio}"
+            );
+        }
+        // The default 700 px panel is height-capped, so its width must shrink.
+        assert!(heatmap_size(700.0).x < 700.0);
+    }
 }

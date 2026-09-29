@@ -1196,6 +1196,42 @@ pub fn parse_pal(bytes: &[u8]) -> Option<[[u8; 3]; 64]> {
     Some(pal)
 }
 
+/// Read and parse the `.pal` file at `path` for the current session.
+///
+/// Deliberately takes no config: a failure here must not change what the user
+/// configured. A read error can be transient (a network share that dropped, a
+/// USB drive not yet mounted), and until v2.9.3 the caller answered any failure
+/// by clearing `[graphics] palette_file` and saving the config, so the setting
+/// was gone for good (review thread on #39). The caller now falls back to the
+/// built-in palette for this session only and keeps the path.
+///
+/// # Errors
+///
+/// A human-readable reason naming the path: the I/O error, or that the file is
+/// shorter than the 192 bytes a 64-colour palette needs.
+///
+/// Reads at most 192 bytes, whatever the file's size.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_pal_file(path: &std::path::Path) -> Result<[[u8; 3]; 64], String> {
+    use std::io::Read as _;
+    // Read at most the 192 bytes `parse_pal` uses. The path is user-supplied,
+    // so an unbounded read of a huge file, a FIFO or a device would allocate
+    // without limit (agy on #571). A longer `.pal` (e.g. 1,536 bytes with the
+    // emphasis variants) still loads its first 64 colours, as before.
+    let io_err = |e: std::io::Error| format!("palette file {}: {e}", path.display());
+    let mut bytes = Vec::with_capacity(192);
+    std::fs::File::open(path)
+        .and_then(|f| f.take(192).read_to_end(&mut bytes))
+        .map_err(io_err)?;
+    parse_pal(&bytes).ok_or_else(|| {
+        format!(
+            "palette file {} is {} bytes; a palette needs at least 192",
+            path.display(),
+            bytes.len()
+        )
+    })
+}
+
 /// Audio configuration.
 //
 // Not `Eq`: the v1.0.0 `volume` field is an `f32`, so the section is
@@ -2690,6 +2726,39 @@ mod tests {
         assert_eq!(parse_pal(&bytes).unwrap()[0], [0, 1, 2]);
         // Too short → None.
         assert!(parse_pal(&[0u8; 191]).is_none());
+    }
+
+    #[test]
+    fn load_pal_file_reports_missing_and_short_files_without_touching_config() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("gone.pal");
+        let err = load_pal_file(&missing).unwrap_err();
+        assert!(err.contains("gone.pal"), "{err}");
+        let short = dir.path().join("short.pal");
+        std::fs::write(&short, [0u8; 100]).unwrap();
+        assert!(load_pal_file(&short).unwrap_err().contains("100 bytes"));
+        let good = dir.path().join("good.pal");
+        let bytes: Vec<u8> = (0..192u16).map(|i| (i & 0xFF) as u8).collect();
+        std::fs::write(&good, &bytes).unwrap();
+        assert_eq!(load_pal_file(&good).unwrap()[1], [3, 4, 5]);
+    }
+
+    /// The configured path is user-supplied and can name anything: a huge
+    /// file, a FIFO, or a device that never ends. Only the first 192 bytes are
+    /// used, so only 192 are read. Until v2.9.3 this was `std::fs::read`, which
+    /// on `/dev/zero` grows a buffer until the allocator fails (agy on #571).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn load_pal_file_reads_only_what_a_palette_needs() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_pal_file(std::path::Path::new("/dev/zero")));
+        });
+        let pal = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("an endless file must not be read to its end")
+            .expect("192 zero bytes are a (black) palette");
+        assert_eq!(pal, [[0u8; 3]; 64]);
     }
 
     #[test]

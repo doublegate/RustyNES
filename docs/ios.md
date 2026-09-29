@@ -122,7 +122,11 @@ only what needs cpal.
 - `scripts/ios-host-typecheck.sh` (run in CI's lint job) compiles the real
   `audio.rs` and `ffi.rs` on Linux against the real cpal, with only the Metal
   renderer stubbed. Before v2.7.4 nothing on a pull request compiled either
-  file; only the tag-triggered `ios.yml` did.
+  file; only the tag-triggered `ios.yml` did. Since v2.9.3 it also
+  `cargo check`s the real `gfx_metal.rs` against the workspace's wgpu (its
+  dependencies are all platform-neutral), so a wgpu API change there fails a
+  pull request instead of the release build. That is a compile check only: no
+  Metal surface is created, so rendering still needs a device.
 
 ### v2.7.4 host fixes (frontend audit IOS-*, MOB-05, MOB-09)
 

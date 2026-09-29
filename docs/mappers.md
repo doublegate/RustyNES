@@ -174,7 +174,7 @@ Every mapper resolves a CPU/PPU address into a `(bank_index, offset)` pair on ev
 
 Most mappers expose a register that selects horizontal, vertical, single-screen A, or single-screen B. The PPU's nametable fetch consults `cart.ppu_read(addr)` for `$2000-$3FFF`; the mapper applies mirroring. Four-screen mode requires extra cart-side VRAM (typically 2 KB) on top of the console's 2 KB.
 
-**Per-game mirroring override (v1.1.0 beta.1, T-110-B4).** The bus carries an optional `nt_mirroring_override: Option<Mirroring>` (set via `Nes::set_mirroring_override`). When `Some`, the bus's `$2000-$3EFF` nametable translation uses it instead of the mapper's `nametable_address` — a load-time correction for ROMs with a wrong iNES mirroring flag, supplied by the frontend's CRC32-keyed game database (the `rustynes_frontend::game_db` module). It does **not** affect mapper-supplied VRAM (`nametable_fetch`, e.g. four-screen), is `None` by default (byte-identical; the core test suites never set it), and is persisted in the save-state. See `docs/compatibility.md` §Input devices for the device side and the CHANGELOG for the rollout.
+**Per-game mirroring override (v1.1.0 beta.1, T-110-B4).** The bus carries an optional `nt_mirroring_override: Option<Mirroring>` (set via `Nes::set_mirroring_override`). When `Some`, the bus's `$2000-$3EFF` nametable translation uses it instead of the mapper's `nametable_address` — a load-time correction for ROMs with a wrong iNES mirroring flag, supplied by the frontend's CRC32-keyed game database (the `rustynes_frontend::game_db` module). It does **not** affect mapper-supplied VRAM (`nametable_fetch`, e.g. four-screen), is `None` by default (byte-identical; the core test suites never set it), and is persisted in the save-state. The database itself (its format, CRC keys and the load-time rules for when an entry may apply) is documented in the `rustynes-gamedb` crate docs (`crates/rustynes-gamedb/src/lib.rs`); the CHANGELOG has the rollout.
 
 ### Bus conflicts
 
@@ -418,7 +418,7 @@ note below).
 
 | iNES | Submapper | Name | Audio | IRQ | Status | Notes |
 |------|-----------|------|-------|-----|--------|-------|
-| 28 | — | Action 53 homebrew multicart | — | — | landed (v1.4.0 / S9) | Outer `$5xxx` register-select + inner `$8000-$FFFF` bank latch; 2-bit PRG-mode field (NROM-128/256/UNROM) + 2-bit mirroring field; CHR-RAM. |
+| 28 | — | Action 53 homebrew multicart | — | — | landed (v1.4.0 / S9); rewritten v2.9.3 | `$5000-$5FFF` selects one of four registers (`$00` CHR bank, `$01` inner PRG, `$80` mode, `$81` outer PRG), written through `$8000-$FFFF` with no bus conflicts. PRG follows the wiki's 12-row mode × outer-size table (32 KiB, UNROM #180, UNROM #2; 32-256 KiB outer), the fixed UNROM half resolved as 32 KiB. 32 KiB CHR-RAM in four 8 KiB banks; D4 of a `$00`/`$01` write selects the 1-screen page. Powers on with the last 16 KiB at `$C000`. |
 | 30 | — | UNROM-512 | — | — | landed (v1.4.0 / S9) | Homebrew. Latch `[N CC P PPPP]`: 16K PRG (bits 0-4) + 8K CHR-RAM/ROM (bits 5-6) + nametable bit (bit 7); fixed last bank at `$C000`. Bus-conflict / flash wiring keyed off submapper + battery (sub 0 w/o battery or sub 2 = bus conflicts on `$8000-$FFFF`; sub 0 w/ battery or sub 1/3/4 = no conflicts, latch only on `$C000-$FFFF`, `$8000-$BFFF` = flash window). |
 | 63 | — | NTDEC 0324 (Powerful 250-in-1) | — | — | landed (v1.4.0 / S9) | Address-decoded multicart: 16/32K PRG bank + mirroring bit; CHR-RAM. |
 | 76 | — | NAMCOT-3446 (Namco 109) | — | — | landed (v1.4.0 / S9) | MMC3-style `$8000`/`$8001` register pairs select two 8K PRG banks (fixed last two) + four 2K CHR banks; header-fixed mirroring. |
@@ -433,7 +433,17 @@ note below).
 
 These were boot-smoked against real unlicensed / pirate / multicart dumps (10 of
 the 12 families have a library dump; 28 + 174 do not and are register-decode +
-save-state tested only). The boot-smoke caught a shared `cpu_read_unmapped`
+save-state tested only).
+
+**Mapper 28 was wrong until v2.9.3.** It shifted the outer bank instead of
+masking it, masked the inner bank to one bit, fixed the wrong half in both
+UNROM modes, ignored the CHR bank register and the D4 mirroring write, and
+powered on with bank 1 at `$C000` (a review thread on #97 reported the banking
+half). It is now pinned by a unit test that checks every mode value, outer and
+inner bank against the wiki table transcribed row for row, and by
+`tests/roms/nes-test-roms/other/test28.nes`: the board passes that ROM's
+power-on check, which it used to fail, and then stops at its check 2 exactly
+where Mesen and Nestopia do (compared black-box, screen output only). The boot-smoke caught a shared `cpu_read_unmapped`
 inversion (it had also been latent in the pre-existing m132 + m143) that
 open-bused the whole PRG window so the board never booted, plus several decode
 errors (m225/m226/m233/m242/m246) — all corrected. 7 of the 10 staged dumps now
@@ -716,7 +726,9 @@ families RustyNES already implements, with board-resolution unit tests for each.
 NSF chiptune files are not cartridges — they have no iNES header and no PPU
 program. They are played through a synthetic `NsfMapper` (`nsf.rs`), built by the
 dedicated `Nes::from_nsf` path (not `parse`). The mapper serves the program image
-(`$8000-$FFFF`, with `$5FF8-$5FFF` 4 KiB bank-switching), 8 KiB WRAM at `$6000`,
+(`$8000-$FFFF`, with `$5FF8-$5FFF` 4 KiB bank-switching; those registers are
+write-only and read as open bus, per the NSF spec's readable-address list),
+8 KiB WRAM at `$6000`,
 and a tiny hand-assembled 6502 **driver** at `$5000`; the reset/NMI/IRQ vectors
 (`$FFFA-$FFFF`) are overridden to point at the driver. Reset runs `init` for the
 selected song. At the standard 60 Hz it enables vblank NMI and the ordinary 60 Hz

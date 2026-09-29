@@ -985,6 +985,56 @@ borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
 
+### v2.9.3 — frame pacing after the wgpu 29 -> 30 move (#570): presents are now even
+
+**Finding: the move to wgpu 30 made present intervals regular on this host.
+No code was changed for it.** #570 changed the present call
+(`Queue::present` instead of `SurfaceTexture::present`) and made the surface
+colour space explicit (`Auto`). The p99 capture owed since then was taken as
+an A/B, not as a single number.
+
+**Method.** Two release frontends on one host: v2.9.2 (`4bbc3b31`, wgpu 29)
+from a worktree, and `9dd64f2e` (wgpu 30). They ran alternately (old, new,
+old, new), 45 s each, with `RUSTYNES_PERF_LOG=1` on the CC0
+`tests/roms/assorted/flowing_palette.nes`, which is `perf_capture.sh`'s
+default. Captures started once the one-minute load average was under 2.
+Configuration, identical for both and read from each CSV header and the
+config file: run-ahead 0, rewind on, present mode Mailbox, a 119.991 Hz
+Wayland monitor. Every capture passed `perf_log_check.py` with
+`present_discarded=0`, so the window was on screen throughout. Values are the
+mean over the 36 per-second rows after warm-up.
+
+| | old 1 | new 1 | old 2 | new 2 |
+| --- | --- | --- | --- | --- |
+| presented mean (ms) | 8.38 | 8.37 | 8.38 | 8.37 |
+| presented p50 | 5.45 | **8.36** | 5.70 | **8.35** |
+| presented p95 | 15.63 | **11.38** | 15.67 | **10.35** |
+| presented p99 | 16.93 | **11.97** | 16.94 | **11.70** |
+| redraw wait (`rwait`) p95 | 14.68 | **8.48** | 14.47 | **8.45** |
+| produced p99 (checker) | 17.96 | 17.69 | 18.18 | 17.76 |
+| produced max (checker) | 27.0 | 19.0 | 26.9 | 19.0 |
+| cost p95 (checker) | 2.99 | 2.95 | 2.98 | 2.94 |
+
+**Reading it.** Both builds present at the monitor's rate (a mean of 8.37 ms
+is one 120 Hz vblank), so each NES frame is shown twice. The difference is
+how evenly those presents are spaced. Under wgpu 29 they came in bunches: a
+median of 5.5 ms but a p95 of 15.6 ms, meaning a short gap, then a long one.
+Under wgpu 30 they land one vblank apart (median 8.36 ms, p95 10.4-11.4 ms),
+and the redraw handler's wait shrinks to one vblank. The emulator's own
+produce cadence changed little: produced p99 is about 0.3 ms lower, and its
+worst interval dropped from 27 to 19 ms. Emulation cost is unchanged. Both
+pairs agree in direction and roughly in size.
+
+**What it does not show.** One host, one ROM, one configuration (Mailbox, 120
+Hz, Wayland). It is not measured under Fifo, at 60 Hz, with run-ahead, or on
+another GPU or compositor. It is a measurement of present timing, not of what
+reached the eye. It is also not attributed to a specific wgpu change: the
+present-path move and the colour-space field landed together. The four raw
+CSVs are kept outside the repository, in the maintainer's git-ignored
+`salvaged/evidence/v2.9.3/pacing/` (`1-OLD.csv` .. `4-NEW.csv`);
+`python3 scripts/perf/perf_log_check.py <csv>` re-derives the checker rows
+and prints `present_discarded=0` for each.
+
 ### v2.9.1 — the Vs. `DualSystem` serialize, adopted; and `ab_check.sh` compared the reference with itself
 
 **Decision: `VsDualSystem::snapshot_into` ADOPTED (serialize −88.9% and

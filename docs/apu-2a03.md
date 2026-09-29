@@ -304,6 +304,13 @@ never written into the save state, and the frontend re-applies it at ROM load �
 determinism and the audio oracle hold on the default. Frontend selector: **Settings
 → Audio → Filter model** (`[audio] filter_model` = `nes` / `famicom` / `clean`).
 
+**Per-channel gain.** `Apu::set_channel_gain` scales each channel's integer
+output before the lookup mixer. Each gain is clamped to `0.0..=2.0`, and since
+v2.9.3 a NaN gain falls back to unity (`1.0`) instead of reaching the mixer,
+where `NaN.clamp` would have stayed NaN and the rounded sample index would have
+been meaningless. Infinities clamp to the range ends. Pinned by
+`channel_gain_rejects_nan_and_clamps_infinities`.
+
 ### Band-limited sample emission
 
 Naive sample-rate conversion produces aliasing. Use a blip-buf-style ring buffer:

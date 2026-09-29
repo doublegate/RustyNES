@@ -146,7 +146,8 @@ pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
-pub use header::{Header, parse_header, serialize_header};
+#[allow(deprecated)] // `serialize_header` stays exported until v3.0.0 (ADR 0042).
+pub use header::{Header, parse_header, serialize_header, serialize_header_preserving};
 pub use homebrew_boards::{Action53M28, Cufrom29, Gtrom111, Inl31, MagicFloor218, Unrom512M30};
 pub use jaleco_discrete::{Jaleco72, Jaleco86, Jaleco92, Jaleco101, Jaleco140};
 pub use kaiser::{new_m56, new_m142, new_m303, new_m305, new_m306, new_m312};

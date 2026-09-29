@@ -12,10 +12,13 @@
 //! region, console type, RAM sizes) is the default; an explicit "Edit header"
 //! toggle reveals the editors and a "Write to file..." action.
 //!
-//! Decoding and re-encoding both reuse the core's canonical
-//! [`rustynes_core::rustynes_mappers::parse_header`] /
-//! [`rustynes_core::rustynes_mappers::serialize_header`] round-trip, so the
-//! editor can never drift from the loader. Source inspiration: FCEUX
+//! Decoding reuses the core's [`rustynes_core::rustynes_mappers::parse_header`],
+//! so the editor can never drift from the loader. Writing uses
+//! [`rustynes_core::rustynes_mappers::serialize_header_preserving`] over the
+//! bytes the file held: only the fields you changed are rewritten, and every
+//! bit the parser does not model (Vs. hardware types, the extended console
+//! type, bytes 14-15, NVRAM nibbles, iNES 1.0 padding) is kept. Until v2.9.3 it
+//! wrote the canonical encoding, which zeroed all of those. Source inspiration: FCEUX
 //! `iNesHeaderEditor.cpp`. See `docs/cartridge-format.md`.
 //!
 //! Native-only: editing a file on disk needs `std::fs` + the `rfd` picker,
@@ -25,7 +28,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use rustynes_core::rustynes_mappers::{
-    ConsoleType, Header, Mirroring, Region, VsPpuType, parse_header, serialize_header,
+    ConsoleType, Header, Mirroring, Region, VsPpuType, parse_header, serialize_header_preserving,
 };
 
 /// Length of the iNES / NES 2.0 header in bytes.
@@ -47,6 +50,9 @@ struct Loaded {
     path: std::path::PathBuf,
     /// The parsed (and editable) header.
     header: Header,
+    /// The 16 bytes the file held when `header` was parsed (or last written).
+    /// Edits are written over these, so bits the parser does not model survive.
+    original: [u8; HEADER_LEN],
     /// Raw PRG/CHR unit counts shown for editing (16 KiB / 8 KiB units). Only
     /// meaningful when the size is expressible in the standard notation (which
     /// the editor restricts to).
@@ -254,6 +260,7 @@ fn open_file(state: &mut HeaderEditorState) {
                 state.loaded = Some(Loaded {
                     path,
                     header,
+                    original: bytes,
                     prg_units: (header.prg_size / (16 * 1024)) as u16,
                     chr_units: (header.chr_size / (8 * 1024)) as u16,
                 });
@@ -276,10 +283,14 @@ fn read_header_bytes(path: &std::path::Path) -> std::io::Result<[u8; HEADER_LEN]
 /// Re-serialize the edited header and overwrite the first 16 bytes of the file
 /// in place (the ROM body is untouched). Seeks + writes only the header — the
 /// rest of the file is never read or rewritten. Returns a status string.
-fn write_header_to_file(loaded: &Loaded) -> String {
-    let new_header = serialize_header(&loaded.header);
+fn write_header_to_file(loaded: &mut Loaded) -> String {
+    let new_header = serialize_header_preserving(&loaded.header, &loaded.original);
     match overwrite_header(&loaded.path, &new_header) {
-        Ok(()) => "header written".into(),
+        Ok(()) => {
+            // The file now holds these bytes; the next write diffs against them.
+            loaded.original = new_header;
+            "header written".into()
+        }
         Err(e) => format!("write failed: {e}"),
     }
 }

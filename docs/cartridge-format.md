@@ -33,7 +33,7 @@ Parse iNES 1.0 and NES 2.0 ROM files into a `Cartridge` value that the mapper su
 | 10 | PRG-RAM shift (bits 0-3), PRG-NVRAM shift (bits 4-7) — NES 2.0 only |
 | 11 | CHR-RAM shift (bits 0-3), CHR-NVRAM shift (bits 4-7) — NES 2.0 only |
 | 12 | CPU/PPU timing (bits 0-1: 0=NTSC, 1=PAL, 2=multi, 3=Dendy) — NES 2.0 only |
-| 13 | Vs. PPU type (bits 0-3) or extended console type (bits 4-7) — NES 2.0 only |
+| 13 | Console type 1 (Vs. System): Vs. PPU type (bits 0-3), Vs. hardware type (bits 4-7). Console type 3 (Extended): extended console type (bits 0-3), bits 4-7 reserved. Otherwise unused — NES 2.0 only |
 | 14 | Misc ROM count (bits 0-1) — NES 2.0 only |
 | 15 | Default expansion device (bits 0-5) — NES 2.0 only |
 
@@ -85,8 +85,9 @@ Byte 12 bits 0-1: `00` = NTSC, `01` = PAL, `10` = multi-region, `11` = Dendy. iN
 
 ### Default input device (NES 2.0)
 
-Byte 15 bits 0-5 identify the default expansion or input device. The current
-frontend assumes standard controllers unless mapper or test harness metadata
+Byte 15 bits 0-5 identify the default expansion or input device. It is parsed
+into `Header::default_expansion_device` and written back unchanged, but the
+frontend still assumes standard controllers unless mapper or test harness metadata
 overrides it. Full use of this field belongs with the v1.x expanded-input
 work, especially for Zapper, Four Score, Famicom expansion devices, and
 special controllers.
@@ -110,25 +111,46 @@ The 16-byte header itself has a separate decode/encode pair used by tooling:
 
 ```rust
 pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError>;
-pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN];   // canonical 16-byte layout
+pub fn serialize_header_preserving(h: &Header, original: &[u8; HEADER_LEN]) -> [u8; HEADER_LEN];
+#[deprecated(since = "2.9.3")] // removed at v3.0.0 (ADR 0042)
+pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN];   // canonical, lossy
 ```
 
-`serialize_header` is the exact inverse of `parse_header` for the standard
-(non-exponent-multiplier) size notation. It re-derives the mapper low/mid/hi
-nibbles, the flags-6/flags-7 bits, the submapper, the standard PRG/CHR unit
-counts, the NES 2.0 region/console/RAM-shift bytes, and the Vs. byte-13 nibbles.
-A round-trip test guards `parse → serialize → parse` equality.
+`Header` does not model every header bit, so encoding a `Header` from scratch
+cannot be an inverse of `parse_header`. The canonical encoding
+(`serialize_header`) writes as zero every bit it has no field for: the Vs.
+hardware type in byte 13's high nibble (types 1-4 and 6 come back as 0 or 5), the
+extended console type in byte 13's low nibble, bytes 14-15, the PRG-NVRAM and
+CHR-NVRAM nibbles of bytes 10-11, the exponent-multiplier size notation, and
+iNES 1.0 bytes 8-15.
+
+`serialize_header_preserving` is the one to write back to a file. It starts
+from the 16 bytes the `Header` was parsed from and rewrites only the bits of
+fields whose value changed, each in its canonical encoding. An unedited header
+therefore comes back byte for byte, and an edit touches only its own bits. Two
+edits re-encode more: a console-type change rewrites byte 13, because byte 13
+means something different for each console type, and toggling NES 2.0 re-encodes
+the whole header canonically, because bytes 7-15 change meaning with the format.
+Tests pin both properties: identity over every byte-7 x byte-13 pair plus
+200,000 random headers, and a changed-bit mask per editable field.
+
+v2.9.3 changed this. Until then the header editor wrote the canonical
+encoding, which lost the bits listed above. That encoding also wrote mapper
+bits 8-11 into byte 7's high nibble instead of bits 4-7, so every mapper from 16
+up was saved wrong (mapper 66 as 2). The encoder is fixed and
+`canonical_encoding_round_trips_every_mapper_id` guards it. `serialize_header`
+is deprecated and goes at v3.0.0.
 
 ## Header editor (v1.7.0 "Forge" Workstream A2, frontend tooling)
 
 The frontend ships an **iNES / NES 2.0 header editor + read-only "Cartridge
 Info" pane** (`crates/rustynes-frontend/src/debugger/header_editor.rs`,
 native-only, opened from **Debug → Cartridge Info / Header Editor...**). It edits
-the 16-byte header of a ROM **file on disk** — never the running core. Decode +
-re-encode reuse the canonical `parse_header` / `serialize_header` round-trip
-above, so the tool cannot drift from the loader; "Write header to file"
-re-serializes the edited `Header` and overwrites only the file's first 16 bytes
-(the ROM body is untouched). Sizes are edited in their 16 KiB / 8 KiB unit
+the 16-byte header of a ROM **file on disk** — never the running core. It
+decodes with `parse_header`, so it cannot drift from the loader. "Write header
+to file" writes the edits over the bytes the file held with
+`serialize_header_preserving` (above) and overwrites only the file's first 16
+bytes (the ROM body is untouched). Sizes are edited in their 16 KiB / 8 KiB unit
 counts so the re-encode stays in the standard notation. Source inspiration:
 FCEUX `iNesHeaderEditor.cpp`.
 
