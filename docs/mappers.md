@@ -726,7 +726,9 @@ families RustyNES already implements, with board-resolution unit tests for each.
 NSF chiptune files are not cartridges — they have no iNES header and no PPU
 program. They are played through a synthetic `NsfMapper` (`nsf.rs`), built by the
 dedicated `Nes::from_nsf` path (not `parse`). The mapper serves the program image
-(`$8000-$FFFF`, with `$5FF8-$5FFF` 4 KiB bank-switching), 8 KiB WRAM at `$6000`,
+(`$8000-$FFFF`, with `$5FF8-$5FFF` 4 KiB bank-switching; those registers are
+write-only and read as open bus, per the NSF spec's readable-address list),
+8 KiB WRAM at `$6000`,
 and a tiny hand-assembled 6502 **driver** at `$5000`; the reset/NMI/IRQ vectors
 (`$FFFA-$FFFF`) are overridden to point at the driver. Reset runs `init` for the
 selected song. At the standard 60 Hz it enables vblank NMI and the ordinary 60 Hz
