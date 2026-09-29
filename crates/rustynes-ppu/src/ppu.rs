@@ -5166,7 +5166,7 @@ impl Ppu {
                 }
             }
         }
-        // v2.9.5: the re-arm the odd-frame skip deferred takes effect now, after
+        // v2.9.5: the re-arm that the odd-frame skip deferred takes effect now, after
         // pixel 0 was drawn and shifted in the drawing state. The counters then
         // start one dot late, which is what keeps pixels 1-7 in place.
         if self.spr_rearm_deferred {
