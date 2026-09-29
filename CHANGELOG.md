@@ -45,6 +45,9 @@ cycle-accurate core later replaced.
   setting.** A missing or unreadable `.pal` (say, on a drive not yet mounted)
   used to clear `[graphics] palette_file` and save the config. It now falls
   back to the built-in palette for that session only and keeps the setting.
+  Loading a palette also reads only the 192 bytes it uses, so a path that
+  names a huge file or a device such as `/dev/zero` can no longer exhaust
+  memory.
 - **NSF bank registers read as open bus.** `$5FF8-$5FFF` are write-only in the
   NSF spec, but reads there returned 0.
 - **The Bisqwit NTSC filter no longer darkens the picture edges.** Its filter
