@@ -1029,8 +1029,11 @@ pairs agree in direction and roughly in size.
 Hz, Wayland). It is not measured under Fifo, at 60 Hz, with run-ahead, or on
 another GPU or compositor. It is a measurement of present timing, not of what
 reached the eye. It is also not attributed to a specific wgpu change: the
-present-path move and the colour-space field landed together. Raw CSVs are in
-the session scratchpad, not the repository.
+present-path move and the colour-space field landed together. The four raw
+CSVs are kept outside the repository, in the maintainer's git-ignored
+`salvaged/evidence/v2.9.3/pacing/` (`1-OLD.csv` .. `4-NEW.csv`);
+`python3 scripts/perf/perf_log_check.py <csv>` re-derives the checker rows
+and prints `present_discarded=0` for each.
 
 ### v2.9.1 — the Vs. `DualSystem` serialize, adopted; and `ab_check.sh` compared the reference with itself
 

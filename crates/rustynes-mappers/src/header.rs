@@ -60,6 +60,10 @@ pub struct Header {
     /// Carried so that [`serialize_header`] writes back the byte it read;
     /// [`Header::vs_dual_system`] is the flag emulation actually consults.
     pub vs_hardware_type: u8,
+    /// NES 2.0 byte 13 low nibble when `console_type == Extended` (VT01-VT32,
+    /// EPSM, decimal-mode famiclone, ...). `0` otherwise. Not used by
+    /// emulation; carried so the header editor does not zero it.
+    pub extended_console_type: u8,
     /// NES 2.0 byte 14 bits 0-1: the number of miscellaneous ROMs. `0` for
     /// iNES 1.0. Not used by emulation; carried for a faithful round-trip.
     pub misc_rom_count: u8,
@@ -169,8 +173,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         VsPpuType::None
     };
 
-    // Vs. hardware types 5 and 6 are the DualSystem boards (two CPUs / PPUs).
-    let (vs_hw, misc_roms, expansion) = nes2_tail_fields(&h, is_nes2, console_type);
+    let (vs_hw, ext_console, misc_roms, expansion) = nes2_tail_fields(&h, is_nes2, console_type);
 
     // RAM sizes.
     let prg_ram_size = if is_nes2 {
@@ -195,10 +198,6 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         0
     };
 
-    // Battery / trainer.
-    let has_battery = (h[6] & 0x02) != 0;
-    let has_trainer = (h[6] & 0x04) != 0;
-
     Ok(Header {
         is_nes2,
         mapper_id,
@@ -209,14 +208,17 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         region,
         console_type,
         vs_ppu_type,
+        // Vs. hardware types 5 and 6 are the DualSystem boards (two CPUs / PPUs).
         vs_dual_system: matches!(vs_hw, 5 | 6),
         vs_hardware_type: vs_hw,
+        extended_console_type: ext_console,
         misc_rom_count: misc_roms,
         default_expansion_device: expansion,
         prg_ram_size,
         chr_ram_size,
-        has_battery,
-        has_trainer,
+        // Battery / trainer: byte 6 bits 1 and 2.
+        has_battery: (h[6] & 0x02) != 0,
+        has_trainer: (h[6] & 0x04) != 0,
         four_screen,
     })
 }
@@ -331,6 +333,11 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
             };
             out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type) | (hw << 4);
         }
+        // Byte 13 for an Extended console: the extended console type (low
+        // nibble); the high nibble is reserved.
+        if h.console_type == ConsoleType::Extended {
+            out[13] = h.extended_console_type & 0x0F;
+        }
         // Byte 14: miscellaneous ROM count; byte 15: default expansion device.
         out[14] = h.misc_rom_count & 0x03;
         out[15] = h.default_expansion_device & 0x3F;
@@ -339,23 +346,29 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
     out
 }
 
-/// NES 2.0 bytes 13 (high nibble), 14 and 15: the Vs. hardware type (only for
-/// a Vs. System console), the miscellaneous ROM count and the default
+/// NES 2.0 bytes 13-15 beyond the Vs. PPU type: the Vs. hardware type (byte 13
+/// high nibble, Vs. System only), the extended console type (byte 13 low
+/// nibble, Extended console only), the miscellaneous ROM count and the default
 /// expansion device. All zero for iNES 1.0, whose bytes 13-15 are padding.
 const fn nes2_tail_fields(
     h: &[u8; HEADER_LEN],
     is_nes2: bool,
     console: ConsoleType,
-) -> (u8, u8, u8) {
+) -> (u8, u8, u8, u8) {
     if !is_nes2 {
-        return (0, 0, 0);
+        return (0, 0, 0, 0);
     }
     let hw = if matches!(console, ConsoleType::VsSystem) {
         h[13] >> 4
     } else {
         0
     };
-    (hw, h[14] & 0x03, h[15] & 0x3F)
+    let ext = if matches!(console, ConsoleType::Extended) {
+        h[13] & 0x0F
+    } else {
+        0
+    };
+    (hw, ext, h[14] & 0x03, h[15] & 0x3F)
 }
 
 // Truncating cast: count is masked to 8 / 4 bits before the cast.
@@ -547,6 +560,20 @@ mod tests {
                 out[15], h[15],
                 "byte 15 (default expansion device), hw {hw}"
             );
+        }
+    }
+
+    #[test]
+    fn nes2_round_trip_keeps_the_extended_console_type() {
+        // Console type 3 (Extended): byte 13's LOW nibble is the extended
+        // console type (VT01-VT32, EPSM, ...). The Vs. fix alone left it written
+        // as zero (CodeRabbit on #571).
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x03; // NES 2.0, extended console
+        for ext in 0..16u8 {
+            h[13] = ext;
+            let out = serialize_header(&parse_header(&h).unwrap());
+            assert_eq!(out[13], h[13], "extended console type {ext}");
         }
     }
 

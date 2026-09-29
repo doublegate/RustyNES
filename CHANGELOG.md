@@ -37,8 +37,9 @@ cycle-accurate core later replaced.
   wiki's table, row for row. Save states from before still load.
 - **The ROM header editor no longer changes bytes it did not show you.** Saving
   a header wrote Vs. UniSystem protection types 1-4 back as 0, Vs. DualSystem
-  type 6 as 5, and the NES 2.0 misc-ROM count and default expansion device
-  (bytes 14-15) as 0. Every byte the header parser reads is now written back
+  type 6 as 5, the extended console type of an Extended-console image (byte 13,
+  VT01-VT32 and similar) as 0, and the NES 2.0 misc-ROM count and default
+  expansion device (bytes 14-15) as 0. Every byte the header parser reads is now written back
   unchanged.
 - **A palette file that cannot be read no longer erases your palette
   setting.** A missing or unreadable `.pal` (say, on a drive not yet mounted)

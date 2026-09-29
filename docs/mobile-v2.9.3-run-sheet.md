@@ -130,7 +130,7 @@ check (`BuildConfig.DEBUG`), which release builds never run.
 | A5 | AND-03 | NOT RUN (needs another media app) | |
 | A6 | AND-03 | PASS: Home with the game running entered PiP (`mode=pinned`), and the AudioTrack stayed `started` | |
 | A7 | AND-01 | PASS for rotate, sleep/wake and PiP-return, GPU renderer: 13 captures over three cycles all show the picture (36.9% of the screen in portrait, 54.9% in landscape, as the letterbox predicts). Netplay and HD-pack toggles NOT RUN | |
-| A8 | AND-08 | PASS: GPU renderer, paused: CPU 0.6-1.0% over 30 s, against about 148% running (software GPU on the emulator); Bitmap renderer paused: 0.6% | |
+| A8 | AND-08 | NOT RUN to the row's one-minute step. A 30 s preliminary reading: GPU renderer paused, CPU 0.6-1.0%, against about 148% running (software GPU on the emulator); Bitmap renderer paused, 0.6% | |
 | A9 | AND-04 | NOT RUN (needs a Drive account) | |
 | A10 | AND-04 | PASS for function: Save wrote `states/<sha>/1.rns` and the slot shows its age; Load ran; Delete removed the file; no ANR. Stutter needs a device | |
 | A11 | AND-02 | NOT RUN (stutter needs a human eye on a device) | |

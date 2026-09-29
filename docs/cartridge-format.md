@@ -33,7 +33,7 @@ Parse iNES 1.0 and NES 2.0 ROM files into a `Cartridge` value that the mapper su
 | 10 | PRG-RAM shift (bits 0-3), PRG-NVRAM shift (bits 4-7) — NES 2.0 only |
 | 11 | CHR-RAM shift (bits 0-3), CHR-NVRAM shift (bits 4-7) — NES 2.0 only |
 | 12 | CPU/PPU timing (bits 0-1: 0=NTSC, 1=PAL, 2=multi, 3=Dendy) — NES 2.0 only |
-| 13 | Vs. PPU type (bits 0-3) or extended console type (bits 4-7) — NES 2.0 only |
+| 13 | Console type 1 (Vs. System): Vs. PPU type (bits 0-3), Vs. hardware type (bits 4-7). Console type 3 (Extended): extended console type (bits 0-3), bits 4-7 reserved. Otherwise unused — NES 2.0 only |
 | 14 | Misc ROM count (bits 0-1) — NES 2.0 only |
 | 15 | Default expansion device (bits 0-5) — NES 2.0 only |
 
