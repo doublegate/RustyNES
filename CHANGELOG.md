@@ -52,6 +52,10 @@ cycle-accurate core later replaced.
     removed the day a fixed release ships. The wgpu 30 API changes (present on
     the queue, surface colour space, adapter limit buckets, a fallible mapped
     range) keep the picture and limits exactly as before.
+    Measured afterwards on a 120 Hz Wayland desktop (Mailbox): frames are now
+    presented one refresh apart instead of in bunches. The median present
+    interval went from 5.5 to 8.4 ms and the p95 from 15.6 to 10.4-11.4 ms, in
+    two alternating A/B pairs against v2.9.2 (`docs/performance.md`, v2.9.3).
   - egui 0.36 hands each texture several ordered updates per frame and asserts
     that a frame's texture updates are never dropped unapplied. Every update is
     now applied in order, and a detached tool window that closes between
