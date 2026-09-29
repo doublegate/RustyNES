@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.2-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,7 +674,21 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.9.2 "Candidate"** (2026-09-28) — the full audit acted on, and the release-candidate pair: all 32 findings of a fifth audit have a verdict and 16 are fixed, save states keep the cartridge RAM of twelve board families they used to drop, the MiSTer core no longer loses an NMI raised inside a DMA, and both bitstreams are cut for the SuperStation One session. Built on **v2.9.1 "Hone"** (2026-09-27) — what the optimisation bars measure, and what clears them: the A/B tool had been timing the old code on both sides of every code comparison and is fixed, a two-screen Vs. cabinet saves about 9x faster, the off-die MiSTer build keeps CHR in its own SDRAM bank, and both bitstreams are pinned at fitter seed 2 and rebuild byte-identically. Built on **v2.9.0 "Survey"** (2026-09-26) — every audit re-checked, and the SuperStation One surveyed: a Power Cycle no longer erases your save, the off-die MiSTer build boots without the menu core, and 39 new audit findings are fixed or dispositioned. Built on **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
+RustyNES's current release is **v2.9.3 "Handset"** (2026-09-29) — the old review threads closed and the mobile run prepared: every dependency moved to its newest release (egui 0.36 with wgpu 30, rcheevos 12.5.0), all 244 review threads left unanswered on PRs #7-#97 answered and the ten findings that still held fixed (Action 53 multicarts rebuilt to the NESdev spec, and a ROM header editor that no longer rewrites bytes you did not edit or saves mappers from 16 up as the wrong mapper), and the Android unit tests and the iOS renderer added to CI. Built on **v2.9.2 "Candidate"** (2026-09-28) — the full audit acted on, and the release-candidate pair: all 32 findings of a fifth audit have a verdict and 16 are fixed, save states keep the cartridge RAM of twelve board families they used to drop, the MiSTer core no longer loses an NMI raised inside a DMA, and both bitstreams are cut for the SuperStation One session. Built on **v2.9.1 "Hone"** (2026-09-27) — what the optimisation bars measure, and what clears them: the A/B tool had been timing the old code on both sides of every code comparison and is fixed, a two-screen Vs. cabinet saves about 9x faster, the off-die MiSTer build keeps CHR in its own SDRAM bank, and both bitstreams are pinned at fitter seed 2 and rebuild byte-identically. Built on **v2.9.0 "Survey"** (2026-09-26) — every audit re-checked, and the SuperStation One surveyed: a Power Cycle no longer erases your save, the off-die MiSTer build boots without the menu core, and 39 new audit findings are fixed or dispositioned. Built on **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
+
+v2.9.3 prepares the mobile device run and closes old review threads. Every
+dependency moved to its newest release (egui 0.36 with wgpu 30, which now
+presents frames one refresh apart on the measured desktop). All 244 review
+threads left unanswered on PRs #7-#97 were checked against current code; ten
+still held and are fixed. Action 53 multicarts (mapper 28) are rebuilt to the
+NESdev spec. The ROM header editor now writes only the fields you change, and
+no longer saves mappers from 16 up as the wrong mapper. CI now runs the Android app's unit
+tests (on `main` pushes and on pull requests that touch the app or its UniFFI
+bridge) and compiles the iOS renderer on every pull request that changes code. The run
+sheet for the device run is `docs/mobile-v2.9.3-run-sheet.md`, with a
+partial emulator pre-run of the Android rows. **The device runs and the
+SuperStation One board session move after v3.0.0**, by the maintainer's
+decision (2026-09-29).
 
 v2.9.2 acts on a fifth, AI-written audit of both repositories: all 32
 findings have a verdict and their evidence in
@@ -736,7 +750,7 @@ the CHR-during-rendering divergence in the MiSTer sibling.
 | MiSTer bitstream | published for Cyclone V, timing closed at every corner |
 | MiSTer commercial rendering | six titles, one per supported board (NROM from rung 5, plus rung 7's MMC1, UxROM, CNROM, MMC3 and AxROM), each **byte-identical** to this emulator over all 61,440 pixels — [the montage](screenshots/mister-montage.png) |
 
-**The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached — the bring-up runs v2.9.2's release-candidate bitstreams, ahead of the hardware-verified core at v3.0.0 ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)); a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
+**The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached — the bring-up, planned on v2.9.2's release-candidate bitstreams, moved after v3.0.0 by the maintainer's decision (2026-09-29; see [ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)'s amendment); a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
 
 - **Download:** [GitHub Releases](https://github.com/doublegate/RustyNES/releases) — desktop binaries for Linux, macOS (aarch64) and Windows, plus the MiSTer `.rbf`.
 - **Try it in a browser:** <https://doublegate.github.io/RustyNES/>
@@ -773,10 +787,8 @@ closed on, at v2.6.5). The catalog is **149 rows** and the ladder **152 gates
 green, 0 failed, 1 expected failure** as of v2.6.21 — the expected one being a
 documented CHR-during-rendering divergence, registered so that it fails the
 suite if it ever starts passing. The console compiles to a Cyclone V bitstream with timing
-closed at every corner, and that bitstream is published. **Rung 6 is open and closes
-at v2.9.2**: a SuperStation One is in hand, and the bring-up waits until the audit
-lines have landed their last RTL change, so that it measures the bitstream v3.0.0
-will ship — but **no hardware has run any bitstream yet**,
+closed at every corner, and that bitstream is published. **Rung 6 is open**: a SuperStation One is in hand, and the maintainer moved the
+bring-up after v3.0.0 (2026-09-29) — but **no hardware has run any bitstream yet**,
 so nothing about a booting core, a synced display, audible audio or a working pad
 is claimed. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —

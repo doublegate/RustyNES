@@ -26,6 +26,25 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.3] - 2026-09-29 - "Handset" (the old review threads closed, and the mobile run prepared)
+
+The fourth release of the v2.9.x line ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)):
+**every dependency at its newest release, every old review thread answered,
+and the mobile device run made ready.** All 244 review threads left unanswered
+on PRs #7-#97 were checked against current code; 234 were answered and the ten
+findings that still held are fixed below. The mobile run sheet
+([`docs/mobile-v2.9.3-run-sheet.md`](docs/mobile-v2.9.3-run-sheet.md)) carries
+every device row, checksummed builds and an Android-emulator pre-run. **The
+device runs, the SuperStation One board session, and the fixes they produce
+move after v3.0.0** (maintainer, 2026-09-29), so every Swift change since
+v2.7.4 is still uncompiled and no Android row has run on a device. That move
+conflicts with ADR 0041's definition of v3.0.0 as the hardware-verified core;
+its [2026-09-29 amendment](docs/adr/0041-hardware-release-is-v3.0.0.md) records
+the conflict and leaves what v3.0.0 ships open. Emulation output is unchanged
+outside mapper 28, NSF `$5FF8-$5FFF` reads and the Bisqwit filter's edge
+columns; AccuracyCoin 144/144 and nestest 0-diff hold, and the full
+`--features test-roms` suite passes 2,887 tests.
+
 ### Fixed
 
 - **Mapper 28 (Action 53 multicarts) is rebuilt to the NESdev spec.** PRG banking
@@ -86,7 +105,7 @@ still hold.
   runs `:app:testFossDebugUnitTest` (the Kotlin tests, including the
   opposing-direction cancel added in v2.9.2) on every `main` push and on any
   pull request that changes the app. Until now they had only ever run by hand.
-- **The iOS renderer is compiled on every pull request.**
+- **The iOS renderer is compiled on every pull request that changes code.**
   `scripts/ios-host-typecheck.sh`, already in CI's lint job, now type-checks
   the real `gfx_metal.rs` against the workspace's wgpu. Before this, a wgpu
   change there was first compiled when a release was cut. Rendering itself
