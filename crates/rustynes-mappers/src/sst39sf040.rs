@@ -169,6 +169,8 @@ impl Sst39sf040 {
 /// The 4 KiB sectors of `mem` that differ from `original`, as a bitmap
 /// followed by their contents: a save state carries only what was flashed.
 pub(crate) fn encode_sector_diff(mem: &[u8], original: &[u8], out: &mut alloc::vec::Vec<u8>) {
+    // Both are the same chip: the flash and the image it was loaded from.
+    debug_assert_eq!(mem.len(), original.len());
     let sectors = mem.len().div_ceil(SECTOR);
     let mut bitmap = alloc::vec![0u8; sectors.div_ceil(8)];
     for s in 0..sectors {
@@ -187,8 +189,12 @@ pub(crate) fn encode_sector_diff(mem: &[u8], original: &[u8], out: &mut alloc::v
 
 /// Inverse of [`encode_sector_diff`]: rebuild `mem` from `original` plus the
 /// flashed sectors. Returns the number of bytes consumed, or `None` when
-/// `data` is too short.
+/// `data` is too short or `mem` and `original` differ in length. Callers
+/// decode into a scratch buffer, so `None` leaves the board untouched.
 pub(crate) fn decode_sector_diff(mem: &mut [u8], original: &[u8], data: &[u8]) -> Option<usize> {
+    if mem.len() != original.len() {
+        return None;
+    }
     let sectors = mem.len().div_ceil(SECTOR);
     let bitmap_len = sectors.div_ceil(8);
     let bitmap = data.get(..bitmap_len)?;
@@ -337,5 +343,11 @@ mod tests {
         );
         assert_eq!(back, mem);
         assert_eq!(decode_sector_diff(&mut back, &original, &out[..10]), None);
+        let mut short = vec![0u8; 0x4000];
+        assert_eq!(
+            decode_sector_diff(&mut short, &original, &out),
+            None,
+            "a length mismatch is refused, not a panic"
+        );
     }
 }

@@ -17,7 +17,9 @@ def rom_bytes(p):
             z=zipfile.ZipFile(p)
             for n in z.namelist():
                 if n.lower().endswith(".nes"): return z.read(n)
-        except (OSError, zipfile.BadZipFile): return None
+        # RuntimeError: an encrypted member; NotImplementedError: an
+        # unsupported compression method. Both are skipped, like a bad ZIP.
+        except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError): return None
         return None
     return open(p,"rb").read()
 def snake(s):

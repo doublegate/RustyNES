@@ -523,7 +523,8 @@ impl Mapper for Cufrom29 {
 /// - **PRG** is an SST39SF040 (`sst39sf040.rs`). Writes to `$8000-$FFFF` are
 ///   its commands; command addresses are A14-A0, so `5555h` is CPU `$D555`
 ///   and `2AAAh` is `$AAAA` in any bank. The flashed image is the board's
-///   battery save ([`Mapper::sram`]), and a save state carries only the
+///   battery save ([`Mapper::save_data`]; `sram()` stays empty, since no
+///   RAM sits at `$6000`), and a save state carries only the
 ///   sectors that differ from the ROM.
 ///
 /// The LEDs have no emulated effect. Their bits are kept in the register so a
@@ -1996,6 +1997,37 @@ mod tests {
         }
         m.cpu_write(0xC000, 5);
         assert_eq!(m.cpu_read(0x8123), 0xFF);
+    }
+
+    /// The reset a power-on movie performs (`power_on_for_movie` ->
+    /// `clear_save_data`): a flashed UNROM 512 goes back to the image as
+    /// loaded, byte for byte. Neither zeros (a ROM with no program in it) nor
+    /// the flashed image (a movie that replays differently with a save) is
+    /// right. GTROM's half is pinned end to end in `roster_boards.rs`.
+    #[test]
+    fn m30_clear_save_data_restores_the_image_as_loaded() {
+        let fresh = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        let mut m = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        for (bank, a, v) in [
+            (1u8, 0x9555u16, 0xAAu8),
+            (0, 0xAAAA, 0x55),
+            (1, 0x9555, 0xA0),
+            (5, 0x8123, 0x00),
+        ] {
+            m.cpu_write(0xC000, bank);
+            m.cpu_write(a, v);
+        }
+        assert_ne!(
+            m.save_data(),
+            fresh.save_data(),
+            "the program changed the flash"
+        );
+        m.clear_save_data();
+        assert_eq!(
+            m.save_data(),
+            fresh.save_data(),
+            "back to the image as loaded"
+        );
     }
 
     /// A CHR-ROM image headered as mapper 30 is a Waixing FS005 `.WXN`

@@ -271,8 +271,11 @@ impl Nes {
         self.bus.mapper.clear_save_data();
     }
 
-    /// v2.7.3 — whether the cartridge header declares battery-backed PRG-RAM
-    /// (iNES flags 6 bit 1).
+    /// v2.7.3 — whether the cartridge has non-volatile save data: the header
+    /// declares battery-backed PRG-RAM (iNES flags 6 bit 1), or (v2.9.6) the
+    /// board is self-flashable and its flash is the save (GTROM, mapper 111,
+    /// and flashable UNROM 512, mapper 30, whose headers need not set the
+    /// bit). Persist [`Self::save_data`] when this is `true`.
     ///
     /// [`Self::sram`] is not the same question: several boards expose their
     /// work RAM through it whatever the header says (NROM returns its 8 KiB

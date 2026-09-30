@@ -286,7 +286,9 @@ pub struct Cartridge {
     pub prg_ram_size: u32,
     /// Requested CHR-RAM size in bytes (0 if the cart ships with CHR-ROM only).
     pub chr_ram_size: u32,
-    /// True if the PRG-RAM is battery-backed (save RAM).
+    /// True if the cartridge has non-volatile save data: battery-backed
+    /// PRG-RAM per the header, or (v2.9.6) a self-flashable board's flash
+    /// (mappers 30 and 111), set by the loader whatever the header's bit says.
     pub has_battery: bool,
     /// True if a 512-byte trainer was present in the file (loaded at $7000-$71FF).
     pub has_trainer: bool,
