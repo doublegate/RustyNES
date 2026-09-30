@@ -71,7 +71,13 @@ struct NesButtonMask {
     /// `socdNeutral`. A real NES pad's rocking cross cannot report opposites; two
     /// fingers on the on-screen D-pad can. UNCOMPILED at v2.9.2 (no Swift
     /// toolchain on the Linux build host) -- see the device checklist.
-    mutating func cancelOpposingDirections() {
+    ///
+    /// v2.9.7 "Tandem" (plan item 8): `enabled` is the user's "Cancel opposite
+    /// directions" setting (`AppModel.cancelOpposites`), default on -- the
+    /// desktop's `[input] allow_opposing_directions = false`. Off leaves the mask
+    /// untouched. UNCOMPILED at v2.9.7 as well; see the run sheet.
+    mutating func cancelOpposingDirections(enabled: Bool = true) {
+        guard enabled else { return }
         let vertical = NesButton.up.rawValue | NesButton.down.rawValue
         let horizontal = NesButton.left.rawValue | NesButton.right.rawValue
         if bits & vertical == vertical { bits &= ~vertical }

@@ -499,7 +499,10 @@ pub enum ClientCmd {
     /// `client.speedmode(pct)` — set the emulation speed as a percentage
     /// (`100` = realtime). Presentation-only; never alters per-frame output.
     SpeedMode(u32),
-    /// `client.frameskip(n)` — set the render frame-skip count.
+    /// `client.frameskip(n)` — a render frame-skip request. The desktop host
+    /// accepts it and deliberately ignores it (v2.9.7): every frame is
+    /// rendered for accuracy, and presentation already shows only the latest
+    /// frame, so there is nothing to skip. See `docs/scripting.md`.
     FrameSkip(u32),
     /// `client.reboot_core()` — power-cycle the running ROM. Gated like
     /// `emu.write` (it perturbs the run).

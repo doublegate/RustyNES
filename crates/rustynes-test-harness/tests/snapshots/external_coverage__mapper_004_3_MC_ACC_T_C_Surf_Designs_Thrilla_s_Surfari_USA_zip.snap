@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-004-3-MC-ACC/T&C Surf Designs - Thrilla's Surfari (USA).zip
+rom_sha256=2e66e047f18d5b14ba97306b01a3ce48df63c10af8f927db29a956b7d44b7ee7
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=2ee15cceb0f7b2ac
+checkpoint f900 fb_fnv1a64=9f840cca1a88b9cc
+checkpoint f1100 fb_fnv1a64=c5d7811e1f4d74df

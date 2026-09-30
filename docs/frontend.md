@@ -111,9 +111,19 @@ cargo full-build                 # = build --release -p rustynes-frontend --feat
 WASM-only features are deliberately excluded because `full` targets a native
 binary: `script-wasm` is wasm-only *and* mutually exclusive with `scripting`
 (piccolo vs. mlua), and `browser-cheevos` / `wasm-canvas` are browser-only. The
-build is purely opt-in — the shipped/default build and the emulation core are
-unchanged (`hd-pack` / `debug-hooks` only forward to the off-by-default
-`rustynes-core` telemetry, proven byte-identical), so AccuracyCoin is unaffected.
+emulation core is unchanged (`hd-pack` / `debug-hooks` only forward to the
+off-by-default `rustynes-core` telemetry, proven byte-identical), so
+AccuracyCoin is unaffected.
+
+**Since v2.9.7 the release binaries ARE the `full` build** (maintainer decision,
+2026-09-30): `release.yml` passes `--features full`, one archive per platform
+under the same name as before, and `scripts/pgo/run.sh` builds the
+PGO-optimized Linux asset with the same features (`PGO_FEATURES`, default
+`full`). The Cargo `default` set does not change, because `full` is
+native-only: a plain `cargo build` and the wasm build keep today's defaults.
+CI's `full-build` job compiles `full` on macOS and Windows on every ready PR.
+Before it, `full` had been linted and tested on Linux only, so the release job
+would have been its first build on those two.
 
 ## Run loop
 
@@ -515,6 +525,14 @@ the two newest upstream PPU tests are known gaps).
   is length-capped (8 KiB) and tolerant of malformed input (silently keeps
   defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
 
+### Web battery saves and Vs. `DualSystem` (v2.9.7 "Tandem")
+
+The wasm-winit build persists battery saves to `IndexedDB` (see
+[Battery saves in the browser](#battery-saves-in-the-browser-indexeddb-wasm-winit-v297))
+and runs Vs. `DualSystem` cabinets with both screens (see the "Web
+`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed does
+neither: it has no battery store and warns that a cabinet runs main-only.
+
 ### wasm size & startup + software blitter (v2.1.8 "Performance", A2 + A4)
 
 **A4 — release wasm size/startup.** The `<link data-trunk rel="rust">` in
@@ -702,8 +720,10 @@ the always-on dynamic `Gfx::render_dual` with an aspect-correct letterbox. Coin
 (`Emu::from_rom_with_sample_rate`), with the Vs.-DB DIP + RGB palette applied to
 both consoles. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
-run-ahead, rewind, netplay, TAS, dual save-state, the debugger, and HD-pack — they
-snapshot a single `Nes`. Real-cabinet boot stays fixture-limited (the circulating
+run-ahead, rewind, netplay, TAS, the debugger, and HD-pack — they snapshot a
+single `Nes`. **Save states work in dual mode since v2.9.7**, through the
+cabinet's own "RVSD" snapshot: `EmuCore::save_state_blob` /
+`restore_state_blob` (ADR 0032's amendment). Real-cabinet boot stays fixture-limited (the circulating
 dumps are the MAME maincpu half only).
 
 **Present-path parity (v2.1.10 "Web Parity").** The **libretro** core
@@ -713,19 +733,29 @@ side-by-side into a 512×240 XRGB8888 image (MAIN left, SUB right), presented wi
 a 512-wide `max_width` geometry so RetroArch draws the variable width without a
 geometry renegotiation. Ports 0/1 → MAIN P1/P2, 2/3 → SUB P1/P2; MAIN audio plays;
 save states use `VsDualSystem::snapshot`/`restore`; memory maps expose the MAIN
-console. See `docs/libretro/advanced_features.md`. The **wasm** desktop-style
-present remains deferred: the CPU compositor (`Gfx::compose_dual_into`) and the
-core (`Emu::Dual`) are already cross-platform, but enabling it requires adding the
-`VsDualSystem` detection to the *separate* wasm ROM-load path (the wasm build loads
-from bytes, not the native `load_rom_from_path`), un-gating the `present_dual` /
-`dual_mode` fields, and un-gating the GPU present branch (`Gfx::render_dual` +
-`ensure_dual_blit`, currently `cfg(not(wasm))`). That is a multi-site change to the
-**common** wasm present hot-path (which the single-console 99.99% case also runs)
-for a very niche feature — the four Vs. arcade cabinet boards in a browser tab —
-and a wasm GPU present cannot be runtime-verified in CI (no headless browser GPU
-present). The libretro core (above) delivers Vs. `DualSystem` for the mainstream
-RetroArch target now; the wasm second-screen present stays deferred until it can be
-validated in a browser. Mobile remains deferred.
+console. See `docs/libretro/advanced_features.md`. Mobile remains deferred.
+
+**Web `DualSystem` (v2.9.7 "Tandem").** The wasm-winit build now runs a cabinet
+too. Its load path (`AppEvent::RomLoaded` → `start_nes` → `finish_start_nes` →
+`App::install_nes_wasm`) calls the desktop's detection
+(`App::build_dual_cabinet`: the NES 2.0 header or the Vs. database), installs the
+cabinet with `EmuCore::set_dual`, and runs the same `produce_dual_frame` (MAIN
+audio goes to the Web Audio ring) and the same two-screen present
+(`Gfx::compose_dual_into` + `Gfx::render_dual`, now compiled for wasm32; the
+composed texture is 512×240 or 256×480, far inside WebGL2's limits). Input is the
+desktop's: P1/P2 → main, P3/P4 → sub, Insert Coin → the main acceptor. The
+single-console present is unchanged: the dual branch is taken only while a
+cabinet is loaded. Save states work with a cabinet loaded, through the same
+`EmuCore::save_state_blob` / `restore_state_blob` as the desktop (the cabinet's
+"RVSD" snapshot, stored in the ordinary slots; the slot grid shows a
+placeholder thumbnail for it, like the desktop grid). The
+lightweight `wasm-canvas` embed has one 256×240 canvas and no second console,
+so it runs the main console only and warns in the console
+(`app::warn_dual_system_main_only`). The browser run itself is a manual check
+(no headless browser GPU present in CI). The "Vs. DualSystem title" console
+note no longer fires from `apply_vs_db` on every such load: it said the core
+could not boot the cart, which had been false on the desktop since v2.1.2. It
+now fires only where no cabinet is built.
 
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
@@ -944,10 +974,16 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   per-side **Overscan** group (D2).
 - **Emulation** — run-ahead + rewind, plus the **Enhancements (non-accuracy)**
   group (v1.5.0 D3): `[enhancements]` disable-sprite-limit / overclock-scanlines
-  (off by default, clearly labelled, **never applied while the oracle / TAS /
-  netplay run**, and currently *staged / inert* — the cycle-accurate core has no
-  hook for them; deferred to the v2.0 master-clock refactor, ADR 0002) and a
-  cross-linked max-rewind-window knob.
+  (off by default, clearly labelled) and a cross-linked max-rewind-window knob.
+  **Overclock** (v2.9.7) reaches the core: `App::apply_overclock` hands the
+  configured value to `EmuCore`, and `produce_one_frame` applies
+  `effective_extra_scanlines` at the top of every frame. That clamps it to
+  `0..=80` and holds stock timing (0) while a movie records or plays. Both
+  netplay drive sites call `force_stock_timing` before a tick, because every
+  peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
+  (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
+  own `Nes` and never sets it. **Disable sprite limit** is still inert: the core
+  has no hook for it.
 - **Input** — the rebind grids + Port-2 device selector, now with contextual
   **device config** (v1.5.0 D4): SNES-mouse reported sensitivity + pointer-speed
   multiplier, Arkanoid Vaus pointer-speed, and the Power Pad / Family Trainer mat
@@ -1119,7 +1155,19 @@ The layer lives in `crate::i18n`:
   string; one `const fn` per locale (`english`, `spanish`) `match`es `Key` to a
   `&'static str`. There is no runtime file I/O, no parser, no extra dependency —
   the strings are read-only data baked into the binary, which keeps the wasm
-  bundle inside the `scripts/wasm_size_budget.sh` 5 MiB gate.
+  bundle inside the `scripts/wasm_size_budget.sh` 5 MiB gate. Since v2.9.7 all
+  of it is generated by one `catalog!` table in `i18n.rs`, one row per key
+  (`Key => "english", Some("spanish");`), which also emits `Key::ALL`; the
+  coverage tests iterate that list, so it cannot miss a key.
+- **Parameters.** A string built with `format!` becomes a keyed *template*
+  with positional `{0}`, `{1}`, ... placeholders, filled by
+  `tr_fmt(key, &[&arg, ..])` or the `tf!(Key, arg, ..)` macro. The English
+  template is the old format string with its holes numbered, so the English
+  output is unchanged; positional holes let a translation reorder its
+  arguments. That is the whole mechanism — no plurals, no named arguments — and
+  a malformed placeholder is copied through as text rather than panicking. A
+  test checks that each Spanish template uses exactly the English template's
+  placeholders.
 - **Resolution.** `tr(key) -> &'static str` resolves against the current
   process-global locale; the `t!(Key)` macro is sugar for it (`crate::t!(MenuFile)`
   == `crate::i18n::tr(crate::i18n::Key::MenuFile)`). `tr_in(locale, key)` is the
@@ -1136,19 +1184,56 @@ The layer lives in `crate::i18n`:
   re-renders every frame and each converted call site reads `tr(..)` fresh, a
   language change takes effect on the next frame with no explicit invalidation.
 
-**Incremental conversion.** This change wires the high-visibility surfaces
-through `t!(Key)` / `tr(..)` — the menu bar (top-level menus + common File/View items),
-the Settings title/tabs/Display labels, and the status-bar state words. Deeper
-panels keep their literals for now. To convert a string:
+**Scope (v2.9.7 "Tandem").** v1.7.0 wired the menu bar's top level, the
+Settings title/tabs and the status-bar state words. v2.9.7 extends that to
+every **user-facing panel**, by maintainer decision: the whole shell
+(`ui_shell.rs`: menus, status bar, Settings chrome, the Welcome, About and
+Keyboard Shortcuts windows), the Settings sections (`debugger/settings_panel.rs`),
+input bindings (`debugger/input_rebind_panel.rs`), netplay (native
+`debugger/netplay_panel.rs` and the browser lobby `wasm_lobby.rs`), cheats
+(`debugger/cheat_panel.rs`), ROM Info (`debugger/rom_info_panel.rs`) and the
+header editor (`debugger/header_editor.rs`). The catalog holds 498 keys, of
+which 496 have a Spanish string (the two by-design fallbacks, "Shaders" and
+"Audio", are loanwords). **Debugger-internal panels stay English** — CPU, PPU,
+APU, memory, watch, trace, TAStudio, provenance, perf and the rest — and so do
+the Debug-menu entries that open them, so each entry matches the English
+window it opens. The Tools menu is different: it is the user's menu, so its
+entries are translated even where the tool window they open (the Audio
+Mixer, the Latency Oracle, Pixel Provenance and so on) is still English.
 
-1. Add a `Key` variant in `i18n.rs` whose **English** value is the *verbatim*
-   current literal, and add the translation to each non-English catalog (or omit
-   it to fall back to English).
-2. Replace the literal at the call site with `crate::t!(TheKey)` (or
-   `crate::i18n::tr(Key::TheKey)` when the key is computed).
+Deliberately left untranslated in the converted files: proper nouns and
+product names (RustyNES, DoubleGate, Four Score, Power Pad, Family Trainer,
+Famicom Disk System, Game Genie, RetroAchievements, TAStudio, BasicBot, Konami
+and Bandai Hyper Shot, the "Precise. Pure. Powerful." tagline), formats and
+standards (iNES, NES 2.0, NTSC, PAL, Dendy, SHA-256, CRC32, H.264/H.265/VP9,
+the x264 preset names, `.pal`, `.fm2`, `.srt`), NES hardware terms (Mapper,
+Submapper, PRG/CHR-ROM/RAM, Trainer, DMC, the A/B/Select/Start button names),
+key names, units and numbers, and glyph-only buttons. Values that come from
+another module's `label()` (theme names, shader-pass names, Power Pad layout
+names) render as those modules print them; they are outside this scope. One
+side effect to know about: egui derives a window's and a collapsing header's
+identity from its title, so switching language resets the remembered position
+or open state of a translated window once.
 
-Until a string is converted it renders its literal exactly as before, so the
-conversion can proceed panel-by-panel without regressions.
+**The Spanish is machine-drafted and awaits native review.** Every Spanish
+string added at v2.9.7 was drafted by machine translation in neutral Latin
+American / international Spanish; the same note sits above the `catalog!`
+table and on the generated `spanish` catalog. Treat it as a first draft that a
+native speaker should read through before it is called finished.
+
+To convert a further string:
+
+1. Add a row to the `catalog!` table in `i18n.rs` whose **English** value is
+   the *verbatim* current literal (for a `format!`, the format string with its
+   holes numbered `{0}`, `{1}`, ...), with the Spanish translation or `None`.
+2. Replace the literal at the call site with `crate::t!(TheKey)`, or the
+   `format!` with `crate::tf!(TheKey, arg, ..)` (or `crate::i18n::tr(Key::TheKey)`
+   when the key is computed).
+
+A `None` Spanish entry fails `spanish_covers_every_user_facing_key` unless the
+key is added to `SPANISH_FALLBACK_BY_DESIGN`, so a new key cannot ship
+untranslated by accident. Until a string is converted it renders its literal
+exactly as before.
 
 ### Chip panels vs tool panels
 
@@ -2200,7 +2285,58 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   included, which is the Power Cycle defect above. A power-on movie never
   inherited a loaded `.sav`; a Power Cycle erased one.
 - Not persisted: a Vs. `DualSystem` cabinet (none of the four boards has a
-  battery), the web build (no filesystem store), and mobile (v2.7.4).
+  battery), the lightweight `wasm-canvas` embed, and mobile (v2.7.4). The
+  wasm-winit web build persists to `IndexedDB` from v2.9.7 (next section).
+- **The policy is shared with the web build (v2.9.7).** Which cartridges
+  persist, the once-a-second period and the "only when changed, baseline moves
+  only on success, report the first failure once" rule live in
+  [`battery_policy`](../crates/rustynes-frontend/src/battery_policy.rs);
+  `battery_save` keeps only what is specific to a file (the path, the metadata
+  size check, the bounded read, the atomic write).
+
+## Battery saves in the browser (`IndexedDB`, wasm-winit, v2.9.7)
+
+The web build keeps each battery cartridge's save RAM (`Nes::save_data()`, so
+GTROM / UNROM 512 flash saves too) in the browser, under the same rules as the
+desktop `.sav`. The decisions are in
+[`web_battery`](../crates/rustynes-frontend/src/web_battery.rs), a state machine
+compiled on wasm32 and natively under `cfg(test)`, so every rule is tested
+headless; `wasm_idb` only moves the bytes.
+
+- **Where.** The `rustynes` `IndexedDB` database, object store `save-states`
+  (the one the save-state slots use), key `"<rom-sha256-hex>:battery"`; the value
+  is the raw bytes. Where `IndexedDB` is unavailable (some private-browsing
+  modes) the `localStorage` fallback holds it base64-encoded under
+  `rustynes-battery-<hex>`, as the save-state slots fall back.
+- **Why a key and not a new object store.** A new store means opening the
+  database at version 2, and an open at a new version is *blocked* while any
+  other tab holds version 1. Every earlier build opened it without an
+  `onversionchange` handler, so an old tab never lets go, and the restore below
+  would wait for the user to close it. A key suffix keeps version 1 and cannot
+  meet a slot key (`"<hex>:slot<N>"`).
+- **Restored before the first frame.** The read is asynchronous, so a battery
+  cartridge is installed *pending*: `EmuCore::produce_one_frame` produces
+  nothing until the read lands in `EmuCore::restore_web_battery`. Every outcome
+  of the read releases the gate. A read that lands after the user loaded
+  another ROM, or after a movie or netplay session took the save RAM, is
+  discarded. Pinned natively by
+  `a_pending_browser_battery_read_holds_the_first_frame`.
+- **Written on the desktop's cadence.** Compared once per 60 produced frames,
+  written only when the bytes differ from the last write that succeeded; a
+  failed write (a full quota) is retried and reported in the status bar once. A
+  periodic write waits while an earlier one is still in flight; a forced write
+  goes out only when the bytes moved on from the one in flight.
+- **Flushed when the page is hidden.** `visibilitychange` to `hidden` (and
+  `pagehide`) forces a write, because a closing tab gets no reliable later
+  event in which an asynchronous write could finish. Loading another ROM,
+  closing the ROM, and starting a movie or netplay session force one too.
+- **Never clobbers a record it did not read.** A record whose length is not
+  the cartridge's save size, or a store that could not be read, leaves the
+  session unpersisted and the record untouched, with the reason in the status
+  bar.
+- **Not verified headless.** The `IndexedDB` glue (`wasm_idb::get_battery`,
+  `put_battery`, the page-hide listener) runs only in a browser; its check is
+  manual, recorded in the v2.9.7 notes.
 
 ## ROM file handling
 

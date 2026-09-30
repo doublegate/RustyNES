@@ -64,8 +64,12 @@ via `[[bench]] harness = false`.
 
 ### Current figures, and a correction to every stock-bench row since v2.2.3 (2026-09-23)
 
-**Current, v2.7.0 core, i9-10850K, Criterion 3 s warm-up / 10 s measurement,
-each dot path selected explicitly:**
+**The latest full table: the v2.7.0 core, i9-10850K, Criterion 3 s warm-up /
+10 s measurement, each dot path selected explicitly.** It is historical as
+absolute numbers: v2.9.7's A12 change added about 1.9% on the `nestest`
+workloads and nothing reproducible on the palette ones (see
+[its section](#v297--the-cost-of-reporting-the-hardware-a12-stream-an-accuracy-fix-measured-and-accepted)
+for the A/B against v2.9.6). No full re-baseline has been taken since.
 
 | Workload | Exact dot path (`nes_run_frame_*`) | Fast dot path, **shipped** (`*_fast`) | Δ |
 |---|---|---|---|
@@ -984,6 +988,33 @@ unreleased `main`: the newest published release, 0.32.2, supports read-only
 borrowed bytes only. Working around it with a raw framebuffer pointer across the
 FFI would be new `unsafe` that nothing here can verify. It waits for that
 UniFFI release.
+
+### v2.9.7 — the cost of reporting the hardware A12 stream (an accuracy fix, measured and accepted)
+
+v2.9.7 made `Ppu::read_vram` report every read's A12 level, so A12 changes
+about eight times as often per rendered line and the bus is called on each
+change. That was a correctness fix: MC-ACC, mapper 91 and the J.Y. ASIC's A12
+mode had run eight times slow. So this is a cost record, not an adoption
+decision; the project does not trade accuracy for speed.
+
+`scripts/perf/ab_check.sh --base 9c560520` (v2.9.6), two independent runs,
+i9-10850K, load average below 1.5 at start:
+
+| workload | run 1 | run 1 control | run 2 | run 2 control |
+| --- | --- | --- | --- | --- |
+| `nes_run_frame_nestest` | +1.94% (p = 0.00) | +0.11% (p = 0.40) | +4.35% (p = 0.00) | +2.75% (p = 0.00) |
+| `nes_run_frame_nestest_fast` | +1.91% (p = 0.00) | +0.27% (p = 0.07) | +4.51% (p = 0.00) | +2.20% (p = 0.00) |
+| `nes_run_frame_flowing_palette` | -1.72% (p = 0.00) | +0.16% (p = 0.23) | +0.28% (p = 0.57) | +2.50% (p = 0.00) |
+| `nes_run_frame_flowing_palette_fast` | -3.68% (p = 0.00) | -1.31% (p = 0.00) | -0.02% (p = 0.96) | -0.10% (p = 0.58) |
+
+**Reading.** The nestest workloads cost about **+1.9%**. Run 1 measured
++1.9% with a clean order-bias control on those two workloads. Run 2 measured
++4.4% on a control that drifted +2.2% to +2.7%, which leaves about +1.8%.
+The palette workloads show nothing reproducible: run 1's apparent speed-up
+does not reappear in run 2, and one of its own controls drifted -1.3%. A
+speed-up from making the PPU report more has no mechanism either. The shipped
+`_fast` nestest path is the one that pays. It stays well inside the frame
+budget (about 4.0 ms against 16.6 ms).
 
 ### v2.9.3 — frame pacing after the wgpu 29 -> 30 move (#570): presents are now even
 

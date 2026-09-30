@@ -1783,13 +1783,10 @@ pub struct Config {
 /// oracle / `AccuracyCoin` / TAS / netplay paths run** — they are explicitly
 /// out-of-oracle enhancement modes.
 ///
-/// NOTE (v1.5.0): the cycle-accurate core does not yet expose hooks to disable
-/// the 8-sprite-per-scanline limit or to overclock the PPU/CPU (both require a
-/// core synthesis change, deferred to the v2.0 fractional-master-clock
-/// refactor, ADR 0002). These flags persist the user's *intent* and are
-/// surfaced in the UI as experimental / staged; the frontend applies only the
-/// portions that are achievable without a core change. They never affect the
-/// deterministic core output today.
+/// NOTE: the cycle-accurate core has no hook to disable the
+/// 8-sprite-per-scanline limit, so that flag persists the user's *intent* and
+/// changes nothing. The overclock is applied since v2.9.7 (see
+/// `overclock_scanlines`), and never while a movie or netplay runs.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EnhancementsConfig {
     /// Disable the hardware 8-sprite-per-scanline limit (removes sprite
@@ -1801,8 +1798,10 @@ pub struct EnhancementsConfig {
     /// Optional overclock: extra emulated PPU scanlines inserted in the
     /// vblank, reducing per-scanline slowdown in some games (Mesen2's
     /// "additional scanlines" enhancement). `0` (default) = stock timing.
-    /// **Staged**: no core hook yet (v2.0, ADR 0002); persisted + surfaced
-    /// only. Clamped to `0..=80` on use.
+    /// v2.9.7: applied to the core (`Nes::set_extra_scanlines`) from the next
+    /// frame, clamped to `0..=80`, and held at 0 while a movie records or plays
+    /// and under netplay (both are shared timelines). Until v2.9.7 it was
+    /// persisted and shown but nothing read it.
     #[serde(default)]
     pub overclock_scanlines: u16,
 }

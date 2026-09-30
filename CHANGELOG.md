@@ -26,6 +26,171 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
+
+The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:
+the platform release. The web and mobile builds gain what the desktop had,
+and the release binaries include every native feature. The extras item
+staged six real Acclaim games, and doing so turned up a core defect: the PPU
+reported one A12 pulse per scanline where the console makes eight. That is
+fixed. Acclaim's MC-ACC, the J.Y. ASIC's A12 mode and mapper 91 now count at
+their documented rates. The maintainer's decisions for this release are in
+`to-dos/plans/v2.9.7-tandem-plan.md`.
+
+### Added
+
+- **Save states for Vs. DualSystem cabinets on the desktop**
+  (`T-PS-dual-savestate`). F1/F4 and the Save States grid now save and restore
+  both consoles of a two-screen cabinet, using the core's existing cabinet
+  snapshot. Until now F1 with a cabinet loaded did nothing, and did not say so.
+  Run-ahead, rewind, netplay and TAS remain unavailable in dual mode.
+- **Battery saves in the browser** (plan item 4). The wasm-winit build keeps a
+  battery cartridge's in-game save (`Nes::save_data()`, so GTROM and UNROM 512
+  flash saves too) in `IndexedDB`, key `"<rom-sha256>:battery"` in the existing
+  `save-states` store, with the `localStorage` fallback where `IndexedDB` is
+  unavailable. The database stays at version 1: a new object store would need
+  version 2, whose open is blocked while any older tab holds version 1. The
+  stored save is restored before the game's first frame (emulation waits for
+  the asynchronous read), written on the desktop's cadence (once a second,
+  only when changed), and flushed when the page is hidden, on ROM switch and
+  close, and before a movie or netplay session takes the save RAM. A record of
+  the wrong size, or a store that cannot be read, is neither loaded nor
+  overwritten. The browser round trip is a manual check; the decisions are
+  tested natively (`web_battery`).
+- **Vs. `DualSystem` in the browser** (plan item 5). The wasm-winit build now
+  detects a cabinet on its load path by the desktop's rule and runs both
+  consoles, presenting both screens through the desktop's two-screen blit
+  (`Gfx::render_dual`, now compiled for wasm32). P1/P2 drive the main console,
+  P3/P4 the sub, and Insert Coin feeds the main acceptor. Save states work
+  with a cabinet loaded, through the same cabinet snapshot as the desktop.
+  The `wasm-canvas` embed still runs the main console only, and now says so in
+  the console. The browser run is a manual check.
+
+- **FDS disks and NSF files on Android and iOS.** The mobile bridge now loads a
+  Famicom Disk System image or an NSF / NSFe file, told apart by its magic as on
+  the desktop. The FDS BIOS (`disksys.rom`) is yours to supply: the first disk
+  asks for it once and the app keeps it. Disk sides and NSF tracks have buttons
+  in the in-game menu. The app does not yet save what a disk game writes to its
+  disk.
+- **Vs. DualSystem cabinets on Android and iOS.** A cabinet ROM (Vs. Tennis,
+  Wrecking Crew, Balloon Fight, Mahjong) now loads as two consoles, by the
+  desktop's rule. The phone shows one cabinet
+  screen at a time, with a button to swap, a coin button, and players 3 and 4
+  on the right-hand half. Save states hold both consoles; netplay, movies and
+  Lua are not available on a cabinet.
+- **"Cancel opposite directions" setting on Android and iOS**, on by default as
+  before, so Up + Down and Left + Right can reach the game when it is off.
+- The Swift half is uncompiled on the Linux build host. Rows T1-T12 of
+  `docs/mobile-v2.9.3-run-sheet.md` list the device checks, all not yet run.
+
+### Changed
+
+- **The release binaries are now the full native build.** They include
+  RetroAchievements, Lua scripting and its host IPC, HD packs, A/V recording
+  (which runs `ffmpeg` if it is on your `PATH`) and the debugger telemetry,
+  none of which the downloads had before. There is still one archive per
+  platform, under the same name. Building from source with a plain `cargo build`
+  is unchanged; `cargo full-run` gives the same set. CI now compiles this build
+  on macOS and Windows for every pull request, so a release is never the first
+  build of it there.
+- **Lua `client.frameskip(n)` is accepted and ignored by design**, and its log
+  line now says why instead of "not yet supported". The emulator renders every
+  frame for accuracy, and the display already shows only the latest one, so a
+  frame-skip would save nothing. `client.speedmode` controls speed.
+- **One battery-save policy for desktop and web.** Which cartridges persist,
+  the once-a-second period and the only-when-changed rule moved from
+  `battery_save` into a new target-independent `battery_policy` module that
+  both platforms use. Desktop behaviour is unchanged; its tests pass as before.
+- **The "Vs. DualSystem title" note fires only when a cabinet is not built.**
+  It fired on every such load and said the core could not boot the cart,
+  which had been false on the desktop since v2.1.2.
+- **Provenance: mapper 250's address decode is recorded as derived from
+  Mesen2** (`MMC3_250`, GPL-3.0-or-later). The file quoted a Mesen2
+  expression without a `// Provenance:` header or a record row; it now has
+  both, and a NOTICE entry, at the maintainer's direction. The quote is
+  kept, as the project's rule on honest references requires.
+
+### Changed — the user-facing panels in Spanish
+
+- **Every user-facing panel is now translatable** (v2.9.7 plan item 10). The
+  whole shell (menus, status bar, Settings chrome, the Welcome, About and
+  Keyboard Shortcuts windows), the Settings sections, input bindings, netplay
+  (native and the browser lobby), cheats, ROM Info and the header editor now
+  read their text from the i18n catalog. The catalog grew from 34 keys to 498,
+  496 of them with a Spanish string. English is unchanged: every English entry
+  is the literal it replaced. The UI-literal count in those eight files went
+  from 212 to 29, and each of the 29 left is a proper noun, a technical term,
+  a key name or a glyph. Debugger-internal panels stay English by design.
+- **The Spanish is machine-drafted and awaits a native speaker's review.** It
+  is marked as such in `i18n.rs` and in `docs/frontend.md`.
+- **Strings built with `format!` are keyed templates** with positional `{0}`,
+  `{1}` placeholders (`tr_fmt` / `tf!`), so a translation can reorder its
+  arguments. Tests check that every key has English text, that every Spanish
+  template uses the same placeholders, and that every key has a Spanish string
+  except the two loanwords kept by design ("Shaders", "Audio").
+- **The Overclock setting's note now describes what it does** (idle scanlines
+  after the visible frame; ignored while recording or playing a movie and
+  during netplay) instead of calling it inert. The sprite-limit note still says
+  inert, because it still is.
+
+### Fixed
+
+- **The PPU now reports the A12 line the way the hardware drives it.** It
+  reported A12 only for pattern fetches, so the sprite window's garbage
+  nametable reads never pulled A12 low, and each rendered line delivered one
+  rise where the console makes eight. The MMC3 filters the extra seven away,
+  which is why every MMC3 test ROM and AccuracyCoin passed. Boards that count
+  raw edges were starved eightfold:
+  - Acclaim's **MC-ACC** (mapper 4, NES 2.0 submapper 3). Its six local games
+    lost their status bars and title text, and Alien 3 went black, with NES 2.0
+    headers. They now all render correctly, and MC-ACC is promoted from
+    BestEffort to Curated.
+  - **Mapper 91** submapper 0, whose page says it counts "64 unfiltered rises".
+  - The **J.Y. Company ASIC**'s A12 IRQ mode ("unfiltered, eight per
+    scanline"). The *Donkey Kong Country 4* world map (mapper 211) was
+    garbled across its lower half and now renders correctly.
+
+  Four MMC3-based boards that clocked their IRQ on every rise (the MMC3-clone
+  family, 176, 268 and 513) now apply MMC3's filter. Their save states changed
+  format; older states still load. One test framebuffer changed:
+  `mmc1_a12` moves by 9 pixels, because an SNROM board's RAM enable follows
+  CHR A12.
+- **Time Diver: Avenger (mapper 250) renders its playfield correctly.** Its IRQ
+  counted CPU cycles; the board is a regular MMC3 with remapped registers, so
+  it now counts scanlines. The splits land where the game puts them, and the
+  wrong-tile backgrounds are gone. Mapper 250 save states from earlier
+  versions do not load.
+- **The Settings "Overclock (extra scanlines)" field now does something.**
+  It saved `enhancements.overclock_scanlines`, and nothing read it; the core's
+  `Nes::set_extra_scanlines` had no caller. The value now reaches the emulator
+  from the next frame, clamped to 0-80. It is held at stock timing while a
+  movie records or plays and under netplay, because a movie and a netplay
+  session are timelines another player runs, and an extra scanline changes how
+  many CPU cycles a frame has. A Vs. DualSystem cabinet keeps stock timing.
+
+### Verification
+
+- The full `cargo test --release --workspace --features test-roms` suite passes:
+  3,065 tests, 0 failed, 20 ignored (v2.9.6: 3,023). AccuracyCoin is 144/144,
+  nestest is 0-diff, and both MMC3 test-ROM suites and Holy Mapperel pass
+  unchanged.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0 and `external_extended` 138/0, both unchanged
+  against their v2.9.6 baselines. In `external_coverage`, 10 of 698 frames
+  moved, each checked against a v2.9.6 build: the seven newly staged Acclaim
+  and MMC6 dumps (first baselines), the Donkey Kong Country 4 world map
+  (fixed), and the two Time Diver dumps (fixed).
+- `cargo test -p rustynes-mobile`: 47 passed. The Android JVM unit tests pass.
+  The iOS Swift is uncompiled on this Linux host; run-sheet rows T1-T12 are
+  not run. Browser behaviour is a manual check (steps in the release PR).
+- The A12 change costs about 1.9% on the nestest frame workloads and nothing
+  measurable on the others: two independent `ab_check.sh` runs, recorded in
+  `docs/performance.md`.
+- fmt, clippy for every feature set and all three wasm builds, rustdoc, the
+  `no_std` build, cargo-deny and the release audits are clean.
+- The MiSTer RTL is unchanged, so v2.9.2's bitstream pair ships byte for byte.
+  **No hardware has run any bitstream.**
+
 ## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
 
 The seventh release of the v2.9.x line and the third of the line to v3.0.0:

@@ -76,6 +76,12 @@ final class EmulatorCore {
     /// Suppress audio push without tearing the sink down (a user mute toggle).
     var isMuted = false
 
+    /// v2.9.7 "Tandem" (plan item 7): on a Vs. DualSystem cabinet, present the SUB
+    /// console's (right-hand) screen instead of the main one. The device shows one
+    /// cabinet screen at a time; the pill menu's Screen button flips it. Ignored for
+    /// anything but a cabinet (`subFramebuffer()` is then empty).
+    var showSubScreen = false
+
     /// v2.9.2 (audit AUD-14): called once per console frame, on the main thread,
     /// just before the frame runs (single-player and netplay alike), so per-frame
     /// host work -- the hardware-gamepad turbo pulse -- is paced by emulated
@@ -151,19 +157,28 @@ final class EmulatorCore {
     /// Metadata for the loaded cartridge.
     let info: RomInfo
 
-    /// Construct from raw iNES/NES 2.0 ROM bytes. Opens the audio sink first so the
-    /// core can synthesise for the device's real sample rate.
-    /// - Throws: `MobileError` if the bytes are not a loadable cartridge.
-    init(romData: Data) throws {
+    /// Construct from a ROM buffer. Opens the audio sink first so the core can
+    /// synthesise for the device's real sample rate.
+    ///
+    /// v2.9.7 "Tandem": the bridge tells the image apart by its magic -- a
+    /// cartridge, an NSF, a Famicom Disk System disk, or a Vs. DualSystem cabinet.
+    /// A disk boots with `fdsBios` (the user's `disksys.rom`, 8 KiB); without it
+    /// the bridge throws `MobileError.missingFdsBios`, which `AppModel.openGame`
+    /// turns into the BIOS picker.
+    /// - Throws: `MobileError` if the bytes are not a loadable image.
+    init(romData: Data, fdsBios: Data? = nil) throws {
         // Open the cpal sink first to learn the device sample rate. If it fails to
         // open we fall back to the bridge default so the core still runs (silent).
         let sink = rustynes_ios_audio_new()
         let rate = sink.map { rustynes_ios_audio_sample_rate($0) } ?? 0
         let effectiveRate: UInt32 = rate != 0 ? rate : 48_000
 
-        // UniFFI: `NesController(rom:sampleRate:)` is the generated throwing
-        // constructor over the Rust `new(rom, sample_rate)`.
-        self.controller = try NesController(rom: romData, sampleRate: effectiveRate)
+        // UniFFI: `newWithFdsBios(rom:fdsBios:sampleRate:)` is the generated
+        // throwing secondary constructor over the Rust `new_with_fds_bios` (v2.9.7);
+        // with a nil BIOS it is exactly `NesController(rom:sampleRate:)`.
+        self.controller = try NesController.newWithFdsBios(
+            rom: romData, fdsBios: fdsBios, sampleRate: effectiveRate
+        )
         self.audio = sink
         self.sampleRate = effectiveRate
         self.info = controller.info()
@@ -231,7 +246,13 @@ final class EmulatorCore {
 
         // Run a frame and hand the RGBA framebuffer straight to wgpu (which
         // presents). UniFFI marshals `run_frame()` as a Swift `Data`.
-        let frame = controller.runFrame()
+        var frame = controller.runFrame()
+        // v2.9.7: a cabinet ran both consoles; present the right-hand one when the
+        // user flipped to it.
+        if showSubScreen {
+            let sub = controller.subFramebuffer()
+            if !sub.isEmpty { frame = sub }
+        }
 
         // TAStudio export (v1.9.9): if this frame exhausted the authored table,
         // stop the recorder NOW (before any idle frames are recorded).
@@ -455,6 +476,48 @@ final class EmulatorCore {
 
     func reset() { controller.reset() }
     func powerCycle() { controller.powerCycle() }
+
+    // MARK: - FDS, NSF and the Vs. cabinet (v2.9.7 "Tandem")
+
+    /// FDS disk sides (0 for a cartridge / NSF) and the inserted side (0-based,
+    /// nil = ejected).
+    var diskSideCount: Int { Int(controller.diskSideCount()) }
+    var insertedDiskSide: Int? { controller.insertedDiskSide().map { Int($0) } }
+
+    /// Insert the next disk side, wrapping; from ejected, side A. Answers a game's
+    /// "insert side B" prompt.
+    func flipDisk() {
+        let count = diskSideCount
+        guard count > 0 else { return }
+        let next = insertedDiskSide.map { ($0 + 1) % count } ?? 0
+        controller.setDiskSide(side: UInt32(next))
+    }
+
+    /// NSF songs (0 for a cartridge / disk) and the playing one (0-based).
+    var nsfSongCount: Int { Int(controller.nsfSongCount()) }
+    var nsfCurrentSong: Int { Int(controller.nsfCurrentSong()) }
+
+    /// Play the next NSF song, wrapping to the first.
+    func nextNsfSong() {
+        let count = nsfSongCount
+        guard count > 0 else { return }
+        controller.nsfSetSong(song: UInt32((nsfCurrentSong + 1) % count))
+    }
+
+    /// Whether the loaded ROM is a Vs. DualSystem cabinet (two consoles).
+    var isDualSystem: Bool { controller.isDualSystem() }
+
+    /// Whether the loaded ROM is any Vs. System machine (coin-operated).
+    var isVsSystem: Bool { info.isVsSystem || controller.isDualSystem() }
+
+    /// Drop a coin into the acceptor of the screen on show; held three frames by
+    /// the bridge. On a cabinet, acceptors 0/1 are the main (left) console's and
+    /// 2/3 the sub (right) console's, so the right-hand screen credits acceptor 2
+    /// (Copilot on #577). A single Vs. console always uses 0.
+    func insertCoin() {
+        let acceptor: UInt32 = isDualSystem && showSubScreen ? 2 : 0
+        controller.insertCoin(acceptor: acceptor)
+    }
 
     // MARK: - Save states
 

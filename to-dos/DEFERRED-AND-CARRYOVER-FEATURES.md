@@ -534,13 +534,19 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   `debugger/settings_panel.rs` persists `overclock_scanlines` to `config.toml`
   and does nothing; `disable_sprite_limit` has no core hook at all. Both are
   labelled "currently inert" in the UI. Target: **unscheduled**.)*
+  *(2026-09-30, v2.9.7: the scanline overclock field is now wired to
+  `Nes::set_extra_scanlines`, held at 0 under a movie or netplay; see
+  `docs/frontend.md`. The CPU-multiplier overclock and the sprite-limit
+  toggle stay open.)*
 - `[x]` **Full Vs. DualSystem dual-core (C)** — *(shipped v2.0.0 "Timebase"
   beta.5, commit `9fe44a19`: `crates/rustynes-core/src/vs_dualsystem.rs`,
   `pub enum Emu` (Single / Dual); desktop presentation v2.1.2 (`render_dual` in
   `crates/rustynes-frontend/src/gfx.rs`, ADR 0032); libretro v2.1.10
   (`crates/rustynes-libretro/src/lib.rs`). Remaining elsewhere, not in this
   entry's scope: the desktop dual save state (`T-PS-dual-savestate`) and
-  DualSystem on web and mobile, all **v2.9.7** in the line plan.)* second CPU + PPU + bus
+  DualSystem on web and mobile, all **v2.9.7** in the line plan.)*
+  *(2026-09-30, v2.9.7: the desktop dual save state is done; see ADR 0032's
+  amendment.)* second CPU + PPU + bus
   arbitration, surfaced via an `Emu { Single, Dual }` enum API break. Detection
   shipped (v1.3.0 D2) + a frontend note; full emulation has no committable
   test-ROM oracle. Design: `docs/audit/vs-dualsystem-design-2026-06-11.md`.

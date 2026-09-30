@@ -111,8 +111,19 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "Resolved tag: ${tag}"
 
+      # v2.9.7 (maintainer decision, 2026-09-30): the release binary is the
+      # `full` build -- RetroAchievements, Lua scripting (+ IPC), HD packs,
+      # A/V recording and the debug hooks, added on top of the default
+      # features. One archive per platform, under the same name as before.
+      # None of these needs a system library at build time: rcheevos and Lua
+      # are vendored C built with `cc`, HTTP is rustls (no OpenSSL), and A/V
+      # recording runs an `ffmpeg` binary at RUN time and reports its absence.
+      # The Cargo default feature set is unchanged: `full` is native-only, and
+      # the wasm build and a plain `cargo build` keep today's defaults.
+      # CI's `full-build` job compiles this feature set on macOS and Windows on
+      # every ready PR, so a release is never the first build of it there.
       - name: Build release binary
-        run: cargo build --release -p rustynes-frontend --target ${{ matrix.target }}
+        run: cargo build --release -p rustynes-frontend --features full --target ${{ matrix.target }}
 
       - name: Strip binary (Unix)
         if: runner.os != 'Windows'

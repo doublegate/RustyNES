@@ -107,6 +107,23 @@ raw RAM cheats), `movies/` (`.rnm` TAS recordings), `fds-saves/`
 (writable `.fds.sav` disk images), and — with the RetroAchievements
 feature built — `ra-progress/`. Each is created on demand.
 
+### In the browser
+
+The web build at <https://doublegate.github.io/RustyNES/> has no data
+directory. It keeps everything in the browser's own storage for the site:
+
+- **Save states** in `IndexedDB` (database `rustynes`, store `save-states`),
+  under `<rom_sha256>:slot<N>`.
+- **Battery saves** (the in-game save of a cartridge with a battery), from
+  v2.9.7, in the same store under `<rom_sha256>:battery`. They are written
+  about once a second while the game changes them, and again when you switch
+  tabs, close the page, or load another ROM.
+- Where `IndexedDB` is unavailable (some private-browsing modes), both fall
+  back to `localStorage`.
+
+Clearing the site's data in the browser deletes them. The lightweight canvas
+embed keeps save states the same way but no battery saves.
+
 ## Inspecting on your system
 
 To see where your install actually writes (handy when something doesn't

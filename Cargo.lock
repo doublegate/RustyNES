@@ -4278,7 +4278,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-android"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -4296,7 +4296,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4309,7 +4309,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "cc",
  "libc",
@@ -4318,7 +4318,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4335,7 +4335,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4346,7 +4346,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-frontend"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "anstyle",
  "arboard",
@@ -4405,18 +4405,18 @@ dependencies = [
 
 [[package]]
 name = "rustynes-gamedb"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "rustynes-core",
 ]
 
 [[package]]
 name = "rustynes-gfx-shaders"
-version = "2.9.6"
+version = "2.9.7"
 
 [[package]]
 name = "rustynes-hdpack"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "lewton",
  "png",
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ios"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -4441,7 +4441,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-libretro"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "libc",
  "rust-libretro",
@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4462,7 +4462,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mobile"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "rustynes-core",
  "rustynes-hdpack",
@@ -4477,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-netplay"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "futures-util",
  "js-sys",
@@ -4493,7 +4493,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4505,21 +4505,21 @@ dependencies = [
 
 [[package]]
 name = "rustynes-probe"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "rustynes-core",
 ]
 
 [[package]]
 name = "rustynes-ra"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "rustynes-cheevos",
 ]
 
 [[package]]
 name = "rustynes-script"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "mlua",
  "piccolo",
@@ -4530,7 +4530,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "2.9.6"
+version = "2.9.7"
 dependencies = [
  "insta",
  "png",
@@ -6717,9 +6717,9 @@ dependencies = [
 
 [[package]]
 name = "yoke-derive"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33811428bee40dbceb6d545e95754741d17a6aef9a4849f0fd62e2ba4f412a78"
+checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",

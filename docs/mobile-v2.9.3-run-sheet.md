@@ -100,6 +100,35 @@ the rest.
 | D4 | rcheevos 12.5.0, iOS | As D3 | As D3 |
 | D5 | rcheevos, 32-bit Android | Install the **armeabi-v7a** APK (see The build) and confirm `primaryCpuAbi` is `armeabi-v7a`; then as D3 | As D3; this is the platform whose struct layout the `time_t` fix changed |
 
+## Rows added for v2.9.7 "Tandem" (FDS, NSF, DualSystem, SOCD switch)
+
+v2.9.7 gave the mobile bridge FDS disks, NSF files and the Vs. `DualSystem`
+cabinet (plan items 6 and 7), and both apps a "Cancel opposite directions"
+setting (item 8). The bridge half is under host test (`cargo test -p
+rustynes-mobile`), and the Kotlin compiles and passes `SocdTest`. **None of the
+Swift has been compiled** (no Swift toolchain on the Linux build host), and no
+row below has been run on an emulator or a device. Every row is NOT RUN.
+
+| # | Item | Platform | Step | Expect | Result |
+| --- | --- | --- | --- | --- | --- |
+| T1 | 6 | Android | With no BIOS stored, open an `.fds` disk image | A file picker opens; choose `disksys.rom` (8 KiB). The disk then boots to the BIOS screen and the game loads. Reopening another disk later asks nothing | NOT RUN |
+| T2 | 6 | Android | Pick a file that is not 8 KiB at the T1 picker | Status reads "Not an FDS BIOS"; nothing is stored, and the next disk asks again | NOT RUN |
+| T3 | 6 | Android | In a two-sided FDS game, answer its "insert side B" prompt with the control bar's **Disk** button | The label steps A, B, A; the game continues past the prompt | NOT RUN |
+| T4 | 6 | Android | Open an `.nsf`; press **Track n/m >** and **<** | Music plays; the track changes and the label follows; it wraps at both ends | NOT RUN |
+| T5 | 6 | iOS | As T1, opening the `.fds` through the ROM importer (it lists `.fds`, `.nsf` and `.nsfe` since #577's review round; Files' "Open in RustyNES" should offer them too). The BIOS picker is a `.fileImporter`; the first compile of `MobileError.missingFdsBios`, `NesController.newWithFdsBios`, and a second `.fileImporter` in `ContentView`) | As T1. If the ROM importer stops presenting, the two importers are competing; record it | NOT RUN |
+| T6 | 6 | iOS | As T3 with the pill menu's **Flip disk** | As T3 | NOT RUN |
+| T7 | 6 | iOS | As T4 with the pill menu's **Next track** | As T4 | NOT RUN |
+| T8 | 7 | Android | Open a Vs. `DualSystem` dump (Vs. Tennis, Vs. Wrecking Crew, Vs. Balloon Fight or Vs. Mahjong; the Vs. database recognises iNES 1.0 dumps by SHA-256); press **Coin**, then **Screen: left**, then **Coin** on the right-hand screen | The game boots past its handshake; the button flips to the right-hand cabinet screen and back. A P3 / P4 pad drives the right-hand half. **Coin** credits the screen on show (acceptor 2 on the right) | NOT RUN |
+| T9 | 7 | Android | On the T8 cabinet: save a state, play on, load it; then try Netplay | The state restores both halves; netplay refuses with "not available on a Vs. DualSystem cabinet" | NOT RUN |
+| T10 | 7 | iOS | As T8 with **Insert coin** and **Swap screen** in the pill menu | As T8 | NOT RUN |
+| T11 | 8 | Android | Settings > **Cancel opposite directions** off; hold Left and Right on the touch pad with two fingers, and Up on the pad plus Down on a hardware controller. Then, still holding two opposite touch directions, toggle the setting | Both pairs reach the game (a game that reacts to opposites shows it); switched back on, neither does. Toggling while held takes effect without lifting a finger. Default after a fresh install is on | NOT RUN |
+| T12 | 8 | iOS | As T11 (Settings > Controls > **Cancel opposite directions**) | As T11 | NOT RUN |
+
+FDS disk writes are not persisted by either app yet: the bridge exposes
+`disk_image_bytes` / `disk_is_dirty` / `clear_disk_dirty`, but neither host
+writes the image back. A game saved to disk loses the save when the app closes;
+that is known, not a row to fail.
+
 ## Android
 
 EMULATOR is what the `Pixel_8_API_34` emulator showed on this build, before

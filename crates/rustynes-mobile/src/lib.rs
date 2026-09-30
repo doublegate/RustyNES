@@ -24,6 +24,21 @@
 //! directly (handing it to `wgpu`); [`NesController::run_frame`] returning an
 //! owned `Vec<u8>` is the typed-surface convenience used by the spike and by
 //! callers that copy frames across the FFI boundary.
+//!
+//! ## What a buffer can hold (v2.9.7 "Tandem")
+//!
+//! [`NesController::new`] and [`NesController::load_rom`] tell the image apart
+//! by its leading magic, as the desktop does: an iNES / NES 2.0 / UNIF
+//! cartridge, an NSF / `NSFe` music file (tracks through `nsf_*`), or a Famicom
+//! Disk System disk (sides through `*_disk_side`, the written image through
+//! `disk_image_bytes`). A disk boots only with the host's FDS BIOS, which the
+//! app never ships: the host passes it to [`NesController::new_with_fds_bios`]
+//! or [`NesController::set_fds_bios`], and a disk without it fails with the
+//! typed [`MobileError::MissingFdsBios`]. A Vs. `DualSystem` board becomes a
+//! two-console cabinet ([`NesController::is_dual_system`],
+//! [`NesController::sub_framebuffer`], ports 2/3 on the right-hand half, an
+//! `RVSD` save state); netplay, movies and Lua, which assume one console, are
+//! refused on it with [`MobileError::DualSystem`].
 
 // UniFFI-generated scaffolding binds some parameters with a leading underscore.
 #![allow(clippy::used_underscore_binding)]
@@ -36,7 +51,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rustynes_core::{Buttons, Nes, Region};
+use rustynes_core::{Buttons, Emu, Nes, Region, VsDualSystem};
 use rustynes_netplay::{
     AdvanceOutcome, ConnectionState, DEFAULT_STUN_SERVERS, DisconnectReason, NatConfig, NatConnect,
     NatPhase, NetplayConnection, NetplayError, RollbackSession, SessionConfig, TurnConfig,
@@ -129,6 +144,32 @@ pub enum MobileError {
     #[error("battery save error: {reason}")]
     Battery {
         /// Why the save was refused.
+        reason: String,
+    },
+    /// A Famicom Disk System image was loaded before the host supplied the
+    /// FDS BIOS (v2.9.7). The disk system cannot run without it, and the BIOS
+    /// is Nintendo IP that the app never ships: the host asks the user for
+    /// `disksys.rom` (8 KiB), hands it to [`NesController::set_fds_bios`] or
+    /// [`NesController::new_with_fds_bios`], and loads the disk again.
+    #[error(
+        "this is a Famicom Disk System image and needs the FDS BIOS (disksys.rom, 8 KiB); \
+         choose the BIOS file, then load the disk again"
+    )]
+    MissingFdsBios,
+    /// The bytes offered as the FDS BIOS were refused (v2.9.7): the BIOS is
+    /// exactly 8 KiB, so anything else is another file.
+    #[error("invalid FDS BIOS: {reason}")]
+    FdsBios {
+        /// Why the BIOS was refused.
+        reason: String,
+    },
+    /// The action is not available while a Vs. `DualSystem` cabinet is loaded
+    /// (v2.9.7): netplay, movies and Lua assume one console's state and one
+    /// memory map, so the core scopes them out of the two-console cabinet
+    /// (see `rustynes_core::vs_dualsystem`).
+    #[error("not available on a Vs. DualSystem cabinet: {reason}")]
+    DualSystem {
+        /// Which feature was refused.
         reason: String,
     },
 }
@@ -604,6 +645,262 @@ pub fn host_warning_message(kind: HostWarning) -> String {
 /// real NES / FDS / UNIF image is well under it.
 const MAX_ROM_BYTES: usize = 16 * 1024 * 1024;
 
+/// The size of the Famicom Disk System BIOS (`disksys.rom`): 8 KiB, mapped at
+/// `$E000-$FFFF`. The core refuses any other size; the bridge checks first so
+/// the host gets [`MobileError::FdsBios`] at the moment it offers the file,
+/// not a ROM-load failure at the next disk.
+const FDS_BIOS_LEN: usize = 0x2000;
+
+/// How many frames a Vs. System coin insertion holds the acceptor signal
+/// before the bridge clears it: the same three frames (about 50 ms) the
+/// desktop uses, inside the 40-70 ms window the hardware's coin switch reads
+/// true for (see `Nes::insert_coin`).
+const VS_COIN_HOLD_FRAMES: u8 = 3;
+
+/// What kind of image a byte buffer holds, told apart by its leading magic --
+/// the same test the desktop's load path applies (`is_fds_image` and
+/// `is_nsf_image` in `rustynes-frontend`'s `app.rs`), so a file that loads on
+/// one host loads the same way on the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageKind {
+    /// An iNES / NES 2.0 / UNIF cartridge (anything that is not the two below;
+    /// the cartridge parser reports a malformed one).
+    Cartridge,
+    /// A Famicom Disk System disk: the fwNES header (`FDS\x1A`) or the
+    /// headerless raw form, whose first side opens with the disk-info block
+    /// signature `\x01*NINTENDO-HVC*`.
+    Disk,
+    /// An NSF music file: classic `NESM\x1A` or the chunked `NSFE` container.
+    Nsf,
+}
+
+impl ImageKind {
+    /// Classify `bytes` by magic. Never misfires on a cartridge: an iNES image
+    /// opens with `NES\x1A`, which matches neither prefix.
+    fn of(bytes: &[u8]) -> Self {
+        if bytes.starts_with(b"FDS\x1A") || bytes.starts_with(b"\x01*NINTENDO-HVC*") {
+            Self::Disk
+        } else if bytes.starts_with(b"NESM\x1A") || bytes.starts_with(b"NSFE") {
+            Self::Nsf
+        } else {
+            Self::Cartridge
+        }
+    }
+}
+
+/// Check that `bios` is an FDS BIOS by the one property the bridge can
+/// verify: its size. Its contents are the user's own dump and are not
+/// fingerprinted (a patched or translated BIOS is as valid as the original).
+fn check_fds_bios(bios: &[u8]) -> Result<(), MobileError> {
+    if bios.len() == FDS_BIOS_LEN {
+        Ok(())
+    } else {
+        Err(MobileError::FdsBios {
+            reason: format!(
+                "the file is {} bytes; the FDS BIOS (disksys.rom) is exactly {FDS_BIOS_LEN}",
+                bios.len()
+            ),
+        })
+    }
+}
+
+/// A Vs. `DualSystem` cabinet held by the controller (v2.9.7, plan item 7).
+///
+/// ## Why the main console lives in `Inner::nes`, not here
+///
+/// Every one of the bridge's ~60 single-console methods reads `Inner::nes`:
+/// ROM info, battery RAM, cheats, the debugger, the palette, audio. Rather
+/// than branch each of them on "is this a cabinet", the cabinet's MAIN
+/// console is kept in `Inner::nes` at rest, and [`DualSwap`] moves it into the
+/// [`VsDualSystem`] only for the calls that need the pair (a frame, a
+/// snapshot, a restore, a reset), then moves it back. So every
+/// single-console method keeps working, on the main console, the one a
+/// cabinet's left screen and speaker belong to; the SUB console never leaves
+/// the cabinet. While at rest, the cabinet's own `main` slot holds a spare
+/// console built from the same ROM, which never runs.
+///
+/// A swap moves `size_of::<Nes>()` bytes each way, 21,448 on x86-64 when
+/// this was written (the framebuffer and the larger buffers are heap
+/// allocations that move as pointers). Two such copies per frame are a few
+/// microseconds against a cabinet frame of several milliseconds.
+struct DualCabinet {
+    /// The two consoles and their cross-wiring.
+    system: Box<VsDualSystem>,
+    /// The (decompressed) ROM, kept so a power cycle can rebuild the whole
+    /// cabinet, wiring included, exactly as a fresh load does.
+    rom: Vec<u8>,
+}
+
+/// Moves the cabinet's main console out of `Inner::nes` and into the
+/// [`VsDualSystem`] for the guard's lifetime (see [`DualCabinet`]). The
+/// reverse move is in `Drop`, so it also runs when a panic unwinds out of a
+/// frame: `contained_frame` then finds the real main console back in
+/// `Inner::nes`, not the spare.
+struct DualSwap<'a> {
+    nes: &'a mut Nes,
+    system: &'a mut VsDualSystem,
+}
+
+impl<'a> DualSwap<'a> {
+    const fn new(nes: &'a mut Nes, system: &'a mut VsDualSystem) -> Self {
+        core::mem::swap(nes, system.main_mut());
+        Self { nes, system }
+    }
+}
+
+impl Drop for DualSwap<'_> {
+    fn drop(&mut self) {
+        core::mem::swap(self.nes, self.system.main_mut());
+    }
+}
+
+impl core::ops::Deref for DualSwap<'_> {
+    type Target = VsDualSystem;
+    fn deref(&self) -> &VsDualSystem {
+        self.system
+    }
+}
+
+impl core::ops::DerefMut for DualSwap<'_> {
+    fn deref_mut(&mut self) -> &mut VsDualSystem {
+        self.system
+    }
+}
+
+/// A console built from a host buffer: the console the controller runs, and
+/// the cabinet it belongs to when the image is a Vs. `DualSystem` board.
+struct Built {
+    nes: Nes,
+    dual: Option<DualCabinet>,
+}
+
+/// Build whatever `rom` holds (v2.9.7): a cartridge, an FDS disk (booted with
+/// `fds_bios`), an NSF, or a Vs. `DualSystem` cabinet. The size cap and the
+/// zip extraction apply to all of them, as before.
+///
+/// # Errors
+/// [`MobileError::RomLoad`] for an oversized or unparseable image,
+/// [`MobileError::MissingFdsBios`] for a disk with no BIOS set.
+fn build_console(
+    rom: Vec<u8>,
+    fds_bios: Option<&[u8]>,
+    sample_rate: u32,
+) -> Result<Built, MobileError> {
+    check_rom_size(&rom)?;
+    let rom = decompress_rom(rom);
+    let load_err = |e: rustynes_core::rustynes_mappers::RomError| MobileError::RomLoad {
+        reason: e.to_string(),
+    };
+    match ImageKind::of(&rom) {
+        ImageKind::Nsf => Ok(Built {
+            nes: Nes::from_nsf_with_sample_rate(&rom, sample_rate).map_err(load_err)?,
+            dual: None,
+        }),
+        ImageKind::Disk => {
+            let bios = fds_bios.ok_or(MobileError::MissingFdsBios)?;
+            Ok(Built {
+                nes: Nes::from_disk_with_sample_rate(&rom, bios, sample_rate).map_err(load_err)?,
+                dual: None,
+            })
+        }
+        ImageKind::Cartridge => {
+            match Emu::from_rom_with_sample_rate(&rom, sample_rate).map_err(load_err)? {
+                Emu::Single(nes) => Ok(Built {
+                    nes: *nes,
+                    dual: None,
+                }),
+                Emu::Dual(system) => {
+                    let (nes, system) = seat_cabinet(system, &rom, sample_rate)?;
+                    Ok(Built {
+                        nes,
+                        dual: Some(DualCabinet { system, rom }),
+                    })
+                }
+            }
+        }
+    }
+}
+
+/// Finish a freshly built cabinet: apply the Vs. database's PPU palette and
+/// DIP bank to both consoles (as the desktop's cabinet path does, since a
+/// dump's iNES 1.0 header carries neither), then take the main console out
+/// for `Inner::nes`, leaving a never-run spare in its slot (see
+/// [`DualCabinet`]).
+fn seat_cabinet(
+    mut system: Box<VsDualSystem>,
+    rom: &[u8],
+    sample_rate: u32,
+) -> Result<(Nes, Box<VsDualSystem>), MobileError> {
+    if let Some(entry) = rustynes_core::vs_db::lookup(system.main().rom_sha256()) {
+        let pair: [&mut Nes; 2] = system.split_mut().into();
+        for console in pair {
+            console.set_vs_ppu_type(entry.vs_ppu_type);
+            console.set_vs_dip(entry.vs_dip);
+        }
+    }
+    let mut nes =
+        Nes::from_rom_with_sample_rate(rom, sample_rate).map_err(|e| MobileError::RomLoad {
+            reason: e.to_string(),
+        })?;
+    core::mem::swap(&mut nes, system.main_mut());
+    Ok((nes, system))
+}
+
+/// Refuse a single-console feature while a cabinet is loaded.
+fn refuse_on_cabinet(g: &Inner, what: &str) -> Result<(), MobileError> {
+    if g.dual.is_some() {
+        Err(MobileError::DualSystem {
+            reason: format!("{what} runs on one console"),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+/// Run `f` on the loaded cabinet with its main console seated (see
+/// [`DualSwap`]). `None` when no cabinet is loaded.
+fn with_cabinet<T>(g: &mut Inner, f: impl FnOnce(&mut VsDualSystem) -> T) -> Option<T> {
+    let Inner { nes, dual, .. } = g;
+    let cabinet = dual.as_mut()?;
+    let mut seated = DualSwap::new(nes, &mut cabinet.system);
+    Some(f(&mut seated))
+}
+
+/// One cabinet frame (v2.9.7): the four host ports routed through the
+/// cabinet (P1/P2 to the main console, P3/P4 to the sub), the coin latch
+/// counted down, both consoles run in the core's soft lockstep, and the sub
+/// console's audio drained and discarded. The host plays the main console's
+/// speaker (it stays in `Inner::nes` and drains as before); the sub's samples
+/// are synthesized all the same, and without the drain its buffer would grow
+/// for as long as the cabinet runs. The drain goes through a fixed stack
+/// buffer so the per-frame path allocates nothing, as the desktop's does.
+///
+/// Movie, Lua, `RetroAchievements` and HD-pack hooks are deliberately not
+/// run: the entry points that start them refuse on a cabinet.
+fn run_cabinet_frame(masks: &[AtomicU8; 4], g: &mut Inner) {
+    let clear_coin = tick_coin(g);
+    with_cabinet(g, |cab| {
+        for (p, m) in masks.iter().enumerate() {
+            cab.set_buttons(p, Buttons::from_bits_truncate(m.load(Ordering::Acquire)));
+        }
+        if clear_coin {
+            cab.clear_coin();
+        }
+        cab.run_frame();
+        let mut scratch = [0.0_f32; 1024];
+        while cab.sub_mut().drain_audio_into(&mut scratch) == scratch.len() {}
+    });
+}
+
+/// Count down a held coin insertion; `true` on the frame it must clear.
+const fn tick_coin(g: &mut Inner) -> bool {
+    if g.coin_frames == 0 {
+        return false;
+    }
+    g.coin_frames -= 1;
+    g.coin_frames == 0
+}
+
 /// Mutable state behind the controller's lock.
 // Four independent flags (three netplay status bits and `frozen`), each read
 // on its own by a different caller; folding them into an enum would encode
@@ -679,6 +976,17 @@ struct Inner {
     /// instance, let a confused game overwrite its own battery save. Cleared by
     /// a fresh start -- a new ROM, a power cycle, or a loaded save state.
     frozen: bool,
+    /// v2.9.7 — the Famicom Disk System BIOS the host supplied, if any
+    /// (validated at 8 KiB). Kept across `load_rom`, so the host sets it once
+    /// and every later disk boots with it; a cartridge or NSF ignores it.
+    fds_bios: Option<Vec<u8>>,
+    /// v2.9.7 — the Vs. `DualSystem` cabinet, when the loaded ROM is one.
+    /// `nes` then holds the cabinet's MAIN console (see [`DualCabinet`]).
+    /// Cleared by a `load_rom` of anything else.
+    dual: Option<DualCabinet>,
+    /// v2.9.7 — frames left before a Vs. coin insertion clears (see
+    /// [`VS_COIN_HOLD_FRAMES`]); 0 when no coin is held.
+    coin_frames: u8,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -795,6 +1103,28 @@ impl NesController {
         }
     }
 
+    /// The body of one frame, shared by [`Self::run_frame`] and
+    /// [`Self::step_frame`]: a cabinet runs its own frame (v2.9.7, see
+    /// [`run_cabinet_frame`]); a single console latches input, runs the movie
+    /// hook, the frame, and the Lua and `RetroAchievements` hooks, as before,
+    /// and counts down a held Vs. coin.
+    fn tick_frame(&self, g: &mut Inner) {
+        if g.dual.is_some() {
+            run_cabinet_frame(&self.masks, g);
+            return;
+        }
+        self.latch_input(g);
+        if tick_coin(g) {
+            g.nes.clear_coin();
+        }
+        pre_tick_movie(g);
+        #[cfg(test)]
+        injected_frame_fault();
+        let _ = g.nes.run_frame();
+        post_frame_script(g);
+        post_frame_ra(g);
+    }
+
     /// Clear every port's mask (a new cartridge starts with nothing held).
     fn clear_input(&self) {
         for m in &self.masks {
@@ -815,26 +1145,54 @@ impl NesController {
 
 #[uniffi::export]
 impl NesController {
-    /// Construct a controller from raw iNES/NES 2.0 ROM bytes at the given host
-    /// sample rate (Hz). Pass [`DEFAULT_SAMPLE_RATE`] when unsure.
+    /// Construct a controller from a ROM buffer at the given host sample rate
+    /// (Hz). Pass [`DEFAULT_SAMPLE_RATE`] when unsure.
+    ///
+    /// The buffer's leading magic picks the loader, as on the desktop: an
+    /// iNES / NES 2.0 / UNIF cartridge (a Vs. `DualSystem` board becomes a
+    /// two-console cabinet, see [`Self::is_dual_system`]), an NSF / `NSFe` music
+    /// file (v2.9.7), or a Famicom Disk System disk (v2.9.7), which needs the
+    /// BIOS: construct a disk through [`Self::new_with_fds_bios`]. A `.zip` is
+    /// unpacked first.
     ///
     /// # Errors
-    /// Returns [`MobileError::RomLoad`] if the bytes are not a valid cartridge
-    /// image (FDS disks and NSF files are loaded through dedicated entry points
-    /// added in later increments).
+    /// [`MobileError::RomLoad`] if the bytes are not a loadable image;
+    /// [`MobileError::MissingFdsBios`] for an FDS disk (this constructor has
+    /// no BIOS to boot it with).
     #[uniffi::constructor]
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Arc<Self>, MobileError> {
-        check_rom_size(&rom)?;
-        let rom = decompress_rom(rom);
-        let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
-            MobileError::RomLoad {
-                reason: e.to_string(),
-            }
-        })?;
+        Self::new_with_fds_bios(rom, None, sample_rate)
+    }
+
+    /// v2.9.7 — construct a controller as [`Self::new`] does, with the host's
+    /// Famicom Disk System BIOS (`disksys.rom`, 8 KiB) available for an FDS
+    /// disk. The BIOS is kept, so a later [`Self::load_rom`] of another disk
+    /// boots with it too. `None` is exactly [`Self::new`].
+    ///
+    /// Hosts that store the BIOS once (a file in app storage, chosen by the
+    /// user) pass it here on every load; a cartridge or NSF ignores it.
+    ///
+    /// # Errors
+    /// [`MobileError::FdsBios`] if `fds_bios` is not 8 KiB (checked first,
+    /// whatever `rom` is); otherwise as [`Self::new`], with
+    /// [`MobileError::MissingFdsBios`] only when `fds_bios` is `None`.
+    #[uniffi::constructor]
+    pub fn new_with_fds_bios(
+        rom: Vec<u8>,
+        fds_bios: Option<Vec<u8>>,
+        sample_rate: u32,
+    ) -> Result<Arc<Self>, MobileError> {
+        if let Some(bios) = fds_bios.as_deref() {
+            check_fds_bios(bios)?;
+        }
+        let Built { nes, dual } = build_console(rom, fds_bios.as_deref(), sample_rate)?;
         Ok(Arc::new(Self {
             masks: [const { AtomicU8::new(0) }; 4],
             inner: Mutex::new(Inner {
                 nes,
+                fds_bios,
+                dual,
+                coin_frames: 0,
                 sample_rate,
                 recorder: None,
                 playback: None,
@@ -853,20 +1211,24 @@ impl NesController {
         }))
     }
 
-    /// Replace the loaded cartridge in place, resetting per-port input.
+    /// Replace the loaded image in place, resetting per-port input. Accepts
+    /// everything [`Self::new`] does; an FDS disk boots with the BIOS set by
+    /// [`Self::set_fds_bios`] or [`Self::new_with_fds_bios`]. Loading anything
+    /// but a cabinet ends cabinet mode.
     ///
     /// # Errors
-    /// Returns [`MobileError::RomLoad`] if `rom` is not a valid cartridge image.
+    /// [`MobileError::RomLoad`] if `rom` is not a loadable image;
+    /// [`MobileError::MissingFdsBios`] for a disk when no BIOS is set. The
+    /// running game is untouched on any error.
     pub fn load_rom(&self, rom: Vec<u8>, sample_rate: u32) -> Result<(), MobileError> {
-        check_rom_size(&rom)?;
-        let rom = decompress_rom(rom);
-        let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
-            MobileError::RomLoad {
-                reason: e.to_string(),
-            }
-        })?;
+        // Copy the BIOS out rather than build under the lock: parsing (and a
+        // zip inflate) must not hold up the frame thread.
+        let bios = self.lock().fds_bios.clone();
+        let Built { nes, dual } = build_console(rom, bios.as_deref(), sample_rate)?;
         let mut g = self.lock();
         g.nes = nes;
+        g.dual = dual;
+        g.coin_frames = 0;
         g.frozen = false;
         self.clear_input();
         g.sample_rate = sample_rate;
@@ -901,17 +1263,14 @@ impl NesController {
     ///
     /// The native hot path borrows the framebuffer pointer directly instead of
     /// copying; this owned-`Vec` form is the typed-surface convenience.
+    ///
+    /// On a Vs. `DualSystem` cabinet this runs both consoles and returns the
+    /// MAIN (left) screen; [`Self::sub_framebuffer`] reads the right one.
     pub fn run_frame(&self) -> Vec<u8> {
         self.contained_frame(
             |this, g| {
-                this.latch_input(g);
-                pre_tick_movie(g);
-                #[cfg(test)]
-                injected_frame_fault();
-                let fb = g.nes.run_frame().to_vec();
-                post_frame_script(g);
-                post_frame_ra(g);
-                fb
+                this.tick_frame(g);
+                g.nes.framebuffer().to_vec()
             },
             |g| g.nes.framebuffer().to_vec(),
         )
@@ -920,18 +1279,7 @@ impl NesController {
     /// Run one frame and discard the framebuffer copy — for callers that read
     /// the framebuffer through the native surface path and only need the tick.
     pub fn step_frame(&self) {
-        self.contained_frame(
-            |this, g| {
-                this.latch_input(g);
-                pre_tick_movie(g);
-                #[cfg(test)]
-                injected_frame_fault();
-                let _ = g.nes.run_frame();
-                post_frame_script(g);
-                post_frame_ra(g);
-            },
-            |_| (),
-        );
+        self.contained_frame(Self::tick_frame, |_| ());
     }
 
     /// Drain the audio samples produced since the last call (interleaved mono
@@ -1007,21 +1355,65 @@ impl NesController {
     }
 
     /// Soft-reset (the front-panel Reset button); preserves power-on alignment.
+    /// On a cabinet both consoles reset.
     pub fn reset(&self) {
-        self.lock().nes.reset();
+        let mut g = self.lock();
+        let cabinet = with_cabinet(&mut g, |cab| {
+            cab.main_mut().reset();
+            cab.sub_mut().reset();
+        });
+        if cabinet.is_none() {
+            g.nes.reset();
+        }
     }
 
     /// Cold power-cycle (re-randomises power-on state from the seeded PRNG).
+    ///
+    /// v2.9.7: a cabinet is rebuilt from its ROM, both consoles and the
+    /// cross-wiring together, so it powers on exactly as a fresh load does
+    /// (cycling each console alone would leave the wiring's latches as they
+    /// were). The rebuild re-parses a ROM that already parsed once; should it
+    /// fail anyway, each console power-cycles in place instead.
     pub fn power_cycle(&self) {
         let mut g = self.lock();
-        g.nes.power_cycle();
+        let sample_rate = g.sample_rate;
+        let rebuilt = g.dual.as_ref().map(|cab| {
+            Emu::from_rom_with_sample_rate(&cab.rom, sample_rate)
+                .ok()
+                .and_then(|emu| match emu {
+                    Emu::Dual(system) => seat_cabinet(system, &cab.rom, sample_rate).ok(),
+                    Emu::Single(_) => None,
+                })
+        });
+        match rebuilt {
+            Some(Some((nes, system))) => {
+                g.nes = nes;
+                if let Some(cab) = g.dual.as_mut() {
+                    cab.system = system;
+                }
+            }
+            Some(None) => {
+                with_cabinet(&mut g, |cab| {
+                    cab.main_mut().power_cycle();
+                    cab.sub_mut().power_cycle();
+                });
+            }
+            None => g.nes.power_cycle(),
+        }
+        g.coin_frames = 0;
         g.frozen = false;
     }
 
     /// Encode the entire emulator state into a `.rns` save-state blob. The blob
     /// is platform-independent — it loads on desktop, Android, and iOS alike.
+    ///
+    /// v2.9.7: on a Vs. `DualSystem` cabinet the blob is the core's `RVSD`
+    /// container, both consoles and the wiring's latches in one blob (the
+    /// same one the libretro core's cabinet serializes). It restores only
+    /// into a cabinet, and a single console's `.rns` does not restore into one.
     pub fn save_state(&self) -> Vec<u8> {
-        self.lock().nes.snapshot()
+        let mut g = self.lock();
+        with_cabinet(&mut g, |cab| cab.snapshot()).unwrap_or_else(|| g.nes.snapshot())
     }
 
     /// Restore emulator state from a `.rns` blob produced by [`Self::save_state`]
@@ -1042,9 +1434,11 @@ impl NesController {
             drop(g);
             return Err(MobileError::HardcoreBlocked);
         }
-        g.nes.restore(&data).map_err(|e| MobileError::SaveState {
-            reason: e.to_string(),
-        })?;
+        with_cabinet(&mut g, |cab| cab.restore(&data))
+            .unwrap_or_else(|| g.nes.restore(&data))
+            .map_err(|e| MobileError::SaveState {
+                reason: e.to_string(),
+            })?;
         // A whole snapshot replaced whatever a contained panic left behind.
         g.frozen = false;
         // The restore overwrote the core's controller latch with the snapshot's
@@ -1116,8 +1510,149 @@ impl NesController {
             });
         }
         g.nes.save_data_mut().copy_from_slice(&bytes);
+        // v2.9.7: a cabinet's two consoles each hold a copy of the shared
+        // work RAM (the core converges them write by write), so a loaded save
+        // goes into the sub console's copy too, or the halves would boot on
+        // different saves.
+        if let Some(cab) = g.dual.as_mut() {
+            let sub = cab.system.sub_mut().save_data_mut();
+            if sub.len() == bytes.len() {
+                sub.copy_from_slice(&bytes);
+            }
+        }
         drop(g);
         Ok(())
+    }
+
+    // --- Famicom Disk System (v2.9.7 "Tandem", plan item 6) -------------
+
+    /// v2.9.7 — hand the bridge the FDS BIOS (`disksys.rom`, 8 KiB) the user
+    /// chose. It is kept for every later [`Self::load_rom`] of a disk; the
+    /// running game is not touched. The host stores the file itself (the BIOS
+    /// is Nintendo IP and is never bundled) and passes it again to
+    /// [`Self::new_with_fds_bios`] when it builds the next controller.
+    ///
+    /// # Errors
+    /// [`MobileError::FdsBios`] if `bios` is not exactly 8 KiB; a BIOS already
+    /// set is kept.
+    pub fn set_fds_bios(&self, bios: Vec<u8>) -> Result<(), MobileError> {
+        check_fds_bios(&bios)?;
+        self.lock().fds_bios = Some(bios);
+        Ok(())
+    }
+
+    /// v2.9.7 — whether an FDS BIOS has been set on this controller.
+    pub fn has_fds_bios(&self) -> bool {
+        self.lock().fds_bios.is_some()
+    }
+
+    /// v2.9.7 — the number of disk sides in the inserted FDS image; 0 for a
+    /// cartridge or NSF, which is how a host tells an FDS game apart.
+    pub fn disk_side_count(&self) -> u32 {
+        u32::try_from(self.lock().nes.disk_side_count()).unwrap_or(u32::MAX)
+    }
+
+    /// v2.9.7 — the 0-based inserted disk side, or `None` when the disk is
+    /// ejected (and always for a cartridge or NSF). A game's "insert side B"
+    /// prompt is a request for [`Self::set_disk_side`].
+    pub fn inserted_disk_side(&self) -> Option<u32> {
+        self.lock()
+            .nes
+            .inserted_disk_side()
+            .and_then(|s| u32::try_from(s).ok())
+    }
+
+    /// v2.9.7 — insert side `side` (0-based), or eject with `None`. Inserting
+    /// opens the core's short "not ready" window that the BIOS waits out; an
+    /// out-of-range side is ignored, as is any call on a cartridge or NSF.
+    pub fn set_disk_side(&self, side: Option<u32>) {
+        let side = side.and_then(|s| usize::try_from(s).ok());
+        self.lock().nes.set_disk_side(side);
+    }
+
+    /// v2.9.7 — the FDS disk image as it stands, including anything the game
+    /// has written to it, in the headerless `.fds` layout. The host writes it
+    /// to its own save file and, on the next launch, loads THAT file as the
+    /// ROM, which is how a disk game's progress persists (FDS games save to
+    /// the disk; there is no battery RAM). Empty for a cartridge or NSF.
+    pub fn disk_image_bytes(&self) -> Vec<u8> {
+        self.lock().nes.disk_image_bytes()
+    }
+
+    /// v2.9.7 — whether the game has written to the disk since the last
+    /// [`Self::clear_disk_dirty`]; the host's cue to save
+    /// [`Self::disk_image_bytes`].
+    pub fn disk_is_dirty(&self) -> bool {
+        self.lock().nes.disk_is_dirty()
+    }
+
+    /// v2.9.7 — clear the disk's dirty flag after the host saved the image.
+    pub fn clear_disk_dirty(&self) {
+        self.lock().nes.clear_disk_dirty();
+    }
+
+    // --- NSF music files (v2.9.7 "Tandem", plan item 6) -----------------
+
+    /// v2.9.7 — the number of songs in the loaded NSF; 0 for a cartridge or
+    /// disk, which is how a host tells an NSF apart.
+    pub fn nsf_song_count(&self) -> u32 {
+        u32::from(self.lock().nes.nsf_song_count())
+    }
+
+    /// v2.9.7 — the playing song, 0-based (the file's header numbers songs
+    /// from 1; the header's starting song 1 is index 0 here).
+    pub fn nsf_current_song(&self) -> u32 {
+        u32::from(self.lock().nes.nsf_current_song())
+    }
+
+    /// v2.9.7 — play song `song` (0-based) from its start. A song past the
+    /// last selects the last one; no-op on a cartridge or disk.
+    pub fn nsf_set_song(&self, song: u32) {
+        let song = u8::try_from(song).unwrap_or(u8::MAX);
+        self.lock().nes.nsf_set_song(song);
+    }
+
+    // --- Vs. DualSystem cabinet (v2.9.7 "Tandem", plan item 7) ----------
+
+    /// v2.9.7 — whether the loaded ROM is a Vs. `DualSystem` cabinet: two
+    /// consoles, two screens. A host that sees `true` shows
+    /// [`Self::sub_framebuffer`] beside (or under) the main frame, and routes
+    /// ports 0/1 to the left cabinet half and 2/3 to the right one through
+    /// the ordinary [`Self::set_buttons`].
+    ///
+    /// Detection is the core's: the NES 2.0 header's Vs. hardware type, OR the
+    /// Vs. database's record for the ROM's SHA-256 (the circulating dumps are
+    /// iNES 1.0, so the database is what flags them).
+    pub fn is_dual_system(&self) -> bool {
+        self.lock().dual.is_some()
+    }
+
+    /// v2.9.7 — the cabinet's SUB console (right screen) framebuffer, RGBA8
+    /// in the same layout as [`Self::run_frame`]'s; empty when no cabinet is
+    /// loaded. Read it after the frame, like the main one.
+    pub fn sub_framebuffer(&self) -> Vec<u8> {
+        self.lock()
+            .dual
+            .as_ref()
+            .map(|cab| cab.system.sub_framebuffer().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// v2.9.7 — drop a coin into acceptor `acceptor` of a Vs. System machine.
+    /// On a cabinet, acceptors 0/1 belong to the main (left) half and 2/3 to
+    /// the sub (right) half; a single Vs. console has 0 and 1. The coin
+    /// switch reads closed for three frames, then the bridge releases it, as
+    /// the desktop does. An acceptor the machine lacks, and any call on a
+    /// non-Vs. cartridge, does nothing.
+    pub fn insert_coin(&self, acceptor: u32) {
+        let acceptor = u8::try_from(acceptor).unwrap_or(u8::MAX);
+        let mut g = self.lock();
+        // Seated: at rest the cabinet's own main slot holds the spare, so
+        // acceptors 0/1 must be latched with the real main console in place.
+        if with_cabinet(&mut g, |cab| cab.insert_coin(acceptor)).is_none() {
+            g.nes.insert_coin(acceptor);
+        }
+        g.coin_frames = VS_COIN_HOLD_FRAMES;
     }
 
     /// The number of frames emulated since power-on.
@@ -1192,6 +1727,10 @@ impl NesController {
     /// the recording starts from the same state a replay reconstructs).
     pub fn movie_record_from_power_on(&self) {
         let mut g = self.lock();
+        // v2.9.7: a `.rnm` holds one console; a cabinet records nothing.
+        if g.dual.is_some() {
+            return;
+        }
         // v2.9.0 — the session replaces the save RAM; keep reporting the
         // player's (`Inner::battery_held`).
         Self::hold_battery(&mut g);
@@ -1206,6 +1745,10 @@ impl NesController {
     /// save-state as the start point).
     pub fn movie_record_from_here(&self) {
         let mut g = self.lock();
+        // v2.9.7: a `.rnm` holds one console; a cabinet records nothing.
+        if g.dual.is_some() {
+            return;
+        }
         g.playback = None;
         g.recorder = Some(rustynes_core::MovieRecorder::from_current_state(&g.nes));
     }
@@ -1223,6 +1766,7 @@ impl NesController {
     /// # Errors
     /// [`MobileError::Movie`] if the bytes are not a valid movie or the ROM differs.
     pub fn movie_play(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        refuse_on_cabinet(&self.lock(), "movie playback")?;
         let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
             reason: e.to_string(),
         })?;
@@ -1368,6 +1912,7 @@ impl NesController {
     /// [`MobileError::Script`] if the engine fails to start or the script fails to
     /// compile / load.
     pub fn load_script(&self, src: String) -> Result<(), MobileError> {
+        refuse_on_cabinet(&self.lock(), "a Lua script")?;
         let mut engine = rustynes_script::ScriptEngine::new().map_err(|e| MobileError::Script {
             reason: e.to_string(),
         })?;
@@ -1665,6 +2210,7 @@ impl NesController {
     /// [`MobileError::Netplay`] if the socket bind fails.
     pub fn np_host(&self, local_port: u16, num_players: u8) -> Result<u16, MobileError> {
         let mut g = self.lock();
+        refuse_on_cabinet(&g, "netplay")?;
         let rom_hash = *g.nes.rom_sha256();
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         let conn = NetplayConnection::host(local, rom_hash).map_err(|e| MobileError::Netplay {
@@ -1694,6 +2240,7 @@ impl NesController {
     /// [`MobileError::Netplay`] if `address` is not a valid `host:port`, or the
     /// socket bind/connect fails.
     pub fn np_join(&self, address: String) -> Result<(), MobileError> {
+        refuse_on_cabinet(&self.lock(), "netplay")?;
         // Resolve via `ToSocketAddrs` so a hostname (`my-laptop.local:7000`) works
         // as well as a raw IP — `SocketAddr::parse` rejects hostnames. This runs
         // off the UI thread (the host calls `np_join` on a worker), so the brief
@@ -1747,6 +2294,7 @@ impl NesController {
         // stalled the emulation thread's next frame for as long as DNS took.
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
+        refuse_on_cabinet(&g, "netplay")?;
         let rom_hash = *g.nes.rom_sha256();
         let players = num_players.clamp(2, 4);
         // Seed the room-code + STUN-transaction PRNG from a non-deterministic
@@ -1784,6 +2332,7 @@ impl NesController {
         // `np_host_room`.
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
+        refuse_on_cabinet(&g, "netplay")?;
         let rom_hash = *g.nes.rom_sha256();
         let seed = nondeterministic_seed();
         let nat = NatConnect::join(&room_code, rom_hash, nat_cfg, seed).map_err(|e| {
@@ -2198,7 +2747,7 @@ fn check_rom_size(rom: &[u8]) -> Result<(), MobileError> {
 }
 
 /// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
-/// (`.nes` / `.fds` / `.unf` / `.unif`); otherwise return `bytes` unchanged. Lets
+/// (`.nes` / `.fds` / `.unf` / `.unif`, and since v2.9.7 `.nsf` / `.nsfe`); otherwise return `bytes` unchanged. Lets
 /// the host hand a still-compressed ROM straight through — the same convenience the
 /// desktop has — without unzipping on the Kotlin/Swift side. A malformed archive or
 /// a zip with no ROM entry falls back to the original bytes (the cartridge loader
@@ -2220,7 +2769,7 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
                 std::path::Path::new(e.name())
                     .extension()
                     .is_some_and(|ext| {
-                        ["nes", "fds", "unf", "unif"]
+                        ["nes", "fds", "unf", "unif", "nsf", "nsfe"]
                             .iter()
                             .any(|k| ext.eq_ignore_ascii_case(k))
                     })
@@ -3264,6 +3813,295 @@ mod tests {
         assert!(
             !ctrl.ra_hardcore(),
             "a lazily-created session must default to softcore"
+        );
+    }
+
+    // --- FDS, NSF and the Vs. DualSystem cabinet (v2.9.7 "Tandem") ------
+
+    /// A synthetic 8 KiB FDS BIOS: a `JMP $E000` idle loop at the reset
+    /// vector and an `RTI` for NMI / IRQ. Enough for the core to build the
+    /// disk system and run frames; it never reads the disk, which these tests
+    /// do not need (the core's own suites and the libretro ABI harness drive
+    /// real disk traffic). The real `disksys.rom` is Nintendo IP and is never
+    /// committed; the host supplies it.
+    fn synthetic_fds_bios() -> Vec<u8> {
+        let mut bios = vec![0u8; FDS_BIOS_LEN];
+        bios[..3].copy_from_slice(&[0x4C, 0x00, 0xE0]); // $E000: JMP $E000
+        bios[0x80] = 0x40; // $E080: RTI
+        // NMI $E080, RESET $E000, IRQ $E080.
+        bios[0x1FFA..].copy_from_slice(&[0x80, 0xE0, 0x00, 0xE0, 0x80, 0xE0]);
+        bios
+    }
+
+    /// A fwNES-headed disk image with `sides` sides, each opening with the
+    /// disk-info block signature -- the only part the container parser needs.
+    fn synthetic_fds_disk(sides: u8) -> Vec<u8> {
+        const SIDE: usize = 65_500;
+        let mut disk = vec![0u8; 16 + usize::from(sides) * SIDE];
+        disk[..4].copy_from_slice(b"FDS\x1A");
+        disk[4] = sides;
+        for s in 0..usize::from(sides) {
+            let base = 16 + s * SIDE;
+            disk[base] = 0x01;
+            disk[base + 1..base + 15].copy_from_slice(b"*NINTENDO-HVC*");
+        }
+        disk
+    }
+
+    /// A minimal classic NSF with three songs: `init` enables the APU and
+    /// programs a constant-volume pulse-1 tone, `play` is a bare `RTS`.
+    /// Loaded at `$8000`; init `$8000`, play `$800C`.
+    fn synthetic_nsf() -> Vec<u8> {
+        let mut f = vec![0u8; 0x80];
+        f[0..5].copy_from_slice(b"NESM\x1A");
+        f[0x05] = 1; // version
+        f[0x06] = 3; // total songs
+        f[0x07] = 1; // starting song (1-based in the header)
+        f[0x09] = 0x80; // load $8000
+        f[0x0B] = 0x80; // init $8000
+        f[0x0C] = 0x0C;
+        f[0x0D] = 0x80; // play $800C
+        f.extend_from_slice(&[
+            0xA9, 0x0F, 0x8D, 0x15, 0x40, // LDA #$0F; STA $4015
+            0xA9, 0xBF, 0x8D, 0x00, 0x40, // LDA #$BF; STA $4000
+            0x60, // RTS (end of init)
+            0xA0, // padding so play lands at $800C
+            0x60, // play: RTS
+        ]);
+        f
+    }
+
+    /// A header-flagged Vs. `DualSystem` cabinet image: NES 2.0, mapper 99,
+    /// byte 13 = Vs. hardware type 5, 64 KiB PRG (main half then sub half,
+    /// each a `JMP $8000` idle loop) and 8 KiB CHR-RAM. The same shape the
+    /// core's snapshot bench builds; no commercial dump is needed because the
+    /// NES 2.0 header alone routes the image to the cabinet.
+    fn synthetic_dual_cabinet() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 0x10000];
+        rom[0..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 0x04; // 4 x 16 KiB PRG
+        rom[6] = 0x30; // mapper 99, low nibble
+        rom[7] = 0x69; // mapper 99 high nibble | NES 2.0 | Vs. System
+        rom[11] = 0x07; // CHR-RAM: 64 << 7 = 8 KiB
+        rom[13] = 0x50; // Vs. hardware type 5 (DualSystem)
+        for half in [0usize, 0x8000] {
+            let prg = &mut rom[16 + half..16 + half + 0x8000];
+            prg[0..3].copy_from_slice(&[0x4C, 0x00, 0x80]); // $8000: JMP $8000
+            prg[0x7FFA..0x8000].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+        }
+        rom
+    }
+
+    /// Plan item 6: an NSF loads through the ordinary constructor (it used to
+    /// be refused as "not an iNES image"), reports its songs 0-based, and
+    /// selects a track.
+    #[test]
+    fn an_nsf_loads_and_selects_a_track() {
+        let ctrl = match NesController::new(synthetic_nsf(), DEFAULT_SAMPLE_RATE) {
+            Ok(c) => c,
+            Err(e) => panic!("an NSF must load on mobile: {e}"),
+        };
+        assert_eq!(ctrl.nsf_song_count(), 3);
+        assert_eq!(ctrl.nsf_current_song(), 0, "header song 1 is index 0");
+        let mut samples = 0;
+        for _ in 0..4 {
+            ctrl.step_frame();
+            samples += ctrl.drain_audio().len();
+        }
+        assert!(samples > 0, "the NSF plays");
+        ctrl.nsf_set_song(2);
+        assert_eq!(ctrl.nsf_current_song(), 2);
+        ctrl.nsf_set_song(99);
+        assert_eq!(
+            ctrl.nsf_current_song(),
+            2,
+            "out of range clamps to the last"
+        );
+        assert_eq!(ctrl.disk_side_count(), 0, "an NSF has no disk");
+    }
+
+    /// Plan item 6: a disk image with no BIOS set names the missing BIOS
+    /// rather than reporting a generic ROM-parse failure.
+    #[test]
+    fn a_disk_without_a_bios_names_the_missing_bios() {
+        match NesController::new(synthetic_fds_disk(1), DEFAULT_SAMPLE_RATE) {
+            Err(MobileError::MissingFdsBios) => {}
+            Err(other) => panic!("wrong error: {other}"),
+            Ok(_) => panic!("an FDS image cannot boot without a BIOS"),
+        }
+    }
+
+    /// Plan item 6: with the host's BIOS, a two-sided disk loads, reports
+    /// its sides, and swaps and ejects them; the disk image is readable for
+    /// the host's `.fds` save and starts clean.
+    #[test]
+    fn a_disk_loads_with_a_host_bios_and_swaps_sides() {
+        let ctrl = match NesController::new_with_fds_bios(
+            synthetic_fds_disk(2),
+            Some(synthetic_fds_bios()),
+            DEFAULT_SAMPLE_RATE,
+        ) {
+            Ok(c) => c,
+            Err(e) => panic!("a disk with a BIOS must load: {e}"),
+        };
+        assert!(ctrl.has_fds_bios());
+        assert_eq!(ctrl.disk_side_count(), 2);
+        assert_eq!(ctrl.inserted_disk_side(), Some(0));
+        ctrl.step_frame();
+        ctrl.set_disk_side(Some(1));
+        assert_eq!(ctrl.inserted_disk_side(), Some(1));
+        ctrl.set_disk_side(None);
+        assert_eq!(ctrl.inserted_disk_side(), None, "ejected");
+        ctrl.set_disk_side(Some(7));
+        assert_eq!(ctrl.inserted_disk_side(), None, "out of range is ignored");
+        assert!(!ctrl.disk_is_dirty());
+        assert!(!ctrl.disk_image_bytes().is_empty());
+        assert_eq!(ctrl.nsf_song_count(), 0, "a disk is not an NSF");
+    }
+
+    /// Plan item 6: the BIOS set on a controller persists across `load_rom`,
+    /// so a host that stored it once can swap disks without re-supplying it.
+    #[test]
+    fn a_bios_set_once_serves_later_disk_loads() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(!ctrl.has_fds_bios());
+        assert!(matches!(
+            ctrl.load_rom(synthetic_fds_disk(1), DEFAULT_SAMPLE_RATE),
+            Err(MobileError::MissingFdsBios)
+        ));
+        ctrl.set_fds_bios(synthetic_fds_bios()).expect("8 KiB BIOS");
+        ctrl.load_rom(synthetic_fds_disk(1), DEFAULT_SAMPLE_RATE)
+            .expect("disk loads once the BIOS is set");
+        assert_eq!(ctrl.disk_side_count(), 1);
+    }
+
+    /// Plan item 6: a BIOS that is not exactly 8 KiB is refused with a typed
+    /// error, at both entry points, and a refused BIOS replaces nothing.
+    #[test]
+    fn a_bios_of_the_wrong_size_is_refused() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        for len in [0, 0x1FFF, 0x2001, 0x4000] {
+            assert!(matches!(
+                ctrl.set_fds_bios(vec![0; len]),
+                Err(MobileError::FdsBios { .. })
+            ));
+        }
+        assert!(!ctrl.has_fds_bios());
+        assert!(matches!(
+            NesController::new_with_fds_bios(tiny_nrom(), Some(vec![0; 16]), DEFAULT_SAMPLE_RATE),
+            Err(MobileError::FdsBios { .. })
+        ));
+    }
+
+    /// Plan item 7: a Vs. `DualSystem` cabinet builds a dual controller that
+    /// runs both consoles, presents two framebuffers, and snapshots the pair
+    /// (the core's `RVSD` container) so a restore returns both byte for byte.
+    #[test]
+    fn a_dual_cabinet_runs_two_screens_and_snapshots_the_pair() {
+        let ctrl = NesController::new(synthetic_dual_cabinet(), DEFAULT_SAMPLE_RATE)
+            .expect("the cabinet loads");
+        assert!(ctrl.is_dual_system());
+        // The count is the main console's own; a Vs. cabinet reports its
+        // power-on frame as 1, so the test counts from there.
+        let start = ctrl.frame();
+        let len = (FRAME_WIDTH * FRAME_HEIGHT * 4) as usize;
+        let main = ctrl.run_frame();
+        assert_eq!(main.len(), len);
+        assert_eq!(ctrl.sub_framebuffer().len(), len);
+        for _ in 0..5 {
+            ctrl.step_frame();
+        }
+        assert_eq!(ctrl.frame(), start + 6, "the main console advanced");
+        ctrl.set_buttons(3, 0x81)
+            .expect("port 3 reaches the sub console");
+        ctrl.insert_coin(2);
+        let state = ctrl.save_state();
+        assert_eq!(&state[..4], b"RVSD", "the cabinet's own container");
+        for _ in 0..10 {
+            ctrl.step_frame();
+        }
+        let later = ctrl.save_state();
+        assert_ne!(later, state);
+        ctrl.load_state(state.clone()).expect("the pair restores");
+        assert_eq!(ctrl.frame(), start + 6);
+        assert_eq!(ctrl.save_state(), state, "both consoles restored exactly");
+        // A single console's `.rns` is not a cabinet's.
+        let single = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(ctrl.load_state(single.save_state()).is_err());
+        assert!(!single.is_dual_system());
+        assert!(single.sub_framebuffer().is_empty());
+    }
+
+    /// Plan item 7: the features the core scopes out of a cabinet (one
+    /// rollback state, one memory map: netplay, movies, Lua) are refused
+    /// with a typed error instead of silently driving the main console alone.
+    #[test]
+    fn a_dual_cabinet_refuses_the_single_console_features() {
+        let ctrl = NesController::new(synthetic_dual_cabinet(), DEFAULT_SAMPLE_RATE)
+            .expect("the cabinet loads");
+        assert!(matches!(
+            ctrl.np_host(0, 2),
+            Err(MobileError::DualSystem { .. })
+        ));
+        assert!(matches!(
+            ctrl.np_join("127.0.0.1:1".into()),
+            Err(MobileError::DualSystem { .. })
+        ));
+        assert!(matches!(
+            ctrl.movie_play(Vec::new()),
+            Err(MobileError::DualSystem { .. })
+        ));
+        assert!(matches!(
+            ctrl.load_script("function on_frame() end".into()),
+            Err(MobileError::DualSystem { .. })
+        ));
+        ctrl.movie_record_from_power_on();
+        assert!(!ctrl.movie_is_recording(), "no cabinet movie");
+        // Loading an ordinary cartridge leaves cabinet mode.
+        ctrl.load_rom(tiny_nrom(), DEFAULT_SAMPLE_RATE)
+            .expect("load");
+        assert!(!ctrl.is_dual_system());
+    }
+
+    /// A cabinet power cycle rebuilds both consoles from the ROM, which would
+    /// replace battery RAM with fresh bytes for the host to write over the
+    /// `.sav` -- the defect v2.9.0 fixed on the desktop (a review finding
+    /// on #577). It cannot happen today: mapper 99 exposes no save RAM, so a
+    /// cabinet's `battery_ram()` is empty even with the header's battery bit.
+    /// This pins that premise. If it fails, the board has gained a save, and
+    /// `power_cycle` must carry both consoles' `save_data` across the rebuild
+    /// before this test is relaxed.
+    #[test]
+    fn a_dual_cabinet_has_no_save_for_a_power_cycle_to_lose() {
+        let mut rom = synthetic_dual_cabinet();
+        rom[6] |= 0x02; // battery
+        rom[10] = 0x50; // NES 2.0: 64 << 5 = 2 KiB PRG-NVRAM
+        let ctrl = NesController::new(rom, DEFAULT_SAMPLE_RATE).expect("the cabinet loads");
+        assert!(ctrl.is_dual_system());
+        assert!(
+            ctrl.battery_ram().is_empty(),
+            "a cabinet now has save RAM: make power_cycle preserve it"
+        );
+    }
+
+    /// Plan item 7: a power cycle rebuilds the cabinet (both consoles and the
+    /// wiring) instead of cycling the main console alone.
+    #[test]
+    fn a_dual_cabinet_power_cycles_as_a_pair() {
+        let ctrl = NesController::new(synthetic_dual_cabinet(), DEFAULT_SAMPLE_RATE)
+            .expect("the cabinet loads");
+        let fresh = ctrl.save_state();
+        let start = ctrl.frame();
+        for _ in 0..8 {
+            ctrl.step_frame();
+        }
+        ctrl.power_cycle();
+        assert!(ctrl.is_dual_system());
+        assert_eq!(ctrl.frame(), start);
+        assert_eq!(
+            ctrl.save_state(),
+            fresh,
+            "the rebuilt pair is the fresh pair"
         );
     }
 

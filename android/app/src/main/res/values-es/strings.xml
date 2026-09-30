@@ -16,6 +16,11 @@
     <string name="action_close">Cerrar</string>
     <string name="action_states">Estados</string>
     <string name="action_reset">Reiniciar</string>
+    <string name="action_disk_side">Disco %1$s</string>
+    <string name="action_nsf_track">Pista %1$d/%2$d &gt;</string>
+    <string name="action_screen_left">Pantalla: izquierda</string>
+    <string name="action_screen_right">Pantalla: derecha</string>
+    <string name="action_insert_coin">Moneda</string>
     <string name="action_pause">Pausa</string>
     <string name="action_resume">Reanudar</string>
     <string name="action_settings">Configuración</string>
@@ -138,6 +143,7 @@
     <string name="settings_gpu_renderer">Renderizador GPU (reinicia para aplicar)</string>
     <string name="settings_haptics">Vibración</string>
     <string name="settings_hide_pad_with_controller">Ocultar el mando en pantalla con un control</string>
+    <string name="settings_cancel_opposites">Anular direcciones opuestas</string>
     <string name="settings_controller_screen">Mando — pantalla %1$s</string>
 
     <!-- ===== Play Games / estados en la nube (Workstream D+E) — DISTINTO de RetroAchievements ===== -->

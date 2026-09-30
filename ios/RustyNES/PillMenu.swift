@@ -31,6 +31,11 @@ struct PillMenu: View {
     var onSettings: () -> Void
     var onReset: () -> Void
     var onPower: () -> Void
+    // v2.9.7 "Tandem": shown only for the image that has them (nil = hidden).
+    var onFlipDisk: (() -> Void)? = nil
+    var onNextTrack: (() -> Void)? = nil
+    var onSwapScreen: (() -> Void)? = nil
+    var onCoin: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 4) {
@@ -72,6 +77,22 @@ struct PillMenu: View {
                        hint: "Soft-reset the console", action: onReset)
             pillButton("power", "Power cycle",
                        hint: "Power-cycle the console", action: onPower)
+            if let onFlipDisk {
+                pillButton("opticaldisc", "Flip disk",
+                           hint: "Insert the next Famicom Disk System side", action: onFlipDisk)
+            }
+            if let onNextTrack {
+                pillButton("forward.end", "Next track",
+                           hint: "Play the next song in this NSF", action: onNextTrack)
+            }
+            if let onSwapScreen {
+                pillButton("rectangle.split.2x1", "Swap screen",
+                           hint: "Show the other Vs. cabinet screen", action: onSwapScreen)
+            }
+            if let onCoin {
+                pillButton("centsign.circle", "Insert coin",
+                           hint: "Drop a coin into the Vs. machine", action: onCoin)
+            }
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 6)

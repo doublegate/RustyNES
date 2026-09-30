@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
 expression: text
 ---
 rom=mapper-250-Nitra/Time Diver - Avenger (Asia) (En) (Unl).nes
@@ -8,6 +9,6 @@ frames=1141
 fb_bytes=245760
 cycles=33949776
 audio_samples=836505
-audio_fnv1a64=61d59ad8c1a62fae
-checkpoint f900 fb_fnv1a64=7162d54202832ba3
-checkpoint f1100 fb_fnv1a64=41feb2c0da8e86a2
+audio_fnv1a64=240918a294b15a38
+checkpoint f900 fb_fnv1a64=4d73b41d35090bfd
+checkpoint f1100 fb_fnv1a64=4d73b41d35090bfd

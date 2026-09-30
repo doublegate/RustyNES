@@ -84,11 +84,19 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
     if id == 12 && submapper != 0 {
         return None;
     }
-    // Mapper 4 submapper 3, Acclaim's MC-ACC: its falling-edge /8 counter is
-    // on the MMC3 page, but the prescaler reset and phase come from a forum
-    // measurement (`m004_mmc3.rs`, `Mmc3Variant::McAcc`), not a page.
+    // Mapper 4 submapper 3, Acclaim's MC-ACC. v2.9.6 wrote it BestEffort: the
+    // falling-edge /8 counter is on the MMC3 page, but the prescaler reset and
+    // phase come from a forum measurement (`m004_mmc3.rs`, `Mmc3Variant::McAcc`).
+    // v2.9.7 promoted it to Curated on real games. Six Acclaim titles with NES
+    // 2.0 submapper-3 headers boot cleanly, and four of them (Alien 3,
+    // Terminator 2, The Incredible Crash Dummies, WWF King of the Ring) draw
+    // their status bars and title cards only under this model; forced to
+    // standard MMC3 they corrupt. That needed the PPU's v2.9.7 A12 fix: before
+    // it, the /8 was fed one edge per line instead of eight, and those four were
+    // broken. Curated, not the family's Core: no AccuracyCoin-level oracle
+    // covers it.
     if id == 4 && submapper == 3 {
-        return Some(MapperTier::BestEffort);
+        return Some(MapperTier::Curated);
     }
     // Mapper 91 submapper 1's M2 IRQ is described without saying when it
     // asserts (`m091_jy_sf3.rs`), so it carries less evidence than
@@ -312,7 +320,11 @@ mod tests {
         assert_eq!(mapper_tier(12, 1), None);
         assert_eq!(mapper_tier(91, 0), Some(MapperTier::Curated));
         assert_eq!(mapper_tier(91, 1), Some(MapperTier::BestEffort));
-        assert_eq!(mapper_tier(4, 3), Some(MapperTier::BestEffort));
+        assert_eq!(
+            mapper_tier(4, 3),
+            Some(MapperTier::Curated),
+            "MC-ACC, v2.9.7"
+        );
         assert_eq!(mapper_tier(4, 1), Some(MapperTier::Core), "MMC6");
     }
 

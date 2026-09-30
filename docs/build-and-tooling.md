@@ -161,8 +161,9 @@ cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-feature
   bindings, and runs the Gradle build (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37
   / targetSdk 36 / minSdk 26). See `docs/android.md`.
 - `workflows/release.yml` — tag-triggered (`v*`), builds the per-platform
-  release binaries and attaches them to the GitHub Release (it never writes
-  the release body — see the anti-clobber note in the workflow).
+  release binaries (`--features full` since v2.9.7) and attaches them to the
+  GitHub Release (it never writes the release body — see the anti-clobber note
+  in the workflow).
 - `workflows/web.yml` — deploys the wasm32 frontend to GitHub Pages; build +
   size-budget gate run on PRs (paths-filtered to build inputs), deploy only
   on `main`.

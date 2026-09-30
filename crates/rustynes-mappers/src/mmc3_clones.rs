@@ -40,6 +40,7 @@
     clippy::bool_to_int_with_if
 )]
 
+use crate::a12_filter::A12RiseFilter;
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, format, vec, vec::Vec};
@@ -51,7 +52,7 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 /// v2 (v2.7.2) appends the board's WRAM (mapper 245 only today); a v1 blob
 /// loads with it zeroed.
-const SAVE_STATE_VERSION: u8 = 2;
+const SAVE_STATE_VERSION: u8 = 3;
 
 // ---------------------------------------------------------------------------
 // Shared nametable helper (mirrors the one in the other simple-mapper modules).
@@ -117,7 +118,9 @@ struct Mmc3Clone {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
-    last_a12: bool,
+    /// v2.9.7 — MMC3's A12 rise filter (see `a12_filter`): the counter
+    /// clocks once per scanline on the eight-pulse stream the PPU reports.
+    a12: A12RiseFilter,
     prg_count_8k: usize,
     chr_count_1k: usize,
 }
@@ -137,7 +140,7 @@ impl Mmc3Clone {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
-            last_a12: false,
+            a12: A12RiseFilter::new(),
             prg_count_8k: prg_count_8k.max(1),
             chr_count_1k: chr_count_1k.max(1),
         }
@@ -226,9 +229,9 @@ impl Mmc3Clone {
 
     /// Clock the A12 IRQ counter on a PPU A12 transition.
     fn notify_a12(&mut self, level: bool) {
-        let rising = level && !self.last_a12;
-        self.last_a12 = level;
-        if !rising {
+        // v2.9.7 — MMC3's filter; see `a12_filter` for why a bare
+        // rising-edge test is no longer enough.
+        if !self.a12.edge(level) {
             return;
         }
         if self.irq_counter == 0 || self.irq_reload {
@@ -253,10 +256,11 @@ impl Mmc3Clone {
         out.push(u8::from(self.irq_reload));
         out.push(u8::from(self.irq_enabled));
         out.push(u8::from(self.irq_pending));
-        out.push(u8::from(self.last_a12));
+        out.push(self.a12.to_byte());
     }
 
-    fn load(&mut self, data: &[u8]) {
+    /// `legacy_a12`: a v1/v2 state, whose byte 17 is the bare A12 level.
+    fn load(&mut self, data: &[u8], legacy_a12: bool) {
         self.regs.copy_from_slice(&data[0..8]);
         self.bank_select = data[8];
         self.prg_mode = data[9] != 0;
@@ -267,7 +271,11 @@ impl Mmc3Clone {
         self.irq_reload = data[14] != 0;
         self.irq_enabled = data[15] != 0;
         self.irq_pending = data[16] != 0;
-        self.last_a12 = data[17] != 0;
+        self.a12 = if legacy_a12 {
+            A12RiseFilter::from_legacy_level(data[17] != 0)
+        } else {
+            A12RiseFilter::from_byte(data[17])
+        };
     }
 }
 
@@ -488,7 +496,9 @@ impl Mapper for Mmc3CloneMapper {
 
     fn caps(&self) -> MapperCaps {
         MapperCaps {
-            cpu_cycle_hook: false,
+            // v2.9.7: the A12 filter's clock (`notify_cpu_cycle`); the bus
+            // calls it only on boards that declare this.
+            cpu_cycle_hook: true,
             audio: false,
             frame_event_hook: false,
             irq_source: true,
@@ -664,6 +674,10 @@ impl Mapper for Mmc3CloneMapper {
         self.core.notify_a12(level);
     }
 
+    fn notify_cpu_cycle(&mut self) {
+        self.core.a12.tick();
+    }
+
     fn irq_pending(&self) -> bool {
         self.core.irq_pending
     }
@@ -697,9 +711,11 @@ impl Mapper for Mmc3CloneMapper {
             expected: 1,
             got: 0,
         })?;
+        // v3 (v2.9.7) has v2's layout and packs the A12 filter into the old
+        // `last_a12` byte; a v1/v2 state's byte is the bare level.
         let wram_len = match version {
             1 => 0,
-            SAVE_STATE_VERSION => self.wram.len(),
+            2 | SAVE_STATE_VERSION => self.wram.len(),
             v => return Err(MapperError::UnsupportedVersion(v)),
         };
         let expected = 3 + Mmc3Clone::SAVE_LEN + self.vram.len() + chr_ram + wram_len;
@@ -712,7 +728,10 @@ impl Mapper for Mmc3CloneMapper {
         self.outer = data[1];
         self.outer2 = data[2];
         let mut cursor = 3;
-        self.core.load(&data[cursor..cursor + Mmc3Clone::SAVE_LEN]);
+        self.core.load(
+            &data[cursor..cursor + Mmc3Clone::SAVE_LEN],
+            version != SAVE_STATE_VERSION,
+        );
         cursor += Mmc3Clone::SAVE_LEN;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
@@ -834,6 +853,16 @@ clone_ctor!(
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]
 mod tests {
+
+    /// v2.9.7 — the IRQ counter clocks once per scanline on the A12 stream the
+    /// PPU now reports (eight pulses per line), through MMC3's filter. Before,
+    /// it clocked on every rise and depended on the PPU delivering only one.
+    #[test]
+    fn irq_counts_scanlines_not_raw_a12_pulses() {
+        let mut m = new_m245(synth_prg_8k(16), Box::new([]), Mirroring::Vertical).unwrap();
+        assert_eq!(crate::a12_filter::irqs_over_scanlines(&mut m, 16), 2);
+    }
+
     use super::*;
 
     fn synth_prg_8k(banks: usize) -> Box<[u8]> {
@@ -869,6 +898,10 @@ mod tests {
         assert!(!m.irq_pending());
         for _ in 0..3 {
             m.notify_a12(false);
+            // v2.9.7: three CPU cycles low, as MMC3's A12 filter requires.
+            for _ in 0..3 {
+                m.notify_cpu_cycle();
+            }
             m.notify_a12(true);
         }
         assert!(m.irq_pending());

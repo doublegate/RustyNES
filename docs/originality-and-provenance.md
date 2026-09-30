@@ -75,6 +75,7 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-mappers/src/m099_vs_system.rs` | Mesen2 | `VsSystem.h`: DualSystem sub-console `chrOuter` / `prgOuter` banking (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m176_bmc_fk23c.rs` | Mesen2 | `Waixing/Fk23C.h`, `Mmc3Variants/MMC3_Coolboy.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m244_cne_decathlon.rs` | Mesen2; puNES | `Mapper244` / `mapper_244`: the PRG and CHR data-byte scramble tables (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later / GPL-2.0-or-later |
+| `crates/rustynes-mappers/src/m250_nitra250.rs` | Mesen2 | `MMC3_250`: the address decode, register data from A0-A7 and the MMC3 even/odd line from A10, quoted at the `cpu_write` site (recorded v2.9.7 at the maintainer's direction, 2026-09-30; the module doc's `GeraNES` cross-check is not a derivation) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m268_bmc_coolboy.rs` | Mesen2 / FCEUX | `Mmc3Variants/MMC3_Coolboy.h` banking | GPL-3.0-or-later / GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/m513_sachen_9602.rs` | Mesen2 | `Sachen/Sachen9602.h`, `Txc/TxcChip.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/mmc3_clones.rs` | Mesen2 | `Waixing/Mapper253.h`, `Sachen/Sachen8259.h`, `InvertPrgBits`, MMC3 variants | GPL-3.0-or-later |

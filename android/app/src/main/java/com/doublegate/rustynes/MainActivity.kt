@@ -102,6 +102,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import uniffi.rustynes_mobile.HostWarning
 import uniffi.rustynes_mobile.InternalException
+import uniffi.rustynes_mobile.MobileException
 import uniffi.rustynes_mobile.NesController
 import uniffi.rustynes_mobile.RaLoginStatus
 import uniffi.rustynes_mobile.RaToast
@@ -584,6 +585,19 @@ class EmulatorHandle {
     @Volatile
     var muted: Boolean = false
 
+    /** Cancel opposite directions (neutral SOCD, see [socdNeutral]) on every port's
+     *  combined mask -- v2.9.7 "Tandem" (plan item 8), mirrored from
+     *  [AppSettings.cancelOpposites]. Default on, the behaviour before the setting. */
+    @Volatile
+    var cancelOpposites: Boolean = true
+
+    /** On a Vs. DualSystem cabinet, present the SUB console's (right-hand) screen
+     *  instead of the main one -- v2.9.7 "Tandem" (plan item 7). The phone shows one
+     *  cabinet screen at a time; the control bar's Screen button flips it. Ignored
+     *  for anything but a cabinet (the bridge's `subFramebuffer` is then empty). */
+    @Volatile
+    var showSubScreen: Boolean = false
+
     // Each NES port's mask is the OR of two sources that must not clobber each
     // other: P1 also gets the on-screen virtual controller (multi-touch), and every
     // port gets its assigned hardware gamepad (via GamepadManager). applyPort()
@@ -599,6 +613,13 @@ class EmulatorHandle {
      *  keyboard works even with no game pad assigned to port 0). */
     @Volatile
     private var keyboardMask: Int = 0
+
+    /** Drop a coin into the acceptor of the screen on show: 2 on a cabinet's
+     *  right-hand (sub) screen, else 0. The bridge holds it three frames. */
+    fun insertCoin() {
+        val c = controller ?: return
+        c.insertCoin(if (showSubScreen && c.isDualSystem()) 2u else 0u)
+    }
 
     /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */
     fun setTouchMask(mask: Int) {
@@ -644,6 +665,7 @@ class EmulatorHandle {
             } else {
                 gamepadMasks[port]
             },
+            cancelOpposites,
         )
         controller?.setButtons(port.toUInt(), mask.toUByte())
     }
@@ -658,7 +680,9 @@ class EmulatorHandle {
      *  `local_mask` netplay feeds to `npAdvanceFrame` (where the bridge owns the
      *  latch, so `setButtons` is not the input path). Synchronized against the
      *  touch/key updaters. */
-    fun p1Mask(): Int = synchronized(this) { socdNeutral(touchMask or gamepadMasks[0] or keyboardMask) }
+    fun p1Mask(): Int = synchronized(this) {
+        socdNeutral(touchMask or gamepadMasks[0] or keyboardMask, cancelOpposites)
+    }
 
     private fun keyboardKeyToBit(keyCode: Int): Int? = when (keyCode) {
         KeyEvent.KEYCODE_ENTER -> NesBit.START
@@ -672,6 +696,18 @@ class EmulatorHandle {
         else -> null
     }
 }
+
+/** What the control bar shows for the loaded image (v2.9.7 "Tandem"): its FDS disk
+ *  sides and inserted side (0-based, null = ejected), its NSF songs and current song
+ *  (0-based), and whether it is a Vs. System machine or a two-console cabinet. */
+private data class MediaControls(
+    val diskSides: Int,
+    val diskSide: Int?,
+    val songs: Int,
+    val song: Int,
+    val dual: Boolean,
+    val vs: Boolean,
+)
 
 /** NES controller button bits — matches `rustynes_core::Buttons`. */
 object NesBit {
@@ -707,7 +743,10 @@ private class PreparedRom(
  * if the bytes are not a valid ROM (callers wrap in `runCatching`).
  */
 private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: String?): PreparedRom {
-    val ctrl = NesController(bytes, 48_000u)
+    // v2.9.7 "Tandem": the stored FDS BIOS (if the user chose one) rides along, so an
+    // .fds disk boots; a cartridge or NSF ignores it. Without it a disk throws
+    // MobileException.MissingFdsBios, which openRom turns into the BIOS prompt.
+    val ctrl = NesController.newWithFdsBios(bytes, FdsBios.load(context), 48_000u)
     val sha = sha256Hex(bytes)
     // Load the cartridge's `.sav` before its first frame, and before the auto-resume
     // state below (a save state is newer and restores cartridge RAM too).
@@ -1026,6 +1065,13 @@ private fun EmulatorScreen(
     // Whether a ROM is currently loaded — drives the Open/Close toggle button and
     // gates the gameplay view vs. the idle (Open + recents) screen.
     var romLoaded by remember { mutableStateOf(false) }
+    // v2.9.7 "Tandem": bumped whenever the loaded image or its disk side / NSF track /
+    // cabinet screen changes, so the control bar's FDS / NSF / cabinet buttons
+    // re-read the controller (a plain field, not Compose state).
+    var mediaTick by remember { mutableStateOf(0) }
+    // v2.9.7: a disk load that failed for want of the FDS BIOS, retried once the user
+    // has chosen the BIOS file (see `fdsBiosPicker`).
+    var pendingFdsRetry by remember { mutableStateOf<(() -> Unit)?>(null) }
     // HD-pack (v1.8.5): `hdActive` switches the UI to the Bitmap path (the GPU
     // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
     var hdActive by remember { mutableStateOf(false) }
@@ -1091,6 +1137,10 @@ private fun EmulatorScreen(
     // Settings are created at the theme root and passed in (v1.8.3).
     // Drive the audio-mute flag from the persisted setting.
     LaunchedEffect(settings.muted) { emulator.muted = settings.muted }
+    LaunchedEffect(settings.cancelOpposites) {
+        emulator.cancelOpposites = settings.cancelOpposites
+        emulator.reapplyAllPorts()
+    }
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
     // v1.8.8 "Atlas" (Workstream D): a surfaced cloud-save conflict awaiting the user's
@@ -1290,9 +1340,18 @@ private fun EmulatorScreen(
                     prepareRom(context, read(), uri, name())
                 }
                 status = publishRom(scope, emulator, prepared, settings)
+                emulator.showSubScreen = false
+                mediaTick++
                 recents = withContext(Dispatchers.IO) { RomLibrary.recents(context) }
                 libraryVersion++
-            }.onFailure { status = "$errPrefix: ${it.message}" }
+            }.onFailure {
+                status = "$errPrefix: ${it.message}"
+                // v2.9.7: an FDS disk with no BIOS stored -- ask for disksys.rom once,
+                // then load the same disk again (fdsBiosPicker below).
+                if (it is MobileException.MissingFdsBios) {
+                    pendingFdsRetry = { openRom(uri, name, read, errPrefix) }
+                }
+            }
         }
     }
 
@@ -1314,6 +1373,39 @@ private fun EmulatorScreen(
                 errPrefix = "Failed to load ROM",
             )
         }
+    }
+
+    // v2.9.7 "Tandem" (plan item 6): the FDS BIOS picker. Opened by a disk load that
+    // failed with MissingFdsBios; the chosen file is validated (8 KiB), stored once in
+    // app storage (FdsBios), and the pending disk load retried with it.
+    val fdsBiosPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val retry = pendingFdsRetry
+        pendingFdsRetry = null
+        if (uri != null) {
+            scope.launch {
+                val stored = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val bytes = (context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("can't open BIOS stream")).use { it.readBytes() }
+                        FdsBios.save(context, bytes)
+                    }.getOrDefault(false)
+                }
+                if (stored) {
+                    retry?.invoke()
+                } else {
+                    status = "Not an FDS BIOS: disksys.rom is exactly ${FdsBios.SIZE} bytes"
+                }
+            }
+        } else {
+            // Cancelled: say what the disk needs and how to supply it, rather
+            // than leave the raw load error showing (CodeRabbit on #577).
+            status = "FDS disks need the BIOS: load the disk again and choose disksys.rom"
+        }
+    }
+    LaunchedEffect(pendingFdsRetry) {
+        if (pendingFdsRetry != null) fdsBiosPicker.launch(arrayOf("*/*"))
     }
 
     // SAF picker for a custom .pal palette (a 192-byte RGB table; extra colours,
@@ -2197,6 +2289,66 @@ private fun EmulatorScreen(
             }
             OutlinedButton(onClick = { showStates = true }) { Text(stringResource(R.string.action_states)) }
             OutlinedButton(onClick = { emulator.controller?.reset() }) { Text(stringResource(R.string.action_reset)) }
+            // v2.9.7 "Tandem" (plan items 6 and 7): the FDS disk side, the NSF track, and
+            // a Vs. cabinet's screen and coin -- shown only for the image that has them.
+            val media = remember(mediaTick, romLoaded) {
+                emulator.controller?.let { c ->
+                    MediaControls(
+                        diskSides = c.diskSideCount().toInt(),
+                        diskSide = c.insertedDiskSide()?.toInt(),
+                        songs = c.nsfSongCount().toInt(),
+                        song = c.nsfCurrentSong().toInt(),
+                        dual = c.isDualSystem(),
+                        vs = c.info().isVsSystem,
+                    )
+                }
+            }
+            if (media != null && media.diskSides > 0) {
+                // Next side, wrapping; from ejected, side A. A game's "insert side B"
+                // prompt is answered here.
+                OutlinedButton(onClick = {
+                    val next = media.diskSide?.let { (it + 1) % media.diskSides } ?: 0
+                    emulator.controller?.setDiskSide(next.toUInt())
+                    mediaTick++
+                }) {
+                    Text(
+                        stringResource(
+                            R.string.action_disk_side,
+                            media.diskSide?.let { ('A' + it).toString() } ?: "-",
+                        ),
+                    )
+                }
+            }
+            if (media != null && media.songs > 0) {
+                OutlinedButton(onClick = {
+                    emulator.controller?.nsfSetSong(((media.song + media.songs - 1) % media.songs).toUInt())
+                    mediaTick++
+                }) { Text("<") }
+                OutlinedButton(onClick = {
+                    emulator.controller?.nsfSetSong(((media.song + 1) % media.songs).toUInt())
+                    mediaTick++
+                }) { Text(stringResource(R.string.action_nsf_track, media.song + 1, media.songs)) }
+            }
+            if (media != null && media.dual) {
+                OutlinedButton(onClick = {
+                    emulator.showSubScreen = !emulator.showSubScreen
+                    mediaTick++
+                }) {
+                    Text(
+                        stringResource(
+                            if (emulator.showSubScreen) R.string.action_screen_right else R.string.action_screen_left,
+                        ),
+                    )
+                }
+            }
+            if (media != null && (media.vs || media.dual)) {
+                // The coin goes to the screen on show: on a cabinet, acceptors
+                // 0/1 are the main (left) console's and 2/3 the sub's. A single
+                // Vs. console always uses 0. (Copilot on #577, for iOS.)
+                OutlinedButton(onClick = { emulator.insertCoin() }) {
+                    Text(stringResource(R.string.action_insert_coin))
+                }
+            }
             OutlinedButton(onClick = {
                 paused = !paused
                 emulator.paused = paused
@@ -2671,7 +2823,15 @@ private fun EmulatorScreen(
                             if (scriptLoaded) logLines = ctrl.drainScriptLog()
                             return@withContext
                         }
-                        val fb = ctrl.runFrame()
+                        // v2.9.7: a Vs. DualSystem cabinet ran both consoles; show the
+                        // right-hand one when the user flipped to it (empty = no cabinet).
+                        val fb = ctrl.runFrame().let { main ->
+                            if (emulator.showSubScreen) {
+                                ctrl.subFramebuffer().takeIf { it.isNotEmpty() } ?: main
+                            } else {
+                                main
+                            }
+                        }
                         if (hdBmp != null) {
                             // HD-pack: composite the upscaled frame (Bitmap path only —
                             // the GPU SurfaceView is fixed at 256x240).

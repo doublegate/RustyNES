@@ -716,8 +716,8 @@ pub struct App {
     present_phase: u8,
     /// v2.1.2 F2.1 — the composed Vs. `DualSystem` two-screen image (main + sub
     /// arranged side-by-side / stacked), filled under the present lock and blitted
-    /// via `Gfx::render_dual`. Empty unless a cabinet is loaded.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// via `Gfx::render_dual`. Empty unless a cabinet is loaded. v2.9.7
+    /// "Tandem" — on the wasm-winit build too.
     present_dual: Vec<u8>,
     /// v2.1.2 F2.1 — cached "a Vs. `DualSystem` cabinet is loaded" flag, set at
     /// load / cleared at close, so the per-redraw present path can branch without
@@ -1035,18 +1035,34 @@ const fn resolve_vs_dip(
     }
 }
 
-/// Emit the "this is a Vs. dual-system cart" note once such a ROM loads.
-/// These titles need two CPUs + two PPUs; this single-system core renders only a
-/// black/attract screen. Full support is a documented future feature.
-fn log_dual_system_note() {
-    let note = "RustyNES: this is a Vs. DualSystem title (two CPUs / two PPUs, \
-                e.g. Tennis / Mahjong / Wrecking Crew / Balloon Fight). The \
-                single-system core cannot boot it past the attract screen; \
-                DualSystem support is a planned future feature.";
+/// Warn that a Vs. `DualSystem` title is running as its MAIN console only.
+///
+/// These titles need two CPUs + two PPUs (Tennis, Mahjong, Wrecking Crew,
+/// Balloon Fight). The desktop (since v2.1.2) and the wasm-winit build (since
+/// v2.9.7) build the two-console cabinet, so this fires only where one was not
+/// built: the cabinet build failed, or the lightweight `wasm-canvas` embed,
+/// which has no two-screen present path. `why` says which.
+///
+/// Until v2.9.7 this fired from `apply_vs_db` on EVERY Vs. `DualSystem` load,
+/// saying "the single-system core cannot boot it", which had been false on
+/// the desktop since v2.1.2 built the cabinet.
+pub(crate) fn warn_dual_system_main_only(why: &str) {
+    let note = format!(
+        "RustyNES: this is a Vs. DualSystem title (two CPUs / two PPUs, e.g. \
+         Tennis / Mahjong / Wrecking Crew / Balloon Fight). {why} Only the MAIN \
+         console runs, so the game may not get past its attract screen."
+    );
     #[cfg(not(target_arch = "wasm32"))]
     eprintln!("{note}");
     #[cfg(target_arch = "wasm32")]
-    web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(note));
+    web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&note));
+}
+
+/// Whether `nes` is a Vs. `DualSystem` board: the NES 2.0 header says so, or
+/// the Vs. database lists its SHA-256 as one.
+pub(crate) fn is_dual_system(nes: &Nes) -> bool {
+    nes.is_vs_dual_system()
+        || rustynes_core::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system)
 }
 
 /// v1.7.0 "Forge" G4 — the recomputed ROM digests stamped onto an exported TAS
@@ -1118,7 +1134,6 @@ impl App {
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
             present_index_staging: Vec::new(),
-            #[cfg(not(target_arch = "wasm32"))]
             present_dual: Vec::new(),
             dual_mode: false,
             present_phase: 0,
@@ -1267,7 +1282,6 @@ impl App {
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
             present_index_staging: Vec::new(),
-            #[cfg(not(target_arch = "wasm32"))]
             present_dual: Vec::new(),
             dual_mode: false,
             present_phase: 0,
@@ -1392,18 +1406,46 @@ impl App {
         if let Some(entry) = db_entry {
             nes.set_vs_ppu_type(entry.vs_ppu_type);
         }
-        // A Vs. DualSystem cart (two CPUs + two PPUs) cannot boot past the
-        // attract screen on this single-system core. Surface a clear note
-        // rather than leaving the user staring at a black screen. Full
-        // two-system support is a documented future feature
-        // (docs/audit/vs-dualsystem-design-2026-06-11.md). v1.3.0 D2: the note
-        // now also fires for header-flagged DualSystem ROMs (NES 2.0 byte-13
-        // high nibble), not only the SHA-256-DB-known dumps.
-        if db_entry.is_some_and(|e| e.dual_system) || nes.is_vs_dual_system() {
-            log_dual_system_note();
-        }
+        // v2.9.7 — the "Vs. DualSystem" note no longer fires here. It said the
+        // core could not boot such a cart, which stopped being true when the
+        // load paths began building the two-console cabinet; it now fires
+        // only where no cabinet is built (`warn_dual_system_main_only`).
         let dip = resolve_vs_dip(self.config.vs, db_entry);
         nes.set_vs_dip(dip);
+    }
+
+    /// v2.1.2 F2.1 / v2.9.7 "Tandem" — build the two-console Vs. `DualSystem`
+    /// cabinet for a cartridge whose probe `nes` is a `DualSystem` board, with
+    /// the Vs. database's PPU palette + DIP applied to BOTH consoles. `None`
+    /// for any other cartridge, and (with a warning) when the build fails, in
+    /// which case the caller runs the probe as the main console alone.
+    ///
+    /// Shared by the desktop's `load_rom_from_path` (where it was inline from
+    /// v2.1.2) and, from v2.9.7, the wasm-winit load path, so the browser
+    /// detects the same cabinets by the same rule. The caller excludes FDS and
+    /// NSF images, which are never Vs. boards.
+    fn build_dual_cabinet(
+        &self,
+        nes: &Nes,
+        bytes: &[u8],
+        sample_rate: u32,
+    ) -> Option<Box<rustynes_core::VsDualSystem>> {
+        if !is_dual_system(nes) {
+            return None;
+        }
+        match rustynes_core::VsDualSystem::from_rom_with_sample_rate(bytes, sample_rate) {
+            Ok(mut vs) => {
+                self.apply_vs_db(vs.main_mut());
+                self.apply_vs_db(vs.sub_mut());
+                Some(Box::new(vs))
+            }
+            Err(e) => {
+                warn_dual_system_main_only(&format!(
+                    "The two-console cabinet failed to build ({e})."
+                ));
+                None
+            }
+        }
     }
 
     /// v1.1.0 beta.1 (T-110-B4) — apply the per-game database's nametable
@@ -1447,6 +1489,12 @@ impl App {
             // v2.7.3 (FE-01) — the final battery write goes before the ROM.
             #[cfg(not(target_arch = "wasm32"))]
             emu.detach_battery();
+            // v2.9.7 — and the browser's, handed to IndexedDB (the bytes are
+            // copied now, so clearing the ROM cannot change them).
+            #[cfg(target_arch = "wasm32")]
+            if let Some(write) = emu.detach_web_battery() {
+                crate::wasm_idb::spawn_battery_write(write);
+            }
             emu.clear_rom();
             emu.perf.clear();
             emu.present_fb.clear();
@@ -1646,28 +1694,16 @@ impl App {
         // real two-console cabinet from the same bytes and apply the Vs.-DB DIP +
         // RGB palette to BOTH consoles; the probe `nes` becomes a discarded
         // throwaway (its single-console post-setup below is harmless). The install
-        // block routes this into `EmuCore::dual`. On wasm (no dual present path) a
-        // DualSystem ROM keeps running as the single main-console probe.
+        // block routes this into `EmuCore::dual`. The browser has no file path
+        // and so never reaches this function; its load path builds the cabinet
+        // in `install_nes_wasm` (v2.9.7) with the same `build_dual_cabinet`.
         #[cfg(not(target_arch = "wasm32"))]
-        let dual_cabinet: Option<Box<rustynes_core::VsDualSystem>> = if !is_nsf_image(&bytes)
-            && !is_fds_image(&bytes)
-            && (nes.is_vs_dual_system()
-                || rustynes_core::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system))
-        {
-            match rustynes_core::VsDualSystem::from_rom_with_sample_rate(&bytes, sample_rate) {
-                Ok(mut vs) => {
-                    self.apply_vs_db(vs.main_mut());
-                    self.apply_vs_db(vs.sub_mut());
-                    Some(Box::new(vs))
-                }
-                Err(e) => {
-                    eprintln!("rustynes: Vs. DualSystem build failed, running main-only: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let dual_cabinet: Option<Box<rustynes_core::VsDualSystem>> =
+            if !is_nsf_image(&bytes) && !is_fds_image(&bytes) {
+                self.build_dual_cabinet(&nes, &bytes, sample_rate)
+            } else {
+                None
+            };
         if self.config.rewind.enabled {
             let max_bytes: usize =
                 ((self.config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
@@ -1819,6 +1855,8 @@ impl App {
         // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
         // (booted decay-off). Off (default) = byte-identical.
         self.apply_oam_decay();
+        // v2.9.7 — and the overclock, applied from the next frame.
+        self.apply_overclock();
         // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
         // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
         // byte-identical.
@@ -2359,13 +2397,10 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_save_state(&self, slot: u8) {
         // Snapshot under a short lock; the file write runs with it dropped.
-        let snapshot = {
-            let guard = self.emu.lock();
-            guard
-                .nes
-                .as_ref()
-                .map(|nes| (*nes.rom_sha256(), nes.snapshot()))
-        };
+        // v2.9.7 (`T-PS-dual-savestate`): `save_state_blob` covers a Vs.
+        // DualSystem cabinet too (both consoles, one "RVSD" container); before,
+        // F1 with a cabinet loaded returned here and saved nothing.
+        let snapshot = self.emu.lock().save_state_blob();
         let Some((rom_sha256, blob)) = snapshot else {
             return;
         };
@@ -2384,8 +2419,9 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_load_state(&self, slot: u8) {
         // Read the ROM key under a short lock; the file read runs with it
-        // dropped; the restore takes a second short lock.
-        let Some(rom_sha256) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+        // dropped; the restore takes a second short lock. v2.9.7: the key and
+        // the restore both cover a Vs. DualSystem cabinet.
+        let Some(rom_sha256) = self.emu.lock().loaded_rom_sha256() else {
             return;
         };
         let Some(dir) = self.data_dir.as_ref() else {
@@ -2394,11 +2430,9 @@ impl App {
         };
         match save_state::load_from_slot(dir, &rom_sha256, slot) {
             Ok(blob) => {
-                let mut guard = self.emu.lock();
-                let Some(nes) = guard.nes.as_mut() else {
-                    return;
-                };
-                match nes.restore(&blob) {
+                // Bind first so the emu lock drops before the log line.
+                let restored = self.emu.lock().restore_state_blob(&blob);
+                match restored {
                     Ok(()) => eprintln!("rustynes: loaded state from slot {slot}"),
                     Err(e) => eprintln!("rustynes: restore failed: {e}"),
                 }
@@ -3708,13 +3742,13 @@ impl App {
     /// No-op if no ROM is loaded.
     #[cfg(target_arch = "wasm32")]
     fn handle_save_state_wasm(&self, slot: u8) {
-        let (sha, blob) = {
-            let guard = self.emu.lock();
-            let Some(nes) = guard.nes.as_ref() else {
-                crate::wasm_io::log("save state: no ROM loaded");
-                return;
-            };
-            (*nes.rom_sha256(), nes.snapshot())
+        // v2.9.7: `save_state_blob` covers a Vs. DualSystem cabinet too (the
+        // "RVSD" container), as on the desktop. The slot store holds bytes, and
+        // the grid's thumbnail read (`Nes::extract_thumbnail(..).ok().flatten()`)
+        // shows a placeholder for a cabinet slot, as the desktop grid does.
+        let Some((sha, blob)) = self.emu.lock().save_state_blob() else {
+            crate::wasm_io::log("save state: no ROM loaded");
+            return;
         };
         wasm_bindgen_futures::spawn_local(async move {
             crate::wasm_idb::put_state(sha, slot, blob).await;
@@ -3731,7 +3765,7 @@ impl App {
     /// guards against the user swapping ROMs mid-read by re-checking the SHA.
     #[cfg(target_arch = "wasm32")]
     fn handle_load_state_wasm(&self, slot: u8) {
-        let Some(sha) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+        let Some(sha) = self.emu.lock().loaded_rom_sha256() else {
             crate::wasm_io::log("load state: no ROM loaded");
             return;
         };
@@ -3742,16 +3776,14 @@ impl App {
                 return;
             };
             let mut guard = emu.lock();
-            let Some(nes) = guard.nes.as_mut() else {
-                return;
-            };
             // The ROM may have been swapped while the async read was in
-            // flight; only restore if it is still the same game.
-            if *nes.rom_sha256() != sha {
+            // flight; only restore if it is still the same game. v2.9.7: the
+            // key and the restore cover a Vs. DualSystem cabinet too.
+            if guard.loaded_rom_sha256() != Some(sha) {
                 crate::wasm_io::log("load state: ROM changed during load — skipped");
                 return;
             }
-            match nes.restore(&blob) {
+            match guard.restore_state_blob(&blob) {
                 Ok(()) => crate::wasm_io::log("state loaded"),
                 Err(e) => crate::wasm_io::log(&format!("load state: restore failed: {e:?}")),
             }
@@ -5025,7 +5057,7 @@ impl App {
                 {
                     // v1.4.0 E2 — open the browser Save-States grid and kick
                     // off the async IndexedDB slot scan for the current ROM.
-                    let sha = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                    let sha = self.emu.lock().loaded_rom_sha256();
                     crate::wasm_save_states::open(sha);
                     if let Some(gfx) = self.gfx.as_ref() {
                         gfx.window.request_redraw();
@@ -6150,11 +6182,23 @@ impl App {
                 self.set_speed(*pct as f32 / 100.0);
             }
             ClientCmd::FrameSkip(n) => {
-                // RustyNES renders every frame (no frame-skip pipeline today);
-                // record the request rather than silently dropping it.
+                // v2.9.7 — accepted and deliberately ignored. In emulators
+                // where a frame-skip exists, it saves the cost of RENDERING
+                // skipped frames. Here there is none to save: the PPU must
+                // produce every pixel for accuracy (sprite-0 hit, mid-frame
+                // effects), and presentation is already decoupled from
+                // emulation. The presenter shows only the latest frame at the
+                // display's refresh, so frames the display cannot show are
+                // dropped already. Holding a stale image would only look worse.
+                // `client.speedmode` is the speed control. Logged so a
+                // BizHawk-style script learns this instead of assuming it
+                // took effect.
                 if let Some(dbg) = self.debugger.as_mut() {
-                    dbg.script_panel()
-                        .push_log([format!("[client.frameskip({n}) — not yet supported]")]);
+                    dbg.script_panel().push_log([format!(
+                        "[client.frameskip({n}) ignored: every frame is rendered for accuracy, \
+                         and the display already shows only the latest; use \
+                         client.speedmode for speed]"
+                    )]);
                 }
             }
             ClientCmd::PauseAv | ClientCmd::UnpauseAv => {
@@ -6283,6 +6327,17 @@ impl App {
         if let Some(nes) = guard.nes.as_mut() {
             nes.set_oam_decay(enabled);
         }
+    }
+
+    /// v2.9.7 — hand the configured overclock (`[enhancements]
+    /// overclock_scanlines`) to the emulator. `EmuCore` applies it at the top of
+    /// every produced frame through `effective_extra_scanlines`, which clamps it
+    /// and holds stock timing while a movie records or plays; netplay's drive
+    /// sites force stock timing separately. Called on ROM load, after a power
+    /// cycle, at startup and on a Settings change, like the knobs around it.
+    fn apply_overclock(&self) {
+        let lines = self.config.enhancements.overclock_scanlines;
+        self.emu.lock().overclock_scanlines = lines;
     }
 
     /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
@@ -6940,6 +6995,9 @@ impl App {
         let Some(nes) = emu.nes.as_mut() else {
             return;
         };
+        // v2.9.7 — every peer runs the same timeline, so a local overclock
+        // never applies under netplay.
+        crate::emu::force_stock_timing(nes);
         let tick = self.netplay.tick(nes, local);
         if connecting && self.netplay.phase() == crate::netplay_ui::NetplayPhase::InGame {
             emu.release_battery_for_session();
@@ -7004,6 +7062,9 @@ impl App {
         // v1.1.0 beta.1 (T-110-B2) — expand turbo on the local input keyed on
         // the emulated frame, so the bits sent to the peer replay verbatim.
         let local = crate::emu::apply_turbo(raw_local, nes.frame(), turbo_mask, turbo_period);
+        // v2.9.7 — every peer runs the same timeline, so a local overclock
+        // never applies under netplay.
+        crate::emu::force_stock_timing(nes);
         let consumed = driver.tick(nes, local);
         // On an actual produced frame, push this frame's APU samples into the
         // shared Web Audio ring (mirrors the single-player wasm path). A
@@ -8592,6 +8653,10 @@ impl App {
                 }
             };
 
+            // v2.9.7 "Tandem" — the browser battery record: drain finished
+            // writes every tick, count and write only on a produced one.
+            self.web_battery_tick(produced);
+
             if produced {
                 // v1.2.0 Workstream F4 — pump the EXPERIMENTAL wasm Lua engine
                 // for this produced frame (after the frame, before present), so
@@ -8805,6 +8870,8 @@ impl App {
             // v2.1.4 F2.3 — push the persisted OAM-decay toggle (no-op if no ROM
             // is loaded yet; re-applied on each ROM load). Off = byte-identical.
             self.apply_oam_decay();
+            // v2.9.7 — and the overclock, applied from the next frame.
+            self.apply_overclock();
             // v2.1.7 P5 — push the persisted PPU-revision / power-up-palette /
             // power-on-RAM knobs (no-op if no ROM yet). All-off = byte-identical.
             self.apply_ppu_hardware_config();
@@ -8889,6 +8956,158 @@ impl App {
         self.finish_start_nes(nes, event_loop);
     }
 
+    /// v2.9.7 "Tandem" — install a freshly built console in the browser: the
+    /// outgoing cartridge's final battery write, the Vs. `DualSystem` cabinet
+    /// when the ROM is one (plan item 5), and the restore of the incoming
+    /// cartridge's battery record (plan item 4).
+    ///
+    /// # The cabinet
+    ///
+    /// Until v2.9.7 the browser installed every ROM as a single console, and a
+    /// `DualSystem` title only logged a console warning: it ran the main
+    /// console alone and rarely got past its attract screen. The detection is
+    /// now the desktop's (`build_dual_cabinet`), and the cabinet runs through
+    /// the same `EmuCore` dual produce path and the same two-screen blit
+    /// (`Gfx::render_dual`, `[graphics] dual_screen_layout`). Input is the
+    /// desktop's too: P1/P2 drive the main console, P3/P4 the sub, and Insert
+    /// Coin feeds the main acceptor. FDS images are never Vs. boards.
+    ///
+    /// # The battery record
+    ///
+    /// The final write for the outgoing cartridge is taken BEFORE its `Nes` is
+    /// replaced. The incoming cartridge, if it persists, is gated
+    /// (`EmuCore::produce_one_frame` produces nothing) until the asynchronous
+    /// `IndexedDB` read lands in `EmuCore::restore_web_battery`; every outcome of
+    /// the read releases the gate.
+    #[cfg(target_arch = "wasm32")]
+    fn install_nes_wasm(&mut self, nes: Nes) {
+        let sample_rate = crate::wasm_audio::sample_rate().unwrap_or(44_100);
+        // FDS images are never Vs. boards (and the browser loads no NSF: the
+        // cartridge path's `Nes::from_rom` rejects it before this point).
+        let cabinet = if is_fds_image(&self.rom_bytes) {
+            None
+        } else {
+            self.build_dual_cabinet(&nes, &self.rom_bytes, sample_rate)
+        };
+        self.dual_mode = cabinet.is_some();
+        let restore = {
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            if let Some(write) = emu.detach_web_battery() {
+                crate::wasm_idb::spawn_battery_write(write);
+            }
+            if let Some(vs) = cabinet {
+                emu.present_fb_sub.clear();
+                emu.set_dual(vs);
+            } else {
+                emu.set_nes(nes);
+            }
+            emu.begin_web_battery()
+        };
+        if self.dual_mode {
+            crate::wasm_io::log(
+                "Vs. DualSystem cabinet: both consoles run (P1/P2 main, P3/P4 sub); \
+                 save states, rewind, movies and netplay are not available for it",
+            );
+            self.ui.set_status(StatusMessage::info(
+                "Vs. DualSystem: two consoles, both screens (P1/P2 main, P3/P4 sub)",
+            ));
+        }
+        if let Some(sha) = restore {
+            let emu = self.emu.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let stored = crate::wasm_idb::get_battery(sha).await;
+                let notice = emu.lock().restore_web_battery(sha, stored);
+                if let Some(notice) = notice {
+                    crate::wasm_io::log(&notice);
+                    crate::wasm_idb::push_battery_notice(notice);
+                }
+            });
+        }
+    }
+
+    /// v2.9.7 "Tandem" — the browser's per-tick battery work, the counterpart
+    /// of the desktop's `per_frame_host_io` battery flush: report finished
+    /// `IndexedDB` writes to the state machine and surface any message the
+    /// asynchronous tasks raised (every tick), and, on a tick that `produced`
+    /// a frame, hand the write that is due (the shared once-a-second,
+    /// only-when-changed policy) to `IndexedDB`. Counting only produced ticks
+    /// keeps the period in emulated frames, as on the desktop.
+    #[cfg(target_arch = "wasm32")]
+    fn web_battery_tick(&mut self, produced: bool) {
+        let mut notices = crate::wasm_idb::take_battery_notices();
+        let write = {
+            let mut guard = self.emu.lock();
+            for (done, ok) in crate::wasm_idb::take_battery_completions() {
+                if let Some(n) = guard.web_battery_written(done, ok) {
+                    notices.push(n);
+                }
+            }
+            if produced {
+                guard.web_battery_due(false)
+            } else {
+                None
+            }
+        };
+        if let Some(write) = write {
+            crate::wasm_idb::spawn_battery_write(write);
+        }
+        for notice in notices {
+            self.ui.set_status(StatusMessage::error(notice));
+        }
+    }
+
+    /// v2.9.7 "Tandem" — flush the battery record when the page is hidden.
+    ///
+    /// A browser gives a closing or backgrounded tab no reliable last chance:
+    /// `beforeunload` and `unload` are skipped on mobile and by the
+    /// back/forward cache, and an asynchronous `IndexedDB` write started from
+    /// them may never run. `visibilitychange` to `hidden` is the event the
+    /// platform documents as the last one guaranteed to fire, and it fires
+    /// BEFORE the page is torn down, so the write it starts gets to complete.
+    /// `pagehide` is registered as well for the browsers that skip the
+    /// visibility change on a bfcache navigation. A forced write that finds
+    /// nothing changed is skipped, so the two firing together cost nothing.
+    ///
+    /// Registered once, when the graphics context is ready. The closures live
+    /// for the page (`forget`), which is the lifetime they need.
+    #[cfg(target_arch = "wasm32")]
+    fn install_battery_page_hide_flush(&self) {
+        use wasm_bindgen::JsCast;
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let document = window.document();
+        for event in ["visibilitychange", "pagehide"] {
+            let emu = self.emu.clone();
+            let handler = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+                move |_: web_sys::Event| {
+                    let hidden = web_sys::window()
+                        .and_then(|w| w.document())
+                        .is_some_and(|d| d.hidden());
+                    if !hidden && event == "visibilitychange" {
+                        return;
+                    }
+                    let write = emu.lock().web_battery_due(true);
+                    if let Some(write) = write {
+                        crate::wasm_idb::spawn_battery_write(write);
+                    }
+                },
+            );
+            // `visibilitychange` fires on the document, `pagehide` on the window.
+            let target: Option<&web_sys::EventTarget> = if event == "visibilitychange" {
+                document.as_ref().map(AsRef::as_ref)
+            } else {
+                Some(window.as_ref())
+            };
+            if let Some(target) = target {
+                let _ = target
+                    .add_event_listener_with_callback(event, handler.as_ref().unchecked_ref());
+            }
+            handler.forget();
+        }
+    }
+
     /// Common post-construction wiring shared by the cartridge + FDS branches
     /// of [`Self::start_nes`]: rewind ring, Four Score, frame timing, the first
     /// redraw kick, and the cheat/expansion-device sync.
@@ -8967,7 +9186,7 @@ impl App {
             guard.attach_battery(self.data_dir.as_deref())
         };
         #[cfg(target_arch = "wasm32")]
-        self.emu.lock().set_nes(nes);
+        self.install_nes_wasm(nes);
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(notice) = battery_notice {
             self.ui.set_status(StatusMessage::error(notice));
@@ -9008,6 +9227,8 @@ impl App {
         // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
         // (booted decay-off). Off (default) = byte-identical.
         self.apply_oam_decay();
+        // v2.9.7 — and the overclock, applied from the next frame.
+        self.apply_overclock();
         // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
         // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
         // byte-identical.
@@ -9297,7 +9518,13 @@ impl ApplicationHandler<AppEvent> for App {
     /// wasm32 — async `Gfx` + browser ROM bytes arrive here.
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::GfxReady(gfx) => self.on_gfx_ready(*gfx, event_loop),
+            AppEvent::GfxReady(gfx) => {
+                self.on_gfx_ready(*gfx, event_loop);
+                // v2.9.7 "Tandem" — flush the browser battery record when the
+                // page is hidden. Once: the graphics context is built once.
+                #[cfg(target_arch = "wasm32")]
+                self.install_battery_page_hide_flush();
+            }
             AppEvent::RomLoaded(bytes) => {
                 self.rom_bytes = bytes;
                 // v2.3.7 — apply the per-game database's header corrections
@@ -9981,12 +10208,10 @@ impl ApplicationHandler<AppEvent> for App {
                 // without re-locking the emu (the locked branch holds the
                 // guard across the pass). Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                let ss_sha: Option<[u8; 32]> = self
-                    .emu
-                    .lock_timed(&mut lock_wait)
-                    .nes
-                    .as_ref()
-                    .map(|n| *n.rom_sha256());
+                // v2.9.7: `loaded_rom_sha256` so a Vs. DualSystem cabinet's
+                // slots show in the grid too.
+                let ss_sha: Option<[u8; 32]> =
+                    self.emu.lock_timed(&mut lock_wait).loaded_rom_sha256();
                 #[cfg(not(target_arch = "wasm32"))]
                 let ss_dir: Option<PathBuf> = self.data_dir.clone();
                 #[cfg(not(target_arch = "wasm32"))]
@@ -10435,7 +10660,6 @@ impl ApplicationHandler<AppEvent> for App {
                     // path or `present_phase` would freeze and the dot-crawl stall.
                     // v2.1.2 F2.1 — when a cabinet is loaded, the composed
                     // two-screen dimensions (else `None` → the single present).
-                    #[cfg(not(target_arch = "wasm32"))]
                     let mut dual_present_dims: Option<(u32, u32)> = None;
                     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                     let lockfree_fb = {
@@ -10481,7 +10705,7 @@ impl ApplicationHandler<AppEvent> for App {
                         // `present_fb_sub`) into `present_dual` per the configured
                         // layout, under the same brief lock. `emu.dual`/`emu.nes` are
                         // mutually exclusive, so this replaces the single fill.
-                        #[cfg(not(target_arch = "wasm32"))]
+                        // v2.9.7 "Tandem" — on wasm-winit too.
                         if emu.dual.is_some() {
                             let layout = crate::gfx::DualLayout::from_config(
                                 &self.config.graphics.dual_screen_layout,
@@ -10782,13 +11006,19 @@ impl ApplicationHandler<AppEvent> for App {
                             overlay,
                         )
                     };
+                    // v2.9.7 "Tandem" — the browser presents a Vs. `DualSystem`
+                    // cabinet through the same two-screen blit as the desktop.
                     #[cfg(target_arch = "wasm32")]
-                    let render_result = gfx.render_with_overlay(
-                        &self.present_staging,
-                        index_arg,
-                        video_phase,
-                        overlay,
-                    );
+                    let render_result = if let Some((dw, dh)) = dual_present_dims {
+                        gfx.render_dual(&self.present_dual, dw, dh, overlay)
+                    } else {
+                        gfx.render_with_overlay(
+                            &self.present_staging,
+                            index_arg,
+                            video_phase,
+                            overlay,
+                        )
+                    };
                     // v1.5.0 A4 — write the HD pixel-inspector state (px/py/blend)
                     // + the (possibly closed) open flag back into the debugger now
                     // that the `extra` closure that mutated the clone is consumed.
@@ -11062,6 +11292,11 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.oam_decay {
                     self.apply_oam_decay();
                 }
+                // v2.9.7 — overclock live-apply; the emulator picks it up on
+                // its next frame.
+                if settings.overclock {
+                    self.apply_overclock();
+                }
                 // v2.2.3 — PPU fast-dot-path toggle live-apply. Routed through
                 // `apply_ppu_hardware_config` (which pushes the whole
                 // `[emulation]` PPU knob set); re-pushing the other three is
@@ -11109,7 +11344,7 @@ impl ApplicationHandler<AppEvent> for App {
                     match req {
                         SlotRequest::Save(slot) => {
                             self.handle_save_state_wasm(slot);
-                            let sha = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                            let sha = self.emu.lock().loaded_rom_sha256();
                             crate::wasm_save_states::open(sha);
                             self.ui.set_status(StatusMessage::success(format!(
                                 "Saved to slot {}",
@@ -11549,7 +11784,16 @@ mod tests {
         // the enable predicate, the label and the emitted action sit on
         // separate lines that rustfmt is free to re-wrap, and pinning the exact
         // joined spelling would fail on a reflow that changed nothing.
-        let label = "\"Netplay (browser)...\"";
+        // v2.9.7: the label is the i18n key, not a literal; its English text
+        // is pinned here so the search below still names the same menu entry.
+        assert_eq!(
+            crate::i18n::tr_in(
+                crate::i18n::Locale::English,
+                crate::i18n::Key::ShellNetplayBrowserItem
+            ),
+            "Netplay (browser)..."
+        );
+        let label = "crate::t!(ShellNetplayBrowserItem)";
         let at = shell
             .find(label)
             .expect("the wasm Netplay menu entry is gone -- the browser lobby is unreachable");
@@ -11562,6 +11806,44 @@ mod tests {
         assert!(
             after.contains("MenuAction::OpenPanel(ToolPanel::Netplay)"),
             "the wasm Netplay entry no longer emits the panel-open action"
+        );
+    }
+
+    /// v2.9.7 — every site where netplay advances the core puts it back on
+    /// stock timing first, so a locally configured overclock can never make one
+    /// peer's frame longer than another's. `App` cannot be built in a unit test,
+    /// so this pins the source instead: every `tick(nes, ...)` call in
+    /// production code (native `self.netplay.tick`, wasm `driver.tick`) is
+    /// immediately preceded by `force_stock_timing(nes)`, and a new drive site
+    /// without it fails the count.
+    #[test]
+    fn every_netplay_tick_is_preceded_by_stock_timing() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let production = |src: &str| {
+            src.split_once("\n#[cfg(test)]")
+                .map_or(src, |(before, _)| before)
+                .to_owned()
+        };
+        let app = squash(&production(APP_SRC));
+        assert!(
+            !app.contains("fn every_netplay_tick_is_preceded_by_stock_timing"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let ticks = app.matches("tick(nes, ").count();
+        let guarded = app
+            .matches("crate::emu::force_stock_timing(nes); let tick = self.netplay.tick(nes, ")
+            .count()
+            + app
+                .matches("crate::emu::force_stock_timing(nes); let consumed = driver.tick(nes, ")
+                .count();
+        assert_eq!(
+            ticks, 2,
+            "expected the native and the wasm netplay drive sites"
+        );
+        assert_eq!(
+            guarded, ticks,
+            "a netplay drive site runs without stock timing"
         );
     }
 

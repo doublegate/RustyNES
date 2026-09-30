@@ -226,6 +226,16 @@ class AppSettings(context: Context) {
         get() = _autoHideControllerOnPad.value
         set(v) { _autoHideControllerOnPad.value = v; prefs.edit().putBoolean("gpAutoHide", v).apply() }
 
+    /** Cancel opposite directions (v2.9.7 "Tandem", plan item 8): Up + Down, or Left +
+     *  Right, held together reach the console as neither (neutral SOCD, see
+     *  [socdNeutral]). Default on -- the behaviour since v2.9.2, and the desktop's
+     *  `[input] allow_opposing_directions = false`. Off passes every combination
+     *  through, for games and TAS-style play that depend on it. */
+    private val _cancelOpposites = mutableStateOf(prefs.getBoolean("cancelOpposites", true))
+    var cancelOpposites: Boolean
+        get() = _cancelOpposites.value
+        set(v) { _cancelOpposites.value = v; prefs.edit().putBoolean("cancelOpposites", v).apply() }
+
     /** Direct-IP / LAN netplay (v1.8.6): the last "ip:port" the user joined, so the
      *  Join field prefills it. Host-only state (the bound port + LAN IP) is derived
      *  live and not persisted. */
@@ -761,6 +771,12 @@ fun SettingsSheet(
                 stringResource(R.string.settings_hide_pad_with_controller),
                 settings.autoHideControllerOnPad,
             ) { settings.autoHideControllerOnPad = it }
+
+            // v2.9.7: opposite-direction cancel (neutral SOCD), default on.
+            ToggleRow(
+                stringResource(R.string.settings_cancel_opposites),
+                settings.cancelOpposites,
+            ) { settings.cancelOpposites = it }
 
             // Per-screen-mode controller size + opacity (item 5). The active mode
             // is shown so it's clear which screen these apply to.

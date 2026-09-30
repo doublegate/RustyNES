@@ -106,6 +106,45 @@ pub struct EmuHandle {
 /// exactly the drift this constant was created to stop.
 pub(crate) const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 
+/// v2.9.7 — the largest overclock the Settings field offers (`0..=80`). A
+/// hand-edited config above it is clamped here, where the value reaches the
+/// core, rather than trusted.
+pub(crate) const MAX_OVERCLOCK_SCANLINES: u16 = 80;
+
+/// v2.9.7 — the extra-scanline overclock the core should run the next frame
+/// with.
+///
+/// The overclock changes how many CPU cycles a frame contains, so it is part of
+/// the emulated timeline. A movie replays inputs against that timeline, so a
+/// recording made with the overclock would desync on a player without it, and
+/// two netplay peers with different settings would disagree from the first
+/// frame. The rule is therefore simple: **stock timing (0) whenever the
+/// timeline is shared**, the configured value (clamped to
+/// [`MAX_OVERCLOCK_SCANLINES`]) otherwise. Netplay reaches the core outside
+/// [`EmuCore::produce_one_frame`], so its drive sites call
+/// [`force_stock_timing`] instead of this.
+#[must_use]
+pub(crate) const fn effective_extra_scanlines(configured: u16, timeline_shared: bool) -> u16 {
+    if timeline_shared {
+        0
+    } else if configured > MAX_OVERCLOCK_SCANLINES {
+        MAX_OVERCLOCK_SCANLINES
+    } else {
+        configured
+    }
+}
+
+/// v2.9.7 — put the core back on stock timing before a netplay tick advances
+/// it. Netplay drives the `Nes` directly (not through
+/// [`EmuCore::produce_one_frame`]), and every peer must run the same timeline,
+/// so a locally configured overclock never applies there. The comparison keeps
+/// the common case (already 0) to a read.
+pub(crate) const fn force_stock_timing(nes: &mut Nes) {
+    if nes.extra_scanlines() != 0 {
+        nes.set_extra_scanlines(0);
+    }
+}
+
 /// v2.3.3 F21 — fraction of the frame budget at which the run-ahead throttle
 /// engages, measured rather than chosen.
 ///
@@ -434,6 +473,25 @@ impl ProduceFx {
     }
 }
 
+/// v2.9.7 — why [`EmuCore::restore_state_blob`] refused a blob.
+#[derive(Debug)]
+pub enum RestoreStateError {
+    /// No ROM is loaded, so there is nothing to restore into.
+    NoRom,
+    /// The core rejected the blob (malformed, a different version, or a
+    /// single-console state offered to a cabinet or the reverse).
+    Snapshot(rustynes_core::SnapshotError),
+}
+
+impl core::fmt::Display for RestoreStateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoRom => f.write_str("no ROM is loaded"),
+            Self::Snapshot(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 /// The emulation core: the per-frame produce state extracted from `App`.
 pub struct EmuCore {
     /// The running single-console emulator (None until a single-console ROM is
@@ -461,9 +519,11 @@ pub struct EmuCore {
     /// Mutually exclusive with [`Self::nes`]: exactly one is `Some` while a ROM
     /// is loaded. Additive so the single-console produce/present/latch paths stay
     /// byte-identical; the dual path is a parallel branch at each chokepoint. The
-    /// advanced frontend features (run-ahead, rewind, netplay, TAS, save-state)
-    /// are scoped out while a cabinet is loaded (ADR 0032) — they snapshot a
-    /// single `Nes` and are disabled in dual mode.
+    /// advanced frontend features (run-ahead, rewind, netplay, TAS) are scoped
+    /// out while a cabinet is loaded (ADR 0032) — they snapshot a single `Nes`
+    /// and are disabled in dual mode. Save states are the exception since
+    /// v2.9.7 (`T-PS-dual-savestate`): [`Self::save_state_blob`] and
+    /// [`Self::restore_state_blob`] use the cabinet's own "RVSD" snapshot.
     pub dual: Option<Box<rustynes_core::VsDualSystem>>,
     /// TAS movie record/playback state machine.
     pub movie: MovieUi,
@@ -517,6 +577,14 @@ pub struct EmuCore {
     /// EXACT same condition `emu.write` uses (T-110-E2). When `true`, the
     /// post-frame `debug_pokes` drain is skipped — locked = no-op = byte-identical.
     pub writes_locked: bool,
+    /// v2.9.7 — the configured PPU overclock: extra idle scanlines per frame
+    /// (`[enhancements] overclock_scanlines`, pushed by `App` on ROM load, power
+    /// cycle and a Settings change). This is the CONFIGURED value; the one the
+    /// core runs with is `effective_extra_scanlines` of it, applied at the top
+    /// of every produced frame, which is 0 while a movie records or plays.
+    /// `0` (the default) is stock timing, byte-identical to a core that never
+    /// heard of the setting.
+    pub overclock_scanlines: u16,
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
@@ -661,6 +729,14 @@ pub struct EmuCore {
     /// would roll live save RAM back to the last write.
     #[cfg(not(target_arch = "wasm32"))]
     pub battery: Option<crate::battery_save::BatterySave>,
+    /// v2.9.7 "Tandem" — the browser's battery save: the `IndexedDB`
+    /// counterpart of [`Self::battery`], driven by the wasm frontend. While a
+    /// stored save is being read ([`crate::web_battery::WebBattery::is_pending`])
+    /// [`Self::produce_one_frame`] produces nothing, so the game's first frame
+    /// already sees its save, as it does on the desktop. Compiled natively only
+    /// for tests (the gate is tested there); a native build has no such field.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub web_battery: crate::web_battery::WebBattery,
     /// v1.2.0 (T-110-E2) — Lua `emu.setInput` per-port button override, applied
     /// at the next [`Self::latch`] (the deterministic late-latch point, the same
     /// place a real keypress enters) then consumed (one-shot per command).
@@ -723,6 +799,57 @@ impl EmuCore {
         self.dual = Some(dual);
     }
 
+    /// v2.9.7 — the loaded game's identity (the save-state slot key): the
+    /// single console's `rom_sha256`, or the MAIN console's for a Vs.
+    /// `DualSystem` cabinet (both consoles run the same image). `None` with no
+    /// ROM loaded.
+    #[must_use]
+    pub fn loaded_rom_sha256(&self) -> Option<[u8; 32]> {
+        self.nes
+            .as_ref()
+            .map(|nes| *nes.rom_sha256())
+            .or_else(|| self.dual.as_ref().map(|d| *d.main().rom_sha256()))
+    }
+
+    /// v2.9.7 (`T-PS-dual-savestate`) — a save-state blob of whatever is
+    /// loaded, with its slot key: a single console's `Nes::snapshot`, or a
+    /// cabinet's `VsDualSystem::snapshot` (the "RVSD" container holding both
+    /// consoles and the latch that wires them together).
+    ///
+    /// Both kinds share the ROM's slot files. The same image always loads the
+    /// same way (the `vs_db` flag decides), and the two containers carry
+    /// different magic, so a blob of the other kind fails to restore with an
+    /// error rather than being misread. Before v2.9.7 the desktop's F1 with a
+    /// cabinet loaded returned silently and saved nothing.
+    #[must_use]
+    pub fn save_state_blob(&self) -> Option<([u8; 32], Vec<u8>)> {
+        if let Some(nes) = self.nes.as_ref() {
+            return Some((*nes.rom_sha256(), nes.snapshot()));
+        }
+        self.dual
+            .as_ref()
+            .map(|d| (*d.main().rom_sha256(), d.snapshot()))
+    }
+
+    /// v2.9.7 — restore a blob from [`Self::save_state_blob`] into whatever
+    /// is loaded. A cabinet restores atomically: on error both consoles are
+    /// unchanged (`VsDualSystem::restore`).
+    ///
+    /// # Errors
+    ///
+    /// The core's [`rustynes_core::SnapshotError`] for a malformed blob or one
+    /// of the other kind; [`RestoreStateError::NoRom`] with nothing loaded.
+    pub fn restore_state_blob(&mut self, blob: &[u8]) -> Result<(), RestoreStateError> {
+        if let Some(nes) = self.nes.as_mut() {
+            return nes.restore(blob).map_err(RestoreStateError::Snapshot);
+        }
+        self.dual
+            .as_mut()
+            .map_or(Err(RestoreStateError::NoRom), |dual| {
+                dual.restore(blob).map_err(RestoreStateError::Snapshot)
+            })
+    }
+
     /// Drop any loaded ROM and the cached name with it, so a stale mapper label
     /// cannot outlive the ROM it described.
     pub fn clear_rom(&mut self) {
@@ -750,6 +877,7 @@ impl EmuCore {
             raw_cheats: Vec::new(),
             debug_pokes: Vec::new(),
             writes_locked: false,
+            overclock_scanlines: 0,
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
@@ -778,6 +906,8 @@ impl EmuCore {
             fds_disk_sha256: None,
             #[cfg(not(target_arch = "wasm32"))]
             battery: None,
+            #[cfg(any(target_arch = "wasm32", test))]
+            web_battery: crate::web_battery::WebBattery::new(),
             #[cfg(feature = "scripting")]
             script_input_override: [None, None],
             #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
@@ -1239,14 +1369,23 @@ impl EmuCore {
         // otherwise).
         #[allow(unused_mut)]
         let mut fx = ProduceFx::default();
+        // v2.9.7 "Tandem" — the browser reads a battery cartridge's stored save
+        // asynchronously. Until it lands, produce nothing: a frame run now would
+        // boot the game on power-on RAM, and a game that finds no save may
+        // format a fresh one. The desktop loads its `.sav` synchronously, so it
+        // never has this field outside tests.
+        #[cfg(any(target_arch = "wasm32", test))]
+        if self.web_battery.is_pending() {
+            return fx;
+        }
         // v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet takes a parallel, much
         // simpler produce path: step both consoles, harvest both framebuffers,
         // push the MAIN console's audio. The advanced single-`Nes` features
         // (run-ahead, rewind, TAS, breakpoints, HD-pack, A/V record) are scoped
         // out in dual mode (ADR 0032) — `dual` and `nes` are mutually exclusive,
-        // so the whole single path below is dead when a cabinet is loaded. Dual
-        // is native-only (the wasm frontend has no dual present path).
-        #[cfg(not(target_arch = "wasm32"))]
+        // so the whole single path below is dead when a cabinet is loaded.
+        // v2.9.7 "Tandem" — the wasm-winit frontend takes this path too (it
+        // builds the cabinet on its load path and presents both screens).
         if self.dual.is_some() {
             self.produce_dual_frame(sinks);
             return fx;
@@ -1263,9 +1402,21 @@ impl EmuCore {
         // no audio sink).
         #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
         let mut av_audio_n: usize = 0;
+        // v2.9.7 — the overclock this frame runs with: the configured value, or
+        // stock timing while a movie records or plays, because a movie is a
+        // timeline someone else replays (see `effective_extra_scanlines`).
+        // Resolved per frame rather than at movie start/stop, so no start or
+        // stop path can forget it.
+        let extra_lines = effective_extra_scanlines(
+            self.overclock_scanlines,
+            self.movie.mode() != crate::movie_ui::MovieMode::Idle,
+        );
         let Some(nes) = self.nes.as_mut() else {
             return fx;
         };
+        if nes.extra_scanlines() != extra_lines {
+            nes.set_extra_scanlines(extra_lines);
+        }
         // v2.7.0 — RetroAchievements hardcore mode disables rewind (already
         // folded into `inputs.rewind_held` by `App`).
         let rewinding = inputs.rewind_held;
@@ -1496,8 +1647,18 @@ impl EmuCore {
     /// to the sink. The SUB console's audio is drained and discarded so its APU
     /// sample buffer cannot grow without bound. This path deliberately omits the
     /// single-`Nes` machinery (run-ahead / rewind / TAS / breakpoints / HD-pack /
-    /// A/V record), which is scoped out in dual mode (ADR 0032). Native only.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// A/V record), which is scoped out in dual mode (ADR 0032).
+    ///
+    /// v2.9.7 "Tandem" — no longer native-only: the wasm-winit frontend runs a
+    /// cabinet too. The only platform difference is the audio sink: native
+    /// pushes to the `cpal` sink in `sinks`, wasm to the Web Audio ring, the
+    /// same split the single-console path makes.
+    // `sinks` carries the native audio sink; on wasm the audio goes to the
+    // thread-local Web Audio ring instead, as on the single-console path.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(unused_variables, clippy::needless_pass_by_ref_mut)
+    )]
     fn produce_dual_frame(&mut self, sinks: &mut FrameSinks<'_>) {
         // v2.5.0 / F2.1 — Vs. System coin latch: a coin-insert holds the acceptor
         // for a few frames, then auto-clears (uniform with the single path).
@@ -1527,6 +1688,10 @@ impl EmuCore {
             let n = dual.main_mut().drain_audio_into(&mut self.audio_buf);
             audio.push_samples(&self.audio_buf[..n]);
         }
+        // The browser plays the MAIN console through the Web Audio ring, the
+        // sink the single-console wasm path feeds.
+        #[cfg(target_arch = "wasm32")]
+        crate::wasm_audio::push_samples(&dual.main_mut().drain_audio());
         // Bound the SUB console's APU buffer even though its audio is not played:
         // drain it into the reusable `audio_buf` scratch (never a fresh `Vec`),
         // looping until a partial fill signals the buffer is empty.
@@ -1777,8 +1942,9 @@ impl EmuCore {
     /// `start` reports failure (a movie for another ROM, a refused save
     /// state), the console is unchanged and saving continues.
     ///
-    /// Returns what `start` returned. On wasm32 there is no battery file and
-    /// this is `start(self)`.
+    /// Returns what `start` returned. On wasm32 the same two steps drive the
+    /// `IndexedDB` battery record (v2.9.7): the pending change is handed to the
+    /// browser store, and the record is released.
     pub fn start_sandboxed_session(&mut self, start: impl FnOnce(&mut Self) -> bool) -> bool {
         self.flush_battery_now();
         let began = start(self);
@@ -1793,27 +1959,36 @@ impl EmuCore {
     /// somewhere else: netplay's power-on happens inside the netplay tick once
     /// the handshake completes, so the app calls this on every connecting tick
     /// (no emulation runs then, so only the first call can find a change).
-    // Empty on wasm32 (no `.sav` there), where clippy would have it `const`;
-    // the native body writes a file.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
+    ///
+    /// v2.9.7 "Tandem" — on wasm32 this hands the change to the `IndexedDB`
+    /// store (asynchronously; the bytes are copied now, so the session that
+    /// follows cannot change what is written).
     pub fn flush_battery_now(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_battery(true);
+        #[cfg(target_arch = "wasm32")]
+        if let Some(write) = self.web_battery_due(true) {
+            crate::wasm_idb::spawn_battery_write(write);
+        }
     }
 
     /// v2.9.0 — stop persisting the cartridge's battery RAM for the rest of
     /// this ROM session, WITHOUT writing it: the live RAM now belongs to a
     /// session. The second half of [`Self::start_sandboxed_session`].
-    // Empty on wasm32 (no `.sav` there), where clippy would have it `const`;
-    // the native body writes a file.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
     pub fn release_battery_for_session(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        if self.battery.take().is_some() {
-            eprintln!(
-                "rustynes: battery saving paused for this session (movie, TAStudio \
-                 or netplay); reload the ROM to resume"
-            );
+        let released = self.battery.take().is_some();
+        // v2.9.7 — the browser record likewise. A read still in flight is
+        // discarded when it lands, so it cannot overwrite the session's RAM.
+        #[cfg(target_arch = "wasm32")]
+        let released = self.web_battery.release();
+        if released {
+            let note = "rustynes: battery saving paused for this session (movie, TAStudio \
+                        or netplay); reload the ROM to resume";
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{note}");
+            #[cfg(target_arch = "wasm32")]
+            crate::wasm_io::log(note);
         }
     }
 
@@ -1840,6 +2015,74 @@ impl EmuCore {
     pub fn detach_battery(&mut self) {
         self.flush_battery(true);
         self.battery = None;
+    }
+
+    /// v2.9.7 "Tandem" — bind the just-installed cartridge's battery RAM to
+    /// its browser record. Returns the ROM hash to read when the cartridge
+    /// persists; production is then gated until
+    /// [`Self::restore_web_battery`] delivers the read. `None` for a cartridge
+    /// without a battery, for a Vs. `DualSystem` cabinet (its four boards
+    /// carry none), and before any ROM.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn begin_web_battery(&mut self) -> Option<[u8; 32]> {
+        if let Some(nes) = self.nes.as_ref() {
+            self.web_battery.begin(nes)
+        } else {
+            self.web_battery = crate::web_battery::WebBattery::new();
+            None
+        }
+    }
+
+    /// v2.9.7 "Tandem" — deliver the outcome of reading `sha`'s browser
+    /// record (see [`crate::web_battery::WebBattery::restore`]). Returns a
+    /// status-bar message when a record exists but could not be used, so the
+    /// player learns this session will not save rather than finding out later.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[must_use]
+    pub fn restore_web_battery(
+        &mut self,
+        sha: [u8; 32],
+        stored: Result<Option<Vec<u8>>, String>,
+    ) -> Option<String> {
+        use crate::web_battery::Restored;
+        let nes = self.nes.as_mut()?;
+        match self.web_battery.restore(nes, sha, stored) {
+            Restored::Refused(e) => Some(format!(
+                "Battery save not loaded; this session will not save: {e}"
+            )),
+            Restored::Loaded | Restored::Empty | Restored::Stale => None,
+        }
+    }
+
+    /// v2.9.7 "Tandem" — the browser battery write that is due, if any (the
+    /// shared period and dirty rule; forced writes for page hide and ROM
+    /// switch). Store it, then report with [`Self::web_battery_written`].
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn web_battery_due(&mut self, force: bool) -> Option<crate::web_battery::WebBatteryWrite> {
+        let nes = self.nes.as_ref()?;
+        self.web_battery.due(nes, force)
+    }
+
+    /// v2.9.7 "Tandem" — record a finished browser battery write. Returns a
+    /// status-bar message on the first failure of a run (a full quota is
+    /// shown once, not every second).
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[must_use]
+    pub fn web_battery_written(
+        &mut self,
+        write: crate::web_battery::WebBatteryWrite,
+        ok: bool,
+    ) -> Option<String> {
+        self.web_battery
+            .written(write, ok)
+            .then(|| "Battery save failed (browser storage); retrying".to_string())
+    }
+
+    /// v2.9.7 "Tandem" — the final browser battery write for the outgoing
+    /// cartridge, then unbind. Call before a new ROM replaces the `Nes`.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn detach_web_battery(&mut self) -> Option<crate::web_battery::WebBatteryWrite> {
+        self.web_battery.detach(self.nes.as_ref())
     }
 }
 
@@ -2134,6 +2377,183 @@ mod tests {
             konami_hyper_shot: 0,
             bandai_hyper_shot: 0,
         }
+    }
+
+    /// v2.9.7 — the Settings overclock reaches the core, clamped, and a movie
+    /// forces stock timing for as long as it records. Before v2.9.7 the field
+    /// was saved and nothing read it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn overclock_reaches_the_core_and_a_movie_forces_stock_timing() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.nes = Some(Nes::from_rom(&rom).unwrap());
+        let lines = |core: &EmuCore| core.nes.as_ref().unwrap().extra_scanlines();
+
+        core.overclock_scanlines = 20;
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(lines(&core), 20, "the configured value reaches the core");
+
+        core.overclock_scanlines = 500;
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(lines(&core), MAX_OVERCLOCK_SCANLINES, "clamped at the core");
+
+        let EmuCore { movie, nes, .. } = &mut core;
+        movie.start_recording_power_on(nes.as_mut().unwrap(), false);
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(lines(&core), 0, "a recording runs on stock timing");
+
+        let _ = core.movie.finish_recording();
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(
+            lines(&core),
+            MAX_OVERCLOCK_SCANLINES,
+            "restored after the movie"
+        );
+    }
+
+    /// v2.9.7 (`T-PS-dual-savestate`) — a Vs. `DualSystem` cabinet saves and
+    /// restores both consoles, byte for byte. A single-console blob and a
+    /// cabinet blob are each refused by the other kind, and nothing restores
+    /// with no ROM loaded. Before v2.9.7 the desktop saved nothing for a
+    /// cabinet.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_dual_cabinet_save_state_round_trips_both_consoles() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.set_dual(Box::new(
+            rustynes_core::VsDualSystem::from_rom(&rom).unwrap(),
+        ));
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let (key, blob) = core.save_state_blob().expect("a cabinet saves");
+        let dual = |core: &EmuCore| core.dual.as_ref().unwrap().main().frame();
+        assert_eq!(key, *core.dual.as_ref().unwrap().main().rom_sha256());
+        assert_eq!(core.loaded_rom_sha256(), Some(key));
+        let saved_frame = dual(&core);
+        for _ in 0..5 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert_ne!(dual(&core), saved_frame, "the cabinet ran on");
+        core.restore_state_blob(&blob).unwrap();
+        assert_eq!(dual(&core), saved_frame);
+        assert_eq!(
+            core.save_state_blob().unwrap().1,
+            blob,
+            "both consoles are back exactly where they were"
+        );
+
+        let single = Nes::from_rom(&rom).unwrap().snapshot();
+        assert!(
+            core.restore_state_blob(&single).is_err(),
+            "a single-console blob"
+        );
+        assert_eq!(
+            core.save_state_blob().unwrap().1,
+            blob,
+            "refusal changed nothing"
+        );
+        let mut one = EmuCore::new();
+        one.set_nes(Nes::from_rom(&rom).unwrap());
+        assert!(one.restore_state_blob(&blob).is_err(), "a cabinet blob");
+        assert!(matches!(
+            EmuCore::new().restore_state_blob(&blob),
+            Err(RestoreStateError::NoRom)
+        ));
+    }
+
+    /// v2.9.7 — the rule itself, and the netplay helper.
+    #[test]
+    fn effective_extra_scanlines_and_netplay_stock_timing() {
+        assert_eq!(effective_extra_scanlines(0, false), 0);
+        assert_eq!(effective_extra_scanlines(40, false), 40);
+        assert_eq!(
+            effective_extra_scanlines(81, false),
+            MAX_OVERCLOCK_SCANLINES
+        );
+        assert_eq!(effective_extra_scanlines(40, true), 0);
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.set_extra_scanlines(30);
+        force_stock_timing(&mut nes);
+        assert_eq!(nes.extra_scanlines(), 0);
+    }
+
+    /// v2.9.7 "Tandem" (plan item 4) — the browser battery restore gate. A
+    /// battery cartridge's stored save is read asynchronously in the browser;
+    /// until the read lands, `produce_one_frame` must not run the console, or
+    /// the game boots on power-on RAM and its save is not there. Tested here
+    /// natively because the gate is `EmuCore` logic; the `IndexedDB` read that
+    /// releases it cannot run headless.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_pending_browser_battery_read_holds_the_first_frame() {
+        let rom = crate::web_battery::tests::rom(true);
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&rom).unwrap());
+        let sha = core.begin_web_battery().expect("a battery cart persists");
+        let before = core.nes.as_ref().unwrap().frame();
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let held = core.nes.as_ref().unwrap();
+        assert_eq!(held.frame(), before, "no frame completes while held");
+        assert_eq!(
+            held.save_data()[0],
+            0,
+            "and the program has not run: its first store never happened"
+        );
+        let mut stored = vec![0u8; core.nes.as_ref().unwrap().save_data().len()];
+        stored[2] = 0x77; // a byte the program never touches
+        assert!(core.restore_web_battery(sha, Ok(Some(stored))).is_none());
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let nes = core.nes.as_ref().unwrap();
+        assert!(nes.frame() > before, "the read released the gate");
+        assert_eq!(nes.save_data()[0], 0xA5, "the program ran");
+        assert_eq!(
+            nes.save_data()[2],
+            0x77,
+            "on the restored save, which was in place before its first frame"
+        );
+    }
+
+    /// v2.9.7 — a cartridge without a battery is never gated.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_cart_without_a_battery_is_never_held() {
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&crate::web_battery::tests::rom(false)).unwrap());
+        assert!(core.begin_web_battery().is_none());
+        for _ in 0..3 {
+            core.produce_one_frame(&quiet_inputs(), &mut sinks);
+        }
+        assert_eq!(core.nes.as_ref().unwrap().sram()[0], 0xA5, "it ran");
     }
 
     /// v1.7.0 "Forge" Workstream A1 — the gated-writeback contract: a queued

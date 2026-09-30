@@ -30,6 +30,8 @@
 //! `[input.gamepad*]` sections are new but `#[serde(default)]`, so older
 //! files keep working.
 
+use std::borrow::Cow;
+
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -332,7 +334,7 @@ impl InputPanelState {
         };
         if matches!(code, KeyCode::Escape) {
             self.pending = None;
-            self.status = "(cancelled)".into();
+            self.status = crate::t!(RebindCancelled).into();
             return;
         }
         let name = format!("{code:?}");
@@ -378,7 +380,7 @@ pub fn show(
         ctx,
         detached,
         "input",
-        "Input bindings",
+        crate::t!(RebindTitle),
         super::WindowCfg {
             default_pos: Some([560.0, 64.0]),
             default_size: Some([460.0, 520.0]),
@@ -410,20 +412,20 @@ fn device_config_ui(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut
         // a frontend DPI multiplier on the host-mouse motion.
         ExpansionDevice::SnesMouse => {
             ui.group(|ui| {
-                ui.label(egui::RichText::new("SNES mouse").strong());
+                ui.label(egui::RichText::new(crate::t!(RebindSnesMouse)).strong());
                 ui.horizontal(|ui| {
-                    ui.label("Reported sensitivity");
+                    ui.label(crate::t!(RebindReportedSensitivity));
                     let mut sens = config.input.mouse_sensitivity.min(2);
                     egui::ComboBox::from_id_salt("dev-mouse-sens")
                         .selected_text(match sens {
-                            0 => "Low",
-                            1 => "Medium",
-                            _ => "High",
+                            0 => crate::t!(RebindLow),
+                            1 => crate::t!(RebindMedium),
+                            _ => crate::t!(RebindHigh),
                         })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut sens, 0u8, "Low");
-                            ui.selectable_value(&mut sens, 1u8, "Medium");
-                            ui.selectable_value(&mut sens, 2u8, "High");
+                            ui.selectable_value(&mut sens, 0u8, crate::t!(RebindLow));
+                            ui.selectable_value(&mut sens, 1u8, crate::t!(RebindMedium));
+                            ui.selectable_value(&mut sens, 2u8, crate::t!(RebindHigh));
                         });
                     if sens != config.input.mouse_sensitivity {
                         config.input.mouse_sensitivity = sens;
@@ -437,7 +439,7 @@ fn device_config_ui(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut
         // far the paddle travels per host-mouse movement.
         ExpansionDevice::Vaus => {
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Arkanoid Vaus paddle").strong());
+                ui.label(egui::RichText::new(crate::t!(RebindVausPaddle)).strong());
                 pointer_scale_slider(ui, state, config);
             });
         }
@@ -446,7 +448,7 @@ fn device_config_ui(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut
             ui.group(|ui| {
                 ui.label(egui::RichText::new("Power Pad / Family Trainer").strong());
                 ui.horizontal(|ui| {
-                    ui.label("Mat layout");
+                    ui.label(crate::t!(RebindMatLayout));
                     let mut layout = config.input.power_pad_layout;
                     egui::ComboBox::from_id_salt("dev-powerpad-layout")
                         .selected_text(layout.label())
@@ -470,7 +472,7 @@ fn device_config_ui(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut
 fn pointer_scale_slider(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
     let mut scale = config.input.pointer_scale.clamp(0.1, 8.0);
     if ui
-        .add(egui::Slider::new(&mut scale, 0.1..=8.0).text("Pointer speed"))
+        .add(egui::Slider::new(&mut scale, 0.1..=8.0).text(crate::t!(RebindPointerSpeed)))
         .changed()
     {
         config.input.pointer_scale = scale;
@@ -482,16 +484,16 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
     // Apply any captured rebind from the previous input event.
     if let Some((slot, name)) = state.captured.take() {
         apply_slot(config, slot, &name);
-        state.status = format!("Rebound {} -> {name}", slot_label(slot));
+        state.status = crate::tf!(RebindRebound, row_label(slot_label(slot)), name);
         state.bindings_dirty = true;
     }
 
     {
         if state.pending.is_some() {
             let prompt = if state.pending.is_some_and(Slot::is_gamepad) {
-                "Press any gamepad button (rebind again to cancel)"
+                crate::t!(RebindPressPad)
             } else {
-                "Press any key (Esc to cancel)"
+                crate::t!(RebindPressKey)
             };
             egui::Frame::default()
                 .fill(egui::Color32::from_black_alpha(220))
@@ -511,27 +513,24 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
             // `.toml` file (a backup / share copy), via the native save dialog.
             #[cfg(not(target_arch = "wasm32"))]
             if ui
-                .button("Export config...")
-                .on_hover_text(
-                    "Settings auto-save continuously. Use this to export a copy of \
-                     the whole config to a chosen .toml file.",
-                )
+                .button(crate::t!(RebindExportConfig))
+                .on_hover_text(crate::t!(RebindExportHover))
                 .clicked()
                 && let Some(path) = rfd::FileDialog::new()
-                    .set_title("Export RustyNES config")
+                    .set_title(crate::t!(RebindExportDialogTitle))
                     .set_file_name("rustynes-config.toml")
                     .add_filter("TOML", &["toml"])
                     .save_file()
             {
                 match config.save_to(&path) {
-                    Ok(()) => state.status = format!("Exported to {}", path.display()),
-                    Err(e) => state.status = format!("export error: {e}"),
+                    Ok(()) => state.status = crate::tf!(RebindExportedTo, path.display()),
+                    Err(e) => state.status = crate::tf!(RebindExportError, e),
                 }
             }
-            if ui.button("Reset to defaults").clicked() {
+            if ui.button(crate::t!(RebindResetDefaults)).clicked() {
                 *config = Config::default();
                 // Auto-save fires on the dirty edge, so this reset persists too.
-                state.status = "Defaults restored.".into();
+                state.status = crate::t!(RebindDefaultsRestored).into();
                 state.bindings_dirty = true;
             }
         });
@@ -540,7 +539,7 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         // Flagging the bindings dirty routes the new value to
         // `nes.set_four_score` via the app's reload path.
         if ui
-            .checkbox(&mut config.input.four_score, "Four Score (4-player)")
+            .checkbox(&mut config.input.four_score, crate::t!(RebindFourScore))
             .changed()
         {
             state.bindings_dirty = true;
@@ -552,7 +551,7 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         // `InputState` so the change applies without a relaunch. Edits all four
         // pad sections so a single slider covers the common single-pad case.
         ui.horizontal(|ui| {
-            ui.label("Gamepad stick deadzone");
+            ui.label(crate::t!(RebindStickDeadzone));
             let mut dz = config.input.gamepad1.axis_deadzone.clamp(0.05, 0.95);
             if ui
                 .add(egui::Slider::new(&mut dz, 0.05..=0.95).fixed_decimals(2))
@@ -575,13 +574,13 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         // strobe is applied where input meets the NES keyed on the emulated
         // frame, so it is deterministic + rollback / TAS / netplay-safe.
         ui.separator();
-        ui.label(egui::RichText::new("Turbo / autofire").strong());
+        ui.label(egui::RichText::new(crate::t!(RebindTurboHeading)).strong());
         ui.horizontal(|ui| {
             ui.checkbox(&mut config.input.turbo_a, "Turbo A");
             ui.checkbox(&mut config.input.turbo_b, "Turbo B");
         });
         ui.horizontal(|ui| {
-            ui.label("Turbo speed");
+            ui.label(crate::t!(RebindTurboSpeed));
             // Period in frames per on/off half-cycle: 1 = ~30 Hz, 4 = ~7.5 Hz.
             // Normalize the persisted value into range up front, so a config
             // loaded with an out-of-range `turbo_period` (e.g. 0 or 999) is
@@ -589,7 +588,7 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
             config.input.turbo_period = config.input.turbo_period.clamp(1, 8);
             let mut period = config.input.turbo_period;
             if ui
-                .add(egui::Slider::new(&mut period, 1..=8).text("frames"))
+                .add(egui::Slider::new(&mut period, 1..=8).text(crate::t!(RebindFrames)))
                 .changed()
             {
                 config.input.turbo_period = period;
@@ -606,12 +605,9 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         if ui
             .checkbox(
                 &mut config.input.allow_opposing_directions,
-                "Allow opposing directions (Up+Down, Left+Right)",
+                crate::t!(RebindAllowOpposing),
             )
-            .on_hover_text(
-                "Off: holding opposite directions together reads as neither, as on a \
-                 real NES pad. On: both reach the game (some games glitch on it).",
-            )
+            .on_hover_text(crate::t!(RebindAllowOpposingHover))
             .changed()
         {
             state.bindings_dirty = true;
@@ -624,36 +620,52 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         {
             use crate::config::ExpansionDevice;
             let mut dev = config.input.expansion_device;
-            egui::ComboBox::from_label("Port 2 device ($4017)")
+            egui::ComboBox::from_label(crate::t!(RebindPort2Device))
                 .selected_text(match dev {
-                    ExpansionDevice::None => "Standard controller",
-                    ExpansionDevice::Zapper => "Zapper (light gun)",
-                    ExpansionDevice::Vaus => "Vaus (Arkanoid paddle)",
-                    ExpansionDevice::PowerPad => "Power Pad (mat)",
-                    ExpansionDevice::SnesMouse => "SNES mouse",
-                    ExpansionDevice::FamilyKeyboard => "Family BASIC keyboard",
-                    ExpansionDevice::FamilyTrainer => "Family Trainer (mat)",
-                    ExpansionDevice::SuborKeyboard => "Subor keyboard",
+                    ExpansionDevice::None => crate::t!(RebindStandardController),
+                    ExpansionDevice::Zapper => crate::t!(RebindZapper),
+                    ExpansionDevice::Vaus => crate::t!(RebindVaus),
+                    ExpansionDevice::PowerPad => crate::t!(RebindPowerPad),
+                    ExpansionDevice::SnesMouse => crate::t!(RebindSnesMouse),
+                    ExpansionDevice::FamilyKeyboard => crate::t!(RebindFamilyKeyboard),
+                    ExpansionDevice::FamilyTrainer => crate::t!(RebindFamilyTrainer),
+                    ExpansionDevice::SuborKeyboard => crate::t!(RebindSuborKeyboard),
                     ExpansionDevice::KonamiHyperShot => "Konami Hyper Shot",
                     ExpansionDevice::BandaiHyperShot => "Bandai Hyper Shot",
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut dev, ExpansionDevice::None, "Standard controller");
-                    ui.selectable_value(&mut dev, ExpansionDevice::Zapper, "Zapper (light gun)");
-                    ui.selectable_value(&mut dev, ExpansionDevice::Vaus, "Vaus (Arkanoid paddle)");
-                    ui.selectable_value(&mut dev, ExpansionDevice::PowerPad, "Power Pad (mat)");
-                    ui.selectable_value(&mut dev, ExpansionDevice::SnesMouse, "SNES mouse");
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::None,
+                        crate::t!(RebindStandardController),
+                    );
+                    ui.selectable_value(&mut dev, ExpansionDevice::Zapper, crate::t!(RebindZapper));
+                    ui.selectable_value(&mut dev, ExpansionDevice::Vaus, crate::t!(RebindVaus));
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::PowerPad,
+                        crate::t!(RebindPowerPad),
+                    );
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::SnesMouse,
+                        crate::t!(RebindSnesMouse),
+                    );
                     ui.selectable_value(
                         &mut dev,
                         ExpansionDevice::FamilyKeyboard,
-                        "Family BASIC keyboard",
+                        crate::t!(RebindFamilyKeyboard),
                     );
                     ui.selectable_value(
                         &mut dev,
                         ExpansionDevice::FamilyTrainer,
-                        "Family Trainer (mat)",
+                        crate::t!(RebindFamilyTrainer),
                     );
-                    ui.selectable_value(&mut dev, ExpansionDevice::SuborKeyboard, "Subor keyboard");
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::SuborKeyboard,
+                        crate::t!(RebindSuborKeyboard),
+                    );
                     ui.selectable_value(
                         &mut dev,
                         ExpansionDevice::KonamiHyperShot,
@@ -679,15 +691,29 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.separator();
-            ui.label(egui::RichText::new("Keyboard").strong());
-            binding_grid(ui, "kb-grid", "Key", KB_ROWS, state, config);
+            ui.label(egui::RichText::new(crate::t!(RebindKeyboard)).strong());
+            binding_grid(
+                ui,
+                "kb-grid",
+                crate::t!(RebindColKey),
+                KB_ROWS,
+                state,
+                config,
+            );
 
             // Gamepad rows: native only (no gilrs on wasm32).
             #[cfg(not(target_arch = "wasm32"))]
             {
                 ui.separator();
-                ui.label(egui::RichText::new("Gamepad").strong());
-                binding_grid(ui, "pad-grid", "Button", PAD_ROWS, state, config);
+                ui.label(egui::RichText::new(crate::t!(RebindGamepad)).strong());
+                binding_grid(
+                    ui,
+                    "pad-grid",
+                    crate::t!(RebindColButton),
+                    PAD_ROWS,
+                    state,
+                    config,
+                );
             }
             #[cfg(target_arch = "wasm32")]
             let _ = PAD_ROWS;
@@ -701,7 +727,7 @@ fn binding_grid(
     ui: &mut egui::Ui,
     id: &str,
     value_col: &str,
-    rows: &[(Slot, &str)],
+    rows: &[(Slot, &'static str)],
     state: &mut InputPanelState,
     config: &Config,
 ) {
@@ -709,14 +735,14 @@ fn binding_grid(
         .num_columns(3)
         .striped(true)
         .show(ui, |ui| {
-            ui.label("Action");
+            ui.label(crate::t!(RebindColAction));
             ui.label(value_col);
             ui.label("");
             ui.end_row();
             for &(slot, label) in rows {
-                ui.label(label);
+                ui.label(row_label(label));
                 ui.monospace(read_slot(config, slot));
-                if ui.button("rebind").clicked() {
+                if ui.button(crate::t!(RebindButton)).clicked() {
                     state.pending = Some(slot);
                     state.status.clear();
                 }
@@ -731,6 +757,69 @@ fn slot_label(slot: Slot) -> &'static str {
         .chain(PAD_ROWS)
         .find(|(s, _)| *s == slot)
         .map_or("?", |(_, l)| *l)
+}
+
+/// v2.9.7 — the displayed (localised) form of a binding-row label.
+///
+/// The `KB_ROWS` / `PAD_ROWS` tables stay English: their labels double as the
+/// stable names `slot_label` returns and the tests pin. Translation happens
+/// here, at display time. The 64 per-player rows are composed rather than
+/// keyed one by one: `Player<N> <button>` / `Pad<N> <button>` become the
+/// `RebindRowPlayer` / `RebindRowPad` templates with the direction words
+/// translated, while `A`, `B`, `Select` and `Start` are the NES buttons' own
+/// names and stay as printed on the pad. The system actions map to one key
+/// each. In English every branch rebuilds the table string exactly, and a
+/// label this function does not recognise is shown verbatim, so a new row
+/// can never render blank.
+fn row_label_in(locale: crate::i18n::Locale, label: &'static str) -> Cow<'static, str> {
+    use crate::i18n::{Key, tr_fmt_in, tr_in};
+
+    for (prefix, key) in [("Player", Key::RebindRowPlayer), ("Pad", Key::RebindRowPad)] {
+        if let Some(rest) = label.strip_prefix(prefix)
+            && let Some((n, button)) = rest.split_once(' ')
+            && !n.is_empty()
+            && n.bytes().all(|b| b.is_ascii_digit())
+        {
+            let button = match button {
+                "Up" => tr_in(locale, Key::RebindDirUp),
+                "Down" => tr_in(locale, Key::RebindDirDown),
+                "Left" => tr_in(locale, Key::RebindDirLeft),
+                "Right" => tr_in(locale, Key::RebindDirRight),
+                other => other,
+            };
+            return Cow::Owned(tr_fmt_in(locale, key, &[&n, &button]));
+        }
+    }
+    let key = match label {
+        "Quit" => Key::RebindActQuit,
+        "Save state" => Key::RebindActSaveState,
+        "Load state" => Key::RebindActLoadState,
+        "Rewind (hold)" => Key::RebindActRewind,
+        "Reset" => Key::RebindActReset,
+        "Power cycle" => Key::RebindActPowerCycle,
+        "Debug overlay" => Key::RebindActDebugOverlay,
+        "Open ROM" => Key::RebindActOpenRom,
+        "Pause / resume" => Key::RebindActPause,
+        "Frame advance" => Key::RebindActFrameAdvance,
+        "Fast forward (hold)" => Key::RebindActFastForward,
+        "Fullscreen" => Key::RebindActFullscreen,
+        "Toggle menu bar" => Key::RebindActToggleMenuBar,
+        "Speed up" => Key::RebindActSpeedUp,
+        "Speed down" => Key::RebindActSpeedDown,
+        "Speed reset" => Key::RebindActSpeedReset,
+        "Movie record" => Key::RebindActMovieRecord,
+        "Movie play" => Key::RebindActMoviePlay,
+        "Movie branch" => Key::RebindActMovieBranch,
+        "Swap disk side (FDS)" => Key::RebindActDiskSwap,
+        "Insert coin (Vs.)" => Key::RebindActInsertCoin,
+        _ => return Cow::Borrowed(label),
+    };
+    Cow::Borrowed(tr_in(locale, key))
+}
+
+/// [`row_label_in`] in the current UI locale.
+fn row_label(label: &'static str) -> Cow<'static, str> {
+    row_label_in(crate::i18n::current_locale(), label)
 }
 
 fn read_slot(cfg: &Config, slot: Slot) -> String {
@@ -920,6 +1009,26 @@ fn apply_slot(cfg: &mut Config, slot: Slot, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_labels_are_verbatim_in_english_and_translated_in_spanish() {
+        use crate::i18n::Locale;
+        for &(_, label) in KB_ROWS.iter().chain(PAD_ROWS) {
+            // English rebuilds the table string exactly (the default UI is
+            // unchanged) ...
+            assert_eq!(row_label_in(Locale::English, label), label);
+            // ... and every row has a Spanish form: an unrecognised label
+            // would fall through verbatim, which this catches.
+            assert_ne!(row_label_in(Locale::Spanish, label), label, "{label}");
+        }
+        assert_eq!(
+            row_label_in(Locale::Spanish, "Player3 Up"),
+            "Jugador3 Arriba"
+        );
+        assert_eq!(row_label_in(Locale::Spanish, "Pad2 Start"), "Mando2 Start");
+        // An unknown label is shown as-is rather than blank.
+        assert_eq!(row_label_in(Locale::Spanish, "Mystery"), "Mystery");
+    }
 
     #[test]
     fn keyboard_slots_are_not_gamepad() {

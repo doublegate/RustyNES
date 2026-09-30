@@ -3207,8 +3207,26 @@ impl Ppu {
     // `&mut self` is required under `mc-ppu-2007-render-buffer` (it latches
     // `self.render_data_bus` below); clippy's needless-pass-by-ref-mut only fires
     // on the default build where that cfg is off, so allow it here.
-    #[allow(clippy::needless_pass_by_ref_mut)]
     fn read_vram<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
+        // v2.9.7 — every read drives its address onto the PPU bus, so every
+        // read reports its A12 level. Before v2.9.7 only pattern fetches and
+        // `v` did, so the garbage nametable reads of the sprite window never
+        // pulled A12 low, and the eight A12 pulses of each rendered line
+        // reached the mapper as one. MMC3's filter ignores the short lows, so
+        // it never showed there. Boards that count raw edges were starved
+        // eightfold: Acclaim's MC-ACC (a divide-by-8 on every edge) and
+        // mapper 91 submapper 0 ("64 unfiltered rises"). Pinned by
+        // `a12_reports_the_hardware_stream_and_an_mmc3_filter_still_sees_241`.
+        // `observe_a12_addr` calls the bus only on a change of level.
+        self.observe_a12_addr(bus, addr & 0x3FFF);
+        self.read_vram_unobserved(bus, addr)
+    }
+
+    /// [`Self::read_vram`] without the A12 report: the read itself, for the
+    /// one caller whose A12 edge would land in the wrong order (the sprite
+    /// window's second garbage nametable read; see `tick_sprite_fetch_read`).
+    #[allow(clippy::needless_pass_by_ref_mut)]
+    fn read_vram_unobserved<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let a = addr & 0x3FFF;
         // Every PPU bus read passes through here -- pattern fetches, nametable
         // and attribute fetches, sprite pattern fetches, and `$2007`. Capturing
@@ -3282,7 +3300,23 @@ impl Ppu {
                     0x2000 | (self.v & 0x0FFF)
                 };
                 // `read_vram` latches `render_data_bus` with the value read.
-                let _ = self.read_vram(bus, nt);
+                //
+                // A12 (v2.9.7): on hardware the slot's two garbage reads hold
+                // A12 low for dots 257-260 of the slot, and the pattern fetch
+                // raises it at 261. Here the pattern fetch is collapsed into
+                // `fetch_sprite_tile` at the slot's dot 260, the same dot as the
+                // second garbage read (local 3), and runs BEFORE it. Reporting
+                // that read's A12 would lower A12 again after the rise and leave
+                // it low for eight dots instead of high, which lets an MMC3
+                // filter count a second rise per slot (mmc3_test 2 "clocked 241
+                // times" fails). So the first read (local 1) reports the fall,
+                // the pattern fetch the rise, and the second read stays silent:
+                // the same edges, one per slot, as the hardware.
+                let _ = if local == 1 {
+                    self.read_vram(bus, nt)
+                } else {
+                    self.read_vram_unobserved(bus, nt)
+                };
             }
             5 if slot < 8 => self.render_data_bus = self.spr_fetch_lo_raw[slot],
             7 if slot < 8 => self.render_data_bus = self.spr_fetch_hi_raw[slot],
@@ -7273,20 +7307,37 @@ mod tests {
         assert_eq!(p.oam_addr, 0x41);
     }
 
-    /// Diagnostic: with standard MMC3 layout (BG=$0000, sprites=$1000)
-    /// and rendering enabled, the PPU should produce exactly 241 A12
-    /// rising edges per NTSC frame (240 visible scanlines + 1 pre-render
-    /// scanline).  This is what MMC3's IRQ counter clocks on.
+    /// v2.9.7 — the A12 stream the PPU reports is the HARDWARE stream, not
+    /// MMC3's filtered view of it.
+    ///
+    /// Standard layout (BG at `$0000`, sprites at `$1000`), rendering on. In
+    /// each of the eight 8-dot sprite-fetch slots (dots 257-320) the PPU reads
+    /// two garbage nametable bytes (`$2xxx`, A12 low) and then the sprite's two
+    /// pattern bytes (`$1xxx`, A12 high). So A12 rises **eight times per
+    /// rendered line**: 240 visible lines plus the pre-render line give
+    /// `8 * 241 = 1928` per NTSC frame.
+    ///
+    /// MMC3 sees one of those per line because its filter ignores a rise
+    /// unless A12 was low for about three CPU cycles (nine dots). The first
+    /// slot's rise follows the long low of the background fetches; every later
+    /// slot's rise follows a four-dot low. The same filter, applied here to
+    /// the raw stream, must therefore still count exactly 241.
+    ///
+    /// Until v2.9.7 the PPU never reported the garbage nametable reads, so it
+    /// emitted MMC3's view (241 rises) as if it were the stream, and this test
+    /// pinned that. Boards that count raw edges were starved eightfold:
+    /// Acclaim's MC-ACC (a divide-by-8 on every edge), whose six local test
+    /// games lost their status bars, and mapper 91 submapper 0, whose page
+    /// says it counts "64 unfiltered rises of PPU A12".
     #[test]
-    fn a12_rising_edges_match_241_per_ntsc_frame_standard_layout() {
+    fn a12_reports_the_hardware_stream_and_an_mmc3_filter_still_sees_241() {
         struct CountingBus {
             chr: [u8; 0x2000],
-            rises: u32,
+            dot: u64,
             last_a12: bool,
-            // diagnostic: count rises in each phase
-            rises_visible: u32,
-            rises_prerender: u32,
-            cur_scanline_is_pre: bool,
+            low_since: u64,
+            raw_rises: u32,
+            filtered_rises: u32,
         }
         impl PpuBus for CountingBus {
             fn ppu_read(&mut self, addr: u16) -> u8 {
@@ -7302,17 +7353,20 @@ mod tests {
                 }
             }
             fn notify_a12(&mut self, level: bool) {
-                if level != self.last_a12 {
-                    if level {
-                        self.rises += 1;
-                        if self.cur_scanline_is_pre {
-                            self.rises_prerender += 1;
-                        } else {
-                            self.rises_visible += 1;
-                        }
-                    }
-                    self.last_a12 = level;
+                if level == self.last_a12 {
+                    return;
                 }
+                if level {
+                    self.raw_rises += 1;
+                    // MMC3-style filter, in dots: low for at least 9 dots
+                    // (three CPU cycles on NTSC).
+                    if self.dot.saturating_sub(self.low_since) >= 9 {
+                        self.filtered_rises += 1;
+                    }
+                } else {
+                    self.low_since = self.dot;
+                }
+                self.last_a12 = level;
             }
             fn nametable_address(&self, addr: u16) -> u16 {
                 let table = ((addr.wrapping_sub(0x2000)) / 0x0400) & 0x03;
@@ -7325,40 +7379,29 @@ mod tests {
         p.post_reset_mask_remaining = 0;
         let mut b = CountingBus {
             chr: [0u8; 0x2000],
-            rises: 0,
+            dot: 0,
             last_a12: false,
-            rises_visible: 0,
-            rises_prerender: 0,
-            cur_scanline_is_pre: false,
+            low_since: 0,
+            raw_rises: 0,
+            filtered_rises: 0,
         };
-        // Standard layout: BG=$0000 (PPUCTRL bit 4 = 0),
-        //                  sprites=$1000 (PPUCTRL bit 3 = 1).
         p.cpu_write_register(0, PpuCtrl::SPRITE_PATTERN_HIGH.bits(), &mut b);
-        // Enable BG + sprite rendering (PPUMASK bits 3 + 4).
         p.cpu_write_register(1, (PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE).bits(), &mut b);
-
-        // Advance past a complete frame.  Reset rise counters at the start of
-        // the frame and then tick exactly one NTSC frame (262 scanlines × 341
-        // dots — odd-frame skip not triggered because frame counter is 0).
-        // First, advance to scanline 0 dot 0.
         while !(p.scanline() == 0 && p.dot() == 0) {
             p.tick(&mut b);
+            b.dot += 1;
         }
-        b.rises = 0;
-        b.rises_visible = 0;
-        b.rises_prerender = 0;
-        b.last_a12 = false;
-        // Now run exactly one frame.
+        b.raw_rises = 0;
+        b.filtered_rises = 0;
         let start_frame = p.frame();
         while p.frame() == start_frame {
-            b.cur_scanline_is_pre = p.scanline() == PpuRegion::Ntsc.prerender_line();
             p.tick(&mut b);
+            b.dot += 1;
         }
+        assert_eq!(b.raw_rises, 8 * 241, "eight A12 rises per rendered line");
         assert_eq!(
-            b.rises, 241,
-            "expected 241 A12 rises per NTSC frame (240 visible + 1 pre-render), \
-             got {} (visible={}, prerender={})",
-            b.rises, b.rises_visible, b.rises_prerender
+            b.filtered_rises, 241,
+            "an MMC3-style filter still sees one rise per rendered line"
         );
     }
 

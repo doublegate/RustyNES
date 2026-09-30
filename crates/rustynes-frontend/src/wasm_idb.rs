@@ -34,6 +34,9 @@
 //! - Key = `"<rom_sha256_hex>:slot<N>"` (the per-ROM-per-slot string), so
 //!   distinct ROMs + slots never collide — the IDB analogue of the
 //!   `localStorage` `save_state_key`.
+//! - v2.9.7 — the same store also holds each battery cartridge's save RAM
+//!   under `"<rom_sha256_hex>:battery"` (`crate::web_battery::battery_key`),
+//!   which keeps the database at version 1; see the battery section below.
 //! - Value = the raw snapshot bytes as a `Uint8Array`.
 //!
 //! Every fallible browser call degrades to a `wasm_io::log(...)` console
@@ -249,6 +252,154 @@ pub async fn scan_slots(rom_sha256: [u8; 32], slots: u8) -> Vec<SlotMeta> {
         out.push(meta);
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// v2.9.7 "Tandem" (plan item 4) — the battery record.
+//
+// The decisions (which cartridge persists, when a write is due, whether a
+// stored record is usable, what a finished write means) are in
+// `crate::web_battery`, where they are tested natively. These functions only
+// move bytes between that state machine and the browser, and have no headless
+// test: IndexedDB exists only in a browser. The manual check is in the v2.9.7
+// notes.
+//
+// The record lives in the existing `save-states` store under the key
+// `"<sha>:battery"` rather than in a store of its own, so the database stays
+// at version 1: an open at a new version is blocked by any other tab still
+// holding version 1, and the restore that gates emulation would wait on it.
+// `crate::web_battery::battery_key` records the reasoning in full.
+// ---------------------------------------------------------------------------
+
+/// Read a ROM's battery record: `Ok(Some(bytes))` when one is stored,
+/// `Ok(None)` when none is, `Err(reason)` when the store could not be read.
+///
+/// The distinction between "none" and "could not be read" is the point: a
+/// failed read that looked like "no save" would arm the session from power-on
+/// RAM, and its first write would replace the player's save with it.
+///
+/// Where IndexedDB is unavailable, the `localStorage` fallback (base64 under
+/// `rustynes-battery-<hex>`) is used for reads and writes alike, as the
+/// save-state slots do.
+///
+/// # Errors
+///
+/// The IndexedDB request failed, or neither IndexedDB nor `localStorage` is
+/// available, or a `localStorage` record is not valid base64.
+pub async fn get_battery(rom_sha256: [u8; 32]) -> Result<Option<Vec<u8>>, String> {
+    let key = crate::web_battery::battery_key(&rom_sha256);
+    if let Some(db) = open_db().await {
+        let store = readonly_store(&db).ok_or("IndexedDB transaction failed")?;
+        let req = store
+            .get(&JsValue::from_str(&key))
+            .map_err(|_| "IndexedDB get failed")?;
+        let value = JsFuture::from(request_to_promise(&req))
+            .await
+            .map_err(|_| "IndexedDB read rejected")?;
+        if value.is_undefined() || value.is_null() {
+            return Ok(None);
+        }
+        let array = value
+            .dyn_into::<js_sys::Uint8Array>()
+            .map_err(|_| "the stored record is not a byte array")?;
+        return Ok(Some(array.to_vec()));
+    }
+    let storage =
+        crate::wasm_io::local_storage().ok_or("neither IndexedDB nor localStorage is available")?;
+    let ls_key = crate::web_battery::localstorage_battery_key(&rom_sha256);
+    match storage.get_item(&ls_key) {
+        Ok(Some(encoded)) => crate::wasm_io::base64_decode(&encoded)
+            .map(Some)
+            .ok_or_else(|| "the localStorage record is corrupt".to_string()),
+        Ok(None) => Ok(None),
+        Err(_) => Err("localStorage read failed".to_string()),
+    }
+}
+
+/// Store one battery write. Returns whether the browser accepted it.
+///
+/// IndexedDB when available, else the `localStorage` fallback. The outcome is
+/// reported back to `crate::web_battery::WebBattery::written`, which moves the
+/// baseline only on success, so a rejected write (a full quota) is retried at
+/// the next comparison.
+pub async fn put_battery(write: &crate::web_battery::WebBatteryWrite) -> bool {
+    let Some(db) = open_db().await else {
+        let Some(storage) = crate::wasm_io::local_storage() else {
+            log("battery save: no browser storage available");
+            return false;
+        };
+        let key = crate::web_battery::localstorage_battery_key(write.rom_sha256());
+        let encoded = crate::wasm_io::base64_encode(write.bytes());
+        // `base64_encode` returns "" when `btoa` is unavailable. Storing that
+        // would report success, move the baseline so no retry follows, and
+        // restore next load as a wrong-sized save that switches persistence
+        // off (CodeRabbit on #577).
+        if encoded.is_empty() && !write.bytes().is_empty() {
+            log("battery save: base64 encoding failed");
+            return false;
+        }
+        return storage.set_item(&key, &encoded).is_ok();
+    };
+    let Ok(tx) = db.transaction_with_str_and_mode(STORE, IdbTransactionMode::Readwrite) else {
+        log("battery save: IndexedDB transaction failed");
+        return false;
+    };
+    let Ok(store) = tx.object_store(STORE) else {
+        log("battery save: IndexedDB object store missing");
+        return false;
+    };
+    let value = js_sys::Uint8Array::from(write.bytes());
+    let Ok(req) = store.put_with_key(value.as_ref(), &JsValue::from_str(&write.key())) else {
+        log("battery save: IndexedDB put failed");
+        return false;
+    };
+    if JsFuture::from(request_to_promise(&req)).await.is_ok() {
+        true
+    } else {
+        log("battery save: IndexedDB write rejected (quota?)");
+        false
+    }
+}
+
+thread_local! {
+    /// Finished battery writes, waiting for the frontend to report them to
+    /// `WebBattery::written` on its next tick. A queue rather than a callback
+    /// into the emulator: a write can be started from inside `EmuCore` (the
+    /// sandboxed-session flush), which holds no handle to itself, and the
+    /// browser is single-threaded, so a thread-local is the whole channel.
+    static BATTERY_DONE: core::cell::RefCell<Vec<(crate::web_battery::WebBatteryWrite, bool)>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+    /// Status-bar messages raised by the asynchronous battery tasks (a
+    /// refused record), waiting for the frontend's next tick.
+    static BATTERY_NOTICES: core::cell::RefCell<Vec<String>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// Store `write` asynchronously and queue its outcome for
+/// [`take_battery_completions`]. The bytes are already a copy, so the caller
+/// may keep running the console.
+pub fn spawn_battery_write(write: crate::web_battery::WebBatteryWrite) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let ok = put_battery(&write).await;
+        BATTERY_DONE.with(|q| q.borrow_mut().push((write, ok)));
+    });
+}
+
+/// Take the battery writes that finished since the last call.
+#[must_use]
+pub fn take_battery_completions() -> Vec<(crate::web_battery::WebBatteryWrite, bool)> {
+    BATTERY_DONE.with(|q| core::mem::take(&mut *q.borrow_mut()))
+}
+
+/// Queue a status-bar message from an asynchronous battery task.
+pub fn push_battery_notice(notice: String) {
+    BATTERY_NOTICES.with(|q| q.borrow_mut().push(notice));
+}
+
+/// Take the battery status-bar messages raised since the last call.
+#[must_use]
+pub fn take_battery_notices() -> Vec<String> {
+    BATTERY_NOTICES.with(|q| core::mem::take(&mut *q.borrow_mut()))
 }
 
 #[cfg(test)]

@@ -119,7 +119,7 @@ pub fn show(ctx: &egui::Context, state: &mut WasmLobbyState, config: &mut crate:
     state.seed(&config.netplay.signaling_url, config.netplay.num_players);
 
     let mut open = state.open;
-    egui::Window::new("Netplay (browser)")
+    egui::Window::new(crate::t!(LobbyTitle))
         .open(&mut open)
         .default_pos([600.0, 96.0])
         .default_size([400.0, 320.0])
@@ -136,31 +136,35 @@ fn body(ui: &mut egui::Ui, state: &mut WasmLobbyState, config: &mut crate::confi
     let active = !matches!(state.phase, Idle);
 
     // --- Status block ---
-    ui.label(egui::RichText::new("Status").strong());
+    ui.label(egui::RichText::new(crate::t!(NpStatus)).strong());
     match state.phase {
         Idle => {
-            ui.label("Single-player (not connected).");
+            ui.label(crate::t!(NpSinglePlayer));
         }
         Connecting => {
             ui.colored_label(
                 egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
-                "Connecting (signaling + WebRTC handshake)...",
+                crate::t!(LobbyConnecting),
             );
             if !state.message.is_empty() {
                 ui.label(egui::RichText::new(&state.message).weak());
             }
         }
         InGame => {
-            let role = if state.host { "host" } else { "joiner" };
+            let role = if state.host {
+                crate::t!(LobbyRoleHost)
+            } else {
+                crate::t!(LobbyRoleJoiner)
+            };
             ui.colored_label(
                 egui::Color32::from_rgb(0x40, 0xC0, 0x40),
-                format!("In game ({} players, joined as {role})", state.num_players),
+                crate::tf!(LobbyInGame, state.num_players, role),
             );
         }
         Error => {
             ui.colored_label(
                 egui::Color32::from_rgb(0xE0, 0x40, 0x40),
-                format!("Error: {}", state.message),
+                crate::tf!(NpError, state.message),
             );
         }
     }
@@ -169,7 +173,7 @@ fn body(ui: &mut egui::Ui, state: &mut WasmLobbyState, config: &mut crate::confi
 
     // --- Connection setup (disabled while active) ---
     ui.add_enabled_ui(!active, |ui| {
-        ui.label(egui::RichText::new("Signaling server").strong());
+        ui.label(egui::RichText::new(crate::t!(LobbySignalingServer)).strong());
         ui.horizontal(|ui| {
             ui.label("URL:");
             ui.add(
@@ -180,47 +184,40 @@ fn body(ui: &mut egui::Ui, state: &mut WasmLobbyState, config: &mut crate::confi
         });
 
         ui.horizontal(|ui| {
-            ui.label("room:");
+            ui.label(crate::t!(LobbyRoom));
             ui.add(
                 egui::TextEdit::singleline(&mut state.room)
-                    .hint_text("lobby code")
+                    .hint_text(crate::t!(LobbyCodeHint))
                     .desired_width(160.0),
             );
         });
 
         ui.horizontal(|ui| {
-            ui.label("role:");
-            ui.selectable_value(&mut state.host, true, "Host (P1)");
-            ui.selectable_value(&mut state.host, false, "Join (P2)");
+            ui.label(crate::t!(LobbyRole));
+            ui.selectable_value(&mut state.host, true, crate::t!(LobbyHostP1));
+            ui.selectable_value(&mut state.host, false, crate::t!(LobbyJoinP2));
         });
 
         if state.num_players < 2 {
             state.num_players = 2;
         }
         ui.horizontal(|ui| {
-            ui.label("players:");
+            ui.label(crate::t!(NpPlayers));
             for n in 2u8..=4 {
                 ui.selectable_value(&mut state.num_players, n, n.to_string());
             }
         });
         if state.num_players > 2 {
-            ui.label(
-                egui::RichText::new(
-                    "3-4 players use the Four Score adapter and form a full WebRTC \
-                     mesh (every peer connected to every other). All players must \
-                     share the room code; each gets the next free slot.",
-                )
-                .weak(),
-            );
+            ui.label(egui::RichText::new(crate::t!(LobbyFourScoreNote)).weak());
         }
 
-        if ui.button("Connect").clicked() {
+        if ui.button(crate::t!(LobbyConnect)).clicked() {
             let signaling_url = state.signaling_url.trim().to_string();
             let room = state.room.trim().to_string();
             if signaling_url.is_empty() {
-                state.message = "enter a signaling-server URL first".to_string();
+                state.message = crate::t!(LobbyNeedUrl).to_string();
             } else if room.is_empty() {
-                state.message = "enter a room code first".to_string();
+                state.message = crate::t!(LobbyNeedRoom).to_string();
             } else {
                 let num_players = state.num_players.clamp(2, 4);
                 // Persist the conveniences for the next launch.
@@ -240,29 +237,14 @@ fn body(ui: &mut egui::Ui, state: &mut WasmLobbyState, config: &mut crate::confi
 
     // --- Leave (enabled while active) ---
     ui.add_enabled_ui(active, |ui| {
-        if ui.button("Leave").clicked() {
+        if ui.button(crate::t!(NpLeave)).clicked() {
             state.request = Some(LobbyRequest::Leave);
         }
     });
 
     ui.separator();
-    ui.label(
-        egui::RichText::new(
-            "Both peers must run the SAME ROM (the signaling handshake checks \
-             the SHA-256) and point at the same signaling server + room code. \
-             A live session needs the server deployed (see deploy/) and two \
-             browsers.",
-        )
-        .weak(),
-    );
-    ui.label(
-        egui::RichText::new(
-            "IMPORTANT: keep every player's window VISIBLE (side-by-side, not a \
-             background tab). Browsers throttle requestAnimationFrame in hidden \
-             tabs, which stalls and desyncs the rollback session.",
-        )
-        .weak(),
-    );
+    ui.label(egui::RichText::new(crate::t!(LobbyPeersNote)).weak());
+    ui.label(egui::RichText::new(crate::t!(LobbyVisibleNote)).weak());
 }
 
 #[cfg(test)]
