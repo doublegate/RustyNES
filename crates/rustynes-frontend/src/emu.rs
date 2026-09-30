@@ -106,6 +106,45 @@ pub struct EmuHandle {
 /// exactly the drift this constant was created to stop.
 pub(crate) const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 
+/// v2.9.7 — the largest overclock the Settings field offers (`0..=80`). A
+/// hand-edited config above it is clamped here, where the value reaches the
+/// core, rather than trusted.
+pub(crate) const MAX_OVERCLOCK_SCANLINES: u16 = 80;
+
+/// v2.9.7 — the extra-scanline overclock the core should run the next frame
+/// with.
+///
+/// The overclock changes how many CPU cycles a frame contains, so it is part of
+/// the emulated timeline. A movie replays inputs against that timeline, so a
+/// recording made with the overclock would desync on a player without it, and
+/// two netplay peers with different settings would disagree from the first
+/// frame. The rule is therefore simple: **stock timing (0) whenever the
+/// timeline is shared**, the configured value (clamped to
+/// [`MAX_OVERCLOCK_SCANLINES`]) otherwise. Netplay reaches the core outside
+/// [`EmuCore::produce_one_frame`], so its drive sites call
+/// [`force_stock_timing`] instead of this.
+#[must_use]
+pub(crate) const fn effective_extra_scanlines(configured: u16, timeline_shared: bool) -> u16 {
+    if timeline_shared {
+        0
+    } else if configured > MAX_OVERCLOCK_SCANLINES {
+        MAX_OVERCLOCK_SCANLINES
+    } else {
+        configured
+    }
+}
+
+/// v2.9.7 — put the core back on stock timing before a netplay tick advances
+/// it. Netplay drives the `Nes` directly (not through
+/// [`EmuCore::produce_one_frame`]), and every peer must run the same timeline,
+/// so a locally configured overclock never applies there. The comparison keeps
+/// the common case (already 0) to a read.
+pub(crate) const fn force_stock_timing(nes: &mut Nes) {
+    if nes.extra_scanlines() != 0 {
+        nes.set_extra_scanlines(0);
+    }
+}
+
 /// v2.3.3 F21 — fraction of the frame budget at which the run-ahead throttle
 /// engages, measured rather than chosen.
 ///
@@ -517,6 +556,14 @@ pub struct EmuCore {
     /// EXACT same condition `emu.write` uses (T-110-E2). When `true`, the
     /// post-frame `debug_pokes` drain is skipped — locked = no-op = byte-identical.
     pub writes_locked: bool,
+    /// v2.9.7 — the configured PPU overclock: extra idle scanlines per frame
+    /// (`[enhancements] overclock_scanlines`, pushed by `App` on ROM load, power
+    /// cycle and a Settings change). This is the CONFIGURED value; the one the
+    /// core runs with is [`effective_extra_scanlines`] of it, applied at the top
+    /// of every produced frame, which is 0 while a movie records or plays.
+    /// `0` (the default) is stock timing, byte-identical to a core that never
+    /// heard of the setting.
+    pub overclock_scanlines: u16,
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
@@ -750,6 +797,7 @@ impl EmuCore {
             raw_cheats: Vec::new(),
             debug_pokes: Vec::new(),
             writes_locked: false,
+            overclock_scanlines: 0,
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
@@ -1263,9 +1311,21 @@ impl EmuCore {
         // no audio sink).
         #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
         let mut av_audio_n: usize = 0;
+        // v2.9.7 — the overclock this frame runs with: the configured value, or
+        // stock timing while a movie records or plays, because a movie is a
+        // timeline someone else replays (see `effective_extra_scanlines`).
+        // Resolved per frame rather than at movie start/stop, so no start or
+        // stop path can forget it.
+        let extra_lines = effective_extra_scanlines(
+            self.overclock_scanlines,
+            self.movie.mode() != crate::movie_ui::MovieMode::Idle,
+        );
         let Some(nes) = self.nes.as_mut() else {
             return fx;
         };
+        if nes.extra_scanlines() != extra_lines {
+            nes.set_extra_scanlines(extra_lines);
+        }
         // v2.7.0 — RetroAchievements hardcore mode disables rewind (already
         // folded into `inputs.rewind_held` by `App`).
         let rewinding = inputs.rewind_held;
@@ -2134,6 +2194,61 @@ mod tests {
             konami_hyper_shot: 0,
             bandai_hyper_shot: 0,
         }
+    }
+
+    /// v2.9.7 — the Settings overclock reaches the core, clamped, and a movie
+    /// forces stock timing for as long as it records. Before v2.9.7 the field
+    /// was saved and nothing read it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn overclock_reaches_the_core_and_a_movie_forces_stock_timing() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.nes = Some(Nes::from_rom(&rom).unwrap());
+        let lines = |core: &EmuCore| core.nes.as_ref().unwrap().extra_scanlines();
+
+        core.overclock_scanlines = 20;
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(lines(&core), 20, "the configured value reaches the core");
+
+        core.overclock_scanlines = 500;
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(lines(&core), MAX_OVERCLOCK_SCANLINES, "clamped at the core");
+
+        let EmuCore { movie, nes, .. } = &mut core;
+        movie.start_recording_power_on(nes.as_mut().unwrap(), false);
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(lines(&core), 0, "a recording runs on stock timing");
+
+        let _ = core.movie.finish_recording();
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(
+            lines(&core),
+            MAX_OVERCLOCK_SCANLINES,
+            "restored after the movie"
+        );
+    }
+
+    /// v2.9.7 — the rule itself, and the netplay helper.
+    #[test]
+    fn effective_extra_scanlines_and_netplay_stock_timing() {
+        assert_eq!(effective_extra_scanlines(0, false), 0);
+        assert_eq!(effective_extra_scanlines(40, false), 40);
+        assert_eq!(
+            effective_extra_scanlines(81, false),
+            MAX_OVERCLOCK_SCANLINES
+        );
+        assert_eq!(effective_extra_scanlines(40, true), 0);
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.set_extra_scanlines(30);
+        force_stock_timing(&mut nes);
+        assert_eq!(nes.extra_scanlines(), 0);
     }
 
     /// v1.7.0 "Forge" Workstream A1 — the gated-writeback contract: a queued

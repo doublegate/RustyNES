@@ -26,6 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Settings "Overclock (extra scanlines)" field now does something.**
+  It saved `enhancements.overclock_scanlines`, and nothing read it; the core's
+  `Nes::set_extra_scanlines` had no caller. The value now reaches the emulator
+  from the next frame, clamped to 0-80. It is held at stock timing while a
+  movie records or plays and under netplay, because a movie and a netplay
+  session are timelines another player runs, and an extra scanline changes how
+  many CPU cycles a frame has. A Vs. DualSystem cabinet keeps stock timing.
+
 ## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
 
 The seventh release of the v2.9.x line and the third of the line to v3.0.0:

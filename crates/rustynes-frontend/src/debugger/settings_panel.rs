@@ -133,6 +133,10 @@ pub struct SettingsApply {
     /// `[emulation]` PPU knobs into the core under the emu lock. Both settings
     /// emit the identical frame, so this only honours the user's escape hatch.
     pub fast_dotloop: bool,
+    /// v2.9.7 — the overclock (extra scanlines) value changed; the app pushes it
+    /// into the emulator, which applies it from the next frame (and holds stock
+    /// timing while a movie records or plays, or under netplay).
+    pub overclock: bool,
 }
 
 impl SettingsApply {
@@ -158,6 +162,7 @@ impl SettingsApply {
             || self.palette_select
             || self.oam_decay
             || self.fast_dotloop
+            || self.overclock
     }
 }
 
@@ -1919,16 +1924,24 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
 
             ui.horizontal(|ui| {
                 ui.label("Overclock (extra scanlines)");
-                changed |= ui
+                let overclock_changed = ui
                     .add(
                         egui::DragValue::new(&mut config.enhancements.overclock_scanlines)
                             .speed(1.0)
                             .range(0..=80),
                     )
                     .changed();
+                if overclock_changed {
+                    state.apply.overclock = true;
+                }
+                changed |= overclock_changed;
             });
             ui.indent("enh-overclock-note", |ui| {
-                ui.weak("Experimental: staged for the v2.0 core pass (currently inert).");
+                ui.weak(
+                    "Adds idle scanlines after the visible frame to reduce slowdown in some \
+                     games. Changes timing, so it is ignored while recording or playing a \
+                     movie and during netplay.",
+                );
             });
 
             // The max-rewind window cross-links the Rewind group above (the

@@ -1801,8 +1801,10 @@ pub struct EnhancementsConfig {
     /// Optional overclock: extra emulated PPU scanlines inserted in the
     /// vblank, reducing per-scanline slowdown in some games (Mesen2's
     /// "additional scanlines" enhancement). `0` (default) = stock timing.
-    /// **Staged**: no core hook yet (v2.0, ADR 0002); persisted + surfaced
-    /// only. Clamped to `0..=80` on use.
+    /// v2.9.7: applied to the core (`Nes::set_extra_scanlines`) from the next
+    /// frame, clamped to `0..=80`, and held at 0 while a movie records or plays
+    /// and under netplay (both are shared timelines). Until v2.9.7 it was
+    /// persisted and shown but nothing read it.
     #[serde(default)]
     pub overclock_scanlines: u16,
 }

@@ -1819,6 +1819,8 @@ impl App {
         // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
         // (booted decay-off). Off (default) = byte-identical.
         self.apply_oam_decay();
+        // v2.9.7 — and the overclock, applied from the next frame.
+        self.apply_overclock();
         // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
         // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
         // byte-identical.
@@ -6285,6 +6287,17 @@ impl App {
         }
     }
 
+    /// v2.9.7 — hand the configured overclock (`[enhancements]
+    /// overclock_scanlines`) to the emulator. `EmuCore` applies it at the top of
+    /// every produced frame through `effective_extra_scanlines`, which clamps it
+    /// and holds stock timing while a movie records or plays; netplay's drive
+    /// sites force stock timing separately. Called on ROM load, after a power
+    /// cycle, at startup and on a Settings change, like the knobs around it.
+    fn apply_overclock(&self) {
+        let lines = self.config.enhancements.overclock_scanlines;
+        self.emu.lock().overclock_scanlines = lines;
+    }
+
     /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
     /// `[emulation]` config into the core. Called on ROM load, after a
     /// power-cycle, and at startup. With every knob at its default (all off) the
@@ -6940,6 +6953,9 @@ impl App {
         let Some(nes) = emu.nes.as_mut() else {
             return;
         };
+        // v2.9.7 — every peer runs the same timeline, so a local overclock
+        // never applies under netplay.
+        crate::emu::force_stock_timing(nes);
         let tick = self.netplay.tick(nes, local);
         if connecting && self.netplay.phase() == crate::netplay_ui::NetplayPhase::InGame {
             emu.release_battery_for_session();
@@ -7004,6 +7020,9 @@ impl App {
         // v1.1.0 beta.1 (T-110-B2) — expand turbo on the local input keyed on
         // the emulated frame, so the bits sent to the peer replay verbatim.
         let local = crate::emu::apply_turbo(raw_local, nes.frame(), turbo_mask, turbo_period);
+        // v2.9.7 — every peer runs the same timeline, so a local overclock
+        // never applies under netplay.
+        crate::emu::force_stock_timing(nes);
         let consumed = driver.tick(nes, local);
         // On an actual produced frame, push this frame's APU samples into the
         // shared Web Audio ring (mirrors the single-player wasm path). A
@@ -8805,6 +8824,8 @@ impl App {
             // v2.1.4 F2.3 — push the persisted OAM-decay toggle (no-op if no ROM
             // is loaded yet; re-applied on each ROM load). Off = byte-identical.
             self.apply_oam_decay();
+            // v2.9.7 — and the overclock, applied from the next frame.
+            self.apply_overclock();
             // v2.1.7 P5 — push the persisted PPU-revision / power-up-palette /
             // power-on-RAM knobs (no-op if no ROM yet). All-off = byte-identical.
             self.apply_ppu_hardware_config();
@@ -9008,6 +9029,8 @@ impl App {
         // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
         // (booted decay-off). Off (default) = byte-identical.
         self.apply_oam_decay();
+        // v2.9.7 — and the overclock, applied from the next frame.
+        self.apply_overclock();
         // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
         // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
         // byte-identical.
@@ -11062,6 +11085,11 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.oam_decay {
                     self.apply_oam_decay();
                 }
+                // v2.9.7 — overclock live-apply; the emulator picks it up on
+                // its next frame.
+                if settings.overclock {
+                    self.apply_overclock();
+                }
                 // v2.2.3 — PPU fast-dot-path toggle live-apply. Routed through
                 // `apply_ppu_hardware_config` (which pushes the whole
                 // `[emulation]` PPU knob set); re-pushing the other three is
@@ -11500,6 +11528,44 @@ mod tests {
     /// menu item was `cfg(not(wasm32))` -- which is why removing the auto-open
     /// alone would have made the feature unreachable instead of unobtrusive.
     /// Both halves therefore have to hold together, and this test fails if
+    /// v2.9.7 — every site where netplay advances the core puts it back on
+    /// stock timing first, so a locally configured overclock can never make one
+    /// peer's frame longer than another's. `App` cannot be built in a unit test,
+    /// so this pins the source instead: every `tick(nes, ...)` call in
+    /// production code (native `self.netplay.tick`, wasm `driver.tick`) is
+    /// immediately preceded by `force_stock_timing(nes)`, and a new drive site
+    /// without it fails the count.
+    #[test]
+    fn every_netplay_tick_is_preceded_by_stock_timing() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let production = |src: &str| {
+            src.split_once("\n#[cfg(test)]")
+                .map_or(src, |(before, _)| before)
+                .to_owned()
+        };
+        let app = squash(&production(APP_SRC));
+        assert!(
+            !app.contains("fn every_netplay_tick_is_preceded_by_stock_timing"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let ticks = app.matches("tick(nes, ").count();
+        let guarded = app
+            .matches("crate::emu::force_stock_timing(nes); let tick = self.netplay.tick(nes, ")
+            .count()
+            + app
+                .matches("crate::emu::force_stock_timing(nes); let consumed = driver.tick(nes, ")
+                .count();
+        assert_eq!(
+            ticks, 2,
+            "expected the native and the wasm netplay drive sites"
+        );
+        assert_eq!(
+            guarded, ticks,
+            "a netplay drive site runs without stock timing"
+        );
+    }
+
     /// either one is undone.
     #[test]
     fn the_browser_netplay_lobby_is_menu_reachable_and_never_auto_opens() {

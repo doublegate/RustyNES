@@ -534,6 +534,10 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   `debugger/settings_panel.rs` persists `overclock_scanlines` to `config.toml`
   and does nothing; `disable_sprite_limit` has no core hook at all. Both are
   labelled "currently inert" in the UI. Target: **unscheduled**.)*
+  *(2026-09-30, v2.9.7: the scanline overclock field is now wired to
+  `Nes::set_extra_scanlines`, held at 0 under a movie or netplay; see
+  `docs/frontend.md`. The CPU-multiplier overclock and the sprite-limit
+  toggle stay open.)*
 - `[x]` **Full Vs. DualSystem dual-core (C)** — *(shipped v2.0.0 "Timebase"
   beta.5, commit `9fe44a19`: `crates/rustynes-core/src/vs_dualsystem.rs`,
   `pub enum Emu` (Single / Dual); desktop presentation v2.1.2 (`render_dual` in

@@ -944,10 +944,16 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   per-side **Overscan** group (D2).
 - **Emulation** — run-ahead + rewind, plus the **Enhancements (non-accuracy)**
   group (v1.5.0 D3): `[enhancements]` disable-sprite-limit / overclock-scanlines
-  (off by default, clearly labelled, **never applied while the oracle / TAS /
-  netplay run**, and currently *staged / inert* — the cycle-accurate core has no
-  hook for them; deferred to the v2.0 master-clock refactor, ADR 0002) and a
-  cross-linked max-rewind-window knob.
+  (off by default, clearly labelled) and a cross-linked max-rewind-window knob.
+  **Overclock** (v2.9.7) reaches the core: `App::apply_overclock` hands the
+  configured value to `EmuCore`, and `produce_one_frame` applies
+  `effective_extra_scanlines` at the top of every frame. That clamps it to
+  `0..=80` and holds stock timing (0) while a movie records or plays. Both
+  netplay drive sites call `force_stock_timing` before a tick, because every
+  peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
+  (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
+  own `Nes` and never sets it. **Disable sprite limit** is still inert: the core
+  has no hook for it.
 - **Input** — the rebind grids + Port-2 device selector, now with contextual
   **device config** (v1.5.0 D4): SNES-mouse reported sensitivity + pointer-speed
   multiplier, Arkanoid Vaus pointer-speed, and the Power Pad / Family Trainer mat
