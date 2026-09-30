@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
+
 The seventh release of the v2.9.x line and the third of the line to v3.0.0:
 the mapper release. **17 new families (174 → 191)**, all written from their
 NESdev pages. GTROM is promoted to Curated. Two self-flashing homebrew boards
@@ -125,12 +127,60 @@ BestEffort, and 160 of the 191 families are accuracy-gated.
   - GTROM goes to v2 and UNROM 512 to v2. Their v1 states are refused with a
     version error, never misread.
 
+### Tests — the commercial suites re-baselined
+
+- **The local commercial-ROM snapshot suites had been stale since about
+  v2.0.0.** They need the dumps, so CI never runs them. A clean `main`
+  mismatched 461 coverage and 106 byte-oracle snapshots, and v2.9.4 already
+  failed the frame-changed titles it was tried on.
+- **Attributed per ROM against a clean `main`.** 764 of 765 coverage and 197 of
+  198 byte-oracle snapshots match `main` exactly, so they are inherited. The
+  exception in each is StarTropics, the MMC6 fix.
+- **Every title whose frame changed was looked at before blessing.** Two old
+  bugs turned up. Time Diver: Avenger (mapper 250) garbles its in-game
+  background, and Uchuu Keibitai SDF (MMC5) its intro frame. Both render the
+  same on v2.0.0, and they are ticketed as `T-COMMERCIAL-GARBLE`.
+- **`external_coverage` can be green again.**
+  - Seven malformed dumps are skipped by name, with a guard that fails if any
+    ever parses.
+  - The 60 staged dumps that boot to a blank frame (all unchanged since before
+    v2.9.5) are a two-way ratchet: a new blank boot fails, and a listed ROM that
+    starts rendering fails until it is removed from the list.
+
+### Tooling — lint across the repository
+
+- **`ruff.toml` and `.shellcheckrc`**, both limited to defects rather than
+  style, with pinned `ruff-check` and `shellcheck` pre-commit hooks.
+- **Their findings fixed.** 38 unused imports and empty f-strings, 5 unused
+  variables, 3 bare `except`s, and 4 `A && B || C` shell lines rewritten as
+  `if`.
+- **Every pre-commit hook passes on all files.**
+- **`.gitignore`** covers pre-edit backups (`*.bak`, `*.preedit`) and insta's
+  `*.pending-snap`.
+
 ### Documentation
 
 - **README rewritten as a front page.** The release-by-release history it
   carried is in this file and in `VERSION-PLAN.md`. Stale claims are
   corrected: the v3.0.0 definition (ADR 0043), the architecture's type names,
   the performance figures and the citation.
+- **Corrected elsewhere:** `CONTRIBUTING.md` (edition 2024, MSRV 1.96),
+  `AGENTS.md` (store listings are unversioned, ADR 0035), the libretro and
+  frontend battery-save docs, and the mapper, status and agent docs.
+
+### Verification
+
+- The full `cargo test --release --workspace --features test-roms` suite passes:
+  3,013 tests, 0 failed, 20 ignored (v2.9.5: 2,905). AccuracyCoin is 144/144,
+  and nestest is 0-diff.
+- All 31 mutants are caught.
+- The local commercial suites (`--features test-roms,commercial-roms`, gitignored
+  dumps) pass without re-blessing: `external_coverage` 6/0 (including the
+  `KNOWN_BLANK` ratchet), `external_extended` 138/0, `external_real_games` 60/0.
+- fmt, clippy for every feature set and all three wasm builds, rustdoc, the
+  `no_std` build, cargo-deny and the release audits are clean.
+- The MiSTer RTL is unchanged, so v2.9.2's bitstream pair ships byte for byte.
+  **No hardware has run any bitstream.**
 
 ## [2.9.5] - 2026-09-29 - "Caliper" (every open accuracy item measured, then fixed or closed)
 
