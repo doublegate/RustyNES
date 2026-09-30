@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Nitra address decode (register data from A0-A7, the MMC3 even/odd line from A10) is derived from Mesen2 (GPL-3.0-or-later), `MMC3_250`, alongside the NESdev "INES Mapper 250" documentation. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Nitra (mapper 250) -- Time Diver Avenger.
 //!
 //! An MMC3 work-alike that moves the register interface into the *address*:

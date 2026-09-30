@@ -104,6 +104,11 @@ their documented rates. The maintainer's decisions for this release are in
 - **The "Vs. DualSystem title" note fires only when a cabinet is not built.**
   It fired on every such load and said the core could not boot the cart,
   which had been false on the desktop since v2.1.2.
+- **Provenance: mapper 250's address decode is recorded as derived from
+  Mesen2** (`MMC3_250`, GPL-3.0-or-later). The file quoted a Mesen2
+  expression without a `// Provenance:` header or a record row; it now has
+  both, and a NOTICE entry, at the maintainer's direction. The quote is
+  kept, as the project's rule on honest references requires.
 
 ### Changed — the user-facing panels in Spanish
 
