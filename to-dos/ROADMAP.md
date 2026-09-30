@@ -1054,6 +1054,40 @@ the fix lands, flip `mmc3_test_2_4_scanline_timing_strict` off `#[ignore]` only
 if it genuinely passes; otherwise update the `_currently_fails` probe's expected
 sub-test, which is asserted by name and will fail loudly if the shape changes.
 
+## T-MAPPER-DUMPS — stage real dumps for the v2.9.6 families (v2.9.7)
+
+v2.9.6 "Roster" landed 17 mapper families on unit tests, a synthetic CC0 boot
+fixture per board (`roster_boards.rs`) and a 31-mutant proof, but on no real
+game. The maintainer's library index (`scripts/coverage/.library-index.json`)
+lists dumps for 16 of the 18 new ids (every one but 194 and 195), and also
+StarTropics II (mapper 4 submapper 1, MMC6) and nine Acclaim titles on
+submapper 3 (MC-ACC). The library's recorded root was not on this machine
+at the v2.9.6 cut, and the maintainer chose to ship without it (2026-09-30).
+
+When it is reachable: stage one or two dumps per family into the gitignored
+`tests/roms/external/mapper-NNN-*/`, run `external_coverage`, look at each
+boot, and bless a snapshot per ROM. A board that fails to boot a real game is a
+finding against the page's reading and gets fixed before its snapshot is kept.
+The MC-ACC titles are the first real evidence for 4.3's forum-derived prescaler
+rule, and can promote it if they boot cleanly. Commercial dumps are never
+committed; only the `.snap` files are.
+
+## T-COMMERCIAL-GARBLE — two commercial titles render garbage (found v2.9.6)
+
+Found by looking at every title whose frame moved in the v2.9.6 commercial
+re-baseline, and confirmed identical on v2.0.0, so neither is a regression from
+the v2.x line:
+
+- **Time Diver: Avenger** (mapper 250, Nitra): the title is correct, but the
+  in-game background fills with wrong tiles (runs of `K`, `J`, `A`).
+- **Uchuu Keibitai SDF** (MMC5): the intro frame at 300 is garbage, and the
+  game is correct from "READY" on.
+
+Each is to be reproduced headless, localised to a frame and a register write,
+and fixed from the mapper's NESdev page, or recorded in
+`docs/accuracy-ledger.md` with the cause if it proves to be the game or the
+dump.
+
 ## Open questions blocking planning
 
 None block Phase 1. Open questions in the docs (esp. `architecture.md`, `mappers.md`) will be revisited at the start of the phase that needs them resolved.
