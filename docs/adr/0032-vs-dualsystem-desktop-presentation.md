@@ -39,3 +39,22 @@ We want to present both screens on desktop **without** regressing the single-con
 - Dual mode forgoes the lock-free present fast-path (it needs both framebuffers from the emu lock) — acceptable, the cabinet is rare.
 - Desktop only; wasm and the mobile hosts are deferred.
 - The `dual` / `nes` mutual-exclusion invariant is a runtime convention, not type-enforced; the load/close paths and the chokepoint branches maintain it.
+
+## Amendment (2026-09-30, v2.9.7 "Tandem"): save states in dual mode
+
+`T-PS-dual-savestate` is done. The core already had the container: the
+`VsDualSystem` "RVSD" snapshot, which holds both consoles and the latch that
+wires them together, and which restores atomically. What was missing was the
+frontend path. `EmuCore::save_state_blob`, `restore_state_blob` and
+`loaded_rom_sha256` now dispatch on the single console or the cabinet, and the
+desktop's F1/F4 and the Save States grid go through them.
+
+A cabinet's states share the ROM's slot files. The same image always loads the
+same way (the `vs_db` flag decides), and the two containers carry different
+magic, so offering one kind to the other fails with an error rather than being
+misread. The slot grid shows a cabinet slot without a thumbnail, because
+`Nes::extract_thumbnail` reads single-console blobs only.
+
+Run-ahead, rewind, netplay and TAS stay out of dual mode (`T-PS-dual-runahead`,
+`T-PS-dual-netplay`), and so do the debugger and HD packs. The overclock is not
+applied to a cabinet either (v2.9.7).

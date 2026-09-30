@@ -2361,13 +2361,10 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_save_state(&self, slot: u8) {
         // Snapshot under a short lock; the file write runs with it dropped.
-        let snapshot = {
-            let guard = self.emu.lock();
-            guard
-                .nes
-                .as_ref()
-                .map(|nes| (*nes.rom_sha256(), nes.snapshot()))
-        };
+        // v2.9.7 (`T-PS-dual-savestate`): `save_state_blob` covers a Vs.
+        // DualSystem cabinet too (both consoles, one "RVSD" container); before,
+        // F1 with a cabinet loaded returned here and saved nothing.
+        let snapshot = self.emu.lock().save_state_blob();
         let Some((rom_sha256, blob)) = snapshot else {
             return;
         };
@@ -2386,8 +2383,9 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_load_state(&self, slot: u8) {
         // Read the ROM key under a short lock; the file read runs with it
-        // dropped; the restore takes a second short lock.
-        let Some(rom_sha256) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+        // dropped; the restore takes a second short lock. v2.9.7: the key and
+        // the restore both cover a Vs. DualSystem cabinet.
+        let Some(rom_sha256) = self.emu.lock().loaded_rom_sha256() else {
             return;
         };
         let Some(dir) = self.data_dir.as_ref() else {
@@ -2396,11 +2394,9 @@ impl App {
         };
         match save_state::load_from_slot(dir, &rom_sha256, slot) {
             Ok(blob) => {
-                let mut guard = self.emu.lock();
-                let Some(nes) = guard.nes.as_mut() else {
-                    return;
-                };
-                match nes.restore(&blob) {
+                // Bind first so the emu lock drops before the log line.
+                let restored = self.emu.lock().restore_state_blob(&blob);
+                match restored {
                     Ok(()) => eprintln!("rustynes: loaded state from slot {slot}"),
                     Err(e) => eprintln!("rustynes: restore failed: {e}"),
                 }
@@ -10004,12 +10000,10 @@ impl ApplicationHandler<AppEvent> for App {
                 // without re-locking the emu (the locked branch holds the
                 // guard across the pass). Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                let ss_sha: Option<[u8; 32]> = self
-                    .emu
-                    .lock_timed(&mut lock_wait)
-                    .nes
-                    .as_ref()
-                    .map(|n| *n.rom_sha256());
+                // v2.9.7: `loaded_rom_sha256` so a Vs. DualSystem cabinet's
+                // slots show in the grid too.
+                let ss_sha: Option<[u8; 32]> =
+                    self.emu.lock_timed(&mut lock_wait).loaded_rom_sha256();
                 #[cfg(not(target_arch = "wasm32"))]
                 let ss_dir: Option<PathBuf> = self.data_dir.clone();
                 #[cfg(not(target_arch = "wasm32"))]

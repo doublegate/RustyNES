@@ -702,8 +702,10 @@ the always-on dynamic `Gfx::render_dual` with an aspect-correct letterbox. Coin
 (`Emu::from_rom_with_sample_rate`), with the Vs.-DB DIP + RGB palette applied to
 both consoles. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
-run-ahead, rewind, netplay, TAS, dual save-state, the debugger, and HD-pack — they
-snapshot a single `Nes`. Real-cabinet boot stays fixture-limited (the circulating
+run-ahead, rewind, netplay, TAS, the debugger, and HD-pack — they snapshot a
+single `Nes`. **Save states work in dual mode since v2.9.7**, through the
+cabinet's own "RVSD" snapshot: `EmuCore::save_state_blob` /
+`restore_state_blob` (ADR 0032's amendment). Real-cabinet boot stays fixture-limited (the circulating
 dumps are the MAME maincpu half only).
 
 **Present-path parity (v2.1.10 "Web Parity").** The **libretro** core

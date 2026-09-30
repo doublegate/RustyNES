@@ -26,6 +26,14 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Save states for Vs. DualSystem cabinets on the desktop**
+  (`T-PS-dual-savestate`). F1/F4 and the Save States grid now save and restore
+  both consoles of a two-screen cabinet, using the core's existing cabinet
+  snapshot. Until now F1 with a cabinet loaded did nothing, and did not say so.
+  Run-ahead, rewind, netplay and TAS remain unavailable in dual mode.
+
 ### Fixed
 
 - **The Settings "Overclock (extra scanlines)" field now does something.**

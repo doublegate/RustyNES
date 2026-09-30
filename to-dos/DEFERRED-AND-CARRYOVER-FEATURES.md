@@ -544,7 +544,9 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   `crates/rustynes-frontend/src/gfx.rs`, ADR 0032); libretro v2.1.10
   (`crates/rustynes-libretro/src/lib.rs`). Remaining elsewhere, not in this
   entry's scope: the desktop dual save state (`T-PS-dual-savestate`) and
-  DualSystem on web and mobile, all **v2.9.7** in the line plan.)* second CPU + PPU + bus
+  DualSystem on web and mobile, all **v2.9.7** in the line plan.)*
+  *(2026-09-30, v2.9.7: the desktop dual save state is done; see ADR 0032's
+  amendment.)* second CPU + PPU + bus
   arbitration, surfaced via an `Emu { Single, Dual }` enum API break. Detection
   shipped (v1.3.0 D2) + a frontend note; full emulation has no committable
   test-ROM oracle. Design: `docs/audit/vs-dualsystem-design-2026-06-11.md`.

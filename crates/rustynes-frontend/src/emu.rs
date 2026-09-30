@@ -473,6 +473,25 @@ impl ProduceFx {
     }
 }
 
+/// v2.9.7 — why [`EmuCore::restore_state_blob`] refused a blob.
+#[derive(Debug)]
+pub enum RestoreStateError {
+    /// No ROM is loaded, so there is nothing to restore into.
+    NoRom,
+    /// The core rejected the blob (malformed, a different version, or a
+    /// single-console state offered to a cabinet or the reverse).
+    Snapshot(rustynes_core::SnapshotError),
+}
+
+impl core::fmt::Display for RestoreStateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoRom => f.write_str("no ROM is loaded"),
+            Self::Snapshot(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 /// The emulation core: the per-frame produce state extracted from `App`.
 pub struct EmuCore {
     /// The running single-console emulator (None until a single-console ROM is
@@ -500,9 +519,11 @@ pub struct EmuCore {
     /// Mutually exclusive with [`Self::nes`]: exactly one is `Some` while a ROM
     /// is loaded. Additive so the single-console produce/present/latch paths stay
     /// byte-identical; the dual path is a parallel branch at each chokepoint. The
-    /// advanced frontend features (run-ahead, rewind, netplay, TAS, save-state)
-    /// are scoped out while a cabinet is loaded (ADR 0032) — they snapshot a
-    /// single `Nes` and are disabled in dual mode.
+    /// advanced frontend features (run-ahead, rewind, netplay, TAS) are scoped
+    /// out while a cabinet is loaded (ADR 0032) — they snapshot a single `Nes`
+    /// and are disabled in dual mode. Save states are the exception since
+    /// v2.9.7 (`T-PS-dual-savestate`): [`Self::save_state_blob`] and
+    /// [`Self::restore_state_blob`] use the cabinet's own "RVSD" snapshot.
     pub dual: Option<Box<rustynes_core::VsDualSystem>>,
     /// TAS movie record/playback state machine.
     pub movie: MovieUi,
@@ -768,6 +789,57 @@ impl EmuCore {
         self.mapper_name = dual.main().mapper_info().name;
         self.nes = None;
         self.dual = Some(dual);
+    }
+
+    /// v2.9.7 — the loaded game's identity (the save-state slot key): the
+    /// single console's `rom_sha256`, or the MAIN console's for a Vs.
+    /// `DualSystem` cabinet (both consoles run the same image). `None` with no
+    /// ROM loaded.
+    #[must_use]
+    pub fn loaded_rom_sha256(&self) -> Option<[u8; 32]> {
+        self.nes
+            .as_ref()
+            .map(|nes| *nes.rom_sha256())
+            .or_else(|| self.dual.as_ref().map(|d| *d.main().rom_sha256()))
+    }
+
+    /// v2.9.7 (`T-PS-dual-savestate`) — a save-state blob of whatever is
+    /// loaded, with its slot key: a single console's `Nes::snapshot`, or a
+    /// cabinet's `VsDualSystem::snapshot` (the "RVSD" container holding both
+    /// consoles and the latch that wires them together).
+    ///
+    /// Both kinds share the ROM's slot files. The same image always loads the
+    /// same way (the `vs_db` flag decides), and the two containers carry
+    /// different magic, so a blob of the other kind fails to restore with an
+    /// error rather than being misread. Before v2.9.7 the desktop's F1 with a
+    /// cabinet loaded returned silently and saved nothing.
+    #[must_use]
+    pub fn save_state_blob(&self) -> Option<([u8; 32], Vec<u8>)> {
+        if let Some(nes) = self.nes.as_ref() {
+            return Some((*nes.rom_sha256(), nes.snapshot()));
+        }
+        self.dual
+            .as_ref()
+            .map(|d| (*d.main().rom_sha256(), d.snapshot()))
+    }
+
+    /// v2.9.7 — restore a blob from [`Self::save_state_blob`] into whatever
+    /// is loaded. A cabinet restores atomically: on error both consoles are
+    /// unchanged (`VsDualSystem::restore`).
+    ///
+    /// # Errors
+    ///
+    /// The core's [`rustynes_core::SnapshotError`] for a malformed blob or one
+    /// of the other kind; [`RestoreStateError::NoRom`] with nothing loaded.
+    pub fn restore_state_blob(&mut self, blob: &[u8]) -> Result<(), RestoreStateError> {
+        if let Some(nes) = self.nes.as_mut() {
+            return nes.restore(blob).map_err(RestoreStateError::Snapshot);
+        }
+        self.dual
+            .as_mut()
+            .map_or(Err(RestoreStateError::NoRom), |dual| {
+                dual.restore(blob).map_err(RestoreStateError::Snapshot)
+            })
     }
 
     /// Drop any loaded ROM and the cached name with it, so a stale mapper label
@@ -2233,6 +2305,64 @@ mod tests {
             MAX_OVERCLOCK_SCANLINES,
             "restored after the movie"
         );
+    }
+
+    /// v2.9.7 (`T-PS-dual-savestate`) — a Vs. `DualSystem` cabinet saves and
+    /// restores both consoles, byte for byte. A single-console blob and a
+    /// cabinet blob are each refused by the other kind, and nothing restores
+    /// with no ROM loaded. Before v2.9.7 the desktop saved nothing for a
+    /// cabinet.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_dual_cabinet_save_state_round_trips_both_consoles() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.set_dual(Box::new(
+            rustynes_core::VsDualSystem::from_rom(&rom).unwrap(),
+        ));
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let (key, blob) = core.save_state_blob().expect("a cabinet saves");
+        let dual = |core: &EmuCore| core.dual.as_ref().unwrap().main().frame();
+        assert_eq!(key, *core.dual.as_ref().unwrap().main().rom_sha256());
+        assert_eq!(core.loaded_rom_sha256(), Some(key));
+        let saved_frame = dual(&core);
+        for _ in 0..5 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert_ne!(dual(&core), saved_frame, "the cabinet ran on");
+        core.restore_state_blob(&blob).unwrap();
+        assert_eq!(dual(&core), saved_frame);
+        assert_eq!(
+            core.save_state_blob().unwrap().1,
+            blob,
+            "both consoles are back exactly where they were"
+        );
+
+        let single = Nes::from_rom(&rom).unwrap().snapshot();
+        assert!(
+            core.restore_state_blob(&single).is_err(),
+            "a single-console blob"
+        );
+        assert_eq!(
+            core.save_state_blob().unwrap().1,
+            blob,
+            "refusal changed nothing"
+        );
+        let mut one = EmuCore::new();
+        one.set_nes(Nes::from_rom(&rom).unwrap());
+        assert!(one.restore_state_blob(&blob).is_err(), "a cabinet blob");
+        assert!(matches!(
+            EmuCore::new().restore_state_blob(&blob),
+            Err(RestoreStateError::NoRom)
+        ));
     }
 
     /// v2.9.7 — the rule itself, and the netplay helper.
