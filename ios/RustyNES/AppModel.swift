@@ -57,6 +57,11 @@ final class AppModel: ObservableObject {
     @Published var emulator: EmulatorCore?
     /// The library entry backing `emulator` (for save-state keying / metadata).
     @Published var currentEntry: LibraryEntry?
+    /// v2.9.7 "Tandem" (plan item 6): a disk failed to load for want of the FDS BIOS;
+    /// the ContentView presents a file picker while this is true, and the chosen
+    /// file goes to `installFdsBios(from:)`, which re-opens `pendingFdsEntry`.
+    @Published var needsFdsBios = false
+    private var pendingFdsEntry: LibraryEntry?
     /// A transient error to surface to the user (load/import failures).
     @Published var errorMessage: String?
     /// A transient, non-blocking *notice* to surface to the user — distinct from
@@ -126,6 +131,20 @@ final class AppModel: ObservableObject {
             if hapticsEnabled { haptics.prepare() }
             UserDefaults.standard.set(hapticsEnabled, forKey: "hapticsEnabled")
             if !isApplyingCloud { cloud.setBool(hapticsEnabled, forKey: "hapticsEnabled") }
+        }
+    }
+
+    /// Cancel opposite directions (v2.9.7 "Tandem", plan item 8): Up + Down, or
+    /// Left + Right, held together reach the console as neither (neutral SOCD).
+    /// **On by default** -- the behaviour since v2.9.2 and the desktop's
+    /// `[input] allow_opposing_directions = false`. Off passes every combination
+    /// through, for games and TAS-style play that depend on it. Device-local (not
+    /// cloud-synced), like the crash-report switch. Re-pushes every port so a held
+    /// opposing pair changes at once.
+    @Published var cancelOpposites: Bool = true {
+        didSet {
+            UserDefaults.standard.set(cancelOpposites, forKey: "cancelOpposites")
+            for port in 0..<4 { pushInput(port: port) }
         }
     }
 
@@ -201,6 +220,8 @@ final class AppModel: ObservableObject {
         muted = UserDefaults.standard.bool(forKey: "muted")
         hapticsEnabled = UserDefaults.standard.bool(forKey: "hapticsEnabled")
         crashReportingEnabled = UserDefaults.standard.bool(forKey: CrashReporter.enabledKey)
+        // v2.9.7: default ON when never written (`bool(forKey:)` would read false).
+        cancelOpposites = UserDefaults.standard.object(forKey: "cancelOpposites") as? Bool ?? true
         globalPaletteId = UserDefaults.standard.string(forKey: "paletteId") ?? ""
         // Restore the persisted shader params, falling back to the defaults above when
         // a key was never written (UserDefaults.float returns 0 for a missing key, so
@@ -311,7 +332,8 @@ final class AppModel: ObservableObject {
         do {
             audioSession.configure()
             let data = try await library.romData(for: entry)
-            let core = try EmulatorCore(romData: data)
+            // v2.9.7: the stored FDS BIOS rides along (a cartridge or NSF ignores it).
+            let core = try EmulatorCore(romData: data, fdsBios: FdsBiosStore.load())
             core.isMuted = muted
             // v2.9.2 (AUD-14): pace the gamepad turbo pulse by emulated frames.
             // Captures the manager (a plain class), not `self`, so the closure
@@ -342,9 +364,27 @@ final class AppModel: ObservableObject {
             netplay.attach(core: core)
             // Reconcile this game's cloud save-states (pull any newer-remote slots).
             cloudSaveStates.setCurrentGame(sha: entry.sha)
+        } catch MobileError.missingFdsBios {
+            // v2.9.7: ask for disksys.rom once, then open this disk again.
+            pendingFdsEntry = entry
+            needsFdsBios = true
         } catch {
             errorMessage = "Could not load \(entry.name): \(error.localizedDescription)"
         }
+    }
+
+    /// v2.9.7 "Tandem" (plan item 6): store the FDS BIOS the user picked (checked at
+    /// 8 KiB, kept in Application Support) and re-open the disk that needed it.
+    func installFdsBios(from url: URL) async {
+        let entry = pendingFdsEntry
+        pendingFdsEntry = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let bytes = try? Data(contentsOf: url), FdsBiosStore.save(bytes) else {
+            errorMessage = "Not an FDS BIOS: disksys.rom is exactly \(FdsBiosStore.size) bytes."
+            return
+        }
+        if let entry { await openGame(entry) }
     }
 
     /// Import a ROM from a picked URL and immediately open it. The import read +
@@ -504,7 +544,7 @@ final class AppModel: ObservableObject {
         // touch direction plus the opposite on a hardware pad would otherwise
         // still reach the core. (CodeRabbit on #563.)
         var m = NesButtonMask(bits: port == 0 ? touchMask | padMasks[0] : padMasks[port])
-        m.cancelOpposingDirections()
+        m.cancelOpposingDirections(enabled: cancelOpposites)
         emulator.setButtons(port: UInt32(port), mask: m.bits)
     }
 
@@ -951,6 +991,41 @@ final class AppModel: ObservableObject {
             emulator?.resume()
         } else {
             emulator?.pause()
+        }
+    }
+}
+
+/// The Famicom Disk System BIOS the user chose (v2.9.7 "Tandem", plan item 6).
+///
+/// FDS disks boot only with `disksys.rom`, an 8 KiB Nintendo BIOS the app never
+/// ships. The first disk that fails with `MobileError.missingFdsBios` asks for it
+/// once; the copy kept here serves every later disk. The bridge re-checks the size.
+enum FdsBiosStore {
+    /// The exact size of the FDS BIOS.
+    static let size = 8 * 1024
+
+    private static var url: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("RustyNES/fds/disksys.rom")
+    }
+
+    /// The stored BIOS, or nil when none was chosen (or it is not 8 KiB).
+    static func load() -> Data? {
+        guard let data = try? Data(contentsOf: url), data.count == size else { return nil }
+        return data
+    }
+
+    /// Store `data` as the BIOS; false (nothing stored) unless it is 8 KiB.
+    static func save(_ data: Data) -> Bool {
+        guard data.count == size else { return false }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
         }
     }
 }

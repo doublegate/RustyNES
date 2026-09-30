@@ -55,6 +55,23 @@ cycle-accurate core later replaced.
   The `wasm-canvas` embed still runs the main console only, and now says so in
   the console. The browser run is a manual check.
 
+- **FDS disks and NSF files on Android and iOS.** The mobile bridge now loads a
+  Famicom Disk System image or an NSF / NSFe file, told apart by its magic as on
+  the desktop. The FDS BIOS (`disksys.rom`) is yours to supply: the first disk
+  asks for it once and the app keeps it. Disk sides and NSF tracks have buttons
+  in the in-game menu. The app does not yet save what a disk game writes to its
+  disk.
+- **Vs. DualSystem cabinets on Android and iOS.** A cabinet ROM (Vs. Tennis,
+  Wrecking Crew, Balloon Fight, Mahjong) now loads as two consoles, by the
+  desktop's rule. The phone shows one cabinet
+  screen at a time, with a button to swap, a coin button, and players 3 and 4
+  on the right-hand half. Save states hold both consoles; netplay, movies and
+  Lua are not available on a cabinet.
+- **"Cancel opposite directions" setting on Android and iOS**, on by default as
+  before, so Up + Down and Left + Right can reach the game when it is off.
+- The Swift half is uncompiled on the Linux build host. Rows T1-T12 of
+  `docs/mobile-v2.9.3-run-sheet.md` list the device checks, all not yet run.
+
 ### Changed
 
 - **The release binaries are now the full native build.** They include

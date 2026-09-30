@@ -124,7 +124,9 @@ fun VirtualController(
                     // directions (hitTest derives them from one offset), but two
                     // fingers on the D-pad can -- a resting thumb plus a sliding
                     // one -- and a real NES pad's rocking cross never reports that.
-                    m = socdNeutral(m)
+                    // v2.9.7: the user can turn this off (Settings > Cancel
+                    // opposite directions); on by default, as before.
+                    m = socdNeutral(m, emulator.cancelOpposites)
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
                         if (m and mask.inv() != 0) tick(vibrator, hapticLevel)
@@ -185,8 +187,14 @@ internal fun tick(vibrator: Vibrator?, level: HapticLevel) {
  * same rule as the desktop's `input::socd_neutral`. Applied to the on-screen pad's
  * combined multi-touch mask only -- movie playback, Lua and netplay peers' input
  * never pass through here.
+ *
+ * v2.9.7 "Tandem" (plan item 8): [enabled] is the user's "Cancel opposite
+ * directions" setting, default on -- the desktop's `[input]
+ * allow_opposing_directions = false`. Off returns [mask] untouched, for the games
+ * and TAS-style play that rely on Up + Down or Left + Right reaching the console.
  */
-internal fun socdNeutral(mask: Int): Int {
+internal fun socdNeutral(mask: Int, enabled: Boolean = true): Int {
+    if (!enabled) return mask
     var m = mask
     val vertical = NesBit.UP or NesBit.DOWN
     val horizontal = NesBit.LEFT or NesBit.RIGHT

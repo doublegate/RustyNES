@@ -51,7 +51,8 @@ struct GameView: View {
                     Spacer(minLength: 0)
                     MultiTouchControlPad(
                         onMaskChanged: { mask in model.setTouchMask(mask) },
-                        onLogoTap: { menuVisible.toggle() }
+                        onLogoTap: { menuVisible.toggle() },
+                        cancelOpposites: model.cancelOpposites
                     )
                     .aspectRatio(ControlPadLayout.aspectRatio, contentMode: .fit)
                     .frame(maxWidth: .infinity)
@@ -88,7 +89,16 @@ struct GameView: View {
                         onRecord: { model.recorder.toggle() },
                         onSettings: { showingSettings = true },
                         onReset: { model.emulator?.reset() },
-                        onPower: { model.emulator?.powerCycle() }
+                        onPower: { model.emulator?.powerCycle() },
+                        // v2.9.7 "Tandem": FDS side, NSF track, Vs. cabinet screen + coin.
+                        onFlipDisk: (model.emulator?.diskSideCount ?? 0) > 0
+                            ? { model.emulator?.flipDisk() } : nil,
+                        onNextTrack: (model.emulator?.nsfSongCount ?? 0) > 0
+                            ? { model.emulator?.nextNsfSong() } : nil,
+                        onSwapScreen: (model.emulator?.isDualSystem ?? false)
+                            ? { if let core = model.emulator { core.showSubScreen.toggle() } } : nil,
+                        onCoin: (model.emulator?.isVsSystem ?? false)
+                            ? { model.emulator?.insertCoin() } : nil
                     )
                     .padding(.trailing, 8)
                 }
