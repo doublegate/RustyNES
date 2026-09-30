@@ -227,6 +227,28 @@ alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
 | **B** wgpu `SurfaceView` + surface-loss lifecycle | **Next increment** (Bitmap blit ships now) |
 | **F** shaders / palettes / per-game DB / TAS UI | **Next increment** (depends on B for shaders) |
 
+**FDS, NSF, the Vs. `DualSystem` cabinet and the SOCD switch (v2.9.7 "Tandem").**
+The bridge (`rustynes-mobile`) tells a buffer apart by its leading magic, as the
+desktop does: a cartridge, an **FDS disk** (`FDS\x1A` or the raw
+`\x01*NINTENDO-HVC*` form), an **NSF / NSFe** file, or a **Vs. `DualSystem`
+cabinet** (NES 2.0 Vs. type, or the Vs. database's SHA-256 record). The FDS BIOS
+(`disksys.rom`, 8 KiB) is supplied by the host, never shipped:
+`NesController.newWithFdsBios(rom, bios, rate)` / `setFdsBios(bios)`, with a disk
+that has none failing as `MobileException.MissingFdsBios`. The app answers that
+exception with a document picker, stores the BIOS once in
+`filesDir/fds/disksys.rom` (`FdsBios` in `Persistence.kt`), and retries the disk.
+The control bar gains **Disk A/B** (next side), **Track n/m** with **<** (NSF),
+**Screen: left/right** (a cabinet shows one of its two screens at a time) and
+**Coin** (any Vs. machine). A cabinet's save state is the core's `RVSD`
+container; netplay, movies and Lua are refused on it with
+`MobileException.DualSystem`. The bridge exposes the FDS disk-write accessors
+(`diskImageBytes`, `diskIsDirty`, `clearDiskDirty`), but the app does **not yet
+write the disk image back**, so a disk game's own save is lost on close. Settings
+gains **Cancel opposite directions** (neutral SOCD), default on, the desktop's
+`[input] allow_opposing_directions = false`; off, `socdNeutral(mask, enabled =
+false)` passes every mask through (`SocdTest` covers both). The device checks are
+rows T1-T4, T8, T9 and T11 of `docs/mobile-v2.9.3-run-sheet.md`, all NOT RUN.
+
 **Room-code / online netplay (v1.8.7).** Mobile netplay landed past the locked
 MVP: alongside direct-IP / LAN play, the app hosts and joins **internet** matches
 by sharing a short 6-char **room code**, traversing carrier-grade NAT (CGNAT) via

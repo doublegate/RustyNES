@@ -26,6 +26,24 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added — mobile (v2.9.7 "Tandem", plan items 6-8)
+
+- **FDS disks and NSF files on Android and iOS.** The mobile bridge now loads a
+  Famicom Disk System image or an NSF / NSFe file, told apart by its magic as on
+  the desktop. The FDS BIOS (`disksys.rom`) is yours to supply: the first disk
+  asks for it once and the app keeps it. Disk sides and NSF tracks have buttons
+  in the in-game menu. The app does not yet save what a disk game writes to its
+  disk.
+- **Vs. DualSystem cabinets on Android and iOS.** Vs. Tennis, Wrecking Crew,
+  Balloon Fight and Mahjong run as two consoles. The phone shows one cabinet
+  screen at a time, with a button to swap, a coin button, and players 3 and 4
+  on the right-hand half. Save states hold both consoles; netplay, movies and
+  Lua are not available on a cabinet.
+- **"Cancel opposite directions" setting on Android and iOS**, on by default as
+  before, so Up + Down and Left + Right can reach the game when it is off.
+- The Swift half is uncompiled on the Linux build host. Rows T1-T12 of
+  `docs/mobile-v2.9.3-run-sheet.md` list the device checks, all not yet run.
+
 ## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
 
 The seventh release of the v2.9.x line and the third of the line to v3.0.0:

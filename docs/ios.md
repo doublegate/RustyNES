@@ -366,13 +366,25 @@ window; **v2.0.9** is the joint (Android + iOS) on-device readiness pass, and **
 the joint store launch. *(History: that launch never happened; see the current
 status above. The fastlane scaffolding remains, dormant.)*
 
-**Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
-iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
-cannot be loaded** — the picker + Info.plist advertise only `.nes` (+ `.zip`), and
-there is correspondingly **no NSF player**. The native desktop **20-band EQ** (the
-mobile audio-depth panel ships a 5-band EQ) and the debugger's **`.dbg` ca65/cc65
-source maps** are likewise deferred to the post-v2.0.0 mobile re-port. These land
-when the iOS app re-ports onto the v2.0.0 "Timebase" core.
+**FDS, NSF and the Vs. `DualSystem` cabinet (v2.9.7 "Tandem").** Until v2.9.7 the
+mobile bridge was iNES / NES 2.0-only. It now tells a buffer apart by its magic, as
+the desktop does, and loads **FDS disk images (`.fds`)**, **NSF / NSFe music files**
+and **Vs. `DualSystem` cabinets** (two consoles, two screens). The FDS BIOS
+(`disksys.rom`, 8 KiB) is Nintendo IP the app never ships: the first disk that
+fails with `MobileError.missingFdsBios` raises a file picker, the chosen BIOS is
+kept in Application Support (`FdsBiosStore`), and every later disk boots with it.
+The pill menu gains **Flip disk** (FDS), **Next track** (NSF), **Swap screen**
+(cabinet: the device shows one cabinet screen at a time) and **Insert coin** (any
+Vs. machine). A cabinet's save state is the core's `RVSD` container; netplay,
+movies and Lua are refused on a cabinet. FDS disk writes are exposed by the bridge
+(`diskImageBytes` / `diskIsDirty`) but **not yet persisted by the app**. Settings >
+Controls also gains **Cancel opposite directions** (default on). **All of this
+Swift is uncompiled** on the Linux build host; the checks are rows T5-T7, T10 and
+T12 of `docs/mobile-v2.9.3-run-sheet.md`.
+
+**Still NOT on the iOS bridge.** The native desktop **20-band EQ** (the mobile
+audio-depth panel ships a 5-band EQ) and the debugger's **`.dbg` ca65/cc65 source
+maps** remain deferred to the post-v2.0.0 mobile re-port.
 
 **Maintainer-manual carryovers** (cannot be CI-self-certified, mirroring the
 Android line): an Apple Developer Program account + bundle ID; the signing secrets
