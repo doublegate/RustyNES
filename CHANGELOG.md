@@ -26,6 +26,29 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed — the user-facing panels in Spanish
+
+- **Every user-facing panel is now translatable** (v2.9.7 plan item 10). The
+  whole shell (menus, status bar, Settings chrome, the Welcome, About and
+  Keyboard Shortcuts windows), the Settings sections, input bindings, netplay
+  (native and the browser lobby), cheats, ROM Info and the header editor now
+  read their text from the i18n catalog. The catalog grew from 34 keys to 498,
+  496 of them with a Spanish string. English is unchanged: every English entry
+  is the literal it replaced. The UI-literal count in those eight files went
+  from 212 to 29, and each of the 29 left is a proper noun, a technical term,
+  a key name or a glyph. Debugger-internal panels stay English by design.
+- **The Spanish is machine-drafted and awaits a native speaker's review.** It
+  is marked as such in `i18n.rs` and in `docs/frontend.md`.
+- **Strings built with `format!` are keyed templates** with positional `{0}`,
+  `{1}` placeholders (`tr_fmt` / `tf!`), so a translation can reorder its
+  arguments. Tests check that every key has English text, that every Spanish
+  template uses the same placeholders, and that every key has a Spanish string
+  except the two loanwords kept by design ("Shaders", "Audio").
+- **The Overclock setting's note now describes what it does** (idle scanlines
+  after the visible frame; ignored while recording or playing a movie and
+  during netplay) instead of calling it inert. The sprite-limit note still says
+  inert, because it still is.
+
 ## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
 
 The seventh release of the v2.9.x line and the third of the line to v3.0.0:

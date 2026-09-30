@@ -330,6 +330,22 @@ impl ShortcutsDevice {
             Self::FamilyKeyboard => "Family BASIC keyboard",
         }
     }
+
+    /// v2.9.7 — [`Self::label`] in the current UI locale. `label` stays the
+    /// stable English name (a `const fn`, usable where a translation lookup is
+    /// not); this is what the selector and the section header display.
+    #[must_use]
+    pub fn display_label(self) -> &'static str {
+        match self {
+            Self::Player1 => crate::t!(ShellPlayer1),
+            Self::Player2 => crate::t!(ShellPlayer2),
+            Self::Player3 => crate::t!(ShellPlayer3),
+            Self::Player4 => crate::t!(ShellPlayer4),
+            // A product name, shown as printed on the accessory.
+            Self::PowerPad => self.label(),
+            Self::FamilyKeyboard => crate::t!(RebindFamilyKeyboard),
+        }
+    }
 }
 
 impl UiShell {
@@ -600,7 +616,7 @@ impl UiShell {
                                         let name = path
                                             .file_name()
                                             .and_then(|n| n.to_str())
-                                            .unwrap_or("Unknown")
+                                            .unwrap_or_else(|| crate::t!(ShellUnknown))
                                             .to_string();
                                         // (audit m3) gray out entries whose file is gone.
                                         let exists = path.exists();
@@ -616,7 +632,10 @@ impl UiShell {
                                         }
                                     }
                                     ui.separator();
-                                    if ui.button(ic(glyph::XMARK, "Clear Recent")).clicked() {
+                                    if ui
+                                        .button(ic(glyph::XMARK, crate::t!(ShellClearRecent)))
+                                        .clicked()
+                                    {
                                         out.action = Some(MenuAction::ClearRecent);
                                         ui.close();
                                     }
@@ -630,7 +649,7 @@ impl UiShell {
                     if ui
                         .add_enabled(
                             rom && !rom_change_restricted,
-                            egui::Button::new(ic(glyph::XMARK, "Close ROM")),
+                            egui::Button::new(ic(glyph::XMARK, crate::t!(ShellCloseRom))),
                         )
                         .clicked()
                     {
@@ -652,7 +671,7 @@ impl UiShell {
                         if accel_enabled(
                             ui,
                             rom,
-                            &ic(glyph::FLOPPY_DISK, "Save State"),
+                            &ic(glyph::FLOPPY_DISK, crate::t!(ShellSaveState)),
                             &keys.save_state,
                         )
                         .clicked()
@@ -667,7 +686,7 @@ impl UiShell {
                         if accel_enabled(
                             ui,
                             rom_interactive,
-                            &ic(glyph::DOWNLOAD, "Load State"),
+                            &ic(glyph::DOWNLOAD, crate::t!(ShellLoadState)),
                             &keys.load_state,
                         )
                         .clicked()
@@ -676,10 +695,13 @@ impl UiShell {
                             ui.close();
                         }
                         ui.separator();
-                        ui.menu_button(ic(glyph::FLOPPY_DISK, "Active Slot"), |ui| {
+                        ui.menu_button(ic(glyph::FLOPPY_DISK, crate::t!(ShellActiveSlot)), |ui| {
                             for slot in 0u8..8 {
                                 if ui
-                                    .radio(self.active_slot == slot, format!("Slot {}", slot + 1))
+                                    .radio(
+                                        self.active_slot == slot,
+                                        crate::tf!(ShellSlotN, slot + 1),
+                                    )
                                     .clicked()
                                 {
                                     self.active_slot = slot;
@@ -695,33 +717,45 @@ impl UiShell {
                         // (H1) Save-to-slot needs only a ROM; Load-from-slot is
                         // additionally replay-locked (same rule as Load State).
                         if rom {
-                            ui.menu_button(ic(glyph::FLOPPY_DISK, "Save to Slot"), |ui| {
-                                for slot in 0u8..8 {
-                                    if ui.button(format!("Slot {}", slot + 1)).clicked() {
-                                        out.action = Some(MenuAction::SaveStateSlot(slot));
-                                        ui.close();
+                            ui.menu_button(
+                                ic(glyph::FLOPPY_DISK, crate::t!(ShellSaveToSlot)),
+                                |ui| {
+                                    for slot in 0u8..8 {
+                                        if ui.button(crate::tf!(ShellSlotN, slot + 1)).clicked() {
+                                            out.action = Some(MenuAction::SaveStateSlot(slot));
+                                            ui.close();
+                                        }
                                     }
-                                }
-                            });
+                                },
+                            );
                         } else {
                             ui.add_enabled(
                                 false,
-                                egui::Button::new(ic(glyph::FLOPPY_DISK, "Save to Slot")),
+                                egui::Button::new(ic(
+                                    glyph::FLOPPY_DISK,
+                                    crate::t!(ShellSaveToSlot),
+                                )),
                             );
                         }
                         if rom_interactive {
-                            ui.menu_button(ic(glyph::DOWNLOAD, "Load from Slot"), |ui| {
-                                for slot in 0u8..8 {
-                                    if ui.button(format!("Slot {}", slot + 1)).clicked() {
-                                        out.action = Some(MenuAction::LoadStateSlot(slot));
-                                        ui.close();
+                            ui.menu_button(
+                                ic(glyph::DOWNLOAD, crate::t!(ShellLoadFromSlot)),
+                                |ui| {
+                                    for slot in 0u8..8 {
+                                        if ui.button(crate::tf!(ShellSlotN, slot + 1)).clicked() {
+                                            out.action = Some(MenuAction::LoadStateSlot(slot));
+                                            ui.close();
+                                        }
                                     }
-                                }
-                            });
+                                },
+                            );
                         } else {
                             ui.add_enabled(
                                 false,
-                                egui::Button::new(ic(glyph::DOWNLOAD, "Load from Slot")),
+                                egui::Button::new(ic(
+                                    glyph::DOWNLOAD,
+                                    crate::t!(ShellLoadFromSlot),
+                                )),
                             );
                         }
 
@@ -734,7 +768,7 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 rom,
-                                egui::Button::new(ic(glyph::IMAGE, "Manage States...")),
+                                egui::Button::new(ic(glyph::IMAGE, crate::t!(ShellManageStates))),
                             )
                             .clicked()
                         {
@@ -749,7 +783,7 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 frame.rom_loaded,
-                                egui::Button::new(ic(glyph::IMAGE, "Take Screenshot")),
+                                egui::Button::new(ic(glyph::IMAGE, crate::t!(ShellTakeScreenshot))),
                             )
                             .clicked()
                         {
@@ -763,7 +797,7 @@ impl UiShell {
                                 frame.rom_loaded,
                                 egui::Button::new(ic(
                                     glyph::CLIPBOARD,
-                                    "Copy Screenshot to Clipboard",
+                                    crate::t!(ShellCopyScreenshot),
                                 )),
                             )
                             .clicked()
@@ -790,9 +824,9 @@ impl UiShell {
                 // ----- Emulation -----
                 ui.menu_button(ic(glyph::CALCULATOR, crate::t!(MenuEmulation)), |ui| {
                     let pause_label = if self.paused {
-                        ic(glyph::PLAY, "Resume")
+                        ic(glyph::PLAY, crate::t!(ShellResume))
                     } else {
-                        ic(glyph::PAUSE, "Pause")
+                        ic(glyph::PAUSE, crate::t!(ShellPause))
                     };
                     // (BUG-4) disabled during netplay. (UX3 BUG-1) show the
                     // pause/resume accelerator key alongside the label.
@@ -814,7 +848,7 @@ impl UiShell {
                     if accel_enabled(
                         ui,
                         hw_interactive,
-                        &ic(glyph::ROTATE_RIGHT, "Reset"),
+                        &ic(glyph::ROTATE_RIGHT, crate::t!(RebindActReset)),
                         &keys.reset,
                     )
                     .clicked()
@@ -825,7 +859,7 @@ impl UiShell {
                     if accel_enabled(
                         ui,
                         hw_interactive,
-                        &ic(glyph::ROTATE_RIGHT, "Power Cycle"),
+                        &ic(glyph::ROTATE_RIGHT, crate::t!(ShellPowerCycle)),
                         &keys.power_cycle,
                     )
                     .clicked()
@@ -844,7 +878,7 @@ impl UiShell {
                     if accel_enabled(
                         ui,
                         rom && self.paused && !rom_change_restricted,
-                        &ic(glyph::FORWARD_STEP, "Frame Advance"),
+                        &ic(glyph::FORWARD_STEP, crate::t!(ShellFrameAdvance)),
                         &keys.frame_advance,
                     )
                     .clicked()
@@ -858,18 +892,15 @@ impl UiShell {
                     // engaged plus the bound key to hold. Enabled-looking while a
                     // ROM is loaded so the "(hold X)" affordance is legible.
                     let ff_label = if frame.fast_forwarding {
-                        format!("Fast Forward: ON (hold {})", keys.fast_forward)
+                        crate::tf!(ShellFastForwardOn, keys.fast_forward)
                     } else {
-                        format!("Fast Forward (hold {})", keys.fast_forward)
+                        crate::tf!(ShellFastForwardHold, keys.fast_forward)
                     };
                     ui.add_enabled(
                         rom && !rom_change_restricted,
                         egui::Button::new(ic(glyph::FORWARD_FAST, &ff_label)),
                     )
-                    .on_hover_text(
-                        "Hold the bound key to run unthrottled (audio muted). \
-                         Rebind in Settings -> Input.",
-                    );
+                    .on_hover_text(crate::t!(ShellFastForwardHover));
                     ui.separator();
                     ui.menu_button(
                         ic(
@@ -898,35 +929,41 @@ impl UiShell {
                     // peers run lockstep at the console rate). Mirrors GeraNES
                     // `isNetplaySpeedRestricted` (only `Normal` enabled).
                     ui.add_enabled_ui(rom, |ui| {
-                        ui.menu_button(ic(glyph::SLIDERS, &format!("Speed: {speed_pct}%")), |ui| {
-                            for &preset in &[0.25_f32, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
-                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                                let pct = (preset * 100.0).round() as u32;
-                                // Float-equality is fine: the menu sets these
-                                // exact preset values, and the keys step the same.
-                                #[allow(clippy::float_cmp)]
-                                let selected = frame.speed == preset;
-                                #[allow(clippy::float_cmp)]
-                                let preset_enabled = !rom_change_restricted || preset == 1.0;
-                                if ui
-                                    .add_enabled(
-                                        preset_enabled,
-                                        egui::RadioButton::new(selected, format!("{pct}%")),
-                                    )
-                                    .clicked()
-                                {
-                                    out.action = Some(MenuAction::SetSpeed(preset));
-                                    ui.close();
+                        ui.menu_button(
+                            ic(glyph::SLIDERS, &crate::tf!(ShellSpeedPct, speed_pct)),
+                            |ui| {
+                                for &preset in &[0.25_f32, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
+                                    #[allow(
+                                        clippy::cast_possible_truncation,
+                                        clippy::cast_sign_loss
+                                    )]
+                                    let pct = (preset * 100.0).round() as u32;
+                                    // Float-equality is fine: the menu sets these
+                                    // exact preset values, and the keys step the same.
+                                    #[allow(clippy::float_cmp)]
+                                    let selected = frame.speed == preset;
+                                    #[allow(clippy::float_cmp)]
+                                    let preset_enabled = !rom_change_restricted || preset == 1.0;
+                                    if ui
+                                        .add_enabled(
+                                            preset_enabled,
+                                            egui::RadioButton::new(selected, format!("{pct}%")),
+                                        )
+                                        .clicked()
+                                    {
+                                        out.action = Some(MenuAction::SetSpeed(preset));
+                                        ui.close();
+                                    }
                                 }
-                            }
-                        });
+                            },
+                        );
                     });
                     // Region is read-only (no core setter): display only.
                     ui.add_enabled(
                         false,
                         egui::Button::new(ic(
                             glyph::GLOBE,
-                            &format!("Region: {}", frame.region_label),
+                            &crate::tf!(ShellRegion, frame.region_label),
                         )),
                     );
                     // (H1) Inserting a Vs. coin is a hardware action — locked
@@ -935,7 +972,7 @@ impl UiShell {
                         && accel_enabled(
                             ui,
                             rom && !rom_change_restricted,
-                            &ic(glyph::COINS, "Vs. Insert Coin"),
+                            &ic(glyph::COINS, crate::t!(ShellVsInsertCoin)),
                             &keys.insert_coin,
                         )
                         .clicked()
@@ -959,7 +996,7 @@ impl UiShell {
                             if accel_enabled(
                                 ui,
                                 !replay_locked,
-                                &ic(glyph::FLOPPY_DISK, "Swap Disk Side"),
+                                &ic(glyph::FLOPPY_DISK, crate::t!(ShellSwapDiskSide)),
                                 &keys.disk_swap,
                             )
                             .clicked()
@@ -977,7 +1014,7 @@ impl UiShell {
                                     if ui
                                         .radio(
                                             frame.inserted_disk_side == Some(i),
-                                            format!("Side {}", i + 1),
+                                            crate::tf!(ShellSideN, i + 1),
                                         )
                                         .clicked()
                                     {
@@ -987,7 +1024,10 @@ impl UiShell {
                                 }
                                 ui.separator();
                                 if ui
-                                    .radio(frame.inserted_disk_side.is_none(), "Eject")
+                                    .radio(
+                                        frame.inserted_disk_side.is_none(),
+                                        crate::t!(ShellEject),
+                                    )
                                     .clicked()
                                 {
                                     out.action = Some(MenuAction::SetDiskSide(None));
@@ -1000,7 +1040,10 @@ impl UiShell {
 
                 // ----- View -----
                 ui.menu_button(ic(glyph::EYE, crate::t!(MenuView)), |ui| {
-                    if ui.button(ic(glyph::GEAR, "Settings...")).clicked() {
+                    if ui
+                        .button(ic(glyph::GEAR, crate::t!(ShellSettingsItem)))
+                        .clicked()
+                    {
                         self.show_settings_window = true;
                         ui.close();
                     }
@@ -1018,7 +1061,7 @@ impl UiShell {
                     if ui
                         .checkbox(
                             &mut config.ui.pixel_aspect_correction,
-                            ic(glyph::TV, "8:7 Pixel Aspect"),
+                            ic(glyph::TV, crate::t!(ShellPixelAspect)),
                         )
                         .changed()
                     {
@@ -1029,7 +1072,7 @@ impl UiShell {
                     if ui
                         .checkbox(
                             &mut config.graphics.hide_overscan,
-                            ic(glyph::TV, "Hide Overscan"),
+                            ic(glyph::TV, crate::t!(ShellHideOverscan)),
                         )
                         .changed()
                     {
@@ -1044,7 +1087,7 @@ impl UiShell {
                         if accel_changed(
                             ui,
                             &mut fs,
-                            &ic(glyph::EXPAND, "Fullscreen"),
+                            &ic(glyph::EXPAND, crate::t!(RebindActFullscreen)),
                             &keys.fullscreen,
                         ) {
                             out.action = Some(MenuAction::ToggleFullscreen);
@@ -1066,7 +1109,10 @@ impl UiShell {
                         }
                     });
                     if ui
-                        .checkbox(&mut config.ui.show_fps, ic(glyph::GAUGE, "Show FPS"))
+                        .checkbox(
+                            &mut config.ui.show_fps,
+                            ic(glyph::GAUGE, crate::t!(ShellShowFps)),
+                        )
                         .changed()
                     {
                         save_config(config);
@@ -1075,12 +1121,9 @@ impl UiShell {
                     if ui
                         .checkbox(
                             &mut config.ui.show_lag_frames,
-                            ic(glyph::GAUGE, "Show Lag Frames"),
+                            ic(glyph::GAUGE, crate::t!(ShellShowLagFrames)),
                         )
-                        .on_hover_text(
-                            "Show a counter of frames where the game polled no \
-                             controller (a TAS / debug diagnostic).",
-                        )
+                        .on_hover_text(crate::t!(ShellShowLagFramesHover))
                         .changed()
                     {
                         save_config(config);
@@ -1088,7 +1131,7 @@ impl UiShell {
                     if ui
                         .checkbox(
                             &mut config.ui.pause_on_focus_loss,
-                            ic(glyph::PAUSE, "Pause When Unfocused"),
+                            ic(glyph::PAUSE, crate::t!(ShellPauseUnfocused)),
                         )
                         .changed()
                     {
@@ -1098,7 +1141,7 @@ impl UiShell {
                     if accel_changed(
                         ui,
                         &mut menu_bar,
-                        &ic(glyph::BARS, "Show Menu Bar"),
+                        &ic(glyph::BARS, crate::t!(ShellShowMenuBar)),
                         &keys.toggle_menu_bar,
                     ) {
                         out.action = Some(MenuAction::ToggleMenuBar);
@@ -1119,7 +1162,7 @@ impl UiShell {
                     // top level because it is by a wide margin the most-opened
                     // panel and burying the common case is how menus get worse.
                     if ui
-                        .button(ic(glyph::WAND_MAGIC_SPARKLES, "Cheats..."))
+                        .button(ic(glyph::WAND_MAGIC_SPARKLES, crate::t!(ShellCheatsItem)))
                         .clicked()
                     {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
@@ -1132,7 +1175,7 @@ impl UiShell {
                     // authoring panels, and the A/V + clip exporters.
                     //
                     // BUG-1: direct child (not inside add_enabled_ui — see File).
-                    ui.menu_button(ic(glyph::VIDEO, "Movies & Recording"), |ui| {
+                    ui.menu_button(ic(glyph::VIDEO, crate::t!(ShellMovies)), |ui| {
                         // (H1) The movie transport is unavailable during a netplay
                         // session (a rollback session cannot also be a TAS movie).
                         // Pre-reorg this gated the whole submenu open/closed; it is
@@ -1144,9 +1187,9 @@ impl UiShell {
                         // playback). The toggle-off case (already recording)
                         // stays enabled so the user can stop.
                         let rec_label = if frame.movie_recording {
-                            ic(glyph::STOP, "Stop Recording")
+                            ic(glyph::STOP, crate::t!(ShellStopRecording))
                         } else {
-                            ic(glyph::VIDEO, "Record")
+                            ic(glyph::VIDEO, crate::t!(ShellRecord))
                         };
                         let rec_enabled =
                             movie_ok && (frame.movie_recording || !frame.movie_playing);
@@ -1158,9 +1201,9 @@ impl UiShell {
                         // Play toggles playback; locked while RECORDING. The
                         // toggle-off (already playing) stays enabled to stop.
                         let play_label = if frame.movie_playing {
-                            ic(glyph::STOP, "Stop Playback")
+                            ic(glyph::STOP, crate::t!(ShellStopPlayback))
                         } else {
-                            ic(glyph::PLAY, "Play")
+                            ic(glyph::PLAY, crate::t!(ShellPlay))
                         };
                         let play_enabled =
                             movie_ok && (frame.movie_playing || !frame.movie_recording);
@@ -1174,7 +1217,7 @@ impl UiShell {
                         if accel_enabled(
                             ui,
                             movie_ok && frame.movie_playing,
-                            &ic(glyph::VIDEO, "Branch"),
+                            &ic(glyph::VIDEO, crate::t!(ShellBranch)),
                             &keys.movie_branch,
                         )
                         .clicked()
@@ -1203,7 +1246,7 @@ impl UiShell {
                                     import_enabled,
                                     egui::Button::new(ic(
                                         glyph::FOLDER_OPEN,
-                                        "Import (.fm2 / .bk2)",
+                                        crate::t!(ShellImportMovie),
                                     )),
                                 )
                                 .clicked()
@@ -1218,7 +1261,7 @@ impl UiShell {
                                     export_enabled,
                                     egui::Button::new(ic(
                                         glyph::FLOPPY_DISK,
-                                        "Export (.fm2 / .bk2)",
+                                        crate::t!(ShellExportMovie),
                                     )),
                                 )
                                 .clicked()
@@ -1233,7 +1276,7 @@ impl UiShell {
                                     movie_ok,
                                     egui::Button::new(ic(
                                         glyph::FLOPPY_DISK,
-                                        "Export subtitles (.srt)",
+                                        crate::t!(ShellExportSubtitles),
                                     )),
                                 )
                                 .clicked()
@@ -1255,7 +1298,10 @@ impl UiShell {
                         }
                         // v1.5.0 "Lens" Workstream C2 — Replay / TAS window (device
                         // topology + timebase + branch/seek UX over the .rnm machinery).
-                        if ui.button(ic(glyph::VIDEO, "Replay / TAS")).clicked() {
+                        if ui
+                            .button(ic(glyph::VIDEO, crate::t!(ShellReplayTas)))
+                            .clicked()
+                        {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::Replay));
                             ui.close();
                         }
@@ -1268,9 +1314,9 @@ impl UiShell {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
                         {
                             let av_label = if frame.av_recording {
-                                ic(glyph::STOP, "Stop A/V Recording")
+                                ic(glyph::STOP, crate::t!(ShellStopAv))
                             } else {
-                                ic(glyph::VIDEO, "Record A/V...")
+                                ic(glyph::VIDEO, crate::t!(ShellRecordAv))
                             };
                             let av_enabled = frame.av_recording || rom;
                             if ui
@@ -1287,7 +1333,10 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 rom,
-                                egui::Button::new(ic(glyph::FLOPPY_DISK, "Export Last 30s (.rnm)")),
+                                egui::Button::new(ic(
+                                    glyph::FLOPPY_DISK,
+                                    crate::t!(ShellExportLast30),
+                                )),
                             )
                             .clicked()
                         {
@@ -1296,10 +1345,13 @@ impl UiShell {
                         }
                     });
                     // ---- Audio ---------------------------------------------
-                    ui.menu_button(ic(glyph::HEADPHONES, "Audio"), |ui| {
+                    ui.menu_button(ic(glyph::HEADPHONES, crate::t!(SettingsTabAudio)), |ui| {
                         // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
                         // the Debug menu; it is a playback tool, not a chip inspector).
-                        if ui.button(ic(glyph::HEADPHONES, "NSF Player")).clicked() {
+                        if ui
+                            .button(ic(glyph::HEADPHONES, crate::t!(ShellNsfPlayer)))
+                            .clicked()
+                        {
                             out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
                             ui.close();
                         }
@@ -1307,18 +1359,24 @@ impl UiShell {
                         // balance sliders + per-channel scopes / VU (base 2A03 + the
                         // on-cart expansion channel). A frontend mix overlay; the
                         // deterministic core output is unchanged.
-                        if ui.button(ic(glyph::SLIDERS, "Audio Mixer")).clicked() {
+                        if ui
+                            .button(ic(glyph::SLIDERS, crate::t!(ShellAudioMixer)))
+                            .clicked()
+                        {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::AudioMixer));
                             ui.close();
                         }
                     });
                     // ---- Input ---------------------------------------------
-                    ui.menu_button(ic(glyph::GAMEPAD, "Input"), |ui| {
+                    ui.menu_button(ic(glyph::GAMEPAD, crate::t!(SettingsTabInput)), |ui| {
                         // v1.7.0 "Forge" beta.5 (#51) — one consolidated "Input
                         // Display" panel: standard pads + every expansion peripheral
                         // (Zapper / Vaus / SNES mouse / Power Pad / keyboard / Hyper
                         // Shot / Four Score), real-time button/axis state.
-                        if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
+                        if ui
+                            .button(ic(glyph::GAMEPAD, crate::t!(ShellInputDisplay)))
+                            .clicked()
+                        {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
                             ui.close();
                         }
@@ -1326,7 +1384,10 @@ impl UiShell {
                         // clickable egui controller that feeds player 1. Native-only
                         // (the browser build has the touch overlay).
                         #[cfg(not(target_arch = "wasm32"))]
-                        if ui.button(ic(glyph::GAMEPAD, "Virtual Pad")).clicked() {
+                        if ui
+                            .button(ic(glyph::GAMEPAD, crate::t!(ShellVirtualPad)))
+                            .clicked()
+                        {
                             out.action = Some(MenuAction::ToggleVirtualPad);
                             ui.close();
                         }
@@ -1334,11 +1395,14 @@ impl UiShell {
                     // ---- Game Data -----------------------------------------
                     // What this cartridge IS, as opposed to what it is doing:
                     // both entries describe the loaded ROM and both need one.
-                    ui.menu_button(ic(glyph::DATABASE, "Game Data"), |ui| {
+                    ui.menu_button(ic(glyph::DATABASE, crate::t!(ShellGameData)), |ui| {
                         // (H1) v2.2.0 "Capstone" — the read-only ROM Info browser
                         // needs a loaded ROM to describe.
                         if ui
-                            .add_enabled(rom, egui::Button::new(ic(glyph::CIRCLE_INFO, "ROM Info")))
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(glyph::CIRCLE_INFO, crate::t!(RomInfoTitle))),
+                            )
                             .clicked()
                         {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::RomInfo));
@@ -1348,7 +1412,7 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 rom,
-                                egui::Button::new(ic(glyph::DATABASE, "ROM Database")),
+                                egui::Button::new(ic(glyph::DATABASE, crate::t!(ShellRomDatabase))),
                             )
                             .clicked()
                         {
@@ -1361,91 +1425,111 @@ impl UiShell {
                     // game rather than changing it: what its input lag is, why a
                     // pixel looks the way it does, and what input sequence reaches
                     // a goal. All three are output-only.
-                    ui.menu_button(ic(glyph::MAGNIFYING_GLASS_PLUS, "Analysis"), |ui| {
-                        // v2.3.6 — the Latency Oracle. Grouped with the other
-                        // measurement tools rather than under Settings because it is
-                        // a measurement you RUN, not a preference you set; it
-                        // recommends a run-ahead depth and never applies one itself.
-                        if ui
-                            .add_enabled(rom, egui::Button::new(ic(glyph::GAUGE, "Latency Oracle")))
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::OpenPanel(ToolPanel::LatencyOracle));
-                            ui.close();
-                        }
-                        // (H1) v2.3.2 "Lucid" — the pixel provenance inspector: the
-                        // causal chain from a screen pixel back to the tile, the
-                        // palette entry, and the instruction that wrote them. Needs a
-                        // loaded ROM to have any pixels to explain. NOT gated on the
-                        // frontend's `debug-hooks` alias: the frontend always pulls
-                        // `rustynes-core` with `debug-hooks` on (see its Cargo.toml),
-                        // so gating on the alias — which is off by default — would
-                        // ship the panel permanently unreachable.
-                        if ui
-                            .add_enabled(
-                                rom,
-                                egui::Button::new(ic(
-                                    glyph::MAGNIFYING_GLASS_PLUS,
-                                    "Pixel Provenance",
-                                )),
-                            )
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
-                            ui.close();
-                        }
-                        // v2.3.7 "Overtone" — the audio counterpart: why does
-                        // this moment sound like that. Sits beside Pixel
-                        // Provenance because they answer the same question about
-                        // the two halves of the output.
-                        if ui
-                            .add_enabled(
-                                rom,
-                                egui::Button::new(ic(glyph::VOLUME_HIGH, "Audio Provenance")),
-                            )
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::OpenPanel(ToolPanel::AudioProvenance));
-                            ui.close();
-                        }
-                        // v2.3.6 workstream C — the RAM Atlas: classify every
-                        // byte of work RAM by behaviour, then verify a candidate
-                        // by perturbing it. Sits with the other output-only
-                        // analysis tools; needs a loaded ROM to have any memory
-                        // to describe.
-                        if ui
-                            .add_enabled(rom, egui::Button::new(ic(glyph::MEMORY, "RAM Atlas")))
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::OpenPanel(ToolPanel::RamAtlas));
-                            ui.close();
-                        }
-                        // v2.3.8 "Parallax" — the Divergence Lens: replay this
-                        // moment twice, with and without one work-RAM byte set,
-                        // and localise the difference to pixels or a CPU cycle.
-                        // Sits next to the RAM Atlas because it answers the
-                        // follow-up question the Atlas raises: the Atlas says an
-                        // address is live, this says what it changes.
-                        #[cfg(feature = "debug-hooks")]
-                        if ui
-                            .add_enabled(
-                                rom,
-                                egui::Button::new(ic(glyph::MEMORY, "Divergence Lens")),
-                            )
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::OpenPanel(ToolPanel::DivergenceLens));
-                            ui.close();
-                        }
-                        // v1.8.9 "Backlog" — BasicBot input-search control panel.
-                        if ui
-                            .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::OpenPanel(ToolPanel::BasicBot));
-                            ui.close();
-                        }
-                    });
+                    ui.menu_button(
+                        ic(glyph::MAGNIFYING_GLASS_PLUS, crate::t!(ShellAnalysis)),
+                        |ui| {
+                            // v2.3.6 — the Latency Oracle. Grouped with the other
+                            // measurement tools rather than under Settings because it is
+                            // a measurement you RUN, not a preference you set; it
+                            // recommends a run-ahead depth and never applies one itself.
+                            if ui
+                                .add_enabled(
+                                    rom,
+                                    egui::Button::new(ic(
+                                        glyph::GAUGE,
+                                        crate::t!(ShellLatencyOracle),
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::OpenPanel(ToolPanel::LatencyOracle));
+                                ui.close();
+                            }
+                            // (H1) v2.3.2 "Lucid" — the pixel provenance inspector: the
+                            // causal chain from a screen pixel back to the tile, the
+                            // palette entry, and the instruction that wrote them. Needs a
+                            // loaded ROM to have any pixels to explain. NOT gated on the
+                            // frontend's `debug-hooks` alias: the frontend always pulls
+                            // `rustynes-core` with `debug-hooks` on (see its Cargo.toml),
+                            // so gating on the alias — which is off by default — would
+                            // ship the panel permanently unreachable.
+                            if ui
+                                .add_enabled(
+                                    rom,
+                                    egui::Button::new(ic(
+                                        glyph::MAGNIFYING_GLASS_PLUS,
+                                        crate::t!(ShellPixelProvenance),
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action =
+                                    Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
+                                ui.close();
+                            }
+                            // v2.3.7 "Overtone" — the audio counterpart: why does
+                            // this moment sound like that. Sits beside Pixel
+                            // Provenance because they answer the same question about
+                            // the two halves of the output.
+                            if ui
+                                .add_enabled(
+                                    rom,
+                                    egui::Button::new(ic(
+                                        glyph::VOLUME_HIGH,
+                                        crate::t!(ShellAudioProvenance),
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action =
+                                    Some(MenuAction::OpenPanel(ToolPanel::AudioProvenance));
+                                ui.close();
+                            }
+                            // v2.3.6 workstream C — the RAM Atlas: classify every
+                            // byte of work RAM by behaviour, then verify a candidate
+                            // by perturbing it. Sits with the other output-only
+                            // analysis tools; needs a loaded ROM to have any memory
+                            // to describe.
+                            if ui
+                                .add_enabled(
+                                    rom,
+                                    egui::Button::new(ic(glyph::MEMORY, crate::t!(ShellRamAtlas))),
+                                )
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::OpenPanel(ToolPanel::RamAtlas));
+                                ui.close();
+                            }
+                            // v2.3.8 "Parallax" — the Divergence Lens: replay this
+                            // moment twice, with and without one work-RAM byte set,
+                            // and localise the difference to pixels or a CPU cycle.
+                            // Sits next to the RAM Atlas because it answers the
+                            // follow-up question the Atlas raises: the Atlas says an
+                            // address is live, this says what it changes.
+                            #[cfg(feature = "debug-hooks")]
+                            if ui
+                                .add_enabled(
+                                    rom,
+                                    egui::Button::new(ic(
+                                        glyph::MEMORY,
+                                        crate::t!(ShellDivergenceLens),
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::OpenPanel(ToolPanel::DivergenceLens));
+                                ui.close();
+                            }
+                            // v1.8.9 "Backlog" — BasicBot input-search control panel.
+                            if ui
+                                .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::OpenPanel(ToolPanel::BasicBot));
+                                ui.close();
+                            }
+                        },
+                    );
                     // v1.3.0 menu reorg — HD-pack loader (v1.2.0 C3), folded in
                     // from the former standalone "Mod" menu as a Tools submenu;
                     // native + `hd-pack`-feature-gated. (H1) Load/unload needs a
@@ -1461,7 +1545,10 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 mod_enabled,
-                                egui::Button::new(ic(glyph::FOLDER_OPEN, "Load HD Pack...")),
+                                egui::Button::new(ic(
+                                    glyph::FOLDER_OPEN,
+                                    crate::t!(ShellLoadHdPack),
+                                )),
                             )
                             .clicked()
                         {
@@ -1471,7 +1558,7 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 mod_enabled,
-                                egui::Button::new(ic(glyph::XMARK, "Unload HD Pack")),
+                                egui::Button::new(ic(glyph::XMARK, crate::t!(ShellUnloadHdPack))),
                             )
                             .clicked()
                         {
@@ -1481,7 +1568,10 @@ impl UiShell {
                         ui.separator();
                         // v1.5.0 "Lens" Workstream A4 — per-pixel composition trace.
                         if ui
-                            .button(ic(glyph::MAGNIFYING_GLASS_PLUS, "Pixel Inspector"))
+                            .button(ic(
+                                glyph::MAGNIFYING_GLASS_PLUS,
+                                crate::t!(ShellPixelInspector),
+                            ))
                             .clicked()
                         {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::HdPixelInspector));
@@ -1493,7 +1583,7 @@ impl UiShell {
                         // ROM and an unrestricted (non-replay/netplay) session.
                         if frame.hd_pack_building {
                             if ui
-                                .button(ic(glyph::FLOPPY_DISK, "Stop & Save HD Pack..."))
+                                .button(ic(glyph::FLOPPY_DISK, crate::t!(ShellStopSaveHdPack)))
                                 .clicked()
                             {
                                 out.action = Some(MenuAction::HdPackBuilderStop);
@@ -1502,7 +1592,7 @@ impl UiShell {
                         } else if ui
                             .add_enabled(
                                 rom && !rom_change_restricted && !replay_locked,
-                                egui::Button::new(ic(glyph::IMAGE, "Build HD Pack (Record)")),
+                                egui::Button::new(ic(glyph::IMAGE, crate::t!(ShellBuildHdPack))),
                             )
                             .clicked()
                         {
@@ -1530,7 +1620,7 @@ impl UiShell {
                     if ui
                         .add_enabled(
                             !replay_locked,
-                            egui::Button::new(ic(glyph::WIFI, "Netplay...")),
+                            egui::Button::new(ic(glyph::WIFI, crate::t!(ShellNetplayItem))),
                         )
                         .clicked()
                     {
@@ -1553,7 +1643,7 @@ impl UiShell {
                     if ui
                         .add_enabled(
                             rom_interactive,
-                            egui::Button::new(ic(glyph::WIFI, "Netplay (browser)...")),
+                            egui::Button::new(ic(glyph::WIFI, crate::t!(ShellNetplayBrowserItem))),
                         )
                         .clicked()
                     {
@@ -1654,7 +1744,7 @@ impl UiShell {
                     {
                         ui.separator();
                         if ui
-                            .button(ic(glyph::FILE, "Cartridge Info / Header Editor..."))
+                            .button(ic(glyph::FILE, crate::t!(ShellHeaderEditorItem)))
                             .clicked()
                         {
                             out.action = Some(MenuAction::OpenChipPanel(ChipPanel::HeaderEditor));
@@ -1689,8 +1779,8 @@ impl UiShell {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         if ui
-                            .button(ic(glyph::BOOK_OPEN, "Documentation..."))
-                            .on_hover_text("Searchable in-app manual, About, and changelog")
+                            .button(ic(glyph::BOOK_OPEN, crate::t!(ShellDocumentation)))
+                            .on_hover_text(crate::t!(ShellDocumentationHover))
                             .clicked()
                         {
                             out.action = Some(MenuAction::OpenDocumentation);
@@ -1699,14 +1789,17 @@ impl UiShell {
                         ui.separator();
                     }
                     if ui
-                        .button(ic(glyph::KEYBOARD, "Keyboard Shortcuts"))
+                        .button(ic(glyph::KEYBOARD, crate::t!(ShellKeyboardShortcuts)))
                         .clicked()
                     {
                         self.show_shortcuts = true;
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button(ic(glyph::CIRCLE_INFO, "About")).clicked() {
+                    if ui
+                        .button(ic(glyph::CIRCLE_INFO, crate::t!(ShellAbout)))
+                        .clicked()
+                    {
                         self.show_about = true;
                         ui.close();
                     }
@@ -1770,7 +1863,7 @@ impl UiShell {
                         if let Some(net) = frame.netplay_detail.as_deref() {
                             ui.separator();
                             ui.colored_label(egui::Color32::from_rgb(80, 180, 240), net)
-                                .on_hover_text("Netplay session status");
+                                .on_hover_text(crate::t!(ShellNetplayStatusHover));
                         }
                         // v1.7.0 "Forge" beta.5 (#52) — surface the new recording
                         // states in the status bar: a TAS movie record/playback
@@ -1778,18 +1871,30 @@ impl UiShell {
                         // marker. All red/amber so an active capture is obvious.
                         if frame.movie_recording {
                             ui.separator();
-                            ui.colored_label(egui::Color32::from_rgb(224, 64, 64), "REC movie");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(224, 64, 64),
+                                crate::t!(ShellRecMovie),
+                            );
                         } else if frame.movie_playing {
                             ui.separator();
-                            ui.colored_label(egui::Color32::from_rgb(64, 192, 64), "PLAY movie");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(64, 192, 64),
+                                crate::t!(ShellPlayMovie),
+                            );
                         }
                         if frame.av_recording {
                             ui.separator();
-                            ui.colored_label(egui::Color32::from_rgb(224, 64, 64), "REC A/V");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(224, 64, 64),
+                                crate::t!(ShellRecAv),
+                            );
                         }
                         if frame.hd_pack_building {
                             ui.separator();
-                            ui.colored_label(egui::Color32::from_rgb(240, 200, 100), "HD-Pack REC");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(240, 200, 100),
+                                crate::t!(ShellHdPackRec),
+                            );
                         }
                         // v1.5.0 "Lens" Workstream I7 — the RetroAchievements
                         // readout relocated from the retired `` ` `` overlay HUD,
@@ -1804,7 +1909,7 @@ impl UiShell {
                                 egui::Color32::from_rgb(180, 160, 220)
                             };
                             ui.colored_label(color, ra)
-                                .on_hover_text("RetroAchievements (Tools -> RetroAchievements)");
+                                .on_hover_text(crate::t!(ShellRaHover));
                         }
                     } else {
                         ui.label(crate::t!(StatusNoRom));
@@ -1842,10 +1947,8 @@ impl UiShell {
                         && let Some(lag) = frame.lag_frames
                     {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("Lag: {lag}")).on_hover_text(
-                                "Lag frames since ROM load (no controller polled). \
-                                     Toggle in View -> Show Lag Frames.",
-                            );
+                            ui.label(crate::tf!(ShellLagCount, lag))
+                                .on_hover_text(crate::t!(ShellLagHover));
                         });
                     }
                 });
@@ -1913,10 +2016,7 @@ impl UiShell {
                                         }
                                     })
                                     .response
-                                    .on_hover_text(
-                                        "High Contrast and Colorblind-Safe are accessibility \
-                                         themes (WCAG AA contrast / Okabe-Ito palette).",
-                                    );
+                                    .on_hover_text(crate::t!(ShellThemeHover));
                                 if before != config.ui.theme {
                                     save_config(config);
                                 }
@@ -1940,10 +2040,7 @@ impl UiShell {
                                         }
                                     })
                                     .response
-                                    .on_hover_text(
-                                        "Translations are incremental: untranslated \
-                                         strings fall back to English.",
-                                    );
+                                    .on_hover_text(crate::t!(ShellLanguageHover));
                                 if before != config.ui.locale {
                                     crate::i18n::set_locale(config.ui.locale);
                                     save_config(config);
@@ -1952,14 +2049,14 @@ impl UiShell {
                             if ui
                                 .checkbox(
                                     &mut config.ui.pixel_aspect_correction,
-                                    "8:7 Pixel Aspect Ratio (NES native)",
+                                    crate::t!(ShellPixelAspectRatio),
                                 )
                                 .changed()
                             {
                                 save_config(config);
                             }
                             if ui
-                                .checkbox(&mut config.ui.show_fps, "Show FPS in status bar")
+                                .checkbox(&mut config.ui.show_fps, crate::t!(ShellShowFpsStatus))
                                 .changed()
                             {
                                 save_config(config);
@@ -1968,7 +2065,7 @@ impl UiShell {
                             if ui
                                 .checkbox(
                                     &mut config.ui.show_lag_frames,
-                                    "Show lag-frame counter in status bar",
+                                    crate::t!(ShellShowLagStatus),
                                 )
                                 .changed()
                             {
@@ -1983,7 +2080,7 @@ impl UiShell {
                             // render loop reading `config.ui.zoom_factor`.
                             ui.heading(crate::t!(SettingsHeadingAccessibility));
                             ui.horizontal(|ui| {
-                                ui.label("UI scale:");
+                                ui.label(crate::t!(ShellUiScale));
                                 let mut pct = (config.ui.clamped_zoom_factor() * 100.0).round();
                                 let resp = ui.add(
                                     egui::Slider::new(
@@ -2004,8 +2101,8 @@ impl UiShell {
                                     save_config(config);
                                 }
                                 if ui
-                                    .button("Reset")
-                                    .on_hover_text("Reset UI scale to 100%")
+                                    .button(crate::t!(ButtonReset))
+                                    .on_hover_text(crate::t!(ShellResetUiScaleHover))
                                     .clicked()
                                 {
                                     config.ui.zoom_factor = 1.0;
@@ -2013,12 +2110,9 @@ impl UiShell {
                                 }
                             });
                             ui.label(
-                                egui::RichText::new(
-                                    "Scales the menus, Settings, and debugger UI. \
-                                     The game image is not affected.",
-                                )
-                                .small()
-                                .weak(),
+                                egui::RichText::new(crate::t!(ShellUiScaleNote))
+                                    .small()
+                                    .weak(),
                             );
                             ui.separator();
                             settings_body(ui, config, SettingsTab::Video);
@@ -2062,7 +2156,7 @@ impl UiShell {
             save_config(config);
         }
         let mut open = true;
-        egui::Window::new("Welcome to RustyNES")
+        egui::Window::new(crate::t!(ShellWelcomeTitle))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -2070,17 +2164,17 @@ impl UiShell {
             .show(ctx, |ui| {
                 ui.set_width(420.0);
                 ui.add_space(8.0);
-                ui.label("A cycle-accurate NES emulator written in Rust.");
+                ui.label(crate::t!(ShellWelcomeBlurb));
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Quick start:").strong());
+                ui.label(egui::RichText::new(crate::t!(ShellQuickStart)).strong());
                 ui.add_space(4.0);
                 shortcuts_grid(ui, "welcome_shortcuts");
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Get Started").clicked() {
+                    if ui.button(crate::t!(ShellGetStarted)).clicked() {
                         self.show_welcome = false;
                     }
-                    if ui.button("Keyboard Shortcuts").clicked() {
+                    if ui.button(crate::t!(ShellKeyboardShortcuts)).clicked() {
                         self.show_shortcuts = true;
                     }
                 });
@@ -2291,7 +2385,7 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
     if !*open {
         return;
     }
-    egui::Window::new("About RustyNES")
+    egui::Window::new(crate::t!(ShellAboutTitle))
         .open(open)
         .resizable(false)
         .collapsible(false)
@@ -2321,9 +2415,9 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.add_space(2.0);
                 ui.label(egui::RichText::new("Precise. Pure. Powerful.").italics());
                 ui.add_space(10.0);
-                ui.label("A cycle-accurate NES emulator written in pure Rust.");
+                ui.label(crate::t!(ShellAboutBlurb));
                 ui.add_space(10.0);
-                ui.label("Created by DoubleGate");
+                ui.label(crate::t!(ShellCreatedBy));
                 ui.hyperlink_to(
                     "github.com/doublegate/RustyNES",
                     "https://github.com/doublegate/RustyNES",
@@ -2351,14 +2445,14 @@ impl UiShell {
         }
         let mut open = self.show_shortcuts;
         let device = &mut self.shortcuts_device;
-        egui::Window::new("Keyboard Shortcuts")
+        egui::Window::new(crate::t!(ShellKeyboardShortcuts))
             .open(&mut open)
             .resizable(true)
             .collapsible(true)
             .default_width(420.0)
             .show(ctx, |ui| {
                 // --- Emulator / system hotkeys (live bindings) ---
-                ui.label(egui::RichText::new("Emulator hotkeys").strong());
+                ui.label(egui::RichText::new(crate::t!(ShellEmulatorHotkeys)).strong());
                 system_hotkeys_grid(ui, config);
 
                 // --- Separator between emulator hotkeys and controller mapping ---
@@ -2368,9 +2462,9 @@ impl UiShell {
 
                 // --- Controller / device mapping (per-device selector) ---
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Device:").strong());
+                    ui.label(egui::RichText::new(crate::t!(ShellDevice)).strong());
                     egui::ComboBox::from_id_salt("shortcuts-device")
-                        .selected_text(device.label())
+                        .selected_text(device.display_label())
                         .show_ui(ui, |ui| {
                             for d in [
                                 ShortcutsDevice::Player1,
@@ -2380,7 +2474,7 @@ impl UiShell {
                                 ShortcutsDevice::PowerPad,
                                 ShortcutsDevice::FamilyKeyboard,
                             ] {
-                                ui.selectable_value(device, d, d.label());
+                                ui.selectable_value(device, d, d.display_label());
                             }
                         });
                 });
@@ -2401,33 +2495,36 @@ fn system_hotkeys_grid(ui: &mut egui::Ui, config: &Config) {
         .spacing([32.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Action").strong());
-            ui.label(egui::RichText::new("Key").strong());
+            ui.label(egui::RichText::new(crate::t!(RebindColAction)).strong());
+            ui.label(egui::RichText::new(crate::t!(RebindColKey)).strong());
             ui.end_row();
             for (action, key) in [
-                ("Open ROM", s.open_rom.as_str()),
-                ("Save state", s.save_state.as_str()),
-                ("Load state", s.load_state.as_str()),
-                ("Rewind (hold)", s.rewind.as_str()),
-                ("Reset", s.reset.as_str()),
-                ("Power cycle", s.power_cycle.as_str()),
-                ("Pause / resume", s.pause.as_str()),
-                ("Frame advance", s.frame_advance.as_str()),
-                ("Fast forward (hold)", s.fast_forward.as_str()),
-                ("Movie record", s.movie_record.as_str()),
-                ("Movie play", s.movie_play.as_str()),
-                ("Movie branch", s.movie_branch.as_str()),
-                ("Swap disk side (FDS)", s.disk_swap.as_str()),
-                ("Insert coin (Vs.)", s.insert_coin.as_str()),
-                ("Fullscreen", s.fullscreen.as_str()),
-                ("Toggle menu bar", s.toggle_menu_bar.as_str()),
+                (crate::t!(RebindActOpenRom), s.open_rom.as_str()),
+                (crate::t!(RebindActSaveState), s.save_state.as_str()),
+                (crate::t!(RebindActLoadState), s.load_state.as_str()),
+                (crate::t!(RebindActRewind), s.rewind.as_str()),
+                (crate::t!(RebindActReset), s.reset.as_str()),
+                (crate::t!(RebindActPowerCycle), s.power_cycle.as_str()),
+                (crate::t!(RebindActPause), s.pause.as_str()),
+                (crate::t!(RebindActFrameAdvance), s.frame_advance.as_str()),
+                (crate::t!(RebindActFastForward), s.fast_forward.as_str()),
+                (crate::t!(RebindActMovieRecord), s.movie_record.as_str()),
+                (crate::t!(RebindActMoviePlay), s.movie_play.as_str()),
+                (crate::t!(RebindActMovieBranch), s.movie_branch.as_str()),
+                (crate::t!(RebindActDiskSwap), s.disk_swap.as_str()),
+                (crate::t!(RebindActInsertCoin), s.insert_coin.as_str()),
+                (crate::t!(RebindActFullscreen), s.fullscreen.as_str()),
+                (
+                    crate::t!(RebindActToggleMenuBar),
+                    s.toggle_menu_bar.as_str(),
+                ),
                 // v1.7.0 "Forge" beta.5 (#55) — the backtick key now toggles the
                 // status-bar RetroAchievements read-out (compact <-> long-form).
                 // v1.7.1 — the debugger has no single toggle; each inspector
                 // opens directly from the Debug menu.
-                ("Toggle RA status detail", s.debug_overlay.as_str()),
-                ("Debugger panels", "Debug menu"),
-                ("Quit / exit fullscreen", s.quit.as_str()),
+                (crate::t!(ShellToggleRaDetail), s.debug_overlay.as_str()),
+                (crate::t!(ShellDebuggerPanels), crate::t!(ShellDebugMenu)),
+                (crate::t!(ShellQuitExitFullscreen), s.quit.as_str()),
             ] {
                 ui.label(action);
                 ui.label(pretty_key(key));
@@ -2441,7 +2538,7 @@ fn system_hotkeys_grid(ui: &mut egui::Ui, config: &Config) {
 /// fixed default mapping documented in `input.rs` (they are not rebindable yet,
 /// so this reflects their actual host keys).
 fn device_bindings_grid(ui: &mut egui::Ui, config: &Config, device: ShortcutsDevice) {
-    ui.label(egui::RichText::new(device.label()).strong());
+    ui.label(egui::RichText::new(device.display_label()).strong());
     let pad = match device {
         ShortcutsDevice::Player1 => Some(&config.input.player1),
         ShortcutsDevice::Player2 => Some(&config.input.player2),
@@ -2455,14 +2552,14 @@ fn device_bindings_grid(ui: &mut egui::Ui, config: &Config, device: ShortcutsDev
             .spacing([32.0, 4.0])
             .striped(true)
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Button").strong());
-                ui.label(egui::RichText::new("Key").strong());
+                ui.label(egui::RichText::new(crate::t!(RebindColButton)).strong());
+                ui.label(egui::RichText::new(crate::t!(RebindColKey)).strong());
                 ui.end_row();
                 for (b, key) in [
-                    ("Up", p.up.as_str()),
-                    ("Down", p.down.as_str()),
-                    ("Left", p.left.as_str()),
-                    ("Right", p.right.as_str()),
+                    (crate::t!(RebindDirUp), p.up.as_str()),
+                    (crate::t!(RebindDirDown), p.down.as_str()),
+                    (crate::t!(RebindDirLeft), p.left.as_str()),
+                    (crate::t!(RebindDirRight), p.right.as_str()),
                     ("A", p.a.as_str()),
                     ("B", p.b.as_str()),
                     ("Select", p.select.as_str()),
@@ -2478,18 +2575,15 @@ fn device_bindings_grid(ui: &mut egui::Ui, config: &Config, device: ShortcutsDev
     // Non-rebindable devices: show the fixed default host-key layout.
     let rows: &[(&str, &str)] = match device {
         ShortcutsDevice::PowerPad => &[
-            ("Top row (1-4)", "1  2  3  4"),
-            ("Middle row (5-8)", "Q  W  E  R"),
-            ("Bottom row (9-12)", "A  S  D  F"),
-            ("Note", "12-button mat; fixed default keys"),
+            (crate::t!(ShellPowerPadTopRow), "1  2  3  4"),
+            (crate::t!(ShellPowerPadMiddleRow), "Q  W  E  R"),
+            (crate::t!(ShellPowerPadBottomRow), "A  S  D  F"),
+            (crate::t!(ShellNote), crate::t!(ShellPowerPadNote)),
         ],
         ShortcutsDevice::FamilyKeyboard => &[
-            ("Layout", "Host keyboard maps to the matrix"),
-            ("Letters / digits", "as labelled on your keyboard"),
-            (
-                "Note",
-                "Active only with the Family BASIC / Subor keyboard device",
-            ),
+            (crate::t!(ShellLayout), crate::t!(ShellKeyboardMatrix)),
+            (crate::t!(ShellLettersDigits), crate::t!(ShellAsLabelled)),
+            (crate::t!(ShellNote), crate::t!(ShellKeyboardDeviceNote)),
         ],
         _ => &[],
     };
@@ -2539,34 +2633,34 @@ fn shortcuts_grid(ui: &mut egui::Ui, id: &str) {
         .spacing([32.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Action").strong());
-            ui.label(egui::RichText::new("Key").strong());
+            ui.label(egui::RichText::new(crate::t!(RebindColAction)).strong());
+            ui.label(egui::RichText::new(crate::t!(RebindColKey)).strong());
             ui.end_row();
 
             for (action, key) in [
-                ("Open ROM", "F12 / drag & drop"),
-                ("Save state", "F1"),
-                ("Load state", "F4"),
-                ("Rewind (hold)", "F5"),
-                ("Reset", "F2"),
-                ("Power cycle", "F3"),
-                ("Movie record", "F6"),
-                ("Movie play", "F7"),
-                ("Movie branch", "F8"),
-                ("Swap disk side (FDS)", "F9"),
-                ("Insert coin (Vs.)", "F10"),
-                ("Fullscreen", "F11"),
-                ("Toggle menu bar", "M"),
+                (crate::t!(RebindActOpenRom), crate::t!(ShellOpenRomKeys)),
+                (crate::t!(RebindActSaveState), "F1"),
+                (crate::t!(RebindActLoadState), "F4"),
+                (crate::t!(RebindActRewind), "F5"),
+                (crate::t!(RebindActReset), "F2"),
+                (crate::t!(RebindActPowerCycle), "F3"),
+                (crate::t!(RebindActMovieRecord), "F6"),
+                (crate::t!(RebindActMoviePlay), "F7"),
+                (crate::t!(RebindActMovieBranch), "F8"),
+                (crate::t!(RebindActDiskSwap), "F9"),
+                (crate::t!(RebindActInsertCoin), "F10"),
+                (crate::t!(RebindActFullscreen), "F11"),
+                (crate::t!(RebindActToggleMenuBar), "M"),
                 // v1.7.1 — the backtick key toggles the status-bar
                 // RetroAchievements read-out (compact <-> long-form), not the
                 // debugger overlay; the debugger has no single toggle (each
                 // inspector opens from the Debug menu). Kept consistent with
                 // `system_hotkeys_grid`.
-                ("Toggle RA status detail", "`"),
-                ("Quit / exit fullscreen", "Esc"),
-                ("D-pad", "Arrow keys"),
-                ("A button", "Z"),
-                ("B button", "X"),
+                (crate::t!(ShellToggleRaDetail), "`"),
+                (crate::t!(ShellQuitExitFullscreen), "Esc"),
+                ("D-pad", crate::t!(ShellArrowKeys)),
+                (crate::t!(ShellAButton), "Z"),
+                (crate::t!(ShellBButton), "X"),
                 ("Start", "Enter"),
                 ("Select", "Right Shift"),
             ] {

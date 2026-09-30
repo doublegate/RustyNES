@@ -56,9 +56,9 @@ fn sha256_hex(hash: &[u8; 32]) -> (String, String) {
 /// with the exact byte count always shown alongside for non-multiples).
 fn fmt_size(bytes: usize) -> String {
     if bytes < 1024 {
-        format!("{bytes} bytes")
+        crate::tf!(HdrBytes, bytes)
     } else {
-        format!("{} KiB ({bytes} bytes)", bytes / 1024)
+        crate::tf!(RomInfoKibBytes, bytes / 1024, bytes)
     }
 }
 
@@ -81,7 +81,7 @@ pub fn show(
         ctx,
         detached,
         "rom_info",
-        "ROM Info",
+        crate::t!(RomInfoTitle),
         super::WindowCfg {
             resizable: Some(false),
             ..Default::default()
@@ -89,7 +89,7 @@ pub fn show(
         open,
         |ui| {
             // --- Identity / provenance keys ---
-            ui.heading("Identity");
+            ui.heading(crate::t!(RomInfoIdentity));
             egui::Grid::new("rom_info_identity")
                 .num_columns(2)
                 .striped(true)
@@ -99,24 +99,26 @@ pub fn show(
                         .and_then(game_db::entry_for_crc)
                         .map(|e| e.title)
                         .filter(|t| !t.is_empty());
-                    ui.label("Title (game DB)");
-                    ui.label(title.as_deref().unwrap_or("(not in database)"));
-                    ui.end_row();
-
-                    ui.label("CRC32 (game-DB key)");
+                    ui.label(crate::t!(RomInfoTitleDb));
                     ui.label(
-                        crc.map_or_else(
-                            || "(no cartridge CRC)".to_string(),
-                            |c| format!("{c:08X}"),
-                        ),
+                        title
+                            .as_deref()
+                            .unwrap_or_else(|| crate::t!(RomInfoNotInDb)),
                     );
                     ui.end_row();
 
-                    ui.label("CRC32 (No-Intro, full file)");
-                    ui.label(
-                        crc_full
-                            .map_or_else(|| "(unavailable)".to_string(), |c| format!("{c:08X}")),
-                    );
+                    ui.label(crate::t!(RomInfoCrcDbKey));
+                    ui.label(crc.map_or_else(
+                        || crate::t!(RomInfoNoCartCrc).to_string(),
+                        |c| format!("{c:08X}"),
+                    ));
+                    ui.end_row();
+
+                    ui.label(crate::t!(RomInfoCrcNoIntro));
+                    ui.label(crc_full.map_or_else(
+                        || crate::t!(RomInfoUnavailable).to_string(),
+                        |c| format!("{c:08X}"),
+                    ));
                     ui.end_row();
 
                     let (hi, lo) = sha256_hex(nes.rom_sha256());
@@ -131,7 +133,7 @@ pub fn show(
             ui.separator();
 
             // --- Decoded cartridge header (straight off the running Nes) ---
-            ui.heading("Cartridge");
+            ui.heading(crate::t!(RomInfoCartridge));
             egui::Grid::new("rom_info_cart")
                 .num_columns(2)
                 .striped(true)
@@ -143,7 +145,7 @@ pub fn show(
                     let db_mapper = crc.and_then(game_db::entry_for_crc).and_then(|e| e.mapper);
                     match db_mapper {
                         Some(m) if m != active => {
-                            ui.label(format!("{active} (DB: {m})"));
+                            ui.label(crate::tf!(RomInfoMapperDb, active, m));
                         }
                         _ => {
                             ui.label(active.to_string());
@@ -151,7 +153,7 @@ pub fn show(
                     }
                     ui.end_row();
 
-                    ui.label("Region");
+                    ui.label(crate::t!(HdrRegion));
                     ui.label(format!("{:?}", nes.region()));
                     ui.end_row();
 
@@ -162,7 +164,7 @@ pub fn show(
                     let chr = nes.chr_rom_len();
                     ui.label("CHR");
                     ui.label(if chr == 0 {
-                        "CHR-RAM (no CHR ROM)".to_string()
+                        crate::t!(RomInfoChrRamNoRom).to_string()
                     } else {
                         fmt_size(chr)
                     });
@@ -171,12 +173,12 @@ pub fn show(
                     // Mirroring / submapper from the DB entry, when present.
                     if let Some(entry) = crc.and_then(game_db::entry_for_crc) {
                         if let Some(m) = entry.mirroring {
-                            ui.label("Mirroring (DB)");
+                            ui.label(crate::t!(RomInfoMirroringDb));
                             ui.label(format!("{m:?}"));
                             ui.end_row();
                         }
                         if let Some(sm) = entry.submapper {
-                            ui.label("Submapper (DB)");
+                            ui.label(crate::t!(RomInfoSubmapperDb));
                             ui.label(sm.to_string());
                             ui.end_row();
                         }
@@ -184,14 +186,7 @@ pub fn show(
                 });
 
             ui.separator();
-            ui.label(
-                egui::RichText::new(
-                    "Read-only. Metadata from the vendored per-game database + the \
-                     cartridge header. Edit corrections in Tools -> ROM Database.",
-                )
-                .small()
-                .weak(),
-            );
+            ui.label(egui::RichText::new(crate::t!(RomInfoFooter)).small().weak());
         },
     );
 }
