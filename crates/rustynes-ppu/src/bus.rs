@@ -45,6 +45,15 @@ pub trait PpuBus {
     /// Write a byte at `addr`.
     fn ppu_write(&mut self, addr: u16, value: u8);
 
+    /// Whether `$3000-$3EFF` is independent cartridge RAM rather than a
+    /// mirror of `$2000-$2EFF` (the mapper's `nametable_unfolded`). When it
+    /// is, the PPU passes those addresses unfolded to
+    /// [`Self::peek_nametable`] and [`Self::write_nametable`]. Default:
+    /// `false`.
+    fn nametable_unfolded(&self) -> bool {
+        false
+    }
+
     /// Optionally synthesize a nametable byte for `addr` ($2000-$3EFF).
     ///
     /// When the bus returns `Some(v)`, the PPU uses `v` directly and skips

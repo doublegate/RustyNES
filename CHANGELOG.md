@@ -26,6 +26,112 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+The seventh release of the v2.9.x line and the third of the line to v3.0.0:
+the mapper release. **17 new families (174 → 191)**, all written from their
+NESdev pages. GTROM is promoted to Curated. Two self-flashing homebrew boards
+now keep their saves, and mapper 4's NES 2.0 submappers are corrected.
+Each new board is pinned by register-decode unit tests and by a synthetic CC0
+program run on the full emulator. 31 mutants, one per documented behaviour,
+are all caught.
+
+### Added — mapper families
+
+- **MMC3 boards** (`mmc3_boards.rs`, a new module over the project's own
+  `Mmc3`):
+  - **12**: SL-5020B, MMC3A IRQ, with CHR A18 chosen per pattern table;
+  - **37**: *Super Mario Bros. + Tetris + Nintendo World Cup*;
+  - **45**: GA23C, four outer registers, lock, DIP switch;
+  - **47**: *Super Spike V'Ball + Nintendo World Cup*;
+  - **74, 191, 192, 194**: Waixing CHR-RAM overlays;
+  - **195**: Waixing FS303, whose CHR-RAM window is picked by PPU writes;
+  - **121**: Kasheng A9711/A9713 protection;
+  - **249**: Waixing T9552 scrambler.
+- **83**: Cony / Yoko, all three submappers, with the 16-bit up/down M2 IRQ.
+- **91**: J.Y. Company, with the PA12 IRQ on submapper 0 and the M2 IRQ on
+  submapper 1.
+- **105**: NES-EVENT (*Nintendo World Championships 1990*): the lock, the
+  two-chip PRG and the 30-bit timer, with the tournament DIP setting as the
+  default.
+- **153**: Bandai LZ93D50 with 8 KiB battery WRAM (*Famicom Jump II*).
+- **163**: Nanjing FC-001, including its automatic CHR-RAM switch on the
+  latched PPU A9.
+- **228**: *Action 52* / *Cheetahmen II*, with chip 2 reading as open bus.
+
+Tiers, by the maintainer's rule for this release: Curated where the page gives
+exact register masks (12, 37, 45, 74, 83, 91, 105, 153, 163, 192, 195, 228,
+249), BestEffort where it gives only Disch's notes or "probably" masks (47, 121,
+191, 194, and submapper 1 of 91). The split is now 51 Core + 109 Curated + 31
+BestEffort, and 160 of the 191 families are accuracy-gated.
+
+### Fixed — mapper 4 submappers
+
+- **NES 2.0 submappers 1 and 4 were swapped, and 2, 3 and 5 unmodelled.**
+  - Submapper 1 is the **MMC6**, now modelled per `MMC6.md`: 1 KiB of internal
+    RAM at `$7000`, with separate read and write enables per 512-byte half.
+    Before, it was run as an "NEC" MMC3.
+  - Submapper 4 is the NEC MMC3, and was run as Sharp.
+  - Submapper 2 is MMC3C with hard-wired mirroring.
+  - Submapper 3 is Acclaim's MC-ACC: a falling-edge A12 counter behind a /8
+    prescaler (BestEffort, since its reset rule comes from a forum measurement).
+  - Submapper 5 is the T9552 scrambler.
+- **StarTropics** (NES 2.0 submapper 1) is the one staged dump affected, and it
+  shows why this matters. It writes `$A001 = $30`, the MMC6 value for "low half
+  readable and writable". The MMC3 model read that as "RAM disabled", so all
+  99,864 reads of `$7000-$7FFF` in its first 1,200 frames returned 0 and 33,907
+  writes were dropped. Its oracle snapshot moves by one CPU cycle and an audio
+  hash, and its frame is unchanged.
+- **The `Mmc3Revision` documentation called the Sharp behaviour "MMC3A".**
+  `MMC3.md` gives MMC3A the alternate behaviour. Only the labels were wrong.
+
+### Fixed — homebrew flash boards
+
+- **GTROM (111) promoted to Curated** once it matched `GTROM.md`:
+  - the register decodes only at `$5000-$5FFF` and `$7000-$7FFF` (it also
+    answered at `$6000`);
+  - a read there latches the floating bus value;
+  - each nametable page is 8 KiB, so `$3000-$3EFF` is bonus RAM rather than a
+    mirror;
+  - PRG is an SST39SF040 that games rewrite to save.
+- **The flash chip is modelled** (`sst39sf040.rs`, from the datasheet: byte
+  program, sector erase, chip erase, software ID). GTROM and flashable UNROM 512
+  (30) boards now keep their saves: the `.sav` is the flash image, restored on
+  load and kept across a power cycle. Before, UNROM 512 accepted flash writes
+  and dropped them.
+- **UNROM 512's four-screen board** maps the last 8 KiB of its CHR-RAM over
+  `$2000-$3EFF`. Before, it was approximated as single-screen.
+- **The *Ninja Ryukenden* mapper-111 image is refused** with a clear message. It
+  carries CHR-ROM, so it is the MMC1 variant the GTROM page lists, not GTROM,
+  and no public description of its registers exists. It used to run as GTROM
+  and jam after 26 CPU cycles.
+
+### Changed — API
+
+- **`Mapper` gains six defaulted methods** (additive):
+  - `reset`, the console reset, which five boards use;
+  - `notify_floating_read`;
+  - `nametable_unfolded`;
+  - `save_data`, `save_data_mut` and `clear_save_data`.
+- **`Nes` gains `save_data`, `save_data_mut` and `clear_save_data`.** The save
+  paths use them: the desktop `.sav`, the mobile bridge, libretro's `SAVE_RAM`,
+  power cycle and movie start. `sram()` keeps meaning the `$6000` RAM that
+  memory maps describe.
+- **`Mmc3Variant`** is new, and `Mmc3::with_variant` selects it.
+
+### Changed — save states
+
+- **Save states for the boards changed here carry new versioned layouts.**
+  - Bandai FCG goes to v2, and a v1 state still loads on 16 and 159.
+  - MMC3 goes to v3, and a v2 state still loads.
+  - GTROM goes to v2 and UNROM 512 to v2. Their v1 states are refused with a
+    version error, never misread.
+
+### Documentation
+
+- **README rewritten as a front page.** The release-by-release history it
+  carried is in this file and in `VERSION-PLAN.md`. Stale claims are
+  corrected: the v3.0.0 definition (ADR 0043), the architecture's type names,
+  the performance figures and the citation.
+
 ## [2.9.5] - 2026-09-29 - "Caliper" (every open accuracy item measured, then fixed or closed)
 
 The sixth release of the v2.9.x line and the second of the line to v3.0.0: the

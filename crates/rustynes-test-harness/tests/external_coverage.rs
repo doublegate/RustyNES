@@ -131,6 +131,18 @@ use common::external::{InputScript, run_capture_opt, snapshot_text};
 /// because the structure is unknown per-ROM. ROMs that still land blank
 /// get a hand-tuned entry in `external_real_games` / `external_extended`,
 /// or indicate a genuine mapper-decode bug to fix.
+/// Staged dumps whose board this emulator deliberately does not run, with the
+/// reason. Each is skipped by name, and `unsupported_dumps_are_still_refused`
+/// fails if one ever parses, so the skip cannot hide a regression.
+///
+/// The mapper-111 *Ninja Ryukenden* translation is an MMC1 variant, not GTROM:
+/// it carries CHR-ROM, and until v2.9.6 it was run as GTROM and jammed after 26
+/// CPU cycles. Its snapshot pinned that jam. `parse` now refuses it by name.
+const UNSUPPORTED: &[(&str, &str)] = &[(
+    "mapper-111-GTROM-Cheapocabra/Ninja Ryukenden (Ch).nes",
+    "the Ninja Ryukenden MMC1 variant of mapper 111 (not GTROM); no public register description",
+)];
+
 const DEFAULT_CAPTURE: InputScript = InputScript::RepeatStartTap {
     warmup: 240,
     period: 150,
@@ -505,6 +517,10 @@ fn external_coverage_boot_smoke() {
 
     let mut failures: Vec<String> = Vec::new();
     for rom_rel in &roms {
+        if let Some((_, why)) = UNSUPPORTED.iter().find(|(r, _)| *r == rom_rel.as_str()) {
+            eprintln!("[external_coverage] SKIP {rom_rel}: {why}.");
+            continue;
+        }
         let id = snapshot_id(rom_rel);
         // Catch the per-ROM assertion panic (insta panics on a baseline
         // mismatch in normal mode; in INSTA_UPDATE=auto/always it writes
@@ -586,6 +602,22 @@ fn external_coverage_boot_smoke() {
         roms.len(),
         failures.join("\n  "),
     );
+}
+
+/// The skip list above is honest only while each entry is actually refused.
+/// Runs wherever the dump is staged; silent where it is not.
+#[test]
+fn unsupported_dumps_are_still_refused() {
+    for (rel, why) in UNSUPPORTED {
+        let path = external_root().join(rel);
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        assert!(
+            rustynes_core::Nes::from_rom(&bytes).is_err(),
+            "{rel} now parses; remove it from UNSUPPORTED ({why}) and bless its snapshot"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -91,6 +91,17 @@ NROM, MMC1 and MMC3 expose work RAM whatever the header says. Before those
 releases a game's in-cartridge save on the desktop and the phones survived
 only inside a save state (the v2.7.1 finding).
 
+**Since v2.9.6 the hosts persist `save_data()`, which is `sram()` except on a
+self-flashable board.** GTROM (111) and a flashable UNROM 512 (30) save by
+rewriting their PRG flash, have no RAM at `$6000`, and return the flash image
+from `Mapper::save_data`. Every host moved to it: the desktop `.sav`, the mobile
+bridge, libretro's `SAVE_RAM`, a power cycle (which keeps it), and a power-on
+movie, which calls `clear_save_data`, the ROM as loaded on a flash board.
+`sram()` stays the `$6000` RAM: libretro's memory map, which RetroAchievements
+reads, and the open-bus rule both depend on that meaning, so it was not stretched
+to cover a 512 KiB ROM. `parse` raises the battery flag for these two boards,
+because GTROM headers do not set it.
+
 `crates/rustynes-mappers/tests/battery_sram_exposed.rs` builds every NES 2.0
 mapper number (0-4095) with a battery and 8 KiB of PRG-NVRAM, both with CHR-ROM
 and with CHR-RAM, and fails any board whose `$6000-$7FFF` holds CPU writes while
@@ -399,7 +410,7 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 | 94 | — | UN1ROM (Senjou no Ookami) | — | — | landed (v1.3.0 / S8) | 16K PRG bank (data bits 4-2, bus conflict) + fixed last bank at `$C000`; CHR-RAM. |
 | 101 | — | Jaleco JF-10 CHR latch | — | — | landed (v1.3.0 / S8) | Fixed 32K PRG; 8K CHR bank latched via a write to the `$6000-$7FFF` window. |
 | 107 | — | Magic Dragon | — | — | landed (v1.3.0 / S8) | One `$8000-$FFFF` latch: 32K PRG = data>>1, 8K CHR = data. |
-| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8) | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + 4-screen nametable RAM with a bank-select bit; LED bit ignored. Since v2.9.0 (re-audit NC-02) a save state whose PRG, CHR or nametable bank is one the register cannot produce is refused; before, it loaded and the next fetch panicked. |
+| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8); rewritten and promoted to Curated v2.9.6 | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + two 8 KiB nametable pages, four-screen. See the v2.9.6 section below for the register window, bonus RAM and self-flashing. Since v2.9.0 (re-audit NC-02) a save state whose PRG, CHR or nametable bank is one the register cannot produce is refused; before, it loaded and the next fetch panicked. |
 | 143 | — | Sachen TCA01 | — | — | landed (v1.3.0 / S8) | NROM-128 (mirrored) + a simple protection read at `$4020-$5FFF` returning `(~addr & 0x3F) \| 0x40`. |
 | 177 | — | Hengedianzi | — | — | landed (v1.3.0 / S8) | 32K PRG + mirroring bit (bit 5) from one `$8000-$FFFF` latch; CHR-RAM. |
 | 179 | — | Hengedianzi variant | — | — | landed (v1.3.0 / S8) | 32K PRG via `$5000-$5FFF` (data>>1) + mirroring bit (bit 0) via `$8000-$FFFF`; CHR-RAM. |
@@ -419,7 +430,7 @@ note below).
 | iNES | Submapper | Name | Audio | IRQ | Status | Notes |
 |------|-----------|------|-------|-----|--------|-------|
 | 28 | — | Action 53 homebrew multicart | — | — | landed (v1.4.0 / S9); rewritten v2.9.3 | `$5000-$5FFF` selects one of four registers (`$00` CHR bank, `$01` inner PRG, `$80` mode, `$81` outer PRG), written through `$8000-$FFFF` with no bus conflicts. PRG follows the wiki's 12-row mode × outer-size table (32 KiB, UNROM #180, UNROM #2; 32-256 KiB outer), the fixed UNROM half resolved as 32 KiB. 32 KiB CHR-RAM in four 8 KiB banks; D4 of a `$00`/`$01` write selects the 1-screen page. Powers on with the last 16 KiB at `$C000`. |
-| 30 | — | UNROM-512 | — | — | landed (v1.4.0 / S9) | Homebrew. Latch `[N CC P PPPP]`: 16K PRG (bits 0-4) + 8K CHR-RAM/ROM (bits 5-6) + nametable bit (bit 7); fixed last bank at `$C000`. Bus-conflict / flash wiring keyed off submapper + battery (sub 0 w/o battery or sub 2 = bus conflicts on `$8000-$FFFF`; sub 0 w/ battery or sub 1/3/4 = no conflicts, latch only on `$C000-$FFFF`, `$8000-$BFFF` = flash window). |
+| 30 | — | UNROM-512 | — | — | landed (v1.4.0 / S9) | Homebrew. Latch `[N CC P PPPP]`: 16K PRG (bits 0-4) + 8K CHR-RAM/ROM (bits 5-6) + nametable bit (bit 7); fixed last bank at `$C000`. Bus-conflict / flash wiring keyed off submapper + battery (sub 0 w/o battery or sub 2 = bus conflicts on `$8000-$FFFF`; sub 0 w/ battery or sub 1/3/4 = no conflicts, latch only on `$C000-$FFFF`, `$8000-$BFFF` = flash window). Since v2.9.6 the flash window reaches a modelled SST39SF040 and the four-screen board maps the last 8 KiB of CHR-RAM over `$2000-$3EFF` (see the v2.9.6 section below). |
 | 63 | — | NTDEC 0324 (Powerful 250-in-1) | — | — | landed (v1.4.0 / S9) | Address-decoded multicart: 16/32K PRG bank + mirroring bit; CHR-RAM. |
 | 76 | — | NAMCOT-3446 (Namco 109) | — | — | landed (v1.4.0 / S9) | MMC3-style `$8000`/`$8001` register pairs select two 8K PRG banks (fixed last two) + four 2K CHR banks; header-fixed mirroring. |
 | 174 | — | NTDEC 5-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG bank + 8K CHR bank + mirroring bit. |
@@ -620,6 +631,99 @@ transforms in the same file — a disclosed Mesen2 derivation, see `NOTICE` and
 `docs/originality-and-provenance.md` §1 — no reference-emulator source was
 consulted for any of the FS005 code.
 
+### Tenth batch — v2.9.6 "Roster" (17 families, 174 → 191)
+
+Every family here is written from its vendored NESdev page, named in the table;
+no reference-emulator source was read. The MMC3-based boards live in
+`mmc3_boards.rs`, a new module that wraps the project's own `Mmc3` as a register
+file and IRQ counter. They are kept out of `mmc3_clones.rs` on purpose: that
+file carries a Mesen2 derivation record for its MMC3 variants, and mixing
+independently written boards into it would blur which regions the record covers.
+
+Tiers follow the maintainer's rule for this release (2026-09-30). A family is
+**Curated** when its page gives exact register masks: ADR 0011's "precise decode
+spec", backed by register-decode unit tests and a synthetic CC0 boot fixture in
+`crates/rustynes-test-harness/tests/roster_boards.rs`. It is **BestEffort** when
+the page gives only Disch's notes, or masks marked "probably".
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 12 | 0 | Gouder SL-5020B (`INES_Mapper_012`) | Curated | MMC3A (the alternate / NEC behaviour) | `$4100` mask `$E100`: CHR A18 per pattern table (bit 0 for PPU A12=0, bit 4 for A12=1), outside the ASIC so unaffected by `$8000` bit 7. The *Dragon Ball Z 5* language bit read at the same address returns 0 on D0: the page says every known copy is hard-wired to Chinese but not which level that is, so this is an assumption. Submapper 1 (the Magic Card 4M extraction) is a different device and is not supported. |
+| 37 | — | SMB + Tetris + NWC (`INES_Mapper_037`) | Curated | MMC3 | The 74HC161 at `$6000-$7FFF`, written only while the MMC3's `$A001` allows a PRG-RAM write; PRG A16 = Q0·Q1 + Q2·M16, A17 = CHR A17 = Q2 (the page's NAND equations). Write-only (open bus). The CIC reset clears it (`Mapper::reset`). |
+| 45 | — | GA23C (`INES_Mapper_045`) | Curated | MMC3 | Four outer registers written in turn at `$6000` (mask `$F001`): CHR-OR, PRG-OR, CHR-AND + high bits, PRG-AND (inverted) + lock. `$6001` resets and unlocks, as does a soft reset. `$5000-$5FFF` reads the menu DIP switch on D0. WRAM only when a NES 2.0 header declares it. |
+| 47 | — | Spike V'Ball + NWC (`INES_Mapper_047`) | BestEffort | MMC3 | One block bit in the PRG-RAM window, gated like mapper 37. The page is Disch's notes only. |
+| 74 | — | Waixing 43-393 (`INES_Mapper_074`) | Curated | MMC3 | CHR banks 8 and 9 are 2 KiB of CHR-RAM. 8 KiB work RAM. |
+| 83 | 0/1/2 | Cony / Yoko (`INES_Mapper_083`) | Curated | 16-bit M2, up or down | Three PRG modes, `$6000` ROM (subs 0/1) or 32 KiB banked WRAM (sub 2), 1 KiB / 2 KiB / outer-banked CHR. On iNES the submapper follows the page's CHR-size heuristic. The DIP and scratch-RAM masks are "probably" on the page and are decoded inside `$5000-$5FFF` only. |
+| 91 | 0 | JY830623C / YY840238C (`INES_Mapper_091`) | Curated | 64 unfiltered PPU A12 rises | 2 KiB CHR x4, 8 KiB PRG x2 + fixed 16 KiB, outer bank from the `$8000-$9FFF` write address. |
+| 91 | 1 | EJ-006-1 | BestEffort | M2, down by 5 every 4th cycle | The page does not say when it asserts; this board asserts on the decrement that would go below zero, then stops until `$7007`. |
+| 105 | — | NES-EVENT (`NES_EVENT`) | Curated | 30-bit M2 timer | An embedded `Mmc1` runs the serial port. PRG locked to the first 32 KiB until `$A000` I goes 0 then 1; `O` picks the chip; the timer fires at `$20000000 \| DIP<<25`, default the tournament setting (DIP C, `NWC_TOURNAMENT_DIP`). Reset relocks. |
+| 121 | — | Kasheng A9711 / A9713 (`INES_Mapper_121`) | BestEffort | MMC3 | Protection array at `$5000`, the bit-reversed `$8001` latch and `$8003` index overrides, CHR A18 from PPU A12 (A9711) or a `$5180` outer bank (A9713, told apart by 512 KiB PRG). The page's masks are "probably". |
+| 153 | — | Bandai LZ93D50 + WRAM (`INES_Mapper_153`) | Curated | LZ93D50 | In `m016_bandai_fcg.rs` (outside its EEPROM region): `$8000-$8003` bit 0 is the outer 256 KiB PRG bank, `$800D` bit 5 the WRAM enable; unbanked CHR-RAM; the WRAM is the battery save. |
+| 163 | — | Nanjing FC-001 (`INES_Mapper_163`) | Curated | — | 32 KiB PRG from `$5000`/`$5200` with the mode register's D0/D1 swap (not on 1 MiB boards) and the boot-in-bank-3 rule; feedback register at `$5100`/`$5500`; the automatic CHR-RAM switch latches PPU A9 on each rise of A13, modelled as a nametable access that follows a pattern access. |
+| 191 | — | (`INES_Mapper_191`) | BestEffort | MMC3 | CHR bank bit 7 selects 2 KiB CHR-RAM. Disch's notes. |
+| 192 | — | Waixing FS308 (`INES_Mapper_192`) | Curated | MMC3 | CHR banks 8-11 are 4 KiB of CHR-RAM. |
+| 194 | — | (`INES_Mapper_194`) | BestEffort | MMC3 | CHR banks 0 and 1 are 2 KiB of CHR-RAM. Disch's notes. |
+| 195 | — | Waixing FS303 (`INES_Mapper_195`) | Curated | MMC3 | A PPU write to a bank mapped to ROM selects which banks are RAM, from that bank's number (the page's eight-row table; power-on `$80`). CHR A10-A12 reach the RAM, so `$80` and `$82` share it. The optional 4 KiB at `$5000` appears when a NES 2.0 header declares PRG-RAM. |
+| 228 | — | Action 52 / Cheetahmen II (`INES_Mapper_228`) | Curated | — | The register latches the write ADDRESS (mirroring, chip, page, size) and data (CHR low bits). On the 1.5 MiB image chip 3 is the third 512 KiB and chip 2 is open bus. Reset clears it. |
+| 249 | — | Waixing T9552 (`T9552`) | Curated | MMC3 | `$5000` selects a PRG A14-A17 / CHR A12-A17 scrambling pattern; the file is stored in the `$5000=$00` order. Pinned to the page's worked example. |
+
+**Mapper 4, corrected.** The NES 2.0 submappers of mapper 4 were mis-assigned:
+submapper 1 was read as "NEC" and 4 as Sharp. `NES_2_0_submappers` defines 1 as
+the **MMC6**, 2 as MMC3C with hard-wired mirroring, 3 as Acclaim's **MC-ACC**, 4
+as the **NEC** MMC3 and 5 as the **T9552** scrambler. All five are now modelled:
+the MMC6's 1 KiB of internal RAM with its per-half read and write enables
+(`MMC6.md`), `$A000` ignored on submapper 2, the MC-ACC's falling-edge A12 counter
+behind a /8 prescaler, NEC on 4, and T9552 on 5 (the file in the `$02` order). An
+iNES 1.0 StarTropics stays a plain MMC3, as the submapper page advises. The
+`Mmc3Revision` names were also wrong: MMC3A is the *alternate* behaviour, not
+Sharp. MC-ACC (4.3) is BestEffort: its prescaler reset and phase come from a
+forum measurement the MMC3 page links, not from the page.
+
+**GTROM (111), promoted to Curated.** Three documented behaviours were missing:
+
+- the latch decodes `/ROMSEL`, A14 and A12 high, which is `$5000-$5FFF` and
+  `$7000-$7FFF` only, and a read there latches the value floating on the bus
+  (`Mapper::notify_floating_read`);
+- each nametable page is 8 KiB covering `$2000-$3EFF` unmirrored, so
+  `$3000-$3EFF` is bonus RAM (`Mapper::nametable_unfolded`);
+- PRG is an SST39SF040 that games rewrite to save.
+
+The flash model is `sst39sf040.rs`, written from the datasheet's command table:
+byte program, 4 KiB sector erase, chip erase and software ID. Programming only
+clears bits. Operation time is not modelled, so every command completes within
+its write. The flashed image is the board's battery save. It is
+exposed through a new `Mapper::save_data` seam rather than `sram()`, which keeps
+meaning "the RAM in the `$6000` window", the thing the open-bus rule, the
+libretro memory map and RetroAchievements rely on. `parse` marks the cartridge
+battery-backed. The desktop `.sav`, the mobile bridge and libretro's `SAVE_RAM`
+all persist `save_data()`, a power cycle keeps it, and a power-on movie resets
+it with `clear_save_data`, which on a flash board restores the ROM as loaded
+rather than zero-filling it. A save state carries only the 4 KiB sectors that
+differ from the ROM. The desktop keys `.sav` files by the ROM's hash, so a
+flash image is never applied to a different ROM. RetroArch keys saves by content
+name, so a renamed or updated ROM can load an older image there.
+
+UNROM 512 (30) uses the same model on its flashable wiring, which needs the
+flash window AND CHR-RAM. The CHR-ROM images headered as mapper 30 are Waixing
+FS005 `.WXN` conversions (`UNROM_512.md`). Their MMC3-style register writes
+reached the flash in this release's first draft and rewrote 21,602 bytes of
+*Shui Hu Zhuan*; they are never flashed. The four-screen board now maps the last
+8 KiB of its 32 KiB CHR-RAM over `$2000-$3EFF`, where it used to approximate
+that as single-screen.
+
+The promotion is backed by the CC0 fixture in `roster_boards.rs`: the register
+window, the floating-read latch, bonus RAM and a byte program through the real
+bus, plus the battery flag. The old tier note named "*Ninja Ryukenden*" as
+GTROM's only dump. That image is a different board, an MMC1 variant with
+CHR-ROM that the page describes only as "non-serialized", and it is not
+supported.
+
+**Mutation proof.** 31 mutants, each reverting one documented behaviour above
+(an equation, a mask, a lock, an IRQ direction, a dispatch, a hook call, a save
+path), were all CAUGHT by the unit tests or `roster_boards.rs`. Two needed a new
+test first: the bus's floating-read call, which no mapper-level test can reach,
+and the PPU's unfolded `$3xxx` path. The record is in the v2.9.6 plan.
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by
@@ -632,8 +736,10 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **174 families** — 51 Core + 95 Curated (**146 accuracy-gated**) +
-28 BestEffort (v2.3.4 added 154 and 243). The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
+Current split: **191 families** — 51 Core + 109 Curated (**160 accuracy-gated**) +
+31 BestEffort (v2.3.4 added 154 and 243; v2.9.6 added 17 families and promoted
+111, see above). Submapper-level exceptions: 4.3 (MC-ACC), 91.1 and 176.2 are
+BestEffort, and 12.1 is unsupported. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
 BestEffort families to Curated: each has a **cleanly-booting** staged
 commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
 GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in
@@ -643,7 +749,8 @@ dump — the 16 NES 2.0 high-id boards
 (268/286/289/290/299/301/303/305/306/312/320/336/348/349/366/513, which GoodNES
 v3.23b's iNES-1.0 headers cannot encode); 8 boards with no matching cart
 (29/39/81/104/174/179/238/261); and 2 boards whose only dump jams at boot
-(50 SMB2j FDS-conversion, 111 GTROM "Ninja Ryukenden") — and stay register-decode
+(50 SMB2j FDS-conversion, and 111, whose "Ninja Ryukenden" dump turned out at
+v2.9.6 to be a different board; GTROM itself is now Curated) — and stay register-decode
 and save-state unit-tested only. To keep that long tail from silently rotting,
 the **v2.1.0 "Fathom" F3.1 CI boot-smoke sweep**
 (`crates/rustynes-test-harness/tests/v21_best_effort_sweep.rs`) exercises the

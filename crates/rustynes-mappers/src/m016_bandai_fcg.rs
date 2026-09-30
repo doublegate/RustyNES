@@ -25,6 +25,14 @@
 //! Mapper 159 is mapper 16 submapper 5 with a 128-byte X24C01 EEPROM
 //! (instead of the 256-byte 24C02 on mapper 16).
 //!
+//! Mapper 153 (v2.9.6, written from `nesdev_wiki/output/INES_Mapper_153.md`)
+//! is an LZ93D50 with 8 KiB of battery-backed WRAM and no EEPROM. Its CHR
+//! registers `$8000-$8003` become the outer 256 KiB PRG bank (bit 0, "the same
+//! value must be written to all four"); CHR is 8 KiB of unbanked CHR-RAM; and
+//! `$800D` bit 5 enables the WRAM chip. The page notes that *Famicom Jump II*
+//! freezes when it boots with zero-filled WRAM and runs after a soft reset;
+//! that is the game, not the board.
+//!
 //! ## Offsets (relative to the window base, masked to `$x..F`)
 //!
 //! | Offset | Function                                              |
@@ -75,7 +83,12 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 (v2.9.6) appends mapper 153's outer bank, WRAM enable and WRAM. A v1
+/// blob still loads on the variants that have neither.
+const SAVE_STATE_VERSION: u8 = 2;
+
+/// Mapper 153's WRAM.
+const WRAM_153: usize = 0x2000;
 
 /// FCG board / EEPROM variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +104,9 @@ pub enum FcgVariant {
     Lz93d50_24c02,
     /// Mapper 159: LZ93D50 with a 128-byte X24C01 EEPROM.
     Lz93d50_24c01,
+    /// Mapper 153: LZ93D50 with 8 KiB of battery-backed WRAM and an outer
+    /// 256 KiB PRG bank in place of the CHR registers.
+    Lz93d50Wram,
 }
 
 impl FcgVariant {
@@ -98,7 +114,10 @@ impl FcgVariant {
         matches!(self, Self::Both | Self::Fcg)
     }
     const fn responds_high(self) -> bool {
-        matches!(self, Self::Both | Self::Lz93d50_24c02 | Self::Lz93d50_24c01)
+        matches!(
+            self,
+            Self::Both | Self::Lz93d50_24c02 | Self::Lz93d50_24c01 | Self::Lz93d50Wram
+        )
     }
     /// LZ93D50 latches the IRQ counter (`$x0B/$x0C` write a latch); FCG-1/2
     /// writes the counter directly.
@@ -109,7 +128,7 @@ impl FcgVariant {
         match self {
             Self::Lz93d50_24c01 => 128,
             Self::Both | Self::Lz93d50_24c02 => 256,
-            Self::Fcg => 0,
+            Self::Fcg | Self::Lz93d50Wram => 0,
         }
     }
     /// X24C01 uses a combined 7-bit word-address byte; the 24C02 uses a
@@ -415,6 +434,13 @@ pub struct BandaiFcg {
     eeprom: Option<Eeprom>,
     // Last value written to the EEPROM control register (for save-state).
     eeprom_ctrl: u8,
+
+    /// Mapper 153: the outer 256 KiB PRG bank (`$8000-$8003` bit 0).
+    outer: u8,
+    /// Mapper 153: `$800D` bit 5, the WRAM chip enable.
+    wram_enabled: bool,
+    /// Mapper 153: 8 KiB of battery-backed WRAM; empty on the other variants.
+    wram: Box<[u8]>,
 }
 
 impl BandaiFcg {
@@ -469,7 +495,19 @@ impl BandaiFcg {
             irq_pending: false,
             eeprom,
             eeprom_ctrl: 0,
+            outer: 0,
+            wram_enabled: false,
+            wram: if variant == FcgVariant::Lz93d50Wram {
+                vec![0u8; WRAM_153].into_boxed_slice()
+            } else {
+                Box::new([])
+            },
         })
+    }
+
+    /// Mapper 153's outer bank as a 16 KiB bank offset (256 KiB = 16 banks).
+    const fn outer_base(&self) -> usize {
+        (self.outer as usize & 0x01) << 4
     }
 
     const fn nametable_offset(&self, addr: u16) -> usize {
@@ -489,6 +527,10 @@ impl BandaiFcg {
     /// Apply a register write decoded to offset `$0-$F`.
     fn write_reg(&mut self, off: u8, value: u8) {
         match off & 0x0F {
+            // Mapper 153: PA12/PA13 are grounded, so `$0-$3` are the outer
+            // PRG bank and `$4-$7` do nothing.
+            0x0..=0x3 if self.variant == FcgVariant::Lz93d50Wram => self.outer = value & 0x01,
+            0x4..=0x7 if self.variant == FcgVariant::Lz93d50Wram => {}
             0x0..=0x7 => self.chr_banks[(off & 0x07) as usize] = value,
             0x8 => self.prg_bank = value & 0x0F,
             0x9 => {
@@ -522,6 +564,10 @@ impl BandaiFcg {
                     self.irq_counter = (self.irq_counter & 0x00FF) | ((value as u16) << 8);
                 }
             }
+            0xD if self.variant == FcgVariant::Lz93d50Wram => {
+                self.eeprom_ctrl = value;
+                self.wram_enabled = value & 0x20 != 0;
+            }
             0xD => {
                 self.eeprom_ctrl = value;
                 if let Some(ee) = self.eeprom.as_mut() {
@@ -542,9 +588,15 @@ impl Mapper for BandaiFcg {
     // audit IMP-08). The EEPROM is reached through an I2C protocol, not a CPU
     // window, so this accessor is the ONLY way the frontend can persist it.
     fn sram(&self) -> &[u8] {
+        if !self.wram.is_empty() {
+            return &self.wram;
+        }
         self.eeprom.as_ref().map_or(&[], |e| &e.mem)
     }
     fn sram_mut(&mut self) -> &mut [u8] {
+        if !self.wram.is_empty() {
+            return &mut self.wram;
+        }
         match self.eeprom.as_mut() {
             Some(e) => &mut e.mem,
             None => &mut [],
@@ -558,6 +610,13 @@ impl Mapper for BandaiFcg {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
+            0x6000..=0x7FFF if !self.wram.is_empty() => {
+                if self.wram_enabled {
+                    self.wram[usize::from(addr - 0x6000)]
+                } else {
+                    0
+                }
+            }
             0x6000..=0x7FFF => {
                 // EEPROM read appears in bit 4 (LZ93D50). Otherwise open bus
                 // (the bus's open-bus latch handles unmapped reads, but the
@@ -570,12 +629,17 @@ impl Mapper for BandaiFcg {
             }
             0x8000..=0xBFFF => {
                 let total = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-                let bank = (self.prg_bank as usize) % total;
+                let bank = (self.prg_bank as usize | self.outer_base()) % total;
                 self.prg_rom[bank * PRG_BANK_16K + (addr - 0x8000) as usize]
             }
             0xC000..=0xFFFF => {
                 let total = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-                let last = total - 1;
+                // Mapper 153: the last bank of the selected 256 KiB.
+                let last = if self.wram.is_empty() {
+                    total - 1
+                } else {
+                    (0x0F | self.outer_base()) % total
+                };
                 self.prg_rom[last * PRG_BANK_16K + (addr - 0xC000) as usize]
             }
             _ => 0,
@@ -583,6 +647,9 @@ impl Mapper for BandaiFcg {
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
+        if !self.wram.is_empty() && self.wram_enabled && (0x6000..=0x7FFF).contains(&addr) {
+            self.wram[usize::from(addr - 0x6000)] = value;
+        }
         if self.variant.responds_low() && (0x6000..=0x7FFF).contains(&addr) {
             self.write_reg((addr & 0x0F) as u8, value);
         }
@@ -596,6 +663,9 @@ impl Mapper for BandaiFcg {
         // present, so that window is mapped; otherwise default behavior.
         if self.eeprom.is_some() && (0x6000..=0x7FFF).contains(&addr) {
             return false;
+        }
+        if !self.wram.is_empty() && (0x6000..=0x7FFF).contains(&addr) {
+            return !self.wram_enabled;
         }
         (0x4020..=0x5FFF).contains(&addr)
     }
@@ -652,10 +722,10 @@ impl Mapper for BandaiFcg {
     }
 
     fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
-        let id = if matches!(self.variant, FcgVariant::Lz93d50_24c01) {
-            159
-        } else {
-            16
+        let id = match self.variant {
+            FcgVariant::Lz93d50_24c01 => 159,
+            FcgVariant::Lz93d50Wram => 153,
+            _ => 16,
         };
         let mut info = crate::mapper::MapperDebugInfo {
             mapper_id: id,
@@ -709,21 +779,28 @@ impl Mapper for BandaiFcg {
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
+        out.push(self.outer);
+        out.push(u8::from(self.wram_enabled));
+        out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let ee_len = self.eeprom.as_ref().map_or(0, |e| e.mem.len());
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 18 + self.vram.len() + ee_len + need_chr;
+        let v1_len = 18 + self.vram.len() + ee_len + need_chr;
+        let expected = match data.first() {
+            // v1 carried no 153 tail, so it loads only where there is none.
+            Some(1) if self.wram.is_empty() => v1_len,
+            Some(&SAVE_STATE_VERSION) => v1_len + 2 + self.wram.len(),
+            Some(&v) => return Err(MapperError::UnsupportedVersion(v)),
+            None => v1_len,
+        };
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
         self.chr_banks.copy_from_slice(&data[2..10]);
@@ -760,6 +837,16 @@ impl Mapper for BandaiFcg {
         if self.chr_is_ram {
             self.chr
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
+            cursor += self.chr.len();
+        }
+        if data[0] == SAVE_STATE_VERSION {
+            self.outer = data[cursor] & 0x01;
+            self.wram_enabled = data[cursor + 1] != 0;
+            cursor += 2;
+            self.wram.copy_from_slice(&data[cursor..]);
+        } else {
+            self.outer = 0;
+            self.wram_enabled = false;
         }
         Ok(())
     }
@@ -1089,5 +1176,96 @@ mod tests {
             e.clock_fall(0);
             assert_eq!(e.addr, 0, "x24c01={is_x24c01}: read rollover reaches $00");
         }
+    }
+
+    // ---- Mapper 153 (`INES_Mapper_153.md`) ------------------------------
+
+    fn m153(banks_16k: usize) -> BandaiFcg {
+        BandaiFcg::new(
+            synth_prg(banks_16k),
+            Box::new([]),
+            Mirroring::Vertical,
+            FcgVariant::Lz93d50Wram,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn m153_outer_bank_from_8000_to_8003_and_fixed_last_of_the_block() {
+        let mut m = m153(32); // 512 KiB
+        m.cpu_write(0x8008, 3);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        assert_eq!(m.cpu_read(0xC000), 15, "last bank of the first 256 KiB");
+        for a in 0x8000..=0x8003u16 {
+            m.cpu_write(a, 1);
+        }
+        assert_eq!(m.cpu_read(0x8000), 16 + 3);
+        assert_eq!(m.cpu_read(0xC000), 31);
+        // `$8004-$8007` do nothing on this board.
+        m.cpu_write(0x8004, 0);
+        assert_eq!(m.cpu_read(0x8000), 16 + 3);
+    }
+
+    #[test]
+    fn m153_wram_follows_the_800d_chip_enable() {
+        let mut m = m153(32);
+        assert_eq!(m.sram().len(), WRAM_153, "the battery save is the WRAM");
+        assert!(m.cpu_read_unmapped(0x6000), "disabled at power-on");
+        m.cpu_write(0x6000, 0x11);
+        m.cpu_write(0x800D, 0x20);
+        assert!(!m.cpu_read_unmapped(0x6000));
+        assert_eq!(m.cpu_read(0x6000), 0, "the disabled write was dropped");
+        m.cpu_write(0x7FFF, 0x22);
+        assert_eq!(m.cpu_read(0x7FFF), 0x22);
+        m.cpu_write(0x800D, 0x00);
+        assert!(m.cpu_read_unmapped(0x7FFF));
+    }
+
+    #[test]
+    fn m153_chr_is_unbanked_ram_and_irq_is_the_lz93d50s() {
+        let mut m = m153(32);
+        m.cpu_write(0x8000, 1); // outer bank, not CHR bank 0
+        m.ppu_write(0x0005, 0x9A);
+        assert_eq!(m.ppu_read(0x0005), 0x9A);
+        m.cpu_write(0x800B, 2);
+        m.cpu_write(0x800C, 0);
+        m.cpu_write(0x800A, 1);
+        for _ in 0..3 {
+            m.notify_cpu_cycle();
+        }
+        assert!(m.irq_pending(), "latched counter 2 reaches zero");
+    }
+
+    #[test]
+    fn m153_state_round_trips_and_v1_is_refused() {
+        let mut a = m153(32);
+        a.cpu_write(0x8001, 1);
+        a.cpu_write(0x800D, 0x20);
+        a.cpu_write(0x6123, 0x44);
+        let blob = a.save_state();
+        let mut b = m153(32);
+        b.load_state(&blob).unwrap();
+        assert_eq!(b.cpu_read(0x6123), 0x44);
+        assert_eq!(b.cpu_read(0xC000), 31);
+        assert_eq!(b.save_state(), blob);
+        let mut v1 = blob.clone();
+        v1[0] = 1;
+        v1.truncate(v1.len() - 2 - WRAM_153);
+        assert!(
+            b.load_state(&v1).is_err(),
+            "a v1 blob has no WRAM to restore"
+        );
+        // A v1 blob still loads on a board with no 153 tail.
+        let mut fcg = BandaiFcg::new(
+            synth_prg(8),
+            synth_chr(128),
+            Mirroring::Vertical,
+            FcgVariant::Fcg,
+        )
+        .unwrap();
+        let mut v1 = fcg.save_state();
+        v1[0] = 1;
+        v1.truncate(v1.len() - 2);
+        fcg.load_state(&v1).unwrap();
     }
 }

@@ -249,6 +249,30 @@ pub trait Mapper: Send {
         }
     }
 
+    /// A CPU read the mapper declined ([`Self::cpu_read_unmapped`]) has just
+    /// completed, and `value` is what floated on the bus.
+    ///
+    /// Only GTROM (mapper 111) uses it: its register latches on any CPU access
+    /// to its window, so "reading from the register effectively writes the
+    /// value of open bus" (`nesdev_wiki/output/GTROM.md`). Called only on the
+    /// unmapped path, so PRG fetches never pay for it. Default: nothing.
+    /// Added in v2.9.6.
+    fn notify_floating_read(&mut self, _addr: u16, _value: u8) {}
+
+    /// Whether PPU `$3000-$3EFF` is independent RAM on this cartridge rather
+    /// than a mirror of `$2000-$2EFF`.
+    ///
+    /// When `true`, [`Self::nametable_fetch`] and [`Self::nametable_write`]
+    /// receive `$3000-$3EFF` unfolded. Two boards need it: GTROM's "bonus RAM"
+    /// (`GTROM.md`) and UNROM 512's four-screen board (`UNROM_512.md`), whose
+    /// nametable RAM covers the whole `$2000-$3EFF` window. Only `$2007`
+    /// accesses reach `$3xxx` (rendering fetches never do), and the PPU asks
+    /// only for those, so rendering pays nothing. Default: `false`, the
+    /// console's own mirroring. Added in v2.9.6.
+    fn nametable_unfolded(&self) -> bool {
+        false
+    }
+
     /// Which data bits a mapped read in the register window (`$4020-$5FFF`)
     /// actually drives; the rest float and keep the bus's open-bus value.
     ///
@@ -387,6 +411,18 @@ pub trait Mapper: Send {
     /// Notify of a CPU cycle. Default no-op; VRC2/4/6, FME-7, Namco 163
     /// override this for IRQ counter clocking.
     fn notify_cpu_cycle(&mut self) {}
+
+    /// The console's RESET button (a soft reset, not a power cycle).
+    ///
+    /// A cartridge sees reset only on the boards that wire the CIC's reset
+    /// line, or /RESET itself, into their logic, so the default does nothing
+    /// and almost every board keeps its registers across a reset, exactly as
+    /// on a console. The boards that clear something are documented per page:
+    /// mapper 37's outer latch (`INES_Mapper_037.md`), mapper 45's outer
+    /// registers, NES-EVENT's PRG lock (mapper 105), and Action 52's register
+    /// (mapper 228). Added in v2.9.6; a power cycle rebuilds the mapper
+    /// instead and never calls this.
+    fn reset(&mut self) {}
 
     /// Notify the mapper of the APU frame-counter events fired on the
     /// current CPU cycle (quarter-frame envelope clock, half-frame length
@@ -598,6 +634,33 @@ pub trait Mapper: Send {
     /// By default, returns an empty mutable slice if unsupported.
     fn sram_mut(&mut self) -> &mut [u8] {
         &mut []
+    }
+
+    /// The cartridge's non-volatile data: what a battery save persists and a
+    /// power cycle keeps. For almost every board that is its battery-backed
+    /// RAM, [`Self::sram`], and the default says so.
+    ///
+    /// Self-flashable boards differ (v2.9.6). GTROM and a flashable UNROM 512
+    /// save by rewriting their own PRG flash, so their save is the flash image,
+    /// and they have no RAM at `$6000` at all. Keeping the two apart is the
+    /// point. `sram()` goes on meaning "the RAM in the `$6000` window", which
+    /// the open-bus rule, the libretro memory map and `RetroAchievements` all
+    /// rely on. Only the save paths read this.
+    fn save_data(&self) -> &[u8] {
+        self.sram()
+    }
+
+    /// Mutable [`Self::save_data`], for loading a save.
+    fn save_data_mut(&mut self) -> &mut [u8] {
+        self.sram_mut()
+    }
+
+    /// Return the save data to the state of a cartridge that has never been
+    /// saved to. That is zeroed RAM by default. On a flash board it is the PRG
+    /// image as loaded, since a zero-filled flash would be a ROM with no
+    /// program in it. A power-on movie calls this (`power_on_for_movie`).
+    fn clear_save_data(&mut self) {
+        self.save_data_mut().fill(0);
     }
 
     /// Start recording the diagnostic FDS read-stream trace (off by default;

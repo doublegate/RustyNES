@@ -36,7 +36,7 @@ attract screen — a backdrop-only frame here means "boots without crashing", no
 | 94 | UN1ROM (Senjou no Ookami) | boots; blank w/o input — flagged for input-driven re-test |
 | 101 | Jaleco JF-10 (Urusei Yatsura) | RENDERED |
 | 107 | Magic Dragon (Unl) | boots; backdrop w/o input |
-| 111 | GTROM / Cheapocabra (Ninja Ryukenden Ch) | boots; backdrop w/o input |
+| 111 | *Ninja Ryukenden* (Ch), which is not GTROM | **not supported since v2.9.6.** The image carries CHR-ROM: it is the MMC1 variant the GTROM page lists under "Variations", which ran as GTROM and jammed after 26 CPU cycles. The committed PNGs show that jam. GTROM itself is Curated and pinned by a CC0 fixture (`roster_boards.rs`) |
 | 143 | Sachen TCA01 (Dancing Blocks) | boots; blank w/o input |
 | 177 | Hengedianzi (American Man) | boots; backdrop w/o input |
 | 218 | Magic Floor (homebrew) | boots (D1 PRG-size bug fixed; minimal-puzzle backdrop) |

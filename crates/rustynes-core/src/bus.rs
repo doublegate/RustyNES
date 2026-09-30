@@ -1175,6 +1175,8 @@ impl LockstepBus {
         self.dma_halt_addr = 0;
         self.deferred_dma_replay_addr = 0;
         self.unified_dma_clear();
+        // v2.9.6: the boards that see the reset line (`Mapper::reset`).
+        self.mapper.reset();
     }
 
     /// Power-cycle. Zeroes RAM and resets all state. Caller resets the CPU.
@@ -1271,13 +1273,15 @@ impl LockstepBus {
         // Power Cycle wrote zeros over the player's save. Volatile PRG-RAM and
         // CHR-RAM are still cleared. A power-on MOVIE wants cleared save RAM
         // and asks for it explicitly (`movie::power_on_for_movie`).
-        let battery_ram: Option<Vec<u8>> =
-            self.cart.has_battery.then(|| self.mapper.sram().to_vec());
+        let battery_ram: Option<Vec<u8>> = self
+            .cart
+            .has_battery
+            .then(|| self.mapper.save_data().to_vec());
         if let Some(bytes) = self.rom_bytes.take() {
             if let Ok((_cart, mapper)) = rustynes_mappers::parse(&bytes) {
                 self.mapper = mapper;
                 if let Some(saved) = battery_ram.as_deref() {
-                    let fresh = self.mapper.sram_mut();
+                    let fresh = self.mapper.save_data_mut();
                     // Same ROM, same board: the sizes match. Guarded anyway,
                     // since a mismatch would mean the rebuild is not the board
                     // the RAM came from, and copying into it would be wrong.
@@ -1684,6 +1688,11 @@ impl LockstepBus {
         match addr {
             0x0000..=0x1FFF => self.mapper.ppu_read(addr),
             0x2000..=0x3EFF => {
+                let addr = if addr >= 0x3000 && !self.mapper.nametable_unfolded() {
+                    addr - 0x1000
+                } else {
+                    addr
+                };
                 if let Some(v) = self.mapper.nametable_fetch(addr) {
                     v
                 } else {
@@ -1721,7 +1730,11 @@ impl LockstepBus {
         match addr {
             0x0000..=0x1FFF => self.mapper.ppu_write(addr & 0x1FFF, value),
             0x2000..=0x3EFF => {
-                let nt_addr = if addr >= 0x3000 { addr - 0x1000 } else { addr };
+                let nt_addr = if addr >= 0x3000 && !self.mapper.nametable_unfolded() {
+                    addr - 0x1000
+                } else {
+                    addr
+                };
                 // Give the mapper a chance to absorb the write (ExRAM
                 // nametables, fill-mode drops), exactly like `write_vram`.
                 if !self.mapper.nametable_write(nt_addr, value) {
@@ -4065,6 +4078,9 @@ impl LockstepBus {
                     // only after something has moved the external bus alone --
                     // a DMC DMA fetch, or an OAM-DMA put with the 6502 bus
                     // parked in `$4000-$401F` (core audit v2.9.2 AUD-03).
+                    // v2.9.6: a board whose register latches on reads (GTROM)
+                    // sees the value that floated.
+                    self.mapper.notify_floating_read(addr, self.open_bus);
                     self.open_bus
                 } else {
                     // The Game Genie physically substitutes the byte on the
@@ -4180,6 +4196,9 @@ impl PpuBus for PpuBusAdapter<'_> {
     }
     fn ppu_write(&mut self, addr: u16, value: u8) {
         self.mapper.ppu_write(addr & 0x1FFF, value);
+    }
+    fn nametable_unfolded(&self) -> bool {
+        self.mapper.nametable_unfolded()
     }
     fn peek_nametable(&mut self, addr: u16) -> Option<u8> {
         self.mapper.nametable_fetch(addr)

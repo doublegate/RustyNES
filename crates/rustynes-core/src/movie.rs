@@ -790,7 +790,9 @@ pub struct MovieRecorder {
 /// cartridge RAM and are not reset by this.
 pub fn power_on_for_movie(nes: &mut Nes) {
     nes.power_cycle();
-    nes.sram_mut().fill(0);
+    // Not `sram_mut().fill(0)`: on a flash board (v2.9.6) the save is the PRG
+    // image, and a never-saved flash is the ROM as loaded, not zeros.
+    nes.clear_save_data();
 }
 
 impl MovieRecorder {

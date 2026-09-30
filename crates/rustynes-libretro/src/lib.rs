@@ -2467,7 +2467,10 @@ impl Core for RustyNesLibretro {
                 if !nes.has_battery() {
                     return std::ptr::null_mut();
                 }
-                let sram = nes.sram_mut();
+                // v2.9.6: `save_data`, which is the flash image on a
+                // self-flashable board (GTROM, UNROM 512); the `$6000` RAM
+                // the memory map describes stays `sram()`.
+                let sram = nes.save_data_mut();
                 if sram.is_empty() {
                     std::ptr::null_mut()
                 } else {
@@ -2492,7 +2495,7 @@ impl Core for RustyNesLibretro {
         match id {
             // Battery-backed RAM only; see `get_memory_data`. Without a
             // battery this falls through to the `_ => 0` arm.
-            RETRO_MEMORY_SAVE_RAM if nes.has_battery() => nes.sram().len(),
+            RETRO_MEMORY_SAVE_RAM if nes.has_battery() => nes.save_data().len(),
             RETRO_MEMORY_SYSTEM_RAM => nes.wram().len(),
             RETRO_MEMORY_VIDEO_RAM => nes.vram().len(),
             _ => 0,

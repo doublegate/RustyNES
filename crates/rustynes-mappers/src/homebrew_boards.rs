@@ -35,6 +35,7 @@
 
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError};
+use crate::sst39sf040::{Sst39sf040, decode_sector_diff, encode_sector_diff};
 use alloc::{boxed::Box, vec::Vec};
 use alloc::{format, vec};
 
@@ -504,17 +505,49 @@ impl Mapper for Cufrom29 {
     }
 }
 
-/// Mapper 111 (`GTROM`/Cheapocabra).
+/// Mapper 111 (`GTROM` / Cheapocabra), written from
+/// `nesdev_wiki/output/GTROM.md` (v2.9.6 "Roster": the register window, bonus
+/// RAM and self-flashing were added and the board promoted to Curated).
+///
+/// - **Register** (`GRNC PPPP`): 32 KiB PRG bank, 8 KiB CHR-RAM bank, 8 KiB
+///   nametable page, and two LEDs. The latch clocks when `/ROMSEL`, A14 and
+///   A12 are all high, which is `$5000-$5FFF` and `$7000-$7FFF` and nowhere
+///   else; `$6000-$6FFF` is not decoded. A read there latches too, with the
+///   value floating on the bus ("reading from the register effectively
+///   writes the value of open bus"), which is what
+///   [`Mapper::notify_floating_read`] exists for.
+/// - **PPU RAM** is one 32 KiB chip. The pattern tables use one of its first
+///   two 8 KiB pages, and PPU `$2000-$3EFF` one of its last two, unmirrored.
+///   Each nametable page therefore holds the four nametables plus almost
+///   4 KiB of bonus RAM at `$3000-$3EFF`. The console's CIRAM is disabled.
+/// - **PRG** is an SST39SF040 ([`Sst39sf040`]). Writes to `$8000-$FFFF` are
+///   its commands; command addresses are A14-A0, so `5555h` is CPU `$D555`
+///   and `2AAAh` is `$AAAA` in any bank. The flashed image is the board's
+///   battery save ([`Mapper::sram`]), and a save state carries only the
+///   sectors that differ from the ROM.
+///
+/// The LEDs have no emulated effect. Their bits are kept in the register so a
+/// debugger shows them.
 pub struct Gtrom111 {
-    prg_rom: Box<[u8]>,
-    /// 16 KiB CHR-RAM: two 8 KiB banks.
+    /// The flash contents: PRG-ROM as loaded, plus whatever was flashed.
+    flash: Box<[u8]>,
+    /// The PRG-ROM as loaded, for the sector diff in save states.
+    original: Box<[u8]>,
+    chip: Sst39sf040,
+    /// 16 KiB of pattern-table RAM: two 8 KiB pages.
     chr_ram: Box<[u8]>,
-    /// 8 KiB nametable RAM: two banks of four 1 KiB screens.
+    /// 16 KiB of nametable RAM: two 8 KiB pages covering `$2000-$3FFF`.
     nt_ram: Box<[u8]>,
+    /// The last value latched (`GRNC PPPP`).
+    reg: u8,
     prg_bank: u8,
     chr_bank: u8,
     nt_bank: u8,
 }
+
+/// GTROM save-state layout version. v2 (v2.9.6) grew the nametable pages to
+/// 8 KiB and added the register, the flash state and the flashed sectors.
+const GTROM_STATE_VERSION: u8 = 2;
 
 impl Gtrom111 {
     /// Construct a new mapper 111 board.
@@ -531,9 +564,12 @@ impl Gtrom111 {
             )));
         }
         Ok(Self {
-            prg_rom,
+            original: prg_rom.clone(),
+            flash: prg_rom,
+            chip: Sst39sf040::new(),
             chr_ram: vec![0u8; 2 * CHR_BANK_8K].into_boxed_slice(),
-            nt_ram: vec![0u8; 2 * 4 * NAMETABLE_SIZE].into_boxed_slice(),
+            nt_ram: vec![0u8; 2 * CHR_BANK_8K].into_boxed_slice(),
+            reg: 0,
             prg_bank: 0,
             chr_bank: 0,
             nt_bank: 0,
@@ -542,21 +578,30 @@ impl Gtrom111 {
 
     #[allow(clippy::cast_possible_truncation)]
     fn update_register(&mut self, value: u8) {
-        let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+        let count = (self.flash.len() / PRG_BANK_32K).max(1);
+        self.reg = value;
         // `(value & 0x0F) % count` < 16, so the cast cannot truncate.
         self.prg_bank = ((value & 0x0F) as usize % count) as u8;
         self.chr_bank = (value >> 4) & 0x01;
         self.nt_bank = (value >> 5) & 0x01;
     }
 
+    /// The latch decodes `/ROMSEL` high, A14 high, A12 high.
+    const fn is_register(addr: u16) -> bool {
+        matches!(addr, 0x5000..=0x5FFF | 0x7000..=0x7FFF)
+    }
+
     const fn chr_offset(&self, addr: u16) -> usize {
         (self.chr_bank as usize) * CHR_BANK_8K + (addr as usize & 0x1FFF)
     }
 
+    /// `$2000-$3EFF`, unmirrored within the selected 8 KiB page.
     const fn nt_offset(&self, addr: u16) -> usize {
-        let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as usize;
-        let local = (addr as usize) & (NAMETABLE_SIZE - 1);
-        (self.nt_bank as usize) * 4 * NAMETABLE_SIZE + table * NAMETABLE_SIZE + local
+        (self.nt_bank as usize) * CHR_BANK_8K + (addr as usize & 0x1FFF)
+    }
+
+    fn chip_addr(&self, addr: u16) -> usize {
+        (self.prg_bank as usize) * PRG_BANK_32K + (addr as usize & 0x7FFF)
     }
 }
 
@@ -565,18 +610,46 @@ impl Mapper for Gtrom111 {
         MapperCaps::NONE
     }
 
+    /// The flash image: what a self-flashing GTROM game saves to. There is
+    /// no RAM at `$6000`, so `sram()` stays empty.
+    fn save_data(&self) -> &[u8] {
+        &self.flash
+    }
+
+    fn save_data_mut(&mut self) -> &mut [u8] {
+        &mut self.flash
+    }
+
+    fn clear_save_data(&mut self) {
+        self.flash.copy_from_slice(&self.original);
+    }
+
+    /// The register is write-only and nothing else lives below `$8000`.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        addr < 0x8000
+    }
+
+    fn notify_floating_read(&mut self, addr: u16, value: u8) {
+        if Self::is_register(addr) {
+            self.update_register(value);
+        }
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_rom[(self.prg_bank as usize) * PRG_BANK_32K + (addr as usize - 0x8000)]
+        if addr >= 0x8000 {
+            let a = self.chip_addr(addr);
+            self.chip.id_read(a).unwrap_or(self.flash[a])
         } else {
             0
         }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
-        // The register decodes anywhere in the $5000-$7FFF window.
-        if (0x5000..=0x7FFF).contains(&addr) {
+        if Self::is_register(addr) {
             self.update_register(value);
+        } else if addr >= 0x8000 {
+            let a = self.chip_addr(addr);
+            self.chip.write(&mut self.flash, a, value);
         }
     }
 
@@ -604,6 +677,10 @@ impl Mapper for Gtrom111 {
         }
     }
 
+    fn nametable_unfolded(&self) -> bool {
+        true
+    }
+
     fn nametable_fetch(&mut self, addr: u16) -> Option<u8> {
         Some(self.nt_ram[self.nt_offset(addr)])
     }
@@ -618,26 +695,53 @@ impl Mapper for Gtrom111 {
         Mirroring::FourScreen
     }
 
+    fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
+        let mut info = crate::mapper::MapperDebugInfo {
+            mapper_id: 111,
+            name: "GTROM (111)".into(),
+            mirroring: crate::mapper::mirroring_name(Mirroring::FourScreen),
+            ..Default::default()
+        };
+        info.prg_banks
+            .push(("32K".into(), format!("{:#04x}", self.prg_bank)));
+        info.chr_banks
+            .push(("8K".into(), format!("{}", self.chr_bank)));
+        info.extra
+            .push(("nt page".into(), format!("{}", self.nt_bank)));
+        info.extra.push((
+            "LEDs".into(),
+            format!(
+                "red {} green {}",
+                if self.reg & 0x40 == 0 { "on" } else { "off" },
+                if self.reg & 0x80 == 0 { "on" } else { "off" }
+            ),
+        ));
+        info
+    }
+
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(4 + self.chr_ram.len() + self.nt_ram.len());
-        out.push(SAVE_STATE_VERSION);
+        let mut out = Vec::with_capacity(8 + self.chr_ram.len() + self.nt_ram.len());
+        out.push(GTROM_STATE_VERSION);
         out.push(self.prg_bank);
         out.push(self.chr_bank);
         out.push(self.nt_bank);
+        out.push(self.reg);
+        out.extend_from_slice(&self.chip.to_bytes());
         out.extend_from_slice(&self.chr_ram);
         out.extend_from_slice(&self.nt_ram);
+        encode_sector_diff(&self.flash, &self.original, &mut out);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 4 + self.chr_ram.len() + self.nt_ram.len();
-        if data.len() != expected {
+        let fixed = 7 + self.chr_ram.len() + self.nt_ram.len();
+        if data.len() < fixed {
             return Err(MapperError::Truncated {
-                expected,
+                expected: fixed,
                 got: data.len(),
             });
         }
-        if data[0] != SAVE_STATE_VERSION {
+        if data[0] != GTROM_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         // v2.9.0 (re-audit NC-02): validate before assigning anything. The
@@ -647,7 +751,7 @@ impl Mapper for Gtrom111 {
         // These are exactly the values `update_register` can produce: a PRG
         // bank below the 32 KiB bank count, and 0 or 1 for the CHR-RAM and
         // nametable banks.
-        let prg_banks = self.prg_rom.len() / PRG_BANK_32K;
+        let prg_banks = self.flash.len() / PRG_BANK_32K;
         let (prg_bank, chr_bank, nt_bank) = (data[1], data[2], data[3]);
         if usize::from(prg_bank) >= prg_banks || chr_bank > 1 || nt_bank > 1 {
             return Err(MapperError::Invalid(format!(
@@ -655,10 +759,26 @@ impl Mapper for Gtrom111 {
                  exceed the board ({prg_banks} PRG banks, 2 CHR, 2 NT)"
             )));
         }
+        let mut flash = vec![0u8; self.flash.len()];
+        let used = decode_sector_diff(&mut flash, &self.original, &data[fixed..]).ok_or(
+            MapperError::Truncated {
+                expected: fixed + 1,
+                got: data.len(),
+            },
+        )?;
+        if fixed + used != data.len() {
+            return Err(MapperError::Truncated {
+                expected: fixed + used,
+                got: data.len(),
+            });
+        }
+        self.flash.copy_from_slice(&flash);
         self.prg_bank = prg_bank;
         self.chr_bank = chr_bank;
         self.nt_bank = nt_bank;
-        let mut cursor = 4;
+        self.reg = data[4];
+        self.chip = Sst39sf040::from_bytes([data[5], data[6]]);
+        let mut cursor = 7;
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
         cursor += self.chr_ram.len();
@@ -932,9 +1052,11 @@ impl Mapper for Action53M28 {
 //     (the written value is ANDed with the PRG byte at that address).
 //   * Submapper 0 *with* the battery bit, or submappers 1/3/4: NO bus
 //     conflicts; the latch responds only to $C000-$FFFF (A14 high) and
-//     $8000-$BFFF is the flash-write window (a write there does NOT bank-switch
-//     — we accept it but do not model the SST39SF040 flash chip, so reads of
-//     that window return PRG-ROM and self-flashing persistence is a no-op).
+//     $8000-$BFFF is the flash-write window: a write there reaches the
+//     SST39SF040 at bank * 16 KiB + (addr & $3FFF), so `$9555` in bank 1 is its
+//     `5555h` and `$AAAA` in bank 0 its `2AAAh` (`UNROM_512.md`). Since
+//     v2.9.6 the chip is modelled (`sst39sf040.rs`) and the flashed image is
+//     the battery save, where before v2.9.6 the write was dropped.
 //
 // The battery bit, not a save-RAM presence, is what selects the no-bus-conflict
 // wiring on iNES (submapper 0). Self-flashing homebrew such as *Wampus* and the
@@ -973,14 +1095,17 @@ enum M30Nametable {
     SwitchableHv,
     /// Software-switchable single-screen (latch bit 7 picks A/B).
     OneScreen,
-    /// Four-screen, cartridge VRAM. On real hardware (the `InfiniteNESLives`
-    /// variant) the four nametables come from the last 8 KiB of the 32 KiB
-    /// CHR-RAM, not a separate 4 KiB VRAM chip. We allocate only the standard
-    /// 2 KiB CIRAM, so this is approximated as single-screen rather than true
-    /// 4-screen — an honest `BestEffort` limitation, not a true 4-screen claim.
-    /// No game in the corpus exercises it; revisit if one appears.
+    /// Four-screen, cartridge VRAM (the `InfiniteNESLives` board): the last
+    /// 8 KiB of the 32 KiB CHR-RAM is mapped to PPU `$2000-$3EFF`, the four
+    /// nametables at `$2000-$2FFF` and independent RAM at `$3000-$3EFF`
+    /// (`UNROM_512.md`, "InfiniteNESLives 4-screen board"). Until v2.9.6 this
+    /// was approximated as single-screen.
     FourScreen,
 }
+
+/// UNROM 512 save-state layout version. v2 (v2.9.6) appends the flash
+/// chip's command state and, on a flashable board, the flashed sectors.
+const M30_STATE_VERSION: u8 = 2;
 
 /// Mapper 30 (`UNROM-512`).
 ///
@@ -989,7 +1114,11 @@ enum M30Nametable {
 /// banking mode), so they don't fold into an enum without losing fidelity.
 #[allow(clippy::struct_excessive_bools)]
 pub struct Unrom512M30 {
+    /// PRG: the SST39SF040's contents on a flashable board.
     prg_rom: Box<[u8]>,
+    /// The PRG as loaded, for the save state's sector diff (flashable only).
+    original: Box<[u8]>,
+    chip: Sst39sf040,
     /// CHR storage: 32 KiB RAM by default, or CHR-ROM for `.WXN` conversions.
     chr: Box<[u8]>,
     /// True when `chr` is read-only ROM (no PPU writes land).
@@ -1070,7 +1199,13 @@ impl Unrom512M30 {
         let nt_bit = nametable == M30Nametable::SwitchableHv;
 
         Ok(Self {
+            original: if flash_window && !chr_is_rom {
+                prg_rom.clone()
+            } else {
+                Box::new([])
+            },
             prg_rom,
+            chip: Sst39sf040::new(),
             chr,
             chr_is_rom,
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
@@ -1084,9 +1219,32 @@ impl Unrom512M30 {
     }
 
     fn read_prg(&self, bank: usize, addr: u16) -> u8 {
+        let a = self.prg_chip_addr(bank, addr);
+        self.chip.id_read(a).unwrap_or(self.prg_rom[a])
+    }
+
+    /// Whether writes to `$8000-$BFFF` reach a flash chip. The flashable
+    /// wiring needs the flash window AND CHR-RAM: UNROM 512 carries CHR-RAM,
+    /// while the CHR-ROM images headered as mapper 30 are Waixing FS005 `.WXN`
+    /// conversions (`UNROM_512.md`), whose MMC3-style register writes would
+    /// otherwise program the "ROM". Measured on *Shui Hu Zhuan*: 7,012 such
+    /// writes in 1,200 frames rewrote 21,602 bytes of it before this check.
+    const fn flashable(&self) -> bool {
+        self.flash_window && !self.chr_is_rom
+    }
+
+    fn prg_chip_addr(&self, bank: usize, addr: u16) -> usize {
         let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-        let bank = bank % count;
-        self.prg_rom[bank * PRG_BANK_16K + (addr as usize & 0x3FFF)]
+        (bank % count) * PRG_BANK_16K + (addr as usize & 0x3FFF)
+    }
+
+    /// The four-screen board's nametable RAM, the last 8 KiB of CHR-RAM,
+    /// when the board has the full 32 KiB it is defined for.
+    fn four_screen_offset(&self, addr: u16) -> Option<usize> {
+        (self.nametable == M30Nametable::FourScreen
+            && !self.chr_is_rom
+            && self.chr.len() == 4 * CHR_BANK_8K)
+            .then(|| 3 * CHR_BANK_8K + (addr as usize & 0x1FFF))
     }
 
     fn chr_offset(&self, addr: u16) -> usize {
@@ -1134,16 +1292,61 @@ impl Mapper for Unrom512M30 {
         }
     }
 
+    /// The flash image on a flashable board, its save; nothing otherwise.
+    /// There is never RAM at `$6000`, so `sram()` stays empty.
+    fn save_data(&self) -> &[u8] {
+        if self.flashable() { &self.prg_rom } else { &[] }
+    }
+
+    fn save_data_mut(&mut self) -> &mut [u8] {
+        if self.flashable() {
+            &mut self.prg_rom
+        } else {
+            &mut []
+        }
+    }
+
+    fn clear_save_data(&mut self) {
+        if self.flashable() {
+            self.prg_rom.copy_from_slice(&self.original);
+        }
+    }
+
+    /// Nothing drives `$4020-$7FFF` on any wiring.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        addr < 0x8000
+    }
+
+    fn nametable_unfolded(&self) -> bool {
+        self.four_screen_offset(0x2000).is_some()
+    }
+
+    fn nametable_fetch(&mut self, addr: u16) -> Option<u8> {
+        self.four_screen_offset(addr).map(|off| self.chr[off])
+    }
+
+    fn nametable_write(&mut self, addr: u16, value: u8) -> bool {
+        match self.four_screen_offset(addr) {
+            Some(off) => {
+                self.chr[off] = value;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return;
         }
         if self.flash_window {
             // No-bus-conflict wiring: the banking latch lives at $C000-$FFFF;
-            // $8000-$BFFF is the SST39SF040 flash-command window (not modelled
-            // — accepted as a no-op so self-flashing writes don't bank-switch).
+            // $8000-$BFFF writes reach the SST39SF040 in the selected bank.
             if addr >= 0xC000 {
                 self.write_latch(addr, value);
+            } else if self.flashable() {
+                let a = self.prg_chip_addr(self.prg_bank as usize, addr);
+                self.chip.write(&mut self.prg_rom, a, value);
             }
         } else {
             // Submapper 0 w/o battery or submapper 2: the latch responds to the
@@ -1191,10 +1394,15 @@ impl Mapper for Unrom512M30 {
                     Mirroring::Horizontal
                 }
             }
+            // The four-screen board with its 32 KiB of CHR-RAM owns the
+            // nametables outright.
+            M30Nametable::FourScreen if self.four_screen_offset(0x2000).is_some() => {
+                Mirroring::FourScreen
+            }
             // Software-switchable single-screen: latch bit 7 selects which CIRAM
-            // half (A10=0 lower, A10=1 upper). The 4-screen wiring routes its
-            // nametables through cartridge CHR-RAM, so the mapper still reports a
-            // single-screen base here; the bit is otherwise inert for it.
+            // half (A10=0 lower, A10=1 upper). A four-screen header on a board
+            // without 32 KiB of CHR-RAM, which the page leaves undefined, keeps
+            // this single-screen base.
             M30Nametable::OneScreen | M30Nametable::FourScreen => {
                 if self.nt_bit {
                     Mirroring::SingleScreenB
@@ -1207,8 +1415,8 @@ impl Mapper for Unrom512M30 {
 
     fn save_state(&self) -> Vec<u8> {
         let chr_len = if self.chr_is_rom { 0 } else { self.chr.len() };
-        let mut out = Vec::with_capacity(4 + self.vram.len() + chr_len);
-        out.push(SAVE_STATE_VERSION);
+        let mut out = Vec::with_capacity(6 + self.vram.len() + chr_len);
+        out.push(M30_STATE_VERSION);
         out.push(self.prg_bank);
         out.push(self.chr_bank);
         out.push(u8::from(self.nt_bit));
@@ -1217,21 +1425,45 @@ impl Mapper for Unrom512M30 {
         if !self.chr_is_rom {
             out.extend_from_slice(&self.chr);
         }
+        out.extend_from_slice(&self.chip.to_bytes());
+        if self.flashable() {
+            encode_sector_diff(&self.prg_rom, &self.original, &mut out);
+        }
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_len = if self.chr_is_rom { 0 } else { self.chr.len() };
-        let expected = 4 + self.vram.len() + chr_len;
-        if data.len() != expected {
+        let fixed = 6 + self.vram.len() + chr_len;
+        if data.len() < fixed {
             return Err(MapperError::Truncated {
-                expected,
+                expected: fixed,
                 got: data.len(),
             });
         }
-        if data[0] != SAVE_STATE_VERSION {
+        if data[0] != M30_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
+        let used = if self.flashable() {
+            let mut flash = vec![0u8; self.prg_rom.len()];
+            let used = decode_sector_diff(&mut flash, &self.original, &data[fixed..]).ok_or(
+                MapperError::Truncated {
+                    expected: fixed + 1,
+                    got: data.len(),
+                },
+            )?;
+            self.prg_rom.copy_from_slice(&flash);
+            used
+        } else {
+            0
+        };
+        if fixed + used != data.len() {
+            return Err(MapperError::Truncated {
+                expected: fixed + used,
+                got: data.len(),
+            });
+        }
+        self.chip = Sst39sf040::from_bytes([data[fixed - 2], data[fixed - 1]]);
         // Mask the register indices to their live-invariant widths so a
         // corrupted / hand-edited save-state can't seed an out-of-range value
         // (mirrors the write-latch masks; same defensive treatment as the
@@ -1397,6 +1629,112 @@ mod tests {
         assert_eq!(m2.cpu_read(0x8000), 3);
         assert_eq!(m2.ppu_read(0x0001), 0xAA);
         assert_eq!(m2.nametable_fetch(0x2001), Some(0xBB));
+    }
+
+    /// v2.9.6: the latch decodes `/ROMSEL`, A14 and A12 high: `$5000` and
+    /// `$7000` pages only (`GTROM.md`, "Hardware Teardown").
+    #[test]
+    fn m111_register_window_is_5000_and_7000_only() {
+        let mut m = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+        m.cpu_write(0x6000, 0x03);
+        assert_eq!(m.cpu_read(0x8000), 0, "$6000 is not decoded");
+        m.cpu_write(0x4FFF, 0x03);
+        assert_eq!(m.cpu_read(0x8000), 0, "$4FFF is not decoded");
+        m.cpu_write(0x7ABC, 0x03);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        m.cpu_write(0x5FFF, 0x04);
+        assert_eq!(m.cpu_read(0x8000), 4);
+        assert!(m.cpu_read_unmapped(0x5000), "the register is write-only");
+    }
+
+    /// "reading from the register effectively writes the value of open bus".
+    #[test]
+    fn m111_a_read_latches_the_floating_value() {
+        let mut m = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+        m.notify_floating_read(0x5000, 0x26);
+        assert_eq!(m.cpu_read(0x8000), 6);
+        m.notify_floating_read(0x6000, 0x01);
+        assert_eq!(m.cpu_read(0x8000), 6, "outside the window: no latch");
+    }
+
+    /// PPU `$3000-$3EFF` is RAM of its own, per nametable page.
+    #[test]
+    fn m111_bonus_ram_at_3000_is_not_a_mirror() {
+        let mut m = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+        assert!(m.nametable_unfolded());
+        m.nametable_write(0x2123, 0x11);
+        m.nametable_write(0x3123, 0x22);
+        assert_eq!(m.nametable_fetch(0x2123), Some(0x11));
+        assert_eq!(m.nametable_fetch(0x3123), Some(0x22));
+        m.cpu_write(0x5000, 0x20); // the other nametable page
+        assert_eq!(m.nametable_fetch(0x3123), Some(0x00));
+        m.nametable_write(0x3EFF, 0x33);
+        m.cpu_write(0x5000, 0x00);
+        assert_eq!(m.nametable_fetch(0x3123), Some(0x22));
+        assert_eq!(m.nametable_fetch(0x3EFF), Some(0x00));
+    }
+
+    /// Self-flashing: `5555h` is `$D555` and `2AAAh` is `$AAAA` in any bank.
+    #[test]
+    fn m111_flash_program_and_erase_through_the_cpu_window() {
+        let mut m = Gtrom111::new(synth_prg_32k(16), &[]).unwrap();
+        m.cpu_write(0x5000, 0x07);
+        for (a, v) in [
+            (0xD555u16, 0xAAu8),
+            (0xAAAA, 0x55),
+            (0xD555, 0xA0),
+            (0x9000, 0x3C),
+        ] {
+            m.cpu_write(a, v);
+        }
+        assert_eq!(m.cpu_read(0x9000), 0x3C, "programmed");
+        assert_eq!(
+            m.save_data()[7 * PRG_BANK_32K + 0x1000],
+            0x3C,
+            "save_data() is the flash"
+        );
+        assert!(m.sram().is_empty(), "GTROM has no RAM at $6000");
+        m.cpu_write(0x5000, 0x02);
+        assert_eq!(m.cpu_read(0x9000), 0xFF, "another bank is untouched");
+        m.cpu_write(0x5000, 0x07);
+        for (a, v) in [
+            (0xD555u16, 0xAAu8),
+            (0xAAAA, 0x55),
+            (0xD555, 0x80),
+            (0xD555, 0xAA),
+            (0xAAAA, 0x55),
+            (0x9800, 0x30),
+        ] {
+            m.cpu_write(a, v);
+        }
+        assert_eq!(m.cpu_read(0x9000), 0xFF, "the 4 KiB sector is erased");
+        assert_eq!(m.cpu_read(0x8000), 0x07, "the neighbouring sector is not");
+    }
+
+    #[test]
+    fn m111_state_carries_only_flashed_sectors() {
+        let mut m = Gtrom111::new(synth_prg_32k(16), &[]).unwrap();
+        let clean = m.save_state().len();
+        for (a, v) in [
+            (0xD555u16, 0xAAu8),
+            (0xAAAA, 0x55),
+            (0xD555, 0xA0),
+            (0xC001, 0x00),
+        ] {
+            m.cpu_write(a, v);
+        }
+        m.nametable_write(0x3456, 0x78);
+        let blob = m.save_state();
+        assert_eq!(blob.len(), clean + 0x1000, "one flashed sector");
+        let mut m2 = Gtrom111::new(synth_prg_32k(16), &[]).unwrap();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.cpu_read(0xC001), 0x00);
+        assert_eq!(m2.nametable_fetch(0x3456), Some(0x78));
+        assert_eq!(m2.save_state(), blob);
+        // A clean state restores the loaded ROM over a flashed one.
+        let fresh = Gtrom111::new(synth_prg_32k(16), &[]).unwrap().save_state();
+        m2.load_state(&fresh).unwrap();
+        assert_eq!(m2.cpu_read(0xC001), 0xFF);
     }
 
     /// v2.9.0 re-audit NC-02: a restored bank the board cannot hold is
@@ -1612,6 +1950,98 @@ mod tests {
         // Bank 5 even though the PRG byte read there (the bank index) differs.
         m.cpu_write(0xC000, 0x05);
         assert_eq!(m.cpu_read(0x8000), 5);
+    }
+
+    /// v2.9.6: the flashable wiring programs the SST39SF040 with the
+    /// wiki's own sequence (`UNROM_512.md`, "Write a byte").
+    #[test]
+    fn m30_flashable_board_programs_and_erases_the_chip() {
+        let mut m = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        assert_eq!(
+            m.save_data().len(),
+            16 * PRG_BANK_16K,
+            "the flash is the save"
+        );
+        assert!(m.sram().is_empty(), "no RAM at $6000");
+        for (bank, a, v) in [
+            (1u8, 0x9555u16, 0xAAu8),
+            (0, 0xAAAA, 0x55),
+            (1, 0x9555, 0xA0),
+            (5, 0x8123, 0x42),
+        ] {
+            m.cpu_write(0xC000, bank);
+            m.cpu_write(a, v);
+        }
+        m.cpu_write(0xC000, 5);
+        assert_eq!(m.cpu_read(0x8123), 0x42);
+        let blob = m.save_state();
+        let mut m2 = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(
+            m2.cpu_read(0x8123),
+            0x42,
+            "the flashed sector is in the state"
+        );
+        // Erase the sector again ("Erase 4KB Flash Sector").
+        for (bank, a, v) in [
+            (1u8, 0x9555u16, 0xAAu8),
+            (0, 0xAAAA, 0x55),
+            (1, 0x9555, 0x80),
+            (1, 0x9555, 0xAA),
+            (0, 0xAAAA, 0x55),
+            (5, 0x8000, 0x30),
+        ] {
+            m.cpu_write(0xC000, bank);
+            m.cpu_write(a, v);
+        }
+        m.cpu_write(0xC000, 5);
+        assert_eq!(m.cpu_read(0x8123), 0xFF);
+    }
+
+    /// A CHR-ROM image headered as mapper 30 is a Waixing FS005 `.WXN`
+    /// conversion, not UNROM 512 (`UNROM_512.md`). Its register writes must not
+    /// program a "flash": that rewrote 21,602 bytes of *Shui Hu Zhuan*.
+    #[test]
+    fn m30_chr_rom_image_is_never_flashed() {
+        let chr = vec![0u8; 0x8000];
+        let mut m = Unrom512M30::new(synth_prg_16k(16), &chr, false, false, 0, true).unwrap();
+        assert!(m.save_data().is_empty(), "no flash save on a CHR-ROM image");
+        for (a, v) in [
+            (0x9555u16, 0xAAu8),
+            (0xAAAA, 0x55),
+            (0x9555, 0xA0),
+            (0x8123, 0x00),
+        ] {
+            m.cpu_write(0xC000, 1);
+            m.cpu_write(a, v);
+        }
+        m.cpu_write(0xC000, 0);
+        assert_eq!(m.cpu_read(0x8123), 0xFF, "the ROM is untouched");
+    }
+
+    #[test]
+    fn m30_non_flashable_board_has_no_flash() {
+        let mut m = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 0, false).unwrap();
+        assert!(m.save_data().is_empty());
+        m.cpu_write(0x9555, 0xAA);
+        assert!(m.cpu_read_unmapped(0x6000));
+    }
+
+    /// The four-screen board: the last 8 KiB of the 32 KiB CHR-RAM is PPU
+    /// `$2000-$3EFF`, `$3000-$3EFF` included.
+    #[test]
+    fn m30_four_screen_uses_the_last_chr_ram_bank() {
+        let mut m = Unrom512M30::new(synth_prg_16k(16), &[], true, true, 0, true).unwrap();
+        assert_eq!(m.current_mirroring(), Mirroring::FourScreen);
+        assert!(m.nametable_unfolded());
+        assert!(m.nametable_write(0x2C00, 0x44));
+        assert!(m.nametable_write(0x3C00, 0x55));
+        assert_eq!(m.nametable_fetch(0x2C00), Some(0x44));
+        assert_eq!(m.nametable_fetch(0x3C00), Some(0x55));
+        // The same bytes seen as pattern data in CHR bank 3.
+        m.cpu_write(0xC000, 0x60);
+        assert_eq!(m.ppu_read(0x0C00), 0x44);
+        assert_eq!(m.ppu_read(0x1C00), 0x55);
     }
 
     #[test]
