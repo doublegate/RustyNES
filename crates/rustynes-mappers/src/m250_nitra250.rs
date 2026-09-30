@@ -16,6 +16,7 @@
 //! See `tier.rs` (`MapperTier::BestEffort`), `docs/adr/0011-mapper-tiering.md`,
 //! and `docs/mappers.md` §Mapper coverage matrix.
 
+use crate::a12_filter::A12RiseFilter;
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, vec::Vec};
@@ -26,7 +27,10 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 (v2.9.7): the IRQ counter counts scanlines (MMC3), not CPU cycles, and
+/// the A12 filter byte follows the IRQ flags. A v1 counter meant cycles, so a
+/// v1 state is refused rather than reinterpreted.
+const SAVE_STATE_VERSION: u8 = 2;
 
 // ---------------------------------------------------------------------------
 // Shared nametable helper (mirrors the one in the other simple-mapper modules).
@@ -57,6 +61,8 @@ pub struct Nitra250 {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    /// v2.9.7 — MMC3's A12 rise filter (see `a12_filter`).
+    a12: A12RiseFilter,
 }
 
 impl Nitra250 {
@@ -97,6 +103,7 @@ impl Nitra250 {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
+            a12: A12RiseFilter::new(),
         })
     }
 
@@ -218,17 +225,29 @@ impl Mapper for Nitra250 {
     }
 
     fn notify_cpu_cycle(&mut self) {
-        // A simple 8-bit M2 reload counter (Nitra wires the MMC3 IRQ to M2 on
-        // this board rather than to A12). On reload or zero, reload from latch;
-        // otherwise decrement, asserting at the 1->0 transition when enabled.
-        if self.irq_reload || self.irq_counter == 0 {
+        self.a12.tick();
+    }
+
+    /// The MMC3 scanline counter (v2.9.7). `INES_Mapper_250.md`: "regular MMC3
+    /// chip connected in [a] different way", where the difference is only in
+    /// how the registers are addressed. Until v2.9.7 this was an 8-bit counter
+    /// decremented every CPU cycle, which nothing on the page supports; the
+    /// splits of *Time Diver Avenger* landed at arbitrary points and its
+    /// playfield drew from the wrong CHR banks (`T-COMMERCIAL-GARBLE`).
+    /// Reload on zero or a pending reload, else decrement; assert at zero when
+    /// enabled. A rise counts only through MMC3's filter.
+    fn notify_a12(&mut self, level: bool) {
+        if !self.a12.edge(level) {
+            return;
+        }
+        if self.irq_counter == 0 || self.irq_reload {
             self.irq_counter = self.irq_latch;
             self.irq_reload = false;
         } else {
             self.irq_counter -= 1;
-            if self.irq_counter == 0 && self.irq_enabled {
-                self.irq_pending = true;
-            }
+        }
+        if self.irq_counter == 0 && self.irq_enabled {
+            self.irq_pending = true;
         }
     }
 
@@ -249,7 +268,7 @@ impl Mapper for Nitra250 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(18 + self.vram.len());
+        let mut out = Vec::with_capacity(19 + self.vram.len());
         out.push(SAVE_STATE_VERSION);
         out.push(self.reg_index);
         out.extend_from_slice(&self.bank_regs);
@@ -261,12 +280,13 @@ impl Mapper for Nitra250 {
         out.push(u8::from(self.irq_reload));
         out.push(u8::from(self.irq_enabled));
         out.push(u8::from(self.irq_pending));
+        out.push(self.a12.to_byte());
         out.extend_from_slice(&self.vram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 18 + self.vram.len();
+        let expected = 19 + self.vram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -286,7 +306,8 @@ impl Mapper for Nitra250 {
         self.irq_reload = data[15] != 0;
         self.irq_enabled = data[16] != 0;
         self.irq_pending = data[17] != 0;
-        self.vram.copy_from_slice(&data[18..18 + self.vram.len()]);
+        self.a12 = A12RiseFilter::from_byte(data[18]);
+        self.vram.copy_from_slice(&data[19..19 + self.vram.len()]);
         Ok(())
     }
 }
@@ -326,20 +347,37 @@ mod tests {
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
     }
 
+    /// v2.9.7 (`T-COMMERCIAL-GARBLE`): `INES_Mapper_250.md` says the board is
+    /// a "regular MMC3 chip connected in [a] different way" (A10 selects the
+    /// register, A7-A0 carry the data), so its IRQ is the MMC3 scanline
+    /// counter clocked by filtered A12 rises. It was an 8-bit M2 cycle counter,
+    /// which nothing on the page supports: splits landed at arbitrary points,
+    /// and *Time Diver Avenger* drew its playfield from the wrong CHR banks.
+    /// Latch 7 through the address-encoded registers (`$C007` = latch 7,
+    /// `$C400` reload, `$E400` enable): once per eight scanlines.
     #[test]
-    fn m250_irq_counts_down() {
+    fn m250_irq_is_the_mmc3_scanline_counter() {
         let mut m = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
-        // latch = 3 via even $C000 (A10=0), data 0x03.
-        m.cpu_write(0xC000 | 0x03, 0);
-        m.cpu_write(0xC000 | 0x400, 0); // reload (odd, A10=1)
-        m.cpu_write(0xE000 | 0x400, 0); // enable (odd, A10=1)
-        // First cycle reloads from latch (=3); subsequent decrements reach 0.
-        for _ in 0..5 {
-            m.notify_cpu_cycle();
+        m.cpu_write(0xC000 | 0x07, 0);
+        m.cpu_write(0xC000 | 0x400, 0);
+        m.cpu_write(0xE000 | 0x400, 0);
+        let mut irqs = 0;
+        for _ in 0..16 {
+            for _ in 0..85 {
+                m.notify_cpu_cycle();
+            }
+            for _ in 0..8 {
+                m.notify_a12(true);
+                m.notify_cpu_cycle();
+                m.notify_a12(false);
+                m.notify_cpu_cycle();
+            }
+            if m.irq_pending() {
+                irqs += 1;
+                m.irq_acknowledge();
+            }
         }
-        assert!(m.irq_pending());
-        m.cpu_write(0xE000, 0); // disable + ack (even, A10=0)
-        assert!(!m.irq_pending());
+        assert_eq!(irqs, 2, "once per eight scanlines, as an MMC3");
     }
 
     #[test]
@@ -350,6 +388,7 @@ mod tests {
         m.cpu_write(0xC000 | 0x05, 0);
         m.cpu_write(0xC000 | 0x400, 0);
         m.cpu_write(0xE000 | 0x400, 0);
+        m.notify_a12(true);
         m.notify_cpu_cycle();
         let blob = m.save_state();
         let mut m2 = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
