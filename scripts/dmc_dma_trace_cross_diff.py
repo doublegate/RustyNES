@@ -308,7 +308,7 @@ def main() -> int:
         return 0
 
     offset = m4015.cpu_cycle - r4015.cpu_cycle
-    print(f"=== ALIGNMENT ===")
+    print("=== ALIGNMENT ===")
     print(f"  rusty first $4015 W: cyc={r4015.cpu_cycle} (sl={r4015.ppu_scanline} dot={r4015.ppu_dot} val=${r4015.bus_data:02X})")
     print(f"  mesen first $4015 W: cyc={m4015.cpu_cycle} (sl={m4015.ppu_scanline} dot={m4015.ppu_dot} val=${m4015.value:02X})")
     print(f"  offset (mesen - rusty): {offset} cycles")
@@ -322,7 +322,7 @@ def main() -> int:
     r_4015 = rusty_4015_accesses(rusty)
     m_4015 = mesen_4015_accesses(mesen)
 
-    print(f"=== SUMMARY ===")
+    print("=== SUMMARY ===")
     print(f"  DMC fetches:        rusty={len(r_fetches):4d}    mesen={len(m_fetches):4d}    diff={len(r_fetches)-len(m_fetches):+d}")
     print(f"  $4015 accesses:     rusty={len(r_4015):4d}    mesen={len(m_4015):4d}    diff={len(r_4015)-len(m_4015):+d}")
     print(f"  APU IRQ rises:      rusty={len(r_irq):4d}    mesen={len(m_irq):4d}    diff={len(r_irq)-len(m_irq):+d}")
@@ -371,7 +371,7 @@ def main() -> int:
     print()
 
     # ---------- DIVERGENCE ----------
-    print(f"=== DIVERGENCE ===")
+    print("=== DIVERGENCE ===")
     print(f"  DMC fetches diverged (|Δ|>{args.tolerance}): {diverged} of {min(len(r_fetches), len(m_fetches))}")
     print(f"  Largest signed Δ in walk:                      {largest_abs_delta:+d} cycles")
     print(f"  $4015 R/W value mismatches:                    {val_mismatches}")

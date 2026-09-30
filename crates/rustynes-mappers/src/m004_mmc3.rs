@@ -79,19 +79,55 @@ const PRG_RAM_DEFAULT: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 2;
+/// v3 (v2.9.6) appends the MMC6 PRG-RAM state and the MC-ACC prescaler.
+const SAVE_STATE_VERSION: u8 = 3;
 
-/// MMC3 hardware revision.  Default is Sharp (MMC3A); the alternative
-/// NEC (MMC3B) suppresses the "reload to 0 asserts IRQ" behavior.
+/// MMC6 internal PRG-RAM: 1 KiB, two 512-byte halves (`MMC6.md`).
+const MMC6_RAM: usize = 0x0400;
+
+/// MMC3 IRQ-counter behaviour. Default is the Sharp ("new") behaviour; the
+/// alternative suppresses the "reload to 0 asserts IRQ" behaviour.
+///
+/// **Naming, corrected in v2.9.6.** These two variants were documented as
+/// "Sharp MMC3A" and "NEC MMC3B". `MMC3.md` says otherwise: the old or
+/// alternate behaviour belongs to the MMC3A and to non-Sharp MMC3B chips
+/// ("1 (Sharp MMC3B, MMC3C) or 2 (MMC3A, Non-Sharp MMC3B) to 256 scanlines"),
+/// and the NES 2.0 submapper for it is 4, not 1 (`NES_2_0_submappers.md`).
+/// The behaviour of each variant was always right; only the labels were
+/// wrong, together with the submapper mapping that followed them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mmc3Revision {
-    /// Sharp MMC3A (and MMC3C): reloading the IRQ counter to 0 asserts
-    /// IRQ if IRQs are enabled.  Default.
+    /// Sharp MMC3B and MMC3C: reloading the IRQ counter to 0 asserts IRQ if
+    /// IRQs are enabled, so a latch of 0 fires every scanline. Default.
     #[default]
     Sharp,
-    /// NEC MMC3B: a counter that reloads to 0 from a non-zero state
-    /// does NOT assert IRQ.  Selected via NES 2.0 submapper byte = 1.
+    /// NEC MMC3B and the MMC3A: the IRQ fires on the counter's 1 -> 0
+    /// transition, so a latch of 0 stops IRQs. NES 2.0 submapper 4.
     Nec,
+}
+
+/// Which chip or board wiring an [`Mmc3`] models, beyond the IRQ revision
+/// (the NES 2.0 submappers of mapper 4, `NES_2_0_submappers.md`). v2.9.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mmc3Variant {
+    /// A standard MMC3 board (submappers 0 and 4).
+    #[default]
+    Standard,
+    /// Submapper 1, the MMC6 (`MMC6.md`): 1 KiB of internal PRG-RAM at
+    /// `$7000-$7FFF`, enabled by `$8000` bit 5, with separate read and write
+    /// enables for each 512-byte half in `$A001` bits 4-7.
+    Mmc6,
+    /// Submapper 2: an MMC3C with hard-wired mirroring; `$A000` does nothing.
+    HardwiredMirroring,
+    /// Submapper 3, Acclaim's MC-ACC (`MMC3.md`, "IRQ Specifics"): the
+    /// scanline counter is clocked by FALLING edges of PPU A12 through a
+    /// divide-by-8 prescaler instead of the M2 filter. The page gives only
+    /// that. The two details used here come from the forum measurement it
+    /// links (forums.nesdev.org, p=242427): writing `$C001` resets the
+    /// prescaler, and the counter clocks on the first edge of each group of
+    /// eight. That evidence is forum-level, so mapper 4 submapper 3 is
+    /// BestEffort in `tier.rs`.
+    McAcc,
 }
 
 /// MMC3 mapper (iNES mapper 4).
@@ -148,6 +184,13 @@ pub struct Mmc3 {
     cpu_cycle: u64,
 
     revision: Mmc3Revision,
+    variant: Mmc3Variant,
+    /// MMC6: `$8000` bit 5, the PRG-RAM enable.
+    mmc6_ram_enabled: bool,
+    /// MMC6: `$A001` bits 4-7 (`HhLl`): read/write enables of each half.
+    mmc6_protect: u8,
+    /// MC-ACC: falling A12 edges counted, modulo 8.
+    mcacc_prescaler: u8,
 
     // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`, default-off):
     // a qualifying A12 rise observed during the POST-access (M2-high, φ2)
@@ -271,11 +314,103 @@ impl Mmc3 {
             a12_low_cycle: 0,
             cpu_cycle: 0,
             revision,
+            variant: Mmc3Variant::Standard,
+            mmc6_ram_enabled: false,
+            mmc6_protect: 0,
+            mcacc_prescaler: 0,
             #[cfg(feature = "mmc3-m2-phase-irq")]
             irq_assert_pending_next_cycle: false,
             #[cfg(feature = "mmc3-a12-phase-probe")]
             probe: Mmc3A12PhaseProbe::default(),
         })
+    }
+
+    /// Select the board wiring (the NES 2.0 submapper), v2.9.6. An MMC6 gets
+    /// its 1 KiB of internal RAM in place of the board PRG-RAM.
+    ///
+    /// Call it once, on a board fresh from a constructor: choosing
+    /// [`Mmc3Variant::Mmc6`] replaces the board PRG-RAM with the 1 KiB
+    /// internal RAM, and a later call with another variant does not restore
+    /// the original allocation.
+    #[must_use]
+    pub fn with_variant(mut self, variant: Mmc3Variant) -> Self {
+        self.variant = variant;
+        if variant == Mmc3Variant::Mmc6 {
+            self.prg_ram = vec![0u8; MMC6_RAM].into_boxed_slice();
+        }
+        self
+    }
+
+    /// MMC6: which half `$7000-$7FFF` addresses, and its read / write
+    /// enables. Half 0 is `$7000-$71FF` (bits 5 / 4), half 1 `$7200-$73FF`
+    /// (bits 7 / 6), mirrored through `$7FFF`.
+    const fn mmc6_half(&self, addr: u16) -> (usize, bool, bool) {
+        let high = addr & 0x0200 != 0;
+        let (r, w) = if high { (0x80, 0x40) } else { (0x20, 0x10) };
+        (
+            addr as usize & (MMC6_RAM - 1),
+            self.mmc6_protect & r != 0,
+            self.mmc6_protect & w != 0,
+        )
+    }
+
+    /// MMC6: the `$7000-$7FFF` window floats when RAM is disabled or neither
+    /// half is readable.
+    const fn mmc6_window_open(&self) -> bool {
+        !self.mmc6_ram_enabled || self.mmc6_protect & 0xA0 == 0
+    }
+
+    /// An MMC3 used only as a register file and IRQ counter, for boards that
+    /// resolve PRG and CHR themselves (`mmc3_boards.rs`, v2.9.6).
+    ///
+    /// Those boards put an outer bank or a CHR-RAM overlay between the MMC3's
+    /// bank outputs and the memories, so they own the ROM and read the raw
+    /// outputs through [`Self::prg_bank_raw`] and [`Self::chr_bank_1k`]. The
+    /// core therefore carries only placeholder memories: 8 KiB of PRG and
+    /// 1 KiB of CHR it never reads, no PRG-RAM, and the real nametable VRAM
+    /// (which the board delegates to it). Nothing in the Nintendo MMC3 path
+    /// calls this, so mapper 4 is unchanged.
+    pub(crate) fn register_core(mirroring: Mirroring, revision: Mmc3Revision) -> Self {
+        // Both sizes are valid by construction, so `new` cannot fail.
+        let mut core = Self::new(
+            vec![0u8; PRG_BANK_8K].into_boxed_slice(),
+            vec![0u8; CHR_BANK_1K].into_boxed_slice(),
+            mirroring,
+            PRG_RAM_DEFAULT,
+            revision,
+        )
+        .unwrap_or_else(|_| unreachable!("fixed valid sizes"));
+        core.prg_ram = Box::new([]);
+        core
+    }
+
+    /// The MMC3's raw 8 KiB PRG bank output for the CPU address `addr`
+    /// (`$8000-$FFFF`), before any board masking: R6 / R7 as written, and
+    /// the fixed banks as the chip drives them, all-ones (`$FF`) for the last
+    /// and `$FE` for the second-last. A multicart ANDs this with its inner
+    /// mask and ORs its outer bank in, which is why the fixed banks must be
+    /// the chip's own all-ones pattern and not "last bank of the ROM"
+    /// (`nesdev_wiki/output/INES_Mapper_045.md`, "PRG-AND").
+    pub(crate) fn prg_bank_raw(&self, addr: u16) -> u8 {
+        match (addr & 0xE000, self.prg_mode) {
+            (0x8000, false) | (0xC000, true) => self.regs[6],
+            (0x8000, true) | (0xC000, false) => 0xFE,
+            (0xA000, _) => self.regs[7],
+            _ => 0xFF,
+        }
+    }
+
+    /// `$A001` bit 7: the PRG-RAM chip enable. Boards that put a register in
+    /// the PRG-RAM window (mappers 37 and 47) accept a write only while the
+    /// MMC3 would let it reach RAM.
+    pub(crate) const fn prg_ram_enabled(&self) -> bool {
+        self.prg_ram_enabled
+    }
+
+    /// `$A001` bit 7 set and bit 6 clear: a write to `$6000-$7FFF` would
+    /// reach RAM.
+    pub(crate) const fn prg_ram_writable(&self) -> bool {
+        self.prg_ram_enabled && !self.prg_ram_protect
     }
 
     /// Resolve a CPU PRG address (`$8000-$FFFF`) to a byte offset in
@@ -468,8 +603,28 @@ impl Mapper for Mmc3 {
         MapperCaps::CYCLE_IRQ
     }
 
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        match addr {
+            0x4020..=0x5FFF => true,
+            0x6000..=0x6FFF if self.variant == Mmc3Variant::Mmc6 => true,
+            0x7000..=0x7FFF if self.variant == Mmc3Variant::Mmc6 => self.mmc6_window_open(),
+            0x6000..=0x7FFF => self.prg_ram.is_empty(),
+            _ => false,
+        }
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
+            0x6000..=0x7FFF if self.variant == Mmc3Variant::Mmc6 => {
+                // "If only one bank is enabled for reading, the other reads
+                // back as zero" (`MMC6.md`).
+                let (off, readable, _) = self.mmc6_half(addr);
+                if addr >= 0x7000 && readable && self.mmc6_ram_enabled {
+                    self.prg_ram[off]
+                } else {
+                    0
+                }
+            }
             0x6000..=0x7FFF => {
                 if self.prg_ram_enabled && !self.prg_ram.is_empty() {
                     let off = (addr - 0x6000) as usize;
@@ -489,6 +644,14 @@ impl Mapper for Mmc3 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
+            0x6000..=0x7FFF if self.variant == Mmc3Variant::Mmc6 => {
+                // "The write-enable bits only have effect if that bank is
+                // enabled for reading".
+                let (off, readable, writable) = self.mmc6_half(addr);
+                if addr >= 0x7000 && self.mmc6_ram_enabled && readable && writable {
+                    self.prg_ram[off] = value;
+                }
+            }
             0x6000..=0x7FFF => {
                 if self.prg_ram_enabled && !self.prg_ram_protect && !self.prg_ram.is_empty() {
                     let off = (addr - 0x6000) as usize;
@@ -503,6 +666,14 @@ impl Mapper for Mmc3 {
                     self.bank_select = value & 0x07;
                     self.prg_mode = (value & 0x40) != 0;
                     self.chr_mode = (value & 0x80) != 0;
+                    if self.variant == Mmc3Variant::Mmc6 {
+                        // "When PRG RAM is disabled via $8000, the mapper
+                        // continuously sets $A001 to $00".
+                        self.mmc6_ram_enabled = value & 0x20 != 0;
+                        if !self.mmc6_ram_enabled {
+                            self.mmc6_protect = 0;
+                        }
+                    }
                 } else {
                     // $8001 odd: bank-data.
                     self.regs[(self.bank_select & 0x07) as usize] = value;
@@ -510,13 +681,18 @@ impl Mapper for Mmc3 {
             }
             0xA000..=0xBFFF => {
                 if addr & 1 == 0 {
-                    // Mirroring (ignored on 4-screen carts).
-                    if !self.fixed_4screen {
+                    // Mirroring (ignored on 4-screen carts and on the
+                    // hard-wired MMC3C board, submapper 2).
+                    if !self.fixed_4screen && self.variant != Mmc3Variant::HardwiredMirroring {
                         self.mirroring = if value & 1 == 0 {
                             Mirroring::Vertical
                         } else {
                             Mirroring::Horizontal
                         };
+                    }
+                } else if self.variant == Mmc3Variant::Mmc6 {
+                    if self.mmc6_ram_enabled {
+                        self.mmc6_protect = value & 0xF0;
                     }
                 } else {
                     // PRG-RAM protect / enable.
@@ -536,6 +712,8 @@ impl Mapper for Mmc3 {
                     self.irq_reload_pending_with_nonzero_clear = self.irq_counter != 0;
                     self.irq_counter = 0;
                     self.irq_reload_pending = true;
+                    // MC-ACC: "Writing to $C001 resets pulse counter".
+                    self.mcacc_prescaler = 0;
                 }
             }
             0xE000..=0xFFFF => {
@@ -646,6 +824,18 @@ impl Mapper for Mmc3 {
             not(feature = "mmc3-a12-phase-probe")
         ))]
         let _ = sub_dot;
+        if self.variant == Mmc3Variant::McAcc {
+            // Falling edges through the divide-by-8 prescaler; the counter
+            // clocks on the first edge of each group of eight.
+            if self.last_a12 && !level {
+                if self.mcacc_prescaler == 0 && self.clock_irq() {
+                    self.irq_pending_line = true;
+                }
+                self.mcacc_prescaler = (self.mcacc_prescaler + 1) & 0x07;
+            }
+            self.last_a12 = level;
+            return;
+        }
         if !self.last_a12 && level {
             // Rising edge.
             let gap = self.cpu_cycle.saturating_sub(self.a12_low_cycle);
@@ -813,6 +1003,10 @@ impl Mapper for Mmc3 {
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
+        // v3 tail.
+        out.push(u8::from(self.mmc6_ram_enabled));
+        out.push(self.mmc6_protect);
+        out.push(self.mcacc_prescaler);
         out
     }
 
@@ -831,9 +1025,10 @@ impl Mapper for Mmc3 {
             });
         }
         let version = data[0];
-        if version != 1 && version != SAVE_STATE_VERSION {
+        if !matches!(version, 1..=SAVE_STATE_VERSION) {
             return Err(MapperError::UnsupportedVersion(version));
         }
+        let tail = if version >= 3 { 3 } else { 0 };
         let nonzero_clear_present = version >= 2;
         let scalar_len = 1
             + 8
@@ -854,7 +1049,7 @@ impl Mapper for Mmc3 {
             + 8
             + 1
             + usize::from(nonzero_clear_present);
-        let expected = scalar_len + self.prg_ram.len() + self.vram.len() + chr_part;
+        let expected = scalar_len + self.prg_ram.len() + self.vram.len() + chr_part + tail;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -932,6 +1127,16 @@ impl Mapper for Mmc3 {
         cur += self.vram.len();
         if self.chr_is_ram {
             self.chr.copy_from_slice(&data[cur..cur + self.chr.len()]);
+            cur += self.chr.len();
+        }
+        if tail == 3 {
+            self.mmc6_ram_enabled = data[cur] != 0;
+            self.mmc6_protect = data[cur + 1] & 0xF0;
+            self.mcacc_prescaler = data[cur + 2] & 0x07;
+        } else {
+            self.mmc6_ram_enabled = false;
+            self.mmc6_protect = 0;
+            self.mcacc_prescaler = 0;
         }
         Ok(())
     }
@@ -1515,5 +1720,131 @@ mod tests {
             !m.irq_pending(),
             "an ack write must cancel an in-flight deferred assertion"
         );
+    }
+
+    // ---- v2.9.6: the NES 2.0 submapper variants --------------------------
+
+    fn variant(v: Mmc3Variant) -> Mmc3 {
+        Mmc3::new(
+            synth_prg(16),
+            synth_chr(64),
+            Mirroring::Vertical,
+            0,
+            Mmc3Revision::Sharp,
+        )
+        .unwrap()
+        .with_variant(v)
+    }
+
+    /// `MMC6.md`: RAM at `$7000` only, off until `$8000` bit 5, then per
+    /// half read/write enables; `$6000-$6FFF` floats.
+    #[test]
+    fn mmc6_prg_ram_follows_its_own_protect_scheme() {
+        let mut m = variant(Mmc3Variant::Mmc6);
+        assert_eq!(m.sram().len(), MMC6_RAM, "1 KiB of internal RAM");
+        assert!(m.cpu_read_unmapped(0x6000));
+        assert!(m.cpu_read_unmapped(0x7000), "RAM disabled at power-on");
+        m.cpu_write(0xA001, 0xF0);
+        assert!(
+            m.cpu_read_unmapped(0x7000),
+            "$A001 ignored while $8000.5 = 0"
+        );
+        m.cpu_write(0x8000, 0x20);
+        m.cpu_write(0xA001, 0x30); // low half: read + write
+        m.cpu_write(0x7001, 0x11);
+        m.cpu_write(0x7201, 0x22); // high half not writable
+        assert_eq!(m.cpu_read(0x7001), 0x11);
+        assert_eq!(m.cpu_read(0x7201), 0x00, "the unreadable half reads zero");
+        assert_eq!(m.cpu_read(0x7401), 0x11, "mirrored every 1 KiB");
+        m.cpu_write(0xA001, 0x80); // high half readable only
+        m.cpu_write(0x7201, 0x33);
+        assert_eq!(m.cpu_read(0x7201), 0x00, "readable but not writable");
+        m.cpu_write(0xA001, 0x20); // low half read-only
+        m.cpu_write(0x7001, 0x44);
+        assert_eq!(m.cpu_read(0x7001), 0x11);
+        m.cpu_write(0x8000, 0x00); // disable: $A001 forced to $00
+        m.cpu_write(0x8000, 0x20);
+        assert!(m.cpu_read_unmapped(0x7000), "the protect bits were cleared");
+    }
+
+    #[test]
+    fn hardwired_board_ignores_a000() {
+        let mut m = variant(Mmc3Variant::HardwiredMirroring);
+        m.cpu_write(0xA000, 1);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+        let mut s = variant(Mmc3Variant::Standard);
+        s.cpu_write(0xA000, 1);
+        assert_eq!(s.current_mirroring(), Mirroring::Horizontal);
+    }
+
+    /// MC-ACC: falling A12 edges, /8, first edge of each group, `$C001`
+    /// resets the prescaler.
+    #[test]
+    fn mc_acc_counts_falling_edges_through_a_prescaler() {
+        let mut m = variant(Mmc3Variant::McAcc);
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        let fall = |m: &mut Mmc3| {
+            m.notify_a12(true);
+            m.notify_a12(false);
+        };
+        fall(&mut m); // edge 0 of group 0: reload to 1
+        assert!(!m.irq_pending());
+        for _ in 0..7 {
+            fall(&mut m); // edges 1-7: no clock
+        }
+        assert!(!m.irq_pending());
+        fall(&mut m); // edge 0 of group 1: 1 -> 0, IRQ
+        assert!(m.irq_pending());
+        // `$C001` resets the prescaler. Four edges into a group (latch 1,
+        // reloaded on edge 0), a `$C001` makes the next edge a group start:
+        // it reloads, and the 9th edge after the write decrements 1 -> 0.
+        // Without the reset the group would restart only at the 5th edge and
+        // the IRQ would come at the 13th.
+        let mut p = variant(Mmc3Variant::McAcc);
+        p.cpu_write(0xC000, 1);
+        p.cpu_write(0xE001, 0);
+        for _ in 0..4 {
+            fall(&mut p);
+        }
+        p.cpu_write(0xC001, 0);
+        for _ in 0..8 {
+            fall(&mut p);
+        }
+        assert!(!p.irq_pending());
+        fall(&mut p);
+        assert!(p.irq_pending(), "the 9th edge after $C001");
+        // Rising edges alone never clock it.
+        let mut r = variant(Mmc3Variant::McAcc);
+        r.cpu_write(0xC000, 0);
+        r.cpu_write(0xE001, 0);
+        for _ in 0..16 {
+            r.notify_a12(true);
+            r.notify_cpu_cycle();
+            r.notify_cpu_cycle();
+            r.notify_cpu_cycle();
+            r.notify_cpu_cycle();
+        }
+        assert!(!r.irq_pending());
+    }
+
+    #[test]
+    fn variant_state_round_trips_and_v2_still_loads() {
+        let mut a = variant(Mmc3Variant::Mmc6);
+        a.cpu_write(0x8000, 0x20);
+        a.cpu_write(0xA001, 0x30);
+        a.cpu_write(0x7003, 0x99);
+        let blob = a.save_state();
+        let mut b = variant(Mmc3Variant::Mmc6);
+        b.load_state(&blob).unwrap();
+        assert_eq!(b.cpu_read(0x7003), 0x99);
+        assert_eq!(b.save_state(), blob);
+        // A v2 blob (no tail) from a standard board still loads.
+        let std_blob = variant(Mmc3Variant::Standard).save_state();
+        let mut v2 = std_blob;
+        v2[0] = 2;
+        v2.truncate(v2.len() - 3);
+        variant(Mmc3Variant::Standard).load_state(&v2).unwrap();
     }
 }

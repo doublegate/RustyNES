@@ -164,6 +164,20 @@ impl Mmc1 {
         })
     }
 
+    /// The four internal registers, `(control, chr0, chr1, prg)`, for boards
+    /// that embed an MMC1 and resolve banking themselves (mapper 105,
+    /// NES-EVENT, v2.9.6). Read-only: the serial port stays the only writer.
+    pub(crate) const fn registers(&self) -> (u8, u8, u8, u8) {
+        (self.control, self.chr0, self.chr1, self.prg)
+    }
+
+    /// Bits collected by the serial port so far (0-4). A write that finds 4
+    /// here and leaves 0 without the reset bit committed a register; that is
+    /// how mapper 105 sees a write to `$A000` even when its value is unchanged.
+    pub(crate) const fn shift_count(&self) -> u8 {
+        self.shift_count
+    }
+
     /// Map a PPU address in `$2000-$3EFF` to a 2 KiB-VRAM offset using the
     /// current mirroring mode (control bits 1-0).
     fn nametable_offset(&self, addr: u16) -> usize {

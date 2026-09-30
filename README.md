@@ -9,297 +9,85 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.5-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
-  <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
-  <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.9.6-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="#accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="docs/mappers.md"><img src="https://img.shields.io/badge/mapper%20families-191-informational.svg" alt="Mapper families"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
+  <a href="#platforms"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS%20%7C%20RetroArch-lightgrey.svg" alt="Platform"></a>
 </p>
-
-## Overview
 
 **RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in
-pure Rust.** It targets the Mesen2 / higan / ares accuracy bar — tight, lockstep
-scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
-**AccuracyCoin 100.00% (144/144)** and matching the Nintendulator golden log on
-`nestest` with **zero diff**. (As of v2.0.3 every assigned test passes, including the
-two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", via the promoted
-2-cycle-ALE fetch model — ADR 0030.)
+pure Rust.** It aims at the Mesen2 / higan / ares accuracy bar: one master clock,
+every CPU cycle a real bus access, and the PPU caught up to each half of it, so a
+sprite-zero hit, a mid-scanline scroll write or an MMC3 IRQ lands on the exact dot
+without a per-game patch. It passes **AccuracyCoin 144/144** and matches the
+Nintendulator `nestest` log with **zero diff**.
 
-> **Development note — AI-assisted:** RustyNES is heavily AI-assisted software,
-> built with LLM tooling under a human-directed, test-driven workflow (public
-> test ROMs as the oracle, a `no_std` core, and continuous CI). See
+Around that core sits a complete, modern platform: 191 mapper families, the
+Famicom Disk System, Vs. System and PlayChoice-10 arcade boards, rollback
+netplay, RetroAchievements, a TAStudio piano-roll editor, a Mesen2-class
+debugger, HD packs, a shader stack, and native apps for desktop, the browser,
+Android, iOS and RetroArch, all on one bit-deterministic core.
+
+**[Play it in your browser](https://doublegate.github.io/RustyNES/)**, no
+install required.
+
+> **Development note: AI-assisted.** RustyNES is built with LLM tooling under a
+> human-directed, test-driven workflow, with public test ROMs as the oracle. See
 > [`docs/originality-and-provenance.md`](docs/originality-and-provenance.md) for
-> what that means for originality and licensing, and the
-> [Acknowledgments](#acknowledgments) for the references and components it builds
-> on. Accuracy claims are meant to be *checked* by running the public suites, not
-> taken on faith; comparisons to other emulators are comparisons, not a claim of
-> being "better."
-
-Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
-**174 mapper families** covering the vast majority of the commercial library (plus a
-UNIF `.unf` cartridge loader), the full **Famicom Disk System** (real-BIOS boot with a
-timed disk-head model), **Vs. System / PlayChoice-10** arcade games in true RGB,
-**GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4 players),
-**RetroAchievements**, a **native Libretro core** for RetroArch, a **scriptable TAStudio piano-roll TAS editor** with `.fm2` /
-`.bk2` / `.fcm` / `.fmv` / `.vmv` movie interop, editing-capable debug tools
-(palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline
-6502 assembler), save states with rewind, run-ahead latency reduction, a **Mesen2-class
-debugger** (expression / conditional breakpoints, R/W/X watchpoints, a hex editor, RAM
-search, a callstack, `.dbg` source maps), **A/V recording**, **HD-pack** video + audio
-(with an HD-Pack Builder), a **shader / filter ecosystem**, and a localized
-(i18n) UI — all on a strict bit-determinism contract. The frontend is pure Rust (`winit` + `wgpu` +
-`cpal` + `egui`) with native binaries for Linux, macOS, and Windows, plus a WebAssembly
-build that runs in the browser.
-
-**[Try it in your browser](https://doublegate.github.io/RustyNES/)** — no install
-required.
-
----
-
-## Why RustyNES?
-
-RustyNES combines **accuracy-first emulation** with **modern features** and the
-**safety guarantees of Rust**. Whether you are a casual player, a TAS creator, a
-speedrunner, or a homebrew developer, RustyNES provides a comprehensive and faithful
-platform for NES emulation.
-
-**Key differentiators:**
-
-- **Reference-grade accuracy** — a from-scratch core on a `u64` master clock with
-  run-to-timestamp catch-up; region-exact 3:1 NTSC/Dendy and **3.2:1 PAL** clock
-  ratios; sub-instruction PPU events visible to subsequent CPU code.
-- **Determinism as a hard contract** — same seed, ROM, and input sequence yield a
-  bit-identical framebuffer and audio. This is what makes save-state round-trips,
-  regression testing, and rollback netplay correct by construction.
-- **Modern features** — RetroAchievements, rollback netplay, a scriptable TAStudio,
-  run-ahead, display-sync pacing, an Android app, and a Mesen2-class, editing-capable
-  debugger (read-only by default, determinism-preserving).
-- **Safe, modular Rust** — the chip stack is `no_std + alloc` with a one-directional
-  workspace graph, so each component (CPU, PPU, APU) is independently fuzzable and
-  benchmarkable. The only `unsafe` lives behind opt-in feature boundaries.
-
----
-
-## Highlights
-
-| Feature | Description |
-| --- | --- |
-| **Cycle-Accurate** | Master-clock-precise CPU / PPU / APU — AccuracyCoin 144/144 (100.00%), nestest 0-diff |
-| **One-Clock Timebase** | A single canonical cycle counter, every CPU cycle a real bus access, with a split-around-the-access PPU catch-up |
-| **174 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) loader |
-| **Famicom Disk System** | `.fds` games with real-BIOS boot, writable disks, side-swapping, a timed disk-head model, and 2C33 wavetable audio |
-| **Vs. / PlayChoice-10** | Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets; Vs. DualSystem two-screen presentation on desktop |
-| **RetroAchievements** | Native `rcheevos` integration: achievements, leaderboards, rich presence, hardcore mode |
-| **Rollback Netplay** | GGPO-style rollback for up to 4 players over UDP or browser WebRTC — room-code / TURN traversal, matchmaking / lobby, and spectators |
-| **TAStudio + Movie Interop** | A piano-roll TAS editor (drag-paint grid, save-state greenzone, lag log, markers, forkable branches) with `.fm2` / `.bk2` / `.fcm` / `.fmv` / `.vmv` import and the native `.rnm` format |
-| **Run-Ahead & Rewind** | Input-lag-hiding run-ahead and a tiered (Zwinder) rewind window, on the deterministic snapshot path |
-| **Mesen2-Class Debugger** | Expression / conditional breakpoints, R/W/X watchpoints, a hex editor, RAM search, a callstack, and `.dbg` source maps — editing-capable (palette / nametable / CHR / OAM writeback, header editor, inline 6502 assembler), read-only by default |
-| **Lua Scripting** | Sandboxed Lua 5.4 — memory / state access, frame & access callbacks, a `tastudio.*` API, HUD overlay, and host-IPC automation (opt-in) |
-| **Shaders & HD Packs** | An NES-NTSC composite / S-video filter, a composable CRT / scanline shader stack (CRT-Royale / guest-advanced / Megatron look), a generated NTSC palette, custom `.pal` palettes, and a Mesen-style HD-pack loader + builder (video + OGG audio) |
-| **Cheats & Peripherals** | A ~10,800-code Game Genie database with per-game nomination + encoder, raw RAM cheats, and a broad peripheral set (Four Score, Zapper, Arkanoid, Power Pad, keyboards, mouse) |
-| **A/V Recording** | Synchronized video + audio capture to `.mp4` / `.mkv` via an `ffmpeg` pipe (opt-in, output-only) |
-| **NSF / NSFe Player** | Chiptune playback through the real APU + expansion synths, honoring non-60 Hz play-speed dividers |
-| **Android & iOS Apps** | Complete native apps on the byte-identical core — touch + hardware controllers, save-states, netplay, RetroAchievements, and the shader stack (sideload / TestFlight; free store listing possible later) |
-| **Libretro Core** | A cycle-accurate `rustynes_libretro` core for RetroArch (RetroAchievements, dynamic audio sync, deterministic rollback / save-state, region-correct NTSC / PAL / Dendy pacing, FDS multi-disk swapping, Game Genie cheats, and the NES Zapper on ports 1-2) |
-| **Pure Rust** | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack |
-
-<p align="center">
-  <img src="images/RustyNES_Arch-Blueprint_1.png" alt="RustyNES Architecture Blueprint" width="800">
-</p>
-
----
-
-## Showcase
-
-A cross-section of the commercial library running pixel-accurately on RustyNES —
-launch classics like Donkey Kong, Excitebike, and Super Mario Bros.; the Famicom
-Disk System's Kid Icarus; Konami's Castlevania and Contra; the Mega Man
-boss-select; and Mike Tyson's Punch-Out!! — spanning NROM up through MMC3 / MMC5,
-FME-7, and the full VRC line, plus Vs.-arcade RGB.
+> what that means for originality and licensing. The accuracy claims are meant to
+> be *checked* by running the public suites, not taken on faith. A comparison to
+> another emulator is a comparison, not a claim of being better.
 
 <p align="center">
   <img src="screenshots/showcase.png" alt="A grid of commercial NES titles running on RustyNES: Donkey Kong, Excitebike, Super Mario Bros., Kid Icarus, Castlevania, Contra, Mega Man, and Mike Tyson's Punch-Out!!" width="800">
 </p>
 
-The full per-mapper visual corpus lives in
-[`screenshots/external/`](screenshots/external/) (Core / Curated) and
-[`screenshots/besteffort/`](screenshots/besteffort/) (BestEffort) — boot / title /
-gameplay frames spanning the bulk of the 174 mapper families.
+---
+
+## Contents
+
+- [Highlights](#highlights)
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Controls](#controls)
+- [Accuracy](#accuracy)
+- [Platforms](#platforms)
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Current release](#current-release)
+- [Roadmap](#roadmap)
+- [The MiSTer core](#the-mister-core)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
 ---
 
-## Features
+## Highlights
 
-### Emulation core
-
-- **Master-clock-precise scheduler.** A `u64` master clock drives the CPU, PPU, and
-  APU off the fundamental NES timebase with run-to-timestamp catch-up (the
-  TetaNES / Mesen2 model). This is the central architectural choice and the reason
-  mid-instruction PPU events — a sprite-zero hit at a precise dot, an MMC3 IRQ at a
-  PPU dot, a mid-scanline scroll write — work without per-quirk patches.
-- **Cycle-accurate 6502 CPU** — all 256 opcodes including the full unofficial set
-  (incl. the unstable SH\* / TAS / LAS / XAA family), per-cycle bus interleaving,
-  cycle-exact interrupt-sample timing, and sub-instruction DMC/OAM DMA via one
-  unified dispatch.
-- **Cycle-accurate 2C02 PPU** — per-dot scheduling, the full cycle-resolution
-  sprite-evaluation FSM (including the hardware `n+m` overflow increment bug), the
-  background-fetch pipeline, the `PPUMASK`→dot-skip delay, and a rendering-time
-  `$2007` state machine.
-- **Cycle-accurate 2A03 APU** — the non-linear lookup mixer, 256-phase × 32-tap
-  Blackman-windowed sinc synthesis (SFDR 81.6 dB), a 3-stage analog filter chain, and
-  the DMC byte timer on the shared master clock.
-
-### Cartridges and platforms
-
-- **174 mapper families** covering the bulk of the licensed library — NROM, all
-  MMC1-5, the full VRC1/2/4/6/7 line (incl. VRC6 and VRC7 expansion audio), Sunsoft
-  FME-7/1/2/3/4 (+ 5B audio), Namco 163 (+ wavetable), the Taito
-  TC0190/TC0690/X1-005/X1-017, J.Y. Company ASIC boards, and the
-  Irem/Jaleco/Bandai/Tengen and Vs.-System mappers — classified Core / Curated /
-  BestEffort behind a CI accuracy-honesty gate. A **UNIF (`.unf`) cartridge loader**
-  resolves board names to the corresponding mapper. See
-  [`docs/mappers.md`](docs/mappers.md).
-- **Famicom Disk System** — `.fds` games with a user-supplied `disksys.rom` BIOS: the disk
-  drive and IRQs, writable disks (`.fds.sav`, `F9` side-swap), 2C33 wavetable audio, a timed
-  disk-head position / not-ready model, `$4032` drive-status auto-insert, and a per-game CRC
-  quirk table. Real-BIOS boot works — Zelda, Metroid, and others boot into the game.
-- **Vs. System / PlayChoice-10** — the 2C03 / 2C04 / 2C05 RGB PPUs with per-game DIP
-  presets and exact palettes; real arcade ROMs render in true RGB.
-
-### Modern features
-
-- **RetroAchievements** *(opt-in, native-only)* — login, achievements, leaderboards, rich
-  presence, and hardcore mode, via the vendored MIT `rcheevos` library.
-- **Rollback netplay** — GGPO-style rollback over UDP for up to 4 players (predict →
-  advance → roll back on the deterministic core), plus a browser **WebRTC** mesh with a
-  deployable signaling / STUN bundle ([`deploy/`](deploy/)), room-code / TURN traversal,
-  matchmaking / lobby, and read-only spectators.
-- **TAS + TAStudio** — frame-perfect deterministic record / replay in the versioned `.rnm`
-  format, plus a Mesen2 / BizHawk-class piano-roll editor: a drag-paint button grid, a
-  save-state **greenzone** for instant seeking, a lag log, markers, forkable branches, and
-  `.rnmproj` projects. Imports FCEUX `.fm2` / BizHawk `.bk2` / `.fcm` / `.fmv` / `.vmv`.
-- **Save state, rewind, run-ahead** — instant save / load, a thumbnail manager, a tiered
-  (Zwinder) rewind window, and input-lag-hiding run-ahead — all on the deterministic
-  snapshot path.
-- **Speed, pacing, audio** — 25 %–300 % speed presets, hold-to-fast-forward, frame advance;
-  an `auto` / `display` / `vrr` / `wallclock` display-sync matrix; and a lock-free audio
-  ring with dynamic rate control, per-channel mutes, and a 5- / 20-band equalizer.
-- **Lua scripting** *(opt-in, native-only)* — a sandboxed **Lua 5.4** engine: read / write
-  memory, inspect state, react to per-frame / per-access events, draw an HUD, and drive
-  movies (`emu.run` / `emu.frameadvance`) and the piano-roll (`tastudio.*`), with a
-  host-mediated IPC sandbox. The browser build runs an experimental `piccolo` backend
-  (observational, never in the determinism oracle). See [`docs/scripting.md`](docs/scripting.md).
-- **Cheats + peripherals** — a Game Genie encoder plus a bundled ~10,800-code database with
-  per-game nomination (header-robust CRC matching), raw RAM cheats, and a broad peripheral
-  set (standard pad, Four Score, Arkanoid Vaus, Zapper, Power Pad, SNES mouse, Family BASIC
-  and Subor keyboards, Family Trainer, Hyper Shot). Turbo / autofire, an all-device
-  input-display overlay, and USB gamepads (`gilrs`) with deadzone + hot-plug.
-- **Debugger + devtools** *(opt-in `debug-hooks`)* — a read-only CPU / PPU / APU / memory /
-  OAM / mapper inspector by default; opt-in expression / conditional breakpoints, R/W/X
-  watchpoints, a watch window, conditional + cycle trace, an event viewer, a full hex editor
-  (poke / freeze / heatmap / find), RAM search, and a callstack with step in / over / out —
-  all determinism-preserving when off.
-- **A/V recording** *(opt-in `av-record`, native-only)* — capture to `.mp4` / `.mkv` via an
-  external `ffmpeg` pipe; a read-only tap on the produced framebuffer / audio, so it never
-  touches the core.
-
-### Authoring and automation *(opt-in `debug-hooks` / `scripting` / `script-ipc`)*
-
-- **Editing-capable debug tools** — the inspectors become editors: palette / nametable /
-  CHR / OAM writeback, an iNES / NES 2.0 header editor, and an inline 6502 assembler; plus
-  `ca65` / `cc65` `.dbg` source maps (and `.sym` / `.mlb` / `.nl`) for source-level debugging.
-- **Host IPC / automation** — a host-mediated `comm.*` / `client.*` / `userdata.*` sandbox
-  lets an external process drive and observe the emulator over IPC for CI harnesses, behind
-  a documented security posture.
-- **HD packs** — an HD-Pack Builder authors Mesen-format packs from the running game, and
-  the loader mixes HD-pack `<bgm>` / `<sfx>` OGG audio through `$4100`.
-- **Audio depth** — stereo panning, Schroeder reverb + crossfeed, an output-device picker,
-  and per-context (game / menu) volume.
-- **Per-game config + i18n** — a `<rom>.json` overlay (region / mapper / mirroring
-  overrides), a DIP-switch editor, a lag-frame counter, and a compile-time i18n catalog
-  (English default + universal fallback; Spanish shipped).
-
-### Display and audio
-
-- **Video filters + shaders** — a full NES-NTSC composite / S-video filter and a composable
-  CRT / scanline shader stack (curvature, scanlines, aperture mask; LMP88959 composite,
-  hqNx / xBRZ upscalers, and a constrained RetroArch `.slangp` / `.cgp` importer), plus a
-  three-rung composite-shader ladder (blur → LMP88959 → Bisqwit per-dot) with live
-  emulator-synced dot-crawl and custom `.pal` palettes — all display-only and off by
-  default, so the pre-shader framebuffer stays byte-identical. See [`docs/frontend.md`](docs/frontend.md).
-- **Generated NTSC palette** *(opt-in)* — an in-core synthesizer builds the 64-entry palette
-  from a 2C02 composite model (tunable saturation / hue / contrast / brightness / gamma),
-  byte-identical across all targets via `libm` and locked by a committed golden.
-- **APU filter model** — pick the analog filter: `nes` (default, authentic front-loader),
-  `famicom` (fuller low end), or `clean` (Mesen2-like) — tonal-only, byte-identical on the
-  default.
-- **NSF / NSFe player** — chiptune playback through the real APU and expansion synths, with a
-  track selector and metadata, honoring non-60 Hz play-speed dividers and the chunked `NSFE`
-  container.
-- **OAM decay** *(opt-in)* — Mesen2-modeled dynamic-RAM decay of un-refreshed OAM rows; off
-  by default (byte-identical), deterministic when on, and round-trips the save-state.
-
-### Web / WebAssembly
-
-The browser build runs the same core with web-specific glue (native builds are byte-identical):
-
-- **Lua in the browser** — the experimental `piccolo` backend runs from a `.lua` picker /
-  paste box (observational, off by default, never in the determinism oracle).
-- **File System Access API** — TAS `.rnm` exports use a native "Save As" on Chromium, with a
-  download fallback on Firefox / Safari.
-- **Gamepad API** — `navigator.getGamepads()` is polled each frame at the same late-latch as
-  touch / keyboard, so it records and replays identically.
-- **PWA + share-links** — an installable, offline-capable manifest + service worker (within a
-  5 MiB budget), plus `?settings=` URL share-links for a curated `Config` subset.
-
-### Android
-
-RustyNES runs as a complete native **Android app** on the byte-identical core (so
-AccuracyCoin holds 144/144 as on desktop), built on a shared **`rustynes-mobile`**
-UniFFI bridge, a **`rustynes-android`** JNI layer, and a Jetpack **Compose** shell:
-
-- **Rendering + audio** — wgpu on a `SurfaceView`, reusing the desktop WGSL CRT /
-  scanline / NTSC shaders (shared via `rustynes-gfx-shaders`), plus low-latency
-  `AudioTrack`.
-- **Input** — a multi-touch on-screen NES controller (foldable-aware and resizable) and
-  full hardware-gamepad support (players 1–4, hot-plug, per-pad remapping, turbo).
-- **Library + state** — a SHA-256-keyed box-art ROM library with SAF import, save-states
-  and battery-SRAM, and save-on-background / auto-resume.
-- **Connectivity** — Lua scripting, RetroAchievements, and direct-IP / LAN plus
-  CGNAT / TURN room-code rollback netplay over the same `rustynes-script` / `rustynes-ra`
-  / `rustynes-netplay` cores as desktop.
-- **Platform polish** — adaptive / foldable / TV (Leanback) layouts, Material You and
-  EN/ES i18n, screenshot / MP4 capture, Picture-in-Picture, widgets, and accessibility
-  (high-contrast + Okabe-Ito).
-
-The apps ship now as **GitHub-Releases / sideload**, full-featured; a possible
-**free** Google Play / F-Droid listing — a free app with the `foss` / `play` flavor
-split distinguishing pure-AOSP builds from optional free Google Play services
-(achievements, Cast, Integrity, in-app update, cloud save) — is a **later** step with
-no fixed version (see [Roadmap](#roadmap)). RustyNES is permanently open-source and
-income-free (ADR 0035): no ads, no tracking, no paid unlock. Details in
-[`docs/android.md`](docs/android.md).
-
-### iOS / iPadOS
-
-RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maintaining the same 144/144 AccuracyCoin bar as desktop), built on the shared **`rustynes-mobile`** UniFFI bridge and a native SwiftUI shell:
-
-- **Rendering + audio** — Metal via `wgpu` with the same full WGSL shader pipelines (CRT, NTSC, Bisqwit) and ProMotion pacing, plus a low-latency CoreAudio hot path.
-- **Input** — multi-touch on-screen pad (NES-001 style), responsive sizing, GameController framework for P1–P4 (hot-plug), and Core Haptics.
-- **Connectivity & Tooling** — room-code netplay (CGNAT/TURN) and LAN rollback, RetroAchievements, iCloud save-state sync (CloudKit), Lua console, and power-user tooling (TAS `.rnm` movies, `.pal` palettes, `.zip` ROMs, HD-pack loading).
-- **Platform polish** — ReplayKit capture, Game Center, accessibility, EN/ES i18n, and a 4-slot save-state manager. (No monetization — the app is free; see [ADR 0035](docs/adr/0035-rustynes-is-permanently-non-commercial.md).)
-
-The apps are currently distributed via **TestFlight**; a future **free** App Store listing (no ads, no purchase) is possible but has no fixed version. Details in [`docs/ios.md`](docs/ios.md).
+| | |
+| --- | --- |
+| **Cycle-accurate** | CPU, PPU and APU on one master clock: AccuracyCoin 144/144, `nestest` 0-diff, blargg's CPU, APU and PAL suites |
+| **191 mapper families** | NROM through MMC5, the whole VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company, the MMC3 and MMC1 multicarts, Waixing and Nanjing boards, homebrew flash boards with working saves, and a UNIF (`.unf`) loader. Each is classified Core, Curated or BestEffort by the evidence behind it |
+| **Famicom Disk System** | Real-BIOS boot, writable disks, side swapping, a timed disk-head model and 2C33 wavetable audio |
+| **Vs. / PlayChoice-10** | Arcade boards in true 2C03 / 2C04 / 2C05 RGB, per-game DIP presets, and Vs. DualSystem two-screen cabinets |
+| **Rollback netplay** | GGPO-style, up to four players over UDP or browser WebRTC, with room codes, TURN traversal and spectators |
+| **RetroAchievements** | Achievements, leaderboards, rich presence and hardcore mode through the `rcheevos` library |
+| **TAStudio** | A piano-roll TAS editor with a greenzone, branches and markers, plus `.fm2` / `.bk2` / `.fcm` / `.fmv` / `.vmv` import |
+| **Debugger** | Conditional breakpoints, watchpoints, a hex editor, RAM search, a callstack, `.dbg` source maps, and editable palette, nametable, CHR and OAM |
+| **Video and audio** | NTSC composite filtering, a CRT shader stack, HD packs with OGG audio, `.pal` palettes, a generated NTSC palette, and an NSF / NSFe player |
+| **Save states, rewind, run-ahead** | All on the deterministic snapshot path, so a replay is bit-identical |
+| **Lua scripting** | A sandboxed Lua 5.4 engine with memory access, callbacks, an HUD and a TAStudio API |
+| **Everywhere** | Linux, macOS and Windows binaries, a WebAssembly build, Android and iOS apps, and a libretro core for RetroArch |
 
 ---
 
-## Quick Start
+## Quick start
 
-### Download binaries
+### Download
 
-Pre-built binaries for the latest release are available on the
-[Releases page](https://github.com/doublegate/RustyNES/releases), built automatically
-for `aarch64` macOS (Apple silicon), `x86_64` Linux, and `x86_64` Windows. Other targets
-(Intel macOS, Linux ARM64, Android) build from source using the instructions below.
+Pre-built binaries for every release are on the
+[Releases page](https://github.com/doublegate/RustyNES/releases): Linux `x86_64`,
+macOS (Apple silicon) and Windows `x86_64`.
 
 ```bash
 # Linux / macOS
@@ -308,582 +96,310 @@ tar xf rustynes-<tag>-<target>.tar.gz && ./rustynes path/to/rom.nes
 Expand-Archive rustynes-<tag>-x86_64-pc-windows-msvc.zip; .\rustynes.exe path\to\rom.nes
 ```
 
+Launch it without a ROM and use **F12**, the File menu, or drag and drop a
+`.nes` / `.fds` onto the window.
+
 ### Build from source
 
-**Prerequisites:**
-
-- **Rust 1.96** — pinned via `rust-toolchain.toml` and auto-installed by
-  [rustup](https://rustup.rs).
-- **Linux desktop dependencies** for `winit` / `wgpu` / `cpal` / `egui` (see below).
-- **Git.**
+You need **Rust 1.96** (pinned in `rust-toolchain.toml`; [rustup](https://rustup.rs)
+installs it) and Git.
 
 ```bash
-# Clone the repository
 git clone https://github.com/doublegate/RustyNES.git
 cd RustyNES
-
-# Build the workspace (release)
-cargo build --release --workspace
-
-# Run a ROM you legally own (or launch bare and use F12 / drag-and-drop)
 cargo run --release -p rustynes-frontend -- path/to/rom.nes
 
-# Optional: build with RetroAchievements (needs a C compiler for vendored rcheevos)
-cargo run --release -p rustynes-frontend --features retroachievements -- path/to/rom.nes
-
-# Maximal NATIVE build — the "cargo --full equivalent". The `full` feature
-# aggregates every native feature (RetroAchievements + Lua scripting + host IPC +
-# HD-pack + debugger telemetry + A/V recording). Aliases make it a one-liner:
-cargo full-run path/to/rom.nes       # run the most fully-featured desktop binary
-cargo full-run --fullscreen rom.nes  # the alias ends in `--`, so flags forward to the binary
-cargo full-build                     # build it (= --release -p rustynes-frontend --features full)
+# Everything native at once: RetroAchievements, Lua, host IPC, HD packs,
+# debugger telemetry and A/V recording.
+cargo full-run path/to/rom.nes
 ```
 
-The `full` build is purely opt-in — the default/shipped build and the emulation
-core are unchanged. The WASM-only features (`script-wasm`, `browser-cheevos`,
-`wasm-canvas`) are deliberately excluded, since `full` targets a native binary.
-
-The frontend opens a 256×240 window (scaled, with 8:7 pixel-aspect correction),
-starts audio via the OS default device, and runs the ROM.
-
-#### Command-line help
-
-The native binary ships a clap 4 CLI with styled `--help`, a `help` subcommand,
-shell completions, and an interactive terminal help browser:
+On Linux, the window, GPU and audio stack need a few system libraries:
 
 ```bash
-rustynes --help                 # styled usage + examples + keyboard summary
-rustynes help                   # browse all topics (interactive TUI on a terminal)
-rustynes help mappers           # one topic, printed (also works piped: `… | less`)
-rustynes completions fish       # print a shell-completion script
-```
-
-Help topics: `controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
-`scripting`, `netplay`, `about`. The interactive browser is behind the default-on
-`help-tui` cargo feature; piped / non-terminal output falls back to a static page.
-
-### Platform-specific dependencies
-
-**Ubuntu / Debian:**
-
-```bash
+# Ubuntu / Debian
 sudo apt-get install -y libxkbcommon-dev libwayland-dev libxkbcommon-x11-dev libasound2-dev libudev-dev
-```
-
-**CachyOS / Arch:**
-
-```bash
+# Arch / CachyOS
 sudo pacman -S --needed libxkbcommon wayland alsa-lib systemd-libs
 ```
 
-**macOS / Windows:** no extra system dependencies are required for the default build.
-The optional `retroachievements` feature additionally needs a C compiler for the
-vendored rcheevos sources.
+macOS and Windows need nothing extra; the optional `retroachievements` feature
+needs a C compiler on every platform.
 
-### Run in the browser (WebAssembly)
+`rustynes --help` lists the command-line options, and `rustynes help` opens an
+interactive guide to the controls, hotkeys, mappers, configuration, scripting and
+netplay.
 
-A hosted demo is live at
-**[doublegate.github.io/RustyNES](https://doublegate.github.io/RustyNES/)**. To build
-it yourself you need [trunk](https://trunkrs.dev) (`cargo install trunk`):
+### In the browser
 
-```bash
-cd crates/rustynes-frontend/web
-trunk serve            # dev server at http://127.0.0.1:8081
-trunk build --release  # the full winit + wgpu + egui build in ./dist
-# Or a lightweight canvas-2D embed:
-trunk build --release --no-default-features --features wasm-canvas
-```
+The hosted build is at **[doublegate.github.io/RustyNES](https://doublegate.github.io/RustyNES/)**.
+To build it yourself, install [trunk](https://trunkrs.dev) and run `trunk serve`
+in `crates/rustynes-frontend/web`.
 
 ---
 
-## Desktop UX
+## Features
 
-The desktop frontend frames the NES image with an always-on **menu bar** (top) and
-**status bar** (bottom); the egui debugger is a separate overlay toggled with `` ` ``.
-Everything has a keyboard shortcut, but nothing requires one.
+### Emulation core
 
-- **Menu bar** — File (Open ROM, Open Recent, save / load state, a ten-slot (0–9) Save
-  Slot picker, a thumbnail **Save States…** manager, Take Screenshot, Copy Screenshot to
-  Clipboard), Emulation (Pause, Reset, Power Cycle, **Speed 25–300 %**, Run-Ahead 0–3,
-  the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
-  (Cheats, TAS Movies, the **TAStudio** piano-roll editor, the **Audio Mixer**, **Record
-  A/V**, Netplay, RetroAchievements, a read-only **ROM Info** browser, and the **Performance
-  Monitor** — opened as floating panels; on native, every tool panel also offers a **Detach**
-  button that pops it out into a real, separate OS window you can move to another monitor),
-  View (Settings, Theme, 8:7 Pixel Aspect,
-  Hide Overscan, Fullscreen, Window Size 1x–4x, Show FPS, Pause When Unfocused, Show
-  Menu Bar), Debug (the debugger overlay + per-chip panels), and Help (Keyboard
-  Shortcuts, About).
-- **Status bar** — ROM name, region, mapper, run-ahead depth, Running / Paused /
-  Netplay state, the current speed when not 100 %, and the FPS readout.
-- **Settings window** — a tabbed Display / Audio / Input / Advanced dialog (View →
-  Settings…) with a live master-volume slider + mute, per-APU-channel mutes, a gamepad
-  deadzone slider, live theme / pixel-aspect / overscan / FPS toggles, and a
-  Reset-to-Defaults button per section.
-- **Quality-of-life** — 25 %–300 % emulation-speed presets, hold-to-fast-forward (audio
-  muted) and single-frame advance while paused, a thumbnail save-state browser, integer
-  window-size presets (1x–4x), optional overscan cropping, optional pause-when-unfocused,
-  light / dark / system themes, a pause-dim "PAUSED" overlay, a recent-ROMs list (missing
-  files greyed out), controller hot-plug toasts, and a first-run Welcome modal.
+- **One master clock.** A single cycle counter drives the CPU, PPU and APU at the
+  region-exact ratios (3:1 NTSC and Dendy, 3.2:1 PAL). Every CPU cycle is clocked in
+  two halves with the PPU caught up to each, so events inside an instruction are
+  visible to the next access.
+- **6502.** All 256 opcodes including the unstable ones, per-cycle bus access,
+  exact interrupt polling, and OAM and DMC DMA through one unified model.
+- **2C02.** A per-dot pipeline, the cycle-resolution sprite-evaluation state
+  machine with its hardware overflow bug, and the rendering-time `$2007` behaviour.
+- **2A03.** The non-linear mixer, band-limited synthesis, the analog filter chain,
+  and expansion audio for VRC6, VRC7, MMC5, Namco 163, Sunsoft 5B and the FDS.
+- **Determinism.** The same seed, ROM and input give a bit-identical framebuffer
+  and audio, which is what makes save states, replays, regression tests and
+  rollback netplay correct by construction.
 
-## Default Controls
+### Cartridges
 
-Every binding is TOML-rebindable (and remappable in the in-app Settings); see the
-[controls guide](docs/user-guide/controls.md) for the full schema. USB gamepads
-auto-bind to player 1 (Xbox-style: South = A, West = B, plus Start, Back / Select, and
-the D-pad), and you can drag-and-drop a `.nes` / `.fds` onto the window to load it any time.
+- **191 mapper families**, written from the NESdev wiki and pinned by test ROMs,
+  unit tests and a commercial-ROM oracle. [`docs/mappers.md`](docs/mappers.md)
+  lists every family, its tier and its evidence.
+- **Self-flashing homebrew boards** (GTROM, UNROM 512) emulate their SST39SF040
+  flash chip, so games that save by rewriting their own ROM keep those saves.
+- **Battery saves** persist on desktop, Android and iOS.
+- **Famicom Disk System** with a user-supplied `disksys.rom`, and **UNIF** boards
+  mapped to their iNES numbers.
 
-### Gamepad
+### Playing
 
-| Action         | Player 1            | Player 2      |
-| -------------- | ------------------- | ------------- |
-| D-Pad          | Arrow keys          | W / A / S / D |
-| A / B          | Z / X               | Q / E         |
-| Start / Select | Enter / Right-Shift | P / R         |
+- **Netplay:** GGPO-style rollback for two to four players over UDP or browser
+  WebRTC, with a deployable signaling bundle in [`deploy/`](deploy/).
+- **RetroAchievements** on desktop, Android, iOS and the libretro core.
+- **Speed and pacing:** 25-300% speed, fast-forward, frame advance, rewind,
+  run-ahead, and display-synced, VRR or wall-clock pacing.
+- **Input:** USB gamepads with hot-plug and remapping, turbo, the Four Score,
+  Zapper, Arkanoid paddle, Power Pad, keyboards and mouse.
+- **Cheats:** a Game Genie encoder with a ~10,800-code database, and raw RAM
+  cheats.
 
-### System and tools
+### Creating and debugging *(opt-in features)*
 
-| Action                       | Key                | Action                  | Key       |
-| ---------------------------- | ------------------ | ----------------------- | --------- |
-| Pause / Resume               | Space              | Save / Load state       | F1 / F4   |
-| Fast-forward (hold)          | Tab                | Rewind (hold)           | F5        |
-| Frame-advance (while paused) | `\` (backslash)    | Reset / Power-cycle     | F2 / F3   |
-| Speed up / down / reset      | = / - / 0          | Open ROM                | F12       |
-| TAS record / play / branch   | F6 / F7 / F8       | Swap disk side (FDS)    | F9        |
-| Toggle menu bar              | M                  | Insert coin (Vs.)       | F10       |
-| Toggle debugger              | `` ` `` (backtick) | Fullscreen              | F11       |
-| Quit / exit fullscreen       | Esc                | Famicom microphone      | N (hold)  |
+- **TAStudio:** a piano-roll editor with a save-state greenzone, lag log,
+  markers and branches, and movie import from FCEUX, BizHawk and others.
+- **Debugger:** breakpoints on expressions and conditions, R/W/X watchpoints, a
+  trace logger, an event viewer, a hex editor, RAM search, a callstack, and
+  `ca65` / `cc65` source maps. The inspectors become editors on request.
+- **Lua 5.4 scripting:** memory and state access, per-frame and per-access
+  callbacks, an HUD, and host IPC for automation. See
+  [`docs/scripting.md`](docs/scripting.md).
+- **HD packs:** a Mesen-format loader with OGG audio, and a builder that authors
+  packs from the running game.
+- **A/V recording** to `.mp4` / `.mkv` through `ffmpeg`.
+
+### Display and audio
+
+- An NES-NTSC composite / S-video filter, a CRT and scanline shader stack, hqNx
+  and xBRZ upscalers, and a constrained RetroArch `.slangp` importer.
+- Custom `.pal` palettes, a generated NTSC palette, and a choice of analog filter
+  models.
+- An NSF / NSFe player through the real APU and expansion synths.
+- Every display option is off the core's path, so the emulated framebuffer is
+  unchanged by it.
+
+### Mobile
+
+- **Android:** a Jetpack Compose app with touch and hardware controllers,
+  the shared shader stack, save states, netplay, RetroAchievements and Lua.
+  Distributed through GitHub Releases. See [`docs/android.md`](docs/android.md).
+- **iOS / iPadOS:** a SwiftUI app on Metal with GameController support, iCloud
+  save sync and ReplayKit. Distributed through TestFlight. See
+  [`docs/ios.md`](docs/ios.md).
+
+Both apps run the same core as desktop, and both are free: RustyNES is
+permanently non-commercial ([ADR 0035](docs/adr/0035-rustynes-is-permanently-non-commercial.md)).
+
+---
+
+## Controls
+
+Every binding can be changed in Settings or in the TOML config; the
+[controls guide](docs/user-guide/controls.md) has the full list. USB gamepads bind
+to player 1 automatically.
+
+| Action | Player 1 | Player 2 |
+| --- | --- | --- |
+| D-pad | Arrow keys | W / A / S / D |
+| A / B | Z / X | Q / E |
+| Start / Select | Enter / Right Shift | P / R |
+
+| Action | Key | Action | Key |
+| --- | --- | --- | --- |
+| Pause | Space | Save / load state | F1 / F4 |
+| Fast-forward (hold) | Tab | Rewind (hold) | F5 |
+| Frame advance | `\` | Reset / power cycle | F2 / F3 |
+| Speed up / down / reset | = / - / 0 | Open ROM | F12 |
+| TAS record / play / branch | F6 / F7 / F8 | FDS disk side | F9 |
+| Menu bar | M | Vs. coin | F10 |
+| Debugger | `` ` `` | Fullscreen | F11 |
+| Quit | Esc | Famicom microphone | N (hold) |
+
+---
+
+## Accuracy
+
+| Suite | Result |
+| --- | --- |
+| **AccuracyCoin** | **144/144 (100.00%)**, read from RAM rather than the screen |
+| `nestest` | 0-diff against the Nintendulator log |
+| blargg `cpu_interrupts_v2` | 5/5, and the unstable-store tests 6/6 |
+| blargg APU (NTSC and PAL) | 11/11 and 10/10 |
+| blargg `apu_test` frame-counter probes | 10/10 |
+| `region_timing` | 4/4, including PAL's 3.2:1 ratio |
+| Holy Mapperel | every committed variant reports detail code `0000` |
+| Commercial-ROM oracle | 99 titles, SHA-256-pinned, byte-identical frames |
+
+The one known residual in the battery is `mmc3_test_2/4-scanline_timing`
+sub-test 3, a one-PPU-clock MMC3 reload timing that affects no AccuracyCoin
+entry and no commercial game. Every other known approximation is listed, with its
+evidence, in [`docs/accuracy-ledger.md`](docs/accuracy-ledger.md), and the
+per-suite detail is in [`docs/STATUS.md`](docs/STATUS.md).
+
+When a document and a passing test ROM disagree, the ROM wins: that is this
+project's definition of cycle-accurate.
+
+**Mapper tiers.** Of the 191 families, 160 are *accuracy-gated*: 51 Core and 109
+Curated, each backed by a test ROM, a commercial dump, or a precise register
+description with a synthetic fixture. The other 31 are *BestEffort*: their
+documentation is thin, and a CI gate keeps them out of every accuracy claim.
+
+---
+
+## Platforms
+
+| Platform | Status |
+| --- | --- |
+| Linux `x86_64`, Windows `x86_64`, macOS (Apple silicon) | Release binaries |
+| macOS (Intel), Linux ARM64 | Build from source |
+| WebAssembly | [Hosted](https://doublegate.github.io/RustyNES/) and buildable |
+| Android (arm64) | GitHub Releases (sideload) |
+| iOS / iPadOS | TestFlight |
+| RetroArch | `rustynes_libretro` core, published by the libretro buildbot |
+
+A GPU with a `wgpu` backend is required: Vulkan, Metal, DX12, or WebGPU / WebGL2 in
+the browser. The headless core runs a frame in about 4 ms on an Intel i9-10850K,
+about four times faster than real time; [`docs/performance.md`](docs/performance.md)
+has the measurements.
 
 ---
 
 ## Architecture
 
-RustyNES is a Cargo workspace of focused crates. Three load-bearing decisions, detailed
-in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs/scheduler.md):
+RustyNES is a Cargo workspace of focused crates. Three decisions carry the design,
+detailed in [`docs/architecture.md`](docs/architecture.md) and
+[`docs/scheduler.md`](docs/scheduler.md):
 
-1. **A shared master-clock timebase.** The CPU advances a `u64` master clock by the
-   region's `cpu_divider` per cycle; the PPU is caught up to `master_clock − ppu_offset`
-   in both halves of every access (APU and DMA share the same clock). This makes the
-   region-exact 3.2:1 PAL ratio and cycle-exact interrupt / DMA timing expressible, and
-   makes sub-instruction PPU events work naturally.
-2. **The Bus owns everything mutable.** `rustynes-core::Bus` holds the PPU, APU,
-   mapper, WRAM, controllers, and open-bus latch; the CPU borrows `&mut Bus` during
-   `tick()`. This single choice avoids the borrow-checker fight the alternative creates.
-3. **A one-directional workspace graph.** `rustynes-cpu` has no `rustynes-ppu` or
-   `rustynes-apu` dependency; each chip is fuzzable and benchmarkable in isolation.
+1. **One master clock.** Each CPU cycle runs in two halves around its bus access,
+   and the PPU, APU and DMA are caught up to each half.
+2. **The bus owns everything mutable.** It holds the PPU, APU, cartridge, work RAM
+   and controllers, and the CPU borrows it one instruction at a time. That single
+   choice avoids the borrow-checker fight of the alternative.
+3. **A one-directional dependency graph.** The chip crates are `no_std` and do not
+   depend on each other, so each can be fuzzed and benchmarked alone.
 
 <p align="center">
   <img src="images/RustyNES_Arch-Blueprint_2.png" alt="RustyNES Component Architecture Blueprint" width="800">
 </p>
 
-### Workspace crates
-
-| Crate                    | Role                                                         |
-| ------------------------ | ----------------------------------------------------------- |
-| `rustynes-cpu`           | Cycle-accurate 6502 / 2A03 CPU core                         |
-| `rustynes-ppu`           | Dot-level 2C02 PPU                                          |
-| `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
-| `rustynes-mappers`       | 174 mapper families + expansion audio + UNIF loader         |
-| `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
-| `rustynes-script`        | Sandboxed Lua 5.4 scripting engine (native `mlua`, wasm `piccolo`) |
-| `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
-| `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
-| `rustynes-cheevos`       | RetroAchievements `rcheevos` FFI (opt-in, native-only)      |
-| `rustynes-ra`            | Shared RetroAchievements session state (`RaClient`, native-only) |
-| `rustynes-libretro`      | Native Libretro API core wrapper (RetroArch)                |
-| `rustynes-gfx-shaders`   | Shared WGSL presentation shaders (desktop + Android renderers) |
-| `rustynes-hdpack`        | HD-pack loader + compositor + HD audio (shared desktop + mobile) |
-| `rustynes-mobile`        | UniFFI bridge for the mobile platforms (Android, and v1.9.0 iOS) |
-| `rustynes-android`       | Android JNI glue over the mobile bridge                      |
-| `rustynes-test-harness`  | Integration tests and the accuracy / commercial-ROM oracles |
-
-### Project layout
-
-```text
-crates/        Cargo workspace: the crates above
-docs/          Implementation specs, ADRs, the user guide,
-               STATUS.md (single source of truth), and release notes
-deploy/        Docker / compose for the browser-netplay signaling server + STUN/TURN
-ref-docs/      Deep-research NES hardware reference
-tests/         Integration tests + vendored CC0 / MIT / zlib test ROMs (no commercial ROMs)
-screenshots/   Committed commercial-game visual corpus + showcase montages
-scripts/       Regression-bisect + ROM-survey tooling
-fuzz/          cargo-fuzz harnesses
-```
-
----
-
-## Compatibility and Accuracy
-
-RustyNES demonstrates reference-grade emulation accuracy. The single validated
-scheduler is the master-clock core; the RAM-direct AccuracyCoin decoder over 144
-assigned tests is the authoritative source.
-
-| Suite                       | Result                                                                |
-| --------------------------- | --------------------------------------------------------------------- |
-| **AccuracyCoin**            | **100.00% (144/144)** — the 2026-09 upstream re-sync grew the battery to 144 assigned tests, and v2.6.18 closed the last of them (`Advanced Sprite Evaluation :: Frozen OAM2 Increment`); `KNOWN_FAILING` is now empty. Includes the older upstream PPU tests ("ALE + Read", "Hybrid Addresses"), via the promoted 2-cycle-ALE fetch model (v2.0.3, ADR 0030) |
-| nestest                     | 0-diff vs the Nintendulator golden log                                |
-| blargg `cpu_interrupts_v2`  | 5/5 strict · SH\* 6/6                                                  |
-| blargg `blargg_apu_2005`    | 11/11 NTSC — length counters + table, frame-IRQ flag and timing, clock jitter, length timing in both frame-counter modes, reset timing, length halt/reload ordering |
-| blargg `pal_apu_tests`      | 10/10 PAL — the region-calibrated rebuild of the same corpus, forced to PAL timing |
-| `region_timing`             | 4/4 (PAL **3.2:1**) · `$2007` Stress 170/170                          |
-| Commercial-ROM oracle       | 99 titles (60-ROM gate + 39-title survey), SHA-256-pinned, byte-identical |
-
-The commercial-ROM oracle is a **regression gate**, not a correctness check — a visual
-99-title survey is what catches rendering bugs. The wasm32 target shares the exact
-emulator core, so the browser build runs the same scheduler. The **sole strict
-expected-fail** is `mmc3_test_2/4` sub-test #3 (a 1-PPU-clock MMC3 reload-pending
-bracket that affects no AccuracyCoin score and breaks no commercial game). The full
-per-suite breakdown, the mapper coverage matrix, and the version policy live in
-**[`docs/STATUS.md`](docs/STATUS.md)**.
-
-v1.6.0's **off-axis accuracy** pass (Workstream D) was a pin-test-first audit that
-confirmed the cycle-accurate engine already models the dot/CPU-cycle-granular off-axis
-cluster — the DMC/OAM-DMA ↔ `$4016` / `$4017` controller-read double-clock / dropped-bit
-conflict, the `$2007` (PPUDATA) read-during-active-rendering window with its deferred
-state-machine reload and `v`-increment glitch, and the buggy sprite-overflow `n+m`
-evaluation with the three-group open-bus / MDR decay timer — all verified by committed
-oracles with no engine change. Those residuals were subsequently taken up by the
-**v2.0.0 "Timebase"** one-clock scheduler rewrite (ADR 0002 / ADR 0029) and the v2.1.0
-accuracy-remediation pass, which closed the MMC3 R1/R2 scanline-IRQ residual by design
-(the full disposition of every remaining approximation lives in
-[`docs/accuracy-ledger.md`](docs/accuracy-ledger.md)).
-
-**Everything added since the v1.0.0 core is additive and off-by-default** — each new
-workstream is a frontend tap or an opt-in feature flag, so the shipped / native /
-`no_std` / wasm builds stay **byte-identical** — with two deliberate exceptions to
-that byte-identity guarantee: the **v2.0.0** one-clock "Timebase" scheduler and the
-**v2.0.3** promotion of the 2-cycle-ALE PPU fetch model (ADR 0030), which together
-bring **AccuracyCoin to 100% (141/141)** — both newest upstream PPU tests, "ALE +
-Read" and "Hybrid Addresses", now pass on the shipped default.
-
-> A note on test counts: RustyNES is validated by closed-form test ROMs (AccuracyCoin,
-> nestest, blargg, mmc3_test, Holy Mapperel) and a commercial-ROM oracle, not by a
-> headline unit-test number. When a doc and a passing test ROM disagree, **the ROM
-> wins** — that is the project's definition of "cycle-accurate."
-
-RustyNES's accuracy claims are meant to be *checked*, not taken on faith: run the
-public suites yourself (AccuracyCoin, nestest, blargg, Holy Mapperel — see
-[Compatibility & Accuracy](#compatibility-and-accuracy)). Any comparison to
-another emulator is exactly that — a comparison against a reference RustyNES was
-measured against (e.g. Mesen2 / higan / ares — see the [Acknowledgments](#acknowledgments)) —
-and is **not** a claim that RustyNES is "better." For an honest
-account of where the project advances, diverges from, or independently re-derives
-NES emulation technique (and its license posture), see
-[`docs/originality-and-provenance.md`](docs/originality-and-provenance.md).
-
-### Super Mario Bros. on RustyNES
-
-The screenshot below is an early-milestone image — Super Mario Bros. at "first
-light," among the first commercial titles to render during development. It
-predates much of the current accuracy work and is kept as a representative
-gameplay shot, not a claim about any particular sub-system.
-
-<p align="center">
-  <img src="images/RustyNES-Screen_SMB_FirstLight.png" alt="Super Mario Bros. running on RustyNES" width="512">
-</p>
-
----
-
-## Performance
-
-The headless core is comfortably real-time. On an Intel i9-10850K (rustc 1.86,
-release), against the **16.639 ms NTSC frame deadline**:
-
-| Workload                          | Frame time | Headroom                  |
-| --------------------------------- | ---------- | ------------------------- |
-| `nestest` (static menu)           | 3.92 ms    | 4.25× realtime · 255 fps  |
-| `flowing_palette` (render-heavy)  | 2.49 ms    | 6.69× realtime · 402 fps  |
-
-The reproducible record (methodology, all benches, and the historical A/B) is in
-[`docs/benchmarks.md`](docs/benchmarks.md).
-
----
-
-## Platform Support
-
-| Platform            | Status  |
-| ------------------- | ------- |
-| **Windows x64**     | Primary (release binary) |
-| **Linux x64**       | Primary (release binary) |
-| **macOS ARM64**     | Primary (release binary; Apple silicon) |
-| **macOS x64**       | Supported (Intel; build from source) |
-| **WebAssembly**     | Primary (hosted demo + build) |
-| **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
-| **Linux ARM64**     | Supported (cross-compile) |
-| **Libretro Core**   | Supported (RetroArch via `rustynes-libretro`) |
-| **iOS / iPadOS**    | Supported (v1.9.x TestFlight; free App Store listing possible later) |
-
-### System requirements
-
-- **Rust 1.96 stable** (pinned via `rust-toolchain.toml`; auto-installed by `rustup`).
-- A GPU with a `wgpu`-supported backend (Vulkan / Metal / DX12, or WebGPU / WebGL2 in
-  the browser).
-- The optional `retroachievements` feature needs a C compiler for the vendored
-  rcheevos sources; the default build does not.
+| Crate | Role |
+| --- | --- |
+| `rustynes-cpu`, `rustynes-ppu`, `rustynes-apu` | The 6502, 2C02 and 2A03 |
+| `rustynes-mappers` | 191 mapper families, expansion audio, the UNIF loader |
+| `rustynes-core` | The bus, scheduler, console and save states |
+| `rustynes-frontend` | The `winit` + `wgpu` + `cpal` + `egui` application (`rustynes`) |
+| `rustynes-netplay` | Rollback netcode over UDP and WebRTC |
+| `rustynes-script` | Sandboxed Lua 5.4 |
+| `rustynes-cheevos`, `rustynes-ra` | RetroAchievements |
+| `rustynes-hdpack`, `rustynes-gfx-shaders` | HD packs and the shared WGSL shaders |
+| `rustynes-mobile`, `rustynes-android`, `rustynes-ios` | The mobile bridge and platform glue |
+| `rustynes-libretro` | The RetroArch core |
+| `rustynes-test-harness` | Integration tests and the accuracy oracles |
 
 ---
 
 ## Documentation
 
-| Document                                | Description                                                        |
-| --------------------------------------- | ----------------------------------------------------------------- |
-| [User guide](docs/user-guide/README.md) | Install, controls, save states + rewind, debugger, config, FAQ    |
-| [Project status matrix](docs/STATUS.md) | Per-suite pass count, mapper coverage, feature flags, version policy |
-| [Architecture](docs/architecture.md)    | System design and the load-bearing decisions                      |
-| [Scheduler](docs/scheduler.md)          | The master-clock lockstep model                                   |
-| [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
-| [Documentation handbook](https://doublegate.github.io/RustyNES/docs/) | The Material-for-MkDocs site rendering the subsystem specs + user guide (also on GitHub Pages) |
-| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — currently the audit line to the **v3.0.0 SuperStation One core** (v2.7.x core + frontend, v2.8.x libretro + RTL, v2.9.x re-audit + the board) |
-| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set, the v2.1.x "Fathom" line, and the current [v2.7.x](to-dos/plans/v2.7.x-core-frontend-audit-plan.md) → [v3.0.0](to-dos/plans/v3.0.0-superstation-core-plan.md) plans) + the reference-emulator research dives that fed them |
-| [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
-| [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
-| [MiSTer co-simulation](docs/mister.md) | The MiSTer programme, which ships at **v3.0.0**: a NEW NES core in SystemVerilog, written from public documentation in a sibling repository, with this emulator as its verification oracle. The rung ladder, the compare surfaces, and what each rung cannot verify |
-| [Accuracy ledger](docs/accuracy-ledger.md) | Known residuals in this emulator, including the ones the co-simulation ladder found **in the oracle rather than the DUT** — the first being NROM's PRG-RAM window, which this emulator provides and the board does not |
-
-### Hardware and subsystem specs
-
-| Component  | Location                                       |
-| ---------- | ---------------------------------------------- |
-| CPU (6502) | [docs/cpu-6502.md](docs/cpu-6502.md)           |
-| PPU (2C02) | [docs/ppu-2c02.md](docs/ppu-2c02.md)           |
-| APU (2A03) | [docs/apu-2a03.md](docs/apu-2a03.md)           |
-| Mappers    | [docs/mappers.md](docs/mappers.md)             |
-| Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
-| Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
-
-Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0038, including
-0028–0029 the v2.0.0 "Timebase" one-clock timebase + save-state/movie-format break,
-0030 the AccuracyCoin 2-cycle-ALE / octal-latch closure, 0031 the game-database
-must-not-override-mapper-controlled-state gate, 0032 the Vs. `DualSystem` desktop
-presentation, 0035 RustyNES is permanently non-commercial, 0036 the relicense to
-GPL-3.0-or-later as a derivative work, 0037 the provenance firewall extended to
-HDL for the MiSTer co-simulation programme, and 0038 the co-simulation
-interrupt-injection API). (The deeper engine-development audit logs are
-kept locally, outside the public repo.)
-
-The hosted GitHub Pages deployment serves **three** sections from one artifact: the
-playable WebAssembly demo at
-**[doublegate.github.io/RustyNES](https://doublegate.github.io/RustyNES/)**, the
-workspace API docs (rustdoc) at
-**[doublegate.github.io/RustyNES/api/](https://doublegate.github.io/RustyNES/api/)**,
-and the Material-for-MkDocs documentation handbook at
-**[doublegate.github.io/RustyNES/docs/](https://doublegate.github.io/RustyNES/docs/)**.
+| | |
+| --- | --- |
+| [User guide](docs/user-guide/README.md) | Installing, controls, save states, the debugger, configuration, FAQ |
+| [Documentation handbook](https://doublegate.github.io/RustyNES/docs/) | The subsystem specs and user guide as a website |
+| [API documentation](https://doublegate.github.io/RustyNES/api/) | Rustdoc for the whole workspace |
+| [Status](docs/STATUS.md) | Current state: per-suite results, the mapper matrix, feature flags |
+| [Changelog](CHANGELOG.md) | Every release, newest first |
+| [Hardware specs](docs/) | [CPU](docs/cpu-6502.md), [PPU](docs/ppu-2c02.md), [APU](docs/apu-2a03.md), [mappers](docs/mappers.md), [testing](docs/testing-strategy.md), [netplay](docs/netplay-webrtc.md) |
+| [Decisions](docs/adr/) | Architecture Decision Records |
+| [Libretro core](docs/libretro/WALKTHROUGH.md) | The RetroArch core and how to set it up |
+| [Accuracy ledger](docs/accuracy-ledger.md) | Every known approximation, with its evidence |
 
 ---
 
-## Current Release
+## Current release
 
-RustyNES's current release is **v2.9.5 "Caliper"** (2026-09-29) — every open accuracy item measured, then fixed or closed: four fixes red first (the `apu_test` frame-counter coincidence, the composite 2C02 scanline-0 sprite glitch, OAM DMA filling the PPU I/O latch, KS7032 at `$6000`), 49 unreferenced test ROMs gated, the MMC3 M2-edge filter lever tried and refuted, and a save-state epoch (`PPU_SNAPSHOT_VERSION` 11). Built on **v2.9.4 "Plumb"** (2026-09-29) — the records made true, and CI made to run what it only linted: v3.0.0 decided as the API major with a release-candidate core (ADR 0043), CI now running 63 feature-gated tests it never ran, the eight fuzz targets and a 70% line-coverage floor, the mapper tiers, store status and deferred-features catalogue corrected against the code, and the OAM-decay model recorded as derived from Mesen2. Built on **v2.9.3 "Handset"** (2026-09-29) — the old review threads closed and the mobile run prepared: every dependency moved to its newest release (egui 0.36 with wgpu 30, rcheevos 12.5.0), all 244 review threads left unanswered on PRs #7-#97 answered and the ten findings that still held fixed (Action 53 multicarts rebuilt to the NESdev spec, and a ROM header editor that no longer rewrites bytes you did not edit or saves mappers from 16 up as the wrong mapper), and the Android unit tests and the iOS renderer added to CI. Built on **v2.9.2 "Candidate"** (2026-09-28) — the full audit acted on, and the release-candidate pair: all 32 findings of a fifth audit have a verdict and 16 are fixed, save states keep the cartridge RAM of twelve board families they used to drop, the MiSTer core no longer loses an NMI raised inside a DMA, and both bitstreams are cut for the SuperStation One session. Built on **v2.9.1 "Hone"** (2026-09-27) — what the optimisation bars measure, and what clears them: the A/B tool had been timing the old code on both sides of every code comparison and is fixed, a two-screen Vs. cabinet saves about 9x faster, the off-die MiSTer build keeps CHR in its own SDRAM bank, and both bitstreams are pinned at fitter seed 2 and rebuild byte-identically. Built on **v2.9.0 "Survey"** (2026-09-26) — every audit re-checked, and the SuperStation One surveyed: a Power Cycle no longer erases your save, the off-die MiSTer build boots without the menu core, and 39 new audit findings are fixed or dispositioned. Built on **v2.8.4 "Tether"** (2026-09-26) — the MiSTer core's SDRAM build, made trustworthy: its controller now reads data on the edge the memory presents it (every off-die read would have been wrong on hardware, and only the new SDRAM timing constraints could see it), the power-up sequence and CAS-latency-3 reads follow the datasheet, the arbiter can no longer return the wrong byte or lose a write, the off-die bitstream builds from a script, both builds are swept and pinned at fitter seed 5, and the co-simulation ladder runs all 165 gates from a clean checkout. Built on **v2.8.3 "Rivet"** (2026-09-25) — the MiSTer core's reset, area and comments, measured: every reset is released on the clock that uses it and the timing analysis now checks each release, the CPU is about 4% smaller by two exact rewrites the fit report confirmed, four false comments are corrected, and the co-simulation ladder runs from a fresh checkout (164 of its 165 gates; the last needs a hand-built ROM no generator produces).
+RustyNES's current release is **v2.9.6 "Roster"** (2026-09-30) — seventeen mapper families written from their NESdev pages (174 → 191), GTROM promoted to Curated with a modelled flash chip whose saves persist, mapper 4's NES 2.0 submappers corrected (MMC6, NEC, MC-ACC, T9552), and the local commercial suites re-baselined after drifting unread since about v2.0.0. Built on **v2.9.5 "Caliper"** (2026-09-29) — every open accuracy item measured, then fixed or closed.
 
-v2.9.5 is the accuracy release: every open item in the accuracy ledger got an
-outcome. Four emulation fixes land, each with a test that failed first: blargg's
-`apu_test` frame-counter coincidence, the composite 2C02's odd-frame sprite
-pixel on scanline 0, OAM DMA filling the PPU's I/O latch, and KS7032's `$6000`
-window. **Save states from v2.9.4 and earlier do not load**, because the
-scanline-0 fix adds a byte of PPU state (`PPU_SNAPSHOT_VERSION` 11). 49
-committed test ROMs that no test ran are now gated. The MMC3 M2-edge filter
-lever was tried and refuted. The MiSTer RTL is unchanged, so its bitstreams are
-v2.9.2's.
+The per-release detail, back to v0.1.0, is in [`CHANGELOG.md`](CHANGELOG.md) and
+on the [Releases page](https://github.com/doublegate/RustyNES/releases).
 
-v2.9.4 changes no emulation behaviour. It records what v3.0.0 now is (the API
-major with a release-candidate core, ADR 0043) and the line of releases that
-leads there. CI now runs tests it had only been linting (63 behind non-default
-features), builds and runs the eight fuzz targets, and fails below 70% line
-coverage of the lib tests (71.66% on the CI runner). The records were re-checked
-against the code: the mapper tiers, the store status, the roadmaps and the
-deferred-features catalogue. The OAM-decay model is now recorded as derived from
-Mesen2, as its v2.1.4 commit had said.
-
-v2.9.3 prepares the mobile device run and closes old review threads. Every
-dependency moved to its newest release (egui 0.36 with wgpu 30, which now
-presents frames one refresh apart on the measured desktop). All 244 review
-threads left unanswered on PRs #7-#97 were checked against current code; ten
-still held and are fixed. Action 53 multicarts (mapper 28) are rebuilt to the
-NESdev spec. The ROM header editor now writes only the fields you change, and
-no longer saves mappers from 16 up as the wrong mapper. CI now runs the Android app's unit
-tests (on `main` pushes and on pull requests that touch the app or its UniFFI
-bridge) and compiles the iOS renderer on every pull request that changes code. The run
-sheet for the device run is `docs/mobile-v2.9.3-run-sheet.md`, with a
-partial emulator pre-run of the Android rows. **The device runs and the
-SuperStation One board session move after v3.0.0**, by the maintainer's
-decision (2026-09-29).
-
-v2.9.2 acts on a fifth, AI-written audit of both repositories: all 32
-findings have a verdict and their evidence in
-`docs/audits/v2.9.2-full-audit-disposition.md`, and 16 are fixed, each pinned
-by a test that failed first. The largest find was one the report never made:
-save states dropped the cartridge RAM of twelve board families, and a test now
-round-trips the RAM of every mapper the emulator supports. A netplay peer can
-no longer make a session allocate memory it names, an unplugged gamepad
-releases its buttons, and opposing D-pad directions cancel, as they do on real
-hardware. The MiSTer CPU no longer loses an NMI raised inside a DMA. Both
-bitstreams are re-swept (seed 2 again), compile byte-identically twice, and
-pass the co-simulation ladder (173 gates on-die, 174 off-die, one expected
-failure each); they are the pair the SuperStation One session runs. The full
-`--features test-roms` suite passes 2,867 tests.
-
-v2.9.1 is the optimisation release, and it began by fixing the tool that
-judges optimisations: `scripts/perf/ab_check.sh` had been timing the old code
-on both sides of every code comparison. Every earlier rejection that could be
-rebuilt was measured again; three verdicts were wrong, and the dead NMI edge
-detector's per-dot call, 4-5% on palette-heavy frames, goes at v3.0.0 with the
-rest of that code. A two-screen Vs. cabinet now saves about 9x faster. The
-MiSTer core keeps CHR and PRG in separate SDRAM banks off-die, runs its whole
-co-simulation ladder in one pass (171 gates on-die, 172 off-die, one expected
-failure each), and pins fitter seed 2 after an eight-seed sweep of each build,
-with two clean compiles of each byte-identical. The full `--features
-test-roms` suite passes 2,812 tests.
-
-v2.9.0 re-ran all four audits against the tree v2.7.x and v2.8.x left: 139
-ledger rows re-verified with none regressed, and 39 new findings fixed or
-dispositioned (`docs/audits/`). The worst: a Power Cycle erased the battery
-save, a crafted HD pack or BPS patch could crash the app or exhaust memory,
-Lua scripts could escape their instruction budget through finalizers and
-pattern matching, a failed save-state load (every RetroArch load among them)
-could leave a half-restored machine, and the off-die MiSTer build lost ROM
-bytes and hung under `bootcore=`. AccuracyCoin 144/144 and nestest pass, the
-full `--features test-roms` suite passes 2,811 tests, and the co-simulation
-passes 171 gates on-die and 172 off-die with one expected failure each. **No
-hardware has run any bitstream.** v2.8.4 closed the v2.8.x line with the
-MiSTer core's off-die (SDRAM) build, v3.0.0's secondary bitstream. v2.8.3 released every reset on the clock
-that uses it and made the CPU about 4% smaller, v2.8.2
-corrected the core's on-die RTL (and found the emulator's MMC1 wrong),
-v2.8.1 closed the libretro half of the line, and v2.8.0
-made the libretro core unwind and contain a panic at its own boundary, and
-v2.7.5 closed the v2.7.x audit line: the core and frontend ledgers have no
-open row. Desktop, Android and iOS all keep battery
-saves. v2.7.4's mobile changes have a device checklist
-(`docs/mobile-v2.7.4-device-checklist.md`); this repository records no run of
-it yet. Built on **v2.7.3 "Hearth"**, which made the desktop keep battery
-saves and closed the Lua sandbox's escapes, **v2.7.2 "Bankroll"**, which
-completed cartridge memory in the core, and **v2.6.23 "Pulse"**, which closed
-the CHR-during-rendering divergence in the MiSTer sibling.
-
-| Measure | Value |
-|---|---|
-| AccuracyCoin | **144/144 (100.00%)**, RAM decoder — battery grew to 144 assigned tests at the 2026-09 re-sync, all closed as of v2.6.18 |
-| nestest | 0-diff against the reference log |
-| Mapper families | **174** — 51 Core, 95 Curated, 28 BestEffort |
-| Co-simulation suite | see `docs/STATUS.md` -- the count moves every release and a number transcribed here goes stale silently |
-| MiSTer bitstream | published for Cyclone V, timing closed at every corner |
-| MiSTer commercial rendering | six titles, one per supported board (NROM from rung 5, plus rung 7's MMC1, UxROM, CNROM, MMC3 and AxROM), each **byte-identical** to this emulator over all 61,440 pixels — [the montage](screenshots/mister-montage.png) |
-
-**The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached — the bring-up, planned on v2.9.2's release-candidate bitstreams, moved after v3.0.0 by the maintainer's decision (2026-09-29; see [ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)'s amendment); a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
-
-- **Download:** [GitHub Releases](https://github.com/doublegate/RustyNES/releases) — desktop binaries for Linux, macOS (aarch64) and Windows, plus the MiSTer `.rbf`.
-- **Try it in a browser:** <https://doublegate.github.io/RustyNES/>
-- **Per-release detail:** [`CHANGELOG.md`](CHANGELOG.md) — every release back through v2.0.0 "Timebase" and the v1.x line.
-- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — per-suite pass counts and the mapper matrix.
-- **Version policy and the forward table:** [`VERSION-PLAN.md`](VERSION-PLAN.md).
+---
 
 ## Roadmap
 
-The active line runs to **v3.0.0 — the SuperStation One core**
-([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)). Three minor lines come
-first, each acting on audits in [`docs/audits/`](docs/audits/README.md): **v2.7.x**
-the core and frontend audits, **v2.8.x** the libretro and RTL audits and the
-off-die SDRAM build, **v2.9.x** a re-audit, the final seed sweeps and the bring-up
-on the board. Each line works from its audit reports as well as its plan: the
-reports hold the detail the plans compress. The MiSTer core itself is a **new** NES
-core in SystemVerilog, written from public hardware documentation in the sibling
-`RustyNES_MiSTer` repository, with this emulator as its **verification oracle**.
+The line runs to **v3.0.0**, the API major with a release-candidate MiSTer core
+([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
+Before it: more mapper families, platform features that are already designed,
+performance work, and a final re-audit. v3.0.0 removes the APIs deprecated since
+v2.7.5 ([ADR 0042](docs/adr/0042-v3-removes-the-v2-7-5-deprecations-and-the-dead-nmi-edge-detector.md)).
+Verifying the MiSTer core on hardware comes after it, in v3.x.
 
-**RustyNES is not being ported to FPGA and cannot be** — a MiSTer core is
-SystemVerilog compiled by Quartus into a Cyclone V bitstream, and high-level
-synthesis of a cycle-accurate emulator's control flow does not produce usable
-hardware. What is buildable is a new implementation verified against this one,
-and `crates/rustynes-cosim` is the boundary: a narrow C ABI a Verilator
-testbench links, plus a `nes_golden_export` CLI emitting golden traces.
-
-Progress is a **rung ladder**, and a rung may not open until the one below is
-green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
-interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
-hardware bring-up, rung 7 mappers. **Rungs 0-5 are closed** — the 6502, the
-bus and interrupts, the 2C02, the 2A03, and AccuracyCoin parity, with the status
-vector identical entry for entry across all 146 entries (the figures rung 5
-closed on, at v2.6.5). The catalog is **149 rows** and the ladder **152 gates
-green, 0 failed, 1 expected failure** as of v2.6.21 — the expected one being a
-documented CHR-during-rendering divergence, registered so that it fails the
-suite if it ever starts passing. The console compiles to a Cyclone V bitstream with timing
-closed at every corner, and that bitstream is published. **Rung 6 is open**: a SuperStation One is in hand, and the maintainer moved the
-bring-up after v3.0.0 (2026-09-29) — but **no hardware has run any bitstream yet**,
-so nothing about a booting core, a synced display, audible audio or a working pad
-is claimed. Every rung is labelled in
-[`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
-because 144/144 on AccuracyCoin is not the same as "matches silicon", and a rung
-verified only against this emulator inherits whatever this emulator has wrong.
-
-**Rung 5 has already shown why that caveat is not decorative.** A `cpu_bus`
-module written from the wiki disagreed with this emulator at `$6000-$7FFF`: an
-NROM board decodes nothing there and reads open bus, while RustyNES allocates
-8 KiB of PRG-RAM unconditionally. The wiki names that emulator default as a
-problem and lists games that crash on it. **The DUT is the more accurate of the
-two**, and the finding is recorded in
-[`docs/accuracy-ledger.md`](docs/accuracy-ledger.md) rather than fixed inside a
-co-simulation step — it changes shipped behaviour on every iNES NROM cartridge.
-
-**The emulation core does change on this line**: v2.7.x fixes what the core audit located (save-state input validation, battery-save
-plumbing, mapper gaps). Each fix lands behind a test that fails first, and
-AccuracyCoin 144/144 and nestest 0-diff are re-run on every such release rather
-than assumed.
-
-Two risks are accepted in writing rather than discovered later: `NES_MiSTer`
-scored 121/125 on AccuracyCoin when that was last measured here, and real Famicom
-AV hardware scores about the same, so there is no published accuracy headroom and
-**the core may be declined as a duplicate** — a risk that grew when the incumbent
-took AccuracyCoin-driven commits in September 2026, so v2.9.2 re-measures it on
-the same corpus before deciding anything (Retro Remake / openFPGA are planned routes, not
-contingencies); and **the oracle can be wrong**.
-
-A **free** mobile store listing (Google Play / F-Droid / App Store) remains a
-possible later, unversioned step with **no** monetization attached (ADR 0035).
-Per-release scope beyond the current step is planning, not a shipped promise.
-
-The longer forward arc lives as research-grounded design plans in
-[`to-dos/plans/`](to-dos/plans/README.md); see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)
-for the full roadmap and [`docs/STATUS.md`](docs/STATUS.md) for the current state.
+The full plan is [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md), with one plan per
+release in [`to-dos/plans/`](to-dos/plans/README.md). A free mobile store listing
+may follow later, with no monetization of any kind.
 
 ---
 
-<p align="center">
-  <img src="screenshots/montage.png" alt="A montage of commercial NES titles running on RustyNES" width="800">
-</p>
+## The MiSTer core
+
+A sibling project writes a **new** NES core in SystemVerilog for the MiSTer FPGA
+platform, from public hardware documentation, and uses this emulator as its
+verification oracle through `crates/rustynes-cosim`. RustyNES itself is not being
+ported to an FPGA: what can be built is a new implementation checked against this
+one, cycle by cycle.
+
+Its co-simulation ladder covers the 6502, the bus and interrupts, the 2C02, the
+2A03, AccuracyCoin parity and six mapper boards. Each release attaches a timing-closed
+bitstream. **No hardware has run any bitstream yet**, so a booting core, a synced
+display, audible sound and a working pad are not claimed. The details, and what
+each rung can and cannot verify, are in [`docs/mister.md`](docs/mister.md).
 
 <p align="center">
-  <img src="screenshots/mister-montage.png" alt="The same six titles rendered by the RustyNES_MiSTer RTL under Verilator, each byte-identical to this emulator" width="800">
+  <img src="screenshots/mister-montage.png" alt="Six commercial titles rendered by the MiSTer core's RTL under Verilator, each byte-identical to this emulator" width="800">
   <br>
-  <sub><b>The same console, in SystemVerilog.</b> Six commercial cartridges, one per supported board, rendered by the
-  <a href="docs/mister.md">MiSTer core's RTL</a> under Verilator — each one <b>byte-identical to this emulator</b> over all
-  61,440 pixels. Pre-palette output, coloured by the renderer. <b>No hardware has run it.</b></sub>
+  <sub>Six commercial cartridges, one per supported board, rendered by the MiSTer core's RTL under
+  Verilator, each <b>byte-identical to this emulator</b> over all 61,440 pixels. <b>No hardware has run it.</b></sub>
 </p>
+
+---
 
 ## Contributing
 
-Contributions of all kinds are welcome — code, testing, documentation, and design.
-Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) for the quality-gate contract, the
-conventional-commit format, and the chip-behavior-change rule (a chip change touches
-both the code and its `docs/<subsystem>.md` in the same PR).
-
-### Quick contribution workflow
+Contributions of every kind are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md)
+explains the quality gates, the Conventional Commit format, and the rule that a
+change to chip behaviour updates its `docs/<subsystem>.md` in the same pull request.
 
 ```bash
-# 1. Fork and clone, then create a feature branch
-git checkout -b feat/my-feature
-
-# 2. Make changes and run the quality gates
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
-
-# 3. Commit using conventional commits, then push and open a PR
-git commit -m "feat(cpu): implement <thing>"
-git push origin feat/my-feature
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-The four quality gates (`fmt`, `clippy`, `doc`, and the test suite) all run in CI and
-must be green. See [GitHub Discussions](https://github.com/doublegate/RustyNES/discussions)
-if you need guidance.
+Questions are welcome in
+[GitHub Discussions](https://github.com/doublegate/RustyNES/discussions).
 
 ---
 
@@ -891,123 +407,68 @@ if you need guidance.
 
 RustyNES is licensed **[GPL-3.0-or-later](LICENSE)**.
 
-**Why GPLv3, and provenance.** RustyNES is a **derivative work** of GPL-licensed NES
-emulators: it incorporates code derived from **Mesen2** (GPL-3.0-or-later) and, for
-several mappers and the FDS drive model, from **puNES**, **FCEUX**, and **Nestopia UE**
-(GPL-2.0-or-later). An earlier version of this project incorrectly described that code
-as "oracle cross-checks" and licensed it MIT/Apache-2.0; that was wrong. Following a
-NESdev community review, the project is relicensed GPL-3.0-or-later and the derivation
-is credited per subsystem in **[`docs/originality-and-provenance.md`](docs/originality-and-provenance.md)**
-and **[`NOTICE`](NOTICE)** (see also ADR 0036). Contributions are accepted under
-GPL-3.0-or-later.
+It is a **derivative work** of GPL-licensed NES emulators: it incorporates code
+derived from **Mesen2** (GPL-3.0-or-later) and, for a few subsystems, from
+**puNES**, **FCEUX** and **Nestopia UE** (GPL-2.0-or-later). An earlier version
+described that code as "oracle cross-checks" and licensed it MIT/Apache-2.0,
+which was wrong; after a NESdev community review the project was relicensed and
+every derivation credited in
+[`docs/originality-and-provenance.md`](docs/originality-and-provenance.md) and
+[`NOTICE`](NOTICE) ([ADR 0036](docs/adr/0036-relicense-gplv3-derivative-work.md)).
 
-**AI-assistance disclosure.** RustyNES is heavily AI-assisted software. That does not
-change the above: code an LLM reproduces from GPL sources is still GPL-derived, and the
-maintainer is responsible for what lands in the tree — which is why the provenance is
-now stated plainly rather than scrubbed.
+How that happened, and the rules that keep it from recurring, are public:
+[`docs/provenance-failure-postmortem.md`](docs/provenance-failure-postmortem.md)
+and [`docs/ai-emulator-provenance-guardrails.md`](docs/ai-emulator-provenance-guardrails.md).
+Reference emulators are black-box oracles: their output may be compared, and their
+source is never read.
 
-**Reference firewall (so it does not recur).** The failure that led to the relicense —
-an AI reproducing reference-emulator source despite a black-box instruction, then later
-scrubbing the honest "ported from" comments — is documented as a forensic post-mortem
-([`docs/provenance-failure-postmortem.md`](docs/provenance-failure-postmortem.md)) and
-distilled into a preventive, console-agnostic ruleset,
-**[`docs/ai-emulator-provenance-guardrails.md`](docs/ai-emulator-provenance-guardrails.md)**
-(themed PDFs of both in [`ref-docs/`](ref-docs/)). It is the project's top development
-rule, ingested into `AGENTS.md`: reference emulators are **black-box oracles** whose
-*output* may be observed but whose *source* is never read or reproduced; the local
-`ref-proj/` reference-emulator clone has been **removed from the repo and stays
-gitignored** so that source is out of reach by design; hardware behavior is implemented
-from public documentation and test ROMs; and any genuine derivation is attributed and
-license-checked rather than laundered. The guardrails are shared as community
-best-guidance for other AI-assisted emulator projects.
-
-**Incorporated permissive components** (all GPL-compatible, notices in `NOTICE`):
-emu2413 (MIT), TriCNES (MIT), the optional `crates/rustynes-cheevos` crate's vendored
-[RetroAchievements `rcheevos`](https://github.com/RetroAchievements/rcheevos) (MIT),
-blip_buf (LGPL-2.1-or-later), and the bundled fonts.
-
-**Test ROMs** under `tests/roms/` are individually CC0, MIT, or zlib licensed. **No
-commercial Nintendo ROMs are included, and they will never be bundled** — dumps for the
-commercial-ROM oracle are the user's responsibility and must come from cartridges they
-legally own.
+Permissive components (emu2413, TriCNES, `rcheevos`, blip_buf and the bundled
+fonts) are credited in `NOTICE`. The test ROMs under `tests/roms/` are CC0, MIT or
+zlib. **No commercial ROMs are included**: dumps for the commercial-ROM oracle must
+come from cartridges you own.
 
 ---
 
 ## Acknowledgments
 
-RustyNES stands on the shoulders of giants:
-
-- The **[Nesdev wiki](https://www.nesdev.org/wiki/)** community for decades of hardware
-  documentation and forum research.
-- **[Mesen2](https://github.com/SourMesen/Mesen2)** (GPL-3.0-or-later) — the primary
-  derivation source. RustyNES is a derivative work and incorporates code derived from it
-  (CPU unstable-store opcodes, the PPU sprite-evaluation / OAM model, ~15 mapper boards,
-  the Bisqwit NTSC tables, and EEPROM / UNIF / debug-symbol / PGO code).
-  **[higan](https://github.com/higan-emu/higan)** and
-  **[ares](https://github.com/ares-emulator/ares)** set the accuracy bar and serve as
-  behavioral / trace oracles.
+- The **[NESdev wiki](https://www.nesdev.org/wiki/)** community, for decades of
+  hardware documentation and research.
+- **[Mesen2](https://github.com/SourMesen/Mesen2)**, the primary derivation source,
+  and **[higan](https://github.com/higan-emu/higan)** and
+  **[ares](https://github.com/ares-emulator/ares)**, which set the accuracy bar.
 - **[puNES](https://github.com/punesemu/puNES)**,
-  **[FCEUX](https://github.com/TASEmulators/fceux)**, and
-  **[Nestopia UE](https://github.com/0ldsk00l/nestopia)** (GPL-2.0-or-later) — derivation
-  for specific subsystems: the puNES FDS drive-timing table, the FCEUX / puNES JV001 /
-  mapper-147 code, and the Nestopia FME-7 model.
-- **[TetaNES](https://github.com/lukexor/tetanes)** for the Bus-owns-everything
-  architecture postmortem and Rust patterns.
-- **[blargg](https://wiki.nesdev.org/w/index.php/Emulator_tests)**, kevtris' nestest,
-  **[Tepples' Holy Mapperel](https://github.com/pinobatch/holy-mapperel-build)**, and
-  **[100thCoin's AccuracyCoin](https://github.com/100thCoin/AccuracyCoin)** as the
-  closed-form definition of "cycle-accurate" used by this project.
-- **[RetroAchievements](https://retroachievements.org/)** and the
-  **[`rcheevos`](https://github.com/RetroAchievements/rcheevos)** library that powers
-  the achievement integration.
-- **[emu2413](https://github.com/digital-sound-antiques/emu2413)** (Mitsutaka
-  Okazaki, MIT) — the YM2413 / OPLL model behind VRC7 audio — and
-  **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT), the
-  cycle-accurate C# emulator (a detailed sub-cycle CPU/PPU/APU/DMA state machine)
-  whose PPU / DMA models RustyNES ports (MIT-licensed, its
-  source vendored in-repo with attribution) and also uses as a golden oracle.
-  **GeraNES** (GPL-3.0-only) served as a behavioral oracle — consulted, not incorporated.
-- The community CRT shaders and NTSC filters whose *looks* RustyNES independently
-  reimplements — **CRT-Royale** (TroggleMonkey), **crt-guest-advanced** (guest.r),
-  **Sony Megatron** (MajorPainInTheCactus),
-  **[NTSC-CRT](https://github.com/LMP88959/NTSC-CRT)** (EMMIR), and **Bisqwit**'s
-  NES composite model — plus the **Press Start 2P** (OFL) and **Font Awesome**
-  fonts. Full attribution and the complete license posture are in
-  [`NOTICE`](NOTICE).
+  **[FCEUX](https://github.com/TASEmulators/fceux)** and
+  **[Nestopia UE](https://github.com/0ldsk00l/nestopia)**, for specific subsystems.
+- **[TetaNES](https://github.com/lukexor/tetanes)**, for the bus-owns-everything
+  lesson.
+- **blargg**, kevtris' **nestest**, Tepples' **[Holy Mapperel](https://github.com/pinobatch/holy-mapperel-build)**
+  and 100thCoin's **[AccuracyCoin](https://github.com/100thCoin/AccuracyCoin)**, which
+  define "cycle-accurate" here.
+- **[RetroAchievements](https://retroachievements.org/)** and
+  **[`rcheevos`](https://github.com/RetroAchievements/rcheevos)**.
+- **[emu2413](https://github.com/digital-sound-antiques/emu2413)** (VRC7 audio) and
+  **[TriCNES](https://github.com/100thCoin/TriCNES)** (PPU and DMA models).
+- The shader authors whose looks RustyNES reimplements: CRT-Royale, crt-guest-advanced,
+  Sony Megatron, [NTSC-CRT](https://github.com/LMP88959/NTSC-CRT) and Bisqwit's
+  composite model.
 
----
+Full attribution is in [`NOTICE`](NOTICE).
 
-## Citation
-
-If you use RustyNES in academic research, please cite:
+### Citation
 
 ```bibtex
 @software{rustynes2026,
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.6.21},
   url     = {https://github.com/doublegate/RustyNES},
-  note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
-             AccuracyCoin 100\% (144/144), nestest 0-diff; 174 mapper families,
-             Famicom Disk System, Vs./PlayChoice-10 RGB, rollback netplay,
-             RetroAchievements, a TAStudio piano-roll TAS editor with .fm2/.bk2
-             movie interop, and a Mesen2-class debugger; pure-Rust
-             winit/wgpu/cpal/egui frontend with a WebAssembly build}
+  note    = {Cycle-accurate NES emulator; AccuracyCoin 144/144, nestest 0-diff}
 }
 ```
 
----
-
 <p align="center">
-  <strong>Built with Rust. Powered by passion for retro gaming.</strong><br>
-  <sub>Preserving video game history, one frame at a time.</sub>
-</p>
-
-<p align="center">
-  <a href="#quick-start">Get Started</a> ·
-  <a href="https://doublegate.github.io/RustyNES/">Play in Browser</a> ·
+  <a href="#quick-start">Get started</a> ·
+  <a href="https://doublegate.github.io/RustyNES/">Play in the browser</a> ·
   <a href="CONTRIBUTING.md">Contribute</a> ·
-  <a href="docs/">Documentation</a> ·
   <a href="https://github.com/doublegate/RustyNES/discussions">Discuss</a>
 </p>

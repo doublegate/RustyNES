@@ -2131,7 +2131,9 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
 ## Battery saves (`.sav`, native, v2.7.3)
 
 A cartridge's battery-backed RAM — the in-game save — is kept in
-`<data_dir>/battery/<rom-sha256>.sav`, the raw bytes of `Nes::sram()`. Before
+`<data_dir>/battery/<rom-sha256>.sav`, the raw bytes of `Nes::save_data()`
+(`sram()` on every board except the self-flashable GTROM and UNROM 512, whose
+save is their flash image; v2.9.6). Before
 v2.7.3 the desktop kept no such file: an in-game save survived only inside a
 save state. The module is [`battery_save`](../crates/rustynes-frontend/src/battery_save.rs).
 

@@ -187,9 +187,14 @@ fn best_effort_set_is_nonempty_and_matches_classifier() {
     // 26 -> 28 in v2.3.4: mapper 154 (NAMCOT-3453) and 243 (Sachen SA-020A).
     // Both have a staged dump that boots, but neither dump is redistributable,
     // so neither can be oracle-gated and both stay BestEffort.
+    //
+    // 28 -> 31 in v2.9.6 "Roster": 111 (GTROM) left for Curated, and 47, 121,
+    // 191 and 194 arrived, whose NESdev pages give only Disch's notes or
+    // "probably" masks. The submapper-level BestEffort variants (4.3 MC-ACC,
+    // 91.1, 176.2) are not counted here: this sweep classifies submapper 0.
     assert_eq!(
         ids.len(),
-        28,
+        31,
         "BestEffort family count changed to {} — if intentional, update this \
          assertion and docs/mappers.md; if not, a tier arm regressed",
         ids.len()

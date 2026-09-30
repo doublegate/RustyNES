@@ -48,6 +48,7 @@ cargo build --release -p rustynes-frontend >/dev/null
 
 # Fresh perf-logs dir so we can pick the new file deterministically.
 mkdir -p perf-logs
+# shellcheck disable=SC2012 # perf-logs/ holds only this tool's perf-*.csv names
 BEFORE="$(ls -1 perf-logs/ 2>/dev/null | wc -l)"
 
 # v2.3.3 — snapshot the config we are ABOUT to run with, so the emitted
@@ -105,7 +106,9 @@ kill "$APP_PID" 2>/dev/null || true
 wait "$APP_PID" 2>/dev/null || true
 trap - EXIT
 
+# shellcheck disable=SC2012 # perf-logs/ holds only this tool's perf-*.csv names
 NEWEST="$(ls -1t perf-logs/perf-*.csv 2>/dev/null | head -1 || true)"
+# shellcheck disable=SC2012 # perf-logs/ holds only this tool's perf-*.csv names
 AFTER="$(ls -1 perf-logs/ 2>/dev/null | wc -l)"
 if [[ -z "$NEWEST" || "$AFTER" -le "$BEFORE" ]]; then
     echo "perf_capture: no new perf-log CSV produced (did the window open?)" >&2

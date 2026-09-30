@@ -3227,8 +3227,14 @@ impl Ppu {
         let val = if a < 0x2000 {
             bus.ppu_read(a)
         } else {
-            // Mirror $3000-$3EFF to $2000-$2EFF.
-            let nt_addr = if a >= 0x3000 { a - 0x1000 } else { a };
+            // Mirror $3000-$3EFF to $2000-$2EFF, unless the cartridge has RAM
+            // there (v2.9.6: GTROM, UNROM 512 four-screen). Asked only for a
+            // `$3xxx` address, which rendering never produces.
+            let nt_addr = if a >= 0x3000 && !bus.nametable_unfolded() {
+                a - 0x1000
+            } else {
+                a
+            };
             if let Some(v) = bus.peek_nametable(nt_addr) {
                 v
             } else {
@@ -3290,7 +3296,11 @@ impl Ppu {
         if a < 0x2000 {
             bus.ppu_write(a, value);
         } else {
-            let nt_addr = if a >= 0x3000 { a - 0x1000 } else { a };
+            let nt_addr = if a >= 0x3000 && !bus.nametable_unfolded() {
+                a - 0x1000
+            } else {
+                a
+            };
             // Give the mapper a chance to absorb the write (ExRAM
             // nametables, fill-mode drops, etc.). If declined, write CIRAM.
             if !bus.write_nametable(nt_addr, value) {

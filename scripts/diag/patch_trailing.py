@@ -1,4 +1,3 @@
-import re
 import sys
 
 filepath = sys.argv[1]

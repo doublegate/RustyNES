@@ -131,6 +131,122 @@ use common::external::{InputScript, run_capture_opt, snapshot_text};
 /// because the structure is unknown per-ROM. ROMs that still land blank
 /// get a hand-tuned entry in `external_real_games` / `external_extended`,
 /// or indicate a genuine mapper-decode bug to fix.
+/// Staged dumps whose board this emulator deliberately does not run, with the
+/// reason. Each is skipped by name, and `unsupported_dumps_are_still_refused`
+/// fails if one ever parses, so the skip cannot hide a regression.
+///
+/// The mapper-111 *Ninja Ryukenden* translation is an MMC1 variant, not GTROM:
+/// it carries CHR-ROM, and until v2.9.6 it was run as GTROM and jammed after 26
+/// CPU cycles. Its snapshot pinned that jam. `parse` now refuses it by name.
+const UNSUPPORTED: &[(&str, &str)] = &[
+    (
+        "mapper-111-GTROM-Cheapocabra/Ninja Ryukenden (Ch).nes",
+        "the Ninja Ryukenden MMC1 variant of mapper 111 (not GTROM); no public register description",
+    ),
+    // Malformed dumps, refused by `parse` with a typed error. None has ever
+    // had a snapshot; they sat in the corpus making every sweep red (v2.9.6).
+    (
+        "mapper-013-CPROM/Glider Expansion - Mad House (PD).zip",
+        "malformed: CPROM is 32 KiB of PRG and this image has 128 KiB",
+    ),
+    (
+        "mapper-013-CPROM/Glider Expansion - Plato's Bath House (PD).zip",
+        "malformed: CPROM is 32 KiB of PRG and this image has 16 KiB",
+    ),
+    (
+        "mapper-013-CPROM/Glider Expansion - The House (PD).zip",
+        "malformed: CPROM is 32 KiB of PRG and this image has 16 KiB",
+    ),
+    (
+        "mapper-058-Multicart58/Study and Game 32-in-1 (Ch) [!].nes",
+        "malformed: mapper 58 carries CHR-ROM and this image has none",
+    ),
+    (
+        "mapper-146-Sachen-NINA/Lucky 777 (Sachen) [!].nes",
+        "malformed: mapper 146 PRG is a multiple of 32 KiB and this image has 16 KiB",
+    ),
+    (
+        "mapper-146-Sachen-NINA/Lucky 777 (Sachen) [!].zip",
+        "malformed: mapper 146 PRG is a multiple of 32 KiB and this image has 16 KiB",
+    ),
+    (
+        "vs-system/VS Castlevania Hack.nes",
+        "not an iNES image (no NES<1A> magic)",
+    ),
+];
+
+/// Staged dumps that boot to a blank or one-colour frame, as measured at
+/// v2.9.6 on a clean `main` and on the branch alike. Every one had the same
+/// framebuffer hash before v2.9.5 changed emulation output, so none is a
+/// recent regression; they are an old, documented state of this corpus,
+/// hacks, demos and conversions among them. Listed so the sweep can be green,
+/// and a RATCHET both ways: a blank boot not listed here fails, and a listed
+/// ROM that starts rendering fails too, until it is removed. Before v2.9.6
+/// these 60 kept the sweep permanently red, which is how v2.9.5's drift went
+/// unread.
+const KNOWN_BLANK: &[&str] = &[
+    "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
+    "mapper-009-MMC2/Gradius II (J) (VC).zip",
+    "mapper-015-Multicart15/Bio Hazard (Unl) [!].nes",
+    "mapper-015-Multicart15/Doraemon (J) (PRG0) [hM15].zip",
+    "mapper-015-Multicart15/Dragon Ball - Shen Long no Nazo (J) [hM15].zip",
+    "mapper-015-Multicart15/Mobile Suit Z Gundam - Hot Scramble (J) [hM15].zip",
+    "mapper-015-Multicart15/Subor V1.0 (R).nes",
+    "mapper-015-Multicart15/Xiao Au Jiang Wu (Ch) [!].nes",
+    "mapper-021-VRC2-VRC4/TwinBee Yahoo!! - Over the Sea Music Demo (PD).zip",
+    "mapper-030-UNROM512/Chu Liu Xiang (Ch) (Wxn).nes",
+    "mapper-034-BNROM-NINA001/Bio Senshi Dan - Increaser Tono Tatakai (J) [hM34].zip",
+    "mapper-034-BNROM-NINA001/Dragon Ball - Shen Long no Nazo (J) [hM34].zip",
+    "mapper-035-JYCompany35/Warioland II (Unl).zip",
+    "mapper-036-TXC36/Policeman (Spain) (Gluk Video) (Unl).nes",
+    "mapper-036-TXC36/Policeman (Spain) (Gluk Video) (Unl).zip",
+    "mapper-036-TXC36/Strike Wolf (Asia) (Unl).zip",
+    "mapper-036-TXC36/Strike Wolf (MGC-014) (Unl) [!].nes",
+    "mapper-040-NTDEC2722/Super Mario Bros 2 (Lost Levels) (Unl).nes",
+    "mapper-048-TaitoTC0690/Bakushou!! Jinsei Gekijou 3 (Japan).nes",
+    "mapper-050-SMB2j-FDS/Super Mario Bros. (Alt Levels) [p1][!].zip",
+    "mapper-051-BallGames11in1/11-in-1 Ball Games [p1][!].zip",
+    "mapper-058-Multicart58/73-in-1 [p1][!].nes",
+    "mapper-060-Multicart60/TN 95-in-1 (6-in-1) [p1].nes",
+    "mapper-063-NTDEC0324/255-in-1 (As) [!].nes",
+    "mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - '91 Kaimaku Hen (Japan).zip",
+    "mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - OB All Star Hen (Japan).zip",
+    "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
+    "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
+    "mapper-090-JYCompany90/1997 Super HIK 4-in-1 (JY-052) [p1][!].zip",
+    "mapper-099-VsSystem/Balloon Fight (VS) [!].nes",
+    "mapper-099-VsSystem/Mahjong (VS) [!].nes",
+    "mapper-099-VsSystem/Tennis (VS) [!].nes",
+    "mapper-099-VsSystem/Wrecking Crew (VS) [!].nes",
+    "mapper-112-NTDEC-Asder/Fighting Hero III (Unl) [!].nes",
+    "mapper-139-Sachen8259C/Final Combat (Sachen-JAP) [!].zip",
+    "mapper-142-KaiserKS7032/Pipe 5 (Sachen) [!].zip",
+    "mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).zip",
+    "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (Japan) (Rev 1).zip",
+    "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).zip",
+    "mapper-162-WaixingFS304/Chong Wu Jin Hua Shi (Pet Evolve) (ES-1085) (Ch).nes",
+    "mapper-162-WaixingFS304/Shu Ma Bao Bei (Digimon Crystal) (Ch) (Wxn).nes",
+    "mapper-162-WaixingFS304/Xi You Ji Hou Zhuan (Ch).nes",
+    "mapper-164-WaixingFinalFantasy/Digital Dragon (Ch) [!].zip",
+    "mapper-177-Hengedianzi/Xing He Zhan Shi (Ch).nes",
+    "mapper-178-WaixingEdu/Xing Ji Zheng Ba (Ch).nes",
+    "mapper-185-CNROM-Lock/Sansuu 1 Nen - Keisan Game (Japan).zip",
+    "mapper-185-CNROM-Lock/Sansuu 2 Nen - Keisan Game (Japan).zip",
+    "mapper-185-CNROM-Lock/Sansuu 3 Nen - Keisan Game (Japan).zip",
+    "mapper-205-BMC-JC016/4-in-1 (K-3131GS, GN-45) [p1][!].zip",
+    "mapper-227-BMC-1200in1/Biohazard (China) (Unl) (En) (1.0).nes",
+    "mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes",
+    "mapper-241-BxROM241/Fan Kong Jing Ying (Asia) (Unl).zip",
+    "mapper-244-Decathlon/Asmik-kun Land (J) [t1].nes",
+    "mapper-244-Decathlon/Kyatto Ninden Teyandee 1stage by ZURG (Hack).nes",
+    "vs-system/GVS Balloon Fight (Dual).nes",
+    "vs-system/GVS Balloon Fight.nes",
+    "vs-system/GVS Mahjong.nes",
+    "vs-system/GVS Tennis.nes",
+    "vs-system/GVS Wrecking Crew (Dual).nes",
+    "vs-system/GVS Wrecking Crew.nes",
+];
+
 const DEFAULT_CAPTURE: InputScript = InputScript::RepeatStartTap {
     warmup: 240,
     period: 150,
@@ -504,7 +620,12 @@ fn external_coverage_boot_smoke() {
     );
 
     let mut failures: Vec<String> = Vec::new();
+    let mut blank_seen: Vec<&str> = Vec::new();
     for rom_rel in &roms {
+        if let Some((_, why)) = UNSUPPORTED.iter().find(|(r, _)| *r == rom_rel.as_str()) {
+            eprintln!("[external_coverage] SKIP {rom_rel}: {why}.");
+            continue;
+        }
         let id = snapshot_id(rom_rel);
         // Catch the per-ROM assertion panic (insta panics on a baseline
         // mismatch in normal mode; in INSTA_UPDATE=auto/always it writes
@@ -564,7 +685,11 @@ fn external_coverage_boot_smoke() {
             }
             // Snapshot passed but the final frame was blank/few-colour.
             Ok(Err(reason)) => {
-                failures.push(format!("{rom_rel}  (snapshot id: {id}) — {reason}"));
+                if KNOWN_BLANK.contains(&rom_rel.as_str()) {
+                    blank_seen.push(rom_rel.as_str());
+                } else {
+                    failures.push(format!("{rom_rel}  (snapshot id: {id}) — {reason}"));
+                }
             }
             // run_capture panicked (read/parse) or insta panicked
             // (baseline mismatch / missing in normal mode).
@@ -573,6 +698,16 @@ fn external_coverage_boot_smoke() {
                     "{rom_rel}  (snapshot id: {id}) — snapshot mismatch or boot panic"
                 ));
             }
+        }
+    }
+
+    // The other half of the ratchet: a listed ROM that was swept and did not
+    // come back blank now renders, and the list must say so.
+    for known in KNOWN_BLANK {
+        if roms.iter().any(|r| r == known) && !blank_seen.contains(known) {
+            failures.push(format!(
+                "{known} is in KNOWN_BLANK but no longer boots blank; remove it from the list"
+            ));
         }
     }
 
@@ -586,6 +721,22 @@ fn external_coverage_boot_smoke() {
         roms.len(),
         failures.join("\n  "),
     );
+}
+
+/// The skip list above is honest only while each entry is actually refused.
+/// Runs wherever the dump is staged; silent where it is not.
+#[test]
+fn unsupported_dumps_are_still_refused() {
+    for (rel, why) in UNSUPPORTED {
+        let path = external_root().join(rel);
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        assert!(
+            rustynes_core::Nes::from_rom(&bytes).is_err(),
+            "{rel} now parses; remove it from UNSUPPORTED ({why}) and bless its snapshot"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

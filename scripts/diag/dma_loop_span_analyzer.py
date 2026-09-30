@@ -1,4 +1,4 @@
-import sys, collections
+import collections
 rows=[]
 with open('/tmp/RustyNES_dmaloop_seed1.csv') as f:
     hdr=f.readline()
@@ -6,7 +6,7 @@ with open('/tmp/RustyNES_dmaloop_seed1.csv') as f:
         p=l.strip().split(',')
         if len(p)<3: continue
         try: cyc=int(p[0]); kind=int(p[2])
-        except: continue
+        except ValueError: continue
         held=p[3] if len(p)>3 else ''
         rows.append((cyc,kind,held))
 # DMC span: from a halt(0) to the next get(1)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, zipfile, glob, collections
+import os, zipfile, glob, collections
 
 LIB = os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)")
 EXT = "/home/parobek/Code/OSS_Public-Projects/RustyNES/tests/roms/external"

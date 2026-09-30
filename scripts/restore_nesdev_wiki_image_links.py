@@ -178,11 +178,8 @@ def process_one(
 
     stats.files_modified += 1
     if verbose:
-        delta = sum(1 for _ in re.finditer(r'(src|href)="', original)) - sum(
-            1 for _ in re.finditer(r'(src|href)="', rewritten)
-        )
-        # delta is not very meaningful (attribute count is preserved);
-        # show byte delta instead.
+        # The attribute count is preserved by the rewrite, so the byte delta is
+        # the useful figure.
         print(
             f"REWRITE {path.name}  (-{len(original) - len(rewritten)} bytes)"
         )
@@ -227,27 +224,27 @@ def discover_target(explicit: str | None) -> Path:
 def write_report(report_path: Path, stats: Stats, target: Path) -> None:
     """Emit a per-run summary to `report_path`."""
     lines: list[str] = []
-    lines.append(f"# nesdev_wiki image-link restoration report")
-    lines.append(f"")
+    lines.append("# nesdev_wiki image-link restoration report")
+    lines.append("")
     lines.append(f"Target directory: `{target}`")
     lines.append(f"Files scanned: {stats.files_scanned}")
     lines.append(f"Files modified: {stats.files_modified}")
     lines.append(f"Write errors: {stats.write_errors}")
-    lines.append(f"")
-    lines.append(f"## Rewrites by pattern")
-    lines.append(f"")
+    lines.append("")
+    lines.append("## Rewrites by pattern")
+    lines.append("")
     for name, _ in PATTERNS:
         lines.append(
             f"- `{name}`: rewrote {stats.rewrites_by_pattern[name]}, "
             f"missed {stats.misses_by_pattern[name]}"
         )
-    lines.append(f"")
+    lines.append("")
     lines.append(f"## Missing image files ({len(stats.missing_basenames)} unique)")
-    lines.append(f"")
+    lines.append("")
     lines.append("These references resolved to a local basename that does not")
     lines.append("exist on disk. They were left untouched. Counts indicate how")
     lines.append("many .xhtml pages referenced each missing file.")
-    lines.append(f"")
+    lines.append("")
     for basename, count in sorted(
         stats.missing_basenames.items(), key=lambda kv: (-kv[1], kv[0])
     ):
@@ -373,14 +370,14 @@ def verify_mode(target: Path, report_path_arg: str | None) -> int:
         print(f"  {ext or '<no-ext>':>10}: {count}")
     if unresolved:
         print()
-        print(f"Top 25 unresolved local basenames (count × name):")
+        print("Top 25 unresolved local basenames (count × name):")
         for basename, count in sorted(
             unresolved.items(), key=lambda kv: (-kv[1], kv[0])
         )[:25]:
             print(f"  {count:>4}× {basename}")
     if leftover_broken:
         print()
-        print(f"Leftover broken URL shapes (top 5):")
+        print("Leftover broken URL shapes (top 5):")
         for url, count in sorted(
             leftover_broken.items(), key=lambda kv: (-kv[1], kv[0])
         )[:5]:

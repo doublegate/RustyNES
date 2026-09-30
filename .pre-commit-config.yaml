@@ -65,6 +65,30 @@ repos:
         # files in the vendored TriCNES tree legitimately carry CRLF.
         exclude: *vendored_trees
 
+  # Python tooling (v2.9.6). The rules live in `ruff.toml` (defects only:
+  # pyflakes, syntax errors, bare `except`). Pinned to the version installed
+  # here, like every other hook, so a new ruff release cannot redden unchanged
+  # scripts.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff-check
+
+  # Shell scripts (v2.9.6). Repo-wide choices live in `.shellcheckrc`; a one-off
+  # exception is an inline `# shellcheck disable=` with its reason. Pinned to the
+  # shellcheck installed here (0.11.0).
+  #
+  # The three `agy-review` scripts are excluded because they are INSTALLED from
+  # the reviewer template (`antigravity-pr-review`, outside this repository):
+  # an edit here is overwritten on the next reinstall. Their remaining notes
+  # (literal `$` in single quotes, variables a called function reads) are
+  # intended and belong to the template to annotate.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        exclude: ^scripts/(_agy_print|agy-review|agy-review-selftest)\.sh$
+
   # Markdown linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.49.1

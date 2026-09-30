@@ -227,7 +227,6 @@ def main() -> int:
         print("perf_log_check: no rows after warmup", file=sys.stderr)
         return 2
 
-    last = body[-1]
     # Cumulative counters: take the MAXIMUM readable value, not the final row.
     #
     # Every timed capture ends by killing the frontend mid-write, so the last

@@ -79,6 +79,23 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
     if id == 176 && submapper == 2 {
         return Some(MapperTier::BestEffort);
     }
+    // v2.9.6 "Roster": mapper 12 submapper 1 is the Magic Card 4M disk
+    // extraction, a different device that `parse` does not support.
+    if id == 12 && submapper != 0 {
+        return None;
+    }
+    // Mapper 4 submapper 3, Acclaim's MC-ACC: its falling-edge /8 counter is
+    // on the MMC3 page, but the prescaler reset and phase come from a forum
+    // measurement (`m004_mmc3.rs`, `Mmc3Variant::McAcc`), not a page.
+    if id == 4 && submapper == 3 {
+        return Some(MapperTier::BestEffort);
+    }
+    // Mapper 91 submapper 1's M2 IRQ is described without saying when it
+    // asserts (`m091_jy_sf3.rs`), so it carries less evidence than
+    // submapper 0.
+    if id == 91 && submapper == 1 {
+        return Some(MapperTier::BestEffort);
+    }
     match id {
         // --- Tier 0 / Core: the original 51 families (AccuracyCoin/oracle-gated).
         0 | 1 | 2 | 3 | 4 | 5 | 7 | 9 | 10 | 11 | 13 | 16 | 18 | 19 | 21 | 22 | 23 | 24 | 25
@@ -101,6 +118,16 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         | 218 | 221 | 225 | 226 | 227 | 229 | 231 | 232 | 233 | 234 | 240 | 241 | 242 | 244
         | 245 | 246 | 250 | 253 => Some(MapperTier::Curated),
 
+        // --- v2.9.6 "Roster": families written from a NESdev page that gives
+        // exact register masks (ADR 0011's "precise decode spec"), each with
+        // register-decode unit tests and a synthetic boot fixture, plus
+        // GTROM (111), promoted from BestEffort once the board matched its
+        // page (register window, bonus RAM, self-flashing) and a CC0 fixture
+        // pinned it. None has a redistributable commercial ROM.
+        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 163 | 192 | 195 | 228 | 249 => {
+            Some(MapperTier::Curated)
+        }
+
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
         // be honestly oracle-gated and stay register-decode + save-state
@@ -112,20 +139,23 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // ids); 8 boards with no matching cart in the collection (29 Sealie
         // RET-CUFROM, 39 Subor BNROM, 81 NTDEC Super Gun, 104 Golden Five,
         // 174 multicart, 179 Hengedianzi, 238 MMC3+$4020-security, 261 BMC); and
-        // 2 boards whose ONLY available dump jams at boot (50 SMB2j FDS-conversion
-        // halts ~18 frames in, 111 GTROM "Ninja Ryukenden" jams immediately) — a
-        // jammed boot is not honest Curated oracle evidence. NOT accuracy-gated
-        // (ADR 0011).
+        // 50, whose ONLY available dump (SMB2j FDS-conversion) halts ~18 frames
+        // in — a jammed boot is not honest Curated oracle evidence. NOT
+        // accuracy-gated (ADR 0011). 111 GTROM left this list in v2.9.6.
         //
         // v2.3.4 adds 154 (NAMCOT-3453) and 243 (Sachen SA-020A). Both became
         // visible only once the coverage harness started applying the per-game
         // database, which is what routes `Devil Man` from its m88 header to 154
         // and the Sachen 74LS374N set from m150 to 243. Their dumps are staged
         // but not redistributable, so neither can be honestly oracle-gated.
-        29 | 39 | 50 | 81 | 104 | 111 | 154 | 174 | 179 | 238 | 243 | 261 | 268 | 286 | 289
-        | 290 | 299 | 301 | 303 | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513 => {
+        29 | 39 | 50 | 81 | 104 | 154 | 174 | 179 | 238 | 243 | 261 | 268 | 286 | 289 | 290
+        | 299 | 301 | 303 | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513 => {
             Some(MapperTier::BestEffort)
         }
+
+        // --- v2.9.6 "Roster" BestEffort: pages that give only Disch's notes
+        // (47, 191, 194) or register masks marked "probably" (121).
+        47 | 121 | 191 | 194 => Some(MapperTier::BestEffort),
 
         _ => None,
     }
@@ -203,6 +233,8 @@ mod tests {
         137, 138, 139, 140, 141, 142, 143, 145, 146, 147, 148, 149, 150, 156, 162, 164, 176, 177,
         178, 180, 185, 189, 193, 200, 201, 202, 203, 204, 205, 209, 211, 212, 213, 214, 218, 221,
         225, 226, 227, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 250, 253,
+        // v2.9.6 "Roster".
+        12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249,
     ];
 
     #[test]
@@ -227,8 +259,9 @@ mod tests {
     /// multicarts 261/289/320/336/349), and the v1.8.9 "Backlog" beta.6
     /// NTDEC/TXC/BMC multicart batch (193/204/221/299).
     const BEST_EFFORT_IDS: &[u16] = &[
-        29, 39, 50, 81, 104, 111, 174, 179, 238, 261, 268, 286, 289, 290, 299, 301, 303, 305, 306,
-        312, 320, 336, 348, 349, 366, 513,
+        29, 39, 50, 81, 104, 174, 179, 238, 261, 268, 286, 289, 290, 299, 301, 303, 305, 306, 312,
+        320, 336, 348, 349, 366, 513, // v2.9.6 "Roster":
+        47, 121, 191, 194,
     ];
 
     #[test]
@@ -269,6 +302,18 @@ mod tests {
                 "id {id} in both Core and BestEffort"
             );
         }
+    }
+
+    /// v2.9.6: the per-submapper verdicts. Mapper 12 submapper 1 is not
+    /// supported at all; mapper 91 submapper 1 carries less evidence.
+    #[test]
+    fn roster_submapper_overrides() {
+        assert_eq!(mapper_tier(12, 0), Some(MapperTier::Curated));
+        assert_eq!(mapper_tier(12, 1), None);
+        assert_eq!(mapper_tier(91, 0), Some(MapperTier::Curated));
+        assert_eq!(mapper_tier(91, 1), Some(MapperTier::BestEffort));
+        assert_eq!(mapper_tier(4, 3), Some(MapperTier::BestEffort));
+        assert_eq!(mapper_tier(4, 1), Some(MapperTier::Core), "MMC6");
     }
 
     #[test]

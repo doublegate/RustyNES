@@ -1,5 +1,3 @@
-import re
-import sys
 
 filepath = 'crates/rustynes-core/src/bus.rs'
 

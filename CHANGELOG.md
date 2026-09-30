@@ -26,6 +26,162 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
+
+The seventh release of the v2.9.x line and the third of the line to v3.0.0:
+the mapper release. **17 new families (174 → 191)**, all written from their
+NESdev pages. GTROM is promoted to Curated. Two self-flashing homebrew boards
+now keep their saves, and mapper 4's NES 2.0 submappers are corrected.
+Each new board is pinned by register-decode unit tests and by a synthetic CC0
+program run on the full emulator. 31 mutants, one per documented behaviour,
+are all caught.
+
+### Added — mapper families
+
+- **MMC3 boards** (`mmc3_boards.rs`, a new module over the project's own
+  `Mmc3`):
+  - **12**: SL-5020B, MMC3A IRQ, with CHR A18 chosen per pattern table;
+  - **37**: *Super Mario Bros. + Tetris + Nintendo World Cup*;
+  - **45**: GA23C, four outer registers, lock, DIP switch;
+  - **47**: *Super Spike V'Ball + Nintendo World Cup*;
+  - **74, 191, 192, 194**: Waixing CHR-RAM overlays;
+  - **195**: Waixing FS303, whose CHR-RAM window is picked by PPU writes;
+  - **121**: Kasheng A9711/A9713 protection;
+  - **249**: Waixing T9552 scrambler.
+- **83**: Cony / Yoko, all three submappers, with the 16-bit up/down M2 IRQ.
+- **91**: J.Y. Company, with the PA12 IRQ on submapper 0 and the M2 IRQ on
+  submapper 1.
+- **105**: NES-EVENT (*Nintendo World Championships 1990*): the lock, the
+  two-chip PRG and the 30-bit timer, with the tournament DIP setting as the
+  default.
+- **153**: Bandai LZ93D50 with 8 KiB battery WRAM (*Famicom Jump II*).
+- **163**: Nanjing FC-001, including its automatic CHR-RAM switch on the
+  latched PPU A9.
+- **228**: *Action 52* / *Cheetahmen II*, with chip 2 reading as open bus.
+
+Tiers, by the maintainer's rule for this release: Curated where the page gives
+exact register masks (12, 37, 45, 74, 83, 91, 105, 153, 163, 192, 195, 228,
+249), BestEffort where it gives only Disch's notes or "probably" masks (47, 121,
+191, 194, and submapper 1 of 91). The split is now 51 Core + 109 Curated + 31
+BestEffort, and 160 of the 191 families are accuracy-gated.
+
+### Fixed — mapper 4 submappers
+
+- **NES 2.0 submappers 1 and 4 were swapped, and 2, 3 and 5 unmodelled.**
+  - Submapper 1 is the **MMC6**, now modelled per `MMC6.md`: 1 KiB of internal
+    RAM at `$7000`, with separate read and write enables per 512-byte half.
+    Before, it was run as an "NEC" MMC3.
+  - Submapper 4 is the NEC MMC3, and was run as Sharp.
+  - Submapper 2 is MMC3C with hard-wired mirroring.
+  - Submapper 3 is Acclaim's MC-ACC: a falling-edge A12 counter behind a /8
+    prescaler (BestEffort, since its reset rule comes from a forum measurement).
+  - Submapper 5 is the T9552 scrambler.
+- **StarTropics** (NES 2.0 submapper 1) is the one staged dump affected, and it
+  shows why this matters. It writes `$A001 = $30`, the MMC6 value for "low half
+  readable and writable". The MMC3 model read that as "RAM disabled", so all
+  99,864 reads of `$7000-$7FFF` in its first 1,200 frames returned 0 and 33,907
+  writes were dropped. Its oracle snapshot moves by one CPU cycle and an audio
+  hash, and its frame is unchanged.
+- **The `Mmc3Revision` documentation called the Sharp behaviour "MMC3A".**
+  `MMC3.md` gives MMC3A the alternate behaviour. Only the labels were wrong.
+
+### Fixed — homebrew flash boards
+
+- **GTROM (111) promoted to Curated** once it matched `GTROM.md`:
+  - the register decodes only at `$5000-$5FFF` and `$7000-$7FFF` (it also
+    answered at `$6000`);
+  - a read there latches the floating bus value;
+  - each nametable page is 8 KiB, so `$3000-$3EFF` is bonus RAM rather than a
+    mirror;
+  - PRG is an SST39SF040 that games rewrite to save.
+- **The flash chip is modelled** (`sst39sf040.rs`, from the datasheet: byte
+  program, sector erase, chip erase, software ID). GTROM and flashable UNROM 512
+  (30) boards now keep their saves: the `.sav` is the flash image, restored on
+  load and kept across a power cycle. Before, UNROM 512 accepted flash writes
+  and dropped them.
+- **UNROM 512's four-screen board** maps the last 8 KiB of its CHR-RAM over
+  `$2000-$3EFF`. Before, it was approximated as single-screen.
+- **The *Ninja Ryukenden* mapper-111 image is refused** with a clear message. It
+  carries CHR-ROM, so it is the MMC1 variant the GTROM page lists, not GTROM,
+  and no public description of its registers exists. It used to run as GTROM
+  and jam after 26 CPU cycles.
+
+### Changed — API
+
+- **`Mapper` gains six defaulted methods** (additive):
+  - `reset`, the console reset, which five boards use;
+  - `notify_floating_read`;
+  - `nametable_unfolded`;
+  - `save_data`, `save_data_mut` and `clear_save_data`.
+- **`Nes` gains `save_data`, `save_data_mut` and `clear_save_data`.** The save
+  paths use them: the desktop `.sav`, the mobile bridge, libretro's `SAVE_RAM`,
+  power cycle and movie start. `sram()` keeps meaning the `$6000` RAM that
+  memory maps describe.
+- **`Mmc3Variant`** is new, and `Mmc3::with_variant` selects it.
+
+### Changed — save states
+
+- **Save states for the boards changed here carry new versioned layouts.**
+  - Bandai FCG goes to v2, and a v1 state still loads on 16 and 159.
+  - MMC3 goes to v3, and a v2 state still loads.
+  - GTROM goes to v2 and UNROM 512 to v2. Their v1 states are refused with a
+    version error, never misread.
+
+### Tests — the commercial suites re-baselined
+
+- **The local commercial-ROM snapshot suites had been stale since about
+  v2.0.0.** They need the dumps, so CI never runs them. A clean `main`
+  mismatched 461 coverage and 106 byte-oracle snapshots, and v2.9.4 already
+  failed the frame-changed titles it was tried on.
+- **Attributed per ROM against a clean `main`.** 764 of 765 coverage and 197 of
+  198 byte-oracle snapshots match `main` exactly, so they are inherited. The
+  exception in each is StarTropics, the MMC6 fix.
+- **Every title whose frame changed was looked at before blessing.** Two old
+  bugs turned up. Time Diver: Avenger (mapper 250) garbles its in-game
+  background, and Uchuu Keibitai SDF (MMC5) its intro frame. Both render the
+  same on v2.0.0, and they are ticketed as `T-COMMERCIAL-GARBLE`.
+- **`external_coverage` can be green again.**
+  - Seven malformed dumps are skipped by name, with a guard that fails if any
+    ever parses.
+  - The 60 staged dumps that boot to a blank frame (all unchanged since before
+    v2.9.5) are a two-way ratchet: a new blank boot fails, and a listed ROM that
+    starts rendering fails until it is removed from the list.
+
+### Tooling — lint across the repository
+
+- **`ruff.toml` and `.shellcheckrc`**, both limited to defects rather than
+  style, with pinned `ruff-check` and `shellcheck` pre-commit hooks.
+- **Their findings fixed.** 38 unused imports and empty f-strings, 5 unused
+  variables, 3 bare `except`s, and 4 `A && B || C` shell lines rewritten as
+  `if`.
+- **Every pre-commit hook passes on all files.**
+- **`.gitignore`** covers pre-edit backups (`*.bak`, `*.preedit`) and insta's
+  `*.pending-snap`.
+
+### Documentation
+
+- **README rewritten as a front page.** The release-by-release history it
+  carried is in this file and in `VERSION-PLAN.md`. Stale claims are
+  corrected: the v3.0.0 definition (ADR 0043), the architecture's type names,
+  the performance figures and the citation.
+- **Corrected elsewhere:** `CONTRIBUTING.md` (edition 2024, MSRV 1.96),
+  `AGENTS.md` (store listings are unversioned, ADR 0035), the libretro and
+  frontend battery-save docs, and the mapper, status and agent docs.
+
+### Verification
+
+- The full `cargo test --release --workspace --features test-roms` suite passes:
+  3,023 tests, 0 failed, 20 ignored (v2.9.5: 2,905). AccuracyCoin is 144/144,
+  and nestest is 0-diff.
+- All 31 mutants are caught.
+- The local commercial suites (`--features test-roms,commercial-roms`, gitignored
+  dumps) pass without re-blessing: `external_coverage` 6/0 (including the
+  `KNOWN_BLANK` ratchet), `external_extended` 138/0, `external_real_games` 60/0.
+- fmt, clippy for every feature set and all three wasm builds, rustdoc, the
+  `no_std` build, cargo-deny and the release audits are clean.
+- The MiSTer RTL is unchanged, so v2.9.2's bitstream pair ships byte for byte.
+  **No hardware has run any bitstream.**
+
 ## [2.9.5] - 2026-09-29 - "Caliper" (every open accuracy item measured, then fixed or closed)
 
 The sixth release of the v2.9.x line and the second of the line to v3.0.0: the

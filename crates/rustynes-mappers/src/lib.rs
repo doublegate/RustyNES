@@ -94,16 +94,19 @@ mod m078_irem_jaleco78;
 mod m079_ave_nina03_06;
 mod m080_taito_x1_005;
 mod m082_taito_x1_017;
+mod m083_cony;
 mod m085_vrc7;
 mod m087_jaleco87;
 mod m088_namco118;
 mod m089_sunsoft2;
+mod m091_jy_sf3;
 mod m093_sunsoft3r;
 mod m094_un1rom;
 mod m095_namcot3425;
 mod m096_bandai96;
 mod m097_irem_tam_s1;
 mod m099_vs_system;
+mod m105_nes_event;
 mod m107_magic_dragon107;
 mod m113_ave_nina006;
 mod m118_txsrom;
@@ -113,6 +116,7 @@ mod m136_sachen_3011;
 mod m151_konami_vs;
 mod m152_bandai152;
 mod m156_daou156;
+mod m163_nanjing;
 mod m176_bmc_fk23c;
 mod m177_hengedianzi;
 mod m179_hengedianzi;
@@ -120,6 +124,7 @@ mod m180_nichibutsu180;
 mod m184_sunsoft1;
 mod m185_cnrom185;
 mod m210_namco175;
+mod m228_action52;
 mod m232_camerica_bf9096;
 mod m240_cne_multicart;
 mod m241_bxrom241;
@@ -129,6 +134,7 @@ mod m250_nitra250;
 mod m268_bmc_coolboy;
 mod m513_sachen_9602;
 mod mapper;
+mod mmc3_boards;
 mod mmc3_clones;
 mod multicart_discrete;
 mod nsf;
@@ -136,6 +142,7 @@ mod nsf_expansion;
 mod ntdec;
 mod sachen_8259;
 mod sachen_discrete;
+mod sst39sf040;
 mod tier;
 mod unif;
 mod waixing;
@@ -155,7 +162,7 @@ pub use m000_nrom::Nrom;
 pub use m001_mmc1::Mmc1;
 pub use m002_uxrom::UxRom;
 pub use m003_cnrom::CnRom;
-pub use m004_mmc3::{Mmc3, Mmc3Revision};
+pub use m004_mmc3::{Mmc3, Mmc3Revision, Mmc3Variant};
 pub use m005_mmc5::Mmc5;
 pub use m007_axrom::AxRom;
 pub use m009_mmc2::Mmc2;
@@ -195,16 +202,19 @@ pub use m078_irem_jaleco78::{M78, M78Variant};
 pub use m079_ave_nina03_06::Nina0379;
 pub use m080_taito_x1_005::TaitoX1005;
 pub use m082_taito_x1_017::TaitoX1017;
+pub use m083_cony::Cony83;
 pub use m085_vrc7::Vrc7;
 pub use m087_jaleco87::Jaleco87;
 pub use m088_namco118::{Namco118, Namco118Board};
 pub use m089_sunsoft2::Sunsoft2;
+pub use m091_jy_sf3::Jy91;
 pub use m093_sunsoft3r::Sunsoft3r;
 pub use m094_un1rom::Un1rom94;
 pub use m095_namcot3425::Namcot3425M95;
 pub use m096_bandai96::Bandai96;
 pub use m097_irem_tam_s1::Irem97;
 pub use m099_vs_system::VsSystem;
+pub use m105_nes_event::{NWC_TOURNAMENT_DIP, NesEvent105};
 pub use m107_magic_dragon107::MagicDragon107;
 pub use m113_ave_nina006::Nina006M113;
 pub use m118_txsrom::TxSrom;
@@ -214,6 +224,7 @@ pub use m136_sachen_3011::new_m136;
 pub use m151_konami_vs::KonamiVs;
 pub use m152_bandai152::Bandai152;
 pub use m156_daou156::Daou156;
+pub use m163_nanjing::Nanjing163;
 pub use m176_bmc_fk23c::new_m176;
 pub use m177_hengedianzi::Hengedianzi177;
 pub use m179_hengedianzi::Hengedianzi179;
@@ -221,6 +232,7 @@ pub use m180_nichibutsu180::Nichibutsu180;
 pub use m184_sunsoft1::Sunsoft1;
 pub use m185_cnrom185::CnRom185;
 pub use m210_namco175::{Namco175, Namco175Board};
+pub use m228_action52::Action52M228;
 pub use m232_camerica_bf9096::Camerica232;
 pub use m240_cne_multicart::Cne240;
 pub use m241_bxrom241::Bxrom241;
@@ -233,6 +245,7 @@ pub use mapper::{
     BgSplitState, ExAttribute, Mapper, MapperCaps, MapperDebugInfo, MapperError, MapperFrameEvents,
     mirroring_name,
 };
+pub use mmc3_boards::{Board as Mmc3BoardKind, Mmc3Board};
 pub use mmc3_clones::{
     Mmc3CloneMapper, new_m44, new_m49, new_m52, new_m115, new_m134, new_m189, new_m205, new_m238,
     new_m245, new_m348, new_m366,
@@ -259,6 +272,30 @@ pub use waixing::{Waixing178, Waixing242, WaixingFs304M162, new_m253};
 #[must_use]
 pub const fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Build one of the v2.9.6 MMC3 boards (`mmc3_boards.rs`) from a parsed header.
+///
+/// Work RAM and the CHR-RAM overlay are taken from the header only when it is
+/// NES 2.0: iNES 1.0 reports a nominal 8 KiB of PRG-RAM for every image
+/// (`header.rs`), which would put RAM on multicarts that have a register in
+/// that window instead. Each board then falls back to its own documented
+/// default (`Board::default_wram` / `Board::overlay_bytes`).
+fn mmc3_board(
+    kind: Mmc3BoardKind,
+    prg_rom: Box<[u8]>,
+    chr_rom: Box<[u8]>,
+    h: &Header,
+) -> Result<Box<dyn Mapper>, RomError> {
+    let (wram, chr_ram) = if h.is_nes2 {
+        (h.prg_ram_size as usize, h.chr_ram_size as usize)
+    } else {
+        (0, 0)
+    };
+    Ok(Box::new(
+        Mmc3Board::new(kind, prg_rom, chr_rom, h.mirroring, wram, chr_ram)
+            .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+    ))
 }
 
 /// Parse an iNES 1.0 / NES 2.0 ROM file.
@@ -462,19 +499,35 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
             Box::new(cnrom)
         }
+        // v2.9.6: mapper 4 submapper 5 carries the T9552 scrambler
+        // (`T9552.md`); it is otherwise an MMC3 board.
+        4 if h.is_nes2 && h.submapper == 5 => {
+            mmc3_board(Mmc3BoardKind::M4T9552, prg_rom, chr_rom, &h)?
+        }
+        249 => mmc3_board(Mmc3BoardKind::M249, prg_rom, chr_rom, &h)?,
         4 => {
-            // MMC3 (and MMC6 — Star Tropics — falls under the same iNES
-            // mapper number with submapper 1).  Default revision is Sharp
-            // (project policy: Star Trek 25th Anniversary requires Sharp
-            // behavior).  NES 2.0 submapper byte:
-            //   0 — MMC3A (Sharp; default).
-            //   1 — MMC3B (NEC; "reload to 0" does NOT assert).
-            //   2 — MMC3C (Sharp + minor differences not currently modelled).
-            //   3 — MC-ACC (clone; treat as Sharp).
-            let revision = if h.is_nes2 && h.submapper == 1 {
+            // MMC3, and the boards that share its iNES number. NES 2.0
+            // submappers (`NES_2_0_submappers.md`; corrected in v2.9.6, which
+            // had 1 as "NEC" and 4 as Sharp):
+            //   0 — Sharp MMC3 (default; Star Trek 25th Anniversary needs it).
+            //   1 — MMC6 (StarTropics): its own 1 KiB PRG-RAM scheme.
+            //   2 — MMC3C with hard-wired mirroring.
+            //   3 — Acclaim MC-ACC: falling-edge A12 counter, /8 prescaler.
+            //   4 — NEC MMC3 ("Loading the latch with 0 disables IRQ").
+            //   5 — T9552 scrambler, dispatched to `mmc3_boards.rs` above.
+            // An iNES 1.0 StarTropics stays a plain MMC3, as the page advises
+            // for headers that cannot say which chip it is.
+            let sub = if h.is_nes2 { h.submapper } else { 0 };
+            let revision = if sub == 4 {
                 Mmc3Revision::Nec
             } else {
                 Mmc3Revision::Sharp
+            };
+            let variant = match sub {
+                1 => Mmc3Variant::Mmc6,
+                2 => Mmc3Variant::HardwiredMirroring,
+                3 => Mmc3Variant::McAcc,
+                _ => Mmc3Variant::Standard,
             };
             let prg_ram_bytes = if h.prg_ram_size == 0 {
                 0
@@ -482,7 +535,8 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 h.prg_ram_size as usize
             };
             let mmc3 = Mmc3::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes, revision)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?
+                .with_variant(variant);
             Box::new(mmc3)
         }
         5 => {
@@ -603,6 +657,13 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 _ => FcgVariant::Both,
             };
             let fcg = BandaiFcg::new(prg_rom, chr_rom, h.mirroring, variant)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+            Box::new(fcg)
+        }
+        153 => {
+            // v2.9.6: Bandai LZ93D50 with 8 KiB WRAM and an outer PRG bank
+            // (`INES_Mapper_153.md`).
+            let fcg = BandaiFcg::new(prg_rom, chr_rom, h.mirroring, FcgVariant::Lz93d50Wram)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
             Box::new(fcg)
         }
@@ -1057,6 +1118,19 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             MagicDragon107::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // Mapper 111 with CHR-ROM is not GTROM: it is the Chinese *Ninja
+        // Ryukenden* translation's board, an MMC1 variant whose registers are
+        // written directly with six data bits and address 256 KiB of CHR
+        // (`GTROM.md`, "Variations"; forums.nesdev.org t=24276). Neither source
+        // gives its address decode or bit mapping, so it is refused with a
+        // clear message rather than run as a GTROM that renders garbage.
+        111 if !chr_rom.is_empty() => {
+            return Err(RomError::InvalidConfig(
+                "mapper 111 with CHR-ROM is the Ninja Ryukenden MMC1 variant, which is not \
+                 supported (GTROM carries CHR-RAM)"
+                    .into(),
+            ));
+        }
         // Mapper 111: 4-screen CHR-RAM; no header CHR / mirroring arg.
         111 => Box::new(
             Gtrom111::new(prg_rom, &chr_rom).map_err(|e| RomError::InvalidConfig(e.to_string()))?,
@@ -1243,6 +1317,39 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // MMC3-clone variants (shared MMC3-style core + A12 IRQ),
         // Sachen 8259 A/B/C, and discrete multicarts. Register-decode +
         // save-state unit-tested only, NOT accuracy-gated (`tier.rs`).
+        // v2.9.6 "Roster": MMC3 boards written from their NESdev pages
+        // (`mmc3_boards.rs`). Mapper 12 submapper 1 (the Magic Card 4M
+        // extraction) is a different device and is not supported.
+        12 if h.submapper == 0 => mmc3_board(Mmc3BoardKind::M12, prg_rom, chr_rom, &h)?,
+        83 => Box::new(
+            Cony83::new(prg_rom, chr_rom, h.is_nes2.then_some(h.submapper))
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        91 => Box::new(
+            Jy91::new(prg_rom, chr_rom, h.mirroring, h.submapper)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        105 => Box::new(
+            NesEvent105::new(prg_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        163 => Box::new(
+            Nanjing163::new(prg_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        228 => Box::new(
+            Action52M228::new(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        37 => mmc3_board(Mmc3BoardKind::M37, prg_rom, chr_rom, &h)?,
+        45 => mmc3_board(Mmc3BoardKind::M45, prg_rom, chr_rom, &h)?,
+        47 => mmc3_board(Mmc3BoardKind::M47, prg_rom, chr_rom, &h)?,
+        74 => mmc3_board(Mmc3BoardKind::M74, prg_rom, chr_rom, &h)?,
+        121 => mmc3_board(Mmc3BoardKind::M121, prg_rom, chr_rom, &h)?,
+        191 => mmc3_board(Mmc3BoardKind::M191, prg_rom, chr_rom, &h)?,
+        192 => mmc3_board(Mmc3BoardKind::M192, prg_rom, chr_rom, &h)?,
+        194 => mmc3_board(Mmc3BoardKind::M194, prg_rom, chr_rom, &h)?,
+        195 => mmc3_board(Mmc3BoardKind::M195, prg_rom, chr_rom, &h)?,
         44 => Box::new(
             new_m44(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
@@ -1435,6 +1542,16 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         other => return Err(RomError::UnsupportedMapper(other)),
     };
+
+    // v2.9.6: on a self-flashable board the flash chip IS the non-volatile
+    // save, whatever the header's battery bit says (GTROM headers do not set
+    // it, and UNROM 512 submappers 1/3/4 are flashable without it). The
+    // frontends persist a battery save only when this flag is set, so it is
+    // raised here for the boards whose `save_data()` is their flash image.
+    let mut cart = cart;
+    if matches!(h.mapper_id, 30 | 111) && !mapper.save_data().is_empty() {
+        cart.has_battery = true;
+    }
 
     Ok((cart, mapper))
 }

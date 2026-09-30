@@ -1,4 +1,4 @@
-import csv, sys
+import csv
 def load(fn):
     rows=[]
     with open(fn) as f:

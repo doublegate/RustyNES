@@ -1,4 +1,3 @@
-import re
 # reuse the verified 341-byte key from ppu2004_diff_vs_answerkey.py
 txt=open("ppu2004_diff_vs_answerkey.py").read()
 key_txt=txt.split('key_txt = """')[1].split('"""')[0]

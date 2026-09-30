@@ -134,9 +134,18 @@ forbids, so a flaky test is a bug to fix, not to retry.
 
 - **Format:** `cargo fmt` (rustfmt defaults).
 - **Lint:** pass `cargo clippy --workspace --all-targets -- -D warnings` with no warnings.
-- **Edition:** Rust 2021. **MSRV:** 1.86.
+- **Edition:** Rust 2024. **MSRV:** 1.96 (pinned in `rust-toolchain.toml`).
 - The chip stack (`rustynes-{cpu,ppu,apu,mappers,core}`) is `#![no_std]` + `extern crate alloc;`. `unsafe` is only permitted at FFI boundaries (`rustynes-cheevos`) and the one native priority hook in `rustynes-frontend`, and **must** carry a `// SAFETY:` comment explaining the invariant.
 - No emojis in code, comments, or commits (project policy).
+
+### Scripts
+
+The Python and shell tooling under `scripts/` and `assets/` is linted too, by
+the `ruff-check` and `shellcheck` pre-commit hooks (`pre-commit install` once,
+then every commit runs them). The rules are `ruff.toml` and `.shellcheckrc`.
+Both check for defects, not style: undefined names, unused variables, bare
+`except`, and unquoted or misparsed shell. An exception to a shellcheck rule is
+an inline `# shellcheck disable=SCxxxx # reason` at the line it concerns.
 
 ### Documentation
 

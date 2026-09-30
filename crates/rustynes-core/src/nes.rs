@@ -250,8 +250,32 @@ impl Nes {
         self.bus.mapper.sram_mut()
     }
 
-    /// v2.7.3 — whether the cartridge header declares battery-backed PRG-RAM
-    /// (iNES flags 6 bit 1).
+    /// v2.9.6 — the cartridge's non-volatile data, what a battery save
+    /// persists: [`Self::sram`] on almost every board, and the flash image on
+    /// a self-flashable one (GTROM, a flashable UNROM 512), which has no RAM
+    /// at `$6000`. Hosts that persist saves read and restore THIS, gated on
+    /// [`Self::has_battery`]. `sram()` stays the `$6000` RAM that memory maps
+    /// describe. See `Mapper::save_data`.
+    pub fn save_data(&self) -> &[u8] {
+        self.bus.mapper.save_data()
+    }
+
+    /// Mutable [`Self::save_data`], for loading a save.
+    pub fn save_data_mut(&mut self) -> &mut [u8] {
+        self.bus.mapper.save_data_mut()
+    }
+
+    /// v2.9.6 — return the save data to a never-saved cartridge: zeroed RAM,
+    /// or the flash image as loaded.
+    pub fn clear_save_data(&mut self) {
+        self.bus.mapper.clear_save_data();
+    }
+
+    /// v2.7.3 — whether the cartridge has non-volatile save data: the header
+    /// declares battery-backed PRG-RAM (iNES flags 6 bit 1), or (v2.9.6) the
+    /// board is self-flashable and its flash is the save (GTROM, mapper 111,
+    /// and flashable UNROM 512, mapper 30, whose headers need not set the
+    /// bit). Persist [`Self::save_data`] when this is `true`.
     ///
     /// [`Self::sram`] is not the same question: several boards expose their
     /// work RAM through it whatever the header says (NROM returns its 8 KiB

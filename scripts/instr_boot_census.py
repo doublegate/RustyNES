@@ -60,10 +60,10 @@ def main():
                 j += 1
     print(f"net cumulative C drift across boot: {total_C:+d} "
           f"({'ODD' if total_C & 1 else 'even'})")
-    print(f"\nPER-INSTRUCTION COST-MISMATCH PCs (cycle injected at a matched PC):")
+    print("\nPER-INSTRUCTION COST-MISMATCH PCs (cycle injected at a matched PC):")
     for pc, n in cost_inj.most_common(20):
         print(f"  {pc}: {n}")
-    print(f"\nSTREAM-FORK PCs (loop exited a different # of iterations):")
+    print("\nSTREAM-FORK PCs (loop exited a different # of iterations):")
     for pc, n in fork.most_common(20):
         print(f"  {pc}: {n}")
     return 0

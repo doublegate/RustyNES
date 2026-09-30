@@ -162,7 +162,7 @@ impl BatterySave {
     /// file into the cartridge when one exists.
     ///
     /// Returns `Ok(None)` for a cartridge with nothing to persist: no battery
-    /// bit, or an empty `sram()`. Returns `Err` when a file exists but cannot be
+    /// bit, or empty `save_data()`. Returns `Err` when a file exists but cannot be
     /// used; in that case nothing is loaded and nothing will be written, so the
     /// file survives for the user to inspect.
     ///
@@ -170,11 +170,13 @@ impl BatterySave {
     ///
     /// [`AttachError`] as described above.
     pub fn attach(nes: &mut Nes, data_dir: &Path) -> Result<Option<Self>, AttachError> {
-        if !nes.has_battery() || nes.sram().is_empty() {
+        // `save_data()`, not `sram()`: on a self-flashable board (GTROM, a
+        // flashable UNROM 512) the save is the flash image, not `$6000` RAM.
+        if !nes.has_battery() || nes.save_data().is_empty() {
             return Ok(None);
         }
         let path = sav_path(data_dir, nes.rom_sha256());
-        let expected = nes.sram().len();
+        let expected = nes.save_data().len();
         // Size first, from the metadata: reading a file of the wrong size in
         // full would let a huge or corrupt `.sav` allocate without bound
         // before being refused (review on #551).
@@ -191,7 +193,7 @@ impl BatterySave {
             // and that byte is what shows it changed (agy round 3 on #551).
             Ok(_) => match read_at_most(&path, expected as u64 + 1) {
                 Ok(bytes) if bytes.len() == expected => {
-                    nes.sram_mut().copy_from_slice(&bytes);
+                    nes.save_data_mut().copy_from_slice(&bytes);
                 }
                 // Changed size between the two calls.
                 Ok(bytes) => {
@@ -208,7 +210,7 @@ impl BatterySave {
         }
         Ok(Some(Self {
             path,
-            last: nes.sram().to_vec(),
+            last: nes.save_data().to_vec(),
             frames: 0,
             failing: false,
         }))
@@ -239,7 +241,7 @@ impl BatterySave {
             }
         }
         self.frames = 0;
-        let live = nes.sram();
+        let live = nes.save_data();
         (live != self.last.as_slice()).then(|| BatteryWrite {
             path: self.path.clone(),
             bytes: live.to_vec(),

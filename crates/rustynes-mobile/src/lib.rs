@@ -706,7 +706,7 @@ impl NesController {
     /// v2.9.0 — what [`Inner::battery_held`] should hold for the current
     /// cartridge: a copy of its battery RAM, or `None` without a battery.
     fn held_battery(g: &Inner) -> Option<Vec<u8>> {
-        g.nes.has_battery().then(|| g.nes.sram().to_vec())
+        g.nes.has_battery().then(|| g.nes.save_data().to_vec())
     }
 
     /// v2.9.0 — start holding the save for a movie session, unless one is
@@ -1105,7 +1105,7 @@ impl NesController {
                 reason: "this cartridge has no battery".into(),
             });
         }
-        let expected = g.nes.sram().len();
+        let expected = g.nes.save_data().len();
         if bytes.len() != expected {
             drop(g);
             return Err(MobileError::Battery {
@@ -1115,7 +1115,7 @@ impl NesController {
                 ),
             });
         }
-        g.nes.sram_mut().copy_from_slice(&bytes);
+        g.nes.save_data_mut().copy_from_slice(&bytes);
         drop(g);
         Ok(())
     }
