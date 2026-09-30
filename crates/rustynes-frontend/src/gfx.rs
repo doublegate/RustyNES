@@ -398,9 +398,8 @@ pub struct Gfx {
     /// v2.1.2 F2.1 — the Vs. `DualSystem` two-screen blit texture (the composed
     /// 512x240 side-by-side or 256x480 stacked image), through the same
     /// nearest-sampling pipeline. Always-on (not `hd-pack`-gated); lazily
-    /// (re)built when the composed dimensions change. Native only — the dual
-    /// present path is desktop-only.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// (re)built when the composed dimensions change. v2.9.7 "Tandem" — on the
+    /// wasm-winit build too (the browser runs a cabinet from this release).
     dual_blit: Option<DynBlit>,
 }
 
@@ -408,8 +407,8 @@ pub struct Gfx {
 /// group, blitted (letterboxed) through the same nearest-sampling pipeline as
 /// the NES framebuffer. Used by the HD-pack compositor (`scale*256 x scale*240`)
 /// and the Vs. `DualSystem` two-screen composite. Lazily (re)built when the
-/// source dimensions change. Native only (both consumers are desktop-only).
-#[cfg(not(target_arch = "wasm32"))]
+/// source dimensions change. The HD-pack consumer is desktop-only; the
+/// `DualSystem` one runs on the wasm-winit build too (v2.9.7).
 struct DynBlit {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
@@ -814,7 +813,6 @@ impl Gfx {
             overscan: crate::config::Overscan::default(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             hd: None,
-            #[cfg(not(target_arch = "wasm32"))]
             dual_blit: None,
         })
     }
@@ -1593,10 +1591,14 @@ impl Gfx {
     /// stacked). Reuses the nearest-sampling blit pipeline through a lazily-sized
     /// `DynBlit`, with an aspect-correct letterbox for the wide/tall combined
     /// frame (no overscan / PAR — the source is already two composed screens).
-    /// Native only. Structurally identical to `render_hd_with_overlay`,
-    /// including the release-safe size guard that skips a mismatched upload
-    /// rather than aborting the process.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Structurally identical to `render_hd_with_overlay`, including the
+    /// release-safe size guard that skips a mismatched upload rather than
+    /// aborting the process.
+    ///
+    /// v2.9.7 "Tandem" — compiled for wasm32 as well. Nothing here is
+    /// platform-specific: it uses the device, queue, surface, blit pipeline and
+    /// NES texture format every `Gfx` owns, and the composed texture (at most
+    /// 512x240 or 256x480) is far inside WebGL2's 2048-texel minimum limit.
     pub fn render_dual<F>(
         &mut self,
         dual_rgba: &[u8],
@@ -1706,7 +1708,6 @@ impl Gfx {
     /// (Re)build the dual-screen blit texture + bind group when absent or
     /// resized. Mirrors `ensure_hd_blit` but is always available (not
     /// `hd-pack`-gated) and lands in [`Self::dual_blit`].
-    #[cfg(not(target_arch = "wasm32"))]
     fn ensure_dual_blit(&mut self, w: u32, h: u32) {
         if self
             .dual_blit
@@ -1939,7 +1940,6 @@ pub fn compose_dual_into(
 /// overscan crop and no 8:7 PAR (the source is a raw composite of two screens),
 /// so `crop` is the identity. Returns the same `[rect(4), crop(4)]` uniform the
 /// blit pipeline expects.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 #[allow(clippy::cast_precision_loss)] // dims fit comfortably in the f32 mantissa.
 pub(crate) fn dual_letterbox_uniform(width: u32, height: u32, img_w: u32, img_h: u32) -> [f32; 8] {
     let win_aspect = width as f32 / height.max(1) as f32;

@@ -177,6 +177,19 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             );
             match nes_result {
                 Ok(nes) => {
+                    // v2.9.7 "Tandem" (plan item 5) — this embed draws ONE
+                    // 256x240 canvas through the 2D `ImageData` path; it has
+                    // no two-screen present path and no second console. A Vs.
+                    // `DualSystem` title therefore runs as its main console
+                    // alone. Say so in the console rather than leave a black
+                    // attract screen unexplained; the full web build
+                    // (wasm-winit) runs the two-console cabinet.
+                    if crate::app::is_dual_system(&nes) {
+                        crate::app::warn_dual_system_main_only(
+                            "The lightweight canvas embed runs the main console only; \
+                             the full web build (wasm-winit) runs both consoles.",
+                        );
+                    }
                     // NOT `EmuCore::set_nes`: this is the canvas embed's own
                     // `Emu`, which holds no mapper-name cache to refresh, so
                     // there is nothing for a setter to keep consistent. (The

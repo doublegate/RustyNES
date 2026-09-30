@@ -515,6 +515,14 @@ the two newest upstream PPU tests are known gaps).
   is length-capped (8 KiB) and tolerant of malformed input (silently keeps
   defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
 
+### Web battery saves and Vs. `DualSystem` (v2.9.7 "Tandem")
+
+The wasm-winit build persists battery saves to `IndexedDB` (see
+[Battery saves in the browser](#battery-saves-in-the-browser-indexeddb-wasm-winit-v297))
+and runs Vs. `DualSystem` cabinets with both screens (see the "Web
+`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed does
+neither: it has no battery store and warns that a cabinet runs main-only.
+
 ### wasm size & startup + software blitter (v2.1.8 "Performance", A2 + A4)
 
 **A4 — release wasm size/startup.** The `<link data-trunk rel="rust">` in
@@ -713,19 +721,27 @@ side-by-side into a 512×240 XRGB8888 image (MAIN left, SUB right), presented wi
 a 512-wide `max_width` geometry so RetroArch draws the variable width without a
 geometry renegotiation. Ports 0/1 → MAIN P1/P2, 2/3 → SUB P1/P2; MAIN audio plays;
 save states use `VsDualSystem::snapshot`/`restore`; memory maps expose the MAIN
-console. See `docs/libretro/advanced_features.md`. The **wasm** desktop-style
-present remains deferred: the CPU compositor (`Gfx::compose_dual_into`) and the
-core (`Emu::Dual`) are already cross-platform, but enabling it requires adding the
-`VsDualSystem` detection to the *separate* wasm ROM-load path (the wasm build loads
-from bytes, not the native `load_rom_from_path`), un-gating the `present_dual` /
-`dual_mode` fields, and un-gating the GPU present branch (`Gfx::render_dual` +
-`ensure_dual_blit`, currently `cfg(not(wasm))`). That is a multi-site change to the
-**common** wasm present hot-path (which the single-console 99.99% case also runs)
-for a very niche feature — the four Vs. arcade cabinet boards in a browser tab —
-and a wasm GPU present cannot be runtime-verified in CI (no headless browser GPU
-present). The libretro core (above) delivers Vs. `DualSystem` for the mainstream
-RetroArch target now; the wasm second-screen present stays deferred until it can be
-validated in a browser. Mobile remains deferred.
+console. See `docs/libretro/advanced_features.md`. Mobile remains deferred.
+
+**Web `DualSystem` (v2.9.7 "Tandem").** The wasm-winit build now runs a cabinet
+too. Its load path (`AppEvent::RomLoaded` → `start_nes` → `finish_start_nes` →
+`App::install_nes_wasm`) calls the desktop's detection
+(`App::build_dual_cabinet`: the NES 2.0 header or the Vs. database), installs the
+cabinet with `EmuCore::set_dual`, and runs the same `produce_dual_frame` (MAIN
+audio goes to the Web Audio ring) and the same two-screen present
+(`Gfx::compose_dual_into` + `Gfx::render_dual`, now compiled for wasm32; the
+composed texture is 512×240 or 256×480, far inside WebGL2's limits). Input is the
+desktop's: P1/P2 → main, P3/P4 → sub, Insert Coin → the main acceptor. The
+single-console present is unchanged: the dual branch is taken only while a
+cabinet is loaded. Save states with a cabinet loaded are not wired on the web
+yet; F1 / F4 say so in the status bar instead of logging "no ROM loaded". The
+lightweight `wasm-canvas` embed has one 256×240 canvas and no second console,
+so it runs the main console only and warns in the console
+(`app::warn_dual_system_main_only`). The browser run itself is a manual check
+(no headless browser GPU present in CI). The "Vs. DualSystem title" console
+note no longer fires from `apply_vs_db` on every such load: it said the core
+could not boot the cart, which had been false on the desktop since v2.1.2. It
+now fires only where no cabinet is built.
 
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
@@ -2200,7 +2216,58 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   included, which is the Power Cycle defect above. A power-on movie never
   inherited a loaded `.sav`; a Power Cycle erased one.
 - Not persisted: a Vs. `DualSystem` cabinet (none of the four boards has a
-  battery), the web build (no filesystem store), and mobile (v2.7.4).
+  battery), the lightweight `wasm-canvas` embed, and mobile (v2.7.4). The
+  wasm-winit web build persists to `IndexedDB` from v2.9.7 (next section).
+- **The policy is shared with the web build (v2.9.7).** Which cartridges
+  persist, the once-a-second period and the "only when changed, baseline moves
+  only on success, report the first failure once" rule live in
+  [`battery_policy`](../crates/rustynes-frontend/src/battery_policy.rs);
+  `battery_save` keeps only what is specific to a file (the path, the metadata
+  size check, the bounded read, the atomic write).
+
+## Battery saves in the browser (`IndexedDB`, wasm-winit, v2.9.7)
+
+The web build keeps each battery cartridge's save RAM (`Nes::save_data()`, so
+GTROM / UNROM 512 flash saves too) in the browser, under the same rules as the
+desktop `.sav`. The decisions are in
+[`web_battery`](../crates/rustynes-frontend/src/web_battery.rs), a state machine
+compiled on wasm32 and natively under `cfg(test)`, so every rule is tested
+headless; `wasm_idb` only moves the bytes.
+
+- **Where.** The `rustynes` `IndexedDB` database, object store `save-states`
+  (the one the save-state slots use), key `"<rom-sha256-hex>:battery"`; the value
+  is the raw bytes. Where `IndexedDB` is unavailable (some private-browsing
+  modes) the `localStorage` fallback holds it base64-encoded under
+  `rustynes-battery-<hex>`, as the save-state slots fall back.
+- **Why a key and not a new object store.** A new store means opening the
+  database at version 2, and an open at a new version is *blocked* while any
+  other tab holds version 1. Every earlier build opened it without an
+  `onversionchange` handler, so an old tab never lets go, and the restore below
+  would wait for the user to close it. A key suffix keeps version 1 and cannot
+  meet a slot key (`"<hex>:slot<N>"`).
+- **Restored before the first frame.** The read is asynchronous, so a battery
+  cartridge is installed *pending*: `EmuCore::produce_one_frame` produces
+  nothing until the read lands in `EmuCore::restore_web_battery`. Every outcome
+  of the read releases the gate. A read that lands after the user loaded
+  another ROM, or after a movie or netplay session took the save RAM, is
+  discarded. Pinned natively by
+  `a_pending_browser_battery_read_holds_the_first_frame`.
+- **Written on the desktop's cadence.** Compared once per 60 produced frames,
+  written only when the bytes differ from the last write that succeeded; a
+  failed write (a full quota) is retried and reported in the status bar once. A
+  periodic write waits while an earlier one is still in flight; a forced write
+  goes out only when the bytes moved on from the one in flight.
+- **Flushed when the page is hidden.** `visibilitychange` to `hidden` (and
+  `pagehide`) forces a write, because a closing tab gets no reliable later
+  event in which an asynchronous write could finish. Loading another ROM,
+  closing the ROM, and starting a movie or netplay session force one too.
+- **Never clobbers a record it did not read.** A record whose length is not
+  the cartridge's save size, or a store that could not be read, leaves the
+  session unpersisted and the record untouched, with the reason in the status
+  bar.
+- **Not verified headless.** The `IndexedDB` glue (`wasm_idb::get_battery`,
+  `put_battery`, the page-hide listener) runs only in a browser; its check is
+  manual, recorded in the v2.9.7 notes.
 
 ## ROM file handling
 
