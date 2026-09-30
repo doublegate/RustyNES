@@ -198,27 +198,64 @@ pub(crate) fn encode_sector_diff(mem: &[u8], original: &[u8], out: &mut alloc::v
     }
 }
 
+/// The bitmap's byte length for a `mem_len`-byte chip. The wire format has no
+/// length prefix: both ends derive the bitmap from the chip size, one bit per
+/// 4 KiB sector, least significant bit first.
+pub(crate) const fn sector_bitmap_len(mem_len: usize) -> usize {
+    mem_len.div_ceil(SECTOR).div_ceil(8)
+}
+
+/// The exact byte length of the diff at the start of `data` for a
+/// `mem_len`-byte chip: the bitmap, then one sector per set bit (the last
+/// sector may be short). `None` when `data` does not hold the whole bitmap,
+/// or when a padding bit past the last sector is set, which
+/// [`encode_sector_diff`] never writes (`docs/mappers.md` gotcha 12).
+pub(crate) fn sector_diff_len(mem_len: usize, data: &[u8]) -> Option<usize> {
+    let sectors = mem_len.div_ceil(SECTOR);
+    let bitmap = data.get(..sector_bitmap_len(mem_len))?;
+    let mut len = bitmap.len();
+    for (i, &byte) in bitmap.iter().enumerate() {
+        for bit in 0..8 {
+            if byte & (1 << bit) == 0 {
+                continue;
+            }
+            let s = i * 8 + bit;
+            if s >= sectors {
+                return None;
+            }
+            len += ((s + 1) * SECTOR).min(mem_len) - s * SECTOR;
+        }
+    }
+    Some(len)
+}
+
 /// Inverse of [`encode_sector_diff`]: rebuild `mem` from `original` plus the
 /// flashed sectors. Returns the number of bytes consumed, or `None` when
-/// `data` is too short or `mem` and `original` differ in length. Callers
-/// decode into a scratch buffer, so `None` leaves the board untouched.
+/// `mem` and `original` differ in length or `data` is not a whole diff
+/// ([`sector_diff_len`]). Every check runs before the first write, so `None`
+/// leaves `mem` exactly as it was.
 pub(crate) fn decode_sector_diff(mem: &mut [u8], original: &[u8], data: &[u8]) -> Option<usize> {
     if mem.len() != original.len() {
         return None;
     }
+    let total = sector_diff_len(mem.len(), data)?;
+    if data.len() < total {
+        return None;
+    }
     let sectors = mem.len().div_ceil(SECTOR);
-    let bitmap_len = sectors.div_ceil(8);
-    let bitmap = data.get(..bitmap_len)?;
+    let bitmap_len = sector_bitmap_len(mem.len());
+    let bitmap = &data[..bitmap_len];
     let mut cur = bitmap_len;
     mem.copy_from_slice(original);
     for s in 0..sectors {
         if bitmap[s / 8] & (1 << (s % 8)) != 0 {
             let r = s * SECTOR..((s + 1) * SECTOR).min(mem.len());
             let n = r.len();
-            mem[r].copy_from_slice(data.get(cur..cur + n)?);
+            mem[r].copy_from_slice(&data[cur..cur + n]);
             cur += n;
         }
     }
+    debug_assert_eq!(cur, total);
     Some(cur)
 }
 
@@ -370,5 +407,34 @@ mod tests {
             None,
             "a length mismatch is refused, not a panic"
         );
+    }
+
+    /// The diff's length is exact before anything is copied, so a refusal
+    /// leaves `mem` as it was. A padding bit past the last sector is never
+    /// written by `encode_sector_diff` and is refused.
+    #[test]
+    fn sector_diff_length_is_exact_and_refusal_writes_nothing() {
+        // 20 KiB + 1: six sectors, the last one byte long; one bitmap byte
+        // with two padding bits.
+        let len = 5 * SECTOR + 1;
+        let original = vec![0x11u8; len];
+        let mut mem = original.clone();
+        mem[0] = 0;
+        mem[len - 1] = 0;
+        let mut out = Vec::new();
+        encode_sector_diff(&mem, &original, &mut out);
+        assert_eq!(sector_bitmap_len(len), 1);
+        assert_eq!(sector_diff_len(len, &out), Some(1 + SECTOR + 1));
+        assert_eq!(out.len(), 1 + SECTOR + 1);
+        assert_eq!(sector_diff_len(len, &[]), None, "no bitmap");
+        for bit in [6u8, 7] {
+            assert_eq!(sector_diff_len(len, &[1 << bit]), None, "padding bit {bit}");
+        }
+        let mut target = vec![0xAAu8; len];
+        assert_eq!(
+            decode_sector_diff(&mut target, &original, &out[..out.len() - 1]),
+            None
+        );
+        assert!(target.iter().all(|&b| b == 0xAA), "nothing written");
     }
 }

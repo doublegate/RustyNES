@@ -35,11 +35,42 @@
 
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError};
-use crate::sst39sf040::{Sst39sf040, decode_sector_diff, encode_sector_diff};
+use crate::sst39sf040::{
+    Sst39sf040, decode_sector_diff, encode_sector_diff, sector_bitmap_len, sector_diff_len,
+};
 use alloc::{boxed::Box, vec::Vec};
 use alloc::{format, vec};
 
 const PRG_BANK_4K: usize = 0x1000;
+
+/// The exact length of a flash board's save state: `fixed` bytes, then the
+/// sector diff (`sst39sf040.rs`). A diff whose bitmap is cut short is
+/// `Truncated`, reporting the length the bitmap alone needs. A bitmap bit past
+/// the end of the chip is one `encode_sector_diff` never writes, so `Invalid`
+/// (`docs/mappers.md` gotcha 12). The caller has already checked
+/// `data.len() >= fixed`.
+fn flash_state_len(
+    mapper: u16,
+    fixed: usize,
+    flash_len: usize,
+    data: &[u8],
+) -> Result<usize, MapperError> {
+    let tail = &data[fixed..];
+    let bitmap = sector_bitmap_len(flash_len);
+    if tail.len() < bitmap {
+        return Err(MapperError::Truncated {
+            expected: fixed + bitmap,
+            got: data.len(),
+        });
+    }
+    sector_diff_len(flash_len, tail)
+        .map(|n| fixed + n)
+        .ok_or_else(|| {
+            MapperError::Invalid(format!(
+                "mapper {mapper} flash bitmap marks a sector past the {flash_len}-byte chip"
+            ))
+        })
+}
 const PRG_BANK_16K: usize = 0x4000;
 const PRG_BANK_32K: usize = 0x8000;
 const CHR_BANK_8K: usize = 0x2000;
@@ -766,19 +797,16 @@ impl Mapper for Gtrom111 {
                 data[5], data[6]
             ))
         })?;
-        let mut flash = vec![0u8; self.flash.len()];
-        let used = decode_sector_diff(&mut flash, &self.original, &data[fixed..]).ok_or(
-            MapperError::Truncated {
-                expected: fixed + 1,
-                got: data.len(),
-            },
-        )?;
-        if fixed + used != data.len() {
+        let expected = flash_state_len(111, fixed, self.flash.len(), data)?;
+        if data.len() != expected {
             return Err(MapperError::Truncated {
-                expected: fixed + used,
+                expected,
                 got: data.len(),
             });
         }
+        let mut flash = vec![0u8; self.flash.len()];
+        decode_sector_diff(&mut flash, &self.original, &data[fixed..])
+            .ok_or_else(|| MapperError::Invalid("mapper 111 flash diff".into()))?;
         self.flash.copy_from_slice(&flash);
         self.prg_bank = prg_bank;
         self.chr_bank = chr_bank;
@@ -1459,25 +1487,21 @@ impl Mapper for Unrom512M30 {
                 "mapper 30 flash state {s0:#04x} {s1:#04x} is not one the chip produces"
             ))
         })?;
-        let (flash, used) = if self.flashable() {
-            let mut flash = vec![0u8; self.prg_rom.len()];
-            let used = decode_sector_diff(&mut flash, &self.original, &data[fixed..]).ok_or(
-                MapperError::Truncated {
-                    expected: fixed + 1,
-                    got: data.len(),
-                },
-            )?;
-            (Some(flash), used)
+        let expected = if self.flashable() {
+            flash_state_len(30, fixed, self.prg_rom.len(), data)?
         } else {
-            (None, 0)
+            fixed
         };
-        if fixed + used != data.len() {
+        if data.len() != expected {
             return Err(MapperError::Truncated {
-                expected: fixed + used,
+                expected,
                 got: data.len(),
             });
         }
-        if let Some(flash) = flash {
+        if self.flashable() {
+            let mut flash = vec![0u8; self.prg_rom.len()];
+            decode_sector_diff(&mut flash, &self.original, &data[fixed..])
+                .ok_or_else(|| MapperError::Invalid("mapper 30 flash diff".into()))?;
             self.prg_rom.copy_from_slice(&flash);
         }
         self.chip = chip;
@@ -2076,6 +2100,30 @@ mod tests {
             );
             assert_eq!(m.save_state(), good, "UNROM 512: nothing assigned");
         }
+    }
+
+    /// A cut-short flash section reports the length the state really needs.
+    /// It used to report `fixed + 1`, whatever the bitmap said.
+    #[test]
+    fn m111_truncated_state_reports_its_exact_length() {
+        let mut m = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+        for (a, v) in [
+            (0xD555u16, 0xAAu8),
+            (0xAAAA, 0x55),
+            (0xD555, 0xA0),
+            (0x8100, 0x42),
+        ] {
+            m.cpu_write(a, v);
+        }
+        let blob = m.save_state();
+        let err = Gtrom111::new(synth_prg_32k(8), &[])
+            .unwrap()
+            .load_state(&blob[..blob.len() - 100])
+            .unwrap_err();
+        assert!(
+            matches!(err, MapperError::Truncated { expected, .. } if expected == blob.len()),
+            "{err:?}"
+        );
     }
 
     /// A state refused for trailing bytes must leave the flash as it was. The

@@ -843,7 +843,8 @@ impl Mapper for BandaiFcg {
             self.outer = data[cursor] & 0x01;
             self.wram_enabled = data[cursor + 1] != 0;
             cursor += 2;
-            self.wram.copy_from_slice(&data[cursor..]);
+            self.wram
+                .copy_from_slice(&data[cursor..cursor + self.wram.len()]);
         } else {
             self.outer = 0;
             self.wram_enabled = false;

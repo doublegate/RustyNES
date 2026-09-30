@@ -327,6 +327,11 @@ impl Mmc3 {
 
     /// Select the board wiring (the NES 2.0 submapper), v2.9.6. An MMC6 gets
     /// its 1 KiB of internal RAM in place of the board PRG-RAM.
+    ///
+    /// Call it once, on a board fresh from a constructor: choosing
+    /// [`Mmc3Variant::Mmc6`] replaces the board PRG-RAM with the 1 KiB
+    /// internal RAM, and a later call with another variant does not restore
+    /// the original allocation.
     #[must_use]
     pub fn with_variant(mut self, variant: Mmc3Variant) -> Self {
         self.variant = variant;
