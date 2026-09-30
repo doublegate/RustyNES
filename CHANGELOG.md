@@ -34,6 +34,13 @@ cycle-accurate core later replaced.
   snapshot. Until now F1 with a cabinet loaded did nothing, and did not say so.
   Run-ahead, rewind, netplay and TAS remain unavailable in dual mode.
 
+### Changed
+
+- **Lua `client.frameskip(n)` is accepted and ignored by design**, and its log
+  line now says why instead of "not yet supported". The emulator renders every
+  frame for accuracy, and the display already shows only the latest one, so a
+  frame-skip would save nothing. `client.speedmode` controls speed.
+
 ### Fixed
 
 - **The Settings "Overclock (extra scanlines)" field now does something.**

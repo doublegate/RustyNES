@@ -508,7 +508,7 @@ by the host after the frame.
 | `client.screenshottoclipboard()` | Capture to the system clipboard. |
 | `client.setwindowsize(scale)` | Set the integer window scale. |
 | `client.speedmode(pct)` | Set emulation speed (`100` = realtime). Presentation-only. |
-| `client.frameskip(n)` | Request a render frame-skip (recorded; no skip pipeline today). |
+| `client.frameskip(n)` | Accepted and ignored, by design (v2.9.7), with a log line saying so. The PPU renders every frame for accuracy, and the presenter already shows only the latest frame at the display's refresh, so a skip would save nothing. Use `client.speedmode` for speed. |
 | `client.reboot_core()` | Power-cycle the running ROM. **Gated like `emu.write`.** |
 | `client.pause_av()` / `client.unpause_av()` | A/V-recorder pause intent (recorder is start/stop only today). |
 | `client.addcheat(code)` / `client.removecheat(code)` | Add/remove a Game Genie code. **Gated like `emu.write`.** |

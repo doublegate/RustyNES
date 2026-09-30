@@ -6148,11 +6148,23 @@ impl App {
                 self.set_speed(*pct as f32 / 100.0);
             }
             ClientCmd::FrameSkip(n) => {
-                // RustyNES renders every frame (no frame-skip pipeline today);
-                // record the request rather than silently dropping it.
+                // v2.9.7 — accepted and deliberately ignored. In emulators
+                // where a frame-skip exists, it saves the cost of RENDERING
+                // skipped frames. Here there is none to save: the PPU must
+                // produce every pixel for accuracy (sprite-0 hit, mid-frame
+                // effects), and presentation is already decoupled from
+                // emulation. The presenter shows only the latest frame at the
+                // display's refresh, so frames the display cannot show are
+                // dropped already. Holding a stale image would only look worse.
+                // `client.speedmode` is the speed control. Logged so a
+                // BizHawk-style script learns this instead of assuming it
+                // took effect.
                 if let Some(dbg) = self.debugger.as_mut() {
-                    dbg.script_panel()
-                        .push_log([format!("[client.frameskip({n}) — not yet supported]")]);
+                    dbg.script_panel().push_log([format!(
+                        "[client.frameskip({n}) ignored: every frame is rendered for accuracy, \
+                         and the display already shows only the latest; use \
+                         client.speedmode for speed]"
+                    )]);
                 }
             }
             ClientCmd::PauseAv | ClientCmd::UnpauseAv => {
