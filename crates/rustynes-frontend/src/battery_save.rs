@@ -49,15 +49,25 @@
 //! the time of a slice comparison (and, on a change, one atomic file write).
 //! [`crate::atomic_write::write_atomic`] supplies the durability: a crash mid-write
 //! leaves the previous save, never a truncated one.
+//!
+//! # The policy is shared (v2.9.7)
+//!
+//! Rules 1 and 3 and the period now live in [`crate::battery_policy`], which
+//! the web build's IndexedDB store (`web_battery`) uses too. This module keeps
+//! what is specific to a file: the path, the size check against the file's
+//! metadata, the bounded read, and the atomic write.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
 use rustynes_core::Nes;
 
+use crate::battery_policy::BatteryPolicy;
+
 /// How often, in produced frames, the periodic flush compares the live save
-/// RAM with the last write. One second of NTSC play.
-pub const CHECK_PERIOD_FRAMES: u32 = 60;
+/// RAM with the last write. Re-exported from [`crate::battery_policy`], which
+/// the desktop and web stores share.
+pub use crate::battery_policy::CHECK_PERIOD_FRAMES;
 
 /// The directory under the frontend's data dir that holds `.sav` files.
 pub const BATTERY_DIR: &str = "battery";
@@ -146,15 +156,9 @@ fn read_at_most(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
 #[derive(Debug)]
 pub struct BatterySave {
     path: PathBuf,
-    /// The bytes last written to (or read from) `path`. "Clean" means the live
-    /// save RAM equals this.
-    last: Vec<u8>,
-    /// Produced frames since the last periodic comparison.
-    frames: u32,
-    /// The last write to `path` failed. Lets [`Self::written`] report only the
-    /// FIRST failure of a run, so a full disk is shown to the player once
-    /// rather than every second (agy round 2 on #551).
-    failing: bool,
+    /// The shared write policy: the baseline (the bytes last written to, or
+    /// read from, `path`), the period counter and the failure latch.
+    policy: BatteryPolicy,
 }
 
 impl BatterySave {
@@ -172,7 +176,7 @@ impl BatterySave {
     pub fn attach(nes: &mut Nes, data_dir: &Path) -> Result<Option<Self>, AttachError> {
         // `save_data()`, not `sram()`: on a self-flashable board (GTROM, a
         // flashable UNROM 512) the save is the flash image, not `$6000` RAM.
-        if !nes.has_battery() || nes.save_data().is_empty() {
+        if !crate::battery_policy::persists(nes) {
             return Ok(None);
         }
         let path = sav_path(data_dir, nes.rom_sha256());
@@ -210,9 +214,7 @@ impl BatterySave {
         }
         Ok(Some(Self {
             path,
-            last: nes.save_data().to_vec(),
-            frames: 0,
-            failing: false,
+            policy: BatteryPolicy::new(nes.save_data().to_vec()),
         }))
     }
 
@@ -234,17 +236,10 @@ impl BatterySave {
     /// thread for as long as the disk took (review on #551). Report the
     /// outcome with [`Self::written`].
     pub fn due_write(&mut self, nes: &Nes, force: bool) -> Option<BatteryWrite> {
-        if !force {
-            self.frames += 1;
-            if self.frames < CHECK_PERIOD_FRAMES {
-                return None;
-            }
-        }
-        self.frames = 0;
-        let live = nes.save_data();
-        (live != self.last.as_slice()).then(|| BatteryWrite {
+        let bytes = self.policy.due(nes.save_data(), force)?;
+        Some(BatteryWrite {
             path: self.path.clone(),
-            bytes: live.to_vec(),
+            bytes,
         })
     }
 
@@ -260,13 +255,7 @@ impl BatterySave {
         if write.path != self.path {
             return false;
         }
-        if result.is_ok() {
-            self.last = write.bytes;
-            self.failing = false;
-            false
-        } else {
-            !std::mem::replace(&mut self.failing, true)
-        }
+        self.policy.written(write.bytes, result.is_ok())
     }
 
     /// Write the live save RAM now if it differs from the last write:

@@ -165,7 +165,8 @@ in `crates/rustynes-frontend/web`.
   lists every family, its tier and its evidence.
 - **Self-flashing homebrew boards** (GTROM, UNROM 512) emulate their SST39SF040
   flash chip, so games that save by rewriting their own ROM keep those saves.
-- **Battery saves** persist on desktop, Android and iOS.
+- **Battery saves** persist on desktop, Android and iOS, and in the browser
+  (`IndexedDB`, from v2.9.7).
 - **Famicom Disk System** with a user-supplied `disksys.rom`, and **UNIF** boards
   mapped to their iNES numbers.
 

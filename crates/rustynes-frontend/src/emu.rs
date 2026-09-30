@@ -729,6 +729,14 @@ pub struct EmuCore {
     /// would roll live save RAM back to the last write.
     #[cfg(not(target_arch = "wasm32"))]
     pub battery: Option<crate::battery_save::BatterySave>,
+    /// v2.9.7 "Tandem" — the browser's battery save: the `IndexedDB`
+    /// counterpart of [`Self::battery`], driven by the wasm frontend. While a
+    /// stored save is being read ([`crate::web_battery::WebBattery::is_pending`])
+    /// [`Self::produce_one_frame`] produces nothing, so the game's first frame
+    /// already sees its save, as it does on the desktop. Compiled natively only
+    /// for tests (the gate is tested there); a native build has no such field.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub web_battery: crate::web_battery::WebBattery,
     /// v1.2.0 (T-110-E2) — Lua `emu.setInput` per-port button override, applied
     /// at the next [`Self::latch`] (the deterministic late-latch point, the same
     /// place a real keypress enters) then consumed (one-shot per command).
@@ -898,6 +906,8 @@ impl EmuCore {
             fds_disk_sha256: None,
             #[cfg(not(target_arch = "wasm32"))]
             battery: None,
+            #[cfg(any(target_arch = "wasm32", test))]
+            web_battery: crate::web_battery::WebBattery::new(),
             #[cfg(feature = "scripting")]
             script_input_override: [None, None],
             #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
@@ -1359,14 +1369,23 @@ impl EmuCore {
         // otherwise).
         #[allow(unused_mut)]
         let mut fx = ProduceFx::default();
+        // v2.9.7 "Tandem" — the browser reads a battery cartridge's stored save
+        // asynchronously. Until it lands, produce nothing: a frame run now would
+        // boot the game on power-on RAM, and a game that finds no save may
+        // format a fresh one. The desktop loads its `.sav` synchronously, so it
+        // never has this field outside tests.
+        #[cfg(any(target_arch = "wasm32", test))]
+        if self.web_battery.is_pending() {
+            return fx;
+        }
         // v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet takes a parallel, much
         // simpler produce path: step both consoles, harvest both framebuffers,
         // push the MAIN console's audio. The advanced single-`Nes` features
         // (run-ahead, rewind, TAS, breakpoints, HD-pack, A/V record) are scoped
         // out in dual mode (ADR 0032) — `dual` and `nes` are mutually exclusive,
-        // so the whole single path below is dead when a cabinet is loaded. Dual
-        // is native-only (the wasm frontend has no dual present path).
-        #[cfg(not(target_arch = "wasm32"))]
+        // so the whole single path below is dead when a cabinet is loaded.
+        // v2.9.7 "Tandem" — the wasm-winit frontend takes this path too (it
+        // builds the cabinet on its load path and presents both screens).
         if self.dual.is_some() {
             self.produce_dual_frame(sinks);
             return fx;
@@ -1628,8 +1647,18 @@ impl EmuCore {
     /// to the sink. The SUB console's audio is drained and discarded so its APU
     /// sample buffer cannot grow without bound. This path deliberately omits the
     /// single-`Nes` machinery (run-ahead / rewind / TAS / breakpoints / HD-pack /
-    /// A/V record), which is scoped out in dual mode (ADR 0032). Native only.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// A/V record), which is scoped out in dual mode (ADR 0032).
+    ///
+    /// v2.9.7 "Tandem" — no longer native-only: the wasm-winit frontend runs a
+    /// cabinet too. The only platform difference is the audio sink: native
+    /// pushes to the `cpal` sink in `sinks`, wasm to the Web Audio ring, the
+    /// same split the single-console path makes.
+    // `sinks` carries the native audio sink; on wasm the audio goes to the
+    // thread-local Web Audio ring instead, as on the single-console path.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(unused_variables, clippy::needless_pass_by_ref_mut)
+    )]
     fn produce_dual_frame(&mut self, sinks: &mut FrameSinks<'_>) {
         // v2.5.0 / F2.1 — Vs. System coin latch: a coin-insert holds the acceptor
         // for a few frames, then auto-clears (uniform with the single path).
@@ -1659,6 +1688,10 @@ impl EmuCore {
             let n = dual.main_mut().drain_audio_into(&mut self.audio_buf);
             audio.push_samples(&self.audio_buf[..n]);
         }
+        // The browser plays the MAIN console through the Web Audio ring, the
+        // sink the single-console wasm path feeds.
+        #[cfg(target_arch = "wasm32")]
+        crate::wasm_audio::push_samples(&dual.main_mut().drain_audio());
         // Bound the SUB console's APU buffer even though its audio is not played:
         // drain it into the reusable `audio_buf` scratch (never a fresh `Vec`),
         // looping until a partial fill signals the buffer is empty.
@@ -1909,8 +1942,9 @@ impl EmuCore {
     /// `start` reports failure (a movie for another ROM, a refused save
     /// state), the console is unchanged and saving continues.
     ///
-    /// Returns what `start` returned. On wasm32 there is no battery file and
-    /// this is `start(self)`.
+    /// Returns what `start` returned. On wasm32 the same two steps drive the
+    /// `IndexedDB` battery record (v2.9.7): the pending change is handed to the
+    /// browser store, and the record is released.
     pub fn start_sandboxed_session(&mut self, start: impl FnOnce(&mut Self) -> bool) -> bool {
         self.flush_battery_now();
         let began = start(self);
@@ -1925,27 +1959,36 @@ impl EmuCore {
     /// somewhere else: netplay's power-on happens inside the netplay tick once
     /// the handshake completes, so the app calls this on every connecting tick
     /// (no emulation runs then, so only the first call can find a change).
-    // Empty on wasm32 (no `.sav` there), where clippy would have it `const`;
-    // the native body writes a file.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
+    ///
+    /// v2.9.7 "Tandem" — on wasm32 this hands the change to the `IndexedDB`
+    /// store (asynchronously; the bytes are copied now, so the session that
+    /// follows cannot change what is written).
     pub fn flush_battery_now(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_battery(true);
+        #[cfg(target_arch = "wasm32")]
+        if let Some(write) = self.web_battery_due(true) {
+            crate::wasm_idb::spawn_battery_write(write);
+        }
     }
 
     /// v2.9.0 — stop persisting the cartridge's battery RAM for the rest of
     /// this ROM session, WITHOUT writing it: the live RAM now belongs to a
     /// session. The second half of [`Self::start_sandboxed_session`].
-    // Empty on wasm32 (no `.sav` there), where clippy would have it `const`;
-    // the native body writes a file.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
     pub fn release_battery_for_session(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        if self.battery.take().is_some() {
-            eprintln!(
-                "rustynes: battery saving paused for this session (movie, TAStudio \
-                 or netplay); reload the ROM to resume"
-            );
+        let released = self.battery.take().is_some();
+        // v2.9.7 — the browser record likewise. A read still in flight is
+        // discarded when it lands, so it cannot overwrite the session's RAM.
+        #[cfg(target_arch = "wasm32")]
+        let released = self.web_battery.release();
+        if released {
+            let note = "rustynes: battery saving paused for this session (movie, TAStudio \
+                        or netplay); reload the ROM to resume";
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{note}");
+            #[cfg(target_arch = "wasm32")]
+            crate::wasm_io::log(note);
         }
     }
 
@@ -1972,6 +2015,74 @@ impl EmuCore {
     pub fn detach_battery(&mut self) {
         self.flush_battery(true);
         self.battery = None;
+    }
+
+    /// v2.9.7 "Tandem" — bind the just-installed cartridge's battery RAM to
+    /// its browser record. Returns the ROM hash to read when the cartridge
+    /// persists; production is then gated until
+    /// [`Self::restore_web_battery`] delivers the read. `None` for a cartridge
+    /// without a battery, for a Vs. `DualSystem` cabinet (its four boards
+    /// carry none), and before any ROM.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn begin_web_battery(&mut self) -> Option<[u8; 32]> {
+        if let Some(nes) = self.nes.as_ref() {
+            self.web_battery.begin(nes)
+        } else {
+            self.web_battery = crate::web_battery::WebBattery::new();
+            None
+        }
+    }
+
+    /// v2.9.7 "Tandem" — deliver the outcome of reading `sha`'s browser
+    /// record (see [`crate::web_battery::WebBattery::restore`]). Returns a
+    /// status-bar message when a record exists but could not be used, so the
+    /// player learns this session will not save rather than finding out later.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[must_use]
+    pub fn restore_web_battery(
+        &mut self,
+        sha: [u8; 32],
+        stored: Result<Option<Vec<u8>>, String>,
+    ) -> Option<String> {
+        use crate::web_battery::Restored;
+        let nes = self.nes.as_mut()?;
+        match self.web_battery.restore(nes, sha, stored) {
+            Restored::Refused(e) => Some(format!(
+                "Battery save not loaded; this session will not save: {e}"
+            )),
+            Restored::Loaded | Restored::Empty | Restored::Stale => None,
+        }
+    }
+
+    /// v2.9.7 "Tandem" — the browser battery write that is due, if any (the
+    /// shared period and dirty rule; forced writes for page hide and ROM
+    /// switch). Store it, then report with [`Self::web_battery_written`].
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn web_battery_due(&mut self, force: bool) -> Option<crate::web_battery::WebBatteryWrite> {
+        let nes = self.nes.as_ref()?;
+        self.web_battery.due(nes, force)
+    }
+
+    /// v2.9.7 "Tandem" — record a finished browser battery write. Returns a
+    /// status-bar message on the first failure of a run (a full quota is
+    /// shown once, not every second).
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[must_use]
+    pub fn web_battery_written(
+        &mut self,
+        write: crate::web_battery::WebBatteryWrite,
+        ok: bool,
+    ) -> Option<String> {
+        self.web_battery
+            .written(write, ok)
+            .then(|| "Battery save failed (browser storage); retrying".to_string())
+    }
+
+    /// v2.9.7 "Tandem" — the final browser battery write for the outgoing
+    /// cartridge, then unbind. Call before a new ROM replaces the `Nes`.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn detach_web_battery(&mut self) -> Option<crate::web_battery::WebBatteryWrite> {
+        self.web_battery.detach(self.nes.as_ref())
     }
 }
 
@@ -2379,6 +2490,70 @@ mod tests {
         nes.set_extra_scanlines(30);
         force_stock_timing(&mut nes);
         assert_eq!(nes.extra_scanlines(), 0);
+    }
+
+    /// v2.9.7 "Tandem" (plan item 4) — the browser battery restore gate. A
+    /// battery cartridge's stored save is read asynchronously in the browser;
+    /// until the read lands, `produce_one_frame` must not run the console, or
+    /// the game boots on power-on RAM and its save is not there. Tested here
+    /// natively because the gate is `EmuCore` logic; the `IndexedDB` read that
+    /// releases it cannot run headless.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_pending_browser_battery_read_holds_the_first_frame() {
+        let rom = crate::web_battery::tests::rom(true);
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&rom).unwrap());
+        let sha = core.begin_web_battery().expect("a battery cart persists");
+        let before = core.nes.as_ref().unwrap().frame();
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let held = core.nes.as_ref().unwrap();
+        assert_eq!(held.frame(), before, "no frame completes while held");
+        assert_eq!(
+            held.save_data()[0],
+            0,
+            "and the program has not run: its first store never happened"
+        );
+        let mut stored = vec![0u8; core.nes.as_ref().unwrap().save_data().len()];
+        stored[2] = 0x77; // a byte the program never touches
+        assert!(core.restore_web_battery(sha, Ok(Some(stored))).is_none());
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let nes = core.nes.as_ref().unwrap();
+        assert!(nes.frame() > before, "the read released the gate");
+        assert_eq!(nes.save_data()[0], 0xA5, "the program ran");
+        assert_eq!(
+            nes.save_data()[2],
+            0x77,
+            "on the restored save, which was in place before its first frame"
+        );
+    }
+
+    /// v2.9.7 — a cartridge without a battery is never gated.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_cart_without_a_battery_is_never_held() {
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&crate::web_battery::tests::rom(false)).unwrap());
+        assert!(core.begin_web_battery().is_none());
+        for _ in 0..3 {
+            core.produce_one_frame(&quiet_inputs(), &mut sinks);
+        }
+        assert_eq!(core.nes.as_ref().unwrap().sram()[0], 0xA5, "it ran");
     }
 
     /// v1.7.0 "Forge" Workstream A1 — the gated-writeback contract: a queued

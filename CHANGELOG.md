@@ -33,6 +33,27 @@ cycle-accurate core later replaced.
   both consoles of a two-screen cabinet, using the core's existing cabinet
   snapshot. Until now F1 with a cabinet loaded did nothing, and did not say so.
   Run-ahead, rewind, netplay and TAS remain unavailable in dual mode.
+- **Battery saves in the browser** (plan item 4). The wasm-winit build keeps a
+  battery cartridge's in-game save (`Nes::save_data()`, so GTROM and UNROM 512
+  flash saves too) in `IndexedDB`, key `"<rom-sha256>:battery"` in the existing
+  `save-states` store, with the `localStorage` fallback where `IndexedDB` is
+  unavailable. The database stays at version 1: a new object store would need
+  version 2, whose open is blocked while any older tab holds version 1. The
+  stored save is restored before the game's first frame (emulation waits for
+  the asynchronous read), written on the desktop's cadence (once a second,
+  only when changed), and flushed when the page is hidden, on ROM switch and
+  close, and before a movie or netplay session takes the save RAM. A record of
+  the wrong size, or a store that cannot be read, is neither loaded nor
+  overwritten. The browser round trip is a manual check; the decisions are
+  tested natively (`web_battery`).
+- **Vs. `DualSystem` in the browser** (plan item 5). The wasm-winit build now
+  detects a cabinet on its load path by the desktop's rule and runs both
+  consoles, presenting both screens through the desktop's two-screen blit
+  (`Gfx::render_dual`, now compiled for wasm32). P1/P2 drive the main console,
+  P3/P4 the sub, and Insert Coin feeds the main acceptor. Save states work
+  with a cabinet loaded, through the same cabinet snapshot as the desktop.
+  The `wasm-canvas` embed still runs the main console only, and now says so in
+  the console. The browser run is a manual check.
 
 ### Changed
 
@@ -48,16 +69,13 @@ cycle-accurate core later replaced.
   line now says why instead of "not yet supported". The emulator renders every
   frame for accuracy, and the display already shows only the latest one, so a
   frame-skip would save nothing. `client.speedmode` controls speed.
-
-### Fixed
-
-- **The Settings "Overclock (extra scanlines)" field now does something.**
-  It saved `enhancements.overclock_scanlines`, and nothing read it; the core's
-  `Nes::set_extra_scanlines` had no caller. The value now reaches the emulator
-  from the next frame, clamped to 0-80. It is held at stock timing while a
-  movie records or plays and under netplay, because a movie and a netplay
-  session are timelines another player runs, and an extra scanline changes how
-  many CPU cycles a frame has. A Vs. DualSystem cabinet keeps stock timing.
+- **One battery-save policy for desktop and web.** Which cartridges persist,
+  the once-a-second period and the only-when-changed rule moved from
+  `battery_save` into a new target-independent `battery_policy` module that
+  both platforms use. Desktop behaviour is unchanged; its tests pass as before.
+- **The "Vs. DualSystem title" note fires only when a cabinet is not built.**
+  It fired on every such load and said the core could not boot the cart,
+  which had been false on the desktop since v2.1.2.
 
 ### Changed — the user-facing panels in Spanish
 
@@ -81,6 +99,16 @@ cycle-accurate core later replaced.
   after the visible frame; ignored while recording or playing a movie and
   during netplay) instead of calling it inert. The sprite-limit note still says
   inert, because it still is.
+
+### Fixed
+
+- **The Settings "Overclock (extra scanlines)" field now does something.**
+  It saved `enhancements.overclock_scanlines`, and nothing read it; the core's
+  `Nes::set_extra_scanlines` had no caller. The value now reaches the emulator
+  from the next frame, clamped to 0-80. It is held at stock timing while a
+  movie records or plays and under netplay, because a movie and a netplay
+  session are timelines another player runs, and an extra scanline changes how
+  many CPU cycles a frame has. A Vs. DualSystem cabinet keeps stock timing.
 
 ## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
 
