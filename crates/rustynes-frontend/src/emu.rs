@@ -580,7 +580,7 @@ pub struct EmuCore {
     /// v2.9.7 — the configured PPU overclock: extra idle scanlines per frame
     /// (`[enhancements] overclock_scanlines`, pushed by `App` on ROM load, power
     /// cycle and a Settings change). This is the CONFIGURED value; the one the
-    /// core runs with is [`effective_extra_scanlines`] of it, applied at the top
+    /// core runs with is `effective_extra_scanlines` of it, applied at the top
     /// of every produced frame, which is 0 while a movie records or plays.
     /// `0` (the default) is stock timing, byte-identical to a core that never
     /// heard of the setting.
