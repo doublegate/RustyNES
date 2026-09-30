@@ -520,7 +520,7 @@ impl Mapper for Cufrom29 {
 ///   two 8 KiB pages, and PPU `$2000-$3EFF` one of its last two, unmirrored.
 ///   Each nametable page therefore holds the four nametables plus almost
 ///   4 KiB of bonus RAM at `$3000-$3EFF`. The console's CIRAM is disabled.
-/// - **PRG** is an SST39SF040 ([`Sst39sf040`]). Writes to `$8000-$FFFF` are
+/// - **PRG** is an SST39SF040 (`sst39sf040.rs`). Writes to `$8000-$FFFF` are
 ///   its commands; command addresses are A14-A0, so `5555h` is CPU `$D555`
 ///   and `2AAAh` is `$AAAA` in any bank. The flashed image is the board's
 ///   battery save ([`Mapper::sram`]), and a save state carries only the
