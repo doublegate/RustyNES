@@ -257,19 +257,19 @@ fn reset_to_defaults_button(ui: &mut egui::Ui, armed: &mut bool, section: &str) 
     if *armed {
         let confirm = ui
             .button(
-                egui::RichText::new(format!("Confirm reset {section}?"))
+                egui::RichText::new(crate::tf!(SetConfirmReset, section))
                     .color(egui::Color32::from_rgb(240, 120, 120)),
             )
             .clicked();
         // Offer an inline Cancel so the user can back out of an arm.
-        if ui.button("Cancel").clicked() {
+        if ui.button(crate::t!(ButtonCancel)).clicked() {
             *armed = false;
         }
         if confirm {
             *armed = false;
             return true;
         }
-    } else if ui.button("Reset to Defaults").clicked() {
+    } else if ui.button(crate::t!(SetResetToDefaults)).clicked() {
         *armed = true;
     }
     false
@@ -316,7 +316,7 @@ pub fn show(
         ctx,
         detached,
         "settings",
-        "Settings",
+        crate::t!(SettingsTitle),
         super::WindowCfg {
             default_pos: Some([560.0, 64.0]),
             default_size: Some([420.0, 420.0]),
@@ -328,10 +328,10 @@ pub fn show(
             body(ui, state, config);
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("Save to config.toml").clicked() {
+                if ui.button(crate::t!(SetSaveToConfig)).clicked() {
                     match config.save() {
-                        Ok(()) => state.status = "Saved.".into(),
-                        Err(e) => state.status = format!("save error: {e}"),
+                        Ok(()) => state.status = crate::t!(SetSaved).into(),
+                        Err(e) => state.status = crate::tf!(SetSaveError, e),
                     }
                 }
             });
@@ -356,7 +356,7 @@ pub fn show(
         ctx,
         detached,
         "settings",
-        "Settings",
+        crate::t!(SettingsTitle),
         super::WindowCfg {
             default_pos: Some([560.0, 64.0]),
             default_size: Some([420.0, 420.0]),
@@ -367,7 +367,7 @@ pub fn show(
         |ui| {
             body(ui, state, config);
             ui.separator();
-            ui.label("(config save unavailable on web — changes are in-memory only)");
+            ui.label(crate::t!(SetWebNoSave));
         },
     );
 }
@@ -409,14 +409,13 @@ fn fds_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut C
     egui::CollapsingHeader::new("Famicom Disk System (FDS BIOS)").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label("disksys.rom:");
-            let cur = config
-                .fds
-                .bios_path
-                .as_ref()
-                .map_or_else(|| "(not set)".to_owned(), |p| p.display().to_string());
+            let cur = config.fds.bios_path.as_ref().map_or_else(
+                || crate::t!(SetNotSet).to_owned(),
+                |p| p.display().to_string(),
+            );
             ui.monospace(cur);
         });
-        if ui.button("Browse for disksys.rom\u{2026}").clicked()
+        if ui.button(crate::t!(SetBrowseBios)).clicked()
             && let Some(path) = rfd::FileDialog::new()
                 .add_filter("FDS BIOS", &["rom", "bin"])
                 .pick_file()
@@ -434,27 +433,24 @@ fn fds_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut C
             state.fds_bios_status = Some(match read {
                 Ok(bytes) => match classify(&bytes) {
                     BiosStatus::WrongSize(n) => {
-                        format!("Not an FDS BIOS: {n} bytes (need 8192) - path NOT changed.")
+                        crate::tf!(SetFdsWrongSize, n)
                     }
                     BiosStatus::Recognized(label) => {
                         config.fds.bios_path = Some(path);
-                        format!("Recognized: {label} - path set.")
+                        crate::tf!(SetFdsRecognized, label)
                     }
                     BiosStatus::Unverified(hex) => {
                         config.fds.bios_path = Some(path);
-                        format!(
-                            "8 KiB, unverified dump (sha256 {}\u{2026}) - path set.",
-                            &hex[..16]
-                        )
+                        crate::tf!(SetFdsUnverified, &hex[..16])
                     }
                 },
-                Err(e) => format!("read error: {e}"),
+                Err(e) => crate::tf!(SetReadError, e),
             });
         }
         if let Some(s) = &state.fds_bios_status {
             ui.label(s);
         }
-        ui.weak("Required to boot .fds disk images. Takes effect on the next FDS load.");
+        ui.weak(crate::t!(SetFdsNote));
     });
 }
 
@@ -466,7 +462,7 @@ fn fds_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut C
 /// `AvRecordOptions::from_parts`. Deliberately un-gated so the picker shows even in
 /// a build without the feature — the values just have no effect there.
 fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
-    egui::CollapsingHeader::new("Recording (A/V codec depth)").show(ui, |ui| {
+    egui::CollapsingHeader::new(crate::t!(SetRecordingHeader)).show(ui, |ui| {
         let rec = &mut config.recording;
         const CODECS: [(&str, &str); 3] = [
             ("H.264 (universal)", "h264"),
@@ -482,7 +478,7 @@ fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
             ("Slow", "slow"),
         ];
         ui.horizontal(|ui| {
-            ui.label("Video codec");
+            ui.label(crate::t!(SetVideoCodec));
             let cur = CODECS
                 .iter()
                 .find(|(_, id)| *id == rec.video_codec)
@@ -499,9 +495,9 @@ fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
         });
         // VP9's CRF ceiling is 63; x264/x265 cap at 51.
         let max_crf = if rec.video_codec == "vp9" { 63 } else { 51 };
-        ui.add(egui::Slider::new(&mut rec.crf, 0..=max_crf).text("CRF (lower = better)"));
+        ui.add(egui::Slider::new(&mut rec.crf, 0..=max_crf).text(crate::t!(SetCrf)));
         ui.horizontal(|ui| {
-            ui.label("Preset");
+            ui.label(crate::t!(SetPreset));
             let cur = PRESETS
                 .iter()
                 .find(|(_, id)| *id == rec.preset)
@@ -515,7 +511,7 @@ fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
                         }
                     }
                 });
-            ui.weak("(x264/x265 only)");
+            ui.weak(crate::t!(SetX264Only));
         });
         ui.add(egui::Slider::new(&mut rec.audio_bitrate_k, 32..=512).text("Audio kbit/s"));
     });
@@ -524,11 +520,11 @@ fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
 /// The Graphics section: present mode, pacing, swapchain depth, NTSC filter.
 /// Mutates `config` directly and accumulates live-apply flags on `state.apply`.
 pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
-    ui.heading("Graphics");
+    ui.heading(crate::t!(SetGraphics));
 
     // Present mode: persisted only — a live change needs a surface rebuild.
     ui.horizontal(|ui| {
-        ui.label("Present mode");
+        ui.label(crate::t!(SetPresentMode));
         egui::ComboBox::from_id_salt("settings-present-mode")
             .selected_text(config.graphics.present_mode.clone())
             .show_ui(ui, |ui| {
@@ -536,7 +532,7 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                     ui.selectable_value(&mut config.graphics.present_mode, mode.to_string(), mode);
                 }
             });
-        ui.weak("(restart to apply)");
+        ui.weak(crate::t!(SetRestartToApply));
     });
     if let Some(w) = &state.present_mode_warning {
         ui.colored_label(egui::Color32::from_rgb(255, 160, 0), w.clone());
@@ -545,16 +541,16 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // v2.8.0 Phase 2 — pacing regime. Applied live (the app re-resolves
     // against the monitor refresh and reconfigures the surface).
     ui.horizontal(|ui| {
-        ui.label("Pacing");
+        ui.label(crate::t!(SetPacing));
         let before = config.graphics.pacing_mode.clone();
         egui::ComboBox::from_id_salt("settings-pacing-mode")
             .selected_text(config.graphics.pacing_mode.clone())
             .show_ui(ui, |ui| {
                 for (mode, label) in [
-                    ("auto", "auto (display-sync when refresh matches)"),
-                    ("display", "display (sync to vsync)"),
+                    ("auto", crate::t!(SetPacingAuto)),
+                    ("display", crate::t!(SetPacingDisplay)),
                     ("vrr", "vrr (G-Sync/FreeSync)"),
-                    ("wallclock", "wallclock (classic)"),
+                    ("wallclock", crate::t!(SetPacingWallclock)),
                 ] {
                     ui.selectable_value(&mut config.graphics.pacing_mode, mode.to_string(), label);
                 }
@@ -567,18 +563,18 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // v2.8.0 Phase 2 — swapchain depth. Persisted only (surface created
     // once at startup).
     ui.horizontal(|ui| {
-        ui.label("Max frame latency");
+        ui.label(crate::t!(SetMaxFrameLatency));
         ui.add(
             egui::DragValue::new(&mut config.graphics.max_frame_latency)
                 .speed(0.05)
                 .range(1..=2),
         );
-        ui.weak("(1 = lowest latency; restart to apply)");
+        ui.weak(crate::t!(SetMaxFrameLatencyNote));
     });
 
     // NTSC filter: applied live (binary on/off in the gfx post-pass).
     ui.horizontal(|ui| {
-        ui.label("NTSC filter");
+        ui.label(crate::t!(SetNtscFilter));
         let before = config.graphics.ntsc_filter.clone();
         egui::ComboBox::from_id_salt("settings-ntsc-filter")
             .selected_text(config.graphics.ntsc_filter.clone())
@@ -605,23 +601,26 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             knob_changed |= ui
                 .add(
                     egui::Slider::new(&mut config.graphics.ntsc_contrast, -1.0..=1.0)
-                        .text("Contrast"),
+                        .text(crate::t!(SetContrast)),
                 )
                 .changed();
             knob_changed |= ui
                 .add(
                     egui::Slider::new(&mut config.graphics.ntsc_saturation, -1.0..=1.0)
-                        .text("Saturation"),
+                        .text(crate::t!(SetSaturation)),
                 )
                 .changed();
             knob_changed |= ui
                 .add(
                     egui::Slider::new(&mut config.graphics.ntsc_brightness, -100.0..=100.0)
-                        .text("Brightness"),
+                        .text(crate::t!(SetBrightness)),
                 )
                 .changed();
             knob_changed |= ui
-                .add(egui::Slider::new(&mut config.graphics.ntsc_hue, -180.0..=180.0).text("Hue"))
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_hue, -180.0..=180.0)
+                        .text(crate::t!(SetHue)),
+                )
                 .changed();
         });
         if knob_changed {
@@ -638,7 +637,7 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // v1.1.0 beta.1 — CRT / scanline post-pass. Applied live; mutually exclusive
     // with the NTSC filter (CRT wins). Default off = byte-identical presentation.
     if ui
-        .checkbox(&mut config.graphics.crt_filter, "CRT / scanlines")
+        .checkbox(&mut config.graphics.crt_filter, crate::t!(SetCrtScanlines))
         .changed()
     {
         state.apply.crt_filter = true;
@@ -648,7 +647,7 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         && ui
             .add(
                 egui::Slider::new(&mut config.graphics.crt_scanline, 0.0..=1.0)
-                    .text("Scanline intensity"),
+                    .text(crate::t!(SetScanlineIntensity)),
             )
             .changed()
     {
@@ -665,7 +664,11 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     ui.add_space(4.0);
     // v1.0.0 — reset the Graphics section to its defaults (guarded by a
     // two-click confirm so it isn't a foot-gun), then re-apply live.
-    if reset_to_defaults_button(ui, &mut state.reset_video_armed, "graphics") {
+    if reset_to_defaults_button(
+        ui,
+        &mut state.reset_video_armed,
+        crate::t!(SetSectionGraphics),
+    ) {
         let def = crate::config::GraphicsConfig::default();
         // Cross any off<->on filter / overscan boundary so the app re-applies.
         let ntsc_changed = (config.graphics.ntsc_filter == "off") != (def.ntsc_filter == "off");
@@ -728,7 +731,7 @@ fn overscan_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &
     if ui
         .checkbox(
             &mut config.graphics.hide_overscan,
-            "Hide overscan (crop top + bottom 8 scanlines)",
+            crate::t!(SetHideOverscan),
         )
         .changed()
     {
@@ -736,36 +739,33 @@ fn overscan_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &
         save_config(config);
     }
 
-    egui::CollapsingHeader::new("Overscan (per-side, live)")
+    egui::CollapsingHeader::new(crate::t!(SetOverscanHeader))
         .id_salt("settings-overscan")
         .default_open(false)
         .show(ui, |ui| {
-            ui.weak(
-                "Trim each edge independently (NES pixels). Combined with the \
-                 toggle above; preview updates live.",
-            );
+            ui.weak(crate::t!(SetOverscanNote));
             let mut os = config.graphics.overscan;
             let mut changed = false;
             // Top/Bottom range to 112 px (keeps >= 16 visible rows), Left/Right
             // to 120 px (keeps >= 16 visible columns).
             changed |= ui
-                .add(egui::Slider::new(&mut os.top, 0..=112).text("Top"))
+                .add(egui::Slider::new(&mut os.top, 0..=112).text(crate::t!(SetEdgeTop)))
                 .changed();
             changed |= ui
-                .add(egui::Slider::new(&mut os.bottom, 0..=112).text("Bottom"))
+                .add(egui::Slider::new(&mut os.bottom, 0..=112).text(crate::t!(SetEdgeBottom)))
                 .changed();
             changed |= ui
-                .add(egui::Slider::new(&mut os.left, 0..=120).text("Left"))
+                .add(egui::Slider::new(&mut os.left, 0..=120).text(crate::t!(SetEdgeLeft)))
                 .changed();
             changed |= ui
-                .add(egui::Slider::new(&mut os.right, 0..=120).text("Right"))
+                .add(egui::Slider::new(&mut os.right, 0..=120).text(crate::t!(SetEdgeRight)))
                 .changed();
             if changed {
                 config.graphics.overscan = os.clamped();
                 state.apply.overscan = true;
                 save_config(config);
             }
-            if ui.button("Reset overscan (0,0,0,0)").clicked()
+            if ui.button(crate::t!(SetResetOverscan)).clicked()
                 && !config.graphics.overscan.is_zero()
             {
                 config.graphics.overscan = crate::config::Overscan::default();
@@ -789,18 +789,18 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
 
     // --- Active-palette selector ----------------------------------------
     ui.horizontal(|ui| {
-        ui.label("Palette");
+        ui.label(crate::t!(SetPalette));
         let selected_text = config
             .graphics
             .active_palette
             .clone()
-            .unwrap_or_else(|| "Built-in".to_string());
+            .unwrap_or_else(|| crate::t!(SetBuiltIn).to_string());
         let names: Vec<String> = config.graphics.palettes.palettes.keys().cloned().collect();
         let mut new_active = config.graphics.active_palette.clone();
         egui::ComboBox::from_id_salt("palette-active")
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut new_active, None, "Built-in");
+                ui.selectable_value(&mut new_active, None, crate::t!(SetBuiltIn));
                 for name in &names {
                     ui.selectable_value(&mut new_active, Some(name.clone()), name);
                 }
@@ -818,9 +818,9 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
     // Legacy `.pal` file loader (imports straight into the live palette).
     // Native-only (rfd / filesystem). The named bank below is the v1.5.0 path.
     ui.horizontal(|ui| {
-        ui.weak("Legacy .pal:");
+        ui.weak(crate::t!(SetLegacyPal));
         let current = config.graphics.palette_file.as_ref().map_or_else(
-            || "none".to_string(),
+            || crate::t!(SetNone).to_string(),
             |p| {
                 p.file_name().map_or_else(
                     || p.display().to_string(),
@@ -831,50 +831,54 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
         ui.weak(current);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if ui.button("Load .pal…").clicked() {
+            if ui.button(crate::t!(SetLoadPal)).clicked() {
                 state.apply.palette_pick = true;
             }
-            if config.graphics.palette_file.is_some() && ui.button("Clear .pal").clicked() {
+            if config.graphics.palette_file.is_some() && ui.button(crate::t!(SetClearPal)).clicked()
+            {
                 state.apply.palette_clear = true;
             }
         }
         #[cfg(target_arch = "wasm32")]
-        ui.weak("(native only)");
+        ui.weak(crate::t!(SetNativeOnly));
     });
 
     // --- Generated NTSC palette (F1.4, collapsing) ----------------------
     // Synthesizes the 64-colour base from the composite-video model instead of
     // the hand-authored built-in. Off by default (byte-identical presentation);
     // when on it takes precedence over the named bank + legacy `.pal`.
-    egui::CollapsingHeader::new("Generated NTSC palette")
+    egui::CollapsingHeader::new(crate::t!(SetGeneratedPalette))
         .id_salt("palette-generated-ntsc")
         .default_open(false)
         .show(ui, |ui| {
             let g = &mut config.graphics;
             let mut changed = ui
-                .checkbox(
-                    &mut g.ntsc_palette_enabled,
-                    "Use generated palette (overrides built-in / .pal)",
-                )
+                .checkbox(&mut g.ntsc_palette_enabled, crate::t!(SetUseGenerated))
                 .changed();
             ui.add_enabled_ui(g.ntsc_palette_enabled, |ui| {
                 let p = &mut g.ntsc_palette;
                 changed |= ui
-                    .add(egui::Slider::new(&mut p.saturation, 0.0..=2.0).text("Saturation"))
+                    .add(
+                        egui::Slider::new(&mut p.saturation, 0.0..=2.0)
+                            .text(crate::t!(SetSaturation)),
+                    )
                     .changed();
                 changed |= ui
-                    .add(egui::Slider::new(&mut p.hue, -3.0..=3.0).text("Hue (phase units)"))
+                    .add(egui::Slider::new(&mut p.hue, -3.0..=3.0).text(crate::t!(SetHuePhase)))
                     .changed();
                 changed |= ui
-                    .add(egui::Slider::new(&mut p.contrast, 0.5..=2.0).text("Contrast"))
+                    .add(egui::Slider::new(&mut p.contrast, 0.5..=2.0).text(crate::t!(SetContrast)))
                     .changed();
                 changed |= ui
-                    .add(egui::Slider::new(&mut p.brightness, 0.5..=1.5).text("Brightness"))
+                    .add(
+                        egui::Slider::new(&mut p.brightness, 0.5..=1.5)
+                            .text(crate::t!(SetBrightness)),
+                    )
                     .changed();
                 changed |= ui
                     .add(egui::Slider::new(&mut p.gamma, 1.0..=2.6).text("Gamma"))
                     .changed();
-                if ui.button("Reset to defaults").clicked() {
+                if ui.button(crate::t!(RebindResetDefaults)).clicked() {
                     *p = crate::config::NtscPaletteConfig::default();
                     changed = true;
                 }
@@ -886,7 +890,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
             // `generate_base_palette` the renderer uses, and paints nothing into
             // the emulation path.
             ui.separator();
-            ui.weak("Preview (generated base, 16 x 4):");
+            ui.weak(crate::t!(SetPreview));
             let base =
                 rustynes_core::rustynes_ppu::generate_base_palette(&g.ntsc_palette.to_params());
             paint_palette_preview(ui, &base);
@@ -901,7 +905,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
         });
 
     // --- Editor (collapsing) --------------------------------------------
-    egui::CollapsingHeader::new("Palette editor")
+    egui::CollapsingHeader::new(crate::t!(SetPaletteEditor))
         .id_salt("palette-editor")
         .default_open(false)
         .show(ui, |ui| {
@@ -910,10 +914,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                 state.palette_editor.working = resolve_active_base_palette(config);
                 state.palette_editor.seeded = true;
             }
-            ui.weak(
-                "Click a swatch to edit its colour. 8 columns x 8 rows = the 64 \
-                 NES base colours; emphasis is applied by the renderer.",
-            );
+            ui.weak(crate::t!(SetPaletteEditorNote));
 
             // 8x8 colour-picker grid.
             let mut edited = false;
@@ -968,10 +969,10 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut state.palette_editor.name_input)
-                        .hint_text("Palette name")
+                        .hint_text(crate::t!(SetPaletteName))
                         .desired_width(160.0),
                 );
-                if ui.button("Save as").clicked() {
+                if ui.button(crate::t!(SetSaveAs)).clicked() {
                     let name = state.palette_editor.name_input.trim().to_string();
                     if !name.is_empty() {
                         config.graphics.palettes.palettes.insert(
@@ -984,16 +985,16 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                     }
                 }
                 // Reseed the editor from the built-in palette (start fresh).
-                if ui.button("Reset to built-in").clicked() {
+                if ui.button(crate::t!(SetResetToBuiltIn)).clicked() {
                     state.palette_editor.working = rustynes_core::rustynes_ppu::NES_PALETTE;
                 }
             });
 
             // Import a `.pal` straight into a named bank entry (native only).
             #[cfg(not(target_arch = "wasm32"))]
-            if ui.button("Import .pal into bank…").clicked()
+            if ui.button(crate::t!(SetImportPal)).clicked()
                 && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("NES palette", &["pal"])
+                    .add_filter(crate::t!(SetNesPaletteFilter), &["pal"])
                     .pick_file()
                 && let Some(base) = std::fs::read(&path)
                     .ok()
@@ -1016,7 +1017,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
 
             // Delete the active named palette.
             if let Some(name) = config.graphics.active_palette.clone()
-                && ui.button(format!("Delete \"{name}\"")).clicked()
+                && ui.button(crate::tf!(SetDeletePalette, name)).clicked()
             {
                 config.graphics.palettes.palettes.remove(&name);
                 config.graphics.active_palette = None;
@@ -1080,17 +1081,14 @@ pub fn shader_stack_section(
 ) {
     use crate::shader_pass::{BuiltinPass, ShaderPassDesc};
 
-    egui::CollapsingHeader::new("Shader stack (composable)")
+    egui::CollapsingHeader::new(crate::t!(SetShaderStack))
         .id_salt("settings-shader-stack")
         // v1.5.0 "Lens" Workstream I3 — default-OPEN: the composable stack is the
         // primary control on the Shaders tab, so it should not require a manual
         // click to reveal.
         .default_open(true)
         .show(ui, |ui| {
-            ui.weak(
-                "Passes run top to bottom. An empty / all-disabled stack uses the \
-                 default direct blit (no change to the image).",
-            );
+            ui.weak(crate::t!(SetShaderStackNote));
 
             let all = BuiltinPass::all();
             state.stack_add_index = state.stack_add_index.min(all.len() - 1);
@@ -1104,7 +1102,7 @@ pub fn shader_stack_section(
                             ui.selectable_value(&mut state.stack_add_index, i, p.label());
                         }
                     });
-                if ui.button("Add pass").clicked() {
+                if ui.button(crate::t!(SetAddPass)).clicked() {
                     config
                         .graphics
                         .shader_stack
@@ -1113,7 +1111,7 @@ pub fn shader_stack_section(
                     state.apply.shader_stack = true;
                     save_config(config);
                 }
-                if ui.button("Clear stack").clicked()
+                if ui.button(crate::t!(SetClearStack)).clicked()
                     && !config.graphics.shader_stack.passes.is_empty()
                 {
                     config.graphics.shader_stack.passes.clear();
@@ -1129,12 +1127,12 @@ pub fn shader_stack_section(
             let mut remove: Option<usize> = None;
             let count = config.graphics.shader_stack.passes.len();
             if count == 0 {
-                ui.weak("(no passes — using the default blit)");
+                ui.weak(crate::t!(SetNoPasses));
             }
             for i in 0..count {
                 let pass = &mut config.graphics.shader_stack.passes[i];
                 let label = BuiltinPass::from_id(&pass.id).map_or_else(
-                    || format!("{} (unknown)", pass.id),
+                    || crate::tf!(SetUnknownPass, pass.id),
                     |b| b.label().to_string(),
                 );
                 ui.group(|ui| {
@@ -1194,11 +1192,11 @@ pub fn shader_stack_section(
 
             // --- Preset bank -----------------------------------------------------
             ui.separator();
-            ui.label("Presets");
+            ui.label(crate::t!(SetPresets));
             // Seed the built-in CRT presets (only adds the ones the user doesn't
             // already have a name collision with — never clobbers a user preset).
             if config.graphics.shader_presets.presets.is_empty()
-                && ui.button("Add built-in CRT presets").clicked()
+                && ui.button(crate::t!(SetAddCrtPresets)).clicked()
             {
                 for (name, stack) in crate::shader_pass::ShaderPresetBank::builtins() {
                     config
@@ -1213,10 +1211,10 @@ pub fn shader_stack_section(
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut state.preset_name_input)
-                        .hint_text("Preset name")
+                        .hint_text(crate::t!(SetPresetName))
                         .desired_width(160.0),
                 );
-                if ui.button("Save preset").clicked() {
+                if ui.button(crate::t!(SetSavePreset)).clicked() {
                     let name = state.preset_name_input.trim().to_string();
                     if !name.is_empty() {
                         config
@@ -1231,7 +1229,7 @@ pub fn shader_stack_section(
             });
             ui.horizontal(|ui| {
                 let preview = if state.selected_preset.is_empty() {
-                    "Load preset…".to_string()
+                    crate::t!(SetLoadPreset).to_string()
                 } else {
                     state.selected_preset.clone()
                 };
@@ -1256,7 +1254,9 @@ pub fn shader_stack_section(
                     .shader_presets
                     .presets
                     .contains_key(&state.selected_preset);
-                if ui.add_enabled(has_sel, egui::Button::new("Load")).clicked()
+                if ui
+                    .add_enabled(has_sel, egui::Button::new(crate::t!(ButtonLoad)))
+                    .clicked()
                     && let Some(stack) = config
                         .graphics
                         .shader_presets
@@ -1270,7 +1270,7 @@ pub fn shader_stack_section(
                     save_config(config);
                 }
                 if ui
-                    .add_enabled(has_sel, egui::Button::new("Delete"))
+                    .add_enabled(has_sel, egui::Button::new(crate::t!(SetDelete)))
                     .clicked()
                 {
                     config
@@ -1291,15 +1291,11 @@ pub fn shader_stack_section(
             #[cfg(not(target_arch = "wasm32"))]
             {
                 ui.separator();
-                ui.label("Import RetroArch preset (constrained)");
-                ui.weak(
-                    "Recognizes common crt / ntsc / hqx / xbr preset names and maps \
-                     them onto the built-in passes. Source shaders are not translated; \
-                     unrecognized passes are reported.",
-                );
-                if ui.button("Import .slangp / .cgp…").clicked()
+                ui.label(crate::t!(SetImportRaPreset));
+                ui.weak(crate::t!(SetRaImportNote));
+                if ui.button(crate::t!(SetImportSlangp)).clicked()
                     && let Some(path) = rfd::FileDialog::new()
-                        .add_filter("RetroArch preset", &["slangp", "cgp"])
+                        .add_filter(crate::t!(SetRaPresetFilter), &["slangp", "cgp"])
                         .pick_file()
                 {
                     match std::fs::read_to_string(&path) {
@@ -1312,16 +1308,15 @@ pub fn shader_stack_section(
                                     state.apply.shader_stack = true;
                                     save_config(config);
                                 }
-                                state.preset_import_status = format!(
-                                    "Imported {mapped} pass(es); {unsupported} unsupported."
-                                );
+                                state.preset_import_status =
+                                    crate::tf!(SetImportedPasses, mapped, unsupported);
                             }
                             Err(e) => {
-                                state.preset_import_status = format!("Import failed: {e}");
+                                state.preset_import_status = crate::tf!(SetImportFailed, e);
                             }
                         },
                         Err(e) => {
-                            state.preset_import_status = format!("Could not read file: {e}");
+                            state.preset_import_status = crate::tf!(SetCouldNotRead, e);
                         }
                     }
                 }
@@ -1335,13 +1330,13 @@ pub fn shader_stack_section(
 /// The Audio section: master volume, sample rate, DRC latency target,
 /// dynamic rate control.
 pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
-    ui.heading("Audio");
+    ui.heading(crate::t!(SettingsTabAudio));
 
     // v1.0.0 — master volume + mute. Applied LIVE at the cpal consume point
     // (the gain is lock-free); flag `audio_gain` so the app pushes the new
     // value into the queue this frame. Default 1.0 / un-muted = today's sound.
     ui.horizontal(|ui| {
-        ui.label("Volume");
+        ui.label(crate::t!(SetVolume));
         let mut pct = (config.audio.volume.clamp(0.0, 1.0) * 100.0).round();
         if ui
             .add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%"))
@@ -1350,7 +1345,10 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             config.audio.volume = (pct / 100.0).clamp(0.0, 1.0);
             state.apply.audio_gain = true;
         }
-        if ui.checkbox(&mut config.audio.muted, "Mute").changed() {
+        if ui
+            .checkbox(&mut config.audio.muted, crate::t!(SetMute))
+            .changed()
+        {
             state.apply.audio_gain = true;
         }
     });
@@ -1360,14 +1358,12 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // bass/triangle); "famicom"/"clean" drop that high-pass for a fuller low end
     // (closer to Mesen2/FCEUX). Pushed to the core on change via `apu_filter_model`.
     ui.horizontal(|ui| {
-        ui.label("Filter model").on_hover_text(
-            "NES front-loader high-passes hard (thin bass — authentic). \
-                 Famicom/Clean keep more low end (closer to Mesen2).",
-        );
+        ui.label(crate::t!(SetFilterModel))
+            .on_hover_text(crate::t!(SetFilterModelHover));
         let label = match config.audio.filter_model.as_str() {
-            "famicom" => "Famicom (37 Hz HPF — fuller)",
-            "clean" => "Clean (full-range — fullest)",
-            _ => "NES front-loader (authentic)",
+            "famicom" => crate::t!(SetFilterFamicom),
+            "clean" => crate::t!(SetFilterClean),
+            _ => crate::t!(SetFilterNes),
         };
         // Canonicalize (case-insensitively) to a known token first, so a corrupt
         // / hand-edited `filter_model` still selects a valid option (and, since it
@@ -1379,17 +1375,9 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         egui::ComboBox::from_id_salt("audio-filter-model")
             .selected_text(label)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut sel, "nes".to_string(), "NES front-loader (authentic)");
-                ui.selectable_value(
-                    &mut sel,
-                    "famicom".to_string(),
-                    "Famicom (37 Hz HPF — fuller)",
-                );
-                ui.selectable_value(
-                    &mut sel,
-                    "clean".to_string(),
-                    "Clean (full-range — fullest)",
-                );
+                ui.selectable_value(&mut sel, "nes".to_string(), crate::t!(SetFilterNes));
+                ui.selectable_value(&mut sel, "famicom".to_string(), crate::t!(SetFilterFamicom));
+                ui.selectable_value(&mut sel, "clean".to_string(), crate::t!(SetFilterClean));
             });
         if sel != config.audio.filter_model {
             config.audio.filter_model = sel;
@@ -1403,21 +1391,21 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // (all six on) is byte-identical to today's mixer output (the determinism
     // contract — the oracle / test ROMs never set a mask).
     ui.add_space(4.0);
-    ui.label("Channels");
+    ui.label(crate::t!(SetChannels));
     {
         // Bit layout matches `rustynes_apu::Apu::channel_mask`:
         // 0 = pulse 1, 1 = pulse 2, 2 = triangle, 3 = noise, 4 = DMC,
         // 5 = external/mapper audio.
-        const CHANNELS: [(u8, &str); 6] = [
-            (0, "Pulse 1"),
-            (1, "Pulse 2"),
-            (2, "Triangle"),
-            (3, "Noise"),
+        let channels: [(u8, &str); 6] = [
+            (0, crate::t!(SetPulse1)),
+            (1, crate::t!(SetPulse2)),
+            (2, crate::t!(SetTriangle)),
+            (3, crate::t!(SetNoise)),
             (4, "DMC"),
-            (5, "Mapper Audio"),
+            (5, crate::t!(SetMapperAudio)),
         ];
         ui.horizontal_wrapped(|ui| {
-            for (bit, label) in CHANNELS {
+            for (bit, label) in channels {
                 let mut on = config.audio.channel_mask & (1 << bit) != 0;
                 if ui.checkbox(&mut on, label).changed() {
                     if on {
@@ -1440,14 +1428,14 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // name. Live-applied via `apu_channel_gain`; the default (all 1.0) is
     // byte-identical to today's mixer output (the determinism contract).
     ui.add_space(4.0);
-    ui.label("Channel volume");
+    ui.label(crate::t!(SetChannelVolume));
     {
         // (gain index, label) for the five always-present internal channels.
-        const APU_GAINS: [(usize, &str); 5] = [
-            (0, "Pulse 1"),
-            (1, "Pulse 2"),
-            (2, "Triangle"),
-            (3, "Noise"),
+        let apu_gains: [(usize, &str); 5] = [
+            (0, crate::t!(SetPulse1)),
+            (1, crate::t!(SetPulse2)),
+            (2, crate::t!(SetTriangle)),
+            (3, crate::t!(SetNoise)),
             (4, "DMC"),
         ];
         let gain_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| -> bool {
@@ -1463,7 +1451,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             });
             changed
         };
-        for (idx, label) in APU_GAINS {
+        for (idx, label) in apu_gains {
             if gain_slider(ui, &mut config.audio.channel_gain[idx], label) {
                 config.audio.channel_gain[idx] = config.audio.channel_gain[idx].clamp(0.0, 2.0);
                 state.apply.apu_channel_gain = true;
@@ -1478,7 +1466,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             state.apply.apu_channel_gain = true;
             save_config(config);
         }
-        if ui.button("Reset volumes (1.0)").clicked() {
+        if ui.button(crate::t!(SetResetVolumes)).clicked() {
             config.audio.channel_gain = [1.0; 6];
             state.apply.apu_channel_gain = true;
             save_config(config);
@@ -1494,7 +1482,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         ui.add_space(6.0);
         ui.separator();
         if ui
-            .checkbox(&mut config.audio.eq_enabled, "Graphic EQ")
+            .checkbox(&mut config.audio.eq_enabled, crate::t!(SetGraphicEq))
             .changed()
         {
             state.apply.audio_eq = true;
@@ -1502,8 +1490,8 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         }
         // v1.7.0 H3 — choose the 5-band voicing or the 20-band graphic EQ.
         if ui
-            .checkbox(&mut config.audio.eq_20_band, "20-band graphic EQ")
-            .on_hover_text("ISO third-octave bands (25 Hz–20 kHz); off uses the classic 5 bands")
+            .checkbox(&mut config.audio.eq_20_band, crate::t!(SetEq20))
+            .on_hover_text(crate::t!(SetEq20Hover))
             .changed()
         {
             state.apply.audio_eq = true;
@@ -1551,7 +1539,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                     }
                 }
             });
-            if ui.button("Reset EQ (flat)").clicked() {
+            if ui.button(crate::t!(SetResetEq)).clicked() {
                 if config.audio.eq_20_band {
                     config.audio.eq_bands_20 = [0.0; 20];
                 } else {
@@ -1568,13 +1556,13 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         // mono-duplicated output.
         ui.add_space(6.0);
         ui.separator();
-        ui.label("Stereo");
+        ui.label(crate::t!(SetStereo));
         {
-            const PANS: [(usize, &str); 5] = [
-                (0, "Pulse 1"),
-                (1, "Pulse 2"),
-                (2, "Triangle"),
-                (3, "Noise"),
+            let pans: [(usize, &str); 5] = [
+                (0, crate::t!(SetPulse1)),
+                (1, crate::t!(SetPulse2)),
+                (2, crate::t!(SetTriangle)),
+                (3, crate::t!(SetNoise)),
                 (4, "DMC"),
             ];
             let pan_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| -> bool {
@@ -1598,7 +1586,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                 });
                 changed
             };
-            for (idx, label) in PANS {
+            for (idx, label) in pans {
                 if pan_slider(ui, &mut config.audio.pan[idx], label) {
                     config.audio.pan[idx] = config.audio.pan[idx].clamp(-1.0, 1.0);
                     state.apply.audio_stereo = true;
@@ -1613,7 +1601,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                 save_config(config);
             }
             ui.horizontal(|ui| {
-                ui.label("Reverb");
+                ui.label(crate::t!(SetReverb));
                 if ui
                     .add(
                         egui::Slider::new(&mut config.audio.reverb_mix, 0.0..=1.0)
@@ -1628,7 +1616,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                     .add(
                         egui::Slider::new(&mut config.audio.reverb_room, 0.0..=1.0)
                             .fixed_decimals(2)
-                            .text("room"),
+                            .text(crate::t!(SetRoom)),
                     )
                     .changed()
                 {
@@ -1637,19 +1625,19 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Crossfeed");
+                ui.label(crate::t!(SetCrossfeed));
                 if ui
                     .add(
                         egui::Slider::new(&mut config.audio.crossfeed, 0.0..=1.0).fixed_decimals(2),
                     )
-                    .on_hover_text("Headphone L/R blend; 0 = off")
+                    .on_hover_text(crate::t!(SetCrossfeedHover))
                     .changed()
                 {
                     state.apply.audio_stereo = true;
                     save_config(config);
                 }
             });
-            if ui.button("Reset stereo (center / dry)").clicked() {
+            if ui.button(crate::t!(SetResetStereo)).clicked() {
                 config.audio.pan = [0.0; 6];
                 config.audio.reverb_mix = 0.0;
                 config.audio.reverb_room = 0.5;
@@ -1662,7 +1650,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         // v1.7.0 H3 — per-context master volumes (master / game / menu). All
         // default to 1.0 (no-op → byte-identical).
         ui.add_space(6.0);
-        ui.label("Context volume");
+        ui.label(crate::t!(SetContextVolume));
         {
             let vol_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| -> bool {
                 let mut changed = false;
@@ -1678,9 +1666,9 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                 });
                 changed
             };
-            if vol_slider(ui, &mut config.audio.master_volume, "Master")
-                || vol_slider(ui, &mut config.audio.volume_game, "Game")
-                || vol_slider(ui, &mut config.audio.volume_menu, "Menu")
+            if vol_slider(ui, &mut config.audio.master_volume, crate::t!(SetMaster))
+                || vol_slider(ui, &mut config.audio.volume_game, crate::t!(SetGame))
+                || vol_slider(ui, &mut config.audio.volume_menu, crate::t!(SetMenu))
             {
                 state.apply.audio_gain = true;
                 save_config(config);
@@ -1692,17 +1680,20 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         // (restart), and an absent device falls back to the default gracefully.
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label("Output device");
+            ui.label(crate::t!(SetOutputDevice));
             let selected = config
                 .audio
                 .output_device
                 .clone()
-                .unwrap_or_else(|| "System default".to_owned());
+                .unwrap_or_else(|| crate::t!(SetSystemDefault).to_owned());
             egui::ComboBox::from_id_salt("settings-audio-device")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     if ui
-                        .selectable_label(config.audio.output_device.is_none(), "System default")
+                        .selectable_label(
+                            config.audio.output_device.is_none(),
+                            crate::t!(SetSystemDefault),
+                        )
                         .clicked()
                     {
                         config.audio.output_device = None;
@@ -1716,12 +1707,12 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                         }
                     }
                 });
-            ui.weak("(restart to apply)");
+            ui.weak(crate::t!(SetRestartToApply));
         });
 
         // Manual persist for anything still in-flight; the live gain is already
         // applied above.
-        if ui.button("Save audio settings").clicked() {
+        if ui.button(crate::t!(SetSaveAudio)).clicked() {
             save_config(config);
         }
     }
@@ -1729,7 +1720,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     // Sample rate: persisted only — a live change needs an audio-stream
     // (and APU) rebuild. Offer the two common presets plus a numeric edit.
     ui.horizontal(|ui| {
-        ui.label("Sample rate");
+        ui.label(crate::t!(SetSampleRate));
         egui::ComboBox::from_id_salt("settings-sample-rate")
             .selected_text(format!("{}", config.audio.sample_rate))
             .show_ui(ui, |ui| {
@@ -1742,31 +1733,31 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
                 .speed(100.0)
                 .range(8_000..=192_000),
         );
-        ui.weak("(restart to apply)");
+        ui.weak(crate::t!(SetRestartToApply));
     });
 
     // v2.8.0 Phase 1 — DRC latency target. Persisted only (the queue +
     // start-gate are sized at stream open).
     ui.horizontal(|ui| {
-        ui.label("Audio latency");
+        ui.label(crate::t!(SetAudioLatency));
         ui.add(
             egui::DragValue::new(&mut config.audio.latency_ms)
                 .speed(1.0)
                 .range(20..=250)
                 .suffix(" ms"),
         );
-        ui.weak("(restart to apply)");
+        ui.weak(crate::t!(SetRestartToApply));
     });
 
     // v2.8.0 Phase 1 — dynamic rate control toggle. Persisted only.
     ui.horizontal(|ui| {
-        ui.checkbox(&mut config.audio.drc, "Dynamic rate control");
-        ui.weak("(±0.5% drift compensation; restart to apply)");
+        ui.checkbox(&mut config.audio.drc, crate::t!(SetDrc));
+        ui.weak(crate::t!(SetDrcNote));
     });
 
     ui.add_space(4.0);
     // v1.0.0 — reset the Audio section to defaults; re-apply the live gain.
-    if reset_to_defaults_button(ui, &mut state.reset_audio_armed, "audio") {
+    if reset_to_defaults_button(ui, &mut state.reset_audio_armed, crate::t!(SetSectionAudio)) {
         config.audio = crate::config::AudioConfig::default();
         state.apply.audio_gain = true;
         state.apply.apu_channels = true;
@@ -1781,26 +1772,29 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
 
 /// The Advanced section: run-ahead depth + rewind enable / window / keyframe.
 pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
-    ui.heading("Latency");
+    ui.heading(crate::t!(SetLatency));
 
     // v2.8.0 Phase 3 — run-ahead depth. Applied live (the produce path
     // reads the config each frame). Native-only feature; the wasm panel
     // shows the control but the wasm produce path ignores it.
     ui.horizontal(|ui| {
-        ui.label("Run-ahead (frames)");
+        ui.label(crate::t!(SetRunAhead));
         ui.add(
             egui::DragValue::new(&mut config.input.run_ahead)
                 .speed(0.05)
                 .range(0..=3),
         );
-        ui.weak("(removes the game's internal input lag; 1 fits most games)");
+        ui.weak(crate::t!(SetRunAheadNote));
     });
 
     ui.add_space(8.0);
-    ui.heading("Rewind");
+    ui.heading(crate::t!(SetRewind));
 
     // Enabled: applied live — the running Nes arms / frees the ring.
-    if ui.checkbox(&mut config.rewind.enabled, "Enabled").changed() {
+    if ui
+        .checkbox(&mut config.rewind.enabled, crate::t!(SetEnabled))
+        .changed()
+    {
         state.apply.rewind_enabled = true;
     }
 
@@ -1808,37 +1802,33 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
     // is armed, so editing them while rewind is already on does not resize
     // the live buffer.
     ui.horizontal(|ui| {
-        ui.label("Window (seconds)");
+        ui.label(crate::t!(SetWindowSeconds));
         ui.add(
             egui::DragValue::new(&mut config.rewind.max_seconds)
                 .speed(1.0)
                 .range(1..=600),
         );
-        ui.weak("(restart to apply)");
+        ui.weak(crate::t!(SetRestartToApply));
     });
     ui.horizontal(|ui| {
-        ui.label("Keyframe period (frames)");
+        ui.label(crate::t!(SetKeyframePeriod));
         ui.add(
             egui::DragValue::new(&mut config.rewind.keyframe_period)
                 .speed(1.0)
                 .range(1..=600),
         );
-        ui.weak("(restart to apply)");
+        ui.weak(crate::t!(SetRestartToApply));
     });
 
     ui.add_space(8.0);
-    ui.heading("Accuracy");
+    ui.heading(crate::t!(SetAccuracy));
     // v2.1.4 F2.3 — optional OAM decay. OFF by default is byte-identical to a
     // decay-free core (the determinism oracle / AccuracyCoin / TAS / netplay are
     // unaffected); ON models the 2C02's dynamic sprite-RAM decay when rendering is
     // disabled (NTSC/Dendy only). Pushed to the core live via `oam_decay`.
     if ui
-        .checkbox(&mut config.emulation.oam_decay, "OAM decay (accuracy)")
-        .on_hover_text(
-            "Model the 2C02's dynamic OAM losing un-refreshed sprite rows to a \
-             garbage pattern when rendering stays off (à la Mesen2). NTSC/Dendy \
-             only. Off is byte-identical to today's core.",
-        )
+        .checkbox(&mut config.emulation.oam_decay, crate::t!(SetOamDecay))
+        .on_hover_text(crate::t!(SetOamDecayHover))
         .changed()
     {
         state.apply.oam_decay = true;
@@ -1853,15 +1843,9 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
     if ui
         .checkbox(
             &mut config.emulation.fast_dotloop,
-            "Fast PPU dot path (performance, not accuracy)",
+            crate::t!(SetFastDotPath),
         )
-        .on_hover_text(
-            "Run the specialized straight-line handler for undisturbed visible \
-             background dots. Emits the identical frame either way (verified \
-             bit-for-bit every frame) and is ~11% faster on rendering-heavy \
-             games. Leave on unless you are diagnosing a suspected PPU \
-             difference.",
-        )
+        .on_hover_text(crate::t!(SetFastDotPathHover))
         .changed()
     {
         state.apply.fast_dotloop = true;
@@ -1873,7 +1857,11 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
 
     ui.add_space(4.0);
     // v1.0.0 — reset run-ahead + rewind to defaults; re-arm the rewind ring.
-    if reset_to_defaults_button(ui, &mut state.reset_advanced_armed, "latency/rewind") {
+    if reset_to_defaults_button(
+        ui,
+        &mut state.reset_advanced_armed,
+        crate::t!(SetSectionLatencyRewind),
+    ) {
         config.input.run_ahead = crate::config::InputConfig::default().run_ahead;
         config.rewind = crate::config::RewindConfig::default();
         config.enhancements = crate::config::EnhancementsConfig::default();
@@ -1902,28 +1890,25 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
 /// ADR 0002), so they persist the user's intent + are surfaced as experimental
 /// but do not affect the deterministic core output today.
 fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
-    egui::CollapsingHeader::new("Enhancements (non-accuracy)")
+    egui::CollapsingHeader::new(crate::t!(SetEnhancements))
         .id_salt("settings-enhancements")
         .default_open(false)
         .show(ui, |ui| {
-            ui.weak(
-                "Off-by-default enhancement modes. These are NEVER applied while \
-                 accuracy tests / TAS replay / netplay run.",
-            );
+            ui.weak(crate::t!(SetEnhancementsNote));
 
             let mut changed = false;
             changed |= ui
                 .checkbox(
                     &mut config.enhancements.disable_sprite_limit,
-                    "Disable 8-sprite-per-scanline limit (reduces flicker)",
+                    crate::t!(SetDisableSpriteLimit),
                 )
                 .changed();
             ui.indent("enh-sprite-note", |ui| {
-                ui.weak("Experimental: staged for the v2.0 core pass (currently inert).");
+                ui.weak(crate::t!(SetEnhSpriteInert));
             });
 
             ui.horizontal(|ui| {
-                ui.label("Overclock (extra scanlines)");
+                ui.label(crate::t!(SetOverclock));
                 let overclock_changed = ui
                     .add(
                         egui::DragValue::new(&mut config.enhancements.overclock_scanlines)
@@ -1937,18 +1922,14 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
                 changed |= overclock_changed;
             });
             ui.indent("enh-overclock-note", |ui| {
-                ui.weak(
-                    "Adds idle scanlines after the visible frame to reduce slowdown in some \
-                     games. Changes timing, so it is ignored while recording or playing a \
-                     movie and during netplay.",
-                );
+                ui.weak(crate::t!(SetEnhOverclockNote));
             });
 
             // The max-rewind window cross-links the Rewind group above (the
             // enhancement-adjacent third knob), surfaced here for grouping.
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("Max rewind (seconds)");
+                ui.label(crate::t!(SetMaxRewind));
                 if ui
                     .add(
                         egui::DragValue::new(&mut config.rewind.max_seconds)
@@ -1959,7 +1940,7 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
                 {
                     changed = true;
                 }
-                ui.weak("(also in Rewind; restart to resize the buffer)");
+                ui.weak(crate::t!(SetMaxRewindNote));
             });
 
             if changed {

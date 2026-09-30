@@ -71,7 +71,7 @@ pub fn show(
         ctx,
         detached,
         "header_editor",
-        "Cartridge Info / Header",
+        crate::t!(HdrTitle),
         super::WindowCfg {
             default_pos: Some([120.0, 80.0]),
             default_size: Some([420.0, 460.0]),
@@ -80,22 +80,22 @@ pub fn show(
         },
         open,
         |ui| {
-            if ui.button("Open ROM file...").clicked() {
+            if ui.button(crate::t!(HdrOpenRomFile)).clicked() {
                 open_file(state);
             }
             let Some(loaded) = state.loaded.as_mut() else {
                 ui.separator();
-                ui.weak("Open a .nes / NES 2.0 ROM file to inspect its header.");
+                ui.weak(crate::t!(HdrOpenHint));
                 return;
             };
-            ui.monospace(format!("file: {}", loaded.path.display()));
+            ui.monospace(crate::tf!(HdrFile, loaded.path.display()));
             ui.separator();
-            ui.checkbox(&mut state.editing, "Edit header (writes the file)");
+            ui.checkbox(&mut state.editing, crate::t!(HdrEditToggle));
             ui.separator();
             if state.editing {
                 editor(ui, loaded);
                 ui.separator();
-                if ui.button("Write header to file").clicked() {
+                if ui.button(crate::t!(HdrWriteToFile)).clicked() {
                     state.status = write_header_to_file(loaded);
                 }
             } else {
@@ -115,32 +115,56 @@ fn info_pane(ui: &mut egui::Ui, h: &Header) {
         .num_columns(2)
         .striped(true)
         .show(ui, |ui| {
-            row(ui, "Format", if h.is_nes2 { "NES 2.0" } else { "iNES 1.0" });
+            row(
+                ui,
+                crate::t!(HdrFormat),
+                if h.is_nes2 { "NES 2.0" } else { "iNES 1.0" },
+            );
             row(ui, "Mapper", &format!("{}", h.mapper_id));
             row(ui, "Submapper", &format!("{}", h.submapper));
-            row(ui, "Mirroring", &format!("{:?}", h.mirroring));
+            row(ui, crate::t!(HdrMirroring), &format!("{:?}", h.mirroring));
             row(
                 ui,
                 "PRG-ROM",
-                &format!("{} bytes ({} KiB)", h.prg_size, h.prg_size / 1024),
+                &crate::tf!(HdrBytesKib, h.prg_size, h.prg_size / 1024),
             );
             row(
                 ui,
                 "CHR-ROM",
-                &format!("{} bytes ({} KiB)", h.chr_size, h.chr_size / 1024),
+                &crate::tf!(HdrBytesKib, h.chr_size, h.chr_size / 1024),
             );
-            row(ui, "PRG-RAM", &format!("{} bytes", h.prg_ram_size));
-            row(ui, "CHR-RAM", &format!("{} bytes", h.chr_ram_size));
-            row(ui, "Battery", if h.has_battery { "yes" } else { "no" });
-            row(ui, "Trainer", if h.has_trainer { "yes" } else { "no" });
-            row(ui, "Region", &format!("{:?}", h.region));
-            row(ui, "Console", &format!("{:?}", h.console_type));
+            row(ui, "PRG-RAM", &crate::tf!(HdrBytes, h.prg_ram_size));
+            row(ui, "CHR-RAM", &crate::tf!(HdrBytes, h.chr_ram_size));
+            row(
+                ui,
+                crate::t!(HdrBattery),
+                if h.has_battery {
+                    crate::t!(HdrYes)
+                } else {
+                    crate::t!(HdrNo)
+                },
+            );
+            row(
+                ui,
+                "Trainer",
+                if h.has_trainer {
+                    crate::t!(HdrYes)
+                } else {
+                    crate::t!(HdrNo)
+                },
+            );
+            row(ui, crate::t!(HdrRegion), &format!("{:?}", h.region));
+            row(ui, crate::t!(HdrConsole), &format!("{:?}", h.console_type));
             if h.console_type == ConsoleType::VsSystem {
                 row(ui, "Vs. PPU", &format!("{:?}", h.vs_ppu_type));
                 row(
                     ui,
                     "Vs. DualSystem",
-                    if h.vs_dual_system { "yes" } else { "no" },
+                    if h.vs_dual_system {
+                        crate::t!(HdrYes)
+                    } else {
+                        crate::t!(HdrNo)
+                    },
                 );
             }
             ui.end_row();
@@ -158,7 +182,7 @@ fn row(ui: &mut egui::Ui, label: &str, value: &str) {
 /// the re-serialization stays in the standard (non-exponent) notation.
 fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
     let h = &mut loaded.header;
-    ui.checkbox(&mut h.is_nes2, "NES 2.0 (vs iNES 1.0)");
+    ui.checkbox(&mut h.is_nes2, crate::t!(HdrNes2Toggle));
 
     ui.horizontal(|ui| {
         ui.label("Mapper:");
@@ -169,7 +193,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
         }
     });
 
-    egui::ComboBox::from_label("Mirroring")
+    egui::ComboBox::from_label(crate::t!(HdrMirroring))
         .selected_text(format!("{:?}", h.mirroring))
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut h.mirroring, Mirroring::Horizontal, "Horizontal");
@@ -181,7 +205,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
     h.four_screen = matches!(h.mirroring, Mirroring::FourScreen);
 
     ui.horizontal(|ui| {
-        ui.label("PRG (16 KiB units):");
+        ui.label(crate::t!(HdrPrgUnits));
         if ui
             .add(egui::DragValue::new(&mut loaded.prg_units).range(0..=4095))
             .changed()
@@ -190,7 +214,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
         }
     });
     ui.horizontal(|ui| {
-        ui.label("CHR (8 KiB units):");
+        ui.label(crate::t!(HdrChrUnits));
         if ui
             .add(egui::DragValue::new(&mut loaded.chr_units).range(0..=4095))
             .changed()
@@ -199,11 +223,11 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
         }
     });
 
-    ui.checkbox(&mut h.has_battery, "Battery-backed save RAM");
-    ui.checkbox(&mut h.has_trainer, "512-byte trainer present");
+    ui.checkbox(&mut h.has_battery, crate::t!(HdrBatteryRam));
+    ui.checkbox(&mut h.has_trainer, crate::t!(HdrTrainerPresent));
 
     if h.is_nes2 {
-        egui::ComboBox::from_label("Region")
+        egui::ComboBox::from_label(crate::t!(HdrRegion))
             .selected_text(format!("{:?}", h.region))
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut h.region, Region::Ntsc, "NTSC");
@@ -211,7 +235,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
                 ui.selectable_value(&mut h.region, Region::Multi, "Multi");
                 ui.selectable_value(&mut h.region, Region::Dendy, "Dendy");
             });
-        egui::ComboBox::from_label("Console")
+        egui::ComboBox::from_label(crate::t!(HdrConsole))
             .selected_text(format!("{:?}", h.console_type))
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut h.console_type, ConsoleType::Nes, "NES/Famicom");
@@ -224,7 +248,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
                 ui.selectable_value(&mut h.console_type, ConsoleType::Extended, "Extended");
             });
         if h.console_type == ConsoleType::VsSystem {
-            ui.checkbox(&mut h.vs_dual_system, "Vs. DualSystem board");
+            ui.checkbox(&mut h.vs_dual_system, crate::t!(HdrVsDualBoard));
         } else {
             h.vs_ppu_type = VsPpuType::None;
             h.vs_dual_system = false;
@@ -239,10 +263,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
         });
     }
 
-    ui.weak(
-        "Edits the 16-byte header of the file on disk only (not the running \
-         core). Sizes are stored in standard 16K/8K-unit notation.",
-    );
+    ui.weak(crate::t!(HdrEditNote));
 }
 
 /// Open a ROM file, parse its header, and seed the editor state.
@@ -264,11 +285,11 @@ fn open_file(state: &mut HeaderEditorState) {
                     prg_units: (header.prg_size / (16 * 1024)) as u16,
                     chr_units: (header.chr_size / (8 * 1024)) as u16,
                 });
-                state.status = "header loaded".into();
+                state.status = crate::t!(HdrStatusLoaded).into();
             }
-            Err(e) => state.status = format!("not a valid iNES/NES2.0 header: {e:?}"),
+            Err(e) => state.status = crate::tf!(HdrStatusInvalid, format!("{e:?}")),
         },
-        Err(e) => state.status = format!("read failed: {e}"),
+        Err(e) => state.status = crate::tf!(HdrStatusReadFailed, e),
     }
 }
 
@@ -289,9 +310,9 @@ fn write_header_to_file(loaded: &mut Loaded) -> String {
         Ok(()) => {
             // The file now holds these bytes; the next write diffs against them.
             loaded.original = new_header;
-            "header written".into()
+            crate::t!(HdrStatusWritten).into()
         }
-        Err(e) => format!("write failed: {e}"),
+        Err(e) => crate::tf!(HdrStatusWriteFailed, e),
     }
 }
 

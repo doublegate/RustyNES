@@ -234,7 +234,7 @@ pub fn show(
         ctx,
         detached,
         "netplay",
-        "Netplay",
+        crate::t!(StatusNetplay),
         super::WindowCfg {
             default_pos: Some([600.0, 96.0]),
             default_size: Some([400.0, 320.0]),
@@ -262,7 +262,7 @@ pub fn show(
         ctx,
         detached,
         "netplay",
-        "Netplay",
+        crate::t!(StatusNetplay),
         super::WindowCfg {
             default_pos: Some([600.0, 96.0]),
             default_size: Some([320.0, 120.0]),
@@ -271,21 +271,9 @@ pub fn show(
         },
         open,
         |ui| {
-            ui.label(egui::RichText::new("Use the \"Netplay (browser)\" panel").strong());
-            ui.label(
-                "This UDP netplay panel is native-only (a browser cannot open a \
-                 raw UDP socket). In the browser, use the separate \"Netplay \
-                 (browser)\" panel, which runs the same rollback netcode over \
-                 WebRTC via a signaling server (2-4 players).",
-            );
-            ui.label(
-                egui::RichText::new(
-                    "Tip: keep BOTH browser windows visible side-by-side — a \
-                     backgrounded tab is rAF-throttled by the browser and will \
-                     desync the session.",
-                )
-                .weak(),
-            );
+            ui.label(egui::RichText::new(crate::t!(NpUseBrowserPanel)).strong());
+            ui.label(crate::t!(NpWasmNativeOnly));
+            ui.label(egui::RichText::new(crate::t!(NpWasmTip)).weak());
         },
     );
 }
@@ -295,42 +283,42 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
     use NetplayPhaseView::{Connecting, Error, Idle, InGame, Spectating};
 
     // --- Status block ---
-    ui.label(egui::RichText::new("Status").strong());
+    ui.label(egui::RichText::new(crate::t!(NpStatus)).strong());
     let st = &state.status;
     match st.phase {
         Idle => {
-            ui.label("Single-player (not connected).");
+            ui.label(crate::t!(NpSinglePlayer));
         }
         Connecting => {
             ui.colored_label(
                 egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
-                format!(
-                    "Connecting as {}...",
+                crate::tf!(
+                    NpConnectingAs,
                     if st.is_host {
-                        "host (P1)"
+                        crate::t!(NpHostP1)
                     } else {
-                        "joiner (P2)"
+                        crate::t!(NpJoinerP2)
                     }
                 ),
             );
             if let Some(ms) = st.ping_ms {
-                ui.label(format!("ping: {ms} ms"));
+                ui.label(crate::tf!(NpPingMs, ms));
             }
         }
         InGame => {
             ui.colored_label(
                 egui::Color32::from_rgb(0x40, 0xC0, 0x40),
-                format!(
-                    "In game as {}",
+                crate::tf!(
+                    NpInGameAs,
                     if st.is_host {
-                        "host (P1)"
+                        crate::t!(NpHostP1)
                     } else {
-                        "joiner (P2)"
+                        crate::t!(NpJoinerP2)
                     }
                 ),
             );
-            ui.label(format!(
-                "ping: {}   frame: {}   confirmed: {}",
+            ui.label(crate::tf!(
+                NpInGameStats,
                 st.ping_ms
                     .map_or_else(|| "-".to_string(), |ms| format!("{ms} ms")),
                 st.current_frame,
@@ -339,10 +327,10 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             ));
             let mut sync = Vec::new();
             if st.rolled_back {
-                sync.push(format!("rollback x{}", st.resimulated_frames));
+                sync.push(crate::tf!(NpRollback, st.resimulated_frames));
             }
             if st.stalled {
-                sync.push("stalled (time-sync)".to_string());
+                sync.push(crate::t!(NpStalled).to_string());
             }
             if !sync.is_empty() {
                 ui.label(sync.join("   "));
@@ -352,27 +340,21 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
         Spectating => {
             ui.colored_label(
                 egui::Color32::from_rgb(0x40, 0xA0, 0xE0),
-                "Spectating (read-only)",
+                crate::t!(NpSpectating),
             );
-            ui.label(format!(
-                "frame: {}   confirmed: {}   behind: {}",
+            ui.label(crate::tf!(
+                NpSpectateStats,
                 st.current_frame,
                 st.confirmed_frame
                     .map_or_else(|| "-".to_string(), |f| f.to_string()),
                 st.spectator_pending,
             ));
-            ui.label(
-                egui::RichText::new(
-                    "You are watching the match's confirmed input stream. \
-                     Your controls do nothing and you send no input.",
-                )
-                .weak(),
-            );
+            ui.label(egui::RichText::new(crate::t!(NpSpectateNote)).weak());
         }
         Error => {
             ui.colored_label(
                 egui::Color32::from_rgb(0xE0, 0x40, 0x40),
-                format!("Error: {}", st.message),
+                crate::tf!(NpError, st.message),
             );
         }
     }
@@ -383,31 +365,25 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
 
     // --- Host ---
     ui.add_enabled_ui(!active, |ui| {
-        ui.label(egui::RichText::new("Host (player 1)").strong());
+        ui.label(egui::RichText::new(crate::t!(NpHostHeading)).strong());
         ui.horizontal(|ui| {
-            ui.label("local port:");
+            ui.label(crate::t!(NpLocalPort));
             ui.add(egui::TextEdit::singleline(&mut state.host_port).desired_width(70.0));
         });
         if state.host_num_players < 2 {
             state.host_num_players = 2;
         }
         ui.horizontal(|ui| {
-            ui.label("players:");
+            ui.label(crate::t!(NpPlayers));
             for n in 2u8..=4 {
                 ui.selectable_value(&mut state.host_num_players, n, n.to_string());
             }
         });
         if state.host_num_players > 2 {
-            ui.label(egui::RichText::new("3-4 players use the Four Score adapter.").weak());
+            ui.label(egui::RichText::new(crate::t!(NpFourScoreNote)).weak());
         }
-        ui.label(
-            egui::RichText::new(
-                "Share your IP:port with the joiner. The host waits and \
-                 learns the joiner's address from its first connect.",
-            )
-            .weak(),
-        );
-        if ui.button("Host").clicked()
+        ui.label(egui::RichText::new(crate::t!(NpHostNote)).weak());
+        if ui.button(crate::t!(NpHostButton)).clicked()
             && let Ok(port) = state.host_port.trim().parse::<u16>()
         {
             let num_players = state.host_num_players.clamp(2, 4);
@@ -421,16 +397,16 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
 
     // --- Join ---
     ui.add_enabled_ui(!active, |ui| {
-        ui.label(egui::RichText::new("Join (player 2)").strong());
+        ui.label(egui::RichText::new(crate::t!(NpJoinHeading)).strong());
         ui.horizontal(|ui| {
-            ui.label("host:port:");
+            ui.label(crate::t!(NpHostPort));
             ui.add(
                 egui::TextEdit::singleline(&mut state.join_remote)
-                    .hint_text("ip:port")
+                    .hint_text(crate::t!(NpIpPortHint))
                     .desired_width(180.0),
             );
         });
-        if ui.button("Join").clicked() {
+        if ui.button(crate::t!(NpJoinButton)).clicked() {
             config.netplay.last_join_address = state.join_remote.trim().to_string();
             state.request = Some(NetplayRequest::Join {
                 remote: state.join_remote.trim().to_string(),
@@ -442,27 +418,20 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
 
     // --- Spectate (read-only) (v1.7.0 H8) ---
     ui.add_enabled_ui(!active, |ui| {
-        ui.label(egui::RichText::new("Spectate (watch, read-only)").strong());
+        ui.label(egui::RichText::new(crate::t!(NpSpectateHeading)).strong());
         if state.spectate_remote.is_empty() {
             state.join_remote.clone_into(&mut state.spectate_remote);
         }
         ui.horizontal(|ui| {
-            ui.label("host:port:");
+            ui.label(crate::t!(NpHostPort));
             ui.add(
                 egui::TextEdit::singleline(&mut state.spectate_remote)
-                    .hint_text("ip:port")
+                    .hint_text(crate::t!(NpIpPortHint))
                     .desired_width(180.0),
             );
         });
-        ui.label(
-            egui::RichText::new(
-                "Watch a running match without joining it. You replay the \
-                 confirmed input stream locally and send no input, so you \
-                 cannot affect the players.",
-            )
-            .weak(),
-        );
-        if ui.button("Spectate").clicked() {
+        ui.label(egui::RichText::new(crate::t!(NpSpectateHint)).weak());
+        if ui.button(crate::t!(NpSpectateButton)).clicked() {
             state.request = Some(NetplayRequest::Spectate {
                 remote: state.spectate_remote.trim().to_string(),
             });
@@ -473,20 +442,13 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
 
     // --- Leave ---
     ui.add_enabled_ui(active, |ui| {
-        if ui.button("Leave").clicked() {
+        if ui.button(crate::t!(NpLeave)).clicked() {
             state.request = Some(NetplayRequest::Leave);
         }
     });
 
     ui.separator();
-    ui.label(
-        egui::RichText::new(
-            "Both peers must run the SAME ROM (the handshake checks the \
-             SHA-256). The host is P1, the joiner is P2; both use their own \
-             player-1 controls.",
-        )
-        .weak(),
-    );
+    ui.label(egui::RichText::new(crate::t!(NpPeersNote)).weak());
 }
 
 /// Render the read-only "Diagnostics" section (v1.3.0 Workstream G1): the room
@@ -497,14 +459,14 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
 #[cfg(not(target_arch = "wasm32"))]
 fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
     ui.separator();
-    egui::CollapsingHeader::new("Diagnostics")
+    egui::CollapsingHeader::new(crate::t!(NpDiagnostics))
         .default_open(true)
         .show(ui, |ui| {
             // --- Room / input topology ---
-            ui.label(egui::RichText::new("Topology").strong());
+            ui.label(egui::RichText::new(crate::t!(NpTopology)).strong());
             if diag.num_players >= 2 {
-                ui.label(format!(
-                    "{} players (mesh){}",
+                ui.label(crate::tf!(
+                    NpTopologyPlayers,
                     diag.num_players,
                     if diag.num_players > 2 {
                         " — Four Score"
@@ -518,23 +480,23 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
                     2 => "P3 (Four Score)",
                     _ => "P4 (Four Score)",
                 };
-                ui.label(format!(
-                    "you drive: player {} = {}",
+                ui.label(crate::tf!(
+                    NpYouDrive,
                     diag.local_player + 1,
                     port_label(diag.local_player),
                 ));
             } else {
-                ui.label(egui::RichText::new("(no active session)").weak());
+                ui.label(egui::RichText::new(crate::t!(NpNoSession)).weak());
             }
 
             ui.separator();
 
             // --- Sync status ---
-            ui.label(egui::RichText::new("State checksums").strong());
+            ui.label(egui::RichText::new(crate::t!(NpStateChecksums)).strong());
             if diag.in_sync {
                 ui.colored_label(
                     egui::Color32::from_rgb(0x40, 0xC0, 0x40),
-                    format!("in sync ({} compares OK)", diag.total_compares),
+                    crate::tf!(NpInSync, diag.total_compares),
                 );
             } else {
                 let frame = diag
@@ -542,14 +504,11 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
                     .map_or_else(|| "?".to_string(), |f| f.to_string());
                 ui.colored_label(
                     egui::Color32::from_rgb(0xE0, 0x40, 0x40),
-                    format!(
-                        "DESYNCED at frame {frame} ({} mismatches / {} compares)",
-                        diag.mismatches, diag.total_compares,
-                    ),
+                    crate::tf!(NpDesynced, frame, diag.mismatches, diag.total_compares,),
                 );
                 if diag.consecutive_mismatches > 0 {
-                    ui.label(format!(
-                        "consecutive mismatches: {}",
+                    ui.label(crate::tf!(
+                        NpConsecutiveMismatches,
                         diag.consecutive_mismatches
                     ));
                 }
@@ -557,30 +516,33 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
 
             if let Some(last) = diag.last_compare {
                 let kind = if last.matched {
-                    "match"
+                    crate::t!(NpKindMatch)
                 } else if last.same_framebuffer {
-                    "timing (same picture)"
+                    crate::t!(NpKindTiming)
                 } else {
-                    "state (picture differs)"
+                    crate::t!(NpKindState)
                 };
-                ui.label(format!(
-                    "last @ frame {}: local {:#018x} vs remote {:#018x} [{kind}]",
-                    last.frame, last.local, last.remote,
+                ui.label(crate::tf!(
+                    NpLastCompare,
+                    last.frame,
+                    format!("{:#018x}", last.local),
+                    format!("{:#018x}", last.remote),
+                    kind,
                 ));
             }
 
             // --- Rolling CRC-match history ---
             if !diag.recent.is_empty() {
                 ui.separator();
-                ui.label(egui::RichText::new("Recent CRC history").strong());
+                ui.label(egui::RichText::new(crate::t!(NpRecentCrc)).strong());
                 egui::Grid::new("netplay-crc-history")
                     .num_columns(4)
                     .striped(true)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new("frame").weak());
-                        ui.label(egui::RichText::new("local").weak());
-                        ui.label(egui::RichText::new("remote").weak());
-                        ui.label(egui::RichText::new("ok").weak());
+                        ui.label(egui::RichText::new(crate::t!(NpColFrame)).weak());
+                        ui.label(egui::RichText::new(crate::t!(NpColLocal)).weak());
+                        ui.label(egui::RichText::new(crate::t!(NpColRemote)).weak());
+                        ui.label(egui::RichText::new(crate::t!(NpColOk)).weak());
                         ui.end_row();
                         // Newest first for readability.
                         for c in diag.recent.iter().rev() {
@@ -588,9 +550,15 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
                             ui.label(format!("{:#018x}", c.local));
                             ui.label(format!("{:#018x}", c.remote));
                             if c.matched {
-                                ui.colored_label(egui::Color32::from_rgb(0x40, 0xC0, 0x40), "yes");
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(0x40, 0xC0, 0x40),
+                                    crate::t!(HdrYes),
+                                );
                             } else {
-                                ui.colored_label(egui::Color32::from_rgb(0xE0, 0x40, 0x40), "NO");
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(0xE0, 0x40, 0x40),
+                                    crate::t!(NpNoUpper),
+                                );
                             }
                             ui.end_row();
                         }

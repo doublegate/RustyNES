@@ -11621,7 +11621,16 @@ mod tests {
         // the enable predicate, the label and the emitted action sit on
         // separate lines that rustfmt is free to re-wrap, and pinning the exact
         // joined spelling would fail on a reflow that changed nothing.
-        let label = "\"Netplay (browser)...\"";
+        // v2.9.7: the label is the i18n key, not a literal; its English text
+        // is pinned here so the search below still names the same menu entry.
+        assert_eq!(
+            crate::i18n::tr_in(
+                crate::i18n::Locale::English,
+                crate::i18n::Key::ShellNetplayBrowserItem
+            ),
+            "Netplay (browser)..."
+        );
+        let label = "crate::t!(ShellNetplayBrowserItem)";
         let at = shell
             .find(label)
             .expect("the wasm Netplay menu entry is gone -- the browser lobby is unreachable");

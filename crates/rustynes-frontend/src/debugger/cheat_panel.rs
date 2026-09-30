@@ -161,7 +161,7 @@ pub fn show(
         ctx,
         detached,
         "cheat",
-        "Cheats (Game Genie)",
+        crate::t!(CheatTitle),
         super::WindowCfg {
             default_pos: Some([560.0, 64.0]),
             default_size: Some([420.0, 380.0]),
@@ -203,7 +203,7 @@ pub fn show(
         ctx,
         detached,
         "cheat",
-        "Cheats (Game Genie)",
+        crate::t!(CheatTitle),
         super::WindowCfg {
             default_pos: Some([560.0, 64.0]),
             default_size: Some([420.0, 380.0]),
@@ -248,7 +248,7 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> boo
                 .desired_width(140.0)
                 .hint_text("SXIOPO"),
         );
-        let submit = ui.button("Add").clicked()
+        let submit = ui.button(crate::t!(CheatAdd)).clicked()
             || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
         if submit {
             changed |= try_add(state);
@@ -274,16 +274,16 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> boo
 
     ui.separator();
     if state.cheats.is_empty() {
-        ui.label("No Game Genie cheats. Enter a 6- or 8-character code above.");
+        ui.label(crate::t!(CheatNoGenie));
     } else {
         let mut remove: Option<usize> = None;
         egui::Grid::new("cheat-grid")
             .num_columns(4)
             .striped(true)
             .show(ui, |ui| {
-                ui.label("On");
-                ui.label("Code");
-                ui.label("Effect");
+                ui.label(crate::t!(CheatColOn));
+                ui.label(crate::t!(CheatColCode));
+                ui.label(crate::t!(CheatColEffect));
                 ui.label("");
                 ui.end_row();
                 for (i, entry) in state.cheats.iter_mut().enumerate() {
@@ -305,14 +305,14 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> boo
     }
 
     ui.add_space(8.0);
-    egui::CollapsingHeader::new("Game Genie encoder")
+    egui::CollapsingHeader::new(crate::t!(CheatEncoder))
         .default_open(false)
         .show(ui, |ui| {
             changed |= encoder_body(ui, state);
         });
 
     ui.add_space(8.0);
-    ui.heading("RAM cheats");
+    ui.heading(crate::t!(CheatRamHeading));
     changed |= raw_body(ui, state);
 
     changed
@@ -326,7 +326,7 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> boo
 fn encoder_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Addr $");
+        ui.label(crate::t!(CheatAddrDollar));
         ui.add(
             egui::TextEdit::singleline(&mut state.enc_addr_text)
                 .desired_width(56.0)
@@ -338,13 +338,13 @@ fn encoder_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
                 .desired_width(40.0)
                 .hint_text("AD"),
         );
-        ui.label("if");
+        ui.label(crate::t!(CheatIf));
         ui.add(
             egui::TextEdit::singleline(&mut state.enc_compare_text)
                 .desired_width(40.0)
-                .hint_text("(any)"),
+                .hint_text(crate::t!(CheatAnyHint)),
         );
-        if ui.button("Encode").clicked() {
+        if ui.button(crate::t!(CheatEncode)).clicked() {
             encode_from_fields(state);
         }
     });
@@ -357,19 +357,13 @@ fn encoder_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
     if !state.enc_result.is_empty() {
         ui.horizontal(|ui| {
             ui.monospace(state.enc_result.clone());
-            if ui.button("Add to list").clicked() {
+            if ui.button(crate::t!(CheatAddToList)).clicked() {
                 state.enc_result.clone_into(&mut state.add_text);
                 changed |= try_add(state);
             }
         });
     }
-    ui.label(
-        egui::RichText::new(
-            "Address is the PRG byte the code substitutes ($8000-$FFFF). With a \
-             compare byte you get an 8-character (bank-specific) code.",
-        )
-        .weak(),
-    );
+    ui.label(egui::RichText::new(crate::t!(CheatEncoderNote)).weak());
     changed
 }
 
@@ -386,15 +380,15 @@ fn encode_from_fields(state: &mut CheatPanelState) {
     let cmp_str = state.enc_compare_text.trim();
 
     let Ok(addr) = u16::from_str_radix(addr_str, 16) else {
-        state.enc_error = "address must be hex".to_string();
+        state.enc_error = crate::t!(CheatErrAddrHex).to_string();
         return;
     };
     if addr < 0x8000 {
-        state.enc_error = "address must be in $8000-$FFFF".to_string();
+        state.enc_error = crate::t!(CheatErrAddrRange).to_string();
         return;
     }
     let Ok(data) = u8::from_str_radix(data_str, 16) else {
-        state.enc_error = "data must be a hex byte".to_string();
+        state.enc_error = crate::t!(CheatErrDataHex).to_string();
         return;
     };
     if cmp_str.is_empty() {
@@ -402,7 +396,7 @@ fn encode_from_fields(state: &mut CheatPanelState) {
     } else if let Ok(cmp) = u8::from_str_radix(cmp_str, 16) {
         state.enc_result = crate::genie_encode::encode_8(addr, data, cmp);
     } else {
-        state.enc_error = "compare must be a hex byte (or blank)".to_string();
+        state.enc_error = crate::t!(CheatErrCompareHex).to_string();
     }
 }
 
@@ -412,7 +406,7 @@ fn raw_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
     let mut changed = false;
 
     ui.horizontal(|ui| {
-        ui.label("Addr");
+        ui.label(crate::t!(CheatAddr));
         ui.add(
             egui::TextEdit::singleline(&mut state.raw_addr_text)
                 .desired_width(56.0)
@@ -424,13 +418,13 @@ fn raw_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
                 .desired_width(40.0)
                 .hint_text("0A"),
         );
-        ui.label("if");
+        ui.label(crate::t!(CheatIf));
         ui.add(
             egui::TextEdit::singleline(&mut state.raw_compare_text)
                 .desired_width(40.0)
-                .hint_text("(any)"),
+                .hint_text(crate::t!(CheatAnyHint)),
         );
-        if ui.button("Add").clicked() {
+        if ui.button(crate::t!(CheatAdd)).clicked() {
             changed |= try_add_raw(state);
         }
     });
@@ -443,7 +437,7 @@ fn raw_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
 
     ui.separator();
     if state.raw.is_empty() {
-        ui.label("No RAM cheats. Enter a hex address ($0000-$1FFF) and value above.");
+        ui.label(crate::t!(CheatNoRam));
         return changed;
     }
 
@@ -452,8 +446,8 @@ fn raw_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
         .num_columns(3)
         .striped(true)
         .show(ui, |ui| {
-            ui.label("On");
-            ui.label("Effect");
+            ui.label(crate::t!(CheatColOn));
+            ui.label(crate::t!(CheatColEffect));
             ui.label("");
             ui.end_row();
             for (i, entry) in state.raw.iter_mut().enumerate() {
@@ -499,7 +493,7 @@ fn add_code_by_str(state: &mut CheatPanelState, raw: &str) -> bool {
         Ok(code) => {
             let canonical = code.code().to_string();
             if state.cheats.iter().any(|c| c.code == canonical) {
-                state.error = format!("{canonical} is already in the list");
+                state.error = crate::tf!(CheatAlreadyInList, canonical);
                 return false;
             }
             state.cheats.push(CheatEntry {
@@ -550,12 +544,12 @@ fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &
     // can mutate the cheat list via `add_code_by_str`).
     let mut to_add: Vec<String> = Vec::new();
     ui.horizontal(|ui| {
-        ui.label("Known codes:");
+        ui.label(crate::t!(CheatKnownCodes));
         egui::ComboBox::from_id_salt("genie-db-picklist")
             .selected_text(if game.is_empty() {
-                "Pick a code…".to_string()
+                crate::t!(CheatPickCode).to_string()
             } else {
-                format!("{game} — pick a code…")
+                crate::tf!(CheatGamePickCode, game)
             })
             .show_ui(ui, |ui| {
                 for (category, codes) in groups {
@@ -616,15 +610,15 @@ fn try_add_raw(state: &mut CheatPanelState) -> bool {
     let compare_text = state.raw_compare_text.trim();
 
     let Ok(address) = u16::from_str_radix(addr_text, 16) else {
-        state.raw_error = format!("invalid hex address '{addr_text}'");
+        state.raw_error = crate::tf!(CheatErrBadAddr, addr_text);
         return false;
     };
     if address >= 0x2000 {
-        state.raw_error = format!("address ${address:04X} out of range (must be $0000-$1FFF)");
+        state.raw_error = crate::tf!(CheatErrAddrOutOfRange, format!("{address:04X}"));
         return false;
     }
     let Ok(value) = u8::from_str_radix(value_text, 16) else {
-        state.raw_error = format!("invalid hex value '{value_text}'");
+        state.raw_error = crate::tf!(CheatErrBadValue, value_text);
         return false;
     };
     let compare = if compare_text.is_empty() {
@@ -632,7 +626,7 @@ fn try_add_raw(state: &mut CheatPanelState) -> bool {
     } else if let Ok(c) = u8::from_str_radix(compare_text, 16) {
         Some(c)
     } else {
-        state.raw_error = format!("invalid hex compare '{compare_text}'");
+        state.raw_error = crate::tf!(CheatErrBadCompare, compare_text);
         return false;
     };
 
@@ -701,6 +695,6 @@ fn persist_cheats(state: &mut CheatPanelState, persist: Option<&CheatPersist>) {
     let Some(p) = persist else { return };
     match crate::cheats::save(&p.data_dir, &p.rom_sha256, &state.cheats, &state.raw) {
         Ok(()) => state.save_error.clear(),
-        Err(e) => state.save_error = format!("cheats not saved: {e}"),
+        Err(e) => state.save_error = crate::tf!(CheatNotSaved, e),
     }
 }
