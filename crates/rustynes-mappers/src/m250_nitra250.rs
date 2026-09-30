@@ -229,7 +229,7 @@ impl Mapper for Nitra250 {
     }
 
     /// The MMC3 scanline counter (v2.9.7). `INES_Mapper_250.md`: "regular MMC3
-    /// chip connected in [a] different way", where the difference is only in
+    /// chip connected in \[a\] different way", where the difference is only in
     /// how the registers are addressed. Until v2.9.7 this was an 8-bit counter
     /// decremented every CPU cycle, which nothing on the page supports; the
     /// splits of *Time Diver Avenger* landed at arbitrary points and its
@@ -348,7 +348,7 @@ mod tests {
     }
 
     /// v2.9.7 (`T-COMMERCIAL-GARBLE`): `INES_Mapper_250.md` says the board is
-    /// a "regular MMC3 chip connected in [a] different way" (A10 selects the
+    /// a "regular MMC3 chip connected in \[a\] different way" (A10 selects the
     /// register, A7-A0 carry the data), so its IRQ is the MMC3 scanline
     /// counter clocked by filtered A12 rises. It was an 8-bit M2 cycle counter,
     /// which nothing on the page supports: splits landed at arbitrary points,
