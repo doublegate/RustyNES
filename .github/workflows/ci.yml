@@ -571,6 +571,32 @@ jobs:
           cargo test -p rustynes-apu --features debug-hooks
           cargo test -p rustynes-script --features script-ipc,script-sqlite
 
+  # v2.9.7 — the release binary is the `full` build (release.yml), and until
+  # now nothing compiled `full` on macOS or Windows: its clippy and tests run
+  # on Linux only. rcheevos and Lua are vendored C built by `cc`, which is
+  # exactly the kind of thing that builds on one toolchain and not another
+  # (MSVC vs clang vs gcc), so a release would have been the first time. This
+  # builds it on both, on every ready PR, so a failure lands on the PR.
+  full-build:
+    name: full build (${{ matrix.os }})
+    needs: [changes, setup]
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
+    runs-on: ${{ matrix.os }}
+    # Typical: ~6 min macOS / ~10 min Windows (a debug build of the frontend).
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: full-build
+      - run: cargo build -p rustynes-frontend --features full --locked
+
   test-roms:
     name: test (test-roms feature)
     # The SLOWEST job (release-mode compile + the heavy CPU / AccuracyCoin ROM
@@ -1057,7 +1083,7 @@ jobs:
   ci-success:
     name: CI success
     if: ${{ always() }}
-    needs: [changes, setup, lint, test, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage]
+    needs: [changes, setup, lint, test, full-build, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage]
     runs-on: ubuntu-26.04
     # Typical: instant. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.

@@ -36,6 +36,14 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **The release binaries are now the full native build.** They include
+  RetroAchievements, Lua scripting and its host IPC, HD packs, A/V recording
+  (which runs `ffmpeg` if it is on your `PATH`) and the debugger telemetry,
+  none of which the downloads had before. There is still one archive per
+  platform, under the same name. Building from source with a plain `cargo build`
+  is unchanged; `cargo full-run` gives the same set. CI now compiles this build
+  on macOS and Windows for every pull request, so a release is never the first
+  build of it there.
 - **Lua `client.frameskip(n)` is accepted and ignored by design**, and its log
   line now says why instead of "not yet supported". The emulator renders every
   frame for accuracy, and the display already shows only the latest one, so a

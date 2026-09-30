@@ -20,6 +20,11 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 FRAMES="${1:-3600}" # ~60 s of NTSC gameplay per ROM at full speed
+# v2.9.7 — the shipping binary is the `full` build (release.yml), so the
+# PGO-optimized frontend is too; otherwise a promoted PGO Linux asset would
+# silently drop RetroAchievements, Lua, HD packs and A/V recording. Override
+# with PGO_FEATURES="" for a default-feature build.
+FEATURES="${PGO_FEATURES-full}"
 
 command -v cargo-pgo >/dev/null || {
     echo "error: cargo-pgo not installed (cargo install cargo-pgo)" >&2
@@ -34,9 +39,9 @@ TRIPLE="$(rustc -vV | sed -n 's/host: //p')"
 "target/${TRIPLE}/release/pgo_trainer" "${FRAMES}"
 
 echo "== 3/3 optimized build of the shipping frontend =="
-cargo pgo optimize build -- -p rustynes-frontend
+cargo pgo optimize build -- -p rustynes-frontend --features "${FEATURES}"
 
 echo "done: target/${TRIPLE}/release/rustynes (PGO-optimized)"
-echo "Optional extra: 'cargo pgo bolt build -- -p rustynes-frontend' chains BOLT"
+echo "Optional extra: 'cargo pgo bolt build -- -p rustynes-frontend --features full' chains BOLT"
 echo "post-link optimization on Linux (the CI promotion bar is >3%; see"
 echo ".github/workflows/pgo.yml + docs/performance.md)."

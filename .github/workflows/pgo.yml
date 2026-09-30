@@ -433,9 +433,9 @@ jobs:
         env:
           PGO_FRAMES: ${{ inputs.frames || '3600' }}
         run: |
-          cargo pgo bolt build -- -p rustynes-frontend
+          cargo pgo bolt build -- -p rustynes-frontend --features full
           scripts/pgo/run.sh "$PGO_FRAMES"
-          cargo pgo bolt optimize -- -p rustynes-frontend
+          cargo pgo bolt optimize -- -p rustynes-frontend --features full
 
       # DISABLED (v2.3.1) — these two steps cannot measure what they claim, and
       # one of them silently reported a fabricated number. Run 31067782333 is the

@@ -111,9 +111,19 @@ cargo full-build                 # = build --release -p rustynes-frontend --feat
 WASM-only features are deliberately excluded because `full` targets a native
 binary: `script-wasm` is wasm-only *and* mutually exclusive with `scripting`
 (piccolo vs. mlua), and `browser-cheevos` / `wasm-canvas` are browser-only. The
-build is purely opt-in — the shipped/default build and the emulation core are
-unchanged (`hd-pack` / `debug-hooks` only forward to the off-by-default
-`rustynes-core` telemetry, proven byte-identical), so AccuracyCoin is unaffected.
+emulation core is unchanged (`hd-pack` / `debug-hooks` only forward to the
+off-by-default `rustynes-core` telemetry, proven byte-identical), so
+AccuracyCoin is unaffected.
+
+**Since v2.9.7 the release binaries ARE the `full` build** (maintainer decision,
+2026-09-30): `release.yml` passes `--features full`, one archive per platform
+under the same name as before, and `scripts/pgo/run.sh` builds the
+PGO-optimized Linux asset with the same features (`PGO_FEATURES`, default
+`full`). The Cargo `default` set does not change, because `full` is
+native-only: a plain `cargo build` and the wasm build keep today's defaults.
+CI's `full-build` job compiles `full` on macOS and Windows on every ready PR.
+Before it, `full` had been linted and tested on Linux only, so the release job
+would have been its first build on those two.
 
 ## Run loop
 

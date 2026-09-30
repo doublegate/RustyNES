@@ -87,7 +87,9 @@ install required.
 
 Pre-built binaries for every release are on the
 [Releases page](https://github.com/doublegate/RustyNES/releases): Linux `x86_64`,
-macOS (Apple silicon) and Windows `x86_64`.
+macOS (Apple silicon) and Windows `x86_64`. From v2.9.7 they are the full
+native build: RetroAchievements, Lua scripting, HD packs, A/V recording (with
+`ffmpeg` on your `PATH`) and the debugger telemetry are all included.
 
 ```bash
 # Linux / macOS
