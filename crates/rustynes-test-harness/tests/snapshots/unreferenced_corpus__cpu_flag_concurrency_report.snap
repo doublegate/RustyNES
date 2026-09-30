@@ -1,0 +1,32 @@
+---
+source: crates/rustynes-test-harness/tests/unreferenced_corpus.rs
+expression: report
+---
+TEST:test_cpu_flag_concurrency
+Verifying that basic CPU flag operations work properly
+..............DFL:30; 30   OK
+NMI:20->30   OK
+IRQ:20->30   OK
+BRK:30->30   OK
+
+Finding APU IRQ timings
+OK, 29823<=29823<29823
+Invoking a BRK-IRQ collision
+Offs #INTs Flags   4015 B n
+...........................035  1     $30,$30 $00  1 36.
+...........................047  2     $20,$30 $40  0 12.
+...........................126  2     $20,$30 $40  1 79.
+...........................135  1     $30,$30 $40  1 9.
+...........................249  2     $30,$30 $00  1 114.
+How does it look? Please
+report to me the following
+ information:
+- IRQ trigger timing: 29823
+- And the entire contents of
+  the above table.
+- It will be helpful to know
+  if the values differ any
+  when running the test
+  multiple times.
+THANK YOU FOR THE HELP.
+-Joel Yliluoma ("Bisqwit")

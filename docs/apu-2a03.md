@@ -135,6 +135,7 @@ Per `ref-docs/research-report.md` §Frame counter:
 - 4-step (mode 0): clocks envelope+linear at every step, length+sweep at steps 2 and 4, frame IRQ at step 4 (if not inhibited). Total 14914 CPU cycles per loop NTSC.
 - 5-step (mode 1): clocks envelope+linear at steps 1,2,3,5; length+sweep at 2 and 5; never sets frame IRQ. Total 18640 CPU cycles per loop NTSC.
 - Writing `$4017` resets the counter with a 3- or 4-CPU-cycle delay (depending on whether the write happened on an even or odd CPU cycle); if mode 1 selected, immediately clocks the half-frame and quarter-frame events.
+- **The write's clock and the sequencer's step can be one pulse (v2.9.5).** A mode-1 write whose reset matures on the CPU cycle after the sequencer fired a quarter- or half-frame step does not clock that unit again. The triggers are emitted on APU-cycle boundaries, and both land in the same one. `FrameCounter::prev_tick_step` derives "the previous tick fired a step" from the sequencer position, so no state is added. The spec is blargg's `tests/roms/extra/apu/apu_test_{1..10}`: 1, 2, 5 and 6 require one decrement at deltas 29830/29831 (4-step) and 37282/37283 (5-step), and 3, 4, 7 and 8 require two, one cycle later (`apu_frame_clock_coincidence.rs`). Only the half-frame side is observed by those ROMs; the quarter-frame side follows the same mechanism.
 
 Nesdev's frame-counter timing is expressed in APU get/put cycle terms:
 the reset side effects occur 3 CPU clocks after the `$4017` write if the write

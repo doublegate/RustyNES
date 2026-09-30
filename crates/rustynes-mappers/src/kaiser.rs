@@ -211,7 +211,11 @@ impl Mapper for KaiserMapper {
         match self.board {
             KaiserBoard::M56 | KaiserBoard::M142 => match addr {
                 0x6000..=0x7FFF => {
-                    if self.use_rom {
+                    // KS7032 (142) has no RAM here: the window is always the
+                    // PRG-ROM bank that bank-select value 4 picks
+                    // (`nesdev_wiki/INES_Mapper_142`; core ledger F-09,
+                    // v2.9.5). KS202 (56) keeps RAM unless `use_rom` is set.
+                    if self.use_rom || self.board == KaiserBoard::M142 {
                         let count = self.prg_count_8k();
                         let bank = (self.prg_regs[3] as usize) % count;
                         self.prg_rom[bank * PRG_BANK_8K + (addr as usize & 0x1FFF)]
@@ -299,7 +303,7 @@ impl Mapper for KaiserMapper {
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         // v2.7.2 (core audit §5.5): M303 and M312 drive nothing at
         // `$6000-$7FFF`, so it floats there. M305 / M306 map PRG-ROM into that
-        // window and M56 / M142 RAM or ROM, so theirs stays mapped.
+        // window, M56 RAM or ROM, and M142 ROM, so theirs stays mapped.
         let floats_6000 = matches!(self.board, KaiserBoard::M303 | KaiserBoard::M312)
             && matches!(addr, 0x6000..=0x7FFF);
         floats_6000
@@ -317,7 +321,7 @@ impl Mapper for KaiserMapper {
                 // The read path served it but no write path existed, so the
                 // game's work RAM silently stayed zero (v2.7.2, found by
                 // `tests/prg_ram_window_open_bus.rs`). M142 has no RAM there
-                // per the wiki; see the core ledger's F-09.
+                // per the wiki: its window is PRG-ROM (core ledger F-09).
                 0x6000 | 0x7000 => {
                     if self.board == KaiserBoard::M56 && !self.use_rom {
                         self.wram[addr as usize & 0x1FFF] = value;
@@ -697,6 +701,24 @@ mod tests {
             }
         }
         assert!(fired);
+    }
+
+    /// KS7032's `$6000-$7FFF` is "8 KB switchable PRG ROM bank" selected by
+    /// bank-select value 4 (`nesdev_wiki/INES_Mapper_142`), with no RAM. It
+    /// used to read a zero work RAM there until the undocumented value 5 set
+    /// a ROM flag (core ledger F-09, closed v2.9.5).
+    #[test]
+    fn ks7032_6000_window_is_prg_rom_from_bank_select_4() {
+        let mut m = new_m142(synth_prg_8k(16), synth_chr_8k(1), Mirroring::Vertical).unwrap();
+        // Power-on: the register is 0, so the window shows PRG bank 0.
+        assert_eq!(m.cpu_read(0x6000), 0);
+        m.cpu_write(0xE000, 0x04); // select the $6000 bank register
+        m.cpu_write(0xF000, 0x05);
+        assert_eq!(m.cpu_read(0x6000), 5);
+        // ROM, not RAM: a write does not stick.
+        m.cpu_write(0x6000, 0xA5);
+        assert_eq!(m.cpu_read(0x6000), 5);
+        assert!(!m.cpu_read_unmapped(0x6000));
     }
 
     #[test]

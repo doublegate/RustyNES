@@ -26,6 +26,105 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.5] - 2026-09-29 - "Caliper" (every open accuracy item measured, then fixed or closed)
+
+The sixth release of the v2.9.x line and the second of the line to v3.0.0: the
+accuracy release. Every open item in the accuracy ledger and the line plan got
+an outcome with its evidence:
+
+- **four fixes**, each red first: blargg's `apu_test` frame-counter
+  coincidence, the composite 2C02's odd-frame sprite glitch on scanline 0, OAM
+  DMA filling the PPU I/O latch, and KS7032's `$6000` window;
+- **49 committed test ROMs** that no test ran are now gated;
+- **one lever tried and refuted**, the MMC3 M2-edge filter;
+- **the rest closed on documentation** or moved to where they belong.
+
+One fix moves a save-state format: **`.rns` files from v2.9.4 or earlier do not
+load.** The full `--features test-roms` suite passes 2,905 tests.
+AccuracyCoin is 144/144, with `Sprites On Scanline 0` now at the composite
+PPU's code 1, and nestest is 0-diff. The MiSTer RTL is unchanged, so the
+bitstreams are v2.9.2's, byte for byte. **No hardware has run any bitstream.**
+
+### Fixed — emulation
+
+- **A `$4017` write's clock no longer doubles the sequencer's step in the same
+  APU cycle.** A mode-1 write whose reset matures on the CPU cycle after the
+  frame sequencer fired a half- or quarter-frame step clocked that unit a second
+  time. Hardware emits the triggers on APU-cycle boundaries, so the two are one
+  pulse. blargg's `tests/roms/extra/apu/apu_test_{1..10}` pin the boundary to
+  the cycle in both sequencer modes. Four of them (1, 2, 5, 6) had failed since
+  they were first read in v2.6.2 and are now gated, 10/10
+  (`apu_frame_clock_coincidence.rs`). The rule is derived from the sequencer
+  position, so no state is added.
+- **Scanline 0 draws the composite 2C02's odd-frame sprite glitch.** When an odd
+  frame skips pre-render dot 340, the sprite shifters miss the dot at which they
+  would see the dot-339 re-arm. Every sprite on scanline 0 then draws its first
+  pixel at X=0, and the other seven where they belong
+  (`forums.nesdev.org/viewtopic.php?t=26291`). AccuracyCoin's
+  `Sprites On Scanline 0` now reads code 1, a composite PPU; it read code 2, an
+  RGB PPU, because the two frames never differed.
+- **An OAM DMA byte fills the PPU's I/O latch**, as any `$2004` write does
+  (`nesdev_wiki/PPU_registers`). `$2002`'s low five bits after a DMA now read
+  the last byte transferred. The MiSTer core already did this, and the oracle is
+  now in line with it (sibling ledger 3.1c).
+- **Kaiser KS7032 (mapper 142) serves PRG-ROM at `$6000`**, the bank that
+  bank-select value 4 picks, as `nesdev_wiki/INES_Mapper_142` documents. It read
+  a zero work RAM there before (core ledger F-09).
+
+### Changed — save states
+
+- **Save-state epoch: `PPU_SNAPSHOT_VERSION` 10 → 11.** The scanline-0 fix adds
+  one byte of PPU state that lives across the frame boundary, where save states
+  and run-ahead snapshot. Because the `.rns` container compares the PPU section
+  version for equality (ADR 0028), a save state from v2.9.4 or earlier fails to
+  load with a clear version error. It is not misread.
+
+### Added — test coverage
+
+- **The 49 committed test ROMs no test ran are gated** (`unreferenced_corpus.rs`).
+  13 report a real `$6000` verdict and pass. 23 Holy Mapperel variants each
+  report detail `0000`. One data report is pinned. 12 visual or audio ROMs are
+  pinned by hash, labelled as regression pins rather than verdicts.
+
+### Closed with evidence
+
+- **AccuracyCoin `APU Register Activation` code 2** is an accepted console
+  variant: the OAM-DMA bus conflict clocked the controller port. The ROM calls
+  both outcomes success.
+- **OPLL (VRC7) rhythm mode** needs nothing. VRC7 has no rhythm DAC and only six
+  audible channels (`nesdev_wiki/VRC7_audio`). A test pins that a `$0E` write
+  changes no output.
+- **The MMC3 M2-edge low-time filter lever** was tried, as the maintainer
+  asked, and refuted. Filter thresholds 2, 3 and 4 give an identical MMC3
+  battery, because the smallest low time at an IRQ-clocking A12 rise is 91 CPU
+  cycles on the scanline-timing ROMs. It is recorded in ADR 0002.
+- **T-ORACLE-001** keeps its residual. The A12 rise is at the documented dot
+  260, and the filter axis is ruled out.
+- **`.fm2` Four Score P3/P4 import** moves to v3.0.0. It needs `FrameInput` to
+  grow two fields, which breaks an exhaustive public struct.
+
+### MiSTer core (co-simulation only; the RTL is unchanged)
+
+- **The PPU I/O-latch decay groups have a stimulus.** `ppudecay075` refreshes
+  bits 0-4 once and then only ever reads `$2002`, so its bus trace shows those
+  bits decay 1,000,000 cycles later while bits 5-7 stay refreshed. The DUT
+  matches on all 1,191,222 cycles. The three decay mutations every earlier ROM
+  left inert are now caught.
+- **The RMW double write is covered.** Both mutations that rung 1 cannot see
+  are caught by the rung-2 bus gate `rmwabsy049`.
+- **Two gated boot goldens were four cycles short** of the window the DUT runs,
+  so the DUT's last four records went unchecked. `ppuregs` and `ppuscroll` are
+  re-cut from the pinned oracle, and a new audit
+  (`tb/check_boot_windows.py`, in CI) keeps the two numbers equal.
+- **Six of 77 checkpoint streams are not compared**, and the README claimed
+  none were. Two are documented exclusions. The other four are AccuracyCoin
+  sub-test ROMs gated by their verdict byte, because the latch difference fixed
+  above dominated their streams; they are registered when the pin moves.
+- **The oracle changes above reach the DUT when its pinned oracle moves**, at
+  v2.9.9. The RTL they need (the `$4017` rule, the scanline-0 re-arm) lands
+  there, under that release's seed sweep. The remaining open ledger rows go
+  with them.
+
 ## [2.9.4] - 2026-09-29 - "Plumb" (the records made true, and CI made to run what it only linted)
 
 The fifth release of the v2.9.x line and the first of the line to v3.0.0

@@ -20,8 +20,9 @@
 //! - **Two controllers stored.** [`FrameInput`] models players 1 and 2 only.
 //!   A `fourscore` `.fm2` (four pads) is imported by keeping pads 1 and 2 and
 //!   dropping pads 3 and 4; the fourscore flag is preserved in [`Fm2Meta`] so
-//!   the caller is not silently misled. (TODO: carry P3/P4 once `FrameInput`
-//!   grows beyond two ports.)
+//!   the caller is not silently misled. Carrying P3/P4 needs `FrameInput` to
+//!   grow two fields, which is breaking for an exhaustive public struct, so it
+//!   is scheduled for v3.0.0 (`to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md`).
 //! - **Soft reset has no home on [`FrameInput`].** The per-frame command
 //!   field's `MOVIECMD_RESET` bit (value 1) is parsed without error but is
 //!   *not* applied to any frame today; see [`import_fm2`].

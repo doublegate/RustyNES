@@ -143,7 +143,13 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   function of `scanline` + `region`, both of which are serialized, so
 ///   recomputing it is equivalent and cheaper than carrying derived bytes — the
 ///   same choice Mesen2 makes in its `if(!s.IsSaving())` post-load fixup block.
-pub const PPU_SNAPSHOT_VERSION: u8 = 10;
+/// - v11 (v2.9.5 "Caliper"): appends `spr_rearm_deferred` (1 byte), the dot-339
+///   sprite re-arm an odd-frame skip defers past scanline 0's first pixel. It is
+///   live only across the frame boundary, which is exactly where run-ahead and
+///   save states snapshot. This is a `.rns` epoch, because the container compares
+///   the PPU section version for equality (ADR 0028); v1..=10 blobs upconvert to
+///   `false` on the direct `Ppu::restore` path.
+pub const PPU_SNAPSHOT_VERSION: u8 = 11;
 
 /// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
 /// field except the 245,760-byte framebuffer.
@@ -588,6 +594,13 @@ impl Ppu {
         // the restored timeline must not.
         w.u8(u8::from(self.rendering_enabled_delayed2));
 
+        // v11 tail — the odd-frame-deferred sprite re-arm (v2.9.5). It is set at
+        // the pre-render skip and cleared after scanline 0's first pixel, so it
+        // is live exactly across the frame boundary where run-ahead and save
+        // states snapshot. Dropping it would draw that frame's scanline-0
+        // sprites at their normal X instead of the composite PPU's X=0.
+        w.u8(u8::from(self.spr_rearm_deferred));
+
         w.buf
     }
 
@@ -920,6 +933,14 @@ impl Ppu {
             self.rendering_enabled_delayed2 = self.rendering_enabled_delayed;
         }
 
+        // v11: the deferred sprite re-arm. Older blobs predate it; `false` is
+        // the state everywhere except the two dots after an odd-frame skip.
+        if version >= 11 {
+            self.spr_rearm_deferred = r.u8()? != 0;
+        } else {
+            self.spr_rearm_deferred = false;
+        }
+
         // Derived-cache fixup (every version): the scanline-classification cache
         // is a pure function of `scanline` + `region`, so it is recomputed rather
         // than carried. Resetting the key to the `Ppu::new` sentinel forces the
@@ -985,7 +1006,7 @@ mod tests {
     // hand-computed literals and hoping they agreed. Naming them makes a bump
     // one edit here, and makes the composition checkable at a glance.
     //
-    // Verified to sum: 23 + 2 + 6 + 14 + 256 + 50 + 3 + 1 = 355 = V3_TAIL..V10_TAIL.
+    // Verified to sum: 23 + 2 + 6 + 14 + 256 + 50 + 3 + 1 + 1 = 356 = V3_TAIL..V11_TAIL.
     /// v3: W3-Stage-4 — `u8*3` + `[u8;8]*2` + u16 PPUDATA FSM + `u8*2` BG freeze.
     const V3_TAIL: usize = 23;
     /// v4: `u16 extra_lines_remaining`.
@@ -1002,9 +1023,48 @@ mod tests {
     const V9_TAIL: usize = 3;
     /// v10: stage 2 of the rendering gate (`rendering_enabled_delayed2`).
     const V10_TAIL: usize = 1;
+    /// v11: the odd-frame-deferred sprite re-arm (`spr_rearm_deferred`).
+    const V11_TAIL: usize = 1;
     /// Everything a v1 blob does not carry, from `ex_attr_latch` onward.
-    const V3_THROUGH_V10_TAILS: usize =
-        V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL + V10_TAIL;
+    const V3_THROUGH_V11_TAILS: usize =
+        V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL + V10_TAIL + V11_TAIL;
+
+    /// v11: `spr_rearm_deferred` is the reason for the epoch, and it is only
+    /// ever `true` across the frame boundary, where every run-ahead and save
+    /// snapshot is taken. The round trip must carry a TRUE value (the default
+    /// `false` would survive an omitted or inverted byte), and a v10 blob must
+    /// upconvert to `false` on the direct `restore` path. Added in v2.9.5 at
+    /// Copilot's review of #575.
+    #[test]
+    fn snapshot_v11_carries_the_deferred_sprite_rearm() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.spr_rearm_deferred = true;
+        let blob = p.snapshot();
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert!(
+            q.spr_rearm_deferred,
+            "a true deferral must survive the round trip"
+        );
+
+        p.spr_rearm_deferred = false;
+        let blob = p.snapshot();
+        q.spr_rearm_deferred = true;
+        q.restore(&blob).unwrap();
+        assert!(
+            !q.spr_rearm_deferred,
+            "a false deferral must overwrite a stale true"
+        );
+
+        // A v10 blob: the current blob minus the one-byte v11 tail.
+        p.spr_rearm_deferred = true;
+        let cur = p.snapshot();
+        let mut v10 = cur[..cur.len() - V11_TAIL].to_vec();
+        v10[0] = 10;
+        q.spr_rearm_deferred = true;
+        q.restore(&v10).expect("v10 blob must upconvert");
+        assert!(!q.spr_rearm_deferred, "a pre-v11 blob restores no deferral");
+    }
 
     #[test]
     fn snapshot_round_trip() {
@@ -1136,8 +1196,9 @@ mod tests {
         // `oam2_addr`), AND the v9 OAM2Address tail (3 bytes: u8
         // `oam2_fetch_addr` + bool `oam2_overflowed` + bool
         // `oam2_fetch_frozen`), AND the v10 rendering-gate stage-2 tail
-        // (1 byte) — 355 bytes total, none of which a v1 blob carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - V3_THROUGH_V10_TAILS]);
+        // (1 byte), AND the v11 deferred sprite re-arm (1 byte) — 356 bytes
+        // total, none of which a v1 blob carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - V3_THROUGH_V11_TAILS]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -1650,7 +1711,8 @@ mod tests {
         // subtracted here too.
         let p = Ppu::new(PpuRegion::Ntsc);
         let cur = p.snapshot();
-        let mut v6 = cur[..cur.len() - (V10_TAIL + V9_TAIL + V8_TAIL + V7_TAIL)].to_vec();
+        let mut v6 =
+            cur[..cur.len() - (V11_TAIL + V10_TAIL + V9_TAIL + V8_TAIL + V7_TAIL)].to_vec();
         v6[0] = 6;
 
         let mut q = Ppu::new(PpuRegion::Ntsc);

@@ -303,6 +303,10 @@ impl FrameCounter {
             self.reset_in -= 1;
             if self.reset_in == 0 {
                 let new_mode = self.pending_mode;
+                // Read BEFORE the mode and position are overwritten: which
+                // clocks did the sequencer fire on the previous tick? See
+                // `prev_tick_step` for why that matters to a mode-1 write.
+                let (prev_quarter, prev_half) = self.prev_tick_step();
                 self.mode = new_mode;
                 self.irq_inhibit = self.pending_inhibit;
                 if self.irq_inhibit {
@@ -320,11 +324,14 @@ impl FrameCounter {
                     self.irq_flag_clear_cycle = 0;
                 }
                 self.cycle = 0;
-                // Mode 1: immediately fire quarter+half-frame events.
+                // Mode 1 (`Mode::FiveStep`): immediately fire quarter+half-frame events —
+                // unless the sequencer fired the same clock on the previous
+                // tick, in which case the two share one APU cycle and are one
+                // pulse, not two (v2.9.5, `prev_tick_step`).
                 if new_mode == Mode::FiveStep {
                     return FrameEvents {
-                        quarter: true,
-                        half: true,
+                        quarter: !prev_quarter,
+                        half: !prev_half,
                         irq: false,
                     };
                 }
@@ -333,6 +340,39 @@ impl FrameCounter {
         }
 
         self.clock_sequencer()
+    }
+
+    /// The quarter/half-frame clocks the sequencer fired on the PREVIOUS
+    /// tick, derived from its current position rather than stored.
+    ///
+    /// A mode-1 `$4017` write clocks the quarter- and half-frame units when
+    /// its reset matures. If that happens one CPU cycle after the sequencer's
+    /// own step fired the same clock, hardware produces ONE clock, not two:
+    /// the triggers are emitted on APU-cycle boundaries (nesdev wiki, *APU
+    /// Frame Counter* and its Talk page), and the step and the write land in
+    /// the same APU cycle. The rule is stated by blargg's
+    /// `tests/roms/extra/apu/apu_test_{1,2,5,6}.nes`, which fail with a
+    /// second decrement and pass with one; `apu_test_{3,4,7,8}` (one cycle
+    /// later) require the second, and `apu_test_{9,10}` show the step itself
+    /// still happens at those deltas. See
+    /// `crates/rustynes-test-harness/tests/apu_frame_clock_coincidence.rs`.
+    ///
+    /// Deriving it keeps the save-state format unchanged. Every step leaves
+    /// [`Self::cycle`] AT its step position until the next tick increments it
+    /// (the wrap steps, which reset it to 0, fire no clock), and a maturing
+    /// reset returns before [`Self::clock_sequencer`] runs. So at that
+    /// moment, "`cycle` equals a clocking step of the current mode" is exactly
+    /// "the previous tick fired that step".
+    fn prev_tick_step(&self) -> (bool, bool) {
+        let (q1, h1, q2, last) = match (self.mode, self.pal) {
+            (Mode::FourStep, false) => (7457, 14913, 22371, 29829),
+            (Mode::FourStep, true) => (8313, 16627, 24939, 33253),
+            (Mode::FiveStep, false) => (7457, 14913, 22371, 37281),
+            (Mode::FiveStep, true) => (8313, 16627, 24939, 41565),
+        };
+        let c = self.cycle;
+        let half = c == h1 || c == last;
+        (half || c == q1 || c == q2, half)
     }
 
     /// Advance the sequencer one CPU cycle and return the events it fires.

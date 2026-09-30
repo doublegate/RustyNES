@@ -1850,3 +1850,49 @@ scanlines and the pre-render line"* and contributes *"the 241st A12 rising edge
 per frame"* — and the fast dot path cannot bypass it, being gated on
 `cached_visible` and `dot <= 256`. The ticket is corrected in place rather than
 deleted, because it was cited in a release plan.
+
+---
+
+## Decision update (2026-09-29, v2.9.5 "Caliper") — the M2-edge low-time filter lever, tried and closed
+
+The v2.1.5 update above left one lever "deferred to a maintainer decision": an
+edge-precise count of M2 falling edges while A12 is low, in place of the integer
+`gap >= 3` CPU-cycle count. The maintainer's decision (2026-09-29): **try it, and
+keep it only if the four `#[ignore]`d R1/R2 tests pass and nothing else changes.**
+
+**Its bound, first.** In this core an M2 falling edge is the CPU-cycle boundary,
+and `Mmc3::cpu_cycle` advances there, so the shipped integer gap already counts
+M2 falling edges. An edge-precise count can differ from it by at most one, and
+only where a fall or a rise lands in the dots a CPU cycle's catch-up assigns to a
+neighbouring cycle. Any such filter is therefore bracketed by the thresholds
+`gap >= 2` and `gap >= 4`.
+
+**Measured, in a scratch worktree of v2.9.4** (nothing committed):
+
+| threshold | `mmc3.rs`, all tests including `#[ignore]`d | failing set and messages |
+| --- | --- | --- |
+| `gap >= 2` | 18 passed, 5 failed | digest `8ed95d00…` |
+| `gap >= 3` (shipped) | 18 passed, 5 failed | digest `8ed95d00…` |
+| `gap >= 4` | 18 passed, 5 failed | digest `8ed95d00…` |
+
+The five failures are the four R1/R2 `_strict` tests and the by-design NEC
+`6-MMC3_alt`, with byte-identical messages at every threshold. The reason is in
+the low times themselves, logged at every rise that clocked the counter into an
+IRQ-asserting state:
+
+| ROM | smallest low time at an IRQ-clocking rise (CPU cycles) |
+| --- | --- |
+| `mmc3_test_2/4-scanline_timing` | 91 |
+| `mmc3_test_v1/4-scanline_timing` | 91 |
+| `mmc3_test_v1/5-MMC3` | 39 |
+| `mmc3_test_v1/6-MMC6` | 39 |
+
+A threshold anywhere from 1 to 39 cannot change a single one of those clocks. The
+v2.1.5 study's premise for `/5` and `/6` (tight, post-access A12 cadence) was
+about *phase*, not low time, and v2.6.15 has since shown both rest on an
+assertion blargg withdrew. That leaves no target for this lever at all.
+
+**Disposition: refuted, and closed.** The lever goes on the DO-NOT-RETRY list.
+The R1/R2 residual (`mmc3_test_2/4` #3 and `mmc3_test_v1/4` #3, one behaviour
+measured twice) stands as ADR 0002 F5.0 closed it: at least one PPU dot late,
+not reachable by the filter axis.

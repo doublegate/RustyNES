@@ -679,6 +679,12 @@ window boards 305/306/312), and the BMC multicarts **261**/**289**/**320**/
 **336**/**349**. All are BestEffort: register-decode + save-state round-trip
 unit-tested, outside the AccuracyCoin / oracle gate.
 
+**KS7032 (142) has no work RAM at `$6000` (v2.9.5).** `nesdev_wiki/INES_Mapper_142`
+gives that window an 8 KiB switchable PRG-ROM bank, selected by bank-select value
+4. The model had read a zero work RAM there until an undocumented register set a
+ROM flag, and it now always serves the bank. KS202 (56) keeps the RAM its own
+page documents. Core ledger F-09.
+
 **MMC3-clone A12/IRQ timing oracle (Fathom F3.3).** The eleven
 `Mmc3CloneMapper` boards (44/49/52/115/134/189/205/238/245/348/366) all route
 their `$8000`-`$FFFF` register space — including the IRQ ports
