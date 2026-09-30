@@ -19,6 +19,11 @@
     <string name="action_close">Close</string>
     <string name="action_states">States</string>
     <string name="action_reset">Reset</string>
+    <string name="action_disk_side">Disk %1$s</string>
+    <string name="action_nsf_track">Track %1$d/%2$d &gt;</string>
+    <string name="action_screen_left">Screen: left</string>
+    <string name="action_screen_right">Screen: right</string>
+    <string name="action_insert_coin">Coin</string>
     <string name="action_pause">Pause</string>
     <string name="action_resume">Resume</string>
     <string name="action_settings">Settings</string>
@@ -147,6 +152,7 @@
     <string name="settings_gpu_renderer">GPU renderer (restart to apply)</string>
     <string name="settings_haptics">Haptics</string>
     <string name="settings_hide_pad_with_controller">Hide on-screen pad with a controller</string>
+    <string name="settings_cancel_opposites">Cancel opposite directions</string>
     <!-- %s = the active screen mode label (Cover / Inner / Cast) -->
     <string name="settings_controller_screen">Controller — %1$s screen</string>
 

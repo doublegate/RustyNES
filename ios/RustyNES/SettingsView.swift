@@ -56,13 +56,17 @@ struct SettingsView: View {
                 Section {
                     Toggle("Haptic feedback", isOn: $model.hapticsEnabled)
                         .disabled(!model.hapticsSupported)
+                    // v2.9.7 "Tandem" (plan item 8): neutral SOCD, default on.
+                    Toggle("Cancel opposite directions", isOn: $model.cancelOpposites)
                 } header: {
                     Text("Controls")
                 } footer: {
                     Text(
-                        model.hapticsSupported
+                        (model.hapticsSupported
                             ? "Light vibration when you press an on-screen button. Off by default."
-                            : "This device does not support haptics."
+                            : "This device does not support haptics.")
+                            + " Cancel opposite directions turns Up + Down, or Left + Right,"
+                            + " held together into neither, as a real NES pad does. On by default."
                     )
                 }
 

@@ -28,6 +28,23 @@ struct ContentView: View {
                 )
             }
         }
+        // v2.9.7 "Tandem": the FDS BIOS picker, raised when a disk needs disksys.rom.
+        // Attached to the Group's content rather than beside the ROM importer below:
+        // two `.fileImporter`s on one view compete and only one presents.
+        .background(
+            Color.clear.fileImporter(
+                isPresented: $model.needsFdsBios,
+                allowedContentTypes: [.data],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first { Task { await model.installFdsBios(from: url) } }
+                case .failure(let error):
+                    model.errorMessage = error.localizedDescription
+                }
+            }
+        )
         // ROM import: .nes / .fds / .nsf plus zip archives (the same set the
         // Info.plist document types register). User-provided ROMs ONLY.
         .fileImporter(

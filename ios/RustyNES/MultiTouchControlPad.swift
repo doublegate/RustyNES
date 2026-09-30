@@ -55,6 +55,9 @@ struct MultiTouchControlPad: View {
     let onMaskChanged: (UInt8) -> Void
     /// Fired when the MENU pill is tapped (the on-screen menu toggle).
     var onLogoTap: () -> Void = {}
+    /// v2.9.7: cancel opposite directions on the combined touch mask (the user's
+    /// setting, default on). See `NesButtonMask.cancelOpposingDirections`.
+    var cancelOpposites: Bool = true
 
     /// The live pressed-button mask, used to light the drawn art. The multi-touch
     /// responder updates this through `onMaskChanged` so held buttons glow.
@@ -85,7 +88,8 @@ struct MultiTouchControlPad: View {
                         liveMask = mask
                         onMaskChanged(mask)
                     },
-                    onLogoTap: onLogoTap
+                    onLogoTap: onLogoTap,
+                    cancelOpposites: cancelOpposites
                 )
                 .accessibilityHidden(true)
             }
@@ -337,11 +341,13 @@ private let pressStart2PAvailable = UIFont(name: pressStart2PName, size: 12) != 
 private struct MultiTouchSurface: UIViewRepresentable {
     let onMaskChanged: (UInt8) -> Void
     let onLogoTap: () -> Void
+    let cancelOpposites: Bool
 
     func makeUIView(context: Context) -> MultiTouchPadView {
         let view = MultiTouchPadView()
         view.onMaskChanged = onMaskChanged
         view.onLogoTap = onLogoTap
+        view.cancelOpposites = cancelOpposites
         return view
     }
 
@@ -349,6 +355,7 @@ private struct MultiTouchSurface: UIViewRepresentable {
         // Re-push the latest callbacks (they capture fresh @State each render).
         view.onMaskChanged = onMaskChanged
         view.onLogoTap = onLogoTap
+        view.cancelOpposites = cancelOpposites
     }
 }
 
@@ -364,6 +371,8 @@ private struct MultiTouchSurface: UIViewRepresentable {
 final class MultiTouchPadView: UIView {
     var onMaskChanged: ((UInt8) -> Void)?
     var onLogoTap: (() -> Void)?
+    /// v2.9.7: the user's "Cancel opposite directions" setting (default on).
+    var cancelOpposites = true
 
     private var lastBits: UInt8 = 0
     private var pillTouches = Set<ObjectIdentifier>()
@@ -423,7 +432,8 @@ final class MultiTouchPadView: UIView {
         // v2.9.2 (audit AUD-10): one touch cannot hit opposite directions
         // (`hitTest` derives them from one offset), but two fingers on the D-pad
         // can; cancel the combined mask to neutral, as a real NES pad would.
-        mask.cancelOpposingDirections()
+        // v2.9.7: unless the user turned it off in Settings.
+        mask.cancelOpposingDirections(enabled: cancelOpposites)
         guard mask.bits != lastBits else { return }
         lastBits = mask.bits
         onMaskChanged?(mask.bits)

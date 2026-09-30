@@ -174,3 +174,31 @@ object SaveStateStore {
         }
     }
 }
+
+/**
+ * The Famicom Disk System BIOS the user chose (v2.9.7 "Tandem", plan item 6).
+ *
+ * FDS disks boot only with `disksys.rom`, an 8 KiB Nintendo BIOS the app never
+ * ships. The first time a disk fails to load with `MissingFdsBios`, the app asks
+ * for the file once and keeps a private copy in `filesDir/fds/disksys.rom`; every
+ * later load hands it to `NesController.newWithFdsBios`. The bridge validates the
+ * size too -- this check only avoids storing a file that could never work.
+ */
+object FdsBios {
+    /** The exact size of the FDS BIOS. */
+    const val SIZE = 8 * 1024
+
+    private fun file(ctx: Context) = File(File(ctx.filesDir, "fds"), "disksys.rom")
+
+    /** The stored BIOS, or null when none has been chosen (or it is unreadable). */
+    fun load(ctx: Context): ByteArray? =
+        runCatching { file(ctx).takeIf { it.isFile }?.readBytes() }.getOrNull()
+            ?.takeIf { it.size == SIZE }
+
+    /** Store [bytes] as the BIOS. Returns false (and stores nothing) unless 8 KiB. */
+    fun save(ctx: Context, bytes: ByteArray): Boolean {
+        if (bytes.size != SIZE) return false
+        writeAtomic(file(ctx), bytes)
+        return true
+    }
+}
