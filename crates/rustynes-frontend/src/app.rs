@@ -11735,44 +11735,6 @@ mod tests {
     /// menu item was `cfg(not(wasm32))` -- which is why removing the auto-open
     /// alone would have made the feature unreachable instead of unobtrusive.
     /// Both halves therefore have to hold together, and this test fails if
-    /// v2.9.7 — every site where netplay advances the core puts it back on
-    /// stock timing first, so a locally configured overclock can never make one
-    /// peer's frame longer than another's. `App` cannot be built in a unit test,
-    /// so this pins the source instead: every `tick(nes, ...)` call in
-    /// production code (native `self.netplay.tick`, wasm `driver.tick`) is
-    /// immediately preceded by `force_stock_timing(nes)`, and a new drive site
-    /// without it fails the count.
-    #[test]
-    fn every_netplay_tick_is_preceded_by_stock_timing() {
-        const APP_SRC: &str = include_str!("app.rs");
-        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
-        let production = |src: &str| {
-            src.split_once("\n#[cfg(test)]")
-                .map_or(src, |(before, _)| before)
-                .to_owned()
-        };
-        let app = squash(&production(APP_SRC));
-        assert!(
-            !app.contains("fn every_netplay_tick_is_preceded_by_stock_timing"),
-            "the test-module split failed, so this test is searching its own source"
-        );
-        let ticks = app.matches("tick(nes, ").count();
-        let guarded = app
-            .matches("crate::emu::force_stock_timing(nes); let tick = self.netplay.tick(nes, ")
-            .count()
-            + app
-                .matches("crate::emu::force_stock_timing(nes); let consumed = driver.tick(nes, ")
-                .count();
-        assert_eq!(
-            ticks, 2,
-            "expected the native and the wasm netplay drive sites"
-        );
-        assert_eq!(
-            guarded, ticks,
-            "a netplay drive site runs without stock timing"
-        );
-    }
-
     /// either one is undone.
     #[test]
     fn the_browser_netplay_lobby_is_menu_reachable_and_never_auto_opens() {
@@ -11844,6 +11806,44 @@ mod tests {
         assert!(
             after.contains("MenuAction::OpenPanel(ToolPanel::Netplay)"),
             "the wasm Netplay entry no longer emits the panel-open action"
+        );
+    }
+
+    /// v2.9.7 — every site where netplay advances the core puts it back on
+    /// stock timing first, so a locally configured overclock can never make one
+    /// peer's frame longer than another's. `App` cannot be built in a unit test,
+    /// so this pins the source instead: every `tick(nes, ...)` call in
+    /// production code (native `self.netplay.tick`, wasm `driver.tick`) is
+    /// immediately preceded by `force_stock_timing(nes)`, and a new drive site
+    /// without it fails the count.
+    #[test]
+    fn every_netplay_tick_is_preceded_by_stock_timing() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let production = |src: &str| {
+            src.split_once("\n#[cfg(test)]")
+                .map_or(src, |(before, _)| before)
+                .to_owned()
+        };
+        let app = squash(&production(APP_SRC));
+        assert!(
+            !app.contains("fn every_netplay_tick_is_preceded_by_stock_timing"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let ticks = app.matches("tick(nes, ").count();
+        let guarded = app
+            .matches("crate::emu::force_stock_timing(nes); let tick = self.netplay.tick(nes, ")
+            .count()
+            + app
+                .matches("crate::emu::force_stock_timing(nes); let consumed = driver.tick(nes, ")
+                .count();
+        assert_eq!(
+            ticks, 2,
+            "expected the native and the wasm netplay drive sites"
+        );
+        assert_eq!(
+            guarded, ticks,
+            "a netplay drive site runs without stock timing"
         );
     }
 

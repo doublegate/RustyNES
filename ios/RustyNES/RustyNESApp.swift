@@ -17,8 +17,8 @@ struct RustyNESApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
-                // Open a ROM dragged onto the app / shared from Files (.nes/.zip
-                // are registered in Info.plist; the bridge is iNES/NES 2.0-only).
+                // Open a ROM dragged onto the app / shared from Files (.nes, .fds,
+                // .nsf / .nsfe and .zip are registered in Info.plist).
                 .onOpenURL { url in
                     Task { await model.importAndOpen(url) }
                 }

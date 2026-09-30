@@ -86,6 +86,9 @@ fun VirtualController(
         modifier = modifier
             .semantics { contentDescription = controllerLabel }
             .pointerInput(Unit) {
+            // The uncleaned multi-touch union last sent to the emulator (see the
+            // loop below). Not drawn, so a local rather than Compose state.
+            var rawMask = 0
             // try/finally so a cancelled gesture (parent intercept, focus loss,
             // disposal) always clears the mask — otherwise the last-pressed
             // buttons stay stuck in the emulator until the next touch.
@@ -118,25 +121,37 @@ fun VirtualController(
                         if (!change.pressed) pillPointers.remove(change.id)
                         change.consume()
                     }
-                    var m = 0
-                    for (pos in active.values) m = m or hitTest(pos.x, pos.y, w, h)
+                    var raw = 0
+                    for (pos in active.values) raw = raw or hitTest(pos.x, pos.y, w, h)
                     // v2.9.2 (audit AUD-09): one finger cannot press opposite
                     // directions (hitTest derives them from one offset), but two
                     // fingers on the D-pad can -- a resting thumb plus a sliding
                     // one -- and a real NES pad's rocking cross never reports that.
                     // v2.9.7: the user can turn this off (Settings > Cancel
                     // opposite directions); on by default, as before.
-                    m = socdNeutral(m, emulator.cancelOpposites)
+                    //
+                    // The RAW union goes to the emulator, which cancels on the
+                    // combined touch + gamepad + keyboard mask (applyPort). Cleaning
+                    // it here first would store a zero for a held Up + Down, so
+                    // switching cancellation off could not reveal it until the next
+                    // touch, and touch Up + Down plus a hardware Up would read as Up
+                    // rather than neutral. Only the drawing and the haptic use the
+                    // cleaned copy. (Copilot on #577.)
+                    if (raw != rawMask) {
+                        rawMask = raw
+                        emulator.setTouchMask(raw)
+                    }
+                    val m = socdNeutral(raw, emulator.cancelOpposites)
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
                         if (m and mask.inv() != 0) tick(vibrator, hapticLevel)
                         mask = m
-                        emulator.setTouchMask(m)
                     }
                 }
             }
             } finally {
                 mask = 0
+                rawMask = 0
                 emulator.setTouchMask(0)
             }
         },

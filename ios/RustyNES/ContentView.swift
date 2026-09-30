@@ -103,14 +103,14 @@ struct ContentView: View {
 
     /// The importable UTTypes — ONLY the ROM / archive types, never `.data`
     /// (`public.data` would let the picker select any file and then fail at load).
-    /// The mobile bridge is iNES/NES 2.0-only (no FDS/NSF load path), so the picker
-    /// advertises only `.nes` (+ `.zip`) — advertising `.fds`/`.nsf` would let the
-    /// user pick a file the core cannot load. The custom `.nes` type is declared in
-    /// Info.plist (UTImportedTypeDeclarations); resolve it by extension so the picker
-    /// shows it even before the system fully indexes the declarations.
+    /// v2.9.7: the bridge loads FDS disks (with the BIOS prompt) and NSF / NSFe
+    /// music as well as iNES / NES 2.0, so the picker offers all four extensions
+    /// (+ `.zip`). The custom types are declared in Info.plist
+    /// (UTImportedTypeDeclarations); resolve them by extension so the picker shows
+    /// them even before the system fully indexes the declarations.
     private var importableTypes: [UTType] {
         var types: [UTType] = [.zip]
-        for ext in ["nes"] {
+        for ext in ["nes", "fds", "nsf", "nsfe"] {
             if let t = UTType(filenameExtension: ext) { types.append(t) }
         }
         return types

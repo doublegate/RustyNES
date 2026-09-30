@@ -330,6 +330,14 @@ pub async fn put_battery(write: &crate::web_battery::WebBatteryWrite) -> bool {
         };
         let key = crate::web_battery::localstorage_battery_key(write.rom_sha256());
         let encoded = crate::wasm_io::base64_encode(write.bytes());
+        // `base64_encode` returns "" when `btoa` is unavailable. Storing that
+        // would report success, move the baseline so no retry follows, and
+        // restore next load as a wrong-sized save that switches persistence
+        // off (CodeRabbit on #577).
+        if encoded.is_empty() && !write.bytes().is_empty() {
+            log("battery save: base64 encoding failed");
+            return false;
+        }
         return storage.set_item(&key, &encoded).is_ok();
     };
     let Ok(tx) = db.transaction_with_str_and_mode(STORE, IdbTransactionMode::Readwrite) else {

@@ -348,6 +348,7 @@ catalog! {
     NpColRemote => "remote", Some("remoto");
     NpColOk => "ok", Some("ok");
     NpNoUpper => "NO", Some("NO");
+    NpYes => "yes", Some("sí");
     NpWasmNativeOnly => "This UDP netplay panel is native-only (a browser cannot open a raw UDP socket). In the browser, use the separate \"Netplay (browser)\" panel, which runs the same rollback netcode over WebRTC via a signaling server (2-4 players).", Some("Este panel de juego en red UDP es solo nativo (un navegador no puede abrir un socket UDP directo). En el navegador, usa el panel separado \"Juego en red (navegador)\", que ejecuta el mismo código de red con rollback sobre WebRTC mediante un servidor de señalización (2-4 jugadores).");
     NpWasmTip => "Tip: keep BOTH browser windows visible side-by-side — a backgrounded tab is rAF-throttled by the browser and will desync the session.", Some("Consejo: mantén AMBAS ventanas del navegador visibles lado a lado; el navegador limita requestAnimationFrame en una pestaña en segundo plano y la sesión se desincronizará.");
     NpConnectingAs => "Connecting as {0}...", Some("Conectando como {0}...");
@@ -601,7 +602,7 @@ catalog! {
     ShellLagCount => "Lag: {0}", Some("Retraso: {0}");
     ShellLagHover => "Lag frames since ROM load (no controller polled). Toggle in View -> Show Lag Frames.", Some("Fotogramas de retraso desde que se cargó la ROM (sin leer ningún control). Actívalo en Ver -> Mostrar fotogramas de retraso.");
     ShellThemeHover => "High Contrast and Colorblind-Safe are accessibility themes (WCAG AA contrast / Okabe-Ito palette).", Some("High Contrast y Colorblind-Safe son temas de accesibilidad (contraste WCAG AA / paleta Okabe-Ito).");
-    ShellLanguageHover => "Translations are incremental: untranslated strings fall back to English.", Some("Las traducciones son parciales: los textos sin traducir se muestran en inglés.");
+    ShellLanguageHover => "Untranslated strings fall back to English.", Some("Los textos sin traducir se muestran en inglés.");
     ShellUiScaleNote => "Scales the menus, Settings, and debugger UI. The game image is not affected.", Some("Escala los menús, la configuración y la interfaz del depurador. La imagen del juego no se ve afectada.");
     ShellPlayer1 => "Player 1", Some("Jugador 1");
     ShellPlayer2 => "Player 2", Some("Jugador 2");

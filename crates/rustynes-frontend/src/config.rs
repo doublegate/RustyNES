@@ -1783,13 +1783,10 @@ pub struct Config {
 /// oracle / `AccuracyCoin` / TAS / netplay paths run** — they are explicitly
 /// out-of-oracle enhancement modes.
 ///
-/// NOTE (v1.5.0): the cycle-accurate core does not yet expose hooks to disable
-/// the 8-sprite-per-scanline limit or to overclock the PPU/CPU (both require a
-/// core synthesis change, deferred to the v2.0 fractional-master-clock
-/// refactor, ADR 0002). These flags persist the user's *intent* and are
-/// surfaced in the UI as experimental / staged; the frontend applies only the
-/// portions that are achievable without a core change. They never affect the
-/// deterministic core output today.
+/// NOTE: the cycle-accurate core has no hook to disable the
+/// 8-sprite-per-scanline limit, so that flag persists the user's *intent* and
+/// changes nothing. The overclock is applied since v2.9.7 (see
+/// `overclock_scanlines`), and never while a movie or netplay runs.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EnhancementsConfig {
     /// Disable the hardware 8-sprite-per-scanline limit (removes sprite

@@ -64,8 +64,12 @@ via `[[bench]] harness = false`.
 
 ### Current figures, and a correction to every stock-bench row since v2.2.3 (2026-09-23)
 
-**Current, v2.7.0 core, i9-10850K, Criterion 3 s warm-up / 10 s measurement,
-each dot path selected explicitly:**
+**The latest full table: the v2.7.0 core, i9-10850K, Criterion 3 s warm-up /
+10 s measurement, each dot path selected explicitly.** It is historical as
+absolute numbers: v2.9.7's A12 change added about 1.9% on the `nestest`
+workloads and nothing reproducible on the palette ones (see
+[its section](#v297--the-cost-of-reporting-the-hardware-a12-stream-an-accuracy-fix-measured-and-accepted)
+for the A/B against v2.9.6). No full re-baseline has been taken since.
 
 | Workload | Exact dot path (`nes_run_frame_*`) | Fast dot path, **shipped** (`*_fast`) | Δ |
 |---|---|---|---|

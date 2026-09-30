@@ -67,9 +67,9 @@
 	     declaring background audio would only invite App Review rejection. -->
 
 	<!-- Document types this app handles (user-provided ROMs only). The own NES
-	     format is declared Owner; .zip is an Alternate handler. The mobile bridge
-	     is iNES/NES 2.0-only, so .fds/.nsf are intentionally NOT declared (they
-	     would route unloadable files to the app). -->
+	     format is declared Owner; .zip is an Alternate handler. v2.9.7: the
+	     bridge loads FDS disks and NSF / NSFe music too, so both are declared
+	     as Alternate handlers (other apps may own them). -->
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -80,6 +80,26 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.doublegate.rustynes.nes</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Famicom Disk System Image</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.doublegate.rustynes.fds</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>NES Sound Format</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.doublegate.rustynes.nsf</string>
 			</array>
 		</dict>
 		<dict>
@@ -117,8 +137,8 @@
 	</array>
 
 	<!-- The own UTI for the NES format (the app declares it since the system has
-	     no built-in type for .nes). Conforms to public.data. .fds/.nsf are NOT
-	     declared: the mobile bridge cannot load them. -->
+	     no built-in type for .nes). Conforms to public.data. v2.9.7: .fds and
+	     .nsf / .nsfe too, which the bridge now loads. -->
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
@@ -135,6 +155,41 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>nes</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.doublegate.rustynes.fds</string>
+			<key>UTTypeDescription</key>
+			<string>Famicom Disk System Image</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fds</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.doublegate.rustynes.nsf</string>
+			<key>UTTypeDescription</key>
+			<string>NES Sound Format</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>nsf</string>
+					<string>nsfe</string>
 				</array>
 			</dict>
 		</dict>

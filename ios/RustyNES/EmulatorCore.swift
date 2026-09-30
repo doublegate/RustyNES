@@ -510,8 +510,14 @@ final class EmulatorCore {
     /// Whether the loaded ROM is any Vs. System machine (coin-operated).
     var isVsSystem: Bool { info.isVsSystem || controller.isDualSystem() }
 
-    /// Drop a coin into the main (left) acceptor; held three frames by the bridge.
-    func insertCoin() { controller.insertCoin(acceptor: 0) }
+    /// Drop a coin into the acceptor of the screen on show; held three frames by
+    /// the bridge. On a cabinet, acceptors 0/1 are the main (left) console's and
+    /// 2/3 the sub (right) console's, so the right-hand screen credits acceptor 2
+    /// (Copilot on #577). A single Vs. console always uses 0.
+    func insertCoin() {
+        let acceptor: UInt32 = isDualSystem && showSubScreen ? 2 : 0
+        controller.insertCoin(acceptor: acceptor)
+    }
 
     // MARK: - Save states
 

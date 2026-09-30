@@ -552,7 +552,7 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
                             if c.matched {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(0x40, 0xC0, 0x40),
-                                    crate::t!(HdrYes),
+                                    crate::t!(NpYes),
                                 );
                             } else {
                                 ui.colored_label(

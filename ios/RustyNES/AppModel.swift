@@ -528,8 +528,15 @@ final class AppModel: ObservableObject {
 
     /// The on-screen pad reports its combined multi-touch mask here; merged with the
     /// P1 hardware-pad mask. A rising edge (any newly pressed button) fires a haptic.
+    /// The mask is the RAW touch union (v2.9.7): opposite directions are cancelled
+    /// in `pushInput`, on touch and hardware combined. The haptic compares the
+    /// cleaned masks, so a second finger on the opposite arm does not tick.
     func setTouchMask(_ mask: UInt8) {
-        let newlyPressed = mask & ~touchMask
+        var before = NesButtonMask(bits: touchMask)
+        var after = NesButtonMask(bits: mask)
+        before.cancelOpposingDirections(enabled: cancelOpposites)
+        after.cancelOpposingDirections(enabled: cancelOpposites)
+        let newlyPressed = after.bits & ~before.bits
         touchMask = mask
         if newlyPressed != 0 { haptics.tap() }
         pushInput(port: 0)

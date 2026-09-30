@@ -467,8 +467,10 @@ matrix and the per-mapper fix log.
 The v1.5.0 Workstream F Tier-2 sweep, ported from the
 concretely-documented nesdev decode tables (and the `Mesen2` / `GeraNES` /
 `puNES` reference implementations). Small pirate / unlicensed / multicart
-boards; eight are hook-free (`MapperCaps::NONE`) and two carry a simple
-CPU-cycle (M2) IRQ (`MapperCaps::CYCLE_IRQ`, m40 + m250 — no A12 hook).
+boards; eight are hook-free (`MapperCaps::NONE`) and two carried a simple
+CPU-cycle (M2) IRQ (`MapperCaps::CYCLE_IRQ`, m40 + m250 — no A12 hook). m250's
+was corrected in v2.9.7 to the MMC3 scanline counter on A12 (its row below);
+m40 keeps the M2 counter its page describes.
 **Register-decode + save-state unit-tested only and not accuracy-gated** (see
 the tiering note below).
 

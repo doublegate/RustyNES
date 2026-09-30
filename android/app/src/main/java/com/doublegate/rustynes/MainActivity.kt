@@ -614,6 +614,13 @@ class EmulatorHandle {
     @Volatile
     private var keyboardMask: Int = 0
 
+    /** Drop a coin into the acceptor of the screen on show: 2 on a cabinet's
+     *  right-hand (sub) screen, else 0. The bridge holds it three frames. */
+    fun insertCoin() {
+        val c = controller ?: return
+        c.insertCoin(if (showSubScreen && c.isDualSystem()) 2u else 0u)
+    }
+
     /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */
     fun setTouchMask(mask: Int) {
         // Touch + key updates can race (different threads); synchronize the
@@ -1391,6 +1398,10 @@ private fun EmulatorScreen(
                     status = "Not an FDS BIOS: disksys.rom is exactly ${FdsBios.SIZE} bytes"
                 }
             }
+        } else {
+            // Cancelled: say what the disk needs and how to supply it, rather
+            // than leave the raw load error showing (CodeRabbit on #577).
+            status = "FDS disks need the BIOS: load the disk again and choose disksys.rom"
         }
     }
     LaunchedEffect(pendingFdsRetry) {
@@ -2331,7 +2342,10 @@ private fun EmulatorScreen(
                 }
             }
             if (media != null && (media.vs || media.dual)) {
-                OutlinedButton(onClick = { emulator.controller?.insertCoin(0u) }) {
+                // The coin goes to the screen on show: on a cabinet, acceptors
+                // 0/1 are the main (left) console's and 2/3 the sub's. A single
+                // Vs. console always uses 0. (Copilot on #577, for iOS.)
+                OutlinedButton(onClick = { emulator.insertCoin() }) {
                     Text(stringResource(R.string.action_insert_coin))
                 }
             }

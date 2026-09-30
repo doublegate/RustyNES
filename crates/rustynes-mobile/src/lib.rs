@@ -4063,6 +4063,27 @@ mod tests {
         assert!(!ctrl.is_dual_system());
     }
 
+    /// A cabinet power cycle rebuilds both consoles from the ROM, which would
+    /// replace battery RAM with fresh bytes for the host to write over the
+    /// `.sav` -- the defect v2.9.0 fixed on the desktop (a review finding
+    /// on #577). It cannot happen today: mapper 99 exposes no save RAM, so a
+    /// cabinet's `battery_ram()` is empty even with the header's battery bit.
+    /// This pins that premise. If it fails, the board has gained a save, and
+    /// `power_cycle` must carry both consoles' `save_data` across the rebuild
+    /// before this test is relaxed.
+    #[test]
+    fn a_dual_cabinet_has_no_save_for_a_power_cycle_to_lose() {
+        let mut rom = synthetic_dual_cabinet();
+        rom[6] |= 0x02; // battery
+        rom[10] = 0x50; // NES 2.0: 64 << 5 = 2 KiB PRG-NVRAM
+        let ctrl = NesController::new(rom, DEFAULT_SAMPLE_RATE).expect("the cabinet loads");
+        assert!(ctrl.is_dual_system());
+        assert!(
+            ctrl.battery_ram().is_empty(),
+            "a cabinet now has save RAM: make power_cycle preserve it"
+        );
+    }
+
     /// Plan item 7: a power cycle rebuilds the cabinet (both consoles and the
     /// wiring) instead of cycling the main console alone.
     #[test]

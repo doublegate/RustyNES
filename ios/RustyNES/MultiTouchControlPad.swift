@@ -55,8 +55,9 @@ struct MultiTouchControlPad: View {
     let onMaskChanged: (UInt8) -> Void
     /// Fired when the MENU pill is tapped (the on-screen menu toggle).
     var onLogoTap: () -> Void = {}
-    /// v2.9.7: cancel opposite directions on the combined touch mask (the user's
-    /// setting, default on). See `NesButtonMask.cancelOpposingDirections`.
+    /// v2.9.7: the user's "Cancel opposite directions" setting (default on), used
+    /// only to light the art. The raw union goes to `onMaskChanged`; the model
+    /// cancels on touch + hardware combined. See `NesButtonMask.cancelOpposingDirections`.
     var cancelOpposites: Bool = true
 
     /// The live pressed-button mask, used to light the drawn art. The multi-touch
@@ -84,12 +85,16 @@ struct MultiTouchControlPad: View {
 
                 // Touch layer (UIKit multi-touch), transparent and on top.
                 MultiTouchSurface(
-                    onMaskChanged: { mask in
-                        liveMask = mask
-                        onMaskChanged(mask)
+                    onMaskChanged: { raw in
+                        // The art shows the cleaned mask; the model receives the
+                        // raw union and cancels on touch + hardware combined (see
+                        // `MultiTouchSurfaceView.recompute`).
+                        var drawn = NesButtonMask(bits: raw)
+                        drawn.cancelOpposingDirections(enabled: cancelOpposites)
+                        liveMask = drawn.bits
+                        onMaskChanged(raw)
                     },
-                    onLogoTap: onLogoTap,
-                    cancelOpposites: cancelOpposites
+                    onLogoTap: onLogoTap
                 )
                 .accessibilityHidden(true)
             }
@@ -341,13 +346,11 @@ private let pressStart2PAvailable = UIFont(name: pressStart2PName, size: 12) != 
 private struct MultiTouchSurface: UIViewRepresentable {
     let onMaskChanged: (UInt8) -> Void
     let onLogoTap: () -> Void
-    let cancelOpposites: Bool
 
     func makeUIView(context: Context) -> MultiTouchPadView {
         let view = MultiTouchPadView()
         view.onMaskChanged = onMaskChanged
         view.onLogoTap = onLogoTap
-        view.cancelOpposites = cancelOpposites
         return view
     }
 
@@ -355,7 +358,6 @@ private struct MultiTouchSurface: UIViewRepresentable {
         // Re-push the latest callbacks (they capture fresh @State each render).
         view.onMaskChanged = onMaskChanged
         view.onLogoTap = onLogoTap
-        view.cancelOpposites = cancelOpposites
     }
 }
 
@@ -371,8 +373,6 @@ private struct MultiTouchSurface: UIViewRepresentable {
 final class MultiTouchPadView: UIView {
     var onMaskChanged: ((UInt8) -> Void)?
     var onLogoTap: (() -> Void)?
-    /// v2.9.7: the user's "Cancel opposite directions" setting (default on).
-    var cancelOpposites = true
 
     private var lastBits: UInt8 = 0
     private var pillTouches = Set<ObjectIdentifier>()
@@ -431,9 +431,16 @@ final class MultiTouchPadView: UIView {
         }
         // v2.9.2 (audit AUD-10): one touch cannot hit opposite directions
         // (`hitTest` derives them from one offset), but two fingers on the D-pad
-        // can; cancel the combined mask to neutral, as a real NES pad would.
-        // v2.9.7: unless the user turned it off in Settings.
-        mask.cancelOpposingDirections(enabled: cancelOpposites)
+        // can, and a real NES pad would read neutral. v2.9.7: unless the user
+        // turned it off in Settings.
+        //
+        // The cancel is NOT applied here. This reports the RAW union, and
+        // `AppModel.pushInput` cancels the touch + hardware mask combined.
+        // Cleaning first would store a zero for a held Up + Down: switching the
+        // setting off would then re-push that zero (`updateUIView` does not
+        // recompute stationary touches), and touch Up + Down plus a hardware Up
+        // would read as Up instead of neutral. The pad art cleans its own copy.
+        // (Copilot on #577.)
         guard mask.bits != lastBits else { return }
         lastBits = mask.bits
         onMaskChanged?(mask.bits)

@@ -1862,19 +1862,31 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         &mut state.reset_advanced_armed,
         crate::t!(SetSectionLatencyRewind),
     ) {
-        config.input.run_ahead = crate::config::InputConfig::default().run_ahead;
-        config.rewind = crate::config::RewindConfig::default();
-        config.enhancements = crate::config::EnhancementsConfig::default();
-        // v2.1.4 F2.3 — reset OAM decay to its default (off) too, and push it live.
-        config.emulation = crate::config::EmulationConfig::default();
-        state.apply.rewind_enabled = true;
-        state.apply.oam_decay = true;
-        // `EmulationConfig::default()` restores `fast_dotloop = true`, so the
-        // reset must re-push it too (a user who had turned it off gets the
-        // default back live, not on next launch).
-        state.apply.fast_dotloop = true;
+        reset_advanced(state, config);
         save_config(config);
     }
+}
+
+/// The Latency & Rewind section's "Reset to defaults": every setting it owns
+/// back to default, and a live-apply flag for each one the running core holds,
+/// so the reset takes effect now rather than at the next launch. Split out of
+/// the UI so a test can pin the flags.
+fn reset_advanced(state: &mut SettingsPanelState, config: &mut Config) {
+    config.input.run_ahead = crate::config::InputConfig::default().run_ahead;
+    config.rewind = crate::config::RewindConfig::default();
+    config.enhancements = crate::config::EnhancementsConfig::default();
+    // v2.9.7: `enhancements` carries the overclock, which reaches the core
+    // only through this flag; without it a reset left the old extra
+    // scanlines running (CodeRabbit on #577).
+    state.apply.overclock = true;
+    // v2.1.4 F2.3 — reset OAM decay to its default (off) too, and push it live.
+    config.emulation = crate::config::EmulationConfig::default();
+    state.apply.rewind_enabled = true;
+    state.apply.oam_decay = true;
+    // `EmulationConfig::default()` restores `fast_dotloop = true`, so the
+    // reset must re-push it too (a user who had turned it off gets the
+    // default back live, not on next launch).
+    state.apply.fast_dotloop = true;
 }
 
 /// v1.5.0 "Lens" Workstream D3 — the grouped "Enhancements" settings (à la
@@ -1884,11 +1896,10 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
 /// netplay paths**.
 ///
 /// The max-rewind window (above, in the Rewind group) is the third
-/// enhancement-adjacent knob; the sprite-limit / overclock toggles below are
-/// staged: the cycle-accurate core has no hook to disable the sprite limit or
-/// to overclock yet (both need the v2.0 fractional-master-clock core pass,
-/// ADR 0002), so they persist the user's intent + are surfaced as experimental
-/// but do not affect the deterministic core output today.
+/// enhancement-adjacent knob. The sprite-limit toggle below is staged: the
+/// cycle-accurate core has no hook to disable the sprite limit, so it persists
+/// the user's intent and changes nothing. The overclock is live since v2.9.7
+/// (`SettingsApply::overclock`), held at stock timing under movies and netplay.
 fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
     egui::CollapsingHeader::new(crate::t!(SetEnhancements))
         .id_salt("settings-enhancements")
@@ -1974,6 +1985,21 @@ mod tests {
         // `take_bindings_dirty`).
         let second = state.take_apply();
         assert!(!second.any());
+    }
+
+    /// The reset must push every setting the running core holds, or it takes
+    /// effect only at the next launch. The overclock flag was missing in the
+    /// first v2.9.7 draft (a review finding on #577).
+    #[test]
+    fn reset_advanced_pushes_what_it_resets() {
+        let mut state = SettingsPanelState::default();
+        let mut config = Config::default();
+        config.enhancements.overclock_scanlines = 40;
+        reset_advanced(&mut state, &mut config);
+        assert_eq!(config.enhancements.overclock_scanlines, 0);
+        let apply = state.take_apply();
+        assert!(apply.overclock, "the reset overclock reaches the core");
+        assert!(apply.rewind_enabled && apply.oam_decay && apply.fast_dotloop);
     }
 
     #[test]

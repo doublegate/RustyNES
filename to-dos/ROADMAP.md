@@ -1068,9 +1068,10 @@ When it is reachable: stage one or two dumps per family into the gitignored
 `tests/roms/external/mapper-NNN-*/`, run `external_coverage`, look at each
 boot, and bless a snapshot per ROM. A board that fails to boot a real game is a
 finding against the page's reading and gets fixed before its snapshot is kept.
-The MC-ACC titles are the first real evidence for 4.3's forum-derived prescaler
-rule, and can promote it if they boot cleanly. Commercial dumps are never
-committed; only the `.snap` files are.
+The MC-ACC titles have been done: v2.9.7 booted six from a local library,
+which found the PPU A12 defect and, once it was fixed, promoted 4.3 to Curated
+(`docs/STATUS.md`). What stays open is the 17 v2.9.6 families. Commercial dumps
+are never committed; only the `.snap` files are.
 
 ## T-MMC5-8X8-SET — the MMC5 CHR set in 8x8 sprite mode (found v2.9.7)
 

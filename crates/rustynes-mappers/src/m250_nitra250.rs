@@ -29,7 +29,7 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 /// v2 (v2.9.7): the IRQ counter counts scanlines (MMC3), not CPU cycles, and
 /// the A12 filter byte follows the IRQ flags. A v1 counter meant cycles, so a
-/// v1 state is refused rather than reinterpreted.
+/// v1 state is refused (as `UnsupportedVersion`) rather than reinterpreted.
 const SAVE_STATE_VERSION: u8 = 2;
 
 // ---------------------------------------------------------------------------
@@ -286,15 +286,27 @@ impl Mapper for Nitra250 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // The version is checked BEFORE the length: a v1 state is one byte
+        // shorter, and must be reported as the version it is rather than as a
+        // truncated v2 (agy on #577).
+        match data.first() {
+            None => {
+                return Err(MapperError::Truncated {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+            Some(&v) if v != SAVE_STATE_VERSION => {
+                return Err(MapperError::UnsupportedVersion(v));
+            }
+            Some(_) => {}
+        }
         let expected = 19 + self.vram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.reg_index = data[1] & 0x07;
         self.bank_regs.copy_from_slice(&data[2..10]);
@@ -394,5 +406,24 @@ mod tests {
         let mut m2 = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.cpu_read(0x8000), m.cpu_read(0x8000));
+    }
+
+    /// A v1 state (v2.9.6 and earlier: 18 bytes plus the nametables, its IRQ
+    /// counter in CPU cycles) is refused by VERSION, not reported as a
+    /// truncated v2.
+    #[test]
+    fn m250_v1_state_is_refused_by_version() {
+        let mut m = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
+        let mut v1 = m.save_state();
+        v1[0] = 1;
+        v1.remove(18);
+        assert!(matches!(
+            m.load_state(&v1),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
+        assert!(matches!(
+            m.load_state(&[]),
+            Err(MapperError::Truncated { .. })
+        ));
     }
 }
