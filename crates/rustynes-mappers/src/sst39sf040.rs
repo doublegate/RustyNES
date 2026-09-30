@@ -61,16 +61,18 @@ impl Step {
         }
     }
 
-    const fn from_byte(b: u8) -> Self {
-        match b {
+    /// `None` for a byte [`Self::to_byte`] never writes.
+    const fn from_byte(b: u8) -> Option<Self> {
+        Some(match b {
+            0 => Self::Idle,
             1 => Self::Unlock1,
             2 => Self::Unlock2,
             3 => Self::Program,
             4 => Self::Erase1,
             5 => Self::Erase2,
             6 => Self::Erase3,
-            _ => Self::Idle,
-        }
+            _ => return None,
+        })
     }
 }
 
@@ -158,11 +160,20 @@ impl Sst39sf040 {
         [self.step.to_byte(), self.id_mode as u8]
     }
 
-    pub(crate) const fn from_bytes(b: [u8; 2]) -> Self {
-        Self {
-            step: Step::from_byte(b[0]),
-            id_mode: b[1] != 0,
-        }
+    /// Inverse of [`Self::to_bytes`]. `None` for bytes it never writes: a
+    /// step other than 0-6, or an ID-mode flag other than 0/1. A board's
+    /// `load_state` refuses those rather than normalising them
+    /// (`docs/mappers.md` gotcha 12).
+    pub(crate) const fn from_bytes(b: [u8; 2]) -> Option<Self> {
+        let Some(step) = Step::from_byte(b[0]) else {
+            return None;
+        };
+        let id_mode = match b[1] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        Some(Self { step, id_mode })
     }
 }
 
@@ -318,9 +329,19 @@ mod tests {
         let mut f = Sst39sf040::new();
         let mut mem = vec![0xFFu8; 0x8000];
         cmd(&mut f, &mut mem, &[UNLOCK[0], UNLOCK[1]]);
-        let g = Sst39sf040::from_bytes(f.to_bytes());
-        let mut g2 = g;
-        assert!(g2.write(&mut mem, 0x5555, 0xA0) | g2.write(&mut mem, 0x10, 0x00));
+        let mut g = Sst39sf040::from_bytes(f.to_bytes()).expect("valid bytes");
+        assert!(g.write(&mut mem, 0x5555, 0xA0) | g.write(&mut mem, 0x10, 0x00));
+        // Every byte pair `to_bytes` can write decodes, and nothing else does.
+        for step in 0..=u8::MAX {
+            for id in 0..=u8::MAX {
+                let ok = step <= 6 && id <= 1;
+                assert_eq!(
+                    Sst39sf040::from_bytes([step, id]).is_some(),
+                    ok,
+                    "{step} {id}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -145,7 +145,11 @@ impl Cony83 {
                 if slot < 2 {
                     r4 * 2 + slot
                 } else {
-                    last - 3 + slot
+                    // The last two banks of the window. `+ window` keeps the
+                    // sum non-negative on an 8 or 16 KiB image, where
+                    // `last - 3 + slot` underflowed; the modulo is a no-op on
+                    // any window of four banks or more.
+                    (last + window + slot - 3) % window
                 }
             }
             1 => (r4 >> 1) * 4 + slot,
@@ -568,6 +572,23 @@ mod tests {
         assert_eq!(m.cpu_read_driven_mask(0x5000), 0x03);
         m.cpu_write(0x5102, 0x5A);
         assert_eq!(m.cpu_read(0x5F06), 0x5A, "scratch byte 2, mask $DF03");
+    }
+
+    /// `Cony83::new` accepts any non-zero multiple of 8 KiB. On a 16 KiB image
+    /// mode 0's fixed half is the last two banks, which is the whole image, and
+    /// on an 8 KiB one it is bank 0 twice. `last - 3 + slot` underflowed there
+    /// (a panic with overflow checks on), so the fixed slots are computed in
+    /// the window.
+    #[test]
+    fn mode_0_fixed_half_on_a_small_image() {
+        let mut m = board(2, 256, None);
+        m.cpu_write(0x8100, 0x00);
+        assert_eq!(m.cpu_read(0xC000), 0, "second-to-last of two banks");
+        assert_eq!(m.cpu_read(0xE000), 1, "the last bank");
+        let mut m = board(1, 256, None);
+        m.cpu_write(0x8100, 0x00);
+        assert_eq!(m.cpu_read(0xC000), 0);
+        assert_eq!(m.cpu_read(0xE000), 0);
     }
 
     #[test]

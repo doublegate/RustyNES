@@ -171,7 +171,7 @@ BestEffort, and 160 of the 191 families are accuracy-gated.
 ### Verification
 
 - The full `cargo test --release --workspace --features test-roms` suite passes:
-  3,013 tests, 0 failed, 20 ignored (v2.9.5: 2,905). AccuracyCoin is 144/144,
+  3,021 tests, 0 failed, 20 ignored (v2.9.5: 2,905). AccuracyCoin is 144/144,
   and nestest is 0-diff.
 - All 31 mutants are caught.
 - The local commercial suites (`--features test-roms,commercial-roms`, gitignored

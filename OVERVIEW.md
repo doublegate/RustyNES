@@ -79,7 +79,7 @@ RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts.
 1. **Emulation enthusiasts** — reference-grade accuracy with a modern, themeable desktop UX and an in-app debugger.
 2. **The TAS community** — frame-perfect deterministic `.rnm` movie record / playback / branching built directly on the determinism contract.
 3. **Netplay users** — GGPO-style rollback netplay (2–4 players), native (UDP) and in the browser (WebRTC).
-4. **Homebrew developers** — broad mapper coverage (174 families), FDS, an instruction/PPU/memory debugger, and an embeddable `no_std` core.
+4. **Homebrew developers** — broad mapper coverage (191 families), FDS, an instruction/PPU/memory debugger, and an embeddable `no_std` core.
 5. **Rust developers** — a clean, modular workspace and a reusable 6502 CPU crate.
 
 ---
@@ -89,7 +89,7 @@ RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts.
 | Area | What ships today |
 |------|----------------------|
 | **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **144/144 (100.00%)** on a battery that grew to 144 assigned tests at the 2026-09 re-sync, `nestest` 0-diff |
-| **Cartridges** | **174** mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
+| **Cartridges** | **191** mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
 | **Platforms** | iNES / NES 2.0, Famicom Disk System (real-BIOS boot, read/write, multi-side), Vs. System / PlayChoice-10 RGB |
 | **Online** | Rollback netplay, UDP (native) + WebRTC (browser), 2–4 players |
 | **Achievements** | RetroAchievements (opt-in, native-only) — login, hardcore, toasts, badges |

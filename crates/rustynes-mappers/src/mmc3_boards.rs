@@ -818,10 +818,15 @@ impl Mapper for Mmc3Board {
         }
         let core_len = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
         let chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = HEAD + core_len + chr + self.chr_ram.len() + self.wram.len();
-        if data.len() != expected {
+        // Checked: `core_len` comes from the blob, and on a 32-bit target
+        // (`usize` = u32) the plain sum wraps, passing the length check and
+        // panicking when the core section is sliced.
+        let expected = HEAD
+            .checked_add(core_len)
+            .and_then(|n| n.checked_add(chr + self.chr_ram.len() + self.wram.len()));
+        if expected != Some(data.len()) {
             return Err(MapperError::Truncated {
-                expected,
+                expected: expected.unwrap_or(usize::MAX),
                 got: data.len(),
             });
         }

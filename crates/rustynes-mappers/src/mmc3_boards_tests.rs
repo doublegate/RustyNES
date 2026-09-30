@@ -38,6 +38,16 @@ fn board(kind: Board, prg_banks: usize, chr_banks: usize) -> Mmc3Board {
     .expect("valid sizes")
 }
 
+/// The embedded MMC3 length is read from the blob. On a 32-bit target, adding
+/// it to the other section sizes wrapped `usize` (a panic in debug builds). It
+/// must be a clean refusal on every target.
+#[test]
+fn state_refuses_an_embedded_length_that_overflows() {
+    let mut blob = board(Board::M37, 64, 512).save_state();
+    blob[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(board(Board::M37, 64, 512).load_state(&blob).is_err());
+}
+
 fn prg_at(m: &mut Mmc3Board, addr: u16) -> usize {
     m.cpu_read(addr) as usize | (m.cpu_read(addr + 1) as usize) << 8
 }

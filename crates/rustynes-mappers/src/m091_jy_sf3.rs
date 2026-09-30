@@ -342,6 +342,20 @@ impl Mapper for Jy91 {
                 data[1], self.submapper
             )));
         }
+        // Submapper 0 counts A12 rises up to `A12_RISES_PER_IRQ` and stops
+        // there, so an enabled counter is below it and a stopped one at most
+        // equal. Anything else loaded cleanly and overflowed `+= 1` on the
+        // next rise. Submapper 1's counter is written whole by `$6006/$6007`,
+        // so every value is one it can hold. Validated before any assignment.
+        let counter = u16::from_le_bytes([data[12], data[13]]);
+        let limit = u16::from(A12_RISES_PER_IRQ);
+        if self.submapper == 0 && (counter > limit || (data[10] != 0 && counter >= limit)) {
+            return Err(MapperError::Invalid(format!(
+                "mapper 91 IRQ counter {counter} is not one submapper 0 reaches \
+                 (enabled {})",
+                data[10] != 0
+            )));
+        }
         if self.submapper == 1 {
             self.mirroring = if data[2] == 0 {
                 Mirroring::Horizontal
@@ -354,7 +368,7 @@ impl Mapper for Jy91 {
         self.outer = data[9] & 0x07;
         self.irq_enabled = data[10] != 0;
         self.irq_pending = data[11] != 0;
-        self.irq_counter = u16::from_le_bytes([data[12], data[13]]);
+        self.irq_counter = counter;
         self.irq_prescale = data[14] & 0x03;
         self.last_a12 = data[15] != 0;
         self.vram
@@ -458,6 +472,36 @@ mod tests {
         assert!(m.irq_pending());
         // Submapper 1's `$F007` mask: `$6006` is no longer CHR register 2.
         assert!(!m.has_hardwired_mirroring());
+    }
+
+    #[test]
+    fn state_refuses_a_counter_the_board_cannot_reach() {
+        // Submapper 0 counts A12 rises up to 64 and stops there, so an enabled
+        // counter is below 64 and a stopped one at most 64. 0xFFFF loaded
+        // cleanly and overflowed `+= 1` on the next rise.
+        let good = board(16, 16, 0).save_state();
+        for (enabled, counter) in [(1u8, 0xFFFFu16), (1, 64), (0, 65)] {
+            let mut blob = good.clone();
+            blob[10] = enabled;
+            blob[12..14].copy_from_slice(&counter.to_le_bytes());
+            let mut m = board(16, 16, 0);
+            assert!(
+                matches!(m.load_state(&blob), Err(MapperError::Invalid(_))),
+                "enabled {enabled} counter {counter}"
+            );
+            assert_eq!(m.save_state(), good, "refused before any assignment");
+        }
+        for (enabled, counter) in [(1u8, 63u16), (0, 64)] {
+            let mut blob = good.clone();
+            blob[10] = enabled;
+            blob[12..14].copy_from_slice(&counter.to_le_bytes());
+            board(16, 16, 0).load_state(&blob).unwrap();
+        }
+        // Submapper 1 loads the counter from its registers: any value is real.
+        let mut blob = board(16, 16, 1).save_state();
+        blob[10] = 1;
+        blob[12..14].copy_from_slice(&0xFFFFu16.to_le_bytes());
+        board(16, 16, 1).load_state(&blob).unwrap();
     }
 
     #[test]

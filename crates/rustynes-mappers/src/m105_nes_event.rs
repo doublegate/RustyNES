@@ -43,6 +43,8 @@ const CHIP: usize = 0x2_0000;
 const CHR_RAM: usize = 0x2000;
 const WRAM: usize = 0x2000;
 const SAVE_STATE_VERSION: u8 = 1;
+/// The largest `target()`: DIP 15, `0x2000_0000 | 15 << 25`.
+const MAX_TARGET: u32 = 0x3E00_0000;
 
 /// The tournament DIP setting: switch C closed.
 pub const NWC_TOURNAMENT_DIP: u8 = 0b0100;
@@ -289,17 +291,31 @@ impl Mapper for NesEvent105 {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         let inner_len = u32::from_le_bytes([data[9], data[10], data[11], data[12]]) as usize;
-        let expected = HEAD + inner_len + CHR_RAM + WRAM;
-        if data.len() != expected {
+        // Checked: `inner_len` comes from the blob, and on a 32-bit target
+        // (`usize` = u32) the plain sum wraps, passing the length check and
+        // panicking at the slice below.
+        let expected = HEAD
+            .checked_add(inner_len)
+            .and_then(|n| n.checked_add(CHR_RAM + WRAM));
+        if expected != Some(data.len()) {
             return Err(MapperError::Truncated {
-                expected,
+                expected: expected.unwrap_or(usize::MAX),
                 got: data.len(),
             });
+        }
+        // The timer stops at `target()`, whose largest value (DIP 15) is
+        // `MAX_TARGET`; a DIP change mid-run only lowers it. A higher counter
+        // is one the board cannot produce, validated before any assignment.
+        let counter = u32::from_le_bytes([data[3], data[4], data[5], data[6]]);
+        if counter > MAX_TARGET {
+            return Err(MapperError::Invalid(format!(
+                "mapper 105 timer {counter:#010x} is past the largest target {MAX_TARGET:#010x}"
+            )));
         }
         self.mmc1.load_state(&data[HEAD..HEAD + inner_len])?;
         self.unlocked = data[1] != 0;
         self.seen_i_low = data[2] != 0;
-        self.counter = u32::from_le_bytes([data[3], data[4], data[5], data[6]]);
+        self.counter = counter;
         self.irq_pending = data[7] != 0;
         self.dip = data[8] & 0x0F;
         let cur = HEAD + inner_len;
@@ -399,6 +415,31 @@ mod tests {
         assert_eq!(m.cpu_read(0x6000), 0x77);
         mmc1(&mut m, 0xE000, 0x10);
         assert!(m.cpu_read_unmapped(0x6000));
+    }
+
+    /// The timer stops once it reaches `target()`, and the largest target is
+    /// `0x3E00_0000` (DIP 15). A higher counter is one the board cannot
+    /// produce. It loaded cleanly and could reach `u32::MAX` and overflow.
+    #[test]
+    fn state_refuses_a_counter_past_the_largest_target() {
+        let good = board().save_state();
+        let mut blob = good.clone();
+        blob[3..7].copy_from_slice(&0x3E00_0001u32.to_le_bytes());
+        let mut m = board();
+        assert!(matches!(m.load_state(&blob), Err(MapperError::Invalid(_))));
+        assert_eq!(m.save_state(), good, "refused before any assignment");
+        blob[3..7].copy_from_slice(&0x3E00_0000u32.to_le_bytes());
+        board().load_state(&blob).unwrap();
+    }
+
+    /// The embedded MMC1 length is read from the blob. On a 32-bit target,
+    /// adding it to the other section sizes wrapped `usize` (a panic in
+    /// debug builds). It must be a clean refusal on every target.
+    #[test]
+    fn state_refuses_an_embedded_length_that_overflows() {
+        let mut blob = board().save_state();
+        blob[9..13].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(board().load_state(&blob).is_err());
     }
 
     #[test]

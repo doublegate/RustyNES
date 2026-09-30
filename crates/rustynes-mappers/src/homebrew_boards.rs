@@ -760,6 +760,12 @@ impl Mapper for Gtrom111 {
                  exceed the board ({prg_banks} PRG banks, 2 CHR, 2 NT)"
             )));
         }
+        let chip = Sst39sf040::from_bytes([data[5], data[6]]).ok_or_else(|| {
+            MapperError::Invalid(format!(
+                "mapper 111 flash state {:#04x} {:#04x} is not one the chip produces",
+                data[5], data[6]
+            ))
+        })?;
         let mut flash = vec![0u8; self.flash.len()];
         let used = decode_sector_diff(&mut flash, &self.original, &data[fixed..]).ok_or(
             MapperError::Truncated {
@@ -778,7 +784,7 @@ impl Mapper for Gtrom111 {
         self.chr_bank = chr_bank;
         self.nt_bank = nt_bank;
         self.reg = data[4];
-        self.chip = Sst39sf040::from_bytes([data[5], data[6]]);
+        self.chip = chip;
         let mut cursor = 7;
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
@@ -1445,7 +1451,15 @@ impl Mapper for Unrom512M30 {
         if data[0] != M30_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
-        let used = if self.flashable() {
+        // Validate everything before assigning anything: a refused state
+        // leaves the board, and above all its flash, as it was.
+        let (s0, s1) = (data[fixed - 2], data[fixed - 1]);
+        let chip = Sst39sf040::from_bytes([s0, s1]).ok_or_else(|| {
+            MapperError::Invalid(format!(
+                "mapper 30 flash state {s0:#04x} {s1:#04x} is not one the chip produces"
+            ))
+        })?;
+        let (flash, used) = if self.flashable() {
             let mut flash = vec![0u8; self.prg_rom.len()];
             let used = decode_sector_diff(&mut flash, &self.original, &data[fixed..]).ok_or(
                 MapperError::Truncated {
@@ -1453,10 +1467,9 @@ impl Mapper for Unrom512M30 {
                     got: data.len(),
                 },
             )?;
-            self.prg_rom.copy_from_slice(&flash);
-            used
+            (Some(flash), used)
         } else {
-            0
+            (None, 0)
         };
         if fixed + used != data.len() {
             return Err(MapperError::Truncated {
@@ -1464,7 +1477,10 @@ impl Mapper for Unrom512M30 {
                 got: data.len(),
             });
         }
-        self.chip = Sst39sf040::from_bytes([data[fixed - 2], data[fixed - 1]]);
+        if let Some(flash) = flash {
+            self.prg_rom.copy_from_slice(&flash);
+        }
+        self.chip = chip;
         // Mask the register indices to their live-invariant widths so a
         // corrupted / hand-edited save-state can't seed an out-of-range value
         // (mirrors the write-latch masks; same defensive treatment as the
@@ -2028,6 +2044,60 @@ mod tests {
             fresh.save_data(),
             "back to the image as loaded"
         );
+    }
+
+    /// The flash chip's two state bytes take only the values `to_bytes` writes
+    /// (`docs/mappers.md` gotcha 12): steps 0-6 and a 0/1 ID-mode flag. Both
+    /// boards refuse anything else before assigning a field.
+    #[test]
+    fn flash_state_bytes_the_chip_cannot_produce_are_refused() {
+        let gt = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+        let good = gt.save_state();
+        for (i, v) in [(5usize, 7u8), (5, 0xFF), (6, 2)] {
+            let mut blob = good.clone();
+            blob[i] = v;
+            let mut m = Gtrom111::new(synth_prg_32k(8), &[]).unwrap();
+            assert!(
+                matches!(m.load_state(&blob), Err(MapperError::Invalid(_))),
+                "GTROM byte {i} = {v:#x}"
+            );
+            assert_eq!(m.save_state(), good, "GTROM: nothing assigned");
+        }
+        let m30 = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        let good = m30.save_state();
+        let fixed = 6 + m30.vram.len() + m30.chr.len();
+        for (i, v) in [(fixed - 2, 7u8), (fixed - 1, 2)] {
+            let mut blob = good.clone();
+            blob[i] = v;
+            let mut m = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+            assert!(
+                matches!(m.load_state(&blob), Err(MapperError::Invalid(_))),
+                "UNROM 512 byte {i} = {v:#x}"
+            );
+            assert_eq!(m.save_state(), good, "UNROM 512: nothing assigned");
+        }
+    }
+
+    /// A state refused for trailing bytes must leave the flash as it was. The
+    /// decoded image used to be copied in before the length check.
+    #[test]
+    fn m30_refused_state_leaves_the_flash_untouched() {
+        let mut a = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        for (bank, addr, v) in [
+            (1u8, 0x9555u16, 0xAAu8),
+            (0, 0xAAAA, 0x55),
+            (1, 0x9555, 0xA0),
+            (5, 0x8123, 0x00),
+        ] {
+            a.cpu_write(0xC000, bank);
+            a.cpu_write(addr, v);
+        }
+        let mut blob = a.save_state();
+        blob.push(0);
+        let mut b = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap();
+        let before = b.save_data().to_vec();
+        assert!(b.load_state(&blob).is_err());
+        assert_eq!(b.save_data(), &before[..], "the flash is unchanged");
     }
 
     /// A CHR-ROM image headered as mapper 30 is a Waixing FS005 `.WXN`
