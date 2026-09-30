@@ -143,3 +143,29 @@ fn the_default_build_is_unchanged() {
         "{cp}"
     );
 }
+
+/// v2.9.8: `platform=libnx` is dropped, and must FAIL rather than build. The
+/// Switch triple has no Rust `std`, and a deleted branch would fall through to
+/// a host build, producing a library for the wrong machine under the Switch's
+/// name. Pinned here so a later edit cannot quietly restore the fall-through.
+#[test]
+fn platform_libnx_is_refused_not_built_for_the_host() {
+    let mut cmd = Command::new("make");
+    cmd.args(["-n", "platform=libnx"]).current_dir(crate_dir());
+    cmd.env_remove("platform").env_remove("ARCH");
+    let out = match cmd.output() {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => panic!("could not run make: {e}"),
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "make platform=libnx succeeded: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        stderr.contains("platform=libnx is not supported"),
+        "make platform=libnx failed for another reason: {stderr}"
+    );
+}

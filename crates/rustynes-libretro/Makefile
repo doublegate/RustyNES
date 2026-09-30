@@ -69,7 +69,12 @@ else ifeq ($(platform),ios)
 else ifeq ($(platform),tvos)
 	RUST_TARGET := aarch64-apple-tvos
 else ifeq ($(platform),libnx)
-	RUST_TARGET := aarch64-nintendo-switch-freestanding
+	# Dropped in v2.9.8 (maintainer decision). The only Switch triple,
+	# `aarch64-nintendo-switch-freestanding`, is tier 3 with no `std`, and this
+	# core needs `std::fs` and `catch_unwind`. An explicit error, not a deleted
+	# branch: without it `platform=libnx` would fall through to a HOST build and
+	# produce a library for the wrong machine. See docs/libretro/architecture.md.
+    $(error platform=libnx is not supported: the Switch target has no Rust std, which this core needs (see docs/libretro/architecture.md))
 else ifeq ($(platform),windows)
 	ifeq ($(ARCH),x86_64)
 		RUST_TARGET := x86_64-pc-windows-gnu
@@ -118,9 +123,6 @@ else ifeq ($(platform),ios)
     EXT := a
     LIB_PREFIX := lib
 else ifeq ($(platform),tvos)
-    EXT := a
-    LIB_PREFIX := lib
-else ifeq ($(platform),libnx)
     EXT := a
     LIB_PREFIX := lib
 else ifeq ($(platform),windows)

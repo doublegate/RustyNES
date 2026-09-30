@@ -59,6 +59,13 @@ cycle-accurate core later replaced.
   never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
   built the iOS host. macOS jobs still never run on pull requests.
 
+### Removed
+
+- **The libretro `platform=libnx` build is dropped.** It targeted
+  `aarch64-nintendo-switch-freestanding`, a tier-3 Rust target without the
+  standard library, which the core needs; it could not build, and no libretro
+  buildbot job ever used it. `make platform=libnx` now stops with an error
+  naming the reason, instead of falling through to a build for the host.
 ## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
 
 The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:
