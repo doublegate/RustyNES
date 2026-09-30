@@ -1,0 +1,37 @@
+# Ruff configuration for the repository's Python tooling (v2.9.6).
+#
+# The Python here is tooling, not product: release automation, test-ROM
+# builders, coverage and screenshot scripts, and short diagnostic one-offs under
+# `scripts/diag/`. The rule set is therefore chosen to catch DEFECTS, not to
+# impose a style. Before this file existed, `ruff check` took whatever each
+# contributor's personal configuration enabled, so its findings (284 under one
+# such config) described that contributor, not the project.
+#
+# Selected:
+#   F     pyflakes: undefined names, unused imports and variables, f-strings
+#         without placeholders. These are the ones that hide real mistakes.
+#   E9    syntax and I/O errors.
+#   E722  bare `except:`, which also swallows KeyboardInterrupt and SystemExit.
+#
+# Not selected, deliberately: the one-statement-per-line and naming rules
+# (E701/E702/E731/E741). The diagnostic scripts are written tersely on purpose,
+# and reflowing them would be churn with no defect behind it.
+
+target-version = "py311"
+line-length = 100
+
+# Vendored and immutable trees are not ours to lint, as in the pre-commit
+# configuration's `vendored_trees` exclusion.
+extend-exclude = [
+    "ref-docs",
+    "ref-proj",
+    "vendor",
+    "crates/rustynes-cheevos/vendor",
+    "crates/rustynes-test-harness/golden/tricnes",
+    "tests/roms",
+    "nesdev_wiki",
+    "salvaged",
+]
+
+[lint]
+select = ["F", "E9", "E722"]

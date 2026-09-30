@@ -17,7 +17,7 @@ def rom_bytes(p):
             z=zipfile.ZipFile(p)
             for n in z.namelist():
                 if n.lower().endswith(".nes"): return z.read(n)
-        except: return None
+        except (OSError, zipfile.BadZipFile): return None
         return None
     return open(p,"rb").read()
 def snake(s):

@@ -218,7 +218,7 @@ def run_service_diff(rusty_path: Path, mesen_path: Path) -> int:
     mesen = [
         r for r in load_mesen2(mesen_path) if r["event_type"] in ("irq_svc", "nmi_svc")
     ]
-    print(f"== Service-event cross-diff ==")
+    print("== Service-event cross-diff ==")
     print(f"  RustyNES (.svc.csv): {rusty_path} ({len(rusty)} rows)")
     print(f"  Mesen2 (svc rows):   {mesen_path} ({len(mesen)} rows)")
     print()
@@ -395,14 +395,14 @@ def main(argv):
     rusty = load_rustynes(rusty_path)
     mesen = load_mesen2(mesen_path)
 
-    print(f"== Cross-diff ==")
+    print("== Cross-diff ==")
     print(f"  RustyNES: {rusty_path} ({len(rusty)} rows)")
     print(f"  Mesen2:   {mesen_path} ({len(mesen)} rows)")
     print()
 
     # Mesen2 event-type tally.
     types = Counter(r["event_type"] for r in mesen)
-    print(f"  Mesen2 event-type tally:")
+    print("  Mesen2 event-type tally:")
     for t, n in sorted(types.items()):
         print(f"    {t}: {n}")
     print()
@@ -410,7 +410,7 @@ def main(argv):
     # First mapper-IRQ assertion (RustyNES) vs first irq_svc (Mesen2).
     rusty_first_mapper = find_first_mapper_assertion_rustynes(rusty)
     mesen_first_irq = find_first_irq_svc_mesen2(mesen)
-    print(f"  First mapper-IRQ event:")
+    print("  First mapper-IRQ event:")
     print(fmt(rusty_first_mapper, "    RustyNES (assertion): "))
     print(fmt(mesen_first_irq, "    Mesen2   (service):   "))
     if rusty_first_mapper and mesen_first_irq:
@@ -425,7 +425,7 @@ def main(argv):
     # First APU-IRQ assertion (RustyNES) vs first apu_set (Mesen2).
     rusty_first_apu = find_first_apu_assertion_rustynes(rusty)
     mesen_first_apu = find_first_apu_set_mesen2(mesen)
-    print(f"  First APU-IRQ assertion:")
+    print("  First APU-IRQ assertion:")
     print(fmt(rusty_first_apu, "    RustyNES (line@high): "))
     print(fmt(mesen_first_apu, "    Mesen2   (apu_set):  "))
     if rusty_first_apu and mesen_first_apu:
@@ -436,7 +436,7 @@ def main(argv):
     # First NMI event.
     rusty_first_nmi = find_first_nmi_rustynes(rusty)
     mesen_first_nmi = find_first_nmi_svc_mesen2(mesen)
-    print(f"  First NMI event:")
+    print("  First NMI event:")
     print(fmt(rusty_first_nmi, "    RustyNES (line=high): "))
     print(fmt(mesen_first_nmi, "    Mesen2   (nmi_svc):  "))
     if rusty_first_nmi and mesen_first_nmi:

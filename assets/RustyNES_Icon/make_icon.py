@@ -273,7 +273,7 @@ def draw_cartridge():
     a narrower base, and the embossed downward triangle. The right-offset BLACK label
     has a colored pixel-art scene, a bold title, the red logo pill (no wordmark), an
     action/robot series box, and the gold 'Seal of Quality'. Generic non-trademarked art."""
-    G, GH, GL, GE = "#8a8884", "#9c9a96", "#6e6c68", "#5a5854"
+    _G, GH, GL, GE = "#8a8884", "#9c9a96", "#6e6c68", "#5a5854"  # base grey kept for reference
     W, H = 52.0, 58.0                         # shell footprint, centered on origin
     L, T = -W / 2.0, -H / 2.0
     fx = lambda f: L + f * W
@@ -347,7 +347,7 @@ def draw_zapper():
     notch, a wedge rear-sight hump at the top-back (the tallest point), horizontal
     grip texture ridges, and the black cable trailing from the grip butt. (Not the
     1989 all-grey/orange revision.)"""
-    LIGHT, LIGHT_HI, LIGHT_LO = "#d9d7d0", "#ece9e2", "#c3c1b9"
+    _LIGHT, LIGHT_HI, LIGHT_LO = "#d9d7d0", "#ece9e2", "#c3c1b9"  # base kept for reference
     DARK, DARK_HI, DARK_LO = "#7c7d77", "#95968f", "#5e5f59"
     RED, RED_HI = "#c63a2c", "#e0584a"
 
@@ -369,7 +369,7 @@ def draw_zapper():
     s.append(f'<path d="{barrel}" fill="url(#zapBarrel)" stroke="{DARK_LO}" stroke-width="1"/>')
     s.append(f'<rect x="15" y="-11" width="47" height="1.5" fill="{DARK_HI}" opacity="0.5"/>')        # straight top sheen
     s.append(f'<rect x="52" y="-13" width="3" height="2.2" rx="0.4" fill="{DARK}" stroke="{DARK_LO}" stroke-width="0.4"/>')   # front sight
-    s.append(f'<rect x="62.5" y="-9.5" width="2" height="5" rx="0.8" fill="#1c1c1c"/>')               # muzzle aperture
+    s.append('<rect x="62.5" y="-9.5" width="2" height="5" rx="0.8" fill="#1c1c1c"/>')               # muzzle aperture
     # light-grey body (over barrel rear + grip top)
     s.append(f'<path d="{body}" fill="url(#zapLight)" stroke="{GRY_ED}" stroke-width="1.2"/>')
     s.append(f'<path d="M -28,-8 L 2,-11 L 20,-11 L 21,-9 L -26,-6 Z" fill="{LIGHT_HI}" opacity="0.6"/>')   # top catch-light
@@ -386,7 +386,7 @@ def draw_zapper():
     # prominent red trigger (the lone color accent)
     s.append(f'<path d="M -2,5 Q 4,9 3,16 Q -2,17 -5,12 L -5,5 Z" fill="{RED}" stroke="{RED_HI}" stroke-width="0.5"/>')
     # black cable from the grip butt, curling down-left
-    s.append(f'<path d="M -14,46 Q -20,52 -28,50" fill="none" stroke="#1c1c1c" stroke-width="2.4"/>')
+    s.append('<path d="M -14,46 Q -20,52 -28,50" fill="none" stroke="#1c1c1c" stroke-width="2.4"/>')
     return "\n".join(s)
 
 
@@ -407,8 +407,8 @@ def draw_rob():
     # ===== BASE: wide ANGULAR octagonal two-tier pedestal =====
     s.append(f'<path d="M -22,30 L -20,18 L -15,15 L 15,15 L 20,18 L 22,30 L 18,34 L -18,34 Z" fill="url(#robBase)" stroke="{GRY_ED}" stroke-width="1.1"/>')   # plinth
     s.append(f'<path d="M -22,30 L -20,18 L -15,15 L 0,15 L 0,34 L -18,34 Z" fill="{DARKB}" opacity="0.18"/>')                                                  # left shade
-    s.append(f'<rect x="-15" y="24" width="30" height="5" rx="0.6" fill="#37151a"/>')                # red "R.O.B." label
-    s.append(f'<rect x="-15" y="24.7" width="13" height="2" fill="#a52219"/>')
+    s.append('<rect x="-15" y="24" width="30" height="5" rx="0.6" fill="#37151a"/>')                # red "R.O.B." label
+    s.append('<rect x="-15" y="24.7" width="13" height="2" fill="#a52219"/>')
     s.append(f'<path d="M -8,30 l2,2.4 l2,-2.4 Z" fill="{JOINT}"/><path d="M 4,30 l2,2.4 l2,-2.4 Z" fill="{JOINT}"/>')   # insert arrows
     s.append(f'<rect x="-17" y="33.5" width="6" height="3" fill="{BLK}"/>')
     s.append(f'<rect x="11" y="33.5" width="6" height="3" fill="{BLK}"/>')                            # feet
@@ -437,7 +437,7 @@ def draw_rob():
         for j in range(3):
             s.append(f'<rect x="{vx}" y="{-39 + j * 2.4:.1f}" width="2.6" height="1.1" rx="0.3" fill="{JOINT}" opacity="0.6"/>')
     s.append(f'<path d="M -10,-40.5 L 10,-40.5 L 9,-31 L -9,-31 Z" fill="{VISOR}"/>')                # angled recessed black visor
-    s.append(f'<path d="M -10,-40.5 L 10,-40.5 L 9.7,-38.5 L -9.7,-38.5 Z" fill="#000" opacity="0.5"/>')   # inner top shadow
+    s.append('<path d="M -10,-40.5 L 10,-40.5 L 9.7,-38.5 L -9.7,-38.5 Z" fill="#000" opacity="0.5"/>')   # inner top shadow
     for ex in (-4.8, 4.8):                                                                           # two big round eyes
         s.append(f'<circle cx="{ex}" cy="-35.5" r="3.5" fill="url(#robLens)" stroke="#000" stroke-width="0.5"/>')
         s.append(f'<circle cx="{ex}" cy="-35.5" r="1.9" fill="#0a0a0d"/>')
@@ -488,7 +488,7 @@ def nes_controller(cx, cy, w, h):
     light-grey housing with red labels above (center), the red racetrack logo capsule
     (upper-right, no wordmark), and the two concave bright-red A/B buttons in a light-grey housing
     with red labels below (right)."""
-    left, right = cx - w / 2.0, cx + w / 2.0
+    left = cx - w / 2.0
     top = cy - h / 2.0
     body_r = 0.14 * h
     plx, ply, plw, plh = left + 0.045 * w, top + 0.11 * h, 0.91 * w, 0.78 * h   # dark face plate

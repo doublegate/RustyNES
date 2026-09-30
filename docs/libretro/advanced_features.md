@@ -22,6 +22,16 @@ The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path i
 As `rustynes-core` is `no_std`, it possesses no ability to interact with the host OS filesystem (`std::fs`), making native `.srm` (battery save) file writing impossible.
 **Solution:** The FFI wrapper exposes the active cartridge's SRAM pointer via `retro_get_memory_data(RETRO_MEMORY_SAVE_RAM)`, **when the cartridge header declares a battery** (`Nes::has_battery`, the same gate the desktop frontend's `.sav` uses). Otherwise `RETRO_MEMORY_SAVE_RAM` reports size 0 and a null pointer (v2.9.0, libretro re-audit NL-02). Several boards expose RAM through `Nes::sram` whatever the header says (NROM always has 8 KiB; MMC1 and MMC3 allocate by default), so before v2.9.0, 581 images of the local test corpus without a battery handed RetroArch a `.srm`, and their work RAM came back on the next boot where the console would have powered on without it. An FDS image has no battery either; its in-game saves live on the disk image.
 
+**Self-flashable boards (v2.9.6).** GTROM (111) and a flashable UNROM 512 (30)
+save by rewriting their PRG flash and have no RAM at `$6000`. For them
+`RETRO_MEMORY_SAVE_RAM` is `Nes::save_data`, the flash image (512 KiB on a full
+board), while the memory map keeps describing `Nes::sram`, which is empty. That
+keeps a 512 KiB ROM out of the `$6000` view RetroAchievements reads. The core
+raises the battery flag for these boards, since GTROM headers do not set it.
+RetroArch keys `.srm` files by content name, not by the ROM's hash as the
+desktop does, so a renamed or updated ROM can load an older flash image, and
+that image includes program code as well as the save.
+
 * RetroArch automatically manages the lifecycle. Upon game load, the frontend injects data from the host's `.srm` file directly into this pointer.
 * Upon shutdown (`retro_deinit`), RetroArch reads the pointer and flushes the data to the disk.
 * A `.srm` a pre-v2.9.0 core wrote for a cartridge without a battery is no longer used: with a size of 0 there is nothing to load it into and nothing to write, so the file stays on disk untouched (inferred from the `libretro.h` contract, not traced in RetroArch's source). A game whose header wrongly omits the battery bit loses its save the same way on the desktop; the fix is the header.

@@ -1,4 +1,4 @@
-import sys,collections
+import collections
 rows=[]
 with open('/tmp/RustyNES_sweepdma.csv') as f:
     f.readline()
@@ -6,7 +6,7 @@ with open('/tmp/RustyNES_sweepdma.csv') as f:
         p=l.strip().split(',')
         if len(p)<4: continue
         try: cyc=int(p[0]); kind=int(p[2]); held=int(p[3],16)
-        except: continue
+        except ValueError: continue
         rows.append((cyc,kind,held))
 # halts = kind 0
 halts=[(c,h) for c,k,h in rows if k==0]

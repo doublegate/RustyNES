@@ -1,0 +1,12 @@
+# ShellCheck configuration (v2.9.6). Only choices that hold for every script in
+# the repository live here; a one-off exception is an inline
+# `# shellcheck disable=SCxxxx # reason` at the line it concerns, so that the
+# rule keeps catching real mistakes everywhere else.
+
+# Follow `source`d helper files, so a function or variable defined in a helper
+# is not reported as missing or unused in the script that uses it.
+external-sources=true
+
+# SC1007 ("remove space after =") flags `local a= b= c=`, the deliberate idiom
+# for declaring several empty variables on one line. Nothing else trips it here.
+disable=SC1007

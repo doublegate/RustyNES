@@ -118,14 +118,14 @@ def main() -> int:
 
     if only_in_base:
         print()
-        print(f"=== CYCLES ONLY IN BASELINE (first 20) ===")
+        print("=== CYCLES ONLY IN BASELINE (first 20) ===")
         for c in only_in_base[:20]:
             a = by_cyc_base[c]
             print(f"  cyc={c}  f={a['ppu_frame']} sl={a['ppu_scanline']} dot={a['ppu_dot']} {a['m2']} {fmt(a)}")
 
     if only_in_var:
         print()
-        print(f"=== CYCLES ONLY IN VARIANT (first 20) ===")
+        print("=== CYCLES ONLY IN VARIANT (first 20) ===")
         for c in only_in_var[:20]:
             b = by_cyc_var[c]
             print(f"  cyc={c}  f={b['ppu_frame']} sl={b['ppu_scanline']} dot={b['ppu_dot']} {b['m2']} {fmt(b)}")

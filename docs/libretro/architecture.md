@@ -98,7 +98,9 @@ reports the loaded cartridge's region in `retro_get_system_av_info`).
   (v2.9.2, audit AUD-16; after an unload deinit sends nothing). PRG-RAM is
   flagged, and exposed as `RETRO_MEMORY_SAVE_RAM` for the
   `.srm`, only when the header declares a battery (v2.9.0;
-  `advanced_features.md`).
+  `advanced_features.md`). On a self-flashable board the `.srm` is the flash
+  image, `Nes::save_data`, and the memory map still describes only `$6000` RAM
+  (v2.9.6).
 
 ### 3. The Emulation Engine (`rustynes-core`)
 

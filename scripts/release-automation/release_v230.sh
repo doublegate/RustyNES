@@ -3,7 +3,7 @@ set -e
 cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
 G=/usr/bin/git
 echo "main=$($G rev-parse --short main) branch=$($G rev-parse --short HEAD)"
-$G merge-base --is-ancestor main HEAD && echo "FF-clean" || { echo "NOT FF"; exit 1; }
+if $G merge-base --is-ancestor main HEAD; then echo "FF-clean"; else echo "NOT FF"; exit 1; fi
 echo "=== commits to land ==="; $G log --oneline main..HEAD
 $G switch main
 $G merge --ff-only feat/v2.3.0-netplay

@@ -274,6 +274,15 @@ flamegraph.svg
 # --- Merge / patch artifacts (git conflict + `git apply --reject` leftovers) ---
 *.orig
 *.rej
+# Pre-edit backups. The workspace rules have an agent copy a file aside before
+# instrumenting it (`cp file file.bak`, `<file>.preedit`) so cleanup restores
+# its own snapshot rather than a `git checkout` over uncommitted work. Those
+# copies are never commit material. Checked in v2.9.6: nothing tracked matches.
+*.bak
+*.preedit
+# insta's pending inline-snapshot file (the `.snap.new` rule below covers the
+# file-snapshot equivalent).
+*.pending-snap
 
 # --- Environment ---
 .env
