@@ -26,6 +26,17 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
+
+The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:
+the platform release. The web and mobile builds gain what the desktop had,
+and the release binaries include every native feature. The extras item
+staged six real Acclaim games, and doing so turned up a core defect: the PPU
+reported one A12 pulse per scanline where the console makes eight. That is
+fixed. Acclaim's MC-ACC, the J.Y. ASIC's A12 mode and mapper 91 now count at
+their documented rates. The maintainer's decisions for this release are in
+`to-dos/plans/v2.9.7-tandem-plan.md`.
+
 ### Added
 
 - **Save states for Vs. DualSystem cabinets on the desktop**
@@ -151,6 +162,29 @@ cycle-accurate core later replaced.
   movie records or plays and under netplay, because a movie and a netplay
   session are timelines another player runs, and an extra scanline changes how
   many CPU cycles a frame has. A Vs. DualSystem cabinet keeps stock timing.
+
+### Verification
+
+- The full `cargo test --release --workspace --features test-roms` suite passes:
+  3,065 tests, 0 failed, 20 ignored (v2.9.6: 3,023). AccuracyCoin is 144/144,
+  nestest is 0-diff, and both MMC3 test-ROM suites and Holy Mapperel pass
+  unchanged.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0 and `external_extended` 138/0, both unchanged
+  against their v2.9.6 baselines. In `external_coverage`, 10 of 698 frames
+  moved, each checked against a v2.9.6 build: the seven newly staged Acclaim
+  and MMC6 dumps (first baselines), the Donkey Kong Country 4 world map
+  (fixed), and the two Time Diver dumps (fixed).
+- `cargo test -p rustynes-mobile`: 47 passed. The Android JVM unit tests pass.
+  The iOS Swift is uncompiled on this Linux host; run-sheet rows T1-T12 are
+  not run. Browser behaviour is a manual check (steps in the release PR).
+- The A12 change costs about 1.9% on the nestest frame workloads and nothing
+  measurable on the others: two independent `ab_check.sh` runs, recorded in
+  `docs/performance.md`.
+- fmt, clippy for every feature set and all three wasm builds, rustdoc, the
+  `no_std` build, cargo-deny and the release audits are clean.
+- The MiSTer RTL is unchanged, so v2.9.2's bitstream pair ships byte for byte.
+  **No hardware has run any bitstream.**
 
 ## [2.9.6] - 2026-09-30 - "Roster" (seventeen mapper families from their NESdev pages, and flash saves that persist)
 
