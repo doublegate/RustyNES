@@ -197,8 +197,8 @@ ASCII `G`, and the ROM writes it as *"Success code 'G', referring to revision G
 PPU (or later) behavior"* — the revision this core models. Its counterpart is
 `$39` = `E` for pre-revision-G.
 
-**`Sprites On Scanline 0` is the one genuinely open item, and v2.9.5 found
-that the paragraph below had the wrong half open.**
+**`Sprites On Scanline 0` was the one genuinely open item. v2.9.5 found that
+the paragraph below had the wrong half open, and closed it.**
 
 The ROM (upstream `AccuracyCoin.asm`, `TEST_Scanline0Sprites`) runs two sets
 of two consecutive frames:
@@ -230,9 +230,13 @@ from pre-render dot 339 to scanline-0 dot 1. That span contains the frame
 boundary, which is exactly where save states and run-ahead snapshots are taken,
 so the state must be serialized. `PPU_SNAPSHOT_VERSION` 10 → 11 is a `.rns`
 epoch, because the container compares the PPU section's version for equality
-(ADR 0028). **Placed with v3.0.0**, which already carries a save-state epoch,
-unless the maintainer takes the epoch sooner. Not implemented behind a
-default-off flag, which would ship nothing.
+(ADR 0028). **Implemented in v2.9.5**, with the epoch taken now at the
+maintainer's direction rather than deferred to v3.0.0's. The skip in
+`advance_dot` sets `spr_rearm_deferred`, and `emit_pixel` releases the slots
+after pixel 0. The PPU snapshot's v11 tail carries it, and
+`snapshot_v11_carries_the_deferred_sprite_rearm` pins it. `Sprites On
+Scanline 0` now reads code 1, the only AccuracyCoin entry that moved against
+v2.9.4, and the per-entry sub-test ROM moved with it.
 
 **Superseded, kept for the record (the text before v2.9.5):**
 

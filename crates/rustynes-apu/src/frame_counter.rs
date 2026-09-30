@@ -324,7 +324,7 @@ impl FrameCounter {
                     self.irq_flag_clear_cycle = 0;
                 }
                 self.cycle = 0;
-                // Mode 1: immediately fire quarter+half-frame events —
+                // Mode 1 (`Mode::FiveStep`): immediately fire quarter+half-frame events —
                 // unless the sequencer fired the same clock on the previous
                 // tick, in which case the two share one APU cycle and are one
                 // pulse, not two (v2.9.5, `prev_tick_step`).

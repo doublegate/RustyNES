@@ -5011,7 +5011,16 @@ impl Ppu {
                 // Column within the sprite (screen X minus the sprite's origin X),
                 // then flip so the captured offset samples the UNFLIPPED
                 // replacement directly (composite is flip-free).
-                let col = pixel_x.wrapping_sub(u16::from(self.hd_spr_x[spr_slot])) & 7;
+                // v2.9.5: on the odd-frame-deferred pixel (scanline 0, X=0,
+                // `spr_rearm_deferred` still set) every drawing sprite emits
+                // its FIRST column there regardless of its X, so the column is
+                // 0, not `pixel_x - x`. CodeRabbit on #575: with X=10 the old
+                // arithmetic gave column 6 and sampled the wrong HD texel.
+                let col = if self.spr_rearm_deferred {
+                    0
+                } else {
+                    pixel_x.wrapping_sub(u16::from(self.hd_spr_x[spr_slot])) & 7
+                };
                 let off_x = if flip_h { 7 - col } else { col };
                 HdTileSource {
                     chr_addr: self.hd_spr_addr[spr_slot],
@@ -6875,6 +6884,31 @@ mod tests {
     // (non-palette) = all driven; $2002 = `---D DDDD` (bits 7-5 driven); $2007
     // palette = `DD-- ----` (bits 7-6 decay). The $2002 low-5 case is covered by
     // `ppustatus_*` above; this locks the $2007-palette and write-only cases.
+    /// v2.9.5 (a review of #575): on the odd-frame-deferred pixel a drawing
+    /// sprite emits its FIRST column at X=0 whatever its own X, so the HD-pack
+    /// tile source must record column 0 there. With X=10 the original
+    /// `(pixel_x - x) & 7` recorded column 6.
+    #[cfg(feature = "hd-pack")]
+    #[test]
+    fn hd_source_records_column_zero_on_the_deferred_pixel() {
+        let (mut p, _b) = fresh_ppu();
+        p.mask = PpuMask::SHOW_SPRITE | PpuMask::SHOW_SPRITE_LEFT;
+        p.scanline = 0;
+        p.dot = 1; // pixel 0
+        p.spr_count = 1;
+        p.spr_x[0] = 10;
+        p.hd_spr_x[0] = 10;
+        p.spr_halted[0] = true; // the drawing state the skip leaves it in
+        p.spr_shift_lo[0] = 0x80; // an opaque first column
+        p.spr_attr[0] = 0;
+        p.spr_rearm_deferred = true;
+        p.emit_pixel();
+        let rec = p.hd_tile_source()[0];
+        assert!(rec.is_sprite, "the deferred pixel must be the sprite's");
+        assert_eq!(rec.offset_x, 0, "the first column is drawn at X=0");
+        assert!(!p.spr_rearm_deferred, "released after pixel 0");
+    }
+
     /// An OAM DMA byte is a `$2004` write, and "writing any value to any PPU
     /// port ... will fill this latch" (`nesdev_wiki/PPU_registers`, the
     /// `_io_db` latch). So `$2002`'s low five bits read the last DMA byte.
