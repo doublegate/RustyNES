@@ -40,7 +40,7 @@ an outcome with its evidence:
 - **the rest closed on documentation** or moved to where they belong.
 
 One fix moves a save-state format: **`.rns` files from v2.9.4 or earlier do not
-load.** The full `--features test-roms` suite passes 2,904 tests.
+load.** The full `--features test-roms` suite passes 2,905 tests.
 AccuracyCoin is 144/144, with `Sprites On Scanline 0` now at the composite
 PPU's code 1, and nestest is 0-diff. The MiSTer RTL is unchanged, so the
 bitstreams are v2.9.2's, byte for byte. **No hardware has run any bitstream.**
@@ -116,6 +116,10 @@ bitstreams are v2.9.2's, byte for byte. **No hardware has run any bitstream.**
   so the DUT's last four records went unchecked. `ppuregs` and `ppuscroll` are
   re-cut from the pinned oracle, and a new audit
   (`tb/check_boot_windows.py`, in CI) keeps the two numbers equal.
+- **Six of 77 checkpoint streams are not compared**, and the README claimed
+  none were. Two are documented exclusions. The other four are AccuracyCoin
+  sub-test ROMs gated by their verdict byte, because the latch difference fixed
+  above dominated their streams; they are registered when the pin moves.
 - **The oracle changes above reach the DUT when its pinned oracle moves**, at
   v2.9.9. The RTL they need (the `$4017` rule, the scanline-0 re-arm) lands
   there, under that release's seed sweep. The remaining open ledger rows go
