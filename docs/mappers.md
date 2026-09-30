@@ -483,7 +483,7 @@ the tiering note below).
 | 162 | — | Waixing FS304 (*San Guo Zhi II*) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | PRG bank composed from individual A15-A20 bits across `$5000`/`$5100`/`$5200` with a `$5300` mode selector (NESdev table; reset boots 32K bank #2); 8K battery PRG-RAM at `$6000-$7FFF`; 8K CHR-RAM; header mirroring. |
 | 178 | — | Waixing educational series (FS305) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | `$4800` bit 0 = mirroring, bits 1-2 = PRG mode (NROM-256/BNROM, UNROM, NROM-128, UNROM-variant); 16K bank = `(reg2<<3)\|(reg1&0x07)`; 8K work-RAM at `$6000`; CHR-RAM. |
 | 244 | — | Decathlon (Mega Soft) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | Data-decoded multicart: the written DATA byte selects through two scramble LUTs with bit 3 choosing CHR (`LUT_CHR[(v>>4)&7][v&7]`) vs PRG (`LUT_PRG[(v>>4)&3][v&3]`); CHR-ROM, header mirroring (Mesen2/puNES). |
-| 250 | — | Nitra (*Time Diver Avenger*) | — | M2 cycle | landed (v1.5.0 / S10; decode corrected in the coverage pass) | MMC3-register-compatible, but the register data is carried in address bits A0-A7 and the even/odd line in **A10** (`addr & 0x0400`, Mesen2 `MMC3_250`); MMC3 banking subset + an M2-clocked 8-bit reload IRQ counter; CHR-ROM. |
+| 250 | — | Nitra (*Time Diver Avenger*) | — | PPU A12 (MMC3) | landed (v1.5.0 / S10; decode corrected in the coverage pass; IRQ corrected v2.9.7) | MMC3-register-compatible, but the register data is carried in address bits A0-A7 and the even/odd line in **A10** (`addr & 0x0400`, Mesen2 `MMC3_250`); MMC3 banking subset + the MMC3 scanline IRQ counter (A12 through MMC3's filter). Until v2.9.7 the IRQ was an M2-clocked 8-bit reload counter, which the page does not support ("a regular MMC3 chip connected in [a] different way"); *Time Diver Avenger*'s splits landed at arbitrary points and its playfield drew from the wrong CHR banks (`T-COMMERCIAL-GARBLE`); CHR-ROM. |
 
 These are register-decode + save-state unit-tested only (no redistributable
 fixture is committed), and structurally excluded from the AccuracyCoin / oracle
@@ -676,8 +676,31 @@ the MMC6's 1 KiB of internal RAM with its per-half read and write enables
 behind a /8 prescaler, NEC on 4, and T9552 on 5 (the file in the `$02` order). An
 iNES 1.0 StarTropics stays a plain MMC3, as the submapper page advises. The
 `Mmc3Revision` names were also wrong: MMC3A is the *alternate* behaviour, not
-Sharp. MC-ACC (4.3) is BestEffort: its prescaler reset and phase come from a
-forum measurement the MMC3 page links, not from the page.
+Sharp. MC-ACC (4.3) was BestEffort at v2.9.6, because its prescaler reset and
+phase come from a forum measurement the MMC3 page links, not from the page.
+
+**MC-ACC, promoted to Curated (v2.9.7).** Six Acclaim titles with NES 2.0
+submapper-3 headers were run headless with scripted input and compared against
+the same dumps forced to submapper 0. The dumps are local and gitignored: Alien
+3, Terminator 2, The Incredible Crash Dummies, WWF King of the Ring, WWF
+WrestleMania: Steel Cage Challenge and T&C Surf Designs. On the first run,
+v2.9.6's model broke four of them: HUDs missing, garbled title text, and Alien 3
+black. The cause was not the model but the PPU. It reported one A12 edge per
+scanline, and the MC-ACC's /8 prescaler expects the hardware's eight
+(`docs/ppu-2c02.md`, dots 257-320). With the PPU fixed, all six boot cleanly.
+The four that use the raster split draw it correctly only under MC-ACC: their
+status bars, portraits and title cards appear, and forced to submapper 0 they
+corrupt. The other two draw identically under either model. The same PPU fix
+brings mapper 91 submapper 0 ("64 unfiltered rises") and the J.Y. ASIC's A12
+mode ("unfiltered, eight per scanline") to their documented rates; both had
+been eight times slow.
+
+**MMC3-core boards with their own counter.** `mmc3_clones`, 176 (FK23C), 268
+(CoolBoy) and 513 (Sachen 9602) clocked their IRQ counter on every A12 rise,
+which was right only while the PPU delivered one rise per line. Since v2.9.7
+they apply MMC3's filter (`a12_filter.rs`: a rise counts after three CPU cycles
+low), and their save states pack the filter into the old `last_a12` byte
+(format versions bumped; older states load with the byte read as the level).
 
 **GTROM (111), promoted to Curated.** Three documented behaviours were missing:
 
@@ -738,8 +761,8 @@ never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
 Current split: **191 families** — 51 Core + 109 Curated (**160 accuracy-gated**) +
 31 BestEffort (v2.3.4 added 154 and 243; v2.9.6 added 17 families and promoted
-111, see above). Submapper-level exceptions: 4.3 (MC-ACC), 91.1 and 176.2 are
-BestEffort, and 12.1 is unsupported. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
+111, see above). Submapper-level exceptions: 91.1 and 176.2 are BestEffort, 4.3
+(MC-ACC) is Curated (BestEffort until v2.9.7), and 12.1 is unsupported. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
 BestEffort families to Curated: each has a **cleanly-booting** staged
 commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
 GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in

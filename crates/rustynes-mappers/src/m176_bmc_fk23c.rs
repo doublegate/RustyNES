@@ -35,6 +35,7 @@
     clippy::unreadable_literal
 )]
 
+use crate::a12_filter::A12RiseFilter;
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, format, vec, vec::Vec};
@@ -46,7 +47,7 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 // v2 adds the FS005 RAM Configuration Register byte and the submapper-2 CHR-RAM
 // overlay, both of which change the serialized length.
-const SAVE_STATE_VERSION: u8 = 2;
+const SAVE_STATE_VERSION: u8 = 3;
 
 // ---------------------------------------------------------------------------
 // Shared nametable + mirroring helpers (mirror the other simple-mapper modules).
@@ -126,7 +127,9 @@ pub struct Fk23c {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
-    last_a12: bool,
+    /// v2.9.7 — MMC3's A12 rise filter (see `a12_filter`): the counter
+    /// clocks once per scanline on the eight-pulse stream the PPU reports.
+    a12: A12RiseFilter,
     // FK23C config ($5000-$5003).
     prg_banking_mode: u8,
     outer_chr_64k: bool,
@@ -199,7 +202,7 @@ impl Fk23c {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
-            last_a12: false,
+            a12: A12RiseFilter::new(),
             prg_banking_mode: 0,
             outer_chr_64k: false,
             select_chr_ram: false,
@@ -489,7 +492,9 @@ impl Mapper for Fk23c {
 
     fn caps(&self) -> MapperCaps {
         MapperCaps {
-            cpu_cycle_hook: false,
+            // v2.9.7: the A12 filter's clock (`notify_cpu_cycle`); the bus
+            // calls it only on boards that declare this.
+            cpu_cycle_hook: true,
             audio: false,
             frame_event_hook: false,
             irq_source: true,
@@ -598,10 +603,14 @@ impl Mapper for Fk23c {
         }
     }
 
+    fn notify_cpu_cycle(&mut self) {
+        self.a12.tick();
+    }
+
     fn notify_a12(&mut self, level: bool) {
-        let rising = level && !self.last_a12;
-        self.last_a12 = level;
-        if !rising {
+        // v2.9.7 — MMC3's filter; see `a12_filter` for why a bare
+        // rising-edge test is no longer enough.
+        if !self.a12.edge(level) {
             return;
         }
         if self.irq_counter == 0 || self.irq_reload {
@@ -641,7 +650,7 @@ impl Mapper for Fk23c {
         out.push(u8::from(self.irq_reload));
         out.push(u8::from(self.irq_enabled));
         out.push(u8::from(self.irq_pending));
-        out.push(u8::from(self.last_a12));
+        out.push(self.a12.to_byte());
         out.push(self.prg_banking_mode);
         out.push(u8::from(self.outer_chr_64k));
         out.push(u8::from(self.select_chr_ram));
@@ -686,8 +695,10 @@ impl Mapper for Fk23c {
         // the legacy length while still declaring version 2, and accepting that
         // would silently reinterpret a corrupt state as an older one -- which is
         // how a truncation turns into wrong emulation instead of an error.
+        // v3 (v2.9.7) has v2's length and packs the A12 filter into the old
+        // `last_a12` byte; a v1/v2 state's byte is the bare level.
         let version_ok = if is_v2 {
-            data[0] == SAVE_STATE_VERSION
+            data[0] == SAVE_STATE_VERSION || data[0] == 2
         } else {
             data[0] == 1
         };
@@ -705,7 +716,11 @@ impl Mapper for Fk23c {
         self.irq_reload = data[c + 5] != 0;
         self.irq_enabled = data[c + 6] != 0;
         self.irq_pending = data[c + 7] != 0;
-        self.last_a12 = data[c + 8] != 0;
+        self.a12 = if data[0] == SAVE_STATE_VERSION {
+            A12RiseFilter::from_byte(data[c + 8])
+        } else {
+            A12RiseFilter::from_legacy_level(data[c + 8] != 0)
+        };
         c += 9;
         self.prg_banking_mode = data[c];
         self.outer_chr_64k = data[c + 1] != 0;
@@ -776,6 +791,16 @@ pub fn new_m176(
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]
 mod tests {
+
+    /// v2.9.7 — the IRQ counter clocks once per scanline on the A12 stream the
+    /// PPU now reports (eight pulses per line), through MMC3's filter. Before,
+    /// it clocked on every rise and depended on the PPU delivering only one.
+    #[test]
+    fn irq_counts_scanlines_not_raw_a12_pulses() {
+        let mut m = new_m176(synth_prg_8k(32), synth_chr_1k(64), Mirroring::Vertical, 0).unwrap();
+        assert_eq!(crate::a12_filter::irqs_over_scanlines(&mut m, 16), 2);
+    }
+
     use super::*;
 
     fn synth_prg_8k(banks: usize) -> Box<[u8]> {
@@ -816,6 +841,10 @@ mod tests {
         m.cpu_write(0xE001, 0); // enable
         for _ in 0..3 {
             m.notify_a12(false);
+            // v2.9.7: three CPU cycles low, as MMC3's A12 filter requires.
+            for _ in 0..3 {
+                m.notify_cpu_cycle();
+            }
             m.notify_a12(true);
         }
         assert!(m.irq_pending());

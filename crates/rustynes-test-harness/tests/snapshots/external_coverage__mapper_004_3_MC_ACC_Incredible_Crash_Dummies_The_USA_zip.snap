@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-004-3-MC-ACC/Incredible Crash Dummies, The (USA).zip
+rom_sha256=3b63f03b6181245e3b9b61b69595198f163ad53f7808bdd2dd28933b8507fb16
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=5be2bbda8c5df687
+checkpoint f900 fb_fnv1a64=9d43bcb96674fa35
+checkpoint f1100 fb_fnv1a64=9d43bcb96674fa35

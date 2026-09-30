@@ -101,6 +101,57 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 
 ## Notes
 
+- **PPU A12 stream, corrected (v2.9.7).** The PPU reported the A12 level of
+  pattern fetches only, so the garbage nametable reads of the sprite window
+  never pulled A12 low, and each rendered line delivered one rise where the
+  hardware makes eight. MMC3 filters the extra seven, so every MMC3 test ROM
+  and AccuracyCoin passed. Boards that count raw edges were starved eightfold:
+  the MC-ACC (mapper 4.3), mapper 91 submapper 0 and the J.Y. ASIC's A12 mode.
+  Found by real games, not a test ROM. Six Acclaim MC-ACC titles run with
+  v2.9.6's model lost their status bars, and Alien 3 went black. Measured: 242
+  falls per frame reached the mapper, against the 1,928 a correct stream
+  gives. Fixed at the source: `Ppu::read_vram` reports every read's A12. Four
+  MMC3-core boards that clocked on every rise gained MMC3's filter
+  (`a12_filter.rs`). The filter clocks on `notify_cpu_cycle`, which the bus
+  sends only to boards that declare `cpu_cycle_hook`. The first draft left it
+  undeclared on those four, so their IRQ never fired on a real `Nes` while
+  their unit tests, which drove the hook by hand, passed. *AV Jiu Ji Ma Jiang
+  2* (mapper 115) showed it. The shared test helper now asserts the flag.
+  Changed goldens: `mmc1_a12` (9 pixels; SNROM's RAM enable follows CHR A12).
+  Commercial frames that moved, each checked against v2.9.6: the
+  *Donkey Kong Country 4* world map (mapper 211), garbled before and correct
+  now; *Time Diver* (mapper 250, its own IRQ fix). Mappers 115, 134 and 189
+  match v2.9.6 frame for frame. Pinned by
+  `a12_reports_the_hardware_stream_and_an_mmc3_filter_still_sees_241` and a
+  per-board `irq_counts_scanlines_not_raw_a12_pulses`.
+- **`T-COMMERCIAL-GARBLE`, v2.9.7.** *Time Diver: Avenger* (mapper 250) is
+  **fixed**. The IRQ was an 8-bit M2 cycle counter, which
+  `INES_Mapper_250.md` does not support ("a regular MMC3 chip connected in [a]
+  different way"). It is now the MMC3 scanline counter, and the playfield,
+  intro and second stage render correctly. *Uchuu Keibitai SDF* (MMC5) is
+  **localised, not fixed**. Frames 120-400 of the intro are wrong in every
+  frame, and later screens, including its vertical-split "ROUND WAVE" screen,
+  are correct. The intro's MMC5 state:
+  - `$5100=3`, `$5101=3` (1 KiB CHR), `$5104=0` (ExRAM nametable), `$5105=$10`;
+  - BG set `$5128-$512B` = `$30-$33`, 8x16 sprites (`$2000=$B0`);
+  - no IRQ register written; split off (`$5200=0`); `$5130=0`; 128 KiB CHR.
+
+  The corrupted frames show recognisable letter tiles scattered in wrong
+  places, so the nametable contents look displaced, not the CHR banks. The
+  next step is a per-access comparison against a reference run of the intro.
+  It stays open under the same ticket.
+- **MMC5 8x8 CHR set, a deviation from the page (found v2.9.7, not changed).**
+  `MMC5.md`: "When using 8x8 sprites, only registers $5120-$5127 are used." The
+  model uses the background set `$5128-$512B` for both kinds of fetch in 8x8
+  mode (`m005_mmc5.rs`, `chr_offset_sprite`'s doc). Changing it moves every
+  8x8 MMC5 game, so it needs its own commercial run: `T-MMC5-8X8-SET`.
+- **Terminator 2 (MC-ACC) pause screen, unexplained.** Pressing Start shows a
+  "PAUSED" screen overlaid with CPU-register-like text (`ADC $0C15`, `TAX`,
+  `CLI`). It looks the same under MC-ACC and standard-MMC3 timing, and the
+  same before and after the A12 fix, so it is not an IRQ symptom. Whether it
+  is the game's own pause display or an emulation fault is not established;
+  it is recorded rather than guessed.
+
 - **Determinism boundary.** Display-only work (the NTSC composite filter/shader
   ladder) stays in the frontend/shader and never feeds the framebuffer/audio
   golden-vector or save-state hash. Two accuracy features DO change deterministic

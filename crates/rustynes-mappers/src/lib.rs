@@ -43,6 +43,7 @@ extern crate std;
 
 use alloc::{boxed::Box, string::ToString};
 
+mod a12_filter;
 mod bmc_simple;
 mod cartridge;
 mod fds;

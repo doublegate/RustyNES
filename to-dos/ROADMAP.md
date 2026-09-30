@@ -1072,7 +1072,21 @@ The MC-ACC titles are the first real evidence for 4.3's forum-derived prescaler
 rule, and can promote it if they boot cleanly. Commercial dumps are never
 committed; only the `.snap` files are.
 
+## T-MMC5-8X8-SET — the MMC5 CHR set in 8x8 sprite mode (found v2.9.7)
+
+`MMC5.md`: "When using 8x8 sprites, only registers $5120-$5127 are used.
+Registers $5128-$512B are completely ignored." `m005_mmc5.rs` does the opposite:
+in 8x8 mode it reads the background set `$5128-$512B` for every fetch. Games that
+program both sets identically cannot tell the difference, which is presumably
+why nothing has shown it. Fix from the page, pin it with a unit test, and run the
+commercial MMC5 corpus (Castlevania III, Just Breed, Metal Slader Glory, the Koei
+titles) before and after; any title whose frames move gets looked at.
+
 ## T-COMMERCIAL-GARBLE — two commercial titles render garbage (found v2.9.6)
+
+**v2.9.7:** *Time Diver: Avenger* fixed (mapper 250's IRQ is the MMC3 scanline
+counter). *Uchuu Keibitai SDF* localised to its intro (frames 120-400) and the
+MMC5 state it sets up, not yet fixed; see `docs/accuracy-ledger.md`.
 
 Found by looking at every title whose frame moved in the v2.9.6 commercial
 re-baseline, and confirmed identical on v2.0.0, so neither is a regression from

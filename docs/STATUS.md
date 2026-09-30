@@ -2012,7 +2012,7 @@ tiered for accuracy honesty (`crates/rustynes-mappers/src/tier.rs`):
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
 | **Curated** (v1.2.0 + **v2.1.0 "Fathom" F3** + v2.9.6) | 109 | Yes | notable games + decode spec; register-decode unit tests **+ byte-identity boot-snapshot oracle** (`external_extended.rs`). The 14 added at v2.9.6 (13 new families and GTROM) have no redistributable dump; their evidence is a precise register table on the NESdev page, unit tests and a synthetic CC0 boot fixture (`roster_boards.rs`) |
-| **BestEffort** | 31 | **No** | long-tail with **no cleanly-booting redistributable ROM dump** and thin documentation (16 NES 2.0 high-id boards + 8 with no matching cart + 50, whose only dump jams at boot + 154 and 243 from v2.3.4 + 47/121/191/194 from v2.9.6, whose pages give only Disch's notes or "probably" masks); register-decode + save-state unit tests only. Submappers 4.3 (MC-ACC), 91.1 and 176.2 are also BestEffort, although their families are not |
+| **BestEffort** | 31 | **No** | long-tail with **no cleanly-booting redistributable ROM dump** and thin documentation (16 NES 2.0 high-id boards + 8 with no matching cart + 50, whose only dump jams at boot + 154 and 243 from v2.3.4 + 47/121/191/194 from v2.9.6, whose pages give only Disch's notes or "probably" masks); register-decode + save-state unit tests only. Submappers 91.1 and 176.2 are also BestEffort, although their families are not (4.3, MC-ACC, was too until v2.9.7 promoted it to Curated on six real games) |
 
 The **v2.1.0 "Fathom" F3** sweep promoted **86** families BestEffort → Curated
 (57 already-staged + 29 sourced from GoodNES v3.23b), taking accuracy-gated

@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-004-3-MC-ACC/Terminator 2 - Judgment Day (USA).zip
+rom_sha256=3b5814a03e31332d34f939c3988d4f6de820f5c4228eb9cdbcbfdb4261f747f3
+frames=1141
+fb_bytes=245760
+cycles=33949789
+audio_samples=836505
+audio_fnv1a64=bb74759f28ceab77
+checkpoint f900 fb_fnv1a64=d35cd2a2c3f5e75d
+checkpoint f1100 fb_fnv1a64=6c54f186df71d3d1

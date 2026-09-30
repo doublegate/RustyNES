@@ -31,6 +31,7 @@
     clippy::unreadable_literal
 )]
 
+use crate::a12_filter::A12RiseFilter;
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, format, vec, vec::Vec};
@@ -40,7 +41,7 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+const SAVE_STATE_VERSION: u8 = 2;
 
 // ---------------------------------------------------------------------------
 // Shared nametable + mirroring helpers (mirror the other simple-mapper modules).
@@ -103,7 +104,9 @@ pub struct Sachen9602 {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
-    last_a12: bool,
+    /// v2.9.7 — MMC3's A12 rise filter (see `a12_filter`): the counter
+    /// clocks once per scanline on the eight-pulse stream the PPU reports.
+    a12: A12RiseFilter,
     /// PRG outer bank (high two bits, << 6).
     outer: u8,
 }
@@ -129,7 +132,7 @@ impl Sachen9602 {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
-            last_a12: false,
+            a12: A12RiseFilter::new(),
             outer: 0,
         })
     }
@@ -188,7 +191,9 @@ impl Sachen9602 {
 impl Mapper for Sachen9602 {
     fn caps(&self) -> MapperCaps {
         MapperCaps {
-            cpu_cycle_hook: false,
+            // v2.9.7: the A12 filter's clock (`notify_cpu_cycle`); the bus
+            // calls it only on boards that declare this.
+            cpu_cycle_hook: true,
             audio: false,
             frame_event_hook: false,
             irq_source: true,
@@ -244,10 +249,14 @@ impl Mapper for Sachen9602 {
         }
     }
 
+    fn notify_cpu_cycle(&mut self) {
+        self.a12.tick();
+    }
+
     fn notify_a12(&mut self, level: bool) {
-        let rising = level && !self.last_a12;
-        self.last_a12 = level;
-        if !rising {
+        // v2.9.7 — MMC3's filter; see `a12_filter` for why a bare
+        // rising-edge test is no longer enough.
+        if !self.a12.edge(level) {
             return;
         }
         if self.irq_counter == 0 || self.irq_reload {
@@ -285,7 +294,7 @@ impl Mapper for Sachen9602 {
         out.push(u8::from(self.irq_reload));
         out.push(u8::from(self.irq_enabled));
         out.push(u8::from(self.irq_pending));
-        out.push(u8::from(self.last_a12));
+        out.push(self.a12.to_byte());
         out.push(self.outer);
         out.push(mirroring_to_byte(self.mirroring));
         out.extend_from_slice(&self.vram);
@@ -301,8 +310,11 @@ impl Mapper for Sachen9602 {
                 got: data.len(),
             });
         }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
+        // v2 (v2.9.7) packs the A12 filter into the old `last_a12` byte; a v1
+        // state's byte is the bare level and loads as such.
+        let version = data[0];
+        if version != SAVE_STATE_VERSION && version != 1 {
+            return Err(MapperError::UnsupportedVersion(version));
         }
         let mut c = 1;
         self.regs.copy_from_slice(&data[c..c + 8]);
@@ -315,7 +327,11 @@ impl Mapper for Sachen9602 {
         self.irq_reload = data[c + 5] != 0;
         self.irq_enabled = data[c + 6] != 0;
         self.irq_pending = data[c + 7] != 0;
-        self.last_a12 = data[c + 8] != 0;
+        self.a12 = if version == 1 {
+            A12RiseFilter::from_legacy_level(data[c + 8] != 0)
+        } else {
+            A12RiseFilter::from_byte(data[c + 8])
+        };
         c += 9;
         self.outer = data[c];
         self.mirroring = byte_to_mirroring(data[c + 1], self.mirroring);
@@ -352,6 +368,16 @@ pub fn new_m513(
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]
 mod tests {
+
+    /// v2.9.7 — the IRQ counter clocks once per scanline on the A12 stream the
+    /// PPU now reports (eight pulses per line), through MMC3's filter. Before,
+    /// it clocked on every rise and depended on the PPU delivering only one.
+    #[test]
+    fn irq_counts_scanlines_not_raw_a12_pulses() {
+        let mut m = new_m513(synth_prg_8k(64), Box::new([]), Mirroring::Vertical).unwrap();
+        assert_eq!(crate::a12_filter::irqs_over_scanlines(&mut m, 16), 2);
+    }
+
     use super::*;
 
     fn synth_prg_8k(banks: usize) -> Box<[u8]> {

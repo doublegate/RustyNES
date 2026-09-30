@@ -16,6 +16,15 @@
 //! `m001_mmc1.rs`) reproduces the pre-v2.7.2 hash exactly. See
 //! `tests/roms/mmc1_a12/README.md`.
 //!
+//! **Re-blessed again at v2.9.7**, when the PPU began reporting the A12 level
+//! of every read, including the sprite window's garbage nametable fetches
+//! (`Ppu::read_vram`). A12 now drops eight times per rendered line, as on
+//! hardware, so the A12-selected register flips back during the sprite
+//! window. Nine pixels of frame 240 change: the partial grey span that marks
+//! the enable change ends a few pixels later. That is the expected shape for a
+//! board whose RAM enable follows CHR A12, and no oracle here can confirm the
+//! exact pixel, so this stays a byte-identity pin, not an accuracy verdict.
+//!
 //! The PPU's A12 line transitions on every BG / sprite CHR fetch.
 //! For MMC3 those transitions are filtered through a small counter
 //! that ultimately fires IRQ (see ADR-0002). For MMC1 — which has no
@@ -26,8 +35,8 @@
 //!
 //! ## Why this matters
 //!
-//! `Mapper::notify_a12(level)` is a default-no-op in the trait; only
-//! the MMC3 family overrides it. A regression in `rustynes-ppu` that
+//! `Mapper::notify_a12(level)` is a default-no-op in the trait. The MMC3
+//! family counts IRQs from it; MMC1 (since v2.7.2) only tracks the level. A regression in `rustynes-ppu` that
 //! starts dispatching A12 to MMC1 (e.g. via a misplaced `if
 //! mapper.has_irq() { ... }` short-circuit removal) would generate
 //! spurious IRQs and corrupt MMC1's `$8000`-`$FFFF` shift register

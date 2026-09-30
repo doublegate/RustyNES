@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-004-3-MC-ACC/WWF WrestleMania Steel Cage Challenge (USA).zip
+rom_sha256=eab221632f51ffcc31af115cab5852d1de51b7a0a3bc4c05490e729cb174a852
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=90452cbf2f3b5ba2
+checkpoint f900 fb_fnv1a64=a30d6a1903a73195
+checkpoint f1100 fb_fnv1a64=05e64d50fac21c95

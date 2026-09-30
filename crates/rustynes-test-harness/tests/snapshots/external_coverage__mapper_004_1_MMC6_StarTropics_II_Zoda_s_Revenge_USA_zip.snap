@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-004-1-MMC6/StarTropics II - Zoda's Revenge (USA).zip
+rom_sha256=0bbf21f0227baa7f8f2f732e70848cce52d836ac848f8c9f92759c6f41e0d2cd
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=fd85cc80fb74cfc5
+checkpoint f900 fb_fnv1a64=bc5fa996282abbb5
+checkpoint f1100 fb_fnv1a64=c3f030cdb33d2711

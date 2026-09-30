@@ -101,7 +101,12 @@ fn a_save_state_from_before_the_ram_still_loads() {
         // version where the board versions its blob (227 shares a file-wide
         // version and is told apart by length).
         let mut old = blob[..blob.len() - 0x2000].to_vec();
-        if n != 227 {
+        if n == 245 {
+            // The MMC3-clone family's pre-RAM format is v1. It is no longer
+            // "current minus one": v2.9.7 moved the family to v3 (the A12
+            // filter byte), and v2 already carried the RAM.
+            old[0] = 1;
+        } else if n != 227 {
             old[0] -= 1;
         }
         let mut o = build(n, true);

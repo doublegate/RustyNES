@@ -119,6 +119,31 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The PPU now reports the A12 line the way the hardware drives it.** It
+  reported A12 only for pattern fetches, so the sprite window's garbage
+  nametable reads never pulled A12 low, and each rendered line delivered one
+  rise where the console makes eight. The MMC3 filters the extra seven away,
+  which is why every MMC3 test ROM and AccuracyCoin passed. Boards that count
+  raw edges were starved eightfold:
+  - Acclaim's **MC-ACC** (mapper 4, NES 2.0 submapper 3). Its six local games
+    lost their status bars and title text, and Alien 3 went black, with NES 2.0
+    headers. They now all render correctly, and MC-ACC is promoted from
+    BestEffort to Curated.
+  - **Mapper 91** submapper 0, whose page says it counts "64 unfiltered rises".
+  - The **J.Y. Company ASIC**'s A12 IRQ mode ("unfiltered, eight per
+    scanline"). The *Donkey Kong Country 4* world map (mapper 211) was
+    garbled across its lower half and now renders correctly.
+
+  Four MMC3-based boards that clocked their IRQ on every rise (the MMC3-clone
+  family, 176, 268 and 513) now apply MMC3's filter. Their save states changed
+  format; older states still load. One test framebuffer changed:
+  `mmc1_a12` moves by 9 pixels, because an SNROM board's RAM enable follows
+  CHR A12.
+- **Time Diver: Avenger (mapper 250) renders its playfield correctly.** Its IRQ
+  counted CPU cycles; the board is a regular MMC3 with remapped registers, so
+  it now counts scanlines. The splits land where the game puts them, and the
+  wrong-tile backgrounds are gone. Mapper 250 save states from earlier
+  versions do not load.
 - **The Settings "Overclock (extra scanlines)" field now does something.**
   It saved `enhancements.overclock_scanlines`, and nothing read it; the core's
   `Nes::set_extra_scanlines` had no caller. The value now reaches the emulator
