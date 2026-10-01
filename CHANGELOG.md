@@ -79,6 +79,16 @@ cycle-accurate core later replaced.
 
 
 
+- **VRC6 (mappers 24 and 26) powers on with its CHR banks in order.** The
+  eight 1 KiB CHR bank registers (`$D000-$E003`) now start at 0-7 instead of
+  all at 0. NESdev documents no power-on state for the VRC6, so this is an
+  assumption, recorded as one in the code and `docs/mappers.md`, and it
+  replaces an equally undocumented one, which is why it is listed here rather
+  than under Fixed. *Pulsewave Invite* never writes those registers and
+  relies on the identity layout; it showed scattered tiles and now shows its
+  postcard. A soft reset still keeps the registers, and the PRG registers
+  still start at 0. The other ten staged mapper 24/26 dumps boot to
+  byte-identical frames.
 ### Fixed
 
 - **Mapper 19 (Namco 163) honours the IRQ enable bit in `$5800`.** The

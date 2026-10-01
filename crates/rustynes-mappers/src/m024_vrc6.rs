@@ -58,6 +58,33 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// three; a v1/v2 blob leaves the RAM untouched, which is the old behaviour.
 const VRC6_SECTION_VERSION: u8 = 3;
 
+/// Power-on contents of the eight 1 KiB CHR bank registers
+/// (`$D000-$D003`, `$E000-$E003`): the identity layout, slot `i` -> bank `i`.
+///
+/// **This is an ASSUMPTION, not documented hardware behaviour.** The NESdev
+/// VRC6 page states no power-on or reset value for any VRC6 register, and the
+/// register file is plain latches whose contents at power-on are whatever the
+/// silicon settles to. Until v2.9.8 the board powered on with all eight slots
+/// on bank 0, which is equally undocumented. The identity layout was chosen
+/// (maintainer decision "Identity default", 2026-10-01) because one program
+/// depends on it and none is known to depend on anything else: *Pulsewave
+/// Invite* (2009, PD) never writes `$D000-$E003` and draws its postcard only
+/// when the first 8 KiB of CHR-ROM is mapped in order -- with every slot on
+/// bank 0 it shows a field of misplaced tiles. The other ten mapper 24/26
+/// dumps in the local corpus (the three licensed games, their translations
+/// and hacks, and three homebrew programs) render byte-identical boot frames
+/// under either layout -- checked frame by frame when this landed.
+///
+/// Applied at power-on only (construction, which is also what a power cycle
+/// does). `Mapper::reset` stays the default no-op: no reset input to the VRC6
+/// is documented, and a console soft reset leaves cartridge register latches
+/// alone on almost every board, so a game reset mid-play keeps its banks.
+///
+/// PRG is deliberately not touched: `$8000`/`$C000` still power on as 0. The
+/// reset vector lives in the fixed `$E000` bank, no documentation states a
+/// PRG power-on value, and no dump in the corpus gives evidence for one.
+const POWER_ON_CHR: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+
 /// Bytes of the v2 audio tail: `audio_ctrl` (1) + two pulses (7 each) + the
 /// sawtooth (8).
 const VRC6_AUDIO_TAIL_LEN: usize = 1 + 7 + 7 + 8;
@@ -277,7 +304,7 @@ impl Vrc6 {
             chr_is_ram,
             prg_16: 0,
             prg_8: 0,
-            chr: [0; 8],
+            chr: POWER_ON_CHR,
             mirroring,
             // 8 KiB WRAM at $6000-$7FFF (T-60-003b).
             prg_ram: vec![0u8; 8 * 1024].into_boxed_slice(),
@@ -1000,6 +1027,46 @@ mod tests {
         m2.load_state(&v2).expect("a v2 blob must still load");
         assert_eq!(m2.pulse1.ctrl, 0x8F, "v2 audio tail restored");
         assert_eq!(m2.cpu_read(0x6123), 0x77, "v2 load must not touch RAM");
+    }
+
+    /// ASSUMPTION pin (v2.9.8, maintainer decision "Identity default"): the
+    /// eight 1 KiB CHR bank registers power on holding 0-7, so slot `i`
+    /// (`$0000 + i * $400`) reads CHR bank `i` before the program writes
+    /// `$D000-$E003`. NESdev documents no VRC6 power-on state; the evidence
+    /// is *Pulsewave Invite* (PD), which never writes those registers and
+    /// draws its postcard only under this layout. Checked for both pin
+    /// orders (mapper 24 = VRC6a, mapper 26 = VRC6b): the power-on value is
+    /// a property of the register file, not of the address decode.
+    #[test]
+    fn vrc6_chr_registers_power_on_as_identity() {
+        for mapper_id in [24, 26] {
+            let mut m = Vrc6::new(synth(8), synth_chr(32), mapper_id, Mirroring::Vertical).unwrap();
+            for slot in 0..8u16 {
+                assert_eq!(
+                    m.ppu_read(slot * 0x0400),
+                    slot as u8,
+                    "mapper {mapper_id}: CHR slot {slot} must read bank {slot} at power-on"
+                );
+            }
+        }
+    }
+
+    /// The console RESET button does not restore the power-on CHR layout:
+    /// the VRC6 has no reset input documented on NESdev, and like almost
+    /// every board it keeps its registers across a soft reset
+    /// (`Mapper::reset` stays the default no-op). Only a power cycle, which
+    /// rebuilds the mapper through `Vrc6::new`, yields the identity layout.
+    #[test]
+    fn vrc6_soft_reset_keeps_chr_registers() {
+        let mut m = Vrc6::new(synth(8), synth_chr(32), 24, Mirroring::Vertical).unwrap();
+        m.cpu_write(0xD000, 0x1F);
+        m.reset();
+        assert_eq!(m.ppu_read(0x0000), 0x1F, "reset must not reload slot 0");
+        assert_eq!(
+            m.ppu_read(0x0400),
+            1,
+            "untouched slot keeps its power-on bank"
+        );
     }
 
     /// A v3 blob one byte short (inside the RAM tail) is rejected.

@@ -266,9 +266,9 @@ Sorted by number of commercial titles using each mapper.
 | 21 | 1, 2 | VRC4a / VRC4c | 4 | — | CPU | landed (Phase 4 / S3) | Konami; Wai Wai World. |
 | 22 | — | VRC2a | 4 | — | — | landed (Phase 4 / S3) | Konami. |
 | 23 | 1-3 | VRC4e / VRC4f / VRC2b | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
-| 24 | — | VRC6a | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Akumajou Densetsu.  3 extra audio channels (2 pulse + 1 sawtooth) gated behind the `mapper-audio` cargo feature. |
+| 24 | — | VRC6a | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Akumajou Densetsu.  3 extra audio channels (2 pulse + 1 sawtooth) gated behind the `mapper-audio` cargo feature.  **Power-on CHR = identity (ASSUMPTION, v2.9.8):** the eight 1 KiB CHR registers (`$D000-$E003`) start at 0-7. NESdev documents no VRC6 power-on state; *Pulsewave Invite* (PD) never writes them and draws its postcard only under this layout (all-zero, the old value, scattered its tiles). The other ten staged mapper 24/26 dumps boot to byte-identical frames either way. Power-on only: `Mapper::reset` keeps the registers, as a soft reset does on almost every board. PRG registers still start at 0 (no documentation or evidence for another value). Applies to mapper 26 as well. |
 | 25 | 1-3 | VRC4b / VRC4d / VRC2c | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
-| 26 | — | VRC6b | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Madara, Esper Dream 2.  Same channels as VRC6a; A0/A1 swap. |
+| 26 | — | VRC6b | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Madara, Esper Dream 2.  Same channels as VRC6a; A0/A1 swap.  Same identity power-on CHR assumption as mapper 24. |
 | 34 | 0-2 | BNROM / NINA-001 | 4 | — | — | landed (Phase 4 / S2) | Submapper 1 selects NINA-001. |
 | 66 | — | GxROM | 2 | — | — | landed (Phase 2) | Bus conflict. |
 | 69 | — | Sunsoft FME-7 | 4 | yes (5B, landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.1) | Gimmick!  Sunsoft 5B = YM2149F clone: 3 squares + 32-step envelope generator + 17-bit LFSR noise.  Two-write protocol via `$C000-$DFFF` (address latch) and `$E000-$FFFF` (data); audio gated behind the `mapper-audio` cargo feature. |
