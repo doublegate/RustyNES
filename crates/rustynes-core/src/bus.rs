@@ -3028,18 +3028,12 @@ impl SystemBus {
         // `new`/`reset`/`power_cycle` do.
         //
         // W3-Stage-4 (2026-06-10, the RW-3 follow-through): the APU snapshot
-        // now DOES carry the exact `put_cycle` / `parity_seed` phase in its
-        // Stage-4 tail, so re-seed the boot alignment ONLY for pre-Stage-4
-        // blobs that lack the tail (`snapshot_restored_parity` is false) —
-        // otherwise the boot seed would overwrite the restored mid-state
-        // parity that the counter-collapse end-flip reads at the next access
-        // point.
-        {
-            self.apu.set_dmc_driven_externally(true);
-            if !self.apu.snapshot_restored_parity() {
-                self.apu.seed_apu_alignment(0);
-            }
-        }
+        // carries the exact `put_cycle` / `parity_seed` phase, so the boot
+        // alignment is NOT re-seeded -- that would overwrite the restored
+        // mid-state parity the counter-collapse end-flip reads at the next
+        // access point. (Until v2.9.8 a pre-Stage-4 blob without that tail
+        // was accepted and re-seeded here; ADR 0042 removed that path.)
+        self.apu.set_dmc_driven_externally(true);
         Ok(())
     }
 

@@ -406,15 +406,16 @@ is lost. Mesen2 serializes the equivalent set (`NesPpu<T>::Serialize`:
 8 is *not* a strictly-additive tail that older readers can truncate past, because the
 state it adds (the sprite-evaluation FSM + OAM data-bus model) has no correct default
 for a mid-frame restore — inventing one is exactly the broken-FSM restore the tail
-exists to prevent. So the reader accepts `1..=PPU_SNAPSHOT_VERSION` and returns
+exists to prevent. So the reader accepted `1..=PPU_SNAPSHOT_VERSION` and returned
 `PpuSnapshotError::UnsupportedVersion` for anything else; a `.rns` slot written by
 v2.2.2 or earlier fails to load with a clear version error rather than being
 upconverted or silently misread. Per ADR 0028 / ADR 0034 this is the deliberate
 choice, and it is confined to `.rns` files on disk: `.rnm` movies replay inputs from
 a power-on and carry no PPU snapshot, and netplay-rollback / TAS-seek snapshots are
-in-memory and always written by the running build. The acceptance bound is expressed
-as `1..=PPU_SNAPSHOT_VERSION` in `snapshot.rs` rather than a literal so it cannot
-drift from the emitted version.
+in-memory and always written by the running build. Since v2.9.8 (ADR 0042) the
+reader accepts `PPU_SNAPSHOT_VERSION` only: every per-version upconversion is gone,
+and a `.rns` from v2.9.7 or earlier is refused at the container header before the
+PPU section is read.
 
 Future work (post-flip):
 

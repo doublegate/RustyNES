@@ -4335,6 +4335,26 @@ mod tests {
         assert_eq!(h.rom_hash_tag, nes.rom_hash_tag());
     }
 
+    /// v2.9.8 (ADR 0042): a `.rns` written by v2.9.7 or earlier carries
+    /// container format 2 and is refused at the header with one typed error,
+    /// before any section is looked at -- and the machine is left as it was.
+    #[test]
+    fn a_v2_9_7_container_is_refused_at_the_header() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        nes.run_frame();
+        let mut old = nes.snapshot();
+        let before = old.clone();
+        // The container's format version is the u16 after the 8-byte magic.
+        old[8..10].copy_from_slice(&2u16.to_le_bytes());
+        let err = nes.restore(&old).unwrap_err();
+        assert!(
+            matches!(err, SnapshotError::FormatTooOld { got: 2, .. }),
+            "expected FormatTooOld, got {err:?}"
+        );
+        assert_eq!(nes.snapshot(), before, "a refused load changed the machine");
+    }
+
     #[test]
     fn restore_rejects_pre_v3_cpu_section_version() {
         // ADR 0028 (v2.0.0 rc.1): a slot file whose CPU section predates the

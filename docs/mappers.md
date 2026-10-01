@@ -124,8 +124,8 @@ append the 8 KiB PRG-RAM, then the 8 KiB CHR-RAM on a board without CHR-ROM,
 after every older field: VRC2 and VRC4 write section v2, VRC6 v3 (after its
 audio tail), and VRC7 v3 without `mapper-audio` / v4 with it (after the
 synthesizer tail, so the version still says whether that tail is present).
-Every older version still loads and leaves the RAM as it was, the old
-behaviour.
+Every older version loaded and left the RAM as it was until v2.9.8, which
+refuses them (see "Save-state versions" below).
 
 A sweep of every mapper id with the same shape of test, run while triaging
 AUD-02, found the same omission on boards beyond the VRC2/4/6/7 set it had
@@ -135,9 +135,9 @@ fixed, VRC1 among them: PRG-RAM on
 older field: MMC2 (9), MMC4 (10), Color Dreams (11), mapper 34 and VRC1 (75,
 and 151, which forwards its section to the VRC1 core) write section v2, FME-7
 (69) v3 (after its 5B audio tail) and Namco 163 (19) v4 (after its v3
-`chr_ram_disable` / `ciram_owned` bytes). Every older version still loads and
-leaves the RAM as it was; a new-version blob of the wrong length is refused
-before any field is written.
+`chr_ram_disable` / `ciram_owned` bytes). Every older version loaded and left
+the RAM as it was until v2.9.8, which refuses them; a blob of the wrong length
+is refused before any field is written.
 
 The sweep is now a standing test,
 `every_board_snapshot_carries_cartridge_ram` in
@@ -167,6 +167,24 @@ FW-01 variant, 241, 245); v2.7.2 gave them their 8 KiB
 (`tests/documented_wram.rs`). A read that drives only some data bits,
 like Sachen's 3-bit registers, reports the rest through `cpu_read_driven_mask`,
 and the bus keeps its floating value on them.
+
+### Save-state versions
+
+**Since v2.9.8 every mapper's `load_state` reads its current layout only**
+(ADR 0042). Before then most boards that grew their blob kept reading the
+older layouts: a lower version byte, or, where the version did not move, a
+shorter length, loaded with the new fields at a default or the RAM left as it
+was. All of those readers are gone. An older version byte is
+`MapperError::UnsupportedVersion`, a short or long blob `MapperError::Truncated`.
+The boards that had them: MMC1, MMC3, MMC5, MMC2, MMC4, Color Dreams, Bandai
+FCG, Namco 163, VRC2, VRC4, VRC6, VRC7, VRC1, mapper 34, FME-7, Namco 118, Vs.
+System (layout 1), FK23C, COOLBOY, Sachen 9602, the MMC3 clones, mappers 156,
+177 and 241, the mapper-15 and FW-01 multicarts, FDS and NSF (a v1 blob on an
+expansion-audio NSF). Two layouts per board survive where both are current:
+VRC7 writes v3 without `mapper-audio` and v4 with it, mapper 99 writes v2 with
+the `DualSystem` shared RAM and v3 without, and an NSF writes v1 or v2 by its
+expansion chips. A `.rns` file from v2.9.7 or earlier never reaches these
+readers: its container is refused at the header.
 
 ## Behavior
 
@@ -561,9 +579,9 @@ shipped as:
 | PPU `$0000-$1FFF` | CHR-RAM writable in every mode | The board is CHR-RAM-only; write-protecting it in some banking modes was modelling a restriction the hardware does not have, and it blanked four ROMs. |
 
 The PRG-RAM is serialized, so it round-trips a save-state. Its arrival lengthened
-the state blob without a version bump, so `load_state` accepts **both** lengths
-and clears the RAM on the shorter one — a pre-v2.3.4 slot still loads rather than
-failing `Truncated` for a field it could not have contained.
+the state blob without a version bump, so until v2.9.8 `load_state` accepted
+**both** lengths and cleared the RAM on the shorter one. Since v2.9.8 (ADR 0042)
+the shorter, pre-v2.3.4 length is `Truncated`.
 
 #### Mapper 154 — NAMCOT-3453
 
@@ -586,7 +604,8 @@ nametable bit is read on every write in the range — odd addresses carrying ban
 
 This makes mirroring **mutable state** on a board family where it had been
 constant, so `SAVE_STATE_VERSION` moves to 2 to carry it. A v1 blob never held a
-mirroring byte and would have restored the wrong CIRAM page.
+mirroring byte and would have restored the wrong CIRAM page; it is refused since
+v2.9.8 (ADR 0042).
 
 Used by exactly one game, *Devil Man*, whose dump is headered mapper 88 and
 corrected to 154 by the per-game database.

@@ -47,14 +47,13 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
 /// v2.0.0 beta.5: the save-state layout emitted when the Vs. `DualSystem`
-/// shared WRAM is provisioned (v1 + the 2 KiB WRAM tail). `UniSystem` carts
-/// keep emitting v1 byte-identically.
+/// shared WRAM is provisioned (the v1 layout + the 2 KiB WRAM tail).
 const SAVE_STATE_VERSION_DUAL: u8 = 2;
 /// v2.9.8: the `UniSystem` layout once the board's 2 KiB RAM is modelled
-/// (v1 + the `OUT1` latch + the 2 KiB RAM tail). A v1 snapshot still loads,
-/// with the RAM cleared and `OUT1` low, which is the power-on state.
+/// (the v1 layout + the `OUT1` latch + the 2 KiB RAM tail). Layout 1 itself
+/// (no RAM) is refused since v2.9.8 (ADR 0042); it used to load with the RAM
+/// cleared and `OUT1` low.
 const SAVE_STATE_VERSION_UNI_RAM: u8 = 3;
 /// The board's work RAM at `$6000-$7FFF`: 2 KiB, mirrored across the 8 KiB
 /// window (nesdev "Vs. System" and `INES_Mapper_099`).
@@ -339,8 +338,8 @@ impl Mapper for VsSystem {
         // WRAM is provisioned): [version=2, chr_bank, vram, chr-if-ram,
         // wram(2 KiB)].
         // v3 layout (v2.9.8, every UniSystem cart): [version=3, chr_bank,
-        // vram, chr-if-ram, out1, wram(2 KiB)]. v1 is no longer emitted but
-        // still loads.
+        // vram, chr-if-ram, out1, wram(2 KiB)]. v1 is neither emitted nor
+        // loaded (refused since v2.9.8, ADR 0042).
         let mut out = Vec::with_capacity(
             3 + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 } + WRAM_SIZE,
         );
@@ -367,7 +366,6 @@ impl Mapper for VsSystem {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let version = *data.first().unwrap_or(&0);
         let (need_wram, need_uni) = match version {
-            SAVE_STATE_VERSION => (0, 0),
             SAVE_STATE_VERSION_DUAL => (WRAM_SIZE, 0),
             SAVE_STATE_VERSION_UNI_RAM => (0, 1 + WRAM_SIZE),
             v => return Err(MapperError::UnsupportedVersion(v)),
@@ -404,7 +402,7 @@ impl Mapper for VsSystem {
             w.copy_from_slice(&data[cursor..cursor + need_wram]);
             self.dual_wram = Some(w);
         } else {
-            // v1 / v3 (UniSystem) layout: drop any dual WRAM the live
+            // v3 (UniSystem) layout: drop any dual WRAM the live
             // instance may have been carrying so in-memory state matches the
             // versioned layout just loaded (a UniSystem snapshot never
             // described dual-WRAM state, so none should survive the restore).
@@ -415,8 +413,8 @@ impl Mapper for VsSystem {
             self.uni_wram
                 .copy_from_slice(&data[cursor + 1..cursor + 1 + WRAM_SIZE]);
         } else {
-            // A v1 snapshot predates the UniSystem RAM: restore the power-on
-            // state of the RAM and its arbitration latch.
+            // A DualSystem snapshot carries the shared WRAM instead; the
+            // UniSystem RAM and its arbitration latch return to power-on.
             self.out1 = false;
             self.uni_wram.fill(0);
         }

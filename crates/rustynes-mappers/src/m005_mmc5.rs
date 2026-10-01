@@ -1724,10 +1724,7 @@ impl Mapper for Mmc5 {
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
-        // v4 tail: audio extension state (30 bytes). Per ADR-0003 the bump
-        // from v3 -> v4 is required (additive trailing field that the
-        // expected-length check would reject otherwise). v3 blobs are
-        // accepted for forward-compat in `load_state` below.
+        // v4 tail: audio extension state (30 bytes).
         out.push(u8::from(self.audio_apu_phase));
         self.audio.write_tail(&mut out);
         // v5 tail (v2.7.2): the superset's extra PRG-RAM pages.
@@ -1753,24 +1750,19 @@ impl Mapper for Mmc5 {
             1 + 9 + 4 + 8 + 16 + 1 + 1 + 1 + 2 + 7 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
         let core_expected =
             scalar_len + self.prg_ram.len() + self.vram.len() + self.exram.len() + chr_part;
-        // v3: no audio tail. v4: audio tail of 1 (audio_apu_phase) +
-        // `Mmc5Audio::TAIL_LEN` bytes. We accept both for forward compat
-        // per ADR-0003.
+        // Only the current version is read (v2.9.8, ADR 0042): v3 (no audio
+        // tail) and v4 (no superset pages) used to load with those parts at
+        // their defaults.
         let version = if data.is_empty() { 0 } else { data[0] };
-        let expected = match version {
-            3 => core_expected,
-            4 => core_expected + 1 + Mmc5Audio::TAIL_LEN,
-            5 => core_expected + 1 + Mmc5Audio::TAIL_LEN + self.prg_ram_extra.len(),
-            _ => core_expected, // best-effort; rejected below by version check
-        };
+        if version != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let expected = core_expected + 1 + Mmc5Audio::TAIL_LEN + self.prg_ram_extra.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if !(3..=SAVE_STATE_VERSION).contains(&version) {
-            return Err(MapperError::UnsupportedVersion(version));
         }
         let mut cur = 1usize;
         self.prg_mode = data[cur];
@@ -1880,29 +1872,15 @@ impl Mapper for Mmc5 {
             self.chr.copy_from_slice(&data[cur..cur + chr_len]);
             cur += chr_len;
         }
-        // v4 audio tail (optional for v3 blobs — defaulted to silent).
-        if version >= 4 {
-            self.audio_apu_phase = data[cur] != 0;
-            cur += 1;
-            self.audio
-                .read_tail(&data[cur..cur + Mmc5Audio::TAIL_LEN])?;
-            cur += Mmc5Audio::TAIL_LEN;
-        } else {
-            // v3 blob: silence the audio extension (channels disabled,
-            // PCM at zero, length counters cleared). This keeps cross-
-            // version load deterministic.
-            self.audio = Mmc5Audio::default();
-            self.audio_apu_phase = false;
-        }
-        // v5 tail: the superset pages. An older blob predates them, and the
-        // game it recorded only ever reached the declared RAM, so they start
-        // zeroed.
-        if version >= 5 {
-            let n = self.prg_ram_extra.len();
-            self.prg_ram_extra.copy_from_slice(&data[cur..cur + n]);
-        } else {
-            self.prg_ram_extra.fill(0);
-        }
+        // v4 tail: the audio extension.
+        self.audio_apu_phase = data[cur] != 0;
+        cur += 1;
+        self.audio
+            .read_tail(&data[cur..cur + Mmc5Audio::TAIL_LEN])?;
+        cur += Mmc5Audio::TAIL_LEN;
+        // v5 tail: the superset pages.
+        let n = self.prg_ram_extra.len();
+        self.prg_ram_extra.copy_from_slice(&data[cur..cur + n]);
         Ok(())
     }
 }
@@ -2775,41 +2753,21 @@ mod tests {
     }
 
     #[test]
-    fn audio_save_load_v3_blob_defaults_audio_to_silent() {
-        // Build a fake v3 blob (pre-audio MMC5 save). We do this by
-        // crafting a v4 blob, then stripping the audio tail and rewriting
-        // the version byte to v3. load_state should accept it and reset
-        // the audio fields to defaults.
-        let mut m = fresh(8, 8);
-        // Populate some audio state in `m` so we can verify it gets
-        // CLEARED by the v3 load.
-        m.cpu_write(0x5015, 0x03);
-        m.cpu_write(0x5003, 4 << 3);
-        m.cpu_write(0x5011, 0x55);
-        assert!(m.audio.pulse1.length > 0);
-        assert_eq!(m.audio.pcm_sample, 0x55);
-
-        // Take a v4 snapshot, strip the audio tail (1 + TAIL_LEN bytes),
-        // rewrite version byte to 3.
+    fn audio_save_load_v3_blob_is_refused() {
+        // A v3 blob (pre-audio MMC5 save) used to load with the audio
+        // extension silenced. v2.9.8 reads the current layout only (ADR
+        // 0042). Build one from a current blob by stripping the v5 superset
+        // tail and the v4 audio tail and rewriting the version byte.
+        let m = fresh(8, 8);
         let mut blob = m.save_state();
-        // Strip the v5 superset tail, then the v4 audio tail.
         let tail_len = m.prg_ram_extra.len() + 1 + Mmc5Audio::TAIL_LEN;
-        for _ in 0..tail_len {
-            blob.pop();
-        }
+        blob.truncate(blob.len() - tail_len);
         blob[0] = 3;
-
-        // Load into a fresh MMC5: audio should default to silent.
         let mut other = fresh(8, 8);
-        // Pre-load some audio state in `other` to make sure load clears it.
-        other.cpu_write(0x5015, 0x03);
-        other.cpu_write(0x5003, 4 << 3);
-        other.cpu_write(0x5011, 0x77);
-        other.load_state(&blob).unwrap();
-        assert_eq!(other.audio.pulse1.length, 0);
-        assert_eq!(other.audio.pulse2.length, 0);
-        assert_eq!(other.audio.pcm_sample, 0);
-        assert_eq!(other.audio.pcm_ctrl, 0);
+        assert!(matches!(
+            other.load_state(&blob),
+            Err(MapperError::UnsupportedVersion(3))
+        ));
     }
 
     #[test]
@@ -2964,7 +2922,7 @@ mod tests {
     }
 
     #[test]
-    fn superset_pages_survive_a_save_state_and_old_blobs_still_load() {
+    fn superset_pages_survive_a_save_state_and_old_blobs_are_refused() {
         let mut m = with_ram(0x2000);
         m.cpu_write(0x5113, 6);
         m.cpu_write(0x6000, 0x66);
@@ -2974,14 +2932,16 @@ mod tests {
         n.load_state(&blob).unwrap();
         n.cpu_write(0x5113, 6);
         assert_eq!(n.cpu_read(0x6000), 0x66, "the superset page round-trips");
-        // A v4 blob (no superset tail) loads with those pages zeroed.
+        // A v4 blob (no superset tail) is refused since v2.9.8 (ADR 0042); it
+        // used to load with those pages zeroed.
         let mut v4 = blob.clone();
         v4.truncate(blob.len() - n.prg_ram_extra.len());
         v4[0] = 4;
         let mut o = with_ram(0x2000);
-        o.load_state(&v4).expect("a v4 blob loads");
-        o.cpu_write(0x5113, 6);
-        assert_eq!(o.cpu_read(0x6000), 0);
+        assert!(matches!(
+            o.load_state(&v4),
+            Err(MapperError::UnsupportedVersion(4))
+        ));
     }
 
     #[test]

@@ -103,9 +103,9 @@ pub use rewind::{
 };
 pub use rustynes_ppu::{PaletteInit, PpuRevision};
 pub use save_state::{
-    BinReader, BinWriter, FORMAT_VERSION, HEADER_LEN, Header, MAGIC, ROM_HASH_TAG_LEN, Section,
-    SectionIter, SnapshotError, THUMBNAIL_HEIGHT, THUMBNAIL_LEN, THUMBNAIL_VERSION,
-    THUMBNAIL_WIDTH, parse_header, tag, tag_string, write_header, write_section,
+    BinReader, BinWriter, FORMAT_VERSION, HEADER_LEN, Header, MAGIC, MIN_FORMAT_VERSION,
+    ROM_HASH_TAG_LEN, Section, SectionIter, SnapshotError, THUMBNAIL_HEIGHT, THUMBNAIL_LEN,
+    THUMBNAIL_VERSION, THUMBNAIL_WIDTH, parse_header, tag, tag_string, write_header, write_section,
 };
 pub use scheduler::M2Phase;
 pub use vs_db::{VsDbEntry, lookup as vs_db_lookup};

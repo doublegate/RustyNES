@@ -23,7 +23,8 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-/// v2 (v2.7.2) appends the 8 KiB WRAM; a v1 blob loads with it zeroed.
+/// v2 (v2.7.2) appends the 8 KiB WRAM. Only v2 loads since v2.9.8 (ADR 0042);
+/// a v1 blob used to load with it zeroed.
 const SAVE_STATE_VERSION: u8 = 2;
 const WRAM_SIZE: usize = 0x2000;
 
@@ -191,11 +192,10 @@ impl Mapper for Bxrom241 {
             expected: 1,
             got: 0,
         })?;
-        let wram_len = match version {
-            1 => 0,
-            SAVE_STATE_VERSION => self.wram.len(),
-            v => return Err(MapperError::UnsupportedVersion(v)),
-        };
+        if version != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let wram_len = self.wram.len();
         let expected = 2 + self.vram.len() + chr_extra + wram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
@@ -213,11 +213,7 @@ impl Mapper for Bxrom241 {
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
             cursor += self.chr.len();
         }
-        if wram_len == 0 {
-            self.wram.fill(0);
-        } else {
-            self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
-        }
+        self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
         Ok(())
     }
 }

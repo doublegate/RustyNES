@@ -182,6 +182,24 @@ Recorded as the work landed, so the next reader does not have to diff for it.
   current docs and `AGENTS.md`. Historical records (ADRs, audits, release
   notes, CHANGELOG history, archived and per-release plans, the measured
   profiles in `docs/performance.md`) keep the old name.
+- **Save states (the amendment's "every legacy-format reader"):** the
+  container format moves 2 -> 3, and `parse_header` refuses anything older
+  than `MIN_FORMAT_VERSION` (3) with the new `SnapshotError::FormatTooOld`.
+  This follows ADR 0028's v2.0.0 approach of bumping the container at a
+  format break, and goes one step further: ADR 0028's bump only signalled the
+  line while rejection happened per section, but here several sections (CPU
+  4, APU 4, PPU 11, most mappers) keep their numbers because their layouts
+  did not move, so without the header check a v2.9.7 file would be refused at
+  whichever section came first, with a message naming that section. The BUS
+  section moves 1 -> 2 with every field required. Removed readers: BUS
+  (every trailing-default tail, and an unknown expansion-device tag read as
+  "none"); APU (the version 1-3 frame-counter migrations, the trailing-optional
+  DMC-DMA bytes and Stage-4 tail, and with it `Apu::snapshot_restored_parity`
+  and the bus's re-seed branch); PPU (the version 1-10 upconversions); the
+  mappers listed in `docs/mappers.md` "Save-state versions" (with
+  `A12RiseFilter::from_legacy_level`). The CPU, OPLL and Vs. `DualSystem`
+  readers were already exact. Tests that pinned old-format acceptance now
+  assert rejection.
 - **Kept:** `Bus::on_cpu_cycle`. It is the default body of `cpu_clock`, which
   every simple test bus (`nestest`, `blargg`, the CPU benches) relies on.
 - **Provenance:** `rustynes-core/src/bus.rs` has carried a `// Provenance:`

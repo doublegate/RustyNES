@@ -321,24 +321,17 @@ impl Mapper for Multicart15 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        // The PRG-RAM tail is NEW in v2.3.4. A state written before it existed
-        // carries the same version byte and is exactly `prg_ram.len()` shorter,
-        // so accept that legacy length too and start the RAM cleared. Rejecting
-        // it would break every existing mapper-15 save slot for a field those
-        // slots could not have contained -- a self-inflicted format epoch, and
-        // this project reserves those for a MAJOR release (ADR 0028).
+        // The PRG-RAM tail is new in v2.3.4 and shares the version byte, so a
+        // state written before it was told apart by length and loaded with the
+        // RAM cleared. Since v2.9.8 (ADR 0042) only the full layout loads; the
+        // short one is a truncation.
         let with_ram = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
-        let legacy = with_ram - self.prg_ram.len();
-        let has_prg_ram = match data.len() {
-            n if n == with_ram => true,
-            n if n == legacy => false,
-            got => {
-                return Err(MapperError::Truncated {
-                    expected: with_ram,
-                    got,
-                });
-            }
-        };
+        if data.len() != with_ram {
+            return Err(MapperError::Truncated {
+                expected: with_ram,
+                got: data.len(),
+            });
+        }
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
@@ -353,12 +346,8 @@ impl Mapper for Multicart15 {
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
         cursor += self.chr_ram.len();
-        if has_prg_ram {
-            self.prg_ram
-                .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
-        } else {
-            self.prg_ram.fill(0);
-        }
+        self.prg_ram
+            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
         Ok(())
     }
 }
@@ -2978,25 +2967,17 @@ impl Mapper for Multicart227 {
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
         // v2.7.2: the FW-01 WRAM, when present, as a trailing block. Its
-        // length is fixed by the header, so an older blob (no block) is told
-        // apart by length rather than by the file-wide version byte.
+        // length is fixed by the header.
         out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         // This board's blob shares the file-wide `SAVE_STATE_VERSION`, so a
-        // pre-v2.7.2 blob (no WRAM) is told apart by length alone: exactly
-        // `without_wram` bytes is the old layout and loads with WRAM zeroed.
-        // Any other length must be the full current layout. A board built
-        // without WRAM (no battery header) has `wram.len() == 0`, and the
-        // two lengths coincide.
-        let without_wram = 6 + self.vram.len() + self.chr_ram.len();
-        let expected = if data.len() == without_wram {
-            without_wram
-        } else {
-            without_wram + self.wram.len()
-        };
+        // pre-v2.7.2 blob (no WRAM) was told apart by length and loaded with
+        // WRAM zeroed. Since v2.9.8 (ADR 0042) only the full layout loads. A
+        // board built without WRAM (no battery header) has `wram.len() == 0`.
+        let expected = 6 + self.vram.len() + self.chr_ram.len() + self.wram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -3018,11 +2999,7 @@ impl Mapper for Multicart227 {
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
         cursor += self.chr_ram.len();
-        if data.len() == cursor {
-            self.wram.fill(0); // a pre-v2.7.2 blob
-        } else {
-            self.wram.copy_from_slice(&data[cursor..]);
-        }
+        self.wram.copy_from_slice(&data[cursor..]);
         Ok(())
     }
 }
@@ -4916,11 +4893,10 @@ mod tests {
     }
 
     #[test]
-    fn m15_loads_a_pre_prg_ram_save_state() {
+    fn m15_refuses_a_pre_prg_ram_save_state() {
         // The PRG-RAM tail is new in v2.3.4 and carries the SAME version byte,
-        // so an existing slot is distinguishable only by length. Rejecting it
-        // would break every mapper-15 save that predates the field, for data
-        // those saves could not have held.
+        // so an old slot is distinguishable only by length. It loaded with the
+        // RAM cleared until v2.9.8 (ADR 0042), which reads the full layout only.
         let mut m = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
         m.cpu_write(0x6000, 0x5A);
         let current = m.save_state();
@@ -4929,13 +4905,10 @@ mod tests {
         let legacy = current[..current.len() - 0x2000].to_vec();
         let mut m2 = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
         m2.cpu_write(0x6000, 0xFF);
-        m2.load_state(&legacy)
-            .expect("a pre-v2.3.4 state must still load");
-        assert_eq!(
-            m2.cpu_read(0x6000),
-            0,
-            "PRG-RAM starts cleared on a legacy load"
-        );
+        assert!(matches!(
+            m2.load_state(&legacy),
+            Err(MapperError::Truncated { .. })
+        ));
 
         // And the current form still round-trips its contents.
         let mut m3 = Multicart15::new(synth_prg_16k(8), &[]).unwrap();

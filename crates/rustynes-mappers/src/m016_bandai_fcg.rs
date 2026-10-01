@@ -83,8 +83,9 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-/// v2 (v2.9.6) appends mapper 153's outer bank, WRAM enable and WRAM. A v1
-/// blob still loads on the variants that have neither.
+/// v2 (v2.9.6) appends mapper 153's outer bank, WRAM enable and WRAM. Since
+/// v2.9.8 (ADR 0042) a v1 blob is refused; it used to load on the variants
+/// that have neither.
 const SAVE_STATE_VERSION: u8 = 2;
 
 /// Mapper 153's WRAM.
@@ -796,13 +797,13 @@ impl Mapper for BandaiFcg {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let ee_len = self.eeprom.as_ref().map_or(0, |e| e.mem.len());
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let v1_len = 18 + self.vram.len() + ee_len + need_chr;
+        // Only the current version is read (v2.9.8, ADR 0042); a v1 blob,
+        // which carried no mapper-153 tail, used to load on boards without one.
+        let core_len = 18 + self.vram.len() + ee_len + need_chr;
         let expected = match data.first() {
-            // v1 carried no 153 tail, so it loads only where there is none.
-            Some(1) if self.wram.is_empty() => v1_len,
-            Some(&SAVE_STATE_VERSION) => v1_len + 2 + self.wram.len(),
+            Some(&SAVE_STATE_VERSION) => core_len + 2 + self.wram.len(),
             Some(&v) => return Err(MapperError::UnsupportedVersion(v)),
-            None => v1_len,
+            None => core_len,
         };
         if data.len() != expected {
             return Err(MapperError::Truncated {
@@ -847,16 +848,11 @@ impl Mapper for BandaiFcg {
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
             cursor += self.chr.len();
         }
-        if data[0] == SAVE_STATE_VERSION {
-            self.outer = data[cursor] & 0x01;
-            self.wram_enabled = data[cursor + 1] != 0;
-            cursor += 2;
-            self.wram
-                .copy_from_slice(&data[cursor..cursor + self.wram.len()]);
-        } else {
-            self.outer = 0;
-            self.wram_enabled = false;
-        }
+        self.outer = data[cursor] & 0x01;
+        self.wram_enabled = data[cursor + 1] != 0;
+        cursor += 2;
+        self.wram
+            .copy_from_slice(&data[cursor..cursor + self.wram.len()]);
         Ok(())
     }
 }
@@ -1293,7 +1289,8 @@ mod tests {
             b.load_state(&v1).is_err(),
             "a v1 blob has no WRAM to restore"
         );
-        // A v1 blob still loads on a board with no 153 tail.
+        // Since v2.9.8 (ADR 0042) a v1 blob is refused on a board with no 153
+        // tail too; it used to load there.
         let mut fcg = BandaiFcg::new(
             synth_prg(8),
             synth_chr(128),
@@ -1304,6 +1301,9 @@ mod tests {
         let mut v1 = fcg.save_state();
         v1[0] = 1;
         v1.truncate(v1.len() - 2);
-        fcg.load_state(&v1).unwrap();
+        assert!(matches!(
+            fcg.load_state(&v1),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
     }
 }

@@ -355,13 +355,6 @@ const CHIPS: &[Chip] = &[
                 "derived: reset at the start of every `tick_with_external` and read by \
                  observers after that same tick; never survives a tick boundary",
             ),
-            (
-                "restored_parity_tail",
-                "restore-produced protocol flag, not emulation state: `Apu::restore` sets it to \
-                 report whether the blob carried the Stage-4 parity/DMA tail, so the bus knows \
-                 not to re-seed the boot alignment over exactly-restored values. Consumed \
-                 immediately after restore; serializing it would be circular",
-            ),
             ("channel_mask", "config: frontend Audio Mixer channel mute"),
             (
                 "channel_gain",

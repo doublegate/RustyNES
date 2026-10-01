@@ -246,7 +246,9 @@ bug report. Pinned behaviourally by
 `frame_counter.cycle` across a mid-countdown round trip; note that
 `frame_counter.mode` cannot serve as the oracle, since `reset_rewrite_4017`
 retains bit 7 and the re-write therefore restores the mode already in effect.
-v1..=3 blobs upconvert to "no re-write pending", the resting value.
+v1..=3 blobs upconverted to "no re-write pending", the resting value, until
+v2.9.8; since then `Apu::restore` reads v4 only, with every field required
+(ADR 0042).
 
 ### DMC channel
 

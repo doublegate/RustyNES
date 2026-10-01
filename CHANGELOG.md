@@ -357,6 +357,21 @@ cycle-accurate core later replaced.
   `dma_mc_consumed`), and every field is now required: a version-1 section is
   refused with a version error, and a short or overlong version-2 section with
   a section error, where version 1 read missing tail fields as defaults.
+
+- **Save states from v2.9.7 and earlier no longer load, and every legacy
+  save-state reader is gone (ADR 0042).** The `.rns` container format moves
+  to 3 and a reader refuses any older container at the header with one typed
+  error, `SnapshotError::FormatTooOld`. Behind it, the BUS section moves to
+  version 2 (the NMI detector's two fields and four that no longer carry
+  state are dropped, and every field is required), and the readers that
+  upconverted older section layouts are removed: the BUS section's
+  trailing-default tails (Four Score, expansion devices, mirroring override,
+  controller-run state, internal bus), the APU's version 1-3 migrations and
+  its trailing-optional DMC-DMA and Stage-4 tails, the PPU's version 1-10
+  upconversions, and the older layouts of 28 mapper implementations (listed in
+  `docs/mappers.md`). Short, long or older blobs are refused with typed
+  errors. Movies that embed a start state from an older version fail the
+  same way.
 ## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
 
 The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:

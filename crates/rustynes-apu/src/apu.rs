@@ -90,11 +90,6 @@ pub struct Apu {
     /// by [`Self::seed_apu_alignment`]; otherwise constant. Unused when the flag
     /// is off (the legacy dual-toggle path runs instead).
     pub(crate) parity_seed: u64,
-    /// W3-Stage-4 (2026-06-10): whether the most recent [`Apu::restore`]
-    /// blob carried the Stage-4 parity/DMA-state tail (so `put_cycle` +
-    /// `parity_seed` were restored EXACTLY and the bus must NOT re-seed the
-    /// boot alignment over them). Transient bookkeeping — never serialized.
-    pub(crate) restored_parity_tail: bool,
     /// Cumulative CPU cycle counter (used for `$4017` write alignment).
     pub(crate) cpu_cycle: u64,
     /// Pending DMC DMA request — the bus polls and consumes this when it
@@ -343,7 +338,6 @@ impl Apu {
             dmc_driven_externally: false,
             put_cycle: false,
             parity_seed: 0,
-            restored_parity_tail: false,
             cpu_cycle: 0,
             pending_dmc_dma: false,
             pending_dmc_dma_next: false,
@@ -1729,17 +1723,6 @@ impl Apu {
         {
             self.parity_seed = (alignment & 1) as u64;
         }
-    }
-
-    /// W3-Stage-4 (2026-06-10): whether the most recent [`Apu::restore`]
-    /// blob carried the Stage-4 parity/DMA-state tail. The bus consults this
-    /// after a snapshot restore: when `true` the exact `put_cycle` /
-    /// `parity_seed` phase came from the blob and must NOT be overwritten by
-    /// the boot [`Self::seed_apu_alignment`] call (pre-Stage-4 blobs lack the
-    /// tail, so the bus falls back to the boot seed exactly as before).
-    #[must_use]
-    pub const fn snapshot_restored_parity(&self) -> bool {
-        self.restored_parity_tail
     }
 
     /// CPU register write (`$4000-$4017` excluding `$4014`).
