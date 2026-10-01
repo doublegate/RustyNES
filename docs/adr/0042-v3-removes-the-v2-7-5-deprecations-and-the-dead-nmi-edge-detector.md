@@ -150,5 +150,9 @@ unreachable or dead.
 
 This contradicts the Decision paragraph above ("done at v3.0.0, not before: a
 v2.9.x release is MINOR"). That paragraph is kept as written and superseded
-here. Whether the release that carries this break keeps the number v2.9.8 is a
-SemVer question that goes to the maintainer at the release cut.
+here. **The release keeps the number v2.9.8** (maintainer, 2026-10-01): "No
+major version change - we're prepping for v3.0.0, I consider this all work
+towards that release". The v2.9.x line is the run-up to v3.0.0, and this break
+is part of that preparation. The rule above ("a v2.9.x release is MINOR") is
+deliberately set aside for this one release, and that is recorded here, not
+left implicit.
