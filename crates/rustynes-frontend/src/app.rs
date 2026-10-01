@@ -1863,6 +1863,9 @@ impl App {
         // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
         // byte-identical.
         self.apply_ppu_hardware_config();
+        // v2.9.8 — and the console model (NES by default = byte-identical),
+        // straight after the boot so a Famicom selection gives its power-on.
+        self.apply_console_model();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -6379,6 +6382,30 @@ impl App {
         }
     }
 
+    /// v2.9.8 — push the `[emulation] famicom_console` choice into the core as
+    /// a [`rustynes_core::ConsoleModel`]. Called on ROM load, after a
+    /// power-cycle, at startup and on a Settings change. Selecting the Famicom
+    /// model straight after a load or power-cycle gives the Famicom power-on
+    /// (the PPU's warm-up already over); selected mid-game it ends any warm-up
+    /// still running and changes what the next Reset does. Off (the NES model)
+    /// is byte-identical.
+    ///
+    /// Kept apart from [`Self::apply_ppu_hardware_config`] on purpose: that
+    /// function also re-applies the power-on work-RAM fill, which rewrites
+    /// work RAM, so it must not run on a mid-game Settings change for this knob.
+    fn apply_console_model(&self) {
+        use rustynes_core::ConsoleModel;
+        let model = if self.config.emulation.famicom_console {
+            ConsoleModel::Famicom
+        } else {
+            ConsoleModel::Nes
+        };
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_console_model(model);
+        }
+    }
+
     /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
     /// from the core and push it into the Settings panel, so the Audio tab shows
     /// the expansion-channel volume slider only for boards with on-cart audio.
@@ -8877,6 +8904,8 @@ impl App {
             // v2.1.7 P5 — push the persisted PPU-revision / power-up-palette /
             // power-on-RAM knobs (no-op if no ROM yet). All-off = byte-identical.
             self.apply_ppu_hardware_config();
+            // v2.9.8 — and the console model (no-op if no ROM yet; NES default).
+            self.apply_console_model();
             // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named
             // bank entry, else legacy .pal / built-in).
             self.apply_active_palette();
@@ -9235,6 +9264,9 @@ impl App {
         // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
         // byte-identical.
         self.apply_ppu_hardware_config();
+        // v2.9.8 — and the console model (NES by default = byte-identical),
+        // straight after the boot so a Famicom selection gives its power-on.
+        self.apply_console_model();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -11305,6 +11337,11 @@ impl ApplicationHandler<AppEvent> for App {
                 // idempotent. Either setting emits the identical frame.
                 if settings.fast_dotloop {
                     self.apply_ppu_hardware_config();
+                }
+                // v2.9.8 — console-model live-apply (its own path, so the
+                // power-on RAM fill is not re-run mid-game).
+                if settings.console_model {
+                    self.apply_console_model();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save

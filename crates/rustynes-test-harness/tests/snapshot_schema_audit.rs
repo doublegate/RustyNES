@@ -489,6 +489,11 @@ const CHIPS: &[Chip] = &[
                 "config: the opt-in power-up palette model, consumed only at power-on",
             ),
             (
+                "console_model",
+                "config: the opt-in Famicom reset wiring, consumed at power-on and reset; \
+                 the warm-up counter it acts on is in the PPU section",
+            ),
+            (
                 "cpu_2a03_revision",
                 "config: the opt-in 2A03 revision knob, re-applied by the host",
             ),

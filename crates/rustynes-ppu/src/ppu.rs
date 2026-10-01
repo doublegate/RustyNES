@@ -1827,6 +1827,37 @@ impl Ppu {
         self.die_revision
     }
 
+    /// v2.9.8 — CPU cycles left in the post-reset warm-up window, during which
+    /// writes to `$2000`/`$2001`/`$2005`/`$2006` are ignored (`0` once the
+    /// window has passed). Read-only; see [`PpuRegion::post_reset_mask_cycles`]
+    /// and `docs/ppu-2c02.md` (§Power-up and reset).
+    #[must_use]
+    pub const fn warmup_cycles_remaining(&self) -> u32 {
+        self.post_reset_mask_remaining
+    }
+
+    /// v2.9.8 — end the post-reset warm-up window now, so `$2000`/`$2001`/
+    /// `$2005`/`$2006` writes take effect from the next CPU cycle.
+    ///
+    /// This is how the opt-in Famicom console model is expressed at the PPU:
+    /// the `NESdev` wiki's "PPU power up state" (§Famicom) documents that the
+    /// Famicom ties the PPU's `/RESET` to 5 V while the CPU's `/RESET` rides a
+    /// 0.47 µF
+    /// capacitor, so at power-on the PPU begins initialising roughly one frame
+    /// (about 29,781 CPU cycles) before the CPU leaves reset. The warm-up window
+    /// is 29,658 cycles on NTSC, shorter than that frame, so by the time the
+    /// CPU executes its first instruction the window has already closed. The
+    /// PPU itself is unchanged; the console decides when its reset is released,
+    /// which is why the caller (the console model in `rustynes-core`) owns the
+    /// decision and this is only the mechanism.
+    ///
+    /// Only the window is touched. Every register and the frame position stay
+    /// as they are, and the field it clears is already part of the save-state,
+    /// so no snapshot change follows from calling it.
+    pub const fn end_warmup(&mut self) {
+        self.post_reset_mask_remaining = 0;
+    }
+
     /// v2.1.7 P5 — apply a power-up palette-RAM pattern (see [`PaletteInit`]).
     ///
     /// Writes all 32 palette-RAM bytes to the selected pattern and records the
@@ -7164,6 +7195,30 @@ mod tests {
         }
         p.cpu_write_register(0, PpuCtrl::NMI_ENABLE.bits(), &mut b);
         assert!(p.ctrl.contains(PpuCtrl::NMI_ENABLE));
+    }
+
+    /// v2.9.8 — `end_warmup` closes the post-reset window at once: the four
+    /// masked registers (`$2000`/`$2001`/`$2005`/`$2006`, `NESdev` "PPU power up
+    /// state") accept the very next write, with no CPU cycles elapsed. This is
+    /// the PPU half of the opt-in Famicom console model.
+    #[test]
+    fn end_warmup_lets_masked_registers_write_immediately() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        let mut b = TestBus::new();
+        assert_eq!(p.warmup_cycles_remaining(), 29_658);
+        p.end_warmup();
+        assert_eq!(p.warmup_cycles_remaining(), 0);
+        p.cpu_write_register(0, PpuCtrl::NMI_ENABLE.bits(), &mut b);
+        assert!(p.ctrl.contains(PpuCtrl::NMI_ENABLE), "$2000 accepted");
+        // Greyscale only: a visible PPUMASK change that leaves rendering off,
+        // so the `$2006` pair below copies `t -> v` at once.
+        p.cpu_write_register(1, 0x01, &mut b);
+        assert_eq!(p.mask.bits(), 0x01, "$2001 accepted");
+        p.cpu_write_register(6, 0x21, &mut b);
+        p.cpu_write_register(6, 0x08, &mut b);
+        assert_eq!(p.v & 0x3FFF, 0x2108, "$2006 pair accepted");
+        p.cpu_write_register(5, 0x08, &mut b);
+        assert!(p.w, "$2005 toggled the write latch");
     }
 
     #[test]

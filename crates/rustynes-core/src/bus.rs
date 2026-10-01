@@ -366,6 +366,11 @@ pub struct LockstepBus {
     /// (the PPU field is lost on rebuild, like the Vs. palette).
     /// [`PpuRevision::default`] models no extra behavior → byte-identical.
     ppu_die_revision: PpuRevision,
+    /// v2.9.8 — which console's reset wiring is modelled (see
+    /// [`crate::nes::ConsoleModel`]). Consulted at power-on and warm reset.
+    /// [`crate::nes::ConsoleModel::Nes`] (default) is byte-identical to every
+    /// earlier release. Config, not save-state.
+    console_model: crate::nes::ConsoleModel,
     /// v2.1.7 P5 — selected power-up palette pattern (see [`PaletteInit`]).
     /// Re-applied on [`Self::power_cycle`] after the PPU (and thus its palette
     /// RAM) is rebuilt. [`PaletteInit::default`] is all-zero → byte-identical.
@@ -964,6 +969,7 @@ impl LockstepBus {
             // defaults (zeroed RAM, default revision, all-zero power-up palette).
             power_on_ram: crate::nes::PowerOnRam::Zeroed,
             ppu_die_revision: PpuRevision::Rp2c02H,
+            console_model: crate::nes::ConsoleModel::Nes,
             power_up_palette: PaletteInit::Zeroed,
             controllers34: [Controller::new(); 2],
             four_score_idx: [0; 2],
@@ -1163,7 +1169,13 @@ impl LockstepBus {
     /// Reset (warm). Defers to `Ppu::reset` and clears DMA state. CPU is
     /// reset by the caller.
     pub fn reset(&mut self) {
-        self.ppu.reset();
+        // v2.9.8 — on a Famicom the PPU's /RESET is tied to 5 V, so the Reset
+        // button reaches only the CPU (NESdev "PPU power up state", §Famicom):
+        // the PPU keeps PPUCTRL/PPUMASK, its latches and its frame position,
+        // and no warm-up window is re-armed. The NES (default) resets both.
+        if matches!(self.console_model, crate::nes::ConsoleModel::Nes) {
+            self.ppu.reset();
+        }
         self.apu.reset();
         {
             self.apu.set_dmc_driven_externally(true);
@@ -1193,6 +1205,9 @@ impl LockstepBus {
         // their defaults, so a default power-cycle stays byte-identical.
         self.ppu.set_revision(self.ppu_die_revision);
         self.ppu.apply_power_up_palette(self.power_up_palette);
+        // v2.9.8 — the rebuilt PPU starts a fresh warm-up window; a Famicom's
+        // closes before the CPU's first instruction. No-op on the NES.
+        self.apply_console_model_power_on();
         // v2.1.7 P5 — re-apply the power-on work-RAM fill after the `fill(0)`
         // above. At the default (`Zeroed`) this is the same zero fill.
         self.apply_power_on_ram();
@@ -1437,6 +1452,34 @@ impl LockstepBus {
     #[must_use]
     pub const fn ppu_revision(&self) -> PpuRevision {
         self.ppu_die_revision
+    }
+
+    /// v2.9.8 — select the console's reset wiring (see
+    /// [`crate::nes::ConsoleModel`]), storing it for [`Self::power_cycle`] and
+    /// [`Self::reset`].
+    ///
+    /// Selecting [`crate::nes::ConsoleModel::Famicom`] also ends any PPU warm-up
+    /// in progress, since a Famicom's PPU is never held in reset while the CPU
+    /// runs; that is what gives a host that applies the knob straight after
+    /// construction the Famicom power-on. At the default this is a store only.
+    pub const fn set_console_model(&mut self, model: crate::nes::ConsoleModel) {
+        self.console_model = model;
+        self.apply_console_model_power_on();
+    }
+
+    /// v2.9.8 — the power-on half of the console model: on a Famicom the PPU
+    /// left reset about one frame before the CPU, which is longer than the
+    /// warm-up window, so the window is already closed. No-op on the NES.
+    const fn apply_console_model_power_on(&mut self) {
+        if matches!(self.console_model, crate::nes::ConsoleModel::Famicom) {
+            self.ppu.end_warmup();
+        }
+    }
+
+    /// v2.9.8 — the currently-selected console reset wiring.
+    #[must_use]
+    pub const fn console_model(&self) -> crate::nes::ConsoleModel {
+        self.console_model
     }
 
     /// v2.1.7 P5 — apply a power-up palette-RAM pattern, storing it so a

@@ -80,6 +80,53 @@ pub struct PowerOnConfig {
     pub ram: PowerOnRam,
 }
 
+/// v2.9.8 — which console wires the PPU's `/RESET` line.
+///
+/// The 2C02 is the same chip in every NTSC console; what differs is the board
+/// around it. The `NESdev` "PPU power up state" page (§Famicom, and its closing
+/// note on front- and top-loaders) documents two wirings:
+///
+/// - **NES (front-loader, NES-001)** — the CPU and PPU are reset together. At
+///   power-on and on every press of Reset the PPU spends about 29,658 CPU
+///   cycles (NTSC) in its warm-up state, ignoring writes to `$2000`, `$2001`,
+///   `$2005` and `$2006`, and Reset clears PPUCTRL, PPUMASK, the scroll/address
+///   latch and the read buffer.
+/// - **Famicom** — the PPU's `/RESET` is tied to 5 V and only the CPU's rides
+///   a 0.47 µF capacitor. At power-on the PPU therefore starts initialising
+///   roughly one frame before the CPU leaves reset, which is longer than the
+///   warm-up window, so the CPU's first instructions can already write the
+///   masked registers. The Reset button reaches only the CPU: the PPU keeps
+///   running and keeps its register state.
+///
+/// What this models, and what it does not:
+///
+/// - Power-on under [`Self::Famicom`] closes the warm-up window before the
+///   first instruction ([`rustynes_ppu::Ppu::end_warmup`]). `NESdev` gives the
+///   lead as "approximately one frame ... the exact timing has not been
+///   measured, and may vary", so the PPU's frame position is left where the NES
+///   model puts it rather than advanced by a guessed amount.
+/// - A warm reset under [`Self::Famicom`] leaves the PPU untouched. The APU,
+///   DMA unit and cartridge reset exactly as under [`Self::Nes`].
+/// - The NES-101 top-loader shares the Famicom's reset wiring, but `NESdev` does
+///   not document its power-on lead, so it is not offered as a separate model.
+///
+/// **Off by default.** [`Self::Nes`] is the model every release before v2.9.8
+/// emulated, so the default build is byte-identical. The selection is a
+/// host/config knob, never derived from the ROM: NES 2.0 has no console type
+/// that distinguishes a Famicom from an NES, and the project does not guess a
+/// console from a per-game list. It is not part of the save-state (the warm-up
+/// counter it acts on already is), and like the other hardware knobs on [`Nes`]
+/// it is re-applied by the host after a load or power-cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum ConsoleModel {
+    /// Default. Front-loading NES: the CPU and PPU share the reset line.
+    #[default]
+    Nes,
+    /// Famicom: the PPU is never held in reset, so it leaves its warm-up before
+    /// the CPU starts and ignores the Reset button.
+    Famicom,
+}
+
 /// v1.1.0 beta.2 (Workstream C, T-110-C2) — one cycle-trace record.
 ///
 /// The CPU register file + cycle count captured just before an instruction
@@ -2857,6 +2904,31 @@ impl Nes {
         self.bus.ppu_revision()
     }
 
+    /// v2.9.8 — select the console whose reset wiring is modelled (see
+    /// [`ConsoleModel`]).
+    ///
+    /// The selection is stored, so every later [`Nes::power_cycle`] and
+    /// [`Nes::reset`] follows it. It also takes effect at once in one respect:
+    /// selecting [`ConsoleModel::Famicom`] ends any PPU warm-up still in
+    /// progress, because a Famicom's PPU is never held in reset while its CPU
+    /// runs. A host that applies its configuration straight after building the
+    /// machine (as the frontend does on every ROM load and power-cycle) thereby
+    /// gets the Famicom power-on. Selecting [`ConsoleModel::Nes`] never re-arms
+    /// a window that has already closed; it applies from the next reset.
+    ///
+    /// [`ConsoleModel::Nes`] is the default and is byte-identical to every
+    /// earlier release. Deterministic; config, not save-state.
+    pub const fn set_console_model(&mut self, model: ConsoleModel) {
+        self.bus.set_console_model(model);
+    }
+
+    /// v2.9.8 — the currently-selected console reset wiring (default
+    /// [`ConsoleModel::Nes`], byte-identical).
+    #[must_use]
+    pub const fn console_model(&self) -> ConsoleModel {
+        self.bus.console_model()
+    }
+
     /// v2.1.7 P5 — apply a power-up palette-RAM pattern (see [`PaletteInit`]).
     ///
     /// The 2C02's palette RAM is not cleared at power-on; this selects the
@@ -3607,6 +3679,105 @@ mod tests {
             PaletteInit::Blargg,
             "palette survives power-cycle"
         );
+    }
+
+    /// v2.9.8 — a ROM that writes PPUCTRL and PPUMASK exactly once, as its
+    /// first four instructions, then idles. Whether those writes land is the
+    /// whole observable difference between the two console models at power-on.
+    ///
+    /// ```text
+    /// C000: A9 90     LDA #$90    ; NMI on, BG pattern table $1000
+    /// C002: 8D 00 20  STA $2000
+    /// C005: A9 01     LDA #$01    ; greyscale only: rendering stays off
+    /// C007: 8D 01 20  STA $2001
+    /// C00A: 4C 0A C0  JMP $C00A
+    /// C00D: 40        RTI         ; NMI handler
+    /// ```
+    fn one_shot_ppu_write_rom() -> Vec<u8> {
+        // (Two frames are run per check below, not one: the machine powers up
+        // with the PPU at the end of the pre-render line, so the first
+        // `run_frame` completes within a few cycles, before these writes.)
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16 KiB PRG, CHR-RAM
+        let prg = &mut bytes[16..];
+        prg[0..14].copy_from_slice(&[
+            0xA9, 0x90, 0x8D, 0x00, 0x20, 0xA9, 0x01, 0x8D, 0x01, 0x20, 0x4C, 0x0A, 0xC0, 0x40,
+        ]);
+        let len = prg.len();
+        prg[len - 6] = 0x0D; // NMI -> $C00D (RTI)
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00; // RESET -> $C000
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x0A; // IRQ -> $C00A
+        prg[len - 1] = 0xC0;
+        bytes
+    }
+
+    fn run_frames(nes: &mut Nes, n: u32) {
+        for _ in 0..n {
+            let _ = nes.run_frame();
+        }
+    }
+
+    /// v2.9.8 — the console model's two documented effects, from `NESdev` "PPU
+    /// power up state" (§Famicom and the front-/top-loader note):
+    ///
+    /// 1. At power-on the NES ignores `$2000`/`$2001` for ~29,658 CPU cycles,
+    ///    so a write issued in the first few cycles is lost; on the Famicom the
+    ///    PPU left reset about one frame earlier, so the same write lands.
+    /// 2. The Reset button resets the PPU on the NES (PPUCTRL cleared, the
+    ///    warm-up window re-armed) and does not reach it on the Famicom.
+    #[test]
+    fn famicom_console_model_ppu_leaves_reset_before_the_cpu() {
+        let rom = one_shot_ppu_write_rom();
+
+        // Default (NES): the model is NES, and the one-shot writes are dropped
+        // inside the warm-up window — the established behaviour.
+        let mut nes = Nes::from_rom(&rom).expect("boot");
+        assert_eq!(nes.console_model(), ConsoleModel::Nes);
+        run_frames(&mut nes, 2);
+        assert_eq!(
+            nes.bus().ppu().debug_registers()[..2],
+            [0x00, 0x00],
+            "NES: writes inside the warm-up window are ignored"
+        );
+
+        // Famicom, selected straight after construction the way the frontend
+        // applies its config: the same writes land.
+        let mut fc = Nes::from_rom(&rom).expect("boot");
+        fc.set_console_model(ConsoleModel::Famicom);
+        assert_eq!(fc.bus().ppu().warmup_cycles_remaining(), 0);
+        run_frames(&mut fc, 2);
+        assert_eq!(
+            fc.bus().ppu().debug_registers()[..2],
+            [0x90, 0x01],
+            "Famicom: the PPU is past its warm-up when the CPU starts"
+        );
+
+        // Reset reaches only the CPU on a Famicom: PPUCTRL/PPUMASK survive and
+        // no window is re-armed.
+        fc.reset();
+        assert_eq!(fc.bus().ppu().debug_registers()[..2], [0x90, 0x01]);
+        assert_eq!(fc.bus().ppu().warmup_cycles_remaining(), 0);
+
+        // On the NES, Reset clears PPUCTRL/PPUMASK and re-arms the window.
+        let mut nes = Nes::from_rom(&rom).expect("boot");
+        nes.set_console_model(ConsoleModel::Famicom);
+        run_frames(&mut nes, 2);
+        assert_eq!(nes.bus().ppu().debug_registers()[..2], [0x90, 0x01]);
+        nes.set_console_model(ConsoleModel::Nes);
+        nes.reset();
+        assert_eq!(nes.bus().ppu().debug_registers()[..2], [0x00, 0x00]);
+        assert!(nes.bus().ppu().warmup_cycles_remaining() > 29_000);
+
+        // The selection survives a power cycle and is applied to the rebuilt
+        // PPU before the CPU's first instruction.
+        fc.power_cycle();
+        assert_eq!(fc.console_model(), ConsoleModel::Famicom);
+        assert_eq!(fc.bus().ppu().warmup_cycles_remaining(), 0);
+        run_frames(&mut fc, 2);
+        assert_eq!(fc.bus().ppu().debug_registers()[..2], [0x90, 0x01]);
     }
 
     #[test]

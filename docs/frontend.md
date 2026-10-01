@@ -983,7 +983,17 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
   own `Nes` and never sets it. **Disable sprite limit** is still inert: the core
-  has no hook for it.
+  has no hook for it. The **Accuracy** group above it carries OAM decay and,
+  from v2.9.8, **Famicom console (PPU leaves reset early)** —
+  `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
+  `App::apply_console_model` maps it to `rustynes_core::ConsoleModel` and calls
+  `Nes::set_console_model` after every ROM load and at startup, and on a
+  Settings change through its own `SettingsApply::console_model` flag (not the
+  `fast_dotloop` path, because `apply_ppu_hardware_config` also re-runs the
+  power-on work-RAM fill). A power-cycle keeps the model inside the core. The
+  model and its limits are specified in `docs/ppu-2c02.md` (§Famicom console
+  model); it takes full effect from the next power-cycle or ROM load, and movies
+  and netplay do not record it.
 - **Input** — the rebind grids + Port-2 device selector, now with contextual
   **device config** (v1.5.0 D4): SNES-mouse reported sensitivity + pointer-speed
   multiplier, Arkanoid Vaus pointer-speed, and the Power Pad / Family Trainer mat

@@ -158,6 +158,60 @@ default-off knobs described below (see [Power-up palette RAM](#power-up-palette-
 and [Power-on work-RAM model](#power-on-work-ram-model-optional-opt-in-default-off-v217-p5));
 the default keeps both deterministic (all-zero).
 
+The table and window above describe the front-loading NES (NES-001), where the
+CPU and PPU share one reset line. That is the default model, and the one every
+release before v2.9.8 emulated. See the next section for the Famicom.
+
+### Famicom console model (optional, opt-in, default-OFF) (v2.9.8)
+
+NESdev's "PPU power up state" page (§Famicom, and its closing note on front-
+and top-loaders) documents a different reset wiring on the Famicom:
+
+- The PPU's `/RESET` is tied to 5 V; only the CPU's rides a 0.47 µF capacitor.
+  At power-on the PPU therefore starts initialising "approximately one frame
+  before the CPU reset" (the page notes the exact timing has not been measured
+  and may vary). One NTSC frame is about 29,781 CPU cycles, longer than the
+  29,658-cycle window, so the window is already over when the CPU runs its
+  first instruction.
+- The Reset button resets only the CPU. The PPU keeps PPUCTRL, PPUMASK, its
+  latches, its read buffer and its frame position, and no window is re-armed.
+
+The page's examples are *Magic John* (waits 9,217 cycles before enabling NMI;
+boots on a Famicom, not on an NES) and *The Lord of King*. The *999-in-1*
+multicart (mapper 212) clears its nametable through `$2006`/`$2007` at about
+cycle 27,400 and shows a screen of "0" tiles under the NES model.
+
+`rustynes_core::ConsoleModel` selects the wiring; `Nes::set_console_model`
+sets it, and the bus consults it in two places:
+
+| Event | `ConsoleModel::Nes` (default) | `ConsoleModel::Famicom` |
+|---|---|---|
+| Power-on / power-cycle | Window armed (29,658 / 33,132 cycles) | Window closed before the first instruction (`Ppu::end_warmup`) |
+| Warm reset | `Ppu::reset` (table above) | PPU untouched; APU, DMA and cartridge reset as on the NES |
+| Selecting the model | Stored; applies from the next reset | Stored, and any window in progress ends now |
+
+The last row is what gives a host the Famicom power-on: the frontend applies
+its configuration straight after building or power-cycling the machine.
+
+Not modelled: the PPU's frame position at power-on is left where the NES model
+puts it rather than advanced by a guessed "approximately one frame", and the
+NES-101 top-loader (which shares the Famicom's reset behaviour, per the same
+page) is not offered separately because its power-on lead is not documented.
+
+The selection is a host/config knob, never derived from the ROM (NES 2.0 has no
+console type that tells a Famicom from an NES) and never from a per-game list.
+It is not part of the save-state; the warm-up counter it acts on already is
+(`post_reset_mask_remaining`, PPU snapshot section), so no snapshot version
+changes. A power-on movie or a netplay session records no console model, the
+same as the other hardware knobs in this file (OAM decay, die revision,
+power-on RAM): replaying one under a different setting can diverge from its
+first frames. With the model at its default, every output is byte-identical.
+
+Tests: `ppu::tests::end_warmup_lets_masked_registers_write_immediately`
+(`rustynes-ppu`), `nes::tests::famicom_console_model_ppu_leaves_reset_before_the_cpu`
+(`rustynes-core`), and the commercial-ROM check
+`crates/rustynes-test-harness/tests/famicom_console.rs` (999-in-1, local dump).
+
 ### Per-dot fetch sequencing (visible + pre-render scanlines)
 
 - **Dot 0** — idle.

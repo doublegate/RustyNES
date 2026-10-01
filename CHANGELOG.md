@@ -51,6 +51,21 @@ cycle-accurate core later replaced.
   and `tests/roms/AccuracyCoin/README.md` were one file on a case-insensitive
   filesystem; the lowercase one is now `RUNTIME.md`.
 
+### Added
+
+- **Famicom console model (opt-in, off by default).** On a Famicom the PPU's
+  reset line is tied high, so the PPU starts about one frame before the CPU
+  and is past its ~29,658-cycle warm-up by the first instruction; the Reset
+  button reaches only the CPU (NESdev "PPU power up state", §Famicom). The NES
+  ignores `$2000`/`$2001`/`$2005`/`$2006` during that warm-up. The new model
+  closes the window at power-on and leaves the PPU alone on Reset. The
+  *999-in-1* multicart clears its nametable at about cycle 27,400 and showed a
+  screen of "0" tiles behind its menu; with the model on, the menu draws on a
+  clean background. Select it with Settings > Emulation > Accuracy > *Famicom
+  console*, `[emulation] famicom_console = true`, or `Nes::set_console_model`
+  (`rustynes_core::ConsoleModel`). The NES model stays the default, so every
+  output is byte-identical with it off. Movies and netplay do not record the
+  setting, like the other hardware options.
 ### Changed
 
 - **CI builds the iOS app at release time.** `ios.yml` now compiles the Swift
