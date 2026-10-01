@@ -102,7 +102,14 @@ not the winit thread:
   drops what they held (OAM decay, fast dot path, custom palette, filter model)
   and unplugs the device (the per-frame input latch re-attaches it); before
   v2.9.8 it re-pushed only the mask and gain.
-  **Reset** needs nothing: it keeps the PPU, the APU and the stored knobs.
+  While a movie records or plays, the Power Cycle then applies the movie's
+  `HardwareOptions` on top (`MovieUi::held_options`, power-on fills
+  included), so the movie's options still win, as `MovieUi::before_frame`
+  makes them win every frame. A ROM load adds no such step: the per-frame
+  re-assertion overrides every movie-recorded setting `configure_console`
+  touches except the two power-on fills, which on a load take the player's
+  values exactly as they did before v2.9.8. **Reset** needs nothing: it keeps the PPU, the APU and the
+  stored knobs.
   Pinned by `every_load_path_configures_the_console_before_installing_it` and
   `configure_console_restores_what_a_power_cycle_drops`.
 - Best-effort Linux priority elevation runs on the emu thread (SCHED_RR →

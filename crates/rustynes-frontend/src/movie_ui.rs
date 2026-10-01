@@ -265,6 +265,20 @@ impl MovieUi {
             .map(|pb| pb.movie.options.extra_scanlines)
     }
 
+    /// v2.9.8 — the options the current movie session holds the console to:
+    /// the recording's (captured at its start) or the playing movie's, `None`
+    /// when idle. The app's Power Cycle re-applies its own configuration to
+    /// the cold-booted console and then these, so a movie's options -- its
+    /// power-on fills included -- still win across a power cycle, as
+    /// [`Self::before_frame`] makes them win on every frame.
+    #[must_use]
+    pub fn held_options(&self) -> Option<&HardwareOptions> {
+        if let Some(rec) = self.recorder.as_ref() {
+            return Some(rec.options());
+        }
+        self.playback.as_ref().map(|pb| &pb.movie.options)
+    }
+
     /// v2.3.2 "Lucid" — drop the in-progress attestation, keeping the recording.
     ///
     /// Called when something rewinds the emulator underneath the recorder: a

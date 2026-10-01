@@ -7014,10 +7014,11 @@ impl App {
     fn do_power_cycle(&mut self) {
         {
             let mut guard = self.emu.lock();
-            if let Some(nes) = guard.nes.as_mut() {
+            let emu = &mut *guard;
+            if let Some(nes) = emu.nes.as_mut() {
                 nes.power_cycle();
                 // v1.0.0 (UX3 BUG-3) — re-apply the configured Game Genie codes
-                // to the freshly cold-booted core (disjoint borrow: `guard.nes` +
+                // to the freshly cold-booted core (disjoint borrow: `emu.nes` +
                 // the `debugger` field) so cheats keep working across a Power-
                 // Cycle even with the Cheats panel closed. A no-op when no codes
                 // are enabled (the no-cheat path stays byte-identical).
@@ -7028,25 +7029,37 @@ impl App {
                     debugger.reset_debug_telemetry();
                 }
                 // v2.9.8 — `power_cycle` rebuilds the PPU and the APU, dropping
-                // every setting stored there, and unplugs the expansion device.
+                // every setting stored there, and unplugs the expansion device
+                // (which the per-frame input latch re-attaches regardless).
                 // Re-apply the whole configuration under this same lock, so
                 // the emulation thread never runs the cold-booted console
                 // without it. Until v2.9.8 only the channel mask and gain were
                 // re-pushed here: the OAM-decay model, the fast dot path
                 // selector, the custom palette and the APU filter model stayed
-                // lost until the next ROM load or Settings change (the device
-                // is re-attached by the per-frame input latch regardless). The bus-held power-on knobs (revision,
-                // power-up palette, RAM fill, console model) survive the cycle;
-                // re-applying them rewrites the values the core has just
-                // written (the reset sequence writes no RAM), plus the open-bus
-                // latch, which the first opcode fetch overwrites -- exactly what
-                // every ROM load has always done after `from_rom`'s reset.
+                // lost until the next ROM load or Settings change. The bus-held
+                // power-on knobs (revision, power-up palette, RAM fill, console
+                // model) survive the cycle; re-applying them rewrites the values
+                // the core has just written (the reset sequence writes no RAM),
+                // plus the open-bus latch, which the first opcode fetch
+                // overwrites -- what every ROM load has always done after
+                // `from_rom`'s reset.
                 configure_console(&self.config, nes);
+                // ... and then a running movie's options on top, power-on
+                // fills included (`HardwareOptions::apply`): the movie, not the
+                // player's Settings, decides how its run behaves, and
+                // `MovieUi::before_frame` re-asserts all but the fills every
+                // frame. Without this the player's fills, written just above,
+                // would have refilled RAM under a replay recorded with others;
+                // before v2.9.8 the cycle simply kept the movie's stored fills.
+                if let Some(options) = emu.movie.held_options() {
+                    let held = options.apply(nes);
+                    debug_assert!(held.is_ok(), "a parsed movie's options re-apply");
+                }
             }
             // v1.7.0 "Forge" D1 — a cold boot restarts the session timeline.
-            guard.history.clear();
+            emu.history.clear();
             // v1.7.0 "Forge" H4 — a cold boot restarts the lag-frame tally.
-            guard.reset_lag_frames();
+            emu.reset_lag_frames();
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
         // status bar doesn't read "Paused" with a freshly-booted, running core.
@@ -11900,6 +11913,52 @@ mod tests {
             .find("configure_console(&self.config, nes)")
             .expect("do_power_cycle: no `configure_console` call");
         assert!(cycled < configured, "configure after the cycle, not before");
+        // A running movie's options are applied after the player's, so the
+        // movie still wins across a power cycle.
+        let movie = cycle
+            .find("emu.movie.held_options()")
+            .expect("do_power_cycle: a running movie's options are not re-applied");
+        assert!(configured < movie, "the movie's options must come last");
+    }
+
+    /// v2.9.8 (task B) — across a Power Cycle a running movie's options win
+    /// over the player's configuration, power-on fills included: the order
+    /// `do_power_cycle` uses (player config, then `HardwareOptions::apply`)
+    /// leaves the console on the movie's fill and console model, and work
+    /// RAM holds the movie's pattern, not the player's.
+    #[test]
+    fn a_movies_options_win_over_the_player_config_across_a_power_cycle() {
+        use rustynes_core::{ConsoleModel, HardwareOptions, PowerOnRam};
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let player = crate::config::Config::default();
+        let movie = HardwareOptions {
+            console_model: ConsoleModel::Famicom,
+            power_on_ram: PowerOnRam::Seeded(0x5EED),
+            ..HardwareOptions::default()
+        };
+        let mut nes = Nes::from_rom(rom).expect("nestest loads");
+        movie.apply(&mut nes).expect("applies");
+        nes.power_cycle();
+        super::configure_console(&player, &mut nes);
+        assert_eq!(
+            nes.power_on_ram(),
+            PowerOnRam::Zeroed,
+            "premise: the player's config alone overrides the movie's fill"
+        );
+        movie.apply(&mut nes).expect("applies");
+        assert_eq!(nes.power_on_ram(), PowerOnRam::Seeded(0x5EED));
+        assert_eq!(nes.console_model(), ConsoleModel::Famicom);
+        let mut fresh = Nes::from_rom(rom).expect("nestest loads");
+        fresh.set_power_on_ram(PowerOnRam::Seeded(0x5EED));
+        assert_eq!(
+            (0..0x800u16)
+                .map(|a| nes.cpu_bus_peek(a))
+                .collect::<Vec<_>>(),
+            (0..0x800u16)
+                .map(|a| fresh.cpu_bus_peek(a))
+                .collect::<Vec<_>>(),
+            "work RAM holds the movie's power-on pattern"
+        );
     }
 
     /// v2.9.8 (task B) — what a Power Cycle drops, `configure_console` puts
