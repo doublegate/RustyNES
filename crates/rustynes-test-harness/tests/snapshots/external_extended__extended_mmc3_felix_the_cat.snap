@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/external_extended.rs
+assertion_line: 74
 expression: text
 ---
 rom=mapper-004-MMC3/Felix the Cat.nes
@@ -9,4 +10,4 @@ fb_bytes=245760
 cycles=17838524
 audio_samples=439524
 audio_fnv1a64=ad4d75b0cdd46157
-checkpoint f600 fb_fnv1a64=7861b32f5d9973a2
+checkpoint f600 fb_fnv1a64=436c63f7c708aaed

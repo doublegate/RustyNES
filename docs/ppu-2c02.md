@@ -535,7 +535,24 @@ change core rendering tests.
 
 ### Greyscale + emphasis
 
-PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis): each modulates one color channel down. Both apply per-pixel during emission.
+PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis) are applied through the 512-entry `rgba_lut`, per pixel during emission.
+
+**Emphasis model (v2.9.8, `T-EMPHASIS-MODEL`).** The hardware has one attenuator shared by
+the three bits, armed during the phases of colours `$C`, `$4` and `$8` for bits 5, 6 and 7,
+so it runs 6, 10 or 12 of the 12 colour phases for one, two or three bits, and it never
+touches columns `$E`/`$F` (`nesdev_wiki/NTSC_video.xhtml`, "Color Tint Bits").
+`emphasis.rs` models exactly that from the page's measured plain and attenuated levels,
+decodes it (twelve samples, burst on `-U`, the page's YUV-to-RGB matrix), and keeps only the
+CHANGE: `EMPHASIS_DELTA[(emphasis << 6) | colour]` is the model's emphasised RGB minus its
+plain RGB, added to the FBX base (or a loaded `.pal`) and clamped. So an un-emphasised frame
+is FBX exactly; one bit tints toward the complement of its phases; all three bits darken
+without tinting. The table is data because `build_rgba_lut` is a `const fn`; the test
+`the_committed_table_is_the_documented_model` recomputes it. Until v2.9.8 each set bit
+dimmed the other two channels to 13/16, compounding, which three bits turned into an even
+0.66 dim of everything, where the hardware attenuates the whole signal once. The MiSTer core
+carries the same 512 colours, checked entry by entry by its `palette-gate`.
+
+The presentation-only `raw_signal` model below is separate, and still attenuates by `0.746`.
 
 ### Index framebuffer + NTSC phase (composite-filter outputs)
 

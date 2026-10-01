@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/external_extended.rs
+assertion_line: 74
 expression: text
 ---
 rom=mapper-221-NTDEC-N625092/1000-in-1 (JPx72) [p1][!].zip
@@ -9,4 +10,4 @@ fb_bytes=245760
 cycles=17838523
 audio_samples=439524
 audio_fnv1a64=d3f715e2e232b87a
-checkpoint f600 fb_fnv1a64=c22c44647acafe7b
+checkpoint f600 fb_fnv1a64=26d46d1c14244470

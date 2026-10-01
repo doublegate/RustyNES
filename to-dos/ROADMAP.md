@@ -1073,6 +1073,21 @@ which found the PPU A12 defect and, once it was fixed, promoted 4.3 to Curated
 (`docs/STATUS.md`). What stays open is the 17 v2.9.6 families. Commercial dumps
 are never committed; only the `.snap` files are.
 
+## T-EMPHASIS-MODEL — PPUMASK emphasis from the documented composite model (v2.9.8)
+
+Found by the MiSTer core's first `palette-gate` (v2.9.8): the emulator dimmed
+the other two channels to 13/16 per set emphasis bit, compounding, and the core
+dimmed each channel once to 3/4. Neither is the hardware, which attenuates the
+composite signal with one attenuator armed on 6, 10 or 12 of the 12 colour
+phases (`nesdev_wiki/NTSC_video.xhtml`). The maintainer asked for a better,
+documented model shared by both, before v3.0.0, in v2.9.8 if best placed there.
+
+Done in v2.9.8: `crates/rustynes-ppu/src/emphasis.rs` models the page's
+measured levels, phases and decode, and supplies the CHANGE emphasis makes as a
+512-entry delta added to the FBX base; the core's `palette.sv` carries the same
+512 colours. Open beyond it, as choices rather than defects: the page's
+differential phase distortion, and the PAL/Dendy red-green swap.
+
 ## T-MMC5-8X8-SET — the MMC5 CHR set in 8x8 sprite mode (found v2.9.7)
 
 `MMC5.md`: "When using 8x8 sprites, only registers $5120-$5127 are used.

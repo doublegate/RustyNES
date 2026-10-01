@@ -59,6 +59,15 @@ cycle-accurate core later replaced.
   never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
   built the iOS host. macOS jobs still never run on pull requests.
 
+- **Colour emphasis follows the documented hardware model.** PPUMASK bits 5-7
+  used to dim the other two colour channels to 13/16 per set bit, which turned
+  all three bits into an even, heavy dim. The console has one attenuator shared
+  by the three bits, active on 6, 10 or 12 of the 12 colour phases, and never on
+  the blacks in columns `$E`/`$F` (NESdev "NTSC video"). The emulator now models
+  that from the page's measured levels and applies the change to the default
+  palette (or a loaded `.pal`). One bit tints toward its complement, all three
+  darken without tinting, and frames without emphasis are unchanged. The MiSTer
+  core carries the same colours.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
