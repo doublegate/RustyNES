@@ -236,6 +236,14 @@ cycle-accurate core later replaced.
   dumps are recorded in `docs/mappers.md` as mis-labelled: their header says
   mapper 151, but their code drives a Namco 108 board, and the protection chip
   that game uses is not modelled.
+
+
+
+- **Toggling "Fast PPU dot path" mid-game no longer wipes work RAM.** The
+  switch changes speed, not output, but its live update went through the
+  function that also re-applies the power-on RAM fill, which zero-filled the
+  console's 2 KiB of work RAM while a game was running. It now changes only the
+  dot path.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

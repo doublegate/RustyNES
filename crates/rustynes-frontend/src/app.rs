@@ -6382,6 +6382,22 @@ impl App {
         }
     }
 
+    /// v2.9.8 — push ONLY the `[emulation] fast_dotloop` selector into the
+    /// core, for a mid-game Settings change.
+    ///
+    /// The live toggle used to call [`Self::apply_ppu_hardware_config`], whose
+    /// `set_power_on_ram` re-applies the power-on fill to the 2 KiB work RAM
+    /// (zero-filling it by default). Flipping the checkbox mid-game therefore
+    /// wiped the running game's RAM, a performance switch with a destructive
+    /// side effect. The other knobs that function pushes are power-on state
+    /// and are only correct at load, power-cycle and startup.
+    fn apply_fast_dotloop(&self) {
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_fast_dotloop(self.config.emulation.fast_dotloop);
+        }
+    }
+
     /// v2.9.8 — push the `[emulation] famicom_console` choice into the core as
     /// a [`rustynes_core::ConsoleModel`]. Called on ROM load, after a
     /// power-cycle, at startup and on a Settings change. Selecting the Famicom
@@ -11331,12 +11347,12 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.overclock {
                     self.apply_overclock();
                 }
-                // v2.2.3 — PPU fast-dot-path toggle live-apply. Routed through
-                // `apply_ppu_hardware_config` (which pushes the whole
-                // `[emulation]` PPU knob set); re-pushing the other three is
-                // idempotent. Either setting emits the identical frame.
+                // v2.2.3 — PPU fast-dot-path toggle live-apply. Either setting
+                // emits the identical frame. v2.9.8: this pushes the selector
+                // alone. It used to go through `apply_ppu_hardware_config`,
+                // whose power-on RAM fill wiped the running game's work RAM.
                 if settings.fast_dotloop {
-                    self.apply_ppu_hardware_config();
+                    self.apply_fast_dotloop();
                 }
                 // v2.9.8 — console-model live-apply (its own path, so the
                 // power-on RAM fill is not re-run mid-game).
@@ -12115,5 +12131,56 @@ mod tests {
         assert!(!is_fds_image(&[]));
         assert!(!is_fds_image(b"FD"));
         assert!(!is_fds_image(b"\x01*NIN"));
+    }
+
+    /// No mid-game Settings change may re-run the power-on work-RAM fill.
+    ///
+    /// The defect pinned (found v2.9.8): the "Fast PPU dot path" live-apply
+    /// called `apply_ppu_hardware_config`, whose `set_power_on_ram` refills the
+    /// 2 KiB work RAM, so toggling a frame-identical performance switch wiped
+    /// the running game's RAM. `App` needs a window and an emulator thread,
+    /// so this is a source-shape gate, as the wasm entry-point tests above
+    /// are: every `if settings.<knob> {` branch of the live-apply block must
+    /// not reach that function, and the selector's own helper must not touch
+    /// RAM.
+    #[test]
+    fn live_settings_never_rerun_the_power_on_ram_fill() {
+        const APP_SRC: &str = include_str!("app.rs");
+        // Cut the test module off first: this function's own text contains
+        // every string it searches for.
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn live_settings_never_rerun_the_power_on_ram_fill"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+
+        // The live branch for the selector calls the narrow helper.
+        assert!(
+            prod.contains("if settings.fast_dotloop { self.apply_fast_dotloop(); }"),
+            "the fast-dot-path live-apply no longer calls apply_fast_dotloop"
+        );
+        // No live `if settings.<knob> { ... }` branch calls the power-on path.
+        for (i, _) in prod.match_indices("if settings.") {
+            let branch = &prod[i..];
+            let end = branch.find('}').unwrap_or(branch.len());
+            assert!(
+                !branch[..end].contains("apply_ppu_hardware_config"),
+                "a live Settings branch re-runs the power-on RAM fill: {}",
+                &branch[..end]
+            );
+        }
+        // The helper itself must not refill RAM.
+        let helper = prod
+            .split_once("fn apply_fast_dotloop(&self) {")
+            .map(|(_, rest)| rest.split_once("fn ").map_or(rest, |(body, _)| body))
+            .expect("apply_fast_dotloop exists");
+        assert!(
+            !helper.contains("set_power_on_ram"),
+            "apply_fast_dotloop refills work RAM"
+        );
     }
 }
