@@ -97,8 +97,8 @@ cycle-accurate core later replaced.
   described. Playback applies the options before frame 0 whatever your
   settings, holds them while it runs, and puts yours back when it stops; it
   refuses a ROM whose region or header differs and names what differs.
-  **Movies from earlier versions are refused** with an error that says to
-  re-record them; the maintainer accepted the break. Recording keeps OAM decay
+  **Movies from earlier versions, and movies that start from a pre-v2.9.8 save
+  state, are refused** with an error that says to re-record them; the maintainer accepted the break. Recording keeps OAM decay
   and the overclock through its power-on (the power cycle used to drop them),
   and raw RAM cheats pause while a movie records or plays because a `.rnm`
   cannot carry them. Foreign imports (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`)

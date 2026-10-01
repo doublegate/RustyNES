@@ -604,6 +604,22 @@ pub enum MovieError {
     #[error("movie emulation option could not be applied: Game Genie code {0:?}")]
     OptionNotApplicable(String),
 
+    /// v2.9.8 — the movie's embedded start-point save state predates the
+    /// `.rns` container epoch 3 (ADR 0042), which v2.9.8 refuses. Kept apart
+    /// from [`MovieError::BadSaveState`] so the message says what to do, in
+    /// the same words as [`MovieError::FormatTooOld`].
+    #[error(
+        "movie starts from a save state written by an older release (container \
+         version {got}, this build reads {min} and later); re-record it with this \
+         version"
+    )]
+    StartStateTooOld {
+        /// The embedded state's container version.
+        got: u16,
+        /// Oldest container version this build reads.
+        min: u16,
+    },
+
     /// The header declared more bytes-per-frame than this build understands.
     #[error("movie declares {got} bytes/frame; this build understands {max}")]
     UnsupportedFrameWidth {
@@ -923,7 +939,12 @@ impl Movie {
         match &self.start {
             StartPoint::PowerOn => power_on_for_movie(nes),
             StartPoint::SaveState(blob) => {
-                nes.restore(blob)?;
+                nes.restore(blob).map_err(|e| match e {
+                    SnapshotError::FormatTooOld { got, min } => {
+                        MovieError::StartStateTooOld { got, min }
+                    }
+                    other => MovieError::BadSaveState(other),
+                })?;
                 // The options are configuration, not save-state, so a restore
                 // leaves them alone; re-asserting the live ones is cheap and
                 // keeps that a checked fact rather than an assumption.
@@ -2295,5 +2316,28 @@ mod tests {
             text.contains("re-record"),
             "the error says what to do: {text}"
         );
+    }
+
+    /// v2.9.8 — a movie whose embedded start state predates the `.rns`
+    /// epoch 3 is refused with the same "re-record" advice as an old movie.
+    #[test]
+    fn a_movie_with_an_old_start_state_says_to_re_record() {
+        let rom = synth_nrom();
+        let nes = Nes::from_rom(&rom).unwrap();
+        let mut movie = MovieRecorder::from_current_state(&nes).finish();
+        if let StartPoint::SaveState(blob) = &mut movie.start {
+            // The container version follows the 8-byte "RUSTYNES" magic.
+            blob[8..10].copy_from_slice(&2u16.to_le_bytes());
+        }
+        let movie = Movie::deserialize(&movie.serialize()).expect("the movie itself parses");
+        let mut player = Nes::from_rom(&rom).unwrap();
+        let err = movie
+            .seek_to_start(&mut player)
+            .expect_err("old start state");
+        assert!(
+            matches!(err, MovieError::StartStateTooOld { got: 2, .. }),
+            "got {err:?}"
+        );
+        assert!(alloc::format!("{err}").contains("re-record"));
     }
 }

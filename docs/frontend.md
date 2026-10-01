@@ -2393,7 +2393,9 @@ header, and widens the per-frame record from 3 bytes to 5 so Four Score players
   correction apart; a mismatch refuses with the field named
   (`MovieError::BoardMismatch`, `RegionMismatch`).
 - **Older movies are refused** (`MovieError::FormatTooOld`): a v1 or v2 `.rnm`
-  does not say which machine it ran on. The maintainer accepted breaking them.
+  does not say which machine it ran on. So is a movie whose start point embeds a
+  save state older than the `.rns` epoch 3 (`MovieError::StartStateTooOld`); both
+  errors say to re-record. The maintainer accepted breaking them.
 - **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) record the stock
   NES explicitly (`HardwareOptions::default`) with no board, plus the one
   option a format declares: an `.fm2` with `fourscore 1` records the Four Score
