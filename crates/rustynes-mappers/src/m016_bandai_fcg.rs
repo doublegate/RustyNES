@@ -518,6 +518,14 @@ impl BandaiFcg {
     }
 
     fn chr_offset(&self, addr: u16) -> usize {
+        // Mapper 153: "8 KiB unbanked CHR-RAM" and "No CHR banking is
+        // available" (`INES_Mapper_153`). Its `$8000-$8003` registers drive
+        // the outer PRG bank instead, so `chr_banks` is never written there
+        // and must not be consulted: routing through it mapped all eight
+        // 1 KiB windows onto the first 1 KiB.
+        if self.variant == FcgVariant::Lz93d50Wram {
+            return addr as usize & 0x1FFF;
+        }
         let slot = (addr as usize / CHR_BANK_1K) & 0x07;
         let total = (self.chr.len() / CHR_BANK_1K).max(1);
         let bank = (self.chr_banks[slot] as usize) % total;
@@ -1235,6 +1243,35 @@ mod tests {
             m.notify_cpu_cycle();
         }
         assert!(m.irq_pending(), "latched counter 2 reaches zero");
+    }
+
+    /// `INES_Mapper_153`: "PPU $0000-$1FFF: 8 KiB unbanked CHR-RAM" and "No
+    /// CHR banking is available". Every byte of the 8 KiB is its own cell, so
+    /// the eight 1 KiB windows must not alias one another. The v2.9.6 model
+    /// routed CHR-RAM through the CHR bank registers, which this board never
+    /// writes, so all eight windows landed on the first 1 KiB and *Famicom
+    /// Jump II*'s pattern tables overwrote each other (the striped title).
+    #[test]
+    fn m153_chr_ram_is_8k_with_no_aliasing_between_1k_windows() {
+        let mut m = m153(32);
+        // Writes to the CHR-register offsets are the outer bank on this board
+        // and must not reach the CHR mapping either.
+        for a in 0x8000..=0x8007u16 {
+            m.cpu_write(a, 0x05);
+        }
+        for slot in 0..8u16 {
+            m.ppu_write(slot * 0x400 + 0x123, 0xA0 | slot as u8);
+        }
+        for slot in 0..8u16 {
+            assert_eq!(
+                m.ppu_read(slot * 0x400 + 0x123),
+                0xA0 | slot as u8,
+                "1 KiB window {slot} aliased another window"
+            );
+        }
+        m.ppu_write(0x1FFF, 0x5A);
+        assert_eq!(m.ppu_read(0x1FFF), 0x5A);
+        assert_eq!(m.ppu_read(0x03FF), 0, "$1FFF must not alias $03FF");
     }
 
     #[test]

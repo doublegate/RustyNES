@@ -76,6 +76,18 @@ cycle-accurate core later replaced.
   own documentation has said since v2.1.9. It had no `// Provenance:` header or
   record row; it now has both, and a NOTICE entry, at the maintainer's
   direction.
+
+
+
+### Fixed
+
+- **Mapper 153 (Bandai LZ93D50 + WRAM) CHR-RAM no longer aliases.** The board
+  has 8 KiB of unbanked CHR-RAM (NESdev `INES_Mapper_153`), but v2.9.6 routed
+  it through the CHR bank registers, which this board uses as the outer PRG
+  bank and never sets, so all eight 1 KiB windows landed on the first 1 KiB.
+  *Famicom Jump II*'s title screen was drawn as vertical stripes; it is now
+  correct. Its blank first boot with a fresh (zero-filled) save is the game's
+  own behaviour, documented on the same page, and a soft reset runs it.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
