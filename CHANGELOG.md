@@ -74,6 +74,18 @@ cycle-accurate core later replaced.
   never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
   built the iOS host. macOS jobs still never run on pull requests.
 
+- **A ROM's identity no longer includes its header (breaks old saves once).**
+  `Nes::rom_sha256` names save-state slots, battery `.sav` files and cheats,
+  tags `.rns` states and movies, matches netplay peers, and is what Lua's
+  `cart:sha256()` returns. It hashed the whole image after the game database
+  had corrected its header, so every change to those corrections renamed
+  saves; this release changed them three times. For iNES / NES 2.0 images it
+  now hashes everything after the 16-byte header, which no correction
+  touches. FDS and NSF are unchanged. **Saves, states, cheats and movies from
+  earlier versions are not found for cartridge games**: the maintainer chose
+  a permanent identity over carrying the old one forward. Two dumps of one
+  game that differ only in their header now share saves. The Vs. System
+  database stays keyed by the whole-file hash, the new `Nes::image_sha256`.
 - **Colour emphasis follows the documented hardware model.** PPUMASK bits 5-7
   used to dim the other two colour channels to 13/16 per set bit, which turned
   all three bits into an even, heavy dim. The console has one attenuator shared
@@ -263,6 +275,10 @@ cycle-accurate core later replaced.
   rows, one image sold in both markets, carry no region, and Vs. System and
   PlayChoice-10 carts stay NTSC. For the promoted games the ROM hash that
   names save-state slots and `.sav` files changes once.
+
+  PlayChoice-10 carts stay NTSC. The rewrite touches only the header, which
+  the ROM identity leaves out (see the next entry), so no game's saves move
+  because of it.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

@@ -2353,7 +2353,7 @@ headless; `wasm_idb` only moves the bytes.
 - Drag-and-drop a `.nes` file → load it.
 - File menu → Open → native dialog.
 - Recent files list (last 10).
-- ROMs are *not* copied; the frontend stores absolute paths. (Save states are keyed by SHA-256 of the ROM, so moving the ROM doesn't break the save.)
+- ROMs are *not* copied; the frontend stores absolute paths. (Save states, battery `.sav` files and cheats are keyed by `Nes::rom_sha256`, so moving the ROM doesn't break the save. Since v2.9.8 that hash leaves out the 16-byte iNES header, so a header correction, from the game database or by hand, doesn't break it either. The Vs. System database stays keyed by the whole-file hash, `Nes::image_sha256`.)
 
 **Per-game database (nametable-mirroring override).** A CRC32-keyed game
 database (vendored from TetaNES, ~2.6k entries) auto-corrects ROMs whose iNES
@@ -2402,8 +2402,9 @@ rows are not taken as written: a row titled for both markets -- the nine
 column had to call PAL -- carries no region, the multi-region reading a NES 2.0
 header gives the same image; and Vs. System / PlayChoice-10 carts stay NTSC
 (*PlayChoice-10 Baseball* shares its PRG/CHR with the home *Baseball (USA,
-Europe)*). The promoted bytes hash differently, so for those games the
-save-state directory and `.sav` named after the ROM hash change once.
+Europe)*). The promotion rewrites only the header, and the ROM identity that
+names save-state directories and `.sav` files (`Nes::rom_sha256`) leaves the
+header out, so it does not rename any game's saves.
 
 **Per-game `<rom>.json` config overlay (v1.7.0 "Forge" Workstream H4).** Layered
 on the v1.2.0 game-DB, a small frontend-only overlay lets a single ROM carry its

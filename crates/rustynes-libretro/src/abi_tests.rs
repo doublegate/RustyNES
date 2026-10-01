@@ -1669,7 +1669,7 @@ fn a_vs_dump_in_the_database_renders_with_its_palette() {
     let pick = paths.iter().find_map(|path| {
         let bytes = std::fs::read(path).ok()?;
         let nes = Nes::from_rom(&bytes).ok()?;
-        let entry = rustynes_core::vs_db::lookup(nes.rom_sha256())?;
+        let entry = rustynes_core::vs_db::lookup(nes.image_sha256())?;
         (!entry.dual_system && nes.is_vs_system()).then_some((path.clone(), bytes, entry))
     });
     let Some((path, bytes, entry)) = pick else {

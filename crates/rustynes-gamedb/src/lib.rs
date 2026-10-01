@@ -457,11 +457,11 @@ fn serialize_row(e: &GameDbEntry) -> String {
 /// runs this function (desktop, browser, the coverage harness) and everything
 /// that later rebuilds from those bytes (a power cycle re-parses them) sees it.
 ///
-/// A promoted image hashes differently, so for an iNES 1.0 game with a PAL
-/// row the ROM hash that names the frontend's save-state directory and `.sav`
-/// file changes once, at v2.9.8: slots and battery saves written before are
-/// left under the old name and not found. (A slot from before was recorded at
-/// NTSC timing; a `.sav` is plain cartridge RAM and can be renamed by hand.)
+/// Only the 16-byte header is ever rewritten, and the ROM identity that names
+/// the frontend's save-state directory and `.sav` file (`Nes::rom_sha256`)
+/// leaves the header out (v2.9.8), so no correction here renames a game's
+/// saves. The Vs. System database is keyed by the whole image instead
+/// (`Nes::image_sha256`), and Vs. carts are never promoted.
 ///
 /// Returns `true` if any byte was changed (the caller may want to log it).
 pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {

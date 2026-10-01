@@ -774,7 +774,7 @@ pub mod external {
             // its game-config DSW0 default (e.g. Vs. Super Mario Bros. needs
             // DSW0=0x10 to leave the attract loop; a forced 0 leaves it blank).
             // Falls back to DIP 0 for a Vs. cart not in the DB.
-            let dip = rustynes_core::vs_db::lookup(nes.rom_sha256()).map_or(0, |entry| {
+            let dip = rustynes_core::vs_db::lookup(nes.image_sha256()).map_or(0, |entry| {
                 nes.set_vs_ppu_type(entry.vs_ppu_type);
                 entry.vs_dip
             });

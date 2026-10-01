@@ -831,7 +831,7 @@ fn seat_cabinet(
     rom: &[u8],
     sample_rate: u32,
 ) -> Result<(Nes, Box<VsDualSystem>), MobileError> {
-    if let Some(entry) = rustynes_core::vs_db::lookup(system.main().rom_sha256()) {
+    if let Some(entry) = rustynes_core::vs_db::lookup(system.main().image_sha256()) {
         let pair: [&mut Nes; 2] = system.split_mut().into();
         for console in pair {
             console.set_vs_ppu_type(entry.vs_ppu_type);
@@ -3385,7 +3385,13 @@ mod tests {
     #[test]
     fn a_refused_movie_leaves_the_save_live() {
         let ctrl = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
-        let other = NesController::new(battery_nrom(false), DEFAULT_SAMPLE_RATE).expect("load");
+        // Another ROM must differ in its BODY. Since v2.9.8 a ROM's identity
+        // (`Nes::rom_sha256`, which a movie records) leaves out the 16-byte
+        // header, so the battery_nrom(false) twin this test used to build
+        // differs only in the header and is now, correctly, the same game.
+        let mut other_rom = battery_nrom(true);
+        *other_rom.last_mut().expect("CHR") = 0xFF;
+        let other = NesController::new(other_rom, DEFAULT_SAMPLE_RATE).expect("load");
         other.movie_record_from_power_on();
         let foreign = other.movie_stop_recording();
         assert!(ctrl.movie_play(foreign).is_err(), "a movie for another ROM");

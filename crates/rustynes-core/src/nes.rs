@@ -163,8 +163,15 @@ pub struct TraceRec {
 pub struct Nes {
     cpu: Cpu,
     bus: LockstepBus,
-    /// SHA-256 of the original ROM bytes the emulator was constructed from.
+    /// The ROM's persistent identity: SHA-256 of an iNES / NES 2.0 image's
+    /// bytes AFTER its 16-byte header (trainer, PRG, CHR, anything trailing),
+    /// or of the whole image for anything without the `NES\x1A` magic (FDS
+    /// disks, NSF files). See [`Nes::rom_sha256`] for why the header is left
+    /// out.
     rom_sha256: [u8; 32],
+    /// SHA-256 of the complete image as constructed, header included. Only the
+    /// Vs. System database is keyed by it ([`Nes::image_sha256`]).
+    image_sha256: [u8; 32],
     /// Optional rewind ring buffer. Disabled by default — frontend opts in
     /// via [`Nes::enable_rewind`].
     rewind: Option<RewindRing>,
@@ -361,7 +368,8 @@ impl Nes {
         Ok(Self {
             cpu,
             bus,
-            rom_sha256: sha256_of(bytes),
+            rom_sha256: rom_identity_sha256(bytes),
+            image_sha256: sha256_of(bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -402,7 +410,8 @@ impl Nes {
         Ok(Self {
             cpu,
             bus,
-            rom_sha256: sha256_of(bytes),
+            rom_sha256: rom_identity_sha256(bytes),
+            image_sha256: sha256_of(bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -473,6 +482,7 @@ impl Nes {
             cpu,
             bus,
             rom_sha256: sha256_of(disk_bytes),
+            image_sha256: sha256_of(disk_bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -540,6 +550,7 @@ impl Nes {
             cpu,
             bus,
             rom_sha256: sha256_of(nsf_bytes),
+            image_sha256: sha256_of(nsf_bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -2081,14 +2092,37 @@ impl Nes {
         self.bus.drain_audio_into(out)
     }
 
-    /// SHA-256 of the ROM bytes this emulator was constructed from.
+    /// The ROM's persistent identity: SHA-256 of an iNES / NES 2.0 image's
+    /// bytes after its 16-byte header, or of the whole image for FDS and NSF.
     ///
-    /// Used by the frontend's save-state file layout (one directory per
-    /// ROM, keyed by hex-encoded SHA-256). The hash is computed once at
-    /// `from_rom` time; subsequent calls are O(1).
+    /// Everything that persists per game is keyed by it: save-state slot
+    /// directories, the battery `.sav`, cheats, the `.rns` header's ROM tag
+    /// ([`Self::rom_hash_tag`]), movies and netplay's ROM match. Computed once
+    /// at construction; subsequent calls are O(1).
+    ///
+    /// **Why the header is excluded (v2.9.8).** Until v2.9.8 this hashed the
+    /// whole image as constructed, which on the desktop is the image AFTER the
+    /// game database corrected its header. Any change to those corrections
+    /// therefore renamed a game's saves and invalidated its states, and v2.9.8
+    /// alone changed them three times (the dirty-tail mapper nibble, the NES 2.0
+    /// guard, the region promotion). The header is the one part of an image
+    /// that load-time corrections rewrite; PRG and CHR never change, so an
+    /// identity built from them survives every past and future correction, and
+    /// two dumps of the same game with different headers share their saves.
+    /// The maintainer accepted the one-time break this causes (2026-10-01).
     #[must_use]
     pub const fn rom_sha256(&self) -> &[u8; 32] {
         &self.rom_sha256
+    }
+
+    /// SHA-256 of the complete image as constructed, header included.
+    ///
+    /// The Vs. System database ([`crate::vs_db`]) is keyed by whole-file
+    /// hashes of the dumps it describes, so its lookups use this, never
+    /// [`Self::rom_sha256`]. Identical to [`Self::rom_sha256`] for FDS and NSF.
+    #[must_use]
+    pub const fn image_sha256(&self) -> &[u8; 32] {
+        &self.image_sha256
     }
 
     /// Truncated ROM hash tag stored in the save-state header.
@@ -3115,6 +3149,16 @@ impl Nes {
             }
         }
         out
+    }
+}
+
+/// The persistent identity of a cartridge image: SHA-256 of everything after
+/// the 16-byte iNES / NES 2.0 header, or of the whole image when the `NES\x1A`
+/// magic is absent. See [`Nes::rom_sha256`].
+fn rom_identity_sha256(bytes: &[u8]) -> [u8; 32] {
+    match bytes {
+        [b'N', b'E', b'S', 0x1A, ..] if bytes.len() >= 16 => sha256_of(&bytes[16..]),
+        _ => sha256_of(bytes),
     }
 }
 
@@ -5317,6 +5361,30 @@ mod tests {
         other[0x10] = 0x99;
         let nes_c = Nes::from_rom(&other).unwrap();
         assert_ne!(nes_a.rom_sha256(), nes_c.rom_sha256());
+    }
+
+    /// v2.9.8: the persistent identity ignores the 16-byte header, so a
+    /// load-time header correction cannot rename a game's saves; the
+    /// whole-image hash (the Vs. database's key) still sees the header.
+    #[test]
+    fn rom_identity_ignores_the_header_and_image_hash_does_not() {
+        let rom = synth_nrom(16, 8);
+        let mut reheaded = rom.clone();
+        // Bytes 10-15 are unused padding in an iNES 1.0 header, so this is a
+        // pure header edit on the same board.
+        reheaded[12] = 0x01;
+        let a = Nes::from_rom(&rom).unwrap();
+        let b = Nes::from_rom(&reheaded).unwrap();
+        assert_eq!(
+            a.rom_sha256(),
+            b.rom_sha256(),
+            "header edit renamed the ROM"
+        );
+        assert_eq!(a.rom_hash_tag(), b.rom_hash_tag());
+        assert_ne!(a.image_sha256(), b.image_sha256());
+        // Exactly the body: the identity is SHA-256 of bytes[16..].
+        assert_eq!(*a.rom_sha256(), sha256_of(&rom[16..]));
+        assert_eq!(*a.image_sha256(), sha256_of(&rom));
     }
 
     #[test]

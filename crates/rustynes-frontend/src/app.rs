@@ -1064,7 +1064,7 @@ pub(crate) fn warn_dual_system_main_only(why: &str) {
 /// the Vs. database lists its SHA-256 as one.
 pub(crate) fn is_dual_system(nes: &Nes) -> bool {
     nes.is_vs_dual_system()
-        || rustynes_core::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system)
+        || rustynes_core::vs_db::lookup(nes.image_sha256()).is_some_and(|e| e.dual_system)
 }
 
 /// v1.7.0 "Forge" G4 — the recomputed ROM digests stamped onto an exported TAS
@@ -1402,7 +1402,7 @@ impl App {
     /// non-Vs. carts (`set_vs_ppu_type` / `set_vs_dip` ignore them) and changes
     /// nothing about normal NES play.
     fn apply_vs_db(&self, nes: &mut Nes) {
-        let db_entry = rustynes_core::vs_db::lookup(nes.rom_sha256());
+        let db_entry = rustynes_core::vs_db::lookup(nes.image_sha256());
         // The DB is authoritative for the palette: apply its PPU type whenever
         // the ROM is in the DB, independent of the DIP precedence below.
         if let Some(entry) = db_entry {
