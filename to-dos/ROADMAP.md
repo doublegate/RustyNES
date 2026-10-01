@@ -1073,6 +1073,27 @@ which found the PPU A12 defect and, once it was fixed, promoted 4.3 to Curated
 (`docs/STATUS.md`). What stays open is the 17 v2.9.6 families. Commercial dumps
 are never committed; only the `.snap` files are.
 
+**v2.9.8:** done for the families the library holds. 44 dumps are pinned with a
+`.snap` and a screenshot each. Booting them found three defects, all fixed red
+first: mapper 153's CHR-RAM aliasing, non-power-of-two images on the MMC3-based
+boards (mapper 191), and the `$4017` frame-IRQ inhibit (mapper 105). Four dumps
+carry the wrong mapper in their header and are recorded in `docs/mappers.md`,
+not pinned. *Famicom Jump II* (153) waits for a reset on zeroed WRAM, as its page
+documents, and is in `KNOWN_BLANK`. *Famicom Yarou 54* is T-GA23C-POWERON.
+Mappers 194 and 195 still have no dump.
+
+## T-GA23C-POWERON — mapper 45's register-2 power-on value (found v2.9.8)
+
+*Famicom Yarou 54* (mapper 45, GA23C) boots to a blue screen while the board's
+other four dumps run. An earlier investigation traced it to the outer registers'
+state before the first write (register 2 in particular), and the NESdev page
+says a reset clears them without giving a power-on or reset value. Its baseline pins the
+blue frame, recorded in `docs/mappers.md`'s mapper 45 row, rather than a guessed
+value. The frame has
+too many colours for `KNOWN_BLANK`'s blank test, which the list's ratchet would
+reject. Close it from documentation or a hardware measurement, never by trying
+values until the game boots (maintainer, 2026-10-01).
+
 ## T-EMPHASIS-MODEL — PPUMASK emphasis from the documented composite model (v2.9.8)
 
 Found by the MiSTer core's first `palette-gate` (v2.9.8): the emulator dimmed

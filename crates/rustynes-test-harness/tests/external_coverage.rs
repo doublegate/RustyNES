@@ -221,6 +221,12 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-112-NTDEC-Asder/Fighting Hero III (Unl) [!].nes",
     "mapper-139-Sachen8259C/Final Combat (Sachen-JAP) [!].zip",
     "mapper-142-KaiserKS7032/Pipe 5 (Sachen) [!].zip",
+    // Added at v2.9.8 (maintainer decision, 2026-10-01). Unlike the rest, this
+    // is the game behaving as documented, not a defect: with its battery WRAM
+    // zero-filled it waits for a reset before showing anything (NESdev
+    // "INES Mapper 153"), and a soft reset runs it. The harness boots every ROM
+    // from power-on with zeroed cartridge RAM, so this is its correct frame.
+    "mapper-153-BandaiLZ93D50/Famicom Jump II - Saikyou no 7 Nin (Japan).nes",
     "mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).zip",
     "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (Japan) (Rev 1).zip",
     "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).zip",
