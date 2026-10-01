@@ -88,6 +88,21 @@ cycle-accurate core later replaced.
   *Famicom Jump II*'s title screen was drawn as vertical stripes; it is now
   correct. Its blank first boot with a fresh (zero-filled) save is the game's
   own behaviour, documented on the same page, and a soft reset runs it.
+
+
+
+- **Mapper 191 translations with 192 KiB and 160 KiB of PRG boot.** The
+  MMC3-based boards of `mmc3_boards.rs` reduced a bank number onto the image
+  with a plain modulo, which on a non-power-of-two image sends the MMC3's
+  fixed last bank (`$FF`) to bank 15 of 24 or 20, where there is no reset
+  vector: *Downtown Nekketsu Monogatari*, *Downtown Special* and *Mighty Final
+  Fight* (Chinese translations) booted to a blank frame. Banks now follow the
+  doubling algorithm of `Non_power_of_two_ROM_size` for PRG and CHR-ROM; for
+  power-of-two images nothing changes. Three blank dumps in the same survey are
+  mis-labelled boards, recorded in `docs/mappers.md` rather than forced: *Q Boy*
+  (Sachen 8259, mapper 141, not 191), *Chaos World* and *San Guo Zhi 2*
+  (Waixing FS005, mapper 176 submapper 2, not 74), and the Kasheng *2-in-1
+  (Mortal Kombat 6, Samurai Spirits)* (mapper 291, not 47).
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

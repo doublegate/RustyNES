@@ -202,6 +202,39 @@ fn t9552_scramble<const N: usize>(
     out
 }
 
+/// Map a bank number onto an image of `count` banks that may not be a power
+/// of two (`nesdev_wiki/output/Non_power_of_two_ROM_size.md`).
+///
+/// The page's doubling algorithm grows such an image to the next power of
+/// two by repeatedly copying its last `lowbit(size)` banks onto its end: a
+/// 24-bank (192 KiB) image becomes `ABCC` (banks 24-31 repeat 16-23), a
+/// 20-bank (160 KiB) one grows 20 -> 24 -> 32. Plain `bank % count` is wrong
+/// for those images: it sends the MMC3's all-ones fixed bank (`$FF`) to bank
+/// 15 of 24 instead of 23, so `$E000` holds no reset vector and the game
+/// never starts (the 192 KiB and 160 KiB translations on mapper 191).
+///
+/// This is the inverse of the doubling, computed without building the grown
+/// image: reduce `bank` modulo the grown size, then, while it lies in a copied
+/// region `[s, s + lowbit(s))`, step it back onto the region's source. For a
+/// power-of-two `count` it is exactly `bank % count`. No allocation, a few
+/// iterations at most (one per set bit of `count`): this runs on every PRG and
+/// CHR-ROM access.
+fn mirror_bank(bank: usize, count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let mut bank = bank & (count.next_power_of_two() - 1);
+    while bank >= count {
+        // Find the doubling stage whose copied region holds `bank`.
+        let mut size = count;
+        while size + (size & size.wrapping_neg()) <= bank {
+            size += size & size.wrapping_neg();
+        }
+        bank -= size & size.wrapping_neg();
+    }
+    bank
+}
+
 /// Where a pattern-table access lands.
 enum Chr {
     Rom(usize),
@@ -454,9 +487,16 @@ impl Mmc3Board {
         }
     }
 
+    /// A CHR-ROM (or whole-image CHR-RAM) byte offset reduced onto the
+    /// image, mirroring a non-power-of-two size per [`mirror_bank`].
+    fn chr_rom_offset(&self, off: usize) -> usize {
+        mirror_bank(off / CHR_BANK_1K, self.chr.len() / CHR_BANK_1K) * CHR_BANK_1K
+            + (off & (CHR_BANK_1K - 1))
+    }
+
     fn read_chr(&self, addr: u16) -> u8 {
         match self.chr_target(addr) {
-            Chr::Rom(off) => self.chr[off % self.chr.len()],
+            Chr::Rom(off) => self.chr[self.chr_rom_offset(off)],
             Chr::Ram(off) => self.chr_ram[off % self.chr_ram.len()],
         }
     }
@@ -600,7 +640,7 @@ impl Mapper for Mmc3Board {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xFFFF => {
-                let bank = self.prg_bank(addr) % (self.prg_rom.len() / PRG_BANK_8K);
+                let bank = mirror_bank(self.prg_bank(addr), self.prg_rom.len() / PRG_BANK_8K);
                 self.prg_rom[bank * PRG_BANK_8K + (addr as usize & 0x1FFF)]
             }
             // Dragon Ball Z 5's language bit. The page says every known copy
@@ -683,7 +723,7 @@ impl Mapper for Mmc3Board {
 
     fn chr_phys(&self, addr: u16) -> Option<u32> {
         match self.chr_target(addr) {
-            Chr::Rom(off) if !self.chr_is_ram => u32::try_from(off % self.chr.len()).ok(),
+            Chr::Rom(off) if !self.chr_is_ram => u32::try_from(self.chr_rom_offset(off)).ok(),
             _ => None,
         }
     }
@@ -709,8 +749,8 @@ impl Mapper for Mmc3Board {
                 self.chr_ram[off % len] = value;
             }
             Chr::Rom(off) if self.chr_is_ram => {
-                let len = self.chr.len();
-                self.chr[off % len] = value;
+                let off = self.chr_rom_offset(off);
+                self.chr[off] = value;
             }
             Chr::Rom(_) => {
                 // FS303: a write to a bank mapped to ROM selects which banks

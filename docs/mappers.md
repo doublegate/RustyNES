@@ -653,8 +653,8 @@ the page gives only Disch's notes, or masks marked "probably".
 | 12 | 0 | Gouder SL-5020B (`INES_Mapper_012`) | Curated | MMC3A (the alternate / NEC behaviour) | `$4100` mask `$E100`: CHR A18 per pattern table (bit 0 for PPU A12=0, bit 4 for A12=1), outside the ASIC so unaffected by `$8000` bit 7. The *Dragon Ball Z 5* language bit read at the same address returns 0 on D0: the page says every known copy is hard-wired to Chinese but not which level that is, so this is an assumption. Submapper 1 (the Magic Card 4M extraction) is a different device and is not supported. |
 | 37 | — | SMB + Tetris + NWC (`INES_Mapper_037`) | Curated | MMC3 | The 74HC161 at `$6000-$7FFF`, written only while the MMC3's `$A001` allows a PRG-RAM write; PRG A16 = Q0·Q1 + Q2·M16, A17 = CHR A17 = Q2 (the page's NAND equations). Write-only (open bus). The CIC reset clears it (`Mapper::reset`). |
 | 45 | — | GA23C (`INES_Mapper_045`) | Curated | MMC3 | Four outer registers written in turn at `$6000` (mask `$F001`): CHR-OR, PRG-OR, CHR-AND + high bits, PRG-AND (inverted) + lock. `$6001` resets and unlocks, as does a soft reset. `$5000-$5FFF` reads the menu DIP switch on D0. WRAM only when a NES 2.0 header declares it. |
-| 47 | — | Spike V'Ball + NWC (`INES_Mapper_047`) | BestEffort | MMC3 | One block bit in the PRG-RAM window, gated like mapper 37. The page is Disch's notes only. |
-| 74 | — | Waixing 43-393 (`INES_Mapper_074`) | Curated | MMC3 | CHR banks 8 and 9 are 2 KiB of CHR-RAM. 8 KiB work RAM. |
+| 47 | — | Spike V'Ball + NWC (`INES_Mapper_047`) | BestEffort | MMC3 | One block bit in the PRG-RAM window, gated like mapper 37. The page is Disch's notes only. The Kasheng *2-in-1 (Mortal Kombat 6, Samurai Spirits)* is often labelled 47 (512 KiB CHR, `$6000` written with `$C0`/`$60` while WRAM is disabled); it is NES 2.0 mapper 291 (`NES_2_0_Mapper_291`), which this project does not implement. |
+| 74 | — | Waixing 43-393 (`INES_Mapper_074`) | Curated | MMC3 | CHR banks 8 and 9 are 2 KiB of CHR-RAM. 8 KiB work RAM. A dump that writes `$A001` with bit 5 set (`$EC`/`$ED`), `$5FF3`, or MMC3 registers 8-11 is a Waixing FS005 re-release, mapper 176 submapper 2 (`INES_Mapper_176`), not this board. |
 | 83 | 0/1/2 | Cony / Yoko (`INES_Mapper_083`) | Curated | 16-bit M2, up or down | Three PRG modes, `$6000` ROM (subs 0/1) or 32 KiB banked WRAM (sub 2), 1 KiB / 2 KiB / outer-banked CHR. On iNES the submapper follows the page's CHR-size heuristic. The DIP and scratch-RAM masks are "probably" on the page and are decoded inside `$5000-$5FFF` only. |
 | 91 | 0 | JY830623C / YY840238C (`INES_Mapper_091`) | Curated | 64 unfiltered PPU A12 rises | 2 KiB CHR x4, 8 KiB PRG x2 + fixed 16 KiB, outer bank from the `$8000-$9FFF` write address. |
 | 91 | 1 | EJ-006-1 | BestEffort | M2, down by 5 every 4th cycle | The page does not say when it asserts; this board asserts on the decrement that would go below zero, then stops until `$7007`. |
@@ -662,12 +662,21 @@ the page gives only Disch's notes, or masks marked "probably".
 | 121 | — | Kasheng A9711 / A9713 (`INES_Mapper_121`) | BestEffort | MMC3 | Protection array at `$5000`, the bit-reversed `$8001` latch and `$8003` index overrides, CHR A18 from PPU A12 (A9711) or a `$5180` outer bank (A9713, told apart by 512 KiB PRG). The page's masks are "probably". |
 | 153 | — | Bandai LZ93D50 + WRAM (`INES_Mapper_153`) | Curated | LZ93D50 | In `m016_bandai_fcg.rs` (outside its EEPROM region): `$8000-$8003` bit 0 is the outer 256 KiB PRG bank, `$800D` bit 5 the WRAM enable; 8 KiB of unbanked CHR-RAM, addressed directly and never through the CHR bank registers (in v2.9.6 and v2.9.7 all eight 1 KiB windows aliased the first 1 KiB, which striped *Famicom Jump II*'s title); the WRAM is the battery save. Per the page, the game itself freezes on a black screen when it boots with zero-filled WRAM (the default fresh-cartridge state here) and runs after a soft reset. |
 | 163 | — | Nanjing FC-001 (`INES_Mapper_163`) | Curated | — | 32 KiB PRG from `$5000`/`$5200` with the mode register's D0/D1 swap (not on 1 MiB boards) and the boot-in-bank-3 rule; feedback register at `$5100`/`$5500`; the automatic CHR-RAM switch latches PPU A9 on each rise of A13, modelled as a nametable access that follows a pattern access. |
-| 191 | — | (`INES_Mapper_191`) | BestEffort | MMC3 | CHR bank bit 7 selects 2 KiB CHR-RAM. Disch's notes. |
+| 191 | — | (`INES_Mapper_191`) | BestEffort | MMC3 | CHR bank bit 7 selects 2 KiB CHR-RAM. Disch's notes. The 192 KiB / 160 KiB translations need the non-power-of-two mirroring below. *Q Boy* (Sachen, CHR-RAM) is often labelled 191 but writes only `$4100`/`$4101`: it is a Sachen 8259 board, mapper 141 (`Sachen_8259`), and does not boot as 191. |
 | 192 | — | Waixing FS308 (`INES_Mapper_192`) | Curated | MMC3 | CHR banks 8-11 are 4 KiB of CHR-RAM. |
 | 194 | — | (`INES_Mapper_194`) | BestEffort | MMC3 | CHR banks 0 and 1 are 2 KiB of CHR-RAM. Disch's notes. |
 | 195 | — | Waixing FS303 (`INES_Mapper_195`) | Curated | MMC3 | A PPU write to a bank mapped to ROM selects which banks are RAM, from that bank's number (the page's eight-row table; power-on `$80`). CHR A10-A12 reach the RAM, so `$80` and `$82` share it. The optional 4 KiB at `$5000` appears when a NES 2.0 header declares PRG-RAM. |
 | 228 | — | Action 52 / Cheetahmen II (`INES_Mapper_228`) | Curated | — | The register latches the write ADDRESS (mirroring, chip, page, size) and data (CHR low bits). On the 1.5 MiB image chip 3 is the third 512 KiB and chip 2 is open bus. Reset clears it. |
 | 249 | — | Waixing T9552 (`T9552`) | Curated | MMC3 | `$5000` selects a PRG A14-A17 / CHR A12-A17 scrambling pattern; the file is stored in the `$5000=$00` order. Pinned to the page's worked example. |
+
+**Non-power-of-two ROM sizes.** Every board in `mmc3_boards.rs` reduces a PRG
+or CHR-ROM bank onto the image by the doubling algorithm of
+`Non_power_of_two_ROM_size` (the smaller ROM is mirrored up to the next power of
+two: 192 KiB reads as `ABCC`, 160 KiB grows 20 -> 24 -> 32 banks), not by a plain
+modulo. A modulo sent the MMC3's all-ones fixed bank to bank 15 of a 24-bank
+image, which holds no reset vector, so the 192 KiB and 160 KiB mapper 191
+translations booted to a blank frame. For power-of-two images the two are
+identical.
 
 **Mapper 4, corrected.** The NES 2.0 submappers of mapper 4 were mis-assigned:
 submapper 1 was read as "NEC" and 4 as Sharp. `NES_2_0_submappers` defines 1 as
