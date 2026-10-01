@@ -189,6 +189,18 @@ cycle-accurate core later replaced.
   drew one repeated tile, and *Super 42-in-1* opened on its second menu page
   under the wrong mirroring. Both now open on their first menu page. RESET
   also clears both registers, as the page says, which returns to the menu.
+
+
+
+- **Vs. System (mapper 99) work RAM on a single-screen cabinet.** The CPU
+  board has 2 KiB of RAM at `$6000-$7FFF`, which the CPU owns while bit 1 of
+  its last `$4016` write is set (NESdev "Vs. System"). Only the two-screen
+  DualSystem path provided it; a UniSystem cart read 0 and lost every write.
+  *Vs. Super Mario Bros.* keeps its state there and stayed on a blank first
+  frame; with the RAM it runs its attract demo. The circulating `VS Super
+  Mario Bros.nes` dump is headed mapper 3 with no Vs. flag, so that file
+  still runs as CNROM; it is recorded in `docs/mappers.md`, not forced.
+  Mapper 99 save states gain the RAM (layout 3; older states still load).
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

@@ -309,7 +309,7 @@ RGB device.
 |------|-----------|------|-------|-----|-------|
 | 33 | — | Taito TC0190 / TC0350 | — | — | Don Doko Don, Power Blazer. 2x8K PRG + 2x2K + 4x1K CHR; software mirroring. (mapper 48 = TC0690, the +A12-IRQ variant.) |
 | 93 | — | Sunsoft-3R | — | — | Shanghai, Fantasy Zone. UxROM-like: PRG bits 4-6 + CHR-RAM-enable bit 0; 8K CHR-RAM. |
-| 99 | — | **Nintendo Vs. System** | — | — | **Vs. Excitebike, Vs. Clu Clu Land.** Fixed PRG (8/16/32K) + 8K CHR bank from `$4016` bit 2. Forces Vs. System + 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). |
+| 99 | — | **Nintendo Vs. System** | — | — | **Vs. Excitebike, Vs. Clu Clu Land.** Fixed PRG (8/16/32K) + 8K CHR bank from `$4016` bit 2. Forces Vs. System + 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). Since v2.9.8 a UniSystem cart also has the board's 2 KiB RAM at `$6000-$7FFF` (mirrored), which the CPU sees while the last `$4016` write had bit 1 (`OUT1`) set and as open bus otherwise (nesdev "Vs. System", `$4016` write; save-state layout v3). *Vs. Super Mario Bros.* keeps its state there and never left its first frame without it. The DualSystem path keeps its shared copy and does not gate on `OUT1`. The circulating `VS Super Mario Bros.nes` dump is headed mapper 3 with no Vs. flag, so it runs as CNROM and still cannot boot: its code banks CHR through `$4016` bit 2 and writes the `$4020` coin counter, so its board is mapper 99 (recorded, not forced). |
 | 152 | — | Bandai 74161/161 (1-screen) | — | — | Arkanoid II, Pocket Zaurus. UxROM-like (PRG bits 4-6, CHR bits 0-3) + bit-7 software 1-screen select. |
 
 ### Third long-tail batch (5 families, 43 → 48)
