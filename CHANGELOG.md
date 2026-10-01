@@ -81,6 +81,16 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Mapper 19 (Namco 163) honours the IRQ enable bit in `$5800`.** The
+  register is `EHHH HHHH` on NESdev, bit 7 the enable, but every write
+  turned the counter on, so a game that stopped its raster IRQ with
+  `$5800 = $00` took a stray IRQ every 32,768 cycles instead. *Digital Devil
+  Story: Megami Tensei II* stops its IRQ that way after its last raster
+  band; the stray IRQ rewrote the background CHR banks mid-frame and covered
+  the title, the intro and the text screens with a repeated tile pattern.
+  They now render cleanly, and `$5800` reads back the enable in bit 7. The
+  other staged Namco 163 games are unchanged.
+
 - **Mapper 64 (Tengen RAMBO-1) raises its IRQ when a reload lands on 0.**
   The counter tested for zero only after a decrement, but NESdev's
   "RAMBO-1" page applies the test after a reload too, so a latch of 0

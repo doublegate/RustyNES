@@ -639,7 +639,9 @@ impl Mapper for Namco163 {
                 v
             }
             0x5800..=0x5FFF => {
-                let v = ((self.irq_counter >> 8) & 0x7F) as u8;
+                // `EHHH HHHH`: the enable in bit 7, the counter's high bits
+                // below it (bit 15 of `irq_counter` holds the enable).
+                let v = (self.irq_counter >> 8) as u8;
                 self.irq_pending = false;
                 v
             }
@@ -662,9 +664,14 @@ impl Mapper for Namco163 {
                 self.irq_counter = (self.irq_counter & 0xFF00) | u16::from(value);
                 self.irq_pending = false;
             }
+            // `$5800` is `EHHH HHHH` (NESdev "INES Mapper 019"): bit 7 is
+            // the IRQ enable and bits 6-0 the counter's high bits. Bit 15 of
+            // `irq_counter` stores the enable, so the whole byte lands in the
+            // high half. Until v2.9.8 this forced the enable on, so a
+            // `$5800 = $00` meant to stop the counter restarted it instead
+            // (Megami Tensei II's raster bands).
             0x5800..=0x5FFF => {
-                self.irq_counter =
-                    (self.irq_counter & 0x00FF) | ((u16::from(value) & 0x7F) << 8) | 0x8000;
+                self.irq_counter = (self.irq_counter & 0x00FF) | (u16::from(value) << 8);
                 self.irq_pending = false;
             }
             0x6000..=0x7FFF => {
@@ -1039,6 +1046,39 @@ mod tests {
             m.notify_cpu_cycle();
         }
         assert!(m.irq_pending());
+    }
+
+    #[test]
+    fn namco163_5800_bit7_is_the_irq_enable() {
+        // NESdev "INES Mapper 019", $5800-$5FFF (read/write) is `EHHH HHHH`:
+        // bit 7 is the IRQ enable (0: disabled) and bits 6-0 the counter's
+        // high bits. Until v2.9.8 every $5800 write enabled the counter, so a
+        // game that disables its raster IRQ with $5800 = $00 kept counting
+        // and took a spurious IRQ every 32,768 cycles. Megami Tensei II does
+        // exactly that after its last raster band, and the stray IRQ rewrote
+        // its background CHR banks mid-frame.
+        let mut m = Namco163::new(synth(8), synth_chr(8), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x5000, 0xFE);
+        m.cpu_write(0x5800, 0x7F); // counter $7FFE, enable clear
+        for _ in 0..40_000 {
+            m.notify_cpu_cycle();
+        }
+        assert!(!m.irq_pending(), "a disabled counter never fires");
+        assert_eq!(
+            m.cpu_read(0x5800),
+            0x7F,
+            "disabled: bit 7 reads 0, count held"
+        );
+        assert_eq!(
+            m.cpu_read(0x5000),
+            0xFE,
+            "a disabled counter does not count"
+        );
+        m.cpu_write(0x5800, 0xFF); // same count, enable set
+        assert_eq!(m.cpu_read(0x5800), 0xFF, "bit 7 reads back the enable");
+        m.notify_cpu_cycle(); // $7FFE -> $7FFF
+        m.notify_cpu_cycle(); // at $7FFF: fire
+        assert!(m.irq_pending(), "an enabled counter fires at $7FFF");
     }
 
     fn namco163_for_audio() -> Namco163 {
