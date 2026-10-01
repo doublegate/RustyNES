@@ -394,6 +394,19 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 |---|---|
 | 15 (K-1029 multicart), 36 (TXC 01-22000), 39 (Subor BNROM-like), 61, 62 (multicart), 72 / 92 (Jaleco JF-17/19), 77 (Irem, 4-screen CHR-RAM), 96 (Bandai Oeka Kids, PPU-bus CHR latch), 97 (Irem TAM-S1), 132 (TXC 22211), 133 / 145 / 146 (Sachen) | 147 (Sachen 3018), 148 / 149 (Sachen), 150 (Sachen SA-015, readable protection + custom mirroring), 180 (Nichibutsu UNROM-inverted), 185 (CNROM CHR-disable protection), 200 / 201 / 202 / 203 / 212 / 213 / 214 (multicart) |
 
+**Mapper 212, *999-in-1* (v2.9.8 survey): not a board defect.** Its menu
+shows `0` glyphs around the list because the nametable is never cleared. The
+reset handler waits for one vblank, then sets `PPUADDR` and writes 960 `$24`
+tiles; that `$2006` write lands about 27,400 CPU cycles after power-on, inside
+the documented NTSC warm-up in which `PPUCTRL`/`PPUMASK`/`PPUSCROLL`/`PPUADDR`
+writes are ignored (~29,658 cycles, NESdev "PPU power up state"), so the fill
+goes to pattern space and the nametable keeps tile `$00`, the font's `0`. The
+same page says a Famicom's PPU leaves reset about one frame before its CPU,
+which such pirate carts assume; with the warm-up removed in a scratch run the
+menu draws on a clean background. RustyNES emulates the front-loader here;
+whether to model a Famicom power-on is a console-model decision, not a mapper
+fix. The board itself matches `INES_Mapper_212`.
+
 ### Seventh long-tail batch — v1.3.0 "Bedrock" best-effort sweep (14 families, 87 → 101)
 
 The v1.3.0 Workstream D1 Tier-2 sweep, ported from the GeraNES reference.
@@ -438,7 +451,7 @@ note below).
 | 226 | — | 76-in-1 BMC | — | — | landed (v1.4.0 / S9) | Two `$8000-$FFFF` regs (even/odd): reg0 `[PMOP PPPP]` (bits 4-0 = PRG bits 4-0, bit 5 mode 0=32K/1=16K, bit 6 mirror 0=H/1=V, bit 7 = PRG bit 5), reg1 bit0 = PRG bit 6; CHR-RAM; RESET clears both registers. Before v2.9.8 bits 5-7 were read as PRG bit 5 / mode / mirroring, so *76-in-1* drew one repeated tile and *Super 42-in-1* opened on its second page under the wrong mirroring. |
 | 227 | — | 1200-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG + fixed-high-bank mode + mirroring bit; CHR-RAM. |
 | 229 | — | 31-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded: low bits zero = fixed NROM-32 menu bank, else a 16K bank pair + 8K CHR + mirroring bit. |
-| 233 | — | 42-in-1 reset-based BMC | — | — | landed (v1.4.0 / S9) | DATA-driven `[MMOP PPPP]` (4-bit page, bit5 mode 0=16K/1=32K, bits6-7 mirroring); the reset-selected outer block is host-driven (fixed power-on `0`); CHR-RAM. |
+| 233 | — | 42-in-1 reset-based BMC | — | — | landed (v1.4.0 / S9) | DATA-driven `[MMOP PPPP]` (4-bit page, bit5 mode 0=16K/1=32K, bits6-7 mirroring); the reset-selected outer block is host-driven (fixed power-on `0`); CHR-RAM. **Not implementable from documentation (v2.9.8 survey):** `Unknown Multi Cart w-Galaxian [p1].nes` (512 KiB PRG + 256 KiB CHR) is solid blue at every capture point. It is the "Unknown Multicart 1" that `INES_Mapper_233` itself says "does *not* follow the description in this doc at all": 32 NROM-128 games, no menu, each game's CHR page eight below its PRG page, mirroring varying per game, "might even be assigned the wrong mapper number". No documented board fits it, so none is guessed. |
 | 242 | — | Waixing 43-in-1 (Wai Xing Zhan Shi) | — | — | landed (v1.4.0 / S9) | `$8000-$FFFF` address-decoded 32K PRG (inner = A2-A4, outer = A5-A6) + mirror bit (A1); 8K work-RAM at `$6000-$7FFF`; CHR-RAM. |
 | 246 | — | Fong Shen Bang / G0151-1 | — | — | landed (v1.4.0 / S9) | Four `$6000-$6003` PRG (8K) + four `$6004-$6007` CHR (2K) banking regs; 2K PRG-RAM at `$6800-$6FFF`; `$6003` powers on to `$FF` and `$FFE4-$FFFF`-family reads force PRG A17 high; CHR-ROM, header-fixed mirroring. |
 
