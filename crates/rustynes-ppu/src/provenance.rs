@@ -10,7 +10,7 @@
 //!
 //! The existing devtools each hold one piece and none holds this one. The Trace
 //! Logger has the PC but not the effect; the Event Viewer
-//! (`LockstepBus::events`) has the CPU-side `$2000-$3FFF` write with its PPU
+//! (`SystemBus::events`) has the CPU-side `$2000-$3FFF` write with its PPU
 //! position but neither the resolved VRAM address nor the PC; the memory-access
 //! counter has per-address read/write counts and a last-access cycle stamp but,
 //! again, no PC. This module supplies the missing edge: for each byte of the

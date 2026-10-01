@@ -33,7 +33,7 @@ about which piece was missing, because the shape of the gap determined the desig
 | existing tool | has | lacks |
 |---|---|---|
 | Trace Logger (`Nes::trace`) | PC, registers, cycle | any link to an effect |
-| Event Viewer (`LockstepBus::events`) | the `$2000-$3FFF` CPU write, its PPU scanline/dot | the PC, and the *resolved* destination |
+| Event Viewer (`SystemBus::events`) | the `$2000-$3FFF` CPU write, its PPU scanline/dot | the PC, and the *resolved* destination |
 | memory access counter (`debugger/access_counter.rs`) | per-address read/write counts, last-access cycle | the PC |
 | HD-pack tile source (`HdTileSource`) | per-pixel tile/palette/sprite context | write history |
 

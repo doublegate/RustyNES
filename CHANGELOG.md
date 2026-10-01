@@ -74,6 +74,11 @@ cycle-accurate core later replaced.
   never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
   built the iOS host. macOS jobs still never run on pull requests.
 
+- **`LockstepBus` is renamed `SystemBus` (API break, ADR 0042).** The old
+  name described the pre-v2.0.0 dot-lockstep scheduler, which v2.0.0
+  retired. `Bus` was ruled out because `rustynes_cpu::Bus` is the trait the
+  type implements. **Migration:** replace `rustynes_core::LockstepBus` with
+  `rustynes_core::SystemBus`; nothing outside the workspace names it.
 - **A ROM's identity no longer includes its header (breaks old saves once).**
   `Nes::rom_sha256` names save-state slots, battery `.sav` files and cheats,
   tags `.rns` states and movies, matches netplay peers, and is what Lua's

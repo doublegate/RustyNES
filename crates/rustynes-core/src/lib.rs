@@ -70,7 +70,7 @@ pub mod zwinder;
 /// value instead of transcribing a literal that could silently fall out of step
 /// with the samples actually emitted.
 pub use bus::DEFAULT_SAMPLE_RATE;
-pub use bus::LockstepBus;
+pub use bus::SystemBus;
 #[cfg(feature = "debug-hooks")]
 pub use bus::{AccessRec, EventBpKind, EventBreakHit, EventKind, EventRec, InterruptRec};
 pub use bus_snapshot::{EXPANSION_DEVICE_MAX_LEN, SAVE_STATE_DEVICE_HEADROOM};

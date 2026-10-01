@@ -56,7 +56,7 @@ impl Apu {
 The DMC sample DMA path is intentionally a **polling protocol on the
 `Apu`**, not a callback trait. When the DMC bit-shift register empties,
 `Apu::dmc_dma_pending()` returns `true` and `Apu::dmc_dma_addr()` exposes
-the target address; the `LockstepBus` polls these on its halt cycles,
+the target address; the `SystemBus` polls these on its halt cycles,
 performs the read (which can stall the CPU for the documented 1-4 cycles
 depending on what the CPU was doing), and feeds the byte back via
 `Apu::complete_dmc_dma(byte)`. This keeps the `rustynes-apu` crate from

@@ -1,9 +1,9 @@
-//! Save-state encoding for the [`crate::bus::LockstepBus`] (the "BUS"
+//! Save-state encoding for the [`crate::bus::SystemBus`] (the "BUS"
 //! tagged section) — owns CPU RAM, controllers, the unified DMA engine's
 //! bookkeeping, the two data-bus latches, and the cumulative cycle counter.
 //!
 //! The chip sub-states (CPU / PPU / APU / mapper) are emitted as their own
-//! tagged sections by [`crate::bus::LockstepBus::snapshot`].
+//! tagged sections by [`crate::bus::SystemBus::snapshot`].
 //!
 //! # Version 2 (v2.9.8, ADR 0042)
 //!
@@ -12,14 +12,14 @@
 //! loaded. Version 2 drops that: every field is required, a short body is a
 //! truncation error, and trailing bytes are rejected, because a version-2
 //! reader is never handed anything but a version-2 body (the section version
-//! check in `LockstepBus::restore` refuses version 1 first). It also drops
+//! check in `SystemBus::restore` refuses version 1 first). It also drops
 //! the fields that no longer carry state: the NMI edge detector's
 //! `last_nmi_level` / `nmi_edge_latch` (they fed only the removed `poll_nmi`),
 //! the OAM-DMA owed-cycle counter and byte index (the unified engine's
 //! length is emergent), and `dma_mc_consumed` (structurally zero since
 //! v2.0.0, and decoded as zero regardless since v2.7.0).
 
-use crate::bus::LockstepBus;
+use crate::bus::SystemBus;
 use crate::controller::Controller;
 use crate::input_device::{
     FamilyKeyboardState, InputDevice, SnesMouseState, VausState, ZapperState,
@@ -56,7 +56,7 @@ pub const SAVE_STATE_DEVICE_HEADROOM: usize = 2 * (EXPANSION_DEVICE_MAX_LEN - 1)
 
 /// Encode the bus's own state (RAM, controllers, DMA, data-bus latches,
 /// cycle). The order is the on-wire layout [`decode_bus`] reads back.
-pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
+pub fn encode_bus(bus: &SystemBus) -> Vec<u8> {
     let mut w = BinWriter::with_capacity(0x900);
     // Cumulative cycle counter.
     w.u64(bus.cycle());
@@ -364,7 +364,7 @@ fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>,
 // The body is one straight-line field-by-field decode mirroring `encode_bus`;
 // splitting it would obscure the byte-order correspondence between the two.
 #[allow(clippy::too_many_lines)]
-pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotError> {
+pub fn decode_bus(bus: &mut SystemBus, data: &[u8]) -> Result<(), SnapshotError> {
     let mut r = BinReader::new(data);
     let cycle = r.u64()?;
     let ram = r.take(0x800)?;

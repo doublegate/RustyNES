@@ -73,7 +73,7 @@ fn cpu_interrupts_v2_3_nmi_and_irq_strict() {
 
 // ============================================================================
 // 4-irq_and_dma — PASSES strictly as of C1 Phase 3 (DMA alignment audit,
-// 2026-05-15). The OAM DMA alignment parity in `LockstepBus::drain_dma`
+// 2026-05-15). The OAM DMA alignment parity in `SystemBus::drain_dma`
 // was inverted from `cycle & 1 == 0 => 513` to `cycle & 1 == 0 => 514`
 // per nesdev §DMA's get/put alignment rule; combined with Phase 1's
 // M2-low IRQ sample, this flipped the test FAIL → PASS.

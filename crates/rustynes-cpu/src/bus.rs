@@ -53,7 +53,7 @@ pub trait Bus {
 
     /// Cumulative bus-side cycle counter.
     ///
-    /// On the production `LockstepBus`, this is `self.cycle` —
+    /// On the production `SystemBus`, this is `self.cycle` —
     /// the total number of CPU cycles the bus has ticked, INCLUDING
     /// DMC DMA halt + dummy + alignment + transfer cycles (which
     /// the CPU's own `Cpu::cycles` field does NOT count because
@@ -81,7 +81,7 @@ pub trait Bus {
     // `Cpu::start_cycle` / `Cpu::end_cycle` call these around every access.
     // The defaults delegate to `cpu_read` / `cpu_write` / `on_cpu_cycle`, so
     // a simple test bus keeps working without modelling the split; the
-    // production `LockstepBus` overrides them with the real master-clock
+    // production `SystemBus` overrides them with the real master-clock
     // catch-up. History: `docs/audit/v2.0-master-clock-r1-port-plan-2026-06-03.md`.
     // ================================================================
 
@@ -103,7 +103,7 @@ pub trait Bus {
     /// ppu_divider` dots — 3:1 NTSC, 3.2:1 PAL, 3:1 Dendy). The R1 CPU loop
     /// advances `master_clock` and derives its read/write split off this. The
     /// default (12) keeps test stubs + the non-regioned path on NTSC; the
-    /// `LockstepBus` overrides from the cartridge region.
+    /// `SystemBus` overrides from the cartridge region.
     fn cpu_divider(&self) -> u64 {
         12
     }
@@ -118,7 +118,7 @@ pub trait Bus {
     /// `Cpu::start_cycle`, before the bus access — mirrors Mesen's
     /// `StartCpuCycle`), `true` for the post-access half (called from
     /// `Cpu::end_cycle`, after the bus access — mirrors `EndCpuCycle`).
-    /// R1c-3 (`mmc3-m2-phase-irq`, default-off experiment): `LockstepBus`
+    /// R1c-3 (`mmc3-m2-phase-irq`, default-off experiment): `SystemBus`
     /// forwards this as the real M2-phase label on the `PpuBusAdapter` it
     /// constructs, replacing the previously call-local (and therefore
     /// almost-always-zero) `sub_dot` counter with a value that actually
@@ -224,7 +224,7 @@ pub trait Bus {
     /// Diagnostic-only hook fired once per R1 CPU cycle from `Cpu::end_cycle`
     /// (after `handle_interrupts`), so the `irq-timing-trace` tooling can
     /// record a `CycleRecord` for the R1 access path (which bypasses the
-    /// `LockstepBus` `tick_one_cpu_cycle` push). Default no-op; the production
+    /// `SystemBus` `tick_one_cpu_cycle` push). Default no-op; the production
     /// bus overrides it only under the `irq-timing-trace` feature, so non-trace
     /// R1 builds compile this to an empty call.
     fn trace_end_cycle(&mut self) {}

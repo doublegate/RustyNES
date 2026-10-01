@@ -94,7 +94,7 @@ Per the TetaNES postmortem (`ref-docs/research-report.md` §State of the art), s
 > mirroring Mesen2's `StartCpuCycle → Read → EndCpuCycle` split. Every
 > instruction cycle is a real bus access (no busless filler cycles); DMA
 > is a unified, per-cycle-interleaved engine, not a separate stepping
-> mode; `LockstepBus::cycle` is the ONE canonical per-cycle counter that
+> mode; `SystemBus::cycle` is the ONE canonical per-cycle counter that
 > `Cpu::cycles`/`Apu::cpu_cycle` are assigned from, never independently
 > incremented. See `docs/adr/0029-one-clock-every-cycle-timebase.md` for
 > the full architectural decision and rationale, and `docs/scheduler.md`

@@ -105,7 +105,7 @@ pub const HEADER_SIZE: usize = BINARY_MAGIC.len() + 2 + 2;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CpuBootRecord {
     /// Cumulative CPU cycle counter at the start of this
-    /// instruction (matches `LockstepBus::cycle()`).
+    /// instruction (matches `SystemBus::cycle()`).
     pub cycle: u64,
     /// PPU frame counter at the start of this instruction.
     pub frame: u32,

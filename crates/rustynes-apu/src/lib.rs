@@ -7,7 +7,7 @@
 //! lookup-table non-linear mixer, analog highpass / lowpass filter chain,
 //! frame counter (4-step + 5-step modes with the documented IRQ flag),
 //! band-limited synthesis at host sample rate, and DMC sample DMA. The
-//! bus-side DMC DMA scheduling lives in `rustynes-core::LockstepBus`.
+//! bus-side DMC DMA scheduling lives in `rustynes-core::SystemBus`.
 
 #![no_std]
 // The chip stack carries no `unsafe`; `forbid` makes that a compile-time

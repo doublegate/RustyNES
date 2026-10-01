@@ -876,7 +876,7 @@ impl Apu {
     /// This is one of the five counters of the timebase substrate the
     /// v2.0.0 "Timebase" rewrite collapses (ADR 0002 + the v2.0.0
     /// master-clock plan): `Cpu::master_clock`, `Cpu::cycles`,
-    /// `LockstepBus::cycle`, `LockstepBus::ppu_clock`, and this field are
+    /// `SystemBus::cycle`, `SystemBus::ppu_clock`, and this field are
     /// each advanced exactly once (or by one region divider) per CPU cycle
     /// at different points *within* the cycle, and must never drift. The
     /// RW-1 parity collapse already derives `apu_phase` / `put_cycle` from
@@ -1106,7 +1106,7 @@ impl Apu {
     /// calling this (the bus is responsible for performing the DMA fetch
     /// before resuming `tick()` calls).
     ///
-    /// Standalone/test convenience: production (`LockstepBus`) drives the
+    /// Standalone/test convenience: production (`SystemBus`) drives the
     /// canonical cycle counter via [`Self::set_canonical_cycle`] before each
     /// [`Self::tick_with_external`] (the v2.0.0 one-clock contract — the APU
     /// never self-increments). This helper self-advances the counter so

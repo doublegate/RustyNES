@@ -410,10 +410,10 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 ### 6a. The timebase rewrite itself
 
 - `[x]` **One monotonic master clock (A1)** — *(SHIPPED v2.0.0 "Timebase",
-  2026-07-03, ADR 0029. `LockstepBus::cycle` is now the ONE canonical per-cycle
+  2026-07-03, ADR 0029. `SystemBus::cycle` is now the ONE canonical per-cycle
   counter; `Cpu::cycles` and `Apu::cpu_cycle` are **assigned** from it rather than
   independently incremented.)* collapse the five-counter substrate
-  (`Cpu::master_clock`, `Cpu::cycles`, `LockstepBus::cycle`/`ppu_clock`,
+  (`Cpu::master_clock`, `Cpu::cycles`, `SystemBus::cycle`/`ppu_clock`,
   `Apu::cpu_cycle` + `apu_phase`/`put_cycle` parity + DMC byte-timer) to a single
   `master_clock: u64` with everything else derived by fixed arithmetic. Target:
   **v2.0.0**. Files: `crates/rustynes-cpu/src/cpu.rs`,

@@ -2,14 +2,20 @@
 //
 // Provenance: this bus is RustyNES's own, but it incorporates models ported from TriCNES (MIT): the OAM-DMA register-window read (`oam_dma_read_reg_active`) is a direct port of TriCNES's `Fetch` address-bus-window block, and the unified DMA engine's state (`dmc_halt`, `uni_oam_active` / `_halt` / `_aligned` / `_addr`) is modelled on TriCNES's DMA flags. See docs/originality-and-provenance.md (Section 1)
 // and NOTICE for the complete, audited derivation record.
-//! Lockstep bus for the `Nes` facade.
+//! The system bus behind the `Nes` facade.
 //!
-//! Per `docs/scheduler.md` §Bus design: this bus owns CPU RAM, the PPU, the
-//! APU, the cartridge mapper, and the controller stub. Each
-//! `cpu_read`/`cpu_write` ticks the PPU exactly 3 times (NTSC) and dispatches
-//! the access to the right device. PPU register reads have side effects;
-//! OAM DMA and DMC DMA are handled by `cpu_cycles_owed`-style state machines
-//! that drain stolen cycles before completing the access that triggered them.
+//! Per `docs/scheduler.md` §Bus design: [`SystemBus`] owns CPU RAM, the PPU,
+//! the APU, the cartridge mapper, the controller ports and the two data-bus
+//! latches, and implements `rustynes_cpu::Bus`. The CPU clocks every cycle in
+//! two halves (ADR 0002 / ADR 0029): `run_ppu_to` catches the PPU up to the
+//! master clock, `cpu_clock` runs the cycle-start work (APU, mapper hook,
+//! the deferred controller strobe), the access is dispatched to the right
+//! device, and `cpu_clock_apu_dmc` ticks the DMC at the cycle's end. OAM and
+//! DMC DMA run through one unified engine (`unified_dma_cycle_impl`), one
+//! full CPU cycle at a time.
+//!
+//! The type was `LockstepBus` until v2.9.8 (ADR 0042), a name left over from
+//! the pre-v2.0.0 dot-lockstep scheduler.
 
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -209,7 +215,7 @@ const INTERRUPT_CAP: usize = 4_096;
 /// feature-off build is byte-identical.
 ///
 /// The 16 categories are packed into a `u16` arm mask (see
-/// [`LockstepBus::set_event_breakpoints`]); the bit index is the discriminant.
+/// [`SystemBus::set_event_breakpoints`]); the bit index is the discriminant.
 #[cfg(feature = "debug-hooks")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -309,18 +315,19 @@ pub struct EventBreakHit {
     pub dot: u16,
 }
 
-/// Lockstep bus.
+/// The system bus.
 ///
-/// Owns the entire emulator's mutable state. The CPU borrows `&mut LockstepBus`
-/// during `Cpu::step`. The PPU and APU are ticked from the bus's
-/// `cpu_read`/`cpu_write` implementations (3 dots per CPU cycle, NTSC; APU
-/// every CPU cycle).
+/// Owns the entire emulator's mutable state. The CPU borrows `&mut SystemBus`
+/// during `Cpu::step`, and the bus advances the PPU (`run_ppu_to`, 3 dots per
+/// CPU cycle on NTSC / Dendy, 3.2 on PAL) and the APU (`cpu_clock`, every CPU
+/// cycle) from the hooks the CPU calls around each access. Named
+/// `LockstepBus` until v2.9.8 (ADR 0042).
 // The bus carries many independent `bool` state words (the Four Score and
 // Vs. flags, `in_dmc_dma`, the unified DMA engine's OAM latches, the
 // debug-hook toggles). They are not a single enum-modelled machine, so
 // silencing the lint is the right call.
 #[allow(clippy::struct_excessive_bools)]
-pub struct LockstepBus {
+pub struct SystemBus {
     /// CPU RAM (2 KiB), mirrored every 0x800 bytes from `$0000-$1FFF`.
     pub(crate) ram: Box<[u8; RAM_SIZE]>,
     /// PPU instance.
@@ -424,8 +431,8 @@ pub struct LockstepBus {
     /// Vs. System coin-acceptor state: bit 0 = acceptor #1 ($4016 bit 5),
     /// bit 1 = acceptor #2 ($4016 bit 6). A real coin pulse reads true for
     /// ~40-70 ms; the frontend latches it for a configurable number of frames
-    /// via [`LockstepBus::insert_coin`] and clears it with
-    /// [`LockstepBus::clear_coin`]. Vs.-System carts only.
+    /// via [`SystemBus::insert_coin`] and clears it with
+    /// [`SystemBus::clear_coin`]. Vs.-System carts only.
     vs_coin: u8,
     /// Vs. System service button ($4016 bit 2). Vs.-System carts only.
     vs_service: bool,
@@ -467,7 +474,7 @@ pub struct LockstepBus {
     /// A3 (v2.2.3): serve a Zapper's light bit from the beam-relative
     /// temporal model instead of the frame-granular one. Default **on** since
     /// v2.3.6 (the constructor sets `true`); off restores the frame-granular
-    /// model. See [`LockstepBus::set_zapper_temporal_light`].
+    /// model. See [`SystemBus::set_zapper_temporal_light`].
     zapper_temporal_light: bool,
     /// Famicom built-in **microphone** signal (v2.2.0 "Capstone"). The hardwired
     /// second Famicom controller carries a push-to-talk microphone whose state is
@@ -744,7 +751,7 @@ pub struct LockstepBus {
     pub(crate) trace_r1_frame_start: u64,
 }
 
-impl LockstepBus {
+impl SystemBus {
     /// v2.7.0 -- reject a restored CPU/PPU clock pair too far apart to be real.
     ///
     /// `run_ppu_to` ticks the PPU until `ppu_clock` catches up to the CPU's
@@ -3776,7 +3783,7 @@ impl PpuBus for PpuBusAdapter<'_> {
 /// per-game mirroring override when one is set.
 ///
 /// Factored out of [`PpuBusAdapter::nametable_address`] (v2.3.2 "Lucid") so
-/// [`LockstepBus::resolve_nametable_address`] can answer the same question
+/// [`SystemBus::resolve_nametable_address`] can answer the same question
 /// without constructing an adapter. One definition, so the fetch path and the
 /// provenance panel cannot drift apart on a board with an override.
 fn resolve_nt_addr(
@@ -3790,7 +3797,7 @@ fn resolve_nt_addr(
     )
 }
 
-impl LockstepBus {
+impl SystemBus {
     /// Read-only nametable-address resolution for the pixel-provenance panel.
     ///
     /// Shares [`resolve_nt_addr`] with the PPU's own fetch path, so a board with
@@ -3803,7 +3810,7 @@ impl LockstepBus {
 
 /// v2.0 master-clock R1 substrate helpers (Phase 1). Compiled only under
 /// `mc-r1-substrate`; used by the clean `Bus` contract overrides below.
-impl LockstepBus {
+impl SystemBus {
     /// Tick the APU + frame counter once and fan frame events out to on-cart
     /// audio (the per-CPU-cycle APU advance `cpu_clock` runs at cycle start).
     ///
@@ -3841,7 +3848,7 @@ impl LockstepBus {
     }
 }
 
-impl Bus for LockstepBus {
+impl Bus for SystemBus {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if self.deferred_dma_replay_addr != 0
             && self.open_bus == (self.deferred_dma_replay_addr >> 8) as u8
@@ -4524,8 +4531,8 @@ mod four_score_tests {
     use crate::controller::Buttons;
 
     /// Minimal NROM (16-byte iNES header + 16 KiB PRG + 8 KiB CHR). Enough to
-    /// construct a `LockstepBus`; these tests never run the CPU.
-    fn test_bus() -> LockstepBus {
+    /// construct a `SystemBus`; these tests never run the CPU.
+    fn test_bus() -> SystemBus {
         let mut rom = Vec::with_capacity(16 + 0x4000 + 0x2000);
         rom.extend_from_slice(b"NES\x1A");
         rom.push(1); // 16 KiB PRG
@@ -4533,10 +4540,10 @@ mod four_score_tests {
         rom.extend_from_slice(&[0u8; 10]);
         rom.extend_from_slice(&[0u8; 0x4000]);
         rom.extend_from_slice(&[0u8; 0x2000]);
-        LockstepBus::new(&rom).expect("synthetic NROM parses")
+        SystemBus::new(&rom).expect("synthetic NROM parses")
     }
 
-    fn strobe(bus: &mut LockstepBus) {
+    fn strobe(bus: &mut SystemBus) {
         bus.commit_controller_strobe(1);
         bus.commit_controller_strobe(0);
     }
@@ -4919,7 +4926,7 @@ mod four_score_tests {
         prg[0] = 0x20; // $C000 (and $8000): the DMC sample byte
         rom.extend_from_slice(&prg);
         rom.extend_from_slice(&[0u8; 0x2000]);
-        let mut bus = LockstepBus::new(&rom).expect("synthetic NROM parses");
+        let mut bus = SystemBus::new(&rom).expect("synthetic NROM parses");
         assert!(
             bus.mapper.cpu_read_unmapped(0x5000),
             "fixture: $5000 floats"
@@ -5046,7 +5053,7 @@ mod partial_drive_tests {
         rom.push(0x90); // high nibble 9
         rom.extend_from_slice(&[0u8; 8]);
         rom.resize(16 + 0x8000 + 0x2000, 0);
-        let mut bus = LockstepBus::new(&rom).expect("mapper 150 parses");
+        let mut bus = SystemBus::new(&rom).expect("mapper 150 parses");
         bus.mapper.cpu_write(0x4100, 0x05); // select register 5
         bus.mapper.cpu_write(0x4101, 0x03); // R5 = 3
         bus.open_bus = 0xA8; // the last value driven on the bus

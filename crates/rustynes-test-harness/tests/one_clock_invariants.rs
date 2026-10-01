@@ -3,7 +3,7 @@
 //! The shipping R1 core keeps FIVE cycle counters that all advance exactly
 //! once (or by one region divider) per CPU cycle, at different points within
 //! the cycle: `Cpu::master_clock` (master-clock units), `Cpu::cycles`,
-//! `LockstepBus::cycle`, `LockstepBus::ppu_clock`, and `Apu::cpu_cycle`.
+//! `SystemBus::cycle`, `SystemBus::ppu_clock`, and `Apu::cpu_cycle`.
 //! They are kept in lockstep by hand-written `+= 1` statements rather than
 //! being derived from one source of truth — the exact substrate the v2.0.0
 //! one-clock collapse (ADR 0002 + `to-dos/plans/v2.0.0-master-clock-plan.md`

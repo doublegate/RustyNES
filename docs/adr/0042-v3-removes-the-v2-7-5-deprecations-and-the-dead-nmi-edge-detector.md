@@ -178,6 +178,10 @@ Recorded as the work landed, so the next reader does not have to diff for it.
   the `Cpu::end_cycle` fold that drained it, and the per-sub-dot A12 capture
   of the IRQ trace (its column has been empty since v2.0.0 and stays in the
   CSV schema). `M2Phase` stays: it is the IRQ trace's vocabulary.
+- **Renamed:** `LockstepBus` is `SystemBus` in the code, its rustdoc, the
+  current docs and `AGENTS.md`. Historical records (ADRs, audits, release
+  notes, CHANGELOG history, archived and per-release plans, the measured
+  profiles in `docs/performance.md`) keep the old name.
 - **Kept:** `Bus::on_cpu_cycle`. It is the default body of `cpu_clock`, which
   every simple test bus (`nestest`, `blargg`, the CPU benches) relies on.
 - **Provenance:** `rustynes-core/src/bus.rs` has carried a `// Provenance:`

@@ -6,6 +6,11 @@
 
 Set quantitative performance targets, identify expected hot paths, and lay out the profiling and optimization plan.
 
+> **Naming.** The bus type was `LockstepBus` until v2.9.8 renamed it
+> `SystemBus` (ADR 0042). The measurement records below keep the name under
+> which each profile was taken; in a current profile the symbols read
+> `<rustynes_core::bus::SystemBus as rustynes_cpu::bus::Bus>::...`.
+
 ## Targets
 
 > **These are DESIGN-PHASE targets, written before the cycle-accurate core

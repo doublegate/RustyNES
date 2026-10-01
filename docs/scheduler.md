@@ -15,7 +15,7 @@ The scheduler is the heart of the cycle-accurate emulator: it advances the PPU, 
 > by the region divider per CPU cycle (asymmetric read 5/7, write 7/5 φ1/φ2
 > split on NTSC; PAL 16, Dendy 15) with the PPU pulled to
 > `master_clock − PPU_OFFSET` at both half-cycles (`run_ppu_to` double
-> catch-up); `LockstepBus::cycle` is the ONE canonical per-cycle counter
+> catch-up); `SystemBus::cycle` is the ONE canonical per-cycle counter
 > (`Cpu::cycles` / `Apu::cpu_cycle` are assigned from it, never independently
 > incremented); every instruction cycle is a real bus access (no busless
 > cycles); DMA is the per-cycle interleaved unified engine; and the warm
@@ -64,7 +64,7 @@ fn cpu_tick(&mut self) {
 
 ### Bus design
 
-The bus (`LockstepBus`) owns: PPU, APU, mapper (via cart), WRAM, controllers, open-bus latch. The CPU borrows it for each instruction (`Cpu::step(&mut bus)`, generic over `rustynes_cpu::Bus`). The PPU gets its own bus trait for what it needs:
+The bus (`SystemBus`) owns: PPU, APU, mapper (via cart), WRAM, controllers, open-bus latch. The CPU borrows it for each instruction (`Cpu::step(&mut bus)`, generic over `rustynes_cpu::Bus`). The PPU gets its own bus trait for what it needs:
 
 - `PpuBus`: `ppu_read` / `ppu_read_sprite` / `ppu_write` and the nametable accessors (delegated to the mapper, which owns CIRAM mapping); the mapper notifications `notify_a12`, `notify_scanline_start` and `notify_vblank` (mapper IRQs).
 - The APU has no bus trait. The bus drives the DMC sample fetch itself: it polls `Apu::dmc_dma_pending` / `dmc_dma_addr`, performs the read inside the CPU's unified DMA, and returns the byte with `Apu::complete_dmc_dma`. The APU's IRQ line is read through `bus.irq_level()`. (An `ApuBus` trait existed, unimplemented, until v2.9.8 removed it with ADR 0042; until v2.7.5 this section described it as live — core audit §4.3.)
@@ -96,7 +96,7 @@ observable side effects.
 
 The v2.0.0 "Timebase" rewrite collapsed these three drivers (standalone OAM,
 standalone DMC, and the DMC-during-OAM overlap) into one per-cycle engine —
-`LockstepBus::unified_dma_cycle_impl` in `crates/rustynes-core/src/bus.rs`, a
+`SystemBus::unified_dma_cycle_impl` in `crates/rustynes-core/src/bus.rs`, a
 direct port of TriCNES's `_6502` DMA dispatch table. The 513/514 (OAM) and 3/4
 (DMC) spans are **emergent** from a single get/put parity label
 (`get = !apu.put_cycle()`) rather than an owed-cycle counter. The committed

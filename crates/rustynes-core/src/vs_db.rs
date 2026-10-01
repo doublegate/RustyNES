@@ -24,7 +24,7 @@
 //! The `vs_dip` byte here is in **this emulator's** encoding: DIP switch 1 =
 //! bit 0 .. DIP switch 8 = bit 7. The bus overlay maps DIP1 -> `$4016` bit 3,
 //! DIP2 -> `$4016` bit 4, and DIP3..8 -> `$4017` bits 2..7 (see
-//! `LockstepBus::vs_overlay_4016` / `vs_overlay_4017`). Each value below is
+//! `SystemBus::vs_overlay_4016` / `vs_overlay_4017`). Each value below is
 //! MAME's documented `DSW0` factory default for the corresponding game
 //! (the bitwise-OR of the per-field `PORT_DIPNAME` defaults in MAME's
 //! `src/mame/nintendo/vsnes.cpp`), which is exactly the `vs_dip` byte the

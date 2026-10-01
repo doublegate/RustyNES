@@ -1496,7 +1496,7 @@ the default (no-device) input path stays byte-identical:
 
   **v2.2.3 A3 — the beam-relative temporal model, default ON since v2.3.6.**
   That refinement landed as `Nes::set_zapper_temporal_light`, shipped off in
-  v2.2.3-v2.3.5 and promoted to the default in v2.3.6 (`LockstepBus::new`
+  v2.2.3-v2.3.5 and promoted to the default in v2.3.6 (`SystemBus::new`
   initialises it `true`; the core rustdoc on `set_zapper_temporal_light` says
   so). With it on,
   the light bit is derived from where the CRT beam is at the moment of the

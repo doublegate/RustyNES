@@ -434,9 +434,9 @@ const CHIPS: &[Chip] = &[
     // `internal_data_bus` missing from the BUS section by reading; this entry
     // is what would have found it at the commit that added the field.
     Chip {
-        label: "LockstepBus",
+        label: "SystemBus",
         struct_src: include_str!("../../rustynes-core/src/bus.rs"),
-        struct_name: "LockstepBus",
+        struct_name: "SystemBus",
         snapshot_src: include_str!("../../rustynes-core/src/bus.rs"),
         writer_fns: &[
             "    fn snapshot_into_with(",
@@ -798,7 +798,7 @@ fn touches_field_via(src: &str, prefix: &str, field: &str) -> bool {
 
 #[test]
 fn every_bus_misc_state_field_is_encoded_and_decoded() {
-    // Review on #556 (CodeRabbit). The `LockstepBus` entry audits the bus
+    // Review on #556 (CodeRabbit). The `SystemBus` entry audits the bus
     // struct against `bus_misc_state` / `set_bus_misc_state`, the accessors
     // that move fields in and out of `BusMiscState`. That proves a field
     // reaches the transfer struct; it does not prove `encode_bus` WRITES it or

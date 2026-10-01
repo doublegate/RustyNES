@@ -18,7 +18,7 @@ use core::time::Duration;
 
 use crate::Cpu2A03Revision;
 use crate::Region;
-use crate::bus::LockstepBus;
+use crate::bus::SystemBus;
 use crate::controller::Buttons;
 use crate::debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 use crate::genie::{GenieCode, GenieError};
@@ -162,7 +162,7 @@ pub struct TraceRec {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Nes {
     cpu: Cpu,
-    bus: LockstepBus,
+    bus: SystemBus,
     /// The ROM's persistent identity: SHA-256 of an iNES / NES 2.0 image's
     /// bytes AFTER its 16-byte header (trainer, PRG, CHR, anything trailing),
     /// or of the whole image for anything without the `NES\x1A` magic (FDS
@@ -360,7 +360,7 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom(bytes: &[u8]) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::new(bytes)?;
+        let mut bus = SystemBus::new(bytes)?;
         // Cold-boot path: `Cpu::power_on()` seeds `S=$00`; the subsequent
         // `reset()`'s `S -= 3` (wrapping) lands at `$FD`, matching Mesen2's
         // power-up state. See `docs/audit/session-13-cpu-boot-fix-2026-05-21.md`.
@@ -404,7 +404,7 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom_with_sample_rate(bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::with_sample_rate(bytes, sample_rate)?;
+        let mut bus = SystemBus::with_sample_rate(bytes, sample_rate)?;
         // Cold-boot path: see comment in `from_rom`.
         let mut cpu = Cpu::power_on();
         cpu.reset(&mut bus);
@@ -475,7 +475,7 @@ impl Nes {
         bios_bytes: &[u8],
         sample_rate: u32,
     ) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::with_disk(disk_bytes, bios_bytes, sample_rate)?;
+        let mut bus = SystemBus::with_disk(disk_bytes, bios_bytes, sample_rate)?;
         // Cold-boot path: see comment in `from_rom`.
         let mut cpu = Cpu::power_on();
         cpu.reset(&mut bus);
@@ -544,7 +544,7 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] when the NSF header is malformed.
     pub fn from_nsf_with_sample_rate(nsf_bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::with_nsf(nsf_bytes, sample_rate)?;
+        let mut bus = SystemBus::with_nsf(nsf_bytes, sample_rate)?;
         let mut cpu = Cpu::power_on();
         cpu.reset(&mut bus);
         Ok(Self {
@@ -1352,12 +1352,12 @@ impl Nes {
 
     /// Borrow the underlying bus (debugger / tests).
     #[must_use]
-    pub const fn bus(&self) -> &LockstepBus {
+    pub const fn bus(&self) -> &SystemBus {
         &self.bus
     }
 
     /// Mutably borrow the underlying bus (debugger / tests).
-    pub const fn bus_mut(&mut self) -> &mut LockstepBus {
+    pub const fn bus_mut(&mut self) -> &mut SystemBus {
         &mut self.bus
     }
 
@@ -1424,7 +1424,7 @@ impl Nes {
             rustynes_mappers::Region::Pal => Region::Pal,
             rustynes_mappers::Region::Dendy => Region::Dendy,
             // iNES 1.0 "Multi" cartridges are treated as NTSC for pacing
-            // (matches the PPU / APU init in `LockstepBus::with_sample_rate`).
+            // (matches the PPU / APU init in `SystemBus::with_sample_rate`).
             _ => Region::Ntsc,
         }
     }
@@ -1725,7 +1725,7 @@ impl Nes {
     /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
     ///
     /// **Default ON since v2.3.6** (was off in v2.2.3-v2.3.5). See
-    /// [`crate::bus::LockstepBus::set_zapper_temporal_light`] for the model and
+    /// [`crate::bus::SystemBus::set_zapper_temporal_light`] for the model and
     /// for why it was promoted; in short, the light bit is a function of where
     /// the CRT beam is at the moment of the read (dark before the beam paints
     /// the aim row, lit for the ~19-26-scanline photodiode hold, dark after)
@@ -2476,7 +2476,7 @@ impl Nes {
         }
         // v2.7.0 -- the one cross-section invariant: the CPU's master clock and
         // the bus's PPU clock must be close enough that the next catch-up
-        // terminates (see `LockstepBus::check_restored_clocks`).
+        // terminates (see `SystemBus::check_restored_clocks`).
         self.bus.check_restored_clocks(self.cpu.master_clock())?;
         Ok(())
     }
@@ -2548,7 +2548,7 @@ impl Nes {
     ///
     /// Called from `run_frame` / `step_instruction` BEFORE the
     /// `Cpu::step` call.  The opcode + 2 operand bytes are peeked
-    /// side-effect-free via `LockstepBus::debug_peek_cpu` so the
+    /// side-effect-free via `SystemBus::debug_peek_cpu` so the
     /// trace is non-perturbing.
     ///
     /// No-op if the trace was never enabled.
@@ -3236,7 +3236,7 @@ mod tests {
         let live = nes.bus().ppu_clock_for_test();
         let live_skew = master.abs_diff(live);
         assert!(
-            live_skew <= LockstepBus::RESTORED_CLOCK_SKEW_MAX,
+            live_skew <= SystemBus::RESTORED_CLOCK_SKEW_MAX,
             "the running machine's own skew ({live_skew}) must be inside the bound"
         );
         assert!(
@@ -3251,7 +3251,7 @@ mod tests {
         // small, so the "behind" direction is exercised by moving the PPU
         // clock only as far as zero allows and the "ahead" direction carries
         // the bound.
-        let max = LockstepBus::RESTORED_CLOCK_SKEW_MAX;
+        let max = SystemBus::RESTORED_CLOCK_SKEW_MAX;
         for (label, ppu_clock, ok) in [
             ("behind, as far as zero", master.saturating_sub(max), true),
             ("at the bound, ahead", master + max, true),
@@ -3310,7 +3310,7 @@ mod tests {
             blob
         };
 
-        let ceiling = LockstepBus::RESTORED_CLOCK_MAX;
+        let ceiling = SystemBus::RESTORED_CLOCK_MAX;
         for (label, shift, ok) in [
             ("unshifted", 0, true),
             (
@@ -5487,7 +5487,7 @@ mod tests {
         // v2.8.0 (libretro audit §2.2, with §2.1). The libretro core reports a
         // `retro_serialize_size` with headroom for expansion devices, so the
         // frontend hands `retro_unserialize` this core's own state followed by
-        // zeros. Both restore paths walk the sections (`LockstepBus::restore`
+        // zeros. Both restore paths walk the sections (`SystemBus::restore`
         // for BUS/PPU/APU/MAP, then `apply_snapshot` for CPU), so both must end
         // at the padding rather than report it as a damaged section.
         let rom = synth_nrom(16, 8);
@@ -5730,7 +5730,7 @@ mod tests {
     /// ROM could adjudicate it and the supported titles were satisfied either
     /// way. The second half was false: under the frame-granular model *Duck
     /// Hunt* receives its "dark frame then bright frame" probe inverted and can
-    /// never register a hit. See `LockstepBus::set_zapper_temporal_light`.
+    /// never register a hit. See `SystemBus::set_zapper_temporal_light`.
     #[test]
     fn zapper_temporal_light_is_on_by_default() {
         let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
