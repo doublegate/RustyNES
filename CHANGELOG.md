@@ -330,6 +330,28 @@ cycle-accurate core later replaced.
   standard library, which the core needs; it could not build, and no libretro
   buildbot job ever used it. `make platform=libnx` now stops with an error
   naming the reason, instead of falling through to a build for the host.
+
+
+
+- **The bus surface deprecated at v2.7.5 is removed (API break, ADR 0042).**
+  The 18 `#[deprecated]` methods of `rustynes_cpu::Bus` (`poll_nmi`,
+  `poll_irq`, `poll_irq_at_phase`, `cpu_cycle_phi1` / `cpu_cycle_phi2`,
+  `internal_data_bus`, and the per-engine DMC / OAM / overlap DMA hooks) and
+  the `rustynes_apu::ApuBus` trait are gone, with the bus-side NMI edge
+  detector that ran on every PPU dot and fed only `poll_nmi`. So is the
+  machinery that only they reached: the pre-v2.0.0 `tick_one_cpu_cycle`, the
+  non-deprecated `oam_dma_overlap_cycle` and `take_dma_mc_consumed` hooks,
+  and `LockstepBus::current_m2_phase`. Emulation output is unchanged: none
+  of it ran on the one-clock scheduler. **Migration:** nothing outside the
+  workspace called these items. A test bus that overrode `poll_nmi` or
+  `poll_irq` should override `nmi_level` / `irq_level` (the CPU edge-detects
+  and delays them itself); one that relied on `take_dma_mc_consumed` drops it.
+- **Save states from v2.9.7 and earlier no longer load (BUS section 2).** The
+  BUS section drops the detector's two fields and four that no longer carry
+  state (the OAM DMA's owed-cycle counter and byte index, and the always-zero
+  `dma_mc_consumed`), and every field is now required: a version-1 section is
+  refused with a version error, and a short or overlong version-2 section with
+  a section error, where version 1 read missing tail fields as defaults.
 ## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
 
 The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:

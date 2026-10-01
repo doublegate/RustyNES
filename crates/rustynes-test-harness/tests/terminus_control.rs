@@ -12,8 +12,9 @@
 //! it was built, committed, and then DELETED, because a mutation against it
 //! came back NOT CAUGHT: moving the write commit two master clocks produced a
 //! byte-identical chain. The reason is structural. Those chains require
-//! `--irq-trace`, `irq-timing-trace` selects a different `for sub_dot in 0..3`
-//! loop in `Bus::tick_one_cpu_cycle` (the v2.4.1 finding), and that loop does
+//! `--irq-trace`, `irq-timing-trace` selected a different `for sub_dot in 0..3`
+//! loop in `Bus::tick_one_cpu_cycle` (the v2.4.1 finding; the function was
+//! removed at v2.9.8 as unreachable, ADR 0042), and that loop did
 //! not go through `write_split` at all. The instrument is blind to the exact
 //! change this version exists to make — agreement about an unasked question.
 //!

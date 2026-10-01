@@ -428,8 +428,8 @@ const CHIPS: &[Chip] = &[
         known_gaps: &[],
     },
     // v2.8.0 — the bus. It owns everything the chips do not (CPU RAM, the
-    // controller ports, the DMA engines, the NMI edge latches, the open-bus
-    // latches), and it was never registered here, so nothing mechanical ever
+    // controller ports, the DMA engine, the open-bus latches), and it was
+    // never registered here, so nothing mechanical ever
     // compared its struct with its serializer. The libretro audit (§2.4) found
     // `internal_data_bus` missing from the BUS section by reading; this entry
     // is what would have found it at the commit that added the field.
@@ -555,41 +555,15 @@ const CHIPS: &[Chip] = &[
                  clear at any point a snapshot can be taken",
             ),
             // --- Intra-cycle state, identical at every snapshot point.
-            (
-                "m2_phase",
-                "derived: set to Low at the end of every CPU cycle, so it is Low at every \
-                 instruction boundary a snapshot is taken at",
-            ),
-            (
-                "irq_snapshot_mapper_at_low",
-                "derived: rewritten every CPU cycle before any read; read live only by the \
-                 `irq-timing-trace` record",
-            ),
+            //
+            // v2.9.8 (ADR 0042) removed `m2_phase`, three of the four
+            // `irq_snapshot_*` fields, `dma_total` and `dmc_step_was_get`, all
+            // listed here until then: they were written or read only by the
+            // pre-v2.0.0 `tick_one_cpu_cycle` and the deprecated `Bus` hooks.
             (
                 "irq_snapshot_apu_at_low",
-                "derived: rewritten every CPU cycle before any read; read live only by the \
-                 `irq-timing-trace` record",
-            ),
-            (
-                "irq_snapshot_mapper_at_high",
-                "derived: rewritten every CPU cycle before any read; its other reader is the \
-                 deprecated `poll_irq`",
-            ),
-            (
-                "irq_snapshot_apu_at_high",
-                "derived: rewritten every CPU cycle before any read; its other reader is the \
-                 deprecated `poll_irq`",
-            ),
-            // --- The pre-v2.0.0 per-cycle DMA path, dead since the one-clock scheduler.
-            (
-                "dma_total",
-                "dead: set and read only by `oam_dma_step` and the `dmc_overlap_*` methods, \
-                 `#[deprecated]` in v2.7.5 with no caller since v2.0.0; zero on the live path",
-            ),
-            (
-                "dmc_step_was_get",
-                "dead: read only by the deprecated `dmc_dma_last_was_get`, which has no \
-                 caller since v2.0.0",
+                "output-only: `irq-timing-trace` scratch, rewritten at the start of every \
+                 CPU cycle and read only by that cycle's trace record",
             ),
             // --- Output-only telemetry, never read back into emulation.
             (
@@ -622,18 +596,6 @@ const CHIPS: &[Chip] = &[
             (
                 "irq_trace",
                 "output-only: the `irq-timing-trace` capture buffer",
-            ),
-            (
-                "trace_a12_latest",
-                "output-only: cycle-trace scratch for the debug-hooks trace record",
-            ),
-            (
-                "trace_last_a12",
-                "output-only: cycle-trace scratch for the debug-hooks trace record",
-            ),
-            (
-                "trace_a12_scratch",
-                "output-only: cycle-trace scratch for the debug-hooks trace record",
             ),
             (
                 "trace_bus_access",

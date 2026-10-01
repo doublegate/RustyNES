@@ -17,7 +17,8 @@ Implement the 2A03 APU in `crates/rustynes-apu`: five sound channels (pulse 1, p
 The implementation that landed in Phase 3 polled the bus differently from
 the original sketch: rather than a callback-style `ApuBus` trait, the APU
 exposes `dmc_dma_pending() / dmc_dma_addr() / complete_dmc_dma(byte)` that
-the lockstep bus polls and services on its halt cycles.
+the bus polls and services on its halt cycles. The unused `ApuBus` trait was
+deprecated at v2.7.5 and removed at v2.9.8 (ADR 0042).
 
 ```rust
 pub struct Apu { /* opaque */ }
@@ -64,7 +65,8 @@ turn keeps the workspace dep graph one-directional (`rustynes-apu` is a leaf;
 see CLAUDE.md §"Workspace dependency graph is one-directional"). An
 earlier sketch of an `ApuBus { fn dmc_read(...) }` callback trait was
 considered but never wired in production — the polling shape is simpler
-and avoids the trait-object indirection on the DMA-read hot path.
+and avoids the trait-object indirection on the DMA-read hot path. The trait
+itself survived, unimplemented, until v2.9.8 removed it (ADR 0042).
 
 The APU is clocked by the master scheduler at CPU cadence (every other PPU dot triple on NTSC). The triangle wave timer runs at CPU clock; pulses, noise, and DMC timer-divide at half CPU clock. The frame counter divides further to ~240 Hz.
 

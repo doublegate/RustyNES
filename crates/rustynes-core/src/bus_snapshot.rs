@@ -1,9 +1,23 @@
 //! Save-state encoding for the [`crate::bus::LockstepBus`] (the "BUS"
-//! tagged section) — owns CPU RAM, controllers, OAM/DMC DMA bookkeeping,
-//! NMI edge latches, open-bus, and the cumulative cycle counter.
+//! tagged section) — owns CPU RAM, controllers, the unified DMA engine's
+//! bookkeeping, the two data-bus latches, and the cumulative cycle counter.
 //!
 //! The chip sub-states (CPU / PPU / APU / mapper) are emitted as their own
 //! tagged sections by [`crate::bus::LockstepBus::snapshot`].
+//!
+//! # Version 2 (v2.9.8, ADR 0042)
+//!
+//! Version 1 grew by appending fields to the tail and decoding each
+//! missing tail as its default, so a blob from any release since v0.9 still
+//! loaded. Version 2 drops that: every field is required, a short body is a
+//! truncation error, and trailing bytes are rejected, because a version-2
+//! reader is never handed anything but a version-2 body (the section version
+//! check in `LockstepBus::restore` refuses version 1 first). It also drops
+//! the fields that no longer carry state: the NMI edge detector's
+//! `last_nmi_level` / `nmi_edge_latch` (they fed only the removed `poll_nmi`),
+//! the OAM-DMA owed-cycle counter and byte index (the unified engine's
+//! length is emergent), and `dma_mc_consumed` (structurally zero since
+//! v2.0.0, and decoded as zero regardless since v2.7.0).
 
 use crate::bus::LockstepBus;
 use crate::controller::Controller;
@@ -11,16 +25,14 @@ use crate::input_device::{
     FamilyKeyboardState, InputDevice, SnesMouseState, VausState, ZapperState,
 };
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
-
-/// Bytes in the v2.6.5 controller-run tail: four `bool` port flags plus two
-/// `u64` cycle stamps. Zero trailing bytes is a pre-v2.6.5 blob; anything
-/// between 1 and this is damage, not a legacy layout.
-const CONTROLLER_RUN_TAIL: usize = 4 + 2 * 8 + 2;
 use alloc::format;
 use alloc::vec::Vec;
 
 /// Schema version for the BUS section payload.
-pub const BUS_SECTION_VERSION: u8 = 1;
+///
+/// 2 since v2.9.8 (ADR 0042): see the module docs for what changed. A
+/// version-1 section is refused with [`SnapshotError::VersionMismatch`].
+pub const BUS_SECTION_VERSION: u8 = 2;
 
 /// Largest encoding of one port's expansion device in the BUS section.
 ///
@@ -42,41 +54,36 @@ pub const EXPANSION_DEVICE_MAX_LEN: usize = 14;
 /// leaves is zeroed and read back as padding (`save_state::SectionIter`).
 pub const SAVE_STATE_DEVICE_HEADROOM: usize = 2 * (EXPANSION_DEVICE_MAX_LEN - 1);
 
-/// Encode the bus's own state (RAM, controllers, DMA, edge latches, cycle).
+/// Encode the bus's own state (RAM, controllers, DMA, data-bus latches,
+/// cycle). The order is the on-wire layout [`decode_bus`] reads back.
 pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     let mut w = BinWriter::with_capacity(0x900);
     // Cumulative cycle counter.
     w.u64(bus.cycle());
     // CPU RAM (2 KiB).
     w.bytes(bus.ram_bytes());
-    // Controllers.
+    // Standard controllers (players 1 and 2).
     for c in bus.controllers_ref() {
         encode_controller(&mut w, *c);
     }
-    // DMA + edge latch state.
     let s = bus.bus_misc_state();
+    // A `$4014` write awaiting its first DMA cycle: page, then presence.
     w.u8(s.dma_pending.unwrap_or(0));
     w.u8(u8::from(s.dma_pending.is_some()));
-    w.u32(s.dma_cycles_owed);
+    // The OAM DMA's scratch byte, source page and parked CPU address.
     w.u8(s.dma_byte);
-    w.u16(s.dma_idx);
     w.u8(s.dma_page);
-    w.u8(u8::from(s.last_nmi_level));
-    w.u8(u8::from(s.nmi_edge_latch));
+    w.u16(s.dma_halt_addr);
+    // The external data bus (open bus) and the last CPU read address.
     w.u8(s.open_bus);
     w.u16(s.last_read_addr);
     w.u8(u8::from(s.in_dmc_dma));
-    w.u16(s.dma_halt_addr);
     w.u16(s.deferred_dma_replay_addr);
-    // Session-24 / Phase 3 (Controller Strobing) deferred-write buffer.
-    // Appended at the tail so v1 blobs without these bytes still decode
-    // via the trailing-default-zero pattern used by `dma_halt_addr` /
-    // `deferred_dma_replay_addr` above.
+    // The deferred controller-strobe write (Session-24 / Phase 3).
     w.u8(s.controller_write_pending);
     w.u8(s.controller_write_value);
-    // v1.7.0 Four Score state, appended at the tail (same trailing-default
-    // pattern as the bytes above): pre-v1.7.0 blobs lack these and decode
-    // with the adapter off, so old saves still load.
+    // Four Score: the flag, players 3 and 4, and the per-port read index and
+    // signature shift register.
     w.u8(u8::from(s.four_score));
     for c in bus.controllers34_ref() {
         encode_controller(&mut w, *c);
@@ -85,50 +92,31 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     w.u8(s.four_score_idx[1]);
     w.u8(s.four_score_sig[0]);
     w.u8(s.four_score_sig[1]);
-    // W3-Stage-4 (2026-06-10), appended at the tail (same trailing-default
-    // pattern): the DMC halt latch + the unified DMA engine's OAM state
-    // (`mc-r1-dma-unified`; zeros when the feature is off so the layout is
-    // identical across feature builds). Pre-Stage-4 blobs lack these bytes
-    // and decode to the inactive defaults — exactly the state the old
-    // clear-on-restore imposed.
+    // The unified DMA engine: the DMC halt latch and the OAM engine's state.
     w.u8(u8::from(s.dmc_halt));
     w.u8(u8::from(s.uni_oam_active));
     w.u8(u8::from(s.uni_oam_halt));
     w.u8(u8::from(s.uni_oam_aligned));
     w.u16(s.uni_oam_addr);
-    // The R1 substrate's bus-side master-clock pair: `ppu_clock` (PPU
-    // progress in master-clock units) + `dma_mc_consumed` (master clocks
-    // consumed by bus-side DMA cycles not yet folded into the CPU). These
-    // MUST travel with `Cpu::master_clock` (CPU section v2) -- restoring one
-    // side without the other desynchronizes `run_ppu_to` and spins the PPU
-    // until the pair re-coheres.
+    // `ppu_clock`, the PPU's progress in master clocks. It MUST travel with
+    // `Cpu::master_clock` (CPU section): restoring one without the other
+    // desynchronises `run_ppu_to`, and `check_restored_clocks` refuses a pair
+    // too far apart to be real.
     w.u64(s.ppu_clock);
-    w.u64(s.dma_mc_consumed);
-    // v2.1.0 non-standard input devices, appended at the tail (same
-    // trailing-default pattern): a tag byte per port (0 = None, 1 = Zapper,
-    // 2 = Vaus, 3 = PowerPad, 4 = SnesMouse, 5 = FamilyKeyboard — the last
-    // three added in v1.1.0 beta.1 / v1.2.0 Workstream D) followed by that
-    // device's fields. Pre-v2.1.0 blobs lack these bytes and decode with both
-    // ports unplugged (`None`) — exactly the default. Devices are NOT part of
-    // the determinism-critical no-device path.
+    // A tag byte per port (0 = none, 1 = Zapper, 2 = Vaus, 3 = Power Pad,
+    // 4 = SNES mouse, 5 = Family BASIC keyboard, 6 = Family Trainer,
+    // 7 = Subor keyboard, 8 = Konami Hyper Shot, 9 = Bandai Hyper Shot)
+    // followed by that device's fields.
     for port in 0..2 {
         encode_expansion_device(&mut w, bus.expansion_device(port).as_ref());
     }
-    // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override (trailing
-    // field; pre-v1.1.0 blobs lack it and decode as `None` = no override).
+    // The per-game nametable mirroring override (0 = none).
     w.u8(encode_mirroring_override(bus.mirroring_override()));
-    // v2.6.5 — the controller-port CLK run state, appended at the tail rather
-    // than folded into `encode_controller`, which sits in the middle of this
-    // section and cannot grow without breaking every earlier blob.
-    //
-    // Both halves outlive an instruction and so must be carried: a `$4016` read
-    // is the last cycle of `LDA $4016`, so a snapshot taken at that instruction
-    // boundary has a shift owed and a run open. Restoring without them makes
-    // the next read return a bit the timeline already delivered.
-    //
-    // Pre-v2.6.5 blobs lack these bytes and decode as "no shift owed, no run" —
-    // which is the state after any strobe, so a restored pre-v2.6.5 save
-    // behaves exactly as it did when it was written.
+    // The controller-port CLK run state (v2.6.5). Both halves outlive an
+    // instruction: a `$4016` read is the last cycle of `LDA $4016`, so a
+    // snapshot at that boundary has a shift owed and a run open, and
+    // restoring without them makes the next read return a bit the timeline
+    // already delivered.
     for c in bus.controllers_ref() {
         w.bool(c.pending_shift);
     }
@@ -138,24 +126,13 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     for port in 0..2 {
         w.u64(bus.port_read_cycle(port));
     }
-    // The Four Score chain's own owed edge. It clocks with the pads, so it has
-    // to be restored with them: without it a snapshot taken mid-run resumes
-    // with the adapter and the pads on different positions of one shift chain.
+    // The Four Score chain's own owed edge, which clocks with the pads.
     for f in bus.four_score_pending() {
         w.bool(f);
     }
-    // v2.8.0 (libretro audit §2.4) -- the 2A03's INTERNAL data bus, appended
-    // after the controller-run tail. It is a separate latch from `open_bus`:
-    // a DMC DMA fetch drives only the external bus, so across a DMC halt the
-    // two differ, and a `$4015` read takes bit 5 from this one. Until now a
-    // restore left the running machine's value in place, which under
-    // run-ahead and rollback is a value from a discarded timeline.
-    //
-    // Pre-v2.8.0 blobs end before this byte and decode it as `open_bus` (see
-    // `decode_bus`). One trailing byte cannot be told from its own absence,
-    // so a v2.8.0 section truncated by exactly one byte reads as legacy; the
-    // container's section length header makes that reachable only from a
-    // crafted file, and it decodes deterministically either way.
+    // The 2A03's INTERNAL data bus (v2.8.0): a separate latch from
+    // `open_bus`, because a DMC DMA fetch drives only the external bus, and a
+    // `$4015` read takes bit 5 from this one.
     w.u8(s.internal_data_bus);
     w.into_vec()
 }
@@ -264,15 +241,13 @@ fn encode_expansion_device(w: &mut BinWriter, device: Option<&InputDevice>) {
     }
 }
 
-/// Decode one port's optional overlay device (trailing-default `None`).
+/// Decode one port's optional overlay device (tag 0 is an empty port).
 // A flat one-arm-per-device-tag dispatch decoder; the length is inherent to the
 // device count, not a sign of tangled logic.
 #[allow(clippy::too_many_lines)]
 fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>, SnapshotError> {
-    if r.remaining() < 1 {
-        return Ok(None);
-    }
     Ok(match r.u8()? {
+        0 => None,
         1 => {
             let x = r.u16()?;
             let y = r.u16()?;
@@ -368,19 +343,26 @@ fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>,
                 crate::input_device::BandaiHyperShotState::from_parts(sensors, select),
             ))
         }
-        // 0 (None) or any unknown tag => no device.
-        _ => None,
+        other => {
+            return Err(SnapshotError::SectionInvalid {
+                tag: "BUS ".into(),
+                reason: format!("unknown expansion-device tag {other}"),
+            });
+        }
     })
 }
 
 /// Apply a previously [`encode_bus`]-emitted blob.
 ///
+/// Every field is required (version 2, see the module docs): a short body is
+/// [`SnapshotError::Eof`], and bytes left over after the last field are
+/// [`SnapshotError::SectionInvalid`].
+///
 /// # Errors
 ///
 /// Returns [`SnapshotError`] for malformed inputs.
-// The body is one straight-line field-by-field decode mirroring `encode_bus`
-// (trailing-default reads dominate the count); splitting it would obscure the
-// byte-order correspondence between the two functions.
+// The body is one straight-line field-by-field decode mirroring `encode_bus`;
+// splitting it would obscure the byte-order correspondence between the two.
 #[allow(clippy::too_many_lines)]
 pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotError> {
     let mut r = BinReader::new(data);
@@ -394,11 +376,11 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
     }
     bus.set_controllers(controllers);
 
-    let dma_byte_value = r.u8()?;
+    let dma_page_pending = r.u8()?;
     let dma_present = r.u8()?;
     let dma_pending = match dma_present {
         0 => None,
-        1 => Some(dma_byte_value),
+        1 => Some(dma_page_pending),
         other => {
             return Err(SnapshotError::SectionInvalid {
                 tag: "BUS ".into(),
@@ -406,64 +388,28 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
             });
         }
     };
-    let dma_cycles_owed = r.u32()?;
     let dma_byte = r.u8()?;
-    let dma_idx = r.u16()?;
     let dma_page = r.u8()?;
-    let last_nmi_level = r.u8()? != 0;
-    let nmi_edge_latch = r.u8()? != 0;
+    let dma_halt_addr = r.u16()?;
     let open_bus = r.u8()?;
     let last_read_addr = r.u16()?;
-    let in_dmc_dma = r.u8()? != 0;
-    let dma_halt_addr = if r.remaining() >= 2 { r.u16()? } else { 0 };
-    let deferred_dma_replay_addr = if r.remaining() >= 2 { r.u16()? } else { 0 };
-    // Session-24 / Phase 3: trailing controller-strobe deferred-write
-    // bytes.  Default zero so v1 blobs without these bytes still load.
-    let controller_write_pending = if r.remaining() >= 1 { r.u8()? } else { 0 };
-    let controller_write_value = if r.remaining() >= 1 { r.u8()? } else { 0 };
-    // v1.7.0 Four Score state (trailing-default: pre-v1.7.0 blobs decode off).
-    let four_score = if r.remaining() >= 1 {
-        r.u8()? != 0
-    } else {
-        false
-    };
+    let in_dmc_dma = r.bool()?;
+    let deferred_dma_replay_addr = r.u16()?;
+    let controller_write_pending = r.u8()?;
+    let controller_write_value = r.u8()?;
+    let four_score = r.bool()?;
     let mut controllers34 = [Controller::new(); 2];
-    if r.remaining() >= 6 {
-        for c in &mut controllers34 {
-            decode_controller(&mut r, c)?;
-        }
+    for c in &mut controllers34 {
+        decode_controller(&mut r, c)?;
     }
     bus.set_controllers34(controllers34);
-    let four_score_idx = [
-        if r.remaining() >= 1 { r.u8()? } else { 0 },
-        if r.remaining() >= 1 { r.u8()? } else { 0 },
-    ];
-    let four_score_sig = [
-        if r.remaining() >= 1 { r.u8()? } else { 0 },
-        if r.remaining() >= 1 { r.u8()? } else { 0 },
-    ];
-    // W3-Stage-4 trailing bytes (default-zero for pre-Stage-4 blobs).
-    let dmc_halt = if r.remaining() >= 1 {
-        r.u8()? != 0
-    } else {
-        false
-    };
-    let uni_oam_active = if r.remaining() >= 1 {
-        r.u8()? != 0
-    } else {
-        false
-    };
-    let uni_oam_halt = if r.remaining() >= 1 {
-        r.u8()? != 0
-    } else {
-        false
-    };
-    let uni_oam_aligned = if r.remaining() >= 1 {
-        r.u8()? != 0
-    } else {
-        false
-    };
-    let uni_oam_addr = if r.remaining() >= 2 { r.u16()? } else { 0 };
+    let four_score_idx = [r.u8()?, r.u8()?];
+    let four_score_sig = [r.u8()?, r.u8()?];
+    let dmc_halt = r.bool()?;
+    let uni_oam_active = r.bool()?;
+    let uni_oam_halt = r.bool()?;
+    let uni_oam_aligned = r.bool()?;
+    let uni_oam_addr = r.u16()?;
     // The OAM-DMA byte index runs 0..=255 while a transfer is active and is
     // left at 256 when the 256th write completes it (it is re-zeroed only when
     // the next transfer starts). Any other value is a corrupt file: an active
@@ -478,87 +424,41 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
             ),
         });
     }
-    let ppu_clock = if r.remaining() >= 8 { r.u64()? } else { 0 };
-    // The bytes are read to keep the layout, and the value is DISCARDED.
-    // `dma_mc_consumed` is structurally zero at any instruction boundary on
-    // the live unified-DMA path, and `Cpu::end_cycle` drains and discards it
-    // in release while `debug_assert_eq!`-ing it to zero in dev profiles. A
-    // non-zero value can therefore come only from a corrupt file, and loading
-    // it did nothing in release but panic every dev/test/fuzz build on the
-    // first CPU cycle. Found by the v2.7.0 `save_state` fuzz target in 6,848
-    // runs. Restoring zero is byte-identical to what release already did.
-    let _dma_mc_consumed_on_disk = if r.remaining() >= 8 { r.u64()? } else { 0 };
-    let dma_mc_consumed = 0;
-    // v2.1.0 non-standard input devices (trailing-default `None`).
+    let ppu_clock = r.u64()?;
     let device0 = decode_expansion_device(&mut r)?;
     let device1 = decode_expansion_device(&mut r)?;
     bus.set_expansion_device(0, device0);
     bus.set_expansion_device(1, device1);
-    // v1.1.0 beta.1 (T-110-B4) — per-game mirroring override (trailing-default:
-    // pre-v1.1.0 blobs have no byte left and decode as `None`).
-    let mirroring_override = if r.remaining() >= 1 {
-        decode_mirroring_override(r.u8()?)
-    } else {
-        None
-    };
-    bus.set_mirroring_override(mirroring_override);
-    // v2.6.5 — controller-port CLK run state (trailing-default: pre-v2.6.5
-    // blobs have no bytes left and decode as "no shift owed, no run open",
-    // which is the post-strobe state and so reproduces how they behaved when
-    // they were written).
-    //
-    // A PARTIAL TAIL IS REFUSED RATHER THAN READ AS LEGACY. The test used to be
-    // `>= 20`, so a v2.6.5 blob truncated to between 1 and 19 trailing bytes
-    // took the legacy path and restored `pending_shift = false` for every port
-    // -- silently, and with a consequence: the next controller read repeats a
-    // bit that was already delivered. Zero bytes is a pre-v2.6.5 blob and is
-    // the only absence that means "no tail"; anything shorter than the whole
-    // tail is damage, and a save state is untrusted input.
-    if r.remaining() != 0 && r.remaining() < CONTROLLER_RUN_TAIL {
-        return Err(SnapshotError::SectionTruncated {
-            tag: alloc::string::String::from("BUS "),
-            declared: CONTROLLER_RUN_TAIL,
-            got: r.remaining(),
+    bus.set_mirroring_override(decode_mirroring_override(r.u8()?));
+    let mut pending = [false; 4];
+    for p in &mut pending {
+        *p = r.bool()?;
+    }
+    let mut cycles = [0u64; 2];
+    for c in &mut cycles {
+        *c = r.u64()?;
+    }
+    // Through a setter, not locals: the controllers were installed above, and
+    // mutating copies here would decode cleanly and restore nothing.
+    bus.set_controller_run_state(pending, cycles);
+    let mut fs = [false; 2];
+    for f in &mut fs {
+        *f = r.bool()?;
+    }
+    bus.set_four_score_pending(fs);
+    let internal_data_bus = r.u8()?;
+    if r.remaining() != 0 {
+        return Err(SnapshotError::SectionInvalid {
+            tag: "BUS ".into(),
+            reason: format!("{} unexpected trailing bytes", r.remaining()),
         });
     }
-    if r.remaining() >= CONTROLLER_RUN_TAIL {
-        let mut pending = [false; 4];
-        for p in &mut pending {
-            *p = r.bool()?;
-        }
-        let mut cycles = [0u64; 2];
-        for c in &mut cycles {
-            *c = r.u64()?;
-        }
-        // Through a setter, not the locals above: those were installed into the
-        // bus a hundred lines earlier and mutating them here would decode
-        // cleanly and restore nothing.
-        bus.set_controller_run_state(pending, cycles);
-        let mut fs = [false; 2];
-        for f in &mut fs {
-            *f = r.bool()?;
-        }
-        bus.set_four_score_pending(fs);
-    }
-    // v2.8.0 -- the internal data bus (trailing-default). A pre-v2.8.0 blob
-    // has no byte left here; the external latch it does carry is the value the
-    // internal one holds everywhere outside a DMC-DMA halt, and it makes the
-    // restore deterministic, which keeping the running value did not.
-    let internal_data_bus = if r.remaining() >= 1 {
-        r.u8()?
-    } else {
-        open_bus
-    };
     bus.set_bus_misc_state(BusMiscState {
         dma_pending,
-        dma_cycles_owed,
         dma_byte,
-        dma_idx,
         dma_page,
         dma_halt_addr,
         deferred_dma_replay_addr,
-        last_nmi_level,
-        nmi_edge_latch,
         open_bus,
         internal_data_bus,
         last_read_addr,
@@ -574,7 +474,6 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         uni_oam_aligned,
         uni_oam_addr,
         ppu_clock,
-        dma_mc_consumed,
     });
     Ok(())
 }
@@ -601,22 +500,14 @@ fn decode_controller(r: &mut BinReader<'_>, c: &mut Controller) -> Result<(), Sn
 pub struct BusMiscState {
     /// Source page of a deferred OAM DMA (consumed at the next CPU access).
     pub dma_pending: Option<u8>,
-    /// Cycles still owed to the OAM DMA.
-    pub dma_cycles_owed: u32,
     /// Scratch byte for the OAM DMA's read/write pair.
     pub dma_byte: u8,
-    /// Progress index into the 256-byte OAM DMA window.
-    pub dma_idx: u16,
     /// Active OAM DMA page.
     pub dma_page: u8,
     /// CPU read address repeated while OAM DMA has the CPU halted.
     pub dma_halt_addr: u16,
     /// Deferred DMC readout side-effect target for absolute register reads.
     pub deferred_dma_replay_addr: u16,
-    /// Last-observed PPU NMI level.
-    pub last_nmi_level: bool,
-    /// Latched NMI edge.
-    pub nmi_edge_latch: bool,
     /// Open-bus latch (the EXTERNAL data bus).
     pub open_bus: u8,
     /// The 2A03's INTERNAL data bus, which a DMC DMA fetch does not drive;
@@ -643,7 +534,7 @@ pub struct BusMiscState {
     /// pending/halted and waiting for its GET slot).
     pub dmc_halt: bool,
     /// W3-Stage-4: unified DMA engine (`mc-r1-dma-unified`) — OAM DMA active
-    /// (`TriCNES` `DoOAMDMA`). Always `false` when the feature is off.
+    /// (`TriCNES` `DoOAMDMA`).
     pub uni_oam_active: bool,
     /// W3-Stage-4: unified DMA engine — `TriCNES` `OAMDMA_Halt`.
     pub uni_oam_halt: bool,
@@ -652,13 +543,9 @@ pub struct BusMiscState {
     /// W3-Stage-4: unified DMA engine — `TriCNES` `DMAAddress` (the OAM
     /// byte index).
     pub uni_oam_addr: u16,
-    /// W3-Stage-4: R1 substrate PPU progress in master-clock units (the
-    /// `run_ppu_to` cursor). Paired with `Cpu::master_clock` (CPU section
-    /// v2); always 0 when `mc-r1-substrate` is off.
+    /// PPU progress in master-clock units (the `run_ppu_to` cursor). Paired
+    /// with `Cpu::master_clock` (CPU section).
     pub ppu_clock: u64,
-    /// W3-Stage-4: R1 substrate master clocks consumed by bus-side DMA
-    /// cycles not yet folded into `Cpu::master_clock`.
-    pub dma_mc_consumed: u64,
 }
 
 #[cfg(test)]

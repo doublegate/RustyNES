@@ -55,9 +55,8 @@ use rustynes_ppu::{
 use crate::Cpu2A03Revision;
 use crate::controller::{Buttons, Controller};
 #[cfg(feature = "irq-timing-trace")]
-use crate::irq_trace::{A12Event, BusAccess, CycleRecord, IrqTrace};
+use crate::irq_trace::{BusAccess, CycleRecord, IrqTrace};
 use crate::save_state::{self, SnapshotError};
-use crate::scheduler::M2Phase;
 
 /// CPU RAM (2 KiB).
 const RAM_SIZE: usize = 0x0800;
@@ -316,11 +315,10 @@ pub struct EventBreakHit {
 /// during `Cpu::step`. The PPU and APU are ticked from the bus's
 /// `cpu_read`/`cpu_write` implementations (3 dots per CPU cycle, NTSC; APU
 /// every CPU cycle).
-// The per-phase IRQ snapshots (Phase B2 of the C1 IRQ-timing rework) add
-// 4 bools beyond the original 3 (last_nmi_level / nmi_edge_latch /
-// in_dmc_dma), plus another `trace_last_a12` when the trace feature is
-// on. They're independent state words, not a single enum-modelled
-// machine — silencing the lint is the right call.
+// The bus carries many independent `bool` state words (the Four Score and
+// Vs. flags, `in_dmc_dma`, the unified DMA engine's OAM latches, the
+// debug-hook toggles). They are not a single enum-modelled machine, so
+// silencing the lint is the right call.
 #[allow(clippy::struct_excessive_bools)]
 pub struct LockstepBus {
     /// CPU RAM (2 KiB), mirrored every 0x800 bytes from `$0000-$1FFF`.
@@ -534,27 +532,14 @@ pub struct LockstepBus {
     /// OAM DMA pending source page (set by `$4014` write; consumed on the
     /// next `cpu_read`/`cpu_write`).
     dma_pending: Option<u8>,
-    /// Cycles owed to the OAM DMA before the original access can complete.
-    dma_cycles_owed: u32,
     /// OAM DMA scratch byte: read on even cycles, written on odd cycles.
     dma_byte: u8,
-    /// OAM DMA progress index (0..256).
-    dma_idx: u16,
     /// OAM DMA active source page (latched from `dma_pending`).
     dma_page: u8,
     /// CPU read address that OAM DMA halted. While the CPU is halted,
     /// no-op DMA cycles keep this address on the 6502 core bus.
     dma_halt_addr: u16,
-    /// Stage-D (`mc-r1-full-cpu`): the OAM DMA's original total cycle count
-    /// (513 or 514) latched at set-up, so the CPU-driven per-cycle
-    /// `oam_dma_step` can recompute `consumed = dma_total - dma_cycles_owed`
-    /// and the alignment across calls. 0 when no OAM DMA is in flight.
-    dma_total: u32,
 
-    /// Edge-detector latch for the PPU NMI line, used by `poll_nmi`.
-    last_nmi_level: bool,
-    /// Latched NMI edge (consumed by `poll_nmi`).
-    nmi_edge_latch: bool,
     /// v2.5.1 (ADR 0038) — externally asserted /NMI, for co-simulation only.
     ///
     /// Active-high here (`true` = the pin is asserted, i.e. /NMI low). It is
@@ -585,11 +570,6 @@ pub struct LockstepBus {
     /// the value equals what the prior `region_dividers()` match returned.
     cpu_div_cached: u8,
     ppu_div_cached: u8,
-    /// v2.0 master-clock R1 substrate (Phase 1): master clocks consumed by
-    /// bus-side DMA cycles since the CPU last drained the accumulator (folded
-    /// into `Cpu::master_clock` in `end_cycle` to keep the CPU<->PPU phase
-    /// coherent across a DMA span). Drained by `take_dma_mc_consumed`.
-    dma_mc_consumed: u64,
 
     /// External CPU data bus latch: last value driven onto the bus
     /// by ANY device (CPU, DMC DMA, OAM DMA conflict reads).
@@ -634,12 +614,9 @@ pub struct LockstepBus {
     /// v2.0 interleaved-DMA Phase B (`mc-r1-substrate`): the `TriCNES`
     /// `DMCDMA_Halt` flag — set when the interleaved DMC DMA starts, cleared
     /// after a GET cycle. Gates whether the current get cycle is the halt
-    /// re-read or the actual sample fetch. Only used by `dmc_dma_step`.
+    /// re-read or the actual sample fetch. Read and written by the unified
+    /// DMA engine (`unified_dma_cycle_impl`).
     dmc_halt: bool,
-    /// Program M (M-2, `mc-r1-dmc-oam-overlap`): whether the most recent
-    /// `dmc_dma_step` performed the GET (vs a halt/dummy/align). Read by the
-    /// read1 overlap loop to decide whether the DMC cycle can share an OAM cycle.
-    dmc_step_was_get: bool,
     /// W3-Stage-1 (`mc-r1-dma-unified`): the unified engine's OAM-DMA-active
     /// flag (`TriCNES` `DoOAMDMA` once latched). The 513/514 length is EMERGENT
     /// from `uni_oam_halt`/`uni_oam_aligned` + the per-cycle dispatch — no
@@ -684,19 +661,6 @@ pub struct LockstepBus {
     /// emulation state. See [`crate::genie`].
     genie_codes: BTreeMap<u16, GenieCode>,
 
-    /// Which half of the current CPU cycle the lockstep scheduler is in.
-    /// See [`M2Phase`] for the convention; see
-    /// [`LockstepBus::current_m2_phase`] for the read accessor.
-    ///
-    /// Maintained by `tick_one_cpu_cycle`: enters each cycle at
-    /// [`M2Phase::Low`], transitions to [`M2Phase::High`] after sub-dot
-    /// 1 of the 3-PPU-dot tick loop (the M2-rising boundary), then
-    /// resets to [`M2Phase::Low`] at end-of-cycle.  As of Phase B2 of
-    /// the C1 IRQ-timing rework this is still informational; the
-    /// production [`Bus::poll_irq_at_phase`] path reads from the
-    /// `irq_snapshot_*` fields below.
-    m2_phase: M2Phase,
-
     /// Deferred controller strobe write (Session-24 / Phase 3 of the
     /// v1.0.0-final brief).  Mirrors Mesen2's `NesControlManager`
     /// `_writeAddr` / `_writeValue` / `_writePending` triplet (see
@@ -705,8 +669,8 @@ pub struct LockstepBus {
     /// strobe state.  Instead the write is buffered here.
     /// `controller_write_pending` is set to 1 (odd-cycle write) or 2
     /// (even-cycle write) at the moment of the CPU write, then
-    /// decremented every CPU cycle at the START of `tick_one_cpu_cycle`
-    /// (BEFORE the 3-dot PPU loop runs); when it reaches 0 the buffered
+    /// decremented every CPU cycle at the START of `cpu_clock` (the
+    /// cycle-start half of the one-clock scheduler); when it reaches 0 the buffered
     /// value is committed to `Controller::write_strobe`.  Multiple
     /// writes within the commit window collapse — the latest value
     /// wins (the buffer is single-slot, the previous value is
@@ -724,64 +688,30 @@ pub struct LockstepBus {
     /// CPU write; committed when `controller_write_pending` reaches 0).
     controller_write_value: u8,
 
-    /// Mapper-side IRQ line snapshotted at the conventional M2-low
-    /// boundary of the current CPU cycle (between PPU sub-dot 0 and
-    /// sub-dot 1, per the [`M2Phase`] convention).  Updated by
-    /// [`LockstepBus::tick_one_cpu_cycle`] every cycle; read by
-    /// [`Bus::poll_irq_at_phase`] when `phase == M2Phase::Low`.
+    /// APU-side IRQ line snapshotted at the start of each CPU cycle, before
+    /// `apu_advance_one` runs the frame counter (`irq-timing-trace` only).
+    /// `trace_end_cycle` pairs it with the end-of-cycle level so a record
+    /// shows whether the frame-counter flag was SET or a `$4015` read CLEARED
+    /// it within the cycle.
     ///
-    /// Phase B2 of the C1 IRQ-timing rework: the storage is
-    /// unconditional (not gated on the `irq-timing-trace` feature) so
-    /// it's available on every build of the bus.  Per Phase A's
-    /// empirical finding the M2-low and M2-high values are byte-
-    /// identical for every baseline trace ROM, but the storage is kept
-    /// separate so Phase B4's MMC3 sub_dot-aware A12 filter can change
-    /// the two halves' values independently.
-    irq_snapshot_mapper_at_low: bool,
-    /// APU-side IRQ line snapshotted at the conventional M2-low
-    /// boundary.  See [`Self::irq_snapshot_mapper_at_low`].
+    /// v2.9.8 (ADR 0042) removed the four unconditional per-phase snapshots
+    /// this replaced. They were written by the dead pre-v2.0.0
+    /// `tick_one_cpu_cycle` and read only by the removed `poll_irq` /
+    /// `poll_irq_at_phase`.
+    #[cfg(feature = "irq-timing-trace")]
     irq_snapshot_apu_at_low: bool,
-    /// Mapper-side IRQ line snapshotted at the conventional M2-high
-    /// boundary of the current CPU cycle.  The exact intra-cycle
-    /// position is "between the end of PPU sub-dot 2 and the call to
-    /// `mapper.notify_cpu_cycle`" — i.e. the historical query point the
-    /// pre-Phase-B2 `Bus::poll_irq` impl used when called from
-    /// `Cpu::idle_tick` after `bus.on_cpu_cycle()` returned.
-    ///
-    /// Read by [`Bus::poll_irq`] and by
-    /// [`Bus::poll_irq_at_phase`] when `phase == M2Phase::High`.
-    irq_snapshot_mapper_at_high: bool,
-    /// APU-side IRQ line snapshotted at the conventional M2-high
-    /// boundary.  See [`Self::irq_snapshot_mapper_at_high`].
-    irq_snapshot_apu_at_high: bool,
 
     /// Optional IRQ-timing trace buffer (Track C1 pre-work, gated on the
     /// `irq-timing-trace` cargo feature). See `crates/rustynes-core/src/irq_trace.rs`
     /// and ADR-0002 "Decision (revised, 2026-05-13)".
     #[cfg(feature = "irq-timing-trace")]
     pub(crate) irq_trace: Option<IrqTrace>,
-    /// Scratch latch the `PpuBusAdapter` writes when the mapper sees an
-    /// `notify_a12` call.  Polled between every PPU sub-dot tick inside
-    /// `tick_one_cpu_cycle` and drained into the current cycle record's
-    /// `a12_events`.  Only populated when the trace feature is on.
-    #[cfg(feature = "irq-timing-trace")]
-    pub(crate) trace_a12_latest: Option<bool>,
-    /// Last A12 level seen across cycle boundaries; used to filter out
-    /// "no transition" sub-dots so the trace records only the actual
-    /// rising / falling edges.
-    #[cfg(feature = "irq-timing-trace")]
-    pub(crate) trace_last_a12: bool,
-    /// Scratch buffer for A12 events accumulated during a single CPU
-    /// cycle's 3 PPU dots.  Drained into the trace record at end-of-cycle.
-    #[cfg(feature = "irq-timing-trace")]
-    pub(crate) trace_a12_scratch: alloc::vec::Vec<A12Event>,
     /// Session-21 (Sprint 1 iteration 2 prereq) bus-access tracker.
     ///
-    /// Set by `cpu_read` / `cpu_write` / the DMC DMA service path / the
-    /// OAM DMA service path BEFORE `tick_one_cpu_cycle` records the
-    /// per-cycle bus-access columns; consumed (and reset to
-    /// `BusAccess::Idle` / 0) inside `tick_one_cpu_cycle` after the
-    /// record is pushed.  A single CPU cycle has at most one external
+    /// Set by `cpu_read` / `cpu_write` / the unified DMA engine BEFORE
+    /// `trace_end_cycle` records the per-cycle bus-access columns; consumed
+    /// (and reset to `BusAccess::Idle` / 0) by `trace_end_cycle` when it
+    /// pushes the record.  A single CPU cycle has at most one external
     /// bus access — burn cycles (`idle_tick`) leave the tracker at
     /// `BusAccess::Idle`, which is the correct semantics for the trace
     /// (CPU internal cycles do not drive the bus).
@@ -789,8 +719,8 @@ pub struct LockstepBus {
     /// The DMA paths set this directly because the bus owns the cycle
     /// during DMA halt and the CPU's `cpu_read` / `cpu_write` is not
     /// invoked (the bus's `raw_cpu_read` is invoked instead, which
-    /// does not advance time on its own — `tick_one_cpu_cycle` is
-    /// called separately).
+    /// does not advance time on its own — the CPU's surrounding
+    /// `start_cycle` / `end_cycle` do).
     #[cfg(feature = "irq-timing-trace")]
     pub(crate) trace_bus_access: BusAccess,
     #[cfg(feature = "irq-timing-trace")]
@@ -805,8 +735,7 @@ pub struct LockstepBus {
     #[cfg(feature = "irq-timing-trace")]
     pub(crate) trace_last_pc: u16,
     /// R1-path PPU position captured at cycle-start (`cpu_clock`) for the
-    /// `trace_end_cycle` diagnostic push (the R1 loop bypasses
-    /// `tick_one_cpu_cycle`'s own snapshot).
+    /// `trace_end_cycle` diagnostic push.
     #[cfg(feature = "irq-timing-trace")]
     pub(crate) trace_r1_scanline_start: i16,
     #[cfg(feature = "irq-timing-trace")]
@@ -1009,14 +938,9 @@ impl LockstepBus {
             event_break_hit: None,
             cycle: 0,
             dma_pending: None,
-            dma_cycles_owed: 0,
             dma_byte: 0,
-            dma_idx: 0,
             dma_page: 0,
             dma_halt_addr: 0,
-            dma_total: 0,
-            last_nmi_level: false,
-            nmi_edge_latch: false,
             #[cfg(feature = "cosim-interrupt-inject")]
             inject_nmi: false,
             #[cfg(feature = "cosim-interrupt-inject")]
@@ -1024,13 +948,11 @@ impl LockstepBus {
             ppu_clock: 0,
             cpu_div_cached,
             ppu_div_cached,
-            dma_mc_consumed: 0,
             open_bus: 0,
             internal_data_bus: 0,
             last_read_addr: 0,
             deferred_dma_replay_addr: 0,
             in_dmc_dma: false,
-            dmc_step_was_get: false,
             uni_oam_active: false,
             uni_oam_halt: false,
             uni_oam_aligned: false,
@@ -1038,21 +960,12 @@ impl LockstepBus {
             cpu_2a03_revision: Cpu2A03Revision::default(),
             dmc_halt: false,
             genie_codes: BTreeMap::new(),
-            m2_phase: M2Phase::Low,
-            irq_snapshot_mapper_at_low: false,
+            #[cfg(feature = "irq-timing-trace")]
             irq_snapshot_apu_at_low: false,
-            irq_snapshot_mapper_at_high: false,
-            irq_snapshot_apu_at_high: false,
             controller_write_pending: 0,
             controller_write_value: 0,
             #[cfg(feature = "irq-timing-trace")]
             irq_trace: None,
-            #[cfg(feature = "irq-timing-trace")]
-            trace_a12_latest: None,
-            #[cfg(feature = "irq-timing-trace")]
-            trace_last_a12: false,
-            #[cfg(feature = "irq-timing-trace")]
-            trace_a12_scratch: alloc::vec::Vec::new(),
             #[cfg(feature = "irq-timing-trace")]
             trace_bus_access: BusAccess::Idle,
             #[cfg(feature = "irq-timing-trace")]
@@ -1182,8 +1095,6 @@ impl LockstepBus {
             self.apu.seed_apu_alignment(0);
         }
         self.dma_pending = None;
-        self.dma_cycles_owed = 0;
-        self.dma_idx = 0;
         self.dma_halt_addr = 0;
         self.deferred_dma_replay_addr = 0;
         self.unified_dma_clear();
@@ -1241,19 +1152,14 @@ impl LockstepBus {
         self.famicom_mic = false;
         self.cycle = 0;
         self.dma_pending = None;
-        self.dma_cycles_owed = 0;
-        self.dma_idx = 0;
         self.dma_halt_addr = 0;
-        self.last_nmi_level = false;
-        self.nmi_edge_latch = false;
         self.open_bus = 0;
         self.internal_data_bus = 0;
         self.deferred_dma_replay_addr = 0;
-        self.m2_phase = M2Phase::Low;
-        self.irq_snapshot_mapper_at_low = false;
-        self.irq_snapshot_apu_at_low = false;
-        self.irq_snapshot_mapper_at_high = false;
-        self.irq_snapshot_apu_at_high = false;
+        #[cfg(feature = "irq-timing-trace")]
+        {
+            self.irq_snapshot_apu_at_low = false;
+        }
         self.unified_dma_clear();
         // A cold boot must reset EVERY run-history-dependent field, or the
         // post-power-cycle machine depends on how long it ran before — breaking
@@ -1265,11 +1171,8 @@ impl LockstepBus {
         self.ppu_clock = 0;
         self.dma_byte = 0;
         self.dma_page = 0;
-        self.dma_total = 0;
-        self.dma_mc_consumed = 0;
         self.last_read_addr = 0;
         self.in_dmc_dma = false;
-        self.dmc_step_was_get = false;
         self.dmc_halt = false;
         self.controller_write_pending = 0;
         self.controller_write_value = 0;
@@ -1580,14 +1483,6 @@ impl LockstepBus {
     #[cfg(feature = "irq-timing-trace")]
     pub fn enable_irq_trace(&mut self, capacity: usize) {
         self.irq_trace = Some(IrqTrace::with_capacity(capacity));
-        self.trace_a12_latest = None;
-        self.trace_a12_scratch.clear();
-        // Snapshot whatever A12 level the PPU last drove so the first
-        // recorded transition matches reality (the PPU's `last_a12` is
-        // private to its module; we accept "first cycle may miss a level
-        // assignment" as a cold-start artifact, matching every existing
-        // diagnostic probe).
-        self.trace_last_a12 = false;
         // Session-21: reset bus-access tracker so the first traced cycle
         // reflects accurate (CPU-driven) state rather than a stale
         // pre-trace driver.
@@ -2292,30 +2187,6 @@ impl LockstepBus {
         self.cycle
     }
 
-    /// Returns the M2 phase the lockstep scheduler is currently in.
-    ///
-    /// The scheduler ticks the PPU 3 dots per CPU cycle.  Convention:
-    /// [`M2Phase::Low`] is the FIRST half of the cycle (the cycle's
-    /// pre-sub-dot-1 portion, corresponding to silicon's `φ1`);
-    /// [`M2Phase::High`] is the SECOND half (post-sub-dot-1, silicon's
-    /// `φ2`).  The boundary is the M2-rising edge between sub-dot 1 and
-    /// sub-dot 2.
-    ///
-    /// At the start of `tick_one_cpu_cycle` the bus is in [`M2Phase::Low`].
-    /// After sub-dot 1 of the 3-PPU-dot tick loop, it transitions to
-    /// [`M2Phase::High`].  After the cycle's last sub-dot the bus
-    /// advances the cycle counter and returns to [`M2Phase::Low`] for
-    /// the next cycle.
-    ///
-    /// This accessor is informational.  As of Phase B2 the bus stores
-    /// per-phase IRQ snapshots (read by [`Bus::poll_irq_at_phase`])
-    /// independently of this accessor — `current_m2_phase()` itself is
-    /// not consulted by the CPU's IRQ sample path.
-    #[must_use]
-    pub const fn current_m2_phase(&self) -> M2Phase {
-        self.m2_phase
-    }
-
     /// Set the Vs. System 8-bit DIP switch bank (switch 1 = bit 0 ..
     /// switch 8 = bit 7). No effect on non-Vs. carts. Default 0.
     pub const fn set_vs_dip(&mut self, dip: u8) {
@@ -2859,13 +2730,9 @@ impl LockstepBus {
     pub const fn bus_misc_state(&self) -> crate::bus_snapshot::BusMiscState {
         crate::bus_snapshot::BusMiscState {
             dma_pending: self.dma_pending,
-            dma_cycles_owed: self.dma_cycles_owed,
             dma_byte: self.dma_byte,
-            dma_idx: self.dma_idx,
             dma_page: self.dma_page,
             dma_halt_addr: self.dma_halt_addr,
-            last_nmi_level: self.last_nmi_level,
-            nmi_edge_latch: self.nmi_edge_latch,
             open_bus: self.open_bus,
             internal_data_bus: self.internal_data_bus,
             last_read_addr: self.last_read_addr,
@@ -2886,20 +2753,15 @@ impl LockstepBus {
             uni_oam_aligned: self.uni_oam_aligned,
             uni_oam_addr: self.uni_oam_addr,
             ppu_clock: self.ppu_clock,
-            dma_mc_consumed: self.dma_mc_consumed,
         }
     }
 
     /// Apply a previously-snapshotted bus bookkeeping state.
     pub const fn set_bus_misc_state(&mut self, s: crate::bus_snapshot::BusMiscState) {
         self.dma_pending = s.dma_pending;
-        self.dma_cycles_owed = s.dma_cycles_owed;
         self.dma_byte = s.dma_byte;
-        self.dma_idx = s.dma_idx;
         self.dma_page = s.dma_page;
         self.dma_halt_addr = s.dma_halt_addr;
-        self.last_nmi_level = s.last_nmi_level;
-        self.nmi_edge_latch = s.nmi_edge_latch;
         self.open_bus = s.open_bus;
         self.internal_data_bus = s.internal_data_bus;
         self.last_read_addr = s.last_read_addr;
@@ -2911,28 +2773,19 @@ impl LockstepBus {
         self.four_score_idx = s.four_score_idx;
         self.four_score_sig = s.four_score_sig;
         // W3-Stage-4 (2026-06-10): the unified engine's OAM state + the DMC
-        // halt latch are now serialized (trailing-default-zero in the BUS
-        // section), replacing the Stage-1 clear-on-restore. Snapshots are
-        // taken at instruction boundaries where the engine is idle, so for
-        // every legitimately produced blob these decode to the same inactive
-        // state the clear imposed -- but a restored blob now reproduces them
-        // EXACTLY instead of by assumption.
-        {
-            self.dmc_halt = s.dmc_halt;
-        }
-        {
-            self.uni_oam_active = s.uni_oam_active;
-            self.uni_oam_halt = s.uni_oam_halt;
-            self.uni_oam_aligned = s.uni_oam_aligned;
-            self.uni_oam_addr = s.uni_oam_addr;
-        }
-        // The R1 substrate master-clock pair (see `BusMiscState::ppu_clock`):
-        // pre-Stage-4 blobs decode these as 0, which together with the CPU
-        // v1-blob `master_clock` upconvert keeps the pair coherent.
-        {
-            self.ppu_clock = s.ppu_clock;
-            self.dma_mc_consumed = s.dma_mc_consumed;
-        }
+        // halt latch are serialized, replacing the Stage-1 clear-on-restore.
+        // Snapshots are taken at instruction boundaries where the engine is
+        // idle, so for every legitimately produced blob these decode to the
+        // same inactive state the clear imposed -- but a restored blob
+        // reproduces them EXACTLY instead of by assumption.
+        self.dmc_halt = s.dmc_halt;
+        self.uni_oam_active = s.uni_oam_active;
+        self.uni_oam_halt = s.uni_oam_halt;
+        self.uni_oam_aligned = s.uni_oam_aligned;
+        self.uni_oam_addr = s.uni_oam_addr;
+        // Half of the master-clock pair; the other half is
+        // `Cpu::master_clock` in the CPU section (see `BusMiscState::ppu_clock`).
+        self.ppu_clock = s.ppu_clock;
     }
 
     /// Set the cumulative CPU cycle counter (used by save-state restore).
@@ -3199,308 +3052,6 @@ impl LockstepBus {
         }
     }
 
-    /// Drive the PPU forward 3 dots and account for one CPU cycle of
-    /// bookkeeping (mapper-cycle hook, DMA progress, NMI edge sample,
-    /// APU tick).
-    #[allow(clippy::too_many_lines)] // Session-21 added per-cycle DMC + bus-access snapshots; splitting the trace push into a helper would force the bus to recompute `trace_*_pre_tick` values across function boundaries.
-    pub(crate) fn tick_one_cpu_cycle(&mut self) {
-        // Stamp the PPU with the cycle these dots belong to, BEFORE ticking
-        // them, so a state record carries its own cycle rather than the next
-        // one's. `self.cycle` advances at the END of this function.
-        //
-        // Feature-gated: the default build has neither the field nor this
-        // store. `cpu_clock` carries the same store for the running path; see
-        // the note there for why both are needed.
-        #[cfg(feature = "ppu-state-trace")]
-        self.ppu.set_trace_cpu_cycle(self.cycle);
-
-        // Tick PPU 3 dots in NTSC.  PAL would be 3.2 (5 dots per 16 PPU dots);
-        // we approximate as 3 for now and gate region accuracy behind a
-        // future Phase 2 follow-up.
-        //
-        // Sample the PPU /NMI line state *between every dot* so a glitched
-        // edge that goes low->high then back to low within a single CPU
-        // cycle (e.g. PPUCTRL.7 set during pre-render dot 0, then VBL
-        // cleared at dot 1 within the same CPU cycle) is still latched.
-        //
-        // When the `irq-timing-trace` cargo feature is enabled, capture
-        // per-cycle (cpu_cycle, ppu_scanline, ppu_dot, a12_events, IRQ
-        // lines sampled at TWO points within the cycle, NMI line) into
-        // the bus's trace buffer.
-        //
-        // Phase A of the C1 plan (`docs/adr/0002-irq-timing-coordination.md`)
-        // takes TWO IRQ snapshots per CPU cycle so the M2-low → M2-high
-        // asymmetry the coordinated change is designed to model is
-        // observable in the trace data:
-        //
-        //   * M2-low snapshot:  taken AFTER PPU sub-dot 0 has ticked.
-        //     This catches any A12 transition / APU IRQ assertion that
-        //     happened on the cycle's first PPU dot, but before sub-dots
-        //     1 and 2 have run.
-        //   * M2-high snapshot: taken AFTER PPU sub-dot 2 has ticked,
-        //     i.e. at the end-of-3-PPU-dots boundary, BEFORE
-        //     `notify_cpu_cycle` / `tick_with_external` run.  This is
-        //     the historical query point the pre-Phase-B2
-        //     `Bus::poll_irq` impl used when called from
-        //     `Cpu::idle_tick` after `bus.on_cpu_cycle()` returned.
-        //
-        // The conventional names map to silicon's φ1 / φ2 halves of the
-        // 6502 cycle.  The exact sub-dot placement is conventional, not
-        // canonical — what matters is that the bus records IRQ state at
-        // TWO distinct points within the cycle so downstream phases can
-        // diff them.
-        //
-        // Phase B2 of the C1 IRQ-timing rework: the M2-low and M2-high
-        // snapshots are now stored on `self` unconditionally (not gated
-        // on the `irq-timing-trace` feature).  The trace fixture's
-        // `_at_low` / `_at_high` columns read from these snapshots
-        // rather than re-querying the mapper / APU, removing the
-        // duplicate `mapper.irq_pending()` call that Phase A introduced
-        // inside the cycle.  The production `Bus::poll_irq` /
-        // `Bus::poll_irq_at_phase` paths on `LockstepBus` also read
-        // from these snapshots — see the `impl Bus for LockstepBus`
-        // block below.
-        // Session-24 / Phase 3 (Controller Strobing): commit any
-        // pending controller-strobe write at the START of this CPU
-        // cycle (M2-low boundary).  Mirrors Mesen2's
-        // `NesConsole::ProcessCpuClock` → `NesControlManager::ProcessWrites`
-        // call site (`Core/NES/NesConsole.cpp` line 72).  See
-        // `docs/audit/session-24-phase3-controller-strobing-2026-05-23.md`.
-        if self.controller_write_pending > 0 {
-            self.controller_write_pending -= 1;
-            if self.controller_write_pending == 0 {
-                let value = self.controller_write_value;
-                // The strobe line is shared between both controllers.
-                self.commit_controller_strobe(value);
-            }
-        }
-        #[cfg(feature = "irq-timing-trace")]
-        let (trace_scanline_start, trace_dot_start, trace_frame_start) =
-            (self.ppu.scanline(), self.ppu.dot(), self.ppu.frame());
-        // Session-21 (Sprint 1 iteration 2 prereq): snapshot the DMC
-        // scheduler's "pre-tick" state (mirrors `_at_low` for the IRQ
-        // columns).  These read BEFORE `apu.tick_with_external` runs at
-        // the bottom of this method.
-        #[cfg(feature = "irq-timing-trace")]
-        let trace_dmc_dma_pending_pre = self.apu.dmc_dma_pending();
-        // M2-phase tracking (Phase B1 of the C1 IRQ-timing rework):
-        // each CPU cycle begins in `M2Phase::Low`, transitions to
-        // `M2Phase::High` after sub-dot 1 has ticked (the M2-rising
-        // boundary), and resets to `Low` at end-of-cycle.
-        self.m2_phase = M2Phase::Low;
-        #[cfg(not(feature = "irq-timing-trace"))]
-        for sub_dot in 0..3u8 {
-            let mut adapter = PpuBusAdapter {
-                mapper: self.mapper.as_mut(),
-                nt_override: self.nt_mirroring_override,
-                sub_dot,
-            };
-            self.ppu.tick(&mut adapter);
-            self.sample_nmi_edge();
-            if sub_dot == 0 {
-                // M2-low IRQ snapshot.
-                self.irq_snapshot_mapper_at_low = self.mapper.irq_pending();
-                self.irq_snapshot_apu_at_low = self.apu.irq_line();
-            }
-            if sub_dot == 1 {
-                self.m2_phase = M2Phase::High;
-            }
-        }
-        #[cfg(feature = "irq-timing-trace")]
-        for sub_dot in 0..3u8 {
-            let mut adapter = PpuBusAdapter {
-                mapper: self.mapper.as_mut(),
-                nt_override: self.nt_mirroring_override,
-                sub_dot,
-                trace_a12_latest: if self.irq_trace.is_some() {
-                    Some(&mut self.trace_a12_latest)
-                } else {
-                    None
-                },
-            };
-            self.ppu.tick(&mut adapter);
-            self.sample_nmi_edge();
-            // The `is_some()` guard is load-bearing beyond the borrow below:
-            // it keeps `take()` -- which CLEARS `trace_a12_latest` -- from
-            // running when tracing is off.  Short-circuit evaluation in the
-            // let-chain preserves that exactly.
-            if self.irq_trace.is_some()
-                && let Some(level) = self.trace_a12_latest.take()
-            {
-                if let Some(t) = self.irq_trace.as_mut() {
-                    t.notify_a12_count = t.notify_a12_count.saturating_add(1);
-                }
-                // The PPU already filters to transitions only; every
-                // `notify_a12` call IS a level change.  Record it.
-                self.trace_a12_scratch.push(A12Event { sub_dot, level });
-                self.trace_last_a12 = level;
-            }
-            if sub_dot == 0 {
-                // M2-low IRQ snapshot: taken AFTER sub-dot 0 has ticked
-                // so it reflects the dot's mapper-side effects (e.g. an
-                // A12 rise on sub-dot 0 that just clocked the MMC3 IRQ
-                // counter).  Sub-dots 1 and 2 have not yet run.
-                self.irq_snapshot_mapper_at_low = self.mapper.irq_pending();
-                self.irq_snapshot_apu_at_low = self.apu.irq_line();
-            }
-            if sub_dot == 1 {
-                self.m2_phase = M2Phase::High;
-            }
-        }
-
-        // Phase-A-compatible end-of-3-PPU-dots snapshot — taken BEFORE
-        // `notify_cpu_cycle` / `tick_with_external` advance the mapper
-        // and APU.  Only used by the trace fixture's `_at_high` column
-        // so the Phase A baseline CSV files stay byte-identical across
-        // Phases B2+.  The production `Bus::poll_irq{,_at_phase}` path
-        // reads from `irq_snapshot_*_at_high` below, taken AFTER those
-        // advance, so the CPU's IRQ sample point is unchanged.
-        #[cfg(feature = "irq-timing-trace")]
-        let trace_mapper_at_high_pre_tick = self.mapper.irq_pending();
-        #[cfg(feature = "irq-timing-trace")]
-        let trace_apu_at_high_pre_tick = self.apu.irq_line();
-
-        // End-of-cycle: the bus advances to the next CPU cycle, which
-        // (re)starts in `M2Phase::Low`.  Reset BEFORE the cycle counter
-        // increment so any future read of `current_m2_phase()` from
-        // inside `notify_cpu_cycle` / `tick_with_external` sees the new
-        // cycle's phase rather than the previous cycle's tail.
-        self.m2_phase = M2Phase::Low;
-        self.cycle = self.cycle.wrapping_add(1);
-        self.ppu.on_cpu_cycle();
-        self.mapper.notify_cpu_cycle();
-        // Sample the mapper's audio extension AFTER notify_cpu_cycle has
-        // advanced its oscillators. `Mapper::mix_audio` returns i32 (widened
-        // from i16 in v2.2.3 so the Sunsoft 5B's ~3.6x full-volume level is
-        // representable); we scale to approximately the same [-0.5, 0.5] range
-        // as the APU mixer's own output. Mappers without on-cart audio return
-        // 0, which scales to 0.0 -- a no-op for the standard cartridges.
-        //
-        // `as f32` rather than `f32::from`: there is no lossless From<i32> for
-        // f32. The cast is exact for every value any board actually produces
-        // (|sample| well under 2^24, where f32 is still integer-exact); the
-        // widening exists to raise a ~32k ceiling to ~16.7M, not to use it.
-        #[allow(clippy::cast_precision_loss)]
-        let mapper_sample = self.mapper.mix_audio() as f32 / 65536.0;
-        self.apu.tick_with_external(mapper_sample);
-        // Fan-out the APU frame-counter events to any on-cart audio
-        // extension that shares the 2A03 frame-counter cadence (MMC5).
-        // Default no-op for all other mappers.
-        let ev = self.apu.last_frame_events();
-        self.mapper.notify_frame_event(MapperFrameEvents {
-            quarter: ev.quarter,
-            half: ev.half,
-        });
-
-        // M2-high IRQ snapshot: at the VERY END of `tick_one_cpu_cycle`,
-        // AFTER `notify_cpu_cycle` / `tick_with_external` /
-        // `notify_frame_event` have run.  This matches the historical
-        // `mapper.irq_pending() || apu.irq_line()` query point that
-        // `Cpu::idle_tick` saw when it called `bus.poll_irq()` after
-        // `bus.on_cpu_cycle()` returned — so the production
-        // `Bus::poll_irq` / `poll_irq_at_phase(M2Phase::High)` paths
-        // stay semantically identical to the pre-Phase-B2 direct query
-        // of `mapper.irq_pending() || apu.irq_line()`.
-        self.irq_snapshot_mapper_at_high = self.mapper.irq_pending();
-        self.irq_snapshot_apu_at_high = self.apu.irq_line();
-
-        #[cfg(feature = "irq-timing-trace")]
-        if self.irq_trace.is_some() {
-            let events = core::mem::take(&mut self.trace_a12_scratch);
-            let events_len = events.len();
-            // Session-21: snapshot the DMC scheduler "post-tick" state
-            // and consume the per-cycle bus-access tracker.  These are
-            // taken AFTER `apu.tick_with_external` has run for this
-            // cycle, so they reflect the end-of-cycle scheduler shape
-            // that the next CPU cycle's bus access will observe.
-            let bus_access = core::mem::replace(&mut self.trace_bus_access, BusAccess::Idle);
-            let bus_addr = core::mem::take(&mut self.trace_bus_addr);
-            let bus_data = core::mem::take(&mut self.trace_bus_data);
-            let rec = CycleRecord {
-                // `cpu_cycle` here refers to the cycle we JUST ticked.
-                // `self.cycle` was incremented above, so subtract 1.
-                cpu_cycle: self.cycle.wrapping_sub(1),
-                pc: self.trace_last_pc,
-                ppu_scanline: trace_scanline_start,
-                ppu_dot: trace_dot_start,
-                ppu_frame: trace_frame_start,
-                irq_pending_mapper_at_low: self.irq_snapshot_mapper_at_low,
-                irq_pending_apu_at_low: self.irq_snapshot_apu_at_low,
-                // Trace's `_at_high` columns retain the Phase A
-                // pre-tick_with_external semantics so the committed
-                // baseline CSVs in
-                // `crates/rustynes-test-harness/golden/irq_trace/` stay
-                // byte-identical.  Production `poll_irq` reads from
-                // the post-tick `irq_snapshot_*_at_high` fields above
-                // instead.
-                irq_pending_mapper_at_high: trace_mapper_at_high_pre_tick,
-                irq_pending_apu_at_high: trace_apu_at_high_pre_tick,
-                nmi_line: self.ppu.nmi_line(),
-                a12_events: events,
-                // --- Session-21 DMC + bus-access columns ---
-                dmc_dma_pending_pre: trace_dmc_dma_pending_pre,
-                dmc_dma_pending_post: self.apu.dmc_dma_pending(),
-                dmc_dma_short_post: self.apu.dmc_dma_short(),
-                dmc_abort_pending_post: self.apu.dmc_abort_pending(),
-                dmc_abort_delay_post: self.apu.dmc_abort_delay(),
-                dmc_dma_cooldown_post: self.apu.dmc_dma_cooldown(),
-                dmc_dma_delay_post: self.apu.dmc_dma_delay(),
-                apu_phase_post: self.apu.apu_phase(),
-                in_dmc_dma: self.in_dmc_dma,
-                dma_cycles_owed: self.dma_cycles_owed,
-                bus_access,
-                bus_addr,
-                bus_data,
-                put_cycle_post: self.apu.put_cycle(),
-                dmc_timer_post: self.apu.dmc_timer(),
-                dmc_bits_remaining_post: self.apu.dmc_bits_remaining(),
-                dmc_silence_post: self.apu.dmc_silence(),
-                dmc_buffer_full_post: self.apu.dmc_buffer_full(),
-            };
-            if let Some(t) = self.irq_trace.as_mut() {
-                if events_len > 0 {
-                    t.records_with_a12_count = t.records_with_a12_count.saturating_add(1);
-                }
-                t.push(rec);
-            }
-        }
-        // v2.0 R1 DMA-coherence (Phase 3): under `mc-r1-substrate` this fn is
-        // reached ONLY from the bus-side DMA path — the normal R1 cycle runs
-        // the PPU via `run_ppu_to` + does its per-cycle work in `cpu_clock`,
-        // which does NOT call this. Each DMA cycle ticked the real PPU by 3
-        // dots without advancing `master_clock`/`ppu_clock`. Bump `ppu_clock`
-        // so the next `run_ppu_to` does not RE-tick those dots, and
-        // `dma_mc_consumed` so `Cpu::end_cycle` folds the DMA span into
-        // `master_clock` — keeping the CPU<->PPU phase coherent across DMA
-        // (the v2.0-R1 regression this prevents). Mirrors `dma_tick_one_cycle`
-        // on `refactor/v2.0-master-clock`.
-        {
-            let (cpu_div, ppu_div) = self.region_dividers();
-            // The PPU was physically ticked 3 dots by this DMA cycle, so
-            // `ppu_clock` advances by exactly `3 * ppu_divider` mc — keeping the
-            // boundary check in `run_ppu_to` from re-ticking those dots.
-            self.ppu_clock = self.ppu_clock.wrapping_add(u64::from(ppu_div) * 3);
-            // `master_clock` (via `dma_mc_consumed`) advances by the region's
-            // true CPU-cycle span (`cpu_divider`). On NTSC/Dendy this equals
-            // `3 * ppu_divider` (12/15), so the path is byte-identical; on PAL
-            // (16 vs 15) the 1-mc/cycle deficit accumulates and the next
-            // `run_ppu_to` ticks the catch-up dot, yielding the correct 3.2:1
-            // average across the DMA span.
-            self.dma_mc_consumed = self.dma_mc_consumed.wrapping_add(u64::from(cpu_div));
-        }
-    }
-
-    /// Capture the PPU /NMI line transition (false → true) into the edge
-    /// latch consumed by [`Bus::poll_nmi`].  Idempotent within a "still
-    /// asserted" window: only the rising edge latches.
-    const fn sample_nmi_edge(&mut self) {
-        let level = self.ppu.nmi_line();
-        if level && !self.last_nmi_level {
-            self.nmi_edge_latch = true;
-        }
-        self.last_nmi_level = level;
-    }
-
     /// OAM-DMA source fetch (Session-26 / Sprint 2 iter 4).
     ///
     /// The 2A03 has three internal address buses (6502, OAM DMA, DMC
@@ -3667,7 +3218,7 @@ impl LockstepBus {
     }
 
     /// Session-21: set the bus-access tracker for an upcoming DMA cycle.
-    /// `tick_one_cpu_cycle` consumes this when it pushes the record.
+    /// `trace_end_cycle` consumes this when it pushes the record.
     /// No-op (no field even exists) when the trace feature is disabled.
     #[cfg(feature = "irq-timing-trace")]
     const fn set_trace_dma_access(&mut self, access: BusAccess, addr: u16, data: u8) {
@@ -3703,8 +3254,6 @@ impl LockstepBus {
                     mapper: self.mapper.as_mut(),
                     nt_override: self.nt_mirroring_override,
                     sub_dot: 2,
-                    #[cfg(feature = "irq-timing-trace")]
-                    trace_a12_latest: None,
                 };
                 let _ = self.ppu.cpu_read_register(2, &mut adapter);
             }
@@ -3716,8 +3265,6 @@ impl LockstepBus {
                     // M2-high (sub_dot 2) since the 6502 drives its bus
                     // during φ2.
                     sub_dot: 2,
-                    #[cfg(feature = "irq-timing-trace")]
-                    trace_a12_latest: None,
                 };
                 let _ = self.ppu.cpu_read_register(7, &mut adapter);
             }
@@ -3773,61 +3320,6 @@ impl LockstepBus {
         }
     }
 
-    /// v2.0 interleaved-DMA Phase B: perform ONE cycle of an interleaved DMC
-    /// DMA (`TriCNES` `_6502` DMC-only path: `DMCDMA_Halted`/`Put`/`Get`). Called
-    /// once per R1 cycle from `Cpu::read1` while `apu.dmc_dma_pending()`, at the
-    /// access-point of the cycle (after `start_cycle`, before `end_cycle`). The
-    /// CPU drives the cycle timing; this does only the DMA bus access + advances
-    /// the halt/get state. The GET always lands on a get cycle (`!put_cycle`),
-    /// so the 3-vs-4-cycle span is EMERGENT from the `put_cycle` parity at arm
-    /// time (divergence-A self-consistency), not main's fixed `short?2:3`.
-    #[allow(clippy::too_many_lines)]
-    fn dmc_dma_step_impl(&mut self, halted_addr: u16) {
-        if !self.in_dmc_dma {
-            // First cycle of this DMA span: latch halt + the open-bus replay.
-            self.in_dmc_dma = true;
-            self.dmc_halt = true;
-            self.capture_deferred_dma_replay();
-        }
-        // get = read cycle (TriCNES `!APU_PutCycle`); put = write cycle.
-        let get_cycle = !self.apu.put_cycle();
-        if get_cycle && !self.dmc_halt {
-            // The GET: fetch the sample (with the `$4000` open-bus conflict the
-            // DMA cluster brackets) + deliver to the DMC.
-            let addr = self.apu.dmc_dma_addr();
-            let byte = self.dmc_dma_read(addr, halted_addr);
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, addr, byte);
-            // v1.4.0 Workstream D (D2) — DMC-DMA event-breakpoint tap (the GET
-            // cycle that fetches a sample). Output-only.
-            #[cfg(feature = "debug-hooks")]
-            self.record_event_break(EventBpKind::DmcDma, addr);
-            self.apu.complete_dmc_dma(byte);
-            self.in_dmc_dma = false;
-            // Program M (M-2): this step performed the GET (steals an OAM slot).
-            {
-                self.dmc_step_was_get = true;
-            }
-        } else {
-            // Program M (M-2): this step was a halt/dummy/align (overlaps OAM).
-            {
-                self.dmc_step_was_get = false;
-            }
-            // Halt / alignment / put cycle: re-read the halted CPU address bus
-            // (TriCNES `Fetch(addressBus)`).
-            self.replay_dma_noop_read(halted_addr);
-            // Tag the halt re-read so the trace shows the DMC DMA's $4015
-            // (etc.) re-read landing — the side-effect cycle the $4015
-            // frame-IRQ-clear diagnostic correlates against.
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-            if get_cycle {
-                // A get cycle clears the halt ("halts clear after a get cycle").
-                self.dmc_halt = false;
-            }
-        }
-    }
-
     /// W3-Stage-1 (`mc-r1-dma-unified`): clear the unified engine's transient
     /// OAM-DMA state (reset / power-cycle / snapshot-restore).
     const fn unified_dma_clear(&mut self) {
@@ -3844,6 +3336,11 @@ impl LockstepBus {
     /// standalone OAM, and the DMC-during-OAM overlap all ride — AT FLOOR
     /// PARITY for this stage (the structural-equivalence proof; Stage 2 flips
     /// the one engine to the breakthrough parity).
+    ///
+    /// The "floor" functions named below (`dmc_dma_step_impl`,
+    /// `oam_dma_step`) were the per-engine drivers this engine replaced. They
+    /// were deprecated at v2.7.5 and removed at v2.9.8 (ADR 0042); git history
+    /// holds them.
     ///
     /// Floor-parity mapping (the structural truth Stage 2 collapses): the
     /// floor's two drivers run on OPPOSITE halves of the shared cycle counter
@@ -4050,8 +3547,8 @@ impl LockstepBus {
     }
 
     /// Raw CPU read that does **not** advance time — used by the OAM DMA
-    /// engine and DMC DMA fetches.  Time was already advanced by the
-    /// surrounding `tick_one_cpu_cycle` (or the DMA stall).
+    /// engine and DMC DMA fetches.  Time is advanced by the CPU's
+    /// surrounding `start_cycle` / `end_cycle`.
     pub(crate) fn raw_cpu_read(&mut self, addr: u16) -> u8 {
         // $4015 special case: reading from the APU status port reads
         // 2A03 internal state but does NOT drive the data bus (per
@@ -4173,8 +3670,6 @@ impl LockstepBus {
             nt_override: self.nt_mirroring_override,
             // CPU bus access happens during φ2 → sub_dot 2 (M2-high).
             sub_dot: 2,
-            #[cfg(feature = "irq-timing-trace")]
-            trace_a12_latest: None,
         };
         self.ppu.cpu_read_register(reg, &mut adapter)
     }
@@ -4187,8 +3682,6 @@ impl LockstepBus {
             nt_override: self.nt_mirroring_override,
             // CPU bus access happens during φ2 → sub_dot 2 (M2-high).
             sub_dot: 2,
-            #[cfg(feature = "irq-timing-trace")]
-            trace_a12_latest: None,
         };
         self.ppu.cpu_write_register(reg, value, &mut adapter);
     }
@@ -4219,12 +3712,6 @@ struct PpuBusAdapter<'a> {
     /// propagation modeling.  Sub-dots 0 / 1 are M2-low (φ1) and 2 is
     /// M2-high (φ2) per our convention.
     sub_dot: u8,
-    /// When the IRQ-timing trace feature is enabled, the most recent A12
-    /// level passed through `notify_a12` is mirrored here so the bus's
-    /// per-sub-dot trace loop can pick it up.  `None` when tracing is
-    /// off (the standard hot path).
-    #[cfg(feature = "irq-timing-trace")]
-    trace_a12_latest: Option<&'a mut Option<bool>>,
 }
 
 impl PpuBus for PpuBusAdapter<'_> {
@@ -4273,10 +3760,6 @@ impl PpuBus for PpuBusAdapter<'_> {
         // `notify_a12_at_sub_dot` impl falls back to plain `notify_a12`,
         // so this thread-through is invisible to NROM / UxROM / etc.
         self.mapper.notify_a12_at_sub_dot(level, self.sub_dot);
-        #[cfg(feature = "irq-timing-trace")]
-        if let Some(slot) = self.trace_a12_latest.as_deref_mut() {
-            *slot = Some(level);
-        }
     }
     fn notify_scanline_start(&mut self) {
         self.mapper.notify_scanline_start();
@@ -4321,17 +3804,8 @@ impl LockstepBus {
 /// v2.0 master-clock R1 substrate helpers (Phase 1). Compiled only under
 /// `mc-r1-substrate`; used by the clean `Bus` contract overrides below.
 impl LockstepBus {
-    /// `(cpu_divider, ppu_divider)` in master clocks for the cartridge region
-    /// (NTSC 12/4, PAL 16/5, Dendy 15/5). Drives the R1 `run_ppu_to` dot loop.
-    /// Reads the values cached at construction (region is immutable after
-    /// parse), so the hot R1 paths avoid a per-cycle `match`.
-    const fn region_dividers(&self) -> (u8, u8) {
-        (self.cpu_div_cached, self.ppu_div_cached)
-    }
-
     /// Tick the APU + frame counter once and fan frame events out to on-cart
-    /// audio (the per-CPU-cycle APU advance extracted from
-    /// `tick_one_cpu_cycle`, for the R1 `cpu_clock`).
+    /// audio (the per-CPU-cycle APU advance `cpu_clock` runs at cycle start).
     ///
     /// v2.8.0 Phase 4 — the mapper dispatches are gated on the cached
     /// capability flags: boards without on-cart audio would return 0 from
@@ -4339,7 +3813,13 @@ impl LockstepBus {
     /// and boards without the frame hook have the default no-op. Skipping
     /// both saves two virtual calls + an f32 divide per CPU cycle.
     fn apu_advance_one(&mut self) {
-        #[allow(clippy::cast_precision_loss)] // see `mix_audio`'s call site above
+        // `Mapper::mix_audio` returns i32 (widened from i16 in v2.2.3 so the
+        // Sunsoft 5B's ~3.6x full-volume level is representable); scale it to
+        // about the APU mixer's own [-0.5, 0.5] range. `as f32` rather than
+        // `f32::from`: there is no lossless From<i32> for f32, and the cast
+        // is exact for every value a board produces (|sample| well under
+        // 2^24, where f32 is still integer-exact).
+        #[allow(clippy::cast_precision_loss)]
         let mapper_sample = if self.mapper_caps.audio {
             self.mapper.mix_audio() as f32 / 65536.0
         } else {
@@ -4416,12 +3896,10 @@ impl Bus for LockstepBus {
         #[cfg(feature = "irq-timing-trace")]
         {
             // Session-21: record the CPU-initiated read at the bus-access
-            // tracker.  `tick_one_cpu_cycle` was already called by the
-            // CPU's `read1`/`idle_tick` path (post `bus.on_cpu_cycle()`),
-            // but the order in `Cpu::read1` is `bus.cpu_read(addr)` then
-            // `idle_tick(bus)` → `bus.on_cpu_cycle()` → record-push.
-            // So writing the tracker here populates the record that the
-            // about-to-fire `tick_one_cpu_cycle` will consume.
+            // tracker. `Cpu::read1` performs the access between
+            // `start_cycle` and `end_cycle`, and `end_cycle` ends with
+            // `trace_end_cycle`, which consumes the tracker into this cycle's
+            // record.
             self.trace_bus_access = BusAccess::Read;
             self.trace_bus_addr = addr;
             self.trace_bus_data = value;
@@ -4517,7 +3995,7 @@ impl Bus for LockstepBus {
                 // controllers' OUT pins are only updated at the start
                 // of M2-low (PUT) cycles.  Buffer the write and
                 // commit at the next M2-low boundary inside
-                // `tick_one_cpu_cycle`.  Mirrors Mesen2's
+                // `cpu_clock` (`tick_one_cpu_cycle` until v2.9.8).  Mirrors Mesen2's
                 // `NesControlManager::WriteRam` (Core/NES/
                 // NesControlManager.cpp lines 252-273).
                 //
@@ -4541,9 +4019,9 @@ impl Bus for LockstepBus {
                 // `docs/audit/session-24-phase3-controller-strobing-2026-05-23.md`.
                 self.controller_write_value = value;
                 // Parity convention: in `RustyNES` the CPU `cpu_write` runs
-                // INSIDE `tick_one_cpu_cycle` AFTER `self.cycle` has
-                // been incremented to the post-cycle value (see
-                // `tick_one_cpu_cycle` flow).  The committed commit
+                // AFTER `cpu_clock` has incremented `self.cycle` to the
+                // post-cycle value (`Cpu::start_cycle` calls `cpu_clock`
+                // before the access; `tick_one_cpu_cycle` until v2.9.8).  The committed commit
                 // cycle MUST land on an M2-low boundary (PUT cycle).
                 // In `RustyNES` every CPU cycle starts at M2-low and
                 // transitions to M2-high after sub-dot 1, so every
@@ -4601,47 +4079,6 @@ impl Bus for LockstepBus {
             self.trace_bus_addr = addr;
             self.trace_bus_data = value;
         }
-    }
-
-    fn poll_nmi(&mut self) -> bool {
-        let edge = self.nmi_edge_latch;
-        self.nmi_edge_latch = false;
-        edge
-    }
-
-    fn poll_irq(&mut self) -> bool {
-        // Phase B2 of the C1 IRQ-timing rework: read the M2-high
-        // snapshot captured at end-of-3-PPU-dots inside
-        // `tick_one_cpu_cycle`.  Semantically identical to the prior
-        // `mapper.irq_pending() || apu.irq_line()` query for every
-        // workspace test ROM (verified: 500 strict + 6 ignored
-        // unchanged; trace baselines byte-identical).  Phase B4 will
-        // make the snapshot's value depend on the M2 phase via the
-        // MMC3 sub_dot-aware A12 filter — this method becomes the
-        // single point where the production CPU IRQ sample crosses
-        // into the bus, and from there into the mapper.
-        self.irq_snapshot_mapper_at_high || self.irq_snapshot_apu_at_high
-    }
-
-    fn poll_irq_at_phase(&mut self, phase: M2Phase) -> bool {
-        match phase {
-            M2Phase::Low => self.irq_snapshot_mapper_at_low || self.irq_snapshot_apu_at_low,
-            M2Phase::High => self.irq_snapshot_mapper_at_high || self.irq_snapshot_apu_at_high,
-        }
-    }
-
-    fn on_cpu_cycle(&mut self) {
-        self.tick_one_cpu_cycle();
-    }
-
-    fn internal_data_bus(&self) -> u8 {
-        // Phase 1 of `linked-puzzling-sutherland` v1.0.0-final brief:
-        // expose the internal CPU data bus latch separately from the
-        // external `open_bus`.  Mirrored from every CPU read / write;
-        // NOT updated by DMC DMA fetches.  See the field documentation
-        // on [`LockstepBus::internal_data_bus`] and the trait method
-        // documentation on [`Bus::internal_data_bus`].
-        self.internal_data_bus
     }
 
     fn cycle_count(&self) -> u64 {
@@ -4765,8 +4202,8 @@ impl Bus for LockstepBus {
     /// meant the M2-phase plumbing ADR-0002 describes ("sub-dot 0/1 is
     /// M2-low, 2 is M2-high") was never actually true on the live R1
     /// (non-DMA) scheduler path — only on the legacy `tick_one_cpu_cycle`
-    /// DMA-burst path, which genuinely walks all 3 dots of a cycle in one
-    /// call with a persistent counter. This experiment closes that gap so
+    /// DMA-burst path (removed at v2.9.8, ADR 0042), which genuinely walked
+    /// all 3 dots of a cycle in one call with a persistent counter. This experiment closes that gap so
     /// MMC3's (default-off) M2-phase-aware IRQ-visibility pipeline can be
     /// evaluated against real phase data on the promoted core. See
     /// `docs/adr/0002-irq-timing-coordination.md` and
@@ -4792,30 +4229,30 @@ impl Bus for LockstepBus {
                 mapper: self.mapper.as_mut(),
                 nt_override: self.nt_mirroring_override,
                 sub_dot,
-                #[cfg(feature = "irq-timing-trace")]
-                trace_a12_latest: None,
             };
+            // No per-dot /NMI sampling here: the CPU reads the live level
+            // through `nmi_level` and edge-detects it itself. The bus-side
+            // edge detector that used to run on every dot fed only the
+            // removed `poll_nmi` (ADR 0042, v2.9.8).
             self.ppu.tick(&mut adapter);
-            self.sample_nmi_edge();
             self.ppu_clock += ppu_div;
             sub_dot = sub_dot.wrapping_add(1);
         }
     }
 
     /// R1: one CPU cycle of bus-side work (NO PPU advance — that lives in
-    /// [`Bus::run_ppu_to`]). Controller strobe + bus-side DMA drain + cycle
-    /// counter + per-cycle PPU/mapper hooks + APU tick. DMA stays bus-side
-    /// (the pivot's working `service_dmc_dma`); Phase 3 wires the
-    /// `dma_mc_consumed` coherence accounting.
+    /// [`Bus::run_ppu_to`]). Controller strobe commit + cycle counter +
+    /// per-cycle PPU/mapper hooks + APU tick. DMA is not run here: the CPU
+    /// drives the unified engine through `unified_dma_cycle`, one full cycle
+    /// at a time.
     fn cpu_clock(&mut self) {
         // Stamp the PPU with the cycle whose dots this call is about to run.
-        // See the twin in `tick_one_cpu_cycle` and `Ppu::set_trace_cpu_cycle`.
+        // See `Ppu::set_trace_cpu_cycle`.
         //
-        // BOTH need it, and that is the whole point of having it twice: this is
-        // the path a running console takes, and `tick_one_cpu_cycle` is the one
-        // the harness drives directly. Wiring only the latter left every record
-        // stamped `0` while the field, the column and the plumbing all looked
-        // correct -- caught by
+        // This is the path a running console takes. The stamp once lived only
+        // in the pre-v2.0.0 `tick_one_cpu_cycle` (removed at v2.9.8), which left
+        // every record stamped `0` while the field, the column and the
+        // plumbing all looked correct -- caught by
         // `tests/state_trace_records_carry_their_cpu_cycle.rs`, which exists
         // because a present-but-constant field reinstates the whole problem it
         // was added to solve while appearing to fix it.
@@ -4880,10 +4317,6 @@ impl Bus for LockstepBus {
         self.apu.promote_dmc_pending_next();
     }
 
-    fn take_dma_mc_consumed(&mut self) -> u64 {
-        core::mem::take(&mut self.dma_mc_consumed)
-    }
-
     fn irq_level(&self) -> bool {
         // Bound BEFORE the expression rather than as an inline `#[cfg]` block
         // inside it. The two forms compile identically -- the default build
@@ -4911,13 +4344,13 @@ impl Bus for LockstepBus {
     }
 
     fn nmi_level(&self) -> bool {
-        // v2.5.1 (ADR 0038). Injected here and NOT in `poll_nmi`, because
-        // `poll_nmi` is not the path the production CPU uses: it samples this
-        // LEVEL every cycle and edge-detects it itself (`nmi_first_tick` ->
-        // `pending_nmi` -> `armed_nmi`).
+        // v2.5.1 (ADR 0038). Injected here, on the LEVEL: the production CPU
+        // samples it every cycle and edge-detects it itself (`nmi_first_tick`
+        // -> `pending_nmi` -> `armed_nmi`).
         //
-        // The first implementation injected at `poll_nmi`, which looks like the
-        // right function and is dead for this path. The rung-2 sweep found it on
+        // The first implementation injected at `poll_nmi` (a dead hook,
+        // removed at v2.9.8 with ADR 0042), which looked like the right
+        // function and was never called on this path. The rung-2 sweep found it on
         // its first real run -- the DUT took the injected NMI and the oracle did
         // not -- which is exactly the defect class a co-simulation exists to
         // catch, arriving in the harness rather than in the RTL.
@@ -4929,10 +4362,6 @@ impl Bus for LockstepBus {
             return true;
         }
         self.ppu.nmi_line()
-    }
-
-    fn dmc_dma_pending(&self) -> bool {
-        self.apu.dmc_dma_pending()
     }
 
     fn dmc_dma_defer_load_entry(&self) -> bool {
@@ -4950,64 +4379,6 @@ impl Bus for LockstepBus {
                 && self.apu.dmc_dma_is_load()
                 && lands_on_noop_half
                 && !self.in_dmc_dma
-        }
-    }
-
-    fn dmc_dma_step(&mut self, halted_addr: u16) {
-        self.dmc_dma_step_impl(halted_addr);
-    }
-
-    fn dmc_dma_step_idle(&mut self) {
-        // Internal-cycle DMC halt: re-read the held (last CPU read) address.
-        let halted = self.last_read_addr;
-        self.dmc_dma_step_impl(halted);
-    }
-
-    // Stage-D: OAM DMA is pending (a `$4014` write awaits its first read cycle)
-    // or in flight. The CPU `read1` loop drives it one cycle at a time.
-    fn oam_dma_pending(&self) -> bool {
-        self.dma_pending.is_some() || self.dma_cycles_owed > 0
-    }
-
-    // Stage-D: one CPU-driven OAM DMA cycle. First call latches the pending
-    // `$4014` page + the 513/514 alignment count; subsequent calls run one
-    // halt/align/read/write cycle. Does NOT advance time — the surrounding
-    // `start_cycle`/`end_cycle` (and their `cpu_clock`/`run_ppu_to`/φ2 sample)
-    // do, so each OAM cycle is interrupt-sampled like a normal CPU cycle (the
-    // surface the bus burst bypassed). Mirrors `clock_oam_dma_cycle` minus the
-    // `tick_one_cpu_cycle`.
-    fn oam_dma_step(&mut self, halted_addr: u16) {
-        if let Some(page) = self.dma_pending.take() {
-            self.dma_page = page;
-            self.dma_idx = 0;
-            self.dma_halt_addr = halted_addr;
-            let extra: u32 = if self.cycle & 1 == 0 { 514 } else { 513 };
-            self.dma_cycles_owed = extra;
-            self.dma_total = extra;
-        }
-        if self.dma_cycles_owed == 0 {
-            return;
-        }
-        let total = self.dma_total;
-        let alignment = if total == 514 { 2 } else { 1 };
-        let consumed = total - self.dma_cycles_owed;
-        if consumed < alignment {
-            // Halt / alignment cycle: the held CPU address stays on the bus.
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, self.dma_halt_addr, self.open_bus);
-        } else {
-            let xfer_idx = consumed - alignment; // 0..512
-            if xfer_idx & 1 == 0 {
-                let src_addr =
-                    (u16::from(self.dma_page) << 8) | u16::try_from(xfer_idx >> 1).unwrap_or(0);
-                self.dma_byte = self.raw_oam_dma_read(src_addr);
-            } else {
-                self.oam_dma_put();
-            }
-        }
-        self.dma_cycles_owed -= 1;
-        if self.dma_cycles_owed == 0 {
-            self.dma_total = 0;
         }
     }
 
@@ -5041,144 +4412,6 @@ impl Bus for LockstepBus {
     fn unified_dma_cycle_idle(&mut self) {
         let halted = self.last_read_addr;
         self.unified_dma_cycle_impl(halted);
-    }
-
-    // Program M (M-2): an OAM DMA is started + still owes cycles (in flight),
-    // distinct from `oam_dma_pending` (which also covers a not-yet-started write).
-    fn oam_dma_in_flight(&self) -> bool {
-        self.dma_cycles_owed > 0
-    }
-
-    // W3-Stage-0 (`mc-r1-counter-collapse`): a pending DMC DMA may overlap an OAM
-    // DMA that is in flight OR still pending its first cycle. The collapse flag's
-    // end-of-cycle byte-timer shift can surface the DMC arm in the one-iteration
-    // gap between the `$4014` write and OAM's start-latch; lockstep `drain_dma`
-    // latches OAM BEFORE its DMC-pending check, so the same arm overlaps OAM's
-    // halt/alignment cycles there (the traced DMC+OAM Loop1 idx[6]/idx[7] events
-    // with owed_at_begin == the FULL 514/513). Routing it to the standalone
-    // `dmc_dma_step` instead pays a full unshared reload span = the idx[7] `03`.
-    // Without the collapse flag the arm cannot surface in that gap, so the
-    // original in-flight-only condition is preserved (audit-state invariant).
-    fn oam_dma_overlap_ready(&self) -> bool {
-        self.dma_cycles_owed > 0 || self.dma_pending.is_some()
-    }
-
-    // Program M (M-2): whether the most recent `dmc_dma_step` did the GET.
-    fn dmc_dma_last_was_get(&self) -> bool {
-        self.dmc_step_was_get
-    }
-
-    // Program M (M-2): advance ONE in-flight OAM cycle shared with a DMC halt
-    // cycle. Mirrors the transfer/alignment body of `oam_dma_step` MINUS the
-    // pending-latch (OAM is already in flight) and MINUS the time tick (the
-    // surrounding start_cycle/end_cycle owns it). This is the per-cycle analogue
-    // of lockstep `service_dmc_dma_during_oam` calling `clock_oam_dma_cycle` on
-    // the DMC halt/dummy/align cycles, which is what produces the test's `02/01`
-    // "DMC appears to take only 2/1 cycles" sweep entries.
-    fn oam_dma_overlap_cycle(&mut self) {
-        if self.dma_cycles_owed == 0 {
-            return;
-        }
-        let total = self.dma_total;
-        let alignment = if total == 514 { 2 } else { 1 };
-        let consumed = total - self.dma_cycles_owed;
-        if consumed >= alignment {
-            let xfer_idx = consumed - alignment; // 0..512
-            if xfer_idx & 1 == 0 {
-                let src_addr =
-                    (u16::from(self.dma_page) << 8) | u16::try_from(xfer_idx >> 1).unwrap_or(0);
-                self.dma_byte = self.raw_oam_dma_read(src_addr);
-            } else {
-                self.oam_dma_put();
-            }
-        }
-        self.dma_cycles_owed -= 1;
-        if self.dma_cycles_owed == 0 {
-            self.dma_total = 0;
-        }
-    }
-
-    // Program M (M-2, exact): begin ONE DMC-DMA-during-OAM event. Direct port of
-    // lockstep `service_dmc_dma_during_oam`'s prologue (bus.rs ~2067): latch the
-    // halt + the open-bus replay and return the UNCONDITIONAL halt/dummy/align
-    // noop count (`dmc_dma_short() ? 2 : 3`) — NOT parity-gated. This replaces the
-    // prior per-cycle "share-on-every-non-GET" heuristic (which OVER-GLUED the
-    // looping reloads, reading 2C=44 runaway at the test's `02` positions) with
-    // lockstep's exact noop/GET/realign accounting bound to ONE DMC DMA.
-    fn dmc_overlap_begin(&mut self, halted_addr: u16) -> u32 {
-        // W3-Stage-0 (`mc-r1-counter-collapse` boundary-start): when this event
-        // STARTS a pending (not-yet-latched) `$4014` OAM DMA, the OAM halt
-        // address is the CPU read this DMA pair is preempting — the same value
-        // `oam_dma_step` would have latched. The owed/total latch itself is
-        // deferred to the first `dmc_overlap_noop_cycle` (inside the cycle's
-        // `start_cycle`, so the 514/513 `self.cycle & 1` parity matches the
-        // position `oam_dma_step` would have evaluated it).
-        if self.dma_pending.is_some() {
-            self.dma_halt_addr = halted_addr;
-        }
-        self.in_dmc_dma = true;
-        self.dmc_step_was_get = false;
-        self.capture_deferred_dma_replay();
-        if self.apu.dmc_dma_short() { 2 } else { 3 }
-    }
-
-    // Program M (M-2, exact): one DMC halt/dummy/align cycle overlapping OAM.
-    // Mirrors lockstep's noop-loop body: replay the held CPU read's side-effect,
-    // then (if OAM still owes) advance one OAM slot — the 6502 is RDY-halted but
-    // the OAM engine keeps its bus slot. The time tick is owned by the CPU's
-    // surrounding start_cycle/end_cycle.
-    fn dmc_overlap_noop_cycle(&mut self) {
-        // W3-Stage-0 (`mc-r1-counter-collapse` boundary-start): latch a pending
-        // `$4014` OAM DMA on the first shared halt cycle, mirroring
-        // `oam_dma_step`'s start block at the same within-cycle position (after
-        // `start_cycle`'s `cpu_clock` increments `self.cycle`, so the 514/513
-        // parity choice is identical to the no-DMC counterfactual). The latched
-        // OAM then consumes its halt/alignment/transfer slots through
-        // `oam_dma_overlap_cycle` below, exactly like lockstep's
-        // `service_dmc_dma_during_oam` after `drain_dma` started the OAM.
-        if let Some(page) = self.dma_pending.take() {
-            self.dma_page = page;
-            self.dma_idx = 0;
-            let extra: u32 = if self.cycle & 1 == 0 { 514 } else { 513 };
-            self.dma_cycles_owed = extra;
-            self.dma_total = extra;
-        }
-        let halted_addr = self.dma_halt_addr;
-        self.replay_dma_noop_read(halted_addr);
-        if self.dma_cycles_owed > 0 {
-            self.oam_dma_overlap_cycle();
-        } else {
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-        }
-    }
-
-    // Program M (M-2, exact): the DMC GET cycle. Mirrors lockstep's get block +
-    // the R1 `dmc_dma_step` GET (bus.rs ~2530): fetch the sample (with the
-    // `$4000` open-bus conflict the cluster brackets), deliver it, and clear the
-    // DMC-DMA pending state. OAM is STALLED — it does NOT advance on the GET.
-    fn dmc_overlap_get_cycle(&mut self) {
-        let halted_addr = self.dma_halt_addr;
-        let addr = self.apu.dmc_dma_addr();
-        let byte = self.dmc_dma_read(addr, halted_addr);
-        #[cfg(feature = "irq-timing-trace")]
-        self.set_trace_dma_access(BusAccess::DmaRead, addr, byte);
-        self.apu.complete_dmc_dma(byte);
-        self.in_dmc_dma = false;
-        self.dmc_step_was_get = true;
-    }
-
-    // Program M (M-2, exact): the post-GET realign stall. Mirrors lockstep's
-    // `if dma_cycles_owed > 0 { tick }` after the GET — ONE extra OAM-stalled
-    // cycle (OAM does NOT advance; the parked CPU address stays on the bus) so
-    // the next OAM read resumes on a later get. The cycle the prior per-cycle
-    // scaffold was MISSING.
-    fn dmc_overlap_realign_cycle(&mut self) {
-        #[cfg(feature = "irq-timing-trace")]
-        {
-            let halted_addr = self.dma_halt_addr;
-            self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-        }
     }
 
     fn dmc_abort_pending(&self) -> bool {
@@ -5225,8 +4458,8 @@ impl Bus for LockstepBus {
         }
     }
 
-    /// R1-path per-cycle trace push (mirrors the `tick_one_cpu_cycle`
-    /// `CycleRecord` build for the legacy path). `irq_pending_apu_at_low` was
+    /// Per-cycle trace push, the one `CycleRecord` producer since v2.9.8
+    /// removed the legacy `tick_one_cpu_cycle` build. `irq_pending_apu_at_low` was
     /// snapshotted at cycle-start in `cpu_clock` (before `apu_advance_one`);
     /// `_at_high` is read here at end-of-cycle (after the access + DMC tick), so
     /// a record where low=0/high=1 is a frame-counter SET this cycle and
@@ -5237,7 +4470,6 @@ impl Bus for LockstepBus {
         if self.irq_trace.is_none() {
             return;
         }
-        let events = core::mem::take(&mut self.trace_a12_scratch);
         let bus_access = core::mem::replace(&mut self.trace_bus_access, BusAccess::Idle);
         let bus_addr = core::mem::take(&mut self.trace_bus_addr);
         let bus_data = core::mem::take(&mut self.trace_bus_data);
@@ -5253,7 +4485,11 @@ impl Bus for LockstepBus {
             irq_pending_mapper_at_high: mapper_irq,
             irq_pending_apu_at_high: self.apu.irq_line(),
             nmi_line: self.ppu.nmi_line(),
-            a12_events: events,
+            // The per-sub-dot A12 capture lived in the pre-v2.0.0
+            // `tick_one_cpu_cycle`, removed at v2.9.8 (ADR 0042); the R1 path
+            // never fed it, so the column has been empty on every record
+            // since v2.0.0 and stays in the schema as such.
+            a12_events: alloc::vec::Vec::new(),
             dmc_dma_pending_pre: false,
             dmc_dma_pending_post: self.apu.dmc_dma_pending(),
             dmc_dma_short_post: self.apu.dmc_dma_short(),
@@ -5263,7 +4499,10 @@ impl Bus for LockstepBus {
             dmc_dma_delay_post: self.apu.dmc_dma_delay(),
             apu_phase_post: self.apu.apu_phase(),
             in_dmc_dma: self.in_dmc_dma,
-            dma_cycles_owed: self.dma_cycles_owed,
+            // No owed-cycle counter exists since the unified DMA engine
+            // (its 513/514 length is emergent); the column is kept so the
+            // trace CSV schema is unchanged.
+            dma_cycles_owed: 0,
             bus_access,
             bus_addr,
             bus_data,
@@ -5412,56 +4651,65 @@ mod four_score_tests {
     }
 
     #[test]
-    fn pre_v1_7_0_save_state_decodes_with_four_score_off() {
-        // A v1.7.0 blob carries 11 trailing Four Score bytes (1 flag + 6
-        // controllers34 + 2 idx + 2 sig); the W3-Stage-4 tail appends 22
-        // more (dmc_halt + 3 uni_oam flags + uni_oam_addr u16 + ppu_clock
-        // u64 + dma_mc_consumed u64); the v2.1.0 tail appends 2 more (one
-        // expansion-device tag byte per port, both `None`); the v1.1.0 beta.1
-        // tail appends 1 more (the nametable mirroring-override tag, `None`);
-        // the v2.6.5 tail appends 22 more: four `pending_shift` bools, two
-        // `port_read_cycle` u64s (the controller-port CLK run state), and two
-        // `four_score_pending` bools (the adapter's own owed edge -- the Four
-        // Score is one shift chain with the pads, so it clocks with them); the
-        // v2.8.0 tail appends 1 more (the internal data bus).
-        // Truncating all 59 simulates a pre-v1.7.0 save, which must still load
-        // with the adapter off (and no expansion device / override / run state).
-        //
-        // The constant is deliberately literal rather than computed: it is the
-        // tail's LAYOUT written down, and it is what made a v2.6.5 append fail
-        // loudly here instead of silently shifting every field behind it.
+    fn a_short_bus_section_is_refused_at_every_length() {
+        // v2.9.8 (BUS section version 2, ADR 0042). Version 1 decoded every
+        // missing tail as its default, so a body cut short anywhere after the
+        // first ~2 KiB loaded as an "older" layout. Version 2 has no older
+        // layout to fall back to: the section version check refuses a v1
+        // body before it reaches the decoder, so a short v2 body can only be
+        // damage. Every cut is checked, not a representative, because the
+        // failure this guards is a single trailing-default read left behind.
         let mut bus = test_bus();
-        bus.set_four_score(true);
+        // Attach the largest device so the device decoder's own reads are in
+        // the range the cuts walk through.
+        bus.set_expansion_device(
+            0,
+            Some(crate::input_device::InputDevice::FamilyKeyboard(
+                crate::input_device::FamilyKeyboardState::new(),
+            )),
+        );
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 59];
-        let mut restored = test_bus();
-        restored.set_four_score(true); // prove decode actively turns it off
-        crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
-        assert!(!restored.four_score());
+        crate::bus_snapshot::decode_bus(&mut test_bus(), &blob).expect("the whole body loads");
+        for len in 0..blob.len() {
+            assert!(
+                crate::bus_snapshot::decode_bus(&mut test_bus(), &blob[..len]).is_err(),
+                "a BUS body cut to {len} of {} bytes decoded cleanly",
+                blob.len()
+            );
+        }
     }
 
     #[test]
-    fn a_restored_dma_mc_consumed_is_discarded_not_loaded() {
-        use rustynes_mappers::Mirroring;
-        // Found by the v2.7.0 `save_state` fuzz target: a non-zero
-        // `dma_mc_consumed` in a file restored cleanly, then tripped
-        // `Cpu::end_cycle`'s structural-zero `debug_assert_eq!` on the first
-        // CPU cycle. Release drains and discards the value, so zero on restore
-        // is byte-identical there; the bytes stay in the layout.
-        let mut bus = test_bus();
-        bus.dma_mc_consumed = 0xDEAD_BEEF;
-        // A field encoded AFTER it, so a reader that skipped the eight bytes
-        // instead of consuming them would misread this one.
-        bus.set_mirroring_override(Some(Mirroring::Vertical));
-        let blob = crate::bus_snapshot::encode_bus(&bus);
-        let mut restored = test_bus();
-        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
-        assert_eq!(restored.dma_mc_consumed, 0);
-        assert_eq!(
-            restored.mirroring_override(),
-            Some(Mirroring::Vertical),
-            "the bytes are still consumed, so nothing behind them shifts"
-        );
+    fn trailing_bytes_after_a_bus_section_are_refused() {
+        // The other half of a fixed layout: bytes past the last field are not
+        // a newer tail this build can ignore, because the section version is
+        // what announces a newer layout.
+        let bus = test_bus();
+        let mut blob = crate::bus_snapshot::encode_bus(&bus);
+        blob.push(0);
+        assert!(matches!(
+            crate::bus_snapshot::decode_bus(&mut test_bus(), &blob),
+            Err(SnapshotError::SectionInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn an_unknown_expansion_device_tag_is_refused() {
+        // Version 1 read an unknown tag as "no device" and carried on reading
+        // the bytes behind it as the next field. Tag 0 is the empty port; the
+        // first unassigned tag is 10.
+        let bus = test_bus();
+        let mut bad = crate::bus_snapshot::encode_bus(&bus);
+        // The two device tags sit 25 bytes before the end with both ports
+        // empty: mirroring override (1) + controller-run tail (22) +
+        // internal bus (1) follow them, and port 1's tag is the second.
+        let port0_tag = bad.len() - 1 - 22 - 1 - 2;
+        assert_eq!(&bad[port0_tag..port0_tag + 2], &[0, 0]);
+        bad[port0_tag] = 10;
+        assert!(matches!(
+            crate::bus_snapshot::decode_bus(&mut test_bus(), &bad),
+            Err(SnapshotError::SectionInvalid { .. })
+        ));
     }
 
     #[test]
@@ -5576,34 +4824,6 @@ mod four_score_tests {
         // answer (guards a regression where a peek routes through mutating state).
         assert_eq!(bus.peek_port(1) & LIGHT, peek);
         assert_eq!(bus.peek_port(1) & LIGHT, peek);
-    }
-
-    #[test]
-    fn pre_v2_1_0_save_state_decodes_with_no_expansion_device() {
-        // A pre-v2.1.0 blob lacks the 2 trailing device-tag bytes (one None
-        // tag per port); a pre-v1.1.0 blob also lacks the mirroring-override
-        // tag. With nothing attached the encoder writes `[0, 0]` + `[0]`, so
-        // truncating those trailing bytes reproduces an older save — which
-        // must still load with both ports unplugged and no override.
-        //
-        // THE COUNT IS 23, NOT 3, AND THAT IS THE POINT. v2.6.5 appended a
-        // 20-byte controller-run tail AFTER those three, so removing three
-        // bytes stopped reproducing an old blob the moment that landed: it
-        // produces a CURRENT blob with a half-eaten tail. That decoded
-        // "successfully" for as long as the tail test was `>= 20` — the
-        // remaining 17 bytes fell through to the legacy path and every port
-        // restored `pending_shift = false`, so the next controller read
-        // repeated a bit. The decoder now refuses a partial tail, which is
-        // what turned this test red and exposed the stale premise. v2.8.0's
-        // one-byte internal-bus tail makes it 24.
-        let bus = test_bus();
-        let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - (3 + 4 + 2 * 8 + 2 + 1)];
-        let mut restored = test_bus();
-        crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
-        assert!(restored.expansion_device(0).is_none());
-        assert!(restored.expansion_device(1).is_none());
-        assert_eq!(restored.mirroring_override(), None);
     }
 
     #[test]
@@ -5746,58 +4966,6 @@ mod four_score_tests {
         crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
         assert_eq!(restored.internal_data_bus, 0x20);
         assert_eq!(restored.open_bus, 0x00);
-    }
-
-    #[test]
-    fn a_pre_v2_8_0_blob_restores_the_internal_bus_from_the_open_bus() {
-        // A blob written before v2.8.0 has no internal-bus byte. The two
-        // latches agree except across a DMC-DMA halt (where only the external
-        // one moves), so the external latch the blob DOES carry is the best
-        // available value, and it is deterministic: the same blob restores the
-        // same machine, which leaving the running value in place did not.
-        let mut bus = test_bus();
-        bus.open_bus = 0x5A;
-        bus.internal_data_bus = 0x20;
-        let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 1];
-        let mut restored = test_bus();
-        restored.internal_data_bus = 0xFF;
-        crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
-        assert_eq!(restored.internal_data_bus, 0x5A);
-    }
-
-    #[test]
-    fn a_half_truncated_controller_tail_is_refused_not_read_as_legacy() {
-        // The guard the test above exposed the need for. A blob cut anywhere
-        // INSIDE the 20-byte controller-run tail is damage, not an older
-        // layout, and reading it as legacy restores `pending_shift = false`
-        // for every port — silently, and with a consequence: the next
-        // controller read repeats a bit that was already delivered. Zero
-        // trailing bytes is the only absence that means "no tail".
-        //
-        // Every interior cut is checked rather than one representative, because
-        // an off-by-one in the bound is exactly the mistake this guards.
-        //
-        // v2.8.0 appended the one-byte internal-bus tail after this one, so
-        // every cut is one byte further from the end: cutting only that byte
-        // is a pre-v2.8.0 blob (`a_pre_v2_8_0_blob_restores_...`), cuts 2
-        // through 22 end inside the controller tail, and 23 removes it whole.
-        let bus = test_bus();
-        let blob = crate::bus_snapshot::encode_bus(&bus);
-        for cut in 2..=(4 + 2 * 8 + 2) {
-            let damaged = &blob[..blob.len() - cut];
-            let mut restored = test_bus();
-            assert!(
-                crate::bus_snapshot::decode_bus(&mut restored, damaged).is_err(),
-                "a blob missing {cut} byte(s) of the controller tail decoded cleanly"
-            );
-        }
-        // ... and the whole tail absent still loads, which is the legacy path
-        // this must not break.
-        let legacy = &blob[..blob.len() - (4 + 2 * 8 + 2 + 1)];
-        let mut restored = test_bus();
-        crate::bus_snapshot::decode_bus(&mut restored, legacy)
-            .expect("a blob with no controller tail at all is a pre-v2.6.5 save");
     }
 
     #[test]

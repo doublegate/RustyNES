@@ -3501,14 +3501,15 @@ mod tests {
         // T-51-005: end-to-end controller plumbing — the bus must shift the
         // latched button state out via $4016 in canonical order.
         //
-        // Session-24 / Phase 3 update: `$4016` writes are now deferred
-        // (committed at the next M2-low boundary inside
-        // `tick_one_cpu_cycle`).  Direct-API callers that bypass CPU
-        // stepping must tick the bus between the strobe pulse and the
-        // shift-out reads so the buffered write commits.  Two ticks
-        // are sufficient (one for the pending=1 commit, one as a
-        // margin in case the test's first write landed on the pending=2
-        // path).
+        // Session-24 / Phase 3 update: `$4016` writes are deferred
+        // (committed at the start of a later cycle by `Bus::cpu_clock`).
+        // Direct-API callers that bypass CPU stepping must clock the bus
+        // between the strobe pulse and the shift-out reads so the buffered
+        // write commits. Two cycles are sufficient (one for the pending=1
+        // commit, one as a margin in case the test's first write landed on
+        // the pending=2 path). Until v2.9.8 these tests drove the removed
+        // pre-v2.0.0 `tick_one_cpu_cycle`, which committed the strobe the
+        // same way.
         use rustynes_cpu::Bus as _;
         let rom = synth_nrom(16, 8);
         let mut nes = Nes::from_rom(&rom).expect("parse + boot");
@@ -3518,11 +3519,11 @@ mod tests {
         // bus enough cycles between writes for the deferred-write
         // commit to land.
         nes.bus_mut().cpu_write(0x4016, 1);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
         nes.bus_mut().cpu_write(0x4016, 0);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
 
         // 8 reads of $4016 should yield A, B, Select, Start, Up, Down, Left, Right.
         let expected = [1u8, 0, 1, 0, 0, 1, 0, 0];
@@ -3543,11 +3544,11 @@ mod tests {
         nes.set_buttons(1, Buttons::B | Buttons::START | Buttons::RIGHT);
 
         nes.bus_mut().cpu_write(0x4016, 1);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
         nes.bus_mut().cpu_write(0x4016, 0);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
 
         // A, B, Select, Start, Up, Down, Left, Right.
         let expected = [0u8, 1, 0, 1, 0, 0, 0, 1];
@@ -3569,11 +3570,11 @@ mod tests {
 
         let strobe = |nes: &mut Nes| {
             nes.bus_mut().cpu_write(0x4016, 1);
-            nes.bus_mut().tick_one_cpu_cycle();
-            nes.bus_mut().tick_one_cpu_cycle();
+            nes.bus_mut().cpu_clock();
+            nes.bus_mut().cpu_clock();
             nes.bus_mut().cpu_write(0x4016, 0);
-            nes.bus_mut().tick_one_cpu_cycle();
-            nes.bus_mut().tick_one_cpu_cycle();
+            nes.bus_mut().cpu_clock();
+            nes.bus_mut().cpu_clock();
         };
 
         nes.set_buttons(0, Buttons::A);

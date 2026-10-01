@@ -32,26 +32,6 @@ fn roundf(x: f32) -> f32 {
     }
 }
 
-/// Bus surface seen by the APU.  A small subset of the full CPU bus for the
-/// DMC's sample-fetch DMA.
-///
-/// **Deprecated since v2.7.5 (core audit §4.3): nothing implements or calls
-/// it.** The DMC sample fetch is driven from outside the APU instead: the bus
-/// polls [`Apu::dmc_dma_pending`] / [`Apu::dmc_dma_addr`], performs the read
-/// inside the CPU's unified DMA, and hands the byte back with
-/// [`Apu::complete_dmc_dma`]. Whether it is removed is decided at v2.9.0
-/// (ADR 0041).
-#[deprecated(
-    since = "2.7.5",
-    note = "nothing implements or calls it: the bus drives the DMC fetch via Apu::dmc_dma_pending / dmc_dma_addr / complete_dmc_dma; removal is decided at v2.9.0 (ADR 0041)"
-)]
-pub trait ApuBus {
-    /// Read one byte for a DMC sample fetch.  The bus is responsible for
-    /// halting the CPU and accounting for the 3- or 4-cycle DMA stall
-    /// before this is called.
-    fn dmc_read(&mut self, addr: u16) -> u8;
-}
-
 /// Top-level APU.
 #[derive(Debug, Clone)]
 pub struct Apu {
@@ -1678,7 +1658,7 @@ impl Apu {
     /// v2.0 F-2: advance ONLY the DMC byte-timer + DMA arm by one CPU cycle.
     /// The R1 bus calls this at END of cycle (after the access) when
     /// [`Self::set_dmc_driven_externally`] is set, so the DMC fire-phase matches
-    /// main's `tick_one_cpu_cycle` (the cycle DMASync's `$4000` conflict
+    /// the pre-v2.0.0 `tick_one_cpu_cycle` (the cycle DMASync's `$4000` conflict
     /// expects) while the rest of the APU — incl. the IRQ line — stays on the
     /// cycle-start `tick_with_external`. Order mirrors `tick_with_external`:
     /// delay-arm → APU-rate timer clock (via the `dmc_ext_phase` flip-flop) →

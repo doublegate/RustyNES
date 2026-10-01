@@ -40,8 +40,6 @@
 )]
 
 use crate::bus::Bus;
-// `M2Phase` is used only by the legacy lockstep interrupt-sampling paths
-// (idle_tick / read1 / write1), which are gated off under the R1 substrate.
 use crate::status::Status;
 
 /// Stack base address: the CPU stack lives at `$0100 + S`.
@@ -402,8 +400,7 @@ impl Cpu {
     /// `master_clock` counts master-clock units (NTSC: 12 per CPU cycle,
     /// PAL: 16, Dendy: 15) and is advanced only by `start_cycle` /
     /// `end_cycle` (the asymmetric read 5/7 vs write 7/5 φ1/φ2 split on
-    /// NTSC) plus the bus-side DMA coherence fold
-    /// (`Bus::take_dma_mc_consumed`). It is the counter the v2.0.0
+    /// NTSC). It is the counter the v2.0.0
     /// "Timebase" rewrite (ADR 0002) promotes to the ONE canonical
     /// timebase; the test harness asserts the affine relation
     /// `master_clock == seed + cpu_divider * cycles` against the other
@@ -718,30 +715,17 @@ impl Cpu {
         self.cycles = bus.cycle_count();
     }
 
-    /// End half of one CPU cycle: fold any bus-side DMA span into
-    /// `master_clock` (coherence — keeps the CPU<->PPU phase aligned across a
-    /// DMA), advance by the POST split, catch the PPU up again (the double
-    /// catch-up), then sample interrupts (φ2, the T_last-1 rule).
+    /// End half of one CPU cycle: advance by the POST split, catch the PPU
+    /// up again (the double catch-up), then sample interrupts (φ2, the
+    /// T_last-1 rule).
+    ///
+    /// Every DMA cycle is a first-class `start_cycle`/`end_cycle` on the
+    /// unified-DMA path, advancing `master_clock` directly, so there is no
+    /// bus-side DMA span to fold in. The `take_dma_mc_consumed` fold that
+    /// once did that was retired at v2.0.0 beta.1 (it only ever mattered for
+    /// the pre-v2.0.0 bus-side burst engine) and its hook was removed at
+    /// v2.9.8 with the rest of that engine's dead code (ADR 0042).
     fn end_cycle<B: Bus>(&mut self, bus: &mut B, for_read: bool) {
-        // v2.0.0 beta.1 (A1 one-clock collapse, promoted to the only path in
-        // beta.4): the `dma_mc_consumed` coherence fold is RETIRED. On the
-        // live unified-DMA path every DMA cycle is a first-class
-        // `start_cycle`/`end_cycle` (advancing `master_clock` directly), so
-        // the bus-side accumulator is structurally zero — the fold only ever
-        // mattered for the legacy bus-side burst engine, which is dead code.
-        // The accumulator is drained UNCONDITIONALLY (identical dev/release
-        // behavior — clippy's `debug_assert_with_mut_call` rightly forbids
-        // the take inside the assertion) and the structural-zero claim is
-        // asserted in dev profiles; the byte-identity gate (AccuracyCoin
-        // 139/139 + nestest 0-diff) proves it for release.
-        let folded = bus.take_dma_mc_consumed();
-        debug_assert_eq!(
-            folded, 0,
-            "dma_mc_consumed accumulated on the live path — a legacy \
-             bus-side DMA cycle ran outside the unified engine (see the \
-             v2.0.0 plan A1)"
-        );
-        let _ = folded;
         let div = bus.cpu_divider();
         let post = if for_read {
             read_split(div).1
@@ -894,9 +878,10 @@ impl Cpu {
                     bus.dmc_abort_cancel();
                 }
             }
-            // W3-Stage-1 (`mc-r1-dma-unified`): ONE DMA loop replacing the
-            // three loops below (the standalone DMC drain, the sequential
-            // Stage-D OAM loop, and the Program-M overlap loop). Each
+            // W3-Stage-1 (`mc-r1-dma-unified`): the ONE DMA loop. It replaced
+            // three earlier loops (the standalone DMC drain, the sequential
+            // Stage-D OAM loop and the Program-M overlap loop), whose bus hooks
+            // were deprecated at v2.7.5 and removed at v2.9.8 (ADR 0042). Each
             // iteration is one full R1 cycle (start_cycle -> the bus's
             // unified TriCNES-dispatch cycle -> end_cycle), so every DMA
             // cycle keeps the φ2 IRQ sample — the C1-safe shape. The
@@ -904,7 +889,9 @@ impl Cpu {
             // and the overlap) lives bus-side in `unified_dma_cycle`; the
             // load-get-entry defer is folded into `unified_dma_pending`
             // (pre-cycle, like the floor's while-gate) AND the engine's
-            // in-cycle entry gate (post-flip parity).
+            // in-cycle entry gate (post-flip parity). A DMC DMA halts the CPU
+            // only on a READ cycle, which is why the loop lives here and in
+            // `idle_tick`, never in `write1`.
             while bus.unified_dma_pending() {
                 // DMA halt cycles count against `cycles_emitted`.
                 self.cycles_emitted = self.cycles_emitted.saturating_add(1);
@@ -912,42 +899,6 @@ impl Cpu {
                 bus.unified_dma_cycle(addr);
                 self.end_cycle(bus, true);
             }
-            // Phase B (interleaved DMC DMA): a DMC DMA halts the CPU only on a
-            // READ cycle (TriCNES `CPU_Read`). While one is pending, consume R1
-            // cycles ONE AT A TIME — each a full R1 cycle (PPU caught up,
-            // `tick_dmc` advances the DMC timer once = the span↔fire feedback,
-            // arm gated by `in_dmc_dma` = no cascade) — BEFORE the CPU's own
-            // read. `dmc_dma_step` re-reads `addr` on halt/align cycles and
-            // fetches the sample on the get cycle (`!put_cycle`).
-            // W3-Stage-0: when an OAM DMA can overlap this DMC
-            // (`oam_dma_overlap_ready` — under `mc-r1-counter-collapse` that
-            // includes a `$4014` write still pending its first cycle), do NOT
-            // drain the DMC standalone here: the combined overlap loop below
-            // services both engines as ONE shared-cycle event. Draining it here
-            // first pays a full unshared reload span = the DMC+OAM idx[7]
-            // regime-transition `03`. Without the overlap feature this bus query
-            // is the trait default (`oam_dma_in_flight` = `false` at read1 entry),
-            // so the floor path is unchanged by construction.
-            // W3-Stage-1: replaced by the unified engine loop above under
-            // `mc-r1-dma-unified` (cfg'd out, not deleted).
-            // Stage-D (`mc-r1-full-cpu`): OAM DMA runs CPU-driven, one cycle at a
-            // time through start_cycle/end_cycle (so each OAM cycle samples
-            // IRQ/NMI via the φ2 `_prev*` pipeline in end_cycle — the surface the
-            // bus burst bypassed and RW-2 regressed). A pending DMC DMA preempts
-            // (the DMC loop above already drained first = DMC-get-before-OAM-get).
-            //
-            // NOTE: this SEQUENTIAL nested form drains a mid-OAM DMC DMA fully
-            // before resuming OAM (no overlap), so the DMC+OAM test's `02/01`
-            // shared-cycle entries never appear. `mc-r1-dmc-oam-overlap` replaces
-            // it with the overlap model below.
-            // Program M (M-2, `mc-r1-dmc-oam-overlap`): the DMC-DMA-during-OAM-DMA
-            // overlap model. A single combined loop services BOTH engines per
-            // cycle: when a DMC DMA is pending while an OAM DMA is IN FLIGHT, the
-            // DMC halt/dummy/align cycles SHARE an OAM cycle (the 6502 is
-            // RDY-halted but the OAM engine keeps consuming its bus slot), and
-            // only the DMC GET steals an OAM slot. This is the per-cycle analogue
-            // of lockstep `service_dmc_dma_during_oam`, which produces the test's
-            // canonical `04,03,...,02,01` sweep (nesdev `DMA#DMC_DMA_during_OAM`).
             // R1 clean access shape: start_cycle (PPU caught up to the
             // access's exact mc + bus cpu_clock) → bus.read → end_cycle
             // (double catch-up + φ2 interrupt sample). Mesen `MemoryRead`.

@@ -9,8 +9,9 @@
 //! through `--message-format=json`, that union was
 //! `['cpu-boot-trace', 'debug-hooks', 'default', 'hd-pack', 'irq-timing-trace', 'std']`.
 //!
-//! That is not a performance footnote. `irq-timing-trace` selects a **different**
-//! `for sub_dot in 0..3` loop in `Bus::tick_one_cpu_cycle`, so CI's
+//! That is not a performance footnote. `irq-timing-trace` selected a **different**
+//! `for sub_dot in 0..3` loop in `Bus::tick_one_cpu_cycle` (a function v2.9.8
+//! removed as unreachable from the one-clock scheduler, ADR 0042), so CI's
 //! `cargo test --workspace --release --features test-roms` — the accuracy battery
 //! — was validating a scheduler no user runs. Same shape as the v2.3.4 defect
 //! where the coverage harness tested a load path no user runs. (The cost is

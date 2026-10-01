@@ -915,7 +915,8 @@ makes moot but is worth recording:
 - §3.1 B's accumulator is structurally zero in production for a different reason
   than the audit gives: the production bus overrides `cpu_clock`, so the only
   path that feeds it (`on_cpu_cycle` -> `tick_one_cpu_cycle`) is reached from
-  unit tests alone.
+  unit tests alone. (v2.9.8 removed the accumulator, the fold and that path,
+  ADR 0042.)
 - IMP-12 (hoist `PpuBusAdapter`) is v2.3.1's **G10**, already measured and
   rejected: no adapter symbol survives codegen, and the hoist conflicts with the
   borrow of `self.mapper` in the same loop.
@@ -1240,6 +1241,10 @@ shipped `_fast` variants move, the control small beside the effect):
   changes what the deprecated `poll_nmi` reports and what two `.rns` fields
   hold, in a MINOR release, and ADR 0042 already removes the detector, its
   fields and `poll_nmi` together at v3.0.0 (maintainer decision, 2026-09-27).
+  **v2.9.8 removed it** (ADR 0042's 2026-10-01 amendment moved the removal
+  forward): `sample_nmi_edge`, its two fields and `poll_nmi` are gone, and
+  `run_ppu_to` no longer samples /NMI per dot. The speed-up of the shipped
+  build is to be measured with `ab_check.sh`, not inferred from this probe.
 - **Two ceilings are not zero.** Deleting the palette mirror outright is
   −4.1% to −4.8% on the palette workloads. Skipping the unmapped-read check is
   −1.5% to −2.7% on the `nestest` pair. Both probes are INCORRECT code, so
@@ -1546,7 +1551,8 @@ What the per-item look found beyond the timing:
   that only a unit-test path feeds). Both belong to the pre-v2.0.0 machinery
   whose removal, with the deprecated trait methods that read it, is decided at
   v2.9.0 (ADR 0041); removing the internals alone would leave `poll_nmi`
-  answering wrongly.
+  answering wrongly. Both went together at v2.9.8 (ADR 0042), with §3.1 B's
+  accumulator (`dma_mc_consumed` and `take_dma_mc_consumed`).
 - **IMP-06's stores are no-ops, and are now an assertion.** The fast render
   path re-wrote three rendering-history fields to `true` that the guard in
   `tick` already requires to be `true`. The writes are replaced by a
@@ -1621,6 +1627,8 @@ checker. With **no `unsafe` in the chip stack** (the standing constraint), it
 cannot be done without restructuring `sample_nmi_edge` onto disjoint fields. And
 the profile says there is nothing to win: no `PpuBusAdapter` symbol survives
 codegen, its three field moves already inlined into callers measured at zero.
+(v2.9.8 removed `sample_nmi_edge`, so the borrow obstacle is gone; the
+nothing-to-win argument is unchanged and was not re-measured.)
 
 ---
 

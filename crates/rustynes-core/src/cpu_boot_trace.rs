@@ -134,15 +134,14 @@ pub struct CpuBootRecord {
     pub op1: u8,
     /// Opcode operand byte 2 (PC + 2), peeked.
     pub op2: u8,
-    /// 1 byte of bookkeeping flags, low bits 0..3:
-    ///   bit 0 = CPU NMI line latched (`armed_nmi || pending_nmi`)
-    ///   bit 1 = CPU IRQ line latched (`armed_irq || pending_irq`)
-    ///   bit 2 = `bus.poll_nmi_edge_for_trace()` -- whether the
-    ///           PPU has driven an NMI edge that hasn't been
-    ///           consumed yet
-    ///   bit 3 = `bus.irq_snapshot_mapper_at_high ||
-    ///           irq_snapshot_apu_at_high` (the M2-high snapshot
-    ///           the CPU samples at the second-to-last cycle)
+    /// 1 byte of bookkeeping flags:
+    ///   bit 0 = the PPU is driving the /NMI line (`Ppu::nmi_line`) at the
+    ///           instruction-fetch boundary, the one latch observable on
+    ///           both sides of the Mesen2 comparison
+    ///   bits 1..7 = reserved, always zero. (Bits 1-3 were once planned
+    ///           for the CPU's own IRQ/NMI latches and the bus-side NMI
+    ///           edge and IRQ snapshots; the recorder never set them, and
+    ///           v2.9.8 removed the bus-side state they would have read.)
     pub flags: u8,
 }
 

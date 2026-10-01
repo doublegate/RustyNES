@@ -156,3 +156,35 @@ towards that release". The v2.9.x line is the run-up to v3.0.0, and this break
 is part of that preparation. The rule above ("a v2.9.x release is MINOR") is
 deliberately set aside for this one release, and that is recorded here, not
 left implicit.
+
+## Implementation record (v2.9.8)
+
+Recorded as the work landed, so the next reader does not have to diff for it.
+
+- **Removed as decided:** the 18 deprecated `rustynes_cpu::Bus` methods and
+  their overrides, `rustynes_apu::ApuBus` and its re-export,
+  `dmc_dma_step_impl`, `sample_nmi_edge` with `last_nmi_level` /
+  `nmi_edge_latch`, `oam_dma_overlap_cycle`, `dma_total` and
+  `dmc_step_was_get`.
+- **Also dead, found by the removal:** the pre-v2.0.0 `tick_one_cpu_cycle`.
+  Its only caller was `LockstepBus`'s `on_cpu_cycle` override, and the bus
+  overrides `cpu_clock`, the one path that calls `on_cpu_cycle`, so it ran
+  only in three `nes.rs` unit tests (moved onto `cpu_clock`). With it went
+  the state only it wrote or only the removed hooks read: `m2_phase` and the
+  public `current_m2_phase` (always `Low` on the live path), three of the
+  four `irq_snapshot_*` fields (the fourth survives under `irq-timing-trace`),
+  `region_dividers`, the OAM DMA's owed-cycle counter and byte index, the
+  `dma_mc_consumed` accumulator with the trait's `take_dma_mc_consumed` and
+  the `Cpu::end_cycle` fold that drained it, and the per-sub-dot A12 capture
+  of the IRQ trace (its column has been empty since v2.0.0 and stays in the
+  CSV schema). `M2Phase` stays: it is the IRQ trace's vocabulary.
+- **Kept:** `Bus::on_cpu_cycle`. It is the default body of `cpu_clock`, which
+  every simple test bus (`nestest`, `blargg`, the CPU benches) relies on.
+- **Provenance:** `rustynes-core/src/bus.rs` has carried a `// Provenance:`
+  header since 2026-09-28 (the TriCNES OAM-DMA register-window read and the
+  unified DMA engine's state), which the Consequences above predate. The
+  header is unchanged, and so is every comment naming TriCNES or Mesen2. One
+  removed function touched a disclosed item: `dmc_dma_step_impl` read and
+  wrote `dmc_halt`, which the header names as modelled on TriCNES's DMA flags.
+  The field stays, used by the unified engine; whether the removed function
+  was itself derived is not established here and goes to the maintainer.

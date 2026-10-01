@@ -389,11 +389,11 @@ cycle from the dot, and the two sides stamp their records at
 different points within the cycle — which produced, and then
 retracted, a "two-dot CPU/PPU alignment" diagnosis in v2.6.5
 (sibling ledger 3.39 / 3.42). It is written by
-`Bus::set_trace_cpu_cycle` at **two** call sites: `cpu_clock`,
-the path a running console takes, and `tick_one_cpu_cycle`,
-the one the harness drives. Wiring only the latter leaves every
-record `0` while the field, the column and the plumbing all
-look correct, which is what
+`Bus::set_trace_cpu_cycle` in `cpu_clock`, the path a running
+console takes. Until v2.9.8 there was a second call site in the
+pre-v2.0.0 `tick_one_cpu_cycle` (removed with ADR 0042). Wiring
+only that one left every record `0` while the field, the column
+and the plumbing all looked correct, which is what
 `state_trace_records_carry_their_cpu_cycle` exists to catch.
 
 Bump

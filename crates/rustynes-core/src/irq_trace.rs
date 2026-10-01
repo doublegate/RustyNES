@@ -260,7 +260,7 @@ pub struct CycleRecord {
     pub bus_data: u8,
     /// `Apu::put_cycle` (`TriCNES` `APU_PutCycle`) snapshotted at the end of
     /// the cycle. This is the interleaved-DMA get/put flip-flop the R1
-    /// `dmc_dma_step` GET is gated on (`get = !put_cycle`); distinct from
+    /// DMC DMA GET is gated on (`get = !put_cycle`); distinct from
     /// `apu_phase_post`. Only toggled under `dmc_driven_externally` (R1), so
     /// it is `false` on the default lockstep path.
     pub put_cycle_post: bool,
