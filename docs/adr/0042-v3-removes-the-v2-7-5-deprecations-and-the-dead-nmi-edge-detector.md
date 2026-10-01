@@ -123,3 +123,32 @@ Two items for v3.0.0, alongside the decision above:
   it `#[non_exhaustive]` in the same break, so later fields stop being API
   breaks. The editor does not need them either way, since the preserving
   writer keeps what it does not model.
+
+## Amendment (2026-10-01, v2.9.8): the removals move into v2.9.8
+
+The maintainer asked which permanent changes the project would make if it did
+not care about breaking the past, then directed: "do all of this now, don't wait
+for a future version or release". v2.9.8 therefore carries this ADR's whole
+decision, and also settles the questions it left for v3.0.0:
+
+- **`LockstepBus` is renamed `SystemBus`.** `rustynes_cpu::Bus` is the trait it
+  implements, so `Bus` was ruled out to avoid the collision.
+- **Older `.rns` states are rejected cleanly**, not read and discarded.
+  `BUS_SECTION_VERSION` goes 1 -> 2, and every legacy-format reader the core
+  still carries goes with it (ADR 0003's pattern, as v2.0.0 did under ADR 0028).
+  v2.9.8 had already made old cartridge saves unfindable by moving the ROM
+  identity off the header (`084daf28`), so those readers were close to
+  unreachable.
+- **`Header` models its remaining bytes** (the Vs. hardware type, the extended
+  console type, bytes 14-15 and the NVRAM split) and **becomes
+  `#[non_exhaustive]`**, so later fields are not API breaks.
+  `serialize_header` is removed and `canonical_header` becomes private.
+
+Unchanged by the move: emulation output must stay byte-identical (goldens,
+AccuracyCoin 144/144, nestest 0-diff), because everything removed is
+unreachable or dead.
+
+This contradicts the Decision paragraph above ("done at v3.0.0, not before: a
+v2.9.x release is MINOR"). That paragraph is kept as written and superseded
+here. Whether the release that carries this break keeps the number v2.9.8 is a
+SemVer question that goes to the maintainer at the release cut.
