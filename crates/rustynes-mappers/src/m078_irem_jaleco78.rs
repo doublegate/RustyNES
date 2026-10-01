@@ -11,7 +11,10 @@
 //!
 //! The two modes are mutually incompatible — running one game's ROM under the
 //! other's wiring glitches. iNES 1.0 images often set the "alternative
-//! nametables" header flag for Holy Diver; NES 2.0 uses the submapper byte.
+//! nametables" header flag for Holy Diver and clear it for Cosmo Carrier; NES
+//! 2.0 uses the submapper byte. The dispatcher in `lib.rs` follows exactly
+//! that: a named submapper wins, and without one the flag picks the wiring
+//! (set = Holy Diver, clear = Cosmo Carrier, the common emulator default).
 //!
 //! # Bank Select (`$8000-$FFFF`)
 //!

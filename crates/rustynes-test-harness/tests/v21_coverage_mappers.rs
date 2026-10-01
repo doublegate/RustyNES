@@ -144,8 +144,10 @@ fn mapper_68_sunsoft4_nt_rom_mode_boots() {
 }
 
 #[test]
-fn mapper_78_holy_diver_default_boots() {
-    // No submapper -> Holy Diver (H/V) variant.
+fn mapper_78_no_submapper_default_boots() {
+    // No submapper and the alternative-nametables bit clear -> Cosmo Carrier
+    // (single-screen) wiring since v2.9.8 (NESdev `INES_Mapper_078`); it was
+    // Holy Diver before. The selection itself is pinned in rustynes-mappers.
     boot_smoke(&synth_rom(78, 0, 8, 2), 78);
 }
 

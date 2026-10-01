@@ -808,13 +808,18 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // Holy Diver / Uchuusen Cosmo Carrier: UxROM-like 16 KiB PRG +
             // 8 KiB CHR with submapper-selected mirroring. NES 2.0
             // submapper 3 = Holy Diver (H/V switch); submapper 1 = Cosmo
-            // Carrier (single-screen A/B). Default to Holy Diver (H/V) when
-            // no submapper is present, matching the common iNES "alternative
-            // nametables" header convention for Holy Diver.
-            let variant = if h.is_nes2 && h.submapper == 1 {
-                M78Variant::CosmoCarrier
-            } else {
-                M78Variant::HolyDiver
+            // Carrier (single-screen A/B). Without a submapper (iNES 1.0, or
+            // NES 2.0 submapper 0) the header's "alternative nametables" bit
+            // decides, per NESdev `INES_Mapper_078`: iNES images "often set
+            // [it] for Holy Diver and cleared it for Cosmo Carrier", and
+            // Nestopia / FCEUX default to Cosmo Carrier's 1scA/1scB wiring.
+            // Until v2.9.8 the no-submapper case was always Holy Diver, which
+            // ignored the bit and contradicted both statements.
+            let variant = match (h.is_nes2, h.submapper) {
+                (true, 1) => M78Variant::CosmoCarrier,
+                (true, 3) => M78Variant::HolyDiver,
+                _ if h.mirroring == Mirroring::FourScreen => M78Variant::HolyDiver,
+                _ => M78Variant::CosmoCarrier,
             };
             let m78 = M78::new(prg_rom, chr_rom, variant)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -1605,6 +1610,65 @@ mod tests {
         let rom = synth_nrom_rom(32, 8);
         let (cart, _mapper) = parse(&rom).unwrap();
         assert_eq!(cart.prg_rom.len(), 32 * 1024);
+    }
+
+    /// A mapper-78 image: 32 KiB PRG, 8 KiB CHR. `flags6_low` carries the
+    /// mirroring / alternative-nametables bits; `nes2_sub` makes it NES 2.0
+    /// with that submapper.
+    fn synth_m78(flags6_low: u8, nes2_sub: Option<u8>) -> Vec<u8> {
+        let mut rom = synth_nrom_rom(32, 8);
+        rom[6] = 0xE0 | (flags6_low & 0x0F); // mapper 78 low nibble = 0xE
+        rom[7] = 0x40; // mapper 78 high nibble = 0x4
+        if let Some(sub) = nes2_sub {
+            rom[7] |= 0x08;
+            rom[8] = sub << 4;
+        }
+        rom
+    }
+
+    /// The mirroring a mapper-78 image selects once bit 3 of the bank register
+    /// is set: Vertical on the Holy Diver wiring, single-screen B on Cosmo
+    /// Carrier's.
+    fn m78_mirroring_with_bit3(rom: &[u8]) -> Mirroring {
+        let (_cart, mut mapper) = parse(rom).unwrap();
+        mapper.cpu_write(0x8000, 0x08);
+        mapper.current_mirroring()
+    }
+
+    #[test]
+    fn mapper_78_ines_header_selects_wiring_by_alt_nametables_bit() {
+        // NESdev `INES_Mapper_078`: "iNES1 ROM image headers often set the
+        // 'alternative nametables' flag for Holy Diver and cleared it for
+        // Cosmo Carrier", and Nestopia / FCEUX default to Cosmo Carrier's
+        // 1scA/1scB wiring. So an iNES 1.0 image with the flag clear is
+        // Cosmo Carrier, and with it set is Holy Diver.
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x00, None)),
+            Mirroring::SingleScreenB,
+            "iNES 1.0, flag clear: Cosmo Carrier wiring"
+        );
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x08, None)),
+            Mirroring::Vertical,
+            "iNES 1.0, flag set: Holy Diver wiring"
+        );
+        // NES 2.0 submapper 0 says nothing, so it falls back to the same rule.
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x00, Some(0))),
+            Mirroring::SingleScreenB,
+            "NES 2.0 submapper 0, flag clear: Cosmo Carrier wiring"
+        );
+        // A named submapper wins over the flag, in both directions.
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x08, Some(1))),
+            Mirroring::SingleScreenB,
+            "submapper 1: Cosmo Carrier"
+        );
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x00, Some(3))),
+            Mirroring::Vertical,
+            "submapper 3: Holy Diver"
+        );
     }
 
     #[test]

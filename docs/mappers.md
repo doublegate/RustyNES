@@ -291,7 +291,7 @@ boot-smoke (no redistributable behavioral fixtures exist for these boards).
 | 68 | — | Sunsoft-4 | — | — | After Burner, Maharaja. CHR-ROM-as-nametable. |
 | 70 | — | Bandai discrete | — | — | Kamen Rider Club, Family Trainer. UxROM-like. |
 | 73 | — | Konami VRC3 | — | CPU | Salamander. Simplest VRC; 8K CHR-RAM. |
-| 78 | 1,3 | Holy Diver / Cosmo Carrier | — | — | Submapper-selected mirroring. |
+| 78 | 1,3 | Holy Diver / Cosmo Carrier | — | — | Submapper-selected mirroring: 3 = Holy Diver (H/V), 1 = Cosmo Carrier (1scA/1scB). Without one (iNES 1.0, or NES 2.0 submapper 0) the header's alternative-nametables bit decides, per `INES_Mapper_078`: set = Holy Diver, clear = Cosmo Carrier (v2.9.8; it was always Holy Diver). The GoodNES *Uchuusen - Cosmo Carrier (J) [!]* sets the bit, so its header names Holy Diver and it stalls on a blue screen; the NES 2.0 image of the same PRG/CHR (submapper 1) plays. |
 | 88 / 206 | — | Namco 118 / DxROM | — | — | Dragon Spirit, Quinty, Family Circuit. MMC3 banking subset. |
 | 118 | — | TxSROM / TLSROM | — | A12 | Armadillo, NES Play Action Football. MMC3 + per-slot NT mirroring. |
 | 119 | — | TQROM | — | A12 | Pin\*Bot, High Speed. MMC3 + mixed CHR (64K CHR-ROM + 8K CHR-RAM; bank bit 6 = RAM select). |

@@ -156,6 +156,18 @@ cycle-accurate core later replaced.
   178). A vendored row's mapper and submapper now apply only to an iNES 1.0
   header; your own overrides still apply to anything. Five of these games leave
   the coverage sweep's known-blank list.
+
+
+
+- **Mapper 78 without a submapper follows the header's nametable bit.** The two
+  games wire the mirroring bit differently (Holy Diver H/V, Cosmo Carrier
+  single-screen), and an iNES 1.0 image chose Holy Diver whatever its header
+  said. NESdev's `INES_Mapper_078` gives the convention: the alternative
+  nametables bit set means Holy Diver, clear means Cosmo Carrier, which is also
+  the common emulator default. An image with NES 2.0 submapper 1 or 3 is
+  unchanged. No staged dump changes: the GoodNES *Uchuusen - Cosmo Carrier [!]*
+  sets the bit, so its header names Holy Diver and it still stalls; its NES 2.0
+  twin plays.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
