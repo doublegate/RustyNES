@@ -2100,45 +2100,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock $4015-enable load-delay placement. The default master-clock core (the only scheduler) moves the load arm to the put-end countdown, so this unit assertion is kept as a historical pin and cannot be un-ignored. Battery coverage: AccuracyCoin Delta-Mod/Implicit (100% on the default build)."]
-    fn dmc_enable_schedules_load_dma_after_apu_aligned_delay() {
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.write_register(0x4012, 0x00);
-        a.write_register(0x4013, 0x00);
-        a.apu_phase = false; // put half: load halt attempt after 3 cycles.
-
-        a.write_register(0x4015, 0x10);
-
-        assert!(!a.pending_dmc_dma);
-        assert_eq!(a.dmc_dma_addr, 0xC000);
-        assert_eq!(a.dmc_dma_delay, 3);
-        a.tick();
-        assert!(!a.pending_dmc_dma);
-        a.tick();
-        assert!(!a.pending_dmc_dma);
-        a.tick();
-        assert!(a.pending_dmc_dma);
-        assert_eq!(a.dmc_dma_delay, 0);
-    }
-
-    #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock cycle-start reload-arm position. The default master-clock core moves the byte-timer/reload-arm to dmc_tick_end, so this unit assertion is kept as a historical pin and cannot be un-ignored. Battery coverage: AccuracyCoin DMC+OAM/Implicit (100% on the default build)."]
-    fn dmc_reload_dma_arms_when_sample_buffer_becomes_empty() {
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.dmc.bytes_remaining = 1;
-        a.dmc.sample_buffer = Some(0xAA);
-        a.dmc.bits_remaining = 1;
-        a.dmc.timer = 0;
-        a.apu_phase = false;
-
-        a.tick();
-
-        assert!(a.pending_dmc_dma);
-        assert_eq!(a.dmc_dma_delay, 0);
-        assert_eq!(a.dmc_dma_addr, 0xC000);
-    }
-
-    #[test]
     fn write_4015_clears_lengths_when_disabled() {
         let mut a = Apu::new(Region::Ntsc, 44_100);
         a.pulse1.length.enabled = true;
@@ -2362,43 +2323,6 @@ mod tests {
         let full = m.mix(15, 0, 0, 0, 0);
         let attenuated = m.mix(half, 0, 0, 0, 0);
         assert!(attenuated > 0.0 && attenuated < full);
-    }
-
-    #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED legacy dual-flip-flop put_cycle toggle. In the default master-clock core, put_cycle is derived from the unified counter and flipped at end-of-cycle, so this unit assertion is kept as a historical pin and cannot be un-ignored."]
-    fn put_cycle_toggles_per_cycle_only_when_driven_externally() {
-        // Interleaved-DMA Phase A: under external DMC driving the global get/put
-        // flip-flop toggles exactly once per CPU cycle (TriCNES `APU_PutCycle`).
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.set_dmc_driven_externally(true);
-        a.seed_apu_alignment(0); // case 0 => put_cycle = true
-        assert!(a.put_cycle());
-        a.tick();
-        assert!(!a.put_cycle(), "toggles after one cycle");
-        a.tick();
-        assert!(a.put_cycle(), "toggles back after two cycles");
-
-        // Default build (not driven externally): the flip-flop is frozen, so the
-        // default path is byte-identical (nothing toggles or reads it).
-        //
-        // RW-1 (`mc-r1-one-clock`): `put_cycle` is DERIVED from the one counter
-        // (`put_cycle = !apu_phase`) and is no longer gated on
-        // `dmc_driven_externally` — that gating WAS the second independent
-        // flip-flop this phase removes. So under the flag `put_cycle` tracks the
-        // counter unconditionally and stays the exact complement of `apu_phase`
-        // (the coherence guarantee). The default (non-R1) path never consumes
-        // `put_cycle`, so this is still byte-identical there.
-        {
-            let mut b = Apu::new(Region::Ntsc, 44_100);
-            for _ in 0..10 {
-                b.tick();
-                assert_eq!(
-                    b.put_cycle(),
-                    !b.apu_phase(),
-                    "one-clock: put_cycle is the derived complement of apu_phase"
-                );
-            }
-        }
     }
 
     #[test]

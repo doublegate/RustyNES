@@ -200,6 +200,13 @@ Recorded as the work landed, so the next reader does not have to diff for it.
   `A12RiseFilter::from_legacy_level`). The CPU, OPLL and Vs. `DualSystem`
   readers were already exact. Tests that pinned old-format acceptance now
   assert rejection.
+- **Superseded test pins deleted:** the seven `#[ignore]`d "permanent-by-design"
+  pins of the pre-master-clock scheduler (three CPU mock-bus interrupt tests,
+  which overrode `poll_irq` / `poll_nmi`, three APU DMC / `put_cycle` tests
+  and one PPU BG-shifter test). The MMC3 escape hatches, the NEC rev B
+  `mmc3_alt` and the two `mmc3_test_v1` "SUPERSEDED ASSERTION" pins stay:
+  their reasons name a by-design revision or a withdrawn assertion with a
+  live `*_currently_fails` companion, not a scheduler that no longer exists.
 - **Kept:** `Bus::on_cpu_cycle`. It is the default body of `cpu_clock`, which
   every simple test bus (`nestest`, `blargg`, the CPU benches) relies on.
 - **Provenance:** `rustynes-core/src/bus.rs` has carried a `// Provenance:`
