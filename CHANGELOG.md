@@ -66,6 +66,9 @@ cycle-accurate core later replaced.
   (`rustynes_core::ConsoleModel`). The NES model stays the default, so every
   output is byte-identical with it off. Movies and netplay do not record the
   setting, like the other hardware options.
+
+  output is byte-identical with it off. Movies record the setting and netplay
+  peers must match it (see the movie and netplay entries under Changed).
 ### Changed
 
 - **CI builds the iOS app at release time.** `ios.yml` now compiles the Swift
@@ -79,6 +82,44 @@ cycle-accurate core later replaced.
   retired. `Bus` was ruled out because `rustynes_cpu::Bus` is the trait the
   type implements. **Migration:** replace `rustynes_core::LockstepBus` with
   `rustynes_core::SystemBus`; nothing outside the workspace names it.
+
+
+
+- **Movies record the emulation options they were made with (breaks old
+  movies).** A `.rnm` used to record the ROM and the input and nothing else,
+  so a replay ran whatever the player had configured: record on the Famicom
+  model or with a seeded power-on RAM, replay with the defaults, and it
+  silently ran a different machine. Format 3 stores every option that changes
+  emulation -- console model, PPU and 2A03 die revisions, OAM decay, power-on
+  RAM fill, power-up palette, overclock scanlines, Four Score, Zapper light
+  model, Vs. DIP switches and PPU type, mirroring override and Game Genie codes
+  (`rustynes_core::HardwareOptions`) -- plus the cartridge board the header
+  described. Playback applies the options before frame 0 whatever your
+  settings, holds them while it runs, and puts yours back when it stops; it
+  refuses a ROM whose region or header differs and names what differs.
+  **Movies from earlier versions are refused** with an error that says to
+  re-record them; the maintainer accepted the break. Recording keeps OAM decay
+  and the overclock through its power-on (the power cycle used to drop them),
+  and raw RAM cheats pause while a movie records or plays because a `.rnm`
+  cannot carry them. Foreign imports (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`)
+  record the stock NES. The full list of what is and is not recorded is in
+  `docs/frontend.md`; the decision is ADR 0044.
+
+- **Movies keep Four Score players 3 and 4 (API break).** `FrameInput` gains
+  `p3` and `p4` and is now `#[non_exhaustive]`: build one with
+  `FrameInput::new` or `FrameInput::four_players`. Recording captures all four
+  ports and playback drives them, and a `fourscore` `.fm2` import keeps pads 3
+  and 4 (they were dropped) and plugs the adapter in; `.fm2` export writes
+  them.
+
+- **Netplay peers must run the same machine, not only the same ROM (API and
+  protocol break).** The handshake carries a `SessionIdentity`: the ROM hash
+  plus a hash of the region, the cartridge header and every emulation option
+  (`rustynes_core::config_digest`). Peers whose settings differ refuse to
+  connect with a message saying so, instead of connecting and desyncing; the
+  guest does not adopt the host's options. The netplay constructors take a
+  `SessionIdentity` (`SessionIdentity::of(&nes)`), and `PROTOCOL_VERSION` is 5,
+  so v2.9.7 peers do not connect to this one.
 - **A ROM's identity no longer includes its header (breaks old saves once).**
   `Nes::rom_sha256` names save-state slots, battery `.sav` files and cheats,
   tags `.rns` states and movies, matches netplay peers, and is what Lua's

@@ -43,6 +43,8 @@ pub mod irq_trace;
 // .mc2 is PC Engine and rejected). `no_std`-clean byte parsers, mirroring the
 // `.fm2`/`.bk2` interop design; reuse the canonical power-on alignment.
 pub mod legacy_movie;
+// v2.9.8 — the emulation options a movie or a netplay session must agree on.
+mod hardware_options;
 mod movie;
 pub mod movie_interop;
 mod nes;
@@ -77,6 +79,7 @@ pub use bus_snapshot::{EXPANSION_DEVICE_MAX_LEN, SAVE_STATE_DEVICE_HEADROOM};
 pub use controller::{Buttons, Controller};
 pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 pub use genie::{GenieCode, GenieError};
+pub use hardware_options::{BoardDescription, HardwareOptions, OptionsDecodeError, config_digest};
 pub use input_device::{
     BandaiHyperShotState, FamilyKeyboardState, InputDevice, KonamiHyperShotState, PowerPadState,
     SnesMouseState, VausState, ZapperState,
@@ -86,9 +89,9 @@ pub use legacy_movie::{
 };
 pub use movie::{
     ATTESTATION_CHECKPOINT_INTERVAL, ATTESTATION_MAGIC, ATTESTATION_VERSION, Attestation,
-    AttestationBuilder, BYTES_PER_FRAME, FrameInput, MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie,
-    MovieError, MoviePlayer, MovieRecorder, StartPoint, VerifyOutcome, power_on_for_movie,
-    recorded_before_v2_timebase,
+    AttestationBuilder, BYTES_PER_FRAME, FrameInput, MIN_MOVIE_FORMAT_VERSION,
+    MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie, MovieError, MoviePlayer, MovieRecorder, StartPoint,
+    VerifyOutcome, power_on_for_movie, recorded_before_v2_timebase,
 };
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;

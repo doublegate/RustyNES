@@ -915,6 +915,10 @@ struct Inner {
     /// Active TAS playback: the loaded movie + the next frame index. While set,
     /// `run_frame` drives input from the movie instead of the host masks.
     playback: Option<(rustynes_core::Movie, usize)>,
+    /// v2.9.8 — the player's emulation options as they were before a movie's
+    /// were applied; put back by [`end_playback`] when playback ends. `None`
+    /// whenever no movie is playing.
+    playback_player_options: Option<rustynes_core::HardwareOptions>,
     /// v2.9.0 — the battery RAM as it stood when a movie session replaced it,
     /// which [`NesController::battery_ram`] reports instead of the live RAM
     /// until the next `load_rom`. A power-on movie starts from cleared save RAM
@@ -1196,6 +1200,7 @@ impl NesController {
                 sample_rate,
                 recorder: None,
                 playback: None,
+                playback_player_options: None,
                 battery_held: None,
                 hd_pack: None,
                 script: None,
@@ -1233,8 +1238,11 @@ impl NesController {
         self.clear_input();
         g.sample_rate = sample_rate;
         // A new cartridge invalidates any in-flight movie + HD-pack + script.
+        // The new machine is built from the player's settings, so there are
+        // no options to restore.
         g.recorder = None;
         g.playback = None;
+        g.playback_player_options = None;
         g.battery_held = None;
         g.hd_pack = None;
         g.script = None;
@@ -1736,8 +1744,10 @@ impl NesController {
         Self::hold_battery(&mut g);
         // v2.9.0 — cleared cartridge RAM as well, the state playback
         // reconstructs; see `rustynes_core::power_on_for_movie`.
+        // v2.9.8 — a power-on recording is the player's own run: restore
+        // their options if a movie was playing, before they are captured.
+        end_playback(&mut g);
         rustynes_core::power_on_for_movie(&mut g.nes);
-        g.playback = None;
         g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
     }
 
@@ -1749,7 +1759,10 @@ impl NesController {
         if g.dual.is_some() {
             return;
         }
+        // v2.9.8 — a branch continues the machine as it is, movie options
+        // included (the desktop's rule); the player's return at the next load.
         g.playback = None;
+        g.playback_player_options = None;
         g.recorder = Some(rustynes_core::MovieRecorder::from_current_state(&g.nes));
     }
 
@@ -1785,6 +1798,12 @@ impl NesController {
         // v2.9.0 — held only if the seek succeeds: a refused seek (another
         // ROM, a bad start state) leaves the console, and saving, unchanged.
         let before = g.battery_held.is_none().then(|| Self::held_battery(&g));
+        // v2.9.8 — the player's options, kept to restore when playback ends
+        // (an earlier movie's saved ones win: they are the player's).
+        let player_options = g
+            .playback_player_options
+            .clone()
+            .unwrap_or_else(|| rustynes_core::HardwareOptions::capture(&g.nes));
         movie
             .seek_to_start(&mut g.nes)
             .map_err(|e| MobileError::Movie {
@@ -1802,6 +1821,7 @@ impl NesController {
         }
         g.recorder = None;
         g.playback = Some((movie, 0));
+        g.playback_player_options = Some(player_options);
         drop(g);
         Ok(())
     }
@@ -1841,7 +1861,8 @@ impl NesController {
     pub fn movie_stop(&self) {
         let mut g = self.lock();
         g.recorder = None;
-        g.playback = None;
+        end_playback(&mut g);
+        drop(g);
     }
 
     /// Whether a TAS recording is in progress.
@@ -2211,7 +2232,7 @@ impl NesController {
     pub fn np_host(&self, local_port: u16, num_players: u8) -> Result<u16, MobileError> {
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         let conn = NetplayConnection::host(local, rom_hash).map_err(|e| MobileError::Netplay {
             reason: format!("host bind failed: {e}"),
@@ -2255,7 +2276,7 @@ impl NesController {
                 reason: format!("host:port '{address}' resolved to no addresses"),
             })?;
         let mut g = self.lock();
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         let conn = NetplayConnection::connect(local, remote, rom_hash).map_err(|e| {
             MobileError::Netplay {
@@ -2295,7 +2316,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let players = num_players.clamp(2, 4);
         // Seed the room-code + STUN-transaction PRNG from a non-deterministic
         // source so two concurrent hosts don't collide on a room code. This is
@@ -2333,7 +2354,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let seed = nondeterministic_seed();
         let nat = NatConnect::join(&room_code, rom_hash, nat_cfg, seed).map_err(|e| {
             MobileError::Netplay {
@@ -2887,19 +2908,37 @@ fn pre_tick_movie(g: &mut Inner) {
         fi
     });
     if let Some(fi) = pb {
-        g.nes.set_buttons(0, fi.p1);
-        g.nes.set_buttons(1, fi.p2);
+        // v2.9.8 — hold the movie's options against anything the host pushed
+        // since the last frame, then drive all four ports.
+        if let Some((movie, _)) = g.playback.as_ref() {
+            let held = movie.options.apply_live(&mut g.nes);
+            debug_assert!(held.is_ok(), "movie options re-apply");
+        }
+        fi.apply_to(&mut g.nes);
     }
     // Stop playback once the movie is exhausted.
     if g.playback
         .as_ref()
         .is_some_and(|(m, i)| *i >= m.frames.len())
     {
-        g.playback = None;
+        end_playback(g);
     }
-    // Recording: capture the inputs the upcoming frame will consume.
+    // Recording: hold the recording's options (v2.9.8), then capture the
+    // inputs the upcoming frame will consume.
     if let Some(rec) = g.recorder.as_mut() {
+        let held = rec.options().apply_live(&mut g.nes);
+        debug_assert!(held.is_ok(), "captured options re-apply");
         rec.capture(&g.nes);
+    }
+}
+
+/// v2.9.8 — end any movie playback and put the player's emulation options back
+/// on the console ([`rustynes_core::HardwareOptions::restore_after_playback`]).
+fn end_playback(g: &mut Inner) {
+    g.playback = None;
+    if let Some(opts) = g.playback_player_options.take() {
+        let restored = opts.restore_after_playback(&mut g.nes);
+        debug_assert!(restored.is_ok(), "player options re-apply");
     }
 }
 
@@ -3046,7 +3085,7 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
                 local_player: u8::from(!is_host), // host = 0 (P1), joiner = 1 (P2).
                 ..SessionConfig::default()
             };
-            let rom_hash = *g.nes.rom_sha256();
+            let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
             let session = RollbackSession::new(config, transport, rom_hash);
             g.netplay = Some(NetplaySession::InGame(Box::new(session), is_host));
             NpTick::STALLED
@@ -3055,6 +3094,11 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
             let why = match conn.disconnect_reason() {
                 Some(DisconnectReason::RomMismatch) => {
                     "peer is running a different ROM".to_string()
+                }
+                Some(DisconnectReason::ConfigMismatch) => {
+                    "peer runs this ROM with different emulation settings; match them and \
+                     reconnect"
+                        .to_string()
                 }
                 Some(DisconnectReason::HandshakeTimeout) => {
                     "handshake timed out (no peer answered)".to_string()

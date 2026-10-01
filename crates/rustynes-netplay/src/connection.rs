@@ -19,7 +19,8 @@
 //!   so the connection can adopt it.
 //! - [`NetplayConnection`] — a small host/join state machine that owns a
 //!   `UdpTransport`, performs the [`NetMessage::Sync`] handshake (both sides
-//!   exchange + confirm a matching magic and identical `rom_hash`), and tracks
+//!   exchange + confirm a matching magic and an identical [`SessionIdentity`]:
+//!   the same ROM AND, since v2.9.8, the same machine configuration), and tracks
 //!   the [`ConnectionState`]. There is no matchmaking — the joiner dials the
 //!   host's `IP:port` via [`connect`](NetplayConnection::connect); the host can
 //!   instead [`host`](NetplayConnection::host) WITHOUT a known remote and
@@ -45,7 +46,7 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::NetMessage;
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
 use crate::relay::RelayUdpSocket;
 use crate::transport::Transport;
 
@@ -336,9 +337,9 @@ impl Transport for UdpTransport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
     /// The `Sync` handshake has not yet completed (no matching peer `Sync`
-    /// with an identical `rom_hash` confirmed).
+    /// with an identical [`SessionIdentity`] confirmed).
     Connecting,
-    /// The peer confirmed a matching magic + identical `rom_hash`. Gameplay
+    /// The peer confirmed a matching magic + identical identity. Gameplay
     /// traffic can flow; the rollback session can run.
     Synced,
     /// The connection was torn down — either an explicit disconnect, a
@@ -353,6 +354,11 @@ pub enum DisconnectReason {
     HandshakeTimeout,
     /// The peer announced a different ROM hash in its `Sync`.
     RomMismatch,
+    /// v2.9.8 — the peer runs the same ROM on a differently configured
+    /// machine: another console model, power-on RAM fill, die revision,
+    /// overclock, Four Score, Vs. setting, Game Genie code, region or
+    /// cartridge header. Both players must match their emulation settings.
+    ConfigMismatch,
     /// The peer was synced but then went silent past the disconnect timeout
     /// (no datagram of any kind received for [`NetplayConnection`]'s
     /// `peer_disconnect_timeout`). See [`PeerLink`] for the graded liveness
@@ -427,7 +433,7 @@ pub enum PeerLink {
 #[derive(Debug)]
 pub struct NetplayConnection {
     transport: UdpTransport,
-    rom_hash: [u8; 32],
+    identity: SessionIdentity,
     state: ConnectionState,
     disconnect_reason: Option<DisconnectReason>,
 
@@ -483,20 +489,26 @@ impl NetplayConnection {
     /// [`ConnectionState::Synced`] by calling [`pump`](Self::pump)
     /// periodically.
     ///
-    /// `rom_hash` is the SHA-256 from [`Nes::rom_sha256`](rustynes_core::Nes::rom_sha256);
-    /// the peer must announce an identical hash or the connection is rejected.
+    /// `identity` is [`SessionIdentity::of`] the local machine; the peer must
+    /// announce an identical one (same ROM, same configuration) or the
+    /// connection is rejected with [`DisconnectReason::RomMismatch`] or
+    /// [`DisconnectReason::ConfigMismatch`].
     ///
     /// # Errors
     ///
     /// Returns any socket bind / configuration error.
-    pub fn connect(local: SocketAddr, remote: SocketAddr, rom_hash: [u8; 32]) -> io::Result<Self> {
+    pub fn connect(
+        local: SocketAddr,
+        remote: SocketAddr,
+        identity: SessionIdentity,
+    ) -> io::Result<Self> {
         let transport = UdpTransport::bind(local, remote)?;
-        Ok(Self::with_transport(transport, rom_hash))
+        Ok(Self::with_transport(transport, identity))
     }
 
     /// Bind `local` and start "listening" as the host WITHOUT a known remote:
     /// the joiner's address is adopted from the first valid [`NetMessage::Sync`]
-    /// (right magic + matching `rom_hash`) seen in [`pump`](Self::pump). This is
+    /// (right magic + matching identity) seen in [`pump`](Self::pump). This is
     /// the joiner-dials-host flow — the host no longer needs to pre-enter the
     /// joiner's `IP:port`; it only shares its own listening `IP:port`.
     ///
@@ -509,24 +521,24 @@ impl NetplayConnection {
     /// # Errors
     ///
     /// Returns any socket bind / configuration error.
-    pub fn host(local: SocketAddr, rom_hash: [u8; 32]) -> io::Result<Self> {
+    pub fn host(local: SocketAddr, identity: SessionIdentity) -> io::Result<Self> {
         let transport = UdpTransport::bind_listening(local)?;
-        Ok(Self::with_transport(transport, rom_hash))
+        Ok(Self::with_transport(transport, identity))
     }
 
     /// Build a connection around an existing [`UdpTransport`] (e.g. one bound
     /// with custom socket options). Sends the opening `Sync` immediately.
     #[must_use]
-    pub fn with_transport(mut transport: UdpTransport, rom_hash: [u8; 32]) -> Self {
+    pub fn with_transport(mut transport: UdpTransport, identity: SessionIdentity) -> Self {
         // Announce ourselves right away so a peer already listening syncs fast.
         transport.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
-            rom_hash,
+            identity,
         });
         let now = Instant::now();
         Self {
             transport,
-            rom_hash,
+            identity,
             state: ConnectionState::Connecting,
             disconnect_reason: None,
             peer_synced: false,
@@ -689,7 +701,7 @@ impl NetplayConnection {
         //    handshake / ping traffic.
         for (msg, from) in self.transport.poll_with_source() {
             // A host that has not yet adopted a remote ignores everything
-            // EXCEPT a valid Sync (right magic + matching rom_hash), whose
+            // EXCEPT a valid Sync (right magic + matching identity), whose
             // source it adopts. Until then there is no peer to talk to.
             let remote_known = self.transport.remote_addr().is_some();
             // A datagram from the adopted peer — or ANY datagram while we are
@@ -703,15 +715,19 @@ impl NetplayConnection {
                 self.last_recv = now;
             }
             match msg {
-                NetMessage::Sync { magic, rom_hash } => {
+                NetMessage::Sync { magic, identity } => {
                     if magic != NetMessage::SYNC_MAGIC {
                         continue; // foreign / corrupt — ignore, never panic.
                     }
-                    if rom_hash != self.rom_hash {
-                        // A mismatched ROM is rejected the same way whether or
-                        // not we have adopted this peer yet.
+                    if let Err(m) = self.identity.check(&identity) {
+                        // A mismatched ROM or configuration is rejected the
+                        // same way whether or not we have adopted this peer
+                        // yet.
                         self.state = ConnectionState::Disconnected;
-                        self.disconnect_reason = Some(DisconnectReason::RomMismatch);
+                        self.disconnect_reason = Some(match m {
+                            IdentityMismatch::Rom => DisconnectReason::RomMismatch,
+                            IdentityMismatch::Config => DisconnectReason::ConfigMismatch,
+                        });
                         return self.state;
                     }
                     // Right magic + our ROM. If we are a listening host with no
@@ -729,7 +745,7 @@ impl NetplayConnection {
                     if !self.peer_synced {
                         self.transport.send(&NetMessage::Sync {
                             magic: NetMessage::SYNC_MAGIC,
-                            rom_hash: self.rom_hash,
+                            identity: self.identity,
                         });
                     }
                     self.peer_synced = true;
@@ -801,7 +817,7 @@ impl NetplayConnection {
             if now.saturating_duration_since(self.last_sync_sent) >= self.sync_resend_interval {
                 self.transport.send(&NetMessage::Sync {
                     magic: NetMessage::SYNC_MAGIC,
-                    rom_hash: self.rom_hash,
+                    identity: self.identity,
                 });
                 self.last_sync_sent = now;
             }
@@ -903,7 +919,7 @@ mod tests {
 
     #[test]
     fn handshake_succeeds_over_loopback() {
-        let hash = [0x11u8; 32];
+        let hash = SessionIdentity::new([0x11u8; 32], [0; 32]);
         let (ta, tb) = transport_pair();
         let mut a = NetplayConnection::with_transport(ta, hash);
         let mut b = NetplayConnection::with_transport(tb, hash);
@@ -928,7 +944,7 @@ mod tests {
         // should progress Live -> Interrupted -> TimedOut and finally disconnect
         // with `PeerTimeout`. This is the run-time RTT liveness, distinct from
         // the connect-time handshake timeout.
-        let hash = [0x21u8; 32];
+        let hash = SessionIdentity::new([0x21u8; 32], [0; 32]);
         let (ta, tb) = transport_pair();
         let mut a = NetplayConnection::with_transport(ta, hash)
             .with_peer_timeouts(Duration::from_millis(60), Duration::from_millis(150));
@@ -970,7 +986,7 @@ mod tests {
         // The host binds WITHOUT a known remote; the joiner dials the host's
         // concrete port. The host must adopt the joiner's address from its
         // first Sync and both must reach Synced.
-        let hash = [0x33u8; 32];
+        let hash = SessionIdentity::new([0x33u8; 32], [0; 32]);
         let host_sock = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
         let host_addr = host_sock.local_addr().unwrap();
         let host_transport = UdpTransport::from_socket_opt(host_sock, None).unwrap();
@@ -1005,7 +1021,7 @@ mod tests {
         // A listening host receives junk + a foreign-magic Sync from a stray
         // socket FIRST; neither must bind it as the peer. Only the valid Sync
         // from the real joiner is adopted.
-        let hash = [0x44u8; 32];
+        let hash = SessionIdentity::new([0x44u8; 32], [0; 32]);
         let host_sock = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
         let host_addr = host_sock.local_addr().unwrap();
         let host_transport = UdpTransport::from_socket_opt(host_sock, None).unwrap();
@@ -1047,8 +1063,10 @@ mod tests {
     #[test]
     fn handshake_rejects_rom_mismatch() {
         let (ta, tb) = transport_pair();
-        let mut a = NetplayConnection::with_transport(ta, [0x11u8; 32]);
-        let mut b = NetplayConnection::with_transport(tb, [0x22u8; 32]);
+        let mut a =
+            NetplayConnection::with_transport(ta, SessionIdentity::new([0x11u8; 32], [0; 32]));
+        let mut b =
+            NetplayConnection::with_transport(tb, SessionIdentity::new([0x22u8; 32], [0; 32]));
 
         let mut rounds = 0;
         while !matches!(
@@ -1068,12 +1086,41 @@ mod tests {
         assert!(!a.is_synced() && !b.is_synced());
     }
 
+    /// v2.9.8 — same ROM, different machine configuration: refused, with the
+    /// reason that says so (not a ROM mismatch, not a timeout).
+    #[test]
+    fn handshake_rejects_config_mismatch() {
+        let (ta, tb) = transport_pair();
+        let rom = [0x11u8; 32];
+        let mut a = NetplayConnection::with_transport(ta, SessionIdentity::new(rom, [0xA0; 32]));
+        let mut b = NetplayConnection::with_transport(tb, SessionIdentity::new(rom, [0xB0; 32]));
+
+        let mut rounds = 0;
+        while !matches!(
+            (a.state(), b.state()),
+            (ConnectionState::Disconnected, _) | (_, ConnectionState::Disconnected)
+        ) && rounds < 200
+        {
+            a.pump(0);
+            b.pump(0);
+            rounds += 1;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let a_rejected = a.disconnect_reason() == Some(DisconnectReason::ConfigMismatch);
+        let b_rejected = b.disconnect_reason() == Some(DisconnectReason::ConfigMismatch);
+        assert!(
+            a_rejected || b_rejected,
+            "a config mismatch must be rejected as one"
+        );
+        assert!(!a.is_synced() && !b.is_synced());
+    }
+
     #[test]
     fn handshake_times_out_with_no_peer() {
         // Point at a dead port; no peer will ever answer.
         let dst = SocketAddr::from((Ipv4Addr::LOCALHOST, 9));
         let t = bind_loopback(dst);
-        let mut c = NetplayConnection::with_transport(t, [0u8; 32])
+        let mut c = NetplayConnection::with_transport(t, SessionIdentity::new([0u8; 32], [0; 32]))
             .with_handshake_timeout(Duration::from_millis(50));
         let mut rounds = 0;
         while !matches!(c.state(), ConnectionState::Disconnected) && rounds < 200 {

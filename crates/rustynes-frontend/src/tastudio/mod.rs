@@ -29,7 +29,7 @@ pub use greenzone::{Greenzone, MAX_FORCED_GREENZONE_FRAMES};
 
 use std::collections::BTreeMap;
 
-use rustynes_core::{Buttons, FrameInput, Movie, Nes, Region, StartPoint};
+use rustynes_core::{Buttons, FrameInput, Movie, Nes, StartPoint};
 use thiserror::Error;
 
 /// Magic prefix of a `.rnmproj` `TAStudio` project file.
@@ -147,11 +147,15 @@ impl<'a> Reader<'a> {
         let mut v = Vec::with_capacity(n.min(self.remaining() / 3));
         for _ in 0..n {
             let s = self.take(3)?;
-            v.push(FrameInput {
-                p1: Buttons::from_bits_truncate(s[0]),
-                p2: Buttons::from_bits_truncate(s[1]),
-                expansion: s[2],
-            });
+            // The project format keeps its own 3-byte, two-player record
+            // (TAStudio edits players 1 and 2); `FrameInput` is
+            // `#[non_exhaustive]` since v2.9.8, so it is built, then edited.
+            let mut f = FrameInput::new(
+                Buttons::from_bits_truncate(s[0]),
+                Buttons::from_bits_truncate(s[1]),
+            );
+            f.expansion = s[2];
+            v.push(f);
         }
         Ok(v)
     }
@@ -381,12 +385,15 @@ impl TasEditor {
     /// Build a portable [`Movie`] from the current input log, carrying the TAS
     /// [`Self::rerecord_count`] into the movie (and thus the `.fm2` / `.bk2`
     /// `rerecordCount` header on export). `TAStudio` projects always replay from
-    /// power-on; `region` and `rom_sha256` come from the running console.
+    /// power-on; the region, ROM identity, emulation options (v2.9.8) and
+    /// cartridge board come from the running console `nes`.
     #[must_use]
-    pub fn to_movie(&self, region: Region, rom_sha256: [u8; 32]) -> Movie {
+    pub fn to_movie(&self, nes: &Nes) -> Movie {
         Movie {
-            region,
-            rom_sha256,
+            region: nes.region(),
+            rom_sha256: *nes.rom_sha256(),
+            options: rustynes_core::HardwareOptions::capture(nes),
+            board: Some(rustynes_core::BoardDescription::capture(nes)),
             start: StartPoint::PowerOn,
             frames: self.input_log.clone(),
             rerecord_count: self.rerecord_count,
@@ -835,7 +842,7 @@ mod tests {
             .expect("frame 0 is anchored");
         assert_eq!(frame, 0);
 
-        let movie = ed.to_movie(nes.region(), *nes.rom_sha256());
+        let movie = ed.to_movie(&nes);
         let mut replay = Nes::from_rom(&rom).unwrap();
         for _ in 0..7 {
             replay.run_frame(); // a different history, which the seek must erase
@@ -905,12 +912,12 @@ mod tests {
 
         // `to_movie` carries the tally into the exported movie (and thus the
         // `.fm2` / `.bk2` rerecordCount header).
-        assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 4);
+        assert_eq!(ed.to_movie(&nes).rerecord_count, 4);
 
         // Seeding from a loaded movie continues the tally from its value.
         ed.set_rerecord_count(1000);
         assert_eq!(ed.rerecord_count(), 1000);
-        assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 1000);
+        assert_eq!(ed.to_movie(&nes).rerecord_count, 1000);
     }
 
     #[test]

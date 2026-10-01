@@ -121,7 +121,7 @@ impl Shared {
 /// the per-peer connections live in [`Shared::legs`].
 pub struct BrowserNetplay {
     shared: Rc<RefCell<Shared>>,
-    rom_hash: [u8; 32],
+    identity: rustynes_netplay::SessionIdentity,
     /// The rollback session, once every data channel is open.
     session: Option<RollbackSession<WebRtcMeshTransport>>,
     config: SessionConfig,
@@ -134,10 +134,10 @@ pub struct BrowserNetplay {
 impl BrowserNetplay {
     /// A fresh, idle driver.
     #[must_use]
-    pub fn new(rom_hash: [u8; 32]) -> Self {
+    pub fn new(identity: rustynes_netplay::SessionIdentity) -> Self {
         Self {
             shared: Rc::new(RefCell::new(Shared::default())),
-            rom_hash,
+            identity,
             session: None,
             config: SessionConfig::default(),
             keepalive_socket: None,
@@ -222,7 +222,9 @@ impl BrowserNetplay {
         // On open, announce ourselves to the room with the desired player count.
         let ws_for_open = ws.clone();
         let room_owned = room.to_string();
-        let rom_hex_open = hex32(&self.rom_hash);
+        // Rooms are matched by game; the configuration is compared in the
+        // session's `Sync` handshake (v2.9.8), where a mismatch has a reason.
+        let rom_hex_open = hex32(&self.identity.rom_hash);
         let max_players = self.config.num_players;
         let on_open = Closure::<dyn FnMut(JsValue)>::wrap(Box::new(move |_ev: JsValue| {
             let join = SignalMessage::Join {
@@ -323,7 +325,7 @@ impl BrowserNetplay {
         let transport = WebRtcMeshTransport::new(channels);
         let mut cfg = self.config;
         cfg.local_player = slot;
-        self.session = Some(RollbackSession::new(cfg, transport, self.rom_hash));
+        self.session = Some(RollbackSession::new(cfg, transport, self.identity));
         self.shared.borrow_mut().phase = BrowserNetplayPhase::InGame;
         log("browser netplay: mesh complete, session started");
     }
@@ -687,6 +689,7 @@ fn describe_err(e: &NetplayError) -> String {
             }
         ),
         NetplayError::RomMismatch => "rom mismatch".to_string(),
+        NetplayError::ConfigMismatch => e.to_string(),
         other => format!("netplay error: {other}"),
     }
 }

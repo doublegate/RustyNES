@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_netplay::SessionIdentity;
 use rustynes_netplay::{
     LinkConditions, MemoryTransport, MeshTransport, NetplayError, RollbackSession, SessionConfig,
     SplitMix64, fnv1a64,
@@ -90,7 +91,7 @@ fn asymmetric_realtime_drive_stays_in_sync() {
         );
         let mut nes0 = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("{rel}: {e:?}"));
         let mut nes1 = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("{rel}: {e:?}"));
-        let hash = *nes0.rom_sha256();
+        let hash = SessionIdentity::of(&nes0);
         let mut s0 = RollbackSession::new(SessionConfig::default(), t0, hash);
         let mut s1 = RollbackSession::new(
             SessionConfig {
@@ -383,7 +384,7 @@ fn run_two_sessions(
     let (t0, t1) = MemoryTransport::pair(conditions, seed);
     let mut nes0 = Nes::from_rom(rom).expect("load nestest p0");
     let mut nes1 = Nes::from_rom(rom).expect("load nestest p1");
-    let hash = *nes0.rom_sha256();
+    let hash = SessionIdentity::of(&nes0);
 
     let cfg0 = SessionConfig {
         local_player: 0,
@@ -624,7 +625,7 @@ fn desync_detection() {
     let (t0, t1) = MemoryTransport::pair(conditions, 0x00C0_FFEE);
     let mut nes0 = Nes::from_rom(&rom).expect("load");
     let mut nes1 = Nes::from_rom(&rom).expect("load");
-    let hash = *nes0.rom_sha256();
+    let hash = SessionIdentity::of(&nes0);
 
     // Session 1 receives corrupted remote (player-0) inputs, so its emulator
     // diverges from session 0's. Both still exchange checksums.
@@ -691,9 +692,9 @@ fn rom_mismatch_rejected() {
     let rom = nestest_rom();
     let (t0, t1) = MemoryTransport::pair(LinkConditions::PERFECT, 1);
     let mut nes0 = Nes::from_rom(&rom).expect("load");
-    let hash = *nes0.rom_sha256();
+    let hash = SessionIdentity::of(&nes0);
     let mut wrong = hash;
-    wrong[0] ^= 0xFF;
+    wrong.rom_hash[0] ^= 0xFF;
 
     let mut s0 = RollbackSession::new(SessionConfig::default(), t0, hash);
     // Peer announces a different ROM.
@@ -711,6 +712,60 @@ fn rom_mismatch_rejected() {
     assert!(matches!(err, Err(NetplayError::RomMismatch)));
 }
 
+/// v2.9.8 — the same ROM on differently configured machines must be refused
+/// before the first frame, with the reason that names it. Each option is
+/// tried on its own, so the handshake is shown to cover every one rather than
+/// any one.
+#[test]
+fn config_mismatch_rejected_for_every_option() {
+    /// One option changed on the second peer's machine.
+    type Change = fn(&mut Nes);
+    use rustynes_core::{ConsoleModel, Cpu2A03Revision, PaletteInit, PowerOnRam, PpuRevision};
+    let rom = nestest_rom();
+    let changes: [(&str, Change); 11] = [
+        ("console model", |n| {
+            n.set_console_model(ConsoleModel::Famicom);
+        }),
+        ("PPU revision", |n| n.set_ppu_revision(PpuRevision::Rp2c02G)),
+        ("2A03 revision", |n| {
+            n.set_cpu_2a03_revision(Cpu2A03Revision::Rp2A03H);
+        }),
+        ("OAM decay", |n| n.set_oam_decay(true)),
+        ("power-on RAM", |n| {
+            n.set_power_on_ram(PowerOnRam::Seeded(7));
+        }),
+        ("power-up palette", |n| {
+            n.set_power_up_palette(PaletteInit::Blargg);
+        }),
+        ("overclock", |n| n.set_extra_scanlines(10)),
+        ("Four Score", |n| n.set_four_score(true)),
+        ("Zapper light", |n| n.set_zapper_temporal_light(false)),
+        ("Vs. DIP", |n| n.set_vs_dip(0x01)),
+        ("Game Genie", |n| n.add_genie_code("SXIOPO").unwrap()),
+    ];
+    for (name, change) in changes {
+        let (t0, t1) = MemoryTransport::pair(LinkConditions::PERFECT, 1);
+        let mut nes0 = Nes::from_rom(&rom).expect("load");
+        let mut nes1 = Nes::from_rom(&rom).expect("load");
+        change(&mut nes1);
+        let mut s0 = RollbackSession::new(SessionConfig::default(), t0, SessionIdentity::of(&nes0));
+        let _s1: RollbackSession<MemoryTransport> = RollbackSession::new(
+            SessionConfig {
+                local_player: 1,
+                ..SessionConfig::default()
+            },
+            t1,
+            SessionIdentity::of(&nes1),
+        );
+        s0.add_local_input(Buttons::empty());
+        let err = s0.advance(&mut nes0);
+        assert!(
+            matches!(err, Err(NetplayError::ConfigMismatch)),
+            "{name}: expected a configuration mismatch, got {err:?}"
+        );
+    }
+}
+
 /// The `AdvanceOutcome` reports rollbacks: under latency, at least one
 /// `advance` must report `rolled_back` with `resimulated_frames > 0`, while a
 /// perfect link never rolls back. Exercises the public outcome surface that
@@ -720,7 +775,7 @@ fn advance_outcome_reports_rollbacks() {
     let rom = nestest_rom();
     let frames = 120u32;
     let (p0, p1) = make_input_streams(frames, 0x1357_9BDF);
-    let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+    let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
 
     // Latent link: expect rollbacks.
     let (t0, t1) = MemoryTransport::pair(LinkConditions::fixed_latency(3), 0xFEED);
@@ -831,7 +886,7 @@ fn run_n_sessions(
     let mut nes: Vec<Nes> = (0..num_players)
         .map(|_| Nes::from_rom(rom).expect("load peer nes"))
         .collect();
-    let hash = *nes[0].rom_sha256();
+    let hash = SessionIdentity::of(&nes[0]);
 
     let mut sessions: Vec<RollbackSession<MeshTransport>> = transports
         .into_iter()
@@ -1012,7 +1067,7 @@ fn n_player_desync_detection() {
 
     let conditions = LinkConditions::fixed_latency(1);
     let transports = MeshTransport::mesh(num_players, conditions, 0x00C0_FFEE);
-    let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+    let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
 
     let base = SessionConfig {
         num_players,

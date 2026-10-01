@@ -978,7 +978,10 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   **Overclock** (v2.9.7) reaches the core: `App::apply_overclock` hands the
   configured value to `EmuCore`, and `produce_one_frame` applies
   `effective_extra_scanlines` at the top of every frame. That clamps it to
-  `0..=80` and holds stock timing (0) while a movie records or plays. Both
+  `0..=80` and holds stock timing (0) while a movie records; from v2.9.8 a
+  playing movie runs the overclock its own options record
+  (`MovieUi::session_extra_scanlines`), which is 0 for every recording this
+  frontend makes. Both
   netplay drive sites call `force_stock_timing` before a tick, because every
   peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
@@ -992,8 +995,9 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   `fast_dotloop` path, because `apply_ppu_hardware_config` also re-runs the
   power-on work-RAM fill). A power-cycle keeps the model inside the core. The
   model and its limits are specified in `docs/ppu-2c02.md` (§Famicom console
-  model); it takes full effect from the next power-cycle or ROM load, and movies
-  and netplay do not record it.
+  model); it takes full effect from the next power-cycle or ROM load. Movies
+  record it and netplay compares it (v2.9.8; see "What a movie records and a
+  netplay peer must match" below).
 - **Input** — the rebind grids + Port-2 device selector, now with contextual
   **device config** (v1.5.0 D4): SNES-mouse reported sensitivity + pointer-speed
   multiplier, Arkanoid Vaus pointer-speed, and the Power Pad / Family Trainer mat
@@ -2351,6 +2355,115 @@ headless; `wasm_idb` only moves the bytes.
 - **Not verified headless.** The `IndexedDB` glue (`wasm_idb::get_battery`,
   `put_battery`, the page-hide listener) runs only in a browser; its check is
   manual, recorded in the v2.9.7 notes.
+
+## What a movie records and a netplay peer must match (v2.9.8)
+
+**Maintainer decision, 2026-10-01: a replay or a peer must never silently
+diverge.** Until v2.9.8 a `.rnm` recorded the ROM and the input stream and
+nothing else, and netplay compared only the ROM, so every host knob that changes
+what the console does was whatever the player happened to have set. Record on
+the Famicom model, replay on the NES model, and the replay ran a different
+machine without a word.
+
+### The record
+
+`rustynes_core::HardwareOptions` holds every host-settable option that changes
+emulation; `rustynes_core::BoardDescription` holds what the cartridge header
+told the core to build. The `.rnm` format 3 epoch (`MOVIE_FORMAT_VERSION` 3,
+ADR 0028's rule) stores both in a length-prefixed OPTIONS block after the fixed
+header, and widens the per-frame record from 3 bytes to 5 so Four Score players
+3 and 4 are recorded too (`FrameInput` gained `p3` / `p4` and became
+`#[non_exhaustive]`).
+
+- **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
+  the replay does not depend on the player's settings, and the desktop and mobile
+  hosts re-assert them before every frame (`HardwareOptions::apply_live`) against
+  a Settings change, the cheat panel's per-frame resync or a game-database edit
+  made mid-movie. When playback stops, the player's options come back
+  (`HardwareOptions::restore_after_playback`; `MovieUi::stop_playback`). Settings
+  changed during playback therefore take effect when it stops.
+- **Recording captures the options once**, at the start, and holds them for the
+  length of the recording. The overclock is held at stock timing while recording
+  (the v2.9.7 rule), so a recording always says 0 extra scanlines; a playing
+  movie runs whatever its own record says.
+- **What cannot be applied is checked**: the ROM identity, the region, and the
+  board (mapper, submapper, mirroring, console type, `DualSystem`, PRG-/CHR-RAM
+  size, battery, trainer). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte
+  header, so the board is what tells a re-headered dump or a changed database
+  correction apart; a mismatch refuses with the field named
+  (`MovieError::BoardMismatch`, `RegionMismatch`).
+- **Older movies are refused** (`MovieError::FormatTooOld`): a v1 or v2 `.rnm`
+  does not say which machine it ran on. The maintainer accepted breaking them.
+- **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) record the stock
+  NES explicitly (`HardwareOptions::default`) with no board, plus the one
+  option a format declares: an `.fm2` with `fourscore 1` records the Four Score
+  plugged in and keeps all four pads.
+- **Raw RAM cheats are suspended while a movie records or plays.** They are
+  frontend pokes after each frame that a `.rnm` cannot carry. Game Genie codes
+  are core state and are recorded.
+- **Power-on movies keep the options through their power cycle.**
+  `power_on_for_movie` captures the options, power-cycles, and re-applies the
+  live ones, because `Nes::power_cycle` rebuilds the PPU and drops OAM decay and
+  the overclock. Before v2.9.8 a recording therefore started with OAM decay off
+  whatever the player had set.
+
+### Netplay
+
+The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the ROM hash
+plus `rustynes_core::config_digest`, SHA-256 over the region, the board and the
+options (`PROTOCOL_VERSION` 5). Peers that differ refuse to connect:
+`DisconnectReason::ConfigMismatch` / `NetplayError::ConfigMismatch` /
+`MeshError::ConfigMismatch`, and the HUD tells both players to match their
+emulation settings. **The guest does not adopt the host's options**: adoption
+would silently rewrite the guest's console model, RAM fill or cheats, the same
+silent change in the other direction, and the power-on options would need a
+coordinated re-power-on after the handshake. A refusal is explicit and costs one
+retry. The handshake covers the options at connect time; a change made during a
+session is caught by the periodic desync checksum, not prevented. Signaling
+rooms still match by ROM only, so a mismatch is reported at the UDP handshake,
+where it has its own reason.
+
+### The survey
+
+Every `Nes` setter (and the frontend-side knobs) with its verdict. "Yes" means
+it changes what the deterministic core computes and is therefore recorded or
+compared.
+
+| Knob | Determinism | Handling |
+| --- | --- | --- |
+| `set_console_model` (NES / Famicom) | yes: the PPU warm-up and Reset wiring | option |
+| `set_ppu_revision` | yes: the `$2003` OAM corruption on `Rp2c02G` | option |
+| `set_cpu_2a03_revision` | yes: the DMA unit's extra halt-read | option |
+| `set_oam_decay` | yes: OAM rows decay | option |
+| `set_power_on_ram` (Zeroed / Seeded / Filled) | yes: work RAM and open bus at power-on | option |
+| `set_power_up_palette` | yes: palette RAM at power-on, readable by games | option |
+| `set_extra_scanlines` (overclock) | yes: CPU time per frame | option |
+| `set_four_score` | yes: `$4016` / `$4017` reads 9-24 | option |
+| `set_zapper_temporal_light` | yes: the Zapper light answer | option |
+| `set_vs_dip` | yes: `$4016` / `$4017` upper bits on Vs. carts | option |
+| `set_vs_ppu_type` | yes: on a 2C05 the `$2002` ID bits and the `$2000` / `$2001` swap, not only the palette | option |
+| `set_mirroring_override` | yes: nametable mapping | option |
+| `add_genie_code` / `remove_genie_code` / `clear_genie_codes` | yes: CPU reads are substituted | option |
+| Region (header, after game-database correction) | yes: clock dividers | checked, not applied |
+| Cartridge header (mapper, submapper, mirroring, RAM, battery, trainer, console type) | yes: the machine built | checked (`BoardDescription`) |
+| `set_buttons` ports 0-3 | yes: input | the per-frame input stream |
+| `set_expansion_device`, `set_zapper`, `set_paddle`, `set_power_pad`, `set_snes_mouse`, keyboards, Family Trainer, Hyper Shots | yes: input | **not recorded**: per-frame device input a `.rnm` has no field for |
+| `set_microphone` | yes: `$4016` bit 2 | **not recorded** (input) |
+| `insert_coin` / `clear_coin` / `set_vs_service` | yes: Vs. inputs | **not recorded** (input) |
+| `set_disk_side` / `set_disk_write_protected` | yes: FDS drive state | **not recorded** (disk events during play) |
+| Raw RAM cheats (frontend) | yes: post-frame pokes | suspended while a movie records or plays |
+| `set_fast_dotloop` | no: byte-identical by proof (`fast_dotloop_diff`) | preserved across `power_on_for_movie`, not recorded |
+| `set_custom_palette` | no: presentation (the RGBA LUT) | not recorded |
+| `set_apu_channel_mask` / `set_apu_channel_gain` / `set_apu_filter_model` | no: applied to the mix after synthesis, never fed back | not recorded |
+| Sample rate (`from_rom_with_sample_rate`) | no: output resampling | not recorded |
+| SOCD / opposing-direction cancel (frontend) | input cleaning before `set_buttons`, so its result IS the recorded input; replays and remote streams are not cleaned again | nothing to record |
+| Run-ahead, rewind capture, frame skip, pacing | no: frontend timeline orchestration | not recorded |
+| Breakpoints, tracing, event / access / exec / interrupt logging, pixel / audio / write provenance | no: observability | not recorded |
+
+Two caveats the table cannot hold: `Movie::verify` hashes the RGBA framebuffer,
+so a custom palette or Vs. palette on the verifier changes the hash without
+changing emulation; and a movie whose ROM needs an expansion device replays
+with the device's input absent.
 
 ## ROM file handling
 

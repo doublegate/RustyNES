@@ -49,7 +49,7 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::NetMessage;
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
 use crate::transport::Transport;
 
 /// Largest datagram read in one `recv_from`. The longest [`NetMessage`] is a
@@ -162,6 +162,9 @@ pub enum MeshError {
     Timeout,
     /// A joiner / the host announced a different ROM hash.
     RomMismatch,
+    /// v2.9.8 — a joiner / the host runs the same ROM on a differently
+    /// configured machine (emulation options, region or header).
+    ConfigMismatch,
 }
 
 impl std::fmt::Display for MeshError {
@@ -169,11 +172,25 @@ impl std::fmt::Display for MeshError {
         match self {
             Self::Timeout => f.write_str("mesh handshake timed out before all joiners arrived"),
             Self::RomMismatch => f.write_str("a peer announced a different ROM"),
+            Self::ConfigMismatch => f.write_str(
+                "a peer runs this ROM with different emulation settings (console model, \
+                 power-on RAM, die revisions, overclock, Four Score, Vs. settings, Game \
+                 Genie codes, region or header); match them and reconnect",
+            ),
         }
     }
 }
 
 impl std::error::Error for MeshError {}
+
+impl From<IdentityMismatch> for MeshError {
+    fn from(m: IdentityMismatch) -> Self {
+        match m {
+            IdentityMismatch::Rom => Self::RomMismatch,
+            IdentityMismatch::Config => Self::ConfigMismatch,
+        }
+    }
+}
 
 /// The host side of the N-peer UDP roster handshake.
 ///
@@ -187,7 +204,7 @@ impl std::error::Error for MeshError {}
 /// roster is re-sent a few times to ride out loss.
 pub struct MeshHost {
     socket: Option<UdpSocket>,
-    rom_hash: [u8; 32],
+    identity: SessionIdentity,
     num_players: u8,
     /// `addr -> player index`, in adoption order (the host itself is player 0,
     /// never in this map).
@@ -223,13 +240,13 @@ impl MeshHost {
         local: SocketAddr,
         host_gameplay_addr: SocketAddr,
         num_players: u8,
-        rom_hash: [u8; 32],
+        identity: SessionIdentity,
     ) -> io::Result<Self> {
         let socket = UdpSocket::bind(local)?;
         socket.set_nonblocking(true)?;
         Ok(Self {
             socket: Some(socket),
-            rom_hash,
+            identity,
             num_players: num_players.clamp(2, 4),
             joiners: BTreeMap::new(),
             host_addr: host_gameplay_addr,
@@ -322,13 +339,11 @@ impl MeshHost {
         }
 
         for (msg, from) in inbound {
-            if let NetMessage::Sync { magic, rom_hash } = msg {
+            if let NetMessage::Sync { magic, identity } = msg {
                 if magic != NetMessage::SYNC_MAGIC {
                     continue;
                 }
-                if rom_hash != self.rom_hash {
-                    return Err(MeshError::RomMismatch);
-                }
+                self.identity.check(&identity).map_err(MeshError::from)?;
                 // Adopt this source as a new joiner IF there is still room and it
                 // is not already known (idempotent — a re-sent Sync from a known
                 // joiner must not shift indices).
@@ -403,7 +418,7 @@ impl MeshHost {
 pub struct MeshJoiner {
     socket: Option<UdpSocket>,
     host: SocketAddr,
-    rom_hash: [u8; 32],
+    identity: SessionIdentity,
     /// This joiner's own player index (assigned by the host scheme; the frontend
     /// supplies it, or it is discovered from the roster — see module docs).
     my_player: u8,
@@ -426,13 +441,13 @@ impl MeshJoiner {
         local: SocketAddr,
         host: SocketAddr,
         my_player: u8,
-        rom_hash: [u8; 32],
+        identity: SessionIdentity,
     ) -> io::Result<Self> {
         let socket = UdpSocket::bind(local)?;
         socket.set_nonblocking(true)?;
         let sync = NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
-            rom_hash,
+            identity,
         }
         .to_bytes();
         let _ = socket.send_to(&sync, host);
@@ -440,7 +455,7 @@ impl MeshJoiner {
         Ok(Self {
             socket: Some(socket),
             host,
-            rom_hash,
+            identity,
             my_player,
             started: now,
             timeout: Self::DEFAULT_TIMEOUT,
@@ -495,10 +510,10 @@ impl MeshJoiner {
             match socket.recv_from(&mut buf) {
                 Ok((len, _from)) => match NetMessage::from_bytes(&buf[..len]) {
                     Some(NetMessage::Roster { peers }) => roster = Some(peers),
-                    Some(NetMessage::Sync { magic, rom_hash })
-                        if magic == NetMessage::SYNC_MAGIC && rom_hash != self.rom_hash =>
+                    Some(NetMessage::Sync { magic, identity })
+                        if magic == NetMessage::SYNC_MAGIC =>
                     {
-                        return Err(MeshError::RomMismatch);
+                        self.identity.check(&identity).map_err(MeshError::from)?;
                     }
                     _ => {}
                 },
@@ -544,7 +559,7 @@ impl MeshJoiner {
         if due && let Some(socket) = self.socket.as_ref() {
             let sync = NetMessage::Sync {
                 magic: NetMessage::SYNC_MAGIC,
-                rom_hash: self.rom_hash,
+                identity: self.identity,
             }
             .to_bytes();
             let _ = socket.send_to(&sync, self.host);
@@ -618,7 +633,7 @@ mod tests {
     /// order.
     fn run_roster_handshake(
         num_players: u8,
-        rom_hash: [u8; 32],
+        rom_hash: SessionIdentity,
     ) -> (UdpMeshTransport, Vec<UdpMeshTransport>) {
         // Probe a free loopback port so the host's listening addr == its
         // gameplay addr (correct for loopback; an internet deployment swaps in
@@ -662,7 +677,7 @@ mod tests {
 
     #[test]
     fn three_player_roster_handshake_wires_full_mesh() {
-        let hash = [0x55u8; 32];
+        let hash = SessionIdentity::new([0x55u8; 32], [0; 32]);
         let (host, joiners) = run_roster_handshake(3, hash);
         // Host reaches 2 joiners; each joiner reaches 2 others (host + 1 joiner).
         assert_eq!(host.peers().len(), 2, "host wired to both joiners");
@@ -676,9 +691,16 @@ mod tests {
         let probe = UdpSocket::bind(loopback()).unwrap();
         let port = probe.local_addr().unwrap();
         drop(probe);
-        let mut host = MeshHost::bind(port, port, 3, [0x11u8; 32]).unwrap();
+        let mut host =
+            MeshHost::bind(port, port, 3, SessionIdentity::new([0x11u8; 32], [0; 32])).unwrap();
         // A joiner with the WRONG rom hash dials in.
-        let mut bad = MeshJoiner::connect(loopback(), port, 1, [0x22u8; 32]).unwrap();
+        let mut bad = MeshJoiner::connect(
+            loopback(),
+            port,
+            1,
+            SessionIdentity::new([0x22u8; 32], [0; 32]),
+        )
+        .unwrap();
         let mut rejected = false;
         for _ in 0..500 {
             let _ = bad.pump();
@@ -691,6 +713,29 @@ mod tests {
         assert!(rejected, "host rejected the mismatched-ROM joiner");
     }
 
+    /// v2.9.8 — same ROM, different configuration: the host refuses the
+    /// joiner with `ConfigMismatch`.
+    #[test]
+    fn host_rejects_config_mismatch() {
+        let probe = UdpSocket::bind(loopback()).unwrap();
+        let port = probe.local_addr().unwrap();
+        drop(probe);
+        let rom = [0x11u8; 32];
+        let mut host = MeshHost::bind(port, port, 3, SessionIdentity::new(rom, [1; 32])).unwrap();
+        let mut bad =
+            MeshJoiner::connect(loopback(), port, 1, SessionIdentity::new(rom, [2; 32])).unwrap();
+        let mut rejected = false;
+        for _ in 0..500 {
+            let _ = bad.pump();
+            if matches!(host.pump(), Err(MeshError::ConfigMismatch)) {
+                rejected = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(rejected, "host rejected the differently configured joiner");
+    }
+
     #[test]
     fn host_adoption_is_idempotent_for_duplicate_sync() {
         // A joiner that re-sends Sync many times must be adopted ONCE (its index
@@ -698,9 +743,10 @@ mod tests {
         let probe = UdpSocket::bind(loopback()).unwrap();
         let port = probe.local_addr().unwrap();
         drop(probe);
-        let mut host = MeshHost::bind(port, port, 2, [0x77u8; 32]).unwrap();
+        let id = SessionIdentity::new([0x77u8; 32], [0; 32]);
+        let mut host = MeshHost::bind(port, port, 2, id).unwrap();
         let listen = host.local_addr().unwrap();
-        let mut j = MeshJoiner::connect(loopback(), listen, 1, [0x77u8; 32]).unwrap();
+        let mut j = MeshJoiner::connect(loopback(), listen, 1, id).unwrap();
         let mut done = false;
         for _ in 0..500 {
             let _ = j.pump();

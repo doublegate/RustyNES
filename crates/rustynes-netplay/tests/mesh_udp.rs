@@ -32,6 +32,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_netplay::SessionIdentity;
 use rustynes_netplay::{
     MeshHost, MeshJoiner, NetplayError, RollbackSession, SessionConfig, SplitMix64,
     UdpMeshTransport, fnv1a64,
@@ -103,7 +104,7 @@ fn loopback() -> SocketAddr {
 
 /// Run the multi-joiner roster handshake on loopback, returning the per-player
 /// mesh transports in player order (index 0 = host). Bounded; never hangs.
-fn run_roster_handshake(num_players: u8, rom_hash: [u8; 32]) -> Vec<UdpMeshTransport> {
+fn run_roster_handshake(num_players: u8, rom_hash: SessionIdentity) -> Vec<UdpMeshTransport> {
     // Probe a free port so the host's listening addr == its gameplay addr (true
     // on loopback; an internet deployment substitutes the STUN public addr).
     let probe = UdpSocket::bind(loopback()).unwrap();
@@ -156,7 +157,7 @@ fn run_n_sessions_over_udp(
     let mut nes: Vec<Nes> = (0..num_players)
         .map(|_| Nes::from_rom(rom).expect("load peer nes"))
         .collect();
-    let hash = *nes[0].rom_sha256();
+    let hash = SessionIdentity::of(&nes[0]);
 
     let transports = run_roster_handshake(num_players, hash);
 

@@ -35,7 +35,9 @@
 
 use std::collections::VecDeque;
 
-use rustynes_core::{FrameInput, Movie, Nes, Region, StartPoint};
+use rustynes_core::{
+    BoardDescription, FrameInput, HardwareOptions, Movie, Nes, Region, StartPoint,
+};
 
 /// Default frames of input/anchor history to retain — 60 s @ 60 fps.
 ///
@@ -71,6 +73,13 @@ struct Anchor {
     seq: u64,
     /// The deterministic save-state blob (`Nes::snapshot`).
     blob: Vec<u8>,
+    /// v2.9.8 — the emulation options in force when the state was stashed. A
+    /// snapshot does not carry configuration, so an exported clip takes them
+    /// from its anchor; captured per anchor because the player may change
+    /// them mid-session.
+    options: HardwareOptions,
+    /// v2.9.8 — the cartridge board, for the exported movie's header check.
+    board: BoardDescription,
 }
 
 /// Errors from [`HistoryViewer::export_last_seconds`].
@@ -130,6 +139,8 @@ impl std::fmt::Debug for Anchor {
         f.debug_struct("Anchor")
             .field("seq", &self.seq)
             .field("blob_len", &self.blob.len())
+            .field("options", &self.options)
+            .field("board", &self.board)
             .finish()
     }
 }
@@ -171,17 +182,16 @@ impl HistoryViewer {
         let seq = self.next_seq;
         self.next_seq += 1;
         let nes_frame = nes.frame();
-        let input = FrameInput {
-            p1: nes.buttons(0),
-            p2: nes.buttons(1),
-            expansion: 0,
-        };
+        // All four ports (v2.9.8), as `MovieRecorder::capture` records them.
+        let input = FrameInput::held_on(nes);
         // Stash a start-anchor on the cadence (and always on the very first
         // recorded frame, so an early export still has a base).
         if self.anchors.is_empty() || self.since_anchor + 1 >= self.anchor_period {
             self.anchors.push_back(Anchor {
                 seq,
                 blob: nes.snapshot(),
+                options: HardwareOptions::capture(nes),
+                board: BoardDescription::capture(nes),
             });
             self.since_anchor = 0;
         } else {
@@ -316,6 +326,8 @@ impl HistoryViewer {
         Ok(Movie {
             region,
             rom_sha256,
+            options: anchor.options.clone(),
+            board: Some(anchor.board),
             start: StartPoint::SaveState(anchor.blob.clone()),
             frames,
             // An exported rewind window is a straight capture — no re-records.

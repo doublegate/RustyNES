@@ -2844,7 +2844,9 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_play_toggle(&self) {
         if self.emu.lock().movie.is_playing() {
-            self.emu.lock().movie.stop_playback();
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            emu.movie.stop_playback(emu.nes.as_mut());
             eprintln!("rustynes: movie playback stopped");
             return;
         }
@@ -2898,11 +2900,10 @@ impl App {
             let Some(nes) = emu.nes.as_mut() else {
                 return false;
             };
-            if let Err(e) = movie.seek_to_start(nes) {
-                eprintln!("rustynes: movie seek failed (wrong ROM?): {e}");
+            if let Err(e) = emu.movie.start_playback(nes, movie) {
+                eprintln!("rustynes: movie seek failed: {e}");
                 return false;
             }
-            emu.movie.start_playback(movie);
             true
         });
         if !began {
@@ -2927,7 +2928,7 @@ impl App {
     fn handle_movie_branch(&self) {
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_ref() else {
+        let Some(nes) = emu.nes.as_mut() else {
             eprintln!("rustynes: movie branch: no ROM loaded");
             return;
         };
@@ -3027,11 +3028,10 @@ impl App {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
-                if let Err(e) = movie.seek_to_start(nes) {
+                if let Err(e) = emu.movie.start_playback(nes, movie) {
                     seek_error = Some(e);
                     return false;
                 }
-                emu.movie.start_playback(movie);
                 true
             });
             if !began {
@@ -3147,10 +3147,7 @@ impl App {
                 .filter(|ed| !ed.is_empty())
                 .and_then(|ed| {
                     let guard = self.emu.lock();
-                    guard
-                        .nes
-                        .as_ref()
-                        .map(|nes| ed.to_movie(nes.region(), *nes.rom_sha256()))
+                    guard.nes.as_ref().map(|nes| ed.to_movie(nes))
                 });
             tas_movie.or_else(|| {
                 let mut guard = self.emu.lock();
@@ -3715,7 +3712,9 @@ impl App {
                         event_loop,
                     );
                 } else if playing {
-                    self.emu.lock().movie.stop_playback();
+                    let mut guard = self.emu.lock();
+                    let emu = &mut *guard;
+                    emu.movie.stop_playback(emu.nes.as_mut());
                 }
             }
             ReplayRequest::Seek(target) => {
@@ -3863,7 +3862,8 @@ impl App {
     fn handle_movie_play_toggle_wasm(&self) {
         let mut guard = self.emu.lock();
         if guard.movie.is_playing() {
-            guard.movie.stop_playback();
+            let emu = &mut *guard;
+            emu.movie.stop_playback(emu.nes.as_mut());
             crate::wasm_io::log("movie playback stopped");
             return;
         }
@@ -3877,7 +3877,7 @@ impl App {
     fn handle_movie_branch_wasm(&self) {
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_ref() else {
+        let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie branch: no ROM loaded");
             return;
         };
@@ -3914,12 +3914,11 @@ impl App {
             crate::wasm_io::log("movie play: no ROM loaded");
             return;
         };
-        if let Err(e) = movie.seek_to_start(nes) {
-            crate::wasm_io::log(&format!("movie seek failed (wrong ROM?): {e:?}"));
+        let total = movie.len();
+        if let Err(e) = emu.movie.start_playback(nes, movie) {
+            crate::wasm_io::log(&format!("movie seek failed: {e}"));
             return;
         }
-        let total = movie.len();
-        emu.movie.start_playback(movie);
         // The seek (power-cycle or restore) reset emulator state; restart the
         // frame clock so the first replayed frame is due now.
         emu.next_frame_time = Some(Instant::now());
@@ -7153,11 +7152,17 @@ impl App {
                 host: _,
                 num_players,
             } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     crate::wasm_io::log("rustynes: browser netplay needs a loaded ROM first");
                     return;
                 };
-                let mut driver = crate::wasm_netplay::BrowserNetplay::new(rom_hash);
+                let mut driver = crate::wasm_netplay::BrowserNetplay::new(identity);
                 driver.set_num_players(num_players);
                 let ice = self.config.netplay.stun_servers.clone();
                 match driver.connect(&signaling_url, &room, &ice) {
@@ -7221,7 +7226,13 @@ impl App {
                 );
             }
             NetplayRequest::Host { port, num_players } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     return;
                 };
                 // v2.8.0 Phase 5 increment 3 — pause the emulation thread
@@ -7232,17 +7243,23 @@ impl App {
                 self.pause_emu_thread_for_netplay();
                 // Host "listen" mode: bind the local port and learn the joiner's
                 // address from its first Sync — no remote to pre-enter or parse.
-                self.netplay.start_host(port, num_players, rom_hash);
+                self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
                     Ok(addr) => {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
-                        self.netplay.start_join(addr, rom_hash);
+                        self.netplay.start_join(addr, identity);
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }
@@ -7250,14 +7267,20 @@ impl App {
             // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
             // Join, but the spectator never authors input (see `start_spectate`).
             NetplayRequest::Spectate { remote } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
                     Ok(addr) => {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
-                        self.netplay.start_spectate(addr, rom_hash);
+                        self.netplay.start_spectate(addr, identity);
                         // v2.9.0 — the cold boot `start_spectate`'s doc has always
                         // promised and nothing performed: the players' timeline
                         // starts at a power-on with cleared save RAM, and a

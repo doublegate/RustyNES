@@ -1560,10 +1560,35 @@ impl Nes {
     /// iNES-1.0 Vs. dumps default to the 2C03 palette (no NES 2.0 byte-13);
     /// the per-game database ([`crate::vs_db`]) supplies the correct
     /// 2C04-000x / 2C05 type, which the frontend applies through this setter.
-    /// Affects only the colour LUT the PPU emits through, never game logic.
-    /// No effect on non-Vs. carts.
+    /// Mostly the colour LUT the PPU emits through, but a 2C05 also returns
+    /// its identification bits in `$2002` and swaps `$2000` / `$2001`, which
+    /// game code reads -- so it is emulation state, and movies and netplay
+    /// carry it (v2.9.8, [`crate::HardwareOptions`]). (Until v2.9.8 this said
+    /// "never game logic", which the 2C05 path contradicts.) No effect on
+    /// non-Vs. carts.
     pub const fn set_vs_ppu_type(&mut self, t: rustynes_mappers::VsPpuType) {
         self.bus.set_vs_ppu_type(t);
+    }
+
+    /// v2.9.8 — the Vs. System PPU type in effect: the header's, or the one a
+    /// later [`Self::set_vs_ppu_type`] installed. [`rustynes_mappers::VsPpuType::None`]
+    /// on every non-Vs. cart.
+    ///
+    /// Read by [`crate::HardwareOptions::capture`]: on a 2C05 the type also
+    /// sets the `$2002` identification bits and swaps `$2000` / `$2001`, which
+    /// game code reads, so a movie or a netplay peer must run the same one.
+    #[must_use]
+    pub const fn vs_ppu_type(&self) -> rustynes_mappers::VsPpuType {
+        self.bus.cart.vs_ppu_type
+    }
+
+    /// v2.9.8 — the parsed cartridge description the machine was built from
+    /// (mapper, submapper, mirroring, RAM sizes, console type ...), after any
+    /// load-time header correction. Crate-internal: read by
+    /// [`crate::BoardDescription::capture`].
+    #[must_use]
+    pub(crate) const fn cartridge(&self) -> &rustynes_mappers::Cartridge {
+        &self.bus.cart
     }
 
     /// Latch a Vs. System coin insertion on the given acceptor (0 = #1, 1 = #2).
@@ -1961,6 +1986,13 @@ impl Nes {
     /// affect mappers with on-cart VRAM (4-screen).
     pub const fn set_mirroring_override(&mut self, m: Option<rustynes_mappers::Mirroring>) {
         self.bus.set_mirroring_override(m);
+    }
+
+    /// v2.9.8 — the per-game nametable mirroring override in effect (`None` =
+    /// the mapper decides). See [`Self::set_mirroring_override`].
+    #[must_use]
+    pub const fn mirroring_override(&self) -> Option<rustynes_mappers::Mirroring> {
+        self.bus.mirroring_override()
     }
 
     /// Whether the loaded mapper's nametable mirroring is **hardwired** by the

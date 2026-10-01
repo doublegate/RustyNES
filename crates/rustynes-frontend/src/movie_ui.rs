@@ -25,8 +25,27 @@
 //!   file picker arrives as `AppEvent::MovieLoaded` and plays back. Movies are
 //!   not persisted in browser storage (no `IndexedDB`). This module is
 //!   target-agnostic and holds no native-only types.
+//!
+//! # Emulation options (v2.9.8)
+//!
+//! A `.rnm` carries the [`HardwareOptions`] it was recorded with, and the
+//! movie's options -- not the player's Settings -- decide how it replays:
+//!
+//! - **Playback** captures the player's options, lets
+//!   [`Movie::seek_to_start`] apply the movie's, and re-asserts them before
+//!   every frame ([`HardwareOptions::apply_live`]), so a Settings change, a
+//!   cheat-panel resync or a game-database edit made mid-movie cannot reach
+//!   the replayed run. [`MovieUi::stop_playback`] puts the player's options
+//!   back ([`HardwareOptions::restore_after_playback`]).
+//! - **Recording** captures the options once, at the start, and holds them
+//!   the same way for the length of the recording, because the movie records
+//!   them once. The overclock is held at stock timing while recording (the
+//!   v2.9.7 rule), so a recording always says 0 extra scanlines.
+//!
+//! Settings changed while a movie runs therefore take effect when it stops
+//! (playback) or at the next ROM load or power cycle (recording).
 
-use rustynes_core::{Movie, MovieRecorder, Nes};
+use rustynes_core::{HardwareOptions, Movie, MovieError, MovieRecorder, Nes};
 
 /// A read-only port-topology + timebase snapshot for the Replay / TAS window.
 ///
@@ -96,6 +115,9 @@ pub struct MovieUi {
 struct Playback {
     movie: Movie,
     cursor: usize,
+    /// v2.9.8 — the player's options as they were before the movie's were
+    /// applied, put back by [`MovieUi::stop_playback`].
+    player_options: HardwareOptions,
 }
 
 impl MovieUi {
@@ -154,7 +176,12 @@ impl MovieUi {
         if self.recorder.is_some() {
             return;
         }
-        self.playback = None;
+        // v2.9.8 — a power-on recording is the player's own run: put their
+        // options back first if a movie was playing.
+        self.stop_playback(Some(nes));
+        // v2.9.7 rule: a recording runs at stock timing. Set before the
+        // options are captured so the movie records what the frames run with.
+        nes.set_extra_scanlines(0);
         // v2.9.0 — a power cycle AND cleared cartridge RAM, the state playback
         // reconstructs (`Movie::seek_to_start`); see `power_on_for_movie`.
         rustynes_core::power_on_for_movie(nes);
@@ -169,8 +196,14 @@ impl MovieUi {
     /// save-state start point). Stops any in-progress playback. Used both
     /// by the dedicated branch gesture and when the user starts recording
     /// mid-game without wanting a power-on reset.
-    pub fn start_recording_branch(&mut self, nes: &Nes, attest: bool) {
+    ///
+    /// v2.9.8: a branch continues the machine as it is, so a branch taken
+    /// from a playing movie keeps (and records) the MOVIE's options rather
+    /// than restoring the player's; the player's return at the next ROM load
+    /// or power cycle, when the app re-applies its configuration.
+    pub fn start_recording_branch(&mut self, nes: &mut Nes, attest: bool) {
         self.playback = None;
+        nes.set_extra_scanlines(0);
         let mut rec = MovieRecorder::from_current_state(nes);
         if attest {
             rec.enable_attestation();
@@ -191,12 +224,45 @@ impl MovieUi {
         self.playback.as_ref().map(|pb| pb.movie.clone())
     }
 
-    /// Begin playing `movie`. The caller must have already
-    /// [`Movie::seek_to_start`]ed `nes` to the movie's start point. Stops
-    /// any in-progress recording.
-    pub fn start_playback(&mut self, movie: Movie) {
+    /// Begin playing `movie`: capture the player's options, move `nes` to
+    /// the movie's start point under the movie's options
+    /// ([`Movie::seek_to_start`]), and drive input from the recording.
+    /// Stops any in-progress recording (and any earlier playback, whose
+    /// player options are the ones kept).
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Movie::seek_to_start`] refuses (another ROM, region or
+    /// header, a bad start state). `nes` and the movie state are then left
+    /// exactly as they were.
+    pub fn start_playback(&mut self, nes: &mut Nes, movie: Movie) -> Result<(), MovieError> {
+        // A movie already playing has the player's options saved; keep those,
+        // not the first movie's.
+        let player_options = self.playback.as_ref().map_or_else(
+            || HardwareOptions::capture(nes),
+            |pb| pb.player_options.clone(),
+        );
+        movie.seek_to_start(nes)?;
         self.recorder = None;
-        self.playback = Some(Playback { movie, cursor: 0 });
+        self.playback = Some(Playback {
+            movie,
+            cursor: 0,
+            player_options,
+        });
+        Ok(())
+    }
+
+    /// v2.9.8 — the overclock the current movie session runs with: the
+    /// playing movie's recorded value, stock timing (0) while recording, or
+    /// `None` when idle (the player's own setting applies).
+    #[must_use]
+    pub fn session_extra_scanlines(&self) -> Option<u16> {
+        if let Some(rec) = self.recorder.as_ref() {
+            return Some(rec.options().extra_scanlines);
+        }
+        self.playback
+            .as_ref()
+            .map(|pb| pb.movie.options.extra_scanlines)
     }
 
     /// v2.3.2 "Lucid" — drop the in-progress attestation, keeping the recording.
@@ -240,9 +306,21 @@ impl MovieUi {
         }
     }
 
-    /// Stop playback (control returns to live input). No-op if not playing.
-    pub fn stop_playback(&mut self) {
-        self.playback = None;
+    /// Stop playback (control returns to live input) and put the player's
+    /// options back on `nes` (v2.9.8). No-op if not playing.
+    ///
+    /// `nes` is `None` only where the console is already gone (a ROM swap
+    /// replaced it); the next machine is built from the player's settings
+    /// anyway.
+    pub fn stop_playback(&mut self, nes: Option<&mut Nes>) {
+        if let Some(pb) = self.playback.take()
+            && let Some(nes) = nes
+        {
+            // The player's own codes were valid when captured from this
+            // machine, so this cannot fail.
+            let restored = pb.player_options.restore_after_playback(nes);
+            debug_assert!(restored.is_ok(), "player options re-apply");
+        }
     }
 
     /// v1.5.0 "Lens" Workstream C2 — deterministically seek the active playback
@@ -268,8 +346,7 @@ impl MovieUi {
             let Some(input) = pb.movie.frames.get(i).copied() else {
                 break;
             };
-            nes.set_buttons(0, input.p1);
-            nes.set_buttons(1, input.p2);
+            input.apply_to(nes);
             nes.run_frame();
         }
         pb.cursor = target;
@@ -289,6 +366,10 @@ impl MovieUi {
     /// Returns `true` for the idle and recording paths.
     pub fn before_frame(&mut self, nes: &mut Nes) -> bool {
         if let Some(rec) = self.recorder.as_mut() {
+            // v2.9.8 — hold the recording's options in place; the movie
+            // records them once, at the start.
+            let held = rec.options().apply_live(nes);
+            debug_assert!(held.is_ok(), "captured options re-apply");
             rec.capture(nes);
             return true;
         }
@@ -301,8 +382,13 @@ impl MovieUi {
             let Some(input) = pb.movie.frames.get(pb.cursor).copied() else {
                 return false;
             };
-            nes.set_buttons(0, input.p1);
-            nes.set_buttons(1, input.p2);
+            // v2.9.8 — hold the movie's options in place against anything
+            // the app pushed since the last frame (a Settings change, the
+            // cheat panel's per-frame resync, a game-database edit). Codes
+            // were validated when the movie was parsed.
+            let held = pb.movie.options.apply_live(nes);
+            debug_assert!(held.is_ok(), "movie options re-apply");
+            input.apply_to(nes);
             pb.cursor += 1;
             return true;
         }
@@ -500,8 +586,7 @@ mod tests {
 
         // Replay it.
         let mut replay = Nes::from_rom(&rom).unwrap();
-        movie.seek_to_start(&mut replay).unwrap();
-        ui.start_playback(movie);
+        ui.start_playback(&mut replay, movie).unwrap();
         assert_eq!(ui.mode(), MovieMode::Playing);
         assert_eq!(ui.status().total, 3);
 
@@ -538,8 +623,7 @@ mod tests {
         movie.seek_to_start(&mut linear).unwrap();
         for i in 0..7 {
             let f = movie.frames[i];
-            linear.set_buttons(0, f.p1);
-            linear.set_buttons(1, f.p2);
+            f.apply_to(&mut linear);
             linear.run_frame();
         }
         let linear_fb = linear.framebuffer().to_vec();
@@ -547,8 +631,7 @@ mod tests {
 
         // Seek to frame 7 from a fresh playback.
         let mut seeked = Nes::from_rom(&rom).unwrap();
-        movie.seek_to_start(&mut seeked).unwrap();
-        ui.start_playback(movie);
+        ui.start_playback(&mut seeked, movie).unwrap();
         assert!(ui.seek_playback(&mut seeked, 7));
         assert_eq!(ui.status().cursor, 7);
         assert_eq!(seeked.framebuffer(), linear_fb.as_slice());
@@ -570,8 +653,7 @@ mod tests {
         }
         let movie = ui.finish_recording().unwrap();
         let mut replay = Nes::from_rom(&rom).unwrap();
-        movie.seek_to_start(&mut replay).unwrap();
-        ui.start_playback(movie);
+        ui.start_playback(&mut replay, movie).unwrap();
         // Seeking past the end clamps to the movie length.
         assert!(ui.seek_playback(&mut replay, 999));
         assert_eq!(ui.status().cursor, 3);
@@ -594,19 +676,59 @@ mod tests {
         let movie = ui.finish_recording().unwrap();
 
         let mut replay = Nes::from_rom(&rom).unwrap();
-        movie.seek_to_start(&mut replay).unwrap();
-        ui.start_playback(movie);
+        ui.start_playback(&mut replay, movie).unwrap();
         assert!(ui.is_playing());
         // Starting a recording must drop playback.
-        ui.start_recording_branch(&replay, true);
+        ui.start_recording_branch(&mut replay, true);
         assert!(ui.is_recording());
         assert!(!ui.is_playing());
         // Starting playback again must drop the recorder.
         let m2 = ui.finish_recording().unwrap();
         let mut r2 = Nes::from_rom(&rom).unwrap();
-        m2.seek_to_start(&mut r2).unwrap();
-        ui.start_playback(m2);
+        ui.start_playback(&mut r2, m2).unwrap();
         assert!(ui.is_playing());
         assert!(!ui.is_recording());
+    }
+
+    /// v2.9.8 — a movie's options govern its playback whatever the player
+    /// has set, survive a mid-movie change of the player's settings, and give
+    /// way to the player's own options when playback stops.
+    #[test]
+    fn playback_holds_the_movie_options_then_restores_the_players() {
+        use rustynes_core::ConsoleModel;
+        let rom = synth_nrom();
+        let mut rec = Nes::from_rom(&rom).unwrap();
+        rec.set_console_model(ConsoleModel::Famicom);
+        rec.set_oam_decay(true);
+        let mut ui = MovieUi::default();
+        ui.start_recording_power_on(&mut rec, false);
+        for _ in 0..3 {
+            ui.before_frame(&mut rec);
+            rec.run_frame();
+        }
+        let movie = ui.finish_recording().unwrap();
+        assert_eq!(movie.options.console_model, ConsoleModel::Famicom);
+        assert!(
+            movie.options.oam_decay,
+            "the power cycle no longer drops it"
+        );
+
+        // The player runs the NES model with OAM decay off.
+        let mut player = Nes::from_rom(&rom).unwrap();
+        ui.start_playback(&mut player, movie).unwrap();
+        assert_eq!(player.console_model(), ConsoleModel::Famicom);
+        // A Settings push mid-movie is overridden before the next frame.
+        player.set_oam_decay(false);
+        assert!(ui.before_frame(&mut player));
+        assert!(player.oam_decay_enabled(), "the movie's option holds");
+        player.run_frame();
+
+        ui.stop_playback(Some(&mut player));
+        assert_eq!(
+            player.console_model(),
+            ConsoleModel::Nes,
+            "player's model back"
+        );
+        assert!(!player.oam_decay_enabled(), "player's OAM decay back");
     }
 }

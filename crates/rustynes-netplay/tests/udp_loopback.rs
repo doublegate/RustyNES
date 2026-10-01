@@ -32,6 +32,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_netplay::SessionIdentity;
 use rustynes_netplay::{
     NetplayError, RollbackSession, SessionConfig, SplitMix64, UdpTransport, fnv1a64,
 };
@@ -118,7 +119,7 @@ fn udp_asymmetric_idle_drive_stays_in_sync_sprite_heavy() {
         let (t0, t1) = udp_pair();
         let mut nes0 = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("{rel}: {e:?}"));
         let mut nes1 = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("{rel}: {e:?}"));
-        let hash = *nes0.rom_sha256();
+        let hash = SessionIdentity::of(&nes0);
         let mut s0 = RollbackSession::new(SessionConfig::default(), t0, hash);
         let mut s1 = RollbackSession::new(
             SessionConfig {
@@ -184,7 +185,7 @@ fn run_two_sessions_over_udp(
     let (t0, t1) = udp_pair();
     let mut nes0 = Nes::from_rom(rom).expect("load nestest p0");
     let mut nes1 = Nes::from_rom(rom).expect("load nestest p1");
-    let hash = *nes0.rom_sha256();
+    let hash = SessionIdentity::of(&nes0);
 
     let cfg0 = SessionConfig {
         local_player: 0,

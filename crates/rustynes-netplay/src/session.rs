@@ -51,7 +51,7 @@
 use rustynes_core::{Buttons, Nes};
 
 use crate::diagnostics::DesyncDiagnostics;
-use crate::message::{NetMessage, fnv1a64};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, fnv1a64};
 use crate::transport::Transport;
 
 /// The maximum number of players.
@@ -131,6 +131,16 @@ pub enum NetplayError {
     /// two peers are not running the same game.
     #[error("rom mismatch: peer is running a different ROM")]
     RomMismatch,
+
+    /// v2.9.8 — the peer runs the same ROM on a differently configured
+    /// machine (emulation options, region or cartridge header), so the two
+    /// timelines would diverge.
+    #[error(
+        "configuration mismatch: the peer runs this ROM with different emulation \
+         settings (console model, power-on RAM, die revisions, overclock, Four Score, \
+         Vs. settings, Game Genie codes, region or header); match them and reconnect"
+    )]
+    ConfigMismatch,
 }
 
 /// Configuration for a [`RollbackSession`].
@@ -228,7 +238,7 @@ struct InputSlot {
 pub struct RollbackSession<T: Transport> {
     config: SessionConfig,
     transport: T,
-    rom_hash: [u8; 32],
+    identity: SessionIdentity,
 
     /// The next frame to be produced (== number of frames produced so far).
     current_frame: u32,
@@ -297,14 +307,14 @@ pub struct RollbackSession<T: Transport> {
 }
 
 impl<T: Transport> RollbackSession<T> {
-    /// Create a session for `rom_hash` (from [`Nes::rom_sha256`]). Sends the
-    /// opening `Sync` handshake immediately.
+    /// Create a session for `identity` ([`SessionIdentity::of`] the local
+    /// machine). Sends the opening `Sync` handshake immediately.
     ///
     /// # Panics
     ///
     /// Panics in debug builds if `config.num_players` is not in `2..=4` or
     /// `config.local_player >= config.num_players`.
-    pub fn new(config: SessionConfig, mut transport: T, rom_hash: [u8; 32]) -> Self {
+    pub fn new(config: SessionConfig, mut transport: T, identity: SessionIdentity) -> Self {
         debug_assert!(
             (2..=4).contains(&config.num_players),
             "num_players must be 2..=4"
@@ -315,12 +325,12 @@ impl<T: Transport> RollbackSession<T> {
         );
         transport.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
-            rom_hash,
+            identity,
         });
         let mut session = Self {
             config,
             transport,
-            rom_hash,
+            identity,
             current_frame: 0,
             last_confirmed_frame: None,
             remote_ack_frame: None,
@@ -628,12 +638,16 @@ impl<T: Transport> RollbackSession<T> {
 
         for msg in messages {
             match msg {
-                NetMessage::Sync { magic, rom_hash } => {
+                NetMessage::Sync { magic, identity } => {
                     if magic != NetMessage::SYNC_MAGIC {
                         continue;
                     }
-                    if rom_hash != self.rom_hash {
-                        return Err(NetplayError::RomMismatch);
+                    match self.identity.check(&identity) {
+                        Ok(()) => {}
+                        Err(IdentityMismatch::Rom) => return Err(NetplayError::RomMismatch),
+                        Err(IdentityMismatch::Config) => {
+                            return Err(NetplayError::ConfigMismatch);
+                        }
                     }
                     self.synced = true;
                 }
@@ -1058,7 +1072,7 @@ mod tests {
     #[test]
     fn remote_frame_beyond_lookahead_is_dropped_without_allocating() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (link, mut peer) = MemoryTransport::pair(LinkConditions::PERFECT, 11);
         let mut session = RollbackSession::new(SessionConfig::default(), link, hash);
         let mut nes = Nes::from_rom(&rom).unwrap();
@@ -1117,7 +1131,7 @@ mod tests {
         // run for over two years at 60 fps -- but the bound is the guard, so
         // it must hold at its own endpoint.
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (link, _peer) = MemoryTransport::pair(LinkConditions::PERFECT, 12);
         let mut session = RollbackSession::new(SessionConfig::default(), link, hash);
         session.current_frame = u32::MAX - 3;
@@ -1127,7 +1141,7 @@ mod tests {
     #[test]
     fn lookahead_window_edge_is_inclusive() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (link, mut peer) = MemoryTransport::pair(LinkConditions::PERFECT, 12);
         let mut session = RollbackSession::new(SessionConfig::default(), link, hash);
         let mut nes = Nes::from_rom(&rom).unwrap();
@@ -1165,7 +1179,7 @@ mod tests {
     #[test]
     fn window_covers_the_protocol_maximum_with_slack() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (link, _peer) = MemoryTransport::pair(LinkConditions::PERFECT, 13);
         let cfg = SessionConfig::default();
         let session = RollbackSession::new(cfg, link, hash);

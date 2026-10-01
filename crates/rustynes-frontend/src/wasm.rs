@@ -328,7 +328,7 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
                 //   recorded input; `false` => the movie is exhausted, so stop
                 //   playback and hand control back to live input.
                 if !emu.movie.before_frame(nes) {
-                    emu.movie.stop_playback();
+                    emu.movie.stop_playback(Some(nes));
                     log("movie playback finished");
                 }
                 nes.run_frame();
@@ -461,7 +461,11 @@ fn movie_record_toggle() {
 fn movie_play_toggle() {
     let playing = EMU.with(|emu| emu.borrow().movie.is_playing());
     if playing {
-        EMU.with(|emu| emu.borrow_mut().movie.stop_playback());
+        EMU.with(|emu| {
+            let mut emu = emu.borrow_mut();
+            let emu = &mut *emu;
+            emu.movie.stop_playback(emu.nes.as_mut());
+        });
         log("movie playback stopped");
         return;
     }
@@ -473,7 +477,7 @@ fn movie_branch() {
     EMU.with(|emu| {
         let mut emu = emu.borrow_mut();
         let emu = &mut *emu;
-        let Some(nes) = emu.nes.as_ref() else {
+        let Some(nes) = emu.nes.as_mut() else {
             log("movie branch: no ROM loaded");
             return;
         };
@@ -557,12 +561,11 @@ fn start_movie_from_bytes(bytes: &[u8]) {
             log("movie play: no ROM loaded");
             return;
         };
-        if let Err(e) = movie.seek_to_start(nes) {
-            log(&format!("movie seek failed (wrong ROM?): {e:?}"));
+        let total = movie.len();
+        if let Err(e) = emu.movie.start_playback(nes, movie) {
+            log(&format!("movie seek failed: {e}"));
             return;
         }
-        let total = movie.len();
-        emu.movie.start_playback(movie);
         log(&format!("movie playback started ({total} frames)"));
     });
 }
