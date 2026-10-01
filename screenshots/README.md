@@ -24,7 +24,7 @@ screenshots/
     └── pc10/                PlayChoice-10 dumps (2C03 RGB)
 ```
 
-477 PNGs across 170 subdirs of `external/` at v2.9.8, and 10 in `besteffort/`
+488 PNGs across 171 subdirs of `external/` at v2.9.8, and 10 in `besteffort/`
 across three BestEffort families (below). The subdir names match `tests/roms/external/` exactly, so a screenshot
 maps 1:1 to its ROM directory.
 

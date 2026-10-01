@@ -191,7 +191,10 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// and a RATCHET both ways: a blank boot not listed here fails, and a listed
 /// ROM that starts rendering fails too, until it is removed. Before v2.9.6
 /// these 60 kept the sweep permanently red, which is how v2.9.5's drift went
-/// unread.
+/// unread. v2.9.8 cut the list to 52: the dirty-tail header rule and the game
+/// database's NES 2.0 guard made seven of them render, two Doraemon hacks moved
+/// to `UNSUPPORTED` as the mapper 8 images they are, and one documented
+/// blank, Famicom Jump II, was added.
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
     "mapper-009-MMC2/Gradius II (J) (VC).zip",

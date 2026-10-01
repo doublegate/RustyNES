@@ -1079,7 +1079,10 @@ first: mapper 153's CHR-RAM aliasing, non-power-of-two images on the MMC3-based
 boards (mapper 191), and the `$4017` frame-IRQ inhibit (mapper 105). Four dumps
 carry the wrong mapper in their header and are recorded in `docs/mappers.md`,
 not pinned. *Famicom Jump II* (153) waits for a reset on zeroed WRAM, as its page
-documents, and is in `KNOWN_BLANK`. *Famicom Yarou 54* is T-GA23C-POWERON.
+documents, and is in `KNOWN_BLANK`. Until the game-database NES 2.0 guard landed
+later in v2.9.8, the vendored database had been rewriting this dump to mapper
+16, so its first baseline was taken on the wrong board; it was re-taken on 153,
+and it is still blank there. *Famicom Yarou 54* is T-GA23C-POWERON.
 Mappers 194 and 195 still have no dump.
 
 ## T-GA23C-POWERON — mapper 45's register-2 power-on value (found v2.9.8)
