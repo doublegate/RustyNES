@@ -655,7 +655,8 @@ fn ines1_as_nes2(bytes: &[u8], region: Region) -> Option<[u8; 16]> {
     header[12] = region_code;
 
     // Byte 10's low nibble is volatile PRG-RAM and its high nibble PRG-NVRAM;
-    // the parser sums them, so either place gives the same size, and the
+    // the boards allocate the two together (`Header::prg_ram_window`), so
+    // either place gives the same window, and the
     // battery flag (byte 6 bit 1, carried over above) is what the boards read.
     let prg_ram = if h.has_battery {
         SHIFT_8K << 4

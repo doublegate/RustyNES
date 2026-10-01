@@ -86,6 +86,30 @@ cycle-accurate core later replaced.
   a permanent identity over carrying the old one forward. Two dumps of one
   game that differ only in their header now share saves. The Vs. System
   database stays keyed by the whole-file hash, the new `Nes::image_sha256`.
+
+
+
+- **`rustynes_mappers::Header` models every header field and is
+  `#[non_exhaustive]` (API break).** It gains the Vs. hardware type
+  (`vs_hardware_type`, the new `VsHardwareType`), the extended console type
+  (`extended_console_type`, `ExtendedConsoleType`), the miscellaneous ROM count
+  (`misc_rom_count`), the default expansion device (`default_expansion_device`,
+  `ExpansionDevice`, the NESdev codes by name) and the NVRAM sizes
+  (`prg_nvram_size`, `chr_nvram_size`), all read from the NES 2.0 page. An
+  iNES 1.0 header reports fixed values for them (`None`, 0, `Unspecified`),
+  whatever junk its bytes 8-15 hold. The header editor shows and edits all of
+  them. Migration: build a `Header` outside the crate with `Header::default()`
+  and field assignment, or with `parse_header`; `vs_dual_system` is now the
+  method `is_vs_dual_system()`; and `prg_ram_size` now holds only the volatile
+  PRG-RAM, with the old sum (volatile plus NVRAM, the window every board
+  allocates) as `prg_ram_window()`. ROM loading uses the window, so every board
+  allocates exactly what it did and emulation output is unchanged. The
+  canonical encoding now writes everything it reads, including sizes that need
+  the exponent notation, so `parse_header(canonical(h)) == h` for every header
+  `parse_header` produces; `serialize_header_preserving` still keeps every
+  reserved bit. The editor's PRG/CHR unit fields stop at `$EFF`: a larger count
+  used to be written with a byte-9 nibble of `$F`, which reads back as an
+  exponent-notation size. ADR 0042's 2026-10-01 amendment.
 - **Colour emphasis follows the documented hardware model.** PPUMASK bits 5-7
   used to dim the other two colour channels to 13/16 per set bit, which turned
   all three bits into an even, heavy dim. The console has one attenuator shared
@@ -280,6 +304,13 @@ cycle-accurate core later replaced.
   the ROM identity leaves out (see the next entry), so no game's saves move
   because of it.
 ### Removed
+
+- **`rustynes_mappers::serialize_header` is removed (API break).** Deprecated
+  since v2.9.3, it encoded a `Header` from scratch and zeroed every bit the
+  type did not model. Use `serialize_header_preserving(header, original)`; to
+  encode a header with no file behind it, pass an empty iNES 1.0 header
+  (`"NES\x1A"` and twelve zeros) as `original`. The canonical encoder behind
+  both stays private to the crate. ADR 0042.
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
   `aarch64-nintendo-switch-freestanding`, a tier-3 Rust target without the

@@ -154,8 +154,10 @@ pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
-#[allow(deprecated)] // `serialize_header` stays exported until v3.0.0 (ADR 0042).
-pub use header::{Header, parse_header, serialize_header, serialize_header_preserving};
+pub use header::{
+    ExpansionDevice, ExtendedConsoleType, Header, VsHardwareType, parse_header,
+    serialize_header_preserving,
+};
 pub use homebrew_boards::{Action53M28, Cufrom29, Gtrom111, Inl31, MagicFloor218, Unrom512M30};
 pub use jaleco_discrete::{Jaleco72, Jaleco86, Jaleco92, Jaleco101, Jaleco140};
 pub use kaiser::{new_m56, new_m142, new_m303, new_m305, new_m306, new_m312};
@@ -289,7 +291,7 @@ fn mmc3_board(
     h: &Header,
 ) -> Result<Box<dyn Mapper>, RomError> {
     let (wram, chr_ram) = if h.is_nes2 {
-        (h.prg_ram_size as usize, h.chr_ram_size as usize)
+        (h.prg_ram_window() as usize, h.chr_ram_size as usize)
     } else {
         (0, 0)
     };
@@ -463,8 +465,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         vs_ppu_type,
         // From the header byte-13 high nibble; independent of the mapper-99/151
         // console-type forcing above (a non-dual Vs. cart stays false).
-        vs_dual_system: h.vs_dual_system,
-        prg_ram_size: h.prg_ram_size,
+        vs_dual_system: h.is_vs_dual_system(),
+        // The whole window, volatile + NVRAM, as the field held before the
+        // header split them (v2.9.8).
+        prg_ram_size: h.prg_ram_window(),
         chr_ram_size: h.chr_ram_size,
         has_battery: h.has_battery,
         has_trainer: h.has_trainer,
@@ -481,10 +485,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // MMC1. Default revision is Sharp (no NES 2.0 submapper). Submapper
             // values (1-5) signal SUROM / SOROM / SXROM / SEROM variants —
             // observationally equivalent at the register-protocol level.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let mmc1 = Mmc1::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -530,10 +534,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 3 => Mmc3Variant::McAcc,
                 _ => Mmc3Variant::Standard,
             };
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let mmc3 = Mmc3::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes, revision)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?
@@ -545,10 +549,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // features deferred (vertical split, dual sprite/BG CHR for
             // 8x16 sprites, ExGrafix attribute injection, audio extension);
             // see `crates/rustynes-mappers/src/m005_mmc5.rs` module docs.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let mmc5 = Mmc5::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -829,10 +833,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // TxSROM / TLSROM (Armadillo, NES Play Action Football, Alien
             // Syndrome): MMC3 banking + IRQ plus per-bank nametable mirroring
             // driven by CHR bank bit 7.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let m118 = TxSrom::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -843,10 +847,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // CHR address space — 64 KiB CHR-ROM + 8 KiB CHR-RAM, selected per
             // 1 KiB bank by bit 6 of the resolved CHR bank number (set =
             // CHR-RAM). See `crates/rustynes-mappers/src/m119_tqrom.rs`.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let m119 = Tqrom::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;

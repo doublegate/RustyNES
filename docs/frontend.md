@@ -1863,11 +1863,15 @@ stack stays `#![no_std]`; AccuracyCoin holds 139/141 (the two newest upstream PP
   Header Editor...**). Inspects (read-only by default) and optionally edits the
   16-byte header of a ROM **file on disk** — never the running core. The pane
   shows format / mapper / submapper / mirroring / PRG-CHR sizes / battery /
-  trainer / region / console type / RAM sizes (+ Vs. PPU + DualSystem for Vs.
-  carts). The editor exposes combo boxes + unit-count fields and, on "Write
+  trainer / region / console type / RAM and NVRAM sizes (+ Vs. PPU, Vs.
+  hardware type and DualSystem for Vs. carts, the extended console type for
+  console type 3, and the misc-ROM count and default expansion device of NES 2.0
+  headers; all modelled since v2.9.8). The editor exposes combo boxes +
+  unit-count fields for every one of them and, on "Write
   header to file", writes the edits over the bytes the file held via the core's
   `serialize_header_preserving` (since v2.9.3; the canonical `serialize_header`
-  it used before zeroed every bit `Header` does not model) and overwrites the
+  it used before zeroed every bit `Header` did not model, and was removed at
+  v2.9.8) and overwrites the
   file's first 16 bytes (the ROM body is untouched). Decoding reuses
   `parse_header`, so the editor can't drift from the loader.
 - **A3 — inline 6502 assembler** (`src/debugger/{cpu_panel,assembler}.rs`). An
