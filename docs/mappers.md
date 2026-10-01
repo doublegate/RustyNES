@@ -633,6 +633,31 @@ transforms in the same file — a disclosed Mesen2 derivation, see `NOTICE` and
 `docs/originality-and-provenance.md` §1 — no reference-emulator source was
 consulted for any of the FS005 code.
 
+**v2.9.8 survey: staged dumps that are not the board their header names.**
+Recorded rather than forced, because the board code is right for the board the
+header names and no per-game override is added:
+
+- `21-in-1 [p1][!]` (labelled 133, Sachen SA-72008). 128 KiB PRG and 64 KiB
+  CHR, more than the 72008's `$4100` latch can address (one PRG bit, two CHR
+  bits, `INES_Mapper_133`), and it never writes `$4100`: its first writes go to
+  `$8001`, `$F000`, `$F020` and `$F001`, an address-encoded latch. Re-headed in
+  scratch as mapper 225 (ET-4310 / K-1010, `INES_Mapper_225`: banks and
+  mirroring in the address of a `$8000-$FFFF` write) it boots to its "21 GAME"
+  menu; as 133 it is tile noise.
+- *Zhan Guo Si Chuan Sheng (C&E) (Unl)* (labelled 132, TXC 22211). The
+  `INES_Mapper_132` page names this exact image: GoodNES sets it to 132, but it
+  is a mapper hack with the CHR banks rearranged for some emulators' mapper 132,
+  "not on the above implementation based on studying the circuit board"; the
+  correct board is mapper 173. Here its title and map screen render, and in-game
+  screens draw from the wrong CHR bank. Mapper 173 is not implemented.
+- *Uchuusen - Cosmo Carrier (J) [!]* (mapper 78): see the row in the first
+  long-tail table; its header's nametable bit names Holy Diver.
+
+*BB Car (Asia) (En) (Unl)* (mapper 152) is not a defect: it never writes a
+mapper register, and the "0123456789" screen it shows is its own. Its
+controller loop reads the Start bit and discards it, so the harness's START taps
+never leave that screen; an A press starts the race.
+
 ### Tenth batch — v2.9.6 "Roster" (17 families, 174 → 191)
 
 Every family here is written from its vendored NESdev page, named in the table;
