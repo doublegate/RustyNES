@@ -108,40 +108,22 @@ fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitC
         }
     };
 
-    // Surface the pre-v2.0.0-timebase caveat rather than silently verifying
-    // across an engine boundary where bit-identical replay was never proven.
-    if rustynes_core::recorded_before_v2_timebase(&movie_bytes).unwrap_or(false) {
-        // One `concat!` rather than a `\`-continued literal: the continuation
-        // form silently baked 14 alignment spaces into the middle of the
-        // sentence, which rendered as a gap in the terminal. Caught in review
-        // on PR #356.
-        eprintln!(
-            "{}",
-            concat!(
-                "rustynes: warning — this movie was recorded before the ",
-                "v2.0.0 \"Timebase\" engine change; exact reproduction across ",
-                "that boundary is unverified."
-            )
-        );
-    }
-
     println!(
         "Verifying {} against {}",
         movie_path.display(),
         rom_path.display()
     );
     println!("  {} frames to replay...", movie.len());
-    // The verifier builds a DEFAULT `Nes` from the ROM bytes. A recording made
-    // with a non-default core profile — Four Score, a PPU die-revision or
-    // power-on RAM model, a per-game database override, a soft-patched ROM —
-    // will not reproduce here, and would report a mismatch that is the profile's
-    // fault rather than the movie's. The format carries no profile field to
-    // check against, so the assumption is stated up front instead of silently
-    // mis-blaming the movie. (Review finding on PR #356; recording-side
-    // eligibility is tracked as follow-up.)
-    println!("  (replaying with a DEFAULT core profile — a recording made with");
-    println!("   Four Score, a PPU revision / power-on model, a game-database");
-    println!("   override, or a patched ROM will not reproduce here)");
+    // v2.9.8: the movie carries its emulation options (Four Score, die
+    // revisions, power-on RAM, console model, Game Genie ...) and `verify`
+    // applies them, so a non-default recording reproduces here. What the
+    // verifier still cannot do is apply a game-database HEADER correction: it
+    // loads the ROM file as given, so a movie recorded on a corrected header is
+    // refused with the differing board field (or region) named, rather than
+    // reported as a mismatch the movie did not cause. (The profile gap was a
+    // review finding on PR #356.)
+    println!("  (the movie's recorded emulation options are applied; the ROM header");
+    println!("   is used as found, so a game-database correction must already be in it)");
     match movie.verify(&mut nes) {
         Ok(VerifyOutcome::Match { frames, hash }) => {
             println!("VERIFIED: {frames} frames reproduced exactly (hash {hash:016x}).");

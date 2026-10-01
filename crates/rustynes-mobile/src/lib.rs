@@ -585,8 +585,14 @@ pub struct DisasmRow {
 pub enum HostWarning {
     /// A `.rnm` recorded on a pre-v2.0.0 "Timebase" build was loaded: its recorded
     /// *input* replays faithfully, but exact framebuffer/audio reproduction is not
-    /// guaranteed across the engine-timebase boundary (ADR 0028). The sole producer is
-    /// [`NesController::movie_play`].
+    /// guaranteed across the engine-timebase boundary (ADR 0028).
+    ///
+    /// **No longer produced (v2.9.8).** `.rnm` format 3 records the emulation
+    /// options, and [`NesController::movie_play`] now refuses every older movie
+    /// with a [`MobileError::Movie`] that says to re-record it, so a pre-v2.0.0
+    /// movie never reaches playback. The variant stays so the generated Kotlin /
+    /// Swift enums and hosts' localization tables keep their meaning (the
+    /// "never repurpose a variant" rule above).
     PreTimebaseMovie,
     /// v2.7.4 (frontend audit MOB-07) — a call panicked inside the bridge. The
     /// panic was contained (the mobile libraries unwind since v2.7.4), but it
@@ -1783,17 +1789,9 @@ impl NesController {
         let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
             reason: e.to_string(),
         })?;
-        // ADR 0028: a `.rnm` recorded on a pre-v2.0.0 "Timebase" build replays its
-        // recorded *input* faithfully, but exact framebuffer/audio reproduction is
-        // not guaranteed across the engine-timebase boundary (the one-clock /
-        // every-cycle-bus-access scheduler rewrite changed the sub-frame timing the
-        // old movie was captured against). Peek the epoch and, for a pre-v2 movie,
-        // queue a drainable host warning — mirroring the desktop + wasm frontends'
-        // identical notice — rather than silently presenting the replay as byte-exact.
-        // A malformed/short header (the `Err` arm) is treated as "not pre-v2": the
-        // deserialize above already succeeded, so it is a current-epoch movie. The
-        // check never blocks playback and never touches the deterministic core.
-        let pre_timebase = rustynes_core::recorded_before_v2_timebase(&bytes).is_ok_and(|v| v);
+        // v2.9.8: `deserialize` refuses every movie older than format 3, so the
+        // pre-v2.0.0 "Timebase" warning (`HostWarning::PreTimebaseMovie`) that
+        // used to be queued here can no longer arise.
         let mut g = self.lock();
         // v2.9.0 — held only if the seek succeeds: a refused seek (another
         // ROM, a bad start state) leaves the console, and saving, unchanged.
@@ -1811,13 +1809,6 @@ impl NesController {
             })?;
         if let Some(before) = before {
             g.battery_held = before;
-        }
-        if pre_timebase {
-            // v2.0.3: queue the machine-readable code, not the pre-baked English.
-            // The default drain ([`Self::drain_warnings`]) maps it straight back to the
-            // identical string via [`HostWarning::message`], so legacy hosts see no
-            // change; a localizing host drains [`Self::drain_warning_codes`] instead.
-            g.warnings.push(HostWarning::PreTimebaseMovie);
         }
         g.recorder = None;
         g.playback = Some((movie, 0));
@@ -3684,16 +3675,14 @@ mod tests {
         );
     }
 
-    // ADR 0028 (the epoch-marker half of `fm2_import_happy_path...`): a movie whose
-    // header `format_version` is < 2 (a pre-v2.0.0 "Timebase" recording) must, on
-    // `movie_play`, still deserialize (the reader accepts `<= MOVIE_FORMAT_VERSION`)
-    // AND queue exactly one drainable host warning citing ADR 0028 — parity with the
-    // desktop/wasm frontends. We synthesize the pre-v2 blob by taking a valid
-    // current-epoch `.rnm` and rewriting only its 2-byte little-endian version field
-    // (offset 8..10) from 2 to 1; the post-version layout is byte-identical across the
-    // epochs (the v2 bump is purely a marker), so the patched blob deserializes cleanly.
+    // v2.9.8 (ADR 0044): a movie older than `.rnm` format 3 does not record the
+    // emulation options it ran with, so `movie_play` refuses it with an error that
+    // says to re-record it, and queues no warning (the pre-v2.0.0 "Timebase"
+    // warning it used to raise for version-1 movies can no longer arise). The old
+    // blob is synthesized by rewriting the 2-byte LE version field of a valid
+    // current movie.
     #[test]
-    fn pre_v2_timebase_movie_raises_one_drainable_warning() {
+    fn a_movie_older_than_format_3_is_refused_without_a_warning() {
         let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
         let fm2 = "version 3\n\
                    |0|........|........||\n\
@@ -3701,34 +3690,26 @@ mod tests {
         let mut rnm = ctrl
             .movie_import_fm2(fm2.as_bytes().to_vec())
             .expect("minimal valid .fm2 must transcode");
-        // Sanity: the freshly transcoded movie is tagged with the current epoch.
         assert_eq!(
             u16::from_le_bytes([rnm[8], rnm[9]]),
-            2,
+            rustynes_core::MOVIE_FORMAT_VERSION,
             "transcoded movie must carry the current MOVIE_FORMAT_VERSION",
         );
-        // Rewrite the version field 2 -> 1 (LE u16): the only mutation needed to
-        // present this as a pre-Timebase recording.
-        rnm[8] = 1;
-        rnm[9] = 0;
-        ctrl.movie_play(rnm)
-            .expect("a pre-v2 (version 1) .rnm must still replay its input stream");
-        let warnings = ctrl.drain_warnings();
-        assert_eq!(
-            warnings.len(),
-            1,
-            "exactly one pre-Timebase warning must be queued, got {warnings:?}",
-        );
-        assert!(
-            warnings[0].contains("ADR 0028"),
-            "the queued warning must cite ADR 0028: {}",
-            warnings[0],
-        );
-        // The warning drains: a second call is empty (no re-emit, no leak).
-        assert!(
-            ctrl.drain_warnings().is_empty(),
-            "drain_warnings must empty the queue after the first drain",
-        );
+        for old in [1u16, 2] {
+            rnm[8..10].copy_from_slice(&old.to_le_bytes());
+            let err = ctrl
+                .movie_play(rnm.clone())
+                .expect_err("an old .rnm must be refused");
+            assert!(
+                err.to_string().contains("re-record"),
+                "the error says what to do: {err}"
+            );
+            assert!(!ctrl.movie_is_playing());
+            assert!(
+                ctrl.drain_warnings().is_empty(),
+                "a refusal queues no warning"
+            );
+        }
     }
 
     // v2.0.3 host-i18n (PR #235 follow-up): the machine-readable `HostWarning` code
@@ -3757,27 +3738,9 @@ mod tests {
         // Display delegates to the same message.
         assert_eq!(format!("{}", HostWarning::PreTimebaseMovie), expected);
 
-        // The code-drain path: a pre-v2 movie queues exactly the PreTimebaseMovie code,
-        // and draining codes clears the shared queue (so a following string-drain is
-        // empty — proving both drains hit the same backing store).
-        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
-        let mut rnm = ctrl
-            .movie_import_fm2(b"version 3\n|0|........|........||\n".to_vec())
-            .expect("minimal valid .fm2 must transcode");
-        rnm[8] = 1; // rewrite MOVIE_FORMAT_VERSION 2 -> 1 (present as pre-Timebase)
-        rnm[9] = 0;
-        ctrl.movie_play(rnm)
-            .expect("a pre-v2 .rnm must still replay");
-        let codes = ctrl.drain_warning_codes();
-        assert_eq!(
-            codes,
-            vec![HostWarning::PreTimebaseMovie],
-            "exactly the PreTimebaseMovie code must be queued, got {codes:?}",
-        );
-        assert!(
-            ctrl.drain_warnings().is_empty(),
-            "draining codes must clear the same queue the string drain reads",
-        );
+        // Since v2.9.8 no path produces this code (a pre-format-3 movie is
+        // refused before playback), so the shared-queue half of this test lives
+        // with the remaining producer, the panic-recovery `RecoveredFromInternalError` code.
     }
 
     // v1.8.6 — the RA bridge surfaces the lazy session + the login lifecycle.
