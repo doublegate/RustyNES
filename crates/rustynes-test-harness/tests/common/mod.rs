@@ -643,8 +643,10 @@ pub mod external {
         // keyed on the header-excluded CRC32, which is exactly what
         // `App::load_rom_from_path` does before handing bytes to the core.
         let mut bytes = bytes;
-        if let Some(entry) =
-            rustynes_gamedb::rom_crc32(&bytes).and_then(rustynes_gamedb::entry_for_crc)
+        // `load_time_entry` is the frontend's lookup: a vendored row never
+        // rewrites a NES 2.0 header's mapper or submapper (v2.9.8).
+        if let Some(entry) = rustynes_gamedb::rom_crc32(&bytes)
+            .and_then(|crc| rustynes_gamedb::load_time_entry(crc, &bytes))
         {
             rustynes_gamedb::apply_header_overrides(&mut bytes, &entry);
         }

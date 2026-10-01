@@ -364,7 +364,9 @@ fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::P
 /// whole feature, and nothing tells you which stages did not need it.
 pub(crate) fn apply_game_db_header_overrides(bytes: &mut [u8]) -> Option<u32> {
     let crc = crate::game_db::rom_crc32(bytes)?;
-    if let Some(entry) = crate::game_db::entry_for_crc(crc) {
+    // `load_time_entry`, not `entry_for_crc`: a vendored row's mapper and
+    // submapper never override a NES 2.0 header (v2.9.8; see its docs).
+    if let Some(entry) = crate::game_db::load_time_entry(crc, bytes) {
         crate::game_db::apply_header_overrides(bytes, &entry);
     }
     Some(crc)
@@ -11582,7 +11584,7 @@ mod tests {
         rom[7] = 0xB0; // mapper high nibble B -> 185
 
         let crc = crate::game_db::rom_crc32(&rom).expect("iNES header parses");
-        let Some(entry) = crate::game_db::entry_for_crc(crc) else {
+        let Some(entry) = crate::game_db::load_time_entry(crc, &rom) else {
             // Synthetic bytes will not match a real DB row; the point of the
             // test is the CALL, so drive the helper with a known entry instead.
             let mut a = rom.clone();

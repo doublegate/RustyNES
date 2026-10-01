@@ -9,5 +9,5 @@ fb_bytes=245760
 cycles=33949771
 audio_samples=836505
 audio_fnv1a64=f316eced83033e5c
-checkpoint f900 fb_fnv1a64=3b655e12889ae236
-checkpoint f1100 fb_fnv1a64=9c66a3fee797103e
+checkpoint f900 fb_fnv1a64=93feb90a08b82875
+checkpoint f1100 fb_fnv1a64=d71f5003c05f23c4

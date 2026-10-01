@@ -140,6 +140,22 @@ cycle-accurate core later replaced.
   (Sachen 8259, mapper 141, not 191), *Chaos World* and *San Guo Zhi 2*
   (Waixing FS005, mapper 176 submapper 2, not 74), and the Kasheng *2-in-1
   (Mortal Kombat 6, Samurai Spirits)* (mapper 291, not 47).
+
+
+
+- **The game database no longer rewrites a NES 2.0 header's mapper.** Its
+  vendored table, built for iNES 1.0 images, lists a compatible mapper for many
+  boards rather than the real one, and the load path applied it to every image,
+  NES 2.0 included. Ten staged dumps whose own headers were right rendered wrong
+  or blank: *Youkai Club* (mapper 140 run as 66, which ignores its `$6000` bank
+  register, so a blue screen), the Sachen *Lightgun Game 2 in 1* (150 run as
+  243, garbage), *Dragon Ball Z - Kyoushuu! Saiya Jin* and both *Magical
+  Taruruuto-kun* games (159 as 16, grey), *Gegege no Kitarou 2* and *Saint
+  Seiya - Ougon Densetsu* (152 as 70), *Mississippi Satsujin Jiken* (140 as 66),
+  *Bakushou!! Jinsei Gekijou 3* (48 as 33) and *Fan Kong Jing Ying* (241 as
+  178). A vendored row's mapper and submapper now apply only to an iNES 1.0
+  header; your own overrides still apply to anything. Five of these games leave
+  the coverage sweep's known-blank list.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

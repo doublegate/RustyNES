@@ -2355,8 +2355,22 @@ does not touch mapper-supplied VRAM (4-screen), and is persisted in the
 save-state so rollback / restore stay consistent. It is frontend-only and
 `None` by default (the core test suites construct the `Nes` directly and never
 consult the database, so the suites stay byte-identical) and deterministic
-(same CRC ⇒ same mirroring, so netplay peers agree). Scope is mirroring only —
-region / mapper overrides and a Game Genie code database are not part of it.
+(same CRC ⇒ same mirroring, so netplay peers agree). A Game Genie code database
+is not part of it.
+
+**Header corrections, and when a NES 2.0 header wins (v2.9.8).** The same table
+also carries region / mapper / submapper columns, which
+`game_db::apply_header_overrides` writes into the header before the core parses
+it (v2.3.4 onward; the coverage harness runs the same path). The lookup the load
+path uses is `game_db::load_time_entry(crc, header)`: a **user-overlay** entry
+applies as written, but a **vendored** row's mapper and submapper are dropped
+when the image already has a NES 2.0 header. The vendored table was built for
+iNES 1.0 images and records a merely *compatible* mapper for many boards (140 as
+66, 150 as 243, 152 as 70, 159 as 16, ...); over the 32 staged NES 2.0 dumps it
+rewrote, 10 rendered wrong or blank under the substitute and correctly under
+their own header, and none the other way round (*Youkai Club*, whose bank
+register at `$6000` mapper 66 does not decode, sat on a blue screen). iNES 1.0
+corrections such as Seicross's mapper 185 submapper 4 still apply.
 
 **Per-game `<rom>.json` config overlay (v1.7.0 "Forge" Workstream H4).** Layered
 on the v1.2.0 game-DB, a small frontend-only overlay lets a single ROM carry its

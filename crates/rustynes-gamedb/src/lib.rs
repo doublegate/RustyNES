@@ -162,6 +162,52 @@ pub fn entry_for_crc(crc: u32) -> Option<GameDbEntry> {
     vendored_entry(crc).cloned()
 }
 
+/// The entry the **load path** applies to a ROM whose header-excluded CRC32 is
+/// `crc` and whose 16-byte header is `header`.
+///
+/// The user overlay is returned as it is: an entry the user wrote is a
+/// deliberate correction of *this* image. A **vendored** row, though, is applied
+/// to a NES 2.0 header without its `mapper` and `submapper` columns.
+///
+/// ## Why a NES 2.0 header wins over the vendored table
+///
+/// The vendored table was compiled for iNES 1.0 images, whose mapper byte is
+/// often wrong and which have no submapper at all; that is the gap it fills
+/// (Seicross needs mapper 185 submapper 4, and its GoodNES dump cannot say so).
+/// It also records, for many boards, a *compatible* mapper rather than the real
+/// one -- mapper 140 as 66, 150 as 243, 152 as 70, 159 as 16 -- which is
+/// harmless only where the substitute decodes the registers the game writes. A
+/// NES 2.0 header is a later, deliberate statement about the image, and on the
+/// staged corpus every NES 2.0 dump the table rewrote either rendered the same
+/// or rendered correctly only with its own header. Measured at v2.9.8 over the
+/// 32 such dumps: 20 rendered identically, 2 differed only in a blinking prompt,
+/// and in the other 10 the NES 2.0 header was right and the table wrong. Youkai
+/// Club writes its bank register at `$6000`,
+/// which mapper 66 does not decode, so it stalled on a blue screen; the Sachen
+/// lightgun 2-in-1 rendered garbage as 243 and its title as 150; the three
+/// mapper-159 Bandai games rendered a grey screen as 16; Gegege no Kitarou 2,
+/// Saint Seiya, Bakushou!! Jinsei Gekijou 3, Fan Kong Jing Ying and
+/// Mississippi Satsujin Jiken rendered wrong or blank under the substitute.
+///
+/// Only the mapper and submapper are withheld. The region and mirroring
+/// columns are unchanged here (mirroring is applied separately, and only to a
+/// board with hardwired mirroring).
+#[must_use]
+pub fn load_time_entry(crc: u32, header: &[u8]) -> Option<GameDbEntry> {
+    if let Ok(overlay) = user_overlay().read()
+        && let Ok(i) = overlay.binary_search_by_key(&crc, |e| e.crc)
+    {
+        return Some(overlay[i].clone());
+    }
+    let mut entry = vendored_entry(crc)?.clone();
+    let is_nes2 = header.len() >= 16 && &header[0..4] == b"NES\x1A" && (header[7] & 0x0C) == 0x08;
+    if is_nes2 {
+        entry.mapper = None;
+        entry.submapper = None;
+    }
+    Some(entry)
+}
+
 /// Look up a ROM's entry in the **vendored base only** (ignoring the user
 /// overlay) — used by the editor to show "reset to default".
 #[must_use]
@@ -605,6 +651,48 @@ mod tests {
         let entry = entry_for_crc(0x0F05_FF0A).expect("Seicross (Japan) listed");
         assert_eq!(entry.mapper, Some(185));
         assert_eq!(entry.submapper, Some(4));
+    }
+
+    /// A 16-byte header for `mapper`, NES 2.0 (`nes2`) or iNES 1.0.
+    fn header_for(mapper: u16, nes2: bool) -> [u8; 16] {
+        let mut h = [0u8; 16];
+        h[0..4].copy_from_slice(b"NES\x1A");
+        h[4] = 8; // 128 KiB PRG
+        h[5] = 4; // 32 KiB CHR
+        h[6] = ((mapper & 0x0F) as u8) << 4;
+        h[7] = (mapper & 0xF0) as u8 | if nes2 { 0x08 } else { 0x00 };
+        h
+    }
+
+    #[test]
+    fn vendored_mapper_never_overrides_a_nes2_header() {
+        // Youkai Club (Japan), headerless CRC32 6BC65D7E. The board is Jaleco's
+        // JF-11/14 (mapper 140, register at $6000-$7FFF); the vendored row says
+        // mapper 66 (GNROM, register at $8000-$FFFF), so the game's $6000 bank
+        // writes went nowhere and it sat on a blue screen. Its staged dump is a
+        // NES 2.0 image that says 140, which is right.
+        const YOUKAI_CLUB: u32 = 0x6BC6_5D7E;
+        let vendored = vendored_entry(YOUKAI_CLUB).expect("Youkai Club listed");
+        assert_eq!(vendored.mapper, Some(66), "premise: the row disagrees");
+
+        // A NES 2.0 header is authoritative: the row's mapper and submapper
+        // are dropped, so the header is left as it is.
+        let nes2 = header_for(140, true);
+        let entry = load_time_entry(YOUKAI_CLUB, &nes2).expect("row still found");
+        assert_eq!(entry.mapper, None, "NES 2.0 mapper must not be rewritten");
+        assert_eq!(
+            entry.submapper, None,
+            "NES 2.0 submapper must not be rewritten"
+        );
+        let mut rom = nes2.to_vec();
+        assert!(!apply_header_overrides(&mut rom, &entry));
+        assert_eq!(&rom[..], &nes2[..]);
+
+        // An iNES 1.0 header is what the table exists to correct, and it still
+        // does (Seicross, v2.3.4, is the case that has to keep working).
+        let ines = header_for(140, false);
+        let entry = load_time_entry(YOUKAI_CLUB, &ines).expect("row found");
+        assert_eq!(entry.mapper, Some(66), "iNES 1.0 corrections still apply");
     }
 
     #[test]

@@ -211,7 +211,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-036-TXC36/Strike Wolf (Asia) (Unl).zip",
     "mapper-036-TXC36/Strike Wolf (MGC-014) (Unl) [!].nes",
     "mapper-040-NTDEC2722/Super Mario Bros 2 (Lost Levels) (Unl).nes",
-    "mapper-048-TaitoTC0690/Bakushou!! Jinsei Gekijou 3 (Japan).nes",
     "mapper-050-SMB2j-FDS/Super Mario Bros. (Alt Levels) [p1][!].zip",
     "mapper-051-BallGames11in1/11-in-1 Ball Games [p1][!].zip",
     "mapper-058-Multicart58/73-in-1 [p1][!].nes",
@@ -233,9 +232,6 @@ const KNOWN_BLANK: &[&str] = &[
     // "INES Mapper 153"), and a soft reset runs it. The harness boots every ROM
     // from power-on with zeroed cartridge RAM, so this is its correct frame.
     "mapper-153-BandaiLZ93D50/Famicom Jump II - Saikyou no 7 Nin (Japan).nes",
-    "mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).zip",
-    "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (Japan) (Rev 1).zip",
-    "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).zip",
     "mapper-162-WaixingFS304/Chong Wu Jin Hua Shi (Pet Evolve) (ES-1085) (Ch).nes",
     "mapper-162-WaixingFS304/Shu Ma Bao Bei (Digimon Crystal) (Ch) (Wxn).nes",
     "mapper-162-WaixingFS304/Xi You Ji Hou Zhuan (Ch).nes",
@@ -248,7 +244,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-205-BMC-JC016/4-in-1 (K-3131GS, GN-45) [p1][!].zip",
     "mapper-227-BMC-1200in1/Biohazard (China) (Unl) (En) (1.0).nes",
     "mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes",
-    "mapper-241-BxROM241/Fan Kong Jing Ying (Asia) (Unl).zip",
     "vs-system/GVS Balloon Fight (Dual).nes",
     "vs-system/GVS Balloon Fight.nes",
     "vs-system/GVS Mahjong.nes",
