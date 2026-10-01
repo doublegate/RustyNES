@@ -91,7 +91,28 @@ NES 2.0 byte 7 bits 0-1: `00` = NES/Famicom, `01` = Vs. System, `10` = Playchoic
 
 ### Region (NES 2.0)
 
-Byte 12 bits 0-1: `00` = NTSC, `01` = PAL, `10` = multi-region, `11` = Dendy. iNES 1.0 has only the legacy bit in byte 9 (largely useless; many ROMs are mis-tagged).
+Byte 12 bits 0-1: `00` = NTSC, `01` = PAL, `10` = multi-region, `11` = Dendy. The core plays multi-region at NTSC timing. iNES 1.0 has only the legacy bit in byte 9 (largely useless; many ROMs are mis-tagged), and `parse_header` ignores it: an iNES 1.0 image always parses as NTSC. Old dump tools wrote "DiskDude!" over bytes 7-15 (byte 9 = `'s'` = `$73`, bit 0 set), and on the staged corpus three pirate multicart images carry `$01` there in an otherwise clean header with nothing to say whether it is meant.
+
+**Where a PAL iNES 1.0 game gets its region (v2.9.8).** From the per-game
+database, on the load path, before the core parses the header
+(`rustynes_gamedb::load_time_entry` then `apply_header_overrides`, the one
+chokepoint the desktop, browser and coverage harness share). A PAL or Dendy row
+rewrites the iNES 1.0 header as the NES 2.0 header that describes the **same
+board**, with the region in byte 12: the mapper number the iNES 1.0 parse
+settled on, submapper 0, the plain byte-4/5 sizes (byte 9 = 0), PRG-RAM and
+CHR-RAM stated as the iNES 1.0 heuristics give them (8 KiB, and 8 KiB of CHR-RAM
+when there is no CHR-ROM), and bytes 13-15 zero. Because NES 2.0 sizes are taken
+at their word where iNES 1.0 sizes are not -- the v2.9.6 MMC3 multicart boards
+take their own default instead of iNES 1.0's nominal 8 KiB -- a second candidate
+states no RAM at all. Each candidate is parsed and compared with the iNES 1.0
+board (cartridge identity, mirroring, console type, battery, and the mapper's
+serialized state, debug view, capability flags and RAM sizes); the first that
+matches is used, and if none does the region is refused rather than bought with
+a different board. A unit sweep over every mapper id finds no board refused.
+Vs. System and PlayChoice-10 carts are never promoted (those cabinets exist only
+in NTSC timing). A NES 2.0 header keeps its own region: a vendored database row
+never rewrites byte 12. `parse_header` itself is unchanged -- the byte-9 rule
+above still holds for an image no database row describes.
 
 ### Default input device (NES 2.0)
 

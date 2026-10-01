@@ -244,6 +244,25 @@ cycle-accurate core later replaced.
   function that also re-applies the power-on RAM fill, which zero-filled the
   console's 2 KiB of work RAM while a game was running. It now changes only the
   dot path.
+
+
+
+- **The game database's region reaches iNES 1.0 games, and leaves NES 2.0
+  headers alone.** A PAL row wrote iNES 1.0 header byte 9 bit 0, which the
+  header parser ignores by design (dump tools left junk there), so every PAL
+  game in an iNES 1.0 header ran at NTSC timing. *Pin Bot (Europe)* uploads
+  CHR-RAM for the length of the PAL vblank; at NTSC the upload ran into
+  rendering and garbled the title. *Sidewinder*, a Sachen PAL release, froze
+  in its attract mode. A PAL or Dendy row now rewrites the iNES 1.0 header as
+  the NES 2.0 header of the same board with the region in byte 12, and the
+  rewrite is used only after the promoted image is parsed and shown to build
+  the same board (a unit sweep over every mapper id finds none refused); both
+  games now run. The other way round, a row no longer rewrites a NES 2.0
+  header's region: *Funblaster Pak (Australia)*, headed PAL, had been forced to
+  NTSC, and two Chinese titles headed Dendy to NTSC. The nine `(USA, Europe)`
+  rows, one image sold in both markets, carry no region, and Vs. System and
+  PlayChoice-10 carts stay NTSC. For the promoted games the ROM hash that
+  names save-state slots and `.sav` files changes once.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

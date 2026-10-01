@@ -2382,6 +2382,29 @@ their own header, and none the other way round (*Youkai Club*, whose bank
 register at `$6000` mapper 66 does not decode, sat on a blue screen). iNES 1.0
 corrections such as Seicross's mapper 185 submapper 4 still apply.
 
+**The database's region (v2.9.8).** A vendored row's region is dropped for a
+NES 2.0 header too -- the header states its own region in byte 12 -- and it is
+applied to an iNES 1.0 header, which states none the core reads. Until v2.9.8
+neither was true: the region column rewrote NES 2.0 byte 12 (forcing
+*Funblaster Pak (Australia)*, whose header says PAL, to NTSC), and on iNES 1.0
+it wrote byte 9 bit 0, which the header parser ignores by design, so no PAL row
+reached any iNES 1.0 game. *Pin Bot (Europe)* (TQROM) ran at NTSC, where its
+CHR-RAM upload, sized for the PAL vblank, overran into rendering and garbled the
+title; *Sidewinder* (Sachen, "(Asia) (PAL)") froze in its attract mode. A PAL
+or Dendy region now reaches the core by rewriting the iNES 1.0 header as the NES
+2.0 header of the same board, verified board-for-board before it is used
+(`docs/cartridge-format.md` §Region). It is still the one chokepoint: the
+desktop's File menu and CLI paths, the browser, and the coverage harness all
+call `apply_header_overrides`, and a power cycle re-parses the corrected bytes,
+so nothing downstream needs to know the region came from the database. Two
+rows are not taken as written: a row titled for both markets -- the nine
+`(USA, Europe)` rows, one image sold in both, which the table's two-valued
+column had to call PAL -- carries no region, the multi-region reading a NES 2.0
+header gives the same image; and Vs. System / PlayChoice-10 carts stay NTSC
+(*PlayChoice-10 Baseball* shares its PRG/CHR with the home *Baseball (USA,
+Europe)*). The promoted bytes hash differently, so for those games the
+save-state directory and `.sav` named after the ROM hash change once.
+
 **Per-game `<rom>.json` config overlay (v1.7.0 "Forge" Workstream H4).** Layered
 on the v1.2.0 game-DB, a small frontend-only overlay lets a single ROM carry its
 own settings (the Mesen2 "per-game config" idea). On load — after the

@@ -8,7 +8,11 @@
 //! frontend computes the ROM's CRC32 and, if the DB lists it, applies a
 //! nametable-mirroring override via [`rustynes_core::Nes::set_mirroring_override`]
 //! — a load-time fix for ROMs whose iNES header carries the wrong mirroring
-//! flag.
+//! flag. The mapper, submapper and region columns are applied to the header
+//! itself before the core parses it ([`load_time_entry`] then
+//! [`apply_header_overrides`]); since v2.9.8 the region reaches iNES 1.0 images
+//! (by promoting the header to the equivalent NES 2.0 one) and no longer
+//! rewrites a NES 2.0 header's own.
 //!
 //! This is **frontend-only**: the core test suites (AccuracyCoin, the commercial
 //! oracle, `nestest`) construct the `Nes` directly and never consult this DB, so
@@ -62,11 +66,53 @@ pub struct GameDbEntry {
 fn db() -> &'static [GameDbEntry] {
     static DB: OnceLock<Vec<GameDbEntry>> = OnceLock::new();
     DB.get_or_init(|| {
-        let mut rows: Vec<GameDbEntry> = DB_TEXT.lines().filter_map(parse_row).collect();
+        let mut rows: Vec<GameDbEntry> = DB_TEXT
+            .lines()
+            .filter_map(parse_row)
+            .map(|mut e| {
+                if is_multi_region_title(&e.title) {
+                    e.region = None;
+                }
+                e
+            })
+            .collect();
         rows.sort_unstable_by_key(|e| e.crc);
         rows.dedup_by_key(|e| e.crc);
         rows.shrink_to_fit();
         rows
+    })
+}
+
+/// `true` when a vendored row's title names one image released in both a
+/// 60 Hz and a 50 Hz market -- the No-Intro tag `(USA, Europe)` and its kin.
+///
+/// ## Region encoding in the vendored table (v2.9.8)
+///
+/// The Region column holds only `NTSC` or `PAL` (2,305 and 377 rows); there is
+/// no `Dendy` row and no token for "multiple regions", which NES 2.0 has (byte
+/// 12 value 2) and which the core plays at NTSC timing. The table still records
+/// the release set, in the No-Intro title: nine PAL rows are titled
+/// `(USA, Europe)` -- Ice Climber, Gumshoe, Kid Icarus, Baseball and five more.
+/// Each is ONE image sold in both markets, so the row's `PAL` is a choice the
+/// column was forced to make, not a fact about the image; the NES 2.0 headers on
+/// the staged copies of two of them (Ice Climber, Gumshoe) say "multiple
+/// region". These nine are the only multi-market titles in the table, and all
+/// nine are PAL rows. Honouring the
+/// column would play the iNES 1.0 copy of an image at PAL timing and its NES 2.0
+/// copy at NTSC. Such a row therefore carries no region correction, and an
+/// iNES 1.0 copy keeps the NTSC default -- what "multiple region" means to the
+/// core.
+///
+/// `Dendy` is accepted from the user overlay (`parse_region`) and promoted like
+/// PAL; the vendored table never produces it.
+fn is_multi_region_title(title: &str) -> bool {
+    const SIXTY_HZ: [&str; 3] = ["USA", "Japan", "World"];
+    title.split('(').skip(1).any(|group| {
+        let tag = group.split(')').next().unwrap_or_default();
+        let regions: Vec<&str> = tag.split(',').map(str::trim).collect();
+        regions.len() > 1
+            && regions.contains(&"Europe")
+            && regions.iter().any(|r| SIXTY_HZ.contains(r))
     })
 }
 
@@ -189,9 +235,23 @@ pub fn entry_for_crc(crc: u32) -> Option<GameDbEntry> {
 /// Saint Seiya, Bakushou!! Jinsei Gekijou 3, Fan Kong Jing Ying and
 /// Mississippi Satsujin Jiken rendered wrong or blank under the substitute.
 ///
-/// Only the mapper and submapper are withheld. The region and mirroring
-/// columns are unchanged here (mirroring is applied separately, and only to a
-/// board with hardwired mirroring).
+/// The mapper, submapper and (v2.9.8) region are withheld. The mirroring column
+/// is unchanged here (mirroring is applied separately, and only to a board with
+/// hardwired mirroring).
+///
+/// ## Region (v2.9.8)
+///
+/// The region follows the same rule: a NES 2.0 header states it (byte 12), so a
+/// vendored row never rewrites it, while an iNES 1.0 header has no region the
+/// core reads and takes the row's. Before v2.9.8 it ran the other way round on
+/// both counts -- the row DID rewrite NES 2.0 byte 12, and for iNES 1.0 it wrote
+/// only byte 9 bit 0, which the core ignores, so the row reached no iNES 1.0
+/// game at all. Measured on the staged corpus, the NES 2.0 half retimed eight
+/// dumps: Funblaster Pak (Australia), whose header says PAL, was forced to
+/// NTSC; two Chinese titles whose headers say Dendy were forced to NTSC; and
+/// five whose headers say "multiple region" were forced to PAL. The iNES 1.0
+/// half now promotes the header so the row arrives (see
+/// [`apply_header_overrides`]).
 #[must_use]
 pub fn load_time_entry(crc: u32, header: &[u8]) -> Option<GameDbEntry> {
     if let Ok(overlay) = user_overlay().read()
@@ -204,6 +264,7 @@ pub fn load_time_entry(crc: u32, header: &[u8]) -> Option<GameDbEntry> {
     if is_nes2 {
         entry.mapper = None;
         entry.submapper = None;
+        entry.region = None;
     }
     Some(entry)
 }
@@ -388,6 +449,20 @@ fn serialize_row(e: &GameDbEntry) -> String {
 /// header, the core sees a normal iNES image, and the CRC key (PRG+CHR, header
 /// excluded) is unchanged so the lookup is stable across the patch.
 ///
+/// A region reaches the core through the header too (v2.9.8). On a NES 2.0
+/// header it is byte 12. On an iNES 1.0 header a PAL or Dendy region rewrites
+/// the header as the NES 2.0 header of the same board, region in byte 12 -- see
+/// `ines1_as_nes2` for why that, and not byte 9, and how "the same board" is
+/// checked. Because the correction lives in the bytes, every load path that
+/// runs this function (desktop, browser, the coverage harness) and everything
+/// that later rebuilds from those bytes (a power cycle re-parses them) sees it.
+///
+/// A promoted image hashes differently, so for an iNES 1.0 game with a PAL
+/// row the ROM hash that names the frontend's save-state directory and `.sav`
+/// file changes once, at v2.9.8: slots and battery saves written before are
+/// left under the old name and not found. (A slot from before was recorded at
+/// NTSC timing; a `.sav` is plain cartridge RAM and can be renamed by hand.)
+///
 /// Returns `true` if any byte was changed (the caller may want to log it).
 pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     if bytes.len() < 16 || &bytes[0..4] != b"NES\x1A" {
@@ -464,9 +539,27 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
                 bytes[12] = new12;
                 changed = true;
             }
+        } else if let Some(header) = (region != Region::Ntsc)
+            .then(|| ines1_as_nes2(bytes, region))
+            .flatten()
+        {
+            // iNES 1.0 has no region field the core reads: byte 9 bit 0 is the
+            // TV-system flag on paper, but raw dumps carry junk there, so the
+            // header parser ignores it (`docs/cartridge-format.md`). A non-NTSC
+            // region therefore travels the only way the core can see it: the
+            // header is rewritten as the NES 2.0 header that describes the SAME
+            // board, with the region in byte 12. `ines1_as_nes2` builds that
+            // header and proves the board is the same before returning it.
+            bytes[..16].copy_from_slice(&header);
+            changed = true;
         } else {
-            // iNES 1.0 TV-system is byte 9 bit 0 (0 = NTSC, 1 = PAL); Dendy is
-            // not representable in iNES 1.0, so map it to PAL timing's flag.
+            // NTSC (the iNES 1.0 default, so nothing to promote), or a PAL /
+            // Dendy region whose NES 2.0 form would not build the same board
+            // (`ines1_as_nes2` returned `None`; an arcade cart, or a header too
+            // short to parse). Keep the pre-v2.9.8 write of the iNES 1.0
+            // TV-system flag, byte 9 bit 0: the core ignores it, so the image
+            // runs at NTSC timing, and the bytes -- and so the ROM hash that
+            // keys save states and `.sav` files -- stay what they were.
             let bit = u8::from(matches!(region, Region::Pal | Region::Dendy));
             let new9 = (bytes[9] & 0xFE) | bit;
             if new9 != bytes[9] {
@@ -477,6 +570,151 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     }
 
     changed
+}
+
+/// The NES 2.0 header that describes the same board as the iNES 1.0 image
+/// `bytes`, with `region` in byte 12 -- or `None` when no such header exists.
+///
+/// ## Why promote, rather than read byte 9
+///
+/// iNES 1.0's only region signal is byte 9 bit 0, and the core deliberately
+/// ignores it: the old dump tools that wrote "DiskDude!" over bytes 7-15 set it
+/// (`'s'` is `0x73`), and clean headers carry it with nothing to say whether it
+/// is meant -- on the staged corpus three pirate multicart images the table
+/// does not list (mapper 60's 4-in-1, mapper 133's 21-in-1, mapper 200's
+/// 7-in-1) have a clean header with `0x01` there. Honouring the bit would
+/// retime every such dump on a guess. The game
+/// database is the source that *does* know, so it states the region the way
+/// the core already reads one: NES 2.0 byte 12.
+///
+/// ## Why the result is verified, not just encoded
+///
+/// NES 2.0 states what iNES 1.0 leaves to heuristics -- PRG-RAM and CHR-RAM
+/// sizes -- and the mapper crate reads a few fields differently depending on
+/// which format it parsed. iNES 1.0 reports 8 KiB of PRG-RAM for every image;
+/// the v2.9.6 MMC3 multicart boards (37, 45, 47, 12, ...) ignore that and take
+/// their own default, because a multicart keeps a register where the RAM would
+/// be, while a NES 2.0 header's stated size is taken at its word. A promotion
+/// that wrote "8 KiB" would put RAM on Super Mario Bros. + Tetris + Nintendo
+/// World Cup's board, where the real cart has none.
+///
+/// So the candidate headers are tried in order, each is parsed into a board,
+/// and the first whose board is indistinguishable from the iNES 1.0 one is
+/// returned: same cartridge identity, mirroring, console type and battery, and a
+/// mapper with the same serialized state, debug view, capability flags and RAM
+/// sizes (see `same_board`). The candidates are:
+///
+/// 1. the iNES 1.0 heuristics written out -- 8 KiB of PRG-RAM (battery-backed
+///    when byte 6 says so) and 8 KiB of CHR-RAM when there is no CHR-ROM;
+/// 2. no RAM stated at all, which is what makes a board fall back to its own
+///    default, as the iNES 1.0 path does for the MMC3 multicarts.
+///
+/// If neither builds the same board the region is refused rather than bought
+/// with a different board. Measured over every mapper id the crate builds by
+/// `promotion_never_changes_the_board` in this file.
+///
+/// Vs. System and PlayChoice-10 carts are refused outright: those cabinets are
+/// NTSC hardware (their RGB PPUs exist only in NTSC timing), so a PAL row on one
+/// describes the home release that shares its PRG/CHR, not the arcade board.
+/// PlayChoice-10 Baseball is the staged case.
+fn ines1_as_nes2(bytes: &[u8], region: Region) -> Option<[u8; 16]> {
+    use rustynes_core::rustynes_mappers::{ConsoleType, parse, parse_header};
+
+    // NES 2.0 RAM sizes are `64 << shift` bytes; 8 KiB is shift 7.
+    const SHIFT_8K: u8 = 7;
+
+    let h = parse_header(bytes).ok()?;
+    if h.is_nes2 {
+        return None;
+    }
+    let original = parse(bytes).ok()?;
+    if original.0.console_type != ConsoleType::Nes {
+        return None;
+    }
+    let region_code = match region {
+        Region::Pal => 1,
+        Region::Multi => 2,
+        Region::Dendy => 3,
+        Region::Ntsc => 0,
+    };
+
+    // The fields every candidate shares. The mapper number is the one the
+    // iNES 1.0 parse settled on -- after its dirty-tail rule -- written cleanly;
+    // iNES 1.0 has 8 mapper bits, so NES 2.0's bits 8-11 (byte 8) are zero, and
+    // so is the submapper. Byte 9 (the size MSBs) is zero because iNES 1.0 sizes
+    // are the plain byte-4/5 counts. Bytes 13-15 (Vs. type, misc ROMs, default
+    // expansion device) are zero: an iNES 1.0 home cart has none of them.
+    let mut header = [0u8; 16];
+    header[..4].copy_from_slice(&bytes[..4]);
+    header[4] = bytes[4];
+    header[5] = bytes[5];
+    #[allow(clippy::cast_possible_truncation)] // iNES 1.0 mapper ids are < 256
+    let mapper = h.mapper_id as u8;
+    header[6] = ((mapper & 0x0F) << 4) | (bytes[6] & 0x0F);
+    header[7] = (mapper & 0xF0) | 0x08;
+    header[12] = region_code;
+
+    // Byte 10's low nibble is volatile PRG-RAM and its high nibble PRG-NVRAM;
+    // the parser sums them, so either place gives the same size, and the
+    // battery flag (byte 6 bit 1, carried over above) is what the boards read.
+    let prg_ram = if h.has_battery {
+        SHIFT_8K << 4
+    } else {
+        SHIFT_8K
+    };
+    let chr_ram = if h.chr_size == 0 { SHIFT_8K } else { 0 };
+
+    for (byte10, byte11) in [(prg_ram, chr_ram), (0, 0)] {
+        header[10] = byte10;
+        header[11] = byte11;
+        let mut image = bytes.to_vec();
+        image[..16].copy_from_slice(&header);
+        if let Ok(promoted) = parse(&image)
+            && same_board(&original, &promoted)
+        {
+            return Some(header);
+        }
+    }
+    None
+}
+
+/// `true` when two parses of one ROM built boards no game could tell apart.
+///
+/// Compares everything the core takes from a parse except the fields a
+/// promotion is *meant* to change (`region`, `is_nes2`) and the two RAM sizes
+/// the cartridge record carries for display only (the mapper's own RAM is
+/// compared through its state instead). The mapper comparison is by observable
+/// output: the serialized state holds the registers, every RAM the board
+/// allocated and the variant fields that select behaviour (a submapper, say),
+/// and the debug view, capability flags and mirroring answers cover the rest.
+fn same_board(
+    a: &(
+        rustynes_core::rustynes_mappers::Cartridge,
+        Box<dyn rustynes_core::rustynes_mappers::Mapper>,
+    ),
+    b: &(
+        rustynes_core::rustynes_mappers::Cartridge,
+        Box<dyn rustynes_core::rustynes_mappers::Mapper>,
+    ),
+) -> bool {
+    let ((ca, ma), (cb, mb)) = (a, b);
+    ca.mapper_id == cb.mapper_id
+        && ca.submapper == cb.submapper
+        && ca.mirroring == cb.mirroring
+        && ca.console_type == cb.console_type
+        && ca.vs_ppu_type == cb.vs_ppu_type
+        && ca.vs_dual_system == cb.vs_dual_system
+        && ca.has_battery == cb.has_battery
+        && ca.has_trainer == cb.has_trainer
+        && ca.prg_rom == cb.prg_rom
+        && ca.chr_rom == cb.chr_rom
+        && ma.caps() == mb.caps()
+        && ma.has_hardwired_mirroring() == mb.has_hardwired_mirroring()
+        && ma.current_mirroring() == mb.current_mirroring()
+        && ma.sram().len() == mb.sram().len()
+        && ma.save_data().len() == mb.save_data().len()
+        && ma.save_state() == mb.save_state()
+        && format!("{:?}", ma.debug_info()) == format!("{:?}", mb.debug_info())
 }
 
 /// Compute the "ROM CRC" of an iNES image: CRC32 of PRG-ROM + CHR-ROM.
@@ -638,7 +876,11 @@ mod tests {
         // Mapper 4: low nibble in flags6[7:4], high nibble (0) in flags7[7:4].
         assert_eq!(rom[6] >> 4, 4, "mapper low nibble");
         assert_eq!(rom[7] >> 4, 0, "mapper high nibble");
-        assert_eq!(rom[9] & 1, 1, "iNES 1.0 PAL TV-system bit");
+        // v2.9.8: a PAL region promotes the iNES 1.0 header to NES 2.0 and lands
+        // in byte 12 -- byte 9 bit 0 is a flag the core never reads.
+        assert_eq!(rom[7] & 0x0C, 0x08, "promoted to NES 2.0");
+        assert_eq!(rom[12] & 0x03, 1, "NES 2.0 PAL region code");
+        assert_eq!(rom[9], 0, "no size MSBs: iNES 1.0 sizes carried over");
         // Re-applying the same override is now a no-op (idempotent).
         assert!(!apply_header_overrides(&mut rom, &entry));
     }
@@ -693,6 +935,172 @@ mod tests {
         let ines = header_for(140, false);
         let entry = load_time_entry(YOUKAI_CLUB, &ines).expect("row found");
         assert_eq!(entry.mapper, Some(66), "iNES 1.0 corrections still apply");
+    }
+
+    /// A whole iNES 1.0 image for `mapper` with `prg16` x 16 KiB of PRG-ROM and
+    /// `chr8` x 8 KiB of CHR-ROM (0 = CHR-RAM). The ROM bytes are a counter so
+    /// no two banks are alike.
+    fn ines1_rom(mapper: u8, prg16: u8, chr8: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = prg16;
+        rom[5] = chr8;
+        rom[6] = (mapper & 0x0F) << 4;
+        rom[7] = mapper & 0xF0;
+        let body = usize::from(prg16) * 16 * 1024 + usize::from(chr8) * 8 * 1024;
+        #[allow(clippy::cast_possible_truncation)] // a deliberate byte counter
+        rom.extend((0..body).map(|i| (i ^ (i >> 8)) as u8));
+        rom
+    }
+
+    fn region_entry(region: Region) -> GameDbEntry {
+        GameDbEntry {
+            crc: 0,
+            region: Some(region),
+            mapper: None,
+            submapper: None,
+            mirroring: None,
+            title: String::new(),
+        }
+    }
+
+    /// v2.9.8 — the database's region reaches the core for an iNES 1.0 image.
+    ///
+    /// Until v2.9.8 a PAL row wrote header byte 9 bit 0, which the core's header
+    /// parser ignores by design (raw dumps carry junk there), so every PAL game
+    /// in an iNES 1.0 header ran at NTSC timing. Pin Bot (Europe), TQROM, was the
+    /// case that showed it: its CHR-RAM upload is sized for the PAL vblank, and
+    /// at NTSC it overran into rendering and garbled the title.
+    #[test]
+    fn a_pal_row_reaches_the_core_on_an_ines1_header() {
+        for (mapper, prg16, chr8) in [(0u8, 1u8, 1u8), (1, 8, 0), (119, 8, 8)] {
+            let mut rom = ines1_rom(mapper, prg16, chr8);
+            assert!(apply_header_overrides(&mut rom, &region_entry(Region::Pal)));
+            let nes = rustynes_core::Nes::from_rom(&rom).expect("promoted image parses");
+            assert_eq!(
+                nes.region(),
+                rustynes_core::Region::Pal,
+                "mapper {mapper}: the PAL row must reach the core"
+            );
+        }
+    }
+
+    /// Every board the mapper crate builds from an iNES 1.0 image is promoted to
+    /// PAL without changing the board. `ines1_as_nes2` refuses a promotion whose
+    /// board differs, so what this pins is the other half: that no board is
+    /// refused, i.e. that one of the two candidate headers always reproduces it.
+    /// A new board whose iNES 1.0 construction no NES 2.0 header can express
+    /// fails here, by id, rather than silently losing its PAL timing.
+    #[test]
+    fn promotion_never_changes_the_board() {
+        use rustynes_core::rustynes_mappers::parse;
+        let mut refused = Vec::new();
+        let mut promoted = 0usize;
+        for mapper in 0..=255u8 {
+            for (prg16, chr8) in [(2u8, 1u8), (8, 0), (8, 8), (16, 16), (32, 32)] {
+                for battery in [false, true] {
+                    let mut rom = ines1_rom(mapper, prg16, chr8);
+                    rom[6] |= u8::from(battery) << 1;
+                    let Ok((cart, _)) = parse(&rom) else {
+                        continue; // this layout is not a valid image of the board
+                    };
+                    if cart.console_type != rustynes_core::rustynes_mappers::ConsoleType::Nes {
+                        continue; // arcade boards are refused by design
+                    }
+                    match ines1_as_nes2(&rom, Region::Pal) {
+                        Some(header) => {
+                            rom[..16].copy_from_slice(&header);
+                            let nes = rustynes_core::Nes::from_rom(&rom).expect("parses");
+                            assert_eq!(nes.region(), rustynes_core::Region::Pal);
+                            promoted += 1;
+                        }
+                        None => refused.push((mapper, prg16, chr8, battery)),
+                    }
+                }
+            }
+        }
+        assert!(
+            promoted > 500,
+            "the sweep must exercise most boards ({promoted})"
+        );
+        assert!(
+            refused.is_empty(),
+            "boards refused a PAL promotion: {refused:?}"
+        );
+    }
+
+    /// The case the second candidate exists for. Mapper 37 (Super Mario Bros. +
+    /// Tetris + Nintendo World Cup, a PAL-only release) is one of the MMC3
+    /// multicart boards that ignore iNES 1.0's nominal 8 KiB of PRG-RAM; a NES
+    /// 2.0 header that stated 8 KiB would put RAM where the board has its outer
+    /// bank register. The promotion must state none.
+    #[test]
+    fn a_multicart_promotion_does_not_invent_work_ram() {
+        let mut rom = ines1_rom(37, 8, 16);
+        let header = ines1_as_nes2(&rom, Region::Pal).expect("mapper 37 promotes");
+        assert_eq!(header[10], 0, "no PRG-RAM stated for the multicart");
+        rom[..16].copy_from_slice(&header);
+        let (_, mapper) = rustynes_core::rustynes_mappers::parse(&rom).expect("parses");
+        assert!(mapper.sram().is_empty(), "mapper 37 has no work RAM");
+    }
+
+    /// Arcade carts keep NTSC: a PlayChoice-10 or Vs. System board exists only
+    /// in NTSC timing, so a PAL row on one names the home release that shares
+    /// its PRG/CHR. The image is left as it was apart from the byte-9 flag.
+    #[test]
+    fn an_arcade_cart_is_never_promoted() {
+        for byte7 in [0x01u8, 0x02] {
+            let mut rom = ines1_rom(0, 2, 1);
+            rom[7] = byte7; // clean iNES 1.0 Vs. System / PlayChoice-10 marker
+            assert_eq!(ines1_as_nes2(&rom, Region::Pal), None);
+            apply_header_overrides(&mut rom, &region_entry(Region::Pal));
+            assert_eq!(rom[7], byte7, "the arcade marker survives");
+            let nes = rustynes_core::Nes::from_rom(&rom).expect("parses");
+            assert_eq!(nes.region(), rustynes_core::Region::Ntsc);
+        }
+        // Mapper 99 is Vs.-only and is forced to the Vs. System by its id, so
+        // both parses agree on the console type and only the explicit arcade
+        // refusal keeps it NTSC.
+        let mut rom = ines1_rom(99, 2, 2);
+        assert_eq!(ines1_as_nes2(&rom, Region::Pal), None);
+        apply_header_overrides(&mut rom, &region_entry(Region::Pal));
+        let nes = rustynes_core::Nes::from_rom(&rom).expect("parses");
+        assert_eq!(nes.region(), rustynes_core::Region::Ntsc);
+    }
+
+    /// NES 2.0 states its own region, so a vendored row's region is withheld
+    /// along with its mapper and submapper; an iNES 1.0 header takes it.
+    #[test]
+    fn a_nes2_header_keeps_its_own_region() {
+        // Pin Bot (Europe): headerless CRC32 9247C38D, a PAL row.
+        const PIN_BOT_EUROPE: u32 = 0x9247_C38D;
+        let row = vendored_entry(PIN_BOT_EUROPE).expect("Pin Bot (Europe) listed");
+        assert_eq!(row.region, Some(Region::Pal), "premise: a PAL row");
+        let nes2 = header_for(119, true);
+        let entry = load_time_entry(PIN_BOT_EUROPE, &nes2).expect("row found");
+        assert_eq!(entry.region, None, "NES 2.0 region must not be rewritten");
+        let ines = header_for(119, false);
+        let entry = load_time_entry(PIN_BOT_EUROPE, &ines).expect("row found");
+        assert_eq!(entry.region, Some(Region::Pal), "iNES 1.0 takes the row");
+    }
+
+    /// A row titled for both markets carries no region: its PAL column is a
+    /// choice the table had to make for an image sold in both. A Europe-only row
+    /// keeps PAL.
+    #[test]
+    fn a_multi_market_row_carries_no_region() {
+        // Baseball (USA, Europe), AFDCBD24 -- the PRG/CHR of the staged
+        // PlayChoice-10 Baseball.
+        let baseball = vendored_entry(0xAFDC_BD24).expect("Baseball listed");
+        assert!(baseball.title.contains("(USA, Europe)"));
+        assert_eq!(baseball.region, None);
+        // Pin Bot (Europe) keeps its PAL row.
+        let pin_bot = vendored_entry(0x9247_C38D).expect("Pin Bot (Europe) listed");
+        assert_eq!(pin_bot.region, Some(Region::Pal));
+        assert!(is_multi_region_title("Ice Climber (USA, Europe).nes"));
+        assert!(!is_multi_region_title("Pin Bot (Europe).nes"));
+        assert!(!is_multi_region_title("Sidewinder (Asia) (PAL) (Unl).nes"));
+        assert!(!is_multi_region_title("Gyromite (World).nes"));
     }
 
     #[test]
