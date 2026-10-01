@@ -362,14 +362,14 @@ fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::P
 /// harness in v2.3.4, the browser here). The lesson recorded with the fix: a
 /// `cfg` gate inherited from the strictest of several stages is a gate on the
 /// whole feature, and nothing tells you which stages did not need it.
+///
+/// v2.9.8 — a thin name for [`crate::game_db::correct_rom`], the stage-one
+/// function every platform now calls (the mobile bridge and the libretro core
+/// included, which skipped the database until then). The lookup it runs is
+/// `load_time_entry`, not `entry_for_crc`: a vendored row never overrides a
+/// NES 2.0 header.
 pub(crate) fn apply_game_db_header_overrides(bytes: &mut [u8]) -> Option<u32> {
-    let crc = crate::game_db::rom_crc32(bytes)?;
-    // `load_time_entry`, not `entry_for_crc`: a vendored row's mapper and
-    // submapper never override a NES 2.0 header (v2.9.8; see its docs).
-    if let Some(entry) = crate::game_db::load_time_entry(crc, bytes) {
-        crate::game_db::apply_header_overrides(bytes, &entry);
-    }
-    Some(crc)
+    crate::game_db::correct_rom(bytes)
 }
 
 /// Hand the game-DB crate its overlay directory, then apply the load-time header
@@ -1439,6 +1439,13 @@ impl App {
             Ok(mut vs) => {
                 self.apply_vs_db(vs.main_mut());
                 self.apply_vs_db(vs.sub_mut());
+                // v2.9.8 — the game database's mirroring correction on both
+                // consoles; until v2.9.8 it reached only the probe console,
+                // which a cabinet discards.
+                let pair: [&mut Nes; 2] = vs.split_mut().into();
+                for console in pair {
+                    Self::apply_game_db(console, bytes);
+                }
                 Some(Box::new(vs))
             }
             Err(e) => {
@@ -1455,17 +1462,16 @@ impl App {
     /// keyed on the ROM's CRC32. A no-op when the ROM is not listed (or not an
     /// iNES image — e.g. FDS), so the default path is byte-identical. The core
     /// test suites never call this, so `AccuracyCoin` / the oracle are unaffected.
+    ///
+    /// v2.9.8 — the body is [`crate::game_db::correct_console`], stage two of
+    /// the load-time correction path every platform shares. It carries the
+    /// hardwired-mirroring guard: a static override on a mapper that controls
+    /// its own mirroring (MMC1/3/5, `AxROM`, VRC, …) corrupts rendering — Wizards
+    /// & Warriors' spurious `Horizontal` blanked its status-bar split and hung
+    /// the game.
     fn apply_game_db(nes: &mut Nes, bytes: &[u8]) {
-        if let Some(crc) = crate::game_db::rom_crc32(bytes)
-            && let Some(m) = crate::game_db::mirroring_for_crc(crc)
-            // A game-DB mirroring correction is only valid for a hardwired-
-            // mirroring board. Force-applying it to a mapper that controls its
-            // own mirroring (MMC1/3/5, AxROM, VRC, …) corrupts rendering — e.g.
-            // Wizards & Warriors (AxROM), whose DB row's spurious `Horizontal`
-            // blanked the status-bar split and hung the game. Skip it there.
-            && nes.mapper_has_hardwired_mirroring()
-        {
-            nes.set_mirroring_override(Some(m));
+        if let Some(crc) = crate::game_db::rom_crc32(bytes) {
+            crate::game_db::correct_console(nes, crc);
         }
     }
 
@@ -11774,6 +11780,13 @@ mod tests {
         assert!(
             squash(CANVAS_SRC).contains("apply_game_db_header_overrides(&mut bytes)"),
             "the `wasm-canvas` embed's ROM loader no longer corrects the header"
+        );
+        // v2.9.8 — and stage two: the embed builds its console itself (not
+        // through `finish_start_nes`), so it must apply the mirroring
+        // correction itself. It did not until v2.9.8.
+        assert!(
+            squash(CANVAS_SRC).contains("crate::game_db::correct_console(&mut nes, crc)"),
+            "the `wasm-canvas` embed's ROM loader no longer corrects the console"
         );
     }
 

@@ -157,14 +157,16 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             // off wasm because a LATER stage of it reads a filesystem, so this
             // stage — a compiled-in table needing nothing — was lost with it, and
             // every mapper / submapper / region fix was absent in the browser.
-            // CRC discarded: nothing stacks on it here, and `None` just means
-            // the bytes are not a parseable iNES image -- which `Nes::from_rom`
-            // reports properly a few lines below.
-            // `let _` is deliberate; an explicit `match` here is rejected by
-            // `clippy::single_match`. `None` means "not an iNES image" -- which
-            // includes formats this path legitimately handles -- so it must not
-            // abort the load; `Nes::from_rom` reports a genuinely malformed one.
-            let _ = crate::app::apply_game_db_header_overrides(&mut bytes);
+            // `None` means "not an iNES image" -- which includes formats this
+            // path legitimately handles -- so it must not abort the load;
+            // `Nes::from_rom` reports a genuinely malformed one.
+            //
+            // v2.9.8 — the CRC is kept now (it was discarded before): stage two of the shared correction
+            // path (`correct_console`, the hardwired-mirroring override) runs on
+            // the built console below. This embed skipped it until v2.9.8, so
+            // its mirroring corrections were missing even where its header
+            // corrections were not.
+            let crc = crate::app::apply_game_db_header_overrides(&mut bytes);
             // The file-pick is a user gesture, so it's safe to create
             // the AudioContext here (the browser autoplay policy
             // requires a gesture). Create the Nes at the audio
@@ -176,7 +178,10 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
                 |sr| Nes::from_rom_with_sample_rate(&bytes, sr),
             );
             match nes_result {
-                Ok(nes) => {
+                Ok(mut nes) => {
+                    if let Some(crc) = crc {
+                        crate::game_db::correct_console(&mut nes, crc);
+                    }
                     // v2.9.7 "Tandem" (plan item 5) — this embed draws ONE
                     // 256x240 canvas through the 2D `ImageData` path; it has
                     // no two-screen present path and no second console. A Vs.

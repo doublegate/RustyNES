@@ -2481,7 +2481,8 @@ ROM's CRC32 (over PRG-ROM + CHR-ROM) and, if listed, applies a nametable
 mirroring override via `Nes::set_mirroring_override`. The override lives in the
 bus's nametable translation (uniform across all mappers, no per-mapper edits),
 does not touch mapper-supplied VRAM (4-screen), and is persisted in the
-save-state so rollback / restore stay consistent. It is frontend-only and
+save-state so rollback / restore stay consistent. It is host-side (the core
+never consults the database itself) and
 `None` by default (the core test suites construct the `Nes` directly and never
 consult the database, so the suites stay byte-identical) and deterministic
 (same CRC ⇒ same mirroring, so netplay peers agree). A Game Genie code database
@@ -2513,8 +2514,9 @@ title; *Sidewinder* (Sachen, "(Asia) (PAL)") froze in its attract mode. A PAL
 or Dendy region now reaches the core by rewriting the iNES 1.0 header as the NES
 2.0 header of the same board, verified board-for-board before it is used
 (`docs/cartridge-format.md` §Region). It is still the one chokepoint: the
-desktop's File menu and CLI paths, the browser, and the coverage harness all
-call `apply_header_overrides`, and a power cycle re-parses the corrected bytes,
+desktop's File menu and CLI paths, the browser, the mobile bridge, the
+libretro core (both since v2.9.8) and the coverage harness all call
+`apply_header_overrides`, and a power cycle re-parses the corrected bytes,
 so nothing downstream needs to know the region came from the database. Two
 rows are not taken as written: a row titled for both markets -- the nine
 `(USA, Europe)` rows, one image sold in both, which the table's two-valued
@@ -2524,6 +2526,23 @@ header gives the same image; and Vs. System / PlayChoice-10 carts stay NTSC
 Europe)*). The promotion rewrites only the header, and the ROM identity that
 names save-state directories and `.sav` files (`Nes::rom_sha256`) leaves the
 header out, so it does not rename any game's saves.
+
+**One correction path for every platform (v2.9.8).** The two stages are two
+functions in `rustynes-gamedb`, and every platform calls both, in this order:
+`correct_rom(&mut bytes)` rewrites the header (the lookup above, then
+`apply_header_overrides`) and returns the header-excluded CRC32; the console is
+built from the corrected bytes; `correct_console(&mut nes, crc)` applies the
+mirroring override, only on a board whose mirroring is hardwired (ADR 0031). The
+callers are the desktop's File-menu and CLI paths (through
+`apply_game_db_header_overrides` / `apply_game_db`), both browser builds, the
+Android / iOS bridge (`rustynes-mobile`'s `build_console`), the libretro core
+(`build_cartridge`) and the coverage harness. Until v2.9.8 the mobile bridge and
+the libretro core called neither, so Android, iOS and RetroArch ran every image
+with its dump's header; the `wasm-canvas` embed called the first stage only.
+A Vs. `DualSystem` cabinet gets the mirroring stage on both of its consoles
+(until v2.9.8, on no platform). The desktop's editable user overlay and its
+per-game `<rom>.json` overlay stay desktop-only second stages; the other
+platforms read the vendored table alone.
 
 **Per-game `<rom>.json` config overlay (v1.7.0 "Forge" Workstream H4).** Layered
 on the v1.2.0 game-DB, a small frontend-only overlay lets a single ROM carry its

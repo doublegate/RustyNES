@@ -732,8 +732,10 @@ fn check_fds_bios(bios: &[u8]) -> Result<(), MobileError> {
 struct DualCabinet {
     /// The two consoles and their cross-wiring.
     system: Box<VsDualSystem>,
-    /// The (decompressed) ROM, kept so a power cycle can rebuild the whole
-    /// cabinet, wiring included, exactly as a fresh load does.
+    /// The (decompressed, database-corrected) ROM, kept so a power cycle can
+    /// rebuild the whole cabinet, wiring included, exactly as a fresh load
+    /// does. Stored after `rustynes_gamedb::correct_rom`, so the rebuild sees
+    /// the same header the load did.
     rom: Vec<u8>,
 }
 
@@ -784,6 +786,20 @@ struct Built {
 /// `fds_bios`), an NSF, or a Vs. `DualSystem` cabinet. The size cap and the
 /// zip extraction apply to all of them, as before.
 ///
+/// v2.9.8: a cartridge also gets the game database's load-time corrections,
+/// through the two functions every platform calls -- `rustynes_gamedb::
+/// correct_rom` rewrites the header before the core parses it, and
+/// `correct_console` applies a hardwired-mirroring override to the built
+/// console. Before v2.9.8 the bridge skipped both, so Android and iOS ran
+/// every image with its dump's header: no mapper, submapper or region fix
+/// (Seicross hung in its protection loop) and none of v2.9.8's NES 2.0 guard
+/// or PAL / Dendy promotion. The database is the vendored table only; the
+/// desktop's editable user overlay is never configured here. An FDS disk or an
+/// NSF has no iNES header, so `correct_rom` leaves it alone. A cabinet gets the
+/// header correction (its stored bytes are the corrected ones, so a power-cycle
+/// rebuild sees them too) and the mirroring correction on both consoles
+/// (`seat_cabinet`).
+///
 /// # Errors
 /// [`MobileError::RomLoad`] for an oversized or unparseable image,
 /// [`MobileError::MissingFdsBios`] for a disk with no BIOS set.
@@ -793,7 +809,8 @@ fn build_console(
     sample_rate: u32,
 ) -> Result<Built, MobileError> {
     check_rom_size(&rom)?;
-    let rom = decompress_rom(rom);
+    let mut rom = decompress_rom(rom);
+    let crc = rustynes_gamedb::correct_rom(&mut rom);
     let load_err = |e: rustynes_core::rustynes_mappers::RomError| MobileError::RomLoad {
         reason: e.to_string(),
     };
@@ -811,10 +828,13 @@ fn build_console(
         }
         ImageKind::Cartridge => {
             match Emu::from_rom_with_sample_rate(&rom, sample_rate).map_err(load_err)? {
-                Emu::Single(nes) => Ok(Built {
-                    nes: *nes,
-                    dual: None,
-                }),
+                Emu::Single(nes) => {
+                    let mut nes = *nes;
+                    if let Some(crc) = crc {
+                        rustynes_gamedb::correct_console(&mut nes, crc);
+                    }
+                    Ok(Built { nes, dual: None })
+                }
                 Emu::Dual(system) => {
                     let (nes, system) = seat_cabinet(system, &rom, sample_rate)?;
                     Ok(Built {
@@ -842,6 +862,14 @@ fn seat_cabinet(
         for console in pair {
             console.set_vs_ppu_type(entry.vs_ppu_type);
             console.set_vs_dip(entry.vs_dip);
+        }
+    }
+    // v2.9.8 — the game database's mirroring correction on both consoles
+    // (`rom` is already header-corrected), as the desktop's cabinet path does.
+    if let Some(crc) = rustynes_gamedb::rom_crc32(rom) {
+        let pair: [&mut Nes; 2] = system.split_mut().into();
+        for console in pair {
+            rustynes_gamedb::correct_console(console, crc);
         }
     }
     let mut nes =
@@ -4330,6 +4358,42 @@ mod tests {
             .expect("reload");
         assert!(!ctrl.np_is_active());
         assert_eq!(ctrl.np_status().phase, NpPhase::Idle);
+    }
+
+    /// v2.9.8 — the bridge applies the game database's load-time corrections,
+    /// through the same two functions every platform calls
+    /// (`rustynes_gamedb::correct_rom` / `correct_console`).
+    ///
+    /// Until v2.9.8 the bridge handed the raw image to the core, so neither
+    /// Android nor iOS received any database fix. The image is one the
+    /// database matches as Gradius (Europe) with every corrected field wrong:
+    /// uncorrected it is NROM with 32 KiB of CHR, which NROM refuses, so the
+    /// load failed outright; corrected it is CNROM, PAL, vertical mirroring.
+    /// Both entry points (`new` and `load_rom`) and a power cycle are checked:
+    /// the cycle must keep the corrections, since a cabinet rebuilds from the
+    /// stored bytes and a console keeps its override.
+    #[test]
+    fn the_bridge_applies_the_game_database_corrections() {
+        use rustynes_core::rustynes_mappers::Mirroring;
+        let rom = rustynes_gamedb::test_support::gradius_europe_with_a_wrong_header();
+        let check = |ctrl: &NesController, when: &str| {
+            let (region, mirroring) = {
+                let g = ctrl.lock();
+                (g.nes.region(), g.nes.mirroring_override())
+            };
+            assert_eq!(region, rustynes_core::Region::Pal, "{when}: region");
+            assert_eq!(mirroring, Some(Mirroring::Vertical), "{when}: mirroring");
+        };
+        let ctrl = NesController::new(rom.clone(), DEFAULT_SAMPLE_RATE)
+            .expect("the corrected image loads through new()");
+        check(&ctrl, "new");
+        ctrl.power_cycle();
+        check(&ctrl, "after a power cycle");
+
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.load_rom(rom, DEFAULT_SAMPLE_RATE)
+            .expect("the corrected image loads through load_rom()");
+        check(&ctrl, "load_rom");
     }
 
     /// End-to-end loopback: two `NesController`s over `127.0.0.1` complete the

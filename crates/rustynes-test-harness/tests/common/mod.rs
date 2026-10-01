@@ -656,14 +656,12 @@ pub mod external {
         // wrong program. `apply_header_overrides` patches the header in place,
         // keyed on the header-excluded CRC32, which is exactly what
         // `App::load_rom_from_path` does before handing bytes to the core.
+        //
+        // v2.9.8 — through `correct_rom` / `correct_console`, the two functions
+        // every platform now calls (the mobile bridge and the libretro core
+        // included), so this net tests the one load path all of them share.
         let mut bytes = bytes;
-        // `load_time_entry` is the frontend's lookup: a vendored row never
-        // rewrites a NES 2.0 header's mapper or submapper (v2.9.8).
-        if let Some(entry) = rustynes_gamedb::rom_crc32(&bytes)
-            .and_then(|crc| rustynes_gamedb::load_time_entry(crc, &bytes))
-        {
-            rustynes_gamedb::apply_header_overrides(&mut bytes, &entry);
-        }
+        let crc = rustynes_gamedb::correct_rom(&mut bytes);
         let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
 
         // The header rewrite above is only HALF of what the frontend does.
@@ -673,11 +671,8 @@ pub mod external {
         // own is what froze Wizards & Warriors (ADR 0031), so the guard is the
         // load-bearing part, not the lookup. Mirroring the frontend's
         // `apply_game_db` exactly: same source, same guard, same order.
-        if let Some(crc) = rustynes_gamedb::rom_crc32(&bytes)
-            && let Some(m) = rustynes_gamedb::mirroring_for_crc(crc)
-            && nes.mapper_has_hardwired_mirroring()
-        {
-            nes.set_mirroring_override(Some(m));
+        if let Some(crc) = crc {
+            rustynes_gamedb::correct_console(&mut nes, crc);
         }
         Load::Ok(Box::new(nes))
     }

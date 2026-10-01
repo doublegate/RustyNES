@@ -392,6 +392,17 @@ Controls also gains **Cancel opposite directions** (default on). **All of this
 Swift is uncompiled** on the Linux build host; the checks are rows T5-T7, T10 and
 T12 of `docs/mobile-v2.9.3-run-sheet.md`.
 
+**The game database's load-time corrections (v2.9.8).** The shared bridge now
+corrects a cartridge before the core parses it (`rustynes_gamedb::correct_rom`:
+mapper, submapper and region fixes, the NES 2.0 guard, the PAL / Dendy
+promotion of an iNES 1.0 image) and corrects the built console
+(`rustynes_gamedb::correct_console`: the hardwired-mirroring override, on both
+consoles of a cabinet), through the same two functions as the desktop, the
+browser and the libretro core (`docs/frontend.md`, "One correction path for
+every platform"). Until v2.9.8 iOS, like Android, ran every image with its dump's
+header. The change is in the Rust bridge only (`build_console`), so no Swift
+changes; only the vendored table is read.
+
 **Still NOT on the iOS bridge.** The native desktop **20-band EQ** (the mobile
 audio-depth panel ships a 5-band EQ) and the debugger's **`.dbg` ca65/cc65 source
 maps** remain deferred to the post-v2.0.0 mobile re-port.

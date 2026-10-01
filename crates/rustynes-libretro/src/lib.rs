@@ -793,6 +793,42 @@ fn apply_vs_database(nes: &mut Nes) {
     apply_vs_entry(nes, rustynes_core::vs_db::lookup(nes));
 }
 
+/// Build a cartridge console from `rom`, with the game database's load-time
+/// corrections applied (v2.9.8).
+///
+/// The correction path is the one every platform calls:
+/// `rustynes_gamedb::correct_rom` rewrites the header in place before the core
+/// parses it (mapper, submapper, region; the NES 2.0 guard; the PAL / Dendy
+/// promotion of an iNES 1.0 image), and `rustynes_gamedb::correct_console`
+/// applies a hardwired-mirroring override to the built console. Before v2.9.8
+/// this core called `Emu::from_rom` on the frontend's bytes as they came, so
+/// none of those corrections reached RetroArch. A Vs. `DualSystem` cabinet
+/// gets both stages, the mirroring correction on each of its two consoles, as
+/// on the desktop and the mobile bridge. The database is the vendored table; the desktop's user
+/// overlay is never configured here.
+///
+/// The bytes are corrected in place because they are the frontend's copy
+/// already (`load_game` takes an owned `Vec`). RetroAchievements hashes the
+/// content RetroArch read from disk, not these bytes, and its NES hash leaves
+/// the header out anyway; the identity the core reports for its own saves
+/// (`Nes::rom_sha256`) excludes the header too, so no correction renames one.
+fn build_cartridge(rom: &mut [u8]) -> Result<Emu, rustynes_core::rustynes_mappers::RomError> {
+    let crc = rustynes_gamedb::correct_rom(rom);
+    let mut emu = Emu::from_rom(rom)?;
+    if let Some(crc) = crc {
+        match &mut emu {
+            Emu::Single(nes) => {
+                rustynes_gamedb::correct_console(nes, crc);
+            }
+            Emu::Dual(dual) => {
+                rustynes_gamedb::correct_console(dual.main_mut(), crc);
+                rustynes_gamedb::correct_console(dual.sub_mut(), crc);
+            }
+        }
+    }
+    Ok(emu)
+}
+
 /// The database step of [`apply_vs_database`], split out so a test can hand
 /// it an entry without a commercial dump.
 const fn apply_vs_entry(nes: &mut Nes, entry: Option<rustynes_core::vs_db::VsDbEntry>) {
@@ -1048,7 +1084,7 @@ impl RustyNesLibretro {
         // read the file from `retro_game_info::path` (agy, #556). Before, that
         // frontend got an error and no game.
         let ext_info = ext_info.filter(|e| !e.data.is_null() && e.size != 0);
-        let (rom_data, is_fds) = if let Some(ext_info) = ext_info {
+        let (mut rom_data, is_fds) = if let Some(ext_info) = ext_info {
             // SAFETY: `data` is non-null and `size` non-zero (the filter above). The
             // libretro spec guarantees it references `size` contiguous bytes owned
             // by the frontend for the duration of this call.
@@ -1095,7 +1131,10 @@ impl RustyNesLibretro {
             // detection the desktop frontend uses, so the libretro core presents dual
             // cabinets identically (two consoles side-by-side) instead of booting a
             // single console that would hang waiting on its cross-wired partner.
-            match Emu::from_rom(&rom_data) {
+            //
+            // v2.9.8 — through `build_cartridge`, which applies the game
+            // database's load-time corrections around that call.
+            match build_cartridge(&mut rom_data) {
                 Ok(e) => e,
                 Err(e) => {
                     self.log(
@@ -2879,6 +2918,20 @@ mod tests {
                 out.push(path);
             }
         }
+    }
+
+    /// v2.9.8 — the mirroring half of the game database's corrections, which
+    /// no libretro call reports (the region half is checked through the C ABI
+    /// in `abi_tests::a_cartridge_gets_the_game_database_corrections`).
+    #[test]
+    fn a_cartridge_gets_the_game_database_mirroring() {
+        use rustynes_core::rustynes_mappers::Mirroring;
+        let mut rom = rustynes_gamedb::test_support::gradius_europe_with_a_wrong_header();
+        let Ok(Emu::Single(nes)) = build_cartridge(&mut rom) else {
+            panic!("the corrected image builds one console");
+        };
+        assert_eq!(nes.region(), Region::Pal);
+        assert_eq!(nes.mirroring_override(), Some(Mirroring::Vertical));
     }
 
     /// libretro re-audit NL-08. A Vs. database entry sets the PPU palette

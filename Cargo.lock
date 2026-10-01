@@ -4446,6 +4446,7 @@ dependencies = [
  "libc",
  "rust-libretro",
  "rustynes-core",
+ "rustynes-gamedb",
 ]
 
 [[package]]
@@ -4465,6 +4466,7 @@ name = "rustynes-mobile"
 version = "2.9.7"
 dependencies = [
  "rustynes-core",
+ "rustynes-gamedb",
  "rustynes-hdpack",
  "rustynes-netplay",
  "rustynes-ra",

@@ -59,6 +59,10 @@ rustynes-ra.workspace = true
 # as a transitive default) so a future default change can't silently drop the
 # room-code path.
 rustynes-netplay = { workspace = true, features = ["netplay-client"] }
+# v2.9.8 — the game database's load-time corrections (`correct_rom` +
+# `correct_console`), the same path the desktop, the browser, the libretro core
+# and the coverage harness call. Before, the bridge applied none of them.
+rustynes-gamedb = { path = "../rustynes-gamedb" }
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the
@@ -76,6 +80,9 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # blocking `tungstenite` server side mirrors the client the bridge uses; same
 # version + pure-rustls features (no OpenSSL) so the dev build stays consistent.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+# v2.9.8 — `test_support::gradius_europe_with_a_wrong_header`, an image the
+# game database corrects, so the load-path test needs no commercial dump.
+rustynes-gamedb = { path = "../rustynes-gamedb", features = ["test-support"] }
 
 [[bin]]
 # The binding generator the platform builds invoke:

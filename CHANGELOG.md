@@ -201,6 +201,21 @@ cycle-accurate core later replaced.
   byte-identical frames.
 ### Fixed
 
+- **Android, iOS and the libretro core apply the game database's
+  corrections.** The database fixes a ROM whose header is wrong: the mapper,
+  the submapper (*Seicross* needs submapper 4 to clear its protection loop),
+  the region (an iNES 1.0 PAL image is promoted to the NES 2.0 header of the
+  same board) and a hardwired mirroring. Until now only the desktop, the
+  browser and the coverage harness applied it; the mobile bridge and the
+  libretro core handed the dump's bytes to the core as they were, so on a
+  phone or in RetroArch every such game ran with its wrong header. Every
+  platform now calls the same two functions, `rustynes_gamedb::correct_rom`
+  (the header, before the parse) and `correct_console` (the mirroring, on the
+  built console). The lightweight `wasm-canvas` web embed applied the header
+  half only and now applies both, and a Vs. `DualSystem` cabinet gets the
+  mirroring correction on both of its consoles, which no platform did before.
+  Save identities are unchanged: the save key leaves the header out.
+
 - **Mapper 19 (Namco 163) honours the IRQ enable bit in `$5800`.** The
   register is `EHHH HHHH` on NESdev, bit 7 the enable, but every write
   turned the counter on, so a game that stopped its raster IRQ with

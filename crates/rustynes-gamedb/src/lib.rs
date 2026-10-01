@@ -14,9 +14,14 @@
 //! (by promoting the header to the equivalent NES 2.0 one) and no longer
 //! rewrites a NES 2.0 header's own.
 //!
-//! This is **frontend-only**: the core test suites (AccuracyCoin, the commercial
-//! oracle, `nestest`) construct the `Nes` directly and never consult this DB, so
-//! they stay byte-identical. The override is deterministic (same CRC ⇒ same
+//! Every platform applies it the same way since v2.9.8, through [`correct_rom`]
+//! (the header, before the core parses it) and [`correct_console`] (the
+//! mirroring, on the built console): the desktop and both browser builds, the
+//! Android / iOS bridge (`rustynes-mobile`), the libretro core and the coverage
+//! harness. Before v2.9.8 the mobile bridge and the libretro core applied none
+//! of it. It is still a **host** concern, not a core one: the core test suites
+//! (AccuracyCoin, the commercial oracle, `nestest`) construct the `Nes` directly
+//! and never consult this DB, so they stay byte-identical. The override is deterministic (same CRC ⇒ same
 //! mirroring) and persisted in the save-state, so netplay + rollback stay
 //! consistent. Both peers in a netplay session resolve the same override from
 //! the shared ROM.
@@ -720,6 +725,159 @@ fn same_board(
         && format!("{:?}", ma.debug_info()) == format!("{:?}", mb.debug_info())
 }
 
+/// Stage one of the load-time correction path every platform shares (v2.9.8):
+/// rewrite `bytes`' header with the database's region / mapper / submapper
+/// corrections, before the core parses it.
+///
+/// Returns the header-excluded CRC32 the lookup used -- the key for stage two
+/// ([`correct_console`]) and for any correction a host stacks on top (the
+/// desktop's per-game `<rom>.json` overlay) -- or `None` when `bytes` is not an
+/// iNES image. `None` is not an error: an FDS disk (`FDS\x1A`) or an NSF
+/// (`NESM\x1A`) has no header to correct and loads through its own
+/// constructor, and a malformed cartridge is reported by the core's parser.
+///
+/// ## One path, every platform
+///
+/// The desktop, the browser (both web builds), the Android and iOS bridge
+/// (`rustynes-mobile`), the libretro core and the coverage harness all call
+/// this function and [`correct_console`], in that order: correct the bytes,
+/// build the console from them, correct the console. Before v2.9.8 only the
+/// desktop, the browser and the harness corrected anything; the mobile bridge
+/// and the libretro core handed the raw image to the core, so every database
+/// fix -- Seicross's submapper, the region promotion, the NES 2.0 guard in
+/// [`load_time_entry`] -- was absent there. That was the fourth load path to
+/// miss the corrections (the CLI, the harness and the browser were the first
+/// three), which is why the two stages now live here rather than in each host.
+///
+/// The lookup is [`load_time_entry`]: the user overlay when a host configured
+/// one ([`set_overlay_dir`]; only the desktop does), else the vendored table
+/// with its NES 2.0 guard. Idempotent: a second pass over corrected bytes finds
+/// the same CRC and changes nothing, because the corrected header is either the
+/// same iNES 1.0 header or a NES 2.0 one the guard leaves alone.
+pub fn correct_rom(bytes: &mut [u8]) -> Option<u32> {
+    let crc = rom_crc32(bytes)?;
+    if let Some(entry) = load_time_entry(crc, bytes) {
+        apply_header_overrides(bytes, &entry);
+    }
+    Some(crc)
+}
+
+/// Stage two of the shared load-time correction path (v2.9.8).
+///
+/// Applies the database's nametable-mirroring correction to a console built
+/// from bytes that went through [`correct_rom`], whose returned CRC is `crc`.
+///
+/// Mirroring is not a header field the database rewrites; it is a
+/// post-construction override ([`rustynes_core::Nes::set_mirroring_override`]),
+/// and only on a board whose mirroring is **hardwired**. Forcing a static
+/// mirroring onto a mapper that switches its own (MMC1/3/5, `AxROM`, VRC, ...)
+/// corrupts its rendering -- Wizards & Warriors' row froze the game (ADR 0031)
+/// -- so the guard is the load-bearing half, not the lookup.
+///
+/// Returns `true` when an override was applied. A host running a Vs.
+/// `DualSystem` cabinet calls it on each of the two consoles (v2.9.8; until
+/// then no host corrected a cabinet's consoles at all).
+pub fn correct_console(nes: &mut rustynes_core::Nes, crc: u32) -> bool {
+    if let Some(m) = mirroring_for_crc(crc)
+        && nes.mapper_has_hardwired_mirroring()
+    {
+        nes.set_mirroring_override(Some(m));
+        return true;
+    }
+    false
+}
+
+/// Test support for the hosts' load-path tests (feature `test-support`):
+/// build an iNES image whose header-excluded CRC32 is a chosen database key.
+///
+/// Every row of the vendored table names a commercial dump, which is never
+/// committed, so a test that wants to see a correction arrive through a host's
+/// load path needs bytes the database matches without the dump. CRC32 is
+/// affine over GF(2), so four chosen bytes at the end of the body reach any
+/// CRC; the rest of the image is zero.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    /// The vendored row the hosts' load-path tests use.
+    ///
+    /// `51C51C35, PAL, 3, 0, 4, 2, 0, false, Vertical, "Gradius (Europe).nes"`.
+    /// It carries one correction of each kind the shared path applies: a
+    /// mapper (3, CNROM), a region (PAL, which on an iNES 1.0 image travels as
+    /// a promotion to NES 2.0) and a hardwired mirroring (vertical).
+    pub const GRADIUS_EUROPE_CRC: u32 = 0x51C5_1C35;
+
+    /// An iNES 1.0 image the database matches as Gradius (Europe).
+    ///
+    /// Every field the row corrects is stated wrongly: mapper 0, horizontal mirroring,
+    /// and no region the core reads. 32 KiB PRG + 32 KiB CHR, which NROM
+    /// refuses (it takes at most 8 KiB of CHR-ROM), so an uncorrected load
+    /// fails outright and a corrected one builds CNROM.
+    #[must_use]
+    pub fn gradius_europe_with_a_wrong_header() -> Vec<u8> {
+        let mut header = [0u8; 16];
+        header[..4].copy_from_slice(b"NES\x1A");
+        header[4] = 2; // 2 x 16 KiB PRG-ROM
+        header[5] = 4; // 4 x 8 KiB CHR-ROM
+        image_with_crc(header, GRADIUS_EUROPE_CRC)
+    }
+
+    /// An image with `header` (16 bytes; the PRG / CHR counts in bytes 4 and 5
+    /// set the body length) whose header-excluded CRC32 is `target_crc`.
+    ///
+    /// # Panics
+    ///
+    /// If the header declares no PRG-ROM (the CRC is then undefined), or if the
+    /// forged CRC does not come out as `target_crc` (checked, not assumed).
+    #[must_use]
+    pub fn image_with_crc(header: [u8; 16], target_crc: u32) -> Vec<u8> {
+        let body = usize::from(header[4]) * 16 * 1024 + usize::from(header[5]) * 8 * 1024;
+        assert!(body >= 4, "the header declares no PRG-ROM");
+        let mut image = header.to_vec();
+        image.resize(16 + body, 0);
+        // The register after the prefix (everything but the last four bytes),
+        // before the final inversion.
+        let mut prefix = 0xFFFF_FFFFu32;
+        for &b in &image[16..16 + body - 4] {
+            prefix = step(prefix, b);
+        }
+        // Walk the wanted final register back four bytes. Each table entry's
+        // top byte is unique, so the register's top byte names the index the
+        // forward step used; the index goes in the low byte of the earlier
+        // register, which is then the bytes XORed with the prefix register.
+        let mut reg = !target_crc;
+        for _ in 0..4 {
+            let idx = (0..=255u32)
+                .find(|&i| table(i) >> 24 == reg >> 24)
+                .expect("the CRC-32 table's top bytes are a permutation");
+            reg = ((reg ^ table(idx)) << 8) | idx;
+        }
+        image[16 + body - 4..].copy_from_slice(&(reg ^ prefix).to_le_bytes());
+        assert_eq!(
+            super::rom_crc32(&image),
+            Some(target_crc),
+            "CRC forging failed"
+        );
+        image
+    }
+
+    /// One table entry of the reflected CRC-32 (polynomial `0xEDB8_8320`).
+    fn table(i: u32) -> u32 {
+        let mut c = i;
+        for _ in 0..8 {
+            c = if c & 1 != 0 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
+        }
+        c
+    }
+
+    /// One forward byte step of the reflected CRC-32 register.
+    fn step(reg: u32, byte: u8) -> u32 {
+        (reg >> 8) ^ table((reg ^ u32::from(byte)) & 0xFF)
+    }
+}
+
 /// Compute the "ROM CRC" of an iNES image: CRC32 of PRG-ROM + CHR-ROM.
 ///
 /// Excludes the 16-byte header and any 512-byte trainer. Returns `None` if the
@@ -1221,5 +1379,57 @@ mod tests {
         // CRC over the 24KB of 0xAA, independent of the header bytes.
         let expected = crc32(&vec![0xAAu8; 16 * 1024 + 8 * 1024]);
         assert_eq!(crc, expected);
+    }
+
+    /// The shared load-time path (v2.9.8) delivers all three kinds of
+    /// correction a row carries: the mapper and the region through the header
+    /// ([`correct_rom`]), the hardwired mirroring through the console
+    /// ([`correct_console`]). The hosts' own tests drive the same image through
+    /// their load paths; this one pins the two stages themselves.
+    #[test]
+    fn the_shared_path_delivers_mapper_region_and_mirroring() {
+        use rustynes_core::Nes;
+        use rustynes_core::rustynes_mappers::Mirroring;
+
+        let raw = test_support::gradius_europe_with_a_wrong_header();
+        assert!(
+            Nes::from_rom(&raw).is_err(),
+            "premise: uncorrected, the image is NROM with 32 KiB of CHR, which NROM refuses"
+        );
+
+        let mut bytes = raw;
+        let crc = correct_rom(&mut bytes).expect("an iNES image");
+        assert_eq!(crc, test_support::GRADIUS_EUROPE_CRC);
+        let mut nes = Nes::from_rom(&bytes).expect("the corrected image builds");
+        // The mapper is read from the corrected header, not `Nes::mapper_id`:
+        // that reports the board's own debug view, which CNROM does not
+        // override (it answers 0). Building at all is the board-level proof --
+        // NROM refuses this image.
+        let header = rustynes_core::rustynes_mappers::parse_header(&bytes).expect("parses");
+        assert_eq!(header.mapper_id, 3, "the row's mapper");
+        assert_eq!(nes.region(), rustynes_core::Region::Pal, "the row's region");
+        assert_eq!(nes.mirroring_override(), None, "stage two has not run yet");
+        assert!(correct_console(&mut nes, crc));
+        assert_eq!(nes.mirroring_override(), Some(Mirroring::Vertical));
+
+        // Idempotent: a second pass over corrected bytes changes nothing (the
+        // desktop's startup path can reach the correction twice).
+        let mut again = bytes.clone();
+        assert_eq!(correct_rom(&mut again), Some(crc));
+        assert_eq!(again, bytes);
+    }
+
+    /// Not an iNES image: nothing to correct, and `None` rather than an error,
+    /// so an FDS disk or an NSF still reaches its own constructor.
+    #[test]
+    fn the_shared_path_leaves_other_formats_alone() {
+        let mut fds = b"FDS\x1A\x01".to_vec();
+        fds.resize(64, 0);
+        let before = fds.clone();
+        assert_eq!(correct_rom(&mut fds), None);
+        assert_eq!(fds, before);
+        let mut nsf = b"NESM\x1A\x01".to_vec();
+        nsf.resize(128, 0);
+        assert_eq!(correct_rom(&mut nsf), None);
     }
 }
