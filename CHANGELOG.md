@@ -91,6 +91,12 @@ cycle-accurate core later replaced.
 
 
 
+- **`$4017` IRQ inhibit now clears the frame IRQ on the write cycle.** It
+  waited for the 3-4 cycle timer reset, so a `CLI` right after the write could
+  still take the frame IRQ. *Nintendo World Championships 1990* (mapper 105)
+  does exactly that, with its IRQ vector in uninitialised WRAM, and showed a
+  blank screen forever; it now reaches its title screen. AccuracyCoin, blargg's
+  APU suites and the PAL APU suite are unchanged.
 - **Mapper 191 translations with 192 KiB and 160 KiB of PRG boot.** The
   MMC3-based boards of `mmc3_boards.rs` reduced a bank number onto the image
   with a plain modulo, which on a non-power-of-two image sends the MMC3's
