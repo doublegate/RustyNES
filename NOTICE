@@ -38,7 +38,8 @@ file-by-file table (source file, function, and line references).
   ~15 mapper board implementations (Bandai EEPROM, JY Company, Waixing, Sachen,
   Txc, NTDEC, Kaiser, MMC3 variants, FK23C, CoolBoy, the Vs. DualSystem
   sub-console banking, the VRC7 audio register path, the mapper 244 scramble
-  tables, the Nitra mapper 250 address decode); the Bisqwit NTSC filter as
+  tables, the Nitra mapper 250 address decode); the raw NTSC composite-signal
+  model ("raw palette"); the Bisqwit NTSC filter as
   Mesen2 implements it; the UNIF board tables; the debug-symbol importer
   (DbgImporter); and the PGO training harness (PGOHelper).
 

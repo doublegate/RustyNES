@@ -68,6 +68,14 @@ cycle-accurate core later replaced.
   palette (or a loaded `.pal`). One bit tints toward its complement, all three
   darken without tinting, and frames without emphasis are unchanged. The MiSTer
   core carries the same colours.
+
+
+
+- **Provenance: the raw NTSC signal model is recorded as derived** from
+  Bisqwit's `nes_ntsc` method and Mesen2's "raw palette" generator, which its
+  own documentation has said since v2.1.9. It had no `// Provenance:` header or
+  record row; it now has both, and a NOTICE entry, at the maintainer's
+  direction.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
