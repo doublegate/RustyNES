@@ -85,6 +85,26 @@ not the winit thread:
   `UdpSocket`); while a session is active the emu thread is paused so the two
   never both drive the core. **RetroAchievements stays on the winit thread**
   (`rc_client` is single-threaded C).
+- **A loaded console is configured before it is installed (v2.9.8).** The emu
+  thread produces whenever it can take the lock while `has_rom` is set, and on a
+  ROM-to-ROM load `has_rom` is still set from the previous game. So every
+  power-on setting -- APU channel mask, gain and filter model, OAM decay, PPU
+  revision, power-up palette, power-on RAM fill, fast dot path, console model,
+  palette, Port-2 device -- and the persisted cheats go onto the new `Nes`
+  through `configure_console` / `load_rom_cheats` BEFORE `EmuCore::set_nes`, and
+  the overclock and raw cheats are set under the install lock. Both load paths
+  (`load_rom_from_path`, `finish_start_nes`) and both consoles of a Vs. cabinet
+  follow this. Until v2.9.8 the settings were pushed after the install, one lock
+  at a time (with the HD-pack load in between on a menu load), so the thread
+  could run frames without them and `set_power_on_ram` then rewrote work RAM
+  under a running game. A **Power Cycle** re-applies the same configuration
+  under its own lock, because `Nes::power_cycle` rebuilds the PPU and APU and
+  drops what they held (OAM decay, fast dot path, custom palette, filter model)
+  and unplugs the device (the per-frame input latch re-attaches it); before
+  v2.9.8 it re-pushed only the mask and gain.
+  **Reset** needs nothing: it keeps the PPU, the APU and the stored knobs.
+  Pinned by `every_load_path_configures_the_console_before_installing_it` and
+  `configure_console_restores_what_a_power_cycle_drops`.
 - Best-effort Linux priority elevation runs on the emu thread (SCHED_RR →
   `nice` → `PR_SET_TIMERSLACK`, degrading silently without the `realtime`
   rlimit).
@@ -989,8 +1009,9 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   has no hook for it. The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
-  `App::apply_console_model` maps it to `rustynes_core::ConsoleModel` and calls
-  `Nes::set_console_model` after every ROM load and at startup, and on a
+  `console_model_for` maps it to `rustynes_core::ConsoleModel`;
+  `Nes::set_console_model` is called on every ROM load and Power Cycle (through
+  `configure_console`, before the console runs), at startup, and on a
   Settings change through its own `SettingsApply::console_model` flag (not the
   `fast_dotloop` path, because `apply_ppu_hardware_config` also re-runs the
   power-on work-RAM fill). A power-cycle keeps the model inside the core. The

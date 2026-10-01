@@ -216,6 +216,22 @@ cycle-accurate core later replaced.
   mirroring correction on both of its consoles, which no platform did before.
   Save identities are unchanged: the save key leaves the header out.
 
+- **Desktop: a game's power-on settings are in place before its first
+  frame, and a Power Cycle keeps them.** On a ROM load the desktop installed
+  the new console first and then pushed its settings one at a time, while the
+  emulation thread was already free to run it (after the first game it never
+  stops for a load). A frame produced in between ran without the configured
+  power-on RAM fill, PPU revision, power-up palette, Famicom model, OAM decay,
+  filter, channel mask or palette, and the late RAM-fill push then rewrote the
+  work RAM of a game that had started; a configured HD pack, loaded in the
+  middle of that sequence, widened the window. Every setting and the saved
+  cheats now go onto the console before it is installed. A Power Cycle
+  rebuilds the PPU and the APU, and it re-applied only the channel mask and
+  gain, so the OAM-decay model, the filter model, a custom or NTSC palette
+  and the fast dot path setting were lost until the next load or Settings
+  change; it now re-applies all of them. The two consoles of a Vs. `DualSystem` cabinet get the settings too,
+  which they never did. With every setting at its default nothing changes.
+
 - **Mapper 19 (Namco 163) honours the IRQ enable bit in `$5800`.** The
   register is `EHHH HHHH` on NESdev, bit 7 the enable, but every write
   turned the counter on, so a game that stopped its raster IRQ with
