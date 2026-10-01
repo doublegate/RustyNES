@@ -460,8 +460,10 @@ fn serialize_row(e: &GameDbEntry) -> String {
 /// Only the 16-byte header is ever rewritten, and the ROM identity that names
 /// the frontend's save-state directory and `.sav` file (`Nes::rom_sha256`)
 /// leaves the header out (v2.9.8), so no correction here renames a game's
-/// saves. The Vs. System database is keyed by the whole image instead
-/// (`Nes::image_sha256`), and Vs. carts are never promoted.
+/// saves. The Vs. System database matches that same identity first (its
+/// whole-image key, `Nes::image_sha256`, is only the fallback), so a header
+/// correction cannot cost a Vs. cart its palette or DIP row either; and Vs.
+/// carts are never promoted.
 ///
 /// Returns `true` if any byte was changed (the caller may want to log it).
 pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {

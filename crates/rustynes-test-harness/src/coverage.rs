@@ -174,7 +174,7 @@ pub fn walk_nes(root: &Path, out: &mut Vec<PathBuf>) {
 pub fn run_rom_headless(bytes: &[u8], frames: u64, start_at: u64) -> Result<Vec<u8>, String> {
     let mut nes = Nes::from_rom(bytes).map_err(|e| e.to_string())?;
     if nes.is_vs_system() {
-        let dip = rustynes_core::vs_db::lookup(nes.image_sha256()).map_or(0, |entry| {
+        let dip = rustynes_core::vs_db::lookup(&nes).map_or(0, |entry| {
             nes.set_vs_ppu_type(entry.vs_ppu_type);
             entry.vs_dip
         });

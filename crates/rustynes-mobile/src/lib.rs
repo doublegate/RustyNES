@@ -831,7 +831,7 @@ fn seat_cabinet(
     rom: &[u8],
     sample_rate: u32,
 ) -> Result<(Nes, Box<VsDualSystem>), MobileError> {
-    if let Some(entry) = rustynes_core::vs_db::lookup(system.main().image_sha256()) {
+    if let Some(entry) = rustynes_core::vs_db::lookup(system.main()) {
         let pair: [&mut Nes; 2] = system.split_mut().into();
         for console in pair {
             console.set_vs_ppu_type(entry.vs_ppu_type);

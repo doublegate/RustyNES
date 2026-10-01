@@ -522,7 +522,7 @@ impl Emu {
         // nibble = Vs. hardware type 5/6) and the SHA-keyed `vs_db` record.
         // The db is load-bearing — the circulating DualSystem dumps are
         // iNES 1.0 (no byte 13), so the header alone can never flag them.
-        let db_dual = crate::vs_db::lookup(nes.image_sha256()).is_some_and(|e| e.dual_system);
+        let db_dual = crate::vs_db::lookup(&nes).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
             // Reuse the probe as the MAIN console; parse once more for the SUB
             // (two parses total, not three). `from_pair` applies the cabinet
@@ -543,7 +543,7 @@ impl Emu {
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom_with_sample_rate(bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
         let nes = Nes::from_rom_with_sample_rate(bytes, sample_rate)?;
-        let db_dual = crate::vs_db::lookup(nes.image_sha256()).is_some_and(|e| e.dual_system);
+        let db_dual = crate::vs_db::lookup(&nes).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
             // Reuse the probe as MAIN; parse once more for SUB (two parses, not
             // three).

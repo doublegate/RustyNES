@@ -581,6 +581,30 @@ pub mod external {
         SkipNoBios,
     }
 
+    /// The raw ROM / disk bytes of the staged file at `external/`-relative
+    /// `rom_rel`, with a `.zip` / `.7z` archive unwrapped to its first NES /
+    /// FDS / UNIF entry. No header correction is applied: these are the bytes
+    /// as dumped, which is what a test of header-sensitive behaviour needs
+    /// (the Vs. database identity test rewrites a header byte of exactly
+    /// these). [`load_nes`] resolves its bytes through this.
+    ///
+    /// Panics on a read or extraction failure, as [`load_nes`] does.
+    pub fn read_rom_bytes(rom_rel: &str) -> Vec<u8> {
+        let path = external_rom_path(rom_rel);
+        let ext_is = |e: &str| path.extension().is_some_and(|x| x.eq_ignore_ascii_case(e));
+        if ext_is("zip") {
+            let raw = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            extract_rom_from_zip(&raw)
+                .unwrap_or_else(|| panic!("no NES/FDS/UNIF entry in archive {rom_rel}"))
+        } else if ext_is("7z") {
+            extract_rom_from_7z(&path).unwrap_or_else(|| {
+                panic!("no NES/FDS/UNIF entry in (or 7z CLI missing for) archive {rom_rel}")
+            })
+        } else {
+            fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        }
+    }
+
     /// Load the staged ROM at `external/`-relative `rom_rel` into a [`Nes`],
     /// mirroring the frontend's load dispatch so EVERY loadable form is
     /// covered, not just bare `.nes`:
@@ -601,17 +625,7 @@ pub mod external {
         let ext_is = |e: &str| path.extension().is_some_and(|x| x.eq_ignore_ascii_case(e));
 
         // 1. Resolve to the raw ROM/disk bytes, unwrapping any archive.
-        let bytes = if ext_is("zip") {
-            let raw = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-            extract_rom_from_zip(&raw)
-                .unwrap_or_else(|| panic!("no NES/FDS/UNIF entry in archive {rom_rel}"))
-        } else if ext_is("7z") {
-            extract_rom_from_7z(&path).unwrap_or_else(|| {
-                panic!("no NES/FDS/UNIF entry in (or 7z CLI missing for) archive {rom_rel}")
-            })
-        } else {
-            fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-        };
+        let bytes = read_rom_bytes(rom_rel);
 
         // 2. Dispatch FDS vs. cartridge by content magic (covers a `.fds`
         //    loose file AND a `.fds` extracted from an archive).
@@ -774,7 +788,7 @@ pub mod external {
             // its game-config DSW0 default (e.g. Vs. Super Mario Bros. needs
             // DSW0=0x10 to leave the attract loop; a forced 0 leaves it blank).
             // Falls back to DIP 0 for a Vs. cart not in the DB.
-            let dip = rustynes_core::vs_db::lookup(nes.image_sha256()).map_or(0, |entry| {
+            let dip = rustynes_core::vs_db::lookup(&nes).map_or(0, |entry| {
                 nes.set_vs_ppu_type(entry.vs_ppu_type);
                 entry.vs_dip
             });

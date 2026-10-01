@@ -1063,8 +1063,7 @@ pub(crate) fn warn_dual_system_main_only(why: &str) {
 /// Whether `nes` is a Vs. `DualSystem` board: the NES 2.0 header says so, or
 /// the Vs. database lists its SHA-256 as one.
 pub(crate) fn is_dual_system(nes: &Nes) -> bool {
-    nes.is_vs_dual_system()
-        || rustynes_core::vs_db::lookup(nes.image_sha256()).is_some_and(|e| e.dual_system)
+    nes.is_vs_dual_system() || rustynes_core::vs_db::lookup(nes).is_some_and(|e| e.dual_system)
 }
 
 /// v1.7.0 "Forge" G4 — the recomputed ROM digests stamped onto an exported TAS
@@ -1394,7 +1393,8 @@ impl App {
     /// Apply the Vs. System per-game database (v2.7.0) to a freshly built
     /// `Nes`, then apply the effective DIP switches.
     ///
-    /// Looks up the ROM's SHA-256 in [`rustynes_core::vs_db`]. When found, the DB's
+    /// Looks up the ROM in [`rustynes_core::vs_db`] (by its header-independent
+    /// identity first, then its whole-image hash). When found, the DB's
     /// PPU type is applied unconditionally (it is authoritative for the output
     /// palette — iNES-1.0 dumps default to the 2C03 and need the DB to pick the
     /// right 2C04-000x / 2C05 LUT). The DIP follows a precedence chain:
@@ -1402,7 +1402,7 @@ impl App {
     /// non-Vs. carts (`set_vs_ppu_type` / `set_vs_dip` ignore them) and changes
     /// nothing about normal NES play.
     fn apply_vs_db(&self, nes: &mut Nes) {
-        let db_entry = rustynes_core::vs_db::lookup(nes.image_sha256());
+        let db_entry = rustynes_core::vs_db::lookup(nes);
         // The DB is authoritative for the palette: apply its PPU type whenever
         // the ROM is in the DB, independent of the DIP precedence below.
         if let Some(entry) = db_entry {

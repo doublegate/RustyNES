@@ -790,7 +790,7 @@ impl VsPanel {
 /// palette changes only the colour table the PPU emits through, never game
 /// logic.
 fn apply_vs_database(nes: &mut Nes) {
-    apply_vs_entry(nes, rustynes_core::vs_db::lookup(nes.image_sha256()));
+    apply_vs_entry(nes, rustynes_core::vs_db::lookup(nes));
 }
 
 /// The database step of [`apply_vs_database`], split out so a test can hand
@@ -2952,7 +2952,7 @@ mod tests {
                     dual.main_mut()
                 }
             };
-            let Some(entry) = rustynes_core::vs_db::lookup(nes.image_sha256()) else {
+            let Some(entry) = rustynes_core::vs_db::lookup(nes) else {
                 continue;
             };
             nes.set_vs_dip(!entry.vs_dip);

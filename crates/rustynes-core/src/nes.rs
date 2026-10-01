@@ -170,7 +170,8 @@ pub struct Nes {
     /// out.
     rom_sha256: [u8; 32],
     /// SHA-256 of the complete image as constructed, header included. Only the
-    /// Vs. System database is keyed by it ([`Nes::image_sha256`]).
+    /// Vs. System database consults it, as the fallback to its identity key
+    /// ([`Nes::image_sha256`]).
     image_sha256: [u8; 32],
     /// Optional rewind ring buffer. Disabled by default — frontend opts in
     /// via [`Nes::enable_rewind`].
@@ -2117,9 +2118,11 @@ impl Nes {
 
     /// SHA-256 of the complete image as constructed, header included.
     ///
-    /// The Vs. System database ([`crate::vs_db`]) is keyed by whole-file
-    /// hashes of the dumps it describes, so its lookups use this, never
-    /// [`Self::rom_sha256`]. Identical to [`Self::rom_sha256`] for FDS and NSF.
+    /// The Vs. System database ([`crate::vs_db`]) keeps a whole-file key on
+    /// each row as a fallback to its identity key ([`Self::rom_sha256`]), so a
+    /// row added from a dump that was never staged stays reachable;
+    /// [`crate::vs_db::lookup`] consults both. Nothing else is keyed by it.
+    /// Identical to [`Self::rom_sha256`] for FDS and NSF.
     #[must_use]
     pub const fn image_sha256(&self) -> &[u8; 32] {
         &self.image_sha256
@@ -5365,7 +5368,7 @@ mod tests {
 
     /// v2.9.8: the persistent identity ignores the 16-byte header, so a
     /// load-time header correction cannot rename a game's saves; the
-    /// whole-image hash (the Vs. database's key) still sees the header.
+    /// whole-image hash (the Vs. database's fallback key) still sees the header.
     #[test]
     fn rom_identity_ignores_the_header_and_image_hash_does_not() {
         let rom = synth_nrom(16, 8);

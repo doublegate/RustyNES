@@ -85,7 +85,20 @@ cycle-accurate core later replaced.
   earlier versions are not found for cartridge games**: the maintainer chose
   a permanent identity over carrying the old one forward. Two dumps of one
   game that differ only in their header now share saves. The Vs. System
-  database stays keyed by the whole-file hash, the new `Nes::image_sha256`.
+  database matches that identity too (next entry); `Nes::image_sha256` is the
+  whole-file hash it keeps as a fallback.
+
+- **The Vs. System database finds a dump by its identity, not its exact file
+  (API break).** Each of its 19 rows was keyed only by the SHA-256 of the
+  whole file, so a Vs. dump whose header had been corrected or rewritten lost
+  its palette and DIP row and fell back to the 2C03 colours and DIP 0. Every row
+  now also carries the dump's `Nes::rom_sha256`, computed from the staged dumps
+  themselves, and the lookup tries that first, then the whole-file hash, which
+  stays on every row so a row for a dump nobody has staged is still reachable.
+  `rustynes_core::vs_db::lookup` (and its re-export `vs_db_lookup`) now takes
+  the `Nes` rather than a hash; `vs_db::lookup_by_hashes(identity, image)` is
+  the hash form. The same file finds the same row it did before, so emulation
+  output is unchanged.
 
 
 
