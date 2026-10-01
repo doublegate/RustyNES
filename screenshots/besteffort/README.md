@@ -1,5 +1,14 @@
 # BestEffort mapper boot-smoke screenshots (v1.3.0 D1)
 
+> **v2.9.8: this directory is empty, and that is correct.** Every family that
+> had a capture here has since been promoted to Core or Curated (the v2.1.0
+> "Fathom" sweep, then GTROM in v2.9.6), and `coverage.py categorize` moves a
+> directory to `external/` with its tier. It was not re-run after those
+> promotions until v2.9.8, which also fixed its `tier.rs` parser (it read only
+> the first arm per tier, so v2.9.6's second Curated arm went unclassified).
+> None of today's 31 BestEffort families has a committed capture. The matrix
+> below is the v1.3.0 record and names directories now under `external/`.
+
 Reference captures for the 14 Tier-2 **BestEffort** mapper families added in the
 v1.3.0 D1 sweep (`crates/rustynes-mappers/src/sprint8.rs`). These are **not** part
 of the AccuracyCoin / commercial-ROM oracle (ADR 0011 + `mapper_tier_honesty.rs`

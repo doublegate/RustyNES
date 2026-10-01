@@ -426,17 +426,27 @@ def mapper_dir_name(mapper: int) -> str:
 # embedded fallback (absorbs categorize_screenshots' static table).
 # --------------------------------------------------------------------------- #
 
+# Regenerated from tier.rs at v2.9.8 (51 / 109 / 31); used only if that
+# file cannot be parsed.
 _FALLBACK_CORE = {
-    0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 13, 16, 18, 19, 21, 22, 23, 24, 25, 26, 32,
-    33, 34, 48, 64, 65, 66, 67, 68, 69, 70, 71, 73, 75, 78, 80, 82, 85, 87, 88,
-    89, 93, 99, 118, 119, 151, 152, 159, 184, 206, 210,
+    0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 13, 16, 18, 19, 21, 22, 23, 24, 25, 26,
+    32, 33, 34, 48, 64, 65, 66, 67, 68, 69, 70, 71, 73, 75, 78, 80, 82, 85,
+    87, 88, 89, 93, 99, 118, 119, 151, 152, 159, 184, 206, 210,
 }
-_FALLBACK_CURATED = {38, 41, 79, 86, 113, 140, 232, 240, 241}
+_FALLBACK_CURATED = {
+    12, 15, 28, 30, 31, 35, 36, 37, 38, 40, 41, 42, 44, 45, 46, 49, 51, 52,
+    56, 57, 58, 60, 61, 62, 63, 72, 74, 76, 77, 79, 83, 86, 90, 91, 92, 94,
+    95, 96, 97, 101, 105, 107, 111, 112, 113, 115, 120, 132, 133, 134, 136,
+    137, 138, 139, 140, 141, 142, 143, 145, 146, 147, 148, 149, 150, 153,
+    156, 162, 163, 164, 176, 177, 178, 180, 185, 189, 192, 193, 195, 200,
+    201, 202, 203, 204, 205, 209, 211, 212, 213, 214, 218, 221, 225, 226,
+    227, 228, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 249,
+    250, 253,
+}
 _FALLBACK_BEST_EFFORT = {
-    15, 28, 29, 30, 31, 36, 39, 40, 58, 60, 61, 62, 63, 72, 76, 77, 81, 92, 94,
-    95, 96, 97, 101, 107, 111, 112, 132, 133, 137, 143, 145, 146, 147, 148, 149,
-    150, 156, 162, 174, 177, 178, 179, 180, 185, 200, 201, 202, 203, 212, 213,
-    214, 218, 225, 226, 227, 229, 231, 233, 234, 242, 244, 246, 250,
+    29, 39, 47, 50, 81, 104, 121, 154, 174, 179, 191, 194, 238, 243, 261,
+    268, 286, 289, 290, 299, 301, 303, 305, 306, 312, 320, 336, 348, 349,
+    366, 513,
 }
 
 SPECIAL_EXTERNAL = {"fds", "pc10", "vs-system"}
@@ -474,6 +484,23 @@ def _parse_tier_block(text: str, marker: str) -> set[int]:
     return {int(x) for x in ids}
 
 
+def _parse_tier_arms(text: str) -> dict[str, set[int]]:
+    """Every `ids => Some(MapperTier::X)` arm in tier.rs, grouped by tier.
+
+    v2.9.8: `_parse_tier_block` read only the FIRST arm after each `// Tier:`
+    marker, and v2.9.6 added a second Curated arm (GTROM and the new
+    families), so `categorize` reported mapper 111 as unclassified. This reads
+    them all. Line comments are stripped first, because their prose carries
+    numbers (`268/286/...`) that are not arm ids.
+    """
+    code = re.sub(r"//[^\n]*", "", text)
+    out: dict[str, set[int]] = {}
+    arm = re.compile(r"((?:\d+\s*\|\s*)*\d+)\s*=>\s*\{?\s*Some\(MapperTier::(\w+)\)")
+    for m in arm.finditer(code):
+        out.setdefault(m.group(2), set()).update(int(x) for x in re.findall(r"\d+", m.group(1)))
+    return out
+
+
 def load_tiers() -> tuple[set[int], set[int], set[int]]:
     tier_rs = os.path.join(
         REPO, "crates", "rustynes-mappers", "src", "tier.rs"
@@ -481,9 +508,8 @@ def load_tiers() -> tuple[set[int], set[int], set[int]]:
     try:
         with open(tier_rs, encoding="utf-8") as f:
             text = f.read()
-        core = _parse_tier_block(text, "/ Core:")
-        curated = _parse_tier_block(text, "/ Curated:")
-        best = _parse_tier_block(text, "/ BestEffort:")
+        arms = _parse_tier_arms(text)
+        core, curated, best = arms.get("Core", set()), arms.get("Curated", set()), arms.get("BestEffort", set())
         if core and curated and best:
             return core, curated, best
     except OSError:
@@ -1041,9 +1067,24 @@ def cmd_categorize(args) -> int:
             return
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.isdir(src) and os.path.isdir(dst):
+            # v2.9.8: a file present in BOTH trees is a duplicate capture of one
+            # game, and which copy is right is a judgement, not a move order.
+            # This loop used to move the source over the destination; at v2.9.8
+            # that replaced six August captures with June ones. Keep both and
+            # flag the pair instead.
+            kept = False
             for item in os.listdir(src):
-                shutil.move(os.path.join(src, item), os.path.join(dst, item))
-            os.rmdir(src)
+                target = os.path.join(dst, item)
+                if os.path.exists(target):
+                    flagged.append(
+                        f"duplicate kept in both trees: {os.path.relpath(os.path.join(src, item), REPO)}"
+                        f" vs {os.path.relpath(target, REPO)}"
+                    )
+                    kept = True
+                    continue
+                shutil.move(os.path.join(src, item), target)
+            if not kept:
+                os.rmdir(src)
         else:
             shutil.move(src, dst)
 

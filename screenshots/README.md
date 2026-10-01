@@ -24,8 +24,14 @@ screenshots/
     └── pc10/                PlayChoice-10 dumps (2C03 RGB)
 ```
 
-~170 PNGs across 37 subdirs. The subdir names match `tests/roms/external/` exactly,
-so a screenshot maps 1:1 to its ROM directory.
+448 PNGs across 159 subdirs of `external/` at v2.9.8, with `besteffort/` empty
+(below). The subdir names match `tests/roms/external/` exactly, so a screenshot
+maps 1:1 to its ROM directory.
+
+**Most PNGs predate the current core.** They were captured at different points
+since v1.0.0, so they are a visual reference, not the regression baseline: the
+`.snap` hashes are. A PNG added or re-captured since v2.9.8 is the
+`external_coverage` harness's `final` frame, the same frame its `.snap` pins.
 
 ## Known non-rendering frames (expected)
 
@@ -38,7 +44,18 @@ A handful of games can't produce a meaningful frame and are kept at their best
 
 ## Regenerating
 
-The corpus is regenerated with the diagnostic `coverage_smoke` (iNES) +
+**The current route (v2.9.8)** is the coverage pipeline in
+`scripts/coverage/README.md`: run the `external_coverage` harness with
+`RUSTYNES_DUMP_FRAMES=1` (narrow it with `RUSTYNES_COVERAGE_FILTER=<substrings>`);
+it writes `<mapper-dir>_<rom>_{f900,f1100,final}.png` flat under
+`/tmp/rustynes-baseline-screenshots/external/`. Copy each ROM's `final` frame to
+`screenshots/external/<mapper-dir>/<standardized name>.png` (names per
+`CURATION-MANIFEST.md`), then run `python3 scripts/coverage/coverage.py
+categorize`, which moves every directory into the tree its mapper's tier calls
+for. Full re-bless sweeps go through `scripts/coverage/bless.sh`.
+
+The older route, which produced much of the existing corpus, is below. It is
+regenerated with the diagnostic `coverage_smoke` (iNES) +
 `fds_smoke` (FDS) bins (gated on `--features commercial-roms`; the gitignored ROMs
 live under `tests/roms/external/` per the README there), then sorted into the
 `mapper-NNN-FAMILY/` + `fds/` + `vs-system/` + `pc10/` layout:
