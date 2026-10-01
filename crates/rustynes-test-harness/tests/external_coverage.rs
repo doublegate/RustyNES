@@ -170,6 +170,14 @@ const UNSUPPORTED: &[(&str, &str)] = &[
         "malformed: mapper 146 PRG is a multiple of 32 KiB and this image has 16 KiB",
     ),
     (
+        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
+        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
+    ),
+    (
+        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
+        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
+    ),
+    (
         "vs-system/VS Castlevania Hack.nes",
         "not an iNES image (no NES<1A> magic)",
     ),
@@ -211,8 +219,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-063-NTDEC0324/255-in-1 (As) [!].nes",
     "mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - '91 Kaimaku Hen (Japan).zip",
     "mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - OB All Star Hen (Japan).zip",
-    "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
-    "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
     "mapper-090-JYCompany90/1997 Super HIK 4-in-1 (JY-052) [p1][!].zip",
     "mapper-099-VsSystem/Balloon Fight (VS) [!].nes",
     "mapper-099-VsSystem/Mahjong (VS) [!].nes",
@@ -243,8 +249,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-227-BMC-1200in1/Biohazard (China) (Unl) (En) (1.0).nes",
     "mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes",
     "mapper-241-BxROM241/Fan Kong Jing Ying (Asia) (Unl).zip",
-    "mapper-244-Decathlon/Asmik-kun Land (J) [t1].nes",
-    "mapper-244-Decathlon/Kyatto Ninden Teyandee 1stage by ZURG (Hack).nes",
     "vs-system/GVS Balloon Fight (Dual).nes",
     "vs-system/GVS Balloon Fight.nes",
     "vs-system/GVS Mahjong.nes",

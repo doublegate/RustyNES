@@ -66,6 +66,40 @@ pub struct Header {
     pub four_screen: bool,
 }
 
+/// Assemble the mapper number from header bytes 6-8 (see the comment
+/// inside for the iNES 1.0 dirty-tail rule).
+fn mapper_number(h: &[u8; HEADER_LEN], is_nes2: bool) -> u16 {
+    // Mapper assembly:
+    //   bits 0..=3 from header[6] high nibble,
+    //   bits 4..=7 from header[7] high nibble,
+    //   bits 8..=11 from header[8] low nibble (NES 2.0 only).
+    //
+    // iNES 1.0 only: old ROM tools wrote signatures ("DiskDude!" and its
+    // variants) into bytes 7-15, which the original iNES emulator ignored.
+    // Byte 7's high nibble then reads as mapper bits 4-7 and adds 64 (for
+    // 'D' = 0x44) to the mapper number. The NESdev "iNES" page gives the rule
+    // applied here: if bytes 12-15 are not all zero and the header is not NES
+    // 2.0, mask off the upper four bits of the mapper number. A clean iNES 1.0
+    // header always has zeros there, so a well-formed dump of any mapper from
+    // 16 to 255 is unaffected; NES 2.0 headers are exempt because bytes 12-15
+    // carry real fields. Byte 7's low nibble is already ignored on the iNES
+    // 1.0 path (console type and the NES 2.0 marker), so nothing else in the
+    // tail is read.
+    let ines1_dirty_tail = !is_nes2 && h[12..16].iter().any(|&b| b != 0);
+    let mapper_low = u16::from((h[6] >> 4) & 0x0F);
+    let mapper_mid = if ines1_dirty_tail {
+        0
+    } else {
+        u16::from(h[7] & 0xF0)
+    };
+    if is_nes2 {
+        let mapper_hi = u16::from(h[8] & 0x0F) << 8;
+        mapper_low | mapper_mid | mapper_hi
+    } else {
+        mapper_low | mapper_mid
+    }
+}
+
 /// Parse a 16-byte header into a [`Header`].
 ///
 /// # Errors
@@ -87,18 +121,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
     let h: [u8; HEADER_LEN] = bytes[..HEADER_LEN].try_into().expect("checked length");
     let is_nes2 = (h[7] & 0x0C) == 0x08;
 
-    // Mapper assembly:
-    //   bits 0..=3 from header[6] high nibble,
-    //   bits 4..=7 from header[7] high nibble,
-    //   bits 8..=11 from header[8] low nibble (NES 2.0 only).
-    let mapper_low = u16::from((h[6] >> 4) & 0x0F);
-    let mapper_mid = u16::from(h[7] & 0xF0);
-    let mapper_id: u16 = if is_nes2 {
-        let mapper_hi = u16::from(h[8] & 0x0F) << 8;
-        mapper_low | mapper_mid | mapper_hi
-    } else {
-        mapper_low | mapper_mid
-    };
+    let mapper_id = mapper_number(&h, is_nes2);
     let submapper: u8 = if is_nes2 { (h[8] >> 4) & 0x0F } else { 0 };
 
     // PRG / CHR sizing.
@@ -970,6 +993,40 @@ mod tests {
         assert_eq!(parsed.vs_ppu_type, VsPpuType::Rc2C05_03);
         let again = serialize_header(&parsed);
         assert_eq!(again[13] & 0x0F, 0x0A);
+    }
+
+    #[test]
+    fn ines1_garbage_tail_masks_the_mapper_high_nibble() {
+        // NESdev "iNES", Flags 7-15: old tools wrote signatures such as
+        // "DiskDude!" into bytes 7-15, which adds 64 to the mapper number,
+        // and "if the last 4 bytes are not all zero, and the header is not
+        // marked for NES 2.0 format, an emulator should either mask off the
+        // upper 4 bits of the mapper number or simply refuse to load the ROM."
+        //
+        // The staged Russian Balloon Fight translation carries "@iskDude!"
+        // (byte 7 = 0x40): an NROM image that loaded as mapper 64 and filled
+        // the sky with RAMBO-1-banked tiles.
+        let mut h = ines_header(1, 1, 0, 0x01);
+        h[7..16].copy_from_slice(b"@iskDude!");
+        assert_eq!(parse_header(&h).unwrap().mapper_id, 0);
+        // The textbook "DiskDude!" form on an MMC1 image: 65 -> 1.
+        let mut h = ines_header(8, 16, 1, 0);
+        h[7..16].copy_from_slice(b"DiskDude!");
+        assert_eq!(parse_header(&h).unwrap().mapper_id, 1);
+        // A clean iNES 1.0 tail keeps the full 8-bit mapper number...
+        let h = ines_header(8, 8, 64, 0);
+        assert_eq!(parse_header(&h).unwrap().mapper_id, 64);
+        // ...and garbage confined to bytes 8-11 does not trigger the rule,
+        // which keys on bytes 12-15 only.
+        let mut h = ines_header(8, 8, 64, 0);
+        h[8..12].copy_from_slice(b"junk");
+        assert_eq!(parse_header(&h).unwrap().mapper_id, 64);
+        // NES 2.0 headers are exempt: bytes 12-15 are real fields there.
+        let mut h = ines_header(8, 8, 64, 0);
+        h[7] |= 0x08;
+        h[12] = 0x01; // PAL
+        h[15] = 0x01; // default expansion device
+        assert_eq!(parse_header(&h).unwrap().mapper_id, 64);
     }
 
     #[test]

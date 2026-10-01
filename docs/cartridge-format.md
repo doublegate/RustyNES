@@ -45,14 +45,24 @@ is_nes2 = (header[7] & 0x0C) == 0x08;
 
 If false, parse as iNES 1.0, but treat upper mapper bits cautiously. Older
 tools often wrote non-zero padding or signature strings into bytes 7-15,
-corrupting mapper high bits. A strict loader may reject dirty headers; RustyNES
-parses leniently for compatibility but should surface a diagnostic when dirty
-padding changes the mapper or region interpretation.
+corrupting mapper high bits ("DiskDude!" puts `'D'` = `$44` in byte 7 and adds
+64 to the mapper number). RustyNES applies the NESdev "iNES" rule: **if the
+header is not NES 2.0 and bytes 12-15 are not all zero, the upper four mapper
+bits (byte 7's high nibble) are masked off** (since v2.9.8). A clean iNES 1.0
+header has zeros there, so a well-formed dump of mapper 16-255 is unaffected,
+and NES 2.0 headers are exempt because bytes 12-15 are real fields. The
+per-game database still runs first in the frontend and the coverage harness,
+but it rewrites only bytes 6-7, not the dirty tail, so a database mapper of 16
+or more on such a dump would be masked as well. Every corrected "DiskDude!"
+dump in the local corpus has a database mapper below 16, so none is affected.
 
 ### Mapper number
 
 ```rust
-mapper = (header[6] >> 4) | (header[7] & 0xF0) | (if is_nes2 { (header[8] & 0x0F) << 8 } else { 0 });
+dirty = !is_nes2 && header[12..16] != [0; 4];
+mapper = (header[6] >> 4)
+    | (if dirty { 0 } else { header[7] & 0xF0 })
+    | (if is_nes2 { (header[8] & 0x0F) << 8 } else { 0 });
 ```
 
 iNES 1.0 mapper numbers cover 0..=255. NES 2.0 extends to 0..=4095.

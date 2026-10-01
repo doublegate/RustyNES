@@ -81,6 +81,19 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **iNES 1.0 headers with a dirty tail no longer gain 64 on the mapper.** Old
+  ROM tools wrote signatures such as "DiskDude!" into bytes 7-15, and byte 7's
+  high nibble then read as mapper bits 4-7. The parser now follows the NESdev
+  "iNES" rule: when a header is not NES 2.0 and bytes 12-15 are not all zero,
+  the upper four mapper bits are masked off. The Russian *Balloon Fight*
+  translation, an NROM image marked "@iskDude!", loaded as mapper 64 and
+  filled its sky with banked tiles; it now plays correctly. *Asmik-kun Land*
+  and the *Kyatto Ninden Teyandee* hack, both MMC3 images whose tails made
+  them mapper 244, now boot instead of showing a blank screen. The
+  *Doraemon World 3* hack now reads as mapper 8 (FFE), which is not
+  implemented, and is refused with an error instead of booting blank as
+  mapper 72. Dumps the per-game database already corrects are unchanged.
+
 - **Mapper 153 (Bandai LZ93D50 + WRAM) CHR-RAM no longer aliases.** The board
   has 8 KiB of unbanked CHR-RAM (NESdev `INES_Mapper_153`), but v2.9.6 routed
   it through the CHR bank registers, which this board uses as the outer PRG
