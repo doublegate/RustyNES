@@ -296,6 +296,7 @@ FAMILY: dict[int, str] = {
     9: "MMC2",
     10: "MMC4",
     11: "ColorDreams",
+    12: "GouderSL5020B",
     13: "CPROM",
     15: "Multicart15",
     16: "BandaiFCG",
@@ -315,10 +316,13 @@ FAMILY: dict[int, str] = {
     33: "TaitoTC0190",
     34: "BNROM-NINA001",
     36: "TXC36",
+    37: "SMB-Tetris-NWC",
     38: "BitCorp-PCI556",
     39: "Multicart39",
     40: "NTDEC2722",
     41: "Caltron6in1",
+    45: "GA23C",
+    47: "SpikeVBall-NWC",
     48: "TaitoTC0690",
     58: "Multicart58",
     60: "Multicart60",
@@ -335,6 +339,7 @@ FAMILY: dict[int, str] = {
     71: "Camerica-BF9093",
     72: "Jaleco72",
     73: "VRC3",
+    74: "Waixing43-393",
     75: "VRC1",
     76: "Namcot3446",
     77: "Irem77",
@@ -343,11 +348,13 @@ FAMILY: dict[int, str] = {
     80: "TaitoX1-005",
     81: "NTDEC-SuperGun",
     82: "TaitoX1-017",
+    83: "Cony-Yoko",
     85: "VRC7",
     86: "JalecoJF13",
     87: "JalecoKonami-CNROM",
     88: "Namcot118",
     89: "Sunsoft2",
+    91: "JYCompany91",
     92: "JalecoJF19",
     93: "Sunsoft3R",
     94: "UN1ROM",
@@ -356,12 +363,14 @@ FAMILY: dict[int, str] = {
     97: "Irem-TamSan",
     99: "VsSystem",
     101: "JalecoJF10",
+    105: "NES-EVENT",
     107: "MagicDragon",
     111: "GTROM-Cheapocabra",
     112: "NTDEC-Asder",
     113: "NINA006-MB91",
     118: "TxSROM-TLSROM",
     119: "TQROM",
+    121: "KashengA9711",
     132: "TXC132",
     133: "SachenSA72008",
     137: "Sachen8259D",
@@ -375,9 +384,11 @@ FAMILY: dict[int, str] = {
     150: "Sachen74LS374N",
     151: "Konami-VS-VRC1",
     152: "Bandai74161",
+    153: "BandaiLZ93D50",
     156: "DIS23C01-DAOU",
     159: "BandaiLZ93D50-24C01",
     162: "WaixingFS304",
+    163: "NanjingFC001",
     174: "NTDEC-5in1",
     177: "Hengedianzi",
     178: "WaixingEdu",
@@ -385,6 +396,10 @@ FAMILY: dict[int, str] = {
     180: "UNROM-Nichibutsu",
     184: "Sunsoft1",
     185: "CNROM-Lock",
+    191: "Waixing191",
+    192: "WaixingFS308",
+    194: "Waixing194",
+    195: "WaixingFS303",
     200: "Multicart200",
     201: "Multicart201",
     202: "Multicart202",
@@ -398,6 +413,7 @@ FAMILY: dict[int, str] = {
     225: "ColorDreams72in1",
     226: "BMC-76in1",
     227: "BMC-1200in1",
+    228: "Action52",
     229: "BMC-31in1",
     231: "BMC-20in1",
     232: "Camerica-Quattro",
@@ -408,6 +424,7 @@ FAMILY: dict[int, str] = {
     242: "Waixing43in1",
     244: "Decathlon",
     246: "FongShenBang",
+    249: "WaixingT9552",
     250: "Nitra",
 }
 
@@ -858,7 +875,12 @@ def _base_title(name: str) -> str:
     name = re.sub(r"\.(nes|zip|unf|unif)$", "", name, flags=re.I)
     name = re.sub(r"\s*\([^)]*\)", "", name)
     name = re.sub(r"\s*\[[^]]*\]", "", name)
-    return name.strip().lower()
+    # v2.9.8: collapse punctuation the way the `external_coverage` snapshot id
+    # does (every non-alphanumeric run -> one separator). Without it,
+    # "Fatal Fury 2" and "Fatal Fury 2'" counted as distinct titles, were both
+    # staged, and then shared one snapshot id, which the harness rightly
+    # refuses as two different files claiming one baseline.
+    return re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
 
 
 def _rank_candidates(recs: list, count: int) -> list:
