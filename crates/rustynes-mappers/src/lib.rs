@@ -1154,10 +1154,26 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Hengedianzi179::new(prg_rom, &chr_rom)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
-        218 => Box::new(
-            MagicFloor218::new(prg_rom, &chr_rom, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
-        ),
+        218 => {
+            // Magic Floor wires CIRAM A10 to one PPU address line chosen by
+            // the RAW flags-6 bits 3 and 0 (NESdev "INES Mapper 218"): with
+            // bit 3 set, bit 0 picks A13 (`$A9`, single screen B) over A12
+            // (`$A8`, single screen A). The generic parser has already folded
+            // bit 0 into `FourScreen`, so re-read it here, as mapper 30 does.
+            let mirroring = if h.four_screen {
+                if (bytes[6] & 0x01) != 0 {
+                    Mirroring::SingleScreenB
+                } else {
+                    Mirroring::SingleScreenA
+                }
+            } else {
+                h.mirroring
+            };
+            Box::new(
+                MagicFloor218::new(prg_rom, &chr_rom, mirroring)
+                    .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+            )
+        }
         231 => Box::new(
             Multicart231::new(prg_rom, &chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,

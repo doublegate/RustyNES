@@ -414,7 +414,7 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 | 143 | — | Sachen TCA01 | — | — | landed (v1.3.0 / S8) | NROM-128 (mirrored) + a simple protection read at `$4020-$5FFF` returning `(~addr & 0x3F) \| 0x40`. |
 | 177 | — | Hengedianzi | — | — | landed (v1.3.0 / S8) | 32K PRG + mirroring bit (bit 5) from one `$8000-$FFFF` latch; CHR-RAM. |
 | 179 | — | Hengedianzi variant | — | — | landed (v1.3.0 / S8) | 32K PRG via `$5000-$5FFF` (data>>1) + mirroring bit (bit 0) via `$8000-$FFFF`; CHR-RAM. |
-| 218 | — | Magic Floor | — | — | landed (v1.3.0 / S8) | No PRG/CHR-ROM banking; the pattern table is served from the console CIRAM under a fixed custom mirroring mode. |
+| 218 | — | Magic Floor | — | — | landed (v1.3.0 / S8); single-screen wirings fixed v2.9.8 | No PRG/CHR-ROM banking; the pattern tables and nametables are both the console's 2 KiB CIRAM. The header wires CIRAM A10 to one PPU address line (NESdev `INES_Mapper_218`): flags 6 `$A1` = A10, `$A0` = A11, `$A8` = A12 (1 KiB per pattern table, one screen in bank 0), `$A9` = A13 (all pattern space bank 0, the nametable bank 1). `parse` re-reads raw bit 0 when bit 3 is set, because the generic parser folds it into `FourScreen`; before v2.9.8 both single-screen wirings fell back to A10, and *Magic Floor* (`$A9`) drew its nametable over its own tiles. |
 | 231 | — | 20-in-1 multicart | — | — | landed (v1.3.0 / S8) | Address-decoded dual 16K PRG banks + a mirroring bit; CHR-RAM. |
 | 234 | — | Maxi 15 / BNROM-like multicart | — | — | landed (v1.3.0 / S8) | Two latch regs (`$FF80-$FF9F` / `$FFE8-$FFF8`) selecting 32K PRG + 8K CHR in NINA-style or CNROM-style sub-mode. |
 

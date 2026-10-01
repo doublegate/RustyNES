@@ -168,6 +168,17 @@ cycle-accurate core later replaced.
   unchanged. No staged dump changes: the GoodNES *Uchuusen - Cosmo Carrier [!]*
   sets the bit, so its header names Holy Diver and it still stalls; its NES 2.0
   twin plays.
+
+
+
+- **Mapper 218 (Magic Floor) single-screen wirings.** The board has no CHR
+  chip: the console's 2 KiB nametable RAM is also the pattern table, and the
+  header wires its A10 to PPU A10, A11, A12 or A13 (NESdev
+  `INES_Mapper_218`). With the four-screen bit set, header bit 0 picks A13
+  over A12, but the generic parser had already folded that bit away, so both
+  single-screen layouts ran as A10 and the nametable shared memory with the
+  tiles it names. *Magic Floor* (`$A9`, A13) drew a field of garbage tiles; it
+  now draws its board and score line.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
