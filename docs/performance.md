@@ -1016,6 +1016,54 @@ speed-up from making the PPU report more has no mechanism either. The shipped
 `_fast` nestest path is the one that pays. It stays well inside the frame
 budget (about 4.0 ms against 16.6 ms).
 
+### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
+
+**Finding: presents are even in every configuration measured; run-ahead
+doubles the emulation cost and lengthens the worst produce interval.** v2.9.3
+measured one configuration (Mailbox, 120 Hz, run-ahead 0) and named the three it
+did not. This covers them.
+
+**Method.** One release frontend (`29fc5a39`, default features), 45 s
+captures with `scripts/perf/perf_capture.sh` on its default CC0 ROM
+(`flowing_palette.nes`), two per configuration. Present mode and run-ahead were
+set in the config file for each capture, and the file was restored byte for
+byte afterwards. The display was switched to 59.97 Hz with
+`kscreen-doctor output.DP-2.mode.1` for the 60 Hz captures and restored to
+119.99 Hz afterwards (maintainer-approved). Every capture passed
+`perf_log_check.py` with `present_discarded=0`. Each started with the
+one-minute load under 2 (1.6-2.0): the off-die co-simulation ladder held one
+core throughout, on a 20-thread host. Values are means over the 30 per-second
+rows after the first nine; `produced max` is the maximum.
+
+| | 60 Hz Mailbox | 60 Hz Fifo | 120 Hz Fifo | 120 Hz Mailbox, run-ahead 1 |
+| --- | --- | --- | --- | --- |
+| fps | 59.90-59.91 | 59.85-59.90 | 60.10-60.11 | 60.10-60.11 |
+| presented mean (ms) | 16.69 | 16.69-16.71 | 8.34 | 8.34 |
+| presented p50 | 16.69 | 16.69 | 8.35 | 8.33-8.34 |
+| presented p95 | 17.92-18.04 | 17.81-17.92 | 9.31-9.58 | **8.88-11.92** |
+| presented p99 | 18.65-18.66 | 18.63-18.78 | 10.45-10.72 | **9.50-13.53** |
+| redraw wait p95 | 14.62-14.65 | 14.39-14.60 | 8.57-8.61 | 8.56-8.63 |
+| produced p99 | 17.97 | 17.90-17.92 | 17.90-17.92 | 17.85-18.06 |
+| produced max | 19.01 | 19.00-19.18 | 19.23-19.27 | **21.86-24.41** |
+| cost p95 | 3.10-3.22 | 3.14 | 3.09-3.18 | **6.22-6.24** |
+
+**Reading it.** At 60 Hz each NES frame is presented once, one vblank apart,
+and Mailbox and Fifo are indistinguishable. At 120 Hz Fifo is as even as
+v2.9.3's Mailbox result (p95 10.35-11.38 ms there, 9.31-9.58 here), so the
+present mode is not what makes pacing even on this host. Run-ahead 1 emulates
+two frames per frame shown, which doubles `cost` (3.1 to 6.2 ms) and lengthens
+the worst produce interval by 3-5 ms. Its present tail is NOT established: the
+two runs disagree (p95 11.92 against 8.88 ms).
+
+**An observation, not investigated.** At 59.97 Hz the frontend produced 59.9
+fps, about 0.3% under NTSC's 60.10, while at 119.99 Hz it produced the full
+60.10. Both captures report `pacing_active = wallclock`. A slower produce rate
+at a 60 Hz display would be the shape of display-locked pacing, which the
+header does not claim.
+
+**What it does not show.** One host, one ROM, one compositor (KDE Wayland), a
+background load of about one core, and two captures per configuration.
+
 ### v2.9.3 — frame pacing after the wgpu 29 -> 30 move (#570): presents are now even
 
 **Finding: the move to wgpu 30 made present intervals regular on this host.
