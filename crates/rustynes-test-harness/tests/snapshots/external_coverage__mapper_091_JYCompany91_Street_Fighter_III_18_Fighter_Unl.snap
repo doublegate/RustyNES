@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-091-JYCompany91/Street Fighter III (18 Fighter) (Unl) [!].nes
+rom_sha256=05f28928aea540320b9682504bd954d643d0f2f160062f403248a742ac0cbd45
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=4ddbc1a176aa8283
+checkpoint f900 fb_fnv1a64=37e51efad32bad31
+checkpoint f1100 fb_fnv1a64=37e51efad32bad31

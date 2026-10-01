@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-163-NanjingFC001/Ne Zha Chuan Qi (NJ036) (Ch) [!].nes
+rom_sha256=a6baa7448006e5c63d2c742a524da870590070348d236960d9813773c1aca650
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=c4c7428aec9babba
+checkpoint f900 fb_fnv1a64=c0ad0a19f8848cd6
+checkpoint f1100 fb_fnv1a64=c0ad0a19f8848cd6

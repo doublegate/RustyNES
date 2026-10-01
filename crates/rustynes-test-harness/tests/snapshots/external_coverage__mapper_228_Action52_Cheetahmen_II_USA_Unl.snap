@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-228-Action52/Cheetahmen II (USA) (Unl).nes
+rom_sha256=1a743c856149f2c8120df66c3292de3c21c6c7ffa23c64bd9234dbcd80f5dbad
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=4d05bebc396d1bbf
+checkpoint f900 fb_fnv1a64=2098c1044eb76dfc
+checkpoint f1100 fb_fnv1a64=2098c1044eb76dfc

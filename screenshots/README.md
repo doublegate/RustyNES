@@ -3,7 +3,7 @@
 Committed PNG snapshots of the commercial games RustyNES runs, used as a
 human-readable compatibility reference and as the README showcase imagery. The
 machine-readable regression baselines are the `fnv1a64` hashes in
-`crates/nes-test-harness/tests/snapshots/*.snap` — these PNGs are the visual
+`crates/rustynes-test-harness/tests/snapshots/*.snap` — these PNGs are the visual
 companion (a 5-second eyeball check instead of a recapture/accept/compare loop).
 
 ## Layout
@@ -24,8 +24,8 @@ screenshots/
     └── pc10/                PlayChoice-10 dumps (2C03 RGB)
 ```
 
-448 PNGs across 159 subdirs of `external/` at v2.9.8, with `besteffort/` empty
-(below). The subdir names match `tests/roms/external/` exactly, so a screenshot
+477 PNGs across 170 subdirs of `external/` at v2.9.8, and 10 in `besteffort/`
+across three BestEffort families (below). The subdir names match `tests/roms/external/` exactly, so a screenshot
 maps 1:1 to its ROM directory.
 
 **Most PNGs predate the current core.** They were captured at different points
@@ -62,10 +62,10 @@ live under `tests/roms/external/` per the README there), then sorted into the
 
 ```bash
 # iNES (recurses tests/roms/external; RUSTYNES_VS_COIN=1 inserts a coin for Vs.):
-RUSTYNES_VS_COIN=1 cargo run -p nes-test-harness --features commercial-roms --release \
+RUSTYNES_VS_COIN=1 cargo run -p rustynes-test-harness --features commercial-roms --release \
     --bin coverage_smoke -- tests/roms/external 1500 /tmp/ss "" 120
 # FDS (real BIOS — never committed):
-cargo run -p nes-test-harness --features commercial-roms --release \
+cargo run -p rustynes-test-harness --features commercial-roms --release \
     --bin fds_smoke -- tests/roms/external/fds/disksys-fcd.rom tests/roms/external/fds 2500 /tmp/ss-fds
 # coverage_smoke dumps `<subdir>__<game>.png`; sort by converting `__` -> `/`.
 ```
@@ -74,7 +74,7 @@ The montages are built from the sorted corpus with ImageMagick `montage`.
 
 ## Reference cross-links
 
-- Machine-readable baselines: `crates/nes-test-harness/tests/snapshots/*.snap`
-- Harness + diagnostic bins: `crates/nes-test-harness/{tests,src/bin}/`
+- Machine-readable baselines: `crates/rustynes-test-harness/tests/snapshots/*.snap`
+- Harness + diagnostic bins: `crates/rustynes-test-harness/{tests,src/bin}/`
 - Compatibility notes (incl. the non-rendering cases): `docs/compatibility.md`
 - ROM library buildout audit: `docs/audit/rom-library-buildout-2026-05-17.md`

@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-091-JYCompany91/Mortal Kombat II (Unl) [!].nes
+rom_sha256=aabd00e4f0bb07dc04265411e465373b2be1c29f35033895ca622b22260beaa4
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=1ebeaafbf6e7c29e
+checkpoint f900 fb_fnv1a64=d8f3359b476d7d4f
+checkpoint f1100 fb_fnv1a64=b20297fff2d9a36e

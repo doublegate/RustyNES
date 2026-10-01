@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-045-GA23C/Super 3-in-1 [p1][!].nes
+rom_sha256=a8903d67abe7dfd07aff9d772d57c4138d48cc2b0e8bdc26806b2b214c295167
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=24227902fe1b6899
+checkpoint f900 fb_fnv1a64=c0966110bfca7262
+checkpoint f1100 fb_fnv1a64=c0966110bfca7262

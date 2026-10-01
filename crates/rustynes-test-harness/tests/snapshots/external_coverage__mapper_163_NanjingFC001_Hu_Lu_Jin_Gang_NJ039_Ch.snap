@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-163-NanjingFC001/Hu Lu Jin Gang (NJ039) (Ch) [!].nes
+rom_sha256=d8e067b4bd8e1e28d43b819e959d4aacc1c399afda48ca52c1c18f145f051dd5
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=63030a5f4e2620ac
+checkpoint f900 fb_fnv1a64=64f70d7c3da17dbb
+checkpoint f1100 fb_fnv1a64=622c8a55b89aa07f

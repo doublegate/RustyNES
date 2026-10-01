@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-121-KashengA9711/Mortal Kombat 6 (Unl) [!].nes
+rom_sha256=916c4306222df89abc3c21626f73f6af73349b6551da9c12ae4d0bae2c0ab34b
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=08279952fa510788
+checkpoint f900 fb_fnv1a64=6f81d18f341a3f8e
+checkpoint f1100 fb_fnv1a64=6f81d18f341a3f8e

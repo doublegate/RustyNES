@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-091-JYCompany91/Mario Rider (Unl) [!].nes
+rom_sha256=58f633c4183dacdb26755cb621f8b95343844663d08d72f94104bd1296dfb127
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=b3c7b80063afc7d5
+checkpoint f900 fb_fnv1a64=a59919916877f117
+checkpoint f1100 fb_fnv1a64=aaa123927ac72a3c

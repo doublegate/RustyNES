@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-083-Cony-Yoko/Fatal Fury 2 (Unl) [!].nes
+rom_sha256=d30b727b8e2b30daf842190b9f27384fa49149ce4f60deb3e517a7f019d3923f
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=edf02ad6ccd74fbe
+checkpoint f900 fb_fnv1a64=beb502ded3587250
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

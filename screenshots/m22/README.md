@@ -8,6 +8,6 @@ Single PNG for the VRC2a (mapper 22) CHR-banking test ROM
 displays the digit "016" mid-CHR-bank-walk. Visible signal, suitable
 as a regression fingerprint in addition to the machine-readable
 framebuffer hash in
-`crates/nes-test-harness/tests/snapshots/m22__m22_vrc2a_chr_banking_0_127.snap`.
+`crates/rustynes-test-harness/tests/snapshots/m22__m22_vrc2a_chr_banking_0_127.snap`.
 
 See `../README.md` for the regeneration recipe.

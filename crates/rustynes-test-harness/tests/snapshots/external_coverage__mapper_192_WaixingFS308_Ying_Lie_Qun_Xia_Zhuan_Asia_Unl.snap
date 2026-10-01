@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-192-WaixingFS308/Ying Lie Qun Xia Zhuan (Asia) (Unl).nes
+rom_sha256=0164e3d00e3f77ebd15f0c3e5a44d0fef3627de2479966085d5e9465b08a39a1
+frames=1141
+fb_bytes=245760
+cycles=40428960
+audio_samples=996152
+audio_fnv1a64=9240d6f81eb53813
+checkpoint f900 fb_fnv1a64=4c8b3e7cfb6f1ff5
+checkpoint f1100 fb_fnv1a64=7b492bbb4ded3ded

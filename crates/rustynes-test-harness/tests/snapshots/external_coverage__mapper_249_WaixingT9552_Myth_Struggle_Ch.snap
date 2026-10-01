@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-249-WaixingT9552/Myth Struggle (Ch).nes
+rom_sha256=7d04e11976e9922cfaa8f3a79473642f12863392615aae81a14ff75ffce32134
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=060e2508b046ed3f
+checkpoint f900 fb_fnv1a64=b81fdf4d0f66a5b5
+checkpoint f1100 fb_fnv1a64=12b3d8587d155b24

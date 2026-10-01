@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-249-WaixingT9552/Duo Bao Xiao Ying Hao - Guang Ming yu An Hei Chuan Shuo (Ch).nes
+rom_sha256=7c582a5ddcd1816561f13089f4eca7e54447814efb90a9e864f0d830bce628b2
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=98469cce976eee3f
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-121-KashengA9711/Panda Prince, The (Shin-Shin) (Eng) (Unl) [!].nes
+rom_sha256=73f0f7b9150fb080541426cedc87bf528c63393e6112812112e8c1339d9bfbf5
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=d7f4f7f5f8a7d060
+checkpoint f900 fb_fnv1a64=445751ba7fee0039
+checkpoint f1100 fb_fnv1a64=f361f4d5fd4c8c05

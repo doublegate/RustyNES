@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-191-Waixing191/Mighty Final Fight (J) [T+Chi_madcell].nes
+rom_sha256=d98560399f0d4cad6fca6d9dbbd5f6ecb795975c9e003acde35c7ed19d39c381
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=35f041840f6fa263
+checkpoint f900 fb_fnv1a64=d621190ee5931774
+checkpoint f1100 fb_fnv1a64=6f9f42d3a85024f6

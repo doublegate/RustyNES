@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-228-Action52/Action 52 (Active Enterprises) [!].nes
+rom_sha256=5d7fcec0fe96796cac020d45b79072d971dc0dd6f8d856ceeb30046ad002e3ce
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=50569841c32ddc0f
+checkpoint f900 fb_fnv1a64=aa86ee35a45e6a0d
+checkpoint f1100 fb_fnv1a64=3c3b5581e66db372

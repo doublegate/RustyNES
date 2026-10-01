@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-249-WaixingT9552/Shui Hu Zhuan (Ch).nes
+rom_sha256=ad89cc0e7bbc2982ecc9897fbfe212807d81ec0af692876974a86d8c5f781123
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=022a29a9620e0be0
+checkpoint f900 fb_fnv1a64=5f240be0e313972c
+checkpoint f1100 fb_fnv1a64=5f240be0e313972c

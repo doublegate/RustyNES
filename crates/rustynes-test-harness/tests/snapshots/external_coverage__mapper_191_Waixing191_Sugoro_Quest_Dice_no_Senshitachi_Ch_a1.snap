@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-191-Waixing191/Sugoro Quest - Dice no Senshitachi (Ch) [a1].nes
+rom_sha256=f54d66ea0a91c2d6ede44aef81728cc4576793addf9b00643266397c0bc4b3cd
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=04a2f4c205a97a1e
+checkpoint f900 fb_fnv1a64=1e32b0a98912d745
+checkpoint f1100 fb_fnv1a64=1e32b0a98912d745

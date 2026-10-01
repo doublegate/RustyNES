@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-012-GouderSL5020B/Dragon Ball Z Super (Ch) [f1].nes
+rom_sha256=a16b8da8f2acd9997a92fedc63b88ece4623f39b2cc6fee057c819ffc222800e
+frames=1141
+fb_bytes=245760
+cycles=33949770
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=97f16c2dd9165d9a
+checkpoint f1100 fb_fnv1a64=97f16c2dd9165d9a

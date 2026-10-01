@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-091-JYCompany91/Dragon Ball Z - Super Butouden 2 (Unl) [!].nes
+rom_sha256=332ccb59191d18d6d77b07c26df4f890944aaad3b8c88c24b3b678007c2df414
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=508ba29d0b060d39
+checkpoint f900 fb_fnv1a64=8529ea387b649f75
+checkpoint f1100 fb_fnv1a64=8529ea387b649f75
