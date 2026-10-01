@@ -332,6 +332,21 @@ static DB: &[Record] = &[
         0x00,
         VsPpuType::Rp2C04_0003,
     ),
+    // Vs. The Goonies (unpatched Konami dump, `Goonies, The (VS).nes`, iNES
+    // mapper 151) -- the same game, board and PPU as the "(hack)" row above,
+    // whose PPU and DSW0 default it carries over: RP2C04-0003, DSW0=0x80.
+    // The two files differ only in 327 PRG bytes of code. v2.9.8: without
+    // this row the dump fell back to the 2C03 and drew its title red on
+    // green; with it, the copyright screen is white on black like the hack.
+    entry(
+        [
+            0xff, 0x26, 0x8f, 0xb3, 0xbb, 0x3e, 0xa2, 0x74, 0x3b, 0x6f, 0xda, 0xe0, 0x5e, 0x84,
+            0x54, 0x7c, 0xce, 0x0f, 0xbb, 0xa0, 0x94, 0x77, 0x79, 0xab, 0xe9, 0x99, 0x0a, 0x94,
+            0x37, 0x08, 0x63, 0x67,
+        ],
+        0x80,
+        VsPpuType::Rp2C04_0003,
+    ),
 ];
 
 /// Look up a Vs. System per-game database entry by ROM SHA-256.
@@ -370,6 +385,23 @@ mod tests {
         let e = lookup(&sha).expect("castlevania present");
         assert_eq!(e.vs_dip, 0x00);
         assert_eq!(e.vs_ppu_type, VsPpuType::Rp2C04_0002);
+    }
+
+    #[test]
+    fn goonies_original_dump_uses_the_2c04_0003_palette() {
+        // The unpatched Konami dump of Vs. The Goonies (`Goonies, The
+        // (VS).nes`, mapper 151 header). Same game and PPU as the hack row
+        // above; without a row it fell back to the 2C03 and drew its title
+        // red on green.
+        let sha = [
+            0xff, 0x26, 0x8f, 0xb3, 0xbb, 0x3e, 0xa2, 0x74, 0x3b, 0x6f, 0xda, 0xe0, 0x5e, 0x84,
+            0x54, 0x7c, 0xce, 0x0f, 0xbb, 0xa0, 0x94, 0x77, 0x79, 0xab, 0xe9, 0x99, 0x0a, 0x94,
+            0x37, 0x08, 0x63, 0x67,
+        ];
+        let e = lookup(&sha).expect("original Goonies dump present");
+        assert_eq!(e.vs_ppu_type, VsPpuType::Rp2C04_0003);
+        assert_eq!(e.vs_dip, 0x80);
+        assert!(!e.dual_system);
     }
 
     #[test]

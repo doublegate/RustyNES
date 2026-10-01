@@ -201,6 +201,16 @@ cycle-accurate core later replaced.
   Mario Bros.nes` dump is headed mapper 3 with no Vs. flag, so that file
   still runs as CNROM; it is recorded in `docs/mappers.md`, not forced.
   Mapper 99 save states gain the RAM (layout 3; older states still load).
+
+
+
+- **Vs. The Goonies (unpatched dump) uses its RP2C04-0003 palette.** The Vs.
+  database had a row only for the patched dump, so the original Konami file
+  fell back to the 2C03 and drew its title red on green. It now has its own
+  row with the same PPU and DIP default. The circulating *Vs. T.K.O. Boxing*
+  dumps are recorded in `docs/mappers.md` as mis-labelled: their header says
+  mapper 151, but their code drives a Namco 108 board, and the protection chip
+  that game uses is not modelled.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted

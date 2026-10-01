@@ -892,7 +892,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Box::new(m82)
         }
         151 => {
-            // Konami VS (Vs. Gradius / GVS VS. TKO Boxing): Konami's VRC1
+            // Konami VS (Vs. Gradius / Vs. The Goonies): Konami's VRC1
             // silicon on a Nintendo Vs. System board. Banking is byte-identical
             // to mapper 75 (VRC1); the console type was forced to Vs. System +
             // the 2C03 RGB PPU above (mapper-driven, like mapper 99).
