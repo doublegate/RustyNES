@@ -435,7 +435,7 @@ note below).
 | 76 | — | NAMCOT-3446 (Namco 109) | — | — | landed (v1.4.0 / S9) | MMC3-style `$8000`/`$8001` register pairs select two 8K PRG banks (fixed last two) + four 2K CHR banks; header-fixed mirroring. |
 | 174 | — | NTDEC 5-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG bank + 8K CHR bank + mirroring bit. |
 | 225 | — | ColorDreams 72-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded `A~[.HMO PPPP PPCC CCCC]`: CHR A0-A5, PRG A6-A11, mode A12 (16/32K), mirror A13, high bit A14; plus a `$5800-$5FFF` 4-nibble scratch-RAM block. |
-| 226 | — | 76-in-1 BMC | — | — | landed (v1.4.0 / S9) | Two `$8000-$FFFF` regs (even/odd): reg0 `[PMOP PPPP]` (bit6 mode 0=32K/1=16K, bit7 mirror 0=H/1=V), reg1 bit0 = high PRG bit; CHR-RAM. |
+| 226 | — | 76-in-1 BMC | — | — | landed (v1.4.0 / S9) | Two `$8000-$FFFF` regs (even/odd): reg0 `[PMOP PPPP]` (bits 4-0 = PRG bits 4-0, bit 5 mode 0=32K/1=16K, bit 6 mirror 0=H/1=V, bit 7 = PRG bit 5), reg1 bit0 = PRG bit 6; CHR-RAM; RESET clears both registers. Before v2.9.8 bits 5-7 were read as PRG bit 5 / mode / mirroring, so *76-in-1* drew one repeated tile and *Super 42-in-1* opened on its second page under the wrong mirroring. |
 | 227 | — | 1200-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG + fixed-high-bank mode + mirroring bit; CHR-RAM. |
 | 229 | — | 31-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded: low bits zero = fixed NROM-32 menu bank, else a 16K bank pair + 8K CHR + mirroring bit. |
 | 233 | — | 42-in-1 reset-based BMC | — | — | landed (v1.4.0 / S9) | DATA-driven `[MMOP PPPP]` (4-bit page, bit5 mode 0=16K/1=32K, bits6-7 mirroring); the reset-selected outer block is host-driven (fixed power-on `0`); CHR-RAM. |

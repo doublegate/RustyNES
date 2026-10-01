@@ -419,7 +419,8 @@ pub trait Mapper: Send {
     /// and almost every board keeps its registers across a reset, exactly as
     /// on a console. The boards that clear something are documented per page:
     /// mapper 37's outer latch (`INES_Mapper_037.md`), mapper 45's outer
-    /// registers, NES-EVENT's PRG lock (mapper 105), and Action 52's register
+    /// registers, NES-EVENT's PRG lock (mapper 105), the 76-in-1 BMC's two
+    /// registers (mapper 226, since v2.9.8), and Action 52's register
     /// (mapper 228). Added in v2.9.6; a power cycle rebuilds the mapper
     /// instead and never calls this.
     fn reset(&mut self) {}

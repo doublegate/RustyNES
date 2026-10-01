@@ -2626,13 +2626,18 @@ impl Mapper for Multicart225 {
 // ===========================================================================
 // Mapper 226 — 76-in-1 BMC.
 //
-// Two latch registers across $8000-$FFFF (the low address bit selects reg0 vs
-// reg1; the data byte carries the bank bits):
-//   reg0 ($8000, even): bits 0-4 = PRG low, bit 5 = PRG high bit, bit 6 =
-//        mirroring (1 = horizontal), bit 7 = 32/16 KiB mode.
+// Two latch registers across $8000-$FFFF (mask $8001: the low address bit
+// selects reg0 vs reg1; NESdev `INES_Mapper_226`):
+//   reg0 ($8000, even): [PMOP PPPP] -- bits 4-0 = PRG bits 4-0, bit 5 = PRG
+//        mode (O: 0 = one 32 KiB bank, 1 = the same 16 KiB bank in both
+//        halves), bit 6 = mirroring (M: 0 = horizontal, 1 = vertical), bit 7
+//        = PRG bit 5.
 //   reg1 ($8001, odd): bit 0 = PRG bit 6 (outer block).
-// The 32 KiB PRG bank = (reg1.bit0 << 6) | (reg0.bit5 << 5) | (reg0 & 0x1F).
-// In 16 KiB mode both halves use the same bank. CHR is 8 KiB RAM. No IRQ.
+// The 7-bit PRG register = (reg1.bit0 << 6) | (reg0.bit7 << 5) | (reg0 & 0x1F);
+// in 32 KiB mode its low bit is ignored. CHR is 8 KiB RAM. No IRQ.
+//
+// Before v2.9.8 bits 5-7 were decoded as PRG bit 5 / mode / mirroring, which
+// sent the 76-in-1 menu to the wrong bank and left it drawing one tile.
 // ===========================================================================
 
 /// Mapper 226 (`76-in-1` BMC).
@@ -2671,16 +2676,19 @@ impl Multicart226 {
         })
     }
 
-    /// 7-bit 16 KiB PRG bank index: low 6 bits from reg0, high bit from reg1.
+    /// 7-bit 16 KiB PRG bank index: bits 4-0 from reg0 bits 4-0, bit 5 from
+    /// reg0 bit 7, bit 6 from reg1 bit 0.
     const fn prg_bank(&self) -> usize {
-        let low = (self.reg0 & 0x3F) as usize;
+        let low = (self.reg0 & 0x1F) as usize;
+        let bit5 = ((self.reg0 >> 7) & 0x01) as usize;
         let high = (self.reg1 & 0x01) as usize;
-        (high << 6) | low
+        (high << 6) | (bit5 << 5) | low
     }
 
-    /// PRG mode: reg0 bit 6 set = two 16 KiB banks; clear = one 32 KiB bank.
+    /// PRG mode: reg0 bit 5 set = the same 16 KiB bank in both halves; clear
+    /// = one 32 KiB bank.
     const fn is_16k(&self) -> bool {
-        (self.reg0 & 0x40) != 0
+        (self.reg0 & 0x20) != 0
     }
 
     fn read_prg(&self, bank16: usize, addr: u16) -> u8 {
@@ -2742,9 +2750,16 @@ impl Mapper for Multicart226 {
         }
     }
 
+    /// NESdev `INES_Mapper_226`: "The multicart clears both registers on soft
+    /// reset", which is how the menu comes back on RESET.
+    fn reset(&mut self) {
+        self.reg0 = 0;
+        self.reg1 = 0;
+    }
+
     fn current_mirroring(&self) -> Mirroring {
-        // reg0 bit 7: 0 = horizontal, 1 = vertical.
-        if (self.reg0 & 0x80) != 0 {
+        // reg0 bit 6 (M): 0 = horizontal, 1 = vertical.
+        if (self.reg0 & 0x40) != 0 {
             Mirroring::Vertical
         } else {
             Mirroring::Horizontal
@@ -4576,14 +4591,47 @@ mod tests {
     #[test]
     fn m226_two_regs_select_prg_and_mirror() {
         let mut m = Multicart226::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        // reg0 (even): low bits = 3, bit6 = mirror H. value 0b0100_0011 = 0x43.
-        m.cpu_write(0x8000, 0x43);
+        // reg0 (even) [PMOP PPPP]: low bits = 3, O (bit 5) = 16K mode, M (bit
+        // 6) = 0 = horizontal. value 0b0010_0011 = 0x23.
+        m.cpu_write(0x8000, 0x23);
         // reg1 (odd): bit0 = 0.
         m.cpu_write(0x8001, 0x00);
-        // 16K mode (reg0 bit7 = 0): bank 3 on both halves.
+        // 16K mode: bank 3 on both halves.
         assert_eq!(m.cpu_read(0x8000), 3);
         assert_eq!(m.cpu_read(0xC000), 3);
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn m226_reg0_layout_is_pmop_pppp() {
+        // NESdev `INES_Mapper_226`: $8000 = [PMOP PPPP] -- bit 7 is PRG bit 5,
+        // bit 6 mirroring (1 = vertical), bit 5 the PRG mode (1 = two 16 KiB
+        // halves of the same bank), bits 4-0 PRG bits 4-0. $8001 bit 0 is
+        // PRG bit 6.
+        let mut m = Multicart226::new(synth_prg_16k(128), &[], Mirroring::Vertical).unwrap();
+        // $A3 = P1 M0 O1 P00011: bank 32 + 3 = 35, 16 KiB mode, horizontal.
+        m.cpu_write(0x8000, 0xA3);
+        assert_eq!(m.cpu_read(0x8000), 35);
+        assert_eq!(m.cpu_read(0xC000), 35);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        // $23 = P0 M0 O1 P00011: the mode bit is not a bank bit -- bank 3.
+        m.cpu_write(0x8000, 0x23);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        // $83 = P1 M0 O0 P00011: bank 35 in 32 KiB mode = 34 / 35.
+        m.cpu_write(0x8000, 0x83);
+        assert_eq!(m.cpu_read(0x8000), 34);
+        assert_eq!(m.cpu_read(0xC000), 35);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        // $45 + $8001 = 1: bank 64 + 5 = 69, 32 KiB mode (68 / 69), vertical.
+        m.cpu_write(0x8000, 0x45);
+        m.cpu_write(0x8001, 0x01);
+        assert_eq!(m.cpu_read(0x8000), 68);
+        assert_eq!(m.cpu_read(0xC000), 69);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+        // "The multicart clears both registers on soft reset": bank 0, 32 KiB.
+        m.reset();
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(m.cpu_read(0xC000), 1);
     }
 
     #[test]

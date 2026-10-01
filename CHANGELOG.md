@@ -179,6 +179,16 @@ cycle-accurate core later replaced.
   single-screen layouts ran as A10 and the nametable shared memory with the
   tiles it names. *Magic Floor* (`$A9`, A13) drew a field of garbage tiles; it
   now draws its board and score line.
+
+
+
+- **Mapper 226 (76-in-1 BMC) register layout.** The first register is
+  `[PMOP PPPP]` (NESdev `INES_Mapper_226`): bit 7 is PRG bit 5, bit 6
+  mirroring and bit 5 the 16/32 KiB mode. The board read bits 5, 6 and 7 as
+  PRG bit 5, mode and mirroring, so *76-in-1* jumped to the wrong bank and
+  drew one repeated tile, and *Super 42-in-1* opened on its second menu page
+  under the wrong mirroring. Both now open on their first menu page. RESET
+  also clears both registers, as the page says, which returns to the menu.
 ### Removed
 
 - **The libretro `platform=libnx` build is dropped.** It targeted
