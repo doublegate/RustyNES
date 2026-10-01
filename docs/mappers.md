@@ -285,7 +285,7 @@ boot-smoke (no redistributable behavioral fixtures exist for these boards).
 |------|-----------|------|-------|-----|-------|
 | 16 / 159 | 0,4,5 | Bandai FCG | — | CPU | DBZ, Famicom Jump II, Datach. +minimal I2C EEPROM (24C02/24C01). |
 | 18 | — | Jaleco SS88006 | — (ADPCM decoded-not-emulated) | CPU | Goemon Gaiden, Doropie. Nibble-paired banking; selectable-width IRQ. |
-| 64 | — | Tengen RAMBO-1 | — | A12 + CPU | Klax, Skull & Crossbones. Dual-mode IRQ (reuses MMC3 A12 filter). |
+| 64 | — | Tengen RAMBO-1 | — | A12 + CPU | Klax, Skull & Crossbones. Dual-mode IRQ (reuses MMC3 A12 filter). The zero test follows a reload as well as a decrement, so a latch of 0 asserts on every clock (v2.9.8; *Skull & Crossbones* depends on it). The reload "+1 kick" and the IRQ delay are not modelled. |
 | 65 | — | Irem H3001 | — | CPU | Daiku no Gen-san, Spartan X 2. 16-bit reload-latch down-counter. |
 | 67 | — | Sunsoft-3 | — | CPU | Fantasy Zone 2. 16-bit write-twice-latch IRQ. |
 | 68 | — | Sunsoft-4 | — | — | After Burner, Maharaja. CHR-ROM-as-nametable. |

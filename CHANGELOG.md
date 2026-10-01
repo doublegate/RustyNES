@@ -81,6 +81,14 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Mapper 64 (Tengen RAMBO-1) raises its IRQ when a reload lands on 0.**
+  The counter tested for zero only after a decrement, but NESdev's
+  "RAMBO-1" page applies the test after a reload too, so a latch of 0
+  asserts the IRQ on every clock. *Skull & Crossbones* writes a latch of 0
+  every frame and waits on that IRQ; it showed a black screen with a
+  fragment of its hints page, and now runs its Tengen logo, title and hints
+  screens. The other staged RAMBO-1 games are unchanged.
+
 - **iNES 1.0 headers with a dirty tail no longer gain 64 on the mapper.** Old
   ROM tools wrote signatures such as "DiskDude!" into bytes 7-15, and byte 7's
   high nibble then read as mapper bits 4-7. The parser now follows the NESdev
