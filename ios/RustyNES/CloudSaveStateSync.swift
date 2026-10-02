@@ -45,6 +45,7 @@
 
 import CloudKit
 import Foundation
+import MachO
 
 @MainActor
 final class CloudSaveStateSync: ObservableObject {
@@ -91,8 +92,10 @@ final class CloudSaveStateSync: ObservableObject {
 
     // MARK: - Lifecycle wiring (driven by AppModel)
 
-    /// Kick off an account check at launch (no game yet). Safe to call when disabled.
+    /// Kick off an account check at launch (no game yet). Safe to call when disabled:
+    /// sync is opt-in, so a disabled sync never touches CloudKit at all.
     func start() {
+        guard enabled else { return }
         Task { await refreshAccount() }
     }
 
@@ -128,7 +131,11 @@ final class CloudSaveStateSync: ObservableObject {
     // MARK: - Account availability
 
     private func refreshAccount() async {
-        let status = try? await CKContainer.default().accountStatus()
+        guard enabled else {
+            accountAvailable = false
+            return
+        }
+        let status = try? await Self.container?.accountStatus()
         accountAvailable = (status == .available)
     }
 
@@ -176,9 +183,9 @@ final class CloudSaveStateSync: ObservableObject {
         // Re-check the account live rather than trusting a possibly-stale cached flag:
         // the initial async account check may not have finished when a save fires, which
         // would wrongly skip the upload and leave the slot `localOnly`.
-        let status = try? await CKContainer.default().accountStatus()
+        let status = try? await Self.container?.accountStatus()
         accountAvailable = (status == .available)
-        guard accountAvailable else { return nil }
+        guard accountAvailable, let database = Self.database else { return nil }
         let urls = saveStates.fileURLs(sha: sha, slot: slot)
         let meta = saveStates.slot(sha: sha, index: slot)
         guard !meta.isEmpty else { return nil }
@@ -194,7 +201,7 @@ final class CloudSaveStateSync: ObservableObject {
         // fails this save instead of being lost. (A missing record, or a fetch
         // that fails offline, starts a new record; saving a new record over an
         // existing one also fails under that policy.)
-        let existing = try? await Self.database.record(for: id)
+        let existing = try? await database.record(for: id)
         if let existing, let remoteSaved = existing["savedAt"] as? Date, remoteSaved > savedAt {
             return nil
         }
@@ -214,7 +221,7 @@ final class CloudSaveStateSync: ObservableObject {
         }
 
         do {
-            let (saved, _) = try await Self.database.modifyRecords(
+            let (saved, _) = try await database.modifyRecords(
                 saving: [record], deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: true
             )
             // The call succeeds as a whole even when this record's save failed
@@ -242,9 +249,9 @@ final class CloudSaveStateSync: ObservableObject {
     /// Remove a slot's cloud record (best-effort) when the user deletes it locally.
     func delete(sha: String, slot: Int) {
         states[slot] = nil
-        guard enabled else { return }
+        guard enabled, let database = Self.database else { return }
         Task {
-            _ = try? await Self.database.modifyRecords(
+            _ = try? await database.modifyRecords(
                 saving: [], deleting: [recordID(sha: sha, slot: slot)],
                 savePolicy: .allKeys, atomically: true
             )
@@ -258,7 +265,7 @@ final class CloudSaveStateSync: ObservableObject {
     func reconcile(sha: String) async {
         guard enabled else { return }
         await refreshAccount()
-        guard accountAvailable else {
+        guard accountAvailable, let database = Self.database else {
             markAllUnavailable()
             return
         }
@@ -266,7 +273,7 @@ final class CloudSaveStateSync: ObservableObject {
         let ids = (0..<SaveStateManager.slotCount).map { recordID(sha: sha, slot: $0) }
         let results: [CKRecord.ID: Result<CKRecord, Error>]
         do {
-            results = try await Self.database.records(for: ids)
+            results = try await database.records(for: ids)
         } catch {
             // Offline / transient: keep the local-derived states, don't churn the UI.
             return
@@ -347,7 +354,21 @@ final class CloudSaveStateSync: ObservableObject {
 
     // MARK: - Record identity
 
-    private static var database: CKDatabase { CKContainer.default().privateCloudDatabase }
+    /// The CloudKit container, or `nil` when this binary is not entitled to one.
+    ///
+    /// CloudKit raises an uncatchable trap -- not a `CKError` -- when the app
+    /// creates a container without the `com.apple.developer.icloud-container-
+    /// identifiers` entitlement: `CKContainer.default()` throws a `CKException`
+    /// ("containerIdentifier can not be nil") and `CKContainer(identifier:)` stops
+    /// in a `brk` inside its initialiser (both measured on the iOS 27 simulator).
+    /// An unsigned simulator build, or a sideload whose profile lacks the iCloud
+    /// capability, crashed at launch that way. So no container is created unless
+    /// the entitlement is present, and every CloudKit call site below treats a
+    /// `nil` container as "unavailable", exactly like a signed-out account.
+    private static let container: CKContainer? =
+        CloudKitEntitlement.isPresent ? CKContainer.default() : nil
+
+    private static var database: CKDatabase? { container?.privateCloudDatabase }
 
     private func recordID(sha: String, slot: Int) -> CKRecord.ID {
         CKRecord.ID(recordName: "state-\(sha)-\(slot)")
@@ -357,5 +378,61 @@ final class CloudSaveStateSync: ObservableObject {
     private func slot(from id: CKRecord.ID) -> Int? {
         guard let dash = id.recordName.lastIndex(of: "-") else { return nil }
         return Int(id.recordName[id.recordName.index(after: dash)...])
+    }
+}
+
+// MARK: - Entitlement probe
+
+/// Whether this binary carries the CloudKit container entitlement, read with public
+/// APIs only (iOS exposes no call that returns an app's own entitlements).
+///
+/// * Simulator: Xcode links the entitlements into the main executable's
+///   `__TEXT,__entitlements` section ("Simulated.xcent"); an unsigned build
+///   (`CODE_SIGNING_ALLOWED=NO`) has no such section.
+/// * Device: a development or ad-hoc build embeds its provisioning profile, whose
+///   `Entitlements` dictionary is what the signature was allowed to claim. App Store
+///   and TestFlight builds carry no `embedded.mobileprovision`, and are always
+///   signed with the capability, so a missing profile counts as entitled.
+enum CloudKitEntitlement {
+    private static let key = "com.apple.developer.icloud-container-identifiers"
+
+    static let isPresent: Bool = {
+        #if targetEnvironment(simulator)
+        guard let entitlements = simulatorEntitlements() else { return false }
+        #else
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") else {
+            return true
+        }
+        guard let entitlements = profileEntitlements(at: url) else { return false }
+        #endif
+        return !((entitlements[key] as? [Any])?.isEmpty ?? true)
+    }()
+
+    #if targetEnvironment(simulator)
+    private static func simulatorEntitlements() -> [String: Any]? {
+        guard let header = _dyld_get_image_header(0) else { return nil }
+        var size: UInt = 0
+        let raw = header.withMemoryRebound(to: mach_header_64.self, capacity: 1) {
+            getsectiondata($0, "__TEXT", "__entitlements", &size)
+        }
+        guard let raw, size > 0 else { return nil }
+        return plist(Data(bytes: raw, count: Int(size)))
+    }
+    #else
+    /// The profile is a CMS envelope around an XML plist; the plist is read out of
+    /// it by its delimiters rather than by verifying the signature, which is the
+    /// kernel's job, not this probe's.
+    private static func profileEntitlements(at url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex)
+        else { return nil }
+        let profile = plist(data.subdata(in: start.lowerBound..<end.upperBound))
+        return profile?["Entitlements"] as? [String: Any]
+    }
+    #endif
+
+    private static func plist(_ data: Data) -> [String: Any]? {
+        (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
     }
 }
