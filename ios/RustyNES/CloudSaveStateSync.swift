@@ -247,14 +247,29 @@ final class CloudSaveStateSync: ObservableObject {
     // MARK: - Delete (on slot clear)
 
     /// Remove a slot's cloud record (best-effort) when the user deletes it locally.
+    ///
+    /// Best-effort means the local delete never waits on or fails with the cloud
+    /// one, not that a failure goes unrecorded: it is logged like an upload
+    /// failure. `modifyRecords` reports a per-record failure in its result rather
+    /// than by throwing, so both are checked. `.unknownItem` is not logged: it
+    /// only means the slot was never uploaded.
     func delete(sha: String, slot: Int) {
         states[slot] = nil
         guard enabled, let database = Self.database else { return }
+        let id = recordID(sha: sha, slot: slot)
         Task {
-            _ = try? await database.modifyRecords(
-                saving: [], deleting: [recordID(sha: sha, slot: slot)],
-                savePolicy: .allKeys, atomically: true
-            )
+            do {
+                let (_, deleted) = try await database.modifyRecords(
+                    saving: [], deleting: [id],
+                    savePolicy: .allKeys, atomically: true
+                )
+                if case .failure(let error) = deleted[id],
+                   (error as? CKError)?.code != .unknownItem {
+                    NSLog("RustyNES: iCloud slot \(slot) not deleted: \(error)")
+                }
+            } catch {
+                NSLog("RustyNES: iCloud slot \(slot) delete failed: \(error)")
+            }
         }
     }
 
@@ -275,7 +290,9 @@ final class CloudSaveStateSync: ObservableObject {
         do {
             results = try await database.records(for: ids)
         } catch {
-            // Offline / transient: keep the local-derived states, don't churn the UI.
+            // Offline / transient: keep the local-derived states, don't churn the
+            // UI. Logged, not shown: a fetch failure changes nothing on screen.
+            NSLog("RustyNES: iCloud reconcile fetch failed: \(error)")
             return
         }
 
