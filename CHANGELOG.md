@@ -202,6 +202,18 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   reserved bit. The editor's PRG/CHR unit fields stop at `$EFF`: a larger count
   used to be written with a byte-9 nibble of `$F`, which reads back as an
   exponent-notation size. ADR 0042's 2026-10-01 amendment.
+
+
+
+- **Faster frames, with output unchanged.** Removing the dead /NMI edge
+  detector (ADR 0042) cut frame time by 4.9% to 6.1% on three benchmark
+  workloads and 1.4% on exact-path `nestest`, in two runs. Three of eleven
+  re-measured hot-path candidates were adopted: a cached unity-gain flag in the
+  mixer, two sprite-evaluation values computed only where used, and one
+  duplicate DMC read removed. Together they are 1.8% to 4.3% faster. Against
+  v2.9.7, the shipped `nestest` frame is 5% to 9% faster. On the other
+  workloads the end-to-end gain did not reproduce, and the cause is a v2.9.9
+  lead. The details and the rejected candidates are in `docs/performance.md`.
 - **Colour emphasis follows the documented hardware model.** PPUMASK bits 5-7
   used to dim the other two colour channels to 13/16 per set bit, which turned
   all three bits into an even, heavy dim. The console has one attenuator shared
