@@ -324,7 +324,7 @@ deterministic / locked session.
 
 | Call | Description |
 |---|---|
-| `cart:mapper_id()` | The loaded iNES / NES 2.0 mapper id. |
+| `cart:mapper_id()` | The loaded iNES / NES 2.0 mapper id (20 for an FDS image, 31 for an NSF). Before v2.9.8 it read 0 for every board without its own debug view (`UxROM`, CNROM, `AxROM`, ...) and for an NSF. |
 | `cart:prg_size()` | PRG-ROM size in bytes. |
 | `cart:chr_size()` | CHR-ROM size in bytes (0 for CHR-RAM boards). |
 | `cart:sha256()` | Lowercase-hex SHA-256 identifying the ROM (64 chars): for an iNES / NES 2.0 image, of the bytes after the 16-byte header (since v2.9.8; the whole file before); for FDS and NSF, of the whole image. A header-only edit does not change it. |

@@ -2434,6 +2434,12 @@ impl SystemBus {
     pub fn mapper_debug_info(&self) -> rustynes_mappers::MapperDebugInfo {
         let mut info = self.mapper.debug_info();
         let cart = &self.cart;
+        // v2.9.8 — the id is cartridge metadata, like the submapper below. A
+        // board's `debug_info` names its own id only when it overrides the
+        // default, which names mapper 0, so the debugger's mapper panel showed
+        // "Mapper 0" for `UxROM`, CNROM, `AxROM` and every other board without
+        // an override (and for an NSF, whose synthetic cartridge is mapper 31).
+        info.mapper_id = cart.mapper_id;
         info.submapper = cart.submapper;
         info.tier = rustynes_mappers::mapper_tier(cart.mapper_id, cart.submapper)
             .map_or("", rustynes_mappers::MapperTier::name);

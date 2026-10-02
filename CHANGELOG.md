@@ -201,6 +201,15 @@ cycle-accurate core later replaced.
   byte-identical frames.
 ### Fixed
 
+- **The mapper id is the cartridge's on every board.** `Nes::mapper_id` read
+  the mapper's debugger view, which names mapper 0 unless the board overrides
+  it, so `UxROM`, CNROM, `AxROM` and every other board without an override
+  reported mapper 0 to the Lua `cart:mapper_id()`, the ROM-info panel, the
+  debugger's mapper panel and the mobile `RomInfo`; an NSF reported 0 instead
+  of the 31 its synthetic cartridge carries. It now reads the cartridge,
+  after any load-time header correction. `Nes::submapper` is new and reads
+  the NES 2.0 submapper the same way.
+
 - **A power cycle keeps the settings stored in the PPU and the APU, on every
   platform.** `Nes::power_cycle` rebuilds both chips, and with them it reset a
   custom or NTSC palette, the overclock scanlines, the fast dot path, the

@@ -1463,10 +1463,25 @@ impl Nes {
         self.bus.chr_rom_len()
     }
 
-    /// The loaded mapper's iNES / NES 2.0 mapper id (backs `cart:mapper_id()`).
+    /// The loaded cartridge's iNES / NES 2.0 mapper id, after any load-time
+    /// header correction (backs the Lua `cart:mapper_id()`, the ROM-info
+    /// panel and the mobile `RomInfo`). A Famicom Disk System image reports
+    /// 20 and an NSF 31, the ids their synthetic cartridges carry.
+    ///
+    /// v2.9.8 — read from the cartridge. It used to read the mapper's debug
+    /// view, whose default `debug_info` names mapper 0, so every board
+    /// without its own override (`UxROM`, CNROM, `AxROM`, ...) reported 0, and
+    /// an NSF reported 0 rather than 31.
     #[must_use]
-    pub fn mapper_id(&self) -> u16 {
-        self.bus.mapper_debug_info().mapper_id
+    pub const fn mapper_id(&self) -> u16 {
+        self.bus.cart.mapper_id
+    }
+
+    /// v2.9.8 — the loaded cartridge's NES 2.0 submapper (0 for an iNES 1.0
+    /// image, which has none), after any load-time header correction.
+    #[must_use]
+    pub const fn submapper(&self) -> u8 {
+        self.bus.cart.submapper
     }
 
     /// Wall-clock frame duration for this cartridge's region. The frontend
@@ -3114,12 +3129,15 @@ impl Nes {
     /// `audio` flag (true only when the mapper overrides `mix_audio` with the
     /// feature on) and the mapper id to name the chip family.
     #[must_use]
-    pub fn expansion_audio_chip(&self) -> Option<&'static str> {
+    pub const fn expansion_audio_chip(&self) -> Option<&'static str> {
         if !self.bus.mapper_caps().audio {
             return None;
         }
-        let id = self.bus.mapper_debug_info().mapper_id;
-        Some(match id {
+        // The cartridge's id, not the debug view's (v2.9.8, see `mapper_id`).
+        // Every board that overrides `mix_audio` also names its id in
+        // `debug_info` today, so no label changes; the debug view simply is
+        // not the place the mapper id is defined.
+        Some(match self.mapper_id() {
             5 => "MMC5",
             19 | 210 => "Namco 163",
             20 => "FDS",
@@ -4864,6 +4882,50 @@ mod tests {
         );
         assert!(nes.bus.ppu.pixel_provenance().is_some(), "pixel provenance");
         assert!(nes.bus.apu.audio_provenance_armed(), "audio provenance");
+    }
+
+    /// v2.9.8 — `mapper_id` reports the cartridge's mapper on every board.
+    ///
+    /// It used to read the mapper's DEBUG view, whose default `debug_info`
+    /// names mapper 0, so every board without its own override -- `UxROM`,
+    /// CNROM, `AxROM` among them -- claimed to be NROM to the Lua
+    /// `cart:mapper_id()`, the ROM-info panel and the mobile `RomInfo`.
+    #[test]
+    fn mapper_id_reports_the_cartridge_mapper_on_every_board() {
+        /// A NES 2.0 image of `mapper` / `submapper`: `prg16` x 16 KiB PRG and
+        /// `chr8` x 8 KiB CHR-ROM (0 = 8 KiB CHR-RAM).
+        fn image(mapper: u16, submapper: u8, prg16: u8, chr8: u8) -> Vec<u8> {
+            let [lo, hi] = mapper.to_le_bytes();
+            let mut rom = vec![0u8; 16];
+            rom[..4].copy_from_slice(b"NES\x1A");
+            rom[4] = prg16;
+            rom[5] = chr8;
+            rom[6] = (lo & 0x0F) << 4;
+            rom[7] = (lo & 0xF0) | 0x08; // NES 2.0
+            rom[8] = (submapper << 4) | (hi & 0x0F);
+            if chr8 == 0 {
+                rom[11] = 0x07; // 64 << 7 = 8 KiB CHR-RAM
+            }
+            rom.resize(
+                16 + usize::from(prg16) * 0x4000 + usize::from(chr8) * 0x2000,
+                0,
+            );
+            rom
+        }
+        for (mapper, submapper, prg16, chr8) in [
+            (0u16, 0u8, 2u8, 1u8),
+            (2, 1, 8, 0),
+            (3, 2, 2, 4),
+            (7, 0, 8, 0),
+            (4, 0, 8, 8),
+        ] {
+            let nes = Nes::from_rom(&image(mapper, submapper, prg16, chr8))
+                .unwrap_or_else(|e| panic!("mapper {mapper}: {e:?}"));
+            assert_eq!(nes.mapper_id(), mapper, "mapper {mapper}");
+            assert_eq!(nes.submapper(), submapper, "mapper {mapper} submapper");
+            // The debugger's mapper panel reads the same id.
+            assert_eq!(nes.mapper_info().mapper_id, mapper, "mapper {mapper} view");
+        }
     }
 
     /// **The counter must not be serialized**, and this is the assertion that
