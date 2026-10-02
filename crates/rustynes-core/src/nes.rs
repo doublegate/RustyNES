@@ -4884,6 +4884,38 @@ mod tests {
         assert!(nes.bus.apu.audio_provenance_armed(), "audio provenance");
     }
 
+    /// v2.9.8 — a power cycle after a program has polled the controllers is
+    /// a fresh boot (`power_cycle == fresh boot`).
+    ///
+    /// The controller ports remember the bus cycle of their last read
+    /// (`port_read_cycle`, `u64::MAX` = never), which the CLK-run model
+    /// compares with the current cycle. A power cycle reset the cycle counter
+    /// to 0 but left those stamps from the old timeline, so the cycled
+    /// console's state depended on how long it had run and differed from a
+    /// fresh one; two netplay peers cycling from different states would carry
+    /// different stamps.
+    #[test]
+    fn a_power_cycle_after_controller_reads_is_a_fresh_boot() {
+        let mut rom = synth_nrom(16, 8);
+        // $C000: LDA $4016 ; LDA $4017 ; JMP $C000
+        rom[16..25].copy_from_slice(&[0xAD, 0x16, 0x40, 0xAD, 0x17, 0x40, 0x4C, 0x00, 0xC0]);
+        let mut cycled = Nes::from_rom(&rom).unwrap();
+        for _ in 0..3 {
+            cycled.run_frame();
+        }
+        assert_ne!(
+            cycled.bus.port_read_cycle(0),
+            u64::MAX,
+            "premise: the program polled the pad"
+        );
+        cycled.power_cycle();
+        let fresh = Nes::from_rom(&rom).unwrap();
+        assert!(
+            cycled.snapshot() == fresh.snapshot(),
+            "a power-cycled console must equal a fresh one"
+        );
+    }
+
     /// v2.9.8 — `mapper_id` reports the cartridge's mapper on every board.
     ///
     /// It used to read the mapper's DEBUG view, whose default `debug_info`

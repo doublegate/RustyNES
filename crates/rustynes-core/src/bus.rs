@@ -1210,6 +1210,12 @@ impl SystemBus {
         self.dmc_halt = false;
         self.controller_write_pending = 0;
         self.controller_write_value = 0;
+        // v2.9.8 — the ports' last-read stamps are bus cycles of the OLD
+        // timeline; `cycle` restarts at 0 above, so a kept stamp made the
+        // cycled state depend on how long the console had run (and could, in
+        // principle, read as "continues a run" against the new clock). A
+        // fresh bus has never read either port.
+        self.port_read_cycle = [u64::MAX; 2];
         // Rebuild the mapper to its power-on state (fresh bank registers, cleared
         // CHR-RAM + volatile PRG-RAM), so a power-cycle is a true cold boot for
         // mapper-stateful games (MMC1/MMC3/…) too — without this, a stateful

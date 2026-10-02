@@ -201,6 +201,14 @@ cycle-accurate core later replaced.
   byte-identical frames.
 ### Fixed
 
+- **A power cycle forgets when the controller ports were last read.** Each
+  port keeps the bus cycle of its last read, for the CLK-run model; a power
+  cycle restarted the cycle counter at 0 but kept those stamps from the old
+  run, so a cycled console differed from a freshly booted one by how long it
+  had run, and a stamp could line up with the new clock as the start of a run
+  of reads. Two netplay peers power-cycling from different states carried
+  different stamps. A power cycle now clears them, as a fresh boot has them.
+
 - **Desktop: a Vs. `DualSystem` ROM given on the command line runs as the
   two-console cabinet.** Only the menu, drag-and-drop and Recent ROMs path
   built the cabinet; `rustynes <rom>` installed the image as a single
