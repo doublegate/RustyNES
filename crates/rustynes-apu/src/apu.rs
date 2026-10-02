@@ -277,6 +277,18 @@ pub struct Apu {
     /// the oracle / test ROMs (which never touch a gain) are unaffected. NEVER
     /// serialized into the save state (a UI preference, like the mask / volume).
     pub(crate) channel_gain: [f32; 6],
+    /// v2.9.8 — the analog output-filter model the host last selected with
+    /// [`Self::set_filter_model`].
+    ///
+    /// The filter itself lives in `blip` as a built chain of coefficients
+    /// (and its IIR history), and a chain does not say which model built it,
+    /// so the selection is kept here as a plain value for
+    /// [`Self::adopt_settings_from`] to carry across a power cycle. Read by
+    /// nothing else: synthesis uses only the chain. A save-state restore
+    /// replaces the chain's coefficients and leaves this alone, so after a
+    /// restore it still names the host's selection, which is what the next
+    /// power cycle should rebuild. NEVER serialized (a UI preference).
+    pub(crate) filter_model: crate::mixer::FilterModel,
     /// v2.1.6 "Expansion Audio" — the most recent RAW external / on-cart
     /// expansion-audio sample fed into [`Self::tick_with_external`] (BEFORE the
     /// UI [`Self::channel_gain`] `[5]` re-weight), retained purely so the
@@ -367,6 +379,7 @@ impl Apu {
             last_frame_events: FrameEvents::default(),
             channel_mask: CHANNEL_MASK_ALL,
             channel_gain: CHANNEL_GAIN_UNITY,
+            filter_model: crate::mixer::FilterModel::NesRf,
             last_external: 0.0,
             #[cfg(feature = "debug-hooks")]
             audio_prov: None,
@@ -642,7 +655,39 @@ impl Apu {
     /// aggressive 440 Hz high-pass for a fuller low end. Display/tonal only —
     /// channel content is unchanged.
     pub fn set_filter_model(&mut self, model: crate::mixer::FilterModel) {
+        self.filter_model = model;
         self.blip.set_filter_model(model);
+    }
+
+    /// v2.9.8 — the analog output-filter model last selected with
+    /// [`Self::set_filter_model`] ([`crate::mixer::FilterModel::NesRf`] until
+    /// one is).
+    #[must_use]
+    pub const fn filter_model(&self) -> crate::mixer::FilterModel {
+        self.filter_model
+    }
+
+    /// v2.9.8 — carry the host's settings from `prev` onto this freshly built
+    /// APU, so a power cycle (which rebuilds the APU from [`Self::new`]) keeps
+    /// them.
+    ///
+    /// Until v2.9.8 the bus rebuilt the APU and re-applied only its own wiring
+    /// (the externally driven DMC and the alignment seed), so the channel mask,
+    /// the per-channel gain and the filter model reverted to their defaults
+    /// and every host had to push them again. Carried: [`Self::channel_mask`],
+    /// [`Self::channel_gain`] and [`Self::filter_model`]. The filter goes
+    /// through [`Self::set_filter_model`], which builds a fresh chain for the
+    /// model at this APU's sample rate -- the chain a fresh console gets when
+    /// a host selects the model, with no IIR history carried from the old
+    /// timeline. The sample rate is the caller's to pass to [`Self::new`];
+    /// the audio provenance stores are moved by the core, armed and emptied.
+    ///
+    /// With every setting at its default this leaves the APU byte-identical
+    /// to [`Self::new`]: the default model's chain is the one `new` builds.
+    pub fn adopt_settings_from(&mut self, prev: &Self) {
+        self.channel_mask = prev.channel_mask;
+        self.channel_gain = prev.channel_gain;
+        self.set_filter_model(prev.filter_model);
     }
 
     /// Current per-channel output gain. See [`Apu::set_channel_gain`].

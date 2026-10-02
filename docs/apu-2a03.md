@@ -316,6 +316,17 @@ where `NaN.clamp` would have stayed NaN and the rounded sample index would have
 been meaningless. Infinities clamp to the range ends. Pinned by
 `channel_gain_rejects_nan_and_clamps_infinities`.
 
+**Settings across a power cycle (v2.9.8).** A power cycle rebuilds the APU from
+`Apu::new`, and `Apu::adopt_settings_from` carries the host's settings onto the
+new one: the channel mask, the per-channel gain and the filter model. The APU
+keeps the selected model as a plain value (`Apu::filter_model`) beside the
+built chain, since a chain of coefficients does not say which model made it;
+the carried model is rebuilt as a fresh chain at the APU's sample rate, with no
+IIR history from the old timeline. Until v2.9.8 all three reverted to their
+defaults in the cycle, and every host had to push them again. Pinned by
+`a_power_cycle_keeps_every_ppu_and_apu_setting` and, for any future
+configuration field, `every_config_field_survives_a_power_cycle`.
+
 ### Band-limited sample emission
 
 Naive sample-rate conversion produces aliasing. Use a blip-buf-style ring buffer:

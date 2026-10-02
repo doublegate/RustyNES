@@ -357,6 +357,12 @@ const CHIPS: &[Chip] = &[
             ),
             ("channel_mask", "config: frontend Audio Mixer channel mute"),
             (
+                "filter_model",
+                "config: the host's selected output-filter model (v2.9.8), kept so a power \
+                 cycle can rebuild the chain; the chain itself, coefficients and IIR history, \
+                 lives in `blip`, which IS serialized",
+            ),
+            (
                 "channel_gain",
                 "config: frontend Audio Mixer per-channel gain",
             ),
@@ -863,6 +869,66 @@ fn every_chip_field_is_serialized_or_explicitly_excluded() {
             unaccounted.len(),
             unaccounted,
         );
+    }
+}
+
+/// v2.9.8 — every PPU / APU field this audit classifies as host
+/// configuration survives a power cycle.
+///
+/// `SystemBus::power_cycle` rebuilds both chips from `new`, so a "config:"
+/// field is lost there unless something carries it: the chip's own
+/// `adopt_settings_from` (which must read `prev.<field>`), or the bus, which
+/// re-applies the few settings it also stores. Until v2.9.8 nothing carried
+/// the PPU's custom palette, overclock, fast dot path and OAM-decay switch
+/// or the APU's mask, gain and filter, and each host re-pushed them -- or,
+/// on most paths, did not. A new "config:" field now fails here until it is
+/// carried or listed below with the bus call that re-applies it.
+#[test]
+fn every_config_field_survives_a_power_cycle() {
+    /// Settings the bus re-applies itself after the rebuild (each stored on
+    /// the bus, which is therefore their source of truth), with the call
+    /// that does it.
+    const BUS_REAPPLIED: &[(&str, &str)] = &[
+        ("active_palette", "self.reapply_vs_palette()"),
+        ("die_revision", "self.ppu.set_revision("),
+        ("power_up_palette", "self.ppu.apply_power_up_palette("),
+        (
+            "dmc_driven_externally",
+            "self.apu.set_dmc_driven_externally(true)",
+        ),
+    ];
+    let bus_src = include_str!("../../rustynes-core/src/bus.rs").replace('\r', "");
+    let cycle_start = bus_src
+        .find("    pub fn power_cycle(&mut self) {")
+        .expect("SystemBus::power_cycle not found");
+    let cycle_body = &bus_src[cycle_start..];
+    let cycle_body = &cycle_body[..cycle_body.find("\n    }\n").expect("end of power_cycle")];
+    for chip in CHIPS
+        .iter()
+        .filter(|c| c.label == "Ppu" || c.label == "Apu")
+    {
+        let src = chip.struct_src.replace('\r', "");
+        let adopt_start = src
+            .find("fn adopt_settings_from(&mut self, prev: &Self) {")
+            .unwrap_or_else(|| panic!("{}: no `adopt_settings_from`", chip.label));
+        let adopt = &src[adopt_start..];
+        let adopt = &adopt[..adopt.find("\n    }\n").expect("end of adopt_settings_from")];
+        for (field, reason) in chip.derived_or_config {
+            if !reason.starts_with("config:") {
+                continue;
+            }
+            let carried = adopt.contains(&format!("prev.{field}"));
+            let reapplied = BUS_REAPPLIED
+                .iter()
+                .find(|(f, _)| f == field)
+                .is_some_and(|(_, call)| cycle_body.contains(call));
+            assert!(
+                carried || reapplied,
+                "{}: config field `{field}` is neither carried by `adopt_settings_from` \
+                 nor re-applied by `SystemBus::power_cycle`, so a power cycle drops it",
+                chip.label
+            );
+        }
     }
 }
 

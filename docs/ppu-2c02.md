@@ -555,6 +555,23 @@ power-cycle re-applies it (`power_cycle == fresh boot`). Build via
 strictly generalizes `Nes::from_rom_with_power_on_seed`, which now routes through
 `PowerOnRam::Seeded`.)
 
+### Host settings across a power cycle (v2.9.8)
+
+A power cycle rebuilds the PPU from `Ppu::new`, and `Ppu::adopt_settings_from`
+carries the host's settings onto the new one: the custom or generated palette
+(the RGBA lookup is rebuilt to honour it), the extra-scanlines overclock, the
+fast dot path selector and the OAM-decay switch (through `set_oam_decay`, so the
+row ages start from the rebuilt PPU's cycle 0, as on a fresh console that
+enables it). The die revision and the two power-on fills above are stored on the
+bus, which re-applies them; the active palette and the 2C05 identity are board
+identity, re-derived from the cartridge. The state and fetch traces are capture
+buffers and are not carried. The provenance stores (`debug-hooks`) stay armed
+and are emptied. Until v2.9.8 the four carried settings reverted to their
+defaults in the cycle, and every host had to push them again. Pinned by
+`a_power_cycle_keeps_every_ppu_and_apu_setting`,
+`a_power_cycled_console_with_settings_runs_as_a_fresh_one` and, for any future
+configuration field, `every_config_field_survives_a_power_cycle`.
+
 ### Loopy `v / t / x / w`
 
 Per `ref-docs/research-report.md` §Internal scroll registers:

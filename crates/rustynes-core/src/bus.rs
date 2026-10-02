@@ -1112,7 +1112,23 @@ impl SystemBus {
     /// Power-cycle. Zeroes RAM and resets all state. Caller resets the CPU.
     pub fn power_cycle(&mut self) {
         self.ram.fill(0);
-        self.ppu = Ppu::new(self.ppu_region());
+        // v2.9.8 — the PPU is rebuilt to its power-on state, but the host's
+        // settings stored on it (custom palette, overclock scanlines, fast dot
+        // path, OAM-decay model) are configuration, not console state: carry
+        // them onto the new PPU, so every host gets a correct power cycle
+        // without re-pushing them. Until v2.9.8 they reverted to their
+        // defaults here. See `Ppu::adopt_settings_from`.
+        let fresh_ppu = Ppu::new(self.ppu_region());
+        #[cfg_attr(not(feature = "debug-hooks"), allow(unused_mut))]
+        let mut prev_ppu = core::mem::replace(&mut self.ppu, fresh_ppu);
+        self.ppu.adopt_settings_from(&prev_ppu);
+        // The provenance stores stay ARMED across the cycle (the user asked
+        // for them); `Nes::power_cycle` then empties them, since a cold boot
+        // ends the history they describe. Until v2.9.8 they were dropped with
+        // the old PPU, which made that clear a no-op.
+        #[cfg(feature = "debug-hooks")]
+        self.ppu.put_provenance(prev_ppu.take_provenance());
+        drop(prev_ppu);
         // Re-apply the Vs./PC10 RGB-PPU configuration (lost when the PPU is
         // reconstructed). No-op for ConsoleType::Nes carts.
         self.reapply_vs_palette();
@@ -1129,7 +1145,18 @@ impl SystemBus {
         // v2.1.7 P5 — re-apply the power-on work-RAM fill after the `fill(0)`
         // above. At the default (`Zeroed`) this is the same zero fill.
         self.apply_power_on_ram();
-        self.apu = Apu::new(self.apu_region(), self.apu.sample_rate);
+        // v2.9.8 — as for the PPU above: the rebuilt APU keeps the host's
+        // channel mask, per-channel gain and filter model (until v2.9.8 they
+        // reverted to their defaults), and its audio provenance stays armed
+        // for `Nes::power_cycle` to empty. See `Apu::adopt_settings_from`.
+        let fresh_apu = Apu::new(self.apu_region(), self.apu.sample_rate);
+        #[cfg_attr(not(feature = "debug-hooks"), allow(unused_mut))]
+        let mut prev_apu = core::mem::replace(&mut self.apu, fresh_apu);
+        self.apu.adopt_settings_from(&prev_apu);
+        #[cfg(feature = "debug-hooks")]
+        self.apu
+            .put_audio_provenance(prev_apu.take_audio_provenance());
+        drop(prev_apu);
         {
             self.apu.set_dmc_driven_externally(true);
             self.apu.seed_apu_alignment(0);

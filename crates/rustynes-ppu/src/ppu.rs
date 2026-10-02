@@ -1768,6 +1768,59 @@ impl Ppu {
         self.fast_dotloop
     }
 
+    /// v1.1.0 beta.1 — the custom 64-entry base palette installed by
+    /// [`Self::set_custom_palette`], or `None` for the built-in one.
+    #[must_use]
+    pub const fn custom_palette(&self) -> Option<[[u8; 3]; 64]> {
+        self.custom_palette
+    }
+
+    /// v2.9.8 — carry the host's settings from `prev` onto this freshly built
+    /// PPU, so a power cycle (which rebuilds the PPU from [`Self::new`]) keeps
+    /// them.
+    ///
+    /// # Why this lives on the PPU
+    ///
+    /// A power cycle is a cold boot of the console, not of the user's
+    /// configuration. Until v2.9.8 the bus rebuilt the PPU and re-applied only
+    /// the settings it also stored itself (the die revision, the power-up
+    /// palette, the Vs. RGB palette), so every setting held ONLY here --
+    /// the custom / generated palette, the extra-scanlines overclock, the fast
+    /// dot path selector and the OAM-decay model -- silently reverted to its
+    /// default, and each host had to remember to push it again. The list of
+    /// what a setting is belongs next to the fields, so a new one is carried
+    /// where it is declared; `snapshot_schema_audit.rs` cross-checks it against
+    /// the fields that audit classifies as configuration.
+    ///
+    /// # What is carried, and what is not
+    ///
+    /// Carried: [`Self::custom_palette`] (the lookup table is rebuilt to
+    /// honour it), [`Self::extra_scanlines`], [`Self::fast_dotloop`] and
+    /// [`Self::oam_decay_enabled`]. The decay switch goes through
+    /// [`Self::set_oam_decay`], exactly as a host enabling it on a fresh
+    /// console would, so the result is what a fresh boot with the setting
+    /// applied produces.
+    ///
+    /// Not carried here: the die revision and the power-up palette are stored
+    /// on the bus, which re-applies them (the power-up palette is a power-on
+    /// FILL and must be rewritten, not copied); the active palette and the
+    /// 2C05 identity are board identity, re-derived from the cartridge by the
+    /// bus. The state and fetch traces are capture buffers, not settings: a
+    /// cold boot ends the history they describe, as it does for the
+    /// provenance stores, which the core moves across separately (armed, then
+    /// emptied).
+    ///
+    /// Every carried value is a selector or an output override, so with
+    /// every setting at its default this leaves the PPU byte-identical to
+    /// [`Self::new`].
+    pub const fn adopt_settings_from(&mut self, prev: &Self) {
+        self.custom_palette = prev.custom_palette;
+        self.rebuild_rgba_lut();
+        self.set_extra_scanlines(prev.extra_scanlines);
+        self.fast_dotloop = prev.fast_dotloop;
+        self.set_oam_decay(prev.oam_decay_enabled);
+    }
+
     /// v2.1.4 F2.3 — enable or disable the optional OAM-decay accuracy model.
     ///
     /// **Off by default.** When off (the default) OAM reads/writes never consult

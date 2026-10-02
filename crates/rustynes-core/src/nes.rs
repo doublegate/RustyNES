@@ -661,6 +661,24 @@ impl Nes {
     }
 
     /// Power-cycle (cold boot). Zeroes WRAM, re-rolls phase, reloads vectors.
+    ///
+    /// A cold boot of the CONSOLE, not of its configuration. The PPU and the
+    /// APU are rebuilt to their power-on state, and since v2.9.8 every host
+    /// setting stored on them survives: the custom or generated palette
+    /// ([`Self::set_custom_palette`]), the overclock scanlines
+    /// ([`Self::set_extra_scanlines`]), the fast dot path
+    /// ([`Self::set_fast_dotloop`]), the OAM-decay model
+    /// ([`Self::set_oam_decay`]), the APU channel mask, per-channel gain and
+    /// filter model, and the armed state of the provenance stores (emptied
+    /// below). The settings stored on the bus survived already: the die
+    /// revisions, the console model, the Vs. DIP switches and PPU type, the
+    /// mirroring override and the Four Score. The power-on FILLS
+    /// ([`Self::set_power_on_ram`], [`Self::set_power_up_palette`]) are
+    /// re-applied, as a fresh boot applies them. What a cold boot does clear
+    /// is console state: RAM, registers, the mapper (battery RAM excepted),
+    /// the controllers' latches, and any non-standard input device, which the
+    /// host re-attaches. Until v2.9.8 the PPU and APU settings reverted to
+    /// their defaults, and each host had to re-push them.
     pub fn power_cycle(&mut self) {
         // v2.4.0 item B — see `reset`; a cold boot is the larger discontinuity.
         self.timeline_generation = self.timeline_generation.wrapping_add(1);
@@ -2838,6 +2856,14 @@ impl Nes {
         self.bus.apu_mut().set_filter_model(model);
     }
 
+    /// v2.9.8 — the APU analog output-filter model last selected with
+    /// [`Self::set_apu_filter_model`] (the default until one is). Survives a
+    /// [`Self::power_cycle`].
+    #[must_use]
+    pub const fn apu_filter_model(&self) -> rustynes_apu::FilterModel {
+        self.bus.apu().filter_model()
+    }
+
     /// Current APU per-channel output gain. See [`Self::set_apu_channel_gain`].
     #[must_use]
     pub const fn apu_channel_gain(&self) -> [f32; 6] {
@@ -2878,6 +2904,14 @@ impl Nes {
     /// set one) are unaffected. Not part of the save-state.
     pub const fn set_custom_palette(&mut self, base: Option<[[u8; 3]; 64]>) {
         self.bus.set_custom_palette(base);
+    }
+
+    /// v2.9.8 — the custom base palette installed by
+    /// [`Self::set_custom_palette`], or `None` for the built-in one. Survives a
+    /// [`Self::power_cycle`].
+    #[must_use]
+    pub const fn custom_palette(&self) -> Option<[[u8; 3]; 64]> {
+        self.bus.ppu().custom_palette()
     }
 
     /// v1.7.0 "Forge" Workstream F3 — set the PPU extra-scanlines overclock: the
@@ -4697,6 +4731,139 @@ mod tests {
         assert!(b > a, "warm reset did not bump");
         nes.power_cycle();
         assert!(nes.timeline_generation() > b, "power cycle did not bump");
+    }
+
+    /// v2.9.8 — a power cycle keeps every host setting stored on the PPU and
+    /// the APU, on a bare `Nes` with no host to re-push anything.
+    ///
+    /// `Nes::power_cycle` rebuilds both chips, and until v2.9.8 each of these
+    /// reverted to its default there: the desktop re-pushed them after the
+    /// cycle, the movie power-on (`power_on_for_movie`), libretro and mobile
+    /// paths did not. One row per setting, each set to a NON-default value,
+    /// so a row that reverts fails on its own.
+    #[test]
+    fn a_power_cycle_keeps_every_ppu_and_apu_setting() {
+        type Setting = (&'static str, fn(&mut Nes), fn(&Nes) -> bool);
+        const PAL: [[u8; 3]; 64] = [[0x12, 0x34, 0x56]; 64];
+        const GAIN: [f32; 6] = [0.5, 1.5, 0.25, 2.0, 0.0, 0.75];
+        let rows: [Setting; 7] = [
+            (
+                "custom palette",
+                |n| n.set_custom_palette(Some(PAL)),
+                |n| n.custom_palette() == Some(PAL),
+            ),
+            (
+                "extra scanlines",
+                |n| n.set_extra_scanlines(7),
+                |n| n.extra_scanlines() == 7,
+            ),
+            (
+                "fast dot path (off; on is the default)",
+                |n| n.set_fast_dotloop(false),
+                |n| !n.fast_dotloop(),
+            ),
+            (
+                "OAM decay",
+                |n| n.set_oam_decay(true),
+                |n| n.oam_decay_enabled(),
+            ),
+            (
+                "APU channel mask",
+                |n| n.set_apu_channel_mask(0x15),
+                |n| n.apu_channel_mask() == 0x15,
+            ),
+            (
+                "APU channel gain",
+                |n| n.set_apu_channel_gain(GAIN),
+                |n| n.apu_channel_gain() == GAIN,
+            ),
+            (
+                "APU filter model",
+                |n| n.set_apu_filter_model(rustynes_apu::FilterModel::Famicom),
+                |n| n.apu_filter_model() == rustynes_apu::FilterModel::Famicom,
+            ),
+        ];
+        let rom = synth_nrom(16, 8);
+        let mut lost = Vec::new();
+        for (name, set, holds) in rows {
+            let mut nes = Nes::from_rom(&rom).unwrap();
+            assert!(!holds(&nes), "{name}: premise -- the default differs");
+            set(&mut nes);
+            assert!(holds(&nes), "{name}: the setter applies it");
+            nes.run_frame();
+            nes.power_cycle();
+            if !holds(&nes) {
+                lost.push(name);
+            }
+        }
+        // Every row is checked before failing, so a regression names every
+        // setting it drops rather than only the first.
+        assert!(lost.is_empty(), "lost across a power cycle: {lost:?}");
+    }
+
+    /// v2.9.8 — the kept settings are not just remembered, they are in force:
+    /// a power-cycled console with them set produces the frame and the audio a
+    /// FRESH console with the same settings produces (`power_cycle == fresh
+    /// boot`, with the host's configuration held constant). The palette and
+    /// the filter change what is emitted, so a setting that was only stored,
+    /// and not applied to the rebuilt chip, fails here.
+    ///
+    /// The channel gain and the OAM-decay model are left out on purpose, and
+    /// are covered by the table above instead: a FRESH console can only
+    /// receive a setting after `from_rom`'s reset sequence has run its first
+    /// cycles at the default, whereas the power-cycled console runs those
+    /// cycles with the setting already in force. For the gain that moves the
+    /// last bits of the audio; for OAM decay, enabling the model stamps every
+    /// row's age with the current cycle, which is 0 on the rebuilt PPU and a
+    /// few cycles later on the fresh one, so the serialized ages differ. Both
+    /// differences are the fix working. (Measured for the gain: applying it
+    /// to both consoles after the cycle matches, carrying it through does not.
+    /// For decay: the test passes with it removed and fails with it present.)
+    #[test]
+    fn a_power_cycled_console_with_settings_runs_as_a_fresh_one() {
+        fn configure(n: &mut Nes) {
+            n.set_custom_palette(Some([[0x40, 0x80, 0xC0]; 64]));
+            n.set_apu_filter_model(rustynes_apu::FilterModel::Clean);
+        }
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut cycled = Nes::from_rom(rom).unwrap();
+        configure(&mut cycled);
+        for _ in 0..5 {
+            cycled.run_frame();
+        }
+        let _ = cycled.drain_audio();
+        cycled.power_cycle();
+        let mut fresh = Nes::from_rom(rom).unwrap();
+        configure(&mut fresh);
+        for _ in 0..10 {
+            cycled.run_frame();
+            fresh.run_frame();
+        }
+        assert_eq!(cycled.framebuffer(), fresh.framebuffer(), "frame");
+        assert_eq!(cycled.drain_audio(), fresh.drain_audio(), "audio");
+        assert_eq!(cycled.snapshot(), fresh.snapshot(), "state");
+    }
+
+    /// v2.9.8 — the provenance stores stay armed across a power cycle (and
+    /// are emptied, since a cold boot ends the history they describe), as the
+    /// comment in `Nes::power_cycle` always said. They were dropped with the
+    /// rebuilt chips until v2.9.8, which made that comment's clear a no-op.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_power_cycle_keeps_the_provenance_stores_armed() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.set_write_attribution(true);
+        nes.set_pixel_provenance(true);
+        nes.set_audio_provenance(true);
+        nes.run_frame();
+        nes.power_cycle();
+        assert!(
+            nes.bus.ppu.write_attribution().is_some(),
+            "write attribution"
+        );
+        assert!(nes.bus.ppu.pixel_provenance().is_some(), "pixel provenance");
+        assert!(nes.bus.apu.audio_provenance_armed(), "audio provenance");
     }
 
     /// **The counter must not be serialized**, and this is the assertion that

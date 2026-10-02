@@ -1084,19 +1084,20 @@ pub struct MovieRecorder {
 ///
 /// # The options survive the power cycle (v2.9.8)
 ///
-/// [`Nes::power_cycle`] rebuilds the PPU, which drops the PPU-held knobs (OAM
-/// decay, the overclock, the fast dot path) to their defaults; the bus-held
-/// ones (console model, die revisions, power-on fills, Four Score, Game
-/// Genie ...) it keeps. Before v2.9.8 a recording therefore started with OAM
-/// decay off whatever the player had set, and nothing recorded that. Now the
-/// options are captured first and the live ones re-applied after the cycle,
-/// so the machine a movie starts on is the one its [`HardwareOptions`]
-/// describe, on the recording side and the playback side alike. The power-on
-/// fills are not re-applied: the cycle itself already filled RAM and palette
-/// RAM from the stored selection.
+/// Before v2.9.8 [`Nes::power_cycle`] rebuilt the PPU and dropped the
+/// PPU-held knobs (OAM decay, the overclock, the fast dot path) to their
+/// defaults, so a recording started with OAM decay off whatever the player
+/// had set, and nothing recorded that. The options are captured first and the
+/// live ones re-applied after the cycle, so the machine a movie starts on is
+/// the one its [`HardwareOptions`] describe, on the recording side and the
+/// playback side alike. Since v2.9.8 the cycle keeps every setting itself
+/// (the PPU and APU ones as well as the bus-held console model, die
+/// revisions, power-on fills, Four Score, Game Genie ...), so the
+/// re-application is a guarantee rather than a repair: it holds whatever a
+/// future cycle might drop. The power-on fills are not re-applied: the cycle
+/// itself already filled RAM and palette RAM from the stored selection.
 pub fn power_on_for_movie(nes: &mut Nes) {
     let options = HardwareOptions::capture(nes);
-    let fast_dotloop = nes.fast_dotloop();
     nes.power_cycle();
     // Not `sram_mut().fill(0)`: on a flash board (v2.9.6) the save is the PRG
     // image, and a never-saved flash is the ROM as loaded, not zeros.
@@ -1104,9 +1105,10 @@ pub fn power_on_for_movie(nes: &mut Nes) {
     // Codes captured from this same machine always decode again.
     let reapplied = options.apply_live(nes);
     debug_assert!(reapplied.is_ok(), "captured options re-apply");
-    // A performance selector, byte-identical either way; kept so starting a
-    // movie does not silently change which PPU path the player runs.
-    nes.set_fast_dotloop(fast_dotloop);
+    // The fast dot path is not an option (it selects a code path, not a
+    // behaviour) and the cycle keeps it since v2.9.8, so starting a movie does
+    // not change which PPU path the player runs. Until v2.9.8 it was captured
+    // and re-set here by hand.
 }
 
 impl MovieRecorder {

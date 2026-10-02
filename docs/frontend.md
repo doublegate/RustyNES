@@ -98,10 +98,13 @@ not the winit thread:
   at a time (with the HD-pack load in between on a menu load), so the thread
   could run frames without them and `set_power_on_ram` then rewrote work RAM
   under a running game. A **Power Cycle** re-applies the same configuration
-  under its own lock, because `Nes::power_cycle` rebuilds the PPU and APU and
-  drops what they held (OAM decay, fast dot path, custom palette, filter model)
-  and unplugs the device (the per-frame input latch re-attaches it); before
-  v2.9.8 it re-pushed only the mask and gain.
+  under its own lock. Since v2.9.8 `Nes::power_cycle` itself keeps every
+  setting the PPU and APU hold across their rebuild (OAM decay, fast dot path,
+  custom palette, overclock scanlines, filter model, mask and gain), so what
+  the re-application still does is re-attach the device the cold boot unplugs
+  (the per-frame input latch re-attaches it too) and put the player's
+  configuration under a running movie's options; before v2.9.8 those settings
+  were lost in the cycle and it re-pushed only the mask and gain.
   While a movie records or plays, the Power Cycle then applies the movie's
   `HardwareOptions` on top (`MovieUi::held_options`, power-on fills
   included), so the movie's options still win, as `MovieUi::before_frame`
@@ -2433,9 +2436,10 @@ header, and widens the per-frame record from 3 bytes to 5 so Four Score players
   are core state and are recorded.
 - **Power-on movies keep the options through their power cycle.**
   `power_on_for_movie` captures the options, power-cycles, and re-applies the
-  live ones, because `Nes::power_cycle` rebuilds the PPU and drops OAM decay and
-  the overclock. Before v2.9.8 a recording therefore started with OAM decay off
-  whatever the player had set.
+  live ones. Until v2.9.8 `Nes::power_cycle` rebuilt the PPU and dropped OAM
+  decay and the overclock, so a recording started with OAM decay off whatever
+  the player had set; the cycle now keeps them itself, and the re-application
+  guarantees the options whatever a cycle does.
 
 ### Netplay
 

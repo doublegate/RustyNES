@@ -201,6 +201,21 @@ cycle-accurate core later replaced.
   byte-identical frames.
 ### Fixed
 
+- **A power cycle keeps the settings stored in the PPU and the APU, on every
+  platform.** `Nes::power_cycle` rebuilds both chips, and with them it reset a
+  custom or NTSC palette, the overclock scanlines, the fast dot path, the
+  OAM-decay model, the channel mask, the per-channel gain and the filter model
+  to their defaults. Only the desktop's Power Cycle put them back: a Power
+  Cycle on Android or iOS dropped a loaded palette for the rest of the
+  session, and a power-on movie (`power_on_for_movie`) re-applied the options
+  it records but not the palette, mask, gain or filter. The core now carries
+  them across the rebuild itself
+  (`Ppu::adopt_settings_from`, `Apu::adopt_settings_from`), and the debugger's
+  provenance stores stay armed, as the code always said they did. The power-on
+  RAM and palette fills still re-apply on a cycle, as at boot. With every
+  setting at its default nothing changes. `Nes::custom_palette` and
+  `Nes::apu_filter_model` read the settings back.
+
 - **Android, iOS and the libretro core apply the game database's
   corrections.** The database fixes a ROM whose header is wrong: the mapper,
   the submapper (*Seicross* needs submapper 4 to clear its protection loop),

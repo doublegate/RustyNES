@@ -416,18 +416,22 @@ fn configure_game_db_and_patch_startup_rom(
 /// does: the first console the thread can see is already configured.
 ///
 /// The same function re-applies the settings after a Power Cycle, under the
-/// same lock as the cycle. `Nes::power_cycle` rebuilds the PPU and the APU, and
-/// with them it drops every setting stored there -- the OAM-decay model, the
-/// fast dot path selector, the custom palette, the APU filter model -- and it
-/// unplugs the expansion device (which the per-frame input latch re-attaches
-/// on the next frame anyway). Before v2.9.8 the desktop's Power Cycle
-/// re-pushed only the channel mask and gain, so the rest stayed lost until the
-/// next ROM load or Settings change. The PPU revision, power-up palette,
-/// power-on RAM fill and console model are stored on the bus and survive the
-/// cycle; re-applying them straight after it rewrites the values the core has
-/// just written (the reset sequence writes no RAM) plus the open-bus latch,
-/// which the first opcode fetch overwrites -- what every ROM load has always
-/// done after the reset in `Nes::from_rom`.
+/// same lock as the cycle. Since v2.9.8 `Nes::power_cycle` keeps every setting
+/// itself -- the PPU and APU ones it rebuilds with the chips (OAM decay, fast
+/// dot path, custom palette, filter, mask, gain) as well as the bus-held ones
+/// (PPU revision, power-up palette, power-on RAM fill, console model) -- so
+/// for those the re-application is a no-op that rewrites the values the core
+/// already holds. What it still does is re-attach the expansion device, which
+/// a cold boot unplugs (the per-frame input latch re-attaches it on the next
+/// frame anyway), and put the player's configuration back over a movie's
+/// options before `do_power_cycle` lays the movie's on top again. Re-applying
+/// the power-on fills straight after the cycle rewrites the values the core
+/// has just written (the reset sequence writes no RAM) plus the open-bus
+/// latch, which the first opcode fetch overwrites -- what every ROM load has
+/// always done after the reset in `Nes::from_rom`. Before v2.9.8 the chip
+/// settings were lost in the cycle, and the desktop's Power Cycle re-pushed
+/// only the channel mask and gain, so the rest stayed lost until the next ROM
+/// load or Settings change.
 ///
 /// The overclock is not here: it lives on [`EmuCore`] (applied at the top of
 /// each produced frame), and the load paths set it under the install lock.
@@ -6432,9 +6436,9 @@ impl App {
     /// overlay: the default `0x3F` (all six channels on) is byte-identical to
     /// today's mixer output, so the deterministic per-frame audio is unchanged
     /// unless a channel is explicitly muted. Cheap; called at startup and on
-    /// every channel-checkbox edit. A fresh ROM load and a Power Cycle (a new
-    /// or rebuilt APU boots all-on) push it through [`configure_console`]
-    /// (v2.9.8), before the console runs.
+    /// every channel-checkbox edit. A fresh ROM load (a new APU boots all-on)
+    /// pushes it through [`configure_console`] (v2.9.8), before the console
+    /// runs; a Power Cycle keeps it in the core since v2.9.8.
     fn apply_apu_channel_mask(&self) {
         let mask = self.config.audio.channel_mask;
         let mut guard = self.emu.lock();
@@ -6449,8 +6453,9 @@ impl App {
     /// (all `1.0`) is byte-identical to today's mixer output, so the deterministic
     /// per-frame audio + the oracle stay byte-identical unless a slider is moved.
     /// Cheap; called at startup and on every gain-slider edit. A fresh ROM load
-    /// and a Power Cycle (a new or rebuilt APU boots at unity) push it through
-    /// [`configure_console`] (v2.9.8), before the console runs.
+    /// (a new APU boots at unity) pushes it through [`configure_console`]
+    /// (v2.9.8), before the console runs; a Power Cycle keeps it in the core
+    /// since v2.9.8.
     fn apply_apu_channel_gain(&self) {
         let gain = self.config.audio.channel_gain;
         let mut guard = self.emu.lock();
@@ -6463,8 +6468,9 @@ impl App {
     /// Default (`"nes"`) is byte-identical to earlier builds; `"famicom"` /
     /// `"clean"` drop the aggressive 440 Hz high-pass for a fuller low end.
     /// Called at startup and on a Settings change; a ROM load and a Power Cycle
-    /// push it through [`configure_console`] (v2.9.8). The Power Cycle did not
-    /// re-push it before v2.9.8, so the rebuilt APU ran the default filter.
+    /// push it through [`configure_console`] (v2.9.8). Before v2.9.8 the Power
+    /// Cycle neither re-pushed it nor kept it, so the rebuilt APU ran the
+    /// default filter; the core now keeps it across the cycle.
     fn apply_apu_filter_model(&self) {
         let model = crate::config::parse_filter_model(&self.config.audio.filter_model);
         let mut guard = self.emu.lock();
@@ -6477,8 +6483,9 @@ impl App {
     /// core. `false` (the default) is byte-identical to a decay-free core; `true`
     /// models the 2C02's dynamic sprite-RAM decay (NTSC/Dendy only). Called at
     /// startup and on a Settings change; a ROM load and a Power Cycle push it
-    /// through [`configure_console`] (v2.9.8). The Power Cycle did not re-push it
-    /// before v2.9.8, so the rebuilt PPU ran with the decay model off.
+    /// through [`configure_console`] (v2.9.8). Before v2.9.8 the Power Cycle
+    /// neither re-pushed it nor kept it, so the rebuilt PPU ran with the decay
+    /// model off; the core now keeps it across the cycle.
     fn apply_oam_decay(&self) {
         let enabled = self.config.emulation.oam_decay;
         let mut guard = self.emu.lock();
@@ -7028,21 +7035,19 @@ impl App {
                     // stack + access counters across a cold boot.
                     debugger.reset_debug_telemetry();
                 }
-                // v2.9.8 — `power_cycle` rebuilds the PPU and the APU, dropping
-                // every setting stored there, and unplugs the expansion device
-                // (which the per-frame input latch re-attaches regardless).
-                // Re-apply the whole configuration under this same lock, so
-                // the emulation thread never runs the cold-booted console
-                // without it. Until v2.9.8 only the channel mask and gain were
-                // re-pushed here: the OAM-decay model, the fast dot path
-                // selector, the custom palette and the APU filter model stayed
-                // lost until the next ROM load or Settings change. The bus-held
-                // power-on knobs (revision, power-up palette, RAM fill, console
-                // model) survive the cycle; re-applying them rewrites the values
-                // the core has just written (the reset sequence writes no RAM),
-                // plus the open-bus latch, which the first opcode fetch
-                // overwrites -- what every ROM load has always done after
-                // `from_rom`'s reset.
+                // v2.9.8 — `power_cycle` keeps every setting (the core carries
+                // the PPU and APU ones across the rebuild), but unplugs the
+                // expansion device (which the per-frame input latch
+                // re-attaches regardless). Re-apply the whole configuration
+                // under this same lock, so the emulation thread never runs the
+                // cold-booted console without the device, and so the player's
+                // configuration is in place for a running movie's options to
+                // be laid over below. For the settings the core kept this
+                // rewrites the values it already holds; for the power-on fills
+                // it rewrites what the cycle just wrote (the reset sequence
+                // writes no RAM), plus the open-bus latch, which the first
+                // opcode fetch overwrites -- what every ROM load has always
+                // done after `from_rom`'s reset.
                 configure_console(&self.config, nes);
                 // ... and then a running movie's options on top, power-on
                 // fills included (`HardwareOptions::apply`): the movie, not the
@@ -11962,11 +11967,12 @@ mod tests {
     }
 
     /// v2.9.8 (task B) — what a Power Cycle drops, `configure_console` puts
-    /// back. `Nes::power_cycle` rebuilds the PPU and the APU and unplugs the
-    /// expansion device; before v2.9.8 the desktop re-pushed only the channel
-    /// mask and gain, so the OAM-decay model, the fast dot path selector, the
-    /// filter model and the palette stayed lost (the device is also re-attached
-    /// by the per-frame input latch).
+    /// back. Since v2.9.8 the core keeps the PPU and APU settings across the
+    /// rebuild itself (`Nes::power_cycle`), so the only thing the cycle still
+    /// drops here is the expansion device, which it unplugs (and which the
+    /// per-frame input latch also re-attaches). Before v2.9.8 the OAM-decay
+    /// model, the fast dot path selector, the filter model and the palette were
+    /// lost too, and the desktop re-pushed only the channel mask and gain.
     #[test]
     fn configure_console_restores_what_a_power_cycle_drops() {
         let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
@@ -11990,10 +11996,10 @@ mod tests {
         assert_eq!(configured(&nes), wanted, "a load configures the console");
 
         nes.power_cycle();
-        assert_ne!(
+        assert_eq!(
             configured(&nes),
-            wanted,
-            "premise: a power cycle drops settings, which is why it must re-apply them"
+            (true, config.emulation.fast_dotloop, 0x15, false),
+            "the core keeps the chip settings; only the device is unplugged"
         );
         super::configure_console(&config, &mut nes);
         assert_eq!(configured(&nes), wanted, "re-applied after the cycle");
