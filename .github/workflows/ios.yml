@@ -11,10 +11,13 @@ name: iOS
 # Simulator (the "Build the app" step). Nothing else in CI builds the Swift
 # target, so until v2.9.7 the app could stop compiling with every check green --
 # and it had. The first Xcode build on a Mac after v2.9.7 failed with 24 errors.
-# That step is release-time only, like the rest of this workflow, on purpose:
-# macOS minutes are the cost this file's gating exists to contain. For an
-# earlier answer, run this workflow by hand (`workflow_dispatch`) on a branch
-# before cutting a release.
+# That step runs only when this workflow does, on purpose: macOS minutes are the
+# cost this file's gating exists to contain. This workflow runs for a release
+# (the `workflow_call` from release-auto.yml), by hand, and on the
+# every-other-month TestFlight refresh cron, which is skipped unless the
+# `IOS_SIGNING_READY` repo variable is "true" (unset as of 2026-10-02, so the
+# cron is dormant). It never runs on a pull request. For an answer before a
+# release, run it by hand (`workflow_dispatch`) on the release branch.
 on:
   push:
     tags:
@@ -136,7 +139,7 @@ jobs:
       - name: Build xcframework + generate project
         run: ./scripts/build-ios-xcframework.sh
 
-      # The script must leave the tracked tree untouched. Until v2.9.8 it
+      # The script must leave the tracked tree untouched. Through v2.9.7 it
       # rewrote the hand-written ios/RustyNES/Info.plist on every run (an
       # `info:` block in project.yml made XcodeGen treat the plist as output),
       # and on a throwaway CI checkout nobody saw it.

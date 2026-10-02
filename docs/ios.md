@@ -252,15 +252,17 @@ device `.a` (`cargo run -p rustynes-mobile --bin uniffi-bindgen -- generate
 --library … --language swift`; rename the modulemap to `module.modulemap`) ->
 assemble the headers dir (`rustynes_mobileFFI.h` + `rustynes_ios.h` +
 `module.modulemap`) -> `xcodebuild -create-xcframework` -> `xcodegen generate`.
-CI (`.github/workflows/ios.yml`) runs this on `macos-latest`, **at release time
-only** because macOS minutes bill ~10x — the host `ci.yml` remains the accuracy /
-determinism authority and is never gated on a device toolchain. In practice
-"release time" means `release-auto.yml`, which calls `ios.yml` (`workflow_call`)
-for every release it cuts. Its `push: tags` trigger never fires for those,
-because the auto-release tag is pushed with `GITHUB_TOKEN`. So from v2.3.9 to
-v2.9.7 no release built the iOS host, until the call was added at v2.9.8.
-Manual dispatch remains for an on-demand run, for example on a branch before a
-release. Each run then **compiles the Swift app** for the generic iOS Simulator,
+CI (`.github/workflows/ios.yml`) runs this on `macos-latest`, **never on a pull
+request**, because macOS minutes bill ~10x — the host `ci.yml` remains the
+accuracy / determinism authority and is never gated on a device toolchain. It
+runs for a release, by hand, and on the TestFlight refresh cron described below
+(dormant until the `IOS_SIGNING_READY` repo variable is set). "For a release"
+means `release-auto.yml`, which calls `ios.yml` (`workflow_call`) for every
+release it cuts. Its `push: tags` trigger never fires for those, because the
+auto-release tag is pushed with `GITHUB_TOKEN`. So no release from v2.3.9 to
+v2.9.7 built the iOS host. The call is unreleased as of this writing: it was
+added after v2.9.7 and first runs on the next release. Manual dispatch remains
+for an on-demand run, for example on a release branch before it merges. Each run then **compiles the Swift app** for the generic iOS Simulator,
 unsigned. It is the only place CI builds the Swift target, and v2.9.7 shipped
 with 24 Swift compile errors because nothing did. The run also fails if the
 script modified any tracked file. `fastlane` (`match` read-only signing + `gym` + `pilot`) uploads
