@@ -17,7 +17,7 @@
 //  derive from these same constants, so a resize rescales and remaps them in lockstep
 //  -- they can never desync.
 //
-//  The mask bit order is `NesButton` (A=0x01 ... Right=0x80) -- the exact order the
+//  The mask bit order is `NesButtonBit` (A=0x01 ... Right=0x80) -- the exact order the
 //  core's `Buttons` bitflag uses (see NesButtons.swift). Every input path lands on
 //  the same late-latched bitmask, so determinism is untouched.
 //
@@ -30,7 +30,7 @@ import UIKit
 /// now-superseded single-touch overlay; the live multi-touch hit test uses the shared
 /// `ControlPadLayout.hitTest(_:in:)` Android-geometry port directly).
 struct PadButton: Identifiable {
-    let button: NesButton
+    let button: NesButtonBit
     let frame: CGRect
     /// The visible glyph ("A"/"B"/"SEL"/"STA"); empty for the D-pad arms.
     let label: String

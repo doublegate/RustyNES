@@ -6,6 +6,10 @@ the uppercase [`../AccuracyCoin/`](../AccuracyCoin/) directory holds the
 upstream test catalog (TSV) that the diagnostic decoder needs, plus the
 custom sub-test ROMs. It holds no copy of the battery ROM itself.
 
+This file is `RUNTIME.md`, not `README.md`, because the two directories
+differ only in case: on a case-insensitive filesystem (macOS, Windows) they
+are one directory, and two `README.md` paths collide on clone.
+
 ## Files
 
 | File | Author | License |

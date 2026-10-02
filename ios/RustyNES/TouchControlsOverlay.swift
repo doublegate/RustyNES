@@ -9,7 +9,7 @@
 //  this in `GameView` with `MultiTouchControlPad` (a UIView-backed true multi-touch
 //  responder). Both share `ControlPadLayout`, so the regions stay identical.
 //
-//  The mask bit order is NesButton (A=0x01 ... Right=0x80) — the exact order the
+//  The mask bit order is NesButtonBit (A=0x01 ... Right=0x80) — the exact order the
 //  core's `Buttons` bitflag uses (see NesButtons.swift). Touch input flows through
 //  the same late-latched mask path, so determinism is untouched.
 //

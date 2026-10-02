@@ -84,7 +84,7 @@ enum ControllerInput: String, Codable, CaseIterable, Identifiable {
     }
 
     /// The plain NES button this drives, or nil for turbo/unmapped (handled apart).
-    var nesButton: NesButton? {
+    var nesButton: NesButtonBit? {
         switch self {
         case .a: return .a
         case .b: return .b

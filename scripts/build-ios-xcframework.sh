@@ -36,6 +36,14 @@ TARGET_DEVICE="aarch64-apple-ios"
 TARGET_SIM_ARM="aarch64-apple-ios-sim"
 TARGET_SIM_X86="x86_64-apple-ios"
 
+# The minimum iOS the archive is compiled for, matching `deploymentTarget` in
+# ios/project.yml. rustc and the `cc` crate (which compiles the bundled C: Lua,
+# rcheevos, ring) both read it. Unset, the C objects default to the installed
+# SDK's version, so the app (17.0) linked objects "built for newer iOS-simulator
+# version (27.0)" -- a warning per object, and on an older device a crash on any
+# newer symbol those objects reference.
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-17.0}"
+
 echo "==> Installing iOS Rust targets"
 rustup target add "${TARGET_DEVICE}" "${TARGET_SIM_ARM}" "${TARGET_SIM_X86}"
 

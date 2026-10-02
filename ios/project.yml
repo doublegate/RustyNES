@@ -100,8 +100,11 @@ targets:
       #   GameKit    — opt-in Game Center sign-in + access point (GameCenterModel.swift).
       - sdk: ReplayKit.framework
       - sdk: GameKit.framework
-    info:
-      path: RustyNES/Info.plist
+    # No `info:` block: XcodeGen GENERATES the file an `info.path` names, and
+    # with no `info.properties` it overwrote the hand-written Info.plist with a
+    # bare template on every run (dropping the ROM document types, the UTI
+    # declarations, the fonts and the orientations). `INFOPLIST_FILE` above
+    # already points the target at the tracked plist.
 
 schemes:
   RustyNES:

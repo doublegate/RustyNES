@@ -26,6 +26,39 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The iOS app compiles again.** The first Xcode build on a Mac (Xcode 27)
+  failed with 24 errors in v2.9.7's Swift. The app's own `NesButton` collided
+  with the type UniFFI generates from `rustynes-mobile`, now renamed
+  `NesButtonBit`. The FDS BIOS prompt also caught `MobileError.missingFdsBios`,
+  but the generated case is `MissingFdsBios`.
+- **iOS games no longer open to a black screen.** The frame loop started only
+  after the renderer was built, and the only retry of a build deferred at
+  first layout ran off that same loop, so no frame ever ran until the app was
+  backgrounded and foregrounded. The loop now starts first.
+- **No iOS launch crash without the iCloud capability.** Save-state sync is
+  opt-in, but the app checked the iCloud account at launch anyway, and
+  `CKContainer` traps uncatchably in a build without the container
+  entitlement. CloudKit is now untouched while sync is off, and a container is
+  created only when the entitlement is present.
+- **`scripts/build-ios-xcframework.sh` no longer overwrites
+  `ios/RustyNES/Info.plist`** (an `info:` block in `ios/project.yml` made
+  XcodeGen regenerate it, dropping the ROM document types, fonts and
+  orientations). It also builds the Rust and C code for the app's iOS 17.0
+  floor instead of the installed SDK's version.
+- **A macOS clone no longer starts dirty.** `tests/roms/accuracycoin/README.md`
+  and `tests/roms/AccuracyCoin/README.md` were one file on a case-insensitive
+  filesystem; the lowercase one is now `RUNTIME.md`.
+
+### Changed
+
+- **CI builds the iOS app at release time.** `ios.yml` now compiles the Swift
+  app for the iOS Simulator, and fails if the build script modified a tracked
+  file. `release-auto.yml` calls `ios.yml` for every release: its tag trigger
+  never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
+  built the iOS host. macOS jobs still never run on pull requests.
+
 ## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
 
 The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:

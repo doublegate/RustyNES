@@ -25,7 +25,7 @@
 import Foundation
 
 /// One standard NES controller button as its single-bit mask value.
-enum NesButton: UInt8, CaseIterable {
+enum NesButtonBit: UInt8, CaseIterable {
     case a = 0x01
     case b = 0x02
     case select = 0x04
@@ -36,14 +36,14 @@ enum NesButton: UInt8, CaseIterable {
     case right = 0x80
 }
 
-/// A live 8-bit controller mask (a set of pressed `NesButton`s) for one port.
+/// A live 8-bit controller mask (a set of pressed `NesButtonBit`s) for one port.
 struct NesButtonMask {
     private(set) var bits: UInt8 = 0
 
     init(bits: UInt8 = 0) { self.bits = bits }
 
     /// Press or release a single button, preserving the others.
-    mutating func set(_ button: NesButton, pressed: Bool) {
+    mutating func set(_ button: NesButtonBit, pressed: Bool) {
         if pressed {
             bits |= button.rawValue
         } else {
@@ -52,7 +52,7 @@ struct NesButtonMask {
     }
 
     /// Whether a button is currently held.
-    func contains(_ button: NesButton) -> Bool {
+    func contains(_ button: NesButtonBit) -> Bool {
         bits & button.rawValue != 0
     }
 
@@ -78,8 +78,8 @@ struct NesButtonMask {
     /// untouched. UNCOMPILED at v2.9.7 as well; see the run sheet.
     mutating func cancelOpposingDirections(enabled: Bool = true) {
         guard enabled else { return }
-        let vertical = NesButton.up.rawValue | NesButton.down.rawValue
-        let horizontal = NesButton.left.rawValue | NesButton.right.rawValue
+        let vertical = NesButtonBit.up.rawValue | NesButtonBit.down.rawValue
+        let horizontal = NesButtonBit.left.rawValue | NesButtonBit.right.rawValue
         if bits & vertical == vertical { bits &= ~vertical }
         if bits & horizontal == horizontal { bits &= ~horizontal }
     }

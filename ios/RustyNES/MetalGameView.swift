@@ -109,11 +109,23 @@ struct MetalGameView: UIViewRepresentable {
         }
 
         /// Build the renderer for the current drawable and start the loop.
+        ///
+        /// The display link starts FIRST, unconditionally. `makeUIView` calls this
+        /// before SwiftUI has laid the view out, so the drawable is normally 0 x 0
+        /// here and the renderer build is deferred -- and the code that retries it
+        /// is `step`'s resize branch, which runs off this same link. Starting the
+        /// link only after a successful build (as through v2.9.7) meant a deferred
+        /// build was never retried: no renderer, no frames, a black game view under
+        /// working controls. (`mtkView(_:drawableSizeWillChange:)` cannot do the
+        /// retry: `view.drawableSize` still reads 0 x 0 inside it.) `tick()` is a
+        /// no-op until the renderer exists, so the early link costs nothing.
         func attachAndStart() {
             guard let view, !attached else { return }
+            startDisplayLink()
             let size = view.drawableSize
             guard size.width > 0, size.height > 0 else {
-                // The drawable is not sized yet; defer to the first delegate call.
+                // The drawable is not sized yet; `step` retries on the first tick
+                // that sees a real size.
                 return
             }
             let ptr = Unmanaged.passUnretained(view).toOpaque()
@@ -121,7 +133,6 @@ struct MetalGameView: UIViewRepresentable {
             lastDrawableSize = size
             attached = true
             emulator.start()
-            startDisplayLink()
         }
 
         private func startDisplayLink() {
@@ -134,6 +145,14 @@ struct MetalGameView: UIViewRepresentable {
             displayLink = link
         }
 
+        /// One display-link tick: complete a deferred renderer build or apply a
+        /// drawable resize, then run the console frames this tick owes.
+        ///
+        /// The link starts before the renderer exists (see `attachAndStart`), so
+        /// the first ticks may only build it; `EmulatorCore.tick()` is a no-op
+        /// until it does. On a ~60 Hz link exactly one console frame runs per
+        /// vsync; on any other refresh the wall-clock accumulator below paces the
+        /// core at the console's 60.0988 Hz.
         @objc private func step(_ link: CADisplayLink) {
             // If the drawable resized (rotation / Stage Manager), reconfigure first.
             if let view, view.drawableSize != lastDrawableSize {
@@ -233,7 +252,10 @@ struct MetalGameView: UIViewRepresentable {
         @objc private func appWillEnterForeground() {
             guard attached else {
                 // The renderer was never built (drawable was 0 at makeUIView); try now.
+                // The link already exists (attachAndStart starts it first) and was
+                // paused on background, so resume it or no tick ever retries.
                 attachAndStart()
+                displayLink?.isPaused = false
                 return
             }
             if let view {
