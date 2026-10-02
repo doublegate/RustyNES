@@ -367,6 +367,12 @@ const CHIPS: &[Chip] = &[
                 "config: frontend Audio Mixer per-channel gain",
             ),
             (
+                "gain_is_unity",
+                "derived: v2.9.8 cache of `channel_gain == CHANNEL_GAIN_UNITY` for the \
+                 per-cycle mix; recomputed by `set_channel_gain`, the only writer of the \
+                 gain, which the power cycle also goes through",
+            ),
+            (
                 "last_external",
                 "output-only: write-only-from-synthesis copy of the expansion-audio DAC tap \
                  for the UI oscilloscope; documented as never read back into the mixer, the \

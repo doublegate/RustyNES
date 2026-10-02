@@ -5626,22 +5626,16 @@ impl Ppu {
         // `-1 - y < 0` for all OAM y values, so the y-test always
         // fails at pre-render and scanline 0 sees no sprites.
         //
-        // NOTE (v2.3.1 G3): sinking these two to their single use site in the
-        // `65..=256` arm — they are dead on 149 of 341 dots — was measured and
-        // produced NO change on any workload across two runs. LLVM already sinks
-        // pure computations past branches that do not use them. Do not re-attempt
-        // as a performance change; see `docs/performance.md`.
-        let next_line: i16 = if self.scanline == self.region.prerender_line() {
-            -1
-        } else {
-            self.scanline
-        };
-        let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
-            16
-        } else {
-            8
-        };
-
+        // That line, and the sprite height, are computed inside the
+        // `65..=256` arm below, their only use. They are dead on 149 of the
+        // 341 dots, and computing them up front cost real time.
+        //
+        // v2.3.1 measured this sink (G3) as "no change" and this comment
+        // used to forbid re-trying it. That run used the pre-v2.9.1
+        // `ab_check.sh`, which timed the same binary on both sides. v2.9.8
+        // re-measured it with the fixed tool: -1.0% to -3.1% on all four
+        // frame workloads, shipped `_fast` paths included, in two runs
+        // (`docs/performance.md`, v2.9.8 campaign).
         match self.dot {
             0 => {
                 // Start-of-scanline: reset FSM working state. We do NOT
@@ -5699,6 +5693,16 @@ impl Ppu {
             }
             65..=256 => {
                 if !self.sprite_eval_done {
+                    let next_line: i16 = if self.scanline == self.region.prerender_line() {
+                        -1
+                    } else {
+                        self.scanline
+                    };
+                    let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
+                        16
+                    } else {
+                        8
+                    };
                     self.tick_sprite_eval_active_dot(next_line, sprite_height);
                 }
 

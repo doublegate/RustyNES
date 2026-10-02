@@ -277,6 +277,15 @@ pub struct Apu {
     /// the oracle / test ROMs (which never touch a gain) are unaffected. NEVER
     /// serialized into the save state (a UI preference, like the mask / volume).
     pub(crate) channel_gain: [f32; 6],
+    /// v2.9.8 (D3): `channel_gain == CHANNEL_GAIN_UNITY`, cached.
+    ///
+    /// The per-cycle mix checks for unity gain on every CPU cycle. Comparing
+    /// six `f32`s there cost -3.1% to -4.5% of frame time on all four
+    /// workloads, in two runs (`docs/performance.md`, v2.9.8 campaign). The
+    /// gain only changes through [`Self::set_channel_gain`], which recomputes
+    /// this flag, so the cached value cannot go stale. It is not serialized:
+    /// like the gain itself, it is a host preference re-applied on load.
+    pub(crate) gain_is_unity: bool,
     /// v2.9.8 — the analog output-filter model the host last selected with
     /// [`Self::set_filter_model`].
     ///
@@ -379,6 +388,7 @@ impl Apu {
             last_frame_events: FrameEvents::default(),
             channel_mask: CHANNEL_MASK_ALL,
             channel_gain: CHANNEL_GAIN_UNITY,
+            gain_is_unity: true,
             filter_model: crate::mixer::FilterModel::NesRf,
             last_external: 0.0,
             #[cfg(feature = "debug-hooks")]
@@ -647,6 +657,7 @@ impl Apu {
         for (slot, g) in self.channel_gain.iter_mut().zip(gain.iter()) {
             *slot = if g.is_nan() { 1.0 } else { g.clamp(0.0, 2.0) };
         }
+        self.gain_is_unity = self.channel_gain == CHANNEL_GAIN_UNITY;
     }
 
     /// v2.1.3 — select the analog output-filter model (see
@@ -686,7 +697,12 @@ impl Apu {
     /// to [`Self::new`]: the default model's chain is the one `new` builds.
     pub fn adopt_settings_from(&mut self, prev: &Self) {
         self.channel_mask = prev.channel_mask;
-        self.channel_gain = prev.channel_gain;
+        // Through the setter, never a field copy: it also refreshes the cached
+        // `gain_is_unity`, which the per-cycle mix reads instead of the gain.
+        // A bare `self.channel_gain = prev.channel_gain` would leave the fresh
+        // APU's `true` in place and mix at unity gain after a power cycle.
+        // `a_power_cycle_keeps_a_non_unity_gain_audible` pins it.
+        self.set_channel_gain(prev.channel_gain);
         self.set_filter_model(prev.filter_model);
     }
 
@@ -1293,7 +1309,7 @@ impl Apu {
         // it would have received, so the output is byte-identical by
         // construction rather than by measurement. `apu_default_mix_matches_the_gated_path`
         // pins that across a 2,048-point sweep anyway.
-        if mask == CHANNEL_MASK_ALL && self.channel_gain == CHANNEL_GAIN_UNITY {
+        if mask == CHANNEL_MASK_ALL && self.gain_is_unity {
             self.last_external = external;
             let mixed = self.mixer.mix(
                 self.pulse1.output(),
@@ -1446,7 +1462,7 @@ impl Apu {
             self.dmc_implicit_abort = false;
         }
         let d4015_bits_before = self.dmc.bits_remaining();
-        let dmc_bits_before = self.dmc.bits_remaining();
+        let dmc_bits_before = d4015_bits_before;
         // The byte-timer-end flag composes only with the canonical apu_phase
         // clock (the `mc-r1-full-cpu` config); the cpu-rate / phase-minus1
         // diagnostic clock variants are not combined with it.
@@ -2350,6 +2366,43 @@ mod tests {
             out_a[..na],
             out_b[..nb],
             "unity gain must be bit-identical to the default mix"
+        );
+    }
+
+    /// v2.9.8: the per-cycle mix reads the cached `gain_is_unity`, so every
+    /// path that changes the gain must refresh it. A power cycle carries the
+    /// gain into a fresh APU through `adopt_settings_from`; a bare field copy
+    /// there left the flag `true` and mixed a 0.5-gain channel at unity.
+    #[test]
+    fn a_power_cycle_keeps_a_non_unity_gain_audible() {
+        const EXT: [f32; 7] = [0.0, 0.1, -0.2, 0.3, -0.1, 0.05, 0.0];
+        let gain = [0.5, 1.0, 1.0, 1.0, 0.25, 1.0];
+        let mut old = Apu::new(Region::Ntsc, 44_100);
+        old.set_channel_gain(gain);
+        // The power-cycled APU: a fresh one that adopted the old one's settings.
+        let mut cycled = Apu::new(Region::Ntsc, 44_100);
+        cycled.adopt_settings_from(&old);
+        assert!(!cycled.gain_is_unity, "the cached flag went stale");
+        // Reference: a fresh APU given the same gain through the setter.
+        let mut direct = Apu::new(Region::Ntsc, 44_100);
+        direct.set_channel_gain(gain);
+        for step in 0..4_000u32 {
+            let v = (step & 0xFF) as u8;
+            cycled.write_register(0x4000 + (step % 0x14) as u16, v);
+            direct.write_register(0x4000 + (step % 0x14) as u16, v);
+            let ext = EXT[(step % 7) as usize];
+            cycled.tick_with_external(ext);
+            direct.tick_with_external(ext);
+        }
+        let mut out_c = [0.0f32; 4096];
+        let mut out_d = [0.0f32; 4096];
+        let nc = cycled.drain_audio_into(&mut out_c);
+        let nd = direct.drain_audio_into(&mut out_d);
+        assert_eq!(nc, nd);
+        assert_eq!(
+            out_c[..nc],
+            out_d[..nd],
+            "a power-cycled APU must mix with the gain it carried"
         );
     }
 
