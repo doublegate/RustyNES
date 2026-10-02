@@ -7086,6 +7086,25 @@ impl App {
                     debug_assert!(held.is_ok(), "a parsed movie's options re-apply");
                 }
             }
+            // v2.9.8 — a Vs. `DualSystem` cabinet (installed in `emu.dual`,
+            // with `emu.nes` empty) is cycled as a whole: cycling its two
+            // consoles one by one would drop the cabinet wiring their mappers
+            // carry, so the sub would run the main's program. Each console is
+            // then configured exactly as a single console is above, a running
+            // movie's options last. Until v2.9.8 the Power Cycle did nothing
+            // to a cabinet. A cabinet carries no cheats and no debugger
+            // telemetry (ADR 0032), so those two steps have no counterpart.
+            if let Some(dual) = emu.dual.as_mut() {
+                dual.power_cycle();
+                let pair: [&mut Nes; 2] = dual.split_mut().into();
+                for console in pair {
+                    configure_console(&self.config, console);
+                    if let Some(options) = emu.movie.held_options() {
+                        let held = options.apply(console);
+                        debug_assert!(held.is_ok(), "a parsed movie's options re-apply");
+                    }
+                }
+            }
             // v1.7.0 "Forge" D1 — a cold boot restarts the session timeline.
             emu.history.clear();
             // v1.7.0 "Forge" H4 — a cold boot restarts the lag-frame tally.
@@ -11955,6 +11974,38 @@ mod tests {
         assert!(
             production_fn_body("cabinet_for_image").contains("self.build_dual_cabinet("),
             "`cabinet_for_image` builds the cabinet"
+        );
+    }
+
+    /// v2.9.8 — the desktop's Power Cycle cycles a Vs. `DualSystem` cabinet
+    /// too, through the same configuration path as a single console.
+    ///
+    /// Until v2.9.8 `do_power_cycle` touched only `emu.nes`, which is `None`
+    /// while a cabinet is installed (`EmuCore::set_dual` clears it), so F3 and
+    /// Emulation > Power Cycle did nothing to a cabinet. The cabinet must be
+    /// cycled as a whole (`VsDualSystem::power_cycle`, which re-wires the pair;
+    /// the core test `a_cabinet_power_cycle_is_a_fresh_cabinet` pins that),
+    /// then each console configured like a single one, a running movie's
+    /// options last. A source-shape test for the same reason as the load-path
+    /// tests: `do_power_cycle` needs `&mut App`.
+    #[test]
+    fn the_power_cycle_cycles_and_configures_a_dual_system_cabinet() {
+        let body = production_fn_body("do_power_cycle");
+        let cycled = body
+            .find("dual.power_cycle();")
+            .expect("do_power_cycle: a cabinet is not power-cycled");
+        let rest = &body[cycled..];
+        let configured = rest
+            .find("configure_console(&self.config, console)")
+            .expect("do_power_cycle: the cabinet's consoles are not configured");
+        let movie = rest
+            .find("emu.movie.held_options()")
+            .expect("do_power_cycle: a movie's options are not re-applied to the cabinet");
+        assert!(configured < movie, "the movie's options must come last");
+        assert!(
+            !body.contains(".main_mut().power_cycle()")
+                && !body.contains(".sub_mut().power_cycle()"),
+            "cycling the consoles one by one drops the cabinet wiring"
         );
     }
 

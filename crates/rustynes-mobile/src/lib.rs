@@ -1415,7 +1415,8 @@ impl NesController {
     /// cross-wiring together, so it powers on exactly as a fresh load does
     /// (cycling each console alone would leave the wiring's latches as they
     /// were). The rebuild re-parses a ROM that already parsed once; should it
-    /// fail anyway, each console power-cycles in place instead.
+    /// fail anyway, the cabinet power-cycles in place
+    /// (`VsDualSystem::power_cycle`, v2.9.8, which re-wires the pair).
     pub fn power_cycle(&self) {
         let mut g = self.lock();
         let sample_rate = g.sample_rate;
@@ -1434,11 +1435,12 @@ impl NesController {
                     cab.system = system;
                 }
             }
+            // v2.9.8: the fallback cycles the cabinet as a whole, which
+            // re-wires the pair. Cycling the two consoles one by one (what
+            // this did until v2.9.8) dropped the wiring their mappers carry,
+            // so the sub ran the main's program.
             Some(None) => {
-                with_cabinet(&mut g, |cab| {
-                    cab.main_mut().power_cycle();
-                    cab.sub_mut().power_cycle();
-                });
+                with_cabinet(&mut g, VsDualSystem::power_cycle);
             }
             None => g.nes.power_cycle(),
         }

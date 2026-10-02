@@ -201,6 +201,17 @@ cycle-accurate core later replaced.
   byte-identical frames.
 ### Fixed
 
+- **Desktop: Power Cycle works on a Vs. `DualSystem` cabinet.** It touched
+  only a single console, so with a cabinet loaded F3 and Emulation > Power
+  Cycle did nothing. It now cycles both consoles and configures each like a
+  single one, a running movie's options last. Cycling the two consoles one
+  by one is not enough: each rebuilt mapper loses the cabinet wiring (the
+  sub's half of the program, the shared RAM), and the sub then runs the
+  main's program. The new `VsDualSystem::power_cycle` cycles both and
+  re-wires them, so the result is the cabinet a fresh load builds; the
+  mobile bridge's fallback, which cycled the consoles one by one, uses it
+  too.
+
 - **A power cycle forgets when the controller ports were last read.** Each
   port keeps the bus cycle of its last read, for the CLK-run model; a power
   cycle restarted the cycle counter at 0 but kept those stamps from the old

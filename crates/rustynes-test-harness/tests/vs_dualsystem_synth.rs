@@ -378,3 +378,30 @@ fn a_valid_restore_after_a_rejected_one_still_lands() {
     dual.snapshot_into(&mut now);
     assert!(now == early, "the valid restore did not land exactly");
 }
+
+/// v2.9.8 — a cabinet power cycle is a fresh cabinet.
+///
+/// Power-cycling each console alone rebuilds its mapper from the ROM, which
+/// drops the cabinet wiring the wrapper installed at construction: the sub's
+/// second-half PRG banking and both consoles' shared WRAM window. The sub then
+/// runs the MAIN program, fails its `$4016` identity check and writes `$EE`,
+/// and the handshake never completes. `VsDualSystem::power_cycle` re-wires the
+/// pair exactly as construction did, so the cycled cabinet's state equals a
+/// freshly built one's and the handshake completes again from scratch.
+#[test]
+fn a_cabinet_power_cycle_is_a_fresh_cabinet() {
+    let mut dual = run_handshake();
+    dual.power_cycle();
+    let rom = build_dual_rom();
+    let fresh = VsDualSystem::from_rom(&rom).expect("fresh cabinet must construct");
+    assert!(
+        dual.snapshot() == fresh.snapshot(),
+        "a power-cycled cabinet must equal a freshly built one"
+    );
+    for _ in 0..5 {
+        dual.run_frame();
+    }
+    let (main, sub) = dual.split_mut();
+    assert_eq!(markers(main), [0x11, 0x22, 0x33, 0x44, 0x00], "main");
+    assert_eq!(markers(sub), [0x11, 0x22, 0x33, 0x44, 0x00], "sub");
+}

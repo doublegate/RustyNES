@@ -104,7 +104,11 @@ not the winit thread:
   the re-application still does is re-attach the device the cold boot unplugs
   (the per-frame input latch re-attaches it too) and put the player's
   configuration under a running movie's options; before v2.9.8 those settings
-  were lost in the cycle and it re-pushed only the mask and gain.
+  were lost in the cycle and it re-pushed only the mask and gain. A Vs.
+  `DualSystem` cabinet is cycled as a whole (`VsDualSystem::power_cycle`,
+  which re-installs the cabinet wiring the consoles' rebuilt mappers lose)
+  and each console then configured the same way, a movie's options last;
+  until v2.9.8 the Power Cycle did nothing to a cabinet.
   While a movie records or plays, the Power Cycle then applies the movie's
   `HardwareOptions` on top (`MovieUi::held_options`, power-on fills
   included), so the movie's options still win, as `MovieUi::before_frame`
