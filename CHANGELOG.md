@@ -51,7 +51,40 @@ cycle-accurate core later replaced.
   and `tests/roms/AccuracyCoin/README.md` were one file on a case-insensitive
   filesystem; the lowercase one is now `RUNTIME.md`.
 
+**Breaking changes at a glance.** This release carries the breaks planned for
+v3.0.0 ahead of it (ADR 0042 and 0043, amended 2026-10-01). It keeps the v2.9.x
+number as preparation for v3.0.0, whose notes will restate every one of them.
+
+- **Old saves are not found for cartridge games.** A ROM is now identified by
+  the bytes after its header, so save states, battery `.sav` files, cheats and
+  movies made by earlier versions are not picked up. FDS and NSF are unchanged.
+- **Save states from v2.9.7 and earlier are refused** with a clear error, and
+  **movies older than format 3 are refused**. Both say to re-record.
+- **Movies and netplay record the machine, not only the ROM.** A movie replays
+  with the options it was made with, and netplay peers must use the same
+  options.
+- **Public API:**
+  - `LockstepBus` is now `SystemBus`;
+  - the items deprecated at v2.7.5 and `serialize_header` are removed;
+  - `Header` and `FrameInput` are `#[non_exhaustive]`;
+  - `vs_db::lookup` takes the console.
 ### Added
+
+- **The MiSTer core's menu gains aspect ratio, scaling, crop and palette
+  options.** The two custom aspect ratios from `MiSTer.ini` (`[ARC1]`,
+  `[ARC2]`), integer scaling through the framework's `video_freak`, a 224-line
+  vertical crop (448 when scan-doubled), and a choice of the FBX "Smooth"
+  palette or the 2C03 RGB palette of the Vs. System and PlayChoice-10. A new
+  co-simulation gate checks the core's palette output entry for entry against
+  this emulator. The options are compiled and timing-closed, and **not yet
+  seen on hardware**.
+
+- **Real-game coverage for the v2.9.6 mapper families.** 44 dumps are now
+  pinned by a baseline and a screenshot each. Every one of the 748 staged dumps
+  was booted and its final frame looked at. The dumps that drew garbage or
+  nothing led to most of the fixes below. Mislabelled dumps are recorded in
+  `docs/mappers.md` rather than forced. The screenshot corpus now holds 488
+  PNGs in 171 directories, plus 10 in `besteffort/`.
 
 - **Famicom console model (opt-in, off by default).** On a Famicom the PPU's
   reset line is tied high, so the PPU starts about one frame before the CPU

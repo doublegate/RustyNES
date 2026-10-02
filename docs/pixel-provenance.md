@@ -415,7 +415,9 @@ The plan called for a "v3 tail". It turned out not to be needed: `.rnm` already
 had a precedent for additive trailing fields — `rerecord_count` is read with
 `r.u32().unwrap_or(0)`, so a reader that stops earlier simply ignores it. The
 attestation is appended the same way behind an `ATTESTATION_MAGIC` marker, so
-`MOVIE_FORMAT_VERSION` stays at 2 and every existing movie round-trips unchanged.
+`MOVIE_FORMAT_VERSION` stayed at 2 and every existing movie round-tripped unchanged.
+(That was v2.3.2. v2.9.8 moved movies to format 3, which carries the emulation
+options and refuses older movies; see ADR 0044.)
 A pre-v2.3.2 reader parses an attested movie as a plain one; the test
 `attested_movie_stays_readable_as_a_plain_movie` pins that by truncating the tail
 and reparsing.
