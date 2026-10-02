@@ -6,11 +6,33 @@ name: iOS
 # is tag- (and manual-) gated because macOS runner minutes bill ~10x Linux — the
 # same gating posture as android.yml's heavier jobs and release.yml. Accuracy is
 # never gated on a device toolchain.
+#
+# Beyond the TestFlight upload, every run also COMPILES THE SWIFT APP for the iOS
+# Simulator (the "Build the app" step). Nothing else in CI builds the Swift
+# target, so until v2.9.7 the app could stop compiling with every check green --
+# and it had. The first Xcode build on a Mac after v2.9.7 failed with 24 errors.
+# That step is release-time only, like the rest of this workflow, on purpose:
+# macOS minutes are the cost this file's gating exists to contain. For an
+# earlier answer, run this workflow by hand (`workflow_dispatch`) on a branch
+# before cutting a release.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+  # Invoked by `release-auto.yml` for every release it cuts. This is the trigger
+  # that actually fires: the auto-release tag is pushed with the built-in
+  # GITHUB_TOKEN, which does NOT trigger `on: push: tags` (GitHub's recursion
+  # guard, the same reason release-auto calls release.yml directly). The tag
+  # trigger above has therefore not run since v2.3.8 (2026-08-20). Every
+  # release from v2.3.9 to v2.9.7 was auto-tagged, and none of them built the
+  # iOS host at all.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v2.9.8)."
+        required: true
+        type: string
   # v1.9.1 "Patch" — TestFlight build-refresh cadence. A TestFlight build expires
   # 90 days after upload; re-build + re-upload at 06:00 UTC on the 1st of every
   # other month (~60-day cadence) so external testers never lose access between
@@ -43,8 +65,11 @@ jobs:
     # so an un-provisioned repo must not paint every release tag push red.
     if: ${{ github.event_name != 'schedule' || vars.IOS_SIGNING_READY == 'true' }}
     steps:
+      # The release tag when called by release-auto (it exists by then, as
+      # release-auto creates it first); otherwise the triggering ref.
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
 
       # v2.0.7 "Trim" — App Store submission floor. From 2026-04-28 every App Store
@@ -110,6 +135,41 @@ jobs:
       # RustyNESFFI.xcframework, and runs `xcodegen generate`.
       - name: Build xcframework + generate project
         run: ./scripts/build-ios-xcframework.sh
+
+      # The script must leave the tracked tree untouched. Until v2.9.8 it
+      # rewrote the hand-written ios/RustyNES/Info.plist on every run (an
+      # `info:` block in project.yml made XcodeGen treat the plist as output),
+      # and on a throwaway CI checkout nobody saw it.
+      - name: Build left the tracked tree unchanged
+        run: git diff --exit-code
+
+      # Compile and link the Swift app against the xcframework and the freshly
+      # generated UniFFI bindings. Unsigned, generic simulator: no device and
+      # no certificate needed, so it runs whether or not the signing secrets
+      # exist. This catches a Swift / UniFFI mismatch, for example a Rust type
+      # renamed or added in rustynes-mobile, at release time instead of on the
+      # first developer's Mac. It proves the app builds, not that it runs; that
+      # is the device run sheet's job.
+      - name: Build the app (iOS Simulator, unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RustyNES.xcodeproj \
+            -scheme RustyNES \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee xcodebuild.log
+
+      - name: Upload the xcodebuild log
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-app-xcodebuild-log
+          path: ios/xcodebuild.log
+          if-no-files-found: ignore
 
       # Detect whether the maintainer-provisioned signing secrets exist. They are a
       # documented manual carryover (docs/ios.md "Maintainer-manual carryovers"):

@@ -247,3 +247,24 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}
+
+  # The iOS host for the same release: the xcframework, the Swift app compiled
+  # for the simulator, and, once signing is provisioned, the TestFlight upload.
+  # Called directly for the same reason as `build` above: the tag this run
+  # pushed with GITHUB_TOKEN never fires ios.yml's own `push: tags` trigger,
+  # which is why no release from v2.3.9 to v2.9.7 built the iOS app at all.
+  # It runs alongside `build`, not after it, and a failure here marks the
+  # release run red without touching the binaries `build` attaches.
+  ios:
+    name: iOS host (xcframework + Swift build)
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ios.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    # The App Store Connect + fastlane match secrets ios.yml reads for the
+    # TestFlight upload. Its "Detect iOS signing secrets" step skips the upload
+    # when they are absent.
+    secrets: inherit
