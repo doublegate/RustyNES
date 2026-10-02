@@ -1644,6 +1644,36 @@ impl App {
         }
     }
 
+    /// v2.9.8 — the one cabinet decision every ROM load path makes: the Vs.
+    /// `DualSystem` cabinet for `bytes` (whose probe console is `nes`), or
+    /// `None` to install `nes` as a single console.
+    ///
+    /// FDS and NSF images are never Vs. boards and are excluded here, by their
+    /// magic, before [`Self::build_dual_cabinet`] reads the probe. Every load
+    /// path asks this and nothing else: the menu, drag-and-drop and Recent
+    /// ROMs (all through `load_rom_from_path`), a ROM given on the command line
+    /// (`finish_start_nes`), and the browser (`install_nes_wasm`). Until v2.9.8
+    /// the command-line path did not ask at all and installed a cabinet image
+    /// as a single console, which runs the main CPU alone and never completes
+    /// the boot handshake with the sub.
+    fn cabinet_for_image(
+        &self,
+        nes: &Nes,
+        bytes: &[u8],
+        sample_rate: u32,
+    ) -> Option<Box<rustynes_core::VsDualSystem>> {
+        // The browser loads no NSF (`Nes::from_rom` rejects one before this
+        // point), and `is_nsf_image` is native-only.
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_nsf_image(bytes) {
+            return None;
+        }
+        if is_fds_image(bytes) {
+            return None;
+        }
+        self.build_dual_cabinet(nes, bytes, sample_rate)
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — apply the per-game database's nametable
     /// mirroring override (a load-time fix for a wrong iNES mirroring flag),
     /// keyed on the ROM's CRC32. A no-op when the ROM is not listed (or not an
@@ -1893,12 +1923,7 @@ impl App {
         // and so never reaches this function; its load path builds the cabinet
         // in `install_nes_wasm` (v2.9.7) with the same `build_dual_cabinet`.
         #[cfg(not(target_arch = "wasm32"))]
-        let dual_cabinet: Option<Box<rustynes_core::VsDualSystem>> =
-            if !is_nsf_image(&bytes) && !is_fds_image(&bytes) {
-                self.build_dual_cabinet(&nes, &bytes, sample_rate)
-            } else {
-                None
-            };
+        let dual_cabinet = self.cabinet_for_image(&nes, &bytes, sample_rate);
         if self.config.rewind.enabled {
             let max_bytes: usize =
                 ((self.config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
@@ -9094,7 +9119,7 @@ impl App {
             let built = self.build_fds_nes(&disk, sample_rate);
             self.rom_bytes = disk;
             if let Some(nes) = built {
-                return self.finish_start_nes(nes, event_loop);
+                return self.finish_start_nes(nes, sample_rate, event_loop);
             }
             // BIOS cancelled / wrong size: a startup FDS load can't proceed.
             // Native: fatal (no running session yet).
@@ -9106,7 +9131,7 @@ impl App {
             // wasm: if the BIOS isn't uploaded yet, keep waiting (the user can
             // upload it, which then retries the build via `set_fds_bios_wasm`).
             if let Some(nes) = self.build_fds_nes_wasm(sample_rate) {
-                return self.finish_start_nes(nes, event_loop);
+                return self.finish_start_nes(nes, sample_rate, event_loop);
             }
             return;
         }
@@ -9127,7 +9152,7 @@ impl App {
         {
             self.emu.lock().fds_disk_sha256 = None;
         }
-        self.finish_start_nes(nes, event_loop);
+        self.finish_start_nes(nes, sample_rate, event_loop);
     }
 
     /// v2.9.7 "Tandem" — install a freshly built console in the browser: the
@@ -9156,13 +9181,7 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn install_nes_wasm(&mut self, nes: Nes) {
         let sample_rate = crate::wasm_audio::sample_rate().unwrap_or(44_100);
-        // FDS images are never Vs. boards (and the browser loads no NSF: the
-        // cartridge path's `Nes::from_rom` rejects it before this point).
-        let cabinet = if is_fds_image(&self.rom_bytes) {
-            None
-        } else {
-            self.build_dual_cabinet(&nes, &self.rom_bytes, sample_rate)
-        };
+        let cabinet = self.cabinet_for_image(&nes, &self.rom_bytes, sample_rate);
         self.dual_mode = cabinet.is_some();
         let restore = {
             let mut guard = self.emu.lock();
@@ -9291,7 +9310,17 @@ impl App {
     // `load_rom_cheats`); the wasm build mutates through the emu lock alone —
     // a cfg artifact.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::needless_pass_by_ref_mut))]
-    fn finish_start_nes(&mut self, mut nes: Nes, event_loop: &ActiveEventLoop) {
+    fn finish_start_nes(&mut self, mut nes: Nes, sample_rate: u32, event_loop: &ActiveEventLoop) {
+        // v2.9.8 — a Vs. `DualSystem` image given on the command line becomes
+        // the two-console cabinet, by the same decision the menu load makes
+        // (`cabinet_for_image`); the probe `nes` then supplies only the frame
+        // timing below, exactly as in `load_rom_from_path`. Until v2.9.8 this
+        // path installed every image as a single console. The browser builds
+        // its cabinet in `install_nes_wasm`, from the same decision.
+        #[cfg(not(target_arch = "wasm32"))]
+        let dual_cabinet = self.cabinet_for_image(&nes, &self.rom_bytes, sample_rate);
+        #[cfg(target_arch = "wasm32")]
+        let _ = sample_rate;
         if self.config.rewind.enabled {
             // 60 fps × max_seconds × ~120 KiB/snapshot keyframe ≈ ~7 MiB
             // before delta compression; we cap at 32 MiB by default.
@@ -9340,8 +9369,17 @@ impl App {
         // emulation thread run, it must find the console already configured.
         // These were pushed after that point, one lock at a time, until v2.9.8.
         configure_console(&self.config, &mut nes);
+        // A cabinet's consoles carry no cheats, as on the menu load path.
         #[cfg(not(target_arch = "wasm32"))]
-        let raw_cheats = self.load_rom_cheats(&mut nes);
+        let raw_cheats = if dual_cabinet.is_none() {
+            Some(self.load_rom_cheats(&mut nes))
+        } else {
+            None
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.dual_mode = dual_cabinet.is_some();
+        }
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
@@ -9368,8 +9406,15 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         let battery_notice = {
             let mut guard = self.emu.lock();
-            guard.set_nes(nes);
-            guard.raw_cheats = raw_cheats;
+            if let Some(vs) = dual_cabinet {
+                guard.present_fb_sub.clear();
+                guard.set_dual(vs);
+            } else {
+                guard.set_nes(nes);
+            }
+            if let Some(raw) = raw_cheats {
+                guard.raw_cheats = raw;
+            }
             // v2.7.3 (FE-01) — the initial ROM's `.sav`, before its first frame.
             guard.attach_battery(self.data_dir.as_deref())
         };
@@ -11857,6 +11902,60 @@ mod tests {
         let rest = &production[start + 4..];
         let end = rest.find("\n    fn ").map_or(rest.len(), |i| i + 1);
         rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// v2.9.8 — every ROM load path installs a Vs. `DualSystem` image as the
+    /// two-console cabinet, through the one cabinet decision.
+    ///
+    /// Until v2.9.8 only `load_rom_from_path` (the menu, drag-and-drop and
+    /// Recent ROMs, which all call it) and the browser's `install_nes_wasm`
+    /// built the cabinet; a ROM given on the command line (`App::new` ->
+    /// `start_nes` -> `finish_start_nes`) was installed as a single console,
+    /// which runs the main CPU alone and never gets past the boot handshake.
+    ///
+    /// A source-shape test, like the one below and for the same reason: these
+    /// functions need an event loop, a window and the emulation thread, and
+    /// the cabinet decision itself (`build_dual_cabinet`) needs `&App`, which
+    /// no unit test can construct. What can be pinned is that every load path
+    /// asks the one decision and installs a cabinet when it gets one, and that
+    /// nothing else asks `build_dual_cabinet` directly (so no path skips the
+    /// FDS / NSF exclusion `cabinet_for_image` applies).
+    #[test]
+    fn every_load_path_installs_a_dual_system_cabinet() {
+        for name in ["load_rom_from_path", "finish_start_nes", "install_nes_wasm"] {
+            let body = production_fn_body(name);
+            let decided = body
+                .find("self.cabinet_for_image(")
+                .unwrap_or_else(|| panic!("{name}: does not ask `cabinet_for_image`"));
+            let installed = body
+                .find(".set_dual(")
+                .unwrap_or_else(|| panic!("{name}: never installs a cabinet"));
+            assert!(decided < installed, "{name}: decide, then install");
+        }
+        // Every other caller of the CLI / menu / drag-and-drop / Recent paths
+        // goes through one of the three above.
+        for (caller, via) in [
+            ("open_rom_dialog", "self.load_rom_from_path(&path)"),
+            ("start_nes", "self.finish_start_nes("),
+        ] {
+            assert!(
+                production_fn_body(caller).contains(via),
+                "{caller}: no longer routes through `{via}`"
+            );
+        }
+        let app_src: &str = include_str!("app.rs");
+        let production = app_src
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(app_src, |(before, _)| before);
+        assert_eq!(
+            production.matches("self.build_dual_cabinet(").count(),
+            1,
+            "`build_dual_cabinet` is called from `cabinet_for_image` only"
+        );
+        assert!(
+            production_fn_body("cabinet_for_image").contains("self.build_dual_cabinet("),
+            "`cabinet_for_image` builds the cabinet"
+        );
     }
 
     /// v2.9.8 (task B) — every power-on setting reaches the console BEFORE the

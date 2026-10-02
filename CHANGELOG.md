@@ -201,6 +201,13 @@ cycle-accurate core later replaced.
   byte-identical frames.
 ### Fixed
 
+- **Desktop: a Vs. `DualSystem` ROM given on the command line runs as the
+  two-console cabinet.** Only the menu, drag-and-drop and Recent ROMs path
+  built the cabinet; `rustynes <rom>` installed the image as a single
+  console, which runs the main CPU alone and never finishes the boot
+  handshake with the sub. Every load path, desktop and browser, now makes
+  the same decision through one function, FDS and NSF images excluded.
+
 - **The mapper id is the cartridge's on every board.** `Nes::mapper_id` read
   the mapper's debugger view, which names mapper 0 unless the board overrides
   it, so `UxROM`, CNROM, `AxROM` and every other board without an override

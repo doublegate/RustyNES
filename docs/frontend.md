@@ -748,7 +748,13 @@ default) or **stacked** (256×480) per `[graphics] dual_screen_layout`, blitted 
 the always-on dynamic `Gfx::render_dual` with an aspect-correct letterbox. Coin
 (F10) routes to the main acceptor. Detection + install happen at ROM load
 (`Emu::from_rom_with_sample_rate`), with the Vs.-DB DIP + RGB palette applied to
-both consoles. The single-console path is byte-identical (the dual path is a
+both consoles. Every load path makes the same decision through
+`App::cabinet_for_image` (FDS and NSF images excluded, then
+`App::build_dual_cabinet`): the menu, drag-and-drop and Recent ROMs through
+`load_rom_from_path`, a ROM given on the command line through
+`finish_start_nes`, and the browser through `install_nes_wasm`. Until v2.9.8 the
+command-line path installed a cabinet image as a single console, which runs the
+main CPU alone and never completes the boot handshake. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
 run-ahead, rewind, netplay, TAS, the debugger, and HD-pack — they snapshot a
 single `Nes`. **Save states work in dual mode since v2.9.7**, through the
