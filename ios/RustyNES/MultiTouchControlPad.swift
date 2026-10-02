@@ -166,7 +166,7 @@ private enum NesControllerArt {
         let w = size.width
         let h = size.height
 
-        func has(_ b: NesButton) -> Bool { mask & b.rawValue != 0 }
+        func has(_ b: NesButtonBit) -> Bool { mask & b.rawValue != 0 }
 
         // --- Body + edge, then the near-black central face. The white-plastic borders
         //     are asymmetric like the real shell: thick top, thin bottom, thin sides.
@@ -276,7 +276,7 @@ private enum NesControllerArt {
         let sqW = 0.112 * w
         let sqH = 0.271 * h
         let br = 0.046 * w
-        for (bx, bit) in [(ControlPadLayout.AB_BX, NesButton.b), (ControlPadLayout.AB_AX, NesButton.a)] {
+        for (bx, bit) in [(ControlPadLayout.AB_BX, NesButtonBit.b), (ControlPadLayout.AB_AX, NesButtonBit.a)] {
             let cx = bx * w
             fillRR(&ctx, NesPad.housingW, cx - sqW / 2, abY - sqH / 2, sqW, sqH, 0.035 * h)
             strokeRR(&ctx, NesPad.housingE, cx - sqW / 2, abY - sqH / 2, sqW, sqH, 0.035 * h, 0.005 * h)

@@ -364,7 +364,7 @@ final class AppModel: ObservableObject {
             netplay.attach(core: core)
             // Reconcile this game's cloud save-states (pull any newer-remote slots).
             cloudSaveStates.setCurrentGame(sha: entry.sha)
-        } catch MobileError.missingFdsBios {
+        } catch MobileError.MissingFdsBios {
             // v2.9.7: ask for disksys.rom once, then open this disk again.
             pendingFdsEntry = entry
             needsFdsBios = true
