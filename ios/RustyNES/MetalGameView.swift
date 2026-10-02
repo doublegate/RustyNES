@@ -145,6 +145,14 @@ struct MetalGameView: UIViewRepresentable {
             displayLink = link
         }
 
+        /// One display-link tick: complete a deferred renderer build or apply a
+        /// drawable resize, then run the console frames this tick owes.
+        ///
+        /// The link starts before the renderer exists (see `attachAndStart`), so
+        /// the first ticks may only build it; `EmulatorCore.tick()` is a no-op
+        /// until it does. On a ~60 Hz link exactly one console frame runs per
+        /// vsync; on any other refresh the wall-clock accumulator below paces the
+        /// core at the console's 60.0988 Hz.
         @objc private func step(_ link: CADisplayLink) {
             // If the drawable resized (rotation / Stage Manager), reconfigure first.
             if let view, view.drawableSize != lastDrawableSize {

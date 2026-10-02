@@ -36,6 +36,23 @@ on:
         description: "Release tag to build (e.g. v2.9.8)."
         required: true
         type: string
+    # Exactly the secrets the TestFlight steps read, passed by name from
+    # release-auto.yml rather than with `secrets: inherit`, which would hand this
+    # workflow every repository secret. All optional: absent, the "Detect iOS
+    # signing secrets" step skips the upload, as it does on a tag push.
+    secrets:
+      ASC_KEY_ID:
+        required: false
+      ASC_ISSUER_ID:
+        required: false
+      ASC_KEY_CONTENT:
+        required: false
+      MATCH_GIT_URL:
+        required: false
+      MATCH_PASSWORD:
+        required: false
+      MATCH_GIT_BASIC_AUTHORIZATION:
+        required: false
   # v1.9.1 "Patch" — TestFlight build-refresh cadence. A TestFlight build expires
   # 90 days after upload; re-build + re-upload at 06:00 UTC on the 1st of every
   # other month (~60-day cadence) so external testers never lose access between

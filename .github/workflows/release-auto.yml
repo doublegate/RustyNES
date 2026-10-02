@@ -264,7 +264,14 @@ jobs:
     uses: ./.github/workflows/ios.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}
-    # The App Store Connect + fastlane match secrets ios.yml reads for the
-    # TestFlight upload. Its "Detect iOS signing secrets" step skips the upload
-    # when they are absent.
-    secrets: inherit
+    # Only the App Store Connect + fastlane match secrets ios.yml reads for the
+    # TestFlight upload, by name. `secrets: inherit` would pass every repository
+    # secret to the called workflow (least privilege, CodeRabbit on #578). Its
+    # "Detect iOS signing secrets" step skips the upload when they are absent.
+    secrets:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}

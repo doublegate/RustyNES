@@ -130,6 +130,12 @@ final class CloudSaveStateSync: ObservableObject {
 
     // MARK: - Account availability
 
+    /// Re-read whether the user's iCloud account can be used, into `accountAvailable`.
+    ///
+    /// Touches CloudKit only when sync is enabled and the binary carries the
+    /// container entitlement (`Self.container` is nil otherwise). Every other case,
+    /// a disabled sync, a missing entitlement or a failed status call, leaves the
+    /// account unavailable, which every caller treats as "stay local".
     private func refreshAccount() async {
         guard enabled else {
             accountAvailable = false
@@ -426,6 +432,14 @@ enum CloudKitEntitlement {
     }()
 
     #if targetEnvironment(simulator)
+    /// The entitlements Xcode linked into the main executable's
+    /// `__TEXT,__entitlements` section, or nil if there is none (an unsigned
+    /// build).
+    ///
+    /// Image 0 is dyld's main executable, which is deliberate: in a Debug build the
+    /// app's code lives in `RustyNES.debug.dylib`, and only the stub executable
+    /// carries the section, so resolving the image from one of our own symbols
+    /// (`dladdr`) would look in the wrong file.
     private static func simulatorEntitlements() -> [String: Any]? {
         guard let header = _dyld_get_image_header(0) else { return nil }
         var size: UInt = 0
@@ -449,6 +463,7 @@ enum CloudKitEntitlement {
     }
     #endif
 
+    /// Decode a property list (XML or binary) whose root is a dictionary, or nil.
     private static func plist(_ data: Data) -> [String: Any]? {
         (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
     }
