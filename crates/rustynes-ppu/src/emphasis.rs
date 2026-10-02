@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! PPUMASK colour emphasis, from the documented composite model (v2.9.8
-//! "Cadence", `T-EMPHASIS-MODEL`).
+//! "Vanguard", `T-EMPHASIS-MODEL`).
 //!
 //! # What the hardware does
 //!

@@ -26,30 +26,20 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### Fixed
+## [2.9.8] - 2026-10-02 - "Vanguard" (v3.0.0's breaks landed early, every staged game looked at, and the database's corrections on every platform)
 
-- **The iOS app compiles again.** The first Xcode build on a Mac (Xcode 27)
-  failed with 24 errors in v2.9.7's Swift. The app's own `NesButton` collided
-  with the type UniFFI generates from `rustynes-mobile`, now renamed
-  `NesButtonBit`. The FDS BIOS prompt also caught `MobileError.missingFdsBios`,
-  but the generated case is `MissingFdsBios`.
-- **iOS games no longer open to a black screen.** The frame loop started only
-  after the renderer was built, and the only retry of a build deferred at
-  first layout ran off that same loop, so no frame ever ran until the app was
-  backgrounded and foregrounded. The loop now starts first.
-- **No iOS launch crash without the iCloud capability.** Save-state sync is
-  opt-in, but the app checked the iCloud account at launch anyway, and
-  `CKContainer` traps uncatchably in a build without the container
-  entitlement. CloudKit is now untouched while sync is off, and a container is
-  created only when the entitlement is present.
-- **`scripts/build-ios-xcframework.sh` no longer overwrites
-  `ios/RustyNES/Info.plist`** (an `info:` block in `ios/project.yml` made
-  XcodeGen regenerate it, dropping the ROM document types, fonts and
-  orientations). It also builds the Rust and C code for the app's iOS 17.0
-  floor instead of the installed SDK's version.
-- **A macOS clone no longer starts dirty.** `tests/roms/accuracycoin/README.md`
-  and `tests/roms/AccuracyCoin/README.md` were one file on a case-insensitive
-  filesystem; the lowercase one is now `RUNTIME.md`.
+The ninth release of the v2.9.x line and the fifth of the line to v3.0.0. It
+began as the performance and MiSTer-menu release. At the maintainer's
+direction it became the preparation release for v3.0.0:
+
+- every planned breaking change landed here, along with the other permanent
+  improvements a break makes possible;
+- every one of the 748 staged dumps was booted and looked at, and the
+  defects that turned up were fixed from their documentation;
+- the game database's corrections now reach every platform.
+
+The maintainer's decisions are in `to-dos/plans/v2.9.8-vanguard-plan.md` and
+the 2026-10-01 amendments to ADR 0042 and ADR 0043.
 
 **Breaking changes at a glance.** This release carries the breaks planned for
 v3.0.0 ahead of it (ADR 0042 and 0043, amended 2026-10-01). It keeps the v2.9.x
@@ -68,6 +58,7 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   - the items deprecated at v2.7.5 and `serialize_header` are removed;
   - `Header` and `FrameInput` are `#[non_exhaustive]`;
   - `vs_db::lookup` takes the console.
+
 ### Added
 
 - **The MiSTer core's menu gains aspect ratio, scaling, crop and palette
@@ -97,11 +88,9 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   clean background. Select it with Settings > Emulation > Accuracy > *Famicom
   console*, `[emulation] famicom_console = true`, or `Nes::set_console_model`
   (`rustynes_core::ConsoleModel`). The NES model stays the default, so every
-  output is byte-identical with it off. Movies and netplay do not record the
-  setting, like the other hardware options.
-
   output is byte-identical with it off. Movies record the setting and netplay
   peers must match it (see the movie and netplay entries under Changed).
+
 ### Changed
 
 - **CI builds the iOS app at release time.** `ios.yml` now compiles the Swift
@@ -115,8 +104,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   retired. `Bus` was ruled out because `rustynes_cpu::Bus` is the trait the
   type implements. **Migration:** replace `rustynes_core::LockstepBus` with
   `rustynes_core::SystemBus`; nothing outside the workspace names it.
-
-
 
 - **Movies record the emulation options they were made with (breaks old
   movies).** A `.rnm` used to record the ROM and the input and nothing else,
@@ -153,6 +140,7 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   guest does not adopt the host's options. The netplay constructors take a
   `SessionIdentity` (`SessionIdentity::of(&nes)`), and `PROTOCOL_VERSION` is 5,
   so v2.9.7 peers do not connect to this one.
+
 - **A ROM's identity no longer includes its header (breaks old saves once).**
   `Nes::rom_sha256` names save-state slots, battery `.sav` files and cheats,
   tags `.rns` states and movies, matches netplay peers, and is what Lua's
@@ -179,8 +167,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   the hash form. The same file finds the same row it did before, so emulation
   output is unchanged.
 
-
-
 - **`rustynes_mappers::Header` models every header field and is
   `#[non_exhaustive]` (API break).** It gains the Vs. hardware type
   (`vs_hardware_type`, the new `VsHardwareType`), the extended console type
@@ -203,8 +189,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   used to be written with a byte-9 nibble of `$F`, which reads back as an
   exponent-notation size. ADR 0042's 2026-10-01 amendment.
 
-
-
 - **Faster frames, with output unchanged.** Removing the dead /NMI edge
   detector (ADR 0042) cut frame time by 4.9% to 6.1% on three benchmark
   workloads and 1.4% on exact-path `nestest`, in two runs. Three of eleven
@@ -214,6 +198,7 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   v2.9.7, the shipped `nestest` frame is 5% to 9% faster. On the other
   workloads the end-to-end gain did not reproduce, and the cause is a v2.9.9
   lead. The details and the rejected candidates are in `docs/performance.md`.
+
 - **Colour emphasis follows the documented hardware model.** PPUMASK bits 5-7
   used to dim the other two colour channels to 13/16 per set bit, which turned
   all three bits into an even, heavy dim. The console has one attenuator shared
@@ -224,15 +209,11 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   darken without tinting, and frames without emphasis are unchanged. The MiSTer
   core carries the same colours.
 
-
-
 - **Provenance: the raw NTSC signal model is recorded as derived** from
   Bisqwit's `nes_ntsc` method and Mesen2's "raw palette" generator, which its
   own documentation has said since v2.1.9. It had no `// Provenance:` header or
   record row; it now has both, and a NOTICE entry, at the maintainer's
   direction.
-
-
 
 - **VRC6 (mappers 24 and 26) powers on with its CHR banks in order.** The
   eight 1 KiB CHR bank registers (`$D000-$E003`) now start at 0-7 instead of
@@ -244,7 +225,31 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   postcard. A soft reset still keeps the registers, and the PRG registers
   still start at 0. The other ten staged mapper 24/26 dumps boot to
   byte-identical frames.
+
 ### Fixed
+
+- **The iOS app compiles again.** The first Xcode build on a Mac (Xcode 27)
+  failed with 24 errors in v2.9.7's Swift. The app's own `NesButton` collided
+  with the type UniFFI generates from `rustynes-mobile`, now renamed
+  `NesButtonBit`. The FDS BIOS prompt also caught `MobileError.missingFdsBios`,
+  but the generated case is `MissingFdsBios`.
+- **iOS games no longer open to a black screen.** The frame loop started only
+  after the renderer was built, and the only retry of a build deferred at
+  first layout ran off that same loop, so no frame ever ran until the app was
+  backgrounded and foregrounded. The loop now starts first.
+- **No iOS launch crash without the iCloud capability.** Save-state sync is
+  opt-in, but the app checked the iCloud account at launch anyway, and
+  `CKContainer` traps uncatchably in a build without the container
+  entitlement. CloudKit is now untouched while sync is off, and a container is
+  created only when the entitlement is present.
+- **`scripts/build-ios-xcframework.sh` no longer overwrites
+  `ios/RustyNES/Info.plist`** (an `info:` block in `ios/project.yml` made
+  XcodeGen regenerate it, dropping the ROM document types, fonts and
+  orientations). It also builds the Rust and C code for the app's iOS 17.0
+  floor instead of the installed SDK's version.
+- **A macOS clone no longer starts dirty.** `tests/roms/accuracycoin/README.md`
+  and `tests/roms/AccuracyCoin/README.md` were one file on a case-insensitive
+  filesystem; the lowercase one is now `RUNTIME.md`.
 
 - **Desktop: Power Cycle works on a Vs. `DualSystem` cabinet.** It touched
   only a single console, so with a cabinet loaded F3 and Emulation > Power
@@ -366,14 +371,13 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   correct. Its blank first boot with a fresh (zero-filled) save is the game's
   own behaviour, documented on the same page, and a soft reset runs it.
 
-
-
 - **`$4017` IRQ inhibit now clears the frame IRQ on the write cycle.** It
   waited for the 3-4 cycle timer reset, so a `CLI` right after the write could
   still take the frame IRQ. *Nintendo World Championships 1990* (mapper 105)
   does exactly that, with its IRQ vector in uninitialised WRAM, and showed a
   blank screen forever; it now reaches its title screen. AccuracyCoin, blargg's
   APU suites and the PAL APU suite are unchanged.
+
 - **Mapper 191 translations with 192 KiB and 160 KiB of PRG boot.** The
   MMC3-based boards of `mmc3_boards.rs` reduced a bank number onto the image
   with a plain modulo, which on a non-power-of-two image sends the MMC3's
@@ -386,8 +390,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   (Sachen 8259, mapper 141, not 191), *Chaos World* and *San Guo Zhi 2*
   (Waixing FS005, mapper 176 submapper 2, not 74), and the Kasheng *2-in-1
   (Mortal Kombat 6, Samurai Spirits)* (mapper 291, not 47).
-
-
 
 - **The game database no longer rewrites a NES 2.0 header's mapper.** Its
   vendored table, built for iNES 1.0 images, lists a compatible mapper for many
@@ -403,8 +405,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   header; your own overrides still apply to anything. Five of these games leave
   the coverage sweep's known-blank list.
 
-
-
 - **Mapper 78 without a submapper follows the header's nametable bit.** The two
   games wire the mirroring bit differently (Holy Diver H/V, Cosmo Carrier
   single-screen), and an iNES 1.0 image chose Holy Diver whatever its header
@@ -415,8 +415,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   sets the bit, so its header names Holy Diver and it still stalls; its NES 2.0
   twin plays.
 
-
-
 - **Mapper 218 (Magic Floor) single-screen wirings.** The board has no CHR
   chip: the console's 2 KiB nametable RAM is also the pattern table, and the
   header wires its A10 to PPU A10, A11, A12 or A13 (NESdev
@@ -426,8 +424,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   tiles it names. *Magic Floor* (`$A9`, A13) drew a field of garbage tiles; it
   now draws its board and score line.
 
-
-
 - **Mapper 226 (76-in-1 BMC) register layout.** The first register is
   `[PMOP PPPP]` (NESdev `INES_Mapper_226`): bit 7 is PRG bit 5, bit 6
   mirroring and bit 5 the 16/32 KiB mode. The board read bits 5, 6 and 7 as
@@ -435,8 +431,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   drew one repeated tile, and *Super 42-in-1* opened on its second menu page
   under the wrong mirroring. Both now open on their first menu page. RESET
   also clears both registers, as the page says, which returns to the menu.
-
-
 
 - **Vs. System (mapper 99) work RAM on a single-screen cabinet.** The CPU
   board has 2 KiB of RAM at `$6000-$7FFF`, which the CPU owns while bit 1 of
@@ -448,8 +442,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   still runs as CNROM; it is recorded in `docs/mappers.md`, not forced.
   Mapper 99 save states gain the RAM (layout 3; older states still load).
 
-
-
 - **Vs. The Goonies (unpatched dump) uses its RP2C04-0003 palette.** The Vs.
   database had a row only for the patched dump, so the original Konami file
   fell back to the 2C03 and drew its title red on green. It now has its own
@@ -458,15 +450,11 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   mapper 151, but their code drives a Namco 108 board, and the protection chip
   that game uses is not modelled.
 
-
-
 - **Toggling "Fast PPU dot path" mid-game no longer wipes work RAM.** The
   switch changes speed, not output, but its live update went through the
   function that also re-applies the power-on RAM fill, which zero-filled the
   console's 2 KiB of work RAM while a game was running. It now changes only the
   dot path.
-
-
 
 - **The game database's region reaches iNES 1.0 games, and leaves NES 2.0
   headers alone.** A PAL row wrote iNES 1.0 header byte 9 bit 0, which the
@@ -482,12 +470,10 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   header's region: *Funblaster Pak (Australia)*, headed PAL, had been forced to
   NTSC, and two Chinese titles headed Dendy to NTSC. The nine `(USA, Europe)`
   rows, one image sold in both markets, carry no region, and Vs. System and
-  PlayChoice-10 carts stay NTSC. For the promoted games the ROM hash that
-  names save-state slots and `.sav` files changes once.
-
   PlayChoice-10 carts stay NTSC. The rewrite touches only the header, which
   the ROM identity leaves out (see the next entry), so no game's saves move
   because of it.
+
 ### Removed
 
 - **`rustynes_mappers::serialize_header` is removed (API break).** Deprecated
@@ -503,8 +489,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   buildbot job ever used it. `make platform=libnx` now stops with an error
   naming the reason, instead of falling through to a build for the host.
 
-
-
 - **The bus surface deprecated at v2.7.5 is removed (API break, ADR 0042).**
   The 18 `#[deprecated]` methods of `rustynes_cpu::Bus` (`poll_nmi`,
   `poll_irq`, `poll_irq_at_phase`, `cpu_cycle_phi1` / `cpu_cycle_phi2`,
@@ -518,13 +502,6 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   workspace called these items. A test bus that overrode `poll_nmi` or
   `poll_irq` should override `nmi_level` / `irq_level` (the CPU edge-detects
   and delays them itself); one that relied on `take_dma_mc_consumed` drops it.
-- **Save states from v2.9.7 and earlier no longer load (BUS section 2).** The
-  BUS section drops the detector's two fields and four that no longer carry
-  state (the OAM DMA's owed-cycle counter and byte index, and the always-zero
-  `dma_mc_consumed`), and every field is now required: a version-1 section is
-  refused with a version error, and a short or overlong version-2 section with
-  a section error, where version 1 read missing tail fields as defaults.
-
 - **Save states from v2.9.7 and earlier no longer load, and every legacy
   save-state reader is gone (ADR 0042).** The `.rns` container format moves
   to 3 and a reader refuses any older container at the header with one typed
@@ -539,6 +516,31 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   `docs/mappers.md`). Short, long or older blobs are refused with typed
   errors. Movies that embed a start state from an older version fail the
   same way.
+
+### Verification
+
+- The full `cargo test --release --workspace --features
+  test-roms,commercial-roms --no-fail-fast` passes on the release tree:
+  3,358 tests, 0 failed, 19 ignored. That covers every unit and
+  integration test, the test-ROM suites (AccuracyCoin 144/144, nestest
+  0-diff), and the local commercial suites. `external_real_games` is 60/0.
+  `external_extended` is 137/0: v2.9.7's 138 less the *Doraemon World 3* hack,
+  now refused as the mapper 8 image it is. The `external_coverage` sweep
+  covers all 744 staged ROMs.
+- Every fix has a test that failed before it, and reverting the fix makes the
+  test fail again. Every changed baseline was looked at and attributed, one of
+  them by `git bisect`.
+- fmt, clippy for every feature set and both wasm builds, rustdoc, the
+  `no_std` build and markdownlint are clean.
+- Performance is two `ab_check.sh` runs per claim, recorded in
+  `docs/performance.md`, including the end-to-end result that does not add up.
+- The MiSTer core: on-die ladder 175 passed, 0 failed, 1 expected failure, and
+  off-die 176 / 0 / 1. Both builds were re-swept at the build date, seed 2
+  stays pinned, and two clean compiles of each are byte-identical.
+  **No hardware has run any bitstream.**
+- The iOS Swift and the mobile device behaviour are unverified on this Linux
+  host, as before.
+
 ## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
 
 The eighth release of the v2.9.x line and the fourth of the line to v3.0.0:
