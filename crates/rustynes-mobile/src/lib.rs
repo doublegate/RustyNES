@@ -891,6 +891,51 @@ fn refuse_on_cabinet(g: &Inner, what: &str) -> Result<(), MobileError> {
     }
 }
 
+/// v2.9.9 (NF-18) — whether a netplay session owns the timeline: present,
+/// connecting, or ended in an error not yet acknowledged with `np_leave`
+/// (the same test [`NesController::np_is_active`] answers the host with).
+const fn netplay_owns_timeline(g: &Inner) -> bool {
+    g.netplay.is_some() || g.netplay_error.is_some()
+}
+
+/// v2.9.9 (NF-18) — whether a movie is recording or playing back.
+const fn movie_owns_timeline(g: &Inner) -> bool {
+    g.recorder.is_some() || g.playback.is_some()
+}
+
+/// v2.9.9 (NF-18) — why a Reset, a Power Cycle or a state load must not run
+/// now, or `None` when it may.
+///
+/// A `.rnm` and a netplay session both carry controller input and nothing
+/// else, so an action outside that stream breaks them: a recording no longer
+/// replays, playback continues from a state it never recorded, and a netplay
+/// peer desyncs (the action happens on this device only). The desktop has
+/// refused these since v2.9.9 (`session_policy`) and refused movies under
+/// netplay since v2.3.0; the bridge checked only for a cabinet or hardcore,
+/// and neither host gated the calls.
+const fn timeline_refusal(g: &Inner) -> Option<&'static str> {
+    if movie_owns_timeline(g) {
+        Some("a movie is recording or playing")
+    } else if netplay_owns_timeline(g) {
+        Some("a netplay session is active")
+    } else {
+        None
+    }
+}
+
+/// v2.9.9 (NF-18) — refuse to start netplay while a movie records or plays
+/// (the desktop's v2.3.0 rule). Uses the existing `Netplay` error, so the
+/// generated Kotlin / Swift bindings are unchanged.
+fn refuse_netplay_during_movie(g: &Inner) -> Result<(), MobileError> {
+    if movie_owns_timeline(g) {
+        Err(MobileError::Netplay {
+            reason: "stop the movie before starting netplay".into(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// Run `f` on the loaded cabinet with its main console seated (see
 /// [`DualSwap`]). `None` when no cabinet is loaded.
 fn with_cabinet<T>(g: &mut Inner, f: impl FnOnce(&mut VsDualSystem) -> T) -> Option<T> {
@@ -1398,8 +1443,16 @@ impl NesController {
 
     /// Soft-reset (the front-panel Reset button); preserves power-on alignment.
     /// On a cabinet both consoles reset.
+    ///
+    /// v2.9.9 (NF-18): a no-op while a movie or a netplay session owns the
+    /// timeline (see `timeline_refusal`); the call returns nothing, so the
+    /// host learns of it only by the console not resetting, and should grey
+    /// the control the same way.
     pub fn reset(&self) {
         let mut g = self.lock();
+        if timeline_refusal(&g).is_some() {
+            return;
+        }
         let cabinet = with_cabinet(&mut g, |cab| {
             cab.main_mut().reset();
             cab.sub_mut().reset();
@@ -1417,8 +1470,14 @@ impl NesController {
     /// were). The rebuild re-parses a ROM that already parsed once; should it
     /// fail anyway, the cabinet power-cycles in place
     /// (`VsDualSystem::power_cycle`, v2.9.8, which re-wires the pair).
+    ///
+    /// v2.9.9 (NF-18): a no-op while a movie or a netplay session owns the
+    /// timeline, as [`Self::reset`] is.
     pub fn power_cycle(&self) {
         let mut g = self.lock();
+        if timeline_refusal(&g).is_some() {
+            return;
+        }
         let sample_rate = g.sample_rate;
         let rebuilt = g.dual.as_ref().map(|cab| {
             Emu::from_rom_with_sample_rate(&cab.rom, sample_rate)
@@ -1477,6 +1536,13 @@ impl NesController {
         {
             drop(g);
             return Err(MobileError::HardcoreBlocked);
+        }
+        // v2.9.9 (NF-18) — nor during a movie or a netplay session.
+        if let Some(why) = timeline_refusal(&g) {
+            drop(g);
+            return Err(MobileError::SaveState {
+                reason: format!("state load refused: {why}"),
+            });
         }
         with_cabinet(&mut g, |cab| cab.restore(&data))
             .unwrap_or_else(|| g.nes.restore(&data))
@@ -1769,10 +1835,13 @@ impl NesController {
 
     /// Start recording a TAS movie from a fresh power-on (the ROM is power-cycled so
     /// the recording starts from the same state a replay reconstructs).
+    ///
+    /// v2.9.9 (NF-18): nothing starts during netplay (movies and netplay are
+    /// mutually exclusive; the netplay tick never captures a frame anyway).
     pub fn movie_record_from_power_on(&self) {
         let mut g = self.lock();
         // v2.9.7: a `.rnm` holds one console; a cabinet records nothing.
-        if g.dual.is_some() {
+        if g.dual.is_some() || netplay_owns_timeline(&g) {
             return;
         }
         // v2.9.0 — the session replaces the save RAM; keep reporting the
@@ -1789,10 +1858,12 @@ impl NesController {
 
     /// Start recording a TAS movie branching from the current state (embeds a
     /// save-state as the start point).
+    ///
+    /// v2.9.9 (NF-18): nothing starts during netplay, as above.
     pub fn movie_record_from_here(&self) {
         let mut g = self.lock();
         // v2.9.7: a `.rnm` holds one console; a cabinet records nothing.
-        if g.dual.is_some() {
+        if g.dual.is_some() || netplay_owns_timeline(&g) {
             return;
         }
         // v2.9.8 — a branch continues the machine as it is, movie options
@@ -1816,6 +1887,12 @@ impl NesController {
     /// [`MobileError::Movie`] if the bytes are not a valid movie or the ROM differs.
     pub fn movie_play(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
         refuse_on_cabinet(&self.lock(), "movie playback")?;
+        // v2.9.9 (NF-18) — movies and netplay are mutually exclusive.
+        if netplay_owns_timeline(&self.lock()) {
+            return Err(MobileError::Movie {
+                reason: "leave netplay before playing a movie".into(),
+            });
+        }
         let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
             reason: e.to_string(),
         })?;
@@ -2253,6 +2330,7 @@ impl NesController {
     pub fn np_host(&self, local_port: u16, num_players: u8) -> Result<u16, MobileError> {
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         let conn = NetplayConnection::host(local, rom_hash).map_err(|e| MobileError::Netplay {
@@ -2283,6 +2361,7 @@ impl NesController {
     /// socket bind/connect fails.
     pub fn np_join(&self, address: String) -> Result<(), MobileError> {
         refuse_on_cabinet(&self.lock(), "netplay")?;
+        refuse_netplay_during_movie(&self.lock())?;
         // Resolve via `ToSocketAddrs` so a hostname (`my-laptop.local:7000`) works
         // as well as a raw IP — `SocketAddr::parse` rejects hostnames. This runs
         // off the UI thread (the host calls `np_join` on a worker), so the brief
@@ -2337,6 +2416,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let players = num_players.clamp(2, 4);
         // Seed the room-code + STUN-transaction PRNG from a non-deterministic
@@ -2375,6 +2455,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let seed = nondeterministic_seed();
         let nat = NatConnect::join(&room_code, rom_hash, nat_cfg, seed).map_err(|e| {
@@ -4827,5 +4908,67 @@ mod tests {
             relay_stop.store(true, Ordering::Relaxed);
             let _ = stun_handle.join();
         }
+    }
+
+    /// v2.9.9 (NF-18) — movies and netplay are mutually exclusive in the
+    /// bridge, and neither lets a Reset, a Power Cycle or a state load change
+    /// the machine under it -- the desktop's rule since v2.3.0.
+    ///
+    /// A `.rnm` and a netplay session both carry controller input only, so an
+    /// action outside that stream breaks them: a recording no longer replays,
+    /// and a netplay peer desyncs. Before v2.9.9 these entry points checked
+    /// only for a cabinet or hardcore, and neither host gated them.
+    #[test]
+    fn a_movie_or_netplay_session_refuses_timeline_changes() {
+        // A recording: Reset, Power Cycle and a state load leave the machine
+        // as it is; netplay refuses to start.
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let blob = ctrl.save_state();
+        ctrl.movie_record_from_here();
+        for _ in 0..3 {
+            ctrl.step_frame();
+        }
+        let before = ctrl.save_state();
+        ctrl.reset();
+        ctrl.power_cycle();
+        assert_eq!(
+            ctrl.save_state(),
+            before,
+            "Reset / Power Cycle during a movie"
+        );
+        assert!(
+            ctrl.load_state(blob.clone()).is_err(),
+            "load during a movie"
+        );
+        assert_eq!(ctrl.save_state(), before, "the load changed the machine");
+        assert!(
+            ctrl.np_host(0, 2).is_err(),
+            "netplay started during a movie"
+        );
+        assert!(!ctrl.np_is_active());
+        let movie = ctrl.movie_stop_recording();
+
+        // Netplay (connecting is enough: the session owns the timeline): no
+        // movie may start, and the console is left alone.
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.np_host(0, 2).expect("host bind");
+        let before = ctrl.save_state();
+        ctrl.movie_record_from_power_on();
+        ctrl.movie_record_from_here();
+        assert!(
+            !ctrl.movie_is_recording(),
+            "a recording started during netplay"
+        );
+        assert!(ctrl.movie_play(movie).is_err(), "playback during netplay");
+        assert!(!ctrl.movie_is_playing());
+        ctrl.reset();
+        ctrl.power_cycle();
+        assert!(ctrl.load_state(blob).is_err(), "load during netplay");
+        assert_eq!(
+            ctrl.save_state(),
+            before,
+            "the console changed under netplay"
+        );
+        ctrl.np_leave();
     }
 }

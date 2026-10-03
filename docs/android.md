@@ -107,6 +107,15 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
   them, so a ROM such as *Seicross* that needs its database row hung on a
   phone. Only the vendored table is read. Shared with iOS: it lives in
   `rustynes-mobile`.
+- **Movies and netplay own the timeline (v2.9.9, NF-18).** Both carry controller
+  input only, so the bridge refuses whatever would change the machine outside
+  that stream: while a movie records or plays, or a netplay session runs (or has
+  ended in an error not yet left), `reset` and `power_cycle` are no-ops and
+  `load_state` returns `SaveState`; a movie cannot start during netplay
+  (`movie_record_*` no-op, `movie_play` returns `Movie`) and netplay cannot start
+  during a movie (`np_*` return `Netplay`). Existing error variants, so the
+  generated bindings are unchanged; the hosts should grey the controls to match.
+  The desktop's rule (`docs/frontend.md`, "Session lockout"). Shared with iOS.
 - Save-states use the **platform-independent `.rns` format**, so a state saved on
   desktop loads on Android and a `.rnm` TAS replays bit-identically — desktop⇄
   Android cross-play stays valid.
