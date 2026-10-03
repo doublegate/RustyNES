@@ -127,6 +127,7 @@ use crate::gfx::{Gfx, NES_H, NES_W};
 use crate::input::{InputState, SysAction};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::save_state;
+use crate::session_policy::TimelineAction;
 use crate::ui_shell::StatusMessage;
 
 /// v1.3.0 Sprint 1.4 — winit custom user-event type, used by both
@@ -3194,6 +3195,12 @@ impl App {
     /// continuation. No-op if no ROM is loaded.
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_branch(&self) {
+        // v2.9.9 (NF-11) — movies and netplay are mutually exclusive (v2.3.0);
+        // record, play and import refused already, the branch did not.
+        if self.netplay.is_active() {
+            eprintln!("rustynes: leave netplay before branching a movie");
+            return;
+        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
@@ -4095,6 +4102,12 @@ impl App {
                 movie.len(),
             ));
         } else {
+            // v2.9.9 (NF-11) — see the native record path. `netplay_is_active`
+            // reads `browser_netplay`, not the emu lock held here.
+            if self.netplay_is_active() {
+                crate::wasm_io::log("leave netplay before recording a movie");
+                return;
+            }
             let Some(nes) = emu.nes.as_mut() else {
                 crate::wasm_io::log("movie record: no ROM loaded");
                 return;
@@ -4136,6 +4149,12 @@ impl App {
             return;
         }
         drop(guard);
+        // v2.9.9 (NF-11) — movies and netplay are mutually exclusive in the
+        // browser too: the native handlers have refused since v2.3.0.
+        if self.netplay_is_active() {
+            crate::wasm_io::log("leave netplay before playing a movie");
+            return;
+        }
         crate::wasm_io::click_file_input("rnm-input");
     }
 
@@ -4143,6 +4162,11 @@ impl App {
     /// (wasm32). The browser counterpart of [`Self::handle_movie_branch`].
     #[cfg(target_arch = "wasm32")]
     fn handle_movie_branch_wasm(&self) {
+        // v2.9.9 (NF-11) — see the native branch.
+        if self.netplay_is_active() {
+            crate::wasm_io::log("leave netplay before branching a movie");
+            return;
+        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
@@ -4932,6 +4956,33 @@ impl App {
         emu.movie.is_recording() || emu.movie.is_playing()
     }
 
+    /// v2.9.9 (NF-11) — refuse `action` when a movie, a netplay session or RA
+    /// hardcore owns the timeline; returns `true` (and puts the reason on the
+    /// status line) when refused, `false` when the caller may proceed.
+    ///
+    /// Every dispatch site of a Reset, Power Cycle, disk change or state load
+    /// calls this first — the hotkeys, the menu, the Save-States manager and
+    /// the browser grid alike. Before v2.9.9 only the menu greyed these, so the
+    /// bound key reached the same handler unguarded (F3 during a recording
+    /// made a movie that no longer replays). The rule itself is
+    /// [`crate::session_policy::refusal`]; this only gathers the three owners
+    /// from the live session.
+    fn refuse_timeline_action(&mut self, action: TimelineAction) -> bool {
+        let owners = crate::session_policy::SessionOwners {
+            movie: self.replay_interaction_locked(),
+            netplay: self.netplay_is_active(),
+            hardcore: self.ra_hardcore_blocks(),
+        };
+        match crate::session_policy::refusal(action, owners) {
+            Some(reason) => {
+                self.ui
+                    .set_status(StatusMessage::info(reason.message(action)));
+                true
+            }
+            None => false,
+        }
+    }
+
     /// v2.7.0 — the per-ROM RA progress sidecar directory
     /// (`<data_dir>/ra-progress/`). `None` if no data dir is available.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -5152,13 +5203,7 @@ impl App {
                 }
             }
             MenuAction::LoadState => {
-                if self.ra_hardcore_blocks() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled (hardcore)"));
-                } else if self.replay_interaction_locked() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled during movie"));
-                } else {
+                if !self.refuse_timeline_action(TimelineAction::LoadState) {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let result = self.handle_load_state(self.active_save_slot);
@@ -5184,12 +5229,16 @@ impl App {
                 self.set_paused(!self.ui.paused);
             }
             MenuAction::Reset => {
-                self.do_reset();
-                self.ui.set_status(StatusMessage::info("Reset"));
+                if !self.refuse_timeline_action(TimelineAction::Reset) {
+                    self.do_reset();
+                    self.ui.set_status(StatusMessage::info("Reset"));
+                }
             }
             MenuAction::PowerCycle => {
-                self.do_power_cycle();
-                self.ui.set_status(StatusMessage::info("Power cycled"));
+                if !self.refuse_timeline_action(TimelineAction::PowerCycle) {
+                    self.do_power_cycle();
+                    self.ui.set_status(StatusMessage::info("Power cycled"));
+                }
             }
             MenuAction::ToggleFullscreen => {
                 self.toggle_fullscreen();
@@ -5201,10 +5250,14 @@ impl App {
                 self.set_window_scale(scale);
             }
             MenuAction::CycleDiskSide => {
-                self.cycle_disk_side();
+                if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
+                    self.cycle_disk_side();
+                }
             }
             MenuAction::SetDiskSide(side) => {
-                self.set_disk_side(side);
+                if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
+                    self.set_disk_side(side);
+                }
             }
             MenuAction::Screenshot => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -5233,13 +5286,7 @@ impl App {
                 }
             }
             MenuAction::LoadStateSlot(slot) => {
-                if self.ra_hardcore_blocks() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled (hardcore)"));
-                } else if self.replay_interaction_locked() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled during movie"));
-                } else {
+                if !self.refuse_timeline_action(TimelineAction::LoadState) {
                     let ok = format!("Loaded from slot {}", slot + 1);
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -6380,10 +6427,12 @@ impl App {
                     self.ui.set_status(StatusMessage::error(e));
                 }
             }
+            // v2.9.9 (NF-11) — a script's load honours the same determinism
+            // gate `SetInput` does (`writes_locked` folds netplay, a movie and
+            // hardcore together); before this it checked hardcore only, so a
+            // script could rewrite a recording's timeline under it.
             ControlCmd::LoadState(slot) => {
-                if !self.ra_hardcore_blocks()
-                    && let Err(e) = self.handle_load_state(*slot)
-                {
+                if !writes_locked && let Err(e) = self.handle_load_state(*slot) {
                     self.ui.set_status(StatusMessage::error(e));
                 }
             }
@@ -6924,13 +6973,9 @@ impl App {
             SysAction::LoadState => {
                 // v2.7.0 — load-state disabled in RA hardcore mode; PR #75 (H1)
                 // — also disabled while a movie records/plays (matches the greyed
-                // menu item, so the hotkey can't bypass it).
-                if self.ra_hardcore_blocks() {
-                    self.toast_hardcore("Load state disabled (hardcore)");
-                } else if self.replay_interaction_locked() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled during movie"));
-                } else {
+                // menu item, so the hotkey can't bypass it); v2.9.9 (NF-11) —
+                // and during netplay, through the one shared rule.
+                if !self.refuse_timeline_action(TimelineAction::LoadState) {
                     // v2.9.8: the hotkey reported nothing, so a refused state
                     // (one from v2.9.7 or earlier) failed in silence.
                     #[cfg(not(target_arch = "wasm32"))]
@@ -6948,8 +6993,19 @@ impl App {
                 // fast-forward state is picked up via `publish_shared_input` (emu
                 // thread) or read directly on the sync / wasm produce paths.
             }
-            SysAction::Reset => self.do_reset(),
-            SysAction::PowerCycle => self.do_power_cycle(),
+            // v2.9.9 (NF-11) — the hotkeys obey the same lockout the menu's
+            // greyed items show; before this, F2 / F3 / F9 reached the handler
+            // during a recording, a playback or a netplay session.
+            SysAction::Reset => {
+                if !self.refuse_timeline_action(TimelineAction::Reset) {
+                    self.do_reset();
+                }
+            }
+            SysAction::PowerCycle => {
+                if !self.refuse_timeline_action(TimelineAction::PowerCycle) {
+                    self.do_power_cycle();
+                }
+            }
             SysAction::ToggleDebug => {
                 // v1.7.0 "Forge" beta.5 (#55) — the backtick (`` ` ``) key no
                 // longer toggles the debugger overlay: every chip inspector now
@@ -6984,7 +7040,11 @@ impl App {
                 #[cfg(target_arch = "wasm32")]
                 self.handle_movie_branch_wasm();
             }
-            SysAction::DiskSwap => self.cycle_disk_side(),
+            SysAction::DiskSwap => {
+                if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
+                    self.cycle_disk_side();
+                }
+            }
             SysAction::InsertCoin => {
                 // v2.5.0 — insert a Vs. System coin (acceptor #1). No-op for
                 // non-Vs. games. The coin latch clears a few frames later.
@@ -7227,23 +7287,6 @@ impl App {
         };
         ra.reset(&mut |a| nes.cpu_bus_peek(a));
     }
-
-    /// v2.7.0 — log a "blocked in hardcore mode" message (and, when an RA
-    /// session is active, surface it as an on-screen toast). A plain no-op-ish
-    /// helper available in both feature states so the gated call sites compile
-    /// uniformly.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-    #[allow(clippy::unused_self)]
-    fn toast_hardcore(&self, msg: &str) {
-        eprintln!("rustynes: {msg}");
-    }
-
-    /// v2.7.0 — `toast_hardcore` stub for builds without the RA feature; it is
-    /// never reached (`ra_hardcore_blocks()` is `const false` there), so it
-    /// just keeps the call site compiling.
-    #[cfg(not(all(not(target_arch = "wasm32"), feature = "retroachievements")))]
-    #[allow(clippy::unused_self)]
-    const fn toast_hardcore(&self, _msg: &str) {}
 
     /// v2.3.0 — the netplay produce path, used in place of the single-player
     /// `produce_one_frame` body while a session is active. Feeds this peer's
@@ -11644,12 +11687,10 @@ impl ApplicationHandler<AppEvent> for App {
                             self.save_states_ui.invalidate_slot(slot);
                             self.report_state_result(result, format!("Saved to slot {}", slot + 1));
                         }
+                        // v2.9.9 (NF-11) — the manager checked hardcore only;
+                        // a movie or netplay session now refuses it too.
                         SaveStateRequest::Load(slot) => {
-                            if self.ra_hardcore_blocks() {
-                                self.ui.set_status(StatusMessage::info(
-                                    "Load state disabled (hardcore)",
-                                ));
-                            } else {
+                            if !self.refuse_timeline_action(TimelineAction::LoadState) {
                                 let result = self.handle_load_state(slot);
                                 self.report_state_result(
                                     result,
@@ -11677,15 +11718,7 @@ impl ApplicationHandler<AppEvent> for App {
                             )));
                         }
                         SlotRequest::Load(slot) => {
-                            if self.ra_hardcore_blocks() {
-                                self.ui.set_status(StatusMessage::info(
-                                    "Load state disabled (hardcore)",
-                                ));
-                            } else if self.replay_interaction_locked() {
-                                self.ui.set_status(StatusMessage::info(
-                                    "Load state disabled during movie",
-                                ));
-                            } else {
+                            if !self.refuse_timeline_action(TimelineAction::LoadState) {
                                 self.handle_load_state_wasm(slot);
                                 self.ui.set_status(StatusMessage::success(format!(
                                     "Loaded from slot {}",
@@ -12740,6 +12773,90 @@ mod tests {
         assert!(
             !helper.contains("set_power_on_ram"),
             "apply_fast_dotloop refills work RAM"
+        );
+    }
+
+    /// v2.9.9 (NF-11) — every route to a timeline-changing action asks the
+    /// one policy in `session_policy`, not only the menu.
+    ///
+    /// The re-audit found the menu greying Reset, Power Cycle, the disk items
+    /// and Load State during a movie (and the hardware items during netplay),
+    /// while the bound hotkeys, the Save-States manager and a script reached
+    /// the same handlers unguarded: F3 during a recording produced a movie that
+    /// no longer replays, with no warning. `App` needs a window, so this is a
+    /// source-shape gate like the ones above: each dispatch arm must open with
+    /// the shared guard for its action, and the F8 branch must refuse netplay
+    /// as record, play and import already do.
+    #[test]
+    fn every_timeline_action_route_asks_the_session_policy() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn every_timeline_action_route_asks_the_session_policy"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        // (arm header, the guard it must call within its first 500 chars --
+        // room for the arm's comment, short of the next arm's guard).
+        let arms: &[(&str, &str)] = &[
+            ("SysAction::Reset =>", "TimelineAction::Reset"),
+            ("SysAction::PowerCycle =>", "TimelineAction::PowerCycle"),
+            ("SysAction::DiskSwap =>", "TimelineAction::DiskSwap"),
+            ("SysAction::LoadState =>", "TimelineAction::LoadState"),
+            ("MenuAction::Reset =>", "TimelineAction::Reset"),
+            ("MenuAction::PowerCycle =>", "TimelineAction::PowerCycle"),
+            ("MenuAction::CycleDiskSide =>", "TimelineAction::DiskSwap"),
+            (
+                "MenuAction::SetDiskSide(side) =>",
+                "TimelineAction::DiskSwap",
+            ),
+            ("MenuAction::LoadState =>", "TimelineAction::LoadState"),
+            (
+                "MenuAction::LoadStateSlot(slot) =>",
+                "TimelineAction::LoadState",
+            ),
+            (
+                "SaveStateRequest::Load(slot) =>",
+                "TimelineAction::LoadState",
+            ),
+            ("SlotRequest::Load(slot) =>", "TimelineAction::LoadState"),
+        ];
+        for (header, action) in arms {
+            let at = prod
+                .find(header)
+                .unwrap_or_else(|| panic!("dispatch arm `{header}` is gone"));
+            // Cut at the next arm (`=>`) so a neighbour's guard for the same
+            // action (CycleDiskSide / SetDiskSide) cannot satisfy this one.
+            let body = &prod[at + header.len()..];
+            let body = body.split_once(" => ").map_or(body, |(b, _)| b);
+            let window: String = body.chars().take(500).collect();
+            let guard = format!("self.refuse_timeline_action({action})");
+            assert!(
+                window.contains(&guard),
+                "`{header}` runs without `{guard}`: {window}"
+            );
+        }
+        // A script's LoadState honours the determinism gate it is handed
+        // (netplay, movie and hardcore are all folded into `writes_locked`).
+        let at = prod
+            .find("ControlCmd::LoadState(slot) =>")
+            .expect("the script LoadState arm is gone");
+        let window: String = prod[at..].chars().take(200).collect();
+        assert!(
+            window.contains("writes_locked"),
+            "a script LoadState ignores writes_locked: {window}"
+        );
+        // The F8 branch refuses netplay, as record / play / import do.
+        let body = prod
+            .split_once("fn handle_movie_branch(&self) {")
+            .map(|(_, rest)| rest.split_once(" fn ").map_or(rest, |(b, _)| b))
+            .expect("handle_movie_branch exists");
+        assert!(
+            body.contains("self.netplay.is_active()"),
+            "the F8 movie branch starts a recording during netplay"
         );
     }
 }

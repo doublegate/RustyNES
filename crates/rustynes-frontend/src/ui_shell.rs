@@ -557,6 +557,13 @@ impl UiShell {
         // (not netplay-locked, not replay-locked). Used to gate the
         // state-mutating items uniformly.
         let rom_interactive = rom && !replay_locked;
+        // v2.9.9 (NF-11) — a state load or a disk change during netplay
+        // happens on one peer only and desyncs the session, exactly as a
+        // Reset does, so these items are greyed under netplay too. The
+        // dispatch sites refuse the same cases (`session_policy`); this only
+        // makes the menu say so before the click.
+        let load_interactive = rom_interactive && !rom_change_restricted;
+        let disk_interactive = !replay_locked && !rom_change_restricted;
         // egui-0.34 menu close model (BUG-3 investigation). The new `MenuBar`
         // builds each top item as a `MenuButton` that inherits the bar's
         // `MenuConfig::close_behavior`, which defaults to
@@ -685,7 +692,7 @@ impl UiShell {
                         // reference emulator's replay recording/interaction lockout.
                         if accel_enabled(
                             ui,
-                            rom_interactive,
+                            load_interactive,
                             &ic(glyph::DOWNLOAD, crate::t!(ShellLoadState)),
                             &keys.load_state,
                         )
@@ -737,7 +744,7 @@ impl UiShell {
                                 )),
                             );
                         }
-                        if rom_interactive {
+                        if load_interactive {
                             ui.menu_button(
                                 ic(glyph::DOWNLOAD, crate::t!(ShellLoadFromSlot)),
                                 |ui| {
@@ -995,7 +1002,7 @@ impl UiShell {
                         ui.menu_button(ic(glyph::FLOPPY_DISK, "Famicom Disk System"), |ui| {
                             if accel_enabled(
                                 ui,
-                                !replay_locked,
+                                disk_interactive,
                                 &ic(glyph::FLOPPY_DISK, crate::t!(ShellSwapDiskSide)),
                                 &keys.disk_swap,
                             )
@@ -1009,7 +1016,7 @@ impl UiShell {
                             // multi-disk FDS game prompts "insert side N"), or eject.
                             // Disabled during a replay (mutating the disk diverges the
                             // recorded timeline), like the cycle item above.
-                            ui.add_enabled_ui(!replay_locked, |ui| {
+                            ui.add_enabled_ui(disk_interactive, |ui| {
                                 for i in 0..frame.disk_sides {
                                     if ui
                                         .radio(

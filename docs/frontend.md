@@ -1098,6 +1098,17 @@ reorganized the order and regrouped several items — see the per-menu notes):
   overhauled in v1.7.0 beta.5 #53 with word-wrap, colorization, navigable
   sub-pages, and intra-doc links), Keyboard Shortcuts, About.
 
+**Session lockout (v2.9.9, NF-11).** A movie and a netplay session both carry
+controller input only, so anything that changes the machine outside that
+stream breaks them: a Reset, a Power Cycle, an FDS disk change and a state load
+are refused while a movie records or plays, or a netplay session runs, and a
+state load is also refused in RA hardcore. The rule is one pure function,
+`session_policy::refusal`, and every route asks it — the menu (which greys the
+items), the hotkeys, the Save-States manager, the browser grid; a script's load
+honours the `writes_locked` gate its `SetInput` already did. The F8 movie
+branch refuses netplay, as record, play and import do. Until v2.9.9 only the
+menu enforced this, so a hotkey reached the same handler unguarded.
+
 **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only,
 determinism-neutral (the core stays byte-identical; AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps).
 (#51) The two input HUDs were **consolidated into one "Input Display" panel** —
