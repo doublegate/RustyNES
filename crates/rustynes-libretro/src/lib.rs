@@ -1863,6 +1863,40 @@ unsafe fn register_disk_control(cb: retro_environment_t) {
     }
 }
 
+/// The log line for a save state `retro_unserialize` refused (v2.9.9
+/// re-audit NL-11), phrased for the user reading the frontend's log.
+///
+/// Until v2.9.9 the core dropped the [`SnapshotError`] and returned a bare
+/// `false`, so the frontend could show only its own generic failure, although
+/// v2.9.8's CHANGELOG promises a pre-v2.9.8 state "is refused with a clear
+/// error". The common case gets its own wording: v2.9.8 (ADR 0042) stopped
+/// reading container formats below [`MIN_FORMAT_VERSION`], so a state saved
+/// by RustyNES v2.9.7 or earlier can only be replaced, not converted. Every
+/// other refusal (a different game's or board's state, a truncated or
+/// damaged file) carries the core's own reason.
+///
+/// This runs only when a restore FAILS. Run-ahead, rewind and netplay hand
+/// the core its own states, which do not fail, so nothing here is on the
+/// per-frame path.
+///
+/// [`SnapshotError`]: rustynes_core::save_state::SnapshotError
+/// [`MIN_FORMAT_VERSION`]: rustynes_core::save_state::MIN_FORMAT_VERSION
+fn refused_state_message(err: &rustynes_core::save_state::SnapshotError) -> String {
+    use rustynes_core::save_state::SnapshotError;
+    match err {
+        SnapshotError::FormatTooOld { got, min } => format!(
+            "save state refused: it is from an older RustyNES (container format {got}; \
+             this core reads format {min} and later, so states saved by RustyNES v2.9.7 \
+             or earlier cannot be loaded); re-record it from the game or an in-game save. \
+             The running game was left as it was."
+        ),
+        other => format!(
+            "save state refused: {other}. It may be from a different game or core version, \
+             or damaged. The running game was left as it was."
+        ),
+    }
+}
+
 /// The label of FDS side `index`: "Side A" to "Side Z", then "Side 27" and
 /// so on. `index` comes from the frontend, so it is bounded rather than
 /// added to `b'A'` (which would overflow `u8` past 'Z').
@@ -2590,14 +2624,26 @@ impl Core for RustyNesLibretro {
 
     fn on_unserialize(&mut self, slice: &mut [u8], _ctx: &mut UnserializeContext) -> bool {
         self.contained("retro_unserialize", false, |core| {
-            // Restores the cycle-accurate lockstep hardware state from the serialized blob.
-            if let Some(nes) = core.nes.as_mut() {
-                return nes.restore_quiet(slice).is_ok();
+            // Restores the console's (or the cabinet's two consoles') state
+            // from the serialized blob. A refused state leaves the machine as
+            // it was (NL-01); the reason goes to the frontend's log (NL-11).
+            let result = if let Some(nes) = core.nes.as_mut() {
+                nes.restore_quiet(slice)
+            } else if let Some(dual) = core.dual.as_mut() {
+                dual.restore(slice)
+            } else {
+                return false;
+            };
+            match result {
+                Ok(()) => true,
+                Err(err) => {
+                    core.log(
+                        retro_log_level::RETRO_LOG_WARN,
+                        &refused_state_message(&err),
+                    );
+                    false
+                }
             }
-            if let Some(dual) = core.dual.as_mut() {
-                return dual.restore(slice).is_ok();
-            }
-            false
         })
     }
 

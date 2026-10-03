@@ -935,6 +935,58 @@ fn a_rejected_unserialize_leaves_the_machine_as_it_was() {
     assert!(unchanged, "a rejected dual unserialize changed the cabinet");
 }
 
+/// v2.9.9 re-audit NL-11. v2.9.8 made every state from v2.9.7 and earlier
+/// unloadable (`.rns` container epoch 3, ADR 0042), and the CHANGELOG promises
+/// such a state is "refused with a clear error". `retro_unserialize` refused
+/// it, but dropped the `SnapshotError` and returned a bare `false`, so the
+/// frontend's log received nothing and the user saw only the frontend's own
+/// generic failure. The refusal must now reach the log with the reason (the
+/// format, and that older states have to be re-recorded), and a refusal for
+/// any other reason must say why too. The machine stays as it was in both
+/// cases (`a_rejected_unserialize_leaves_the_machine_as_it_was`).
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn a_refused_unserialize_logs_the_reason() {
+    use rustynes_core::save_state::MIN_FORMAT_VERSION;
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let size = serialize_size();
+    let mut state = vec![0_u8; size];
+    assert!(serialize(&mut state));
+    // The container header: 8-byte magic, then the little-endian format.
+    let mut old = state.clone();
+    old[8..10].copy_from_slice(&(MIN_FORMAT_VERSION - 1).to_le_bytes());
+    held(&LOGGED).clear();
+    let old_accepted = unserialize(&old);
+    let old_logged = held(&LOGGED).clone();
+
+    let mut damaged = state;
+    reject_last_cpu_section(&mut damaged);
+    held(&LOGGED).clear();
+    let damaged_accepted = unserialize(&damaged);
+    let damaged_logged = held(&LOGGED).clone();
+    unload();
+
+    assert!(!old_accepted, "a pre-v2.9.8 state must not load");
+    let old_line = old_logged.join("\n");
+    assert!(
+        old_line.contains("older RustyNES")
+            && old_line.contains(&format!("format {}", MIN_FORMAT_VERSION - 1))
+            && old_line.contains("re-record"),
+        "an old state's refusal must name the format and the remedy, got {old_logged:?}"
+    );
+    assert!(!damaged_accepted, "a damaged state must not load");
+    assert!(
+        damaged_logged
+            .iter()
+            .any(|line| line.contains("save state refused") && line.contains("CPU ")),
+        "any other refusal must carry the core's reason, got {damaged_logged:?}"
+    );
+}
+
 /// v2.9.1 (NL-09): a Vs. `DualSystem` state now leaves `retro_serialize`
 /// through `VsDualSystem::snapshot_into`. The test above only shows a state
 /// being REFUSED; this one shows the frontend's own state coming back. Save
