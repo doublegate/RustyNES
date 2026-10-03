@@ -217,6 +217,16 @@ impl MovieUi {
         self.recorder.take().map(MovieRecorder::finish)
     }
 
+    /// v2.9.9 (NF-20) — the in-progress recording as a finished [`Movie`],
+    /// WITHOUT ending it (for export to an external `.fm2` / `.bk2`). The
+    /// recorder is cloned and the clone finished, so recording continues and a
+    /// cancelled export dialog loses nothing; before v2.9.9 the export called
+    /// [`Self::finish_recording`] first. `None` if not recording.
+    #[must_use]
+    pub fn recording_snapshot(&self) -> Option<Movie> {
+        self.recorder.as_ref().map(|rec| rec.clone().finish())
+    }
+
     /// v1.6.0 B1 — clone the movie currently being played back (for export to an
     /// external `.fm2` / `.bk2`). Returns `None` if not playing.
     #[must_use]
@@ -744,5 +754,28 @@ mod tests {
             "player's model back"
         );
         assert!(!player.oam_decay_enabled(), "player's OAM decay back");
+    }
+
+    /// v2.9.9 (NF-20) — a snapshot of the recording leaves it recording, and
+    /// holds exactly the frames captured so far.
+    #[test]
+    fn a_recording_snapshot_does_not_end_the_recording() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let mut ui = MovieUi::default();
+        ui.start_recording_branch(&mut nes, false);
+        for _ in 0..4 {
+            ui.before_frame(&mut nes);
+            nes.run_frame();
+        }
+        let snap = ui.recording_snapshot().expect("recording");
+        assert!(ui.is_recording(), "the snapshot ended the recording");
+        assert_eq!(snap.len(), 4);
+        for _ in 0..2 {
+            ui.before_frame(&mut nes);
+            nes.run_frame();
+        }
+        assert_eq!(ui.finish_recording().unwrap().len(), 6);
+        assert!(ui.recording_snapshot().is_none(), "idle has nothing");
     }
 }

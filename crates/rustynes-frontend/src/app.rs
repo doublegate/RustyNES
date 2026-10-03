@@ -3122,7 +3122,7 @@ impl App {
     /// finish the movie, serialize it, and prompt for a `.rnm` save path
     /// via the rfd dialog. No-op if no ROM is loaded.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_record_toggle(&self) {
+    fn handle_movie_record_toggle(&mut self) {
         if self.emu.lock().movie.is_recording() {
             // Finish under a short lock; the (blocking) rfd save dialog runs
             // with the guard dropped.
@@ -3130,7 +3130,8 @@ impl App {
             let Some(movie) = finished else {
                 return;
             };
-            self.movie_save_dialog(&movie);
+            let outcome = self.movie_save_dialog(&movie);
+            self.ui.set_status(outcome);
         } else {
             // v2.3.0 — movies and netplay are mutually exclusive.
             if self.netplay.is_active() {
@@ -3292,7 +3293,10 @@ impl App {
             movie.len()
         )));
         #[cfg(not(target_arch = "wasm32"))]
-        self.movie_save_dialog(&movie);
+        {
+            let outcome = self.movie_save_dialog(&movie);
+            self.ui.set_status(outcome);
+        }
         #[cfg(target_arch = "wasm32")]
         crate::wasm_io::save_file_with_fallback(
             "rustynes-movie.rnm",
@@ -3306,7 +3310,11 @@ impl App {
     /// Serialize + write `movie` to a `.rnm` file chosen via the rfd save
     /// dialog (native). Defaults the directory to `<data_dir>/movies/`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn movie_save_dialog(&self, movie: &rustynes_core::Movie) {
+    ///
+    /// v2.9.9 (NF-20): returns the outcome for the caller's status line; it
+    /// was on stderr only, so a cancelled dialog discarded a recording with
+    /// nothing on screen to say so.
+    fn movie_save_dialog(&self, movie: &rustynes_core::Movie) -> StatusMessage {
         let dir = self.movies_dir();
         if let Some(d) = dir.as_ref() {
             // Best-effort: create the movies dir so the dialog opens there.
@@ -3320,17 +3328,23 @@ impl App {
         }
         let Some(path) = dialog.save_file() else {
             eprintln!("rustynes: movie save cancelled; recording discarded");
-            return;
+            return StatusMessage::info("Movie not saved; recording discarded");
         };
         let bytes = movie.serialize();
         match crate::atomic_write::write_atomic(&path, &bytes) {
-            Ok(()) => eprintln!(
-                "rustynes: movie saved ({} frames, {} bytes) -> {}",
-                movie.len(),
-                bytes.len(),
-                path.display()
-            ),
-            Err(e) => eprintln!("rustynes: movie save failed {}: {e}", path.display()),
+            Ok(()) => {
+                eprintln!(
+                    "rustynes: movie saved ({} frames, {} bytes) -> {}",
+                    movie.len(),
+                    bytes.len(),
+                    path.display()
+                );
+                StatusMessage::success(format!("Movie saved ({} frames)", movie.len()))
+            }
+            Err(e) => {
+                eprintln!("rustynes: movie save failed {}: {e}", path.display());
+                StatusMessage::error(format!("Movie save failed: {e}"))
+            }
         }
     }
 
@@ -3499,11 +3513,15 @@ impl App {
     /// checksum (MD5 for `.fm2`, SHA-1 for `.bk2`) is recomputed and stamped on so
     /// the movie is verifiable on `TASVideos`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_export(&self) {
+    fn handle_movie_export(&mut self) {
         // Prefer an open, non-empty TAStudio edit — it carries the TAS
         // re-record count (and is the most likely thing a user means by
-        // "export" while the piano-roll is up). Else the in-progress recording
-        // (finished here), else the loaded playback movie.
+        // "export" while the piano-roll is up). Else a snapshot of the
+        // in-progress recording, else the loaded playback movie.
+        //
+        // v2.9.9 (NF-20): a SNAPSHOT -- the recording keeps going. This used to
+        // end the recording here, before the dialog, so cancelling the export
+        // threw the whole recording away.
         let movie = {
             let tas_movie = self
                 .debugger
@@ -3515,15 +3533,17 @@ impl App {
                     guard.nes.as_ref().map(|nes| ed.to_movie(nes))
                 });
             tas_movie.or_else(|| {
-                let mut guard = self.emu.lock();
+                let guard = self.emu.lock();
                 guard
                     .movie
-                    .finish_recording()
+                    .recording_snapshot()
                     .or_else(|| guard.movie.playing_movie())
             })
         };
         let Some(movie) = movie else {
             eprintln!("rustynes: movie export: nothing to export");
+            self.ui
+                .set_status(StatusMessage::info("No movie to export"));
             return;
         };
         let dir = self.movies_dir();
@@ -3538,6 +3558,8 @@ impl App {
         }
         let Some(path) = dialog.save_file() else {
             eprintln!("rustynes: movie export cancelled");
+            self.ui
+                .set_status(StatusMessage::info("Movie export cancelled"));
             return;
         };
         // v1.7.0 "Forge" G4 — recompute the ROM digests the interchange formats
@@ -3546,12 +3568,18 @@ impl App {
         let hashes = self.movie_rom_hashes();
         if let Err(e) = Self::write_movie_file(&path, &movie, hashes.as_ref()) {
             eprintln!("rustynes: movie export failed {}: {e}", path.display());
+            self.ui
+                .set_status(StatusMessage::error(format!("Movie export failed: {e}")));
         } else {
             eprintln!(
                 "rustynes: exported movie ({} frames) -> {}",
                 movie.len(),
                 path.display()
             );
+            self.ui.set_status(StatusMessage::success(format!(
+                "Movie exported ({} frames)",
+                movie.len()
+            )));
         }
     }
 
@@ -3645,7 +3673,9 @@ impl App {
     /// window and replays bit-identically (its `StartPoint` is a real
     /// save-state + the recorded input stream).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_history_export_clip(&self, seconds: f64) {
+    ///
+    /// v2.9.9 (NF-20): every outcome reaches the status line, not stderr only.
+    fn handle_history_export_clip(&mut self, seconds: f64) {
         let movie = {
             let guard = self.emu.lock();
             // The region frame rate (NTSC ~60, PAL/Dendy ~50) for seconds->frames.
@@ -3659,6 +3689,8 @@ impl App {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("rustynes: history clip export: {e}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Clip export: {e}")));
                 return;
             }
         };
@@ -3674,20 +3706,29 @@ impl App {
         }
         let Some(path) = dialog.save_file() else {
             eprintln!("rustynes: history clip export cancelled");
+            self.ui
+                .set_status(StatusMessage::info("Clip export cancelled"));
             return;
         };
-        match crate::atomic_write::write_atomic(&path, &movie.serialize()) {
-            Ok(()) => eprintln!(
-                "rustynes: exported {:.0}s history clip ({} frames) -> {}",
-                seconds,
-                movie.len(),
-                path.display()
-            ),
-            Err(e) => eprintln!(
-                "rustynes: history clip export failed {}: {e}",
-                path.display()
-            ),
-        }
+        let status = match crate::atomic_write::write_atomic(&path, &movie.serialize()) {
+            Ok(()) => {
+                eprintln!(
+                    "rustynes: exported {:.0}s history clip ({} frames) -> {}",
+                    seconds,
+                    movie.len(),
+                    path.display()
+                );
+                StatusMessage::success(format!("Clip exported ({} frames)", movie.len()))
+            }
+            Err(e) => {
+                eprintln!(
+                    "rustynes: history clip export failed {}: {e}",
+                    path.display()
+                );
+                StatusMessage::error(format!("Clip export failed: {e}"))
+            }
+        };
+        self.ui.set_status(status);
     }
 
     /// Serialize `movie` to a `.fm2` / `.bk2` file (extension selects the
@@ -13030,5 +13071,50 @@ mod tests {
         let mut untouched = Nes::from_rom(&rom(0)).unwrap();
         apply_per_game_overlay(&mut untouched, None);
         assert_eq!(untouched.mirroring_override(), None);
+    }
+
+    /// v2.9.9 (NF-20) — exporting a recording keeps it, and every movie and
+    /// clip outcome reaches the status line.
+    ///
+    /// `handle_movie_export` took `finish_recording()` BEFORE its save dialog,
+    /// so cancelling the dialog discarded the recording, with only an
+    /// `eprintln!` ("cancelled") to say so; `movie_save_dialog` and the
+    /// history-clip export reported success, failure and cancel on stderr
+    /// only. `App` needs a window, so this pins the shape: the export takes a
+    /// snapshot of the recording, the save dialog returns its outcome, and the
+    /// two export handlers put theirs on the status line.
+    #[test]
+    fn movie_export_keeps_the_recording_and_reports_on_the_status_line() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn movie_export_keeps_the_recording_and_reports_on_the_status_line"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let body = |name: &str| -> String {
+            let (_, rest) = prod
+                .split_once(name)
+                .unwrap_or_else(|| panic!("`{name}` is gone"));
+            rest.split_once(" fn ").map_or(rest, |(b, _)| b).to_owned()
+        };
+        let export = body("fn handle_movie_export(&mut self) {");
+        assert!(
+            !export.contains("finish_recording"),
+            "the export ends the recording before the dialog"
+        );
+        assert!(export.contains("recording_snapshot()"));
+        assert!(export.contains("self.ui.set_status("));
+        assert!(
+            prod.contains(
+                "fn movie_save_dialog(&self, movie: &rustynes_core::Movie) -> StatusMessage {"
+            ),
+            "the .rnm save dialog does not return its outcome"
+        );
+        let clip = body("fn handle_history_export_clip(&mut self, seconds: f64) {");
+        assert!(clip.contains("self.ui.set_status("));
     }
 }
