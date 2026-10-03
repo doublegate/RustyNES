@@ -518,10 +518,7 @@ impl Default for RustyNesLibretro {
             options_declared: false,
             fds_save_path: None,
             fds_flush_countdown: 0,
-            vs_panel: VsPanel {
-                coin_down: [false; 4],
-                coin_frames: 0,
-            },
+            vs_panel: VsPanel::new(),
             vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
@@ -680,14 +677,26 @@ const VS_COIN_HOLD_FRAMES: u8 = 3;
 /// What one frame of the Vs. System panel does (libretro re-audit NL-08).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct VsPanelFrame {
-    /// Release every latched coin before this frame (`clear_coin`).
-    clear_coins: bool,
-    /// Acceptors to latch a coin on this frame: for a single cartridge 0-1,
-    /// for a `DualSystem` cabinet 0-1 main and 2-3 sub
-    /// (`VsDualSystem::insert_coin`).
-    insert: [bool; 4],
+    /// The coin acceptors latched for this frame, as a bitmask: for a single
+    /// cartridge bits 0-1, for a `DualSystem` cabinet bits 0-1 main and 2-3
+    /// sub (`VsDualSystem::insert_coin`). A LEVEL, applied whole every frame
+    /// (clear, then latch these), so what the game sees on a frame depends
+    /// only on the panel's record and the console's frame number -- never on
+    /// what an earlier `retro_run` left in the latch (v2.9.9 re-audit NL-13).
+    coins: u8,
     /// The service button of panel 0 (main) and 1 (a cabinet's sub).
     service: [bool; 2],
+}
+
+/// The latest coin press: the acceptors its pulse latches and the console
+/// frame the pulse started on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VsCoin {
+    /// The console frame number ([`Nes::frame`]) on which the latest press
+    /// latched a coin.
+    start: u64,
+    /// The acceptors latched (bit `n` = acceptor `n`).
+    acceptors: u8,
 }
 
 /// The Vs. System coin and service inputs, on the RetroPad (libretro
@@ -711,47 +720,102 @@ struct VsPanelFrame {
 /// [`VS_COIN_HOLD_FRAMES`] frames however long L is held, as the desktop
 /// does, because a coin switch that stayed closed is not something a game
 /// counts as coins.
+///
+/// # The pulse is timed in EMULATED frames (v2.9.9 re-audit NL-13)
+///
+/// Until v2.9.9 the pulse was a countdown decremented once per `retro_run`.
+/// Run-ahead, preemptive frames, rewind and netplay rollback call `retro_run`
+/// more than once per presented frame, with `retro_unserialize` in between,
+/// and the coin latch is host input that a save state does not carry
+/// (`snapshot_schema_audit`), so the pulse shrank with the run-ahead setting
+/// -- 3 frames at run-ahead 0, 2 at 1, 1 (17 ms, under the switch's 40-70 ms)
+/// at 2 -- and a rollback across the press lost the coin from the replayed
+/// timeline. The pulse is now recorded against the console's own frame
+/// counter, which is part of the state and so rewinds with every restore:
+///
+/// * a press latches its acceptor and records the frame it happened on;
+/// * every frame, the latch is set to the record's acceptors while the frame
+///   number is inside `start .. start + VS_COIN_HOLD_FRAMES`, and cleared
+///   outside it (the record itself is kept; see [`VsPanel::latched`]);
+/// * a frame number BEFORE the record's start means the frontend restored a
+///   state from before the press: the record is dropped and the edge
+///   detector forgets which buttons were down, so the replayed press is seen
+///   again on the frame it happens.
 #[derive(Clone, Copy, Debug, Default)]
 struct VsPanel {
-    /// Whether L was down on each port last frame (edge detection).
+    /// Whether L was down on each port at the previous `retro_run` (edge
+    /// detection).
     coin_down: [bool; 4],
-    /// Frames until the latched coins are released; 0 when none is latched.
-    coin_frames: u8,
+    /// The latest coin press, if any since the game loaded (or since a restore
+    /// to a frame before it).
+    coin: Option<VsCoin>,
 }
 
 impl VsPanel {
+    /// An idle panel: no button down, no coin in flight.
+    const fn new() -> Self {
+        Self {
+            coin_down: [false; 4],
+            coin: None,
+        }
+    }
+
+    /// The acceptors latched on console frame `frame`: the record's while
+    /// `frame` is inside its pulse, none otherwise.
+    ///
+    /// The record is deliberately KEPT once its pulse is over rather than
+    /// dropped: run-ahead runs frames past the pulse's end and then restores
+    /// to inside it, and a record dropped on that speculative frame would
+    /// cut the pulse short exactly as the call-counted countdown did.
+    fn latched(&self, frame: u64) -> u8 {
+        match self.coin {
+            Some(coin) if frame.wrapping_sub(coin.start) < u64::from(VS_COIN_HOLD_FRAMES) => {
+                coin.acceptors
+            }
+            _ => 0,
+        }
+    }
+
     /// Advance one frame given the four RetroPads; `ports` is how many of
     /// them carry a Vs. panel (2 for a single cartridge, 4 for a cabinet).
-    fn step(&mut self, pads: [JoypadState; 4], ports: usize) -> VsPanelFrame {
-        let mut frame = VsPanelFrame::default();
-        if self.coin_frames > 0 {
-            self.coin_frames -= 1;
-            frame.clear_coins = self.coin_frames == 0;
+    /// `frame` is the console's frame number ([`Nes::frame`], the main
+    /// console's for a cabinet) BEFORE this frame runs.
+    fn step(&mut self, pads: [JoypadState; 4], ports: usize, frame: u64) -> VsPanelFrame {
+        if self.coin.is_some_and(|coin| frame < coin.start) {
+            // Restored to before the press: forget it, and the buttons'
+            // previous state with it, so the replay sees the press again.
+            self.coin = None;
+            self.coin_down = [false; 4];
         }
         for (port, pad) in pads.iter().enumerate().take(ports) {
             let down = pad.contains(JoypadState::L);
             if down && !self.coin_down[port] {
-                frame.insert[port] = true;
-                self.coin_frames = VS_COIN_HOLD_FRAMES;
-                // A new coin extends the pulse; nothing is cleared this frame.
-                frame.clear_coins = false;
+                // A new coin restarts the pulse and keeps any acceptor
+                // already latched, as the desktop does.
+                let acceptors = self.latched(frame) | (1 << port);
+                self.coin = Some(VsCoin {
+                    start: frame,
+                    acceptors,
+                });
             }
             self.coin_down[port] = down;
         }
-        frame.service[0] = pads[0].contains(JoypadState::R);
-        frame.service[1] = ports > 2 && pads[2].contains(JoypadState::R);
-        frame
+        VsPanelFrame {
+            coins: self.latched(frame),
+            service: [
+                pads[0].contains(JoypadState::R),
+                ports > 2 && pads[2].contains(JoypadState::R),
+            ],
+        }
     }
 
     /// Apply a frame to a single Vs. console (acceptors 0-1, service 0).
     const fn apply_single(frame: VsPanelFrame, nes: &mut Nes) {
-        if frame.clear_coins {
-            nes.clear_coin();
-        }
-        if frame.insert[0] {
+        nes.clear_coin();
+        if frame.coins & 0b01 != 0 {
             nes.insert_coin(0);
         }
-        if frame.insert[1] {
+        if frame.coins & 0b10 != 0 {
             nes.insert_coin(1);
         }
         nes.set_vs_service(frame.service[0]);
@@ -760,11 +824,9 @@ impl VsPanel {
     /// Apply a frame to a Vs. `DualSystem` cabinet (acceptors 0-3,
     /// service panels 0-1).
     fn apply_dual(frame: VsPanelFrame, dual: &mut VsDualSystem) {
-        if frame.clear_coins {
-            dual.clear_coin();
-        }
-        for (acceptor, insert) in (0u8..).zip(frame.insert) {
-            if insert {
+        dual.clear_coin();
+        for acceptor in 0..4 {
+            if frame.coins & (1 << acceptor) != 0 {
                 dual.insert_coin(acceptor);
             }
         }
@@ -1571,11 +1633,12 @@ impl RustyNesLibretro {
         let zapper_ports = self.lightgun_ports();
         // A Vs. System cartridge's coin and service inputs, from L and R on
         // ports 1-2 (see `VsPanel`); nothing for any other cartridge.
-        let vs = if self.nes.as_ref().is_some_and(Nes::is_vs_system) {
-            let none = JoypadState::empty();
-            Some(self.vs_panel.step([jp0, jp1, none, none], 2))
-        } else {
-            None
+        let vs = match self.nes.as_ref() {
+            Some(nes) if nes.is_vs_system() => {
+                let none = JoypadState::empty();
+                Some(self.vs_panel.step([jp0, jp1, none, none], 2, nes.frame()))
+            }
+            _ => None,
         };
         {
             let Some(nes) = self.nes.as_mut() else {
@@ -1648,11 +1711,13 @@ impl RustyNesLibretro {
             read_joypad(ctx, 3),
         ];
         // Both panels of the cabinet: coins and service on L and R.
-        let vs = self.vs_panel.step(pads, 4);
         {
             let Some(dual) = self.dual.as_mut() else {
                 return;
             };
+            // The pulse is timed on the MAIN console's frame counter; the two
+            // consoles step in lockstep, one frame each per call.
+            let vs = self.vs_panel.step(pads, 4, dual.main().frame());
             VsPanel::apply_dual(vs, dual);
             for (port, pad) in pads.into_iter().enumerate() {
                 dual.set_buttons(port, nes_buttons(pad));
@@ -2792,10 +2857,7 @@ retro_core!(RustyNesLibretro {
     options_declared: false,
     fds_save_path: None,
     fds_flush_countdown: 0,
-    vs_panel: VsPanel {
-        coin_down: [false; 4],
-        coin_frames: 0,
-    },
+    vs_panel: VsPanel::new(),
     vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });

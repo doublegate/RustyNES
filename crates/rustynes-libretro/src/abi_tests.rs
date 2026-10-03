@@ -1690,6 +1690,95 @@ fn vs_dual_system_coins_reach_the_main_console() {
     );
 }
 
+/// Drive the Vs. probe cartridge for `real` presented frames with L held on
+/// port 1 for frames 5 and 6, the way `RetroArch` run-ahead of `ahead` frames
+/// drives a core: each presented frame is one `retro_run`, a
+/// `retro_serialize`, `ahead` speculative `retro_run`s and a
+/// `retro_unserialize` back. Returns the coin bit (`$00 & $20`) the game read
+/// in each presented frame, as `1` / `.`.
+fn vs_coin_under_run_ahead(ahead: usize, real: usize) -> String {
+    assert!(load(vs_probe_rom(false), true));
+    let mut buf = vec![0_u8; serialize_size()];
+    let mut seen = String::new();
+    for frame in 0..real {
+        PADS[0].store(if (5..=6).contains(&frame) { L } else { 0 }, SeqCst);
+        run_frame();
+        let (b0, _) = wram_head();
+        seen.push(if b0 & 0x20 == 0 { '.' } else { '1' });
+        if ahead > 0 {
+            assert!(serialize(&mut buf));
+            for _ in 0..ahead {
+                run_frame();
+            }
+            assert!(unserialize(&buf));
+        }
+    }
+    PADS[0].store(0, SeqCst);
+    unload();
+    seen
+}
+
+/// v2.9.9 re-audit NL-13. The Vs. coin pulse was counted in `retro_run`
+/// calls, not emulated frames, and the latch it drives is host input that a
+/// save state does not carry. Run-ahead (and preemptive frames, rewind,
+/// netplay rollback) call `retro_run` more than once per presented frame, so
+/// the 3-frame (50 ms) pulse shrank to 2 frames at run-ahead 1 and to 1
+/// frame (17 ms) at run-ahead 2 -- under the 40-70 ms the real coin switch
+/// closes for. The pulse is now timed against the console's own frame
+/// counter, which a restore rewinds, so it is the same three frames whatever
+/// the run-ahead setting.
+#[test]
+fn the_vs_coin_pulse_is_three_emulated_frames_under_run_ahead() {
+    let _frontend = frontend();
+    let expected = ".....111............";
+    for ahead in 0..=2 {
+        assert_eq!(
+            vs_coin_under_run_ahead(ahead, expected.len()),
+            expected,
+            "coin bit per presented frame at run-ahead {ahead}"
+        );
+    }
+}
+
+/// NL-13's rollback half. A frontend that restores a state from before the
+/// coin went in and replays (netplay rollback, rewind) must see the coin
+/// where the REPLAYED input puts it. Counting calls, the latch kept whatever
+/// the last call before the restore left in it -- host input is not in the
+/// state -- so the replay began with a coin nobody had inserted yet; and a
+/// panel that remembered the press across the restore would latch it on the
+/// original frame even when the replayed input presses L later (a netplay
+/// peer's corrected input).
+#[test]
+fn a_rollback_across_the_vs_coin_follows_the_replayed_input() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(false), true));
+    let mut before = vec![0_u8; serialize_size()];
+    let play = |from: usize, to: usize, press: std::ops::RangeInclusive<usize>| {
+        let mut seen = String::new();
+        for frame in from..to {
+            PADS[0].store(if press.contains(&frame) { L } else { 0 }, SeqCst);
+            run_frame();
+            seen.push(if wram_head().0 & 0x20 == 0 { '.' } else { '1' });
+        }
+        seen
+    };
+    let lead_in = play(0, 4, 5..=6);
+    assert!(serialize(&mut before));
+    // The first timeline presses L on frames 5 and 6. Roll back to the end
+    // of frame 3 with L still held, and replay with L on frames 7 and 8.
+    let first = play(4, 7, 5..=6);
+    assert!(unserialize(&before));
+    let replay = play(4, 12, 7..=8);
+    PADS[0].store(0, SeqCst);
+    unload();
+    assert_eq!(lead_in, "....");
+    assert_eq!(first, ".11", "the first timeline's coin goes in on frame 5");
+    assert_eq!(
+        replay, "...111..",
+        "the replayed timeline's coin goes in on frame 7, and only there"
+    );
+}
+
 /// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).
 fn oracle_frame(mut nes: Nes, frames: u32) -> Vec<u8> {
     for _ in 0..frames {
