@@ -106,7 +106,7 @@ copy follows at the v3.0.0 sync (ADR 0041).
 
 #### iOS / iPadOS / tvOS availability is a THIRD repo, and a hardcoded list
 
-Being on the buildbot is **necessary but not sufficient** for Apple platforms. RustyNES has had a valid `ios-arm64` core on the buildbot for some time — a 1.3 MiB arm64 Mach-O exporting all 51 `retro_*` symbols, disk-control included — and it still does not appear in RetroArch on iOS or iPadOS.
+Being on the buildbot is **necessary but not sufficient** for Apple platforms. RustyNES has had a valid `ios-arm64` core on the buildbot for some time — a 1.3 MiB arm64 Mach-O exporting all 51 `retro_*` symbols, disk-control included — and until 2026-08-16 it did not appear in RetroArch on iOS or iPadOS. That day [libretro/RetroArch#19416](https://github.com/libretro/RetroArch/pull/19416) merged, adding `rustynes` to `appstore_cores` (checked 2026-10-03: line 268 of `pkg/apple/update-cores.sh`). The rest of this section is how that was found, kept because the next core would hit the same wall.
 
 iOS cannot download cores; Apple prohibits fetching executable code. The App Store build therefore **bundles** a fixed set, chosen by `pkg/apple/update-cores.sh` in [`libretro/RetroArch`](https://github.com/libretro/RetroArch). That script holds two lists:
 
@@ -155,7 +155,9 @@ At this point, you can safely navigate to your repository settings on GitHub and
 
 ---
 
-## Pending sync — measured 2026-08-20, against upstream `master`
+## Sync of 2026-08-20 (done) — measured against upstream `master`
+
+> **Done.** This sync merged upstream as libretro-super #2074 (2026-08-28, `display_version` v2.3.9) and docs #1180 (2026-08-22, the license); #2069 (2026-08-16) was the license correction before it. It is kept as the worked example of the procedure. The next sync is prepared at v2.9.9 and submitted at v3.0.0 (ADR 0043); its diff is measured fresh then, not read from here.
 
 v2.4.0 item A. The obligation this file exists to discharge, with the **actual
 diff** rather than a description of one, so the human step is a copy and not a

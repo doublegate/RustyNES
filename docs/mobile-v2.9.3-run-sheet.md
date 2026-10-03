@@ -27,8 +27,10 @@ known issue.
 - The RetroAchievements struct layout on a 32-bit `time_t` target (i686 Linux,
   run), and on armeabi-v7a (compiled only).
 
-**No Swift has been compiled.** B1 is the first compile of every Swift change
-since v2.7.4.
+**Compiled, not run.** Since v2.9.8 (#578), the release workflow's iOS job builds
+the app for the iOS Simulator, unsigned, on every release, so B1's compile half
+is checked there. Nothing has run on a device: B1's run half and every other row
+below still need one.
 
 ## Build
 
