@@ -383,7 +383,9 @@ fn save_state() {
         return;
     };
     wasm_bindgen_futures::spawn_local(async move {
-        crate::wasm_idb::put_state(sha, CANVAS_SLOT, blob).await;
+        // The canvas embed reports through the console only (it has no
+        // status line); the outcome is logged inside `put_state`.
+        let _ = crate::wasm_idb::put_state(sha, CANVAS_SLOT, blob).await;
     });
 }
 

@@ -136,36 +136,47 @@ async fn open_db() -> Option<IdbDatabase> {
 
 /// Persist `blob` to the IDB slot keyed by the ROM SHA-256 + `slot`.
 ///
-/// Async + best-effort: logs and returns on any browser failure. Callers
-/// drive this from a gesture handler via `spawn_local`.
-pub async fn put_state(rom_sha256: [u8; 32], slot: u8, blob: Vec<u8>) {
+/// Async: logs any browser failure. Callers drive this from a gesture
+/// handler via `spawn_local`.
+///
+/// # Errors
+///
+/// v2.9.9 (NF-19): a short reason when the state was NOT stored, so the
+/// caller can show it (the outcome used to reach the browser console only).
+pub async fn put_state(rom_sha256: [u8; 32], slot: u8, blob: Vec<u8>) -> Result<(), String> {
     let Some(db) = open_db().await else {
         log("save state: IndexedDB unavailable — falling back to localStorage");
-        crate::wasm_io::localstorage_save_state(&rom_sha256, slot, &blob);
-        return;
+        return if crate::wasm_io::localstorage_save_state(&rom_sha256, slot, &blob) {
+            Ok(())
+        } else {
+            Err("browser storage unavailable or full".into())
+        };
     };
     let Ok(tx) = db.transaction_with_str_and_mode(STORE, IdbTransactionMode::Readwrite) else {
         log("save state: IndexedDB transaction failed");
-        return;
+        return Err("IndexedDB transaction failed".into());
     };
     let Ok(store) = tx.object_store(STORE) else {
         log("save state: IndexedDB object store missing");
-        return;
+        return Err("IndexedDB object store missing".into());
     };
     let key = idb_key(&rom_sha256, slot);
     // Store the raw bytes as a Uint8Array (no base64 — IDB is binary-safe).
     let value = js_sys::Uint8Array::from(blob.as_slice());
     let Ok(req) = store.put_with_key(value.as_ref(), &JsValue::from_str(&key)) else {
         log("save state: IndexedDB put failed");
-        return;
+        return Err("IndexedDB put failed".into());
     };
-    match JsFuture::from(request_to_promise(&req)).await {
-        Ok(_) => log(&format!(
+    if JsFuture::from(request_to_promise(&req)).await.is_ok() {
+        log(&format!(
             "state saved to IndexedDB slot {} ({} bytes)",
             slot + 1,
             blob.len()
-        )),
-        Err(_) => log("save state: IndexedDB write rejected (quota?)"),
+        ));
+        Ok(())
+    } else {
+        log("save state: IndexedDB write rejected (quota?)");
+        Err("the browser refused the write (storage full?)".into())
     }
 }
 
@@ -184,7 +195,8 @@ pub async fn get_state(rom_sha256: [u8; 32], slot: u8) -> Option<Vec<u8>> {
                 "migrating slot {} from localStorage -> IndexedDB",
                 slot + 1
             ));
-            put_state(rom_sha256, slot, bytes.clone()).await;
+            // Best-effort migration: the bytes are returned either way.
+            let _ = put_state(rom_sha256, slot, bytes.clone()).await;
             return Some(bytes);
         }
         return None;
@@ -373,6 +385,10 @@ thread_local! {
     /// refused record), waiting for the frontend's next tick.
     static BATTERY_NOTICES: core::cell::RefCell<Vec<String>> =
         const { core::cell::RefCell::new(Vec::new()) };
+    /// v2.9.9 (NF-19) — the outcomes of the asynchronous save-state tasks
+    /// (`true` = success), waiting for the frontend's next tick.
+    static STATE_NOTICES: core::cell::RefCell<Vec<(bool, String)>> =
+        const { core::cell::RefCell::new(Vec::new()) };
 }
 
 /// Store `write` asynchronously and queue its outcome for
@@ -400,6 +416,18 @@ pub fn push_battery_notice(notice: String) {
 #[must_use]
 pub fn take_battery_notices() -> Vec<String> {
     BATTERY_NOTICES.with(|q| core::mem::take(&mut *q.borrow_mut()))
+}
+
+/// v2.9.9 (NF-19) — queue a save-state task's outcome for the status line
+/// (`ok` selects success or error styling).
+pub fn push_state_notice(ok: bool, text: String) {
+    STATE_NOTICES.with(|q| q.borrow_mut().push((ok, text)));
+}
+
+/// v2.9.9 (NF-19) — take the save-state outcomes queued since the last call.
+#[must_use]
+pub fn take_state_notices() -> Vec<(bool, String)> {
+    STATE_NOTICES.with(|q| core::mem::take(&mut *q.borrow_mut()))
 }
 
 #[cfg(test)]

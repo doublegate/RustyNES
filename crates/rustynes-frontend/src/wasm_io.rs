@@ -47,19 +47,25 @@ pub fn local_storage() -> Option<web_sys::Storage> {
 
 /// Persist a save-state blob to `localStorage` under the per-ROM slot key.
 /// Best-effort: logs and returns on any failure (missing storage, quota).
-pub fn localstorage_save_state(rom_sha256: &[u8; 32], slot: u8, blob: &[u8]) {
+///
+/// Returns whether the state was stored (v2.9.9, NF-19: the caller reports
+/// it on the status line).
+pub fn localstorage_save_state(rom_sha256: &[u8; 32], slot: u8, blob: &[u8]) -> bool {
     let Some(storage) = local_storage() else {
         log("save state: localStorage unavailable");
-        return;
+        return false;
     };
     let key = save_state_key(rom_sha256, slot);
     let encoded = base64_encode(blob);
-    match storage.set_item(&key, &encoded) {
-        Ok(()) => log(&format!(
+    if storage.set_item(&key, &encoded).is_ok() {
+        log(&format!(
             "state saved to slot {slot} ({} bytes)",
             blob.len()
-        )),
-        Err(_) => log("save state: localStorage write failed (quota?)"),
+        ));
+        true
+    } else {
+        log("save state: localStorage write failed (quota?)");
+        false
     }
 }
 

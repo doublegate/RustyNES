@@ -4159,10 +4159,18 @@ impl App {
         // shows a placeholder for a cabinet slot, as the desktop grid does.
         let Some((sha, blob)) = self.emu.lock().save_state_blob() else {
             crate::wasm_io::log("save state: no ROM loaded");
+            crate::wasm_idb::push_state_notice(false, "No game loaded".into());
             return;
         };
+        // v2.9.9 (NF-19) — the task reports what actually happened; the
+        // caller showed only "Saving state...". A quota failure used to show
+        // "State saved".
         wasm_bindgen_futures::spawn_local(async move {
-            crate::wasm_idb::put_state(sha, slot, blob).await;
+            let (ok, text) = match crate::wasm_idb::put_state(sha, slot, blob).await {
+                Ok(()) => (true, format!("Saved to slot {}", slot + 1)),
+                Err(e) => (false, format!("Save state failed: {e}")),
+            };
+            crate::wasm_idb::push_state_notice(ok, text);
         });
     }
 
@@ -4178,12 +4186,20 @@ impl App {
     fn handle_load_state_wasm(&self, slot: u8) {
         let Some(sha) = self.emu.lock().loaded_rom_sha256() else {
             crate::wasm_io::log("load state: no ROM loaded");
+            crate::wasm_idb::push_state_notice(false, "No game loaded".into());
             return;
         };
         let emu = self.emu.clone();
+        // v2.9.9 (NF-19) — every outcome is queued for the status line (the
+        // caller showed only "Loading state..."); an empty slot, a refused
+        // state or a ROM change used to show "State loaded".
         wasm_bindgen_futures::spawn_local(async move {
             let Some(blob) = crate::wasm_idb::get_state(sha, slot).await else {
                 crate::wasm_io::log(&format!("load state: no saved state in slot {}", slot + 1));
+                crate::wasm_idb::push_state_notice(
+                    false,
+                    format!("No saved state in slot {}", slot + 1),
+                );
                 return;
             };
             let mut guard = emu.lock();
@@ -4191,12 +4207,28 @@ impl App {
             // flight; only restore if it is still the same game. v2.9.7: the
             // key and the restore cover a Vs. DualSystem cabinet too.
             if guard.loaded_rom_sha256() != Some(sha) {
+                drop(guard);
                 crate::wasm_io::log("load state: ROM changed during load — skipped");
+                crate::wasm_idb::push_state_notice(
+                    false,
+                    "State not loaded: the game changed during the read".into(),
+                );
                 return;
             }
-            match guard.restore_state_blob(&blob) {
-                Ok(()) => crate::wasm_io::log("state loaded"),
-                Err(e) => crate::wasm_io::log(&format!("load state: restore failed: {e:?}")),
+            let restored = guard.restore_state_blob(&blob);
+            drop(guard);
+            match restored {
+                Ok(()) => {
+                    crate::wasm_io::log("state loaded");
+                    crate::wasm_idb::push_state_notice(
+                        true,
+                        format!("Loaded from slot {}", slot + 1),
+                    );
+                }
+                Err(e) => {
+                    crate::wasm_io::log(&format!("load state: restore failed: {e:?}"));
+                    crate::wasm_idb::push_state_notice(false, format!("State refused: {e}"));
+                }
             }
         });
     }
@@ -5330,11 +5362,12 @@ impl App {
                     let result = self.handle_save_state(self.active_save_slot);
                     self.report_state_result(result, "State saved".into());
                 }
-                // The browser write is asynchronous; its outcome is logged.
+                // The browser write is asynchronous: a neutral status now, the
+                // real outcome when the task finishes (v2.9.9, NF-19).
                 #[cfg(target_arch = "wasm32")]
                 {
                     self.handle_save_state_wasm(self.active_save_slot);
-                    self.ui.set_status(StatusMessage::success("State saved"));
+                    self.ui.set_status(StatusMessage::info("Saving state..."));
                 }
             }
             MenuAction::LoadState => {
@@ -5344,11 +5377,11 @@ impl App {
                         let result = self.handle_load_state(self.active_save_slot);
                         self.report_state_result(result, "State loaded".into());
                     }
-                    // The browser read is asynchronous; its outcome is logged.
+                    // The browser read is asynchronous; see the save above.
                     #[cfg(target_arch = "wasm32")]
                     {
                         self.handle_load_state_wasm(self.active_save_slot);
-                        self.ui.set_status(StatusMessage::success("State loaded"));
+                        self.ui.set_status(StatusMessage::info("Loading state..."));
                     }
                 }
             }
@@ -5408,30 +5441,28 @@ impl App {
                     .set_status(StatusMessage::info(format!("Save slot {}", slot + 1)));
             }
             MenuAction::SaveStateSlot(slot) => {
-                let ok = format!("Saved to slot {}", slot + 1);
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let result = self.handle_save_state(slot);
-                    self.report_state_result(result, ok);
+                    self.report_state_result(result, format!("Saved to slot {}", slot + 1));
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
                     self.handle_save_state_wasm(slot);
-                    self.ui.set_status(StatusMessage::success(ok));
+                    self.ui.set_status(StatusMessage::info("Saving state..."));
                 }
             }
             MenuAction::LoadStateSlot(slot) => {
                 if !self.refuse_timeline_action(TimelineAction::LoadState) {
-                    let ok = format!("Loaded from slot {}", slot + 1);
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let result = self.handle_load_state(slot);
-                        self.report_state_result(result, ok);
+                        self.report_state_result(result, format!("Loaded from slot {}", slot + 1));
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
                         self.handle_load_state_wasm(slot);
-                        self.ui.set_status(StatusMessage::success(ok));
+                        self.ui.set_status(StatusMessage::info("Loading state..."));
                     }
                 }
             }
@@ -9541,6 +9572,16 @@ impl App {
         for notice in notices {
             self.ui.set_status(StatusMessage::error(notice));
         }
+        // v2.9.9 (NF-19) — the outcomes of the asynchronous state saves and
+        // loads, shown when their task finishes rather than claimed when it
+        // starts.
+        for (ok, text) in crate::wasm_idb::take_state_notices() {
+            self.ui.set_status(if ok {
+                StatusMessage::success(text)
+            } else {
+                StatusMessage::error(text)
+            });
+        }
     }
 
     /// v2.9.7 "Tandem" — flush the battery record when the page is hidden.
@@ -11840,18 +11881,12 @@ impl ApplicationHandler<AppEvent> for App {
                             self.handle_save_state_wasm(slot);
                             let sha = self.emu.lock().loaded_rom_sha256();
                             crate::wasm_save_states::open(sha);
-                            self.ui.set_status(StatusMessage::success(format!(
-                                "Saved to slot {}",
-                                slot + 1
-                            )));
+                            self.ui.set_status(StatusMessage::info("Saving state..."));
                         }
                         SlotRequest::Load(slot) => {
                             if !self.refuse_timeline_action(TimelineAction::LoadState) {
                                 self.handle_load_state_wasm(slot);
-                                self.ui.set_status(StatusMessage::success(format!(
-                                    "Loaded from slot {}",
-                                    slot + 1
-                                )));
+                                self.ui.set_status(StatusMessage::info("Loading state..."));
                             }
                         }
                     }
@@ -13180,5 +13215,64 @@ mod tests {
                 "`{name}` writes the single console only: {body}"
             );
         }
+    }
+
+    /// v2.9.9 (NF-19) — the browser reports a state save or load's REAL
+    /// outcome, not a success it has not had.
+    ///
+    /// Every browser site set "State saved" / "State loaded" right after
+    /// spawning the asynchronous `IndexedDB` task, so an empty slot, a refused
+    /// state, a ROM change during the read or a quota failure all showed
+    /// success; the real outcome reached the browser console only. The wasm
+    /// target has no test harness here, so this pins the shape: no call site
+    /// claims success, both handlers queue their outcome
+    /// (`wasm_idb::push_state_notice`), and the per-tick drain shows it.
+    #[test]
+    fn the_browser_reports_the_real_state_save_and_load_outcome() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn the_browser_reports_the_real_state_save_and_load_outcome"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let mut sites = 0;
+        for call in [
+            "self.handle_save_state_wasm(",
+            "self.handle_load_state_wasm(",
+        ] {
+            for (at, _) in prod.match_indices(call) {
+                sites += 1;
+                let after: String = prod[at..].chars().take(220).collect();
+                assert!(
+                    !after.contains("StatusMessage::success"),
+                    "a browser call site claims success before the task ran: {after}"
+                );
+            }
+        }
+        assert_eq!(
+            sites, 8,
+            "expected the eight browser save / load call sites"
+        );
+        for handler in [
+            "fn handle_save_state_wasm(&self, slot: u8) {",
+            "fn handle_load_state_wasm(&self, slot: u8) {",
+        ] {
+            let (_, rest) = prod
+                .split_once(handler)
+                .unwrap_or_else(|| panic!("`{handler}` is gone"));
+            let body = rest.split_once(" fn ").map_or(rest, |(b, _)| b);
+            assert!(
+                body.contains("push_state_notice("),
+                "`{handler}` does not report its outcome"
+            );
+        }
+        assert!(
+            prod.contains("crate::wasm_idb::take_state_notices()"),
+            "nothing shows the queued outcomes"
+        );
     }
 }
