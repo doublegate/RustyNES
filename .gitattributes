@@ -4,3 +4,14 @@
 # and break that strict equality. WGSL/GLSL line endings are not semantic.
 *.wgsl text eol=lf
 *.glsl text eol=lf
+
+# Rust sources are LF on every platform for the same reason (v2.9.8). The
+# frontend's source-shape tests read `app.rs` through `include_str!` and split
+# off the test module on "\n#[cfg(test)]\nmod tests {". A CRLF checkout -- the
+# default on the windows-latest runner -- matches no split, so the tests then
+# search their own text: `every_load_path_installs_a_dual_system_cabinet` found
+# `self.build_dual_cabinet(` 3 times instead of 1 and failed main's CI on
+# Windows only, after passing every PR run (PRs test Linux only). Every `.rs`
+# file is already LF in the index (`git ls-files --eol`: 523 of 523), so this
+# changes no committed byte; it fixes what a Windows checkout writes.
+*.rs text eol=lf

@@ -583,8 +583,10 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
 - Performance is two `ab_check.sh` runs per claim, recorded in
   `docs/performance.md`, including the end-to-end result that does not add up.
 - The MiSTer core: on-die ladder 175 passed, 0 failed, 1 expected failure, and
-  off-die 176 / 0 / 1. Both builds were re-swept at the build date, seed 2
-  stays pinned, and two clean compiles of each are byte-identical.
+  off-die 176 / 0 / 1. Both builds were re-swept at build date 261001, seed
+  2 stays pinned, and two clean compiles of each are byte-identical. That
+  261001 pair is what ships: on release day (261003) the on-die compile
+  missed setup by 0.162 ns, as v2.9.3's did at 260929.
   **No hardware has run any bitstream.**
 - The iOS Swift and the mobile device behaviour are unverified on this Linux
   host, as before.
