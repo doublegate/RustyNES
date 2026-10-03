@@ -373,6 +373,46 @@ pub(crate) fn apply_game_db_header_overrides(bytes: &mut [u8]) -> Option<u32> {
     crate::game_db::correct_rom(bytes)
 }
 
+/// v1.7.0 "Forge" H4 — apply a per-game overlay's post-construction settings
+/// to a freshly built console: its mirroring override and its Vs. DIP byte,
+/// layered ON TOP of the game-DB / Vs.-DB results so the per-game file has the
+/// final say. A no-op for `None` or an inert overlay, so the default path is
+/// byte-identical.
+///
+/// A static mirroring override is valid only on a board with hardwired
+/// mirroring; on a mapper-controlled board (MMC1, MMC3, ...) it corrupts
+/// rendering, so it is declined there with a note -- the hazard ADR 0031 and
+/// `rustynes_gamedb::correct_console` guard against.
+///
+/// v2.9.9 (NF-23): one function for both native load paths. The command-line
+/// load had its own copy WITHOUT the guard, so `rustynes game.nes` applied an
+/// override the menu would have declined.
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_per_game_overlay(nes: &mut Nes, cfg: Option<&crate::per_game::PerGameConfig>) {
+    let Some(cfg) = cfg else {
+        return;
+    };
+    if let Some(m) = cfg
+        .overrides
+        .mirroring
+        .as_deref()
+        .and_then(crate::per_game::mirroring_from_token)
+    {
+        if nes.mapper_has_hardwired_mirroring() {
+            nes.set_mirroring_override(Some(m));
+        } else {
+            eprintln!(
+                "rustynes: ignoring per-game mirroring override ({m:?}) — this \
+                 mapper controls its own mirroring; a static override would \
+                 corrupt rendering"
+            );
+        }
+    }
+    if let Some(dip) = cfg.dip_switches {
+        nes.set_vs_dip(dip);
+    }
+}
+
 /// Hand the game-DB crate its overlay directory, then apply the load-time header
 /// corrections to the startup ROM -- in that order, which is the whole point.
 ///
@@ -888,6 +928,11 @@ struct AvFinalize {
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     rom_bytes: Vec<u8>,
+    /// v2.9.9 (NF-23) — the command-line ROM's path, so the startup load
+    /// resolves the per-game overlay (`<rom>.json` beside the ROM) with it, as
+    /// the menu load does and as its own header stage already did.
+    #[cfg(not(target_arch = "wasm32"))]
+    startup_rom_path: PathBuf,
     rom_label: String,
     /// v2.8.0 Phase 5 — the emulation core: ALL per-frame produce state
     /// (the `Nes`, movie, run-ahead, perf, presented framebuffer, pacing
@@ -1328,6 +1373,7 @@ impl App {
         let prev_par_correction = config.ui.pixel_aspect_correction;
         Ok(Self {
             rom_bytes,
+            startup_rom_path: rom_path.to_path_buf(),
             rom_label,
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
@@ -1974,31 +2020,7 @@ impl App {
         // DIP value wins over the `[vs] dip` / Vs.-DB precedence. Both flow
         // through the same core setters the game-DB editor uses; a no-op for a
         // non-Vs. cart / absent override, so the default path is byte-identical.
-        if let Some(cfg) = per_game.as_ref() {
-            if let Some(m) = cfg
-                .overrides
-                .mirroring
-                .as_deref()
-                .and_then(crate::per_game::mirroring_from_token)
-            {
-                // Same hazard as the game-DB path: a static mirroring override is
-                // only valid for a hardwired-mirroring board. Honor an explicit
-                // per-game override there; on a mapper-controlled board, decline
-                // it (with a note) so a stray value can't corrupt rendering.
-                if nes.mapper_has_hardwired_mirroring() {
-                    nes.set_mirroring_override(Some(m));
-                } else {
-                    eprintln!(
-                        "rustynes: ignoring per-game mirroring override ({m:?}) — this \
-                         mapper controls its own mirroring; a static override would \
-                         corrupt rendering"
-                    );
-                }
-            }
-            if let Some(dip) = cfg.dip_switches {
-                nes.set_vs_dip(dip);
-            }
-        }
+        apply_per_game_overlay(&mut nes, per_game.as_ref());
         // v2.9.8 — every power-on setting (mask, gain, filter, OAM decay, PPU
         // revision, power-up palette, power-on RAM, fast dot path, console
         // model, palette, expansion device) and the persisted cheats go onto
@@ -9570,29 +9592,18 @@ impl App {
         self.apply_vs_db(&mut nes);
         // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override.
         Self::apply_game_db(&mut nes, &self.rom_bytes);
-        // v1.7.0 "Forge" Workstream H4 — resolve + apply the per-game overlay's
-        // post-construction settings (mirroring / Vs. DIP) for the CLI/startup
-        // ROM too, layered on top of the game-DB / Vs.-DB results above. (The
-        // overlay's load-time iNES header `overrides` are applied at the menu /
-        // drag load chokepoint; a CLI ROM uses the unrewritten image — its
-        // mirroring/DIP still take effect here.) Absent / inert ⇒ no-op.
+        // v1.7.0 "Forge" Workstream H4 — the per-game overlay's
+        // post-construction settings (mirroring / Vs. DIP) for the startup ROM
+        // too, layered on top of the game-DB / Vs.-DB results above. Its
+        // header `overrides` were applied in `App::new`
+        // (`configure_game_db_and_patch_startup_rom`). v2.9.9 (NF-23): through
+        // the menu path's function, so the hardwired-mirroring guard applies
+        // here as well, and resolved with the ROM's path like the header stage.
         #[cfg(not(target_arch = "wasm32"))]
         {
             let per_game = crate::game_db::rom_crc32(&self.rom_bytes)
-                .and_then(|crc| crate::per_game::resolve(crc, None));
-            if let Some(cfg) = per_game.as_ref() {
-                if let Some(m) = cfg
-                    .overrides
-                    .mirroring
-                    .as_deref()
-                    .and_then(crate::per_game::mirroring_from_token)
-                {
-                    nes.set_mirroring_override(Some(m));
-                }
-                if let Some(dip) = cfg.dip_switches {
-                    nes.set_vs_dip(dip);
-                }
-            }
+                .and_then(|crc| crate::per_game::resolve(crc, Some(&self.startup_rom_path)));
+            apply_per_game_overlay(&mut nes, per_game.as_ref());
         }
         // v2.9.8 — every power-on setting and the persisted cheats go onto the
         // console BEFORE it is installed, as on the menu load path (see
@@ -11995,7 +12006,7 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_load_time_header_overrides;
+    use super::{apply_load_time_header_overrides, apply_per_game_overlay};
     use rustynes_core::Nes;
 
     /// The CLI / initial-ROM path must apply the same load-time header
@@ -12935,5 +12946,89 @@ mod tests {
             body.contains("self.netplay.is_active()"),
             "the F8 movie branch starts a recording during netplay"
         );
+    }
+
+    /// v2.9.9 (NF-23) — the per-game overlay's post-construction settings go
+    /// through one function on every load path, guard included.
+    ///
+    /// The command-line load applied the `<rom>.json` mirroring override
+    /// unconditionally, where the menu load declines it on a board that
+    /// controls its own mirroring (MMC1, MMC3: the Wizards & Warriors class a
+    /// static override corrupts), and it resolved the overlay with no ROM path,
+    /// so a `<rom>.json` beside the ROM corrected the header but not the
+    /// mirroring or DIP. `App` needs a window, so this pins the shape: exactly
+    /// one production call of `set_mirroring_override`, inside the shared
+    /// function and behind the hardwired check, and no path-less resolve.
+    #[test]
+    fn the_per_game_overlay_is_applied_through_one_guarded_function() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn the_per_game_overlay_is_applied_through_one_guarded_function"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        assert_eq!(
+            prod.matches(".set_mirroring_override(").count(),
+            1,
+            "a load path sets the per-game mirroring outside the shared function"
+        );
+        let body = prod
+            .split_once("fn apply_per_game_overlay(")
+            .map(|(_, rest)| rest.split_once(" fn ").map_or(rest, |(b, _)| b))
+            .expect("the shared per-game function exists");
+        let guard = body
+            .find("mapper_has_hardwired_mirroring()")
+            .expect("the shared function checks for hardwired mirroring");
+        let set = body.find(".set_mirroring_override(").expect("and sets it");
+        assert!(guard < set, "the check must come before the override");
+        assert_eq!(
+            prod.matches("apply_per_game_overlay(&mut nes").count(),
+            2,
+            "both the menu and the command-line load use it"
+        );
+        assert!(
+            !prod.contains("per_game::resolve(crc, None)"),
+            "a load path resolves the overlay without the ROM's path"
+        );
+    }
+
+    /// v2.9.9 (NF-23) — the shared function honours a mirroring override on
+    /// a hardwired board and declines it on a mapper-controlled one (MMC3),
+    /// and always applies the DIP byte.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_per_game_mirroring_override_is_declined_on_a_mapper_controlled_board() {
+        let rom = |mapper: u8| {
+            let mut v = vec![0u8; 16 + 2 * 16 * 1024 + 8 * 1024];
+            v[..4].copy_from_slice(b"NES\x1A");
+            v[4] = 2;
+            v[5] = 1;
+            v[6] = (mapper & 0x0F) << 4;
+            v[7] = mapper & 0xF0;
+            v
+        };
+        let mut cfg = crate::per_game::PerGameConfig::default();
+        cfg.overrides.mirroring = Some("Horizontal".into());
+        cfg.dip_switches = Some(0x5A);
+
+        let mut nrom = Nes::from_rom(&rom(0)).unwrap();
+        apply_per_game_overlay(&mut nrom, Some(&cfg));
+        assert_eq!(
+            nrom.mirroring_override(),
+            Some(rustynes_core::rustynes_mappers::Mirroring::Horizontal)
+        );
+
+        let mut mmc3 = Nes::from_rom(&rom(4)).unwrap();
+        assert!(!mmc3.mapper_has_hardwired_mirroring(), "fixture: MMC3");
+        apply_per_game_overlay(&mut mmc3, Some(&cfg));
+        assert_eq!(mmc3.mirroring_override(), None, "MMC3 declines it");
+
+        let mut untouched = Nes::from_rom(&rom(0)).unwrap();
+        apply_per_game_overlay(&mut untouched, None);
+        assert_eq!(untouched.mirroring_override(), None);
     }
 }
