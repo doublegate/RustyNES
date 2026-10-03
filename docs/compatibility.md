@@ -274,7 +274,9 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   volume, behind `mapper-audio`, via `mix_audio`→`tick_with_external`). Construct
   via `Nes::from_disk(disk_bytes, bios_bytes)`. Frontend: `.fds` open/drag-drop,
   a one-time BIOS prompt (new `[fds]` config), an `F9` side-swap key + a disk
-  indicator, `.fds.sav` persistence under `<data_dir>/fds-saves/`; wasm-winit has
+  indicator, `.fds.sav` persistence under `<data_dir>/fds-saves/` (keyed, like
+  the game's save-state slots and cheat file since v2.9.9, on the disk image as
+  loaded before any write, so a disk save does not move them); wasm-winit has
   an in-browser BIOS upload (session-only). **The BIOS is user-supplied (Nintendo
   copyright — NEVER committed); real-BIOS boot is unverified in CI by design** —
   the device + audio are unit-tested (56 FDS unit tests) + an env-gated

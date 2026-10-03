@@ -2171,7 +2171,10 @@ impl App {
         let Some(dir) = self.data_dir.as_ref() else {
             return Vec::new();
         };
-        let rom_sha256 = *nes.rom_sha256();
+        // v2.9.9 (NF-17) — keyed on the save identity, which for an FDS disk
+        // is the pristine image (set by `build_fds_nes` before this runs), so
+        // a disk save does not lose the cheat file.
+        let rom_sha256 = crate::emu::save_identity(nes, self.emu.lock().fds_disk_sha256);
         let loaded = crate::cheats::load(dir, &rom_sha256);
         nes.clear_genie_codes();
         for entry in &loaded.genie {

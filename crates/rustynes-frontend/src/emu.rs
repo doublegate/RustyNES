@@ -780,6 +780,34 @@ pub struct EmuCore {
     pub lag_frames: u32,
 }
 
+/// v2.9.9 (NF-17) — the save identity of `nes`: the key of its save-state
+/// slots and its cheat file.
+///
+/// For a cartridge (and an NSF) this is [`Nes::rom_sha256`], the v2.9.8
+/// identity. For an FDS disk it is the image AS LOADED, before any disk write
+/// -- `fds_pristine`, the hash the load path takes from the pristine image and
+/// keeps in [`EmuCore::fds_disk_sha256`] to key the `.fds.sav`. The desktop
+/// boots the `.fds.sav` image when one exists, and `Nes::from_disk*` hashes
+/// whatever bytes it is given, so `rom_sha256` changed with every launch after
+/// the game's first disk save and the previous session's slots and cheats were
+/// not found.
+///
+/// `fds_pristine` is ignored for a console with no disk drive, so a stale key
+/// left from an earlier FDS game can never relabel a cartridge.
+///
+/// The complete fix is in the core: an `Nes` whose identity is the pristine
+/// image even when booted from a saved one (then this returns `rom_sha256`
+/// for every console, and movies, netplay, the HD-pack and per-game keys that
+/// still read `rom_sha256` directly agree with it).
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn save_identity(nes: &Nes, fds_pristine: Option<[u8; 32]>) -> [u8; 32] {
+    match fds_pristine {
+        Some(sha) if nes.disk_side_count() > 0 => sha,
+        _ => *nes.rom_sha256(),
+    }
+}
+
 impl EmuCore {
     /// Install a freshly-loaded single-console emulator, refreshing the cached
     /// [`Self::mapper_name`] in the same step.
@@ -813,13 +841,32 @@ impl EmuCore {
     /// v2.9.7 — the loaded game's identity (the save-state slot key): the
     /// single console's `rom_sha256`, or the MAIN console's for a Vs.
     /// `DualSystem` cabinet (both consoles run the same image). `None` with no
-    /// ROM loaded.
+    /// ROM loaded. v2.9.9 (NF-17): an FDS disk's is the pristine image's
+    /// ([`save_identity`]), so a disk save does not move the slots.
     #[must_use]
     pub fn loaded_rom_sha256(&self) -> Option<[u8; 32]> {
         self.nes
             .as_ref()
-            .map(|nes| *nes.rom_sha256())
+            .map(|nes| self.identity_of(nes))
             .or_else(|| self.dual.as_ref().map(|d| *d.main().rom_sha256()))
+    }
+
+    /// v2.9.9 (NF-17) — [`save_identity`] with this core's FDS key; plain
+    /// `rom_sha256` on wasm32, whose FDS loads always boot the pristine image
+    /// (the browser keeps no `.fds.sav`).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
+    )]
+    fn identity_of(&self, nes: &Nes) -> [u8; 32] {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            save_identity(nes, self.fds_disk_sha256)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            *nes.rom_sha256()
+        }
     }
 
     /// v2.9.7 (`T-PS-dual-savestate`) — a save-state blob of whatever is
@@ -835,7 +882,7 @@ impl EmuCore {
     #[must_use]
     pub fn save_state_blob(&self) -> Option<([u8; 32], Vec<u8>)> {
         if let Some(nes) = self.nes.as_ref() {
-            return Some((*nes.rom_sha256(), nes.snapshot()));
+            return Some((self.identity_of(nes), nes.snapshot()));
         }
         self.dual
             .as_ref()
@@ -2943,5 +2990,70 @@ mod tests {
                 assert!(handed.is_none(), "playback has nothing to save");
             }
         }
+    }
+
+    /// A synthetic 8 KiB FDS BIOS: a `JMP $E000` idle loop at the reset vector
+    /// and an `RTI` for NMI / IRQ (the mobile bridge's test fixture). Enough
+    /// for the core to build the disk system; the real `disksys.rom` is
+    /// Nintendo IP and is never committed.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn synthetic_fds_bios() -> Vec<u8> {
+        let mut bios = vec![0u8; 8 * 1024];
+        bios[..3].copy_from_slice(&[0x4C, 0x00, 0xE0]); // $E000: JMP $E000
+        bios[0x80] = 0x40; // $E080: RTI
+        bios[0x1FFA..].copy_from_slice(&[0x80, 0xE0, 0x00, 0xE0, 0x80, 0xE0]);
+        bios
+    }
+
+    /// A one-sided fwNES-headed disk image: the disk-info block signature is
+    /// all the container parser needs.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn synthetic_fds_disk() -> Vec<u8> {
+        let mut disk = vec![0u8; 16 + 65_500];
+        disk[..4].copy_from_slice(b"FDS\x1A");
+        disk[4] = 1;
+        disk[16] = 0x01;
+        disk[17..31].copy_from_slice(b"*NINTENDO-HVC*");
+        disk
+    }
+
+    /// v2.9.9 (NF-17) — an FDS game keeps one save identity across its own
+    /// disk saves.
+    ///
+    /// The desktop boots the `.fds.sav` image when one exists, and
+    /// `Nes::from_disk*` hashes the bytes it is given, so after the game's
+    /// first disk save every launch reported a DIFFERENT `rom_sha256`: the
+    /// save-state slots and the cheat file, both keyed on it, were not found
+    /// ("slot 1 is empty and the cheat list is gone"). The identity is the
+    /// image as loaded before any disk write -- the hash the app already
+    /// keeps in `fds_disk_sha256` to key the `.fds.sav` itself.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_fds_game_keeps_its_identity_after_a_disk_save() {
+        let bios = synthetic_fds_bios();
+        let pristine = synthetic_fds_disk();
+        let pristine_sha = *Nes::from_disk(&pristine, &bios).unwrap().rom_sha256();
+        // The game wrote to its disk; the next launch boots this image.
+        let mut saved = pristine;
+        saved[16 + 0x40] = 0x5A;
+        let booted = Nes::from_disk(&saved, &bios).unwrap();
+        assert_ne!(*booted.rom_sha256(), pristine_sha, "fixture: images differ");
+
+        // The load path's key for the cheat file, and the core's slot key.
+        assert_eq!(save_identity(&booted, Some(pristine_sha)), pristine_sha);
+        let mut core = EmuCore::new();
+        core.set_nes(booted);
+        core.fds_disk_sha256 = Some(pristine_sha);
+        assert_eq!(core.loaded_rom_sha256(), Some(pristine_sha));
+        let (key, _) = core.save_state_blob().unwrap();
+        assert_eq!(key, pristine_sha, "the slot key moved with the disk save");
+
+        // A cartridge ignores a stale FDS key (the load path clears it, but
+        // the identity must not depend on that ordering).
+        let cart = Nes::from_rom(&synth_nrom()).unwrap();
+        let cart_sha = *cart.rom_sha256();
+        assert_eq!(save_identity(&cart, Some(pristine_sha)), cart_sha);
+        core.set_nes(cart);
+        assert_eq!(core.loaded_rom_sha256(), Some(cart_sha));
     }
 }
