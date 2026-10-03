@@ -2357,6 +2357,13 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   instead; `the_frame0_anchor_is_the_state_the_exported_movie_starts_from` pins
   it.
 
+  **TAStudio holds its frame-0 options (v2.9.9, NF-14).** The export records
+  the options the frame-0 state was built under, and every seek and recorded
+  frame now runs under them too (`HardwareOptions::apply_live`, as movie
+  playback holds a movie's). A cheat or a Settings change made while the editor
+  is open therefore does not reach its re-emulation; before, the greenzone
+  showed the changed run and the exported movie replayed the original one.
+
   *Correction:* v2.7.3 recorded this as a known limitation, saying playback
   "power-cycles the console, which does not clear cartridge RAM". That was
   wrong in the other direction: the power cycle did clear it, battery RAM

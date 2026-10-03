@@ -240,6 +240,12 @@ pub struct TasEditor {
     /// captured with it. Every cached state descends from frame 0, so these
     /// (not the console's options at export time, which the player may have
     /// changed since) are what [`Self::to_movie`] records.
+    ///
+    /// v2.9.9 (NF-14): and what every re-emulated frame runs under
+    /// ([`Self::hold_start_options`]), as movie playback holds a movie's. A
+    /// save state carries no configuration, so before this a cheat or a
+    /// Settings change made while the editor was open reached every later
+    /// seek: the greenzone showed one run and the export replayed another.
     start_options: rustynes_core::HardwareOptions,
 }
 
@@ -280,6 +286,17 @@ impl TasEditor {
     pub fn new_from_power_on(nes: &mut Nes, budget_bytes: usize, capture_interval: usize) -> Self {
         rustynes_core::power_on_for_movie(nes);
         Self::new(nes, budget_bytes, capture_interval)
+    }
+
+    /// v2.9.9 (NF-14) — put the frame-0 options back on `nes` before it
+    /// re-emulates: the knobs the app or the Cheats panel may have changed
+    /// since the editor opened (Game Genie codes, mirroring override, Vs.
+    /// settings, console model, ...). `apply_live` sets only what differs and
+    /// never writes RAM, so a clean console costs a handful of comparisons.
+    /// The codes were valid when captured from this machine, so it cannot fail.
+    fn hold_start_options(&self, nes: &mut Nes) {
+        let held = self.start_options.apply_live(nes);
+        debug_assert!(held.is_ok(), "frame-0 options re-apply");
     }
 
     /// Bump the TAS re-record tally (saturating). Called by each input-log edit.
@@ -718,6 +735,8 @@ impl TasEditor {
             nes.power_cycle();
             0
         };
+        // v2.9.9 (NF-14) — the frames below run under the frame-0 options.
+        self.hold_start_options(nes);
         for f in start..target {
             let input = self.input_log.get(f).copied().unwrap_or_default();
             // All four ports, as the exported movie's playback drives them
@@ -750,6 +769,8 @@ impl TasEditor {
         self.input_log[frame] = input;
         // Editing here invalidates any stale downstream cache.
         self.greenzone.invalidate_after(frame);
+        // v2.9.9 (NF-14) — recorded frames run under the frame-0 options too.
+        self.hold_start_options(nes);
         input.apply_to(nes);
         nes.run_frame();
         self.record_lag(frame, nes);
@@ -1391,6 +1412,52 @@ mod tests {
             ed.input_log(),
             before.as_slice(),
             "editor unmutated on error"
+        );
+    }
+
+    /// v2.9.9 (NF-14) — a cheat added mid-session does not reach `TAStudio`'s
+    /// re-emulation, so the greenzone and the exported movie agree.
+    ///
+    /// The export records the frame-0 options (`start_options`), but nothing
+    /// held them while the editor re-emulated: a Game Genie code added after
+    /// the editor opened reached every later seek, so the greenzone showed the
+    /// coded run and the exported `.rnm` replayed the uncoded one (the
+    /// re-audit's probe: nestest, `UXPGKU` added after 120 frames, 255
+    /// differing bytes at frame 120). Seeks and recording now hold the frame-0
+    /// options, as movie playback holds a movie's.
+    #[test]
+    fn a_mid_session_cheat_does_not_reach_the_re_emulation() {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let rom = std::fs::read(manifest.join("../../tests/roms/nestest/nestest.nes"))
+            .expect("nestest.nes is committed");
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let mut ed = TasEditor::new_from_power_on(&mut nes, 1 << 24, 16);
+        for f in 0..120u32 {
+            let b = Buttons::from_bits_truncate(f.wrapping_mul(37).to_le_bytes()[0] >> 2);
+            ed.record_frame(&mut nes, FrameInput::new(b, Buttons::empty()));
+        }
+        // The player adds a code; then edits frame 1 and scrubs.
+        nes.add_genie_code("UXPGKU").unwrap();
+        ed.set_input(1, FrameInput::new(Buttons::START, Buttons::empty()));
+        ed.seek(&mut nes, 0);
+        ed.seek(&mut nes, 120);
+        let editor_fb = nes.framebuffer().to_vec();
+
+        let movie = ed.to_movie(&nes);
+        assert!(
+            movie.options.genie_codes.is_empty(),
+            "export: frame-0 options"
+        );
+        let mut replay = Nes::from_rom(&rom).unwrap();
+        movie.seek_to_start(&mut replay).unwrap();
+        let mut player = rustynes_core::MoviePlayer::new(&movie);
+        while player.apply_next(&mut replay) {
+            replay.run_frame();
+        }
+        assert_eq!(
+            replay.framebuffer(),
+            editor_fb.as_slice(),
+            "the greenzone and the exported movie disagree"
         );
     }
 }
