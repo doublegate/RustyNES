@@ -618,7 +618,15 @@ class EmulatorHandle {
      *  right-hand (sub) screen, else 0. The bridge holds it three frames. */
     fun insertCoin() {
         val c = controller ?: return
-        c.insertCoin(if (showSubScreen && c.isDualSystem()) 2u else 0u)
+        c.insertCoin(if (showSubScreen && c.isDualSystem()) SUB_CONSOLE_COIN else MAIN_CONSOLE_COIN)
+    }
+
+    private companion object {
+        /** A cabinet's main (left) console owns coin acceptors 0/1, the sub
+         *  (right) console 2/3; a single Vs. console has 0 and 1 (the bridge's
+         *  `insert_coin`). The coin button uses the first of each pair. */
+        const val MAIN_CONSOLE_COIN: UInt = 0u
+        const val SUB_CONSOLE_COIN: UInt = 2u
     }
 
     /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */

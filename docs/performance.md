@@ -6,6 +6,11 @@
 
 Set quantitative performance targets, identify expected hot paths, and lay out the profiling and optimization plan.
 
+> **Naming.** The bus type was `LockstepBus` until v2.9.8 renamed it
+> `SystemBus` (ADR 0042). The measurement records below keep the name under
+> which each profile was taken; in a current profile the symbols read
+> `<rustynes_core::bus::SystemBus as rustynes_cpu::bus::Bus>::...`.
+
 ## Targets
 
 > **These are DESIGN-PHASE targets, written before the cycle-accurate core
@@ -915,7 +920,8 @@ makes moot but is worth recording:
 - §3.1 B's accumulator is structurally zero in production for a different reason
   than the audit gives: the production bus overrides `cpu_clock`, so the only
   path that feeds it (`on_cpu_cycle` -> `tick_one_cpu_cycle`) is reached from
-  unit tests alone.
+  unit tests alone. (v2.9.8 removed the accumulator, the fold and that path,
+  ADR 0042.)
 - IMP-12 (hoist `PpuBusAdapter`) is v2.3.1's **G10**, already measured and
   rejected: no adapter symbol survives codegen, and the hoist conflicts with the
   borrow of `self.mapper` in the same loop.
@@ -1015,6 +1021,181 @@ does not reappear in run 2, and one of its own controls drifted -1.3%. A
 speed-up from making the PPU report more has no mechanism either. The shipped
 `_fast` nestest path is the one that pays. It stays well inside the frame
 budget (about 4.0 ms against 16.6 ms).
+
+### v2.9.8 — removing the /NMI edge detector, measured
+
+ADR 0042's removal (`63850aa7`: `sample_nmi_edge`, its two fields, `poll_nmi`
+and the dead `tick_one_cpu_cycle` path) is code deletion, not an optimisation
+candidate. It was decided on correctness grounds, because the detector had no
+reader after v2.0.0. Its speed was measured anyway, in isolation: candidate
+`63850aa7` against its parent `8f26671a`, with `scripts/perf/ab_check.sh --base
+63850aa7^` in a scratch worktree at `63850aa7`. Each side was built in a fresh
+target directory, pinned to `taskset -c 2-5`, and each run was started only
+once the one-minute load was under 1.5 (it was 1.18 and 1.20). Two independent
+runs on 2026-10-01:
+
+| workload | run 1 | run 2 | order-bias control, run 2 |
+| --- | --- | --- | --- |
+| `nes_run_frame_nestest` (exact) | −1.37% | −1.47% | +1.00% |
+| `nes_run_frame_flowing_palette` (exact) | −6.09% | −5.78% | +1.76% |
+| `nes_run_frame_nestest_fast` (shipped) | −5.30% | −5.61% | +0.36% (p = 0.31) |
+| `nes_run_frame_flowing_palette_fast` (shipped) | −4.90% | −5.16% | +1.50% |
+
+Every candidate change is p = 0.00 and the same sign on all four workloads, in
+both runs.
+
+- **Run 2's control is the clean one.** It drifts +0.4% to +1.8%, smaller than
+  every effect. Run 1's control drifted +0.5% to +16.5%, worst on
+  `flowing_palette_fast`, so run 1 is read only as agreeing in direction.
+- **Net of run 2's drift**, the shipped `_fast` paths gain about 3.7% to 5.3%.
+  That agrees with v2.9.1's ceiling probe of the same call (−4.09% / −4.54%,
+  row §3.1 C above) and with ADR 0042's "−4.1 to −4.7% on palette frames".
+- **Output is unchanged:** AccuracyCoin 144/144, nestest 0-diff, and no golden
+  or snapshot moved.
+
+### v2.9.8 campaign — the leads the broken tool measured, re-measured
+
+Plan items 1-3. Before v2.9.1, `ab_check.sh` built both sides into one target
+directory, so G3, G4, G5, G6, G9, D1 and D3 were "measured" with the reference
+binary on both sides. D2 and D4 had never been measured. G2 and the palette
+mirror had ceilings but no correct candidate.
+
+**Method.** Each candidate was rebuilt from its prose, against the post-break
+tree (`02a956cb`, after ADR 0042's removals). It was then measured twice with
+`scripts/perf/ab_check.sh --base HEAD`, in a dedicated worktree, each run
+starting only when the one-minute load was under 1.5. Candidates are either
+CORRECT (adoptable code) or a CEILING (deliberately incorrect, deleting the work
+outright to bound what a correct version could save). The driver, `campaign.py`,
+applies each by unique anchors and restores the files by copy afterwards. It is
+in `salvaged/tmp-scratch/` (gitignored).
+
+Change in mean frame time, run 1 / run 2. An asterisk means p >= 0.05. The
+last column is the largest order-bias control drift across the two runs.
+
+| candidate | kind | `nestest` | `palette` | `nestest_fast` | `palette_fast` | max control drift | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **D3** gain-unity flag | correct | −3.9 / −3.9 | −4.0 / −4.3 | −3.5 / −3.1 | −4.3 / −4.5 | 1.1% | **adopted** |
+| **G3** sink two per-dot lets | correct | −2.0 / −2.1 | −2.8 / −2.3 | −1.1 / −1.0 | −3.1 / −1.9 | 0.6% | **adopted** |
+| **D1** read `bits_remaining()` once | correct | −2.5 / −3.0 | −1.1 / −1.7 | −0.0\* / −0.1\* | −1.2 / −1.2 | 1.1% | **adopted** (a shipped path moves) |
+| palette read view | correct | −2.5 / +0.7\* / −1.6 | −5.9 / −3.5 / −3.7 | +0.2\* / −3.0 / **+1.0** | −4.9 / −8.3 / −4.6 | 3.4% (run 2) | **rejected**: mixed sign on shipped `nestest_fast` over three runs |
+| G2 `#[repr(C)]` on `Ppu` | correct | +0.9 / −0.2\* | +0.5 / −0.7 | +1.9 / +0.6 | +1.3 / −0.8 | 3.8% (run 1) | **rejected**: mixed sign |
+| G9 skip `bg_split_state` | ceiling | −4.0 / −5.7 | −4.1 / −4.4 | −3.6 / −3.6 | −6.1 / −4.7 | 1.8% | room of ~4-5% |
+| D4 `Pulse::muted` costs nothing | ceiling | −3.0 / −4.0 | −5.6 / −6.3 | −2.5 / −2.3 | −5.6 / −5.1 | 1.0% | room of ~2-6% |
+| D2 `FrameCounter::tick` reduced | ceiling | −3.5 / −2.3 | −6.9 / −6.8 | −2.9 / −2.6 | −6.5 / −7.2 | 0.8% | room of ~2-7% |
+| G4 no index-framebuffer store | ceiling | −2.2 / **+8.9** | −1.9 / −0.3 | −5.6 / −0.8 | −0.6 / +0.1\* | 3.6% | not interpretable: the runs disagree in sign |
+| G5 no open-bus decay loop | ceiling | — | — | — | — | +19.7% | not interpretable |
+| G6 no BG-pattern A12 reports | ceiling | — | — | — | — | +20.3% | not interpretable |
+
+Notes:
+
+- **The three adopted candidates** are byte-identical by construction. D3
+  caches a comparison of values that change only through the setter. G3 moves
+  pure computations into their only use. D1 removes a duplicate pure read.
+  - Applying D3 found a stale-cache bug before it shipped. The power-cycle
+    carry added earlier in v2.9.8 copied `channel_gain` straight into the fresh
+    APU, which would have left the cache saying "unity" and ignored a
+    non-unity gain after every Power Cycle. It now goes through the setter.
+    `a_power_cycle_keeps_a_non_unity_gain_audible` pins it, and reverting to
+    the field copy fails it.
+- **G3 reverses a recorded verdict.** v2.3.1 measured G3 as "no change", and a
+  comment in `ppu.rs` forbade re-trying it. That run is one of the seven made
+  with the defective tool. The comment now says so and cites this table.
+- **D4's ceiling contradicts v2.7.6's "about 0.2%"**, which was also measured
+  before the tool fix. The three ceilings with room (G9, D4, D2) are leads for
+  v2.9.9 or later. Each needs a correct candidate.
+- **G4, G5 and G6 are not interpretable.** G4's two runs disagree in sign.
+  G5 and G6 each had one run with a control drifting by about 20%, so their
+  candidate numbers are not reported, so that a reader does not take them as
+  results. All three are worth re-measuring on a quieter host.
+- **Combined:** the three adopted candidates are measured together below,
+  against `02a956cb`.
+
+**The three together** (`599d5ade` against its parent `02a956cb`, two runs,
+loads 1.33 and 0.81):
+
+| workload | run 1 | run 2 | control drift (max of the two runs) |
+| --- | --- | --- | --- |
+| `nes_run_frame_nestest` | −2.43% | −3.22% | 0.59% |
+| `nes_run_frame_flowing_palette` | −3.48% | −3.16% | 0.43% |
+| `nes_run_frame_nestest_fast` (shipped) | −1.81% | −2.99% | 0.73% |
+| `nes_run_frame_flowing_palette_fast` (shipped) | −4.02% | −4.34% | 0.83% |
+
+Every change is p = 0.00 and the same sign. The combined gain is smaller than
+the sum of the three individual gains, which is expected for changes in the
+same per-cycle and per-dot loops: they share the work the loop no longer does,
+and each individual run carries its own noise.
+
+**The release end to end** (`599d5ade` against v2.9.7, `e3debc9c`, two runs,
+loads 1.38 and 0.96):
+
+| workload | run 1 | run 2 | control drift (max of the two runs) |
+| --- | --- | --- | --- |
+| `nes_run_frame_nestest` | −3.14% | −0.84%* | 1.32% |
+| `nes_run_frame_flowing_palette` | −4.75% | −0.95%* | 0.78% |
+| `nes_run_frame_nestest_fast` (shipped) | −8.65% | −5.45% | 0.75% |
+| `nes_run_frame_flowing_palette_fast` (shipped) | −5.44% | −0.53%* | 1.26% |
+
+Only the shipped `nestest_fast` path is established: about 5% to 9% faster than
+v2.9.7, in both runs. On the other three, run 1's gain does not reproduce: run
+2 finds no significant change, and run 1's control drifted up to 1.3%.
+
+That does not add up. Two steps inside the release each measured a clean gain
+on every workload: the `/NMI` removal (about −5%) and the three campaign
+changes (about −3%). So something else this release added roughly offsets them
+on the palette and exact-`nestest` workloads. **Found, not investigated.** It
+is a v2.9.9 lead: bisect the release with `ab_check.sh` on
+`nes_run_frame_flowing_palette_fast`. The emphasis model (`508bc5fc`), the
+hardware-option and power-cycle plumbing, and the Header and identity changes
+are the candidates. No release-wide speed-up is claimed beyond the one
+established path.
+
+### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
+
+**Finding: presents are even in every configuration measured; run-ahead
+doubles the emulation cost and lengthens the worst produce interval.** v2.9.3
+measured one configuration (Mailbox, 120 Hz, run-ahead 0) and named the three it
+did not. This covers them.
+
+**Method.** One release frontend (`29fc5a39`, default features), 45 s
+captures with `scripts/perf/perf_capture.sh` on its default CC0 ROM
+(`flowing_palette.nes`), two per configuration. Present mode and run-ahead were
+set in the config file for each capture, and the file was restored byte for
+byte afterwards. The display was switched to 59.97 Hz with
+`kscreen-doctor output.DP-2.mode.1` for the 60 Hz captures and restored to
+119.99 Hz afterwards (maintainer-approved). Every capture passed
+`perf_log_check.py` with `present_discarded=0`. Each started with the
+one-minute load under 2 (1.6-2.0): the off-die co-simulation ladder held one
+core throughout, on a 20-thread host. Values are means over the 30 per-second
+rows after the first nine; `produced max` is the maximum.
+
+| | 60 Hz Mailbox | 60 Hz Fifo | 120 Hz Fifo | 120 Hz Mailbox, run-ahead 1 |
+| --- | --- | --- | --- | --- |
+| fps | 59.90-59.91 | 59.85-59.90 | 60.10-60.11 | 60.10-60.11 |
+| presented mean (ms) | 16.69 | 16.69-16.71 | 8.34 | 8.34 |
+| presented p50 | 16.69 | 16.69 | 8.35 | 8.33-8.34 |
+| presented p95 | 17.92-18.04 | 17.81-17.92 | 9.31-9.58 | **8.88-11.92** |
+| presented p99 | 18.65-18.66 | 18.63-18.78 | 10.45-10.72 | **9.50-13.53** |
+| redraw wait p95 | 14.62-14.65 | 14.39-14.60 | 8.57-8.61 | 8.56-8.63 |
+| produced p99 | 17.97 | 17.90-17.92 | 17.90-17.92 | 17.85-18.06 |
+| produced max | 19.01 | 19.00-19.18 | 19.23-19.27 | **21.86-24.41** |
+| cost p95 | 3.10-3.22 | 3.14 | 3.09-3.18 | **6.22-6.24** |
+
+**Reading it.** At 60 Hz each NES frame is presented once, one vblank apart,
+and Mailbox and Fifo are indistinguishable. At 120 Hz Fifo is as even as
+v2.9.3's Mailbox result (p95 10.35-11.38 ms there, 9.31-9.58 here), so the
+present mode is not what makes pacing even on this host. Run-ahead 1 emulates
+two frames per frame shown, which doubles `cost` (3.1 to 6.2 ms) and lengthens
+the worst produce interval by 3-5 ms. Its present tail is NOT established: the
+two runs disagree (p95 11.92 against 8.88 ms).
+
+**An observation, not investigated.** At 59.97 Hz the frontend produced 59.9
+fps, about 0.3% under NTSC's 60.10, while at 119.99 Hz it produced the full
+60.10. Both captures report `pacing_active = wallclock`. A slower produce rate
+at a 60 Hz display would be the shape of display-locked pacing, which the
+header does not claim.
+
+**What it does not show.** One host, one ROM, one compositor (KDE Wayland), a
+background load of about one core, and two captures per configuration.
 
 ### v2.9.3 — frame pacing after the wgpu 29 -> 30 move (#570): presents are now even
 
@@ -1192,6 +1373,11 @@ shipped `_fast` variants move, the control small beside the effect):
   changes what the deprecated `poll_nmi` reports and what two `.rns` fields
   hold, in a MINOR release, and ADR 0042 already removes the detector, its
   fields and `poll_nmi` together at v3.0.0 (maintainer decision, 2026-09-27).
+  **v2.9.8 removed it** (ADR 0042's 2026-10-01 amendment moved the removal
+  forward): `sample_nmi_edge`, its two fields and `poll_nmi` are gone, and
+  `run_ppu_to` no longer samples /NMI per dot. Measured with `ab_check.sh` in
+  "v2.9.8: removing the /NMI edge detector, measured" below: −4.9% to −6.1%
+  on three workloads, −1.4% on exact-path `nestest`.
 - **Two ceilings are not zero.** Deleting the palette mirror outright is
   −4.1% to −4.8% on the palette workloads. Skipping the unmapped-read check is
   −1.5% to −2.7% on the `nestest` pair. Both probes are INCORRECT code, so
@@ -1498,7 +1684,8 @@ What the per-item look found beyond the timing:
   that only a unit-test path feeds). Both belong to the pre-v2.0.0 machinery
   whose removal, with the deprecated trait methods that read it, is decided at
   v2.9.0 (ADR 0041); removing the internals alone would leave `poll_nmi`
-  answering wrongly.
+  answering wrongly. Both went together at v2.9.8 (ADR 0042), with §3.1 B's
+  accumulator (`dma_mc_consumed` and `take_dma_mc_consumed`).
 - **IMP-06's stores are no-ops, and are now an assertion.** The fast render
   path re-wrote three rendering-history fields to `true` that the guard in
   `tick` already requires to be `true`. The writes are replaced by a
@@ -1573,6 +1760,8 @@ checker. With **no `unsafe` in the chip stack** (the standing constraint), it
 cannot be done without restructuring `sample_nmi_edge` onto disjoint fields. And
 the profile says there is nothing to win: no `PpuBusAdapter` symbol survives
 codegen, its three field moves already inlined into callers measured at zero.
+(v2.9.8 removed `sample_nmi_edge`, so the borrow obstacle is gone; the
+nothing-to-win argument is unchanged and was not re-measured.)
 
 ---
 

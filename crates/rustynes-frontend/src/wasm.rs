@@ -157,14 +157,16 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             // off wasm because a LATER stage of it reads a filesystem, so this
             // stage — a compiled-in table needing nothing — was lost with it, and
             // every mapper / submapper / region fix was absent in the browser.
-            // CRC discarded: nothing stacks on it here, and `None` just means
-            // the bytes are not a parseable iNES image -- which `Nes::from_rom`
-            // reports properly a few lines below.
-            // `let _` is deliberate; an explicit `match` here is rejected by
-            // `clippy::single_match`. `None` means "not an iNES image" -- which
-            // includes formats this path legitimately handles -- so it must not
-            // abort the load; `Nes::from_rom` reports a genuinely malformed one.
-            let _ = crate::app::apply_game_db_header_overrides(&mut bytes);
+            // `None` means "not an iNES image" -- which includes formats this
+            // path legitimately handles -- so it must not abort the load;
+            // `Nes::from_rom` reports a genuinely malformed one.
+            //
+            // v2.9.8 — the CRC is kept now (it was discarded before): stage two of the shared correction
+            // path (`correct_console`, the hardwired-mirroring override) runs on
+            // the built console below. This embed skipped it until v2.9.8, so
+            // its mirroring corrections were missing even where its header
+            // corrections were not.
+            let crc = crate::app::apply_game_db_header_overrides(&mut bytes);
             // The file-pick is a user gesture, so it's safe to create
             // the AudioContext here (the browser autoplay policy
             // requires a gesture). Create the Nes at the audio
@@ -176,7 +178,10 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
                 |sr| Nes::from_rom_with_sample_rate(&bytes, sr),
             );
             match nes_result {
-                Ok(nes) => {
+                Ok(mut nes) => {
+                    if let Some(crc) = crc {
+                        crate::game_db::correct_console(&mut nes, crc);
+                    }
                     // v2.9.7 "Tandem" (plan item 5) — this embed draws ONE
                     // 256x240 canvas through the 2D `ImageData` path; it has
                     // no two-screen present path and no second console. A Vs.
@@ -328,7 +333,7 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
                 //   recorded input; `false` => the movie is exhausted, so stop
                 //   playback and hand control back to live input.
                 if !emu.movie.before_frame(nes) {
-                    emu.movie.stop_playback();
+                    emu.movie.stop_playback(Some(nes));
                     log("movie playback finished");
                 }
                 nes.run_frame();
@@ -461,7 +466,11 @@ fn movie_record_toggle() {
 fn movie_play_toggle() {
     let playing = EMU.with(|emu| emu.borrow().movie.is_playing());
     if playing {
-        EMU.with(|emu| emu.borrow_mut().movie.stop_playback());
+        EMU.with(|emu| {
+            let mut emu = emu.borrow_mut();
+            let emu = &mut *emu;
+            emu.movie.stop_playback(emu.nes.as_mut());
+        });
         log("movie playback stopped");
         return;
     }
@@ -473,7 +482,7 @@ fn movie_branch() {
     EMU.with(|emu| {
         let mut emu = emu.borrow_mut();
         let emu = &mut *emu;
-        let Some(nes) = emu.nes.as_ref() else {
+        let Some(nes) = emu.nes.as_mut() else {
             log("movie branch: no ROM loaded");
             return;
         };
@@ -557,12 +566,11 @@ fn start_movie_from_bytes(bytes: &[u8]) {
             log("movie play: no ROM loaded");
             return;
         };
-        if let Err(e) = movie.seek_to_start(nes) {
-            log(&format!("movie seek failed (wrong ROM?): {e:?}"));
+        let total = movie.len();
+        if let Err(e) = emu.movie.start_playback(nes, movie) {
+            log(&format!("movie seek failed: {e}"));
             return;
         }
-        let total = movie.len();
-        emu.movie.start_playback(movie);
         log(&format!("movie playback started ({total} frames)"));
     });
 }

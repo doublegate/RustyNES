@@ -17,7 +17,8 @@ Implement the 2A03 APU in `crates/rustynes-apu`: five sound channels (pulse 1, p
 The implementation that landed in Phase 3 polled the bus differently from
 the original sketch: rather than a callback-style `ApuBus` trait, the APU
 exposes `dmc_dma_pending() / dmc_dma_addr() / complete_dmc_dma(byte)` that
-the lockstep bus polls and services on its halt cycles.
+the bus polls and services on its halt cycles. The unused `ApuBus` trait was
+deprecated at v2.7.5 and removed at v2.9.8 (ADR 0042).
 
 ```rust
 pub struct Apu { /* opaque */ }
@@ -55,7 +56,7 @@ impl Apu {
 The DMC sample DMA path is intentionally a **polling protocol on the
 `Apu`**, not a callback trait. When the DMC bit-shift register empties,
 `Apu::dmc_dma_pending()` returns `true` and `Apu::dmc_dma_addr()` exposes
-the target address; the `LockstepBus` polls these on its halt cycles,
+the target address; the `SystemBus` polls these on its halt cycles,
 performs the read (which can stall the CPU for the documented 1-4 cycles
 depending on what the CPU was doing), and feeds the byte back via
 `Apu::complete_dmc_dma(byte)`. This keeps the `rustynes-apu` crate from
@@ -64,7 +65,8 @@ turn keeps the workspace dep graph one-directional (`rustynes-apu` is a leaf;
 see CLAUDE.md §"Workspace dependency graph is one-directional"). An
 earlier sketch of an `ApuBus { fn dmc_read(...) }` callback trait was
 considered but never wired in production — the polling shape is simpler
-and avoids the trait-object indirection on the DMA-read hot path.
+and avoids the trait-object indirection on the DMA-read hot path. The trait
+itself survived, unimplemented, until v2.9.8 removed it (ADR 0042).
 
 The APU is clocked by the master scheduler at CPU cadence (every other PPU dot triple on NTSC). The triangle wave timer runs at CPU clock; pulses, noise, and DMC timer-divide at half CPU clock. The frame counter divides further to ~240 Hz.
 
@@ -244,7 +246,9 @@ bug report. Pinned behaviourally by
 `frame_counter.cycle` across a mid-countdown round trip; note that
 `frame_counter.mode` cannot serve as the oracle, since `reset_rewrite_4017`
 retains bit 7 and the re-write therefore restores the mode already in effect.
-v1..=3 blobs upconvert to "no re-write pending", the resting value.
+v1..=3 blobs upconverted to "no re-write pending", the resting value, until
+v2.9.8; since then `Apu::restore` reads v4 only, with every field required
+(ADR 0042).
 
 ### DMC channel
 
@@ -312,6 +316,17 @@ where `NaN.clamp` would have stayed NaN and the rounded sample index would have
 been meaningless. Infinities clamp to the range ends. Pinned by
 `channel_gain_rejects_nan_and_clamps_infinities`.
 
+**Settings across a power cycle (v2.9.8).** A power cycle rebuilds the APU from
+`Apu::new`, and `Apu::adopt_settings_from` carries the host's settings onto the
+new one: the channel mask, the per-channel gain and the filter model. The APU
+keeps the selected model as a plain value (`Apu::filter_model`) beside the
+built chain, since a chain of coefficients does not say which model made it;
+the carried model is rebuilt as a fresh chain at the APU's sample rate, with no
+IIR history from the old timeline. Until v2.9.8 all three reverted to their
+defaults in the cycle, and every host had to push them again. Pinned by
+`a_power_cycle_keeps_every_ppu_and_apu_setting` and, for any future
+configuration field, `every_config_field_survives_a_power_cycle`.
+
 ### Band-limited sample emission
 
 Naive sample-rate conversion produces aliasing. Use a blip-buf-style ring buffer:
@@ -353,7 +368,7 @@ AccuracyCoin stays 144/144 and nestest 0-diff with the change.
 ## Edge cases and gotchas
 
 1. **DMC DMA stalls CPU mid-instruction.** Per `ref-docs/research-report.md` §DMA, halt only on read cycles. The 2A03 register-readout bug (extra reads of `$2007`, `$4015`-`$4017` while halted) must be reproduced — required by `dmc_dma_during_read4`.
-2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag.
+2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag — on the write cycle itself (both `$4015` bit 6 and the CPU /IRQ line); only the timer reset waits the 3-4 cycles. The wiki states the two separately. Until v2.9.8 the clear waited for the timer reset, and *Nintendo World Championships 1990* (`STA $4017` with `$40`, then `CLI`, with the frame flag set since cycle 29,828 and its IRQ vector in uninitialised WRAM) took the IRQ and never drew a frame. Pinned by `write_4017_inhibit_drops_the_irq_on_the_write_cycle` in `crates/rustynes-apu/src/frame_counter.rs`. Whether the inhibit also suppresses a flag set inside the 29,828-29,830 window during the pending reset is not settled by any source and is unchanged.
 3. **Length counter halt / reload race (v1.7.0 F2a; ordering fixed v2.1.5).** The effective halt flag is consulted at the half-frame length clock; a `$400x` halt-bit write — or a length **reload** — on the CPU cycle of that clock races over whether the counter is clocked this step. Silicon resolves the halt change *after* the clock and drops a reload that lands on a non-zero clock. This is modeled by the deferral mechanism in `length.rs` (`new_halt` / `reload_val` / `previous_count`, promoted by `LengthCounter::reload` after the half-frame clock and before the mixer sample — see §Length halt/reload ordering above). blargg `10.len_halt_timing` + `11.len_reload_timing` bracket the exact cycle and pass strictly on **both** the NTSC (`blargg_apu_2005.07.30`) and PAL (`pal_apu_tests`) builds. The `f2a_*` tests in `crates/rustynes-test-harness/tests/f2_accuracy_audit.rs` are the named NTSC regression pin.
 4. **Triangle disabled silently when length counter or linear counter reaches 0.** Holds the last sequencer step (does not produce a click).
    - **Ultrasonic silence (timer period < 2).** When the triangle timer period is below 2 (frequency above ~55.9 kHz), real hardware cannot follow the sequencer and the channel effectively halts. We freeze the sequencer in `Triangle::clock_timer` (the step does not advance and the output holds its current value) rather than emitting the aliasing tone, matching the common-emulator convention; Mega Man 2's "Crash Man" stage relies on this to silence the triangle. The threshold is strictly `< 2` (period 2 still clocks). See `crates/rustynes-apu/src/triangle.rs`.

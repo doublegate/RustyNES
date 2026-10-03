@@ -739,15 +739,6 @@ fn extended_m63_255_in_1() {
 }
 
 #[test]
-fn extended_m72_doraemon_world_3_by_kiku() {
-    check(
-        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
-        DEFAULT_IDLE,
-        "extended_m72_doraemon_world_3_by_kiku",
-    );
-}
-
-#[test]
 fn extended_m76_digital_devil_monogatari_megami_tensei() {
     check(
         "mapper-076-Namcot3446/Digital Devil Monogatari - Megami Tensei (J) [!].nes",

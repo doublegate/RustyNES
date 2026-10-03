@@ -170,6 +170,14 @@ const UNSUPPORTED: &[(&str, &str)] = &[
         "malformed: mapper 146 PRG is a multiple of 32 KiB and this image has 16 KiB",
     ),
     (
+        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
+        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
+    ),
+    (
+        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
+        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
+    ),
+    (
         "vs-system/VS Castlevania Hack.nes",
         "not an iNES image (no NES<1A> magic)",
     ),
@@ -183,7 +191,10 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// and a RATCHET both ways: a blank boot not listed here fails, and a listed
 /// ROM that starts rendering fails too, until it is removed. Before v2.9.6
 /// these 60 kept the sweep permanently red, which is how v2.9.5's drift went
-/// unread.
+/// unread. v2.9.8 cut the list to 52: the dirty-tail header rule and the game
+/// database's NES 2.0 guard made seven of them render, two Doraemon hacks moved
+/// to `UNSUPPORTED` as the mapper 8 images they are, and one documented
+/// blank, Famicom Jump II, was added.
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
     "mapper-009-MMC2/Gradius II (J) (VC).zip",
@@ -203,7 +214,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-036-TXC36/Strike Wolf (Asia) (Unl).zip",
     "mapper-036-TXC36/Strike Wolf (MGC-014) (Unl) [!].nes",
     "mapper-040-NTDEC2722/Super Mario Bros 2 (Lost Levels) (Unl).nes",
-    "mapper-048-TaitoTC0690/Bakushou!! Jinsei Gekijou 3 (Japan).nes",
     "mapper-050-SMB2j-FDS/Super Mario Bros. (Alt Levels) [p1][!].zip",
     "mapper-051-BallGames11in1/11-in-1 Ball Games [p1][!].zip",
     "mapper-058-Multicart58/73-in-1 [p1][!].nes",
@@ -211,8 +221,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-063-NTDEC0324/255-in-1 (As) [!].nes",
     "mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - '91 Kaimaku Hen (Japan).zip",
     "mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - OB All Star Hen (Japan).zip",
-    "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
-    "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
     "mapper-090-JYCompany90/1997 Super HIK 4-in-1 (JY-052) [p1][!].zip",
     "mapper-099-VsSystem/Balloon Fight (VS) [!].nes",
     "mapper-099-VsSystem/Mahjong (VS) [!].nes",
@@ -221,9 +229,12 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-112-NTDEC-Asder/Fighting Hero III (Unl) [!].nes",
     "mapper-139-Sachen8259C/Final Combat (Sachen-JAP) [!].zip",
     "mapper-142-KaiserKS7032/Pipe 5 (Sachen) [!].zip",
-    "mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).zip",
-    "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (Japan) (Rev 1).zip",
-    "mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).zip",
+    // Added at v2.9.8 (maintainer decision, 2026-10-01). Unlike the rest, this
+    // is the game behaving as documented, not a defect: with its battery WRAM
+    // zero-filled it waits for a reset before showing anything (NESdev
+    // "INES Mapper 153"), and a soft reset runs it. The harness boots every ROM
+    // from power-on with zeroed cartridge RAM, so this is its correct frame.
+    "mapper-153-BandaiLZ93D50/Famicom Jump II - Saikyou no 7 Nin (Japan).nes",
     "mapper-162-WaixingFS304/Chong Wu Jin Hua Shi (Pet Evolve) (ES-1085) (Ch).nes",
     "mapper-162-WaixingFS304/Shu Ma Bao Bei (Digimon Crystal) (Ch) (Wxn).nes",
     "mapper-162-WaixingFS304/Xi You Ji Hou Zhuan (Ch).nes",
@@ -236,9 +247,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-205-BMC-JC016/4-in-1 (K-3131GS, GN-45) [p1][!].zip",
     "mapper-227-BMC-1200in1/Biohazard (China) (Unl) (En) (1.0).nes",
     "mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes",
-    "mapper-241-BxROM241/Fan Kong Jing Ying (Asia) (Unl).zip",
-    "mapper-244-Decathlon/Asmik-kun Land (J) [t1].nes",
-    "mapper-244-Decathlon/Kyatto Ninden Teyandee 1stage by ZURG (Hack).nes",
     "vs-system/GVS Balloon Fight (Dual).nes",
     "vs-system/GVS Balloon Fight.nes",
     "vs-system/GVS Mahjong.nes",

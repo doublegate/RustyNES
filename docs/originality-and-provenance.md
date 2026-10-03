@@ -63,6 +63,7 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-cpu/src/cpu.rs` | Mesen2 | `SyaSxaAxa` unstable-store opcodes, `Core/NES/NesCpu.h` | GPL-3.0-or-later |
 | `crates/rustynes-ppu/src/ppu.rs` | Mesen2 | `ProcessSpriteEvaluation` (`NesPpu.cpp:1015-1141`), `ReadSpriteRam`, the OAM-data-bus / sprite-evaluation read paths; the optional OAM-decay model (`ReadSpriteRam` / `WriteSpriteRam`, `OamDecayCycleCount`), written at v2.1.4 and recorded here only at v2.9.4 | GPL-3.0-or-later |
 | `crates/rustynes-core/src/bus.rs` | TriCNES | the `Fetch` address-bus-window block (`oam_dma_read_reg_active`, a direct port); the DMA flags the unified DMA engine models (`dmc_halt`, `uni_oam_*`) | MIT |
+| `crates/rustynes-ppu/src/raw_signal.rs` | Bisqwit; Mesen2 | The raw composite-signal model, which `docs/ppu-2c02.md` has called "the canonical Bisqwit `nes_ntsc` / Mesen2 'raw palette' generator" since v2.1.9 (recorded v2.9.8 at the maintainer's direction; found while the v2.9.8 emphasis model was written, which does not use it) | Bisqwit (see §6); GPL-3.0-or-later (Mesen2) |
 | `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares BSD-2/Apache-2.0 |
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
 | `crates/rustynes-apu/src/opll.rs` | emu2413 (upstream MIT; Mesen2 vendors it) | `emu2413.{h,cpp}` | MIT |

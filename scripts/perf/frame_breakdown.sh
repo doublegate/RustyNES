@@ -13,10 +13,10 @@
 # the whole reason this script exists.
 #
 # Under `lto = "fat"` + `codegen-units = 1`, the APU is inlined wholesale into
-# `<LockstepBus as Bus>::cpu_clock`. The symbol view therefore reports:
+# `<SystemBus as Bus>::cpu_clock`. The symbol view therefore reports:
 #
 #     31.0%  rustynes_ppu::ppu::Ppu::tick
-#     18.3%  <rustynes_core::bus::LockstepBus as rustynes_cpu::bus::Bus>::cpu_clock
+#     18.3%  <rustynes_core::bus::SystemBus as rustynes_cpu::bus::Bus>::cpu_clock
 #     10.0%  rustynes_ppu::ppu::Ppu::emit_pixel
 #      ...   (rustynes_apu:: does not appear ANYWHERE, at any percent limit)
 #
@@ -41,7 +41,7 @@
 #   * `bus.rs` and `scheduler.rs` are bucketed as COUPLING regardless of crate.
 #     That is not a fudge: every one of them is the bus/scheduler abstraction,
 #     so the semantic bucket is the same whichever crate the samples came from
-#     (verified — `bus.rs` samples resolve to `LockstepBus::raw_cpu_read`,
+#     (verified — `bus.rs` samples resolve to `SystemBus::raw_cpu_read`,
 #     `Cpu::read1`, `cpu_clock`, and `Ppu::tick`, i.e. all three crates' bus
 #     files, all of them bus work).
 #   * `lib.rs` and `snapshot.rs` genuinely cannot be attributed from a basename,

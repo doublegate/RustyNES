@@ -76,6 +76,12 @@ const UNTABLED: &[(&str, &str)] = &[
     ),
     ("mmc3-a12-phase-probe", "R1/R2 A12-phase probe"),
     ("cosim-interrupt-inject", "co-simulation testbench hook"),
+    // Test plumbing: enabled only from `[dev-dependencies]`, never in a build
+    // anyone ships, so it has no status to report.
+    (
+        "test-support",
+        "rustynes-gamedb test fixture (v2.9.8): an image the database matches by CRC",
+    ),
 ];
 
 fn repo_root() -> PathBuf {

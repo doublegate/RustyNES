@@ -355,17 +355,22 @@ const CHIPS: &[Chip] = &[
                 "derived: reset at the start of every `tick_with_external` and read by \
                  observers after that same tick; never survives a tick boundary",
             ),
-            (
-                "restored_parity_tail",
-                "restore-produced protocol flag, not emulation state: `Apu::restore` sets it to \
-                 report whether the blob carried the Stage-4 parity/DMA tail, so the bus knows \
-                 not to re-seed the boot alignment over exactly-restored values. Consumed \
-                 immediately after restore; serializing it would be circular",
-            ),
             ("channel_mask", "config: frontend Audio Mixer channel mute"),
+            (
+                "filter_model",
+                "config: the host's selected output-filter model (v2.9.8), kept so a power \
+                 cycle can rebuild the chain; the chain itself, coefficients and IIR history, \
+                 lives in `blip`, which IS serialized",
+            ),
             (
                 "channel_gain",
                 "config: frontend Audio Mixer per-channel gain",
+            ),
+            (
+                "gain_is_unity",
+                "derived: v2.9.8 cache of `channel_gain == CHANNEL_GAIN_UNITY` for the \
+                 per-cycle mix; recomputed by `set_channel_gain`, the only writer of the \
+                 gain, which the power cycle also goes through",
             ),
             (
                 "last_external",
@@ -428,15 +433,15 @@ const CHIPS: &[Chip] = &[
         known_gaps: &[],
     },
     // v2.8.0 — the bus. It owns everything the chips do not (CPU RAM, the
-    // controller ports, the DMA engines, the NMI edge latches, the open-bus
-    // latches), and it was never registered here, so nothing mechanical ever
+    // controller ports, the DMA engine, the open-bus latches), and it was
+    // never registered here, so nothing mechanical ever
     // compared its struct with its serializer. The libretro audit (§2.4) found
     // `internal_data_bus` missing from the BUS section by reading; this entry
     // is what would have found it at the commit that added the field.
     Chip {
-        label: "LockstepBus",
+        label: "SystemBus",
         struct_src: include_str!("../../rustynes-core/src/bus.rs"),
-        struct_name: "LockstepBus",
+        struct_name: "SystemBus",
         snapshot_src: include_str!("../../rustynes-core/src/bus.rs"),
         writer_fns: &[
             "    fn snapshot_into_with(",
@@ -487,6 +492,11 @@ const CHIPS: &[Chip] = &[
             (
                 "power_up_palette",
                 "config: the opt-in power-up palette model, consumed only at power-on",
+            ),
+            (
+                "console_model",
+                "config: the opt-in Famicom reset wiring, consumed at power-on and reset; \
+                 the warm-up counter it acts on is in the PPU section",
             ),
             (
                 "cpu_2a03_revision",
@@ -550,41 +560,15 @@ const CHIPS: &[Chip] = &[
                  clear at any point a snapshot can be taken",
             ),
             // --- Intra-cycle state, identical at every snapshot point.
-            (
-                "m2_phase",
-                "derived: set to Low at the end of every CPU cycle, so it is Low at every \
-                 instruction boundary a snapshot is taken at",
-            ),
-            (
-                "irq_snapshot_mapper_at_low",
-                "derived: rewritten every CPU cycle before any read; read live only by the \
-                 `irq-timing-trace` record",
-            ),
+            //
+            // v2.9.8 (ADR 0042) removed `m2_phase`, three of the four
+            // `irq_snapshot_*` fields, `dma_total` and `dmc_step_was_get`, all
+            // listed here until then: they were written or read only by the
+            // pre-v2.0.0 `tick_one_cpu_cycle` and the deprecated `Bus` hooks.
             (
                 "irq_snapshot_apu_at_low",
-                "derived: rewritten every CPU cycle before any read; read live only by the \
-                 `irq-timing-trace` record",
-            ),
-            (
-                "irq_snapshot_mapper_at_high",
-                "derived: rewritten every CPU cycle before any read; its other reader is the \
-                 deprecated `poll_irq`",
-            ),
-            (
-                "irq_snapshot_apu_at_high",
-                "derived: rewritten every CPU cycle before any read; its other reader is the \
-                 deprecated `poll_irq`",
-            ),
-            // --- The pre-v2.0.0 per-cycle DMA path, dead since the one-clock scheduler.
-            (
-                "dma_total",
-                "dead: set and read only by `oam_dma_step` and the `dmc_overlap_*` methods, \
-                 `#[deprecated]` in v2.7.5 with no caller since v2.0.0; zero on the live path",
-            ),
-            (
-                "dmc_step_was_get",
-                "dead: read only by the deprecated `dmc_dma_last_was_get`, which has no \
-                 caller since v2.0.0",
+                "output-only: `irq-timing-trace` scratch, rewritten at the start of every \
+                 CPU cycle and read only by that cycle's trace record",
             ),
             // --- Output-only telemetry, never read back into emulation.
             (
@@ -617,18 +601,6 @@ const CHIPS: &[Chip] = &[
             (
                 "irq_trace",
                 "output-only: the `irq-timing-trace` capture buffer",
-            ),
-            (
-                "trace_a12_latest",
-                "output-only: cycle-trace scratch for the debug-hooks trace record",
-            ),
-            (
-                "trace_last_a12",
-                "output-only: cycle-trace scratch for the debug-hooks trace record",
-            ),
-            (
-                "trace_a12_scratch",
-                "output-only: cycle-trace scratch for the debug-hooks trace record",
             ),
             (
                 "trace_bus_access",
@@ -831,7 +803,7 @@ fn touches_field_via(src: &str, prefix: &str, field: &str) -> bool {
 
 #[test]
 fn every_bus_misc_state_field_is_encoded_and_decoded() {
-    // Review on #556 (CodeRabbit). The `LockstepBus` entry audits the bus
+    // Review on #556 (CodeRabbit). The `SystemBus` entry audits the bus
     // struct against `bus_misc_state` / `set_bus_misc_state`, the accessors
     // that move fields in and out of `BusMiscState`. That proves a field
     // reaches the transfer struct; it does not prove `encode_bus` WRITES it or
@@ -903,6 +875,66 @@ fn every_chip_field_is_serialized_or_explicitly_excluded() {
             unaccounted.len(),
             unaccounted,
         );
+    }
+}
+
+/// v2.9.8 — every PPU / APU field this audit classifies as host
+/// configuration survives a power cycle.
+///
+/// `SystemBus::power_cycle` rebuilds both chips from `new`, so a "config:"
+/// field is lost there unless something carries it: the chip's own
+/// `adopt_settings_from` (which must read `prev.<field>`), or the bus, which
+/// re-applies the few settings it also stores. Until v2.9.8 nothing carried
+/// the PPU's custom palette, overclock, fast dot path and OAM-decay switch
+/// or the APU's mask, gain and filter, and each host re-pushed them -- or,
+/// on most paths, did not. A new "config:" field now fails here until it is
+/// carried or listed below with the bus call that re-applies it.
+#[test]
+fn every_config_field_survives_a_power_cycle() {
+    /// Settings the bus re-applies itself after the rebuild (each stored on
+    /// the bus, which is therefore their source of truth), with the call
+    /// that does it.
+    const BUS_REAPPLIED: &[(&str, &str)] = &[
+        ("active_palette", "self.reapply_vs_palette()"),
+        ("die_revision", "self.ppu.set_revision("),
+        ("power_up_palette", "self.ppu.apply_power_up_palette("),
+        (
+            "dmc_driven_externally",
+            "self.apu.set_dmc_driven_externally(true)",
+        ),
+    ];
+    let bus_src = include_str!("../../rustynes-core/src/bus.rs").replace('\r', "");
+    let cycle_start = bus_src
+        .find("    pub fn power_cycle(&mut self) {")
+        .expect("SystemBus::power_cycle not found");
+    let cycle_body = &bus_src[cycle_start..];
+    let cycle_body = &cycle_body[..cycle_body.find("\n    }\n").expect("end of power_cycle")];
+    for chip in CHIPS
+        .iter()
+        .filter(|c| c.label == "Ppu" || c.label == "Apu")
+    {
+        let src = chip.struct_src.replace('\r', "");
+        let adopt_start = src
+            .find("fn adopt_settings_from(&mut self, prev: &Self) {")
+            .unwrap_or_else(|| panic!("{}: no `adopt_settings_from`", chip.label));
+        let adopt = &src[adopt_start..];
+        let adopt = &adopt[..adopt.find("\n    }\n").expect("end of adopt_settings_from")];
+        for (field, reason) in chip.derived_or_config {
+            if !reason.starts_with("config:") {
+                continue;
+            }
+            let carried = adopt.contains(&format!("prev.{field}"));
+            let reapplied = BUS_REAPPLIED
+                .iter()
+                .find(|(f, _)| f == field)
+                .is_some_and(|(_, call)| cycle_body.contains(call));
+            assert!(
+                carried || reapplied,
+                "{}: config field `{field}` is neither carried by `adopt_settings_from` \
+                 nor re-applied by `SystemBus::power_cycle`, so a power cycle drops it",
+                chip.label
+            );
+        }
     }
 }
 

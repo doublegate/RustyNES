@@ -71,3 +71,12 @@ Three facts shaped the answer:
 - **Risk accepted:** a MAJOR release ships an FPGA artefact nobody has run on
   hardware. The label, the release notes and the unchanged hardware statements
   are what keep that honest.
+
+## Amendment (2026-10-01, v2.9.8): the API break lands before v3.0.0
+
+The maintainer moved ADR 0042's removals, and the other permanent breaks found
+while v2.9.8 was being built, into v2.9.8 (see ADR 0042's amendment of the same
+date). v3.0.0 therefore no longer carries the API break. Its other content, the
+release-candidate core and both bitstreams labelled not hardware-verified, is
+unchanged. The release that carries the break stays v2.9.8 (maintainer,
+2026-10-01): it is preparation for v3.0.0, not a major of its own.

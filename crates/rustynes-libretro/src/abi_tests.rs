@@ -1669,7 +1669,7 @@ fn a_vs_dump_in_the_database_renders_with_its_palette() {
     let pick = paths.iter().find_map(|path| {
         let bytes = std::fs::read(path).ok()?;
         let nes = Nes::from_rom(&bytes).ok()?;
-        let entry = rustynes_core::vs_db::lookup(nes.rom_sha256())?;
+        let entry = rustynes_core::vs_db::lookup(&nes)?;
         (!entry.dual_system && nes.is_vs_system()).then_some((path.clone(), bytes, entry))
     });
     let Some((path, bytes, entry)) = pick else {
@@ -1704,5 +1704,36 @@ fn a_vs_dump_in_the_database_renders_with_its_palette() {
         presented == with_db,
         "{}: the core must present the database's palette",
         path.display()
+    );
+}
+
+/// v2.9.8 — the core applies the game database's load-time corrections,
+/// through the same two functions every platform calls
+/// (`rustynes_gamedb::correct_rom` / `correct_console`).
+///
+/// Until v2.9.8 the core handed the frontend's bytes straight to
+/// `Emu::from_rom`, so a RetroArch user got none of the database's mapper,
+/// submapper or region fixes. The image is one the database matches as
+/// Gradius (Europe) with every corrected field wrong: uncorrected it is NROM
+/// with 32 KiB of CHR, which NROM refuses, so `retro_load_game` failed;
+/// corrected it is CNROM at PAL timing, and the frontend must be told PAL.
+/// (The mirroring half is pinned below the C ABI, by
+/// `tests::a_cartridge_gets_the_game_database_mirroring`: no libretro call
+/// reports a nametable arrangement.)
+#[test]
+fn a_cartridge_gets_the_game_database_corrections() {
+    let rom = rustynes_gamedb::test_support::gradius_europe_with_a_wrong_header();
+    let _frontend = frontend();
+    assert!(
+        load(Box::leak(rom.into_boxed_slice()), true),
+        "the corrected image must load (uncorrected, NROM refuses it)"
+    );
+    // SAFETY: a plain query with no arguments, made while a game is loaded.
+    let region = unsafe { rust_libretro::retro_get_region() };
+    run_frame();
+    unload();
+    assert_eq!(
+        region, RETRO_REGION_PAL,
+        "the row's PAL region reaches the frontend"
     );
 }

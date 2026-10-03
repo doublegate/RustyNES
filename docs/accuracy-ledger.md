@@ -313,16 +313,18 @@ work and the item this programme's own plan names as its hardest. Deferred with
 the evidence rather than attempted on a partial understanding; the experiment was
 reverted, not left behind a flag.
 
-## Ignored-test dispositions (all 20)
+## Ignored-test dispositions
 
-Every `#[ignore]`'d test in the workspace, with its disposition. **None is an
+Every `#[ignore]`'d test in the workspace at v2.1.0, with its disposition (20
+then; the seven permanent historical pins were deleted at v2.9.8, see below).
+**None is an
 open accuracy gap** — each is either a superseded historical pin, a by-design
 revision/fixture/network limitation, or the MMC3 residual (closed for the
 shipping default; one axis-B lever deferred to a maintainer decision).
 
 | Group | Count | Tests | Disposition |
 |---|---|---|---|
-| Permanent historical pins | 7 | APU `$4015`-load / reload-arm / `put_cycle` (`apu.rs`), CPU interrupt-dispatch ×3 (`opcodes.rs`), PPU BG-shifter (`ppu.rs`) | Pin **superseded pre-master-clock** unit assertions on mock buses; the master-clock core is the only scheduler, so these legitimately cannot be un-ignored. Real coverage supersedes them: AccuracyCoin 100%, `cpu_interrupts_v2` 5/5 strict, `visual_regression` 7/7 |
+| Permanent historical pins | 7 → **0** | APU `$4015`-load / reload-arm / `put_cycle` (`apu.rs`), CPU interrupt-dispatch ×3 (`opcodes.rs`), PPU BG-shifter (`ppu.rs`) | Pinned **superseded pre-master-clock** unit assertions on mock buses that could never be un-ignored. **Deleted at v2.9.8** (ADR 0042): the CPU three overrode the removed `poll_irq` / `poll_nmi` hooks, and all seven were records of a scheduler that no longer exists. Real coverage supersedes them: AccuracyCoin 100%, `cpu_interrupts_v2` 5/5 strict, `visual_regression` |
 | MMC3 R1/R2 scanline-IRQ | 4 | `mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `/5` #2, `/6` #2 | **CLOSED for the shipping default** (ADR 0002 F5.0, 2026-07-09; refined 2026-07-11) — a ≤1-CPU-cycle differential; **zero production-ROM impact**; 21+ falsified levers, all *tested* levers non-curative. The v2.1.5 A12-phase probe (`mmc3_r1r2_phase_probe`) showed post-access IRQ-clocking rises DO exist on `/5`+`/6` (`irq_post=4`) — the one untested axis-B lever (the M2-edge low-time filter) was **tried in v2.9.5 and refuted**: thresholds 2, 3 and 4 give an identical failing set and messages, because the smallest low time at an IRQ-clocking rise is 91 CPU cycles on the scanline ROMs (ADR 0002, v2.9.5 update). Fail-loud `*_currently_fails` companions stay |
 | MMC3 NEC-rev-B | 1 | `mmc3_test_2/6-MMC3_alt` | By-design: only one of the two *opposite* silicon revisions can pass; the project defaults to Sharp rev A (sub-ROM 5 passes strictly) |
 | Vs. DualSystem GVS boots | 5 | `vs_dualsystem` boot ×4 + 1 combined-dump diagnostic | Fixture-limited: the staged GVS dumps are the MAME maincpu half only (sub-CPU PRG absent), so boot cannot complete; needs a combined 64 KiB dual dump (see `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`) |

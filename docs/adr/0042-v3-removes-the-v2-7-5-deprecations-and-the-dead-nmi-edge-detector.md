@@ -123,3 +123,97 @@ Two items for v3.0.0, alongside the decision above:
   it `#[non_exhaustive]` in the same break, so later fields stop being API
   breaks. The editor does not need them either way, since the preserving
   writer keeps what it does not model.
+
+## Amendment (2026-10-01, v2.9.8): the removals move into v2.9.8
+
+The maintainer asked which permanent changes the project would make if it did
+not care about breaking the past, then directed: "do all of this now, don't wait
+for a future version or release". v2.9.8 therefore carries this ADR's whole
+decision, and also settles the questions it left for v3.0.0:
+
+- **`LockstepBus` is renamed `SystemBus`.** `rustynes_cpu::Bus` is the trait it
+  implements, so `Bus` was ruled out to avoid the collision.
+- **Older `.rns` states are rejected cleanly**, not read and discarded.
+  `BUS_SECTION_VERSION` goes 1 -> 2, and every legacy-format reader the core
+  still carries goes with it (ADR 0003's pattern, as v2.0.0 did under ADR 0028).
+  v2.9.8 had already made old cartridge saves unfindable by moving the ROM
+  identity off the header (`084daf28`), so those readers were close to
+  unreachable.
+- **`Header` models its remaining bytes** (the Vs. hardware type, the extended
+  console type, bytes 14-15 and the NVRAM split) and **becomes
+  `#[non_exhaustive]`**, so later fields are not API breaks.
+  `serialize_header` is removed and `canonical_header` becomes private.
+
+Unchanged by the move: emulation output must stay byte-identical (goldens,
+AccuracyCoin 144/144, nestest 0-diff), because everything removed is
+unreachable or dead.
+
+This contradicts the Decision paragraph above ("done at v3.0.0, not before: a
+v2.9.x release is MINOR"). That paragraph is kept as written and superseded
+here. **The release keeps the number v2.9.8** (maintainer, 2026-10-01): "No
+major version change - we're prepping for v3.0.0, I consider this all work
+towards that release". The v2.9.x line is the run-up to v3.0.0, and this break
+is part of that preparation. The rule above ("a v2.9.x release is MINOR") is
+deliberately set aside for this one release, and that is recorded here, not
+left implicit.
+
+## Implementation record (v2.9.8)
+
+Recorded as the work landed, so the next reader does not have to diff for it.
+
+- **Removed as decided:** the 18 deprecated `rustynes_cpu::Bus` methods and
+  their overrides, `rustynes_apu::ApuBus` and its re-export,
+  `dmc_dma_step_impl`, `sample_nmi_edge` with `last_nmi_level` /
+  `nmi_edge_latch`, `oam_dma_overlap_cycle`, `dma_total` and
+  `dmc_step_was_get`.
+- **Also dead, found by the removal:** the pre-v2.0.0 `tick_one_cpu_cycle`.
+  Its only caller was `LockstepBus`'s `on_cpu_cycle` override, and the bus
+  overrides `cpu_clock`, the one path that calls `on_cpu_cycle`, so it ran
+  only in three `nes.rs` unit tests (moved onto `cpu_clock`). With it went
+  the state only it wrote or only the removed hooks read: `m2_phase` and the
+  public `current_m2_phase` (always `Low` on the live path), three of the
+  four `irq_snapshot_*` fields (the fourth survives under `irq-timing-trace`),
+  `region_dividers`, the OAM DMA's owed-cycle counter and byte index, the
+  `dma_mc_consumed` accumulator with the trait's `take_dma_mc_consumed` and
+  the `Cpu::end_cycle` fold that drained it, and the per-sub-dot A12 capture
+  of the IRQ trace (its column has been empty since v2.0.0 and stays in the
+  CSV schema). `M2Phase` stays: it is the IRQ trace's vocabulary.
+- **Renamed:** `LockstepBus` is `SystemBus` in the code, its rustdoc, the
+  current docs and `AGENTS.md`. Historical records (ADRs, audits, release
+  notes, CHANGELOG history, archived and per-release plans, the measured
+  profiles in `docs/performance.md`) keep the old name.
+- **Save states (the amendment's "every legacy-format reader"):** the
+  container format moves 2 -> 3, and `parse_header` refuses anything older
+  than `MIN_FORMAT_VERSION` (3) with the new `SnapshotError::FormatTooOld`.
+  This follows ADR 0028's v2.0.0 approach of bumping the container at a
+  format break, and goes one step further: ADR 0028's bump only signalled the
+  line while rejection happened per section, but here several sections (CPU
+  4, APU 4, PPU 11, most mappers) keep their numbers because their layouts
+  did not move, so without the header check a v2.9.7 file would be refused at
+  whichever section came first, with a message naming that section. The BUS
+  section moves 1 -> 2 with every field required. Removed readers: BUS
+  (every trailing-default tail, and an unknown expansion-device tag read as
+  "none"); APU (the version 1-3 frame-counter migrations, the trailing-optional
+  DMC-DMA bytes and Stage-4 tail, and with it `Apu::snapshot_restored_parity`
+  and the bus's re-seed branch); PPU (the version 1-10 upconversions); the
+  mappers listed in `docs/mappers.md` "Save-state versions" (with
+  `A12RiseFilter::from_legacy_level`). The CPU, OPLL and Vs. `DualSystem`
+  readers were already exact. Tests that pinned old-format acceptance now
+  assert rejection.
+- **Superseded test pins deleted:** the seven `#[ignore]`d "permanent-by-design"
+  pins of the pre-master-clock scheduler (three CPU mock-bus interrupt tests,
+  which overrode `poll_irq` / `poll_nmi`, three APU DMC / `put_cycle` tests
+  and one PPU BG-shifter test). The MMC3 escape hatches, the NEC rev B
+  `mmc3_alt` and the two `mmc3_test_v1` "SUPERSEDED ASSERTION" pins stay:
+  their reasons name a by-design revision or a withdrawn assertion with a
+  live `*_currently_fails` companion, not a scheduler that no longer exists.
+- **Kept:** `Bus::on_cpu_cycle`. It is the default body of `cpu_clock`, which
+  every simple test bus (`nestest`, `blargg`, the CPU benches) relies on.
+- **Provenance:** `rustynes-core/src/bus.rs` has carried a `// Provenance:`
+  header since 2026-09-28 (the TriCNES OAM-DMA register-window read and the
+  unified DMA engine's state), which the Consequences above predate. The
+  header is unchanged, and so is every comment naming TriCNES or Mesen2. One
+  removed function touched a disclosed item: `dmc_dma_step_impl` read and
+  wrote `dmc_halt`, which the header names as modelled on TriCNES's DMA flags.
+  The field stays, used by the unified engine; whether the removed function
+  was itself derived is not established here and goes to the maintainer.

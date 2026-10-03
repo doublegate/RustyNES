@@ -83,8 +83,8 @@ a coin is latched (`Nes::insert_coin`); PC10 games render directly.
 
 ### Vs. System per-game database
 
-`crates/rustynes-core/src/vs_db.rs` is an embedded, SHA-256-keyed, binary-searched
-table (`no_std`-safe const data; `rustynes_core::vs_db::lookup`) that closes two gaps
+`crates/rustynes-core/src/vs_db.rs` is an embedded, SHA-256-keyed table
+(`no_std`-safe const data; `rustynes_core::vs_db::lookup`) that closes two gaps
 for Vs. carts:
 
 1. **Correct PPU palette.** iNES-1.0 dumps carry no NES 2.0 byte-13, so the
@@ -98,15 +98,29 @@ for Vs. carts:
    emulator's encoding (switch 1 = bit 0 .. switch 8 = bit 7, exactly the byte
    `Nes::set_vs_dip` consumes).
 
+**Keys (v2.9.8).** Each row carries two SHA-256 keys. Its **identity key** is
+`Nes::rom_sha256` of the dump, the hash of the bytes after the 16-byte header,
+which is the identity saves and states use; its **image key** is the hash of the
+whole file, header included (`Nes::image_sha256`), the only key before v2.9.8.
+`vs_db::lookup` takes the `Nes` and matches the identity first, then the image,
+so a re-headered or header-corrected dump keeps its palette and DIP row instead
+of falling back to the 2C03 and DIP 0. All 19 rows were re-keyed from their
+staged dumps; the image key stays on every row so that a future row added from a
+dump nobody has staged is still reachable. `vs_db::lookup_by_hashes` takes the
+two hashes when there is no `Nes`. Pinned by the `vs_db` unit tests (every row
+reachable by each of its keys) and `tests/vs_db_identity.rs` (each staged dump
+reaches its row by identity alone, and still does with a header byte rewritten).
+
 The frontend's `apply_vs_db` (`crates/rustynes-frontend/src/app.rs`) runs on every ROM
 load and applies the DIP with the precedence **explicit `[vs] dip` config >
 per-game DB default > 0**. To pin an explicit DIP that overrides the DB, set
 both `[vs] dip = <value>` **and** `[vs] dip_set = true` in `config.toml`
 (`dip_set` is serde-default `false`, so existing configs and not-in-DB games are
-unaffected). 16 entries (Excitebike, Clu Clu Land, Castlevania, Pinball,
+unaffected). 19 rows (Excitebike, Clu Clu Land, Castlevania, Pinball,
 Balloon Fight, Tennis, Mahjong, Stroke & Match Golf, Wrecking Crew, Gradius,
-Goonies, Ice Climber, Duck Hunt, T.K.O. Boxing, Super Mario Bros.) cover the
-staged Vs. set. **PPU types** are taken from MAME `src/mame/nintendo/vsnes.cpp` —
+Goonies, Ice Climber, Duck Hunt, T.K.O. Boxing, Super Mario Bros.; Excitebike,
+Goonies, Balloon Fight and Wrecking Crew each have two dumps) cover the staged
+Vs. set. **PPU types** are taken from MAME `src/mame/nintendo/vsnes.cpp` —
 each game's `ROM_START` block names its hardware palette ROM via the
 `PALETTE_2C04_000x` / `PALETTE_STANDARD` macro (for DualSystem carts the `ppu1`
 master-CPU palette), cross-checked against the fceux `src/vsuni.cpp`

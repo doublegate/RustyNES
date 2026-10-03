@@ -96,6 +96,17 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
 - **ROM buffers are capped at 16 MiB at the bridge (v2.7.4, audit MOB-02)**,
   compressed or not. Only zip entries were bounded before; a plain file of any
   size reached the core, which copies it whole and then again into PRG and CHR.
+- **ROM images get the game database's load-time corrections (v2.9.8).** The
+  bridge's `build_console` runs `rustynes_gamedb::correct_rom` on a cartridge
+  before the core parses it (mapper, submapper and region fixes, the NES 2.0
+  guard, the PAL / Dendy promotion of an iNES 1.0 image) and
+  `rustynes_gamedb::correct_console` on the built console (the hardwired
+  mirroring override; both consoles of a Vs. cabinet). These are the functions
+  the desktop, the browser and the libretro core call (`docs/frontend.md`, "One
+  correction path for every platform"). Until v2.9.8 the bridge applied none of
+  them, so a ROM such as *Seicross* that needs its database row hung on a
+  phone. Only the vendored table is read. Shared with iOS: it lives in
+  `rustynes-mobile`.
 - Save-states use the **platform-independent `.rns` format**, so a state saved on
   desktop loads on Android and a `.rnm` TAS replays bit-identically — desktop⇄
   Android cross-play stays valid.

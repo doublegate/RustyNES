@@ -38,3 +38,14 @@ rust-libretro = { version = "0.3.2", features = ["unstable-env-commands"] }
 [dependencies.rustynes-core]
 path = "../rustynes-core"
 default-features = false
+
+# v2.9.8 — the game database's load-time corrections (`correct_rom` +
+# `correct_console`), the same path every other platform calls. Before, the
+# core applied none of them. It depends on `rustynes-core` with
+# `default-features = false` too, so linking it leaves the core's `std` off.
+[dependencies.rustynes-gamedb]
+path = "../rustynes-gamedb"
+
+[dev-dependencies.rustynes-gamedb]
+path = "../rustynes-gamedb"
+features = ["test-support"]

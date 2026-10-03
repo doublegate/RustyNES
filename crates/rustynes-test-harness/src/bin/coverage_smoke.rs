@@ -66,7 +66,7 @@ fn main() {
             // the frame renders the right colours, and set DIP 0. Mirrors the
             // `external_coverage` harness + the frontend's `apply_vs_db`.
             if nes.is_vs_system() {
-                let dip = rustynes_core::vs_db::lookup(nes.rom_sha256()).map_or(0, |entry| {
+                let dip = rustynes_core::vs_db::lookup(&nes).map_or(0, |entry| {
                     nes.set_vs_ppu_type(entry.vs_ppu_type);
                     entry.vs_dip
                 });
