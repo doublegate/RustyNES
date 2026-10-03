@@ -32,26 +32,6 @@ fn roundf(x: f32) -> f32 {
     }
 }
 
-/// Bus surface seen by the APU.  A small subset of the full CPU bus for the
-/// DMC's sample-fetch DMA.
-///
-/// **Deprecated since v2.7.5 (core audit §4.3): nothing implements or calls
-/// it.** The DMC sample fetch is driven from outside the APU instead: the bus
-/// polls [`Apu::dmc_dma_pending`] / [`Apu::dmc_dma_addr`], performs the read
-/// inside the CPU's unified DMA, and hands the byte back with
-/// [`Apu::complete_dmc_dma`]. Whether it is removed is decided at v2.9.0
-/// (ADR 0041).
-#[deprecated(
-    since = "2.7.5",
-    note = "nothing implements or calls it: the bus drives the DMC fetch via Apu::dmc_dma_pending / dmc_dma_addr / complete_dmc_dma; removal is decided at v2.9.0 (ADR 0041)"
-)]
-pub trait ApuBus {
-    /// Read one byte for a DMC sample fetch.  The bus is responsible for
-    /// halting the CPU and accounting for the 3- or 4-cycle DMA stall
-    /// before this is called.
-    fn dmc_read(&mut self, addr: u16) -> u8;
-}
-
 /// Top-level APU.
 #[derive(Debug, Clone)]
 pub struct Apu {
@@ -110,11 +90,6 @@ pub struct Apu {
     /// by [`Self::seed_apu_alignment`]; otherwise constant. Unused when the flag
     /// is off (the legacy dual-toggle path runs instead).
     pub(crate) parity_seed: u64,
-    /// W3-Stage-4 (2026-06-10): whether the most recent [`Apu::restore`]
-    /// blob carried the Stage-4 parity/DMA-state tail (so `put_cycle` +
-    /// `parity_seed` were restored EXACTLY and the bus must NOT re-seed the
-    /// boot alignment over them). Transient bookkeeping — never serialized.
-    pub(crate) restored_parity_tail: bool,
     /// Cumulative CPU cycle counter (used for `$4017` write alignment).
     pub(crate) cpu_cycle: u64,
     /// Pending DMC DMA request — the bus polls and consumes this when it
@@ -302,6 +277,27 @@ pub struct Apu {
     /// the oracle / test ROMs (which never touch a gain) are unaffected. NEVER
     /// serialized into the save state (a UI preference, like the mask / volume).
     pub(crate) channel_gain: [f32; 6],
+    /// v2.9.8 (D3): `channel_gain == CHANNEL_GAIN_UNITY`, cached.
+    ///
+    /// The per-cycle mix checks for unity gain on every CPU cycle. Comparing
+    /// six `f32`s there cost -3.1% to -4.5% of frame time on all four
+    /// workloads, in two runs (`docs/performance.md`, v2.9.8 campaign). The
+    /// gain only changes through [`Self::set_channel_gain`], which recomputes
+    /// this flag, so the cached value cannot go stale. It is not serialized:
+    /// like the gain itself, it is a host preference re-applied on load.
+    pub(crate) gain_is_unity: bool,
+    /// v2.9.8 — the analog output-filter model the host last selected with
+    /// [`Self::set_filter_model`].
+    ///
+    /// The filter itself lives in `blip` as a built chain of coefficients
+    /// (and its IIR history), and a chain does not say which model built it,
+    /// so the selection is kept here as a plain value for
+    /// [`Self::adopt_settings_from`] to carry across a power cycle. Read by
+    /// nothing else: synthesis uses only the chain. A save-state restore
+    /// replaces the chain's coefficients and leaves this alone, so after a
+    /// restore it still names the host's selection, which is what the next
+    /// power cycle should rebuild. NEVER serialized (a UI preference).
+    pub(crate) filter_model: crate::mixer::FilterModel,
     /// v2.1.6 "Expansion Audio" — the most recent RAW external / on-cart
     /// expansion-audio sample fed into [`Self::tick_with_external`] (BEFORE the
     /// UI [`Self::channel_gain`] `[5]` re-weight), retained purely so the
@@ -363,7 +359,6 @@ impl Apu {
             dmc_driven_externally: false,
             put_cycle: false,
             parity_seed: 0,
-            restored_parity_tail: false,
             cpu_cycle: 0,
             pending_dmc_dma: false,
             pending_dmc_dma_next: false,
@@ -393,6 +388,8 @@ impl Apu {
             last_frame_events: FrameEvents::default(),
             channel_mask: CHANNEL_MASK_ALL,
             channel_gain: CHANNEL_GAIN_UNITY,
+            gain_is_unity: true,
+            filter_model: crate::mixer::FilterModel::NesRf,
             last_external: 0.0,
             #[cfg(feature = "debug-hooks")]
             audio_prov: None,
@@ -660,6 +657,7 @@ impl Apu {
         for (slot, g) in self.channel_gain.iter_mut().zip(gain.iter()) {
             *slot = if g.is_nan() { 1.0 } else { g.clamp(0.0, 2.0) };
         }
+        self.gain_is_unity = self.channel_gain == CHANNEL_GAIN_UNITY;
     }
 
     /// v2.1.3 — select the analog output-filter model (see
@@ -668,7 +666,44 @@ impl Apu {
     /// aggressive 440 Hz high-pass for a fuller low end. Display/tonal only —
     /// channel content is unchanged.
     pub fn set_filter_model(&mut self, model: crate::mixer::FilterModel) {
+        self.filter_model = model;
         self.blip.set_filter_model(model);
+    }
+
+    /// v2.9.8 — the analog output-filter model last selected with
+    /// [`Self::set_filter_model`] ([`crate::mixer::FilterModel::NesRf`] until
+    /// one is).
+    #[must_use]
+    pub const fn filter_model(&self) -> crate::mixer::FilterModel {
+        self.filter_model
+    }
+
+    /// v2.9.8 — carry the host's settings from `prev` onto this freshly built
+    /// APU, so a power cycle (which rebuilds the APU from [`Self::new`]) keeps
+    /// them.
+    ///
+    /// Until v2.9.8 the bus rebuilt the APU and re-applied only its own wiring
+    /// (the externally driven DMC and the alignment seed), so the channel mask,
+    /// the per-channel gain and the filter model reverted to their defaults
+    /// and every host had to push them again. Carried: [`Self::channel_mask`],
+    /// [`Self::channel_gain`] and [`Self::filter_model`]. The filter goes
+    /// through [`Self::set_filter_model`], which builds a fresh chain for the
+    /// model at this APU's sample rate -- the chain a fresh console gets when
+    /// a host selects the model, with no IIR history carried from the old
+    /// timeline. The sample rate is the caller's to pass to [`Self::new`];
+    /// the audio provenance stores are moved by the core, armed and emptied.
+    ///
+    /// With every setting at its default this leaves the APU byte-identical
+    /// to [`Self::new`]: the default model's chain is the one `new` builds.
+    pub fn adopt_settings_from(&mut self, prev: &Self) {
+        self.channel_mask = prev.channel_mask;
+        // Through the setter, never a field copy: it also refreshes the cached
+        // `gain_is_unity`, which the per-cycle mix reads instead of the gain.
+        // A bare `self.channel_gain = prev.channel_gain` would leave the fresh
+        // APU's `true` in place and mix at unity gain after a power cycle.
+        // `a_power_cycle_keeps_a_non_unity_gain_audible` pins it.
+        self.set_channel_gain(prev.channel_gain);
+        self.set_filter_model(prev.filter_model);
     }
 
     /// Current per-channel output gain. See [`Apu::set_channel_gain`].
@@ -896,7 +931,7 @@ impl Apu {
     /// This is one of the five counters of the timebase substrate the
     /// v2.0.0 "Timebase" rewrite collapses (ADR 0002 + the v2.0.0
     /// master-clock plan): `Cpu::master_clock`, `Cpu::cycles`,
-    /// `LockstepBus::cycle`, `LockstepBus::ppu_clock`, and this field are
+    /// `SystemBus::cycle`, `SystemBus::ppu_clock`, and this field are
     /// each advanced exactly once (or by one region divider) per CPU cycle
     /// at different points *within* the cycle, and must never drift. The
     /// RW-1 parity collapse already derives `apu_phase` / `put_cycle` from
@@ -1126,7 +1161,7 @@ impl Apu {
     /// calling this (the bus is responsible for performing the DMA fetch
     /// before resuming `tick()` calls).
     ///
-    /// Standalone/test convenience: production (`LockstepBus`) drives the
+    /// Standalone/test convenience: production (`SystemBus`) drives the
     /// canonical cycle counter via [`Self::set_canonical_cycle`] before each
     /// [`Self::tick_with_external`] (the v2.0.0 one-clock contract — the APU
     /// never self-increments). This helper self-advances the counter so
@@ -1274,7 +1309,7 @@ impl Apu {
         // it would have received, so the output is byte-identical by
         // construction rather than by measurement. `apu_default_mix_matches_the_gated_path`
         // pins that across a 2,048-point sweep anyway.
-        if mask == CHANNEL_MASK_ALL && self.channel_gain == CHANNEL_GAIN_UNITY {
+        if mask == CHANNEL_MASK_ALL && self.gain_is_unity {
             self.last_external = external;
             let mixed = self.mixer.mix(
                 self.pulse1.output(),
@@ -1427,7 +1462,7 @@ impl Apu {
             self.dmc_implicit_abort = false;
         }
         let d4015_bits_before = self.dmc.bits_remaining();
-        let dmc_bits_before = self.dmc.bits_remaining();
+        let dmc_bits_before = d4015_bits_before;
         // The byte-timer-end flag composes only with the canonical apu_phase
         // clock (the `mc-r1-full-cpu` config); the cpu-rate / phase-minus1
         // diagnostic clock variants are not combined with it.
@@ -1678,7 +1713,7 @@ impl Apu {
     /// v2.0 F-2: advance ONLY the DMC byte-timer + DMA arm by one CPU cycle.
     /// The R1 bus calls this at END of cycle (after the access) when
     /// [`Self::set_dmc_driven_externally`] is set, so the DMC fire-phase matches
-    /// main's `tick_one_cpu_cycle` (the cycle DMASync's `$4000` conflict
+    /// the pre-v2.0.0 `tick_one_cpu_cycle` (the cycle DMASync's `$4000` conflict
     /// expects) while the rest of the APU — incl. the IRQ line — stays on the
     /// cycle-start `tick_with_external`. Order mirrors `tick_with_external`:
     /// delay-arm → APU-rate timer clock (via the `dmc_ext_phase` flip-flop) →
@@ -1749,17 +1784,6 @@ impl Apu {
         {
             self.parity_seed = (alignment & 1) as u64;
         }
-    }
-
-    /// W3-Stage-4 (2026-06-10): whether the most recent [`Apu::restore`]
-    /// blob carried the Stage-4 parity/DMA-state tail. The bus consults this
-    /// after a snapshot restore: when `true` the exact `put_cycle` /
-    /// `parity_seed` phase came from the blob and must NOT be overwritten by
-    /// the boot [`Self::seed_apu_alignment`] call (pre-Stage-4 blobs lack the
-    /// tail, so the bus falls back to the boot seed exactly as before).
-    #[must_use]
-    pub const fn snapshot_restored_parity(&self) -> bool {
-        self.restored_parity_tail
     }
 
     /// CPU register write (`$4000-$4017` excluding `$4014`).
@@ -2137,45 +2161,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock $4015-enable load-delay placement. The default master-clock core (the only scheduler) moves the load arm to the put-end countdown, so this unit assertion is kept as a historical pin and cannot be un-ignored. Battery coverage: AccuracyCoin Delta-Mod/Implicit (100% on the default build)."]
-    fn dmc_enable_schedules_load_dma_after_apu_aligned_delay() {
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.write_register(0x4012, 0x00);
-        a.write_register(0x4013, 0x00);
-        a.apu_phase = false; // put half: load halt attempt after 3 cycles.
-
-        a.write_register(0x4015, 0x10);
-
-        assert!(!a.pending_dmc_dma);
-        assert_eq!(a.dmc_dma_addr, 0xC000);
-        assert_eq!(a.dmc_dma_delay, 3);
-        a.tick();
-        assert!(!a.pending_dmc_dma);
-        a.tick();
-        assert!(!a.pending_dmc_dma);
-        a.tick();
-        assert!(a.pending_dmc_dma);
-        assert_eq!(a.dmc_dma_delay, 0);
-    }
-
-    #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock cycle-start reload-arm position. The default master-clock core moves the byte-timer/reload-arm to dmc_tick_end, so this unit assertion is kept as a historical pin and cannot be un-ignored. Battery coverage: AccuracyCoin DMC+OAM/Implicit (100% on the default build)."]
-    fn dmc_reload_dma_arms_when_sample_buffer_becomes_empty() {
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.dmc.bytes_remaining = 1;
-        a.dmc.sample_buffer = Some(0xAA);
-        a.dmc.bits_remaining = 1;
-        a.dmc.timer = 0;
-        a.apu_phase = false;
-
-        a.tick();
-
-        assert!(a.pending_dmc_dma);
-        assert_eq!(a.dmc_dma_delay, 0);
-        assert_eq!(a.dmc_dma_addr, 0xC000);
-    }
-
-    #[test]
     fn write_4015_clears_lengths_when_disabled() {
         let mut a = Apu::new(Region::Ntsc, 44_100);
         a.pulse1.length.enabled = true;
@@ -2384,6 +2369,43 @@ mod tests {
         );
     }
 
+    /// v2.9.8: the per-cycle mix reads the cached `gain_is_unity`, so every
+    /// path that changes the gain must refresh it. A power cycle carries the
+    /// gain into a fresh APU through `adopt_settings_from`; a bare field copy
+    /// there left the flag `true` and mixed a 0.5-gain channel at unity.
+    #[test]
+    fn a_power_cycle_keeps_a_non_unity_gain_audible() {
+        const EXT: [f32; 7] = [0.0, 0.1, -0.2, 0.3, -0.1, 0.05, 0.0];
+        let gain = [0.5, 1.0, 1.0, 1.0, 0.25, 1.0];
+        let mut old = Apu::new(Region::Ntsc, 44_100);
+        old.set_channel_gain(gain);
+        // The power-cycled APU: a fresh one that adopted the old one's settings.
+        let mut cycled = Apu::new(Region::Ntsc, 44_100);
+        cycled.adopt_settings_from(&old);
+        assert!(!cycled.gain_is_unity, "the cached flag went stale");
+        // Reference: a fresh APU given the same gain through the setter.
+        let mut direct = Apu::new(Region::Ntsc, 44_100);
+        direct.set_channel_gain(gain);
+        for step in 0..4_000u32 {
+            let v = (step & 0xFF) as u8;
+            cycled.write_register(0x4000 + (step % 0x14) as u16, v);
+            direct.write_register(0x4000 + (step % 0x14) as u16, v);
+            let ext = EXT[(step % 7) as usize];
+            cycled.tick_with_external(ext);
+            direct.tick_with_external(ext);
+        }
+        let mut out_c = [0.0f32; 4096];
+        let mut out_d = [0.0f32; 4096];
+        let nc = cycled.drain_audio_into(&mut out_c);
+        let nd = direct.drain_audio_into(&mut out_d);
+        assert_eq!(nc, nd);
+        assert_eq!(
+            out_c[..nc],
+            out_d[..nd],
+            "a power-cycled APU must mix with the gain it carried"
+        );
+    }
+
     #[test]
     fn zero_gain_matches_a_cleared_mask_bit() {
         // Gain 0.0 on a channel is equivalent to clearing that channel's mask
@@ -2399,43 +2421,6 @@ mod tests {
         let full = m.mix(15, 0, 0, 0, 0);
         let attenuated = m.mix(half, 0, 0, 0, 0);
         assert!(attenuated > 0.0 && attenuated < full);
-    }
-
-    #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED legacy dual-flip-flop put_cycle toggle. In the default master-clock core, put_cycle is derived from the unified counter and flipped at end-of-cycle, so this unit assertion is kept as a historical pin and cannot be un-ignored."]
-    fn put_cycle_toggles_per_cycle_only_when_driven_externally() {
-        // Interleaved-DMA Phase A: under external DMC driving the global get/put
-        // flip-flop toggles exactly once per CPU cycle (TriCNES `APU_PutCycle`).
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.set_dmc_driven_externally(true);
-        a.seed_apu_alignment(0); // case 0 => put_cycle = true
-        assert!(a.put_cycle());
-        a.tick();
-        assert!(!a.put_cycle(), "toggles after one cycle");
-        a.tick();
-        assert!(a.put_cycle(), "toggles back after two cycles");
-
-        // Default build (not driven externally): the flip-flop is frozen, so the
-        // default path is byte-identical (nothing toggles or reads it).
-        //
-        // RW-1 (`mc-r1-one-clock`): `put_cycle` is DERIVED from the one counter
-        // (`put_cycle = !apu_phase`) and is no longer gated on
-        // `dmc_driven_externally` — that gating WAS the second independent
-        // flip-flop this phase removes. So under the flag `put_cycle` tracks the
-        // counter unconditionally and stays the exact complement of `apu_phase`
-        // (the coherence guarantee). The default (non-R1) path never consumes
-        // `put_cycle`, so this is still byte-identical there.
-        {
-            let mut b = Apu::new(Region::Ntsc, 44_100);
-            for _ in 0..10 {
-                b.tick();
-                assert_eq!(
-                    b.put_cycle(),
-                    !b.apu_phase(),
-                    "one-clock: put_cycle is the derived complement of apu_phase"
-                );
-            }
-        }
     }
 
     #[test]

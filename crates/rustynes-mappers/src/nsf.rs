@@ -789,9 +789,8 @@ impl Mapper for NsfMapper {
     fn save_state(&self) -> Vec<u8> {
         // v1: version + song + 8 bank regs + WRAM.
         // v2 (G2/G3): appends a 1-byte expansion-audio presence tail when
-        // expansion audio is present (ADR-0003: additive; v1 readers ignore
-        // the tail). A base-2A03 NSF still writes a v1 blob, so existing
-        // save-states stay byte-identical.
+        // expansion audio is present. A base-2A03 NSF writes v1, so both are
+        // current; which one a file must carry follows from its `$07B` header.
         let has_exp = self.exp_audio.is_some();
         let version = if has_exp { 2u8 } else { 1u8 };
         let mut out = Vec::with_capacity(2 + 8 + self.wram.len() + usize::from(has_exp));
@@ -807,7 +806,12 @@ impl Mapper for NsfMapper {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let version = data.first().copied().unwrap_or(0);
-        if !(1..=2).contains(&version) {
+        // The version this file writes, from its expansion chips: v1 for a
+        // base-2A03 NSF, v2 with expansion audio. Until v2.9.8 either was
+        // accepted on either file, so a pre-v1.7.0 v1 blob loaded on an
+        // expansion NSF; only the matching one loads now (ADR 0042).
+        let own = if self.exp_audio.is_some() { 2 } else { 1 };
+        if version != own {
             return Err(MapperError::UnsupportedVersion(version));
         }
         let core_len = 2 + 8 + self.wram.len();

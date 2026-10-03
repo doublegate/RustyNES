@@ -11,7 +11,7 @@
 //! `ppu_throughput`); the APU had only `spectral.rs`, which measures blip
 //! *quality*, not per-cycle cost.
 //!
-//! **Methodology.** Each iteration reproduces `LockstepBus::cpu_clock`'s full
+//! **Methodology.** Each iteration reproduces `SystemBus::cpu_clock`'s full
 //! per-cycle APU sequence, not just the tick:
 //!
 //! ```text
@@ -111,7 +111,7 @@ fn silent_apu() -> Apu {
     apu
 }
 
-/// One CPU cycle, in the order `LockstepBus::cpu_clock` runs it. `cycle` is the
+/// One CPU cycle, in the order `SystemBus::cpu_clock` runs it. `cycle` is the
 /// canonical bus counter the APU is handed rather than keeping its own mirror.
 #[inline]
 fn production_cycle(apu: &mut Apu, cycle: u64, external: f32) {

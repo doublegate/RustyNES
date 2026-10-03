@@ -17,12 +17,16 @@
 //!   import (cross-emulator save-state blobs are not portable), and a
 //!   [`StartPoint::SaveState`] [`Movie`] is rejected on export. Both surface
 //!   [`Fm2Error::Unsupported`].
-//! - **Two controllers stored.** [`FrameInput`] models players 1 and 2 only.
-//!   A `fourscore` `.fm2` (four pads) is imported by keeping pads 1 and 2 and
-//!   dropping pads 3 and 4; the fourscore flag is preserved in [`Fm2Meta`] so
-//!   the caller is not silently misled. Carrying P3/P4 needs `FrameInput` to
-//!   grow two fields, which is breaking for an exhaustive public struct, so it
-//!   is scheduled for v3.0.0 (`to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md`).
+//! - **Four controllers (v2.9.8).** A `fourscore` `.fm2` imports all four
+//!   pads into [`FrameInput`]'s `p1`..`p4` and records the Four Score as
+//!   plugged in ([`crate::HardwareOptions::four_score`]), so a replay polls
+//!   players 3 and 4 as FCEUX did. Until v2.9.8 pads 3 and 4 were dropped,
+//!   because `FrameInput` held two players; the `.rnm` format 3 epoch widened
+//!   both together.
+//! - **Emulation options.** `.fm2` records none, so an import states the
+//!   stock NES ([`crate::HardwareOptions::default`]) explicitly, with the one
+//!   option the format does declare -- the Four Score -- taken from its
+//!   `fourscore` key.
 //! - **Soft reset has no home on [`FrameInput`].** The per-frame command
 //!   field's `MOVIECMD_RESET` bit (value 1) is parsed without error but is
 //!   *not* applied to any frame today; see [`import_fm2`].
@@ -88,9 +92,9 @@ pub struct Fm2Meta {
     /// hex-encoded). Not validated against the ROM -- the SHA-256 identity is
     /// supplied separately by the caller.
     pub rom_checksum_md5: Option<String>,
-    /// `true` if the movie declared `fourscore 1` (four controllers). When
-    /// set, only pads 1 and 2 made it into the [`Movie`]; pads 3 and 4 were
-    /// dropped (see the module docs).
+    /// `true` if the movie declared `fourscore 1` (four controllers). Since
+    /// v2.9.8 all four pads are in the [`Movie`] and its options record the
+    /// Four Score as plugged in.
     pub fourscore: bool,
     /// `true` if the movie declared `palFlag 1`.
     pub pal: bool,
@@ -149,9 +153,10 @@ pub struct Fm2ExportOpts {
     pub rom_filename: Option<String>,
     /// Value to emit for the `romChecksum` header, if any.
     pub rom_checksum_md5: Option<String>,
-    /// Emit `fourscore 1` and four pad columns per line when `true`. The
-    /// extra pads (3 and 4) are always released, since [`FrameInput`] models
-    /// only two controllers.
+    /// Emit `fourscore 1` and four pad columns per line when `true`. Also
+    /// implied (v2.9.8) by a movie whose options have the Four Score plugged
+    /// in, so a four-player recording cannot be exported without its players
+    /// 3 and 4.
     pub fourscore: bool,
 }
 
@@ -270,6 +275,15 @@ pub fn import_fm2(text: &str, rom_sha256: [u8; 32]) -> Result<(Movie, Fm2Meta), 
     let movie = Movie {
         region: if meta.pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
+        // v2.9.8 — `.fm2` records no emulation options and no header, so the
+        // import states the stock NES explicitly, plus the one option the
+        // format does declare (the Four Score), and leaves the board unchecked
+        // (the ROM identity and region still are).
+        options: crate::HardwareOptions {
+            four_score: meta.fourscore,
+            ..crate::HardwareOptions::default()
+        },
+        board: None,
         start: StartPoint::PowerOn,
         frames,
         // Carry the `.fm2` rerecordCount through (saturating into the `.rnm` u32).
@@ -305,6 +319,7 @@ pub fn export_fm2(movie: &Movie, opts: &Fm2ExportOpts) -> Result<String, Fm2Erro
     }
 
     let pal = matches!(movie.region, Region::Pal | Region::Dendy);
+    let fourscore = opts.fourscore || movie.options.four_score;
     let mut out = String::new();
 
     // Header. `version` must be first. Writing into a `String` via the
@@ -314,7 +329,7 @@ pub fn export_fm2(movie: &Movie, opts: &Fm2ExportOpts) -> Result<String, Fm2Erro
     let _ = writeln!(out, "emuVersion {}", emu_version_tag());
     let _ = writeln!(out, "rerecordCount {}", opts.rerecord_count);
     let _ = writeln!(out, "palFlag {}", u8::from(pal));
-    let _ = writeln!(out, "fourscore {}", u8::from(opts.fourscore));
+    let _ = writeln!(out, "fourscore {}", u8::from(fourscore));
     let _ = writeln!(out, "port0 {SI_GAMEPAD}");
     let _ = writeln!(out, "port1 {SI_GAMEPAD}");
     out.push_str("port2 0\n");
@@ -339,14 +354,12 @@ pub fn export_fm2(movie: &Movie, opts: &Fm2ExportOpts) -> Result<String, Fm2Erro
         write_pad(frame.p2, &mut pad);
         out.push_str(core::str::from_utf8(&pad).expect("pad bytes are ASCII"));
         out.push('|');
-        if opts.fourscore {
-            // Players 3 and 4 are always released (FrameInput has no P3/P4).
-            write_pad(Buttons::empty(), &mut pad);
-            let empty = core::str::from_utf8(&pad).expect("pad bytes are ASCII");
-            out.push_str(empty);
-            out.push('|');
-            out.push_str(empty);
-            out.push('|');
+        if fourscore {
+            for buttons in [frame.p3, frame.p4] {
+                write_pad(buttons, &mut pad);
+                out.push_str(core::str::from_utf8(&pad).expect("pad bytes are ASCII"));
+                out.push('|');
+            }
         }
         // Trailing empty `port2` field (SIFC_NONE is always empty).
         out.push_str("|\n");
@@ -419,8 +432,8 @@ fn parse_input_line(line: &str, line_no: usize, fourscore: bool) -> Result<Frame
         }
     }
 
-    // pads[0] = P1, pads[1] = P2 (pads 2/3 dropped for fourscore).
-    Ok(FrameInput::new(pads[0], pads[1]))
+    // pads[2] / pads[3] stay released on a two-pad line.
+    Ok(FrameInput::four_players(pads[0], pads[1], pads[2], pads[3]))
 }
 
 /// Parse the variable-length decimal command bitfield. Returns whether the
@@ -505,6 +518,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: varied_frames(),
             rerecord_count: 0,
@@ -538,6 +553,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: vec![
                 FrameInput::new(Buttons::A, Buttons::empty()),
@@ -593,6 +610,8 @@ mod tests {
         let pal_movie = Movie {
             region: Region::Pal,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: vec![FrameInput::new(Buttons::empty(), Buttons::empty())],
             rerecord_count: 0,
@@ -624,9 +643,9 @@ mod tests {
     }
 
     #[test]
-    fn fourscore_layout_parses_two_of_four_pads() {
-        // Four pad fields; only P1/P2 are retained. P1 = A, P2 = B, P3/P4 set
-        // (and dropped). fourscore must survive in meta.
+    fn fourscore_layout_parses_all_four_pads() {
+        // Four pad fields: P1 = A, P2 = B, P3 = Right, P4 = Left (all kept
+        // since v2.9.8). fourscore must survive in meta and in the options.
         let text = "version 3\nfourscore 1\nport0 1\nport1 1\nport2 0\n\
                     |0|.......A|......B.|R.......|.L......||\n";
         let (movie, meta) = import_fm2(text, TEST_SHA).expect("fourscore import");
@@ -634,6 +653,9 @@ mod tests {
         assert_eq!(movie.frames.len(), 1);
         assert_eq!(movie.frames[0].p1, Buttons::A);
         assert_eq!(movie.frames[0].p2, Buttons::B);
+        assert_eq!(movie.frames[0].p3, Buttons::RIGHT);
+        assert_eq!(movie.frames[0].p4, Buttons::LEFT);
+        assert!(movie.options.four_score);
 
         // Export with fourscore emits four pad fields.
         let out = export_fm2(
@@ -649,6 +671,60 @@ mod tests {
         // fields are 8-char pads.
         let pad_count = log_line.split('|').filter(|p| p.len() == 8).count();
         assert_eq!(pad_count, 4, "fourscore export must emit four pad fields");
+    }
+
+    /// v2.9.8 — a four-player `.fm2` keeps players 3 and 4: they survive an
+    /// import / export round trip column for column, and a replay drives them
+    /// onto ports 2 and 3 with the Four Score plugged in.
+    #[test]
+    fn fourscore_import_keeps_players_three_and_four() {
+        let text = "version 3\nfourscore 1\nport0 1\nport1 1\nport2 0\n\
+                    |0|.......A|......B.|R.......|.L......||\n\
+                    |0|........|........|...U....|....T...||\n";
+        let (movie, meta) = import_fm2(text, TEST_SHA).expect("fourscore import");
+        assert!(meta.fourscore);
+        let out = export_fm2(
+            &movie,
+            &Fm2ExportOpts {
+                fourscore: true,
+                ..Default::default()
+            },
+        )
+        .expect("export");
+        let logs: Vec<&str> = out.lines().filter(|l| l.starts_with('|')).collect();
+        assert_eq!(
+            logs,
+            [
+                "|0|.......A|......B.|R.......|.L......||",
+                "|0|........|........|...U....|....T...||",
+            ],
+            "players 3 and 4 must round-trip"
+        );
+
+        // Replay: the imported movie plugs the Four Score in and drives P3/P4.
+        let rom = {
+            let mut b = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0];
+            b.extend_from_slice(&[0u8; 8]);
+            let mut prg = vec![0u8; 16 * 1024];
+            prg[..3].copy_from_slice(&[0x4C, 0x00, 0xC0]);
+            let len = prg.len();
+            prg[len - 6..].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+            b.extend_from_slice(&prg);
+            b.extend_from_slice(&[0u8; 8 * 1024]);
+            b
+        };
+        let mut nes = crate::Nes::from_rom(&rom).unwrap();
+        let (movie, _) = import_fm2(text, *nes.rom_sha256()).unwrap();
+        movie.seek_to_start(&mut nes).expect("seek");
+        assert!(nes.four_score(), "a fourscore import plugs the adapter in");
+        let mut player = crate::MoviePlayer::new(&movie);
+        assert!(player.apply_next(&mut nes));
+        assert_eq!(nes.buttons(2), Buttons::RIGHT);
+        assert_eq!(nes.buttons(3), Buttons::LEFT);
+        nes.run_frame();
+        assert!(player.apply_next(&mut nes));
+        assert_eq!(nes.buttons(2), Buttons::UP);
+        assert_eq!(nes.buttons(3), Buttons::START);
     }
 
     #[test]
@@ -743,6 +819,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::SaveState(vec![1, 2, 3]),
             frames: vec![],
             rerecord_count: 0,

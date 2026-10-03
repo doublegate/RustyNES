@@ -43,7 +43,8 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 /// v2 appends one byte: the latched PPU A12 of the last CHR fetch, which picks
 /// the CHR register that drives SUROM / SOROM / SXROM's outer lines in 4 KiB
-/// CHR mode. A v1 blob still loads, with that latch cleared.
+/// CHR mode. Since v2.9.8 (ADR 0042) a v1 blob is refused; it used to load
+/// with that latch cleared.
 const SAVE_STATE_VERSION: u8 = 2;
 /// Size of one outer PRG-ROM half on SUROM / SXROM.
 const PRG_OUTER_256K: usize = 0x4_0000;
@@ -560,13 +561,10 @@ impl Mapper for Mmc1 {
             expected: 1,
             got: 0,
         })?;
-        // v1 (before v2.7.2) lacks the trailing A12 latch byte.
-        let tail = match version {
-            1 => 0,
-            SAVE_STATE_VERSION => 1,
-            v => return Err(MapperError::UnsupportedVersion(v)),
-        };
-        let expected = 7 + self.prg_ram.len() + self.vram.len() + need_chr + tail;
+        if version != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let expected = 7 + self.prg_ram.len() + self.vram.len() + need_chr + 1;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -591,7 +589,7 @@ impl Mapper for Mmc1 {
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
             cursor += self.chr.len();
         }
-        self.chr_a12_high = tail == 1 && data[cursor] != 0;
+        self.chr_a12_high = data[cursor] != 0;
         Ok(())
     }
 }
@@ -1025,18 +1023,24 @@ mod tests {
     }
 
     #[test]
-    fn a_pre_v2_7_2_save_state_still_loads() {
-        // v1 blobs lack the trailing CHR-A12 latch byte; they must load, with
-        // the latch cleared, so old `.rns` slots keep working.
+    fn a_pre_v2_7_2_save_state_is_refused() {
+        // v1 blobs lack the trailing CHR-A12 latch byte. They loaded with the
+        // latch cleared until v2.9.8, which reads the current layout only
+        // (ADR 0042).
         let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
         m.notify_a12(true);
         let mut blob = m.save_state();
         assert_eq!(blob[0], 2);
         assert_eq!(*blob.last().unwrap(), 1, "the latch is saved");
+        let mut fresh = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        fresh.load_state(&blob).expect("a v2 blob loads");
+        assert!(fresh.chr_a12_high, "the latch is restored");
         blob.pop();
         blob[0] = 1;
-        m.load_state(&blob).expect("a v1 blob loads");
-        assert!(!m.chr_a12_high);
+        assert!(matches!(
+            m.load_state(&blob),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
         assert!(m.load_state(&[9]).is_err(), "an unknown version is refused");
     }
 }

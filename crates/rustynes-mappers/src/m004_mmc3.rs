@@ -80,6 +80,8 @@ const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 /// v3 (v2.9.6) appends the MMC6 PRG-RAM state and the MC-ACC prescaler.
+/// Only v3 is read since v2.9.8 (ADR 0042); v1 and v2 used to load with the
+/// later fields at defaults.
 const SAVE_STATE_VERSION: u8 = 3;
 
 /// MMC6 internal PRG-RAM: 1 KiB, two 512-byte halves (`MMC6.md`).
@@ -1013,11 +1015,9 @@ impl Mapper for Mmc3 {
     #[allow(clippy::too_many_lines)] // tagged-blob deserializer + v1/v2 fork
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_part = if self.chr_is_ram { self.chr.len() } else { 0 };
-        // Tagged scalars laid out below.  v1 omitted
-        // `irq_reload_pending_with_nonzero_clear`; v2 added it as a one-byte
-        // flag immediately after `irq_reload_pending`, expanding the scalar
-        // section by 1 byte.  Cross-version files load with the field
-        // defaulted to `false` (safe — the silicon initial state).
+        // Tagged scalars laid out below. Only the current version is read
+        // (v2.9.8, ADR 0042): v1 (no `irq_reload_pending_with_nonzero_clear`)
+        // and v2 (no three-byte tail) used to load with defaults.
         if data.is_empty() {
             return Err(MapperError::Truncated {
                 expected: 1,
@@ -1025,30 +1025,11 @@ impl Mapper for Mmc3 {
             });
         }
         let version = data[0];
-        if !matches!(version, 1..=SAVE_STATE_VERSION) {
+        if version != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(version));
         }
-        let tail = if version >= 3 { 3 } else { 0 };
-        let nonzero_clear_present = version >= 2;
-        let scalar_len = 1
-            + 8
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 1
-            + 8
-            + 8
-            + 1
-            + usize::from(nonzero_clear_present);
+        let tail = 3;
+        let scalar_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 8 + 8 + 1 + 1;
         let expected = scalar_len + self.prg_ram.len() + self.vram.len() + chr_part + tail;
         if data.len() != expected {
             return Err(MapperError::Truncated {
@@ -1080,18 +1061,8 @@ impl Mapper for Mmc3 {
         self.irq_reload_value = data[17];
         self.irq_reload_pending = data[18] != 0;
         let mut cur = 19usize;
-        self.irq_reload_pending_with_nonzero_clear = if nonzero_clear_present {
-            let v = data[cur] != 0;
-            cur += 1;
-            v
-        } else {
-            // v1 fallback: pre-fix state was equivalent to "always assert
-            // on reload-pending", but the flag's semantic absence is best
-            // represented as `false` (silent reload on next A12), which
-            // matches the post-fix steady state when nothing has been
-            // written to $C001 since the snapshot.
-            false
-        };
+        self.irq_reload_pending_with_nonzero_clear = data[cur] != 0;
+        cur += 1;
         self.irq_enabled = data[cur] != 0;
         cur += 1;
         self.irq_pending_line = data[cur] != 0;
@@ -1129,15 +1100,9 @@ impl Mapper for Mmc3 {
             self.chr.copy_from_slice(&data[cur..cur + self.chr.len()]);
             cur += self.chr.len();
         }
-        if tail == 3 {
-            self.mmc6_ram_enabled = data[cur] != 0;
-            self.mmc6_protect = data[cur + 1] & 0xF0;
-            self.mcacc_prescaler = data[cur + 2] & 0x07;
-        } else {
-            self.mmc6_ram_enabled = false;
-            self.mmc6_protect = 0;
-            self.mcacc_prescaler = 0;
-        }
+        self.mmc6_ram_enabled = data[cur] != 0;
+        self.mmc6_protect = data[cur + 1] & 0xF0;
+        self.mcacc_prescaler = data[cur + 2] & 0x07;
         Ok(())
     }
 }
@@ -1830,7 +1795,7 @@ mod tests {
     }
 
     #[test]
-    fn variant_state_round_trips_and_v2_still_loads() {
+    fn variant_state_round_trips_and_v2_is_refused() {
         let mut a = variant(Mmc3Variant::Mmc6);
         a.cpu_write(0x8000, 0x20);
         a.cpu_write(0xA001, 0x30);
@@ -1840,11 +1805,15 @@ mod tests {
         b.load_state(&blob).unwrap();
         assert_eq!(b.cpu_read(0x7003), 0x99);
         assert_eq!(b.save_state(), blob);
-        // A v2 blob (no tail) from a standard board still loads.
+        // A v2 blob (no tail) is refused since v2.9.8 (ADR 0042); it used to
+        // load with the MMC6 / MC-ACC state at defaults.
         let std_blob = variant(Mmc3Variant::Standard).save_state();
         let mut v2 = std_blob;
         v2[0] = 2;
         v2.truncate(v2.len() - 3);
-        variant(Mmc3Variant::Standard).load_state(&v2).unwrap();
+        assert!(matches!(
+            variant(Mmc3Variant::Standard).load_state(&v2),
+            Err(MapperError::UnsupportedVersion(2))
+        ));
     }
 }

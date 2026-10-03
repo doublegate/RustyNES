@@ -87,7 +87,7 @@ pub const fn nes_color_to_rgba(idx: u8) -> [u8; 4] {
 /// Which PPU palette is active for the running console.
 ///
 /// The default 2C02 ([`Self::Composite2C02`]) is the standard NES/Famicom
-/// composite palette ([`NES_PALETTE`] + `apply_emphasis`). The other variants
+/// composite palette ([`NES_PALETTE`] + `apply_documented_emphasis`). The other variants
 /// are the hardware RGB palettes baked into the Vs. System / PlayChoice-10
 /// arcade PPUs (the 2C03 / 2C04-xxxx / 2C05), which output digital RGB rather
 /// than composite video. Selected from the NES 2.0 header byte 13 Vs. PPU type
@@ -119,7 +119,7 @@ pub enum PpuPalette {
 
 impl PpuPalette {
     /// Returns the backing 64-entry RGB table, or `None` for the composite
-    /// 2C02 (which is handled by [`nes_color_to_rgba`] + `apply_emphasis`).
+    /// 2C02 (which is handled by [`nes_color_to_rgba`] + `apply_documented_emphasis`).
     const fn rgb_table(self) -> Option<&'static [[u8; 3]; 64]> {
         match self {
             Self::Composite2C02 => None,
@@ -142,9 +142,9 @@ impl PpuPalette {
 /// Convert a 6-bit color index to RGBA8 under the active PPU palette,
 /// applying the palette's emphasis model.
 ///
-/// The default [`PpuPalette::Composite2C02`] path is byte-for-byte identical to
-/// `apply_emphasis(nes_color_to_rgba(idx), ...)` so normal NES/Famicom rendering
-/// is unchanged.
+/// The default [`PpuPalette::Composite2C02`] path is the FBX base plus the
+/// documented emphasis model (`apply_documented_emphasis`, v2.9.8); with no
+/// emphasis bit set it is exactly [`nes_color_to_rgba`].
 ///
 /// On the RGB PPUs (2C03 / 2C04 / 2C05) emphasis works the *opposite* way from
 /// the 2C02: rather than darkening the non-emphasized channels, each set
@@ -162,9 +162,9 @@ pub const fn palette_color_to_rgba(
 ) -> [u8; 4] {
     match palette.rgb_table() {
         None => {
-            // Default composite 2C02: byte-identical to the legacy path.
+            // Default composite 2C02: FBX plus the documented emphasis change.
             let rgba = nes_color_to_rgba(idx);
-            apply_emphasis(rgba, emph_red, emph_green, emph_blue)
+            apply_documented_emphasis(rgba, idx, emph_red, emph_green, emph_blue)
         }
         Some(table) => {
             let rgb = table[(idx & 0x3F) as usize];
@@ -212,9 +212,9 @@ pub const fn build_rgba_lut(palette: PpuPalette) -> [[u8; 4]; 512] {
 /// Build the 512-entry `(emphasis << 6) | color` → RGBA8 lookup from a custom
 /// 64-entry base palette (e.g. a loaded `.pal` file).
 ///
-/// Applies the standard 2C02 composite emphasis model — the same `apply_emphasis`
-/// the default composite path uses — so a custom palette behaves like a drop-in
-/// replacement for `NES_PALETTE`.
+/// Applies the 2C02 composite emphasis model — the same
+/// `apply_documented_emphasis` the default composite path uses (v2.9.8) — so a
+/// custom palette behaves like a drop-in replacement for `NES_PALETTE`.
 ///
 /// v1.1.0 beta.1 (T-110-A3): the frontend feeds the parsed `.pal` here via
 /// `Ppu::set_custom_palette`. With no custom palette the PPU keeps using
@@ -228,8 +228,11 @@ pub const fn build_rgba_lut_from_base(base: &[[u8; 3]; 64]) -> [[u8; 4]; 512] {
         let mut c = 0usize;
         while c < 64 {
             let rgb = base[c];
-            lut[(e << 6) | c] = apply_emphasis(
+            #[allow(clippy::cast_possible_truncation)] // c < 64.
+            let idx = c as u8;
+            lut[(e << 6) | c] = apply_documented_emphasis(
                 [rgb[0], rgb[1], rgb[2], 0xFF],
+                idx,
                 e & 1 != 0,
                 e & 2 != 0,
                 e & 4 != 0,
@@ -241,31 +244,27 @@ pub const fn build_rgba_lut_from_base(base: &[[u8; 3]; 64]) -> [[u8; 4]; 512] {
     lut
 }
 
-/// Apply BGR emphasis (PPUMASK bits 7-5) to an RGBA8 pixel.
-///
-/// Per nesdev: emphasis dims the *non-emphasized* channels by ~25%. We
-/// apply 13/16 (~ 0.81) per non-active channel — close enough for visual
-/// regression without floating point.
+/// Apply PPUMASK emphasis (bits 7-5) to colour `idx`'s RGBA8 pixel using the
+/// documented composite model (v2.9.8, `T-EMPHASIS-MODEL`): the model's change
+/// for this colour and emphasis, [`crate::emphasis::EMPHASIS_DELTA`], added to
+/// the base and clamped. Columns `$E`/`$F` and emphasis 0 are unchanged. See
+/// `emphasis.rs` for the model and its source.
 #[must_use]
-pub const fn apply_emphasis(
-    mut rgba: [u8; 4],
+pub const fn apply_documented_emphasis(
+    rgba: [u8; 4],
+    idx: u8,
     emph_red: bool,
     emph_green: bool,
     emph_blue: bool,
 ) -> [u8; 4] {
-    if emph_red {
-        rgba[1] = ((rgba[1] as u16 * 13) >> 4) as u8;
-        rgba[2] = ((rgba[2] as u16 * 13) >> 4) as u8;
-    }
-    if emph_green {
-        rgba[0] = ((rgba[0] as u16 * 13) >> 4) as u8;
-        rgba[2] = ((rgba[2] as u16 * 13) >> 4) as u8;
-    }
-    if emph_blue {
-        rgba[0] = ((rgba[0] as u16 * 13) >> 4) as u8;
-        rgba[1] = ((rgba[1] as u16 * 13) >> 4) as u8;
-    }
-    rgba
+    let e = (emph_red as usize) | ((emph_green as usize) << 1) | ((emph_blue as usize) << 2);
+    let d = crate::emphasis::EMPHASIS_DELTA[(e << 6) | (idx & 0x3F) as usize];
+    [
+        crate::emphasis::apply_delta(rgba[0], d[0]),
+        crate::emphasis::apply_delta(rgba[1], d[1]),
+        crate::emphasis::apply_delta(rgba[2], d[2]),
+        rgba[3],
+    ]
 }
 
 /// 2C03 / 2C05 RGB PPU palette (PlayChoice-10, Vs. Duck Hunt/Tennis, Sharp C1).
@@ -642,22 +641,26 @@ mod tests {
     #[test]
     fn emphasis_dims_other_channels() {
         let base = nes_color_to_rgba(0x30);
-        let red = apply_emphasis(base, true, false, false);
+        let red = apply_documented_emphasis(base, 0x30, true, false, false);
         assert_eq!(red[0], base[0]);
         assert!(red[1] <= base[1]);
         assert!(red[2] <= base[2]);
     }
 
     #[test]
-    fn composite_palette_is_byte_identical_to_legacy_path() {
-        // The default PpuPalette path MUST equal apply_emphasis(nes_color_to_rgba)
-        // for every index and every emphasis combination.
+    fn composite_palette_is_fbx_plus_the_documented_emphasis() {
+        // v2.9.8: the default PpuPalette path is FBX with the documented
+        // emphasis change added, for every index and emphasis; and with no
+        // emphasis it is FBX exactly, so an un-emphasised frame did not change.
         for idx in 0u8..64 {
             for emask in 0u8..8 {
                 let (r, g, b) = (emask & 1 != 0, emask & 2 != 0, emask & 4 != 0);
-                let legacy = apply_emphasis(nes_color_to_rgba(idx), r, g, b);
+                let expected = apply_documented_emphasis(nes_color_to_rgba(idx), idx, r, g, b);
                 let routed = palette_color_to_rgba(PpuPalette::Composite2C02, idx, r, g, b);
-                assert_eq!(legacy, routed, "idx={idx} emask={emask}");
+                assert_eq!(expected, routed, "idx={idx} emask={emask}");
+                if emask == 0 {
+                    assert_eq!(routed, nes_color_to_rgba(idx), "idx={idx}");
+                }
             }
         }
     }

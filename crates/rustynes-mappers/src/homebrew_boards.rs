@@ -233,15 +233,33 @@ enum MagicFloorMode {
 }
 
 impl MagicFloorMode {
-    /// Resolve a logical 1 KiB block index (0..=3) to a physical CIRAM 1 KiB
-    /// bank (0 or 1). Matches `GeraNES` `customMirroring`.
-    const fn physical_bank(self, block: u8) -> usize {
-        match self {
-            Self::Vertical => (block & 0x01) as usize,
-            Self::Horizontal => ((block >> 1) & 0x01) as usize,
-            Self::ScreenA => 0,
-            Self::ScreenB => 1,
-        }
+    /// Resolve a PPU address (pattern or nametable) to its physical CIRAM
+    /// 1 KiB bank (0 or 1).
+    ///
+    /// The board wires CIRAM A10 straight to one PPU address line, chosen by
+    /// the header (NESdev "INES Mapper 218"): A10 (`$A1`), A11 (`$A0`), A12
+    /// (`$A8`) or A13 (`$A9`). Taking the bit from the full address, rather
+    /// than from a 1 KiB block index, is what makes the two single-screen
+    /// wirings come out right: under A12, pattern table 1 (`$1000-$1FFF`) is
+    /// bank 1 while the nametables (`$2xxx`, A12 = 0) are bank 0; under A13,
+    /// all pattern space (A13 = 0) is bank 0 and the nametables are bank 1.
+    ///
+    /// Provenance note, kept rather than deleted (maintainer rule, 2026-09-22:
+    /// provenance mentions are classified, never removed). Until v2.9.7 this
+    /// function took a 1 KiB block index and its doc said "Matches `GeraNES`
+    /// `customMirroring`", a cross-check against that emulator's source of the
+    /// kind `docs/originality-and-provenance.md` describes under "GeraNES
+    /// specifically". That version was wrong for both single-screen wirings.
+    /// v2.9.8 rewrote it from the NESdev page alone; no reference source was
+    /// opened for the rewrite.
+    const fn physical_bank(self, addr: u16) -> usize {
+        let line = match self {
+            Self::Vertical => 10,
+            Self::Horizontal => 11,
+            Self::ScreenA => 12,
+            Self::ScreenB => 13,
+        };
+        ((addr >> line) & 0x01) as usize
     }
 }
 
@@ -279,9 +297,11 @@ impl MagicFloor218 {
                 chr_rom.len()
             )));
         }
-        // The four screen modes come from the cart's mirroring + four-screen
-        // wiring. Without a four-screen flag we use vertical / horizontal;
-        // the single-screen modes are reachable from those header values.
+        // The four wirings come from the header's flags-6 bits 0 and 3. The
+        // generic parser drops bit 0 once bit 3 is set, so `parse` decodes the
+        // raw byte and passes `SingleScreenA` for `$A8` (CIRAM A10 = PPU A12)
+        // and `SingleScreenB` for `$A9` (A13). A bare `FourScreen` (a caller
+        // without the raw byte) falls back to the A10 wiring.
         let mode = match mirroring {
             Mirroring::Vertical | Mirroring::FourScreen => MagicFloorMode::Vertical,
             Mirroring::SingleScreenA => MagicFloorMode::ScreenA,
@@ -295,18 +315,18 @@ impl MagicFloor218 {
         })
     }
 
-    /// Map a $0000-$1FFF pattern-table address into the 2 KiB CIRAM, treating
-    /// the 8 KiB pattern space as four 1 KiB blocks under the custom mirroring.
+    /// Map a $0000-$1FFF pattern-table address into the 2 KiB CIRAM: the low
+    /// ten bits are the offset, and the wired PPU line supplies CIRAM A10.
     const fn chr_offset(&self, addr: u16) -> usize {
-        let block = ((addr >> 10) & 0x03) as u8;
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
-        self.mode.physical_bank(block) * NAMETABLE_SIZE + local
+        self.mode.physical_bank(addr) * NAMETABLE_SIZE + local
     }
 
+    /// Map a $2000-$3EFF nametable address into the 2 KiB CIRAM, by the same
+    /// wiring as [`Self::chr_offset`].
     const fn nt_offset(&self, addr: u16) -> usize {
-        let block = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
-        self.mode.physical_bank(block) * NAMETABLE_SIZE + local
+        self.mode.physical_bank(addr) * NAMETABLE_SIZE + local
     }
 }
 
@@ -1590,6 +1610,41 @@ mod tests {
         // $2000 = table 0 -> bank 0 = the CHR byte written at $0000.
         assert_eq!(m.ppu_read(0x2000), 0x11);
         assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m218_single_screen_a_wires_ciram_a10_to_ppu_a12() {
+        // NESdev "INES Mapper 218", flags 6 = $A8: CIRAM A10 = PPU A12.
+        // Pattern table 0 ($0000-$0FFF) is CIRAM bank 0, pattern table 1
+        // ($1000-$1FFF) is bank 1, and every nametable ($2xxx, A12 = 0) is
+        // bank 0 -- so "swappable via PPUCTRL" pattern tables, one screen.
+        let mut m = MagicFloor218::new(synth_prg_32k(1), &[], Mirroring::SingleScreenA).unwrap();
+        m.ppu_write(0x0000, 0x11);
+        m.ppu_write(0x1000, 0x22);
+        // A10 and A11 do not reach CIRAM A10: $0400 / $0C00 alias $0000.
+        assert_eq!(m.ppu_read(0x0400), 0x11);
+        assert_eq!(m.ppu_read(0x0C00), 0x11);
+        assert_eq!(m.ppu_read(0x1400), 0x22);
+        // Nametables sit in bank 0 alongside pattern table 0.
+        assert_eq!(m.ppu_read(0x2000), 0x11);
+        assert_eq!(m.ppu_read(0x2C00), 0x11);
+        assert_eq!(m.nametable_fetch(0x2400), Some(0x11));
+    }
+
+    #[test]
+    fn m218_single_screen_b_wires_ciram_a10_to_ppu_a13() {
+        // NESdev "INES Mapper 218", flags 6 = $A9: CIRAM A10 = PPU A13.
+        // Every pattern address ($0000-$1FFF, A13 = 0) is CIRAM bank 0 and
+        // every nametable ($2xxx, A13 = 1) is bank 1: 1 KiB (64 tiles) of
+        // CHR-RAM that the nametable never overwrites.
+        let mut m = MagicFloor218::new(synth_prg_32k(1), &[], Mirroring::SingleScreenB).unwrap();
+        m.ppu_write(0x0000, 0x11);
+        m.ppu_write(0x2000, 0x33);
+        assert_eq!(m.ppu_read(0x0000), 0x11);
+        assert_eq!(m.ppu_read(0x1000), 0x11);
+        assert_eq!(m.ppu_read(0x1C00), 0x11);
+        assert_eq!(m.ppu_read(0x2C00), 0x33);
+        assert_eq!(m.nametable_fetch(0x2400), Some(0x33));
     }
 
     #[test]

@@ -18,7 +18,7 @@ use core::time::Duration;
 
 use crate::Cpu2A03Revision;
 use crate::Region;
-use crate::bus::LockstepBus;
+use crate::bus::SystemBus;
 use crate::controller::Buttons;
 use crate::debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 use crate::genie::{GenieCode, GenieError};
@@ -80,6 +80,53 @@ pub struct PowerOnConfig {
     pub ram: PowerOnRam,
 }
 
+/// v2.9.8 — which console wires the PPU's `/RESET` line.
+///
+/// The 2C02 is the same chip in every NTSC console; what differs is the board
+/// around it. The `NESdev` "PPU power up state" page (§Famicom, and its closing
+/// note on front- and top-loaders) documents two wirings:
+///
+/// - **NES (front-loader, NES-001)** — the CPU and PPU are reset together. At
+///   power-on and on every press of Reset the PPU spends about 29,658 CPU
+///   cycles (NTSC) in its warm-up state, ignoring writes to `$2000`, `$2001`,
+///   `$2005` and `$2006`, and Reset clears PPUCTRL, PPUMASK, the scroll/address
+///   latch and the read buffer.
+/// - **Famicom** — the PPU's `/RESET` is tied to 5 V and only the CPU's rides
+///   a 0.47 µF capacitor. At power-on the PPU therefore starts initialising
+///   roughly one frame before the CPU leaves reset, which is longer than the
+///   warm-up window, so the CPU's first instructions can already write the
+///   masked registers. The Reset button reaches only the CPU: the PPU keeps
+///   running and keeps its register state.
+///
+/// What this models, and what it does not:
+///
+/// - Power-on under [`Self::Famicom`] closes the warm-up window before the
+///   first instruction ([`rustynes_ppu::Ppu::end_warmup`]). `NESdev` gives the
+///   lead as "approximately one frame ... the exact timing has not been
+///   measured, and may vary", so the PPU's frame position is left where the NES
+///   model puts it rather than advanced by a guessed amount.
+/// - A warm reset under [`Self::Famicom`] leaves the PPU untouched. The APU,
+///   DMA unit and cartridge reset exactly as under [`Self::Nes`].
+/// - The NES-101 top-loader shares the Famicom's reset wiring, but `NESdev` does
+///   not document its power-on lead, so it is not offered as a separate model.
+///
+/// **Off by default.** [`Self::Nes`] is the model every release before v2.9.8
+/// emulated, so the default build is byte-identical. The selection is a
+/// host/config knob, never derived from the ROM: NES 2.0 has no console type
+/// that distinguishes a Famicom from an NES, and the project does not guess a
+/// console from a per-game list. It is not part of the save-state (the warm-up
+/// counter it acts on already is), and like the other hardware knobs on [`Nes`]
+/// it is re-applied by the host after a load or power-cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum ConsoleModel {
+    /// Default. Front-loading NES: the CPU and PPU share the reset line.
+    #[default]
+    Nes,
+    /// Famicom: the PPU is never held in reset, so it leaves its warm-up before
+    /// the CPU starts and ignores the Reset button.
+    Famicom,
+}
+
 /// v1.1.0 beta.2 (Workstream C, T-110-C2) — one cycle-trace record.
 ///
 /// The CPU register file + cycle count captured just before an instruction
@@ -115,9 +162,17 @@ pub struct TraceRec {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Nes {
     cpu: Cpu,
-    bus: LockstepBus,
-    /// SHA-256 of the original ROM bytes the emulator was constructed from.
+    bus: SystemBus,
+    /// The ROM's persistent identity: SHA-256 of an iNES / NES 2.0 image's
+    /// bytes AFTER its 16-byte header (trainer, PRG, CHR, anything trailing),
+    /// or of the whole image for anything without the `NES\x1A` magic (FDS
+    /// disks, NSF files). See [`Nes::rom_sha256`] for why the header is left
+    /// out.
     rom_sha256: [u8; 32],
+    /// SHA-256 of the complete image as constructed, header included. Only the
+    /// Vs. System database consults it, as the fallback to its identity key
+    /// ([`Nes::image_sha256`]).
+    image_sha256: [u8; 32],
     /// Optional rewind ring buffer. Disabled by default — frontend opts in
     /// via [`Nes::enable_rewind`].
     rewind: Option<RewindRing>,
@@ -305,7 +360,7 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom(bytes: &[u8]) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::new(bytes)?;
+        let mut bus = SystemBus::new(bytes)?;
         // Cold-boot path: `Cpu::power_on()` seeds `S=$00`; the subsequent
         // `reset()`'s `S -= 3` (wrapping) lands at `$FD`, matching Mesen2's
         // power-up state. See `docs/audit/session-13-cpu-boot-fix-2026-05-21.md`.
@@ -314,7 +369,8 @@ impl Nes {
         Ok(Self {
             cpu,
             bus,
-            rom_sha256: sha256_of(bytes),
+            rom_sha256: rom_identity_sha256(bytes),
+            image_sha256: sha256_of(bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -348,14 +404,15 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom_with_sample_rate(bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::with_sample_rate(bytes, sample_rate)?;
+        let mut bus = SystemBus::with_sample_rate(bytes, sample_rate)?;
         // Cold-boot path: see comment in `from_rom`.
         let mut cpu = Cpu::power_on();
         cpu.reset(&mut bus);
         Ok(Self {
             cpu,
             bus,
-            rom_sha256: sha256_of(bytes),
+            rom_sha256: rom_identity_sha256(bytes),
+            image_sha256: sha256_of(bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -418,7 +475,7 @@ impl Nes {
         bios_bytes: &[u8],
         sample_rate: u32,
     ) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::with_disk(disk_bytes, bios_bytes, sample_rate)?;
+        let mut bus = SystemBus::with_disk(disk_bytes, bios_bytes, sample_rate)?;
         // Cold-boot path: see comment in `from_rom`.
         let mut cpu = Cpu::power_on();
         cpu.reset(&mut bus);
@@ -426,6 +483,7 @@ impl Nes {
             cpu,
             bus,
             rom_sha256: sha256_of(disk_bytes),
+            image_sha256: sha256_of(disk_bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -486,13 +544,14 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] when the NSF header is malformed.
     pub fn from_nsf_with_sample_rate(nsf_bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
-        let mut bus = LockstepBus::with_nsf(nsf_bytes, sample_rate)?;
+        let mut bus = SystemBus::with_nsf(nsf_bytes, sample_rate)?;
         let mut cpu = Cpu::power_on();
         cpu.reset(&mut bus);
         Ok(Self {
             cpu,
             bus,
             rom_sha256: sha256_of(nsf_bytes),
+            image_sha256: sha256_of(nsf_bytes),
             rewind: None,
             rewind_capture_enabled: true,
             rewind_snap_buf: Vec::new(),
@@ -602,6 +661,24 @@ impl Nes {
     }
 
     /// Power-cycle (cold boot). Zeroes WRAM, re-rolls phase, reloads vectors.
+    ///
+    /// A cold boot of the CONSOLE, not of its configuration. The PPU and the
+    /// APU are rebuilt to their power-on state, and since v2.9.8 every host
+    /// setting stored on them survives: the custom or generated palette
+    /// ([`Self::set_custom_palette`]), the overclock scanlines
+    /// ([`Self::set_extra_scanlines`]), the fast dot path
+    /// ([`Self::set_fast_dotloop`]), the OAM-decay model
+    /// ([`Self::set_oam_decay`]), the APU channel mask, per-channel gain and
+    /// filter model, and the armed state of the provenance stores (emptied
+    /// below). The settings stored on the bus survived already: the die
+    /// revisions, the console model, the Vs. DIP switches and PPU type, the
+    /// mirroring override and the Four Score. The power-on FILLS
+    /// ([`Self::set_power_on_ram`], [`Self::set_power_up_palette`]) are
+    /// re-applied, as a fresh boot applies them. What a cold boot does clear
+    /// is console state: RAM, registers, the mapper (battery RAM excepted),
+    /// the controllers' latches, and any non-standard input device, which the
+    /// host re-attaches. Until v2.9.8 the PPU and APU settings reverted to
+    /// their defaults, and each host had to re-push them.
     pub fn power_cycle(&mut self) {
         // v2.4.0 item B — see `reset`; a cold boot is the larger discontinuity.
         self.timeline_generation = self.timeline_generation.wrapping_add(1);
@@ -1293,12 +1370,12 @@ impl Nes {
 
     /// Borrow the underlying bus (debugger / tests).
     #[must_use]
-    pub const fn bus(&self) -> &LockstepBus {
+    pub const fn bus(&self) -> &SystemBus {
         &self.bus
     }
 
     /// Mutably borrow the underlying bus (debugger / tests).
-    pub const fn bus_mut(&mut self) -> &mut LockstepBus {
+    pub const fn bus_mut(&mut self) -> &mut SystemBus {
         &mut self.bus
     }
 
@@ -1365,7 +1442,7 @@ impl Nes {
             rustynes_mappers::Region::Pal => Region::Pal,
             rustynes_mappers::Region::Dendy => Region::Dendy,
             // iNES 1.0 "Multi" cartridges are treated as NTSC for pacing
-            // (matches the PPU / APU init in `LockstepBus::with_sample_rate`).
+            // (matches the PPU / APU init in `SystemBus::with_sample_rate`).
             _ => Region::Ntsc,
         }
     }
@@ -1386,10 +1463,25 @@ impl Nes {
         self.bus.chr_rom_len()
     }
 
-    /// The loaded mapper's iNES / NES 2.0 mapper id (backs `cart:mapper_id()`).
+    /// The loaded cartridge's iNES / NES 2.0 mapper id, after any load-time
+    /// header correction (backs the Lua `cart:mapper_id()`, the ROM-info
+    /// panel and the mobile `RomInfo`). A Famicom Disk System image reports
+    /// 20 and an NSF 31, the ids their synthetic cartridges carry.
+    ///
+    /// v2.9.8 — read from the cartridge. It used to read the mapper's debug
+    /// view, whose default `debug_info` names mapper 0, so every board
+    /// without its own override (`UxROM`, CNROM, `AxROM`, ...) reported 0, and
+    /// an NSF reported 0 rather than 31.
     #[must_use]
-    pub fn mapper_id(&self) -> u16 {
-        self.bus.mapper_debug_info().mapper_id
+    pub const fn mapper_id(&self) -> u16 {
+        self.bus.cart.mapper_id
+    }
+
+    /// v2.9.8 — the loaded cartridge's NES 2.0 submapper (0 for an iNES 1.0
+    /// image, which has none), after any load-time header correction.
+    #[must_use]
+    pub const fn submapper(&self) -> u8 {
+        self.bus.cart.submapper
     }
 
     /// Wall-clock frame duration for this cartridge's region. The frontend
@@ -1501,10 +1593,35 @@ impl Nes {
     /// iNES-1.0 Vs. dumps default to the 2C03 palette (no NES 2.0 byte-13);
     /// the per-game database ([`crate::vs_db`]) supplies the correct
     /// 2C04-000x / 2C05 type, which the frontend applies through this setter.
-    /// Affects only the colour LUT the PPU emits through, never game logic.
-    /// No effect on non-Vs. carts.
+    /// Mostly the colour LUT the PPU emits through, but a 2C05 also returns
+    /// its identification bits in `$2002` and swaps `$2000` / `$2001`, which
+    /// game code reads -- so it is emulation state, and movies and netplay
+    /// carry it (v2.9.8, [`crate::HardwareOptions`]). (Until v2.9.8 this said
+    /// "never game logic", which the 2C05 path contradicts.) No effect on
+    /// non-Vs. carts.
     pub const fn set_vs_ppu_type(&mut self, t: rustynes_mappers::VsPpuType) {
         self.bus.set_vs_ppu_type(t);
+    }
+
+    /// v2.9.8 — the Vs. System PPU type in effect: the header's, or the one a
+    /// later [`Self::set_vs_ppu_type`] installed. [`rustynes_mappers::VsPpuType::None`]
+    /// on every non-Vs. cart.
+    ///
+    /// Read by [`crate::HardwareOptions::capture`]: on a 2C05 the type also
+    /// sets the `$2002` identification bits and swaps `$2000` / `$2001`, which
+    /// game code reads, so a movie or a netplay peer must run the same one.
+    #[must_use]
+    pub const fn vs_ppu_type(&self) -> rustynes_mappers::VsPpuType {
+        self.bus.cart.vs_ppu_type
+    }
+
+    /// v2.9.8 — the parsed cartridge description the machine was built from
+    /// (mapper, submapper, mirroring, RAM sizes, console type ...), after any
+    /// load-time header correction. Crate-internal: read by
+    /// [`crate::BoardDescription::capture`].
+    #[must_use]
+    pub(crate) const fn cartridge(&self) -> &rustynes_mappers::Cartridge {
+        &self.bus.cart
     }
 
     /// Latch a Vs. System coin insertion on the given acceptor (0 = #1, 1 = #2).
@@ -1666,7 +1783,7 @@ impl Nes {
     /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
     ///
     /// **Default ON since v2.3.6** (was off in v2.2.3-v2.3.5). See
-    /// [`crate::bus::LockstepBus::set_zapper_temporal_light`] for the model and
+    /// [`crate::bus::SystemBus::set_zapper_temporal_light`] for the model and
     /// for why it was promoted; in short, the light bit is a function of where
     /// the CRT beam is at the moment of the read (dark before the beam paints
     /// the aim row, lit for the ~19-26-scanline photodiode hold, dark after)
@@ -1904,6 +2021,13 @@ impl Nes {
         self.bus.set_mirroring_override(m);
     }
 
+    /// v2.9.8 — the per-game nametable mirroring override in effect (`None` =
+    /// the mapper decides). See [`Self::set_mirroring_override`].
+    #[must_use]
+    pub const fn mirroring_override(&self) -> Option<rustynes_mappers::Mirroring> {
+        self.bus.mirroring_override()
+    }
+
     /// Whether the loaded mapper's nametable mirroring is **hardwired** by the
     /// cartridge (solder pads / header bit) rather than controlled by the
     /// mapper's own registers at runtime.
@@ -2034,14 +2158,39 @@ impl Nes {
         self.bus.drain_audio_into(out)
     }
 
-    /// SHA-256 of the ROM bytes this emulator was constructed from.
+    /// The ROM's persistent identity: SHA-256 of an iNES / NES 2.0 image's
+    /// bytes after its 16-byte header, or of the whole image for FDS and NSF.
     ///
-    /// Used by the frontend's save-state file layout (one directory per
-    /// ROM, keyed by hex-encoded SHA-256). The hash is computed once at
-    /// `from_rom` time; subsequent calls are O(1).
+    /// Everything that persists per game is keyed by it: save-state slot
+    /// directories, the battery `.sav`, cheats, the `.rns` header's ROM tag
+    /// ([`Self::rom_hash_tag`]), movies and netplay's ROM match. Computed once
+    /// at construction; subsequent calls are O(1).
+    ///
+    /// **Why the header is excluded (v2.9.8).** Until v2.9.8 this hashed the
+    /// whole image as constructed, which on the desktop is the image AFTER the
+    /// game database corrected its header. Any change to those corrections
+    /// therefore renamed a game's saves and invalidated its states, and v2.9.8
+    /// alone changed them three times (the dirty-tail mapper nibble, the NES 2.0
+    /// guard, the region promotion). The header is the one part of an image
+    /// that load-time corrections rewrite; PRG and CHR never change, so an
+    /// identity built from them survives every past and future correction, and
+    /// two dumps of the same game with different headers share their saves.
+    /// The maintainer accepted the one-time break this causes (2026-10-01).
     #[must_use]
     pub const fn rom_sha256(&self) -> &[u8; 32] {
         &self.rom_sha256
+    }
+
+    /// SHA-256 of the complete image as constructed, header included.
+    ///
+    /// The Vs. System database ([`crate::vs_db`]) keeps a whole-file key on
+    /// each row as a fallback to its identity key ([`Self::rom_sha256`]), so a
+    /// row added from a dump that was never staged stays reachable;
+    /// [`crate::vs_db::lookup`] consults both. Nothing else is keyed by it.
+    /// Identical to [`Self::rom_sha256`] for FDS and NSF.
+    #[must_use]
+    pub const fn image_sha256(&self) -> &[u8; 32] {
+        &self.image_sha256
     }
 
     /// Truncated ROM hash tag stored in the save-state header.
@@ -2392,7 +2541,7 @@ impl Nes {
         }
         // v2.7.0 -- the one cross-section invariant: the CPU's master clock and
         // the bus's PPU clock must be close enough that the next catch-up
-        // terminates (see `LockstepBus::check_restored_clocks`).
+        // terminates (see `SystemBus::check_restored_clocks`).
         self.bus.check_restored_clocks(self.cpu.master_clock())?;
         Ok(())
     }
@@ -2464,7 +2613,7 @@ impl Nes {
     ///
     /// Called from `run_frame` / `step_instruction` BEFORE the
     /// `Cpu::step` call.  The opcode + 2 operand bytes are peeked
-    /// side-effect-free via `LockstepBus::debug_peek_cpu` so the
+    /// side-effect-free via `SystemBus::debug_peek_cpu` so the
     /// trace is non-perturbing.
     ///
     /// No-op if the trace was never enabled.
@@ -2722,6 +2871,14 @@ impl Nes {
         self.bus.apu_mut().set_filter_model(model);
     }
 
+    /// v2.9.8 — the APU analog output-filter model last selected with
+    /// [`Self::set_apu_filter_model`] (the default until one is). Survives a
+    /// [`Self::power_cycle`].
+    #[must_use]
+    pub const fn apu_filter_model(&self) -> rustynes_apu::FilterModel {
+        self.bus.apu().filter_model()
+    }
+
     /// Current APU per-channel output gain. See [`Self::set_apu_channel_gain`].
     #[must_use]
     pub const fn apu_channel_gain(&self) -> [f32; 6] {
@@ -2762,6 +2919,14 @@ impl Nes {
     /// set one) are unaffected. Not part of the save-state.
     pub const fn set_custom_palette(&mut self, base: Option<[[u8; 3]; 64]>) {
         self.bus.set_custom_palette(base);
+    }
+
+    /// v2.9.8 — the custom base palette installed by
+    /// [`Self::set_custom_palette`], or `None` for the built-in one. Survives a
+    /// [`Self::power_cycle`].
+    #[must_use]
+    pub const fn custom_palette(&self) -> Option<[[u8; 3]; 64]> {
+        self.bus.ppu().custom_palette()
     }
 
     /// v1.7.0 "Forge" Workstream F3 — set the PPU extra-scanlines overclock: the
@@ -2857,6 +3022,31 @@ impl Nes {
         self.bus.ppu_revision()
     }
 
+    /// v2.9.8 — select the console whose reset wiring is modelled (see
+    /// [`ConsoleModel`]).
+    ///
+    /// The selection is stored, so every later [`Nes::power_cycle`] and
+    /// [`Nes::reset`] follows it. It also takes effect at once in one respect:
+    /// selecting [`ConsoleModel::Famicom`] ends any PPU warm-up still in
+    /// progress, because a Famicom's PPU is never held in reset while its CPU
+    /// runs. A host that applies its configuration straight after building the
+    /// machine (as the frontend does on every ROM load and power-cycle) thereby
+    /// gets the Famicom power-on. Selecting [`ConsoleModel::Nes`] never re-arms
+    /// a window that has already closed; it applies from the next reset.
+    ///
+    /// [`ConsoleModel::Nes`] is the default and is byte-identical to every
+    /// earlier release. Deterministic; config, not save-state.
+    pub const fn set_console_model(&mut self, model: ConsoleModel) {
+        self.bus.set_console_model(model);
+    }
+
+    /// v2.9.8 — the currently-selected console reset wiring (default
+    /// [`ConsoleModel::Nes`], byte-identical).
+    #[must_use]
+    pub const fn console_model(&self) -> ConsoleModel {
+        self.bus.console_model()
+    }
+
     /// v2.1.7 P5 — apply a power-up palette-RAM pattern (see [`PaletteInit`]).
     ///
     /// The 2C02's palette RAM is not cleared at power-on; this selects the
@@ -2939,12 +3129,15 @@ impl Nes {
     /// `audio` flag (true only when the mapper overrides `mix_audio` with the
     /// feature on) and the mapper id to name the chip family.
     #[must_use]
-    pub fn expansion_audio_chip(&self) -> Option<&'static str> {
+    pub const fn expansion_audio_chip(&self) -> Option<&'static str> {
         if !self.bus.mapper_caps().audio {
             return None;
         }
-        let id = self.bus.mapper_debug_info().mapper_id;
-        Some(match id {
+        // The cartridge's id, not the debug view's (v2.9.8, see `mapper_id`).
+        // Every board that overrides `mix_audio` also names its id in
+        // `debug_info` today, so no label changes; the debug view simply is
+        // not the place the mapper id is defined.
+        Some(match self.mapper_id() {
             5 => "MMC5",
             19 | 210 => "Namco 163",
             20 => "FDS",
@@ -3046,6 +3239,16 @@ impl Nes {
     }
 }
 
+/// The persistent identity of a cartridge image: SHA-256 of everything after
+/// the 16-byte iNES / NES 2.0 header, or of the whole image when the `NES\x1A`
+/// magic is absent. See [`Nes::rom_sha256`].
+fn rom_identity_sha256(bytes: &[u8]) -> [u8; 32] {
+    match bytes {
+        [b'N', b'E', b'S', 0x1A, ..] if bytes.len() >= 16 => sha256_of(&bytes[16..]),
+        _ => sha256_of(bytes),
+    }
+}
+
 fn sha256_of(bytes: &[u8]) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -3117,7 +3320,7 @@ mod tests {
         let live = nes.bus().ppu_clock_for_test();
         let live_skew = master.abs_diff(live);
         assert!(
-            live_skew <= LockstepBus::RESTORED_CLOCK_SKEW_MAX,
+            live_skew <= SystemBus::RESTORED_CLOCK_SKEW_MAX,
             "the running machine's own skew ({live_skew}) must be inside the bound"
         );
         assert!(
@@ -3132,7 +3335,7 @@ mod tests {
         // small, so the "behind" direction is exercised by moving the PPU
         // clock only as far as zero allows and the "ahead" direction carries
         // the bound.
-        let max = LockstepBus::RESTORED_CLOCK_SKEW_MAX;
+        let max = SystemBus::RESTORED_CLOCK_SKEW_MAX;
         for (label, ppu_clock, ok) in [
             ("behind, as far as zero", master.saturating_sub(max), true),
             ("at the bound, ahead", master + max, true),
@@ -3191,7 +3394,7 @@ mod tests {
             blob
         };
 
-        let ceiling = LockstepBus::RESTORED_CLOCK_MAX;
+        let ceiling = SystemBus::RESTORED_CLOCK_MAX;
         for (label, shift, ok) in [
             ("unshifted", 0, true),
             (
@@ -3382,14 +3585,15 @@ mod tests {
         // T-51-005: end-to-end controller plumbing — the bus must shift the
         // latched button state out via $4016 in canonical order.
         //
-        // Session-24 / Phase 3 update: `$4016` writes are now deferred
-        // (committed at the next M2-low boundary inside
-        // `tick_one_cpu_cycle`).  Direct-API callers that bypass CPU
-        // stepping must tick the bus between the strobe pulse and the
-        // shift-out reads so the buffered write commits.  Two ticks
-        // are sufficient (one for the pending=1 commit, one as a
-        // margin in case the test's first write landed on the pending=2
-        // path).
+        // Session-24 / Phase 3 update: `$4016` writes are deferred
+        // (committed at the start of a later cycle by `Bus::cpu_clock`).
+        // Direct-API callers that bypass CPU stepping must clock the bus
+        // between the strobe pulse and the shift-out reads so the buffered
+        // write commits. Two cycles are sufficient (one for the pending=1
+        // commit, one as a margin in case the test's first write landed on
+        // the pending=2 path). Until v2.9.8 these tests drove the removed
+        // pre-v2.0.0 `tick_one_cpu_cycle`, which committed the strobe the
+        // same way.
         use rustynes_cpu::Bus as _;
         let rom = synth_nrom(16, 8);
         let mut nes = Nes::from_rom(&rom).expect("parse + boot");
@@ -3399,11 +3603,11 @@ mod tests {
         // bus enough cycles between writes for the deferred-write
         // commit to land.
         nes.bus_mut().cpu_write(0x4016, 1);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
         nes.bus_mut().cpu_write(0x4016, 0);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
 
         // 8 reads of $4016 should yield A, B, Select, Start, Up, Down, Left, Right.
         let expected = [1u8, 0, 1, 0, 0, 1, 0, 0];
@@ -3424,11 +3628,11 @@ mod tests {
         nes.set_buttons(1, Buttons::B | Buttons::START | Buttons::RIGHT);
 
         nes.bus_mut().cpu_write(0x4016, 1);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
         nes.bus_mut().cpu_write(0x4016, 0);
-        nes.bus_mut().tick_one_cpu_cycle();
-        nes.bus_mut().tick_one_cpu_cycle();
+        nes.bus_mut().cpu_clock();
+        nes.bus_mut().cpu_clock();
 
         // A, B, Select, Start, Up, Down, Left, Right.
         let expected = [0u8, 1, 0, 1, 0, 0, 0, 1];
@@ -3450,11 +3654,11 @@ mod tests {
 
         let strobe = |nes: &mut Nes| {
             nes.bus_mut().cpu_write(0x4016, 1);
-            nes.bus_mut().tick_one_cpu_cycle();
-            nes.bus_mut().tick_one_cpu_cycle();
+            nes.bus_mut().cpu_clock();
+            nes.bus_mut().cpu_clock();
             nes.bus_mut().cpu_write(0x4016, 0);
-            nes.bus_mut().tick_one_cpu_cycle();
-            nes.bus_mut().tick_one_cpu_cycle();
+            nes.bus_mut().cpu_clock();
+            nes.bus_mut().cpu_clock();
         };
 
         nes.set_buttons(0, Buttons::A);
@@ -3607,6 +3811,105 @@ mod tests {
             PaletteInit::Blargg,
             "palette survives power-cycle"
         );
+    }
+
+    /// v2.9.8 — a ROM that writes PPUCTRL and PPUMASK exactly once, as its
+    /// first four instructions, then idles. Whether those writes land is the
+    /// whole observable difference between the two console models at power-on.
+    ///
+    /// ```text
+    /// C000: A9 90     LDA #$90    ; NMI on, BG pattern table $1000
+    /// C002: 8D 00 20  STA $2000
+    /// C005: A9 01     LDA #$01    ; greyscale only: rendering stays off
+    /// C007: 8D 01 20  STA $2001
+    /// C00A: 4C 0A C0  JMP $C00A
+    /// C00D: 40        RTI         ; NMI handler
+    /// ```
+    fn one_shot_ppu_write_rom() -> Vec<u8> {
+        // (Two frames are run per check below, not one: the machine powers up
+        // with the PPU at the end of the pre-render line, so the first
+        // `run_frame` completes within a few cycles, before these writes.)
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16 KiB PRG, CHR-RAM
+        let prg = &mut bytes[16..];
+        prg[0..14].copy_from_slice(&[
+            0xA9, 0x90, 0x8D, 0x00, 0x20, 0xA9, 0x01, 0x8D, 0x01, 0x20, 0x4C, 0x0A, 0xC0, 0x40,
+        ]);
+        let len = prg.len();
+        prg[len - 6] = 0x0D; // NMI -> $C00D (RTI)
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00; // RESET -> $C000
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x0A; // IRQ -> $C00A
+        prg[len - 1] = 0xC0;
+        bytes
+    }
+
+    fn run_frames(nes: &mut Nes, n: u32) {
+        for _ in 0..n {
+            let _ = nes.run_frame();
+        }
+    }
+
+    /// v2.9.8 — the console model's two documented effects, from `NESdev` "PPU
+    /// power up state" (§Famicom and the front-/top-loader note):
+    ///
+    /// 1. At power-on the NES ignores `$2000`/`$2001` for ~29,658 CPU cycles,
+    ///    so a write issued in the first few cycles is lost; on the Famicom the
+    ///    PPU left reset about one frame earlier, so the same write lands.
+    /// 2. The Reset button resets the PPU on the NES (PPUCTRL cleared, the
+    ///    warm-up window re-armed) and does not reach it on the Famicom.
+    #[test]
+    fn famicom_console_model_ppu_leaves_reset_before_the_cpu() {
+        let rom = one_shot_ppu_write_rom();
+
+        // Default (NES): the model is NES, and the one-shot writes are dropped
+        // inside the warm-up window — the established behaviour.
+        let mut nes = Nes::from_rom(&rom).expect("boot");
+        assert_eq!(nes.console_model(), ConsoleModel::Nes);
+        run_frames(&mut nes, 2);
+        assert_eq!(
+            nes.bus().ppu().debug_registers()[..2],
+            [0x00, 0x00],
+            "NES: writes inside the warm-up window are ignored"
+        );
+
+        // Famicom, selected straight after construction the way the frontend
+        // applies its config: the same writes land.
+        let mut fc = Nes::from_rom(&rom).expect("boot");
+        fc.set_console_model(ConsoleModel::Famicom);
+        assert_eq!(fc.bus().ppu().warmup_cycles_remaining(), 0);
+        run_frames(&mut fc, 2);
+        assert_eq!(
+            fc.bus().ppu().debug_registers()[..2],
+            [0x90, 0x01],
+            "Famicom: the PPU is past its warm-up when the CPU starts"
+        );
+
+        // Reset reaches only the CPU on a Famicom: PPUCTRL/PPUMASK survive and
+        // no window is re-armed.
+        fc.reset();
+        assert_eq!(fc.bus().ppu().debug_registers()[..2], [0x90, 0x01]);
+        assert_eq!(fc.bus().ppu().warmup_cycles_remaining(), 0);
+
+        // On the NES, Reset clears PPUCTRL/PPUMASK and re-arms the window.
+        let mut nes = Nes::from_rom(&rom).expect("boot");
+        nes.set_console_model(ConsoleModel::Famicom);
+        run_frames(&mut nes, 2);
+        assert_eq!(nes.bus().ppu().debug_registers()[..2], [0x90, 0x01]);
+        nes.set_console_model(ConsoleModel::Nes);
+        nes.reset();
+        assert_eq!(nes.bus().ppu().debug_registers()[..2], [0x00, 0x00]);
+        assert!(nes.bus().ppu().warmup_cycles_remaining() > 29_000);
+
+        // The selection survives a power cycle and is applied to the rebuilt
+        // PPU before the CPU's first instruction.
+        fc.power_cycle();
+        assert_eq!(fc.console_model(), ConsoleModel::Famicom);
+        assert_eq!(fc.bus().ppu().warmup_cycles_remaining(), 0);
+        run_frames(&mut fc, 2);
+        assert_eq!(fc.bus().ppu().debug_registers()[..2], [0x90, 0x01]);
     }
 
     #[test]
@@ -4116,6 +4419,26 @@ mod tests {
         assert_eq!(h.rom_hash_tag, nes.rom_hash_tag());
     }
 
+    /// v2.9.8 (ADR 0042): a `.rns` written by v2.9.7 or earlier carries
+    /// container format 2 and is refused at the header with one typed error,
+    /// before any section is looked at -- and the machine is left as it was.
+    #[test]
+    fn a_v2_9_7_container_is_refused_at_the_header() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        nes.run_frame();
+        let mut old = nes.snapshot();
+        let before = old.clone();
+        // The container's format version is the u16 after the 8-byte magic.
+        old[8..10].copy_from_slice(&2u16.to_le_bytes());
+        let err = nes.restore(&old).unwrap_err();
+        assert!(
+            matches!(err, SnapshotError::FormatTooOld { got: 2, .. }),
+            "expected FormatTooOld, got {err:?}"
+        );
+        assert_eq!(nes.snapshot(), before, "a refused load changed the machine");
+    }
+
     #[test]
     fn restore_rejects_pre_v3_cpu_section_version() {
         // ADR 0028 (v2.0.0 rc.1): a slot file whose CPU section predates the
@@ -4426,6 +4749,215 @@ mod tests {
         assert!(b > a, "warm reset did not bump");
         nes.power_cycle();
         assert!(nes.timeline_generation() > b, "power cycle did not bump");
+    }
+
+    /// v2.9.8 — a power cycle keeps every host setting stored on the PPU and
+    /// the APU, on a bare `Nes` with no host to re-push anything.
+    ///
+    /// `Nes::power_cycle` rebuilds both chips, and until v2.9.8 each of these
+    /// reverted to its default there: the desktop re-pushed them after the
+    /// cycle, the movie power-on (`power_on_for_movie`), libretro and mobile
+    /// paths did not. One row per setting, each set to a NON-default value,
+    /// so a row that reverts fails on its own.
+    #[test]
+    fn a_power_cycle_keeps_every_ppu_and_apu_setting() {
+        type Setting = (&'static str, fn(&mut Nes), fn(&Nes) -> bool);
+        const PAL: [[u8; 3]; 64] = [[0x12, 0x34, 0x56]; 64];
+        const GAIN: [f32; 6] = [0.5, 1.5, 0.25, 2.0, 0.0, 0.75];
+        let rows: [Setting; 7] = [
+            (
+                "custom palette",
+                |n| n.set_custom_palette(Some(PAL)),
+                |n| n.custom_palette() == Some(PAL),
+            ),
+            (
+                "extra scanlines",
+                |n| n.set_extra_scanlines(7),
+                |n| n.extra_scanlines() == 7,
+            ),
+            (
+                "fast dot path (off; on is the default)",
+                |n| n.set_fast_dotloop(false),
+                |n| !n.fast_dotloop(),
+            ),
+            (
+                "OAM decay",
+                |n| n.set_oam_decay(true),
+                |n| n.oam_decay_enabled(),
+            ),
+            (
+                "APU channel mask",
+                |n| n.set_apu_channel_mask(0x15),
+                |n| n.apu_channel_mask() == 0x15,
+            ),
+            (
+                "APU channel gain",
+                |n| n.set_apu_channel_gain(GAIN),
+                |n| n.apu_channel_gain() == GAIN,
+            ),
+            (
+                "APU filter model",
+                |n| n.set_apu_filter_model(rustynes_apu::FilterModel::Famicom),
+                |n| n.apu_filter_model() == rustynes_apu::FilterModel::Famicom,
+            ),
+        ];
+        let rom = synth_nrom(16, 8);
+        let mut lost = Vec::new();
+        for (name, set, holds) in rows {
+            let mut nes = Nes::from_rom(&rom).unwrap();
+            assert!(!holds(&nes), "{name}: premise -- the default differs");
+            set(&mut nes);
+            assert!(holds(&nes), "{name}: the setter applies it");
+            nes.run_frame();
+            nes.power_cycle();
+            if !holds(&nes) {
+                lost.push(name);
+            }
+        }
+        // Every row is checked before failing, so a regression names every
+        // setting it drops rather than only the first.
+        assert!(lost.is_empty(), "lost across a power cycle: {lost:?}");
+    }
+
+    /// v2.9.8 — the kept settings are not just remembered, they are in force:
+    /// a power-cycled console with them set produces the frame and the audio a
+    /// FRESH console with the same settings produces (`power_cycle == fresh
+    /// boot`, with the host's configuration held constant). The palette and
+    /// the filter change what is emitted, so a setting that was only stored,
+    /// and not applied to the rebuilt chip, fails here.
+    ///
+    /// The channel gain and the OAM-decay model are left out on purpose, and
+    /// are covered by the table above instead: a FRESH console can only
+    /// receive a setting after `from_rom`'s reset sequence has run its first
+    /// cycles at the default, whereas the power-cycled console runs those
+    /// cycles with the setting already in force. For the gain that moves the
+    /// last bits of the audio; for OAM decay, enabling the model stamps every
+    /// row's age with the current cycle, which is 0 on the rebuilt PPU and a
+    /// few cycles later on the fresh one, so the serialized ages differ. Both
+    /// differences are the fix working. (Measured for the gain: applying it
+    /// to both consoles after the cycle matches, carrying it through does not.
+    /// For decay: the test passes with it removed and fails with it present.)
+    #[test]
+    fn a_power_cycled_console_with_settings_runs_as_a_fresh_one() {
+        fn configure(n: &mut Nes) {
+            n.set_custom_palette(Some([[0x40, 0x80, 0xC0]; 64]));
+            n.set_apu_filter_model(rustynes_apu::FilterModel::Clean);
+        }
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut cycled = Nes::from_rom(rom).unwrap();
+        configure(&mut cycled);
+        for _ in 0..5 {
+            cycled.run_frame();
+        }
+        let _ = cycled.drain_audio();
+        cycled.power_cycle();
+        let mut fresh = Nes::from_rom(rom).unwrap();
+        configure(&mut fresh);
+        for _ in 0..10 {
+            cycled.run_frame();
+            fresh.run_frame();
+        }
+        assert_eq!(cycled.framebuffer(), fresh.framebuffer(), "frame");
+        assert_eq!(cycled.drain_audio(), fresh.drain_audio(), "audio");
+        assert_eq!(cycled.snapshot(), fresh.snapshot(), "state");
+    }
+
+    /// v2.9.8 — the provenance stores stay armed across a power cycle (and
+    /// are emptied, since a cold boot ends the history they describe), as the
+    /// comment in `Nes::power_cycle` always said. They were dropped with the
+    /// rebuilt chips until v2.9.8, which made that comment's clear a no-op.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_power_cycle_keeps_the_provenance_stores_armed() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.set_write_attribution(true);
+        nes.set_pixel_provenance(true);
+        nes.set_audio_provenance(true);
+        nes.run_frame();
+        nes.power_cycle();
+        assert!(
+            nes.bus.ppu.write_attribution().is_some(),
+            "write attribution"
+        );
+        assert!(nes.bus.ppu.pixel_provenance().is_some(), "pixel provenance");
+        assert!(nes.bus.apu.audio_provenance_armed(), "audio provenance");
+    }
+
+    /// v2.9.8 — a power cycle after a program has polled the controllers is
+    /// a fresh boot (`power_cycle == fresh boot`).
+    ///
+    /// The controller ports remember the bus cycle of their last read
+    /// (`port_read_cycle`, `u64::MAX` = never), which the CLK-run model
+    /// compares with the current cycle. A power cycle reset the cycle counter
+    /// to 0 but left those stamps from the old timeline, so the cycled
+    /// console's state depended on how long it had run and differed from a
+    /// fresh one; two netplay peers cycling from different states would carry
+    /// different stamps.
+    #[test]
+    fn a_power_cycle_after_controller_reads_is_a_fresh_boot() {
+        let mut rom = synth_nrom(16, 8);
+        // $C000: LDA $4016 ; LDA $4017 ; JMP $C000
+        rom[16..25].copy_from_slice(&[0xAD, 0x16, 0x40, 0xAD, 0x17, 0x40, 0x4C, 0x00, 0xC0]);
+        let mut cycled = Nes::from_rom(&rom).unwrap();
+        for _ in 0..3 {
+            cycled.run_frame();
+        }
+        assert_ne!(
+            cycled.bus.port_read_cycle(0),
+            u64::MAX,
+            "premise: the program polled the pad"
+        );
+        cycled.power_cycle();
+        let fresh = Nes::from_rom(&rom).unwrap();
+        assert!(
+            cycled.snapshot() == fresh.snapshot(),
+            "a power-cycled console must equal a fresh one"
+        );
+    }
+
+    /// v2.9.8 — `mapper_id` reports the cartridge's mapper on every board.
+    ///
+    /// It used to read the mapper's DEBUG view, whose default `debug_info`
+    /// names mapper 0, so every board without its own override -- `UxROM`,
+    /// CNROM, `AxROM` among them -- claimed to be NROM to the Lua
+    /// `cart:mapper_id()`, the ROM-info panel and the mobile `RomInfo`.
+    #[test]
+    fn mapper_id_reports_the_cartridge_mapper_on_every_board() {
+        /// A NES 2.0 image of `mapper` / `submapper`: `prg16` x 16 KiB PRG and
+        /// `chr8` x 8 KiB CHR-ROM (0 = 8 KiB CHR-RAM).
+        fn image(mapper: u16, submapper: u8, prg16: u8, chr8: u8) -> Vec<u8> {
+            let [lo, hi] = mapper.to_le_bytes();
+            let mut rom = vec![0u8; 16];
+            rom[..4].copy_from_slice(b"NES\x1A");
+            rom[4] = prg16;
+            rom[5] = chr8;
+            rom[6] = (lo & 0x0F) << 4;
+            rom[7] = (lo & 0xF0) | 0x08; // NES 2.0
+            rom[8] = (submapper << 4) | (hi & 0x0F);
+            if chr8 == 0 {
+                rom[11] = 0x07; // 64 << 7 = 8 KiB CHR-RAM
+            }
+            rom.resize(
+                16 + usize::from(prg16) * 0x4000 + usize::from(chr8) * 0x2000,
+                0,
+            );
+            rom
+        }
+        for (mapper, submapper, prg16, chr8) in [
+            (0u16, 0u8, 2u8, 1u8),
+            (2, 1, 8, 0),
+            (3, 2, 2, 4),
+            (7, 0, 8, 0),
+            (4, 0, 8, 8),
+        ] {
+            let nes = Nes::from_rom(&image(mapper, submapper, prg16, chr8))
+                .unwrap_or_else(|e| panic!("mapper {mapper}: {e:?}"));
+            assert_eq!(nes.mapper_id(), mapper, "mapper {mapper}");
+            assert_eq!(nes.submapper(), submapper, "mapper {mapper} submapper");
+            // The debugger's mapper panel reads the same id.
+            assert_eq!(nes.mapper_info().mapper_id, mapper, "mapper {mapper} view");
+        }
     }
 
     /// **The counter must not be serialized**, and this is the assertion that
@@ -5148,6 +5680,30 @@ mod tests {
         assert_ne!(nes_a.rom_sha256(), nes_c.rom_sha256());
     }
 
+    /// v2.9.8: the persistent identity ignores the 16-byte header, so a
+    /// load-time header correction cannot rename a game's saves; the
+    /// whole-image hash (the Vs. database's fallback key) still sees the header.
+    #[test]
+    fn rom_identity_ignores_the_header_and_image_hash_does_not() {
+        let rom = synth_nrom(16, 8);
+        let mut reheaded = rom.clone();
+        // Bytes 10-15 are unused padding in an iNES 1.0 header, so this is a
+        // pure header edit on the same board.
+        reheaded[12] = 0x01;
+        let a = Nes::from_rom(&rom).unwrap();
+        let b = Nes::from_rom(&reheaded).unwrap();
+        assert_eq!(
+            a.rom_sha256(),
+            b.rom_sha256(),
+            "header edit renamed the ROM"
+        );
+        assert_eq!(a.rom_hash_tag(), b.rom_hash_tag());
+        assert_ne!(a.image_sha256(), b.image_sha256());
+        // Exactly the body: the identity is SHA-256 of bytes[16..].
+        assert_eq!(*a.rom_sha256(), sha256_of(&rom[16..]));
+        assert_eq!(*a.image_sha256(), sha256_of(&rom));
+    }
+
     #[test]
     fn thumbnail_has_expected_dimensions() {
         let rom = synth_nrom(16, 8);
@@ -5244,7 +5800,7 @@ mod tests {
         // v2.8.0 (libretro audit §2.2, with §2.1). The libretro core reports a
         // `retro_serialize_size` with headroom for expansion devices, so the
         // frontend hands `retro_unserialize` this core's own state followed by
-        // zeros. Both restore paths walk the sections (`LockstepBus::restore`
+        // zeros. Both restore paths walk the sections (`SystemBus::restore`
         // for BUS/PPU/APU/MAP, then `apply_snapshot` for CPU), so both must end
         // at the padding rather than report it as a damaged section.
         let rom = synth_nrom(16, 8);
@@ -5487,7 +6043,7 @@ mod tests {
     /// ROM could adjudicate it and the supported titles were satisfied either
     /// way. The second half was false: under the frame-granular model *Duck
     /// Hunt* receives its "dark frame then bright frame" probe inverted and can
-    /// never register a hit. See `LockstepBus::set_zapper_temporal_light`.
+    /// never register a hit. See `SystemBus::set_zapper_temporal_light`.
     #[test]
     fn zapper_temporal_light_is_on_by_default() {
         let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");

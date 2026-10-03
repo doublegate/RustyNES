@@ -71,12 +71,6 @@ impl A12RiseFilter {
         qualifies
     }
 
-    /// The A12 level last reported.
-    #[cfg(test)]
-    pub(crate) const fn level(self) -> bool {
-        self.level
-    }
-
     /// The save-state byte: level in bit 7, the saturated age in bits 0-6.
     pub(crate) const fn to_byte(self) -> u8 {
         ((self.level as u8) << 7) | self.age
@@ -87,16 +81,6 @@ impl A12RiseFilter {
         Self {
             level: b & 0x80 != 0,
             age: b & Self::AGE_MAX,
-        }
-    }
-
-    /// A state written before v2.9.7, whose byte was the bare level (`0`/`1`).
-    /// Its age is unknown; saturating it is what such a state meant, since a
-    /// board saved between frames has had A12 settled for thousands of cycles.
-    pub(crate) const fn from_legacy_level(level: bool) -> Self {
-        Self {
-            level,
-            age: Self::AGE_MAX,
         }
     }
 }
@@ -208,10 +192,5 @@ mod tests {
             a.tick();
             b.tick();
         }
-        assert!(A12RiseFilter::from_legacy_level(true).level());
-        assert_eq!(
-            A12RiseFilter::from_legacy_level(false),
-            A12RiseFilter::new()
-        );
     }
 }

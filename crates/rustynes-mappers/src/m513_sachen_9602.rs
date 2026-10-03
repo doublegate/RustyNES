@@ -310,10 +310,11 @@ impl Mapper for Sachen9602 {
                 got: data.len(),
             });
         }
-        // v2 (v2.9.7) packs the A12 filter into the old `last_a12` byte; a v1
-        // state's byte is the bare level and loads as such.
+        // v2 (v2.9.7) packs the A12 filter into the old `last_a12` byte. A v1
+        // state, whose byte is the bare level, is refused since v2.9.8 (ADR
+        // 0042); it used to load as such.
         let version = data[0];
-        if version != SAVE_STATE_VERSION && version != 1 {
+        if version != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(version));
         }
         let mut c = 1;
@@ -327,11 +328,7 @@ impl Mapper for Sachen9602 {
         self.irq_reload = data[c + 5] != 0;
         self.irq_enabled = data[c + 6] != 0;
         self.irq_pending = data[c + 7] != 0;
-        self.a12 = if version == 1 {
-            A12RiseFilter::from_legacy_level(data[c + 8] != 0)
-        } else {
-            A12RiseFilter::from_byte(data[c + 8])
-        };
+        self.a12 = A12RiseFilter::from_byte(data[c + 8]);
         c += 9;
         self.outer = data[c];
         self.mirroring = byte_to_mirroring(data[c + 1], self.mirroring);

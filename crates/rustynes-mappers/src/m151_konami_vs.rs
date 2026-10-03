@@ -1,7 +1,8 @@
 //! Konami VS (iNES mapper 151) implementation.
 //!
 //! Mapper 151 is **Konami's VRC1 silicon mounted on a Nintendo Vs. System
-//! arcade board** (Vs. Gradius / GVS VS. TKO Boxing). The bank-switching
+//! arcade board** (Vs. Gradius / Vs. The Goonies; the T.K.O. Boxing dumps that
+//! carry this header drive a Namco 108 instead, see `docs/mappers.md`). The bank-switching
 //! behaviour is byte-for-byte VRC1 (mapper 75): three switchable 8 KiB PRG
 //! banks at `$8000`/`$A000`/`$C000` with a fixed last bank, two 4 KiB CHR
 //! windows, a CHR-MSB bit per window, and `$9000`-bit-0 H/V mirroring control.

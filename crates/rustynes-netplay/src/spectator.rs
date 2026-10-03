@@ -39,7 +39,7 @@
 
 use rustynes_core::{Buttons, Nes};
 
-use crate::message::NetMessage;
+use crate::message::{NetMessage, SessionIdentity};
 use crate::session::MAX_PLAYERS;
 use crate::transport::Transport;
 
@@ -136,7 +136,7 @@ pub struct SpectatorOutcome {
 pub struct SpectatorSession<T: Transport> {
     config: SpectatorConfig,
     transport: T,
-    rom_hash: [u8; 32],
+    identity: SessionIdentity,
 
     /// The next frame to be produced (== number of frames shown so far).
     current_frame: u32,
@@ -152,7 +152,9 @@ pub struct SpectatorSession<T: Transport> {
 }
 
 impl<T: Transport> SpectatorSession<T> {
-    /// Create a read-only spectator for `rom_hash` (from [`Nes::rom_sha256`]).
+    /// Create a read-only spectator for `identity` ([`SessionIdentity::of`] the
+    /// local machine). It syncs only to a stream announcing the same ROM and,
+    /// since v2.9.8, the same machine configuration.
     ///
     /// Unlike [`RollbackSession::new`](crate::RollbackSession::new) this sends
     /// **no** opening handshake — a spectator is invisible to the match. The
@@ -164,7 +166,7 @@ impl<T: Transport> SpectatorSession<T> {
     ///
     /// Panics in debug builds if `config.num_players` is not in `2..=4`.
     #[must_use]
-    pub fn new(config: SpectatorConfig, transport: T, rom_hash: [u8; 32]) -> Self {
+    pub fn new(config: SpectatorConfig, transport: T, identity: SessionIdentity) -> Self {
         debug_assert!(
             (2..=4).contains(&config.num_players),
             "num_players must be 2..=4"
@@ -172,7 +174,7 @@ impl<T: Transport> SpectatorSession<T> {
         Self {
             config,
             transport,
-            rom_hash,
+            identity,
             current_frame: 0,
             last_confirmed_frame: None,
             synced: false,
@@ -284,8 +286,8 @@ impl<T: Transport> SpectatorSession<T> {
         let messages = self.transport.poll();
         for msg in messages {
             match msg {
-                NetMessage::Sync { magic, rom_hash } => {
-                    if magic == NetMessage::SYNC_MAGIC && rom_hash == self.rom_hash {
+                NetMessage::Sync { magic, identity } => {
+                    if magic == NetMessage::SYNC_MAGIC && self.identity.check(&identity).is_ok() {
                         self.synced = true;
                     }
                 }
@@ -426,7 +428,7 @@ mod tests {
     #[test]
     fn spectator_waits_until_confirmed() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (a, _b) = MemoryTransport::pair(LinkConditions::PERFECT, 1);
         let mut spec = SpectatorSession::new(SpectatorConfig::default(), a, hash);
         let mut nes = Nes::from_rom(&rom).unwrap();
@@ -444,7 +446,7 @@ mod tests {
     fn spectator_delay_buffer_holds_then_reveals() {
         const DELAY: u32 = 3;
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
         let mut spec = SpectatorSession::new(
             SpectatorConfig {
@@ -496,7 +498,7 @@ mod tests {
     #[test]
     fn spectator_delay_is_clamped() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (a, _b) = MemoryTransport::pair(LinkConditions::PERFECT, 1);
         let spec = SpectatorSession::new(
             SpectatorConfig {
@@ -521,7 +523,7 @@ mod tests {
     #[test]
     fn spectator_rejects_out_of_window_frame_without_allocating() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
         let mut spec = SpectatorSession::new(
             SpectatorConfig {
@@ -584,7 +586,7 @@ mod tests {
             )
         };
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
         let mut spec = SpectatorSession::new(
             SpectatorConfig {
@@ -626,7 +628,7 @@ mod tests {
     fn spectator_matches_reference_framebuffer() {
         const FRAMES: usize = 24;
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
 
         // A deterministic per-frame input script for both players (a NROM
         // infinite loop ignores it, but the routing path is still exercised
@@ -663,7 +665,7 @@ mod tests {
 
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
-            rom_hash: hash,
+            identity: hash,
         });
         for (f, (&p0, &p1)) in p0_script.iter().zip(p1_script.iter()).enumerate() {
             let frame = u32::try_from(f).unwrap();

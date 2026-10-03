@@ -16,12 +16,17 @@
 //! ```text
 //! HEADER:
 //!     magic           : "RNESMOV1"   (8 bytes)
-//!     format version  : u16 LE        (currently 1 = MOVIE_FORMAT_VERSION)
+//!     format version  : u16 LE        (currently 3 = MOVIE_FORMAT_VERSION)
 //!     region          : u8            (0 = NTSC, 1 = PAL, 2 = Dendy)
-//!     flags           : u8            (bit0 = embedded save-state start point)
-//!     rom sha-256     : [u8; 32]      (full hash — authoritative ROM identity)
+//!     flags           : u8            (bit0 = embedded save-state start point,
+//!                                      bit1 = board description recorded)
+//!     rom sha-256     : [u8; 32]      (`Nes::rom_sha256`: the image after its
+//!                                      16-byte header — the ROM identity)
 //!     frame count     : u32 LE
 //!     bytes per frame : u8            (currently 3: P1, P2, expansion-reserved)
+//! OPTIONS (format 3+): u32 LE length + that many bytes:
+//!     the `HardwareOptions` encoding, then (flags bit1) the
+//!     `BoardDescription` encoding — see `crate::hardware_options`
 //! START POINT (only when flags bit0 set):
 //!     length-prefixed `.rns` save-state blob (u32 LE length + bytes)
 //! INPUT STREAM:
@@ -33,8 +38,11 @@
 
 use alloc::vec::Vec;
 
+use alloc::string::String;
+
 use crate::Region;
 use crate::controller::Buttons;
+use crate::hardware_options::{BoardDescription, HardwareOptions, OptionsDecodeError};
 use crate::nes::Nes;
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
 use thiserror::Error;
@@ -60,7 +68,21 @@ pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 ///   epoch, not silently promising equivalence. See
 ///   [`recorded_before_v2_timebase`] for the check callers (TAS tooling,
 ///   frontend movie-load UI) should use before relying on verify-replay.
-pub const MOVIE_FORMAT_VERSION: u16 = 2;
+/// - **v3 (v2.9.8, ADR 0028's epoch rule)**: an OPTIONS block follows the
+///   fixed header, carrying every emulation-affecting host option the movie
+///   was recorded with ([`HardwareOptions`]) and, for a recorded movie, the
+///   cartridge board the header described ([`BoardDescription`]). Playback
+///   applies the options before frame 0 and refuses a board or region that
+///   differs, so a replay runs the recorded machine whatever the player's own
+///   settings are. A v1 or v2 movie does not say which machine it ran on, so
+///   it is refused ([`MIN_MOVIE_FORMAT_VERSION`]) rather than replayed on a
+///   guess; the maintainer accepted breaking them (2026-10-01).
+pub const MOVIE_FORMAT_VERSION: u16 = 3;
+
+/// The oldest container version this build replays: v3, the first that
+/// records its emulation options. Older movies fail with
+/// [`MovieError::FormatTooOld`].
+pub const MIN_MOVIE_FORMAT_VERSION: u16 = 3;
 
 /// Peek a `.rnm` blob's header to learn its recording epoch.
 ///
@@ -70,11 +92,10 @@ pub const MOVIE_FORMAT_VERSION: u16 = 2;
 /// (verify-replay) guarantee across the v2.0.0 engine-timebase boundary —
 /// see [`MOVIE_FORMAT_VERSION`]'s v2 doc.
 ///
-/// Playback itself is unaffected: [`Movie::deserialize`] still accepts and
-/// plays any `format_version <= MOVIE_FORMAT_VERSION` movie as pure input
-/// replay; this function exists only to let a caller decide whether to
-/// additionally warn that the bit-identical guarantee is unverified for a
-/// movie recorded across the boundary.
+/// Since v2.9.8 [`Movie::deserialize`] refuses every movie older than
+/// [`MIN_MOVIE_FORMAT_VERSION`], so a movie that parses is never pre-v2; the
+/// function survives for tooling that inspects raw files, and still answers
+/// for any header it is shown.
 ///
 /// # Errors
 ///
@@ -97,38 +118,136 @@ pub fn recorded_before_v2_timebase(bytes: &[u8]) -> Result<bool, MovieError> {
     Ok(format_version < 2)
 }
 
-/// Bytes stored per recorded frame: player 1, player 2, and a reserved
-/// expansion-port byte (always `0` in v1).
+/// Bytes stored per recorded frame: players 1-4, then a reserved
+/// expansion-port byte (always `0` today).
 ///
-/// Stored explicitly in the header so a future device byte can grow the
-/// record without a container-version bump.
-pub const BYTES_PER_FRAME: u8 = 3;
+/// Format 3 (v2.9.8) widened the record from 3 bytes (P1, P2, expansion) to 5
+/// so Four Score players 3 and 4 are recorded; the order puts the players
+/// first, so a narrower record (width 2 = two pads, width 4 = four pads) reads
+/// as "the later fields absent". Stored explicitly in the header so a future
+/// device byte can grow the record without a container-version bump.
+pub const BYTES_PER_FRAME: u8 = 5;
 
 /// Header flag: an embedded `.rns` save-state start point follows the header.
 const FLAG_HAS_SAVE_STATE: u8 = 0x01;
 
-/// Per-frame controller input: the `Buttons` bits for both standard ports
-/// plus a reserved expansion byte. Bit layout matches FCEUX `.fm2`
+/// Header flag (format 3+): the OPTIONS block carries a [`BoardDescription`]
+/// after the [`HardwareOptions`]. Clear for a foreign import, whose source
+/// format records no header.
+const FLAG_HAS_BOARD: u8 = 0x02;
+
+/// The header flags this build understands. Any other bit set is refused, so a
+/// later format cannot be half-read.
+const KNOWN_FLAGS: u8 = FLAG_HAS_SAVE_STATE | FLAG_HAS_BOARD;
+
+/// Per-frame controller input: four controller ports plus an expansion byte.
+///
+/// Each port is a `Buttons` value. Bit layout matches FCEUX `.fm2`
 /// (`bit0=A .. bit7=Right`), which is exactly [`Buttons::bits`].
+///
+/// # Players 3 and 4 (v2.9.8)
+///
+/// `p3` / `p4` are the Four Score's players, polled through `$4016` / `$4017`
+/// only while the adapter is plugged in (which the movie's
+/// [`HardwareOptions::four_score`] records). Until v2.9.8 the struct held two
+/// ports, so a four-player recording captured half of what drove it and the
+/// `.fm2` importer dropped pads 3 and 4.
+///
+/// # Why `#[non_exhaustive]`
+///
+/// Adding `p3` / `p4` broke every caller that built the struct by literal,
+/// which is why the change waited for a breaking release. The next field is
+/// foreseeable -- an expansion-port device byte, a soft-reset command -- and
+/// `.rnm` already stores its per-frame width so the FORMAT side of such a
+/// field is additive; `#[non_exhaustive]` makes the API side additive too.
+/// Outside this crate a frame is built with [`Self::new`],
+/// [`Self::four_players`] or [`Default`] and then edited through its public
+/// fields, all of which keep compiling when a field is added.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct FrameInput {
     /// Player 1 (`$4016`) button state.
     pub p1: Buttons,
     /// Player 2 (`$4017`) button state.
     pub p2: Buttons,
+    /// Player 3 (Four Score, multiplexed on `$4016`) button state.
+    pub p3: Buttons,
+    /// Player 4 (Four Score, multiplexed on `$4017`) button state.
+    pub p4: Buttons,
     /// Reserved expansion-port byte (currently always `0`).
     pub expansion: u8,
 }
 
 impl FrameInput {
-    /// Build a two-controller frame with no expansion byte.
+    /// Build a two-controller frame (players 3/4 released, no expansion byte).
     #[must_use]
     pub const fn new(p1: Buttons, p2: Buttons) -> Self {
+        Self::four_players(p1, p2, Buttons::empty(), Buttons::empty())
+    }
+
+    /// v2.9.8 — build a four-controller frame (no expansion byte).
+    #[must_use]
+    pub const fn four_players(p1: Buttons, p2: Buttons, p3: Buttons, p4: Buttons) -> Self {
         Self {
             p1,
             p2,
+            p3,
+            p4,
             expansion: 0,
         }
+    }
+
+    /// v2.9.8 — the buttons on controller `port` (0-3 = players 1-4).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=3`, matching [`Nes::set_buttons`].
+    #[must_use]
+    pub const fn port(&self, port: usize) -> Buttons {
+        match port {
+            0 => self.p1,
+            1 => self.p2,
+            2 => self.p3,
+            3 => self.p4,
+            _ => panic!("controller port out of range"),
+        }
+    }
+
+    /// v2.9.8 — mutable access to controller `port` (0-3 = players 1-4).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=3`.
+    pub const fn port_mut(&mut self, port: usize) -> &mut Buttons {
+        match port {
+            0 => &mut self.p1,
+            1 => &mut self.p2,
+            2 => &mut self.p3,
+            3 => &mut self.p4,
+            _ => panic!("controller port out of range"),
+        }
+    }
+
+    /// v2.9.8 — drive all four controller ports of `nes` from this frame.
+    ///
+    /// Ports 2 and 3 are only polled while the Four Score is plugged in, so
+    /// setting them on a two-pad machine changes nothing it reads.
+    pub const fn apply_to(&self, nes: &mut Nes) {
+        nes.set_buttons(0, self.p1);
+        nes.set_buttons(1, self.p2);
+        nes.set_buttons(2, self.p3);
+        nes.set_buttons(3, self.p4);
+    }
+
+    /// v2.9.8 — the input currently held on all four ports of `nes`.
+    #[must_use]
+    pub const fn held_on(nes: &Nes) -> Self {
+        Self::four_players(
+            nes.buttons(0),
+            nes.buttons(1),
+            nes.buttons(2),
+            nes.buttons(3),
+        )
     }
 }
 
@@ -140,7 +259,10 @@ impl FrameInput {
 pub const ATTESTATION_MAGIC: u32 = u32::from_le_bytes(*b"RNAT");
 
 /// Attestation tail schema version.
-pub const ATTESTATION_VERSION: u16 = 1;
+///
+/// 2 (v2.9.8): each frame folds in all four players' bytes, not two, so a
+/// version-1 tail describes a different hash and is not compared.
+pub const ATTESTATION_VERSION: u16 = 2;
 
 /// Frames between recorded checkpoint hashes.
 ///
@@ -269,8 +391,13 @@ impl AttestationBuilder {
 
     /// Fold in one frame: the input applied, then the video it produced.
     pub fn push_frame(&mut self, input: FrameInput, framebuffer: &[u8]) {
-        self.hash
-            .write(&[input.p1.bits(), input.p2.bits(), input.expansion]);
+        self.hash.write(&[
+            input.p1.bits(),
+            input.p2.bits(),
+            input.p3.bits(),
+            input.p4.bits(),
+            input.expansion,
+        ]);
         self.hash.write(framebuffer);
         self.frame_count = self.frame_count.saturating_add(1);
         if self
@@ -420,6 +547,79 @@ pub enum MovieError {
         max: u16,
     },
 
+    /// v2.9.8 — the movie predates the options record, so it does not say
+    /// which console model, power-on RAM, die revisions or cheats it ran
+    /// with, and replaying it would run whatever the player has configured.
+    #[error(
+        "movie format version {got} is older than {min}: it does not record the \
+         emulation options it was made with, so it cannot be replayed faithfully; \
+         re-record it with this version"
+    )]
+    FormatTooOld {
+        /// Version we read.
+        got: u16,
+        /// Oldest version this build replays.
+        min: u16,
+    },
+
+    /// v2.9.8 — the header flags carry a bit this build does not know.
+    #[error("movie header flags {0:#04x} carry bits this build does not understand")]
+    UnknownFlags(u8),
+
+    /// v2.9.8 — the OPTIONS block is malformed (an unknown enum byte, a bad
+    /// Game Genie code, a truncated field).
+    #[error("movie emulation options are malformed: {0}")]
+    BadOptions(OptionsDecodeError),
+
+    /// v2.9.8 — the movie was recorded on another region (from a header that
+    /// said PAL, say, where this one says NTSC). A region is built into the
+    /// machine at load, so it cannot be applied; the movie is refused.
+    #[error(
+        "movie was recorded on {movie:?} timing but this ROM runs as {host:?}; \
+         load a dump whose header declares {movie:?}"
+    )]
+    RegionMismatch {
+        /// The movie's region.
+        movie: Region,
+        /// The running machine's region.
+        host: Region,
+    },
+
+    /// v2.9.8 — same ROM, different header: the cartridge the movie ran on
+    /// had another mapper, submapper, mirroring, RAM size, battery or
+    /// trainer. Since v2.9.8 the ROM identity excludes the header, so this is
+    /// what tells a re-headered dump (or a changed database correction)
+    /// apart.
+    #[error(
+        "movie was recorded on the same ROM with a different header: the {field} \
+         differs; load the dump (or game-database correction) it was made with"
+    )]
+    BoardMismatch {
+        /// The first board field that differs.
+        field: &'static str,
+    },
+
+    /// v2.9.8 — an option could not be applied to this machine (a Game Genie
+    /// code that does not decode, in a hand-built movie).
+    #[error("movie emulation option could not be applied: Game Genie code {0:?}")]
+    OptionNotApplicable(String),
+
+    /// v2.9.8 — the movie's embedded start-point save state predates the
+    /// `.rns` container epoch 3 (ADR 0042), which v2.9.8 refuses. Kept apart
+    /// from [`MovieError::BadSaveState`] so the message says what to do, in
+    /// the same words as [`MovieError::FormatTooOld`].
+    #[error(
+        "movie starts from a save state written by an older release (container \
+         version {got}, this build reads {min} and later); re-record it with this \
+         version"
+    )]
+    StartStateTooOld {
+        /// The embedded state's container version.
+        got: u16,
+        /// Oldest container version this build reads.
+        min: u16,
+    },
+
     /// The header declared more bytes-per-frame than this build understands.
     #[error("movie declares {got} bytes/frame; this build understands {max}")]
     UnsupportedFrameWidth {
@@ -450,10 +650,20 @@ pub enum MovieError {
 /// per-frame input stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Movie {
-    /// Cartridge region the movie was recorded under.
+    /// Cartridge region the movie was recorded under. Checked, not applied:
+    /// [`Movie::seek_to_start`] refuses a machine of another region.
     pub region: Region,
-    /// Full SHA-256 of the ROM the movie was recorded against.
+    /// [`Nes::rom_sha256`] of the ROM the movie was recorded against.
     pub rom_sha256: [u8; 32],
+    /// v2.9.8 — every emulation-affecting host option the movie was recorded
+    /// with. [`Movie::seek_to_start`] applies them before frame 0, so the
+    /// replay does not depend on the player's settings. A foreign import
+    /// records [`HardwareOptions::default`], the stock NES.
+    pub options: HardwareOptions,
+    /// v2.9.8 — the cartridge board the recording machine was built from.
+    /// `None` for a foreign import (its format records no header), in which
+    /// case only the ROM identity and the region are checked.
+    pub board: Option<BoardDescription>,
     /// Where playback begins.
     pub start: StartPoint,
     /// Per-frame controller inputs, in playback order.
@@ -499,20 +709,34 @@ impl Movie {
         w.bytes(MOVIE_MAGIC);
         w.u16(MOVIE_FORMAT_VERSION);
         w.u8(region_to_byte(self.region));
-        let flags = match &self.start {
+        let mut flags = match &self.start {
             StartPoint::PowerOn => 0,
             StartPoint::SaveState(_) => FLAG_HAS_SAVE_STATE,
         };
+        if self.board.is_some() {
+            flags |= FLAG_HAS_BOARD;
+        }
         w.u8(flags);
         w.bytes(&self.rom_sha256);
         w.u32(frame_count);
         w.u8(BYTES_PER_FRAME);
+        // v2.9.8 (format 3) — the OPTIONS block, length-prefixed so the
+        // decoder can bound it and confirm it consumed exactly what was
+        // written.
+        let mut opts = BinWriter::with_capacity(48);
+        self.options.write_to(&mut opts);
+        if let Some(board) = &self.board {
+            board.write_to(&mut opts);
+        }
+        w.lp_bytes(&opts.into_vec());
         if let StartPoint::SaveState(blob) = &self.start {
             w.lp_bytes(blob);
         }
         for f in &self.frames {
             w.u8(f.p1.bits());
             w.u8(f.p2.bits());
+            w.u8(f.p3.bits());
+            w.u8(f.p4.bits());
             w.u8(f.expansion);
         }
         // Trailing re-record count (v1.8.9). Appended AFTER the fixed-count input
@@ -567,9 +791,18 @@ impl Movie {
                 max: MOVIE_FORMAT_VERSION,
             });
         }
+        if format_version < MIN_MOVIE_FORMAT_VERSION {
+            return Err(MovieError::FormatTooOld {
+                got: format_version,
+                min: MIN_MOVIE_FORMAT_VERSION,
+            });
+        }
         // Region + flags.
         let region = region_from_byte(r.u8().map_err(map_eof)?)?;
         let flags = r.u8().map_err(map_eof)?;
+        if flags & !KNOWN_FLAGS != 0 {
+            return Err(MovieError::UnknownFlags(flags));
+        }
         // ROM hash.
         let mut rom_sha256 = [0u8; 32];
         r.read_into(&mut rom_sha256).map_err(map_eof)?;
@@ -592,6 +825,20 @@ impl Movie {
                 got: bytes_per_frame,
                 max: BYTES_PER_FRAME,
             });
+        }
+        // v2.9.8 — the OPTIONS block. Decoded from its own bounded slice, and
+        // required to be consumed exactly: trailing bytes would mean a later
+        // format added a field this build would otherwise silently ignore.
+        let block = r.lp_bytes().map_err(map_eof)?;
+        let mut br = BinReader::new(block);
+        let options = HardwareOptions::read_from(&mut br).map_err(MovieError::BadOptions)?;
+        let board = if flags & FLAG_HAS_BOARD != 0 {
+            Some(BoardDescription::read_from(&mut br).map_err(MovieError::BadOptions)?)
+        } else {
+            None
+        };
+        if br.remaining() != 0 {
+            return Err(MovieError::BadOptions("unexpected bytes after the options"));
         }
         // Start point.
         let start = if flags & FLAG_HAS_SAVE_STATE != 0 {
@@ -616,13 +863,13 @@ impl Movie {
         let mut frames = Vec::with_capacity(frame_count.min(max_plausible_frames));
         for _ in 0..frame_count {
             let rec = r.take(width).map_err(map_eof)?;
-            // rec[0] = p1, rec[1] = p2 (present whenever width >= 2, which it
-            // always is for v1's width of 3); rec[2] = expansion when width
-            // >= 3. Lower widths default the missing fields.
-            let p1 = Buttons::from_bits_truncate(rec.first().copied().unwrap_or(0));
-            let p2 = Buttons::from_bits_truncate(rec.get(1).copied().unwrap_or(0));
-            let expansion = rec.get(2).copied().unwrap_or(0);
-            frames.push(FrameInput { p1, p2, expansion });
+            // Format 3: rec = [p1, p2, p3, p4, expansion]. A narrower record
+            // defaults the fields it does not reach (released pads, no
+            // expansion byte).
+            let pad = |i: usize| Buttons::from_bits_truncate(rec.get(i).copied().unwrap_or(0));
+            let mut frame = FrameInput::four_players(pad(0), pad(1), pad(2), pad(3));
+            frame.expansion = rec.get(4).copied().unwrap_or(0);
+            frames.push(frame);
         }
         // Optional trailing re-record count (v1.8.9). Absent in pre-v1.8.9 `.rnm`
         // files, which stop exactly at the input stream — default to 0.
@@ -634,6 +881,8 @@ impl Movie {
         Ok(Self {
             region,
             rom_sha256,
+            options,
+            board,
             start,
             frames,
             rerecord_count,
@@ -644,23 +893,65 @@ impl Movie {
     /// Rewind a running emulator to this movie's start point, ready to replay
     /// from frame 0.
     ///
-    /// For [`StartPoint::PowerOn`] this power-cycles `nes` and clears its
-    /// cartridge RAM ([`power_on_for_movie`]). For
-    /// [`StartPoint::SaveState`] it restores the embedded snapshot. In both
-    /// cases the ROM hash is checked against the movie's recorded hash.
+    /// Checks first, then changes the machine: the ROM identity, the region
+    /// and (for a recorded movie) the [`BoardDescription`] must match, or the
+    /// call fails with `nes` untouched. Then it applies the movie's
+    /// [`HardwareOptions`] -- v2.9.8: the recorded console model, die
+    /// revisions, power-on fills, overclock, Four Score, Vs. settings,
+    /// mirroring override and Game Genie codes replace the player's -- and
+    /// moves to the start point: for [`StartPoint::PowerOn`] a power cycle
+    /// with cleared cartridge RAM ([`power_on_for_movie`]), for
+    /// [`StartPoint::SaveState`] the embedded snapshot.
+    ///
+    /// The player's options are not restored here; a host that wants them
+    /// back captures them first ([`HardwareOptions::capture`]) and calls
+    /// [`HardwareOptions::restore_after_playback`] when playback ends.
     ///
     /// # Errors
     ///
-    /// Returns [`MovieError::RomMismatch`] if `nes` is running a different
-    /// ROM, or [`MovieError::BadSaveState`] if the embedded snapshot is
+    /// [`MovieError::RomMismatch`], [`MovieError::RegionMismatch`] or
+    /// [`MovieError::BoardMismatch`] for a different machine;
+    /// [`MovieError::OptionNotApplicable`] for a Game Genie code that does
+    /// not decode; [`MovieError::BadSaveState`] if the embedded snapshot is
     /// malformed.
     pub fn seek_to_start(&self, nes: &mut Nes) -> Result<(), MovieError> {
         if nes.rom_sha256() != &self.rom_sha256 {
             return Err(MovieError::RomMismatch);
         }
+        if nes.region() != self.region {
+            return Err(MovieError::RegionMismatch {
+                movie: self.region,
+                host: nes.region(),
+            });
+        }
+        if let Some(board) = &self.board
+            && let Some(field) = board.first_difference(&BoardDescription::capture(nes))
+        {
+            return Err(MovieError::BoardMismatch { field });
+        }
+        // Applied BEFORE the start point is reached. For a power-on start the
+        // power cycle must see the movie's stored power-on knobs (fills,
+        // console model, die revision); for a save-state start the restore
+        // then replaces whatever RAM / palette the fills wrote.
+        self.options
+            .apply(nes)
+            .map_err(MovieError::OptionNotApplicable)?;
         match &self.start {
             StartPoint::PowerOn => power_on_for_movie(nes),
-            StartPoint::SaveState(blob) => nes.restore(blob)?,
+            StartPoint::SaveState(blob) => {
+                nes.restore(blob).map_err(|e| match e {
+                    SnapshotError::FormatTooOld { got, min } => {
+                        MovieError::StartStateTooOld { got, min }
+                    }
+                    other => MovieError::BadSaveState(other),
+                })?;
+                // The options are configuration, not save-state, so a restore
+                // leaves them alone; re-asserting the live ones is cheap and
+                // keeps that a checked fact rather than an assumption.
+                self.options
+                    .apply_live(nes)
+                    .map_err(MovieError::OptionNotApplicable)?;
+            }
         }
         Ok(())
     }
@@ -760,6 +1051,8 @@ impl Movie {
 pub struct MovieRecorder {
     region: Region,
     rom_sha256: [u8; 32],
+    options: HardwareOptions,
+    board: BoardDescription,
     start: StartPoint,
     frames: Vec<FrameInput>,
     /// v2.3.2 "Lucid" — optional attestation accumulator. `None` (the default)
@@ -788,11 +1081,34 @@ pub struct MovieRecorder {
 /// the movie session runs long enough to reach the game's own save routine --
 /// the same as that routine running during the movie. FDS disk sides are not
 /// cartridge RAM and are not reset by this.
+///
+/// # The options survive the power cycle (v2.9.8)
+///
+/// Before v2.9.8 [`Nes::power_cycle`] rebuilt the PPU and dropped the
+/// PPU-held knobs (OAM decay, the overclock, the fast dot path) to their
+/// defaults, so a recording started with OAM decay off whatever the player
+/// had set, and nothing recorded that. The options are captured first and the
+/// live ones re-applied after the cycle, so the machine a movie starts on is
+/// the one its [`HardwareOptions`] describe, on the recording side and the
+/// playback side alike. Since v2.9.8 the cycle keeps every setting itself
+/// (the PPU and APU ones as well as the bus-held console model, die
+/// revisions, power-on fills, Four Score, Game Genie ...), so the
+/// re-application is a guarantee rather than a repair: it holds whatever a
+/// future cycle might drop. The power-on fills are not re-applied: the cycle
+/// itself already filled RAM and palette RAM from the stored selection.
 pub fn power_on_for_movie(nes: &mut Nes) {
+    let options = HardwareOptions::capture(nes);
     nes.power_cycle();
     // Not `sram_mut().fill(0)`: on a flash board (v2.9.6) the save is the PRG
     // image, and a never-saved flash is the ROM as loaded, not zeros.
     nes.clear_save_data();
+    // Codes captured from this same machine always decode again.
+    let reapplied = options.apply_live(nes);
+    debug_assert!(reapplied.is_ok(), "captured options re-apply");
+    // The fast dot path is not an option (it selects a code path, not a
+    // behaviour) and the cycle keeps it since v2.9.8, so starting a movie does
+    // not change which PPU path the player runs. Until v2.9.8 it was captured
+    // and re-set here by hand.
 }
 
 impl MovieRecorder {
@@ -800,11 +1116,17 @@ impl MovieRecorder {
     /// `nes` is running. The caller is responsible for calling
     /// [`power_on_for_movie`] on `nes` before the first captured frame so the
     /// recording starts from the same state a replay will reconstruct.
+    ///
+    /// v2.9.8: the machine's [`HardwareOptions`] and [`BoardDescription`] are
+    /// captured here and written into the movie, so a host must set its
+    /// options before this call, not after.
     #[must_use]
-    pub const fn power_on(nes: &Nes) -> Self {
+    pub fn power_on(nes: &Nes) -> Self {
         Self {
             region: nes.region(),
             rom_sha256: *nes.rom_sha256(),
+            options: HardwareOptions::capture(nes),
+            board: BoardDescription::capture(nes),
             start: StartPoint::PowerOn,
             frames: Vec::new(),
             attestation: None,
@@ -819,6 +1141,8 @@ impl MovieRecorder {
         Self {
             region: nes.region(),
             rom_sha256: *nes.rom_sha256(),
+            options: HardwareOptions::capture(nes),
+            board: BoardDescription::capture(nes),
             start: StartPoint::SaveState(nes.snapshot()),
             frames: Vec::new(),
             attestation: None,
@@ -830,32 +1154,17 @@ impl MovieRecorder {
     /// `set_buttons` calls — this captures exactly the inputs the upcoming
     /// frame consumes.
     ///
-    /// # Two ports only, including under a Four Score
+    /// # All four ports (v2.9.8)
     ///
-    /// [`FrameInput`] models ports 0 and 1, so this reads `nes.buttons(0)` and
-    /// `nes.buttons(1)` and **nothing else**. The core itself carries four —
-    /// the frontend calls `set_buttons(2)` / `set_buttons(3)` whenever the Four
-    /// Score adapter is active — so recording a four-player session captures
-    /// half of what drove it, and replaying that movie diverges from the run it
-    /// came from.
-    ///
-    /// Stated here rather than left to be discovered, because the failure is
-    /// silent at record time: nothing about a `.rnm` says which ports it could
-    /// not hold, and the divergence only appears on playback. The frontend's
-    /// Replay panel says so where the topology is displayed, and
-    /// `Movie::verify`'s attestation catches it after the fact.
-    ///
-    /// Widening [`FrameInput`] is a `.rnm` format epoch change (ADR 0028), not
-    /// an additive one, which is why this is a documented limit rather than a
-    /// fix. The `.fm2` importer already takes the same position for the same
-    /// reason — it keeps pads 1 and 2, drops 3 and 4, and preserves the
-    /// `fourscore` flag so the caller is not silently misled.
+    /// Reads `nes.buttons(0..=3)`. Until v2.9.8 [`FrameInput`] modelled ports
+    /// 0 and 1 only, so a four-player session recorded half of what drove it
+    /// and diverged on playback; the `.rnm` format 3 epoch widened the record
+    /// and the struct together. Inputs that are not controller buttons --
+    /// expansion devices (Zapper, Vaus, keyboards ...), the Famicom
+    /// microphone, Vs. coins / service, FDS disk swaps -- are still not
+    /// recorded; see `docs/frontend.md` § "What a movie records".
     pub fn capture(&mut self, nes: &Nes) {
-        self.frames.push(FrameInput {
-            p1: nes.buttons(0),
-            p2: nes.buttons(1),
-            expansion: 0,
-        });
+        self.frames.push(FrameInput::held_on(nes));
     }
 
     /// Record an explicit frame of input (for callers that drive input
@@ -874,6 +1183,15 @@ impl MovieRecorder {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.frames.is_empty()
+    }
+
+    /// v2.9.8 — the options this recording was started with, which the movie
+    /// will carry. A host holds them in place for the length of the recording
+    /// ([`HardwareOptions::apply_live`] each frame), because the movie records
+    /// them once, at the start.
+    #[must_use]
+    pub const fn options(&self) -> &HardwareOptions {
+        &self.options
     }
 
     /// v2.3.2 "Lucid" — start accumulating a replay attestation.
@@ -920,6 +1238,8 @@ impl MovieRecorder {
         Movie {
             region: self.region,
             rom_sha256: self.rom_sha256,
+            options: self.options,
+            board: Some(self.board),
             start: self.start,
             frames: self.frames,
             // A linear recording has no re-records by construction; TAStudio
@@ -996,8 +1316,7 @@ impl<'a> MoviePlayer<'a> {
         let Some(input) = self.movie.frames.get(self.cursor).copied() else {
             return false;
         };
-        nes.set_buttons(0, input.p1);
-        nes.set_buttons(1, input.p2);
+        input.apply_to(nes);
         self.cursor += 1;
         true
     }
@@ -1435,6 +1754,8 @@ mod tests {
         let movie = Movie {
             region: nes.region(),
             rom_sha256: *nes.rom_sha256(),
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: synthetic_inputs(1),
             rerecord_count: 0,
@@ -1464,6 +1785,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0xAB; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: inputs,
             rerecord_count: 0,
@@ -1479,6 +1802,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0x5A; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: synthetic_inputs(10),
             rerecord_count: 4242,
@@ -1501,6 +1826,8 @@ mod tests {
         let movie = Movie {
             region: Region::Pal,
             rom_sha256: [0x11; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::SaveState(vec![1, 2, 3, 4, 5, 6, 7, 8]),
             frames: synthetic_inputs(8),
             rerecord_count: 0,
@@ -1526,6 +1853,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: Vec::new(),
             rerecord_count: 0,
@@ -1562,6 +1891,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: Vec::new(),
             rerecord_count: 0,
@@ -1581,6 +1912,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: synthetic_inputs(10),
             rerecord_count: 0,
@@ -1653,6 +1986,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: *Nes::from_rom(&rom).unwrap().rom_sha256(),
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: synthetic_inputs(20),
             rerecord_count: 0,
@@ -1745,6 +2080,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0xFF; 32], // deliberately wrong
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: Vec::new(),
             rerecord_count: 0,
@@ -1764,22 +2101,56 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
-            frames: vec![FrameInput::new(
+            frames: vec![FrameInput::four_players(
                 Buttons::A | Buttons::RIGHT,
                 Buttons::B | Buttons::START,
+                Buttons::UP,
+                Buttons::SELECT,
             )],
             rerecord_count: 0,
             attestation: None,
         };
         let bytes = movie.serialize();
-        // Input stream begins right after the 49-byte fixed header (no
-        // save state).
-        let p1 = bytes[49];
-        let p2 = bytes[50];
-        assert_eq!(p1, (Buttons::A | Buttons::RIGHT).bits());
-        assert_eq!(p2, (Buttons::B | Buttons::START).bits());
-        assert_eq!(bytes[51], 0, "expansion byte reserved/zero");
+        // Input stream begins after the 49-byte fixed header and the
+        // length-prefixed OPTIONS block (no board, no save state).
+        let at = 49 + 4 + crate::HardwareOptions::default().to_bytes().len();
+        assert_eq!(bytes[at], (Buttons::A | Buttons::RIGHT).bits());
+        assert_eq!(bytes[at + 1], (Buttons::B | Buttons::START).bits());
+        assert_eq!(bytes[at + 2], Buttons::UP.bits(), "player 3");
+        assert_eq!(bytes[at + 3], Buttons::SELECT.bits(), "player 4");
+        assert_eq!(bytes[at + 4], 0, "expansion byte reserved/zero");
+        assert_eq!(bytes[48], BYTES_PER_FRAME, "the header states the width");
+    }
+
+    /// A narrower record still reads: the fields it does not reach default.
+    /// (Format 3 writes 5 bytes; the width field is what lets a later build
+    /// grow the record additively.)
+    #[test]
+    fn a_two_byte_record_defaults_players_three_and_four() {
+        let movie = Movie {
+            region: Region::Ntsc,
+            rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
+            start: StartPoint::PowerOn,
+            frames: vec![FrameInput::four_players(
+                Buttons::A,
+                Buttons::B,
+                Buttons::UP,
+                Buttons::DOWN,
+            )],
+            rerecord_count: 0,
+            attestation: None,
+        };
+        let mut bytes = movie.serialize();
+        let at = 49 + 4 + crate::HardwareOptions::default().to_bytes().len();
+        bytes[48] = 2;
+        bytes.drain(at + 2..at + 5);
+        let back = Movie::deserialize(&bytes).expect("narrow record");
+        assert_eq!(back.frames, [FrameInput::new(Buttons::A, Buttons::B)]);
     }
 
     #[test]
@@ -1789,6 +2160,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: vec![],
             rerecord_count: 0,
@@ -1798,14 +2171,15 @@ mod tests {
         assert!(matches!(recorded_before_v2_timebase(&bytes), Ok(false)));
 
         // A v1-tagged blob (format_version = 1, the only value that existed
-        // pre-v2.0.0) must be flagged, even though it still parses fine.
+        // pre-v2.0.0) must be flagged. Since v2.9.8 it no longer parses: it
+        // predates the options record (MIN_MOVIE_FORMAT_VERSION).
         let mut v1_bytes = bytes;
         v1_bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
         assert!(matches!(recorded_before_v2_timebase(&v1_bytes), Ok(true)));
-        assert!(
-            Movie::deserialize(&v1_bytes).is_ok(),
-            "a v1-tagged movie must still parse and play as input"
-        );
+        assert!(matches!(
+            Movie::deserialize(&v1_bytes),
+            Err(MovieError::FormatTooOld { got: 1, min: 3 })
+        ));
 
         // Malformed input still surfaces the normal header errors.
         assert!(matches!(
@@ -1816,5 +2190,156 @@ mod tests {
             recorded_before_v2_timebase(&[0xFFu8; 10]),
             Err(MovieError::BadMagic { .. })
         ));
+    }
+
+    // ----------------------------------------------------------------- v2.9.8
+    // Emulation options travel with the movie (maintainer decision 2026-10-01)
+    // -------------------------------------------------------------------------
+
+    /// Record `frames` frames on `nes` (already configured by the caller) from
+    /// a power-on start, returning the movie and the machine's full snapshot at
+    /// the end. The snapshot is the strongest available "replays identically"
+    /// oracle: it covers work RAM, the PPU's warm-up counter and every other
+    /// piece of serialized state, so a difference a test ROM never draws on
+    /// screen still shows up.
+    ///
+    /// Returned as an FNV hash so a failing comparison prints two numbers
+    /// rather than two multi-kilobyte byte arrays.
+    fn record_power_on(nes: &mut Nes, frames: usize) -> (Movie, u64) {
+        power_on_for_movie(nes);
+        let mut rec = MovieRecorder::power_on(nes);
+        for f in synthetic_inputs(frames) {
+            nes.set_buttons(0, f.p1);
+            nes.set_buttons(1, f.p2);
+            rec.capture(nes);
+            nes.run_frame();
+        }
+        (rec.finish(), fnv(&nes.snapshot()))
+    }
+
+    /// Replay `movie` on `nes` from its start point and return the snapshot's
+    /// hash.
+    fn replay(movie: &Movie, nes: &mut Nes) -> u64 {
+        movie.seek_to_start(nes).expect("seek");
+        let mut player = MoviePlayer::new(movie);
+        while player.apply_next(nes) {
+            nes.run_frame();
+        }
+        fnv(&nes.snapshot())
+    }
+
+    /// `synth_nrom` whose reset handler writes `$1E` to PPUMASK before it
+    /// loops. On the NES model that write lands inside the PPU's warm-up and
+    /// is ignored; on the Famicom model the warm-up is already over and it
+    /// takes effect -- so the two console models leave different PPU state.
+    fn synth_nrom_ppumask() -> Vec<u8> {
+        let mut rom = synth_nrom();
+        // LDA #$1E ; STA $2001 ; JMP $C005
+        let prog = [0xA9, 0x1E, 0x8D, 0x01, 0x20, 0x4C, 0x05, 0xC0];
+        rom[16..16 + prog.len()].copy_from_slice(&prog);
+        rom
+    }
+
+    /// A movie recorded on the Famicom console model replays identically on a
+    /// player whose own setting is the NES model, through a `.rnm` round trip.
+    #[test]
+    fn a_famicom_movie_replays_identically_on_an_nes_configured_player() {
+        let rom = synth_nrom_ppumask();
+        let mut rec_nes = Nes::from_rom(&rom).unwrap();
+        rec_nes.set_console_model(crate::ConsoleModel::Famicom);
+        let (movie, recorded) = record_power_on(&mut rec_nes, 12);
+        let movie = Movie::deserialize(&movie.serialize()).expect("round trip");
+
+        let mut player = Nes::from_rom(&rom).unwrap();
+        assert_eq!(player.console_model(), crate::ConsoleModel::Nes);
+        assert_eq!(replay(&movie, &mut player), recorded);
+    }
+
+    /// A movie recorded with a seeded power-on RAM fill replays identically on
+    /// a player configured with a different fill, through a `.rnm` round trip.
+    #[test]
+    fn a_seeded_power_on_ram_movie_replays_identically_on_a_differently_configured_player() {
+        let rom = synth_nrom();
+        let mut rec_nes = Nes::from_rom(&rom).unwrap();
+        rec_nes.set_power_on_ram(crate::PowerOnRam::Seeded(0x5EED_1234));
+        let (movie, recorded) = record_power_on(&mut rec_nes, 12);
+        let movie = Movie::deserialize(&movie.serialize()).expect("round trip");
+
+        let mut player = Nes::from_rom(&rom).unwrap();
+        player.set_power_on_ram(crate::PowerOnRam::Filled(0xFF));
+        assert_eq!(replay(&movie, &mut player), recorded);
+    }
+
+    /// Every other option travels too: OAM decay, both die revisions, the
+    /// power-up palette, the overclock, the Four Score, the Zapper light model
+    /// and a Game Genie code, recorded on one machine and replayed on a player
+    /// whose settings are all at their defaults.
+    #[test]
+    fn every_recorded_option_replays_on_a_default_player() {
+        let rom = synth_nrom();
+        let mut rec_nes = Nes::from_rom(&rom).unwrap();
+        rec_nes.set_oam_decay(true);
+        rec_nes.set_ppu_revision(crate::PpuRevision::Rp2c02G);
+        rec_nes.set_cpu_2a03_revision(crate::Cpu2A03Revision::Rp2A03H);
+        rec_nes.set_power_up_palette(crate::PaletteInit::Blargg);
+        rec_nes.set_extra_scanlines(20);
+        rec_nes.set_four_score(true);
+        rec_nes.set_zapper_temporal_light(false);
+        rec_nes.add_genie_code("SXIOPO").unwrap();
+        let (movie, recorded) = record_power_on(&mut rec_nes, 12);
+        let movie = Movie::deserialize(&movie.serialize()).expect("round trip");
+
+        let mut player = Nes::from_rom(&rom).unwrap();
+        assert_eq!(replay(&movie, &mut player), recorded);
+        assert!(player.oam_decay_enabled());
+        assert_eq!(player.extra_scanlines(), 20);
+        assert_eq!(player.genie_codes().count(), 1);
+    }
+
+    /// A movie written before the options were recorded is refused with a
+    /// clear error rather than replayed under whatever the player has set.
+    #[test]
+    fn a_movie_older_than_the_options_epoch_is_rejected() {
+        let movie = Movie {
+            region: Region::Ntsc,
+            rom_sha256: [0; 32],
+            options: crate::HardwareOptions::default(),
+            board: None,
+            start: StartPoint::PowerOn,
+            frames: synthetic_inputs(2),
+            rerecord_count: 0,
+            attestation: None,
+        };
+        let mut bytes = movie.serialize();
+        bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
+        let err = Movie::deserialize(&bytes).expect_err("a v2 movie must be refused");
+        let text = alloc::format!("{err}");
+        assert!(
+            text.contains("re-record"),
+            "the error says what to do: {text}"
+        );
+    }
+
+    /// v2.9.8 — a movie whose embedded start state predates the `.rns`
+    /// epoch 3 is refused with the same "re-record" advice as an old movie.
+    #[test]
+    fn a_movie_with_an_old_start_state_says_to_re_record() {
+        let rom = synth_nrom();
+        let nes = Nes::from_rom(&rom).unwrap();
+        let mut movie = MovieRecorder::from_current_state(&nes).finish();
+        if let StartPoint::SaveState(blob) = &mut movie.start {
+            // The container version follows the 8-byte "RUSTYNES" magic.
+            blob[8..10].copy_from_slice(&2u16.to_le_bytes());
+        }
+        let movie = Movie::deserialize(&movie.serialize()).expect("the movie itself parses");
+        let mut player = Nes::from_rom(&rom).unwrap();
+        let err = movie
+            .seek_to_start(&mut player)
+            .expect_err("old start state");
+        assert!(
+            matches!(err, MovieError::StartStateTooOld { got: 2, .. }),
+            "got {err:?}"
+        );
+        assert!(alloc::format!("{err}").contains("re-record"));
     }
 }

@@ -7,7 +7,7 @@
 //! matches (this lets one code target a specific bank in a mirrored address).
 //!
 //! Codes are a runtime overlay applied on the CPU read path in
-//! [`crate::LockstepBus`]; they are **not** part of emulation state (not
+//! [`crate::SystemBus`]; they are **not** part of emulation state (not
 //! serialized into save states), so with no codes active every read is
 //! byte-identical to a build without this feature — the determinism contract
 //! is preserved. The frontend persists the user's code strings per-ROM.

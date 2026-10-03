@@ -4,7 +4,9 @@
 # delivered through the database — Seicross being the case that exposed it.
 #
 # It carries no heavy dependencies on purpose: the whole point is that a test
-# harness can depend on it without pulling in winit/wgpu.
+# harness can depend on it without pulling in winit/wgpu. Since v2.9.8 the
+# mobile bridge and the libretro core link it too: `correct_rom` +
+# `correct_console` are the one load-time correction path every platform calls.
 [package]
 name = "rustynes-gamedb"
 version.workspace = true
@@ -15,8 +17,20 @@ authors.workspace = true
 repository.workspace = true
 description = "CRC32-keyed per-game correction database (mirroring / mapper / region overrides)"
 
+[features]
+# Test support for the hosts' load-path tests: `test_support::image_with_crc`
+# builds an image a database row matches by CRC, since the rows name commercial
+# dumps that are never committed. Enabled only from `[dev-dependencies]`.
+test-support = []
+
 [dependencies]
-rustynes-core = { path = "../rustynes-core" }
+# `default-features = false` (v2.9.8): the libretro core builds `rustynes-core`
+# without its `std` feature, and since it now links this crate (one shared
+# load-time correction path for every platform), a default-features dependency
+# here would switch the core's `std` back on for it through feature
+# unification. Nothing here needs the core's `std` feature; this crate uses
+# `std` itself.
+rustynes-core = { path = "../rustynes-core", default-features = false }
 
 [lints]
 workspace = true

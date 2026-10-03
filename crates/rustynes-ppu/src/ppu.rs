@@ -1768,6 +1768,59 @@ impl Ppu {
         self.fast_dotloop
     }
 
+    /// v1.1.0 beta.1 — the custom 64-entry base palette installed by
+    /// [`Self::set_custom_palette`], or `None` for the built-in one.
+    #[must_use]
+    pub const fn custom_palette(&self) -> Option<[[u8; 3]; 64]> {
+        self.custom_palette
+    }
+
+    /// v2.9.8 — carry the host's settings from `prev` onto this freshly built
+    /// PPU, so a power cycle (which rebuilds the PPU from [`Self::new`]) keeps
+    /// them.
+    ///
+    /// # Why this lives on the PPU
+    ///
+    /// A power cycle is a cold boot of the console, not of the user's
+    /// configuration. Until v2.9.8 the bus rebuilt the PPU and re-applied only
+    /// the settings it also stored itself (the die revision, the power-up
+    /// palette, the Vs. RGB palette), so every setting held ONLY here --
+    /// the custom / generated palette, the extra-scanlines overclock, the fast
+    /// dot path selector and the OAM-decay model -- silently reverted to its
+    /// default, and each host had to remember to push it again. The list of
+    /// what a setting is belongs next to the fields, so a new one is carried
+    /// where it is declared; `snapshot_schema_audit.rs` cross-checks it against
+    /// the fields that audit classifies as configuration.
+    ///
+    /// # What is carried, and what is not
+    ///
+    /// Carried: [`Self::custom_palette`] (the lookup table is rebuilt to
+    /// honour it), [`Self::extra_scanlines`], [`Self::fast_dotloop`] and
+    /// [`Self::oam_decay_enabled`]. The decay switch goes through
+    /// [`Self::set_oam_decay`], exactly as a host enabling it on a fresh
+    /// console would, so the result is what a fresh boot with the setting
+    /// applied produces.
+    ///
+    /// Not carried here: the die revision and the power-up palette are stored
+    /// on the bus, which re-applies them (the power-up palette is a power-on
+    /// FILL and must be rewritten, not copied); the active palette and the
+    /// 2C05 identity are board identity, re-derived from the cartridge by the
+    /// bus. The state and fetch traces are capture buffers, not settings: a
+    /// cold boot ends the history they describe, as it does for the
+    /// provenance stores, which the core moves across separately (armed, then
+    /// emptied).
+    ///
+    /// Every carried value is a selector or an output override, so with
+    /// every setting at its default this leaves the PPU byte-identical to
+    /// [`Self::new`].
+    pub const fn adopt_settings_from(&mut self, prev: &Self) {
+        self.custom_palette = prev.custom_palette;
+        self.rebuild_rgba_lut();
+        self.set_extra_scanlines(prev.extra_scanlines);
+        self.fast_dotloop = prev.fast_dotloop;
+        self.set_oam_decay(prev.oam_decay_enabled);
+    }
+
     /// v2.1.4 F2.3 — enable or disable the optional OAM-decay accuracy model.
     ///
     /// **Off by default.** When off (the default) OAM reads/writes never consult
@@ -1825,6 +1878,37 @@ impl Ppu {
     #[must_use]
     pub const fn revision(&self) -> PpuRevision {
         self.die_revision
+    }
+
+    /// v2.9.8 — CPU cycles left in the post-reset warm-up window, during which
+    /// writes to `$2000`/`$2001`/`$2005`/`$2006` are ignored (`0` once the
+    /// window has passed). Read-only; see [`PpuRegion::post_reset_mask_cycles`]
+    /// and `docs/ppu-2c02.md` (§Power-up and reset).
+    #[must_use]
+    pub const fn warmup_cycles_remaining(&self) -> u32 {
+        self.post_reset_mask_remaining
+    }
+
+    /// v2.9.8 — end the post-reset warm-up window now, so `$2000`/`$2001`/
+    /// `$2005`/`$2006` writes take effect from the next CPU cycle.
+    ///
+    /// This is how the opt-in Famicom console model is expressed at the PPU:
+    /// the `NESdev` wiki's "PPU power up state" (§Famicom) documents that the
+    /// Famicom ties the PPU's `/RESET` to 5 V while the CPU's `/RESET` rides a
+    /// 0.47 µF
+    /// capacitor, so at power-on the PPU begins initialising roughly one frame
+    /// (about 29,781 CPU cycles) before the CPU leaves reset. The warm-up window
+    /// is 29,658 cycles on NTSC, shorter than that frame, so by the time the
+    /// CPU executes its first instruction the window has already closed. The
+    /// PPU itself is unchanged; the console decides when its reset is released,
+    /// which is why the caller (the console model in `rustynes-core`) owns the
+    /// decision and this is only the mechanism.
+    ///
+    /// Only the window is touched. Every register and the frame position stay
+    /// as they are, and the field it clears is already part of the save-state,
+    /// so no snapshot change follows from calling it.
+    pub const fn end_warmup(&mut self) {
+        self.post_reset_mask_remaining = 0;
     }
 
     /// v2.1.7 P5 — apply a power-up palette-RAM pattern (see [`PaletteInit`]).
@@ -5542,22 +5626,16 @@ impl Ppu {
         // `-1 - y < 0` for all OAM y values, so the y-test always
         // fails at pre-render and scanline 0 sees no sprites.
         //
-        // NOTE (v2.3.1 G3): sinking these two to their single use site in the
-        // `65..=256` arm — they are dead on 149 of 341 dots — was measured and
-        // produced NO change on any workload across two runs. LLVM already sinks
-        // pure computations past branches that do not use them. Do not re-attempt
-        // as a performance change; see `docs/performance.md`.
-        let next_line: i16 = if self.scanline == self.region.prerender_line() {
-            -1
-        } else {
-            self.scanline
-        };
-        let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
-            16
-        } else {
-            8
-        };
-
+        // That line, and the sprite height, are computed inside the
+        // `65..=256` arm below, their only use. They are dead on 149 of the
+        // 341 dots, and computing them up front cost real time.
+        //
+        // v2.3.1 measured this sink (G3) as "no change" and this comment
+        // used to forbid re-trying it. That run used the pre-v2.9.1
+        // `ab_check.sh`, which timed the same binary on both sides. v2.9.8
+        // re-measured it with the fixed tool: -1.0% to -3.1% on all four
+        // frame workloads, shipped `_fast` paths included, in two runs
+        // (`docs/performance.md`, v2.9.8 campaign).
         match self.dot {
             0 => {
                 // Start-of-scanline: reset FSM working state. We do NOT
@@ -5615,6 +5693,16 @@ impl Ppu {
             }
             65..=256 => {
                 if !self.sprite_eval_done {
+                    let next_line: i16 = if self.scanline == self.region.prerender_line() {
+                        -1
+                    } else {
+                        self.scanline
+                    };
+                    let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
+                        16
+                    } else {
+                        8
+                    };
                     self.tick_sprite_eval_active_dot(next_line, sprite_height);
                 }
 
@@ -7166,6 +7254,30 @@ mod tests {
         assert!(p.ctrl.contains(PpuCtrl::NMI_ENABLE));
     }
 
+    /// v2.9.8 — `end_warmup` closes the post-reset window at once: the four
+    /// masked registers (`$2000`/`$2001`/`$2005`/`$2006`, `NESdev` "PPU power up
+    /// state") accept the very next write, with no CPU cycles elapsed. This is
+    /// the PPU half of the opt-in Famicom console model.
+    #[test]
+    fn end_warmup_lets_masked_registers_write_immediately() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        let mut b = TestBus::new();
+        assert_eq!(p.warmup_cycles_remaining(), 29_658);
+        p.end_warmup();
+        assert_eq!(p.warmup_cycles_remaining(), 0);
+        p.cpu_write_register(0, PpuCtrl::NMI_ENABLE.bits(), &mut b);
+        assert!(p.ctrl.contains(PpuCtrl::NMI_ENABLE), "$2000 accepted");
+        // Greyscale only: a visible PPUMASK change that leaves rendering off,
+        // so the `$2006` pair below copies `t -> v` at once.
+        p.cpu_write_register(1, 0x01, &mut b);
+        assert_eq!(p.mask.bits(), 0x01, "$2001 accepted");
+        p.cpu_write_register(6, 0x21, &mut b);
+        p.cpu_write_register(6, 0x08, &mut b);
+        assert_eq!(p.v & 0x3FFF, 0x2108, "$2006 pair accepted");
+        p.cpu_write_register(5, 0x08, &mut b);
+        assert!(p.w, "$2005 toggled the write latch");
+    }
+
     #[test]
     fn ppuctrl_nmi_enable_during_vbl_asserts_nmi_immediately() {
         let (mut p, mut b) = fresh_ppu();
@@ -8615,78 +8727,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// Register-level invariant: the attribute shift registers must track
-    /// the BG pattern shift registers bit-for-bit through the exact
-    /// reload / shift / pre-fetch-`<<= 8` sequence that a real scanline
-    /// boundary performs. This is the direct, hermetic guard against the
-    /// 086ce4d regression where the attribute pipeline (then an 8-bit
-    /// register + 1-bit feed) advanced at a different rate than the 16-bit
-    /// pattern pipeline across the dots 321-336 pre-fetch boundary.
-    ///
-    /// The check exploits an exact structural equivalence: for any tile
-    /// whose pattern low byte is `0xFF` (all 8 pixels opaque in plane 0),
-    /// the pattern-low shift register's per-pixel bit equals 1 for that
-    /// tile's 8 columns. An attribute bit that is set (`at_latch` bit
-    /// set) expands to `0xFF` in `reload_bg_shift_regs`, so the AT-low
-    /// register must hold the IDENTICAL 8-bit run as the pattern-low
-    /// register for that tile. We reload two tiles with pattern-low
-    /// `0xFF` + attribute bit set, run the pre-fetch `<<= 8` boundary,
-    /// then assert the AT registers equal the pattern registers exactly.
-    #[test]
-    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock BG shifter feed. The default master-clock core injects the BG serial-in '1' source the AccuracyCoin 'BG Serial In' test proves correct, so this unit assertion is kept as a historical pin and cannot be un-ignored. Visual coverage: visual_regression 7/7 on the default build."]
-    fn bg_attribute_register_lockstep_through_prefetch() {
-        let (mut p, _b) = fresh_ppu();
-
-        // Start clean.
-        p.bg_shift_lo = 0;
-        p.bg_shift_hi = 0;
-        p.at_shift_lo = 0;
-        p.at_shift_hi = 0;
-
-        // Tile A: pattern low = 0xFF, high = 0xFF; attribute = 0b11 (both
-        // bits set -> both AT bytes expand to 0xFF). After reload the low
-        // byte of every register is 0xFF.
-        p.bg_lo_latch = 0xFF;
-        p.bg_hi_latch = 0xFF;
-        p.at_latch = 0b11;
-        p.reload_bg_shift_regs();
-        assert_eq!(p.bg_shift_lo & 0x00FF, 0x00FF);
-        assert_eq!(p.at_shift_lo & 0x00FF, 0x00FF);
-        assert_eq!(p.at_shift_hi & 0x00FF, 0x00FF);
-
-        // Pre-fetch `<<= 8` (dots 328 / 336): the pattern and attribute
-        // registers MUST be shifted identically. Exercises the exact
-        // production helper used inside `tick`.
-        p.prefetch_shift_bg_regs();
-
-        // Tile B: same content reloaded into the low byte.
-        p.bg_lo_latch = 0xFF;
-        p.bg_hi_latch = 0xFF;
-        p.at_latch = 0b11;
-        p.reload_bg_shift_regs();
-
-        // After the boundary, both tiles' data is present and the
-        // attribute registers must be bit-identical to the pattern
-        // registers (because both tiles set every plane-0 / plane-1 bit
-        // AND every attribute bit). Any drift between the two pipelines
-        // (the regression) makes these diverge.
-        assert_eq!(
-            p.at_shift_lo, p.bg_shift_lo,
-            "AT-low shifter must track pattern-low shifter bit-for-bit \
-             through the pre-fetch boundary (086ce4d lockstep regression)"
-        );
-        assert_eq!(
-            p.at_shift_hi, p.bg_shift_hi,
-            "AT-high shifter must track pattern-high shifter bit-for-bit \
-             through the pre-fetch boundary (086ce4d lockstep regression)"
-        );
-
-        // Now shift one pixel (post-emit `shift_bg`) and re-check lockstep.
-        p.shift_bg();
-        assert_eq!(p.at_shift_lo, p.bg_shift_lo, "lockstep after shift_bg");
-        assert_eq!(p.at_shift_hi, p.bg_shift_hi, "lockstep after shift_bg");
     }
 
     /// v2.7.6 (core audit IMP-06) — the fast render path's history invariant

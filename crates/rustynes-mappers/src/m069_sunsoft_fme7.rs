@@ -65,8 +65,8 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// kept the running game's CHR-RAM instead of the saved one (the v2.9.2
 /// cartridge-RAM sweep; the same omission core audit AUD-02 found on the
 /// Konami VRC boards). **v3** (v2.9.2) appends that CHR-RAM after the audio
-/// tail. `load_state` accepts all three; a v1/v2 blob leaves the CHR-RAM
-/// untouched, which is the old behaviour.
+/// tail. Since v2.9.8 (ADR 0042) `load_state` reads v3 only; a v1/v2 blob,
+/// which it used to load with the CHR-RAM untouched, is refused.
 const FME7_SECTION_VERSION: u8 = 3;
 
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
@@ -1010,21 +1010,20 @@ impl Mapper for Fme7 {
             });
         }
         let version = data[0];
-        if !(1..=3).contains(&version) {
+        // Only the current version is read (v2.9.8, ADR 0042). v1 (no audio
+        // tail) and v2 (no CHR-RAM tail, short audio tail tolerated) used to
+        // load with those parts left as they were.
+        if version != FME7_SECTION_VERSION {
             return Err(MapperError::UnsupportedVersion(version));
         }
-        // v3 is strict: core + the full audio tail + the CHR-RAM tail,
-        // exactly. (v2 tolerated a short audio tail, below; v3 cannot, because
-        // the CHR-RAM tail's offset depends on the audio tail being all
-        // there.) Validated before the first field is written.
-        if version == 3 {
-            let expected = core_expected + Sunsoft5BAudio::TAIL_LEN + self.chr_ram_tail_len();
-            if data.len() != expected {
-                return Err(MapperError::Truncated {
-                    expected,
-                    got: data.len(),
-                });
-            }
+        // Strict: core + the full audio tail + the CHR-RAM tail, exactly.
+        // Validated before the first field is written.
+        let expected = core_expected + Sunsoft5BAudio::TAIL_LEN + self.chr_ram_tail_len();
+        if data.len() != expected {
+            return Err(MapperError::Truncated {
+                expected,
+                got: data.len(),
+            });
         }
         self.cmd = data[1];
         self.chr.copy_from_slice(&data[2..10]);
@@ -1055,19 +1054,11 @@ impl Mapper for Fme7 {
         self.vram.copy_from_slice(&data[cur..cur + self.vram.len()]);
         cur += self.vram.len();
 
-        // v2 tail: audio state.  v1 blobs end at the core; per ADR-0003,
-        // we leave audio at its current state (the caller is responsible
-        // for an explicit power-cycle if they want a clean slate).  A v2
-        // blob shorter than TAIL_LEN bytes is accepted permissively for
-        // the same forward-compat reason VRC6 uses.
-        if version >= 2 && data.len() >= cur + Sunsoft5BAudio::TAIL_LEN {
-            self.audio
-                .read_tail(&data[cur..cur + Sunsoft5BAudio::TAIL_LEN])?;
-        }
-        // v3 CHR-RAM tail, exactly sized by the check above. v1/v2 blobs stop
-        // before it and leave the CHR-RAM as it is -- the pre-v2.9.2
-        // behaviour, so an old save loads exactly as it always did.
-        if version >= 3 && self.chr_is_ram {
+        // v2 tail: audio state.
+        self.audio
+            .read_tail(&data[cur..cur + Sunsoft5BAudio::TAIL_LEN])?;
+        // v3 CHR-RAM tail, exactly sized by the check above.
+        if self.chr_is_ram {
             self.chr_rom
                 .copy_from_slice(&data[cur + Sunsoft5BAudio::TAIL_LEN..]);
         }
@@ -1299,25 +1290,25 @@ mod tests {
         assert_eq!(m2.audio.envelope.shape, 0x0E);
     }
 
+    /// v2.9.8 (ADR 0042): only the current (v3) layout loads. A v1 blob (no
+    /// audio tail) and a v2 blob (no CHR-RAM tail, written through v2.9.1)
+    /// used to load with those parts left as they were.
     #[test]
-    fn sunsoft5b_save_state_loads_v1_blob_with_default_audio() {
-        // ADR-0003 invariant: v2 reader must accept a v1 blob; audio state
-        // stays at whatever the freshly-constructed mapper has (silence).
-        // We synthesize a v1 blob by truncating the audio tail and resetting
-        // the version byte.
-        let m = Fme7::new(synth(8), synth_chr(8), Mirroring::Vertical).unwrap();
-        let mut blob = m.save_state();
-        let tail = Sunsoft5BAudio::TAIL_LEN;
-        blob.truncate(blob.len() - tail);
-        blob[0] = 1;
-
-        let mut m2 = Fme7::new(synth(8), synth_chr(8), Mirroring::Vertical).unwrap();
-        // Perturb audio state pre-load; a v1 blob must not touch it.
-        fme7_audio_write(&mut m2, 0x07, 0xAA);
-        m2.load_state(&blob)
-            .expect("v1 blob must load on v2 reader");
-        // Per ADR-0003: older blobs do not reset newer-section state.
-        assert_eq!(m2.audio.regs[0x07], 0xAA);
+    fn fme7_pre_v3_blobs_are_refused() {
+        let m = Fme7::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        let mut v2 = m.save_state();
+        v2.truncate(v2.len() - m.chr_rom.len());
+        v2[0] = 2;
+        let mut v1 = v2.clone();
+        v1.truncate(v1.len() - Sunsoft5BAudio::TAIL_LEN);
+        v1[0] = 1;
+        let mut m2 = Fme7::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        for (v, old) in [(1u8, &v1), (2, &v2)] {
+            assert!(matches!(
+                m2.load_state(old),
+                Err(MapperError::UnsupportedVersion(got)) if got == v
+            ));
+        }
     }
 
     /// v2.9.2 cartridge-RAM sweep: the section carries the 8 KiB CHR-RAM of
@@ -1333,22 +1324,6 @@ mod tests {
         m2.load_state(&blob).expect("round-trip");
         assert_eq!(m2.chr_rom[0x0000], 0x11);
         assert_eq!(m2.chr_rom[0x1FFF], 0x22);
-    }
-
-    /// A v2 blob (core + audio tail, written through v2.9.1) still loads,
-    /// restores the audio, and leaves the CHR-RAM as it was.
-    #[test]
-    fn fme7_v2_blob_loads_and_leaves_chr_ram_untouched() {
-        let mut m = Fme7::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
-        fme7_audio_write(&mut m, 0x07, 0x36);
-        let mut v2 = m.save_state();
-        v2.truncate(v2.len() - m.chr_rom.len());
-        v2[0] = 2;
-        let mut m2 = Fme7::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
-        m2.chr_rom[0x0123] = 0x77;
-        m2.load_state(&v2).expect("a v2 blob must still load");
-        assert_eq!(m2.audio.regs[0x07], 0x36, "v2 audio tail restored");
-        assert_eq!(m2.chr_rom[0x0123], 0x77, "v2 load must not touch CHR-RAM");
     }
 
     /// A v3 blob one byte short (inside the CHR-RAM tail) is rejected before

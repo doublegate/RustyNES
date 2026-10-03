@@ -17,7 +17,7 @@
 //!
 //! The fixture is gated on the `irq-timing-trace` cargo feature (off by
 //! default).  When the feature is disabled the public-facing API still
-//! exists as no-op stubs, so call sites in `LockstepBus` can stay
+//! exists as no-op stubs, so call sites in `SystemBus` can stay
 //! unconditional without `#[cfg(...)]` clutter.
 //!
 //! # Usage
@@ -180,7 +180,7 @@ impl BusAccess {
 // just obscure the per-record schema downstream tooling reads from CSV.
 #[allow(clippy::struct_excessive_bools)]
 pub struct CycleRecord {
-    /// Cumulative CPU cycle counter (matches `LockstepBus::cycle()`).
+    /// Cumulative CPU cycle counter (matches `SystemBus::cycle()`).
     pub cpu_cycle: u64,
     /// PC of the CPU instruction currently executing (the most recent
     /// `Cpu::step` opcode-fetch PC). Captured via the `trace_instr` hook
@@ -260,7 +260,7 @@ pub struct CycleRecord {
     pub bus_data: u8,
     /// `Apu::put_cycle` (`TriCNES` `APU_PutCycle`) snapshotted at the end of
     /// the cycle. This is the interleaved-DMA get/put flip-flop the R1
-    /// `dmc_dma_step` GET is gated on (`get = !put_cycle`); distinct from
+    /// DMC DMA GET is gated on (`get = !put_cycle`); distinct from
     /// `apu_phase_post`. Only toggled under `dmc_driven_externally` (R1), so
     /// it is `false` on the default lockstep path.
     pub put_cycle_post: bool,

@@ -321,24 +321,17 @@ impl Mapper for Multicart15 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        // The PRG-RAM tail is NEW in v2.3.4. A state written before it existed
-        // carries the same version byte and is exactly `prg_ram.len()` shorter,
-        // so accept that legacy length too and start the RAM cleared. Rejecting
-        // it would break every existing mapper-15 save slot for a field those
-        // slots could not have contained -- a self-inflicted format epoch, and
-        // this project reserves those for a MAJOR release (ADR 0028).
+        // The PRG-RAM tail is new in v2.3.4 and shares the version byte, so a
+        // state written before it was told apart by length and loaded with the
+        // RAM cleared. Since v2.9.8 (ADR 0042) only the full layout loads; the
+        // short one is a truncation.
         let with_ram = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
-        let legacy = with_ram - self.prg_ram.len();
-        let has_prg_ram = match data.len() {
-            n if n == with_ram => true,
-            n if n == legacy => false,
-            got => {
-                return Err(MapperError::Truncated {
-                    expected: with_ram,
-                    got,
-                });
-            }
-        };
+        if data.len() != with_ram {
+            return Err(MapperError::Truncated {
+                expected: with_ram,
+                got: data.len(),
+            });
+        }
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
@@ -353,12 +346,8 @@ impl Mapper for Multicart15 {
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
         cursor += self.chr_ram.len();
-        if has_prg_ram {
-            self.prg_ram
-                .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
-        } else {
-            self.prg_ram.fill(0);
-        }
+        self.prg_ram
+            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
         Ok(())
     }
 }
@@ -2626,13 +2615,18 @@ impl Mapper for Multicart225 {
 // ===========================================================================
 // Mapper 226 — 76-in-1 BMC.
 //
-// Two latch registers across $8000-$FFFF (the low address bit selects reg0 vs
-// reg1; the data byte carries the bank bits):
-//   reg0 ($8000, even): bits 0-4 = PRG low, bit 5 = PRG high bit, bit 6 =
-//        mirroring (1 = horizontal), bit 7 = 32/16 KiB mode.
+// Two latch registers across $8000-$FFFF (mask $8001: the low address bit
+// selects reg0 vs reg1; NESdev `INES_Mapper_226`):
+//   reg0 ($8000, even): [PMOP PPPP] -- bits 4-0 = PRG bits 4-0, bit 5 = PRG
+//        mode (O: 0 = one 32 KiB bank, 1 = the same 16 KiB bank in both
+//        halves), bit 6 = mirroring (M: 0 = horizontal, 1 = vertical), bit 7
+//        = PRG bit 5.
 //   reg1 ($8001, odd): bit 0 = PRG bit 6 (outer block).
-// The 32 KiB PRG bank = (reg1.bit0 << 6) | (reg0.bit5 << 5) | (reg0 & 0x1F).
-// In 16 KiB mode both halves use the same bank. CHR is 8 KiB RAM. No IRQ.
+// The 7-bit PRG register = (reg1.bit0 << 6) | (reg0.bit7 << 5) | (reg0 & 0x1F);
+// in 32 KiB mode its low bit is ignored. CHR is 8 KiB RAM. No IRQ.
+//
+// Before v2.9.8 bits 5-7 were decoded as PRG bit 5 / mode / mirroring, which
+// sent the 76-in-1 menu to the wrong bank and left it drawing one tile.
 // ===========================================================================
 
 /// Mapper 226 (`76-in-1` BMC).
@@ -2671,16 +2665,19 @@ impl Multicart226 {
         })
     }
 
-    /// 7-bit 16 KiB PRG bank index: low 6 bits from reg0, high bit from reg1.
+    /// 7-bit 16 KiB PRG bank index: bits 4-0 from reg0 bits 4-0, bit 5 from
+    /// reg0 bit 7, bit 6 from reg1 bit 0.
     const fn prg_bank(&self) -> usize {
-        let low = (self.reg0 & 0x3F) as usize;
+        let low = (self.reg0 & 0x1F) as usize;
+        let bit5 = ((self.reg0 >> 7) & 0x01) as usize;
         let high = (self.reg1 & 0x01) as usize;
-        (high << 6) | low
+        (high << 6) | (bit5 << 5) | low
     }
 
-    /// PRG mode: reg0 bit 6 set = two 16 KiB banks; clear = one 32 KiB bank.
+    /// PRG mode: reg0 bit 5 set = the same 16 KiB bank in both halves; clear
+    /// = one 32 KiB bank.
     const fn is_16k(&self) -> bool {
-        (self.reg0 & 0x40) != 0
+        (self.reg0 & 0x20) != 0
     }
 
     fn read_prg(&self, bank16: usize, addr: u16) -> u8 {
@@ -2742,9 +2739,16 @@ impl Mapper for Multicart226 {
         }
     }
 
+    /// NESdev `INES_Mapper_226`: "The multicart clears both registers on soft
+    /// reset", which is how the menu comes back on RESET.
+    fn reset(&mut self) {
+        self.reg0 = 0;
+        self.reg1 = 0;
+    }
+
     fn current_mirroring(&self) -> Mirroring {
-        // reg0 bit 7: 0 = horizontal, 1 = vertical.
-        if (self.reg0 & 0x80) != 0 {
+        // reg0 bit 6 (M): 0 = horizontal, 1 = vertical.
+        if (self.reg0 & 0x40) != 0 {
             Mirroring::Vertical
         } else {
             Mirroring::Horizontal
@@ -2963,25 +2967,17 @@ impl Mapper for Multicart227 {
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
         // v2.7.2: the FW-01 WRAM, when present, as a trailing block. Its
-        // length is fixed by the header, so an older blob (no block) is told
-        // apart by length rather than by the file-wide version byte.
+        // length is fixed by the header.
         out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         // This board's blob shares the file-wide `SAVE_STATE_VERSION`, so a
-        // pre-v2.7.2 blob (no WRAM) is told apart by length alone: exactly
-        // `without_wram` bytes is the old layout and loads with WRAM zeroed.
-        // Any other length must be the full current layout. A board built
-        // without WRAM (no battery header) has `wram.len() == 0`, and the
-        // two lengths coincide.
-        let without_wram = 6 + self.vram.len() + self.chr_ram.len();
-        let expected = if data.len() == without_wram {
-            without_wram
-        } else {
-            without_wram + self.wram.len()
-        };
+        // pre-v2.7.2 blob (no WRAM) was told apart by length and loaded with
+        // WRAM zeroed. Since v2.9.8 (ADR 0042) only the full layout loads. A
+        // board built without WRAM (no battery header) has `wram.len() == 0`.
+        let expected = 6 + self.vram.len() + self.chr_ram.len() + self.wram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -3003,11 +2999,7 @@ impl Mapper for Multicart227 {
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
         cursor += self.chr_ram.len();
-        if data.len() == cursor {
-            self.wram.fill(0); // a pre-v2.7.2 blob
-        } else {
-            self.wram.copy_from_slice(&data[cursor..]);
-        }
+        self.wram.copy_from_slice(&data[cursor..]);
         Ok(())
     }
 }
@@ -4576,14 +4568,47 @@ mod tests {
     #[test]
     fn m226_two_regs_select_prg_and_mirror() {
         let mut m = Multicart226::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        // reg0 (even): low bits = 3, bit6 = mirror H. value 0b0100_0011 = 0x43.
-        m.cpu_write(0x8000, 0x43);
+        // reg0 (even) [PMOP PPPP]: low bits = 3, O (bit 5) = 16K mode, M (bit
+        // 6) = 0 = horizontal. value 0b0010_0011 = 0x23.
+        m.cpu_write(0x8000, 0x23);
         // reg1 (odd): bit0 = 0.
         m.cpu_write(0x8001, 0x00);
-        // 16K mode (reg0 bit7 = 0): bank 3 on both halves.
+        // 16K mode: bank 3 on both halves.
         assert_eq!(m.cpu_read(0x8000), 3);
         assert_eq!(m.cpu_read(0xC000), 3);
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn m226_reg0_layout_is_pmop_pppp() {
+        // NESdev `INES_Mapper_226`: $8000 = [PMOP PPPP] -- bit 7 is PRG bit 5,
+        // bit 6 mirroring (1 = vertical), bit 5 the PRG mode (1 = two 16 KiB
+        // halves of the same bank), bits 4-0 PRG bits 4-0. $8001 bit 0 is
+        // PRG bit 6.
+        let mut m = Multicart226::new(synth_prg_16k(128), &[], Mirroring::Vertical).unwrap();
+        // $A3 = P1 M0 O1 P00011: bank 32 + 3 = 35, 16 KiB mode, horizontal.
+        m.cpu_write(0x8000, 0xA3);
+        assert_eq!(m.cpu_read(0x8000), 35);
+        assert_eq!(m.cpu_read(0xC000), 35);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        // $23 = P0 M0 O1 P00011: the mode bit is not a bank bit -- bank 3.
+        m.cpu_write(0x8000, 0x23);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        // $83 = P1 M0 O0 P00011: bank 35 in 32 KiB mode = 34 / 35.
+        m.cpu_write(0x8000, 0x83);
+        assert_eq!(m.cpu_read(0x8000), 34);
+        assert_eq!(m.cpu_read(0xC000), 35);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        // $45 + $8001 = 1: bank 64 + 5 = 69, 32 KiB mode (68 / 69), vertical.
+        m.cpu_write(0x8000, 0x45);
+        m.cpu_write(0x8001, 0x01);
+        assert_eq!(m.cpu_read(0x8000), 68);
+        assert_eq!(m.cpu_read(0xC000), 69);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+        // "The multicart clears both registers on soft reset": bank 0, 32 KiB.
+        m.reset();
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(m.cpu_read(0xC000), 1);
     }
 
     #[test]
@@ -4868,11 +4893,10 @@ mod tests {
     }
 
     #[test]
-    fn m15_loads_a_pre_prg_ram_save_state() {
+    fn m15_refuses_a_pre_prg_ram_save_state() {
         // The PRG-RAM tail is new in v2.3.4 and carries the SAME version byte,
-        // so an existing slot is distinguishable only by length. Rejecting it
-        // would break every mapper-15 save that predates the field, for data
-        // those saves could not have held.
+        // so an old slot is distinguishable only by length. It loaded with the
+        // RAM cleared until v2.9.8 (ADR 0042), which reads the full layout only.
         let mut m = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
         m.cpu_write(0x6000, 0x5A);
         let current = m.save_state();
@@ -4881,13 +4905,10 @@ mod tests {
         let legacy = current[..current.len() - 0x2000].to_vec();
         let mut m2 = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
         m2.cpu_write(0x6000, 0xFF);
-        m2.load_state(&legacy)
-            .expect("a pre-v2.3.4 state must still load");
-        assert_eq!(
-            m2.cpu_read(0x6000),
-            0,
-            "PRG-RAM starts cleared on a legacy load"
-        );
+        assert!(matches!(
+            m2.load_state(&legacy),
+            Err(MapperError::Truncated { .. })
+        ));
 
         // And the current form still round-trips its contents.
         let mut m3 = Multicart15::new(synth_prg_16k(8), &[]).unwrap();

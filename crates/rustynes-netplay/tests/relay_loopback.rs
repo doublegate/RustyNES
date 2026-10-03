@@ -48,6 +48,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_netplay::SessionIdentity;
 use rustynes_netplay::signaling::{Action, ClientId, Relay, SignalMessage};
 use rustynes_netplay::{
     ConnectionState, NatConfig, NatConnect, NatPhase, NetplayConnection, RollbackSession,
@@ -470,7 +471,7 @@ fn nat_connect_loopback_relay_then_session_digests_agree() {
     let rom = nestest_rom();
     let mut host_nes = Nes::from_rom(&rom).expect("host nes");
     let mut join_nes = Nes::from_rom(&rom).expect("join nes");
-    let rom_hash = *host_nes.rom_sha256();
+    let rom_hash = SessionIdentity::of(&host_nes);
 
     let (stun_addr, stun_stop, stun_handle) = spawn_unreachable_stun();
     let (turn_addr, turn_stop, turn_handle) = spawn_mock_turn();

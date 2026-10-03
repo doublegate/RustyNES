@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the raw composite-signal model follows Bisqwit's documented `nes_ntsc` method (NESdev "NTSC video") and Mesen2's "raw palette" generator (GPL-3.0-or-later), as docs/ppu-2c02.md has described it since v2.1.9. Recorded v2.9.8 at the maintainer's direction. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Raw NTSC composite-signal model (v2.1.9 "Presentation & Signal", P4).
 //!
 //! Where `palette_gen` *pre-decodes* each of the 64 base colors to a
