@@ -770,6 +770,10 @@ const fn ram_size_from_shift(shift: u8) -> u32 {
 /// public header writer (since v2.9.8 the only one) and what the header editor
 /// writes to disk.
 ///
+/// One edit reaches outside its own field: on an iNES 1.0 header, setting a
+/// mapper of 16 or more zeroes a non-zero tail in bytes 12-15, which would
+/// otherwise mask the new mapper's bits 4-7 (the `"DiskDude!"` rule).
+///
 /// An edited field is written in its canonical encoding: a size in the
 /// standard notation when that can express it and in exponent-multiplier
 /// notation otherwise, a RAM size as its `64 << shift` nibble. Toggling
@@ -799,6 +803,13 @@ pub fn serialize_header_preserving(h: &Header, original: &[u8; HEADER_LEN]) -> [
             take(8, 0x0F);
         }
     }
+    // A non-zero byte in 12-15 of an iNES 1.0 header masks mapper bits 4-7
+    // (`mapper_number`'s dirty-tail rule), so a mapper edit to 16 or more
+    // clears them or it does not read back. iNES 1.0 reads nothing else there.
+    let clear_dirty_tail = !h.is_nes2
+        && h.mapper_id != base.mapper_id
+        && h.mapper_id > 0x0F
+        && original[12..16].iter().any(|&b| b != 0);
     if h.mirroring != base.mirroring {
         take(6, 0x01);
     }
@@ -867,6 +878,9 @@ pub fn serialize_header_preserving(h: &Header, original: &[u8; HEADER_LEN]) -> [
         if h.default_expansion_device != base.default_expansion_device {
             take(15, 0x7F);
         }
+    }
+    if clear_dirty_tail {
+        out[12..16].fill(0);
     }
     out
 }
@@ -1776,6 +1790,27 @@ mod tests {
         h[12] = 0x01; // PAL
         h[15] = 0x01; // default expansion device
         assert_eq!(parse_header(&h).unwrap().mapper_id, 64);
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — the header editor's
+    /// mapper edit reads back on a `"DiskDude!"` dump. The preserving writer
+    /// copies the untouched tail back, and a non-zero byte in 12-15 masks
+    /// mapper bits 4-7, so setting mapper 66 used to save a header that
+    /// parsed as mapper 2.
+    #[test]
+    fn preserving_mapper_edit_reads_back_over_a_dirty_tail() {
+        let mut h = ines_header(8, 1, 2, 0);
+        h[7..16].copy_from_slice(b"DiskDude!");
+        let mut edited = parse_header(&h).unwrap();
+        assert_eq!(edited.mapper_id, 2);
+        edited.mapper_id = 66;
+        let out = serialize_header_preserving(&edited, &h);
+        assert_eq!(parse_header(&out).unwrap().mapper_id, 66);
+        // A mapper below 16 has no bits 4-7 to lose: the tail stays.
+        edited.mapper_id = 3;
+        let out = serialize_header_preserving(&edited, &h);
+        assert_eq!(parse_header(&out).unwrap().mapper_id, 3);
+        assert_eq!(&out[12..16], &h[12..16]);
     }
 
     #[test]

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import uniffi.rustynes_mobile.NpNetConfig
+import uniffi.rustynes_mobile.defaultPaletteArgb
 import uniffi.rustynes_mobile.NpPhase
 import uniffi.rustynes_mobile.NpStatus
 
@@ -429,9 +430,14 @@ fun localWifiIpv4(context: Context): String? {
 
 /**
  * The 512-entry composite-2C02 NES palette LUT as packed ARGB_8888, indexed by the
- * core's palette-index value `(emphasis << 6) | colour` (0..=511). Byte-identical to
- * the core's `rustynes_ppu::palette::build_rgba_lut_from_base(NES_PALETTE)` — the
- * same `NES_PALETTE` table and the same 13/16 per-channel emphasis attenuation.
+ * core's palette-index value `(emphasis << 6) | colour` (0..=511). It is the core's
+ * own table, read once over the bridge (`defaultPaletteArgb`), so emphasis follows
+ * the core's documented model exactly.
+ *
+ * Until v2.9.8 this was a Kotlin copy of the base palette and of the emphasis rule,
+ * which kept the old 13/16 attenuation after the core moved to the documented model,
+ * so emphasised netplay frames were tinted differently from the same frames off
+ * netplay.
  *
  * It lets the netplay loop turn the core's non-advancing `indexFramebufferBytes()`
  * (which `npAdvanceFrame` already produced) into ARGB pixels for the Bitmap path,
@@ -440,37 +446,8 @@ fun localWifiIpv4(context: Context): String? {
  * during a netplay session — an accepted limitation of the LAN path.
  */
 object NetplayPalette {
-    // The 64-entry composite NES master palette (matches rustynes_ppu NES_PALETTE).
-    private val BASE = intArrayOf(
-        0x6A6D6A, 0x001380, 0x1E008A, 0x39007A, 0x550056, 0x5A0018, 0x4F1000, 0x3D1C00,
-        0x253A00, 0x004E00, 0x004600, 0x004A18, 0x00405A, 0x000000, 0x000000, 0x000000,
-        0xB9BCB9, 0x184BCF, 0x4B24E8, 0x7C12E0, 0xAB13B5, 0xB72164, 0xAB3718, 0x8B5A00,
-        0x5C7A00, 0x209000, 0x008F00, 0x008C42, 0x007D8A, 0x000000, 0x000000, 0x000000,
-        0xFFFFFF, 0x64A0FF, 0x8479FF, 0xAC68FF, 0xDA60FF, 0xE26BC5, 0xDC834C, 0xC39A18,
-        0x9CB000, 0x60C000, 0x30C83C, 0x28C58C, 0x3CB7C9, 0x4C4C4C, 0x000000, 0x000000,
-        0xFFFFFF, 0xC8DDFF, 0xD5CCFF, 0xE5C7FF, 0xF5C5FF, 0xFAC9E6, 0xF8D2BD, 0xEFDA99,
-        0xE1E188, 0xC8E788, 0xB0EA9C, 0xA4EBBD, 0xAAE5E2, 0xB0B0B0, 0x000000, 0x000000,
-    )
-
-    /** The full 512-entry ARGB LUT, built once. */
-    val ARGB: IntArray = IntArray(512).also { lut ->
-        for (e in 0 until 8) {
-            val emphRed = e and 1 != 0
-            val emphGreen = e and 2 != 0
-            val emphBlue = e and 4 != 0
-            for (c in 0 until 64) {
-                val rgb = BASE[c]
-                var r = (rgb shr 16) and 0xFF
-                var g = (rgb shr 8) and 0xFF
-                var b = rgb and 0xFF
-                // apply_emphasis: dim the non-emphasized channels by 13/16.
-                if (emphRed) { g = (g * 13) shr 4; b = (b * 13) shr 4 }
-                if (emphGreen) { r = (r * 13) shr 4; b = (b * 13) shr 4 }
-                if (emphBlue) { r = (r * 13) shr 4; g = (g * 13) shr 4 }
-                lut[(e shl 6) or c] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-            }
-        }
-    }
+    /** The full 512-entry ARGB LUT, read from the core on first use. */
+    val ARGB: IntArray by lazy { defaultPaletteArgb().toIntArray() }
 }
 
 /**

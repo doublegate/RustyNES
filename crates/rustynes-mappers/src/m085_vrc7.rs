@@ -598,9 +598,8 @@ impl Mapper for Vrc7 {
         //   + opll blob (OPLL_SNAPSHOT_LEN bytes, self-versioned)
         // closing the `docs/accuracy-ledger.md` row that recorded the FM
         // voice resuming from arbitrary envelope + phase state after a
-        // rewind / rollback / TAS restore. `load_state` still accepts a v1
-        // blob, which leaves the synthesizer wherever it was — the exact
-        // pre-v2.3.7 behaviour, so an old save is no worse than it was.
+        // rewind / rollback / TAS restore. `load_state` accepts v3 and v4
+        // only; v1 and v2 blobs are refused since v2.9.8 (ADR 0042).
         // version(1) + prg(3) + chr(8) + mirroring(1) + prg_ram_enable(1)
         //   + irq_latch(1) + irq_counter(1) + irq_enabled(1)
         //   + irq_enable_after_ack(1) + irq_mode_scanline(1)

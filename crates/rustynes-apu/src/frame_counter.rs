@@ -228,6 +228,16 @@ impl FrameCounter {
         // Nintendo World Championships 1990 runs `CLI` on the next
         // instruction and crashed into WRAM without it.
         if self.pending_inhibit {
+            // The inhibit itself takes effect with the write too. Clearing
+            // the flag here while leaving `irq_inhibit` to the timer reset
+            // let the OLD sequence raise the IRQ again at 29828-29830 when
+            // the write landed 1-3 cycles before it -- a frame interrupt
+            // delivered after the program inhibited it. No test ROM in the
+            // suite reaches that window (the APU and AccuracyCoin suites
+            // pass either way); the reading is the wiki's, which ties the
+            // flag clear to the inhibit bit, not to the reset. Pinned by
+            // `write_4017_inhibit_holds_through_the_reset_delay`.
+            self.irq_inhibit = true;
             self.irq_flag = false;
             self.irq_line_active = false;
             self.irq_flag_clear_cycle = 0;
@@ -712,6 +722,33 @@ mod tests {
             for _ in 0..4 {
                 drive_tick(&mut f, &mut c, aligned);
                 assert!(!f.irq_line_active && !f.irq_flag);
+            }
+        }
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — the inhibit written
+    /// 1-3 cycles before the four-step IRQ steps holds through the 3-4 cycle
+    /// timer-reset delay. With the inhibit deferred to the reset, the old
+    /// sequence reached 29828 first and raised the IRQ the write had just
+    /// inhibited.
+    #[test]
+    fn write_4017_inhibit_holds_through_the_reset_delay() {
+        for lead in 1..=3u32 {
+            for aligned in [true, false] {
+                let mut fc = FrameCounter::new();
+                let mut cyc = 0u64;
+                for _ in 0..(29828 - lead) {
+                    drive_tick(&mut fc, &mut cyc, aligned);
+                }
+                fc.write(0x40, aligned);
+                for _ in 0..8 {
+                    drive_tick(&mut fc, &mut cyc, aligned);
+                    assert!(
+                        !fc.irq_line_active,
+                        "IRQ raised after an inhibiting write {lead} cycle(s) \
+                         before 29828 (aligned={aligned})"
+                    );
+                }
             }
         }
     }

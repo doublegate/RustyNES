@@ -2367,12 +2367,13 @@ impl Nes {
     /// section bodies are appropriate for the running mapper.
     ///
     /// The header's ROM hash tag is NOT compared with the running ROM, by
-    /// decision (v2.9.0 re-audit NL-01): the tag is the leading bytes of the
-    /// SHA-256 of the whole file INCLUDING its iNES header, so checking it
-    /// would reject every legitimate state after a header-only correction of
-    /// the same dump (a fixed mapper number, mirroring bit or battery flag),
-    /// and the paragraph above has always allowed a load from a different
-    /// ROM. The section-level validation is what keeps a foreign state from
+    /// decision (v2.9.0 re-audit NL-01): the paragraph above has always
+    /// allowed a load from a different ROM. (The decision first rested on a
+    /// second reason too, that the tag hashed the whole file including its
+    /// iNES header, so a header-only correction of the same dump would have
+    /// refused every state. Since v2.9.8 the tag is the leading bytes of
+    /// [`Self::rom_sha256`], which leaves the header out, so that reason no
+    /// longer applies; the first still does.) The section-level validation is what keeps a foreign state from
     /// crashing the core; see `docs/frontend.md` § "Save state files".
     ///
     /// # Errors

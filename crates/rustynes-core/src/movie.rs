@@ -23,14 +23,16 @@
 //!     rom sha-256     : [u8; 32]      (`Nes::rom_sha256`: the image after its
 //!                                      16-byte header — the ROM identity)
 //!     frame count     : u32 LE
-//!     bytes per frame : u8            (currently 3: P1, P2, expansion-reserved)
+//!     bytes per frame : u8            (currently 5: P1, P2, P3, P4,
+//!                                      expansion-reserved; 3 before format 3)
 //! OPTIONS (format 3+): u32 LE length + that many bytes:
 //!     the `HardwareOptions` encoding, then (flags bit1) the
 //!     `BoardDescription` encoding — see `crate::hardware_options`
 //! START POINT (only when flags bit0 set):
 //!     length-prefixed `.rns` save-state blob (u32 LE length + bytes)
 //! INPUT STREAM:
-//!     frame_count * bytes_per_frame raw bytes; each frame = [p1, p2, expansion]
+//!     frame_count * bytes_per_frame raw bytes; each frame =
+//!     [p1, p2, p3, p4, expansion]
 //! ```
 //!
 //! This module is `no_std`-clean: it uses only `core` + `alloc` and the
@@ -903,8 +905,12 @@ impl Movie {
     /// with cleared cartridge RAM ([`power_on_for_movie`]), for
     /// [`StartPoint::SaveState`] the embedded snapshot.
     ///
-    /// The player's options are not restored here; a host that wants them
-    /// back captures them first ([`HardwareOptions::capture`]) and calls
+    /// A start refused after the checks -- an old or malformed start state,
+    /// an undecodable code -- also leaves `nes` as it was: the call takes a
+    /// rollback point first and restores it on any error.
+    ///
+    /// After a successful start the player's options are not restored here;
+    /// a host that wants them back captures them first ([`HardwareOptions::capture`]) and calls
     /// [`HardwareOptions::restore_after_playback`] when playback ends.
     ///
     /// # Errors
@@ -929,6 +935,29 @@ impl Movie {
         {
             return Err(MovieError::BoardMismatch { field });
         }
+        // A refused start must leave the player's game as it was. The options
+        // are applied before the start point is reached, and `apply` rewrites
+        // work RAM and palette RAM, so take a rollback point first. A
+        // snapshot per movie start costs one serialisation; seeking is not a
+        // per-frame call.
+        let prior_options = HardwareOptions::capture(nes);
+        let prior_state = nes.snapshot();
+        let result = self.enter_start(nes);
+        if result.is_err() {
+            // This order: the player's `apply` rewrites the fills, then the
+            // restore puts the running game's RAM and palette back over them.
+            // Neither can fail: the codes decoded when they were captured,
+            // and the blob is this machine's own snapshot.
+            let options_back = prior_options.apply(nes);
+            let state_back = nes.restore_quiet(&prior_state);
+            debug_assert!(options_back.is_ok() && state_back.is_ok());
+        }
+        result
+    }
+
+    /// The mutating half of [`Self::seek_to_start`], after the identity
+    /// checks; its caller rolls the machine back if this fails.
+    fn enter_start(&self, nes: &mut Nes) -> Result<(), MovieError> {
         // Applied BEFORE the start point is reached. For a power-on start the
         // power cycle must see the movie's stored power-on knobs (fills,
         // console model, die revision); for a save-state start the restore
@@ -1358,6 +1387,7 @@ fn map_eof(e: SnapshotError) -> MovieError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::PowerOnRam;
     use alloc::vec;
 
     // ----------------------------------------------------------------- v2.3.2
@@ -2341,5 +2371,46 @@ mod tests {
             "got {err:?}"
         );
         assert!(alloc::format!("{err}").contains("re-record"));
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — a refused start leaves
+    /// the player's machine as it was. `seek_to_start` applies the movie's
+    /// options before it reaches the start point, and `apply` refills work RAM
+    /// and palette RAM; without a rollback, a movie refused for an old start
+    /// state or an undecodable Game Genie code still left the running game
+    /// with the movie's RAM fill and configuration.
+    #[test]
+    fn a_refused_start_leaves_the_player_untouched() {
+        let rom = synth_nrom();
+        let nes = Nes::from_rom(&rom).unwrap();
+        let recorded = MovieRecorder::from_current_state(&nes).finish();
+
+        let mut old_start = recorded.clone();
+        if let StartPoint::SaveState(blob) = &mut old_start.start {
+            blob[8..10].copy_from_slice(&2u16.to_le_bytes());
+        }
+        let mut bad_code = recorded;
+        bad_code.options.genie_codes.push("QQQQQQ".into());
+
+        for (what, movie) in [("old start state", old_start), ("bad code", bad_code)] {
+            // A player configured differently from the movie, mid-game.
+            let mut player = Nes::from_rom(&rom).unwrap();
+            player.set_four_score(true);
+            player.set_power_on_ram(PowerOnRam::Filled(0xA5));
+            player.run_frame();
+            let before_state = player.snapshot();
+            let before_options = HardwareOptions::capture(&player);
+
+            movie.seek_to_start(&mut player).expect_err(what);
+            assert_eq!(
+                HardwareOptions::capture(&player),
+                before_options,
+                "{what}: the player's options changed"
+            );
+            assert!(
+                player.snapshot() == before_state,
+                "{what}: the player's machine state changed"
+            );
+        }
     }
 }

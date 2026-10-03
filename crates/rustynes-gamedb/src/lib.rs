@@ -490,6 +490,15 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
             bytes[7] = new7;
             changed = true;
         }
+        // iNES 1.0 ignores bytes 12-15, except that a non-zero byte there
+        // masks mapper bits 4-7 (the dirty-tail rule in `parse_header`), so a
+        // correction to a mapper of 16 or more clears them or it reads back
+        // as its low nibble. Run before the region step: a promotion copies
+        // the PARSED mapper into the NES 2.0 header.
+        if !is_nes2 && mapper > 0x0F && bytes[12..16].iter().any(|&b| b != 0) {
+            bytes[12..16].fill(0);
+            changed = true;
+        }
         if is_nes2 {
             let hi = ((mapper >> 8) & 0x0F) as u8;
             let new8 = (bytes[8] & 0xF0) | hi;
@@ -1143,6 +1152,39 @@ mod tests {
                 rustynes_core::Region::Pal,
                 "mapper {mapper}: the PAL row must reach the core"
             );
+        }
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — a mapper correction of 16
+    /// or more reaches the core on a `"DiskDude!"` dump. A non-zero byte in 12-15
+    /// of an iNES 1.0 header masks mapper bits 4-7 (`parse_header`'s dirty-tail
+    /// rule), so a correction that wrote only bytes 6-7 read back as its low
+    /// nibble -- and with a PAL row the promotion then wrote that masked id
+    /// into a clean NES 2.0 header, losing the correction for good.
+    #[test]
+    fn a_mapper_correction_survives_a_dirty_tail() {
+        for region in [None, Some(Region::Pal)] {
+            // GxROM (66); the dump's tail reads as mapper 2, and its byte 7
+            // already has the 'D' high nibble 66 needs, so a writer that only
+            // compares bytes 6-7 sees nothing to change.
+            let mut rom = ines1_rom(2, 8, 1);
+            rom[7..16].copy_from_slice(b"DiskDude!");
+            assert_eq!(rustynes_core::Nes::from_rom(&rom).unwrap().mapper_id(), 2);
+            let entry = GameDbEntry {
+                mapper: Some(66),
+                ..region_entry(region.unwrap_or(Region::Ntsc))
+            };
+            let entry = GameDbEntry { region, ..entry };
+            assert!(apply_header_overrides(&mut rom, &entry));
+            let nes = rustynes_core::Nes::from_rom(&rom).expect("corrected image parses");
+            assert_eq!(
+                nes.mapper_id(),
+                66,
+                "region {region:?}: mapper correction lost"
+            );
+            if region.is_some() {
+                assert_eq!(nes.region(), rustynes_core::Region::Pal);
+            }
         }
     }
 

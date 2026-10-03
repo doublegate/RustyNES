@@ -3262,6 +3262,28 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// The core's built-in 2C02 composite palette: 512 packed `0xAARRGGBB` values.
+///
+/// Each is a signed 32-bit integer so Kotlin reads an `Int`, indexed by the
+/// palette-index framebuffer's `(emphasis << 6) | colour`.
+///
+/// v2.9.8: the Android netplay path turns that framebuffer into pixels
+/// without advancing the core, and until now it did so with its own Kotlin
+/// copy of the palette and of the emphasis rule. The copy kept the 13/16
+/// attenuation after the core moved to the documented emphasis model
+/// (`T-EMPHASIS-MODEL`), so emphasised netplay frames were tinted
+/// differently from the same frames off netplay. Taking the table from the
+/// core leaves one definition.
+#[uniffi::export]
+#[must_use]
+pub fn default_palette_argb() -> Vec<i32> {
+    use rustynes_core::rustynes_ppu::{PpuPalette, build_rgba_lut};
+    build_rgba_lut(PpuPalette::Composite2C02)
+        .iter()
+        .map(|&[r, g, b, a]| i32::from_be_bytes([a, r, g, b]))
+        .collect()
+}
+
 // Test-only accessor for the confirmed-entering digest, used by the loopback
 // determinism check. Not part of the FFI surface (no `#[uniffi::export]`).
 #[cfg(test)]
@@ -3298,6 +3320,26 @@ mod tests {
         rom[reset] = 0x00;
         rom[reset + 1] = 0x80;
         rom
+    }
+
+    /// v2.9.8 — the netplay palette the Android shell reads is the core's own,
+    /// emphasis included, packed `0xAARRGGBB`.
+    #[test]
+    fn default_palette_argb_is_the_cores_lut() {
+        let argb = default_palette_argb();
+        let lut = rustynes_core::rustynes_ppu::build_rgba_lut(
+            rustynes_core::rustynes_ppu::PpuPalette::Composite2C02,
+        );
+        assert_eq!(argb.len(), 512);
+        for (i, (&packed, &[r, g, b, a])) in argb.iter().zip(lut.iter()).enumerate() {
+            assert_eq!(packed.to_be_bytes(), [a, r, g, b], "entry {i}");
+        }
+        // Emphasis is the documented model, not the old 13/16 attenuation:
+        // colour $00 with red emphasis keeps nothing of the 13/16 result.
+        let [_, r, g, b] = argb[1 << 6].to_be_bytes();
+        let [_, r0, g0, b0] = argb[0x00].to_be_bytes();
+        let old = |c: u8| u8::try_from((u16::from(c) * 13) >> 4).unwrap();
+        assert_ne!((r, g, b), (r0, old(g0), old(b0)));
     }
 
     #[test]

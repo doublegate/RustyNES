@@ -228,6 +228,32 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
 
 ### Fixed
 
+- **Fixes from release review.** CodeRabbit could not review the 180-file
+  release PR, so its files were reviewed as two smaller review-only PRs
+  (#580, #581). Each fix below has a test that failed first.
+  - **A refused movie no longer changes the running game.** A movie refused
+    for an old start state or a bad Game Genie code had already applied its
+    options, refilling work RAM and palette RAM. `Movie::seek_to_start` now
+    takes a rollback point and restores it on any error.
+  - **A mapper correction of 16 or more survives a "DiskDude!" header.** A
+    non-zero byte in 12-15 of an iNES 1.0 header masks mapper bits 4-7. Both
+    the game database and the header editor wrote the new mapper and left
+    that tail, so the mapper read back as its low nibble. A PAL promotion
+    then fixed the wrong id into the NES 2.0 header. Both now clear the tail.
+  - **A `$4017` inhibit holds through the reset delay.** The flag was
+    cleared on the write while the inhibit waited for the timer reset, so a
+    write 1-3 cycles before the four-step IRQ let the IRQ through. No ROM in
+    the suite reaches this window.
+  - **Netplay v5 and v4 peers can no longer half-sync.** v5 kept v4's
+    `Sync` magic, and a v4 decoder ignores extra bytes. A v4 peer could
+    therefore accept v5's longer message while the v5 side waited. v5's
+    magic is now `"RNE5"`, and a `Sync` of the wrong length is refused.
+  - **Android netplay shows emphasis as everywhere else.** Android's netplay
+    path had its own Kotlin palette, with the old 13/16 emphasis. It now
+    reads the core's table over the bridge (`default_palette_argb`).
+  - A too-long APU snapshot is reported as `TrailingBytes`, not `Truncated`.
+  - The movie format comment shows 5 bytes per frame, and two save-state
+    comments no longer describe pre-v2.9.8 behaviour.
 - **The iOS app compiles again.** The first Xcode build on a Mac (Xcode 27)
   failed with 24 errors in v2.9.7's Swift. The app's own `NesButton` collided
   with the type UniFFI generates from `rustynes-mobile`, now renamed

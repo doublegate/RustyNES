@@ -117,8 +117,9 @@ impl SessionIdentity {
 ///
 /// `5` (v2.9.8): [`NetMessage::Sync`] carries a [`SessionIdentity`] -- the
 /// ROM hash plus a 32-byte configuration hash -- instead of the ROM hash
-/// alone. A v4 `Sync` is 32 bytes shorter and decodes to `None`, so an older
-/// peer is never mistaken for a matching one; it simply never syncs.
+/// alone, under a new magic (`"RNE5"`, [`NetMessage::SYNC_MAGIC`]). A v4 `Sync`
+/// is 32 bytes shorter and decodes to `None`, and a v4 peer rejects v5's
+/// magic, so neither side mistakes the other for a match; they never sync.
 ///
 /// [`from_bytes`]: NetMessage::from_bytes
 pub const PROTOCOL_VERSION: u32 = 5;
@@ -220,7 +221,14 @@ pub enum NetMessage {
 
 impl NetMessage {
     /// The expected value of [`NetMessage::Sync::magic`].
-    pub const SYNC_MAGIC: u32 = 0x524E_4553; // "RNES"
+    ///
+    /// `"RNE5"` since protocol 5 (v2.9.8); `"RNES"` before. A v4 decoder reads
+    /// the magic and the 32-byte ROM hash and ignores the rest, so had v5 kept
+    /// v4's magic, a v4 peer would accept v5's longer `Sync` as its own and
+    /// consider the session synced while the v5 side waited for a reply it
+    /// refuses. Every version compares the magic, so a changed one is
+    /// rejected on both sides.
+    pub const SYNC_MAGIC: u32 = 0x524E_4535; // "RNE5"
 
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
@@ -360,6 +368,11 @@ impl NetMessage {
                 Some(Self::InputAck { frame })
             }
             Self::TAG_SYNC => {
+                // Exactly magic + two hashes: a longer payload is a later
+                // protocol's, not this one's with junk on the end.
+                if rest.len() != 68 {
+                    return None;
+                }
                 let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
                 let rom_hash: [u8; 32] = rest.get(4..36)?.try_into().ok()?;
                 let config_hash: [u8; 32] = rest.get(36..68)?.try_into().ok()?;
@@ -460,6 +473,29 @@ mod tests {
             ping_ms: 33,
             frame_advantage: -4,
         });
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — a v4 peer cannot take a
+    /// v5 `Sync` for its own. A v4 decoder reads the magic and the 32-byte ROM
+    /// hash and ignores what follows, so with v4's magic it accepted v5's
+    /// longer message and marked the session synced while the v5 side, which
+    /// refuses v4's shorter reply, timed out. v5 changes the magic, which v4
+    /// compares, and decodes only a payload of exactly its own length.
+    #[test]
+    fn a_v5_sync_is_not_a_v4_sync() {
+        const V4_SYNC_MAGIC: u32 = 0x524E_4553; // "RNES"
+        assert_ne!(NetMessage::SYNC_MAGIC, V4_SYNC_MAGIC);
+        let mut bytes = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: SessionIdentity::new([7u8; 32], [9u8; 32]),
+        }
+        .to_bytes();
+        bytes.push(0);
+        assert_eq!(
+            NetMessage::from_bytes(&bytes),
+            None,
+            "trailing byte accepted"
+        );
     }
 
     #[test]

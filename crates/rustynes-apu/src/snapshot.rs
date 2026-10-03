@@ -81,6 +81,10 @@ pub enum ApuSnapshotError {
     /// Blob is shorter than the schema declares.
     #[error("APU snapshot truncated at offset {0}")]
     Truncated(usize),
+    /// Blob is longer than the schema declares: this many bytes follow the
+    /// last field (v2.9.8; until then reported as [`Self::Truncated`]).
+    #[error("APU snapshot has {0} trailing byte(s) after its last field")]
+    TrailingBytes(usize),
     /// The blob's version byte is not understood by this build.
     #[error("APU snapshot unsupported version {0}")]
     UnsupportedVersion(u8),
@@ -741,7 +745,7 @@ impl Apu {
 
         // Every field is fixed-size, so the blob must end here.
         if r.pos != data.len() {
-            return Err(ApuSnapshotError::Truncated(r.pos));
+            return Err(ApuSnapshotError::TrailingBytes(data.len() - r.pos));
         }
         Ok(())
     }
@@ -987,7 +991,12 @@ mod tests {
         }
         let mut long = blob.clone();
         long.push(0);
-        assert!(Apu::new(Region::Ntsc, 44_100).restore(&long).is_err());
+        // Named as what it is: "truncated" for a blob that is too LONG sent
+        // the reader looking for missing bytes (CodeRabbit on #580).
+        assert!(matches!(
+            Apu::new(Region::Ntsc, 44_100).restore(&long),
+            Err(ApuSnapshotError::TrailingBytes(n)) if n == 1
+        ));
     }
 
     #[test]
