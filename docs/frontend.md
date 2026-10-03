@@ -2438,6 +2438,12 @@ header, and widens the per-frame record from 3 bytes to 5 so Four Score players
   length of the recording. The overclock is held at stock timing while recording
   (the v2.9.7 rule), so a recording always says 0 extra scanlines; a playing
   movie runs whatever its own record says.
+- **A ROM change ends the session** (v2.9.9, NF-12). Every install and Close ROM
+  goes through `EmuCore::set_nes` / `set_dual` / `clear_rom`, which stop playback
+  (nothing to restore: the new console is built from the player's settings) and
+  finish a recording, which the app then offers through the usual `.rnm` save
+  dialog (a download in the browser). Before v2.9.9 the session ran on and held
+  the old game's mirroring override and Game Genie codes against the new game.
 - **What cannot be applied is checked**: the ROM identity, the region, and the
   board (mapper, submapper, mirroring, console type, `DualSystem`, PRG-/CHR-RAM
   size, battery, trainer). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte

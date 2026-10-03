@@ -527,6 +527,10 @@ pub struct EmuCore {
     pub dual: Option<Box<rustynes_core::VsDualSystem>>,
     /// TAS movie record/playback state machine.
     pub movie: MovieUi,
+    /// v2.9.9 (NF-12) — a recording that a ROM install or Close ROM ended
+    /// (see [`Self::set_nes`]), held for the app to offer for saving through
+    /// its usual save path. Taken with [`Self::take_interrupted_recording`].
+    interrupted_recording: Option<rustynes_core::Movie>,
     /// Frame-pacing / audio instrumentation (Phase 0).
     pub perf: PerfStats,
     /// The framebuffer the renderer presents (with run-ahead active it is
@@ -785,7 +789,13 @@ impl EmuCore {
     /// sites (ROM load, reset-with-new-config, netplay session start, movie
     /// load). Routing them through one setter makes that structural instead of a
     /// convention four call sites have to remember.
+    ///
+    /// v2.9.9 (NF-12): installing a game ends any movie session first (see
+    /// [`Self::end_movie_session`]). Call this only to install a game, never
+    /// to put back a console taken out for a borrow split -- that would end a
+    /// movie the player is still running.
     pub fn set_nes(&mut self, nes: Nes) {
+        self.end_movie_session();
         self.mapper_name = nes.mapper_info().name;
         self.dual = None;
         self.nes = Some(nes);
@@ -794,6 +804,7 @@ impl EmuCore {
     /// Install a Vs. `DualSystem` cabinet, refreshing the cached mapper name from
     /// the MAIN console (the one whose status the shell reports).
     pub fn set_dual(&mut self, dual: Box<rustynes_core::VsDualSystem>) {
+        self.end_movie_session();
         self.mapper_name = dual.main().mapper_info().name;
         self.nes = None;
         self.dual = Some(dual);
@@ -853,9 +864,43 @@ impl EmuCore {
     /// Drop any loaded ROM and the cached name with it, so a stale mapper label
     /// cannot outlive the ROM it described.
     pub fn clear_rom(&mut self) {
+        self.end_movie_session();
         self.nes = None;
         self.dual = None;
         self.mapper_name.clear();
+    }
+
+    /// v2.9.9 (NF-12) — end the movie session because the game is going away.
+    ///
+    /// A movie belongs to the ROM it was recorded on, and while it runs
+    /// `MovieUi::before_frame` holds that game's options -- mirroring override,
+    /// Game Genie codes, Vs. DIP and PPU, console model -- against the console
+    /// every frame. Left running across an install, it forced them onto the
+    /// NEW game (an MMC3 game with a forced mirroring override is the hazard
+    /// ADR 0031 guards against), and `stop_playback` later "restored" the old
+    /// game's player options onto it, so the damage outlived the movie. A
+    /// recording kept appending the new game's input under the old game's
+    /// identity, which never replays.
+    ///
+    /// Playback is stopped with no console (the incoming one is built from
+    /// the player's own settings, so there is nothing to restore). A recording
+    /// is finished and kept in `interrupted_recording` for the app to save:
+    /// everything recorded up to the swap is a valid movie of the old game.
+    /// Every install path goes through [`Self::set_nes`] / [`Self::set_dual`]
+    /// / [`Self::clear_rom`], so the native, command-line and browser loads
+    /// are all covered here rather than at each call site.
+    fn end_movie_session(&mut self) {
+        self.movie.stop_playback(None);
+        if let Some(movie) = self.movie.finish_recording() {
+            self.interrupted_recording = Some(movie);
+        }
+    }
+
+    /// v2.9.9 (NF-12) — the recording a ROM install or Close ROM ended, if
+    /// any, for the app to save (native: the `.rnm` dialog; browser: a
+    /// download). Its `rom_sha256` is the game it was recorded on.
+    pub const fn take_interrupted_recording(&mut self) -> Option<rustynes_core::Movie> {
+        self.interrupted_recording.take()
     }
 
     /// Empty core (no ROM).
@@ -866,6 +911,7 @@ impl EmuCore {
             mapper_name: String::new(),
             dual: None,
             movie: MovieUi::default(),
+            interrupted_recording: None,
             perf: PerfStats::default(),
             present_fb: Vec::new(),
             present_fb_sub: Vec::new(),
@@ -2819,5 +2865,83 @@ mod tests {
         assert!(core.attach_battery(Some(dir.path())).is_none());
         assert!(!core.start_sandboxed_session(|_| false));
         assert!(core.battery.is_some());
+    }
+
+    /// v2.9.9 (NF-12) — installing a new game ends the movie session.
+    ///
+    /// A `.rnm` belongs to the ROM it was recorded on, and both halves of a
+    /// session hold that game's options against the console every frame
+    /// (`MovieUi::before_frame` -> `apply_live`). Before v2.9.9 no install
+    /// touched `emu.movie`, so after Open ROM the old game's mirroring
+    /// override and Game Genie codes were forced onto the new one -- and stayed
+    /// after the movie ended, since `stop_playback` then "restored" the old
+    /// game's player options -- while a recording kept saving the new game's
+    /// input under the old game's identity. The re-audit's probe showed an
+    /// MMC3 game left with a forced Horizontal override and a foreign code.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn installing_a_new_game_ends_the_movie_session() {
+        use rustynes_core::rustynes_mappers::Mirroring;
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let rom_a = synth_nrom();
+        // Same program, another image: a distinct identity.
+        let mut rom_b = synth_nrom();
+        rom_b[16 + 0x100] = 0xEA;
+
+        // Game A carries an override and a code into its movie options.
+        let game_a = || {
+            let mut a = Nes::from_rom(&rom_a).unwrap();
+            a.set_mirroring_override(Some(Mirroring::Horizontal));
+            a.add_genie_code("SXIOPO").unwrap();
+            a
+        };
+        let a_sha = *game_a().rom_sha256();
+
+        for record in [true, false] {
+            let mut core = EmuCore::new();
+            core.set_nes(game_a());
+            if record {
+                core.movie
+                    .start_recording_branch(core.nes.as_mut().unwrap(), false);
+            } else {
+                let mut probe = game_a();
+                let mut rec = rustynes_core::MovieRecorder::from_current_state(&probe);
+                for _ in 0..30 {
+                    rec.capture(&probe);
+                    probe.run_frame();
+                }
+                let movie = rec.finish();
+                core.movie
+                    .start_playback(core.nes.as_mut().unwrap(), movie)
+                    .unwrap();
+            }
+            core.produce_one_frame(&inputs, &mut sinks);
+
+            core.set_nes(Nes::from_rom(&rom_b).unwrap());
+            assert!(
+                !core.movie.is_recording() && !core.movie.is_playing(),
+                "record={record}: the movie survived the ROM install"
+            );
+            for _ in 0..3 {
+                core.produce_one_frame(&inputs, &mut sinks);
+            }
+            let b = core.nes.as_ref().unwrap();
+            assert_eq!(b.mirroring_override(), None, "record={record}");
+            assert_eq!(b.genie_codes().count(), 0, "record={record}");
+            // A recording is handed back for the caller to offer for saving,
+            // under the game it was recorded on.
+            let handed = core.take_interrupted_recording();
+            if record {
+                let m = handed.expect("the interrupted recording is kept");
+                assert_eq!(m.rom_sha256, a_sha);
+            } else {
+                assert!(handed.is_none(), "playback has nothing to save");
+            }
+        }
     }
 }

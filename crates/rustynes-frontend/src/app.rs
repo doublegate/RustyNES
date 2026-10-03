@@ -1742,6 +1742,8 @@ impl App {
             emu.next_frame_time = None;
         }
         self.dual_mode = false;
+        // v2.9.9 (NF-12) — `clear_rom` ended any movie; offer a recording.
+        self.deliver_interrupted_recording();
         // v1.6.0 "Studio" A2 — a TAStudio session anchors on the closed ROM; end it.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
@@ -2079,6 +2081,9 @@ impl App {
         if let Some(notice) = battery_notice {
             self.ui.set_status(StatusMessage::error(notice));
         }
+        // v2.9.9 (NF-12) — the install ended any movie session; a recording
+        // of the outgoing game is offered for saving.
+        self.deliver_interrupted_recording();
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
         // (it anchored on the previous game); end it so the editor can't
         // replay inputs/branches against a different `Nes`.
@@ -3211,6 +3216,31 @@ impl App {
         let attest = self.config.input.run_ahead == 0;
         emu.movie.start_recording_branch(nes, attest);
         eprintln!("rustynes: movie branch — recording from current state");
+    }
+
+    /// v2.9.9 (NF-12) — save a recording that a ROM install or Close ROM
+    /// ended (`EmuCore::end_movie_session`), through the same path a stopped
+    /// recording takes: the `.rnm` save dialog natively, a download in the
+    /// browser. A no-op when nothing was interrupted. Called after the install
+    /// lock is released, so the (blocking) native dialog never holds it.
+    fn deliver_interrupted_recording(&mut self) {
+        let Some(movie) = self.emu.lock().take_interrupted_recording() else {
+            return;
+        };
+        self.ui.set_status(StatusMessage::info(format!(
+            "Movie recording ended by the ROM change ({} frames)",
+            movie.len()
+        )));
+        #[cfg(not(target_arch = "wasm32"))]
+        self.movie_save_dialog(&movie);
+        #[cfg(target_arch = "wasm32")]
+        crate::wasm_io::save_file_with_fallback(
+            "rustynes-movie.rnm",
+            "RustyNES TAS movie",
+            ".rnm",
+            "application/octet-stream",
+            movie.serialize(),
+        );
     }
 
     /// Serialize + write `movie` to a `.rnm` file chosen via the rfd save
@@ -9353,6 +9383,9 @@ impl App {
             }
             emu.begin_web_battery()
         };
+        // v2.9.9 (NF-12) — every browser load lands here; a recording the
+        // install ended is handed to a download.
+        self.deliver_interrupted_recording();
         if self.dual_mode {
             crate::wasm_io::log(
                 "Vs. DualSystem cabinet: both consoles run (P1/P2 main, P3/P4 sub); \
@@ -11498,16 +11531,18 @@ impl ApplicationHandler<AppEvent> for App {
                     // the running `Nes` here on the same reload path.
                     // v2.7.0 — re-apply Four Score + the effective DIP (and the
                     // DB palette, idempotent) so a live DIP edit takes effect;
-                    // explicit config dip wins over the DB preset. Take/restore
-                    // the `Nes` to borrow-split `&self` (config) from the
-                    // `&mut Nes` the helper needs (taken under one short lock,
-                    // restored under another — `apply_vs_db` reads config only).
-                    let taken = self.emu.lock().nes.take();
-                    if let Some(mut nes) = taken {
+                    // explicit config dip wins over the DB preset. Edited in
+                    // place under one lock: `apply_vs_db` takes `&self` and reads
+                    // config only, so it shares the borrow with the guard.
+                    // v2.9.9 (NF-12): this used to take the `Nes` out and put it
+                    // back through `set_nes`, which now ends the movie session
+                    // (it is the install point) -- a binding edit must not.
+                    let mut guard = self.emu.lock();
+                    if let Some(nes) = guard.nes.as_mut() {
                         nes.set_four_score(self.config.input.four_score);
-                        self.apply_vs_db(&mut nes);
-                        self.emu.lock().set_nes(nes);
+                        self.apply_vs_db(nes);
                     }
+                    drop(guard);
                     // v2.1.0 — the expansion-device menu selection also flags
                     // the bindings dirty; re-sync the attached device here.
                     #[cfg(not(target_arch = "wasm32"))]
