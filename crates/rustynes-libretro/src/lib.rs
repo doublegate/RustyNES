@@ -7,8 +7,9 @@
 //! # Architecture
 //!
 //! The Libretro wrapper operates as a thin, safe facade over the `Nes` emulator struct.
-//! Because the emulator guarantees strict cycle-accuracy (a lockstep master clock for the
-//! CPU/PPU/APU) and strict determinism, this crate avoids mutating emulation flow.
+//! Because the emulator guarantees strict cycle-accuracy (one master clock, every CPU
+//! cycle clocked in two halves with the PPU brought up to date at each; ADR 0002 /
+//! ADR 0029) and strict determinism, this crate avoids mutating emulation flow.
 //!
 //! - **Video**: Native 256x240 framebuffers are handed off directly to `VideoContext`.
 //!   A Vs. `DualSystem` cabinet (two cross-wired consoles) instead composes its two
@@ -57,7 +58,8 @@
 //! The core already models the four Vs. `DualSystem` arcade boards (`Emu::Dual`,
 //! `rustynes_core::VsDualSystem`). This wrapper detects them at load through
 //! [`rustynes_core::Emu::from_rom`] — which OR's the NES 2.0 header Vs. type with the
-//! SHA-keyed `vs_db` — and, when a cabinet is loaded, steps BOTH consoles each
+//! `vs_db` lookup, keyed by the header-excluded ROM identity first and the whole-image
+//! hash second (v2.9.8) — and, when a cabinet is loaded, steps BOTH consoles each
 //! `retro_run`, composes their framebuffers side-by-side, and presents the 512x240
 //! result. The deterministic core is untouched; the dual branch is purely a parallel
 //! present/serialize path, exactly mirroring the desktop frontend's `emu.dual` branch.
@@ -840,7 +842,9 @@ impl VsPanel {
 ///
 /// iNES 1.0 Vs. dumps carry no PPU type, so the parser gives every one the
 /// 2C03 palette; many Vs. games used a 2C04 whose colour table differs, and
-/// the SHA-keyed [`rustynes_core::vs_db`] supplies the right one. Before
+/// [`rustynes_core::vs_db`] supplies the right one (matched on the
+/// header-excluded ROM identity first, then the whole-image hash, since
+/// v2.9.8). Before
 /// v2.9.0 the libretro core loaded through `Emu::from_rom` alone, which uses
 /// the database only to recognise a `DualSystem` cabinet, so every Vs. dump
 /// in the database rendered in the wrong colours (7 of 7 local dumps
@@ -1189,7 +1193,8 @@ impl RustyNesLibretro {
         } else {
             // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
             // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
-            // the SHA-keyed `vs_db`), else a standard single `Nes`. This is the SAME
+            // the `vs_db`, matched on the header-excluded ROM identity first and the
+            // whole-image hash second since v2.9.8), else a standard single `Nes`. This is the SAME
             // detection the desktop frontend uses, so the libretro core presents dual
             // cabinets identically (two consoles side-by-side) instead of booting a
             // single console that would hang waiting on its cross-wired partner.
@@ -1668,8 +1673,8 @@ impl RustyNesLibretro {
                     poll_zapper(ctx, nes, port as u32);
                 }
             }
-            // Advance the emulator clock by precisely one frame (the lockstep routine
-            // that drives CPU/PPU/APU progression). The returned framebuffer borrow is
+            // Advance the emulator by precisely one frame (the core's one-clock
+            // scheduler drives CPU/PPU/APU progression). The returned framebuffer borrow is
             // dropped immediately; we re-read it below via `framebuffer()` to keep the
             // video copy disjoint from the audio drain.
             nes.run_frame();
@@ -1716,7 +1721,7 @@ impl RustyNesLibretro {
                 return;
             };
             // The pulse is timed on the MAIN console's frame counter; the two
-            // consoles step in lockstep, one frame each per call.
+            // consoles advance together, one frame each per call.
             let vs = self.vs_panel.step(pads, 4, dual.main().frame());
             VsPanel::apply_dual(vs, dual);
             for (port, pad) in pads.into_iter().enumerate() {

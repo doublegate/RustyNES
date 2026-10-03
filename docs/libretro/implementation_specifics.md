@@ -92,3 +92,22 @@ save-state reader treats an all-zero tail as padding. The snapshot that
 measures the size at load is taken into the buffer `retro_serialize` reuses,
 with that headroom reserved for a single console, so no serialize reallocates it (v2.9.2 audit
 AUD-17; `no_serialize_reallocates_the_buffer_sized_at_load`).
+
+`retro_unserialize` refuses a state, returns `false`, and leaves the running
+game exactly as it was (re-audit NL-01;
+`a_rejected_unserialize_leaves_the_machine_as_it_was`) when:
+
+* it is from RustyNES v2.9.7 or earlier. v2.9.8 moved the `.rns` container to
+  format 3 and stopped reading older formats (ADR 0042), so those states
+  cannot be loaded or converted; play to the same point, or load an in-game
+  save, and save a new state;
+* its sections do not fit the loaded board (a state from a game on a
+  different mapper, a different RAM size, or a single console's state on a
+  Vs. `DualSystem` cabinet and the reverse);
+* it is truncated or damaged.
+
+A state from a different game on the same board shape is not refused; the
+container does not record which game wrote it. Since v2.9.9 every refusal
+writes its reason to the frontend's log at warning level, naming the format
+for an old state (re-audit NL-11; `a_refused_unserialize_logs_the_reason`);
+before, the frontend could show only its own generic failure.

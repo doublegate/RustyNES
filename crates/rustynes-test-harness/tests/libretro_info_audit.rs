@@ -259,3 +259,28 @@ fn libretro_info_description_names_no_retired_design() {
         );
     }
 }
+
+/// The core's own source must not describe the retired design either (v2.9.9
+/// libretro re-audit NL-14). The `.info` and `docs/libretro/` were corrected
+/// (NL-04, L-3.5b) while the crate's module doc and three comments went on
+/// calling the scheduler "a lockstep master clock" / "the lockstep routine",
+/// and four sites still called `vs_db` "SHA-keyed" after v2.9.8 re-keyed it
+/// on the header-excluded identity first.
+#[test]
+fn libretro_source_names_no_retired_design() {
+    let src = core_source();
+    for retired in ["lockstep", "Lockstep", "SHA-keyed"] {
+        let lines: Vec<usize> = src
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains(retired))
+            .map(|(n, _)| n + 1)
+            .collect();
+        assert!(
+            lines.is_empty(),
+            "crates/rustynes-libretro/src/lib.rs says \"{retired}\" on line(s) {lines:?}; \
+             the lockstep scheduler was retired in v2.0.0 (ADR 0002 / ADR 0029) and \
+             `vs_db` is keyed by the header-excluded identity first since v2.9.8"
+        );
+    }
+}
