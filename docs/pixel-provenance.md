@@ -398,13 +398,17 @@ recorder, produce this video*. Two limits are load-bearing:
   accidental divergence and casual edits; a motivated forger can edit the movie
   and recompute it. Establishing authorship would need a signature over the whole
   record with a key the verifier trusts — a different feature.
-- **The verifier assumes a default core profile.** `rustynes verify` builds a
-  plain `Nes` from the ROM bytes. A recording made with Four Score, a PPU
-  die-revision or power-on RAM model, a per-game database override, or a
-  soft-patched ROM will not reproduce, and that mismatch is the profile's fault
-  rather than the movie's. The format carries no profile field, so the CLI states
-  the assumption up front instead of mis-blaming the movie. Recording-side
-  eligibility is follow-up work.
+- **The verifier uses the ROM header as found.** Since v2.9.8 (movie format 3,
+  ADR 0044) a movie carries its emulation options -- Four Score, PPU and 2A03 die
+  revisions, power-on RAM and palette, console model, Game Genie codes -- and
+  `rustynes verify` applies them, so a non-default recording reproduces. What it
+  still cannot apply is a per-game database HEADER correction: it builds the
+  `Nes` from the ROM file as given. A movie recorded on a corrected header is
+  therefore refused with the differing board field or region named, rather than
+  reported as a mismatch the movie did not cause, and the CLI says so up front.
+  A soft-patched ROM is a different ROM and verifies only against that patch.
+  (Before v2.9.8 the format had no profile at all, and the verifier assumed a
+  default one.)
 
 Both were narrowed in review on PR #356, where the prose had drifted into
 "prove it is genuine and unmodified".

@@ -118,10 +118,12 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   settings, holds them while it runs, and puts yours back when it stops; it
   refuses a ROM whose region or header differs and names what differs.
   **Movies from earlier versions, and movies that start from a pre-v2.9.8 save
-  state, are refused** with an error that says to re-record them; the maintainer accepted the break. Recording keeps OAM decay
-  and the overclock through its power-on (the power cycle used to drop them),
-  and raw RAM cheats pause while a movie records or plays because a `.rnm`
-  cannot carry them. Foreign imports (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`)
+  state, are refused** with an error that says to re-record them; the
+  maintainer accepted the break. Recording keeps OAM decay through its
+  power-on (the power cycle used to drop it); recording runs at stock timing,
+  so a recorded movie stores no overclock, while playback applies whatever
+  overclock a movie stores. Raw RAM cheats pause while a movie records or
+  plays because a `.rnm` cannot carry them. Foreign imports (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`)
   record the stock NES. The full list of what is and is not recorded is in
   `docs/frontend.md`; the decision is ADR 0044.
 
@@ -251,6 +253,25 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
   - **Android netplay shows emphasis as everywhere else.** Android's netplay
     path had its own Kotlin palette, with the old 13/16 emphasis. It now
     reads the core's table over the bridge (`default_palette_argb`).
+  - **A refused save state or movie says so on screen.** On the desktop, a
+    load reported "State loaded" whatever happened, and the F4 hotkey
+    reported nothing. A refused state, such as one from v2.9.7, therefore
+    looked like it had loaded. The reason went only to stderr, as did an
+    old movie's "re-record" refusal. Every native save and load now shows
+    its real outcome, and a refused movie shows its reason. The browser
+    build's saves are asynchronous and still log their outcome. (Found by
+    the Antigravity review of #579.)
+  - **History-viewer exports never span an options change.** An exported
+    clip carries one set of options, and one taken across a mid-session
+    change replayed the later frames under the earlier options. The change
+    now places an anchor on its own frame, and an export ends there.
+  - **TAStudio replays and exports what its movie will play.** The editor
+    drove only controllers 1 and 2 while its export plays all four. It also
+    took the options at export time, not the ones frame 0 was built under.
+  - **Power Cycle no longer reads a `.pal` file under the emulation lock.**
+    A stalled drive could stall the emulation thread with it.
+  - The coverage tool warns when it cannot read every tier arm. Its dry
+    run now predicts the duplicates a real run would flag.
   - A too-long APU snapshot is reported as `TrailingBytes`, not `Truncated`.
   - The movie format comment shows 5 bytes per frame, and two save-state
     comments no longer describe pre-v2.9.8 behaviour.

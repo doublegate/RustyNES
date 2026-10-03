@@ -78,7 +78,11 @@ What is recorded and what is not, knob by knob, is the survey table in
   settings, or refuses with a reason. Two peers either run the same machine
   or are told why not.
 - Four-player recordings and `.fm2` imports keep players 3 and 4.
-- Power-on movies keep OAM decay and the overclock through their power cycle.
+- Power-on movies keep OAM decay through their power cycle, and a movie that
+  stores an overclock replays with it. Recording itself runs at stock timing:
+  `MovieUi::start_recording_power_on` sets the extra scanlines to zero before
+  the options are captured (the v2.9.7 rule), so the movies RustyNES records
+  store no overclock; an imported or hand-built movie may.
 
 ### Negative
 

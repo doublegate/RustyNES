@@ -518,6 +518,34 @@ def _parse_tier_arms(text: str) -> dict[str, set[int]]:
     return out
 
 
+_TIER_DRIFT_WARNED = False
+
+
+def _warn_if_tiers_drift(core: set[int], curated: set[int], best: set[int]) -> None:
+    """Warn once when the parsed tiers disagree with the fallback sets.
+
+    The arm regex accepts `a | b | c => Some(MapperTier::X)` only. A guarded
+    arm, a `_ =>` arm or a range pattern (`1..=3`) in tier.rs would be skipped
+    without error and leave a tier short but non-empty, which `load_tiers`
+    would accept -- the silent misclassification v2.9.8 fixed in another form
+    (review on #581). The fallback sets are the last known-good tiers, so a
+    difference means either a tier change that the fallback has not caught up
+    with, or an arm this parser cannot read; both need a look.
+    """
+    global _TIER_DRIFT_WARNED
+    fallback = (set(_FALLBACK_CORE), set(_FALLBACK_CURATED), set(_FALLBACK_BEST_EFFORT))
+    if _TIER_DRIFT_WARNED or (core, curated, best) == fallback:
+        return
+    _TIER_DRIFT_WARNED = True
+    print(
+        "coverage: WARNING tier.rs parsed as "
+        f"{len(core)}/{len(curated)}/{len(best)} (Core/Curated/BestEffort), the fallback "
+        f"has {len(fallback[0])}/{len(fallback[1])}/{len(fallback[2])}: update the "
+        "fallback sets, or check tier.rs for an arm this parser cannot read",
+        file=sys.stderr,
+    )
+
+
 def load_tiers() -> tuple[set[int], set[int], set[int]]:
     tier_rs = os.path.join(
         REPO, "crates", "rustynes-mappers", "src", "tier.rs"
@@ -528,6 +556,7 @@ def load_tiers() -> tuple[set[int], set[int], set[int]]:
         arms = _parse_tier_arms(text)
         core, curated, best = arms.get("Core", set()), arms.get("Curated", set()), arms.get("BestEffort", set())
         if core and curated and best:
+            _warn_if_tiers_drift(core, curated, best)
             return core, curated, best
     except OSError:
         pass
@@ -1086,6 +1115,16 @@ def cmd_categorize(args) -> int:
         rel_s, rel_d = os.path.relpath(src, REPO), os.path.relpath(dst, REPO)
         if args.dry_run:
             print(f"  MOVE  {rel_s}  ->  {rel_d}")
+            # A dry run predicts the real run's FLAGGED list and exit code too
+            # (review on #581): the same duplicate test, without moving.
+            if os.path.isdir(src) and os.path.isdir(dst):
+                for item in os.listdir(src):
+                    target = os.path.join(dst, item)
+                    if os.path.exists(target):
+                        flagged.append(
+                            f"duplicate kept in both trees: {os.path.relpath(os.path.join(src, item), REPO)}"
+                            f" vs {os.path.relpath(target, REPO)}"
+                        )
             return
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.isdir(src) and os.path.isdir(dst):

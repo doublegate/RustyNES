@@ -436,6 +436,19 @@ fn configure_game_db_and_patch_startup_rom(
 /// The overclock is not here: it lives on [`EmuCore`] (applied at the top of
 /// each produced frame), and the load paths set it under the install lock.
 fn configure_console(config: &crate::config::Config, nes: &mut Nes) {
+    configure_console_with_palette(config, palette_for_config(config), nes);
+}
+
+/// [`configure_console`] with the palette already resolved. For a caller that
+/// holds the emu lock: [`palette_for_config`] may read a `.pal` file, and a
+/// stalled drive or network share would then stall the emulation thread on
+/// the lock with it (v2.9.8, found in review). The palette depends on the
+/// configuration only, so resolving it before the lock changes nothing else.
+fn configure_console_with_palette(
+    config: &crate::config::Config,
+    palette: Option<[[u8; 3]; 64]>,
+    nes: &mut Nes,
+) {
     nes.set_apu_channel_mask(config.audio.channel_mask);
     nes.set_apu_channel_gain(config.audio.channel_gain);
     nes.set_apu_filter_model(crate::config::parse_filter_model(
@@ -444,7 +457,7 @@ fn configure_console(config: &crate::config::Config, nes: &mut Nes) {
     nes.set_oam_decay(config.emulation.oam_decay);
     push_ppu_hardware_config(config, nes);
     nes.set_console_model(console_model_for(config));
-    nes.set_custom_palette(palette_for_config(config));
+    nes.set_custom_palette(palette);
     #[cfg(not(target_arch = "wasm32"))]
     attach_expansion_device(config.input.expansion_device, nes);
 }
@@ -2626,50 +2639,79 @@ impl App {
     /// Save state to a filesystem slot. Native-only; wasm32 uses the
     /// `localStorage` path in `wasm.rs` (F1).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_save_state(&self, slot: u8) {
+    fn handle_save_state(&self, slot: u8) -> Result<(), String> {
         // Snapshot under a short lock; the file write runs with it dropped.
         // v2.9.7 (`T-PS-dual-savestate`): `save_state_blob` covers a Vs.
         // DualSystem cabinet too (both consoles, one "RVSD" container); before,
         // F1 with a cabinet loaded returned here and saved nothing.
         let snapshot = self.emu.lock().save_state_blob();
         let Some((rom_sha256, blob)) = snapshot else {
-            return;
+            return Err("No game loaded".into());
         };
         let Some(dir) = self.data_dir.as_ref() else {
             eprintln!("rustynes: no data directory available; save state skipped");
-            return;
+            return Err("No data directory".into());
         };
         match save_state::save_to_slot(dir, &rom_sha256, slot, &blob) {
-            Ok(path) => eprintln!("rustynes: saved state -> {}", path.display()),
-            Err(e) => eprintln!("rustynes: save state failed: {e}"),
+            Ok(path) => {
+                eprintln!("rustynes: saved state -> {}", path.display());
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("rustynes: save state failed: {e}");
+                Err(format!("Save state failed: {e}"))
+            }
         }
     }
 
     /// Load state from a filesystem slot. Native-only (see
     /// [`Self::handle_save_state`]).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_load_state(&self, slot: u8) {
+    fn handle_load_state(&self, slot: u8) -> Result<(), String> {
         // Read the ROM key under a short lock; the file read runs with it
         // dropped; the restore takes a second short lock. v2.9.7: the key and
         // the restore both cover a Vs. DualSystem cabinet.
         let Some(rom_sha256) = self.emu.lock().loaded_rom_sha256() else {
-            return;
+            return Err("No game loaded".into());
         };
         let Some(dir) = self.data_dir.as_ref() else {
             eprintln!("rustynes: no data directory available; load state skipped");
-            return;
+            return Err("No data directory".into());
         };
         match save_state::load_from_slot(dir, &rom_sha256, slot) {
             Ok(blob) => {
                 // Bind first so the emu lock drops before the log line.
                 let restored = self.emu.lock().restore_state_blob(&blob);
                 match restored {
-                    Ok(()) => eprintln!("rustynes: loaded state from slot {slot}"),
-                    Err(e) => eprintln!("rustynes: restore failed: {e}"),
+                    Ok(()) => {
+                        eprintln!("rustynes: loaded state from slot {slot}");
+                        Ok(())
+                    }
+                    // A state from v2.9.7 or earlier lands here, and its
+                    // message says why it is refused.
+                    Err(e) => {
+                        eprintln!("rustynes: restore failed: {e}");
+                        Err(format!("State refused: {e}"))
+                    }
                 }
             }
-            Err(e) => eprintln!("rustynes: load state failed: {e}"),
+            Err(e) => {
+                eprintln!("rustynes: load state failed: {e}");
+                Err(format!("Load state failed: {e}"))
+            }
         }
+    }
+
+    /// v2.9.8 — put a save / load outcome on the status line: `ok` on
+    /// success, the handler's own message (which names a refused state's
+    /// reason) on failure. Every native save and load site goes through this,
+    /// so none can report a success it did not have.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn report_state_result(&mut self, result: Result<(), String>, ok: String) {
+        self.ui.set_status(match result {
+            Ok(()) => StatusMessage::success(ok),
+            Err(e) => StatusMessage::error(e),
+        });
     }
 
     /// v1.0.0 — capture the current framebuffer to a PNG under
@@ -3068,7 +3110,7 @@ impl App {
     /// playback (the movie's input overrides live input). **Stop**: end
     /// playback and return control to live input.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_play_toggle(&self) {
+    fn handle_movie_play_toggle(&mut self) {
         if self.emu.lock().movie.is_playing() {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
@@ -3098,7 +3140,12 @@ impl App {
         let movie = match rustynes_core::Movie::deserialize(&bytes) {
             Ok(m) => m,
             Err(e) => {
+                // v2.9.8: on screen, not only on stderr. A movie from before
+                // this release is refused HERE, and its message says to
+                // re-record it; the release notes promise the player sees it.
                 eprintln!("rustynes: movie parse failed {}: {e}", path.display());
+                self.ui
+                    .set_status(StatusMessage::error(format!("Movie refused: {e}")));
                 return;
             }
         };
@@ -3110,17 +3157,24 @@ impl App {
         let total = movie.len();
         // v2.9.0 — the seek replaces the save RAM with the movie's, which
         // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
+        let mut seek_error = None;
         let began = guard.start_sandboxed_session(|emu| {
             let Some(nes) = emu.nes.as_mut() else {
                 return false;
             };
             if let Err(e) = emu.movie.start_playback(nes, movie) {
                 eprintln!("rustynes: movie seek failed: {e}");
+                seek_error = Some(e);
                 return false;
             }
             true
         });
         if !began {
+            drop(guard);
+            if let Some(e) = seek_error {
+                self.ui
+                    .set_status(StatusMessage::error(format!("Movie refused: {e}")));
+            }
             return;
         }
         // The seek (power-cycle or restore) reset emulator state; restart
@@ -5082,11 +5136,20 @@ impl App {
                 self.close_rom();
             }
             MenuAction::SaveState => {
+                // v2.9.8: the toast reports what happened. It used to say
+                // "State saved" / "State loaded" whatever the outcome, so a
+                // refused state looked like a successful load.
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state(self.active_save_slot);
+                {
+                    let result = self.handle_save_state(self.active_save_slot);
+                    self.report_state_result(result, "State saved".into());
+                }
+                // The browser write is asynchronous; its outcome is logged.
                 #[cfg(target_arch = "wasm32")]
-                self.handle_save_state_wasm(self.active_save_slot);
-                self.ui.set_status(StatusMessage::success("State saved"));
+                {
+                    self.handle_save_state_wasm(self.active_save_slot);
+                    self.ui.set_status(StatusMessage::success("State saved"));
+                }
             }
             MenuAction::LoadState => {
                 if self.ra_hardcore_blocks() {
@@ -5097,10 +5160,16 @@ impl App {
                         .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state(self.active_save_slot);
+                    {
+                        let result = self.handle_load_state(self.active_save_slot);
+                        self.report_state_result(result, "State loaded".into());
+                    }
+                    // The browser read is asynchronous; its outcome is logged.
                     #[cfg(target_arch = "wasm32")]
-                    self.handle_load_state_wasm(self.active_save_slot);
-                    self.ui.set_status(StatusMessage::success("State loaded"));
+                    {
+                        self.handle_load_state_wasm(self.active_save_slot);
+                        self.ui.set_status(StatusMessage::success("State loaded"));
+                    }
                 }
             }
             MenuAction::Quit => {
@@ -5151,14 +5220,17 @@ impl App {
                     .set_status(StatusMessage::info(format!("Save slot {}", slot + 1)));
             }
             MenuAction::SaveStateSlot(slot) => {
+                let ok = format!("Saved to slot {}", slot + 1);
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state(slot);
+                {
+                    let result = self.handle_save_state(slot);
+                    self.report_state_result(result, ok);
+                }
                 #[cfg(target_arch = "wasm32")]
-                self.handle_save_state_wasm(slot);
-                self.ui.set_status(StatusMessage::success(format!(
-                    "Saved to slot {}",
-                    slot + 1
-                )));
+                {
+                    self.handle_save_state_wasm(slot);
+                    self.ui.set_status(StatusMessage::success(ok));
+                }
             }
             MenuAction::LoadStateSlot(slot) => {
                 if self.ra_hardcore_blocks() {
@@ -5168,14 +5240,17 @@ impl App {
                     self.ui
                         .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
+                    let ok = format!("Loaded from slot {}", slot + 1);
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state(slot);
+                    {
+                        let result = self.handle_load_state(slot);
+                        self.report_state_result(result, ok);
+                    }
                     #[cfg(target_arch = "wasm32")]
-                    self.handle_load_state_wasm(slot);
-                    self.ui.set_status(StatusMessage::success(format!(
-                        "Loaded from slot {}",
-                        slot + 1
-                    )));
+                    {
+                        self.handle_load_state_wasm(slot);
+                        self.ui.set_status(StatusMessage::success(ok));
+                    }
                 }
             }
             MenuAction::MovieRecordToggle => {
@@ -6297,10 +6372,19 @@ impl App {
         use rustynes_script::ControlCmd;
         match cmd {
             ControlCmd::Pause => self.set_paused(true),
-            ControlCmd::SaveState(slot) => self.handle_save_state(*slot),
+            // A script's saves and loads report only failures: a script can
+            // save every frame, and a success toast each time would bury the
+            // status line.
+            ControlCmd::SaveState(slot) => {
+                if let Err(e) = self.handle_save_state(*slot) {
+                    self.ui.set_status(StatusMessage::error(e));
+                }
+            }
             ControlCmd::LoadState(slot) => {
-                if !self.ra_hardcore_blocks() {
-                    self.handle_load_state(*slot);
+                if !self.ra_hardcore_blocks()
+                    && let Err(e) = self.handle_load_state(*slot)
+                {
+                    self.ui.set_status(StatusMessage::error(e));
                 }
             }
             // v1.2.0 (T-110-E2) — stash the per-port override on the core; it is
@@ -6830,7 +6914,10 @@ impl App {
             }
             SysAction::SaveState => {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state(self.active_save_slot);
+                {
+                    let result = self.handle_save_state(self.active_save_slot);
+                    self.report_state_result(result, "State saved".into());
+                }
                 #[cfg(target_arch = "wasm32")]
                 self.handle_save_state_wasm(self.active_save_slot);
             }
@@ -6844,8 +6931,13 @@ impl App {
                     self.ui
                         .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
+                    // v2.9.8: the hotkey reported nothing, so a refused state
+                    // (one from v2.9.7 or earlier) failed in silence.
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state(self.active_save_slot);
+                    {
+                        let result = self.handle_load_state(self.active_save_slot);
+                        self.report_state_result(result, "State loaded".into());
+                    }
                     #[cfg(target_arch = "wasm32")]
                     self.handle_load_state_wasm(self.active_save_slot);
                 }
@@ -7044,6 +7136,8 @@ impl App {
 
     /// Power-cycle the running emulator (and keep `RetroAchievements` in sync).
     fn do_power_cycle(&mut self) {
+        // Resolved before the lock: it may read a `.pal` file.
+        let palette = palette_for_config(&self.config);
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
@@ -7073,7 +7167,7 @@ impl App {
                 // writes no RAM), plus the open-bus latch, which the first
                 // opcode fetch overwrites -- what every ROM load has always
                 // done after `from_rom`'s reset.
-                configure_console(&self.config, nes);
+                configure_console_with_palette(&self.config, palette, nes);
                 // ... and then a running movie's options on top, power-on
                 // fills included (`HardwareOptions::apply`): the movie, not the
                 // player's Settings, decides how its run behaves, and
@@ -7098,7 +7192,7 @@ impl App {
                 dual.power_cycle();
                 let pair: [&mut Nes; 2] = dual.split_mut().into();
                 for console in pair {
-                    configure_console(&self.config, console);
+                    configure_console_with_palette(&self.config, palette, console);
                     if let Some(options) = emu.movie.held_options() {
                         let held = options.apply(console);
                         debug_assert!(held.is_ok(), "a parsed movie's options re-apply");
@@ -11546,12 +11640,9 @@ impl ApplicationHandler<AppEvent> for App {
                     use crate::save_states_ui::SaveStateRequest;
                     match req {
                         SaveStateRequest::Save(slot) => {
-                            self.handle_save_state(slot);
+                            let result = self.handle_save_state(slot);
                             self.save_states_ui.invalidate_slot(slot);
-                            self.ui.set_status(StatusMessage::success(format!(
-                                "Saved to slot {}",
-                                slot + 1
-                            )));
+                            self.report_state_result(result, format!("Saved to slot {}", slot + 1));
                         }
                         SaveStateRequest::Load(slot) => {
                             if self.ra_hardcore_blocks() {
@@ -11559,11 +11650,11 @@ impl ApplicationHandler<AppEvent> for App {
                                     "Load state disabled (hardcore)",
                                 ));
                             } else {
-                                self.handle_load_state(slot);
-                                self.ui.set_status(StatusMessage::success(format!(
-                                    "Loaded from slot {}",
-                                    slot + 1
-                                )));
+                                let result = self.handle_load_state(slot);
+                                self.report_state_result(
+                                    result,
+                                    format!("Loaded from slot {}", slot + 1),
+                                );
                             }
                         }
                     }
@@ -11996,7 +12087,7 @@ mod tests {
             .expect("do_power_cycle: a cabinet is not power-cycled");
         let rest = &body[cycled..];
         let configured = rest
-            .find("configure_console(&self.config, console)")
+            .find("configure_console_with_palette(&self.config, palette, console)")
             .expect("do_power_cycle: the cabinet's consoles are not configured");
         let movie = rest
             .find("emu.movie.held_options()")
@@ -12065,9 +12156,24 @@ mod tests {
         let cycle = production_fn_body("do_power_cycle");
         let cycled = cycle.find("nes.power_cycle();").expect("the cycle");
         let configured = cycle
-            .find("configure_console(&self.config, nes)")
+            .find("configure_console_with_palette(&self.config, palette, nes)")
             .expect("do_power_cycle: no `configure_console` call");
         assert!(cycled < configured, "configure after the cycle, not before");
+        // The palette (which may read a `.pal` file) is resolved before the
+        // emu lock is taken, never under it.
+        let resolved = cycle
+            .find("palette_for_config(&self.config)")
+            .expect("do_power_cycle: the palette is not resolved up front");
+        let locked = cycle.find("self.emu.lock()").expect("the lock");
+        assert!(
+            resolved < locked,
+            "the `.pal` read must happen before the lock"
+        );
+        assert_eq!(
+            cycle.matches("palette_for_config").count(),
+            1,
+            "do_power_cycle reads the palette more than once"
+        );
         // A running movie's options are applied after the player's, so the
         // movie still wins across a power cycle.
         let movie = cycle

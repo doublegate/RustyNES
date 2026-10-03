@@ -331,7 +331,7 @@ shipping default; one axis-B lever deferred to a maintainer decision).
 | Live-network probes | 2 | `stun_probe`, `turn_probe` | Hit live public STUN / TURN servers; `#[ignore]`'d so CI/offline runs stay hermetic — run manually with `--ignored` |
 | HD-pack local | 1 | `hdpack` | Needs a copyrighted local HD pack via `RUSTYNES_HDPACK_LOCAL` |
 
-The 16 in the last five rows are documented in `docs/testing-strategy.md`; the 4
+The 13 in the last five rows are documented in `docs/testing-strategy.md`; the 4
 MMC3 R1/R2 pins are dispositioned in ADR 0002's F5.0 decision-update (closed for
 the shipping default; the v2.1.5 A12-phase instrumentation study
 (`mmc3_r1r2_phase_probe`) refined the rationale and deferred one untested axis-B

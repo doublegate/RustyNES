@@ -17,9 +17,11 @@ gate — the same treatment `ref-docs/` and the archive trees get.
 
 ## The line to v3.0.0 (current)
 
-The SuperStation One FPGA core ships as **v3.0.0**
-([ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md)); the three minor
-lines before it act on the four audits in
+v3.0.0 is the API major and a release-candidate FPGA core, not yet
+hardware-verified ([ADR 0043](../../docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md),
+which supersedes [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md)'s
+definition); verifying the core on the SuperStation One is a later v3.x
+release. The minor lines before it act on the four audits in
 [`docs/audits/`](../../docs/audits/README.md).
 
 | Plan | Release | Status |

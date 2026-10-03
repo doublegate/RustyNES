@@ -1049,7 +1049,7 @@ both runs.
   `flowing_palette_fast`, so run 1 is read only as agreeing in direction.
 - **Net of run 2's drift**, the shipped `_fast` paths gain about 3.7% to 5.3%.
   That agrees with v2.9.1's ceiling probe of the same call (−4.09% / −4.54%,
-  row §3.1 C above) and with ADR 0042's "−4.1 to −4.7% on palette frames".
+  row §3.1 C of the v2.9.1 table below) and with ADR 0042's "−4.1 to −4.7% on palette frames".
 - **Output is unchanged:** AccuracyCoin 144/144, nestest 0-diff, and no golden
   or snapshot moved.
 
