@@ -524,6 +524,27 @@ impl NetplayUi {
             unreachable!("tick_spectating only runs in the Spectating state");
         };
         let out = session.advance(nes);
+        // v2.9.9 (NF-15) — a stream announced for another game or another
+        // machine configuration is refused with the reason, as the player
+        // handshake refuses a mismatched peer. Before v2.9.9 nothing read the
+        // spectator's sync state, so it ran the stream and showed a different
+        // game than the one being played.
+        if let Some(why) = session.mismatch() {
+            self.fail(match why {
+                rustynes_netplay::IdentityMismatch::Rom => {
+                    "the watched match is running a different ROM".to_string()
+                }
+                rustynes_netplay::IdentityMismatch::Config => {
+                    "the watched match runs this ROM with different emulation settings; \
+                     match them and spectate again"
+                        .to_string()
+                }
+            });
+            return NetplayTick {
+                active: true,
+                produced_frame: false,
+            };
+        }
         self.status.phase = NetplayPhase::Spectating;
         self.status.is_host = false;
         self.status.current_frame = session.current_frame();

@@ -39,7 +39,7 @@
 
 use rustynes_core::{Buttons, Nes};
 
-use crate::message::{NetMessage, SessionIdentity};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
 use crate::session::MAX_PLAYERS;
 use crate::transport::Transport;
 
@@ -146,6 +146,9 @@ pub struct SpectatorSession<T: Transport> {
     /// `true` once a peer's `Sync` handshake (matching ROM) has been seen. A
     /// spectator validates but does not answer it.
     synced: bool,
+    /// v2.9.9 (NF-15) — set by a `Sync` whose identity differs from ours;
+    /// see [`Self::mismatch`].
+    mismatch: Option<IdentityMismatch>,
 
     /// Per-frame confirmed input history, indexed by frame. Append-only.
     history: Vec<FrameInputs>,
@@ -178,6 +181,7 @@ impl<T: Transport> SpectatorSession<T> {
             current_frame: 0,
             last_confirmed_frame: None,
             synced: false,
+            mismatch: None,
             history: Vec::new(),
         }
     }
@@ -228,6 +232,16 @@ impl<T: Transport> SpectatorSession<T> {
         self.synced
     }
 
+    /// v2.9.9 (NF-15) — why the watched stream was refused: the `Sync` it
+    /// announced named another game ([`IdentityMismatch::Rom`]) or another
+    /// machine configuration ([`IdentityMismatch::Config`]). Terminal: once
+    /// set, [`Self::advance`] produces nothing for the rest of the session,
+    /// and the frontend reports the reason as the player handshake does.
+    #[must_use]
+    pub const fn mismatch(&self) -> Option<IdentityMismatch> {
+        self.mismatch
+    }
+
     /// How many fully-confirmed frames are buffered but not yet shown — i.e.
     /// how far the spectator is *behind* the live match. The frontend can
     /// fast-forward (call [`Self::advance`] repeatedly) to catch up.
@@ -255,11 +269,22 @@ impl<T: Transport> SpectatorSession<T> {
     ///
     /// A spectator never sends, predicts, or rolls back, so this returns no
     /// error: a malformed / foreign packet is simply ignored by the transport
-    /// layer, and a ROM mismatch on the observed `Sync` only leaves `synced`
-    /// false (the caller can surface that via [`is_synced`](Self::is_synced)).
+    /// layer.
+    ///
+    /// v2.9.9 (NF-15): nothing is shown until a `Sync` whose identity matches
+    /// ours has been seen ([`is_synced`](Self::is_synced)); inputs that arrive
+    /// first are buffered and play once it does. A `Sync` that does NOT match
+    /// ends the session ([`mismatch`](Self::mismatch)). Before v2.9.9 a
+    /// mismatch only left `synced` false, which nothing read, so a spectator
+    /// with another ROM or configuration showed a different game than the one
+    /// being played. A relay that fans the match out to spectators must
+    /// therefore forward a player's `Sync`, as it forwards `Roster`.
     pub fn advance(&mut self, nes: &mut Nes) -> SpectatorOutcome {
         self.ingest();
         self.recompute_confirmed();
+        if !self.synced || self.mismatch.is_some() {
+            return SpectatorOutcome::default();
+        }
 
         // Show the next frame only once every player's real input is known AND
         // it sits at or behind the (optionally delayed) reveal horizon. With
@@ -287,8 +312,14 @@ impl<T: Transport> SpectatorSession<T> {
         for msg in messages {
             match msg {
                 NetMessage::Sync { magic, identity } => {
-                    if magic == NetMessage::SYNC_MAGIC && self.identity.check(&identity).is_ok() {
-                        self.synced = true;
+                    // A foreign magic is a different protocol, ignored like any
+                    // stray datagram; a matching magic with another identity is
+                    // the players' stream for another machine, and terminal.
+                    if magic == NetMessage::SYNC_MAGIC && self.mismatch.is_none() {
+                        match self.identity.check(&identity) {
+                            Ok(()) => self.synced = true,
+                            Err(why) => self.mismatch = Some(why),
+                        }
                     }
                 }
                 NetMessage::Input {
@@ -457,6 +488,11 @@ mod tests {
             hash,
         );
         let mut nes = Nes::from_rom(&rom).unwrap();
+        // v2.9.9 (NF-15): nothing is shown before a matching `Sync`.
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
 
         // Confirm frames 0..=2 (fewer than DELAY past frame 0): nothing reveals.
         for f in 0..DELAY {
@@ -534,6 +570,11 @@ mod tests {
             hash,
         );
         let mut nes = Nes::from_rom(&rom).unwrap();
+        // v2.9.9 (NF-15): nothing is shown before a matching `Sync`.
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
 
         // An absurd frame index (near u32::MAX) for a valid player. The horizon
         // starts at 0, so this is far past MAX_SPECTATOR_FRAME_LOOKAHEAD.
@@ -597,6 +638,11 @@ mod tests {
             hash,
         );
         let mut nes = Nes::from_rom(&rom).unwrap();
+        // v2.9.9 (NF-15): nothing is shown before a matching `Sync`.
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
 
         // Confirm + show frame 0 (a 2-player match).
         feeder.send(&NetMessage::Input {
@@ -695,5 +741,78 @@ mod tests {
             ref_fb.as_slice(),
             "spectator framebuffer is byte-identical to the reference"
         );
+    }
+
+    /// v2.9.9 (NF-15) — a spectator shows nothing until a matching `Sync`,
+    /// and a mismatching one ends the session with its reason.
+    ///
+    /// `advance` never consulted `synced`, and nothing in either frontend read
+    /// `is_synced`, so a spectator with another ROM or another machine
+    /// configuration ran the players' stream regardless and showed a
+    /// different game than the one being played, silently. v2.9.8's handshake
+    /// refuses a mismatched PLAYER with a message; this is the same rule for a
+    /// spectator.
+    #[test]
+    fn a_spectator_runs_only_a_stream_whose_sync_matches() {
+        let rom = synth_nrom();
+        let ours = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let feed = |feeder: &mut MemoryTransport, frames: u32| {
+            for frame in 0..frames {
+                for player in 0..2 {
+                    feeder.send(&NetMessage::Input {
+                        player,
+                        frame,
+                        input: 0,
+                    });
+                }
+            }
+        };
+        let mut other_config = ours;
+        other_config.config_hash[0] ^= 1;
+        let mut other_rom = ours;
+        other_rom.rom_hash[0] ^= 1;
+
+        // No Sync yet: inputs are buffered, nothing is shown.
+        let (link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), link, ours);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        feed(&mut feeder, 10);
+        for _ in 0..20 {
+            assert!(
+                !spec.advance(&mut nes).produced_frame,
+                "shown before a Sync"
+            );
+        }
+        assert_eq!(spec.mismatch(), None);
+        // The matching Sync arrives: the buffered stream plays.
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: ours,
+        });
+        let shown = (0..20)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 10, "the stream plays once synced");
+
+        for (theirs, want) in [
+            (other_config, IdentityMismatch::Config),
+            (other_rom, IdentityMismatch::Rom),
+        ] {
+            let (link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+            let mut spec = SpectatorSession::new(SpectatorConfig::default(), link, ours);
+            let mut nes = Nes::from_rom(&rom).unwrap();
+            feeder.send(&NetMessage::Sync {
+                magic: NetMessage::SYNC_MAGIC,
+                identity: theirs,
+            });
+            feed(&mut feeder, 10);
+            for _ in 0..20 {
+                assert!(
+                    !spec.advance(&mut nes).produced_frame,
+                    "{want:?}: a mismatched stream was shown"
+                );
+            }
+            assert_eq!(spec.mismatch(), Some(want));
+        }
     }
 }

@@ -2129,6 +2129,14 @@ the live match by the network latency; the status bar shows `NET spectate fN
 broadcast/relay is a documented maintainer-manual carryover — see
 `docs/netplay-webrtc.md` §4.
 
+Since v2.9.9 (NF-15) a spectator shows nothing until it has seen a player's
+`Sync` with its own identity (same ROM, same machine configuration); inputs
+arriving first are buffered. A `Sync` for another ROM or configuration ends the
+session with the reason, as the player handshake does. Before, a mismatched
+spectator ran the stream anyway and showed a different game. A relay that fans
+the match out to spectators must therefore forward a `Sync`, as it forwards
+`Roster`.
+
 ### v1.7.0 "Forge" Workstream H9 — power-user niceties
 
 All additive + frontend-only; the core stays byte-identical.
