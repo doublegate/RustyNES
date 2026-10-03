@@ -29,7 +29,7 @@ pub use greenzone::{Greenzone, MAX_FORCED_GREENZONE_FRAMES};
 
 use std::collections::BTreeMap;
 
-use rustynes_core::{Buttons, FrameInput, Movie, Nes, Region, StartPoint};
+use rustynes_core::{Buttons, FrameInput, Movie, Nes, StartPoint};
 use thiserror::Error;
 
 /// Magic prefix of a `.rnmproj` `TAStudio` project file.
@@ -147,11 +147,15 @@ impl<'a> Reader<'a> {
         let mut v = Vec::with_capacity(n.min(self.remaining() / 3));
         for _ in 0..n {
             let s = self.take(3)?;
-            v.push(FrameInput {
-                p1: Buttons::from_bits_truncate(s[0]),
-                p2: Buttons::from_bits_truncate(s[1]),
-                expansion: s[2],
-            });
+            // The project format keeps its own 3-byte, two-player record
+            // (TAStudio edits players 1 and 2); `FrameInput` is
+            // `#[non_exhaustive]` since v2.9.8, so it is built, then edited.
+            let mut f = FrameInput::new(
+                Buttons::from_bits_truncate(s[0]),
+                Buttons::from_bits_truncate(s[1]),
+            );
+            f.expansion = s[2];
+            v.push(f);
         }
         Ok(v)
     }
@@ -232,6 +236,11 @@ pub struct TasEditor {
     /// which also bumps on lag-log / cursor / marker / branch churn. Saturates at
     /// `u32::MAX` (4 billion re-records is not a real session).
     rerecord_count: u32,
+    /// v2.9.8 — the emulation options the frame-0 state was built under,
+    /// captured with it. Every cached state descends from frame 0, so these
+    /// (not the console's options at export time, which the player may have
+    /// changed since) are what [`Self::to_movie`] records.
+    start_options: rustynes_core::HardwareOptions,
 }
 
 impl TasEditor {
@@ -253,6 +262,7 @@ impl TasEditor {
             branches: Vec::new(),
             revision: 0,
             rerecord_count: 0,
+            start_options: rustynes_core::HardwareOptions::capture(nes),
         }
     }
 
@@ -381,12 +391,16 @@ impl TasEditor {
     /// Build a portable [`Movie`] from the current input log, carrying the TAS
     /// [`Self::rerecord_count`] into the movie (and thus the `.fm2` / `.bk2`
     /// `rerecordCount` header on export). `TAStudio` projects always replay from
-    /// power-on; `region` and `rom_sha256` come from the running console.
+    /// power-on; the region, ROM identity and cartridge board come from the
+    /// running console `nes`, and the emulation options from the frame-0
+    /// state the editor was built on (v2.9.8; see `start_options`).
     #[must_use]
-    pub fn to_movie(&self, region: Region, rom_sha256: [u8; 32]) -> Movie {
+    pub fn to_movie(&self, nes: &Nes) -> Movie {
         Movie {
-            region,
-            rom_sha256,
+            region: nes.region(),
+            rom_sha256: *nes.rom_sha256(),
+            options: self.start_options.clone(),
+            board: Some(rustynes_core::BoardDescription::capture(nes)),
             start: StartPoint::PowerOn,
             frames: self.input_log.clone(),
             rerecord_count: self.rerecord_count,
@@ -706,8 +720,9 @@ impl TasEditor {
         };
         for f in start..target {
             let input = self.input_log.get(f).copied().unwrap_or_default();
-            nes.set_buttons(0, input.p1);
-            nes.set_buttons(1, input.p2);
+            // All four ports, as the exported movie's playback drives them
+            // (v2.9.8; it drove players 1 and 2 only).
+            input.apply_to(nes);
             nes.run_frame();
             self.record_lag(f, nes);
             let next = f + 1;
@@ -735,8 +750,7 @@ impl TasEditor {
         self.input_log[frame] = input;
         // Editing here invalidates any stale downstream cache.
         self.greenzone.invalidate_after(frame);
-        nes.set_buttons(0, input.p1);
-        nes.set_buttons(1, input.p2);
+        input.apply_to(nes);
         nes.run_frame();
         self.record_lag(frame, nes);
         self.cursor = frame + 1;
@@ -835,7 +849,7 @@ mod tests {
             .expect("frame 0 is anchored");
         assert_eq!(frame, 0);
 
-        let movie = ed.to_movie(nes.region(), *nes.rom_sha256());
+        let movie = ed.to_movie(&nes);
         let mut replay = Nes::from_rom(&rom).unwrap();
         for _ in 0..7 {
             replay.run_frame(); // a different history, which the seek must erase
@@ -905,12 +919,12 @@ mod tests {
 
         // `to_movie` carries the tally into the exported movie (and thus the
         // `.fm2` / `.bk2` rerecordCount header).
-        assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 4);
+        assert_eq!(ed.to_movie(&nes).rerecord_count, 4);
 
         // Seeding from a loaded movie continues the tally from its value.
         ed.set_rerecord_count(1000);
         assert_eq!(ed.rerecord_count(), 1000);
-        assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 1000);
+        assert_eq!(ed.to_movie(&nes).rerecord_count, 1000);
     }
 
     #[test]
@@ -983,6 +997,45 @@ mod tests {
             "framebuffer must match"
         );
         assert_eq!(nes.cycle(), ref_cycle, "cycle count must match");
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #581) — the editor drives all
+    /// four controller ports, as its exported movie's playback does
+    /// (`FrameInput::apply_to`). It drove players 1 and 2 only, so a
+    /// four-player log replayed differently in the editor than in its export.
+    #[test]
+    fn seek_and_record_drive_all_four_ports() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let four = FrameInput::four_players(Buttons::A, Buttons::B, Buttons::START, Buttons::UP);
+        let mut ed = TasEditor::from_inputs(&nes, vec![four; 3], 1 << 20, 10);
+        ed.seek(&mut nes, 3);
+        assert_eq!(
+            (nes.buttons(2), nes.buttons(3)),
+            (Buttons::START, Buttons::UP)
+        );
+        let other = FrameInput::four_players(Buttons::A, Buttons::B, Buttons::LEFT, Buttons::DOWN);
+        ed.record_frame(&mut nes, other);
+        assert_eq!(
+            (nes.buttons(2), nes.buttons(3)),
+            (Buttons::LEFT, Buttons::DOWN)
+        );
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #581) — an export carries the
+    /// options frame 0 was built under, not whatever the console holds at
+    /// export time. The editor's cached states all descend from frame 0, so a
+    /// setting changed afterwards would export a movie that starts on a
+    /// machine the edits never ran on.
+    #[test]
+    fn an_export_carries_the_frame_zero_options() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let ed = TasEditor::new(&nes, 1 << 20, 10);
+        nes.set_four_score(true);
+        assert!(!ed.to_movie(&nes).options.four_score);
     }
 
     /// v2.1.10 "Creator Tools" (B8) — with a force-greenzone range active, a seek

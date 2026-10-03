@@ -296,6 +296,7 @@ FAMILY: dict[int, str] = {
     9: "MMC2",
     10: "MMC4",
     11: "ColorDreams",
+    12: "GouderSL5020B",
     13: "CPROM",
     15: "Multicart15",
     16: "BandaiFCG",
@@ -315,10 +316,13 @@ FAMILY: dict[int, str] = {
     33: "TaitoTC0190",
     34: "BNROM-NINA001",
     36: "TXC36",
+    37: "SMB-Tetris-NWC",
     38: "BitCorp-PCI556",
     39: "Multicart39",
     40: "NTDEC2722",
     41: "Caltron6in1",
+    45: "GA23C",
+    47: "SpikeVBall-NWC",
     48: "TaitoTC0690",
     58: "Multicart58",
     60: "Multicart60",
@@ -335,6 +339,7 @@ FAMILY: dict[int, str] = {
     71: "Camerica-BF9093",
     72: "Jaleco72",
     73: "VRC3",
+    74: "Waixing43-393",
     75: "VRC1",
     76: "Namcot3446",
     77: "Irem77",
@@ -343,11 +348,13 @@ FAMILY: dict[int, str] = {
     80: "TaitoX1-005",
     81: "NTDEC-SuperGun",
     82: "TaitoX1-017",
+    83: "Cony-Yoko",
     85: "VRC7",
     86: "JalecoJF13",
     87: "JalecoKonami-CNROM",
     88: "Namcot118",
     89: "Sunsoft2",
+    91: "JYCompany91",
     92: "JalecoJF19",
     93: "Sunsoft3R",
     94: "UN1ROM",
@@ -356,12 +363,14 @@ FAMILY: dict[int, str] = {
     97: "Irem-TamSan",
     99: "VsSystem",
     101: "JalecoJF10",
+    105: "NES-EVENT",
     107: "MagicDragon",
     111: "GTROM-Cheapocabra",
     112: "NTDEC-Asder",
     113: "NINA006-MB91",
     118: "TxSROM-TLSROM",
     119: "TQROM",
+    121: "KashengA9711",
     132: "TXC132",
     133: "SachenSA72008",
     137: "Sachen8259D",
@@ -375,9 +384,11 @@ FAMILY: dict[int, str] = {
     150: "Sachen74LS374N",
     151: "Konami-VS-VRC1",
     152: "Bandai74161",
+    153: "BandaiLZ93D50",
     156: "DIS23C01-DAOU",
     159: "BandaiLZ93D50-24C01",
     162: "WaixingFS304",
+    163: "NanjingFC001",
     174: "NTDEC-5in1",
     177: "Hengedianzi",
     178: "WaixingEdu",
@@ -385,6 +396,10 @@ FAMILY: dict[int, str] = {
     180: "UNROM-Nichibutsu",
     184: "Sunsoft1",
     185: "CNROM-Lock",
+    191: "Waixing191",
+    192: "WaixingFS308",
+    194: "Waixing194",
+    195: "WaixingFS303",
     200: "Multicart200",
     201: "Multicart201",
     202: "Multicart202",
@@ -398,6 +413,7 @@ FAMILY: dict[int, str] = {
     225: "ColorDreams72in1",
     226: "BMC-76in1",
     227: "BMC-1200in1",
+    228: "Action52",
     229: "BMC-31in1",
     231: "BMC-20in1",
     232: "Camerica-Quattro",
@@ -408,6 +424,7 @@ FAMILY: dict[int, str] = {
     242: "Waixing43in1",
     244: "Decathlon",
     246: "FongShenBang",
+    249: "WaixingT9552",
     250: "Nitra",
 }
 
@@ -426,17 +443,27 @@ def mapper_dir_name(mapper: int) -> str:
 # embedded fallback (absorbs categorize_screenshots' static table).
 # --------------------------------------------------------------------------- #
 
+# Regenerated from tier.rs at v2.9.8 (51 / 109 / 31); used only if that
+# file cannot be parsed.
 _FALLBACK_CORE = {
-    0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 13, 16, 18, 19, 21, 22, 23, 24, 25, 26, 32,
-    33, 34, 48, 64, 65, 66, 67, 68, 69, 70, 71, 73, 75, 78, 80, 82, 85, 87, 88,
-    89, 93, 99, 118, 119, 151, 152, 159, 184, 206, 210,
+    0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 13, 16, 18, 19, 21, 22, 23, 24, 25, 26,
+    32, 33, 34, 48, 64, 65, 66, 67, 68, 69, 70, 71, 73, 75, 78, 80, 82, 85,
+    87, 88, 89, 93, 99, 118, 119, 151, 152, 159, 184, 206, 210,
 }
-_FALLBACK_CURATED = {38, 41, 79, 86, 113, 140, 232, 240, 241}
+_FALLBACK_CURATED = {
+    12, 15, 28, 30, 31, 35, 36, 37, 38, 40, 41, 42, 44, 45, 46, 49, 51, 52,
+    56, 57, 58, 60, 61, 62, 63, 72, 74, 76, 77, 79, 83, 86, 90, 91, 92, 94,
+    95, 96, 97, 101, 105, 107, 111, 112, 113, 115, 120, 132, 133, 134, 136,
+    137, 138, 139, 140, 141, 142, 143, 145, 146, 147, 148, 149, 150, 153,
+    156, 162, 163, 164, 176, 177, 178, 180, 185, 189, 192, 193, 195, 200,
+    201, 202, 203, 204, 205, 209, 211, 212, 213, 214, 218, 221, 225, 226,
+    227, 228, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 249,
+    250, 253,
+}
 _FALLBACK_BEST_EFFORT = {
-    15, 28, 29, 30, 31, 36, 39, 40, 58, 60, 61, 62, 63, 72, 76, 77, 81, 92, 94,
-    95, 96, 97, 101, 107, 111, 112, 132, 133, 137, 143, 145, 146, 147, 148, 149,
-    150, 156, 162, 174, 177, 178, 179, 180, 185, 200, 201, 202, 203, 212, 213,
-    214, 218, 225, 226, 227, 229, 231, 233, 234, 242, 244, 246, 250,
+    29, 39, 47, 50, 81, 104, 121, 154, 174, 179, 191, 194, 238, 243, 261,
+    268, 286, 289, 290, 299, 301, 303, 305, 306, 312, 320, 336, 348, 349,
+    366, 513,
 }
 
 SPECIAL_EXTERNAL = {"fds", "pc10", "vs-system"}
@@ -474,6 +501,51 @@ def _parse_tier_block(text: str, marker: str) -> set[int]:
     return {int(x) for x in ids}
 
 
+def _parse_tier_arms(text: str) -> dict[str, set[int]]:
+    """Every `ids => Some(MapperTier::X)` arm in tier.rs, grouped by tier.
+
+    v2.9.8: `_parse_tier_block` read only the FIRST arm after each `// Tier:`
+    marker, and v2.9.6 added a second Curated arm (GTROM and the new
+    families), so `categorize` reported mapper 111 as unclassified. This reads
+    them all. Line comments are stripped first, because their prose carries
+    numbers (`268/286/...`) that are not arm ids.
+    """
+    code = re.sub(r"//[^\n]*", "", text)
+    out: dict[str, set[int]] = {}
+    arm = re.compile(r"((?:\d+\s*\|\s*)*\d+)\s*=>\s*\{?\s*Some\(MapperTier::(\w+)\)")
+    for m in arm.finditer(code):
+        out.setdefault(m.group(2), set()).update(int(x) for x in re.findall(r"\d+", m.group(1)))
+    return out
+
+
+_TIER_DRIFT_WARNED = False
+
+
+def _warn_if_tiers_drift(core: set[int], curated: set[int], best: set[int]) -> None:
+    """Warn once when the parsed tiers disagree with the fallback sets.
+
+    The arm regex accepts `a | b | c => Some(MapperTier::X)` only. A guarded
+    arm, a `_ =>` arm or a range pattern (`1..=3`) in tier.rs would be skipped
+    without error and leave a tier short but non-empty, which `load_tiers`
+    would accept -- the silent misclassification v2.9.8 fixed in another form
+    (review on #581). The fallback sets are the last known-good tiers, so a
+    difference means either a tier change that the fallback has not caught up
+    with, or an arm this parser cannot read; both need a look.
+    """
+    global _TIER_DRIFT_WARNED
+    fallback = (set(_FALLBACK_CORE), set(_FALLBACK_CURATED), set(_FALLBACK_BEST_EFFORT))
+    if _TIER_DRIFT_WARNED or (core, curated, best) == fallback:
+        return
+    _TIER_DRIFT_WARNED = True
+    print(
+        "coverage: WARNING tier.rs parsed as "
+        f"{len(core)}/{len(curated)}/{len(best)} (Core/Curated/BestEffort), the fallback "
+        f"has {len(fallback[0])}/{len(fallback[1])}/{len(fallback[2])}: update the "
+        "fallback sets, or check tier.rs for an arm this parser cannot read",
+        file=sys.stderr,
+    )
+
+
 def load_tiers() -> tuple[set[int], set[int], set[int]]:
     tier_rs = os.path.join(
         REPO, "crates", "rustynes-mappers", "src", "tier.rs"
@@ -481,10 +553,10 @@ def load_tiers() -> tuple[set[int], set[int], set[int]]:
     try:
         with open(tier_rs, encoding="utf-8") as f:
             text = f.read()
-        core = _parse_tier_block(text, "/ Core:")
-        curated = _parse_tier_block(text, "/ Curated:")
-        best = _parse_tier_block(text, "/ BestEffort:")
+        arms = _parse_tier_arms(text)
+        core, curated, best = arms.get("Core", set()), arms.get("Curated", set()), arms.get("BestEffort", set())
         if core and curated and best:
+            _warn_if_tiers_drift(core, curated, best)
             return core, curated, best
     except OSError:
         pass
@@ -832,7 +904,12 @@ def _base_title(name: str) -> str:
     name = re.sub(r"\.(nes|zip|unf|unif)$", "", name, flags=re.I)
     name = re.sub(r"\s*\([^)]*\)", "", name)
     name = re.sub(r"\s*\[[^]]*\]", "", name)
-    return name.strip().lower()
+    # v2.9.8: collapse punctuation the way the `external_coverage` snapshot id
+    # does (every non-alphanumeric run -> one separator). Without it,
+    # "Fatal Fury 2" and "Fatal Fury 2'" counted as distinct titles, were both
+    # staged, and then shared one snapshot id, which the harness rightly
+    # refuses as two different files claiming one baseline.
+    return re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
 
 
 def _rank_candidates(recs: list, count: int) -> list:
@@ -1038,12 +1115,37 @@ def cmd_categorize(args) -> int:
         rel_s, rel_d = os.path.relpath(src, REPO), os.path.relpath(dst, REPO)
         if args.dry_run:
             print(f"  MOVE  {rel_s}  ->  {rel_d}")
+            # A dry run predicts the real run's FLAGGED list and exit code too
+            # (review on #581): the same duplicate test, without moving.
+            if os.path.isdir(src) and os.path.isdir(dst):
+                for item in os.listdir(src):
+                    target = os.path.join(dst, item)
+                    if os.path.exists(target):
+                        flagged.append(
+                            f"duplicate kept in both trees: {os.path.relpath(os.path.join(src, item), REPO)}"
+                            f" vs {os.path.relpath(target, REPO)}"
+                        )
             return
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.isdir(src) and os.path.isdir(dst):
+            # v2.9.8: a file present in BOTH trees is a duplicate capture of one
+            # game, and which copy is right is a judgement, not a move order.
+            # This loop used to move the source over the destination; at v2.9.8
+            # that replaced six August captures with June ones. Keep both and
+            # flag the pair instead.
+            kept = False
             for item in os.listdir(src):
-                shutil.move(os.path.join(src, item), os.path.join(dst, item))
-            os.rmdir(src)
+                target = os.path.join(dst, item)
+                if os.path.exists(target):
+                    flagged.append(
+                        f"duplicate kept in both trees: {os.path.relpath(os.path.join(src, item), REPO)}"
+                        f" vs {os.path.relpath(target, REPO)}"
+                    )
+                    kept = True
+                    continue
+                shutil.move(os.path.join(src, item), target)
+            if not kept:
+                os.rmdir(src)
         else:
             shutil.move(src, dst)
 

@@ -585,8 +585,14 @@ pub struct DisasmRow {
 pub enum HostWarning {
     /// A `.rnm` recorded on a pre-v2.0.0 "Timebase" build was loaded: its recorded
     /// *input* replays faithfully, but exact framebuffer/audio reproduction is not
-    /// guaranteed across the engine-timebase boundary (ADR 0028). The sole producer is
-    /// [`NesController::movie_play`].
+    /// guaranteed across the engine-timebase boundary (ADR 0028).
+    ///
+    /// **No longer produced (v2.9.8).** `.rnm` format 3 records the emulation
+    /// options, and [`NesController::movie_play`] now refuses every older movie
+    /// with a [`MobileError::Movie`] that says to re-record it, so a pre-v2.0.0
+    /// movie never reaches playback. The variant stays so the generated Kotlin /
+    /// Swift enums and hosts' localization tables keep their meaning (the
+    /// "never repurpose a variant" rule above).
     PreTimebaseMovie,
     /// v2.7.4 (frontend audit MOB-07) — a call panicked inside the bridge. The
     /// panic was contained (the mobile libraries unwind since v2.7.4), but it
@@ -726,8 +732,10 @@ fn check_fds_bios(bios: &[u8]) -> Result<(), MobileError> {
 struct DualCabinet {
     /// The two consoles and their cross-wiring.
     system: Box<VsDualSystem>,
-    /// The (decompressed) ROM, kept so a power cycle can rebuild the whole
-    /// cabinet, wiring included, exactly as a fresh load does.
+    /// The (decompressed, database-corrected) ROM, kept so a power cycle can
+    /// rebuild the whole cabinet, wiring included, exactly as a fresh load
+    /// does. Stored after `rustynes_gamedb::correct_rom`, so the rebuild sees
+    /// the same header the load did.
     rom: Vec<u8>,
 }
 
@@ -778,6 +786,20 @@ struct Built {
 /// `fds_bios`), an NSF, or a Vs. `DualSystem` cabinet. The size cap and the
 /// zip extraction apply to all of them, as before.
 ///
+/// v2.9.8: a cartridge also gets the game database's load-time corrections,
+/// through the two functions every platform calls -- `rustynes_gamedb::
+/// correct_rom` rewrites the header before the core parses it, and
+/// `correct_console` applies a hardwired-mirroring override to the built
+/// console. Before v2.9.8 the bridge skipped both, so Android and iOS ran
+/// every image with its dump's header: no mapper, submapper or region fix
+/// (Seicross hung in its protection loop) and none of v2.9.8's NES 2.0 guard
+/// or PAL / Dendy promotion. The database is the vendored table only; the
+/// desktop's editable user overlay is never configured here. An FDS disk or an
+/// NSF has no iNES header, so `correct_rom` leaves it alone. A cabinet gets the
+/// header correction (its stored bytes are the corrected ones, so a power-cycle
+/// rebuild sees them too) and the mirroring correction on both consoles
+/// (`seat_cabinet`).
+///
 /// # Errors
 /// [`MobileError::RomLoad`] for an oversized or unparseable image,
 /// [`MobileError::MissingFdsBios`] for a disk with no BIOS set.
@@ -787,7 +809,8 @@ fn build_console(
     sample_rate: u32,
 ) -> Result<Built, MobileError> {
     check_rom_size(&rom)?;
-    let rom = decompress_rom(rom);
+    let mut rom = decompress_rom(rom);
+    let crc = rustynes_gamedb::correct_rom(&mut rom);
     let load_err = |e: rustynes_core::rustynes_mappers::RomError| MobileError::RomLoad {
         reason: e.to_string(),
     };
@@ -805,10 +828,13 @@ fn build_console(
         }
         ImageKind::Cartridge => {
             match Emu::from_rom_with_sample_rate(&rom, sample_rate).map_err(load_err)? {
-                Emu::Single(nes) => Ok(Built {
-                    nes: *nes,
-                    dual: None,
-                }),
+                Emu::Single(nes) => {
+                    let mut nes = *nes;
+                    if let Some(crc) = crc {
+                        rustynes_gamedb::correct_console(&mut nes, crc);
+                    }
+                    Ok(Built { nes, dual: None })
+                }
                 Emu::Dual(system) => {
                     let (nes, system) = seat_cabinet(system, &rom, sample_rate)?;
                     Ok(Built {
@@ -831,11 +857,19 @@ fn seat_cabinet(
     rom: &[u8],
     sample_rate: u32,
 ) -> Result<(Nes, Box<VsDualSystem>), MobileError> {
-    if let Some(entry) = rustynes_core::vs_db::lookup(system.main().rom_sha256()) {
+    if let Some(entry) = rustynes_core::vs_db::lookup(system.main()) {
         let pair: [&mut Nes; 2] = system.split_mut().into();
         for console in pair {
             console.set_vs_ppu_type(entry.vs_ppu_type);
             console.set_vs_dip(entry.vs_dip);
+        }
+    }
+    // v2.9.8 — the game database's mirroring correction on both consoles
+    // (`rom` is already header-corrected), as the desktop's cabinet path does.
+    if let Some(crc) = rustynes_gamedb::rom_crc32(rom) {
+        let pair: [&mut Nes; 2] = system.split_mut().into();
+        for console in pair {
+            rustynes_gamedb::correct_console(console, crc);
         }
     }
     let mut nes =
@@ -915,6 +949,10 @@ struct Inner {
     /// Active TAS playback: the loaded movie + the next frame index. While set,
     /// `run_frame` drives input from the movie instead of the host masks.
     playback: Option<(rustynes_core::Movie, usize)>,
+    /// v2.9.8 — the player's emulation options as they were before a movie's
+    /// were applied; put back by [`end_playback`] when playback ends. `None`
+    /// whenever no movie is playing.
+    playback_player_options: Option<rustynes_core::HardwareOptions>,
     /// v2.9.0 — the battery RAM as it stood when a movie session replaced it,
     /// which [`NesController::battery_ram`] reports instead of the live RAM
     /// until the next `load_rom`. A power-on movie starts from cleared save RAM
@@ -1196,6 +1234,7 @@ impl NesController {
                 sample_rate,
                 recorder: None,
                 playback: None,
+                playback_player_options: None,
                 battery_held: None,
                 hd_pack: None,
                 script: None,
@@ -1233,8 +1272,11 @@ impl NesController {
         self.clear_input();
         g.sample_rate = sample_rate;
         // A new cartridge invalidates any in-flight movie + HD-pack + script.
+        // The new machine is built from the player's settings, so there are
+        // no options to restore.
         g.recorder = None;
         g.playback = None;
+        g.playback_player_options = None;
         g.battery_held = None;
         g.hd_pack = None;
         g.script = None;
@@ -1373,7 +1415,8 @@ impl NesController {
     /// cross-wiring together, so it powers on exactly as a fresh load does
     /// (cycling each console alone would leave the wiring's latches as they
     /// were). The rebuild re-parses a ROM that already parsed once; should it
-    /// fail anyway, each console power-cycles in place instead.
+    /// fail anyway, the cabinet power-cycles in place
+    /// (`VsDualSystem::power_cycle`, v2.9.8, which re-wires the pair).
     pub fn power_cycle(&self) {
         let mut g = self.lock();
         let sample_rate = g.sample_rate;
@@ -1392,11 +1435,12 @@ impl NesController {
                     cab.system = system;
                 }
             }
+            // v2.9.8: the fallback cycles the cabinet as a whole, which
+            // re-wires the pair. Cycling the two consoles one by one (what
+            // this did until v2.9.8) dropped the wiring their mappers carry,
+            // so the sub ran the main's program.
             Some(None) => {
-                with_cabinet(&mut g, |cab| {
-                    cab.main_mut().power_cycle();
-                    cab.sub_mut().power_cycle();
-                });
+                with_cabinet(&mut g, VsDualSystem::power_cycle);
             }
             None => g.nes.power_cycle(),
         }
@@ -1736,8 +1780,10 @@ impl NesController {
         Self::hold_battery(&mut g);
         // v2.9.0 — cleared cartridge RAM as well, the state playback
         // reconstructs; see `rustynes_core::power_on_for_movie`.
+        // v2.9.8 — a power-on recording is the player's own run: restore
+        // their options if a movie was playing, before they are captured.
+        end_playback(&mut g);
         rustynes_core::power_on_for_movie(&mut g.nes);
-        g.playback = None;
         g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
     }
 
@@ -1749,7 +1795,10 @@ impl NesController {
         if g.dual.is_some() {
             return;
         }
+        // v2.9.8 — a branch continues the machine as it is, movie options
+        // included (the desktop's rule); the player's return at the next load.
         g.playback = None;
+        g.playback_player_options = None;
         g.recorder = Some(rustynes_core::MovieRecorder::from_current_state(&g.nes));
     }
 
@@ -1770,21 +1819,19 @@ impl NesController {
         let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
             reason: e.to_string(),
         })?;
-        // ADR 0028: a `.rnm` recorded on a pre-v2.0.0 "Timebase" build replays its
-        // recorded *input* faithfully, but exact framebuffer/audio reproduction is
-        // not guaranteed across the engine-timebase boundary (the one-clock /
-        // every-cycle-bus-access scheduler rewrite changed the sub-frame timing the
-        // old movie was captured against). Peek the epoch and, for a pre-v2 movie,
-        // queue a drainable host warning — mirroring the desktop + wasm frontends'
-        // identical notice — rather than silently presenting the replay as byte-exact.
-        // A malformed/short header (the `Err` arm) is treated as "not pre-v2": the
-        // deserialize above already succeeded, so it is a current-epoch movie. The
-        // check never blocks playback and never touches the deterministic core.
-        let pre_timebase = rustynes_core::recorded_before_v2_timebase(&bytes).is_ok_and(|v| v);
+        // v2.9.8: `deserialize` refuses every movie older than format 3, so the
+        // pre-v2.0.0 "Timebase" warning (`HostWarning::PreTimebaseMovie`) that
+        // used to be queued here can no longer arise.
         let mut g = self.lock();
         // v2.9.0 — held only if the seek succeeds: a refused seek (another
         // ROM, a bad start state) leaves the console, and saving, unchanged.
         let before = g.battery_held.is_none().then(|| Self::held_battery(&g));
+        // v2.9.8 — the player's options, kept to restore when playback ends
+        // (an earlier movie's saved ones win: they are the player's).
+        let player_options = g
+            .playback_player_options
+            .clone()
+            .unwrap_or_else(|| rustynes_core::HardwareOptions::capture(&g.nes));
         movie
             .seek_to_start(&mut g.nes)
             .map_err(|e| MobileError::Movie {
@@ -1793,15 +1840,9 @@ impl NesController {
         if let Some(before) = before {
             g.battery_held = before;
         }
-        if pre_timebase {
-            // v2.0.3: queue the machine-readable code, not the pre-baked English.
-            // The default drain ([`Self::drain_warnings`]) maps it straight back to the
-            // identical string via [`HostWarning::message`], so legacy hosts see no
-            // change; a localizing host drains [`Self::drain_warning_codes`] instead.
-            g.warnings.push(HostWarning::PreTimebaseMovie);
-        }
         g.recorder = None;
         g.playback = Some((movie, 0));
+        g.playback_player_options = Some(player_options);
         drop(g);
         Ok(())
     }
@@ -1841,7 +1882,8 @@ impl NesController {
     pub fn movie_stop(&self) {
         let mut g = self.lock();
         g.recorder = None;
-        g.playback = None;
+        end_playback(&mut g);
+        drop(g);
     }
 
     /// Whether a TAS recording is in progress.
@@ -2211,7 +2253,7 @@ impl NesController {
     pub fn np_host(&self, local_port: u16, num_players: u8) -> Result<u16, MobileError> {
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         let conn = NetplayConnection::host(local, rom_hash).map_err(|e| MobileError::Netplay {
             reason: format!("host bind failed: {e}"),
@@ -2255,7 +2297,7 @@ impl NesController {
                 reason: format!("host:port '{address}' resolved to no addresses"),
             })?;
         let mut g = self.lock();
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         let conn = NetplayConnection::connect(local, remote, rom_hash).map_err(|e| {
             MobileError::Netplay {
@@ -2295,7 +2337,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let players = num_players.clamp(2, 4);
         // Seed the room-code + STUN-transaction PRNG from a non-deterministic
         // source so two concurrent hosts don't collide on a room code. This is
@@ -2333,7 +2375,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
-        let rom_hash = *g.nes.rom_sha256();
+        let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let seed = nondeterministic_seed();
         let nat = NatConnect::join(&room_code, rom_hash, nat_cfg, seed).map_err(|e| {
             MobileError::Netplay {
@@ -2887,19 +2929,37 @@ fn pre_tick_movie(g: &mut Inner) {
         fi
     });
     if let Some(fi) = pb {
-        g.nes.set_buttons(0, fi.p1);
-        g.nes.set_buttons(1, fi.p2);
+        // v2.9.8 — hold the movie's options against anything the host pushed
+        // since the last frame, then drive all four ports.
+        if let Some((movie, _)) = g.playback.as_ref() {
+            let held = movie.options.apply_live(&mut g.nes);
+            debug_assert!(held.is_ok(), "movie options re-apply");
+        }
+        fi.apply_to(&mut g.nes);
     }
     // Stop playback once the movie is exhausted.
     if g.playback
         .as_ref()
         .is_some_and(|(m, i)| *i >= m.frames.len())
     {
-        g.playback = None;
+        end_playback(g);
     }
-    // Recording: capture the inputs the upcoming frame will consume.
+    // Recording: hold the recording's options (v2.9.8), then capture the
+    // inputs the upcoming frame will consume.
     if let Some(rec) = g.recorder.as_mut() {
+        let held = rec.options().apply_live(&mut g.nes);
+        debug_assert!(held.is_ok(), "captured options re-apply");
         rec.capture(&g.nes);
+    }
+}
+
+/// v2.9.8 — end any movie playback and put the player's emulation options back
+/// on the console ([`rustynes_core::HardwareOptions::restore_after_playback`]).
+fn end_playback(g: &mut Inner) {
+    g.playback = None;
+    if let Some(opts) = g.playback_player_options.take() {
+        let restored = opts.restore_after_playback(&mut g.nes);
+        debug_assert!(restored.is_ok(), "player options re-apply");
     }
 }
 
@@ -3046,7 +3106,7 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
                 local_player: u8::from(!is_host), // host = 0 (P1), joiner = 1 (P2).
                 ..SessionConfig::default()
             };
-            let rom_hash = *g.nes.rom_sha256();
+            let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
             let session = RollbackSession::new(config, transport, rom_hash);
             g.netplay = Some(NetplaySession::InGame(Box::new(session), is_host));
             NpTick::STALLED
@@ -3055,6 +3115,11 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
             let why = match conn.disconnect_reason() {
                 Some(DisconnectReason::RomMismatch) => {
                     "peer is running a different ROM".to_string()
+                }
+                Some(DisconnectReason::ConfigMismatch) => {
+                    "peer runs this ROM with different emulation settings; match them and \
+                     reconnect"
+                        .to_string()
                 }
                 Some(DisconnectReason::HandshakeTimeout) => {
                     "handshake timed out (no peer answered)".to_string()
@@ -3197,6 +3262,28 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// The core's built-in 2C02 composite palette: 512 packed `0xAARRGGBB` values.
+///
+/// Each is a signed 32-bit integer so Kotlin reads an `Int`, indexed by the
+/// palette-index framebuffer's `(emphasis << 6) | colour`.
+///
+/// v2.9.8: the Android netplay path turns that framebuffer into pixels
+/// without advancing the core, and until now it did so with its own Kotlin
+/// copy of the palette and of the emphasis rule. The copy kept the 13/16
+/// attenuation after the core moved to the documented emphasis model
+/// (`T-EMPHASIS-MODEL`), so emphasised netplay frames were tinted
+/// differently from the same frames off netplay. Taking the table from the
+/// core leaves one definition.
+#[uniffi::export]
+#[must_use]
+pub fn default_palette_argb() -> Vec<i32> {
+    use rustynes_core::rustynes_ppu::{PpuPalette, build_rgba_lut};
+    build_rgba_lut(PpuPalette::Composite2C02)
+        .iter()
+        .map(|&[r, g, b, a]| i32::from_be_bytes([a, r, g, b]))
+        .collect()
+}
+
 // Test-only accessor for the confirmed-entering digest, used by the loopback
 // determinism check. Not part of the FFI surface (no `#[uniffi::export]`).
 #[cfg(test)]
@@ -3233,6 +3320,26 @@ mod tests {
         rom[reset] = 0x00;
         rom[reset + 1] = 0x80;
         rom
+    }
+
+    /// v2.9.8 — the netplay palette the Android shell reads is the core's own,
+    /// emphasis included, packed `0xAARRGGBB`.
+    #[test]
+    fn default_palette_argb_is_the_cores_lut() {
+        let argb = default_palette_argb();
+        let lut = rustynes_core::rustynes_ppu::build_rgba_lut(
+            rustynes_core::rustynes_ppu::PpuPalette::Composite2C02,
+        );
+        assert_eq!(argb.len(), 512);
+        for (i, (&packed, &[r, g, b, a])) in argb.iter().zip(lut.iter()).enumerate() {
+            assert_eq!(packed.to_be_bytes(), [a, r, g, b], "entry {i}");
+        }
+        // Emphasis is the documented model, not the old 13/16 attenuation:
+        // colour $00 with red emphasis keeps nothing of the 13/16 result.
+        let [_, r, g, b] = argb[1 << 6].to_be_bytes();
+        let [_, r0, g0, b0] = argb[0x00].to_be_bytes();
+        let old = |c: u8| u8::try_from((u16::from(c) * 13) >> 4).unwrap();
+        assert_ne!((r, g, b), (r0, old(g0), old(b0)));
     }
 
     #[test]
@@ -3385,7 +3492,13 @@ mod tests {
     #[test]
     fn a_refused_movie_leaves_the_save_live() {
         let ctrl = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
-        let other = NesController::new(battery_nrom(false), DEFAULT_SAMPLE_RATE).expect("load");
+        // Another ROM must differ in its BODY. Since v2.9.8 a ROM's identity
+        // (`Nes::rom_sha256`, which a movie records) leaves out the 16-byte
+        // header, so the battery_nrom(false) twin this test used to build
+        // differs only in the header and is now, correctly, the same game.
+        let mut other_rom = battery_nrom(true);
+        *other_rom.last_mut().expect("CHR") = 0xFF;
+        let other = NesController::new(other_rom, DEFAULT_SAMPLE_RATE).expect("load");
         other.movie_record_from_power_on();
         let foreign = other.movie_stop_recording();
         assert!(ctrl.movie_play(foreign).is_err(), "a movie for another ROM");
@@ -3634,16 +3747,14 @@ mod tests {
         );
     }
 
-    // ADR 0028 (the epoch-marker half of `fm2_import_happy_path...`): a movie whose
-    // header `format_version` is < 2 (a pre-v2.0.0 "Timebase" recording) must, on
-    // `movie_play`, still deserialize (the reader accepts `<= MOVIE_FORMAT_VERSION`)
-    // AND queue exactly one drainable host warning citing ADR 0028 — parity with the
-    // desktop/wasm frontends. We synthesize the pre-v2 blob by taking a valid
-    // current-epoch `.rnm` and rewriting only its 2-byte little-endian version field
-    // (offset 8..10) from 2 to 1; the post-version layout is byte-identical across the
-    // epochs (the v2 bump is purely a marker), so the patched blob deserializes cleanly.
+    // v2.9.8 (ADR 0044): a movie older than `.rnm` format 3 does not record the
+    // emulation options it ran with, so `movie_play` refuses it with an error that
+    // says to re-record it, and queues no warning (the pre-v2.0.0 "Timebase"
+    // warning it used to raise for version-1 movies can no longer arise). The old
+    // blob is synthesized by rewriting the 2-byte LE version field of a valid
+    // current movie.
     #[test]
-    fn pre_v2_timebase_movie_raises_one_drainable_warning() {
+    fn a_movie_older_than_format_3_is_refused_without_a_warning() {
         let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
         let fm2 = "version 3\n\
                    |0|........|........||\n\
@@ -3651,34 +3762,26 @@ mod tests {
         let mut rnm = ctrl
             .movie_import_fm2(fm2.as_bytes().to_vec())
             .expect("minimal valid .fm2 must transcode");
-        // Sanity: the freshly transcoded movie is tagged with the current epoch.
         assert_eq!(
             u16::from_le_bytes([rnm[8], rnm[9]]),
-            2,
+            rustynes_core::MOVIE_FORMAT_VERSION,
             "transcoded movie must carry the current MOVIE_FORMAT_VERSION",
         );
-        // Rewrite the version field 2 -> 1 (LE u16): the only mutation needed to
-        // present this as a pre-Timebase recording.
-        rnm[8] = 1;
-        rnm[9] = 0;
-        ctrl.movie_play(rnm)
-            .expect("a pre-v2 (version 1) .rnm must still replay its input stream");
-        let warnings = ctrl.drain_warnings();
-        assert_eq!(
-            warnings.len(),
-            1,
-            "exactly one pre-Timebase warning must be queued, got {warnings:?}",
-        );
-        assert!(
-            warnings[0].contains("ADR 0028"),
-            "the queued warning must cite ADR 0028: {}",
-            warnings[0],
-        );
-        // The warning drains: a second call is empty (no re-emit, no leak).
-        assert!(
-            ctrl.drain_warnings().is_empty(),
-            "drain_warnings must empty the queue after the first drain",
-        );
+        for old in [1u16, 2] {
+            rnm[8..10].copy_from_slice(&old.to_le_bytes());
+            let err = ctrl
+                .movie_play(rnm.clone())
+                .expect_err("an old .rnm must be refused");
+            assert!(
+                err.to_string().contains("re-record"),
+                "the error says what to do: {err}"
+            );
+            assert!(!ctrl.movie_is_playing());
+            assert!(
+                ctrl.drain_warnings().is_empty(),
+                "a refusal queues no warning"
+            );
+        }
     }
 
     // v2.0.3 host-i18n (PR #235 follow-up): the machine-readable `HostWarning` code
@@ -3707,27 +3810,9 @@ mod tests {
         // Display delegates to the same message.
         assert_eq!(format!("{}", HostWarning::PreTimebaseMovie), expected);
 
-        // The code-drain path: a pre-v2 movie queues exactly the PreTimebaseMovie code,
-        // and draining codes clears the shared queue (so a following string-drain is
-        // empty — proving both drains hit the same backing store).
-        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
-        let mut rnm = ctrl
-            .movie_import_fm2(b"version 3\n|0|........|........||\n".to_vec())
-            .expect("minimal valid .fm2 must transcode");
-        rnm[8] = 1; // rewrite MOVIE_FORMAT_VERSION 2 -> 1 (present as pre-Timebase)
-        rnm[9] = 0;
-        ctrl.movie_play(rnm)
-            .expect("a pre-v2 .rnm must still replay");
-        let codes = ctrl.drain_warning_codes();
-        assert_eq!(
-            codes,
-            vec![HostWarning::PreTimebaseMovie],
-            "exactly the PreTimebaseMovie code must be queued, got {codes:?}",
-        );
-        assert!(
-            ctrl.drain_warnings().is_empty(),
-            "draining codes must clear the same queue the string drain reads",
-        );
+        // Since v2.9.8 no path produces this code (a pre-format-3 movie is
+        // refused before playback), so the shared-queue half of this test lives
+        // with the remaining producer, the panic-recovery `RecoveredFromInternalError` code.
     }
 
     // v1.8.6 — the RA bridge surfaces the lazy session + the login lifecycle.
@@ -4317,6 +4402,42 @@ mod tests {
             .expect("reload");
         assert!(!ctrl.np_is_active());
         assert_eq!(ctrl.np_status().phase, NpPhase::Idle);
+    }
+
+    /// v2.9.8 — the bridge applies the game database's load-time corrections,
+    /// through the same two functions every platform calls
+    /// (`rustynes_gamedb::correct_rom` / `correct_console`).
+    ///
+    /// Until v2.9.8 the bridge handed the raw image to the core, so neither
+    /// Android nor iOS received any database fix. The image is one the
+    /// database matches as Gradius (Europe) with every corrected field wrong:
+    /// uncorrected it is NROM with 32 KiB of CHR, which NROM refuses, so the
+    /// load failed outright; corrected it is CNROM, PAL, vertical mirroring.
+    /// Both entry points (`new` and `load_rom`) and a power cycle are checked:
+    /// the cycle must keep the corrections, since a cabinet rebuilds from the
+    /// stored bytes and a console keeps its override.
+    #[test]
+    fn the_bridge_applies_the_game_database_corrections() {
+        use rustynes_core::rustynes_mappers::Mirroring;
+        let rom = rustynes_gamedb::test_support::gradius_europe_with_a_wrong_header();
+        let check = |ctrl: &NesController, when: &str| {
+            let (region, mirroring) = {
+                let g = ctrl.lock();
+                (g.nes.region(), g.nes.mirroring_override())
+            };
+            assert_eq!(region, rustynes_core::Region::Pal, "{when}: region");
+            assert_eq!(mirroring, Some(Mirroring::Vertical), "{when}: mirroring");
+        };
+        let ctrl = NesController::new(rom.clone(), DEFAULT_SAMPLE_RATE)
+            .expect("the corrected image loads through new()");
+        check(&ctrl, "new");
+        ctrl.power_cycle();
+        check(&ctrl, "after a power cycle");
+
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.load_rom(rom, DEFAULT_SAMPLE_RATE)
+            .expect("the corrected image loads through load_rom()");
+        check(&ctrl, "load_rom");
     }
 
     /// End-to-end loopback: two `NesController`s over `127.0.0.1` complete the

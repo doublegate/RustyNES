@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-074-Waixing43-393/Young Chivalry (Ch) [!].nes
+rom_sha256=6941f113bee417ccaca85c13f04bee33b4e7a32d5a09dbb2f80f99a4049198ca
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=901e95b1d6044ca0
+checkpoint f900 fb_fnv1a64=c5b2ddd238e991ad
+checkpoint f1100 fb_fnv1a64=c5b2ddd238e991ad

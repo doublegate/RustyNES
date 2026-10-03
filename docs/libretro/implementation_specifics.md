@@ -39,7 +39,15 @@ test, the test is named; the tests are the spec.
 3. A Famicom Disk System image is recognised by a `.fds` extension **or** its
    signature (`FDS\x1A`, or a raw side's `\x01*NINTENDO-HVC*`) and loaded with
    `disksys.rom` from the system directory; everything else goes to
-   `Emu::from_rom`.
+   `build_cartridge`, which applies the game database's load-time corrections
+   around `Emu::from_rom` (v2.9.8): `rustynes_gamedb::correct_rom` rewrites the
+   header (mapper, submapper, region) before the parse, and
+   `rustynes_gamedb::correct_console` applies a hardwired-mirroring override to
+   the console, or to both consoles of a Vs. `DualSystem` cabinet. These are
+   the functions every platform calls (`docs/frontend.md`, "One correction path
+   for every platform"); until v2.9.8 the core applied none of them. Only the
+   vendored table is consulted: the desktop's editable overlay is not
+   configured here, so no core option is needed.
 4. A parse error returns `false` to the frontend.
 
 ## The Frame (`retro_run`)

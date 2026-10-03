@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-228-Action52/Cheetah Men II (Active Enterprises) [!p].nes
+rom_sha256=2032ec1f19d97139818dd14d3e182d4b63370d83c9c3e4f0042cc40c1addc464
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=4d05bebc396d1bbf
+checkpoint f900 fb_fnv1a64=2098c1044eb76dfc
+checkpoint f1100 fb_fnv1a64=2098c1044eb76dfc

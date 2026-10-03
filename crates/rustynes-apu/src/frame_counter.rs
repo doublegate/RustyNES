@@ -33,7 +33,8 @@
 //!   write happened on an even or odd CPU cycle: 3 if write occurred on apu-clock-aligned
 //!   cycle, 4 otherwise).
 //! - If mode 1 (bit 7 set), immediately fires a quarter+half-frame clock.
-//! - If IRQ-inhibit (bit 6 set), clears any pending frame IRQ.
+//! - If IRQ-inhibit (bit 6 set), clears any pending frame IRQ — on the write
+//!   cycle itself, not after the timer-reset delay.
 
 /// Output of one APU `tick` describing what events the frame counter fired.
 #[derive(Debug, Clone, Copy, Default)]
@@ -216,6 +217,31 @@ impl FrameCounter {
             Mode::FourStep
         };
         self.pending_inhibit = (value & 0x40) != 0;
+        // The inhibit bit clears the frame interrupt flag on the write
+        // itself; only the timer reset waits the 3-4 cycles below (wiki,
+        // "APU Frame Counter": bit 6 "If set, the frame interrupt flag is
+        // cleared", stated apart from "After 3 or 4 CPU clock cycles, the
+        // timer is reset"). Both the `$4015` bit and the CPU IRQ line drop,
+        // and a pending `$4015`-read clear has nothing left to do. The
+        // reset branch in `tick` still clears again, which is harmless.
+        // Pinned by `write_4017_inhibit_drops_the_irq_on_the_write_cycle`;
+        // Nintendo World Championships 1990 runs `CLI` on the next
+        // instruction and crashed into WRAM without it.
+        if self.pending_inhibit {
+            // The inhibit itself takes effect with the write too. Clearing
+            // the flag here while leaving `irq_inhibit` to the timer reset
+            // let the OLD sequence raise the IRQ again at 29828-29830 when
+            // the write landed 1-3 cycles before it -- a frame interrupt
+            // delivered after the program inhibited it. No test ROM in the
+            // suite reaches that window (the APU and AccuracyCoin suites
+            // pass either way); the reading is the wiki's, which ties the
+            // flag clear to the inhibit bit, not to the reset. Pinned by
+            // `write_4017_inhibit_holds_through_the_reset_delay`.
+            self.irq_inhibit = true;
+            self.irq_flag = false;
+            self.irq_line_active = false;
+            self.irq_flag_clear_cycle = 0;
+        }
         // Schedule reset.  Per nesdev: 3 cycles if write on APU-aligned cycle, 4 otherwise.
         // The reset effect itself fires on cycle 0 of the new sequence.
         self.reset_in = if apu_aligned { 3 } else { 4 };
@@ -651,6 +677,80 @@ mod tests {
         assert!(!fc.irq_flag);
         // The pending clear schedule is also wiped by the inhibit path.
         assert_eq!(fc.irq_flag_clear_cycle, 0);
+    }
+
+    /// The inhibit clear belongs to the WRITE, not to the 3-4 cycle timer
+    /// reset. The wiki's frame-counter page gives the two separately: bit 6
+    /// "If set, the frame interrupt flag is cleared", and only "the timer is
+    /// reset" after 3 or 4 CPU cycles.
+    ///
+    /// *Nintendo World Championships 1990* (mapper 105) depends on it. Its
+    /// reset code waits two vblanks (~57,190 cycles, past the first frame
+    /// IRQ at 29,828 with the power-on `$4017 = $00`), then runs
+    /// `STA $4017` (`$40`), `CLI`, `LDA #$FF`. `LDA #imm` polls /IRQ three
+    /// cycles after the write, inside the old 3-4 cycle window, and the IRQ
+    /// vector is `$6010` in uninitialised WRAM: with the clear deferred to
+    /// the timer reset the cart executed `BRK`s from WRAM forever and
+    /// showed a blank screen on every frame.
+    #[test]
+    fn write_4017_inhibit_drops_the_irq_on_the_write_cycle() {
+        let mut fc = FrameCounter::new();
+        let mut cyc = 0u64;
+        // Past the three-cycle set window (29828-29830), with the flag held,
+        // as in the game. A write inside that window is a separate question
+        // (whether the inhibit itself also waits) that no source settles.
+        for _ in 0..29900 {
+            drive_tick(&mut fc, &mut cyc, true);
+        }
+        assert!(
+            fc.irq_flag && fc.irq_line_active,
+            "frame IRQ raised and held"
+        );
+        for aligned in [true, false] {
+            let mut f = fc;
+            f.write(0x40, aligned);
+            assert!(
+                !f.irq_line_active,
+                "IRQ line low on the write (aligned={aligned})"
+            );
+            assert!(
+                !f.irq_flag,
+                "$4015 bit 6 clear on the write (aligned={aligned})"
+            );
+            // Nothing re-raises it while the timer reset is still pending.
+            let mut c = cyc;
+            for _ in 0..4 {
+                drive_tick(&mut f, &mut c, aligned);
+                assert!(!f.irq_line_active && !f.irq_flag);
+            }
+        }
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — the inhibit written
+    /// 1-3 cycles before the four-step IRQ steps holds through the 3-4 cycle
+    /// timer-reset delay. With the inhibit deferred to the reset, the old
+    /// sequence reached 29828 first and raised the IRQ the write had just
+    /// inhibited.
+    #[test]
+    fn write_4017_inhibit_holds_through_the_reset_delay() {
+        for lead in 1..=3u32 {
+            for aligned in [true, false] {
+                let mut fc = FrameCounter::new();
+                let mut cyc = 0u64;
+                for _ in 0..(29828 - lead) {
+                    drive_tick(&mut fc, &mut cyc, aligned);
+                }
+                fc.write(0x40, aligned);
+                for _ in 0..8 {
+                    drive_tick(&mut fc, &mut cyc, aligned);
+                    assert!(
+                        !fc.irq_line_active,
+                        "IRQ raised after an inhibiting write {lead} cycle(s) \
+                         before 29828 (aligned={aligned})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

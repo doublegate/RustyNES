@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-163-NanjingFC001/Qi Guo Da Zhan (NJ029) (Ch) [!].nes
+rom_sha256=255c0fe357964ab4b5ac0117ffff5d6477bbdd7cc5ce9d70ad99db977310a06e
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=3226d67aa23359ba
+checkpoint f900 fb_fnv1a64=9bb637b693488ac9
+checkpoint f1100 fb_fnv1a64=9bb637b693488ac9

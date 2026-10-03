@@ -66,23 +66,23 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// CHR-RAM when present -- and **v4** is v2 plus the same RAM tail, placed
 /// after the synthesizer tail so every older offset is unchanged. Two new
 /// numbers rather than one keep the audio tail's presence encoded in the
-/// version, exactly as v1/v2 already do. `load_state` accepts all four; a
-/// v1/v2 blob leaves the RAM untouched, which is the old behaviour.
+/// version, exactly as v1/v2 already do. Since v2.9.8 (ADR 0042) `load_state`
+/// accepts v3 and v4 only; a v1/v2 blob, which it used to load with the RAM
+/// untouched, is refused.
 ///
 /// A build without `mapper-audio` has no synthesizer to describe, so it writes
-/// **v3** and, on load, validates a v2/v4 tail's length and ignores its contents.
+/// **v3** and, on load, validates a v4 tail's length and ignores its contents.
 /// That keeps the cross-build property this crate's feature documentation
 /// promises — an audio build's save still loads in a no-audio build, and a
 /// no-audio build's save still loads everywhere.
 ///
 /// **This constant is the WRITE version only. Never key the accept set on it.**
-/// `load_state` compares against the literals 1 and 2 for that reason: it once
-/// compared against this constant, which is 1 here, so the condition collapsed
-/// to "v1 only" and a no-audio build rejected v2 outright — the precise opposite
-/// of the sentence above, which is what the code claimed to do while doing the
-/// reverse. What a build can write and what it must accept are different sets,
-/// and only the first varies by feature. Pinned by
-/// `vrc7_load_state_accepts_a_v2_blob_on_every_build`.
+/// `load_state` compares against the literals 3 and 4 for that reason: it once
+/// compared against this constant, which differs by build, so the condition
+/// collapsed and a no-audio build rejected the audio build's blob outright —
+/// the precise opposite of the sentence above. What a build can write and what
+/// it must accept are different sets, and only the first varies by feature.
+/// Pinned by `vrc7_load_state_accepts_a_v4_blob_on_every_build`.
 #[cfg(feature = "mapper-audio")]
 const VRC7_SECTION_VERSION: u8 = 4;
 #[cfg(not(feature = "mapper-audio"))]
@@ -598,9 +598,8 @@ impl Mapper for Vrc7 {
         //   + opll blob (OPLL_SNAPSHOT_LEN bytes, self-versioned)
         // closing the `docs/accuracy-ledger.md` row that recorded the FM
         // voice resuming from arbitrary envelope + phase state after a
-        // rewind / rollback / TAS restore. `load_state` still accepts a v1
-        // blob, which leaves the synthesizer wherever it was — the exact
-        // pre-v2.3.7 behaviour, so an old save is no worse than it was.
+        // rewind / rollback / TAS restore. `load_state` accepts v3 and v4
+        // only; v1 and v2 blobs are refused since v2.9.8 (ADR 0042).
         // version(1) + prg(3) + chr(8) + mirroring(1) + prg_ram_enable(1)
         //   + irq_latch(1) + irq_counter(1) + irq_enabled(1)
         //   + irq_enable_after_ack(1) + irq_mode_scanline(1)
@@ -668,29 +667,28 @@ impl Mapper for Vrc7 {
         }
         let version = data[0];
         // Both READABLE versions, spelled as literals — deliberately NOT
-        // `VRC7_SECTION_VERSION`, which is what this WRITES and is 1 on a
-        // no-audio build. Keying the accept set on the write version made the
-        // condition collapse to `version != 1` there, so a no-audio build
-        // REJECTED a v2 blob outright — the exact opposite of the
+        // `VRC7_SECTION_VERSION`, which is what this WRITES and differs by
+        // build. Keying the accept set on the write version once made the
+        // condition collapse on a no-audio build, so it REJECTED the audio
+        // build's blob outright — the exact opposite of the
         // validate-then-ignore portability ADR 0004 asks for, and of what the
         // comment on `VRC7_SECTION_VERSION` claimed. What a build can write and
         // what it must accept are different sets; only the first varies by
         // feature. Caught in review by two independent bots.
-        if !matches!(version, 1..=4) {
+        //
+        // v1 and v2 (no RAM tail) are refused since v2.9.8 (ADR 0042); they
+        // used to load with the RAM left as it was.
+        if !matches!(version, 3 | 4) {
             return Err(MapperError::UnsupportedVersion(version));
         }
-        // Which optional tails this version carries. v2/v4 have the
-        // synthesizer tail; v3/v4 have the RAM tail, after it.
-        let has_audio_tail = version == 2 || version == 4;
-        let ram_len = if version >= 3 {
-            self.ram_block_len()
-        } else {
-            0
-        };
+        // Which optional tails this version carries: v4 has the synthesizer
+        // tail; both have the RAM tail, after it.
+        let has_audio_tail = version == 4;
+        let ram_len = self.ram_block_len();
         let audio_len = if has_audio_tail { VRC7_V2_TAIL_LEN } else { 0 };
-        // v3/v4 are strict about the whole length, validated before anything
-        // is written. (v1/v2 keep their original checks below.)
-        if version >= 3 && data.len() != core_expected + audio_len + ram_len {
+        // Strict about the whole length, validated before anything is
+        // written.
+        if data.len() != core_expected + audio_len + ram_len {
             return Err(MapperError::Truncated {
                 expected: core_expected + audio_len + ram_len,
                 got: data.len(),
@@ -784,13 +782,10 @@ impl Mapper for Vrc7 {
         self.audio.regs.copy_from_slice(&data[27..91]);
         self.vram.copy_from_slice(&data[91..91 + self.vram.len()]);
 
-        // --- v2 tail: the live synthesizer ---
+        // --- v4 tail: the live synthesizer ---
         //
-        // A v1 blob stops here. That is deliberately NOT an error and NOT a
-        // reset: it is the pre-v2.3.7 behaviour, in which the synthesizer kept
-        // running from whatever state it held. An old save is therefore exactly
-        // as (in)accurate as it always was, rather than newly silent.
-        // Commit the already-validated synthesizer. Infallible by construction:
+        // A v3 blob (a no-audio build's) has none, and the synthesizer keeps
+        // running from the state it holds. Commit the already-validated one. Infallible by construction:
         // every way this could fail was exercised above, before the first write.
         #[cfg(feature = "mapper-audio")]
         if let Some((counter, sample, opll)) = staged_opll {
@@ -798,18 +793,14 @@ impl Mapper for Vrc7 {
             self.last_opll_sample = sample;
             self.opll = opll;
         }
-        // --- v3/v4 tail: the on-cart RAM ---
+        // --- the RAM tail: the on-cart RAM ---
         //
-        // A v1/v2 blob stops before it and leaves the RAM as it is -- the
-        // pre-v2.9.2 behaviour, so an old save loads as it always did. The
-        // length was proven exact above, before the first write.
-        if ram_len != 0 {
-            let ram_off = core_expected + audio_len;
-            let (prg, chr) = data[ram_off..].split_at(self.prg_ram.len());
-            self.prg_ram.copy_from_slice(prg);
-            if self.chr_is_ram {
-                self.chr_rom.copy_from_slice(chr);
-            }
+        // The length was proven exact above, before the first write.
+        let ram_off = core_expected + audio_len;
+        let (prg, chr) = data[ram_off..].split_at(self.prg_ram.len());
+        self.prg_ram.copy_from_slice(prg);
+        if self.chr_is_ram {
+            self.chr_rom.copy_from_slice(chr);
         }
         Ok(())
     }
@@ -1267,81 +1258,77 @@ mod tests {
         );
     }
 
-    /// The v2 tail is additive: a v1 blob (every save written before v2.3.7)
-    /// still loads. It leaves the synthesizer untouched, which is exactly the
-    /// pre-v2.3.7 behaviour — an old save is no worse than it always was.
+    /// v2.9.8 (ADR 0042): v1 (before v2.3.7) and v2 (v2.3.7 through v2.9.1)
+    /// are refused. Both used to load, the v1 form leaving the synthesizer and
+    /// both leaving the on-cart RAM as they were.
     #[test]
-    fn vrc7_load_state_still_accepts_a_v1_blob() {
-        let mut source = vrc7_default();
-        source.cpu_write(0x8000, 5);
-        source.cpu_write(0x9010, 0x15);
-        source.cpu_write(0x9030, 0x77);
-        let blob = source.save_state();
-
-        // Synthesize the v1 form: version byte 1, and no tail past the VRAM.
+    fn vrc7_load_state_refuses_v1_and_v2_blobs() {
+        let source = vrc7_default();
         let core_len = 91 + source.vram.len();
-        let mut v1 = blob[..core_len].to_vec();
+        let mut v1 = source.save_state()[..core_len].to_vec();
         v1[0] = 1;
-
+        let mut v2 = v1.clone();
+        v2[0] = 2;
+        v2.resize(v2.len() + VRC7_V2_TAIL_LEN, 0);
         let mut target = vrc7_default();
-        target.load_state(&v1).expect("a v1 blob must still load");
-        assert_eq!(target.prg_0, 5, "v1 core fields must round-trip");
-        assert_eq!(target.audio.regs[0x15], 0x77);
+        for (v, old) in [(1u8, &v1), (2, &v2)] {
+            assert!(matches!(
+                target.load_state(old),
+                Err(MapperError::UnsupportedVersion(got)) if got == v
+            ));
+        }
     }
 
-    /// **Every build must ACCEPT a v2 blob, including one that cannot write it.**
+    /// **Every build must ACCEPT a v4 blob, including one that cannot write it.**
     ///
     /// Regression for a defect two review bots caught independently: the accept
-    /// check read `version != 1 && version != VRC7_SECTION_VERSION`, and
-    /// `VRC7_SECTION_VERSION` is 1 on a no-audio build — so the condition
-    /// collapsed to `version != 1` there and a v2 blob was rejected outright.
-    /// That is the exact opposite of the validate-then-ignore portability
-    /// ADR 0004 asks for, and the opposite of what the constant's own doc
-    /// comment claimed.
+    /// check once compared against `VRC7_SECTION_VERSION`, which differs by
+    /// build, so the condition collapsed on a no-audio build and the audio
+    /// build's blob was rejected outright. That is the exact opposite of the
+    /// validate-then-ignore portability ADR 0004 asks for, and the opposite of
+    /// what the constant's own doc comment claimed. (Written against v2 until
+    /// v2.9.8 retired v2; v4 is the audio build's current form.)
     ///
     /// The lesson, which is why this test exists rather than a one-line diff:
     /// **what a build can WRITE and what it must ACCEPT are different sets, and
     /// only the first varies by feature.** Deriving one from the other reads as
     /// tidy and silently couples them.
     #[test]
-    fn vrc7_load_state_accepts_a_v2_blob_on_every_build() {
+    fn vrc7_load_state_accepts_a_v4_blob_on_every_build() {
         let mut source = vrc7_default();
         source.cpu_write(0x8000, 5);
 
-        // Synthesize the v2 shape from the current (v3/v4) writer: the core,
-        // then the synthesizer tail, and no RAM tail. On a `mapper-audio` build
-        // the writer's own synthesizer tail is kept; a no-audio build writes
-        // none, so zeros stand in -- the load path validates that tail's LENGTH
-        // on every build and reads its CONTENTS only where there is a
-        // synthesizer, so zeros are correct there.
-        let core_len = 91 + source.vram.len();
+        // On a `mapper-audio` build the writer's own blob is v4. A no-audio
+        // build writes v3 (core + RAM tail), so the v4 shape is built from it
+        // by inserting a zeroed synthesizer tail between the two -- the load
+        // path validates that tail's LENGTH on every build and reads its
+        // CONTENTS only where there is a synthesizer.
         #[cfg(feature = "mapper-audio")]
-        let blob = {
-            let mut b = source.save_state()[..core_len + VRC7_V2_TAIL_LEN].to_vec();
-            b[0] = 2;
-            b
-        };
+        let blob = source.save_state();
         #[cfg(not(feature = "mapper-audio"))]
         let blob = {
-            let mut b = source.save_state()[..core_len].to_vec();
-            b[0] = 2;
+            let v3 = source.save_state();
+            let core_len = 91 + source.vram.len();
+            let mut b = v3[..core_len].to_vec();
+            b[0] = 4;
             b.resize(b.len() + VRC7_V2_TAIL_LEN, 0);
+            b.extend_from_slice(&v3[core_len..]);
             b
         };
-        assert_eq!(blob[0], 2, "the fixture must be a v2 blob");
+        assert_eq!(blob[0], 4, "the fixture must be a v4 blob");
 
         let mut target = vrc7_default();
         target
             .load_state(&blob)
-            .expect("a v2 blob must load on every build, whether or not it can write one");
+            .expect("a v4 blob must load on every build, whether or not it can write one");
         assert_eq!(target.prg_0, 5, "the core fields must still round-trip");
     }
 
-    /// A v2 blob truncated inside its tail must be rejected, not partially
-    /// applied. This is untrusted input: a save state is a file on disk.
+    /// A truncated v4 blob must be rejected, not partially applied. This is
+    /// untrusted input: a save state is a file on disk.
     #[cfg(feature = "mapper-audio")]
     #[test]
-    fn vrc7_load_state_rejects_a_truncated_v2_tail() {
+    fn vrc7_load_state_rejects_a_truncated_v4_blob() {
         let mut source = vrc7_default();
         key_on_channel_0(&mut source);
         let _ = run_capture(&mut source, 500);
@@ -1356,7 +1343,7 @@ mod tests {
 
         let err = target
             .load_state(&blob[..blob.len() - 1])
-            .expect_err("a truncated v2 tail must be rejected");
+            .expect_err("a truncated v4 blob must be rejected");
         assert!(
             matches!(err, MapperError::Truncated { .. }),
             "expected Truncated, got {err:?}"
@@ -1395,22 +1382,6 @@ mod tests {
         assert_eq!(target.cpu_read(0x7FFF), 0xA5);
         assert_eq!(target.ppu_read(0x0000), 0x11);
         assert_eq!(target.ppu_read(0x1FFF), 0x22);
-    }
-
-    /// Every blob written before v2.9.2 (v1/v2, no RAM tail) still loads, and
-    /// leaves the RAM exactly as it was -- the old behaviour, not a wipe.
-    #[test]
-    fn vrc7_pre_ram_tail_blob_loads_and_leaves_ram_untouched() {
-        let source = vrc7_default();
-        let core_len = 91 + source.vram.len();
-        let mut v1 = source.save_state()[..core_len].to_vec();
-        v1[0] = 1;
-        let mut target = vrc7_default();
-        target.cpu_write(0xE000, 0x40);
-        target.cpu_write(0x6123, 0x77);
-        target.load_state(&v1).expect("a v1 blob must still load");
-        target.cpu_write(0xE000, 0x40);
-        assert_eq!(target.cpu_read(0x6123), 0x77, "v1 load must not touch RAM");
     }
 
     /// A v3/v4 blob one byte short (inside the RAM tail) is rejected before

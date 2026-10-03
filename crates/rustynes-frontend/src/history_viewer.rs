@@ -35,7 +35,9 @@
 
 use std::collections::VecDeque;
 
-use rustynes_core::{FrameInput, Movie, Nes, Region, StartPoint};
+use rustynes_core::{
+    BoardDescription, FrameInput, HardwareOptions, Movie, Nes, Region, StartPoint,
+};
 
 /// Default frames of input/anchor history to retain — 60 s @ 60 fps.
 ///
@@ -71,6 +73,13 @@ struct Anchor {
     seq: u64,
     /// The deterministic save-state blob (`Nes::snapshot`).
     blob: Vec<u8>,
+    /// v2.9.8 — the emulation options in force when the state was stashed. A
+    /// snapshot does not carry configuration, so an exported clip takes them
+    /// from its anchor; captured per anchor because the player may change
+    /// them mid-session.
+    options: HardwareOptions,
+    /// v2.9.8 — the cartridge board, for the exported movie's header check.
+    board: BoardDescription,
 }
 
 /// Errors from [`HistoryViewer::export_last_seconds`].
@@ -130,6 +139,8 @@ impl std::fmt::Debug for Anchor {
         f.debug_struct("Anchor")
             .field("seq", &self.seq)
             .field("blob_len", &self.blob.len())
+            .field("options", &self.options)
+            .field("board", &self.board)
             .finish()
     }
 }
@@ -171,17 +182,23 @@ impl HistoryViewer {
         let seq = self.next_seq;
         self.next_seq += 1;
         let nes_frame = nes.frame();
-        let input = FrameInput {
-            p1: nes.buttons(0),
-            p2: nes.buttons(1),
-            expansion: 0,
-        };
+        // All four ports (v2.9.8), as `MovieRecorder::capture` records them.
+        let input = FrameInput::held_on(nes);
         // Stash a start-anchor on the cadence (and always on the very first
-        // recorded frame, so an early export still has a base).
-        if self.anchors.is_empty() || self.since_anchor + 1 >= self.anchor_period {
+        // recorded frame, so an early export still has a base). v2.9.8: also
+        // on the frame the options change, so an export can end exactly
+        // there (`export_from`); a movie carries one set of options. The
+        // capture allocates only for Game Genie codes, and only while the
+        // viewer records.
+        let options = HardwareOptions::capture(nes);
+        let options_changed = self.anchors.back().is_some_and(|a| a.options != options);
+        if self.anchors.is_empty() || options_changed || self.since_anchor + 1 >= self.anchor_period
+        {
             self.anchors.push_back(Anchor {
                 seq,
                 blob: nes.snapshot(),
+                options,
+                board: BoardDescription::capture(nes),
             });
             self.since_anchor = 0;
         } else {
@@ -305,17 +322,27 @@ impl HistoryViewer {
         let region = self.region.ok_or(ExportError::NoAnchor)?;
         let rom_sha256 = self.rom_sha256.ok_or(ExportError::NoAnchor)?;
 
+        // The clip ends where the options change: the first later anchor
+        // whose options differ (one is placed on the changing frame), since
+        // a movie replays every frame under the one set it records.
+        let end = self
+            .anchors
+            .iter()
+            .find(|a| a.seq > anchor.seq && a.options != anchor.options)
+            .map_or(u64::MAX, |a| a.seq);
         // Input frames from the anchor record forward, in order.
         let frames: Vec<FrameInput> = self
             .inputs
             .iter()
-            .filter(|r| r.seq >= anchor.seq)
+            .filter(|r| r.seq >= anchor.seq && r.seq < end)
             .map(|r| r.input)
             .collect();
 
         Ok(Movie {
             region,
             rom_sha256,
+            options: anchor.options.clone(),
+            board: Some(anchor.board),
             start: StartPoint::SaveState(anchor.blob.clone()),
             frames,
             // An exported rewind window is a straight capture — no re-records.
@@ -461,6 +488,34 @@ mod tests {
             live_fb.as_slice(),
             "replayed clip end framebuffer must be bit-identical to the live session"
         );
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #581) — an export never runs
+    /// frames under options other than the ones it records. A movie carries
+    /// one set of options; an export that spanned a mid-session change
+    /// replayed the frames after it under the anchor's options. The change
+    /// now forces an anchor on its own frame, and an export ends there.
+    #[test]
+    fn an_export_stops_at_an_options_change() {
+        let bytes = rom("assorted/flowing_palette.nes");
+        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+        // An anchor period far longer than the run: only the change can
+        // place the boundary on the right frame.
+        let mut hv = HistoryViewer::new(10_000, 1_000);
+        for f in 0..40u64 {
+            if f == 25 {
+                nes.set_four_score(true);
+            }
+            nes.set_buttons(0, buttons_for(f));
+            hv.record_frame(&nes);
+            nes.run_frame();
+        }
+        let before = hv.export_from(0).expect("export from the start");
+        assert!(!before.options.four_score, "the start's options");
+        assert_eq!(before.frames.len(), 25, "the clip ends at the change");
+        let after = hv.export_from(30).expect("export after the change");
+        assert!(after.options.four_score, "the later clip's options");
+        assert_eq!(after.frames.len(), 15, "it starts at the change");
     }
 
     #[test]

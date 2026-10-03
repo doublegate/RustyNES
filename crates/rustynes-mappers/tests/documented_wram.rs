@@ -86,7 +86,7 @@ fn documented_wram_holds_writes_and_is_saved_per_the_wiki() {
 }
 
 #[test]
-fn a_save_state_from_before_the_ram_still_loads() {
+fn a_save_state_from_before_the_ram_is_refused() {
     for n in [156u8, 177, 227, 241, 245] {
         let mut m = build(n, true);
         m.cpu_write(0x6000, 0x5A);
@@ -109,13 +109,12 @@ fn a_save_state_from_before_the_ram_still_loads() {
         } else if n != 227 {
             old[0] -= 1;
         }
+        // It loaded with the RAM zeroed until v2.9.8, which reads the current
+        // layout only (ADR 0042).
         let mut o = build(n, true);
-        o.load_state(&old)
-            .unwrap_or_else(|e| panic!("{n}: pre-v2.7.2 blob: {e:?}"));
-        assert_eq!(
-            o.cpu_read(0x6000),
-            0,
-            "mapper {n}: an old blob loads with the RAM zeroed"
+        assert!(
+            o.load_state(&old).is_err(),
+            "mapper {n}: a pre-v2.7.2 blob must be refused"
         );
     }
 }

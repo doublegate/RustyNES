@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-121-KashengA9711/Super 3-in-1 (NT-934) (Unl).nes
+rom_sha256=daacefffaf8c0595efdd745bd6eddd085d0d8cdfd350f7fd3a0b7f1f76cb97c6
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=1060bf394133c0e8
+checkpoint f900 fb_fnv1a64=49578a02eef8a9d6
+checkpoint f1100 fb_fnv1a64=10cd3ce978ea34ca

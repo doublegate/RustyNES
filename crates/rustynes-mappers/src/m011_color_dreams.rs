@@ -36,8 +36,9 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// netplay rollback kept the running game's CHR-RAM instead of the saved one
 /// (the v2.9.2 cartridge-RAM sweep; the same omission core audit AUD-02 found
 /// on the Konami VRC boards). **v2** appends the CHR-RAM when present.
-/// `load_state` accepts both; a v1 blob leaves the CHR-RAM untouched, which is
-/// the old behaviour.
+/// Since v2.9.8 (ADR 0042)
+/// `load_state` reads v2 only and refuses a v1 blob, which it used to load
+/// with the RAM left untouched.
 const COLOR_DREAMS_SECTION_VERSION: u8 = 2;
 
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
@@ -176,12 +177,13 @@ impl Mapper for ColorDreams {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let version = data.first().copied().unwrap_or(0);
-        // Both READABLE versions, as literals: v1 (no RAM) and v2 (+ RAM).
-        let ram_len = match version {
-            1 => 0,
-            2 => self.ram_block_len(),
-            other => return Err(MapperError::UnsupportedVersion(other)),
-        };
+        // Only the current layout is read (v2.9.8, ADR 0042). A v1 blob, which
+        // stopped before the RAM block, is refused rather than loaded with the
+        // RAM left as it was.
+        if version != COLOR_DREAMS_SECTION_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let ram_len = self.ram_block_len();
         // The whole length is validated before the first field is written.
         let core_len = 3 + self.vram.len();
         let expected = core_len + ram_len;
@@ -194,9 +196,7 @@ impl Mapper for ColorDreams {
         self.prg_bank = data[1];
         self.chr_bank = data[2];
         self.vram.copy_from_slice(&data[3..core_len]);
-        // A v1 blob stops here and leaves the CHR-RAM as it is -- the
-        // pre-v2.9.2 behaviour, so an old save loads exactly as it always did.
-        if version >= 2 && self.chr_is_ram {
+        if self.chr_is_ram {
             self.chr_rom.copy_from_slice(&data[core_len..]);
         }
         Ok(())
@@ -258,10 +258,10 @@ mod tests {
         assert_eq!(m2.chr_rom[0x1FFF], 0x22);
     }
 
-    /// A v1 blob (no CHR-RAM tail, written through v2.9.1) still loads and
-    /// leaves the CHR-RAM as it was -- the old behaviour, not a wipe.
+    /// v2.9.8 (ADR 0042): a v1 blob (no RAM tail, written through v2.9.1)
+    /// is refused. Until then it loaded and left the RAM as it was.
     #[test]
-    fn color_dreams_v1_blob_loads_and_leaves_chr_ram_untouched() {
+    fn color_dreams_v1_blob_is_refused() {
         let mut m = ColorDreams::new(
             vec![0u8; 32 * 1024].into_boxed_slice(),
             Box::new([]),
@@ -278,10 +278,10 @@ mod tests {
             Mirroring::Vertical,
         )
         .unwrap();
-        m2.chr_rom[0x0123] = 0x77;
-        m2.load_state(&v1).expect("a v1 blob must still load");
-        assert_eq!(m2.chr_bank, 5, "v1 core fields restored");
-        assert_eq!(m2.chr_rom[0x0123], 0x77, "v1 load must not touch CHR-RAM");
+        assert!(matches!(
+            m2.load_state(&v1),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
     }
 
     /// A v2 blob one byte short (inside the CHR-RAM tail) is rejected.

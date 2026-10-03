@@ -154,8 +154,10 @@ pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
-#[allow(deprecated)] // `serialize_header` stays exported until v3.0.0 (ADR 0042).
-pub use header::{Header, parse_header, serialize_header, serialize_header_preserving};
+pub use header::{
+    ExpansionDevice, ExtendedConsoleType, Header, VsHardwareType, parse_header,
+    serialize_header_preserving,
+};
 pub use homebrew_boards::{Action53M28, Cufrom29, Gtrom111, Inl31, MagicFloor218, Unrom512M30};
 pub use jaleco_discrete::{Jaleco72, Jaleco86, Jaleco92, Jaleco101, Jaleco140};
 pub use kaiser::{new_m56, new_m142, new_m303, new_m305, new_m306, new_m312};
@@ -289,7 +291,7 @@ fn mmc3_board(
     h: &Header,
 ) -> Result<Box<dyn Mapper>, RomError> {
     let (wram, chr_ram) = if h.is_nes2 {
-        (h.prg_ram_size as usize, h.chr_ram_size as usize)
+        (h.prg_ram_window() as usize, h.chr_ram_size as usize)
     } else {
         (0, 0)
     };
@@ -463,8 +465,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         vs_ppu_type,
         // From the header byte-13 high nibble; independent of the mapper-99/151
         // console-type forcing above (a non-dual Vs. cart stays false).
-        vs_dual_system: h.vs_dual_system,
-        prg_ram_size: h.prg_ram_size,
+        vs_dual_system: h.is_vs_dual_system(),
+        // The whole window, volatile + NVRAM, as the field held before the
+        // header split them (v2.9.8).
+        prg_ram_size: h.prg_ram_window(),
         chr_ram_size: h.chr_ram_size,
         has_battery: h.has_battery,
         has_trainer: h.has_trainer,
@@ -481,10 +485,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // MMC1. Default revision is Sharp (no NES 2.0 submapper). Submapper
             // values (1-5) signal SUROM / SOROM / SXROM / SEROM variants —
             // observationally equivalent at the register-protocol level.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let mmc1 = Mmc1::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -530,10 +534,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 3 => Mmc3Variant::McAcc,
                 _ => Mmc3Variant::Standard,
             };
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let mmc3 = Mmc3::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes, revision)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?
@@ -545,10 +549,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // features deferred (vertical split, dual sprite/BG CHR for
             // 8x16 sprites, ExGrafix attribute injection, audio extension);
             // see `crates/rustynes-mappers/src/m005_mmc5.rs` module docs.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let mmc5 = Mmc5::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -808,13 +812,18 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // Holy Diver / Uchuusen Cosmo Carrier: UxROM-like 16 KiB PRG +
             // 8 KiB CHR with submapper-selected mirroring. NES 2.0
             // submapper 3 = Holy Diver (H/V switch); submapper 1 = Cosmo
-            // Carrier (single-screen A/B). Default to Holy Diver (H/V) when
-            // no submapper is present, matching the common iNES "alternative
-            // nametables" header convention for Holy Diver.
-            let variant = if h.is_nes2 && h.submapper == 1 {
-                M78Variant::CosmoCarrier
-            } else {
-                M78Variant::HolyDiver
+            // Carrier (single-screen A/B). Without a submapper (iNES 1.0, or
+            // NES 2.0 submapper 0) the header's "alternative nametables" bit
+            // decides, per NESdev `INES_Mapper_078`: iNES images "often set
+            // [it] for Holy Diver and cleared it for Cosmo Carrier", and
+            // Nestopia / FCEUX default to Cosmo Carrier's 1scA/1scB wiring.
+            // Until v2.9.8 the no-submapper case was always Holy Diver, which
+            // ignored the bit and contradicted both statements.
+            let variant = match (h.is_nes2, h.submapper) {
+                (true, 1) => M78Variant::CosmoCarrier,
+                (true, 3) => M78Variant::HolyDiver,
+                _ if h.mirroring == Mirroring::FourScreen => M78Variant::HolyDiver,
+                _ => M78Variant::CosmoCarrier,
             };
             let m78 = M78::new(prg_rom, chr_rom, variant)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -824,10 +833,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // TxSROM / TLSROM (Armadillo, NES Play Action Football, Alien
             // Syndrome): MMC3 banking + IRQ plus per-bank nametable mirroring
             // driven by CHR bank bit 7.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let m118 = TxSrom::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -838,10 +847,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // CHR address space — 64 KiB CHR-ROM + 8 KiB CHR-RAM, selected per
             // 1 KiB bank by bit 6 of the resolved CHR bank number (set =
             // CHR-RAM). See `crates/rustynes-mappers/src/m119_tqrom.rs`.
-            let prg_ram_bytes = if h.prg_ram_size == 0 {
+            let prg_ram_bytes = if h.prg_ram_window() == 0 {
                 0
             } else {
-                h.prg_ram_size as usize
+                h.prg_ram_window() as usize
             };
             let m119 = Tqrom::new(prg_rom, chr_rom, h.mirroring, prg_ram_bytes)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
@@ -887,7 +896,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Box::new(m82)
         }
         151 => {
-            // Konami VS (Vs. Gradius / GVS VS. TKO Boxing): Konami's VRC1
+            // Konami VS (Vs. Gradius / Vs. The Goonies): Konami's VRC1
             // silicon on a Nintendo Vs. System board. Banking is byte-identical
             // to mapper 75 (VRC1); the console type was forced to Vs. System +
             // the 2C03 RGB PPU above (mapper-driven, like mapper 99).
@@ -1149,10 +1158,26 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Hengedianzi179::new(prg_rom, &chr_rom)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
-        218 => Box::new(
-            MagicFloor218::new(prg_rom, &chr_rom, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
-        ),
+        218 => {
+            // Magic Floor wires CIRAM A10 to one PPU address line chosen by
+            // the RAW flags-6 bits 3 and 0 (NESdev "INES Mapper 218"): with
+            // bit 3 set, bit 0 picks A13 (`$A9`, single screen B) over A12
+            // (`$A8`, single screen A). The generic parser has already folded
+            // bit 0 into `FourScreen`, so re-read it here, as mapper 30 does.
+            let mirroring = if h.four_screen {
+                if (bytes[6] & 0x01) != 0 {
+                    Mirroring::SingleScreenB
+                } else {
+                    Mirroring::SingleScreenA
+                }
+            } else {
+                h.mirroring
+            };
+            Box::new(
+                MagicFloor218::new(prg_rom, &chr_rom, mirroring)
+                    .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+            )
+        }
         231 => Box::new(
             Multicart231::new(prg_rom, &chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
@@ -1605,6 +1630,65 @@ mod tests {
         let rom = synth_nrom_rom(32, 8);
         let (cart, _mapper) = parse(&rom).unwrap();
         assert_eq!(cart.prg_rom.len(), 32 * 1024);
+    }
+
+    /// A mapper-78 image: 32 KiB PRG, 8 KiB CHR. `flags6_low` carries the
+    /// mirroring / alternative-nametables bits; `nes2_sub` makes it NES 2.0
+    /// with that submapper.
+    fn synth_m78(flags6_low: u8, nes2_sub: Option<u8>) -> Vec<u8> {
+        let mut rom = synth_nrom_rom(32, 8);
+        rom[6] = 0xE0 | (flags6_low & 0x0F); // mapper 78 low nibble = 0xE
+        rom[7] = 0x40; // mapper 78 high nibble = 0x4
+        if let Some(sub) = nes2_sub {
+            rom[7] |= 0x08;
+            rom[8] = sub << 4;
+        }
+        rom
+    }
+
+    /// The mirroring a mapper-78 image selects once bit 3 of the bank register
+    /// is set: Vertical on the Holy Diver wiring, single-screen B on Cosmo
+    /// Carrier's.
+    fn m78_mirroring_with_bit3(rom: &[u8]) -> Mirroring {
+        let (_cart, mut mapper) = parse(rom).unwrap();
+        mapper.cpu_write(0x8000, 0x08);
+        mapper.current_mirroring()
+    }
+
+    #[test]
+    fn mapper_78_ines_header_selects_wiring_by_alt_nametables_bit() {
+        // NESdev `INES_Mapper_078`: "iNES1 ROM image headers often set the
+        // 'alternative nametables' flag for Holy Diver and cleared it for
+        // Cosmo Carrier", and Nestopia / FCEUX default to Cosmo Carrier's
+        // 1scA/1scB wiring. So an iNES 1.0 image with the flag clear is
+        // Cosmo Carrier, and with it set is Holy Diver.
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x00, None)),
+            Mirroring::SingleScreenB,
+            "iNES 1.0, flag clear: Cosmo Carrier wiring"
+        );
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x08, None)),
+            Mirroring::Vertical,
+            "iNES 1.0, flag set: Holy Diver wiring"
+        );
+        // NES 2.0 submapper 0 says nothing, so it falls back to the same rule.
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x00, Some(0))),
+            Mirroring::SingleScreenB,
+            "NES 2.0 submapper 0, flag clear: Cosmo Carrier wiring"
+        );
+        // A named submapper wins over the flag, in both directions.
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x08, Some(1))),
+            Mirroring::SingleScreenB,
+            "submapper 1: Cosmo Carrier"
+        );
+        assert_eq!(
+            m78_mirroring_with_bit3(&synth_m78(0x00, Some(3))),
+            Mirroring::Vertical,
+            "submapper 3: Holy Diver"
+        );
     }
 
     #[test]

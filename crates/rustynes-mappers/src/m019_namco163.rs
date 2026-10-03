@@ -56,8 +56,8 @@ const NAMETABLE_SIZE: usize = 0x0400;
 /// and netplay rollback kept the running game's CHR-RAM instead of the saved
 /// one (the v2.9.2 cartridge-RAM sweep; the same omission core audit AUD-02
 /// found on the Konami VRC boards). **v4** (v2.9.2) appends that CHR-RAM
-/// after the v3 tail. `load_state` accepts all four; a v1-v3 blob leaves the
-/// CHR-RAM untouched, which is the old behaviour.
+/// after the v3 tail. Since v2.9.8 (ADR 0042) `load_state` reads v4 only; a
+/// v1-v3 blob, which it used to load with the CHR-RAM untouched, is refused.
 const N163_SECTION_VERSION: u8 = 4;
 
 /// Linear scale applied to the channel-count-averaged Namco 163 output (see
@@ -639,7 +639,9 @@ impl Mapper for Namco163 {
                 v
             }
             0x5800..=0x5FFF => {
-                let v = ((self.irq_counter >> 8) & 0x7F) as u8;
+                // `EHHH HHHH`: the enable in bit 7, the counter's high bits
+                // below it (bit 15 of `irq_counter` holds the enable).
+                let v = (self.irq_counter >> 8) as u8;
                 self.irq_pending = false;
                 v
             }
@@ -662,9 +664,14 @@ impl Mapper for Namco163 {
                 self.irq_counter = (self.irq_counter & 0xFF00) | u16::from(value);
                 self.irq_pending = false;
             }
+            // `$5800` is `EHHH HHHH` (NESdev "INES Mapper 019"): bit 7 is
+            // the IRQ enable and bits 6-0 the counter's high bits. Bit 15 of
+            // `irq_counter` stores the enable, so the whole byte lands in the
+            // high half. Until v2.9.8 this forced the enable on, so a
+            // `$5800 = $00` meant to stop the counter restarted it instead
+            // (Megami Tensei II's raster bands).
             0x5800..=0x5FFF => {
-                self.irq_counter =
-                    (self.irq_counter & 0x00FF) | ((u16::from(value) & 0x7F) << 8) | 0x8000;
+                self.irq_counter = (self.irq_counter & 0x00FF) | (u16::from(value) << 8);
                 self.irq_pending = false;
             }
             0x6000..=0x7FFF => {
@@ -900,26 +907,20 @@ impl Mapper for Namco163 {
             });
         }
         let version = data[0];
-        if !(1..=4).contains(&version) {
+        // Only the current version is read (v2.9.8, ADR 0042). v1-v3 used to
+        // load with the audio, CIRAM-as-CHR and CHR-RAM tails defaulted or
+        // left as they were.
+        if version != N163_SECTION_VERSION {
             return Err(MapperError::UnsupportedVersion(version));
         }
-        // v3 was written whole by v2.7.2 and later, so a short one is
-        // corruption rather than an older layout: refuse it before touching
-        // any state. Only v1/v2 keep the permissive tail handling below.
-        let v3_expected = core_expected + 1 + Namco163Audio::TAIL_LEN + 2;
-        if version == 3 && data.len() < v3_expected {
+        // Strict: the core, the audio tail, the two CIRAM-as-CHR bytes and
+        // the CHR-RAM, exactly. Each tail's offset depends on every earlier
+        // field being present, so neither a short nor a long blob can be read
+        // safely.
+        let expected = core_expected + 1 + Namco163Audio::TAIL_LEN + 2 + self.chr_ram_tail_len();
+        if data.len() != expected {
             return Err(MapperError::Truncated {
-                expected: v3_expected,
-                got: data.len(),
-            });
-        }
-        // v4 (v2.9.2) is strict: the v3 layout plus the CHR-RAM tail,
-        // exactly. The tail's offset depends on every earlier field being
-        // present, so neither a short nor a long blob can be read safely.
-        let v4_expected = v3_expected + self.chr_ram_tail_len();
-        if version == 4 && data.len() != v4_expected {
-            return Err(MapperError::Truncated {
-                expected: v4_expected,
+                expected,
                 got: data.len(),
             });
         }
@@ -948,45 +949,17 @@ impl Mapper for Namco163 {
         self.vram.copy_from_slice(&data[cur..cur + self.vram.len()]);
         cur += self.vram.len();
 
-        // v2 tail: audio + sound-disable bit.  v1 blobs end at the core;
-        // per ADR-0003 we leave the audio at its current state — silent
-        // by default after `new()` — so the older blob loads cleanly
-        // (the caller is responsible for an explicit power-cycle if they
-        // want a fully-clean slate).  A v2 blob shorter than the tail is
-        // accepted permissively for the same forward-compat reason VRC6
-        // and FME-7 use.
-        if version >= 2 && data.len() >= cur + 1 + Namco163Audio::TAIL_LEN {
-            self.sound_disabled = data[cur] != 0;
-            cur += 1;
-            self.audio
-                .read_tail(&data[cur..cur + Namco163Audio::TAIL_LEN])?;
-            cur += Namco163Audio::TAIL_LEN;
-        } else if version == 1 {
-            // Reset audio to power-on defaults for clean v1→v2 upgrade.
-            self.sound_disabled = false;
-            self.audio = Namco163Audio::default();
-        }
-        // v3 tail (v2.7.2). An older blob predates CIRAM-as-CHR, which then
-        // was never modelled: restore "both halves CHR-ROM" so it replays the
-        // way it was recorded.
-        // Present whenever version == 3: checked against `v3_expected` above.
-        self.chr_ram_disable = if version >= 3 { data[cur] & 0xC0 } else { 0xC0 };
-        if version >= 3 {
-            self.ciram_owned = data[cur + 1] != 0;
-        } else {
-            // Before v2.7.2 `$C000-$DFFF` writes were ignored, so `nta` was
-            // saved zeroed, which now means "CHR-ROM page 0" in every
-            // quadrant. Rebuild it from the header layout the old model used,
-            // and leave CIRAM with the PPU: this blob's `vram` was never kept
-            // in step with it.
-            self.nta = Self::nta_for(self.mirroring);
-            self.ciram_owned = false;
-        }
-        // v4 tail (v2.9.2): the cartridge CHR-RAM, exactly sized by the
-        // `v4_expected` check above. v1-v3 blobs stop before it and leave the
-        // CHR-RAM as it is -- the pre-v2.9.2 behaviour, so an old save loads
-        // exactly as it always did.
-        if version >= 4 && self.chr_is_ram {
+        // v2 tail: audio + sound-disable bit.
+        self.sound_disabled = data[cur] != 0;
+        cur += 1;
+        self.audio
+            .read_tail(&data[cur..cur + Namco163Audio::TAIL_LEN])?;
+        cur += Namco163Audio::TAIL_LEN;
+        // v3 tail (v2.7.2): CIRAM-as-CHR.
+        self.chr_ram_disable = data[cur] & 0xC0;
+        self.ciram_owned = data[cur + 1] != 0;
+        // v4 tail (v2.9.2): the cartridge CHR-RAM, exactly sized above.
+        if self.chr_is_ram {
             self.chr_rom.copy_from_slice(&data[cur + 2..]);
         }
         Ok(())
@@ -1039,6 +1012,39 @@ mod tests {
             m.notify_cpu_cycle();
         }
         assert!(m.irq_pending());
+    }
+
+    #[test]
+    fn namco163_5800_bit7_is_the_irq_enable() {
+        // NESdev "INES Mapper 019", $5800-$5FFF (read/write) is `EHHH HHHH`:
+        // bit 7 is the IRQ enable (0: disabled) and bits 6-0 the counter's
+        // high bits. Until v2.9.8 every $5800 write enabled the counter, so a
+        // game that disables its raster IRQ with $5800 = $00 kept counting
+        // and took a spurious IRQ every 32,768 cycles. Megami Tensei II does
+        // exactly that after its last raster band, and the stray IRQ rewrote
+        // its background CHR banks mid-frame.
+        let mut m = Namco163::new(synth(8), synth_chr(8), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x5000, 0xFE);
+        m.cpu_write(0x5800, 0x7F); // counter $7FFE, enable clear
+        for _ in 0..40_000 {
+            m.notify_cpu_cycle();
+        }
+        assert!(!m.irq_pending(), "a disabled counter never fires");
+        assert_eq!(
+            m.cpu_read(0x5800),
+            0x7F,
+            "disabled: bit 7 reads 0, count held"
+        );
+        assert_eq!(
+            m.cpu_read(0x5000),
+            0xFE,
+            "a disabled counter does not count"
+        );
+        m.cpu_write(0x5800, 0xFF); // same count, enable set
+        assert_eq!(m.cpu_read(0x5800), 0xFF, "bit 7 reads back the enable");
+        m.notify_cpu_cycle(); // $7FFE -> $7FFF
+        m.notify_cpu_cycle(); // at $7FFF: fire
+        assert!(m.irq_pending(), "an enabled counter fires at $7FFF");
     }
 
     fn namco163_for_audio() -> Namco163 {
@@ -1323,51 +1329,6 @@ mod tests {
     }
 
     #[test]
-    fn namco163_save_state_v1_loads_with_audio_defaults() {
-        // A v1 (pre-audio) save-state blob should load on a v2 reader
-        // with audio defaulted to silence (zero RAM, zero phase, zero
-        // latch, sound_disabled=false).  Construct a synthetic v1 blob
-        // by hand to exercise the backward-compat path.
-        let mut donor = namco163_for_audio();
-        // Mutate non-audio state so we can verify it round-trips.
-        donor.prg[0] = 0x05;
-        donor.chr[3] = 0x07;
-        donor.nta[1] = 0x02;
-        donor.irq_counter = 0x1234;
-        donor.irq_pending = true;
-        donor.audio.ram[0x40] = 0x99; // would normally serialize in v2
-
-        // Build a v1 blob (no audio tail).
-        let mut blob = Vec::new();
-        blob.push(1u8);
-        blob.extend_from_slice(&donor.prg);
-        blob.extend_from_slice(&donor.chr);
-        blob.extend_from_slice(&donor.nta);
-        blob.push(donor.mirroring as u8);
-        blob.extend_from_slice(&donor.irq_counter.to_le_bytes());
-        blob.push(u8::from(donor.irq_pending));
-        blob.extend_from_slice(&donor.prg_ram);
-        blob.extend_from_slice(&donor.vram);
-
-        let mut target = namco163_for_audio();
-        // Pre-populate target with bogus audio state, then verify it
-        // gets cleared by the v1 load path.
-        target.audio.ram[0x40] = 0xAA;
-        target.audio.addr_latch = 0x55;
-        target.audio.auto_inc = true;
-        target.sound_disabled = true;
-        target.load_state(&blob).unwrap();
-        assert_eq!(target.prg[0], 0x05);
-        assert_eq!(target.chr[3], 0x07);
-        assert_eq!(target.irq_counter, 0x1234);
-        // Audio state should be default (silent).
-        assert_eq!(target.audio.ram, [0u8; 128]);
-        assert_eq!(target.audio.addr_latch, 0);
-        assert!(!target.audio.auto_inc);
-        assert!(!target.sound_disabled);
-    }
-
-    #[test]
     fn namco163_save_state_v2_round_trip() {
         // v2 → v2 round-trip preserves the full audio state.
         let mut donor = namco163_for_audio();
@@ -1516,31 +1477,32 @@ mod tests {
         assert_eq!(m.cpu_read(0xA000), 3, "PRG page 3 at $A000");
     }
 
+    /// v2.9.8 (ADR 0042): only the current (v4) layout loads. A v2 blob
+    /// (before v2.7.2's CIRAM-as-CHR) used to load with CHR-RAM disabled and
+    /// its nametable layout rebuilt from the header, and a v3 blob (before
+    /// v2.9.2's CHR-RAM tail) with the CHR-RAM left as it was.
     #[test]
-    fn a_pre_v2_7_2_save_state_loads_with_chr_ram_disabled() {
-        let m = n163(0x100);
-        let mut blob = m.save_state();
-        // Strip the two v3 tail bytes and restamp as v2 to fake an old blob.
-        blob[0] = 2;
-        blob.truncate(blob.len() - 2);
-        let mut n = n163(0x100);
-        n.cpu_write(0xE800, 0x00);
-        n.load_state(&blob).expect("v2 loads");
-        n.cpu_write(0x8000, 0xE0);
-        assert_eq!(
-            n.ppu_read(0x0000),
-            0xE0,
-            "old blobs keep the old CHR-ROM behaviour"
-        );
+    fn pre_v4_save_states_are_refused() {
+        let m = Namco163::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        let blob = m.save_state();
+        let mut v3 = blob.clone();
+        v3.truncate(v3.len() - m.chr_rom.len());
+        v3[0] = 3;
+        let mut v2 = v3.clone();
+        v2.truncate(v2.len() - 2);
+        v2[0] = 2;
+        let mut n = Namco163::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
+        for (v, old) in [(3u8, &v3), (2, &v2)] {
+            assert!(matches!(
+                n.load_state(old),
+                Err(MapperError::UnsupportedVersion(got)) if got == v
+            ));
+        }
+        n.load_state(&blob).expect("the current blob loads");
     }
 
-    /// Before v2.7.2 `$C000-$DFFF` writes were ignored, so every old blob
-    /// holds `nta = [0; 4]`, which now means "CHR-ROM page 0" in every
-    /// quadrant. The restore must rebuild the header layout instead, and leave
-    /// CIRAM with the PPU, because an old blob's `vram` was never kept in step
-    /// with it (PR #550 review).
     #[test]
-    fn a_truncated_v3_blob_is_refused_before_any_state_changes() {
+    fn a_truncated_v4_blob_is_refused_before_any_state_changes() {
         let mut m = n163(0x100);
         m.cpu_write(0xC000, 0x05);
         let blob = m.save_state();
@@ -1555,20 +1517,8 @@ mod tests {
     }
 
     #[test]
-    fn a_pre_v2_7_2_save_state_keeps_its_header_layout() {
+    fn a_current_blob_keeps_ciram_ownership_as_saved() {
         let m = Namco163::new(synth(8), synth_chr(0x100), Mirroring::Horizontal).unwrap();
-        let mut blob = m.save_state();
-        blob[0] = 2;
-        blob.truncate(blob.len() - 2);
-        blob[13..17].fill(0); // what every pre-v2.7.2 blob carries
-        let mut n = Namco163::new(synth(8), synth_chr(0x100), Mirroring::Horizontal).unwrap();
-        n.load_state(&blob).expect("v2 loads");
-        assert_eq!(n.current_mirroring(), Mirroring::Horizontal);
-        assert_eq!(n.nametable_address(0x2000), n.nametable_address(0x2400));
-        assert_ne!(n.nametable_address(0x2000), n.nametable_address(0x2800));
-        assert_eq!(n.nametable_fetch(0x2000), None, "CIRAM stays the PPU's");
-
-        // A current blob keeps ownership as saved.
         let mut o = Namco163::new(synth(8), synth_chr(0x100), Mirroring::Horizontal).unwrap();
         o.load_state(&m.save_state())
             .expect("the current blob loads");
@@ -1588,22 +1538,6 @@ mod tests {
         n.load_state(&blob).expect("round-trip");
         assert_eq!(n.chr_rom[0x0000], 0x11);
         assert_eq!(n.chr_rom[0x1FFF], 0x22);
-    }
-
-    /// A v3 blob (no CHR-RAM tail, written v2.7.2 through v2.9.1) still loads
-    /// and leaves the CHR-RAM as it was -- the old behaviour, not a wipe.
-    #[test]
-    fn n163_v3_blob_loads_and_leaves_chr_ram_untouched() {
-        let mut m = Namco163::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
-        m.cpu_write(0xE000, 0x03); // PRG page 3 at $8000
-        let mut v3 = m.save_state();
-        v3.truncate(v3.len() - m.chr_rom.len());
-        v3[0] = 3;
-        let mut n = Namco163::new(synth(8), Box::new([]), Mirroring::Vertical).unwrap();
-        n.chr_rom[0x0123] = 0x77;
-        n.load_state(&v3).expect("a v3 blob must still load");
-        assert_eq!(n.prg[0], 0x03, "v3 core fields restored");
-        assert_eq!(n.chr_rom[0x0123], 0x77, "v3 load must not touch CHR-RAM");
     }
 
     /// A v4 blob one byte short (inside the CHR-RAM tail) is rejected before

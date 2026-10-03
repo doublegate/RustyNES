@@ -155,7 +155,7 @@ workload; its value is the *direction*, not the absolute.)
 Since the CPU core gets *cheaper* under R1 yet the full frame gets *dearer*,
 the entire +6–8% lives on the **bus side**:
 
-1. **Master-clock PPU catch-up** — `LockstepBus::run_ppu_to` advances the PPU
+1. **Master-clock PPU catch-up** — `SystemBus::run_ppu_to` advances the PPU
    to `master_clock − ppu_offset` with the double catch-up, replacing the
    legacy "tick one dot, every 3rd advances CPU" lockstep.
 2. **Per-cycle unified DMA dispatch** — `unified_dma_cycle` (the TriCNES-style

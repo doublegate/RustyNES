@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-045-GA23C/Famicom Yarou Vol.1 7-in-1 (Unl) [!].nes
+rom_sha256=fb0870b64dbd878997a621dbb9d864844e25925a840936621fa8c0402802c5aa
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=d046673ae808f5c4
+checkpoint f900 fb_fnv1a64=9ae63fa7dd165127
+checkpoint f1100 fb_fnv1a64=9ae63fa7dd165127

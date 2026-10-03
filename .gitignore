@@ -157,6 +157,10 @@ artifacts/
 *.fds
 !/tests/roms/**/*.nes
 /tests/roms/external/
+# The same path as a SYMLINK (how a git worktree points at the main tree's
+# dumps): a pattern ending in `/` matches only a directory, so the link showed
+# as untracked in every agent worktree and could be staged by accident (v2.9.8).
+/tests/roms/external
 /tests/roms/nes-test-roms/
 /game-roms/
 

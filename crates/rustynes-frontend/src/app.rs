@@ -362,12 +362,14 @@ fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::P
 /// harness in v2.3.4, the browser here). The lesson recorded with the fix: a
 /// `cfg` gate inherited from the strictest of several stages is a gate on the
 /// whole feature, and nothing tells you which stages did not need it.
+///
+/// v2.9.8 — a thin name for [`crate::game_db::correct_rom`], the stage-one
+/// function every platform now calls (the mobile bridge and the libretro core
+/// included, which skipped the database until then). The lookup it runs is
+/// `load_time_entry`, not `entry_for_crc`: a vendored row never overrides a
+/// NES 2.0 header.
 pub(crate) fn apply_game_db_header_overrides(bytes: &mut [u8]) -> Option<u32> {
-    let crc = crate::game_db::rom_crc32(bytes)?;
-    if let Some(entry) = crate::game_db::entry_for_crc(crc) {
-        crate::game_db::apply_header_overrides(bytes, &entry);
-    }
-    Some(crc)
+    crate::game_db::correct_rom(bytes)
 }
 
 /// Hand the game-DB crate its overlay directory, then apply the load-time header
@@ -387,6 +389,202 @@ fn configure_game_db_and_patch_startup_rom(
         crate::game_db::set_overlay_dir(dir);
     }
     apply_load_time_header_overrides(rom_bytes, Some(rom_path));
+}
+
+/// v2.9.8 — every config-derived setting the frontend pushes into a console,
+/// applied in one call to a console that has not run since it was built or
+/// power-cycled.
+///
+/// # Why one call, and why before the console is installed
+///
+/// Until v2.9.8 a ROM load installed the new `Nes` into the shared
+/// [`EmuCore`] first and then pushed these settings one `apply_*` call at a
+/// time, each taking and releasing the emu lock. The emulation thread runs a
+/// frame whenever it can take that lock while `has_rom` is set -- and on a
+/// ROM-to-ROM load `has_rom` was already set by the previous game, while on
+/// the first load it was set (`set_has_rom(true)`) before the pushes too.
+/// Between two pushes the thread could therefore run the new game with part of
+/// its power-on configuration missing, and the rest then landed mid-game:
+/// `set_power_on_ram` REWRITES work RAM (the configured fill, or zeroes) after
+/// the game has written to it, `set_console_model(Famicom)` ends a PPU warm-up
+/// the game has already run through, `set_power_up_palette` overwrites palette
+/// RAM the game may have set, and the OAM-decay, filter, mask, gain and
+/// palette settings are absent for the first frame or frames. The window was
+/// widest on a menu load with an HD pack configured, which loads the pack
+/// between the install and the pushes. Applying everything to the console
+/// BEFORE it is installed closes the window outright, whatever the thread
+/// does: the first console the thread can see is already configured.
+///
+/// The same function re-applies the settings after a Power Cycle, under the
+/// same lock as the cycle. Since v2.9.8 `Nes::power_cycle` keeps every setting
+/// itself -- the PPU and APU ones it rebuilds with the chips (OAM decay, fast
+/// dot path, custom palette, filter, mask, gain) as well as the bus-held ones
+/// (PPU revision, power-up palette, power-on RAM fill, console model) -- so
+/// for those the re-application is a no-op that rewrites the values the core
+/// already holds. What it still does is re-attach the expansion device, which
+/// a cold boot unplugs (the per-frame input latch re-attaches it on the next
+/// frame anyway), and put the player's configuration back over a movie's
+/// options before `do_power_cycle` lays the movie's on top again. Re-applying
+/// the power-on fills straight after the cycle rewrites the values the core
+/// has just written (the reset sequence writes no RAM) plus the open-bus
+/// latch, which the first opcode fetch overwrites -- what every ROM load has
+/// always done after the reset in `Nes::from_rom`. Before v2.9.8 the chip
+/// settings were lost in the cycle, and the desktop's Power Cycle re-pushed
+/// only the channel mask and gain, so the rest stayed lost until the next ROM
+/// load or Settings change.
+///
+/// The overclock is not here: it lives on [`EmuCore`] (applied at the top of
+/// each produced frame), and the load paths set it under the install lock.
+fn configure_console(config: &crate::config::Config, nes: &mut Nes) {
+    configure_console_with_palette(config, palette_for_config(config), nes);
+}
+
+/// [`configure_console`] with the palette already resolved. For a caller that
+/// holds the emu lock: [`palette_for_config`] may read a `.pal` file, and a
+/// stalled drive or network share would then stall the emulation thread on
+/// the lock with it (v2.9.8, found in review). The palette depends on the
+/// configuration only, so resolving it before the lock changes nothing else.
+fn configure_console_with_palette(
+    config: &crate::config::Config,
+    palette: Option<[[u8; 3]; 64]>,
+    nes: &mut Nes,
+) {
+    nes.set_apu_channel_mask(config.audio.channel_mask);
+    nes.set_apu_channel_gain(config.audio.channel_gain);
+    nes.set_apu_filter_model(crate::config::parse_filter_model(
+        &config.audio.filter_model,
+    ));
+    nes.set_oam_decay(config.emulation.oam_decay);
+    push_ppu_hardware_config(config, nes);
+    nes.set_console_model(console_model_for(config));
+    nes.set_custom_palette(palette);
+    #[cfg(not(target_arch = "wasm32"))]
+    attach_expansion_device(config.input.expansion_device, nes);
+}
+
+/// v2.1.7 P5 — the opt-in PPU hardware-revision and power-on knobs from
+/// `[emulation]`, plus the fast dot path selector.
+///
+/// With every knob at its default the core stays byte-identical: the default
+/// revision (`Rp2c02H`) models no corruption, the default power-up palette is
+/// all-zero, and RAM powers up zeroed. All configured behaviour is
+/// deterministic (seeded or uniform fills). `set_power_on_ram` rewrites work
+/// RAM, so this is correct only at power-on; a mid-game Settings change goes
+/// through `App::apply_fast_dotloop` or `App::apply_console_model` instead.
+fn push_ppu_hardware_config(config: &crate::config::Config, nes: &mut Nes) {
+    use rustynes_core::{PaletteInit, PowerOnRam, PpuRevision};
+    let revision = if config.emulation.ppu_oamaddr_corruption {
+        PpuRevision::Rp2c02G
+    } else {
+        PpuRevision::Rp2c02H
+    };
+    let palette = if config.emulation.blargg_power_up_palette {
+        PaletteInit::Blargg
+    } else {
+        PaletteInit::Zeroed
+    };
+    let ram = if config.emulation.randomize_power_on_ram {
+        PowerOnRam::Seeded(config.emulation.power_on_ram_seed)
+    } else {
+        PowerOnRam::Zeroed
+    };
+    nes.set_ppu_revision(revision);
+    nes.set_power_up_palette(palette);
+    nes.set_power_on_ram(ram);
+    // v2.2.3 — the specialized PPU fast dot path. Unlike the three knobs above
+    // this is a performance selector, not an accuracy model: both paths emit
+    // the identical frame (pinned every frame by `fast_dotloop_diff`), so
+    // pushing it here is purely about honouring the user's escape hatch.
+    // Default on.
+    nes.set_fast_dotloop(config.emulation.fast_dotloop);
+}
+
+/// v2.9.8 — the `[emulation] famicom_console` choice as a
+/// [`rustynes_core::ConsoleModel`] (the NES model by default).
+const fn console_model_for(config: &crate::config::Config) -> rustynes_core::ConsoleModel {
+    if config.emulation.famicom_console {
+        rustynes_core::ConsoleModel::Famicom
+    } else {
+        rustynes_core::ConsoleModel::Nes
+    }
+}
+
+/// The custom base palette the configuration selects, or `None` for the
+/// built-in one.
+///
+/// In order: the generated NTSC palette when enabled (v2.1.2 F1.4), else the
+/// selected entry of the named bank (v1.5.0 D1), else the legacy `.pal` file
+/// (v1.1.0 beta.1; native only, as the browser has no file to read). A `.pal`
+/// that fails to load falls back to the built-in palette for this session and
+/// says so, but leaves `[graphics] palette_file` as configured: the failure may
+/// be transient (an unmounted drive, a dropped share), and clearing and saving
+/// the config -- what this did until v2.9.3 -- made it permanent. See
+/// `load_pal_file`.
+fn palette_for_config(config: &crate::config::Config) -> Option<[[u8; 3]; 64]> {
+    if config.graphics.ntsc_palette_enabled {
+        let params = config.graphics.ntsc_palette.to_params();
+        return Some(rustynes_core::rustynes_ppu::generate_base_palette(&params));
+    }
+    if let Some(base) = config
+        .graphics
+        .active_palette
+        .as_ref()
+        .and_then(|name| config.graphics.palettes.palettes.get(name))
+        .map(crate::config::CustomPalette::to_base)
+    {
+        return Some(base);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        config.graphics.palette_file.as_ref().and_then(|path| {
+            crate::config::load_pal_file(path)
+                .map_err(|reason| eprintln!("rustynes: {reason}; using the built-in palette"))
+                .ok()
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
+    }
+}
+
+/// v2.1.0 — attach `device` on the player-2 port of `nes`, or detach it
+/// (`None` returns the port to the standard controller). The body of
+/// `App::sync_expansion_device`, split out (v2.9.8) so [`configure_console`]
+/// can attach the device to a console before it is installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn attach_expansion_device(device: crate::config::ExpansionDevice, nes: &mut Nes) {
+    use crate::config::ExpansionDevice;
+    match device {
+        ExpansionDevice::None => nes.set_expansion_device(1, None),
+        ExpansionDevice::Zapper => {
+            nes.set_zapper(1, u16::MAX, u16::MAX, false);
+        }
+        ExpansionDevice::Vaus => {
+            nes.set_paddle(1, 0x80, false);
+        }
+        ExpansionDevice::PowerPad => {
+            nes.set_power_pad(1, 0);
+        }
+        ExpansionDevice::SnesMouse => {
+            nes.set_snes_mouse(1, 0, 0, false, false, 0);
+        }
+        ExpansionDevice::FamilyKeyboard => {
+            nes.set_family_keyboard(1, [0; 9]);
+        }
+        ExpansionDevice::FamilyTrainer => {
+            nes.set_family_trainer(1, 0);
+        }
+        ExpansionDevice::SuborKeyboard => {
+            nes.set_subor_keyboard(1, [0; 9]);
+        }
+        ExpansionDevice::KonamiHyperShot => {
+            nes.set_konami_hyper_shot(1, 0);
+        }
+        ExpansionDevice::BandaiHyperShot => {
+            nes.set_bandai_hyper_shot(1, 0);
+        }
+    }
 }
 
 /// `true` when `bytes` is an NSF music file — classic `NESM\x1A` or the
@@ -1061,8 +1259,7 @@ pub(crate) fn warn_dual_system_main_only(why: &str) {
 /// Whether `nes` is a Vs. `DualSystem` board: the NES 2.0 header says so, or
 /// the Vs. database lists its SHA-256 as one.
 pub(crate) fn is_dual_system(nes: &Nes) -> bool {
-    nes.is_vs_dual_system()
-        || rustynes_core::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system)
+    nes.is_vs_dual_system() || rustynes_core::vs_db::lookup(nes).is_some_and(|e| e.dual_system)
 }
 
 /// v1.7.0 "Forge" G4 — the recomputed ROM digests stamped onto an exported TAS
@@ -1392,7 +1589,8 @@ impl App {
     /// Apply the Vs. System per-game database (v2.7.0) to a freshly built
     /// `Nes`, then apply the effective DIP switches.
     ///
-    /// Looks up the ROM's SHA-256 in [`rustynes_core::vs_db`]. When found, the DB's
+    /// Looks up the ROM in [`rustynes_core::vs_db`] (by its header-independent
+    /// identity first, then its whole-image hash). When found, the DB's
     /// PPU type is applied unconditionally (it is authoritative for the output
     /// palette — iNES-1.0 dumps default to the 2C03 and need the DB to pick the
     /// right 2C04-000x / 2C05 LUT). The DIP follows a precedence chain:
@@ -1400,7 +1598,7 @@ impl App {
     /// non-Vs. carts (`set_vs_ppu_type` / `set_vs_dip` ignore them) and changes
     /// nothing about normal NES play.
     fn apply_vs_db(&self, nes: &mut Nes) {
-        let db_entry = rustynes_core::vs_db::lookup(nes.rom_sha256());
+        let db_entry = rustynes_core::vs_db::lookup(nes);
         // The DB is authoritative for the palette: apply its PPU type whenever
         // the ROM is in the DB, independent of the DIP precedence below.
         if let Some(entry) = db_entry {
@@ -1424,6 +1622,12 @@ impl App {
     /// v2.1.2) and, from v2.9.7, the wasm-winit load path, so the browser
     /// detects the same cabinets by the same rule. The caller excludes FDS and
     /// NSF images, which are never Vs. boards.
+    ///
+    /// v2.9.8 — both consoles also get the game database's mirroring
+    /// correction ([`crate::game_db::correct_console`]) and the whole power-on
+    /// configuration ([`configure_console`]), before the cabinet is installed.
+    /// Until v2.9.8 a cabinet got neither: the load paths applied both to the
+    /// probe console, which a cabinet discards.
     fn build_dual_cabinet(
         &self,
         nes: &Nes,
@@ -1437,6 +1641,11 @@ impl App {
             Ok(mut vs) => {
                 self.apply_vs_db(vs.main_mut());
                 self.apply_vs_db(vs.sub_mut());
+                let pair: [&mut Nes; 2] = vs.split_mut().into();
+                for console in pair {
+                    Self::apply_game_db(console, bytes);
+                    configure_console(&self.config, console);
+                }
                 Some(Box::new(vs))
             }
             Err(e) => {
@@ -1448,22 +1657,51 @@ impl App {
         }
     }
 
+    /// v2.9.8 — the one cabinet decision every ROM load path makes: the Vs.
+    /// `DualSystem` cabinet for `bytes` (whose probe console is `nes`), or
+    /// `None` to install `nes` as a single console.
+    ///
+    /// FDS and NSF images are never Vs. boards and are excluded here, by their
+    /// magic, before [`Self::build_dual_cabinet`] reads the probe. Every load
+    /// path asks this and nothing else: the menu, drag-and-drop and Recent
+    /// ROMs (all through `load_rom_from_path`), a ROM given on the command line
+    /// (`finish_start_nes`), and the browser (`install_nes_wasm`). Until v2.9.8
+    /// the command-line path did not ask at all and installed a cabinet image
+    /// as a single console, which runs the main CPU alone and never completes
+    /// the boot handshake with the sub.
+    fn cabinet_for_image(
+        &self,
+        nes: &Nes,
+        bytes: &[u8],
+        sample_rate: u32,
+    ) -> Option<Box<rustynes_core::VsDualSystem>> {
+        // The browser loads no NSF (`Nes::from_rom` rejects one before this
+        // point), and `is_nsf_image` is native-only.
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_nsf_image(bytes) {
+            return None;
+        }
+        if is_fds_image(bytes) {
+            return None;
+        }
+        self.build_dual_cabinet(nes, bytes, sample_rate)
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — apply the per-game database's nametable
     /// mirroring override (a load-time fix for a wrong iNES mirroring flag),
     /// keyed on the ROM's CRC32. A no-op when the ROM is not listed (or not an
     /// iNES image — e.g. FDS), so the default path is byte-identical. The core
     /// test suites never call this, so `AccuracyCoin` / the oracle are unaffected.
+    ///
+    /// v2.9.8 — the body is [`crate::game_db::correct_console`], stage two of
+    /// the load-time correction path every platform shares. It carries the
+    /// hardwired-mirroring guard: a static override on a mapper that controls
+    /// its own mirroring (MMC1/3/5, `AxROM`, VRC, …) corrupts rendering — Wizards
+    /// & Warriors' spurious `Horizontal` blanked its status-bar split and hung
+    /// the game.
     fn apply_game_db(nes: &mut Nes, bytes: &[u8]) {
-        if let Some(crc) = crate::game_db::rom_crc32(bytes)
-            && let Some(m) = crate::game_db::mirroring_for_crc(crc)
-            // A game-DB mirroring correction is only valid for a hardwired-
-            // mirroring board. Force-applying it to a mapper that controls its
-            // own mirroring (MMC1/3/5, AxROM, VRC, …) corrupts rendering — e.g.
-            // Wizards & Warriors (AxROM), whose DB row's spurious `Horizontal`
-            // blanked the status-bar split and hung the game. Skip it there.
-            && nes.mapper_has_hardwired_mirroring()
-        {
-            nes.set_mirroring_override(Some(m));
+        if let Some(crc) = crate::game_db::rom_crc32(bytes) {
+            crate::game_db::correct_console(nes, crc);
         }
     }
 
@@ -1698,12 +1936,7 @@ impl App {
         // and so never reaches this function; its load path builds the cabinet
         // in `install_nes_wasm` (v2.9.7) with the same `build_dual_cabinet`.
         #[cfg(not(target_arch = "wasm32"))]
-        let dual_cabinet: Option<Box<rustynes_core::VsDualSystem>> =
-            if !is_nsf_image(&bytes) && !is_fds_image(&bytes) {
-                self.build_dual_cabinet(&nes, &bytes, sample_rate)
-            } else {
-                None
-            };
+        let dual_cabinet = self.cabinet_for_image(&nes, &bytes, sample_rate);
         if self.config.rewind.enabled {
             let max_bytes: usize =
                 ((self.config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
@@ -1753,6 +1986,22 @@ impl App {
                 nes.set_vs_dip(dip);
             }
         }
+        // v2.9.8 — every power-on setting (mask, gain, filter, OAM decay, PPU
+        // revision, power-up palette, power-on RAM, fast dot path, console
+        // model, palette, expansion device) and the persisted cheats go onto
+        // the console BEFORE it is installed. They used to be pushed after the
+        // install lock was released, one lock at a time, while the emulation
+        // thread was free to run the new game (`has_rom` was already set by the
+        // previous one); see `configure_console`. A two-console cabinet keeps
+        // what it had: the probe `nes` is discarded, and these never reached a
+        // cabinet's consoles before either.
+        configure_console(&self.config, &mut nes);
+        #[cfg(not(target_arch = "wasm32"))]
+        let raw_cheats = if dual_cabinet.is_none() {
+            Some(self.load_rom_cheats(&mut nes))
+        } else {
+            None
+        };
         // v1.2.0 (B4) — let the ROM-database editor key its overlay on this ROM.
         // v2.1.3 — also stash the full-file (No-Intro) CRC so the Game Genie
         // picklist matches on either key (any dump variant of the loaded game).
@@ -1808,6 +2057,16 @@ impl App {
             {
                 emu.set_nes(nes);
             }
+            // v2.9.8 — the two settings that live on `EmuCore` rather than on
+            // the console, set under the install lock for the same reason the
+            // console was configured before it: the emulation thread cannot
+            // take the lock until they are in place. The overclock applies at
+            // the top of each produced frame (v2.9.7).
+            emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(raw) = raw_cheats {
+                emu.raw_cheats = raw;
+            }
             // v2.7.3 (FE-01) — load the incoming cartridge's `.sav` under the
             // same lock, so the emulation thread cannot run a frame first.
             #[cfg(not(target_arch = "wasm32"))]
@@ -1832,7 +2091,13 @@ impl App {
         }
         // v2.8.0 Phase 5 increment 3 — a reload keeps the pacing regime but
         // may change the region (NTSC<->PAL frame duration); refresh the
-        // emulation thread's frame + keep `has_rom` set.
+        // emulation thread's frame + keep `has_rom` set. The thread may run
+        // the new console from the moment the install lock above is released
+        // (on a reload `has_rom` is still set from the previous game), which
+        // is why every power-on setting went onto the console before the
+        // install (v2.9.8; see `configure_console`). Nothing below changes
+        // emulated state: the HD pack, the Settings label, RetroAchievements
+        // and the NSF panel are host-side.
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         {
             self.publish_emu_thread_regime();
@@ -1840,42 +2105,17 @@ impl App {
                 thread.control().set_has_rom(true);
             }
         }
-        self.apply_cheats_for_current_rom();
         // v1.2.0 C3 — auto-load a configured HD-pack for this ROM (no-op when
         // none is configured, so the default presentation is byte-identical).
         #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
         self.maybe_load_hd_pack_for_rom();
-        // v1.0.0 — re-push the per-APU-channel mute mask (the fresh `Nes` booted
-        // with the all-on default). Default mask 0x3F = byte-identical audio.
-        self.apply_apu_channel_mask();
-        // v1.4.0 Workstream C — re-push the per-APU-channel output gain (the fresh
-        // `Nes` booted at unity). Default (all 1.0) = byte-identical audio.
-        self.apply_apu_channel_gain();
-        self.apply_apu_filter_model();
-        // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
-        // (booted decay-off). Off (default) = byte-identical.
-        self.apply_oam_decay();
-        // v2.9.7 — and the overclock, applied from the next frame.
-        self.apply_overclock();
-        // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
-        // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
-        // byte-identical.
-        self.apply_ppu_hardware_config();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
-        // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named bank
-        // entry, else legacy .pal / built-in) onto the fresh Nes (booted with
-        // the built-in palette). None / unselected = byte-identical.
-        self.apply_active_palette();
         // v2.7.0 — (re)identify the ROM with RetroAchievements + load its saved
         // progress sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
         self.load_ra_game();
-        // v2.1.0 — attach the configured non-standard input device (if any) on
-        // the player-2 port. No-op when ExpansionDevice::None.
-        #[cfg(not(target_arch = "wasm32"))]
-        self.sync_expansion_device();
         // v1.1.0 beta.2 — for an NSF music file, feed the header metadata to the
         // NSF player panel and pop it open (the framebuffer is blank, so the
         // panel is the primary UI).
@@ -1906,21 +2146,24 @@ impl App {
         eprintln!("rustynes: loaded {}", path.display());
     }
 
-    /// v1.6.0 / v1.7.0 — load the current ROM's persisted cheats, apply every
-    /// ENABLED Game Genie code to the running `Nes`, prime the enabled raw RAM
-    /// cheats for the per-frame produce path, and seed the debugger's cheat
-    /// panel with both lists + the per-ROM persistence context. Native-only —
-    /// the wasm32 build has no filesystem, so no cheats are persisted there
-    /// (the in-memory panel still works). No-op if no `Nes` or no data dir.
+    /// v1.6.0 — load the persisted cheat list for the console about to be
+    /// installed: apply every ENABLED Game Genie code to `nes`, seed the
+    /// debugger's cheat panel with both lists + the per-ROM persistence
+    /// context, and return the enabled raw RAM cheats for the caller to store
+    /// in `EmuCore::raw_cheats` under the install lock. Native-only — the wasm32
+    /// build has no filesystem, so no cheats are persisted there (the
+    /// in-memory panel still works).
+    ///
+    /// v2.9.8 — runs on the console BEFORE it is installed (it was
+    /// `apply_cheats_for_current_rom`, run after), so the codes are in force
+    /// from the first frame the emulation thread can produce, as the raw list's
+    /// own comment always claimed. With no data directory it returns an empty
+    /// list, where the old function returned early and left the PREVIOUS
+    /// game's raw cheats armed against the new one.
     #[cfg(not(target_arch = "wasm32"))]
-    fn apply_cheats_for_current_rom(&mut self) {
-        let mut guard = self.emu.lock();
-        let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_mut() else {
-            return;
-        };
+    fn load_rom_cheats(&mut self, nes: &mut Nes) -> Vec<crate::cheats::RawCheat> {
         let Some(dir) = self.data_dir.as_ref() else {
-            return;
+            return Vec::new();
         };
         let rom_sha256 = *nes.rom_sha256();
         let loaded = crate::cheats::load(dir, &rom_sha256);
@@ -1932,12 +2175,13 @@ impl App {
                 eprintln!("rustynes: cheat {} skipped: {e}", entry.code);
             }
         }
-        // v1.7.0 — prime the per-frame raw-cheat list from this ROM's enabled
-        // entries so they apply from frame 1 (before the panel's first pull).
-        emu.raw_cheats = loaded.raw.iter().filter(|c| c.enabled).cloned().collect();
+        // v1.7.0 — the per-frame raw-cheat list from this ROM's enabled entries,
+        // so they apply from frame 1 (before the panel's first pull).
+        let raw = loaded.raw.iter().filter(|c| c.enabled).cloned().collect();
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_cheat_persist(dir.clone(), rom_sha256, loaded.genie, loaded.raw);
         }
+        raw
     }
 
     /// v1.2.0 beta.2 (Workstream C3) — load the HD-pack configured for the
@@ -2395,50 +2639,79 @@ impl App {
     /// Save state to a filesystem slot. Native-only; wasm32 uses the
     /// `localStorage` path in `wasm.rs` (F1).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_save_state(&self, slot: u8) {
+    fn handle_save_state(&self, slot: u8) -> Result<(), String> {
         // Snapshot under a short lock; the file write runs with it dropped.
         // v2.9.7 (`T-PS-dual-savestate`): `save_state_blob` covers a Vs.
         // DualSystem cabinet too (both consoles, one "RVSD" container); before,
         // F1 with a cabinet loaded returned here and saved nothing.
         let snapshot = self.emu.lock().save_state_blob();
         let Some((rom_sha256, blob)) = snapshot else {
-            return;
+            return Err("No game loaded".into());
         };
         let Some(dir) = self.data_dir.as_ref() else {
             eprintln!("rustynes: no data directory available; save state skipped");
-            return;
+            return Err("No data directory".into());
         };
         match save_state::save_to_slot(dir, &rom_sha256, slot, &blob) {
-            Ok(path) => eprintln!("rustynes: saved state -> {}", path.display()),
-            Err(e) => eprintln!("rustynes: save state failed: {e}"),
+            Ok(path) => {
+                eprintln!("rustynes: saved state -> {}", path.display());
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("rustynes: save state failed: {e}");
+                Err(format!("Save state failed: {e}"))
+            }
         }
     }
 
     /// Load state from a filesystem slot. Native-only (see
     /// [`Self::handle_save_state`]).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_load_state(&self, slot: u8) {
+    fn handle_load_state(&self, slot: u8) -> Result<(), String> {
         // Read the ROM key under a short lock; the file read runs with it
         // dropped; the restore takes a second short lock. v2.9.7: the key and
         // the restore both cover a Vs. DualSystem cabinet.
         let Some(rom_sha256) = self.emu.lock().loaded_rom_sha256() else {
-            return;
+            return Err("No game loaded".into());
         };
         let Some(dir) = self.data_dir.as_ref() else {
             eprintln!("rustynes: no data directory available; load state skipped");
-            return;
+            return Err("No data directory".into());
         };
         match save_state::load_from_slot(dir, &rom_sha256, slot) {
             Ok(blob) => {
                 // Bind first so the emu lock drops before the log line.
                 let restored = self.emu.lock().restore_state_blob(&blob);
                 match restored {
-                    Ok(()) => eprintln!("rustynes: loaded state from slot {slot}"),
-                    Err(e) => eprintln!("rustynes: restore failed: {e}"),
+                    Ok(()) => {
+                        eprintln!("rustynes: loaded state from slot {slot}");
+                        Ok(())
+                    }
+                    // A state from v2.9.7 or earlier lands here, and its
+                    // message says why it is refused.
+                    Err(e) => {
+                        eprintln!("rustynes: restore failed: {e}");
+                        Err(format!("State refused: {e}"))
+                    }
                 }
             }
-            Err(e) => eprintln!("rustynes: load state failed: {e}"),
+            Err(e) => {
+                eprintln!("rustynes: load state failed: {e}");
+                Err(format!("Load state failed: {e}"))
+            }
         }
+    }
+
+    /// v2.9.8 — put a save / load outcome on the status line: `ok` on
+    /// success, the handler's own message (which names a refused state's
+    /// reason) on failure. Every native save and load site goes through this,
+    /// so none can report a success it did not have.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn report_state_result(&mut self, result: Result<(), String>, ok: String) {
+        self.ui.set_status(match result {
+            Ok(()) => StatusMessage::success(ok),
+            Err(e) => StatusMessage::error(e),
+        });
     }
 
     /// v1.0.0 — capture the current framebuffer to a PNG under
@@ -2837,9 +3110,11 @@ impl App {
     /// playback (the movie's input overrides live input). **Stop**: end
     /// playback and return control to live input.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_play_toggle(&self) {
+    fn handle_movie_play_toggle(&mut self) {
         if self.emu.lock().movie.is_playing() {
-            self.emu.lock().movie.stop_playback();
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            emu.movie.stop_playback(emu.nes.as_mut());
             eprintln!("rustynes: movie playback stopped");
             return;
         }
@@ -2865,22 +3140,15 @@ impl App {
         let movie = match rustynes_core::Movie::deserialize(&bytes) {
             Ok(m) => m,
             Err(e) => {
+                // v2.9.8: on screen, not only on stderr. A movie from before
+                // this release is refused HERE, and its message says to
+                // re-record it; the release notes promise the player sees it.
                 eprintln!("rustynes: movie parse failed {}: {e}", path.display());
+                self.ui
+                    .set_status(StatusMessage::error(format!("Movie refused: {e}")));
                 return;
             }
         };
-        // ADR 0028: a movie recorded before the v2.0.0 one-clock timebase
-        // promote still plays as pure input replay, but its bit-identical
-        // reproduction guarantee is unverified across the engine boundary.
-        if rustynes_core::recorded_before_v2_timebase(&bytes).is_ok_and(|v| v) {
-            eprintln!(
-                "rustynes: warning: {} was recorded on a pre-v2.0.0 build \
-                 -- input replay proceeds, but exact framebuffer/audio \
-                 reproduction is not guaranteed across the engine-timebase \
-                 boundary (see ADR 0028)",
-                path.display()
-            );
-        }
         let mut guard = self.emu.lock();
         if guard.nes.is_none() {
             eprintln!("rustynes: movie play: no ROM loaded");
@@ -2889,18 +3157,24 @@ impl App {
         let total = movie.len();
         // v2.9.0 — the seek replaces the save RAM with the movie's, which
         // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
+        let mut seek_error = None;
         let began = guard.start_sandboxed_session(|emu| {
             let Some(nes) = emu.nes.as_mut() else {
                 return false;
             };
-            if let Err(e) = movie.seek_to_start(nes) {
-                eprintln!("rustynes: movie seek failed (wrong ROM?): {e}");
+            if let Err(e) = emu.movie.start_playback(nes, movie) {
+                eprintln!("rustynes: movie seek failed: {e}");
+                seek_error = Some(e);
                 return false;
             }
-            emu.movie.start_playback(movie);
             true
         });
         if !began {
+            drop(guard);
+            if let Some(e) = seek_error {
+                self.ui
+                    .set_status(StatusMessage::error(format!("Movie refused: {e}")));
+            }
             return;
         }
         // The seek (power-cycle or restore) reset emulator state; restart
@@ -2922,7 +3196,7 @@ impl App {
     fn handle_movie_branch(&self) {
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_ref() else {
+        let Some(nes) = emu.nes.as_mut() else {
             eprintln!("rustynes: movie branch: no ROM loaded");
             return;
         };
@@ -3022,11 +3296,10 @@ impl App {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
-                if let Err(e) = movie.seek_to_start(nes) {
+                if let Err(e) = emu.movie.start_playback(nes, movie) {
                     seek_error = Some(e);
                     return false;
                 }
-                emu.movie.start_playback(movie);
                 true
             });
             if !began {
@@ -3142,10 +3415,7 @@ impl App {
                 .filter(|ed| !ed.is_empty())
                 .and_then(|ed| {
                     let guard = self.emu.lock();
-                    guard
-                        .nes
-                        .as_ref()
-                        .map(|nes| ed.to_movie(nes.region(), *nes.rom_sha256()))
+                    guard.nes.as_ref().map(|nes| ed.to_movie(nes))
                 });
             tas_movie.or_else(|| {
                 let mut guard = self.emu.lock();
@@ -3710,7 +3980,9 @@ impl App {
                         event_loop,
                     );
                 } else if playing {
-                    self.emu.lock().movie.stop_playback();
+                    let mut guard = self.emu.lock();
+                    let emu = &mut *guard;
+                    emu.movie.stop_playback(emu.nes.as_mut());
                 }
             }
             ReplayRequest::Seek(target) => {
@@ -3858,7 +4130,8 @@ impl App {
     fn handle_movie_play_toggle_wasm(&self) {
         let mut guard = self.emu.lock();
         if guard.movie.is_playing() {
-            guard.movie.stop_playback();
+            let emu = &mut *guard;
+            emu.movie.stop_playback(emu.nes.as_mut());
             crate::wasm_io::log("movie playback stopped");
             return;
         }
@@ -3872,7 +4145,7 @@ impl App {
     fn handle_movie_branch_wasm(&self) {
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_ref() else {
+        let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie branch: no ROM loaded");
             return;
         };
@@ -3894,27 +4167,17 @@ impl App {
                 return;
             }
         };
-        // ADR 0028: see the desktop movie-load path's identical warning.
-        if rustynes_core::recorded_before_v2_timebase(bytes).is_ok_and(|v| v) {
-            crate::wasm_io::log(
-                "warning: this movie was recorded on a pre-v2.0.0 build -- \
-                 input replay proceeds, but exact framebuffer/audio \
-                 reproduction is not guaranteed across the engine-timebase \
-                 boundary (see ADR 0028)",
-            );
-        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie play: no ROM loaded");
             return;
         };
-        if let Err(e) = movie.seek_to_start(nes) {
-            crate::wasm_io::log(&format!("movie seek failed (wrong ROM?): {e:?}"));
+        let total = movie.len();
+        if let Err(e) = emu.movie.start_playback(nes, movie) {
+            crate::wasm_io::log(&format!("movie seek failed: {e}"));
             return;
         }
-        let total = movie.len();
-        emu.movie.start_playback(movie);
         // The seek (power-cycle or restore) reset emulator state; restart the
         // frame clock so the first replayed frame is due now.
         emu.next_frame_time = Some(Instant::now());
@@ -4014,44 +4277,16 @@ impl App {
     }
 
     /// v2.1.0 — (re)attach the configured non-standard device on the player-2
-    /// port, or detach it (returning to the standard controller). Called after
-    /// a ROM loads and whenever the device selection changes.
+    /// port, or detach it (returning to the standard controller). Called
+    /// whenever the device selection changes; a ROM load and a power cycle
+    /// attach it through [`configure_console`] instead (v2.9.8), before the
+    /// console runs.
     #[cfg(not(target_arch = "wasm32"))]
     fn sync_expansion_device(&self) {
-        use crate::config::ExpansionDevice;
         let device = self.config.input.expansion_device;
         let mut guard = self.emu.lock();
         if let Some(nes) = guard.nes.as_mut() {
-            match device {
-                ExpansionDevice::None => nes.set_expansion_device(1, None),
-                ExpansionDevice::Zapper => {
-                    nes.set_zapper(1, u16::MAX, u16::MAX, false);
-                }
-                ExpansionDevice::Vaus => {
-                    nes.set_paddle(1, 0x80, false);
-                }
-                ExpansionDevice::PowerPad => {
-                    nes.set_power_pad(1, 0);
-                }
-                ExpansionDevice::SnesMouse => {
-                    nes.set_snes_mouse(1, 0, 0, false, false, 0);
-                }
-                ExpansionDevice::FamilyKeyboard => {
-                    nes.set_family_keyboard(1, [0; 9]);
-                }
-                ExpansionDevice::FamilyTrainer => {
-                    nes.set_family_trainer(1, 0);
-                }
-                ExpansionDevice::SuborKeyboard => {
-                    nes.set_subor_keyboard(1, [0; 9]);
-                }
-                ExpansionDevice::KonamiHyperShot => {
-                    nes.set_konami_hyper_shot(1, 0);
-                }
-                ExpansionDevice::BandaiHyperShot => {
-                    nes.set_bandai_hyper_shot(1, 0);
-                }
-            }
+            attach_expansion_device(device, nes);
         }
     }
 
@@ -4901,11 +5136,20 @@ impl App {
                 self.close_rom();
             }
             MenuAction::SaveState => {
+                // v2.9.8: the toast reports what happened. It used to say
+                // "State saved" / "State loaded" whatever the outcome, so a
+                // refused state looked like a successful load.
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state(self.active_save_slot);
+                {
+                    let result = self.handle_save_state(self.active_save_slot);
+                    self.report_state_result(result, "State saved".into());
+                }
+                // The browser write is asynchronous; its outcome is logged.
                 #[cfg(target_arch = "wasm32")]
-                self.handle_save_state_wasm(self.active_save_slot);
-                self.ui.set_status(StatusMessage::success("State saved"));
+                {
+                    self.handle_save_state_wasm(self.active_save_slot);
+                    self.ui.set_status(StatusMessage::success("State saved"));
+                }
             }
             MenuAction::LoadState => {
                 if self.ra_hardcore_blocks() {
@@ -4916,10 +5160,16 @@ impl App {
                         .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state(self.active_save_slot);
+                    {
+                        let result = self.handle_load_state(self.active_save_slot);
+                        self.report_state_result(result, "State loaded".into());
+                    }
+                    // The browser read is asynchronous; its outcome is logged.
                     #[cfg(target_arch = "wasm32")]
-                    self.handle_load_state_wasm(self.active_save_slot);
-                    self.ui.set_status(StatusMessage::success("State loaded"));
+                    {
+                        self.handle_load_state_wasm(self.active_save_slot);
+                        self.ui.set_status(StatusMessage::success("State loaded"));
+                    }
                 }
             }
             MenuAction::Quit => {
@@ -4970,14 +5220,17 @@ impl App {
                     .set_status(StatusMessage::info(format!("Save slot {}", slot + 1)));
             }
             MenuAction::SaveStateSlot(slot) => {
+                let ok = format!("Saved to slot {}", slot + 1);
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state(slot);
+                {
+                    let result = self.handle_save_state(slot);
+                    self.report_state_result(result, ok);
+                }
                 #[cfg(target_arch = "wasm32")]
-                self.handle_save_state_wasm(slot);
-                self.ui.set_status(StatusMessage::success(format!(
-                    "Saved to slot {}",
-                    slot + 1
-                )));
+                {
+                    self.handle_save_state_wasm(slot);
+                    self.ui.set_status(StatusMessage::success(ok));
+                }
             }
             MenuAction::LoadStateSlot(slot) => {
                 if self.ra_hardcore_blocks() {
@@ -4987,14 +5240,17 @@ impl App {
                     self.ui
                         .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
+                    let ok = format!("Loaded from slot {}", slot + 1);
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state(slot);
+                    {
+                        let result = self.handle_load_state(slot);
+                        self.report_state_result(result, ok);
+                    }
                     #[cfg(target_arch = "wasm32")]
-                    self.handle_load_state_wasm(slot);
-                    self.ui.set_status(StatusMessage::success(format!(
-                        "Loaded from slot {}",
-                        slot + 1
-                    )));
+                    {
+                        self.handle_load_state_wasm(slot);
+                        self.ui.set_status(StatusMessage::success(ok));
+                    }
                 }
             }
             MenuAction::MovieRecordToggle => {
@@ -6116,10 +6372,19 @@ impl App {
         use rustynes_script::ControlCmd;
         match cmd {
             ControlCmd::Pause => self.set_paused(true),
-            ControlCmd::SaveState(slot) => self.handle_save_state(*slot),
+            // A script's saves and loads report only failures: a script can
+            // save every frame, and a success toast each time would bury the
+            // status line.
+            ControlCmd::SaveState(slot) => {
+                if let Err(e) = self.handle_save_state(*slot) {
+                    self.ui.set_status(StatusMessage::error(e));
+                }
+            }
             ControlCmd::LoadState(slot) => {
-                if !self.ra_hardcore_blocks() {
-                    self.handle_load_state(*slot);
+                if !self.ra_hardcore_blocks()
+                    && let Err(e) = self.handle_load_state(*slot)
+                {
+                    self.ui.set_status(StatusMessage::error(e));
                 }
             }
             // v1.2.0 (T-110-E2) — stash the per-port override on the core; it is
@@ -6279,9 +6544,10 @@ impl App {
     /// under the emu lock (respecting the lock discipline). A UI playback
     /// overlay: the default `0x3F` (all six channels on) is byte-identical to
     /// today's mixer output, so the deterministic per-frame audio is unchanged
-    /// unless a channel is explicitly muted. Cheap; called at startup, on every
-    /// channel-checkbox edit, and after each fresh ROM load (a new `Nes` boots
-    /// with the all-on default, so the mask must be re-pushed).
+    /// unless a channel is explicitly muted. Cheap; called at startup and on
+    /// every channel-checkbox edit. A fresh ROM load (a new APU boots all-on)
+    /// pushes it through [`configure_console`] (v2.9.8), before the console
+    /// runs; a Power Cycle keeps it in the core since v2.9.8.
     fn apply_apu_channel_mask(&self) {
         let mask = self.config.audio.channel_mask;
         let mut guard = self.emu.lock();
@@ -6295,8 +6561,10 @@ impl App {
     /// mixing overlay generalizing [`Self::apply_apu_channel_mask`]: the default
     /// (all `1.0`) is byte-identical to today's mixer output, so the deterministic
     /// per-frame audio + the oracle stay byte-identical unless a slider is moved.
-    /// Cheap; called at startup, on every gain-slider edit, and after each fresh
-    /// ROM load (a new `Nes` boots at unity, so the gains must be re-pushed).
+    /// Cheap; called at startup and on every gain-slider edit. A fresh ROM load
+    /// (a new APU boots at unity) pushes it through [`configure_console`]
+    /// (v2.9.8), before the console runs; a Power Cycle keeps it in the core
+    /// since v2.9.8.
     fn apply_apu_channel_gain(&self) {
         let gain = self.config.audio.channel_gain;
         let mut guard = self.emu.lock();
@@ -6308,7 +6576,10 @@ impl App {
     /// v2.1.3 — push the configured APU analog output-filter model to the core.
     /// Default (`"nes"`) is byte-identical to earlier builds; `"famicom"` /
     /// `"clean"` drop the aggressive 440 Hz high-pass for a fuller low end.
-    /// Called on ROM load, after a power-cycle, and on a Settings change.
+    /// Called at startup and on a Settings change; a ROM load and a Power Cycle
+    /// push it through [`configure_console`] (v2.9.8). Before v2.9.8 the Power
+    /// Cycle neither re-pushed it nor kept it, so the rebuilt APU ran the
+    /// default filter; the core now keeps it across the cycle.
     fn apply_apu_filter_model(&self) {
         let model = crate::config::parse_filter_model(&self.config.audio.filter_model);
         let mut guard = self.emu.lock();
@@ -6319,8 +6590,11 @@ impl App {
 
     /// v2.1.4 F2.3 — push the configured optional OAM-decay accuracy toggle to the
     /// core. `false` (the default) is byte-identical to a decay-free core; `true`
-    /// models the 2C02's dynamic sprite-RAM decay (NTSC/Dendy only). Called on ROM
-    /// load, after a power-cycle, at startup, and on a Settings change.
+    /// models the 2C02's dynamic sprite-RAM decay (NTSC/Dendy only). Called at
+    /// startup and on a Settings change; a ROM load and a Power Cycle push it
+    /// through [`configure_console`] (v2.9.8). Before v2.9.8 the Power Cycle
+    /// neither re-pushed it nor kept it, so the rebuilt PPU ran with the decay
+    /// model off; the core now keeps it across the cycle.
     fn apply_oam_decay(&self) {
         let enabled = self.config.emulation.oam_decay;
         let mut guard = self.emu.lock();
@@ -6333,47 +6607,61 @@ impl App {
     /// overclock_scanlines`) to the emulator. `EmuCore` applies it at the top of
     /// every produced frame through `effective_extra_scanlines`, which clamps it
     /// and holds stock timing while a movie records or plays; netplay's drive
-    /// sites force stock timing separately. Called on ROM load, after a power
-    /// cycle, at startup and on a Settings change, like the knobs around it.
+    /// sites force stock timing separately. Called at startup and on a Settings
+    /// change; the ROM load paths set the field under their install lock
+    /// (v2.9.8), and a Power Cycle leaves it alone (it is not console state).
     fn apply_overclock(&self) {
         let lines = self.config.enhancements.overclock_scanlines;
         self.emu.lock().overclock_scanlines = lines;
     }
 
     /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
-    /// `[emulation]` config into the core. Called on ROM load, after a
-    /// power-cycle, and at startup. With every knob at its default (all off) the
-    /// core stays byte-identical: the default revision (`Rp2c02H`) models no
-    /// corruption, the default power-up palette is all-zero, and RAM powers up
-    /// zeroed. All configured behavior is deterministic (seeded / uniform fills).
+    /// `[emulation]` config into the running core ([`push_ppu_hardware_config`]
+    /// under the emu lock). Called at startup, before any ROM is loaded; a ROM
+    /// load and a Power Cycle apply the same knobs through [`configure_console`]
+    /// (v2.9.8), to a console that has not yet run. It rewrites work RAM, so it
+    /// is never the path for a mid-game change. Native-only: the browser's
+    /// startup has no such push (its first console is configured on load).
+    #[cfg(not(target_arch = "wasm32"))]
     fn apply_ppu_hardware_config(&self) {
-        use rustynes_core::{PaletteInit, PowerOnRam, PpuRevision};
-        let revision = if self.config.emulation.ppu_oamaddr_corruption {
-            PpuRevision::Rp2c02G
-        } else {
-            PpuRevision::Rp2c02H
-        };
-        let palette = if self.config.emulation.blargg_power_up_palette {
-            PaletteInit::Blargg
-        } else {
-            PaletteInit::Zeroed
-        };
-        let ram = if self.config.emulation.randomize_power_on_ram {
-            PowerOnRam::Seeded(self.config.emulation.power_on_ram_seed)
-        } else {
-            PowerOnRam::Zeroed
-        };
         let mut guard = self.emu.lock();
         if let Some(nes) = guard.nes.as_mut() {
-            nes.set_ppu_revision(revision);
-            nes.set_power_up_palette(palette);
-            nes.set_power_on_ram(ram);
-            // v2.2.3 — the specialized PPU fast dot path. Unlike the three
-            // knobs above this is a performance selector, not an accuracy
-            // model: both paths emit the identical frame (pinned every frame
-            // by `fast_dotloop_diff`), so pushing it here is purely about
-            // honouring the user's escape hatch. Default on.
+            push_ppu_hardware_config(&self.config, nes);
+        }
+    }
+
+    /// v2.9.8 — push ONLY the `[emulation] fast_dotloop` selector into the
+    /// core, for a mid-game Settings change.
+    ///
+    /// The live toggle used to call [`Self::apply_ppu_hardware_config`], whose
+    /// `set_power_on_ram` re-applies the power-on fill to the 2 KiB work RAM
+    /// (zero-filling it by default). Flipping the checkbox mid-game therefore
+    /// wiped the running game's RAM, a performance switch with a destructive
+    /// side effect. The other knobs that function pushes are power-on state
+    /// and are only correct at load, power-cycle and startup.
+    fn apply_fast_dotloop(&self) {
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
             nes.set_fast_dotloop(self.config.emulation.fast_dotloop);
+        }
+    }
+
+    /// v2.9.8 — push the `[emulation] famicom_console` choice into the core as
+    /// a [`rustynes_core::ConsoleModel`]. Called at startup and on a Settings
+    /// change; a ROM load and a Power Cycle apply it through
+    /// [`configure_console`], before the console runs, which gives the Famicom
+    /// power-on (the PPU's warm-up already over). Selected mid-game it ends any
+    /// warm-up still running and changes what the next Reset does. Off (the
+    /// NES model) is byte-identical.
+    ///
+    /// Kept apart from [`Self::apply_ppu_hardware_config`] on purpose: that
+    /// function also re-applies the power-on work-RAM fill, which rewrites
+    /// work RAM, so it must not run on a mid-game Settings change for this knob.
+    fn apply_console_model(&self) {
+        let model = console_model_for(&self.config);
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_console_model(model);
         }
     }
 
@@ -6391,74 +6679,24 @@ impl App {
         }
     }
 
-    /// v1.1.0 beta.1 (T-110-A3) — load + apply the configured `.pal` palette to the
-    /// running core (or clear it when none / unreadable). Called on startup and on
-    /// ROM load so a configured palette survives a reload. Native-only (no
-    /// filesystem on wasm); a no-op there. Takes `&self`: it reads the config and
-    /// never writes it (see the failure note inside).
-    #[cfg_attr(
-        target_arch = "wasm32",
-        allow(clippy::unused_self, clippy::missing_const_for_fn)
-    )]
-    fn apply_palette_from_config(&self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // A load failure falls back to the built-in palette for this
-            // session and says so, but leaves `[graphics] palette_file` as
-            // configured: the failure may be transient (an unmounted drive, a
-            // dropped share), and clearing + saving the config -- what this did
-            // until v2.9.3 -- made it permanent. See `load_pal_file`.
-            let pal = self.config.graphics.palette_file.as_ref().and_then(|path| {
-                crate::config::load_pal_file(path)
-                    .map_err(|reason| eprintln!("rustynes: {reason}; using the built-in palette"))
-                    .ok()
-            });
-            let mut guard = self.emu.lock();
-            if let Some(nes) = guard.nes.as_mut() {
-                nes.set_custom_palette(pal);
-            }
-        }
-    }
-
-    /// v1.5.0 "Lens" Workstream D1 — apply the active named palette to the core
-    /// (or clear back to the built-in / legacy `.pal`). When an entry in the
-    /// named bank is selected it takes precedence over the legacy `.pal` file;
-    /// when nothing is selected we fall back to `apply_palette_from_config`
-    /// (built-in or legacy file). Presentation-only; built-in/unselected is
-    /// byte-identical.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
+    /// v1.5.0 "Lens" Workstream D1 — apply the configured palette to the
+    /// running core: the generated NTSC palette, else the active named
+    /// palette, else the legacy `.pal` file, else the built-in one (see
+    /// [`palette_for_config`], which a ROM load and a Power Cycle reach through
+    /// [`configure_console`] since v2.9.8). Called at startup and on a Settings
+    /// change. Presentation-only; built-in/unselected is byte-identical.
     fn apply_active_palette(&self) {
-        // v2.1.2 F1.4 — the generated NTSC palette, when enabled, takes
-        // precedence over the named bank + legacy `.pal` + built-in. It is a
-        // pure function of the stored params, synthesized fresh here (cheap:
-        // 64 colors, one-time on apply) and pushed as a custom base — the PPU
-        // applies the same emphasis LUT it uses for any custom palette.
-        if self.config.graphics.ntsc_palette_enabled {
-            let params = self.config.graphics.ntsc_palette.to_params();
-            let base = rustynes_core::rustynes_ppu::generate_base_palette(&params);
-            let mut guard = self.emu.lock();
-            if let Some(nes) = guard.nes.as_mut() {
-                nes.set_custom_palette(Some(base));
-            }
+        let pal = palette_for_config(&self.config);
+        // The browser reads no `.pal` file, and with neither a generated nor a
+        // named palette selected it has always left the running console's
+        // palette as it was (the fallback was a no-op there). Kept as it was.
+        #[cfg(target_arch = "wasm32")]
+        if pal.is_none() {
             return;
         }
-        let base = self
-            .config
-            .graphics
-            .active_palette
-            .as_ref()
-            .and_then(|name| self.config.graphics.palettes.palettes.get(name))
-            .map(crate::config::CustomPalette::to_base);
-        match base {
-            Some(pal) => {
-                let mut guard = self.emu.lock();
-                if let Some(nes) = guard.nes.as_mut() {
-                    nes.set_custom_palette(Some(pal));
-                }
-            }
-            // No named palette selected — fall back to the built-in or the
-            // legacy `.pal` file (handles the "cleared to built-in" case too).
-            None => self.apply_palette_from_config(),
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_custom_palette(pal);
         }
     }
 
@@ -6676,7 +6914,10 @@ impl App {
             }
             SysAction::SaveState => {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state(self.active_save_slot);
+                {
+                    let result = self.handle_save_state(self.active_save_slot);
+                    self.report_state_result(result, "State saved".into());
+                }
                 #[cfg(target_arch = "wasm32")]
                 self.handle_save_state_wasm(self.active_save_slot);
             }
@@ -6690,8 +6931,13 @@ impl App {
                     self.ui
                         .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
+                    // v2.9.8: the hotkey reported nothing, so a refused state
+                    // (one from v2.9.7 or earlier) failed in silence.
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state(self.active_save_slot);
+                    {
+                        let result = self.handle_load_state(self.active_save_slot);
+                        self.report_state_result(result, "State loaded".into());
+                    }
                     #[cfg(target_arch = "wasm32")]
                     self.handle_load_state_wasm(self.active_save_slot);
                 }
@@ -6890,12 +7136,15 @@ impl App {
 
     /// Power-cycle the running emulator (and keep `RetroAchievements` in sync).
     fn do_power_cycle(&mut self) {
+        // Resolved before the lock: it may read a `.pal` file.
+        let palette = palette_for_config(&self.config);
         {
             let mut guard = self.emu.lock();
-            if let Some(nes) = guard.nes.as_mut() {
+            let emu = &mut *guard;
+            if let Some(nes) = emu.nes.as_mut() {
                 nes.power_cycle();
                 // v1.0.0 (UX3 BUG-3) — re-apply the configured Game Genie codes
-                // to the freshly cold-booted core (disjoint borrow: `guard.nes` +
+                // to the freshly cold-booted core (disjoint borrow: `emu.nes` +
                 // the `debugger` field) so cheats keep working across a Power-
                 // Cycle even with the Cheats panel closed. A no-op when no codes
                 // are enabled (the no-cheat path stays byte-identical).
@@ -6905,18 +7154,55 @@ impl App {
                     // stack + access counters across a cold boot.
                     debugger.reset_debug_telemetry();
                 }
-                // v1.0.0 — `power_cycle` rebuilds the APU (all-on default), so
-                // re-push the per-channel mute mask. Default 0x3F = byte-identical.
-                nes.set_apu_channel_mask(self.config.audio.channel_mask);
-                // v1.4.0 Workstream C — `power_cycle` rebuilds the APU at unity,
-                // so re-push the per-channel gain. Default (all 1.0) =
-                // byte-identical.
-                nes.set_apu_channel_gain(self.config.audio.channel_gain);
+                // v2.9.8 — `power_cycle` keeps every setting (the core carries
+                // the PPU and APU ones across the rebuild), but unplugs the
+                // expansion device (which the per-frame input latch
+                // re-attaches regardless). Re-apply the whole configuration
+                // under this same lock, so the emulation thread never runs the
+                // cold-booted console without the device, and so the player's
+                // configuration is in place for a running movie's options to
+                // be laid over below. For the settings the core kept this
+                // rewrites the values it already holds; for the power-on fills
+                // it rewrites what the cycle just wrote (the reset sequence
+                // writes no RAM), plus the open-bus latch, which the first
+                // opcode fetch overwrites -- what every ROM load has always
+                // done after `from_rom`'s reset.
+                configure_console_with_palette(&self.config, palette, nes);
+                // ... and then a running movie's options on top, power-on
+                // fills included (`HardwareOptions::apply`): the movie, not the
+                // player's Settings, decides how its run behaves, and
+                // `MovieUi::before_frame` re-asserts all but the fills every
+                // frame. Without this the player's fills, written just above,
+                // would have refilled RAM under a replay recorded with others;
+                // before v2.9.8 the cycle simply kept the movie's stored fills.
+                if let Some(options) = emu.movie.held_options() {
+                    let held = options.apply(nes);
+                    debug_assert!(held.is_ok(), "a parsed movie's options re-apply");
+                }
+            }
+            // v2.9.8 — a Vs. `DualSystem` cabinet (installed in `emu.dual`,
+            // with `emu.nes` empty) is cycled as a whole: cycling its two
+            // consoles one by one would drop the cabinet wiring their mappers
+            // carry, so the sub would run the main's program. Each console is
+            // then configured exactly as a single console is above, a running
+            // movie's options last. Until v2.9.8 the Power Cycle did nothing
+            // to a cabinet. A cabinet carries no cheats and no debugger
+            // telemetry (ADR 0032), so those two steps have no counterpart.
+            if let Some(dual) = emu.dual.as_mut() {
+                dual.power_cycle();
+                let pair: [&mut Nes; 2] = dual.split_mut().into();
+                for console in pair {
+                    configure_console_with_palette(&self.config, palette, console);
+                    if let Some(options) = emu.movie.held_options() {
+                        let held = options.apply(console);
+                        debug_assert!(held.is_ok(), "a parsed movie's options re-apply");
+                    }
+                }
             }
             // v1.7.0 "Forge" D1 — a cold boot restarts the session timeline.
-            guard.history.clear();
+            emu.history.clear();
             // v1.7.0 "Forge" H4 — a cold boot restarts the lag-frame tally.
-            guard.reset_lag_frames();
+            emu.reset_lag_frames();
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
         // status bar doesn't read "Paused" with a freshly-booted, running core.
@@ -7108,11 +7394,17 @@ impl App {
                 host: _,
                 num_players,
             } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     crate::wasm_io::log("rustynes: browser netplay needs a loaded ROM first");
                     return;
                 };
-                let mut driver = crate::wasm_netplay::BrowserNetplay::new(rom_hash);
+                let mut driver = crate::wasm_netplay::BrowserNetplay::new(identity);
                 driver.set_num_players(num_players);
                 let ice = self.config.netplay.stun_servers.clone();
                 match driver.connect(&signaling_url, &room, &ice) {
@@ -7176,7 +7468,13 @@ impl App {
                 );
             }
             NetplayRequest::Host { port, num_players } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     return;
                 };
                 // v2.8.0 Phase 5 increment 3 — pause the emulation thread
@@ -7187,17 +7485,23 @@ impl App {
                 self.pause_emu_thread_for_netplay();
                 // Host "listen" mode: bind the local port and learn the joiner's
                 // address from its first Sync — no remote to pre-enter or parse.
-                self.netplay.start_host(port, num_players, rom_hash);
+                self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
                     Ok(addr) => {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
-                        self.netplay.start_join(addr, rom_hash);
+                        self.netplay.start_join(addr, identity);
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }
@@ -7205,14 +7509,20 @@ impl App {
             // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
             // Join, but the spectator never authors input (see `start_spectate`).
             NetplayRequest::Spectate { remote } => {
-                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                let Some(identity) = self
+                    .emu
+                    .lock()
+                    .nes
+                    .as_ref()
+                    .map(rustynes_netplay::SessionIdentity::of)
+                else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
                     Ok(addr) => {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
-                        self.netplay.start_spectate(addr, rom_hash);
+                        self.netplay.start_spectate(addr, identity);
                         // v2.9.0 — the cold boot `start_spectate`'s doc has always
                         // promised and nothing performed: the players' timeline
                         // starts at a power-on with cleared save RAM, and a
@@ -8875,6 +9185,8 @@ impl App {
             // v2.1.7 P5 — push the persisted PPU-revision / power-up-palette /
             // power-on-RAM knobs (no-op if no ROM yet). All-off = byte-identical.
             self.apply_ppu_hardware_config();
+            // v2.9.8 — and the console model (no-op if no ROM yet; NES default).
+            self.apply_console_model();
             // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named
             // bank entry, else legacy .pal / built-in).
             self.apply_active_palette();
@@ -8920,7 +9232,7 @@ impl App {
             let built = self.build_fds_nes(&disk, sample_rate);
             self.rom_bytes = disk;
             if let Some(nes) = built {
-                return self.finish_start_nes(nes, event_loop);
+                return self.finish_start_nes(nes, sample_rate, event_loop);
             }
             // BIOS cancelled / wrong size: a startup FDS load can't proceed.
             // Native: fatal (no running session yet).
@@ -8932,7 +9244,7 @@ impl App {
             // wasm: if the BIOS isn't uploaded yet, keep waiting (the user can
             // upload it, which then retries the build via `set_fds_bios_wasm`).
             if let Some(nes) = self.build_fds_nes_wasm(sample_rate) {
-                return self.finish_start_nes(nes, event_loop);
+                return self.finish_start_nes(nes, sample_rate, event_loop);
             }
             return;
         }
@@ -8953,7 +9265,7 @@ impl App {
         {
             self.emu.lock().fds_disk_sha256 = None;
         }
-        self.finish_start_nes(nes, event_loop);
+        self.finish_start_nes(nes, sample_rate, event_loop);
     }
 
     /// v2.9.7 "Tandem" — install a freshly built console in the browser: the
@@ -8982,13 +9294,7 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn install_nes_wasm(&mut self, nes: Nes) {
         let sample_rate = crate::wasm_audio::sample_rate().unwrap_or(44_100);
-        // FDS images are never Vs. boards (and the browser loads no NSF: the
-        // cartridge path's `Nes::from_rom` rejects it before this point).
-        let cabinet = if is_fds_image(&self.rom_bytes) {
-            None
-        } else {
-            self.build_dual_cabinet(&nes, &self.rom_bytes, sample_rate)
-        };
+        let cabinet = self.cabinet_for_image(&nes, &self.rom_bytes, sample_rate);
         self.dual_mode = cabinet.is_some();
         let restore = {
             let mut guard = self.emu.lock();
@@ -9109,13 +9415,25 @@ impl App {
     }
 
     /// Common post-construction wiring shared by the cartridge + FDS branches
-    /// of [`Self::start_nes`]: rewind ring, Four Score, frame timing, the first
-    /// redraw kick, and the cheat/expansion-device sync.
+    /// of [`Self::start_nes`]: rewind ring, Four Score, the per-game and
+    /// power-on configuration ([`configure_console`]) and the cheats, all
+    /// before the console is installed, then frame timing and the first redraw
+    /// kick.
     // `&mut self` is only exercised by the native body (`resolve_pacing` /
-    // `apply_cheats_for_current_rom`); the wasm build mutates through the emu
-    // lock alone — a cfg artifact.
+    // `load_rom_cheats`); the wasm build mutates through the emu lock alone —
+    // a cfg artifact.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::needless_pass_by_ref_mut))]
-    fn finish_start_nes(&mut self, mut nes: Nes, event_loop: &ActiveEventLoop) {
+    fn finish_start_nes(&mut self, mut nes: Nes, sample_rate: u32, event_loop: &ActiveEventLoop) {
+        // v2.9.8 — a Vs. `DualSystem` image given on the command line becomes
+        // the two-console cabinet, by the same decision the menu load makes
+        // (`cabinet_for_image`); the probe `nes` then supplies only the frame
+        // timing below, exactly as in `load_rom_from_path`. Until v2.9.8 this
+        // path installed every image as a single console. The browser builds
+        // its cabinet in `install_nes_wasm`, from the same decision.
+        #[cfg(not(target_arch = "wasm32"))]
+        let dual_cabinet = self.cabinet_for_image(&nes, &self.rom_bytes, sample_rate);
+        #[cfg(target_arch = "wasm32")]
+        let _ = sample_rate;
         if self.config.rewind.enabled {
             // 60 fps × max_seconds × ~120 KiB/snapshot keyframe ≈ ~7 MiB
             // before delta compression; we cap at 32 MiB by default.
@@ -9158,9 +9476,29 @@ impl App {
                 }
             }
         }
+        // v2.9.8 — every power-on setting and the persisted cheats go onto the
+        // console BEFORE it is installed, as on the menu load path (see
+        // `configure_console`): once `set_has_rom(true)` below lets the
+        // emulation thread run, it must find the console already configured.
+        // These were pushed after that point, one lock at a time, until v2.9.8.
+        configure_console(&self.config, &mut nes);
+        // A cabinet's consoles carry no cheats, as on the menu load path.
+        #[cfg(not(target_arch = "wasm32"))]
+        let raw_cheats = if dual_cabinet.is_none() {
+            Some(self.load_rom_cheats(&mut nes))
+        } else {
+            None
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.dual_mode = dual_cabinet.is_some();
+        }
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
+            // v2.9.8 — the overclock lives on `EmuCore` (applied at the top of
+            // each produced frame); set before the console is installed.
+            emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
             // Capture the cartridge's nominal frame duration — consults the
             // cartridge region (NTSC: ~16.64 ms, PAL/Dendy: ~20 ms).
             emu.frame_duration = nes.frame_duration();
@@ -9181,7 +9519,15 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         let battery_notice = {
             let mut guard = self.emu.lock();
-            guard.set_nes(nes);
+            if let Some(vs) = dual_cabinet {
+                guard.present_fb_sub.clear();
+                guard.set_dual(vs);
+            } else {
+                guard.set_nes(nes);
+            }
+            if let Some(raw) = raw_cheats {
+                guard.raw_cheats = raw;
+            }
             // v2.7.3 (FE-01) — the initial ROM's `.sav`, before its first frame.
             guard.attach_battery(self.data_dir.as_deref())
         };
@@ -9204,7 +9550,9 @@ impl App {
         // v2.8.0 Phase 5 increment 3 — let the (idle) emulation thread start
         // producing now that the core holds a ROM. Set AFTER `nes` is in
         // place so the thread never produces on an empty core; `resolve_pacing`
-        // above already published the regime + frame duration.
+        // above already published the regime + frame duration, and the console
+        // was configured before it was installed (v2.9.8), so the first frame
+        // the thread can produce already has every power-on setting.
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.control().set_has_rom(true);
@@ -9214,38 +9562,13 @@ impl App {
         // the old game's GPU textures are freed).
         #[cfg(not(target_arch = "wasm32"))]
         self.save_states_ui.invalidate_all();
-        // v1.6.0 — apply this ROM's persisted Game Genie cheats (native).
-        #[cfg(not(target_arch = "wasm32"))]
-        self.apply_cheats_for_current_rom();
-        // v1.0.0 — re-push the per-APU-channel mute mask onto the fresh `Nes`
-        // (booted all-on); default 0x3F = byte-identical audio.
-        self.apply_apu_channel_mask();
-        // v1.4.0 Workstream C — re-push the per-APU-channel gain onto the fresh
-        // `Nes` (booted at unity); default (all 1.0) = byte-identical audio.
-        self.apply_apu_channel_gain();
-        self.apply_apu_filter_model();
-        // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
-        // (booted decay-off). Off (default) = byte-identical.
-        self.apply_oam_decay();
-        // v2.9.7 — and the overclock, applied from the next frame.
-        self.apply_overclock();
-        // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
-        // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
-        // byte-identical.
-        self.apply_ppu_hardware_config();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
-        // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named bank
-        // entry, else legacy .pal / built-in).
-        self.apply_active_palette();
         // v2.7.0 — identify the ROM with RetroAchievements + load its progress
         // sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
         self.load_ra_game();
-        // v2.1.0 — attach the configured non-standard input device (native).
-        #[cfg(not(target_arch = "wasm32"))]
-        self.sync_expansion_device();
         // First frame kick. On native this redraw just presents; the
         // wall-clock pacer in `about_to_wait` drives production. On wasm32
         // this is the FIRST `requestAnimationFrame` of the rAF-driven
@@ -11297,12 +11620,17 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.overclock {
                     self.apply_overclock();
                 }
-                // v2.2.3 — PPU fast-dot-path toggle live-apply. Routed through
-                // `apply_ppu_hardware_config` (which pushes the whole
-                // `[emulation]` PPU knob set); re-pushing the other three is
-                // idempotent. Either setting emits the identical frame.
+                // v2.2.3 — PPU fast-dot-path toggle live-apply. Either setting
+                // emits the identical frame. v2.9.8: this pushes the selector
+                // alone. It used to go through `apply_ppu_hardware_config`,
+                // whose power-on RAM fill wiped the running game's work RAM.
                 if settings.fast_dotloop {
-                    self.apply_ppu_hardware_config();
+                    self.apply_fast_dotloop();
+                }
+                // v2.9.8 — console-model live-apply (its own path, so the
+                // power-on RAM fill is not re-run mid-game).
+                if settings.console_model {
+                    self.apply_console_model();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save
@@ -11312,12 +11640,9 @@ impl ApplicationHandler<AppEvent> for App {
                     use crate::save_states_ui::SaveStateRequest;
                     match req {
                         SaveStateRequest::Save(slot) => {
-                            self.handle_save_state(slot);
+                            let result = self.handle_save_state(slot);
                             self.save_states_ui.invalidate_slot(slot);
-                            self.ui.set_status(StatusMessage::success(format!(
-                                "Saved to slot {}",
-                                slot + 1
-                            )));
+                            self.report_state_result(result, format!("Saved to slot {}", slot + 1));
                         }
                         SaveStateRequest::Load(slot) => {
                             if self.ra_hardcore_blocks() {
@@ -11325,11 +11650,11 @@ impl ApplicationHandler<AppEvent> for App {
                                     "Load state disabled (hardcore)",
                                 ));
                             } else {
-                                self.handle_load_state(slot);
-                                self.ui.set_status(StatusMessage::success(format!(
-                                    "Loaded from slot {}",
-                                    slot + 1
-                                )));
+                                let result = self.handle_load_state(slot);
+                                self.report_state_result(
+                                    result,
+                                    format!("Loaded from slot {}", slot + 1),
+                                );
                             }
                         }
                     }
@@ -11561,6 +11886,7 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 #[cfg(test)]
 mod tests {
     use super::apply_load_time_header_overrides;
+    use rustynes_core::Nes;
 
     /// The CLI / initial-ROM path must apply the same load-time header
     /// corrections as the File-menu path.
@@ -11582,7 +11908,7 @@ mod tests {
         rom[7] = 0xB0; // mapper high nibble B -> 185
 
         let crc = crate::game_db::rom_crc32(&rom).expect("iNES header parses");
-        let Some(entry) = crate::game_db::entry_for_crc(crc) else {
+        let Some(entry) = crate::game_db::load_time_entry(crc, &rom) else {
             // Synthetic bytes will not match a real DB row; the point of the
             // test is the CALL, so drive the helper with a known entry instead.
             let mut a = rom.clone();
@@ -11673,6 +11999,287 @@ mod tests {
         assert_ne!(rewritten, rom, "the DB rewrite left the header untouched");
     }
 
+    /// The text of one `fn` in this file's production half, up to the next
+    /// `fn` at the same indentation. For the load-order shape tests below.
+    fn production_fn_body(name: &str) -> String {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(APP_SRC, |(before, _)| before);
+        let start = production
+            .find(&format!("    fn {name}("))
+            .unwrap_or_else(|| panic!("`fn {name}` not found"));
+        let rest = &production[start + 4..];
+        let end = rest.find("\n    fn ").map_or(rest.len(), |i| i + 1);
+        rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// v2.9.8 — every ROM load path installs a Vs. `DualSystem` image as the
+    /// two-console cabinet, through the one cabinet decision.
+    ///
+    /// Until v2.9.8 only `load_rom_from_path` (the menu, drag-and-drop and
+    /// Recent ROMs, which all call it) and the browser's `install_nes_wasm`
+    /// built the cabinet; a ROM given on the command line (`App::new` ->
+    /// `start_nes` -> `finish_start_nes`) was installed as a single console,
+    /// which runs the main CPU alone and never gets past the boot handshake.
+    ///
+    /// A source-shape test, like the one below and for the same reason: these
+    /// functions need an event loop, a window and the emulation thread, and
+    /// the cabinet decision itself (`build_dual_cabinet`) needs `&App`, which
+    /// no unit test can construct. What can be pinned is that every load path
+    /// asks the one decision and installs a cabinet when it gets one, and that
+    /// nothing else asks `build_dual_cabinet` directly (so no path skips the
+    /// FDS / NSF exclusion `cabinet_for_image` applies).
+    #[test]
+    fn every_load_path_installs_a_dual_system_cabinet() {
+        for name in ["load_rom_from_path", "finish_start_nes", "install_nes_wasm"] {
+            let body = production_fn_body(name);
+            let decided = body
+                .find("self.cabinet_for_image(")
+                .unwrap_or_else(|| panic!("{name}: does not ask `cabinet_for_image`"));
+            let installed = body
+                .find(".set_dual(")
+                .unwrap_or_else(|| panic!("{name}: never installs a cabinet"));
+            assert!(decided < installed, "{name}: decide, then install");
+        }
+        // Every other caller of the CLI / menu / drag-and-drop / Recent paths
+        // goes through one of the three above.
+        for (caller, via) in [
+            ("open_rom_dialog", "self.load_rom_from_path(&path)"),
+            ("start_nes", "self.finish_start_nes("),
+        ] {
+            assert!(
+                production_fn_body(caller).contains(via),
+                "{caller}: no longer routes through `{via}`"
+            );
+        }
+        let app_src: &str = include_str!("app.rs");
+        let production = app_src
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(app_src, |(before, _)| before);
+        assert_eq!(
+            production.matches("self.build_dual_cabinet(").count(),
+            1,
+            "`build_dual_cabinet` is called from `cabinet_for_image` only"
+        );
+        assert!(
+            production_fn_body("cabinet_for_image").contains("self.build_dual_cabinet("),
+            "`cabinet_for_image` builds the cabinet"
+        );
+    }
+
+    /// v2.9.8 — the desktop's Power Cycle cycles a Vs. `DualSystem` cabinet
+    /// too, through the same configuration path as a single console.
+    ///
+    /// Until v2.9.8 `do_power_cycle` touched only `emu.nes`, which is `None`
+    /// while a cabinet is installed (`EmuCore::set_dual` clears it), so F3 and
+    /// Emulation > Power Cycle did nothing to a cabinet. The cabinet must be
+    /// cycled as a whole (`VsDualSystem::power_cycle`, which re-wires the pair;
+    /// the core test `a_cabinet_power_cycle_is_a_fresh_cabinet` pins that),
+    /// then each console configured like a single one, a running movie's
+    /// options last. A source-shape test for the same reason as the load-path
+    /// tests: `do_power_cycle` needs `&mut App`.
+    #[test]
+    fn the_power_cycle_cycles_and_configures_a_dual_system_cabinet() {
+        let body = production_fn_body("do_power_cycle");
+        let cycled = body
+            .find("dual.power_cycle();")
+            .expect("do_power_cycle: a cabinet is not power-cycled");
+        let rest = &body[cycled..];
+        let configured = rest
+            .find("configure_console_with_palette(&self.config, palette, console)")
+            .expect("do_power_cycle: the cabinet's consoles are not configured");
+        let movie = rest
+            .find("emu.movie.held_options()")
+            .expect("do_power_cycle: a movie's options are not re-applied to the cabinet");
+        assert!(configured < movie, "the movie's options must come last");
+        assert!(
+            !body.contains(".main_mut().power_cycle()")
+                && !body.contains(".sub_mut().power_cycle()"),
+            "cycling the consoles one by one drops the cabinet wiring"
+        );
+    }
+
+    /// v2.9.8 (task B) — every power-on setting reaches the console BEFORE the
+    /// console is installed in the shared `EmuCore`, on both load paths.
+    ///
+    /// The race this pins: the emulation thread produces a frame whenever it
+    /// can take the emu lock while `has_rom` is set. On a ROM-to-ROM menu load
+    /// `has_rom` is still set from the previous game, so the thread may run
+    /// the NEW console the moment the install lock is released -- and the
+    /// power-on settings used to be pushed after that, one lock at a time,
+    /// with an HD-pack load between the install and most of them. A frame
+    /// produced in that window ran without them, and the late
+    /// `set_power_on_ram` then rewrote work RAM under a running game.
+    ///
+    /// A source-shape test: the race needs a live window and the emulation
+    /// thread, which a unit test cannot drive deterministically. What makes the
+    /// window harmless is an ORDER -- configure, then install -- and the order
+    /// is what this asserts, along with the absence of the old post-install
+    /// pushes (which would reintroduce mid-game rewrites if restored).
+    #[test]
+    fn every_load_path_configures_the_console_before_installing_it() {
+        for (name, install) in [
+            ("load_rom_from_path", "emu.set_nes(nes)"),
+            ("finish_start_nes", "guard.set_nes(nes)"),
+        ] {
+            let body = production_fn_body(name);
+            let configure = body
+                .find("configure_console(&self.config, &mut nes)")
+                .unwrap_or_else(|| panic!("{name}: no `configure_console` call"));
+            let installed = body
+                .find(install)
+                .unwrap_or_else(|| panic!("{name}: no `{install}`"));
+            assert!(
+                configure < installed,
+                "{name}: the console must be configured before it is installed"
+            );
+            for late in [
+                "self.apply_ppu_hardware_config()",
+                "self.apply_console_model()",
+                "self.apply_oam_decay()",
+                "self.apply_apu_filter_model()",
+                "self.apply_apu_channel_mask()",
+                "self.apply_apu_channel_gain()",
+                "self.apply_active_palette()",
+                "self.apply_overclock()",
+                "self.sync_expansion_device()",
+            ] {
+                assert!(
+                    !body.contains(late),
+                    "{name}: `{late}` pushes a setting after the install again"
+                );
+            }
+        }
+        // And the Power Cycle re-applies the whole configuration under its own
+        // lock, straight after the cycle.
+        let cycle = production_fn_body("do_power_cycle");
+        let cycled = cycle.find("nes.power_cycle();").expect("the cycle");
+        let configured = cycle
+            .find("configure_console_with_palette(&self.config, palette, nes)")
+            .expect("do_power_cycle: no `configure_console` call");
+        assert!(cycled < configured, "configure after the cycle, not before");
+        // The palette (which may read a `.pal` file) is resolved before the
+        // emu lock is taken, never under it.
+        let resolved = cycle
+            .find("palette_for_config(&self.config)")
+            .expect("do_power_cycle: the palette is not resolved up front");
+        let locked = cycle.find("self.emu.lock()").expect("the lock");
+        assert!(
+            resolved < locked,
+            "the `.pal` read must happen before the lock"
+        );
+        assert_eq!(
+            cycle.matches("palette_for_config").count(),
+            1,
+            "do_power_cycle reads the palette more than once"
+        );
+        // A running movie's options are applied after the player's, so the
+        // movie still wins across a power cycle.
+        let movie = cycle
+            .find("emu.movie.held_options()")
+            .expect("do_power_cycle: a running movie's options are not re-applied");
+        assert!(configured < movie, "the movie's options must come last");
+    }
+
+    /// v2.9.8 (task B) — across a Power Cycle a running movie's options win
+    /// over the player's configuration, power-on fills included: the order
+    /// `do_power_cycle` uses (player config, then `HardwareOptions::apply`)
+    /// leaves the console on the movie's fill and console model, and work
+    /// RAM holds the movie's pattern, not the player's.
+    #[test]
+    fn a_movies_options_win_over_the_player_config_across_a_power_cycle() {
+        use rustynes_core::{ConsoleModel, HardwareOptions, PowerOnRam};
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let player = crate::config::Config::default();
+        let movie = HardwareOptions {
+            console_model: ConsoleModel::Famicom,
+            power_on_ram: PowerOnRam::Seeded(0x5EED),
+            ..HardwareOptions::default()
+        };
+        let mut nes = Nes::from_rom(rom).expect("nestest loads");
+        movie.apply(&mut nes).expect("applies");
+        nes.power_cycle();
+        super::configure_console(&player, &mut nes);
+        assert_eq!(
+            nes.power_on_ram(),
+            PowerOnRam::Zeroed,
+            "premise: the player's config alone overrides the movie's fill"
+        );
+        movie.apply(&mut nes).expect("applies");
+        assert_eq!(nes.power_on_ram(), PowerOnRam::Seeded(0x5EED));
+        assert_eq!(nes.console_model(), ConsoleModel::Famicom);
+        let mut fresh = Nes::from_rom(rom).expect("nestest loads");
+        fresh.set_power_on_ram(PowerOnRam::Seeded(0x5EED));
+        assert_eq!(
+            (0..0x800u16)
+                .map(|a| nes.cpu_bus_peek(a))
+                .collect::<Vec<_>>(),
+            (0..0x800u16)
+                .map(|a| fresh.cpu_bus_peek(a))
+                .collect::<Vec<_>>(),
+            "work RAM holds the movie's power-on pattern"
+        );
+    }
+
+    /// v2.9.8 (task B) — what a Power Cycle drops, `configure_console` puts
+    /// back. Since v2.9.8 the core keeps the PPU and APU settings across the
+    /// rebuild itself (`Nes::power_cycle`), so the only thing the cycle still
+    /// drops here is the expansion device, which it unplugs (and which the
+    /// per-frame input latch also re-attaches). Before v2.9.8 the OAM-decay
+    /// model, the fast dot path selector, the filter model and the palette were
+    /// lost too, and the desktop re-pushed only the channel mask and gain.
+    #[test]
+    fn configure_console_restores_what_a_power_cycle_drops() {
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut config = crate::config::Config::default();
+        config.emulation.oam_decay = true;
+        config.emulation.fast_dotloop = !config.emulation.fast_dotloop;
+        config.audio.channel_mask = 0x15;
+        config.input.expansion_device = crate::config::ExpansionDevice::Zapper;
+
+        let mut nes = Nes::from_rom(rom).expect("nestest loads");
+        super::configure_console(&config, &mut nes);
+        let configured = |nes: &Nes| {
+            (
+                nes.oam_decay_enabled(),
+                nes.fast_dotloop(),
+                nes.apu_channel_mask(),
+                nes.expansion_device(1).is_some(),
+            )
+        };
+        let wanted = (true, config.emulation.fast_dotloop, 0x15, true);
+        assert_eq!(configured(&nes), wanted, "a load configures the console");
+
+        nes.power_cycle();
+        assert_eq!(
+            configured(&nes),
+            (true, config.emulation.fast_dotloop, 0x15, false),
+            "the core keeps the chip settings; only the device is unplugged"
+        );
+        super::configure_console(&config, &mut nes);
+        assert_eq!(configured(&nes), wanted, "re-applied after the cycle");
+    }
+
+    /// v2.9.8 (task B) — at the default configuration `configure_console`
+    /// changes nothing a game can see: a configured and an unconfigured
+    /// console are byte-identical after a few frames. (Straight after
+    /// construction they differ only in the open-bus latch, which
+    /// `set_power_on_ram` resets and the first opcode fetch overwrites.)
+    #[test]
+    fn configure_console_at_defaults_is_byte_identical() {
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut plain = Nes::from_rom(rom).expect("nestest loads");
+        let mut configured = Nes::from_rom(rom).expect("nestest loads");
+        super::configure_console(&crate::config::Config::default(), &mut configured);
+        for _ in 0..3 {
+            plain.run_frame();
+            configured.run_frame();
+        }
+        assert_eq!(plain.framebuffer(), configured.framebuffer());
+        assert_eq!(plain.snapshot(), configured.snapshot());
+    }
+
     /// Every wasm ROM entry point must call the correction.
     ///
     /// A source-text assertion on purpose, in the style of
@@ -11717,6 +12324,13 @@ mod tests {
         assert!(
             squash(CANVAS_SRC).contains("apply_game_db_header_overrides(&mut bytes)"),
             "the `wasm-canvas` embed's ROM loader no longer corrects the header"
+        );
+        // v2.9.8 — and stage two: the embed builds its console itself (not
+        // through `finish_start_nes`), so it must apply the mirroring
+        // correction itself. It did not until v2.9.8.
+        assert!(
+            squash(CANVAS_SRC).contains("crate::game_db::correct_console(&mut nes, crc)"),
+            "the `wasm-canvas` embed's ROM loader no longer corrects the console"
         );
     }
 
@@ -12076,5 +12690,56 @@ mod tests {
         assert!(!is_fds_image(&[]));
         assert!(!is_fds_image(b"FD"));
         assert!(!is_fds_image(b"\x01*NIN"));
+    }
+
+    /// No mid-game Settings change may re-run the power-on work-RAM fill.
+    ///
+    /// The defect pinned (found v2.9.8): the "Fast PPU dot path" live-apply
+    /// called `apply_ppu_hardware_config`, whose `set_power_on_ram` refills the
+    /// 2 KiB work RAM, so toggling a frame-identical performance switch wiped
+    /// the running game's RAM. `App` needs a window and an emulator thread,
+    /// so this is a source-shape gate, as the wasm entry-point tests above
+    /// are: every `if settings.<knob> {` branch of the live-apply block must
+    /// not reach that function, and the selector's own helper must not touch
+    /// RAM.
+    #[test]
+    fn live_settings_never_rerun_the_power_on_ram_fill() {
+        const APP_SRC: &str = include_str!("app.rs");
+        // Cut the test module off first: this function's own text contains
+        // every string it searches for.
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn live_settings_never_rerun_the_power_on_ram_fill"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+
+        // The live branch for the selector calls the narrow helper.
+        assert!(
+            prod.contains("if settings.fast_dotloop { self.apply_fast_dotloop(); }"),
+            "the fast-dot-path live-apply no longer calls apply_fast_dotloop"
+        );
+        // No live `if settings.<knob> { ... }` branch calls the power-on path.
+        for (i, _) in prod.match_indices("if settings.") {
+            let branch = &prod[i..];
+            let end = branch.find('}').unwrap_or(branch.len());
+            assert!(
+                !branch[..end].contains("apply_ppu_hardware_config"),
+                "a live Settings branch re-runs the power-on RAM fill: {}",
+                &branch[..end]
+            );
+        }
+        // The helper itself must not refill RAM.
+        let helper = prod
+            .split_once("fn apply_fast_dotloop(&self) {")
+            .map(|(_, rest)| rest.split_once("fn ").map_or(rest, |(body, _)| body))
+            .expect("apply_fast_dotloop exists");
+        assert!(
+            !helper.contains("set_power_on_ram"),
+            "apply_fast_dotloop refills work RAM"
+        );
     }
 }

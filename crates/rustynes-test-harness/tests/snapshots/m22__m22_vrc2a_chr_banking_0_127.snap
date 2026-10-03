@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/m22.rs
+assertion_line: 51
 expression: line
 ---
-rom=m22/0-127.nes frames=240 fb_bytes=245760 fnv1a64=2d2361547f2ade00
+rom=m22/0-127.nes frames=240 fb_bytes=245760 fnv1a64=1429c5dca0ae63e6

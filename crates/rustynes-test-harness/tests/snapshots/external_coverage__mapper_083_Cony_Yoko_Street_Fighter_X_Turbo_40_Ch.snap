@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-083-Cony-Yoko/Street Fighter X Turbo 40 (Ch) [!].nes
+rom_sha256=f8c6d026b7fde37068ecc58c34819b6548f80a32205e4a72405a72c9ebe20b46
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=9f43ec4bd945a63c
+checkpoint f900 fb_fnv1a64=06f6e5071451147a
+checkpoint f1100 fb_fnv1a64=06f6e5071451147a

@@ -2,7 +2,7 @@
 
 **Document Version:** 2.1.0
 **Last Updated:** 2026-08-30
-**Applies to:** RustyNES v2.9.7 (the scheduling model is v2.0.0 "Timebase" onward)
+**Applies to:** RustyNES v2.9.8 (the scheduling model is v2.0.0 "Timebase" onward)
 
 This document fixes the high-level architecture of RustyNES. The per-subsystem specs under `docs/` (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`, `scheduler.md`) take these decisions as given and elaborate one chip each. After reading this you should know the workspace shape, the scheduling model, the public boundary, and the load-bearing invariants. The canonical, always-current architecture spec is [`docs/architecture.md`](docs/architecture.md); this file is the top-level companion.
 
@@ -88,7 +88,7 @@ rustynes/
 > the CPU's bus access lands BETWEEN the two PPU catch-ups. Every instruction
 > cycle is a real bus access; there are no busless filler cycles. DMA is a
 > unified, per-cycle-interleaved engine rather than a separate stepping mode.
-> `LockstepBus::cycle` is the ONE canonical per-cycle counter, and
+> `SystemBus::cycle` is the ONE canonical per-cycle counter, and
 > `Cpu::cycles` / `Apu::cpu_cycle` are **assigned** from it, never independently
 > incremented.
 >
@@ -123,7 +123,7 @@ Nes::tick_one_dot() {
 
 `cpu_phase_offset` accounts for the random initial CPU/PPU alignment at power-on (seeded so save states stay deterministic; cold reset re-randomizes). In the dot-lockstep model above, the bus fanned a CPU access out to the right device without re-syncing the PPU or APU, because both had already been advanced by the enclosing dot loop.
 
-Under the shipped one-clock model that ordering is explicit rather than implicit: `start_cycle` pulls the PPU forward, the bus access happens, then `end_cycle` pulls it forward again. That is what makes a register write land at a defined dot instead of at whatever dot the loop happened to be on — and it is why `LockstepBus::cycle` has to be the single counter, since two counters advanced by two rules is exactly the bug the split is designed to make unrepresentable.
+Under the shipped one-clock model that ordering is explicit rather than implicit: `start_cycle` pulls the PPU forward, the bus access happens, then `end_cycle` pulls it forward again. That is what makes a register write land at a defined dot instead of at whatever dot the loop happened to be on — and it is why `SystemBus::cycle` has to be the single counter, since two counters advanced by two rules is exactly the bug the split is designed to make unrepresentable.
 
 ---
 

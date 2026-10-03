@@ -148,6 +148,16 @@ impl VsDualSystem {
             comms_scratch: Vec::new(),
             block_scratch: Vec::new(),
         };
+        dual.wire();
+        dual
+    }
+
+    /// Install the cabinet wiring on a freshly constructed or freshly
+    /// power-cycled pair. Shared by [`Self::from_pair`] and
+    /// [`Self::power_cycle`] (v2.9.8), so a power-cycled cabinet is wired
+    /// exactly as a new one is.
+    fn wire(&mut self) {
+        let dual = self;
         // Cabinet wiring: mark the sub half (its $4016 bit 7 reads 0x80;
         // its mapper banks the second PRG half + upper CHR pages — the two
         // CPUs run different programs on real DualSystem boards) and
@@ -165,7 +175,6 @@ impl VsDualSystem {
         // Wrecking Crew requires this seed to progress past its handshake.
         dual.apply_main_bit1(false);
         dual.apply_sub_bit1(true);
-        dual
     }
 
     /// Apply a MAIN-console bit-1 level: drive the sub's `/IRQ` (LOW
@@ -333,6 +342,28 @@ impl VsDualSystem {
     #[must_use]
     pub const fn split_mut(&mut self) -> (&mut Nes, &mut Nes) {
         (&mut self.main, &mut self.sub)
+    }
+
+    /// v2.9.8 — power-cycle the whole cabinet: both consoles cold-boot and
+    /// the cabinet wiring is installed again, so the result is the cabinet
+    /// [`Self::from_rom`] builds (with each console's settings and battery
+    /// RAM kept, as [`Nes::power_cycle`] keeps them).
+    ///
+    /// Power-cycling the two consoles alone is NOT enough, and that is why
+    /// this exists. [`Nes::power_cycle`] rebuilds each mapper from the ROM,
+    /// which drops the wiring construction installed on it: the sub
+    /// console's second-half PRG / upper-CHR banking (`set_vs_dual_sub`) and
+    /// both consoles' shared 2 KiB WRAM window (`enable_vs_dual_wram`). The
+    /// sub then runs the MAIN program, fails its `$4016` identity check, and
+    /// the boot handshake never completes. The wrapper's latches (the two
+    /// bit-1 levels, and through them each console's external `/IRQ`) are
+    /// re-seeded to their reset values, and the scratch buffers emptied.
+    pub fn power_cycle(&mut self) {
+        self.main.power_cycle();
+        self.sub.power_cycle();
+        self.comms_scratch.clear();
+        self.block_scratch.clear();
+        self.wire();
     }
 
     /// Serialize the dual system: a versioned container nesting the two
@@ -522,7 +553,7 @@ impl Emu {
         // nibble = Vs. hardware type 5/6) and the SHA-keyed `vs_db` record.
         // The db is load-bearing — the circulating DualSystem dumps are
         // iNES 1.0 (no byte 13), so the header alone can never flag them.
-        let db_dual = crate::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system);
+        let db_dual = crate::vs_db::lookup(&nes).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
             // Reuse the probe as the MAIN console; parse once more for the SUB
             // (two parses total, not three). `from_pair` applies the cabinet
@@ -543,7 +574,7 @@ impl Emu {
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom_with_sample_rate(bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
         let nes = Nes::from_rom_with_sample_rate(bytes, sample_rate)?;
-        let db_dual = crate::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system);
+        let db_dual = crate::vs_db::lookup(&nes).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
             // Reuse the probe as MAIN; parse once more for SUB (two parses, not
             // three).

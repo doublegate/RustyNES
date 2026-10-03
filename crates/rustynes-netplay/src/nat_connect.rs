@@ -35,7 +35,7 @@ use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::connection::{NetplayConnection, UdpTransport};
-use crate::message::NetMessage;
+use crate::message::{NetMessage, SessionIdentity};
 use crate::relay::{RelayUdpSocket, TurnClient, TurnConfig};
 use crate::rng::SplitMix64;
 use crate::signaling::SignalMessage;
@@ -96,7 +96,7 @@ const ROOM_CODE_LEN: usize = 6;
 /// [`into_connection`](Self::into_connection).
 pub struct NatConnect {
     socket: Option<UdpSocket>,
-    rom_hash: [u8; 32],
+    identity: SessionIdentity,
     cfg: NatConfig,
     signaling: SignalingClient,
     /// Our assigned slot in the room (0 = host).
@@ -137,7 +137,7 @@ impl NatConnect {
     /// Returns any socket bind error.
     pub fn host(
         num_players: u8,
-        rom_hash: [u8; 32],
+        identity: SessionIdentity,
         cfg: NatConfig,
         seed: u64,
     ) -> io::Result<(Self, String)> {
@@ -148,10 +148,12 @@ impl NatConnect {
         let signaling = SignalingClient::connect(&cfg.signaling_url);
         signaling.send(SignalMessage::Join {
             room: room.clone(),
-            rom_hash: hex(&rom_hash),
+            // Rooms are matched by game; the configuration is compared in the
+            // UDP `Sync` handshake, where a mismatch gets its own reason.
+            rom_hash: hex(&identity.rom_hash),
             max_players: num_players,
         });
-        Ok((Self::new_inner(socket, rom_hash, cfg, signaling, rng), room))
+        Ok((Self::new_inner(socket, identity, cfg, signaling, rng), room))
     }
 
     /// Join an existing room by its `room_code`: connect to signaling, announce
@@ -162,7 +164,7 @@ impl NatConnect {
     /// Returns any socket bind error.
     pub fn join(
         room_code: &str,
-        rom_hash: [u8; 32],
+        identity: SessionIdentity,
         cfg: NatConfig,
         seed: u64,
     ) -> io::Result<Self> {
@@ -173,22 +175,22 @@ impl NatConnect {
         signaling.send(SignalMessage::Join {
             room: room_code.to_string(),
             // The relay's max_players for a joiner is ignored; default 2.
-            rom_hash: hex(&rom_hash),
+            rom_hash: hex(&identity.rom_hash),
             max_players: 2,
         });
-        Ok(Self::new_inner(socket, rom_hash, cfg, signaling, rng))
+        Ok(Self::new_inner(socket, identity, cfg, signaling, rng))
     }
 
     fn new_inner(
         socket: UdpSocket,
-        rom_hash: [u8; 32],
+        identity: SessionIdentity,
         cfg: NatConfig,
         signaling: SignalingClient,
         rng: SplitMix64,
     ) -> Self {
         Self {
             socket: Some(socket),
-            rom_hash,
+            identity,
             cfg,
             signaling,
             slot: None,
@@ -288,7 +290,7 @@ impl NatConnect {
             UdpTransport::from_socket(socket, peer)
                 .expect("socket reconfigured for the punched transport")
         };
-        NetplayConnection::with_transport(transport, self.rom_hash)
+        NetplayConnection::with_transport(transport, self.identity)
     }
 
     // ── phase steps ─────────────────────────────────────────────────────────
@@ -431,7 +433,7 @@ impl NatConnect {
         if due {
             let pkt = NetMessage::Sync {
                 magic: NetMessage::SYNC_MAGIC,
-                rom_hash: self.rom_hash,
+                identity: self.identity,
             }
             .to_bytes();
             let _ = socket.send_to(&pkt, peer);

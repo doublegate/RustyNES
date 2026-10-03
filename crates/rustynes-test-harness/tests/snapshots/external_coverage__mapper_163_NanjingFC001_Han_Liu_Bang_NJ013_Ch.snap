@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-163-NanjingFC001/Han Liu Bang (NJ013) (Ch) [!].nes
+rom_sha256=3c577bf87fe0f84f3b1c6f34c3cb2d69da83aa87ab8e9677a27a6c1b2452bc53
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=1deff3472e874841
+checkpoint f900 fb_fnv1a64=5d36101911d489e1
+checkpoint f1100 fb_fnv1a64=5d36101911d489e1

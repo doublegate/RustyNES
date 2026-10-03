@@ -1,19 +1,16 @@
 //! Scheduler-facing types the CPU crate exposes to its bus host.
 //!
 //! Currently exposes only [`M2Phase`], the canonical reference enum for
-//! "which half of the 6502 cycle the host bus is currently in".  The
-//! enum lives in `rustynes-cpu` rather than `rustynes-core` because the [`Bus`]
-//! trait method [`Bus::poll_irq_at_phase`] is parameterised by it; the
-//! CPU crate stays at the top of the workspace dep graph (`rustynes-core`
-//! already depends on `rustynes-cpu`, not the other way round) and any
-//! `rustynes-core` consumer continues to import `M2Phase` from
+//! "which half of the 6502 cycle the host bus is currently in". The enum
+//! lives in `rustynes-cpu` rather than `rustynes-core` because it used to
+//! parameterise the `Bus::poll_irq_at_phase` trait method, which v2.9.8
+//! removed with the rest of the v2.7.5 deprecations (ADR 0042). It survives
+//! as the vocabulary of the IRQ-timing trace (`rustynes_core::irq_trace`),
+//! and `rustynes-core` consumers keep importing it from
 //! `rustynes_core::scheduler` via re-export.
 //!
 //! See `docs/scheduler.md` and `docs/adr/0002-irq-timing-coordination.md`
 //! for the surrounding design.
-//!
-//! [`Bus`]: crate::Bus
-//! [`Bus::poll_irq_at_phase`]: crate::Bus::poll_irq_at_phase
 
 /// Convention for the M2-phase reference relative to the CPU cycle's 3
 /// PPU dots.
@@ -33,11 +30,8 @@
 /// At end-of-cycle the bus advances its cycle counter and the phase
 /// resets to [`M2Phase::Low`] for the next cycle.
 ///
-/// This is the canonical reference enum used by the docs/ADR, by the
-/// IRQ-timing tracing fixture (`rustynes_core::irq_trace`), and by
-/// [`Bus::poll_irq_at_phase`].
-///
-/// [`Bus::poll_irq_at_phase`]: crate::Bus::poll_irq_at_phase
+/// This is the canonical reference enum used by the docs/ADR and by the
+/// IRQ-timing tracing fixture (`rustynes_core::irq_trace`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum M2Phase {
     /// M2 low (φ1): memory access window.

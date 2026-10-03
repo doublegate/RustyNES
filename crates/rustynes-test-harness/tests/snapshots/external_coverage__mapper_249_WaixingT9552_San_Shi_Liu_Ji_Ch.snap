@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-249-WaixingT9552/San Shi Liu Ji (Ch).nes
+rom_sha256=5f511c88462b9e8b0dc166076131828de99cb3b02e47b3ba3040b8b305c04296
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=f07f808e4ce000e1
+checkpoint f900 fb_fnv1a64=29eaeb71c45c7e8e
+checkpoint f1100 fb_fnv1a64=253bad84c474f828

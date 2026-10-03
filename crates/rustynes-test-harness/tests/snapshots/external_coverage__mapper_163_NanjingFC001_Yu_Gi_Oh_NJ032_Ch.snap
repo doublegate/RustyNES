@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-163-NanjingFC001/Yu-Gi-Oh (NJ032) (Ch) [!].nes
+rom_sha256=d3c003e279b0522c84be295395c686a675b776c249659370864e465ffb105794
+frames=1141
+fb_bytes=245760
+cycles=33949788
+audio_samples=836505
+audio_fnv1a64=1a5c713bf933c222
+checkpoint f900 fb_fnv1a64=962f411a064f230c
+checkpoint f1100 fb_fnv1a64=962f411a064f230c

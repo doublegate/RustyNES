@@ -2040,7 +2040,6 @@ impl Fds {
         data: &[u8],
         mut off: usize,
         base: usize,
-        version: u8,
     ) -> Result<(), MapperError> {
         let saved_sides = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
         off += 4;
@@ -2057,7 +2056,7 @@ impl Fds {
         // any count whose length does not fit in `usize` cannot describe it, and
         // any count that does fit must match `data.len()` exactly. The bound on
         // `saved_sides` is therefore the blob's own length, on every target.
-        let v4_extra = if version >= 4 { FDS_V4_TAIL_LEN } else { 0 };
+        let v4_extra = FDS_V4_TAIL_LEN;
         let expected = saved_sides
             .checked_mul(FDS_SIDE_LEN)
             .and_then(|sides_len| {
@@ -2102,21 +2101,15 @@ impl Fds {
         self.disk_dirty = (disk_flags & 0x01) != 0;
         self.write_protected = (disk_flags & 0x02) != 0;
         self.spun_up = (disk_flags & 0x04) != 0;
-        // v4 continuous head-seek tail; v3 blobs default the model off.
-        if version >= 4 {
-            self.analog_head_seek = data[off] != 0;
-            off += 1;
-            self.pre_rewind_head =
-                u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-            // Advance past the u32 we just consumed so `off` keeps reflecting the
-            // total bytes read — preserving the "offset == consumed" invariant so
-            // any future tail extension starts from the correct position.
-            off += 4;
-        } else {
-            self.analog_head_seek = false;
-            self.pre_rewind_head = 0;
-        }
-        // Both paths must have consumed exactly the blob the length check at the
+        // v4 continuous head-seek tail.
+        self.analog_head_seek = data[off] != 0;
+        off += 1;
+        self.pre_rewind_head = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        // Advance past the u32 we just consumed so `off` keeps reflecting the
+        // total bytes read — preserving the "offset == consumed" invariant so
+        // any future tail extension starts from the correct position.
+        off += 4;
+        // The decode must have consumed exactly the blob the length check at the
         // top validated (`expected == data.len()`); assert the invariant and, in
         // doing so, read `off` on every path (no `unused_assignments`).
         debug_assert_eq!(
@@ -2129,6 +2122,9 @@ impl Fds {
 }
 
 /// Save-state format version for the FDS device.
+///
+/// Only v4 loads since v2.9.8 (ADR 0042); the notes below on how v1-v3 blobs
+/// loaded describe the behaviour before then.
 ///
 /// - v1: Stage 1 (memory + disk position + timer/transfer + IRQ). No audio tail.
 /// - v2: appends the [`FdsAudio`] sound-channel tail ([`FdsAudio::TAIL_LEN`]).
@@ -2486,42 +2482,23 @@ impl Mapper for Fds {
 
     #[allow(clippy::too_many_lines)]
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        // v1: device state only. v2: + the FdsAudio tail. v3: + the disk tail.
+        // Device state, then the FdsAudio tail, the disk tail and the
+        // head-seek tail. Only v4 is read since v2.9.8 (ADR 0042); v1-v3 used
+        // to load with the later tails at their defaults.
         let base = 1 + self.prg_ram.len() + self.chr_ram.len() + 4 + 4 + 2 + 2 + 4 + 4 + 2;
         let version = data.first().copied().unwrap_or(0);
-        // For v3 the disk tail is variable-length (it embeds its own side count
-        // as the first u32), so we validate the fixed prefix here and the disk
-        // tail length once we know the count below. v1/v2 are fixed-length.
-        match version {
-            1 => {
-                if data.len() != base {
-                    return Err(MapperError::Truncated {
-                        expected: base,
-                        got: data.len(),
-                    });
-                }
-            }
-            2 => {
-                let expected = base + FdsAudio::TAIL_LEN;
-                if data.len() != expected {
-                    return Err(MapperError::Truncated {
-                        expected,
-                        got: data.len(),
-                    });
-                }
-            }
-            3 | 4 => {
-                // Need at least the fixed prefix + audio tail + the disk tail's
-                // leading side-count u32 to learn how long the tail is.
-                let min = base + FdsAudio::TAIL_LEN + 4;
-                if data.len() < min {
-                    return Err(MapperError::Truncated {
-                        expected: min,
-                        got: data.len(),
-                    });
-                }
-            }
-            other => return Err(MapperError::UnsupportedVersion(other)),
+        if version != FDS_SAVE_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        // The disk tail is variable-length (it embeds its own side count as the
+        // first u32), so validate the fixed prefix + audio tail + that count
+        // here and the full length once the count is known.
+        let min = base + FdsAudio::TAIL_LEN + 4;
+        if data.len() < min {
+            return Err(MapperError::Truncated {
+                expected: min,
+                got: data.len(),
+            });
         }
         let mut off = 1;
         let pl = self.prg_ram.len();
@@ -2536,9 +2513,8 @@ impl Mapper for Fds {
         let head = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
         off += 4;
         // Clamp restored positions to valid ranges (a corrupt/foreign blob must
-        // not be able to drive an out-of-range index into `side()`). For v1/v2
-        // this is the authoritative inserted side; v3 overwrites it from the
-        // disk tail below.
+        // not be able to drive an out-of-range index into `side()`). The disk
+        // tail below overwrites it with the authoritative inserted side.
         self.inserted_side = Some(legacy_inserted.min(self.disk.side_count().saturating_sub(1)));
         // `head` is a wire-image offset; clamp it after the wire image is rebuilt
         // at the end of restore (the disk tail may change the inserted side).
@@ -2589,30 +2565,12 @@ impl Mapper for Fds {
         } else {
             Mirroring::Vertical
         };
-        // v2 audio tail, or default the sound channel for legacy v1 blobs.
-        if version >= 2 {
-            self.audio.read_tail(&data[off..off + FdsAudio::TAIL_LEN])?;
-            off += FdsAudio::TAIL_LEN;
-        } else {
-            self.audio = FdsAudio::default();
-        }
-        // v3 disk tail: mutable disk contents + insert / write-path state.
-        // Legacy v1/v2 blobs leave the disk at its construction contents
-        // (un-modified), side 0 inserted, not dirty, writable.
-        if version >= 3 {
-            self.load_disk_tail(data, off, base, version)?;
-        } else {
-            self.disk_dirty = false;
-            self.write_protected = false;
-            self.insert_not_ready = 0;
-            // v1/v2 blobs predate the spin-up model: treat the drive as already
-            // spun up so a restored mid-game state does not re-trigger a spin-up
-            // window (the disk was spinning when the state was captured).
-            self.spun_up = true;
-            // v1/v2/v3 predate the continuous head-seek model: default it off.
-            self.analog_head_seek = false;
-            self.pre_rewind_head = 0;
-        }
+        // v2 audio tail.
+        self.audio.read_tail(&data[off..off + FdsAudio::TAIL_LEN])?;
+        off += FdsAudio::TAIL_LEN;
+        // v3 disk tail (mutable disk contents + insert / write-path state) and
+        // the v4 head-seek tail.
+        self.load_disk_tail(data, off, base)?;
         // Rebuild the wire image from the (possibly modified) inserted side and
         // clamp the restored head into it. The wire image is derived state — it
         // is reconstructed from the saved raw side contents rather than stored.
@@ -3545,27 +3503,27 @@ mod tests {
         assert_eq!(Mapper::mix_audio(&mut fds), 0);
     }
 
+    /// v2.9.8 (ADR 0042): only the current (v4) layout loads. v1 (no audio
+    /// tail), v2 (no disk tail) and v3 (no head-seek tail) used to load with
+    /// those parts at their defaults.
     #[test]
-    fn load_state_v1_blob_defaults_audio() {
-        // A v1 (Stage-1) blob has neither the audio tail nor the disk tail;
-        // loading must succeed and leave the sound channel at its default
-        // (silent) state.
+    fn pre_v4_blobs_are_refused() {
         let mut fds = make_device(1);
-        enable_sound_io(&mut fds);
-        // Build a v1-shaped blob by truncating off the disk + audio tails and
-        // stamping version 1. `save_state` now emits v4, so the disk tail
-        // includes the Capstone head-seek extra.
-        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1 + FDS_V4_TAIL_LEN;
-        let mut blob = fds.save_state();
-        blob.truncate(blob.len() - disk_tail - FdsAudio::TAIL_LEN);
-        blob[0] = 1;
-        // Dirty the audio so we can see the default reset.
-        fds.audio.vol_gain = 31;
-        fds.audio.wave_pitch = 0x123;
-        fds.load_state(&blob).unwrap();
-        assert_eq!(fds.audio.vol_gain, 0);
-        assert_eq!(fds.audio.wave_pitch, 0);
-        assert_eq!(fds.audio.env_speed_mult, 0xE8, "default power-on $408A");
+        let blob = fds.save_state();
+        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1;
+        let mut v3 = blob[..blob.len() - FDS_V4_TAIL_LEN].to_vec();
+        v3[0] = 3;
+        let mut v2 = v3[..v3.len() - disk_tail].to_vec();
+        v2[0] = 2;
+        let mut v1 = v2[..v2.len() - FdsAudio::TAIL_LEN].to_vec();
+        v1[0] = 1;
+        for (v, old) in [(1u8, &v1), (2, &v2), (3, &v3)] {
+            assert!(matches!(
+                fds.load_state(old),
+                Err(MapperError::UnsupportedVersion(got)) if got == v
+            ));
+        }
+        fds.load_state(&blob).expect("the current blob loads");
     }
 
     // --- Stage 2b: disk write path / eject-insert / persistence ---
@@ -3986,44 +3944,6 @@ mod tests {
             0x04,
             "write-protect restored"
         );
-    }
-
-    #[test]
-    fn load_state_v2_blob_defaults_disk_clean() {
-        // A v2 (Stage-1/2a) blob has no disk tail; loading must succeed, leave
-        // the disk un-modified, side 0 inserted, clean, writable.
-        let mut fds = make_device(2);
-        enable_disk_io(&mut fds);
-        // Build a v2-shaped blob by truncating off the v4 disk tail + stamping 2.
-        // The disk tail = 4 (side count) + sides*FDS_SIDE_LEN + 4 + 4 + 1 + v4.
-        let disk_tail = 4 + 2 * FDS_SIDE_LEN + 4 + 4 + 1 + FDS_V4_TAIL_LEN;
-        let mut blob = fds.save_state();
-        blob.truncate(blob.len() - disk_tail);
-        blob[0] = 2;
-        // Dirty + eject + protect so we can see the v2 default reset.
-        fds.set_disk_side(None);
-        fds.set_disk_write_protected(true);
-        write_bytes(&mut fds, &[0x01]); // protected: not dirty, but flip state anyway
-        fds.load_state(&blob).unwrap();
-        assert_eq!(fds.inserted_disk_side(), Some(0), "v2 defaults to side 0");
-        assert!(!fds.disk_is_dirty(), "v2 defaults to clean");
-        assert_eq!(fds.cpu_read(0x4032) & 0x04, 0x00, "v2 defaults to writable");
-    }
-
-    #[test]
-    fn load_state_v1_blob_defaults_disk_clean() {
-        // A v1 blob has neither audio nor disk tail; the disk defaults apply.
-        let mut fds = make_device(1);
-        let blob_v3 = fds.save_state();
-        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1 + FDS_V4_TAIL_LEN;
-        let mut blob = blob_v3;
-        blob.truncate(blob.len() - FdsAudio::TAIL_LEN - disk_tail);
-        blob[0] = 1;
-        fds.set_disk_write_protected(true);
-        fds.load_state(&blob).unwrap();
-        assert_eq!(fds.inserted_disk_side(), Some(0));
-        assert!(!fds.disk_is_dirty());
-        assert_eq!(fds.cpu_read(0x4032) & 0x04, 0x00, "v1 defaults to writable");
     }
 
     // --- v2.2.0 "Capstone" medium model ---

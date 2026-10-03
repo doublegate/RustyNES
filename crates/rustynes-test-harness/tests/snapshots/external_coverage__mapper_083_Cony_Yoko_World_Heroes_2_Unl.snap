@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-083-Cony-Yoko/World Heroes 2 (Unl) [!].nes
+rom_sha256=020825b812cd603656b3cb185b779d6ab47f9e49d8624dcfb5d37f881953ae27
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=7eca5d1a03cdbdc8
+checkpoint f900 fb_fnv1a64=d918bf6401f853ef
+checkpoint f1100 fb_fnv1a64=afd4b481eeab502e

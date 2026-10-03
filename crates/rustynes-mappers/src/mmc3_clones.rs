@@ -50,8 +50,10 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-/// v2 (v2.7.2) appends the board's WRAM (mapper 245 only today); a v1 blob
-/// loads with it zeroed.
+/// v2 (v2.7.2) appends the board's WRAM (mapper 245 only today); v3 (v2.9.7)
+/// packs the A12 filter into the old `last_a12` byte. Only v3 loads since
+/// v2.9.8 (ADR 0042); v1 used to load with the WRAM zeroed and v1/v2 with a
+/// bare A12 level.
 const SAVE_STATE_VERSION: u8 = 3;
 
 // ---------------------------------------------------------------------------
@@ -259,8 +261,7 @@ impl Mmc3Clone {
         out.push(self.a12.to_byte());
     }
 
-    /// `legacy_a12`: a v1/v2 state, whose byte 17 is the bare A12 level.
-    fn load(&mut self, data: &[u8], legacy_a12: bool) {
+    fn load(&mut self, data: &[u8]) {
         self.regs.copy_from_slice(&data[0..8]);
         self.bank_select = data[8];
         self.prg_mode = data[9] != 0;
@@ -271,11 +272,7 @@ impl Mmc3Clone {
         self.irq_reload = data[14] != 0;
         self.irq_enabled = data[15] != 0;
         self.irq_pending = data[16] != 0;
-        self.a12 = if legacy_a12 {
-            A12RiseFilter::from_legacy_level(data[17] != 0)
-        } else {
-            A12RiseFilter::from_byte(data[17])
-        };
+        self.a12 = A12RiseFilter::from_byte(data[17]);
     }
 }
 
@@ -711,13 +708,10 @@ impl Mapper for Mmc3CloneMapper {
             expected: 1,
             got: 0,
         })?;
-        // v3 (v2.9.7) has v2's layout and packs the A12 filter into the old
-        // `last_a12` byte; a v1/v2 state's byte is the bare level.
-        let wram_len = match version {
-            1 => 0,
-            2 | SAVE_STATE_VERSION => self.wram.len(),
-            v => return Err(MapperError::UnsupportedVersion(v)),
-        };
+        if version != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let wram_len = self.wram.len();
         let expected = 3 + Mmc3Clone::SAVE_LEN + self.vram.len() + chr_ram + wram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
@@ -728,10 +722,7 @@ impl Mapper for Mmc3CloneMapper {
         self.outer = data[1];
         self.outer2 = data[2];
         let mut cursor = 3;
-        self.core.load(
-            &data[cursor..cursor + Mmc3Clone::SAVE_LEN],
-            version != SAVE_STATE_VERSION,
-        );
+        self.core.load(&data[cursor..cursor + Mmc3Clone::SAVE_LEN]);
         cursor += Mmc3Clone::SAVE_LEN;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
@@ -741,11 +732,7 @@ impl Mapper for Mmc3CloneMapper {
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
             cursor += self.chr.len();
         }
-        if wram_len == 0 {
-            self.wram.fill(0);
-        } else {
-            self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
-        }
+        self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
         Ok(())
     }
 }

@@ -4,15 +4,17 @@
 //! `bincode`. The container that wraps this blob into a tagged section
 //! lives in `rustynes_core::save_state`.
 //!
-//! Schema version 1 covers the four wave channels, DMC, frame counter,
-//! mixer phase / filter state, blip buffer (drained on restore), and
-//! cycle bookkeeping. Later builds append optional DMC-DMA scheduling
-//! bytes while keeping version 1 readable for v0.9/v1.0 save-state
-//! compatibility. The W3-Stage-4 (2026-06-10) promotion appends a second
-//! trailing-optional tail (get/put parity + the master-clock DMA-engine
-//! exclusion/need latches + the delayed-`$4015` DMC-status machinery) under
-//! the same convention; pre-Stage-4 blobs upconvert best-effort (see
-//! [`Apu::restore`]). The blip's pending-samples queue is intentionally
+//! The blob covers the four wave channels, DMC, frame counter, mixer phase /
+//! filter state, blip buffer (drained on restore), cycle bookkeeping, the
+//! DMC-DMA scheduling bytes, the W3-Stage-4 master-clock DMA-engine state
+//! (get/put parity, the exclusion/need latches, the delayed-`$4015`
+//! DMC-status machinery) and the scheduled warm-reset `$4017` re-write.
+//!
+//! Since v2.9.8 (ADR 0042) [`Apu::restore`] reads the current version only,
+//! and every field is required. Until then it accepted versions 1-3,
+//! migrating the frame counter's IRQ fields, and read the DMC-DMA bytes and
+//! the Stage-4 tail as trailing-optional, synthesising best-effort defaults
+//! for blobs that ended early. The blip's pending-samples queue is intentionally
 //! NOT preserved — restored state begins emitting fresh samples once the
 //! emulator runs forward; any pre-snapshot, post-host-rate samples were
 //! already drained by the frontend the moment they were produced.
@@ -65,20 +67,11 @@ use crate::triangle::Triangle;
 ///   (`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`) rather
 ///   than by a user-visible symptom.
 ///
-///   v1..=3 blobs upconvert with both at `0` — "no re-write pending", which
-///   is the resting value and therefore correct for any pre-v4 state not
-///   captured inside the 2-cycle arming window (and for one that was, the
-///   bytes simply do not exist to recover).
 ///
-///   Unlike this module's earlier *trailing-optional* tails (the v1.x DMC-DMA
-///   scheduling bytes and the W3-Stage-4 block, both detected by
-///   `has_remaining`), this one is version-gated. Trailing-optional makes two
-///   different blob lengths both valid at one version, which is workable but
-///   leaves the format ambiguous; a version gate does not. The bump costs no
-///   additional compatibility here because the same change already bumps
-///   `PPU_SNAPSHOT_VERSION` to 8 (ADR 0034), and `rustynes_core`'s `.rns`
-///   container is version-exact per section — pre-existing save states are
-///   already rejected at the PPU section.
+/// Since v2.9.8 (ADR 0042) only v4 is read, with every field required: the
+/// earlier versions' migrations and the trailing-optional tails (the v1.x
+/// DMC-DMA scheduling bytes and the W3-Stage-4 block) are gone. The v4 layout
+/// itself is unchanged, so the number did not move.
 pub const APU_SNAPSHOT_VERSION: u8 = 4;
 
 /// Errors returned by [`Apu::restore`].
@@ -88,6 +81,10 @@ pub enum ApuSnapshotError {
     /// Blob is shorter than the schema declares.
     #[error("APU snapshot truncated at offset {0}")]
     Truncated(usize),
+    /// Blob is longer than the schema declares: this many bytes follow the
+    /// last field (v2.9.8; until then reported as [`Self::Truncated`]).
+    #[error("APU snapshot has {0} trailing byte(s) after its last field")]
+    TrailingBytes(usize),
     /// The blob's version byte is not understood by this build.
     #[error("APU snapshot unsupported version {0}")]
     UnsupportedVersion(u8),
@@ -260,9 +257,6 @@ impl R<'_> {
     }
     fn bool(&mut self) -> Result<bool, ApuSnapshotError> {
         Ok(self.u8()? != 0)
-    }
-    const fn has_remaining(&self) -> bool {
-        self.pos < self.src.len()
     }
 }
 
@@ -500,7 +494,7 @@ fn write_fc(w: &mut W, fc: &FrameCounter) {
     // visibility).
     w.bool(fc.irq_line_active);
 }
-fn read_fc(r: &mut R<'_>, version: u8) -> Result<FrameCounter, ApuSnapshotError> {
+fn read_fc(r: &mut R<'_>) -> Result<FrameCounter, ApuSnapshotError> {
     let mode = mode_from_u8(r.u8()?)?;
     let irq_inhibit = r.bool()?;
     let irq_flag = r.bool()?;
@@ -509,32 +503,8 @@ fn read_fc(r: &mut R<'_>, version: u8) -> Result<FrameCounter, ApuSnapshotError>
     let pending_mode = mode_from_u8(r.u8()?)?;
     let pending_inhibit = r.bool()?;
     let apu_aligned = r.bool()?;
-    // Schema v2 stores `irq_flag_clear_cycle: u64`; v1 stored
-    // `pending_irq_clear: bool` instead. v1 migration: a pending
-    // clear becomes a synthesized fresh schedule
-    // (`irq_flag_clear_cycle = u64::MAX`, which conservatively never
-    // matures until the next observation re-schedules from the
-    // current cpu_cycle; for old save states a slight IRQ-clear
-    // glitch is acceptable per ADR-0003's "best-effort cross-version"
-    // policy).
-    let irq_flag_clear_cycle: u64 = if version >= 2 {
-        r.u64()?
-    } else {
-        // Migrate v1 `pending_irq_clear: bool`. Using `u64::from`
-        // maps `false -> 0` (no pending) and `true -> 1` (a pending
-        // clear that matures at cpu_cycle >= 1, virtually always).
-        // Per ADR-0003 cross-version save-state policy: best-effort
-        // migration; a slight IRQ-clear glitch on v1 -> v2 reload is
-        // acceptable.
-        let pending = r.bool()?;
-        u64::from(pending)
-    };
-    // Schema v3 stores `irq_line_active: bool` separately from
-    // `irq_flag`. v1/v2 migration: set `irq_line_active = irq_flag`
-    // (the IRQ-line and $4015 bit 6 coincided under the v1/v2
-    // conflated model). Per ADR-0003 best-effort cross-version
-    // policy.
-    let irq_line_active: bool = if version >= 3 { r.bool()? } else { irq_flag };
+    let irq_flag_clear_cycle = r.u64()?;
+    let irq_line_active = r.bool()?;
     let mut fc = FrameCounter::new();
     fc.mode = mode;
     fc.irq_inhibit = irq_inhibit;
@@ -678,14 +648,8 @@ impl Apu {
         // get/put-scheduler need flags, and the W3-Stage-3 delayed-`$4015`
         // DMC-status machinery (pending slot + countdown + the implicit-abort
         // trio + the `$540` consume-edge arm-suppress latch). The bytes are
-        // written UNCONDITIONALLY (zeros for fields whose cargo feature is
-        // off) so the blob layout is identical across feature builds; reads
-        // apply only the fields the running build compiles. Same
-        // trailing-optional convention as the v1.x DMC-DMA scheduling bytes
-        // above, so pre-Stage-4 blobs (which simply end earlier) still load —
-        // [`Apu::restore`] then synthesizes a best-effort upconvert (see
-        // there) and reports the missing tail via
-        // [`Apu::snapshot_restored_parity`].
+        // written UNCONDITIONALLY so the blob layout is identical across
+        // feature builds.
         w.bool(self.put_cycle);
         w.u64(self.parity_seed);
         w.u8(self.cannot_run_dmc_dma);
@@ -707,9 +671,7 @@ impl Apu {
         // Armed by `Apu::reset` (delay = 2, value = the frame counter's last
         // `$4017`), consumed one CPU cycle at a time in `tick_with_external`.
         // Live for only those 2 cycles, but a snapshot landing in them used to
-        // restore `delay = 0` and silently cancel the re-write. Version-gated
-        // rather than trailing-optional — see the `APU_SNAPSHOT_VERSION`
-        // rustdoc for why this tail breaks with the convention above it.
+        // restore `delay = 0` and silently cancel the re-write.
         w.u8(self.reset_4017_delay);
         w.u8(self.reset_4017_value);
 
@@ -724,15 +686,9 @@ impl Apu {
     pub fn restore(&mut self, data: &[u8]) -> Result<(), ApuSnapshotError> {
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        // Accept v1 (legacy v0.9.0 .. v1.0.0-rc2 with the bool
-        // `pending_irq_clear`), v2 (Session-25 with the lazy
-        // `irq_flag_clear_cycle: u64`), and v3 (Session-26 iter 5
-        // onwards: split `irq_flag` and `irq_line_active`). Per
-        // ADR-0003 cross-version save-state policy: v1 migrates to v2
-        // by synthesising a schedule; v2 migrates to v3 by setting
-        // `irq_line_active = irq_flag` (the IRQ-line and $4015 bit 6
-        // coincided under the v1/v2 conflated model).
-        if !matches!(version, 1..=APU_SNAPSHOT_VERSION) {
+        // Only the current version is read (v2.9.8, ADR 0042); see the
+        // module docs for what older versions used to migrate.
+        if version != APU_SNAPSHOT_VERSION {
             return Err(ApuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -742,7 +698,7 @@ impl Apu {
         self.triangle = read_triangle(&mut r)?;
         self.noise = read_noise(&mut r)?;
         self.dmc = read_dmc(&mut r, self.region)?;
-        self.frame_counter = read_fc(&mut r, version)?;
+        self.frame_counter = read_fc(&mut r)?;
         // v2.1.5: the frame counter's PAL step-position selector is derived
         // from region, not persisted (the snapshot format is unchanged). Re-
         // derive it here from the just-restored region so a restored PAL state
@@ -756,75 +712,41 @@ impl Apu {
         self.pending_dmc_dma = r.bool()?;
         self.dmc_dma_addr = r.u16()?;
         self.sample_rate = r.u32()?;
-        self.dmc_dma_delay = if r.has_remaining() { r.u8()? } else { 0 };
-        self.dmc_dma_is_load = if r.has_remaining() { r.bool()? } else { false };
-        self.pending_dmc_abort = if r.has_remaining() { r.bool()? } else { false };
-        self.dmc_abort_delay = if r.has_remaining() { r.u8()? } else { 0 };
-        self.dmc_dma_short = if r.has_remaining() { r.bool()? } else { false };
-        self.defer_dmc_reload_once = if r.has_remaining() { r.bool()? } else { false };
-        self.dmc_dma_cooldown = if r.has_remaining() { r.u8()? } else { 0 };
-        self.dmc_reload_suppress_outputs = if r.has_remaining() { r.u8()? } else { 0 };
+        self.dmc_dma_delay = r.u8()?;
+        self.dmc_dma_is_load = r.bool()?;
+        self.pending_dmc_abort = r.bool()?;
+        self.dmc_abort_delay = r.u8()?;
+        self.dmc_dma_short = r.bool()?;
+        self.defer_dmc_reload_once = r.bool()?;
+        self.dmc_dma_cooldown = r.u8()?;
+        self.dmc_reload_suppress_outputs = r.u8()?;
 
-        // === W3-Stage-4 (2026-06-10) trailing tail ===
-        // See the matching block in [`Apu::snapshot`]. All-or-nothing: a
-        // blob either carries the whole tail (current builds) or ends before
-        // it (pre-Stage-4 blobs).
-        let had_stage4_tail = r.has_remaining();
-        if had_stage4_tail {
-            self.put_cycle = r.bool()?;
-            self.parity_seed = r.u64()?;
-            self.cannot_run_dmc_dma = r.u8()?;
-            self.dmc_reenable_period_block = r.bool()?;
-            self.subpos_arm_countdown = r.u8()?;
-            self.dmc_need_halt = r.bool()?;
-            self.dmc_need_dummy_read = r.bool()?;
-            let pending_next = r.bool()?;
-            {
-                self.pending_dmc_dma_next = pending_next;
-            }
-            let delayed_4015 = r.u8()?;
-            let delayed_status = r.bool()?;
-            let status_applied = r.bool()?;
-            let set_implicit_abort = r.bool()?;
-            let implicit_abort = r.bool()?;
-            let edge_arm_suppress = r.bool()?;
-            {
-                self.dmc_delayed_4015 = delayed_4015;
-                self.dmc_delayed_status = delayed_status;
-                self.dmc_status_applied = status_applied;
-                self.dmc_set_implicit_abort = set_implicit_abort;
-                self.dmc_implicit_abort = implicit_abort;
-                self.dmc_edge_arm_suppress = edge_arm_suppress;
-            }
-        } else {
-            // Pre-Stage-4 blob upconvert (ADR-0003 best-effort): the blob was
-            // produced under the immediate-`$4015`-application model, where
-            // "applied DMC status == channel active". Synthesize that
-            // equivalence so an in-flight sample stays serviceable under the
-            // delayed-application engine instead of silently de-gating.
-            {
-                let active = self.dmc.bytes_remaining > 0;
-                self.dmc_delayed_status = active;
-                self.dmc_status_applied = active;
-            }
-        }
-        // `put_cycle`/`parity_seed` came from the blob only when the tail was
-        // present; the bus re-seeds the boot alignment otherwise.
-        self.restored_parity_tail = had_stage4_tail;
+        // === W3-Stage-4 (2026-06-10) tail ===
+        // See the matching block in [`Apu::snapshot`].
+        self.put_cycle = r.bool()?;
+        self.parity_seed = r.u64()?;
+        self.cannot_run_dmc_dma = r.u8()?;
+        self.dmc_reenable_period_block = r.bool()?;
+        self.subpos_arm_countdown = r.u8()?;
+        self.dmc_need_halt = r.bool()?;
+        self.dmc_need_dummy_read = r.bool()?;
+        self.pending_dmc_dma_next = r.bool()?;
+        self.dmc_delayed_4015 = r.u8()?;
+        self.dmc_delayed_status = r.bool()?;
+        self.dmc_status_applied = r.bool()?;
+        self.dmc_set_implicit_abort = r.bool()?;
+        self.dmc_implicit_abort = r.bool()?;
+        self.dmc_edge_arm_suppress = r.bool()?;
 
         // === v4 scheduled warm-reset `$4017` re-write ===
-        // See the matching block in [`Apu::snapshot`]. Version-gated, so a v4
-        // blob must carry both bytes (a short one reports `Truncated`, which is
-        // the honest error). v1..=3 blobs upconvert to "no re-write pending" —
-        // the resting value, and what a pre-v4 restore left behind.
-        if version >= 4 {
-            self.reset_4017_delay = r.u8()?;
-            self.reset_4017_value = r.u8()?;
-        } else {
-            self.reset_4017_delay = 0;
-            self.reset_4017_value = 0;
-        }
+        // See the matching block in [`Apu::snapshot`].
+        self.reset_4017_delay = r.u8()?;
+        self.reset_4017_value = r.u8()?;
 
+        // Every field is fixed-size, so the blob must end here.
+        if r.pos != data.len() {
+            return Err(ApuSnapshotError::TrailingBytes(data.len() - r.pos));
+        }
         Ok(())
     }
 }
@@ -1005,41 +927,6 @@ mod tests {
     }
 
     #[test]
-    fn v1_snapshot_migrates_to_v2_fc_schedule() {
-        // Hand-craft a v1 blob: header version=1, region=0 (NTSC),
-        // empty channels + DMC + frame counter, then truncate at the
-        // end of the FC bool (the v1 `pending_irq_clear`). We avoid
-        // re-implementing the FULL v1 writer here (channels were
-        // mid-development at v1) and instead use the v2 writer
-        // followed by a manual mutation: re-write the version byte
-        // to 1 and CLIP the trailing 8 bytes (which are the new u64
-        // schedule) then APPEND a single zero bool (representing
-        // v1's `pending_irq_clear=false`). The migration path should
-        // restore as `irq_flag_clear_cycle=0` (no pending).
-        let a = Apu::new(Region::Ntsc, 44_100);
-        let mut blob = a.snapshot();
-        // Header version byte at offset 0; force to 1.
-        blob[0] = 1;
-        // The FC u64 is the LAST FC field written (see `write_fc`).
-        // It precedes `write_blip` + the trailing apu state. We need
-        // to swap the u64 (8 bytes) with a bool (1 byte) at exactly
-        // the FC schedule offset. Compute the offset by re-encoding
-        // a minimal FC and finding its size:
-        // version(1) + region(1) + pulse1 + pulse2 + triangle + noise
-        //     + dmc + fc(...) <- replace u64 here.
-        //
-        // The simplest viable test: assert that a v2 blob written
-        // and then restored as v2 keeps `irq_flag_clear_cycle == 0`,
-        // which exercises the same code path (read u64 == 0) that v1
-        // migration produces when `pending_irq_clear == false`.
-        let _ = blob; // unused below; kept for documentation of intent.
-        let mut a2 = Apu::new(Region::Ntsc, 44_100);
-        let v2_blob = a.snapshot();
-        a2.restore(&v2_blob).unwrap();
-        assert_eq!(a2.frame_counter.irq_flag_clear_cycle, 0);
-    }
-
-    #[test]
     fn stage4_tail_round_trips_parity_and_dma_state() {
         let mut a = Apu::new(Region::Ntsc, 44_100);
         a.put_cycle = true;
@@ -1057,8 +944,6 @@ mod tests {
         let blob = a.snapshot();
         let mut b = Apu::new(Region::Ntsc, 44_100);
         b.restore(&blob).unwrap();
-        assert!(b.restored_parity_tail, "tail presence must be reported");
-        assert!(b.snapshot_restored_parity());
         assert!(b.put_cycle);
         assert_eq!(b.cannot_run_dmc_dma, 2);
         assert!(b.dmc_reenable_period_block);
@@ -1073,31 +958,45 @@ mod tests {
         }
     }
 
+    /// v2.9.8 (ADR 0042): older versions and blobs that end early are
+    /// refused. Until then v1-v3 blobs were migrated, and a blob that ended
+    /// before the DMC-DMA bytes or the W3-Stage-4 tail loaded with defaults.
     #[test]
-    fn pre_stage4_blob_without_tail_upconverts() {
-        // Build a current blob, then strip BOTH the v4 reset-`$4017` tail
-        // (2 bytes, version-gated) and the Stage-4 tail (21 bytes: bool + u64 +
-        // u8 + bool + u8 + bool + bool + bool + u8 + bool*5) to simulate a
-        // pre-Stage-4 save, rewriting the version byte to v3 so the v4 gate
-        // does not then demand bytes that are no longer there.
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        // Make the DMC "active" so the delayed-4015 upconvert is observable.
-        a.dmc.sample_length = 16;
-        a.dmc.bytes_remaining = 8;
-        let mut blob = a.snapshot();
-        blob.truncate(blob.len() - (2 + 21));
-        blob[0] = 3;
-        let mut b = Apu::new(Region::Ntsc, 44_100);
-        b.restore(&blob).unwrap();
-        assert!(
-            !b.restored_parity_tail,
-            "missing tail must report no restored parity (bus re-seeds)"
-        );
-        {
-            // Immediate-application equivalence: applied status == active.
-            assert!(b.dmc_delayed_status);
-            assert!(b.dmc_status_applied);
+    fn older_versions_and_short_blobs_are_refused() {
+        let a = Apu::new(Region::Ntsc, 44_100);
+        let blob = a.snapshot();
+        for v in 1..APU_SNAPSHOT_VERSION {
+            let mut old = blob.clone();
+            old[0] = v;
+            assert!(matches!(
+                Apu::new(Region::Ntsc, 44_100).restore(&old),
+                Err(ApuSnapshotError::UnsupportedVersion(got)) if got == v
+            ));
         }
+        // The pre-Stage-4 shape: the current blob minus the v4 tail (2 bytes)
+        // and the Stage-4 tail (21 bytes), at the current version.
+        let short = &blob[..blob.len() - (2 + 21)];
+        assert!(matches!(
+            Apu::new(Region::Ntsc, 44_100).restore(short),
+            Err(ApuSnapshotError::Truncated(_))
+        ));
+        // Every shorter length is refused, and so is a trailing byte.
+        for len in 1..blob.len() {
+            assert!(
+                Apu::new(Region::Ntsc, 44_100)
+                    .restore(&blob[..len])
+                    .is_err(),
+                "an APU blob cut to {len} bytes loaded"
+            );
+        }
+        let mut long = blob.clone();
+        long.push(0);
+        // Named as what it is: "truncated" for a blob that is too LONG sent
+        // the reader looking for missing bytes (CodeRabbit on #580).
+        assert!(matches!(
+            Apu::new(Region::Ntsc, 44_100).restore(&long),
+            Err(ApuSnapshotError::TrailingBytes(n)) if n == 1
+        ));
     }
 
     #[test]
@@ -1117,27 +1016,6 @@ mod tests {
         b.restore(&blob).unwrap();
         assert_eq!(b.reset_4017_delay, 2);
         assert_eq!(b.reset_4017_value, 0x80);
-    }
-
-    #[test]
-    fn pre_v4_blob_upconverts_reset_4017_to_no_pending_rewrite() {
-        // v1..=3 blobs have no reset-`$4017` bytes; they must restore as
-        // "nothing scheduled" — the resting state, and what a pre-v4 restore
-        // left behind. Synthesize one by stripping the 2-byte tail and
-        // rewriting the version byte.
-        let mut a = Apu::new(Region::Ntsc, 44_100);
-        a.reset_4017_delay = 2;
-        a.reset_4017_value = 0x80;
-        let mut blob = a.snapshot();
-        blob.truncate(blob.len() - 2);
-        blob[0] = 3;
-
-        let mut b = Apu::new(Region::Ntsc, 44_100);
-        b.reset_4017_delay = 1; // must be overwritten, not left stale
-        b.reset_4017_value = 0xC0;
-        b.restore(&blob).expect("v3 blob must upconvert");
-        assert_eq!(b.reset_4017_delay, 0);
-        assert_eq!(b.reset_4017_value, 0);
     }
 
     #[test]

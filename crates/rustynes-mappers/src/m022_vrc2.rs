@@ -52,8 +52,9 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// cartridge RAM, so every save-state load, rewind step, run-ahead frame and
 /// netplay rollback kept whatever RAM the running game held instead of the
 /// saved one (core audit v2.9.2 AUD-02). **v2** appends the PRG-RAM, then the
-/// CHR-RAM when present. `load_state` accepts both; a v1 blob leaves the RAM
-/// untouched, which is the old behaviour.
+/// CHR-RAM when present. Since v2.9.8 (ADR 0042)
+/// `load_state` reads v2 only and refuses a v1 blob, which it used to load
+/// with the RAM left untouched.
 const VRC2_SECTION_VERSION: u8 = 2;
 
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
@@ -339,12 +340,13 @@ impl Mapper for Vrc2 {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let version = data.first().copied().unwrap_or(0);
-        // Both READABLE versions, as literals: v1 (no RAM) and v2 (+ RAM).
-        let ram_len = match version {
-            1 => 0,
-            2 => self.ram_block_len(),
-            other => return Err(MapperError::UnsupportedVersion(other)),
-        };
+        // Only the current layout is read (v2.9.8, ADR 0042). A v1 blob, which
+        // stopped before the RAM block, is refused rather than loaded with the
+        // RAM left as it was.
+        if version != VRC2_SECTION_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let ram_len = self.ram_block_len();
         // The whole length is validated before the first field is written.
         let core_len = 12 + self.vram.len();
         let expected = core_len + ram_len;
@@ -367,14 +369,10 @@ impl Mapper for Vrc2 {
             other => return Err(MapperError::Invalid(format!("mirroring {other}"))),
         };
         self.vram.copy_from_slice(&data[12..core_len]);
-        // A v1 blob stops here and leaves the RAM as it is -- the pre-v2.9.2
-        // behaviour, so an old save loads exactly as it always did.
-        if version >= 2 {
-            let (prg, chr) = data[core_len..].split_at(self.prg_ram.len());
-            self.prg_ram.copy_from_slice(prg);
-            if self.chr_is_ram {
-                self.chr_rom.copy_from_slice(chr);
-            }
+        let (prg, chr) = data[core_len..].split_at(self.prg_ram.len());
+        self.prg_ram.copy_from_slice(prg);
+        if self.chr_is_ram {
+            self.chr_rom.copy_from_slice(chr);
         }
         Ok(())
     }
@@ -509,20 +507,20 @@ mod tests {
         assert_eq!(m2.ppu_read(0x03FF), 0x22);
     }
 
-    /// A v1 blob (no RAM tail, written through v2.9.1) still loads and leaves
-    /// the RAM as it was -- the old behaviour, not a wipe.
+    /// v2.9.8 (ADR 0042): a v1 blob (no RAM tail, written through v2.9.1)
+    /// is refused. Until then it loaded and left the RAM as it was.
     #[test]
-    fn vrc2_v1_blob_loads_and_leaves_ram_untouched() {
+    fn vrc2_v1_blob_is_refused() {
         let mut m = Vrc2::new(synth(8), synth_chr(8), 22, 0, Mirroring::Vertical).unwrap();
         m.cpu_write(0x8000, 3);
         let core_len = 12 + m.vram.len();
         let mut v1 = m.save_state()[..core_len].to_vec();
         v1[0] = 1;
         let mut m2 = Vrc2::new(synth(8), synth_chr(8), 22, 0, Mirroring::Vertical).unwrap();
-        m2.cpu_write(0x6123, 0x77);
-        m2.load_state(&v1).expect("a v1 blob must still load");
-        assert_eq!(m2.prg_lo, 3, "v1 core fields restored");
-        assert_eq!(m2.cpu_read(0x6123), 0x77, "v1 load must not touch RAM");
+        assert!(matches!(
+            m2.load_state(&v1),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
     }
 
     /// A v2 blob one byte short (inside the RAM tail) is rejected.

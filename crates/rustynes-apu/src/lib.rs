@@ -7,7 +7,7 @@
 //! lookup-table non-linear mixer, analog highpass / lowpass filter chain,
 //! frame counter (4-step + 5-step modes with the documented IRQ flag),
 //! band-limited synthesis at host sample rate, and DMC sample DMA. The
-//! bus-side DMC DMA scheduling lives in `rustynes-core::LockstepBus`.
+//! bus-side DMC DMA scheduling lives in `rustynes-core::SystemBus`.
 
 #![no_std]
 // The chip stack carries no `unsafe`; `forbid` makes that a compile-time
@@ -54,10 +54,6 @@ mod pulse;
 mod snapshot;
 mod triangle;
 
-// `ApuBus` is deprecated (v2.7.5) but still re-exported, so its public path
-// keeps working until v2.9.0 decides its removal (ADR 0041).
-#[allow(deprecated)]
-pub use apu::ApuBus;
 pub use apu::{Apu, CHANNEL_GAIN_UNITY, CHANNEL_MASK_ALL};
 pub use blip::{BlipBuf, CPU_HZ_NTSC, CPU_HZ_PAL};
 pub use dmc::Dmc;

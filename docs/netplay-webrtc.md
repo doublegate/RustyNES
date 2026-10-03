@@ -164,7 +164,13 @@ unknown message tag cleanly (returns `None`), so a v2 peer **drops** a v3
 **Robustness.** Malformed / foreign / duplicate datagrams are dropped and never
 panic. A duplicate `Sync` from an already-adopted joiner is **idempotent** (it
 does not shift player indices). A `Sync` carrying a mismatched ROM hash is
-rejected.
+rejected, and from v2.9.8 (`PROTOCOL_VERSION` 5) so is one for the same ROM on
+a differently configured machine: `Sync` carries a `SessionIdentity`, the ROM
+hash plus `rustynes_core::config_digest` (SHA-256 over the region, the parsed
+cartridge board and every `HardwareOptions` field), and a difference fails with
+`MeshError::ConfigMismatch` / `DisconnectReason::ConfigMismatch` /
+`NetplayError::ConfigMismatch`. Peers refuse rather than adopt the host's
+options (ADR 0044). Signaling rooms still match by ROM only.
 
 **Verification.** The loopback integration test `tests/mesh_udp.rs` stands up a
 host + 2-3 joiners on `127.0.0.1` ephemeral ports, completes the multi-joiner

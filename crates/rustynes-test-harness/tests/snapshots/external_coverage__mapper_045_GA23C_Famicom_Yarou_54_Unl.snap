@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-045-GA23C/Famicom Yarou 54 (Unl) [!].nes
+rom_sha256=5e9d1ce1d0b282e60bafce10b24f66f1a1d014e00bb47190d40f389d658ede33
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=c1883a7271a5cdbe
+checkpoint f900 fb_fnv1a64=c0b9dab5c7f7171f
+checkpoint f1100 fb_fnv1a64=c0b9dab5c7f7171f

@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-228-Action52/Cheetah Men II - Bugfixed Version 2.1 by PacoChan (Hack).nes
+rom_sha256=cb052deb17f644789fd64f77c9c7545f5459d2266d656cf993255e0de4a186c4
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=4d05bebc396d1bbf
+checkpoint f900 fb_fnv1a64=d23469a7adb3bea0
+checkpoint f1100 fb_fnv1a64=d23469a7adb3bea0

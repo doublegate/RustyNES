@@ -21,8 +21,11 @@
 //! - `post_reset_mask_remaining` u32
 //! - BG latches: `nt_latch` u8 / `at_latch` u8 / `bg_lo_latch` u8 / `bg_hi_latch` u8
 //! - BG shifts (v2): `bg_shift_lo` u16 / `bg_shift_hi` u16 / `at_shift_lo` u16 /
-//!   `at_shift_hi` u16. (v1 stored `at_shift_*` as u8 + two 1-bit feed bytes;
-//!   v1 blobs are upconverted on read.)
+//!   `at_shift_hi` u16. (v1 stored `at_shift_*` as u8 + two 1-bit feed bytes.)
+//!
+//! The versions' tails follow (see [`PPU_SNAPSHOT_VERSION`]). Since v2.9.8
+//! (ADR 0042) only the current version is read; the per-version upconversion
+//! this module used to carry is gone.
 //! - `ex_attr_latch` (presence u8 + `palette` u8 + `chr_bank` u16)
 //! - `bg_split_latch` (presence u8 + `nt_addr` u16 + `at_addr` u16 + `fine_y` u8 + `chr_bank` u8)
 //! - sprite arrays: 8× `shift_lo` / `shift_hi` / `attr` / `x` / `spr_count` u8 / `spr_zero_in_line` bool
@@ -39,7 +42,11 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///
 /// - v1: 8-bit `at_shift_lo`/`at_shift_hi` + 1-bit `at_feed_lo`/`at_feed_hi`.
 /// - v2: 16-bit `at_shift_lo`/`at_shift_hi` (lockstep with the pattern
-///   shifters); the feed fields are gone. v1 blobs are still read.
+///   shifters); the feed fields are gone.
+///
+/// **Since v2.9.8 (ADR 0042) `Ppu::restore` reads the current version only.**
+/// The notes below on how each older version "upconverts" describe the
+/// behaviour before then.
 /// - v3 (W3-Stage-4 promotion, 2026-06-10): appends the
 ///   `mc-ppu-2007-render-buffer` rendering-time `$2007` PPUDATA
 ///   state-machine tail — `render_data_bus`, `ppudata_sm_countdown`,
@@ -609,9 +616,9 @@ impl Ppu {
     /// # Errors
     ///
     /// Returns [`PpuSnapshotError`] on a malformed blob.
-    // A flat, linear field-by-field decoder with per-version tail branches (v1
-    // through v8); splitting it would only scatter the schema that is clearest
-    // read top-to-bottom against the matching `snapshot` writer.
+    // A flat, linear field-by-field decoder; splitting it would only scatter
+    // the schema that is clearest read top-to-bottom against the matching
+    // `snapshot` writer.
     #[allow(clippy::too_many_lines)]
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
         // A valid v1..=8 snapshot always contains these fixed-size blocks (the
@@ -647,9 +654,10 @@ impl Ppu {
         // before the range check so the version rules are unchanged.
         let slim = raw_version & PPU_SNAPSHOT_SLIM_FLAG != 0;
         let version = raw_version & !PPU_SNAPSHOT_SLIM_FLAG;
-        // Bound tied to the constant, not a literal: the acceptance range and
-        // the emitted version must move together on every schema bump.
-        if !matches!(version, 1..=PPU_SNAPSHOT_VERSION) {
+        // Only the current version is read (v2.9.8, ADR 0042). Versions 1-10
+        // used to be upconverted here, each missing tail restored to its
+        // rest default; see `PPU_SNAPSHOT_VERSION` for what each added.
+        if version != PPU_SNAPSHOT_VERSION {
             return Err(PpuSnapshotError::UnsupportedVersion(raw_version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -701,21 +709,8 @@ impl Ppu {
         self.bg_hi_latch = r.u8()?;
         self.bg_shift_lo = r.u16()?;
         self.bg_shift_hi = r.u16()?;
-        if version >= 2 {
-            self.at_shift_lo = r.u16()?;
-            self.at_shift_hi = r.u16()?;
-        } else {
-            // v1: 8-bit attribute shift registers + a 1-bit feed each.
-            // Promote into the v2 16-bit registers (low byte = the v1
-            // 8-bit value; the high byte was always implicitly zero in
-            // the v1 model). The transient feed bits are dropped — they
-            // are regenerated from `at_latch` within one scanline of
-            // resumed rendering, so this is lossless in practice.
-            self.at_shift_lo = u16::from(r.u8()?);
-            self.at_shift_hi = u16::from(r.u8()?);
-            let _at_feed_lo = r.u8()?;
-            let _at_feed_hi = r.u8()?;
-        }
+        self.at_shift_lo = r.u16()?;
+        self.at_shift_hi = r.u16()?;
 
         let ex_present = r.u8()?;
         let palette = r.u8()?;
@@ -758,18 +753,11 @@ impl Ppu {
             r.bytes_into(&mut self.framebuffer)?;
         }
 
-        // v3 (W3-Stage-4): the gated master-clock PPU tail. v1/v2 blobs
-        // lack it; upconvert at the inactive defaults (countdown 0 = no
-        // reload in flight), which is exactly what the pre-v3
-        // clear-on-restore assumption imposed.
-        if version >= 3 {
-            self.restore_stage4_tail(&mut r)?;
-        }
+        // v3 (W3-Stage-4): the gated master-clock PPU tail.
+        self.restore_stage4_tail(&mut r)?;
 
         // v4 (v1.7.0 F3): the in-flight extra-scanlines overclock countdown.
-        // v1/v2/v3 blobs lack it; upconvert to `0` (no insertion in flight),
-        // which is exactly the state a pre-v4 restore left it in.
-        let extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
+        let extra_lines_remaining = r.u16()?;
         // Clamped, not rejected. The configured `extra_scanlines` is a frontend
         // knob that is NOT serialized, so a real save made under a larger knob
         // legitimately carries a larger countdown; refusing it would reject a
@@ -786,162 +774,80 @@ impl Ppu {
             extra_lines_remaining.min(self.extra_scanlines)
         };
 
-        // v5 (v2.0.3, ADR 0030): the 2-cycle-ALE in-flight fetch state. v1..=4
-        // blobs lack it; upconvert to the inactive rest defaults (`0`/`false`) —
-        // the state a fetch boundary leaves it in, and exactly what a pre-v5
-        // restore imposed. A v5 blob taken mid-render round-trips the live values
-        // so the re-simulated frame stays byte-identical (netplay rollback).
-        if version >= 5 {
-            self.octal_latch = r.u8()?;
-            self.address_bus = r.u16()?;
-            self.ale_armed = r.u8()? != 0;
-            self.pattern_latch_stale = r.u8()? != 0;
-            self.copy_v_delay = r.u8()?;
-        } else {
-            self.octal_latch = 0;
-            self.address_bus = 0;
-            self.ale_armed = false;
-            self.pattern_latch_stale = false;
-            self.copy_v_delay = 0;
-        }
+        // v5 (v2.0.3, ADR 0030): the 2-cycle-ALE in-flight fetch state. A blob
+        // taken mid-render round-trips the live values so the re-simulated
+        // frame stays byte-identical (netplay rollback).
+        self.octal_latch = r.u8()?;
+        self.address_bus = r.u16()?;
+        self.ale_armed = r.u8()? != 0;
+        self.pattern_latch_stale = r.u8()? != 0;
+        self.copy_v_delay = r.u8()?;
 
-        // v6: per-sprite shifter halt state (see the write side). Pre-v6 blobs
-        // lack it; upconvert to the power-on default (`true` = halted), which is
-        // what a pre-v6 restore left it at (the field kept its constructor value).
-        if version >= 6 {
-            for h in &mut self.spr_halted {
-                *h = r.u8()? != 0;
-            }
-            self.prev_rendering_enabled = r.u8()? != 0;
-            self.rendering_enabled_delayed = r.u8()? != 0;
-            self.oam_corruption_pending = r.u8()? != 0;
-            self.oam_corruption_index = bounded("oam_corruption_index", r.u8()?, 0x20)?;
-            self.oam_corruption_disabled = r.u8()? != 0;
-            self.oam_corruption_disabled_instant = r.u8()? != 0;
-        } else {
-            self.spr_halted = [true; 8];
-            self.prev_rendering_enabled = false;
-            self.rendering_enabled_delayed = false;
-            self.oam_corruption_pending = false;
-            self.oam_corruption_index = 0;
-            self.oam_corruption_disabled = false;
-            self.oam_corruption_disabled_instant = false;
+        // v6: per-sprite shifter halt state (see the write side).
+        for h in &mut self.spr_halted {
+            *h = r.u8()? != 0;
         }
+        self.prev_rendering_enabled = r.u8()? != 0;
+        self.rendering_enabled_delayed = r.u8()? != 0;
+        self.oam_corruption_pending = r.u8()? != 0;
+        self.oam_corruption_index = bounded("oam_corruption_index", r.u8()?, 0x20)?;
+        self.oam_corruption_disabled = r.u8()? != 0;
+        self.oam_corruption_disabled_instant = r.u8()? != 0;
 
         // v7 (v2.1.4 F2.3): the optional OAM-decay row timestamps, stored as a
         // relative age. Reconstruct the absolute timestamp against the LIVE counter
         // (`now = dot_counter / 3`, unchanged by restore) as `now - age`, so the
         // decay clock is preserved regardless of how the counter was rebased between
-        // snapshot and restore (the rollback-determinism property). Pre-v7 blobs
-        // lack it: stamp every row as freshly-touched at the live cycle (age 0),
-        // i.e. the rest state a pre-v7 restore effectively left (the constructor's
-        // all-zero array with decay off is never consulted anyway).
+        // snapshot and restore (the rollback-determinism property).
         let now = self.dot_counter / 3;
-        if version >= 7 {
-            for ts in &mut self.oam_decay_cycles {
-                let age = r.u64()?;
-                *ts = now.wrapping_sub(age);
-            }
-        } else {
-            self.oam_decay_cycles = [now; 32];
+        for ts in &mut self.oam_decay_cycles {
+            let age = r.u64()?;
+            *ts = now.wrapping_sub(age);
         }
 
         // v8: the per-dot sprite-evaluation FSM + parallel OAM-data-bus model +
-        // the clear-window secondary-OAM pointer. Pre-v8 blobs lack it; upconvert
-        // to the constructor defaults, which is precisely the state a pre-v8
-        // restore left these fields in (they simply kept whatever the instance
-        // already held — for a fresh `Ppu`, these values).
-        if version >= 8 {
-            self.sprite_eval_read_latch = r.u8()?;
-            self.sprite_eval_n = bounded("sprite_eval_n", r.u8()?, 63)?;
-            self.sprite_eval_m = bounded("sprite_eval_m", r.u8()?, 3)?;
-            self.sprite_eval_found = bounded("sprite_eval_found", r.u8()?, 8)?;
-            self.sprite_eval_sec_idx = bounded("sprite_eval_sec_idx", r.u8()?, 0x20)?;
-            self.sprite_eval_copying = r.u8()? != 0;
-            self.sprite_eval_done = r.u8()? != 0;
-            self.sprite_eval_overflow_search = r.u8()? != 0;
-            self.sprite_eval_zero_found = r.u8()? != 0;
-            self.sprite_eval_first_iter = r.u8()? != 0;
+        // the clear-window secondary-OAM pointer.
+        self.sprite_eval_read_latch = r.u8()?;
+        self.sprite_eval_n = bounded("sprite_eval_n", r.u8()?, 63)?;
+        self.sprite_eval_m = bounded("sprite_eval_m", r.u8()?, 3)?;
+        self.sprite_eval_found = bounded("sprite_eval_found", r.u8()?, 8)?;
+        self.sprite_eval_sec_idx = bounded("sprite_eval_sec_idx", r.u8()?, 0x20)?;
+        self.sprite_eval_copying = r.u8()? != 0;
+        self.sprite_eval_done = r.u8()? != 0;
+        self.sprite_eval_overflow_search = r.u8()? != 0;
+        self.sprite_eval_zero_found = r.u8()? != 0;
+        self.sprite_eval_first_iter = r.u8()? != 0;
 
-            self.oam_bus_copybuffer = r.u8()?;
-            r.bytes_into(&mut self.oam_bus_secondary)?;
-            self.oam_bus_addr_h = bounded("oam_bus_addr_h", r.u8()?, 63)?;
-            self.oam_bus_addr_l = bounded("oam_bus_addr_l", r.u8()?, 3)?;
-            self.oam_bus_secondary_addr = bounded("oam_bus_secondary_addr", r.u8()?, 0x20)?;
-            self.oam_bus_copy_done = r.u8()? != 0;
-            self.oam_bus_sprite_in_range = r.u8()? != 0;
-            self.oam_bus_overflow_counter = bounded("oam_bus_overflow_counter", r.u8()?, 3)?;
+        self.oam_bus_copybuffer = r.u8()?;
+        r.bytes_into(&mut self.oam_bus_secondary)?;
+        self.oam_bus_addr_h = bounded("oam_bus_addr_h", r.u8()?, 63)?;
+        self.oam_bus_addr_l = bounded("oam_bus_addr_l", r.u8()?, 3)?;
+        self.oam_bus_secondary_addr = bounded("oam_bus_secondary_addr", r.u8()?, 0x20)?;
+        self.oam_bus_copy_done = r.u8()? != 0;
+        self.oam_bus_sprite_in_range = r.u8()? != 0;
+        self.oam_bus_overflow_counter = bounded("oam_bus_overflow_counter", r.u8()?, 3)?;
 
-            self.oam2_addr = bounded("oam2_addr", r.u8()?, 0x1F)?;
-        } else {
-            self.sprite_eval_read_latch = 0xFF;
-            self.sprite_eval_n = 0;
-            self.sprite_eval_m = 0;
-            self.sprite_eval_found = 0;
-            self.sprite_eval_sec_idx = 0;
-            self.sprite_eval_copying = false;
-            self.sprite_eval_done = false;
-            self.sprite_eval_overflow_search = false;
-            self.sprite_eval_zero_found = false;
-            self.sprite_eval_first_iter = false;
+        self.oam2_addr = bounded("oam2_addr", r.u8()?, 0x1F)?;
 
-            self.oam_bus_copybuffer = 0xFF;
-            self.oam_bus_secondary = [0xFF; 32];
-            self.oam_bus_addr_h = 0;
-            self.oam_bus_addr_l = 0;
-            self.oam_bus_secondary_addr = 0;
-            self.oam_bus_copy_done = false;
-            self.oam_bus_sprite_in_range = false;
-            self.oam_bus_overflow_counter = 0;
-
-            self.oam2_addr = 0;
+        // v9: the `OAM2Address` counter and its two latched flags.
+        // Range-check at the EDGE: this byte is untrusted input and is used
+        // directly as an index into `oam_bus_secondary: [u8; 32]`.
+        let fetch_addr = r.u8()?;
+        if fetch_addr >= 32 {
+            return Err(PpuSnapshotError::InvalidOam2FetchAddr(fetch_addr));
         }
+        self.oam2_fetch_addr = fetch_addr;
+        self.oam2_overflowed = r.u8()? != 0;
+        self.oam2_fetch_frozen = r.u8()? != 0;
 
-        // NOTE ON REACH: this upconversion is NOT what protects a user's `.rns`
-        // file. `Bus::restore` compares the PPU section's version for EQUALITY
-        // (`bus.rs`, `SnapshotError::VersionMismatch`), so a pre-v9 container is
-        // rejected outright and never arrives here -- that rejection is the
-        // approved save-state epoch. This branch exists for the direct
-        // `Ppu::restore` API and for the synthesis tests that build older blobs,
-        // both of which bypass the container. Keeping the two straight matters:
-        // reading it as the `.rns` compatibility path would suggest old saves
-        // still load, which they deliberately do not.
-        if version >= 9 {
-            // Range-check at the EDGE: this byte is untrusted input and is used
-            // directly as an index into `oam_bus_secondary: [u8; 32]`.
-            let fetch_addr = r.u8()?;
-            if fetch_addr >= 32 {
-                return Err(PpuSnapshotError::InvalidOam2FetchAddr(fetch_addr));
-            }
-            self.oam2_fetch_addr = fetch_addr;
-            self.oam2_overflowed = r.u8()? != 0;
-            self.oam2_fetch_frozen = r.u8()? != 0;
-        } else {
-            self.oam2_fetch_addr = 0;
-            self.oam2_overflowed = false;
-            self.oam2_fetch_frozen = false;
-        }
+        // v10: stage 2 of the rendering gate.
+        self.rendering_enabled_delayed2 = r.u8()? != 0;
 
-        // v10: stage 2 of the rendering gate. A pre-v10 blob carries no such
-        // dot, so the closest honest reconstruction is stage 1 -- correct
-        // everywhere except within one dot of a `$2001` rendering edge, which
-        // is the best an older blob can support and is not silently claimed to
-        // be more.
-        if version >= 10 {
-            self.rendering_enabled_delayed2 = r.u8()? != 0;
-        } else {
-            self.rendering_enabled_delayed2 = self.rendering_enabled_delayed;
-        }
+        // v11: the deferred sprite re-arm (`true` only in the two dots after an
+        // odd-frame skip).
+        self.spr_rearm_deferred = r.u8()? != 0;
 
-        // v11: the deferred sprite re-arm. Older blobs predate it; `false` is
-        // the state everywhere except the two dots after an odd-frame skip.
-        if version >= 11 {
-            self.spr_rearm_deferred = r.u8()? != 0;
-        } else {
-            self.spr_rearm_deferred = false;
-        }
-
-        // Derived-cache fixup (every version): the scanline-classification cache
+        // Derived-cache fixup: the scanline-classification cache
         // is a pure function of `scanline` + `region`, so it is recomputed rather
         // than carried. Resetting the key to the `Ppu::new` sentinel forces the
         // next `tick` to refill it from the restored scanline; leaving a warm key
@@ -1032,8 +938,8 @@ mod tests {
     /// v11: `spr_rearm_deferred` is the reason for the epoch, and it is only
     /// ever `true` across the frame boundary, where every run-ahead and save
     /// snapshot is taken. The round trip must carry a TRUE value (the default
-    /// `false` would survive an omitted or inverted byte), and a v10 blob must
-    /// upconvert to `false` on the direct `restore` path. Added in v2.9.5 at
+    /// `false` would survive an omitted or inverted byte), and a v10 blob is
+    /// refused. Added in v2.9.5 at
     /// Copilot's review of #575.
     #[test]
     fn snapshot_v11_carries_the_deferred_sprite_rearm() {
@@ -1056,14 +962,16 @@ mod tests {
             "a false deferral must overwrite a stale true"
         );
 
-        // A v10 blob: the current blob minus the one-byte v11 tail.
+        // A v10 blob (the current blob minus the one-byte v11 tail) upconverted
+        // to `false` until v2.9.8; it is refused now (ADR 0042).
         p.spr_rearm_deferred = true;
         let cur = p.snapshot();
         let mut v10 = cur[..cur.len() - V11_TAIL].to_vec();
         v10[0] = 10;
-        q.spr_rearm_deferred = true;
-        q.restore(&v10).expect("v10 blob must upconvert");
-        assert!(!q.spr_rearm_deferred, "a pre-v11 blob restores no deferral");
+        assert!(matches!(
+            q.restore(&v10),
+            Err(PpuSnapshotError::UnsupportedVersion(10))
+        ));
     }
 
     #[test]
@@ -1143,68 +1051,37 @@ mod tests {
         assert_eq!(q.bg_shift_hi, 0x9ABC);
     }
 
+    /// v2.9.8 (ADR 0042): every older version is refused, whatever its
+    /// length. Each is built the way the upconversion tests used to build
+    /// them: the current blob minus the tails that version did not carry,
+    /// with its version byte. (v1 also had a different attribute-shifter
+    /// layout; its version byte alone is what is refused.)
     #[test]
-    fn snapshot_reads_v1_attribute_shifters_as_low_byte() {
-        // A v1 blob stored `at_shift_lo`/`at_shift_hi` as u8 plus two
-        // 1-bit `at_feed_*` bytes. The v2 reader must accept v1 blobs and
-        // promote the 8-bit attribute value into the low byte of the new
-        // 16-bit register (the high byte was always implicitly zero in
-        // the v1 model). Synthesize a v1 blob by snapshotting v2, then
-        // rewriting the version byte + the 4-byte attribute region in the
-        // v1 (u8 + u8 + u8 + u8) layout.
-        let mut p = Ppu::new(PpuRegion::Ntsc);
-        p.at_shift_lo = 0x00CD; // v1 could only hold the low byte
-        p.at_shift_hi = 0x00EF;
-        let v2 = p.snapshot();
-
-        // Locate the attribute field: it follows bg_shift_lo (u16) +
-        // bg_shift_hi (u16). We rebuild the blob as v1 by re-serialising
-        // up to that point and splicing a v1-shaped attribute block. The
-        // simplest robust construction: decode the v2 layout offset by
-        // searching for the known 16-bit AT-low bytes we set.
-        // at_shift_lo = 0x00CD -> LE bytes [0xCD, 0x00]; at_shift_hi =
-        // 0x00EF -> [0xEF, 0x00]. In v1 these become [0xCD][0xEF] plus two
-        // feed bytes. Build the v1 blob field-by-field by copying the
-        // prefix, then the v1 attribute block, then the v2 tail (which is
-        // identical from `ex_attr_latch` onward).
-        // Find the 4-byte AT region: bytes [.., 0xCD,0x00, 0xEF,0x00, ..].
-        let mut idx = None;
-        for w in 0..v2.len().saturating_sub(4) {
-            if v2[w] == 0xCD && v2[w + 1] == 0x00 && v2[w + 2] == 0xEF && v2[w + 3] == 0x00 {
-                idx = Some(w);
-                break;
-            }
+    fn every_older_snapshot_version_is_refused() {
+        let cur = Ppu::new(PpuRegion::Ntsc).snapshot();
+        let tails = [
+            V3_TAIL, V4_TAIL, V5_TAIL, V6_TAIL, V7_TAIL, V8_TAIL, V9_TAIL, V10_TAIL, V11_TAIL,
+        ];
+        assert_eq!(tails.iter().sum::<usize>(), V3_THROUGH_V11_TAILS);
+        for v in 1..PPU_SNAPSHOT_VERSION {
+            // Versions 1 and 2 carry none of the v3+ tails; version N >= 3
+            // carries the tails up to and including its own.
+            let carried = usize::from(v.saturating_sub(2));
+            let missing: usize = tails[carried..].iter().sum();
+            let mut old = cur[..cur.len() - missing].to_vec();
+            old[0] = v;
+            assert!(
+                matches!(
+                    Ppu::new(PpuRegion::Ntsc).restore(&old),
+                    Err(PpuSnapshotError::UnsupportedVersion(got)) if got == v
+                ),
+                "a v{v} blob must be refused"
+            );
         }
-        let at = idx.expect("locate v2 16-bit AT region");
-        let mut v1 = Vec::new();
-        v1.extend_from_slice(&v2[..at]); // prefix (incl. bg shifters)
-        v1.push(0xCD); // v1 at_shift_lo (u8)
-        v1.push(0xEF); // v1 at_shift_hi (u8)
-        v1.push(0x01); // v1 at_feed_lo (u8)
-        v1.push(0x00); // v1 at_feed_hi (u8)
-        // Tail from ex_attr_latch onward, MINUS the v3 W3-Stage-4 tail
-        // (23 bytes: u8*3 + [u8;8]*2 + u16 PPUDATA state machine, then
-        // u8*2 BG-reload freeze), the v4 extra-scanlines countdown (2 bytes:
-        // u16 `extra_lines_remaining`), the v5 2-cycle-ALE fetch-state tail
-        // (6 bytes: u8 `octal_latch` + u16 `address_bus` + u8 `ale_armed` + u8
-        // `pattern_latch_stale` + u8 `copy_v_delay`), the v6 render-state
-        // tail (14 bytes: [u8;8] `spr_halted` + u8 `prev_rendering_enabled` + u8
-        // `rendering_enabled_delayed` + u8*4 `oam_corruption_*`), the v7
-        // OAM-decay tail (256 bytes: [u64;32] relative-age `oam_decay_cycles`),
-        // AND the v8 sprite-evaluation tail (50 bytes: u8*5 + bool*5 eval FSM,
-        // then u8 + [u8;32] + u8*3 + bool*2 + u8 OAM-data-bus model, then u8
-        // `oam2_addr`), AND the v9 OAM2Address tail (3 bytes: u8
-        // `oam2_fetch_addr` + bool `oam2_overflowed` + bool
-        // `oam2_fetch_frozen`), AND the v10 rendering-gate stage-2 tail
-        // (1 byte), AND the v11 deferred sprite re-arm (1 byte) — 356 bytes
-        // total, none of which a v1 blob carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - V3_THROUGH_V11_TAILS]);
-        v1[0] = 1; // version byte -> v1
-
-        let mut q = Ppu::new(PpuRegion::Ntsc);
-        q.restore(&v1).expect("v1 blob must upconvert");
-        assert_eq!(q.at_shift_lo, 0x00CD, "v1 low byte promoted to 16-bit");
-        assert_eq!(q.at_shift_hi, 0x00EF);
+        // A slim blob of an older version is refused the same way.
+        let mut slim = Ppu::new(PpuRegion::Ntsc).snapshot_slim();
+        slim[0] = PPU_SNAPSHOT_SLIM_FLAG | (PPU_SNAPSHOT_VERSION - 1);
+        assert!(Ppu::new(PpuRegion::Ntsc).restore(&slim).is_err());
     }
 
     #[test]
@@ -1696,32 +1573,6 @@ mod tests {
             let age_q2 = now_q2.wrapping_sub(q2.oam_decay_cycles[i]);
             assert_eq!(age_p, age_q2, "row {i} age preserved across counter rebase");
         }
-    }
-
-    #[test]
-    fn snapshot_pre_v7_blob_upconverts_oam_decay_to_rest() {
-        // A v6 blob lacks the OAM-decay tail; the v7 reader must upconvert it by
-        // stamping every row as freshly-touched at the live cycle (age 0), which is
-        // the rest state (decay is off in any pre-v7 build, so the array is inert).
-        // Synthesize a v6 blob by snapshotting the current version and truncating
-        // the v9 OAM2Address tail (3 bytes), the v8 sprite-evaluation tail (50
-        // bytes) and the v7 OAM-decay tail (256 bytes), then rewriting the
-        // version byte. The totals are cumulative by construction: this builds
-        // an OLD blob out of a CURRENT one, so every schema bump has to be
-        // subtracted here too.
-        let p = Ppu::new(PpuRegion::Ntsc);
-        let cur = p.snapshot();
-        let mut v6 =
-            cur[..cur.len() - (V11_TAIL + V10_TAIL + V9_TAIL + V8_TAIL + V7_TAIL)].to_vec();
-        v6[0] = 6;
-
-        let mut q = Ppu::new(PpuRegion::Ntsc);
-        q.dot_counter = 3 * 12_345; // now = 12_345
-        q.restore(&v6).expect("v6 blob must upconvert");
-        assert_eq!(
-            q.oam_decay_cycles, [12_345u64; 32],
-            "pre-v7 rows stamped fresh at the live cycle"
-        );
     }
 
     #[test]

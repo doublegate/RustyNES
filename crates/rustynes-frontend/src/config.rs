@@ -1863,6 +1863,18 @@ pub struct EmulationConfig {
     #[serde(default)]
     pub power_on_ram_seed: u64,
 
+    /// v2.9.8 — model a Famicom's reset wiring instead of a front-loading
+    /// NES's. On a Famicom the PPU's `/RESET` is tied to 5 V (`NESdev` "PPU power
+    /// up state", §Famicom), so the PPU leaves its ~29,658-cycle warm-up about a
+    /// frame before the CPU starts, and the Reset button reaches only the CPU.
+    /// Some Famicom-market carts (the *999-in-1* multicart) write the PPU inside
+    /// the NES's warm-up and only draw correctly with this on. **Off by
+    /// default** (the NES model), which is byte-identical. Pushed into the core
+    /// via `Nes::set_console_model` on ROM load, power-cycle and a Settings
+    /// change; it takes full effect from the next power-cycle or ROM load.
+    #[serde(default)]
+    pub famicom_console: bool,
+
     /// v2.1.8 A1 / v2.2.3 — use the specialized visible-scanline fast dot path
     /// (`Nes::set_fast_dotloop`). **On by default**, and unlike every other
     /// field here it is **not an accuracy knob**: the fast path runs the same
@@ -1903,6 +1915,7 @@ impl Default for EmulationConfig {
             blargg_power_up_palette: false,
             randomize_power_on_ram: false,
             power_on_ram_seed: 0,
+            famicom_console: false,
             fast_dotloop: default_fast_dotloop(),
         }
     }
@@ -3263,6 +3276,23 @@ debug_overlay = "Backquote"
         assert!(!d.blargg_power_up_palette);
         assert!(!d.randomize_power_on_ram);
         assert_eq!(d.power_on_ram_seed, 0);
+        assert!(!d.famicom_console);
+    }
+
+    #[test]
+    fn emulation_famicom_console_defaults_off_and_round_trips() {
+        // v2.9.8 — a config written before the key existed loads as the NES
+        // model (byte-identical), and an explicit opt-in survives a save.
+        let older: EmulationConfig = toml::from_str("oam_decay = false\n").unwrap();
+        assert!(!older.famicom_console, "missing key must default OFF");
+        let on = EmulationConfig {
+            famicom_console: true,
+            ..EmulationConfig::default()
+        };
+        let text = toml::to_string_pretty(&on).unwrap();
+        assert!(text.contains("famicom_console = true"), "{text}");
+        let back: EmulationConfig = toml::from_str(&text).unwrap();
+        assert!(back.famicom_console, "opt-in must round-trip");
     }
 
     #[test]

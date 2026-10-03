@@ -137,6 +137,10 @@ pub struct SettingsApply {
     /// into the emulator, which applies it from the next frame (and holds stock
     /// timing while a movie records or plays, or under netplay).
     pub overclock: bool,
+    /// v2.9.8 — the console model (`[emulation] famicom_console`) changed; the
+    /// app pushes it into the core through its own path (not the whole PPU
+    /// knob set, which would re-run the power-on RAM fill mid-game).
+    pub console_model: bool,
 }
 
 impl SettingsApply {
@@ -163,6 +167,7 @@ impl SettingsApply {
             || self.oam_decay
             || self.fast_dotloop
             || self.overclock
+            || self.console_model
     }
 }
 
@@ -1835,6 +1840,22 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         save_config(config);
     }
 
+    // v2.9.8 — the Famicom console model. OFF by default (the NES model) is
+    // byte-identical. ON models the Famicom's reset wiring: the PPU is past its
+    // warm-up when the CPU starts, and Reset does not reach the PPU. It takes
+    // full effect from the next power-cycle or ROM load.
+    if ui
+        .checkbox(
+            &mut config.emulation.famicom_console,
+            crate::t!(SetFamicomConsole),
+        )
+        .on_hover_text(crate::t!(SetFamicomConsoleHover))
+        .changed()
+    {
+        state.apply.console_model = true;
+        save_config(config);
+    }
+
     // v2.2.3 — the specialized PPU fast dot path. NOT an accuracy toggle: both
     // paths emit the identical framebuffer/audio/cycle count (pinned every frame
     // by `fast_dotloop_diff`), so this is a performance selector with an escape
@@ -1883,6 +1904,9 @@ fn reset_advanced(state: &mut SettingsPanelState, config: &mut Config) {
     config.emulation = crate::config::EmulationConfig::default();
     state.apply.rewind_enabled = true;
     state.apply.oam_decay = true;
+    // v2.9.8 — the default is the NES model; push it so a reset takes effect
+    // on the running core's next Reset rather than at the next launch.
+    state.apply.console_model = true;
     // `EmulationConfig::default()` restores `fast_dotloop = true`, so the
     // reset must re-push it too (a user who had turned it off gets the
     // default back live, not on next launch).
@@ -1995,11 +2019,17 @@ mod tests {
         let mut state = SettingsPanelState::default();
         let mut config = Config::default();
         config.enhancements.overclock_scanlines = 40;
+        config.emulation.famicom_console = true;
         reset_advanced(&mut state, &mut config);
         assert_eq!(config.enhancements.overclock_scanlines, 0);
+        assert!(!config.emulation.famicom_console, "back to the NES model");
         let apply = state.take_apply();
         assert!(apply.overclock, "the reset overclock reaches the core");
         assert!(apply.rewind_enabled && apply.oam_decay && apply.fast_dotloop);
+        assert!(
+            apply.console_model,
+            "the reset console model reaches the core"
+        );
     }
 
     #[test]

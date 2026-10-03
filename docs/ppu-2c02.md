@@ -95,9 +95,9 @@ Per `ref-docs/research-report.md` §Frame and scanline structure:
 | 241..=260 (NTSC) / 241..=310 (PAL) | 0..=340 | Vertical blank (VBL flag set at scanline 241 dot 1; /NMI asserted at dot 3 — see below) |
 | 261 (NTSC) / 311 (PAL) | 0..=340 | Pre-render |
 
-**VBL flag vs /NMI assertion timing.** The VBL bit (`PPUSTATUS` bit 7) is set at scanline 241 dot 1 per nesdev. Real hardware pulls /NMI low one PPU clock later (dot 2). In our scheduler, where `LockstepBus::cpu_read`/`cpu_write` performs the bus access *before* the cycle's 3 PPU dots tick (vs. real hardware's mid-cycle bus access), we delay /NMI assertion by **2 additional PPU dots** (assert at scanline 241 dot 3) so that blargg's `ppu_vbl_nmi/05-nmi_timing` and `08-nmi_off_timing` sample the rising edge on the same CPU cycle a real 6502 would. The bus's edge detector samples the /NMI line *between every PPU dot* of `tick_one_cpu_cycle` so a glitched edge that goes low→high then back to low within a single CPU cycle (e.g. PPUCTRL.7 set during pre-render dot 0, then VBL cleared at dot 1 within the same CPU cycle) is still latched — required for `ppu_vbl_nmi/07-nmi_on_timing`.
+**VBL flag vs /NMI assertion timing.** The VBL bit (`PPUSTATUS` bit 7) is set at scanline 241 dot 1 per nesdev. Real hardware pulls /NMI low one PPU clock later (dot 2). In our scheduler, where `SystemBus::cpu_read`/`cpu_write` performs the bus access *before* the cycle's 3 PPU dots tick (vs. real hardware's mid-cycle bus access), we delay /NMI assertion by **2 additional PPU dots** (assert at scanline 241 dot 3) so that blargg's `ppu_vbl_nmi/05-nmi_timing` and `08-nmi_off_timing` sample the rising edge on the same CPU cycle a real 6502 would. The CPU samples the /NMI level (`Bus::nmi_level`, the PPU's `nmi_line`) once per CPU cycle and edge-detects it itself (`mc_prev_nmi_line` in `rustynes-cpu`); `ppu_vbl_nmi/07-nmi_on_timing` passes on that path. Before v2.0.0 a bus-side detector sampled the line between every PPU dot of `tick_one_cpu_cycle`, to latch a glitched edge inside one CPU cycle. It had no caller after v2.0.0's scheduler and was removed at v2.9.8 with the rest of that path (ADR 0042).
 
-Odd-frame skip on NTSC: the pre-render scanline of odd frames omits the final dot, jumping `(339, 261) → (0, 0)`. The decision is taken on the transition out of dot 339 and gated on the rendering-enabled flag. The flag read by the dot-skip detector lags `mask` by **two PPU clocks** via a two-stage shift pipeline (`mask_for_skip_check` / `mask_skip_pipe1`), so a `$2001` write whose CPU cycle straddles dot 339 doesn't move the threshold by a full CPU cycle. This compensates for `LockstepBus`'s atomic write-before-tick ordering (CPU PPUMASK write lands ~3 PPU dots earlier than real hardware's φ2 latch); two dots of delay align the visible threshold with blargg's `ppu_vbl_nmi/10-even_odd_timing` expectations. The pipeline is fed only from `mask` and does not affect background, sprite, or palette-greyscale paths, all of which keep using `mask` directly.
+Odd-frame skip on NTSC: the pre-render scanline of odd frames omits the final dot, jumping `(339, 261) → (0, 0)`. The decision is taken on the transition out of dot 339 and gated on the rendering-enabled flag. The flag read by the dot-skip detector lags `mask` by **two PPU clocks** via a two-stage shift pipeline (`mask_for_skip_check` / `mask_skip_pipe1`), so a `$2001` write whose CPU cycle straddles dot 339 doesn't move the threshold by a full CPU cycle. This compensates for `SystemBus`'s atomic write-before-tick ordering (CPU PPUMASK write lands ~3 PPU dots earlier than real hardware's φ2 latch); two dots of delay align the visible threshold with blargg's `ppu_vbl_nmi/10-even_odd_timing` expectations. The pipeline is fed only from `mask` and does not affect background, sprite, or palette-greyscale paths, all of which keep using `mask` directly.
 
 **The skip moves scanline 0's first sprite pixel to X=0 (v2.9.5).** The sprite shifters are told to start counting on dot 339 and see that signal a dot late, at dot 340 (`forums.nesdev.org/viewtopic.php?t=26291`, from Visual2C02 analysis). When the skip removes dot 340, every loaded shifter starts scanline 0 still in the drawing state. It outputs its first pixel at X=0, shifts, and then counts one dot late, so pixels 1-7 land where they normally do. In the model, the skip puts the loaded slots back to `spr_halted`, and `emit_pixel` releases them after pixel 0 (`spr_rearm_deferred`, serialized in the `PPU_SNAPSHOT_VERSION` 11 tail because it lives across the frame boundary). AccuracyCoin's `Sprites On Scanline 0` reads this as a composite 2C02, code 1; without it the two frames agree and the ROM reports an RGB PPU, code 2. An X=0 sprite is unaffected.
 
@@ -157,6 +157,60 @@ unspecified power-up palette RAM and CPU work RAM are modeled by the opt-in,
 default-off knobs described below (see [Power-up palette RAM](#power-up-palette-ram-optional-opt-in-default-off-v217-p5)
 and [Power-on work-RAM model](#power-on-work-ram-model-optional-opt-in-default-off-v217-p5));
 the default keeps both deterministic (all-zero).
+
+The table and window above describe the front-loading NES (NES-001), where the
+CPU and PPU share one reset line. That is the default model, and the one every
+release before v2.9.8 emulated. See the next section for the Famicom.
+
+### Famicom console model (optional, opt-in, default-OFF) (v2.9.8)
+
+NESdev's "PPU power up state" page (§Famicom, and its closing note on front-
+and top-loaders) documents a different reset wiring on the Famicom:
+
+- The PPU's `/RESET` is tied to 5 V; only the CPU's rides a 0.47 µF capacitor.
+  At power-on the PPU therefore starts initialising "approximately one frame
+  before the CPU reset" (the page notes the exact timing has not been measured
+  and may vary). One NTSC frame is about 29,781 CPU cycles, longer than the
+  29,658-cycle window, so the window is already over when the CPU runs its
+  first instruction.
+- The Reset button resets only the CPU. The PPU keeps PPUCTRL, PPUMASK, its
+  latches, its read buffer and its frame position, and no window is re-armed.
+
+The page's examples are *Magic John* (waits 9,217 cycles before enabling NMI;
+boots on a Famicom, not on an NES) and *The Lord of King*. The *999-in-1*
+multicart (mapper 212) clears its nametable through `$2006`/`$2007` at about
+cycle 27,400 and shows a screen of "0" tiles under the NES model.
+
+`rustynes_core::ConsoleModel` selects the wiring; `Nes::set_console_model`
+sets it, and the bus consults it in two places:
+
+| Event | `ConsoleModel::Nes` (default) | `ConsoleModel::Famicom` |
+|---|---|---|
+| Power-on / power-cycle | Window armed (29,658 / 33,132 cycles) | Window closed before the first instruction (`Ppu::end_warmup`) |
+| Warm reset | `Ppu::reset` (table above) | PPU untouched; APU, DMA and cartridge reset as on the NES |
+| Selecting the model | Stored; applies from the next reset | Stored, and any window in progress ends now |
+
+The last row is what gives a host the Famicom power-on: the frontend applies
+its configuration straight after building or power-cycling the machine.
+
+Not modelled: the PPU's frame position at power-on is left where the NES model
+puts it rather than advanced by a guessed "approximately one frame", and the
+NES-101 top-loader (which shares the Famicom's reset behaviour, per the same
+page) is not offered separately because its power-on lead is not documented.
+
+The selection is a host/config knob, never derived from the ROM (NES 2.0 has no
+console type that tells a Famicom from an NES) and never from a per-game list.
+It is not part of the save-state; the warm-up counter it acts on already is
+(`post_reset_mask_remaining`, PPU snapshot section), so no snapshot version
+changes. A power-on movie or a netplay session records no console model, the
+same as the other hardware knobs in this file (OAM decay, die revision,
+power-on RAM): replaying one under a different setting can diverge from its
+first frames. With the model at its default, every output is byte-identical.
+
+Tests: `ppu::tests::end_warmup_lets_masked_registers_write_immediately`
+(`rustynes-ppu`), `nes::tests::famicom_console_model_ppu_leaves_reset_before_the_cpu`
+(`rustynes-core`), and the commercial-ROM check
+`crates/rustynes-test-harness/tests/famicom_console.rs` (999-in-1, local dump).
 
 ### Per-dot fetch sequencing (visible + pre-render scanlines)
 
@@ -352,15 +406,16 @@ is lost. Mesen2 serializes the equivalent set (`NesPpu<T>::Serialize`:
 8 is *not* a strictly-additive tail that older readers can truncate past, because the
 state it adds (the sprite-evaluation FSM + OAM data-bus model) has no correct default
 for a mid-frame restore — inventing one is exactly the broken-FSM restore the tail
-exists to prevent. So the reader accepts `1..=PPU_SNAPSHOT_VERSION` and returns
+exists to prevent. So the reader accepted `1..=PPU_SNAPSHOT_VERSION` and returned
 `PpuSnapshotError::UnsupportedVersion` for anything else; a `.rns` slot written by
 v2.2.2 or earlier fails to load with a clear version error rather than being
 upconverted or silently misread. Per ADR 0028 / ADR 0034 this is the deliberate
 choice, and it is confined to `.rns` files on disk: `.rnm` movies replay inputs from
 a power-on and carry no PPU snapshot, and netplay-rollback / TAS-seek snapshots are
-in-memory and always written by the running build. The acceptance bound is expressed
-as `1..=PPU_SNAPSHOT_VERSION` in `snapshot.rs` rather than a literal so it cannot
-drift from the emitted version.
+in-memory and always written by the running build. Since v2.9.8 (ADR 0042) the
+reader accepts `PPU_SNAPSHOT_VERSION` only: every per-version upconversion is gone,
+and a `.rns` from v2.9.7 or earlier is refused at the container header before the
+PPU section is read.
 
 Future work (post-flip):
 
@@ -500,6 +555,23 @@ power-cycle re-applies it (`power_cycle == fresh boot`). Build via
 strictly generalizes `Nes::from_rom_with_power_on_seed`, which now routes through
 `PowerOnRam::Seeded`.)
 
+### Host settings across a power cycle (v2.9.8)
+
+A power cycle rebuilds the PPU from `Ppu::new`, and `Ppu::adopt_settings_from`
+carries the host's settings onto the new one: the custom or generated palette
+(the RGBA lookup is rebuilt to honour it), the extra-scanlines overclock, the
+fast dot path selector and the OAM-decay switch (through `set_oam_decay`, so the
+row ages start from the rebuilt PPU's cycle 0, as on a fresh console that
+enables it). The die revision and the two power-on fills above are stored on the
+bus, which re-applies them; the active palette and the 2C05 identity are board
+identity, re-derived from the cartridge. The state and fetch traces are capture
+buffers and are not carried. The provenance stores (`debug-hooks`) stay armed
+and are emptied. Until v2.9.8 the four carried settings reverted to their
+defaults in the cycle, and every host had to push them again. Pinned by
+`a_power_cycle_keeps_every_ppu_and_apu_setting`,
+`a_power_cycled_console_with_settings_runs_as_a_fresh_one` and, for any future
+configuration field, `every_config_field_survives_a_power_cycle`.
+
 ### Loopy `v / t / x / w`
 
 Per `ref-docs/research-report.md` §Internal scroll registers:
@@ -535,7 +607,24 @@ change core rendering tests.
 
 ### Greyscale + emphasis
 
-PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis): each modulates one color channel down. Both apply per-pixel during emission.
+PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis) are applied through the 512-entry `rgba_lut`, per pixel during emission.
+
+**Emphasis model (v2.9.8, `T-EMPHASIS-MODEL`).** The hardware has one attenuator shared by
+the three bits, armed during the phases of colours `$C`, `$4` and `$8` for bits 5, 6 and 7,
+so it runs 6, 10 or 12 of the 12 colour phases for one, two or three bits, and it never
+touches columns `$E`/`$F` (`nesdev_wiki/NTSC_video.xhtml`, "Color Tint Bits").
+`emphasis.rs` models exactly that from the page's measured plain and attenuated levels,
+decodes it (twelve samples, burst on `-U`, the page's YUV-to-RGB matrix), and keeps only the
+CHANGE: `EMPHASIS_DELTA[(emphasis << 6) | colour]` is the model's emphasised RGB minus its
+plain RGB, added to the FBX base (or a loaded `.pal`) and clamped. So an un-emphasised frame
+is FBX exactly; one bit tints toward the complement of its phases; all three bits darken
+without tinting. The table is data because `build_rgba_lut` is a `const fn`; the test
+`the_committed_table_is_the_documented_model` recomputes it. Until v2.9.8 each set bit
+dimmed the other two channels to 13/16, compounding, which three bits turned into an even
+0.66 dim of everything, where the hardware attenuates the whole signal once. The MiSTer core
+carries the same 512 colours, checked entry by entry by its `palette-gate`.
+
+The presentation-only `raw_signal` model below is separate, and still attenuates by `0.746`.
 
 ### Index framebuffer + NTSC phase (composite-filter outputs)
 

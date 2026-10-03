@@ -31,9 +31,10 @@ wrapper crate `rustynes-libretro` builds with
    aborting.
 4. **`no_std` preserved** — `rustynes-core` is a path dependency with
    `default-features = false`; the wrapper uses `std` for the host side only.
-5. **`platform=libnx` in the crate `Makefile` is OPEN, and probably cannot
-   build** (v2.9.0 re-audit, L-3.2 side note; checked by reading, not by
-   building). It maps to `aarch64-nintendo-switch-freestanding`, a tier-3
+5. **`platform=libnx` is dropped (v2.9.8, maintainer decision):** the crate
+   `Makefile` now stops with an explicit `$(error ...)` rather than fall
+   through to a host build. The reasoning, from the v2.9.0 re-audit (L-3.2
+   side note): it mapped to `aarch64-nintendo-switch-freestanding`, a tier-3
    target: `rustc --print target-list` knows it, `rustup target list` offers
    no `rust-std` for it, and a `*-freestanding` target has no `std`, while
    this wrapper needs `std` (`std::fs` for the FDS BIOS and disk saves,
@@ -41,7 +42,9 @@ wrapper crate `rustynes-libretro` builds with
    `-Zbuild-std` build, which is the only way to try it. The libretro
    buildbot never reads the Makefile's platform table and has no Rust
    template for the Switch (`.gitlab-ci.yml` header), so no shipped build is
-   affected; the mapping is left as it is and the buildbot matrix unchanged.
+   affected, and the buildbot matrix is unchanged. A fix would need a nightly
+   `-Zbuild-std` build and a `no_std` wrapper without `catch_unwind`, which
+   the panic-containment design depends on.
 
 ## The Abstraction Layer (`rust-libretro`)
 

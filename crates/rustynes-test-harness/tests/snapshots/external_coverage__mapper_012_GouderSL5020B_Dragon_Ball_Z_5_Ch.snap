@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-012-GouderSL5020B/Dragon Ball Z 5 (Ch).nes
+rom_sha256=4e8d261a023aa4bd6a4c43a88200f63bd2a0ae9437a5216e016ba4d6713d9cc8
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=e0bc472bc471efb7
+checkpoint f900 fb_fnv1a64=6dd0a870714d7b6b
+checkpoint f1100 fb_fnv1a64=79aa949bdd1d7fb3

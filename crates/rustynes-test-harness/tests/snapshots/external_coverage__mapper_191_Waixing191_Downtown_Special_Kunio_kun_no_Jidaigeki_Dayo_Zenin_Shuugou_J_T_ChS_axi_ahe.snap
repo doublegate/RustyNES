@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-191-Waixing191/Downtown Special - Kunio-kun no Jidaigeki Dayo Zenin Shuugou! (J) [T+ChS_axi,ahe].nes
+rom_sha256=e81a8f0361f1858a84f8e697b4b7a58d3327c0ae207f605e0cdb2c19acaad5c6
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=06b00d3ba15e5a8d
+checkpoint f1100 fb_fnv1a64=479f06cfff13d947

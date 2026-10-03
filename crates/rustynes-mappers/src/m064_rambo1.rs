@@ -47,8 +47,9 @@
 //!
 //! The IRQ counter, on each clock (scanline A12 rise or every 4 CPU cycles):
 //! if a `$C001` write happened since the last clock, reload from the latch;
-//! else if the counter is 0, reload; else decrement and assert on reaching 0
-//! (when enabled). The +1 reload-kick quirk (`if non-zero, value | 1`) and the
+//! else if the counter is 0, reload; else decrement. Then, if the counter is
+//! 0 and IRQs are enabled, assert -- after a reload as well as after a
+//! decrement, so a latch of 0 asserts on every clock. The +1 reload-kick quirk (`if non-zero, value | 1`) and the
 //! one-cycle assertion delay are documented but not separately modelled here —
 //! we treat the assert as immediate, which is sufficient for the boot-smoke +
 //! register-level verification we can perform (no behavioural fixtures exist).
@@ -248,8 +249,14 @@ impl Rambo1 {
 
     /// Clock the 8-bit IRQ counter. Returns `true` if the IRQ line should
     /// assert. Shared by scanline and CPU-cycle modes.
+    ///
+    /// The zero test follows whichever step ran (NESdev "RAMBO-1", IRQ
+    /// counter operation: "If IRQ counter is now 0 AND IRQs are enabled"),
+    /// so a reload that lands on 0 asserts as well as a decrement that
+    /// reaches 0. A latch of 0 therefore raises the IRQ on every clock,
+    /// which *Skull & Crossbones* relies on. Until v2.9.8 only the
+    /// decrement path asserted.
     fn clock_irq(&mut self) -> bool {
-        let mut would_assert = false;
         if self.irq_reload_pending {
             self.irq_counter = self.irq_latch;
             self.irq_reload_pending = false;
@@ -257,11 +264,8 @@ impl Rambo1 {
             self.irq_counter = self.irq_latch;
         } else {
             self.irq_counter = self.irq_counter.wrapping_sub(1);
-            if self.irq_counter == 0 && self.irq_enabled {
-                would_assert = true;
-            }
         }
-        would_assert
+        self.irq_counter == 0 && self.irq_enabled
     }
 }
 
@@ -660,6 +664,38 @@ mod tests {
         }
         // Edge 1 reload 3; edges 2-4 -> 2,1,0 (assert).
         assert!(m.irq_pending());
+    }
+
+    #[test]
+    fn zero_latch_reload_asserts_on_every_clock() {
+        // NESdev "RAMBO-1", IRQ counter operation: after the reload-or-
+        // decrement step, "If IRQ counter is now 0 AND IRQs are enabled:
+        // trigger IRQ" -- the check follows a reload too, not only a
+        // decrement. With a latch of 0 every clock reloads 0 and asserts.
+        // Skull & Crossbones writes $C000=0, $C001=0, $E001 every vblank and
+        // waits on the resulting scanline IRQ; without it the game never
+        // leaves a mostly black screen.
+        let mut m = fresh();
+        m.cpu_write(0xC000, 0); // latch = 0
+        m.cpu_write(0xC001, 0); // scanline mode, reload pending
+        m.cpu_write(0xE001, 0); // enable
+        let edge = |m: &mut Rambo1| {
+            m.notify_a12(false);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
+            }
+            m.notify_a12(true);
+        };
+        edge(&mut m); // reload path (C001 written): 0 -> assert
+        assert!(m.irq_pending(), "reload to 0 asserts");
+        m.cpu_write(0xE000, 0); // ack + disable
+        m.cpu_write(0xE001, 0); // enable
+        edge(&mut m); // counter-is-0 path: reload 0 -> assert
+        assert!(m.irq_pending(), "zero counter reloading 0 asserts again");
+        // Disabled: the same clock does not assert.
+        m.cpu_write(0xE000, 0);
+        edge(&mut m);
+        assert!(!m.irq_pending());
     }
 
     #[test]

@@ -11,6 +11,94 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+use rustynes_core::Nes;
+
+/// v2.9.8 — what two peers must share to run one timeline: the ROM and the
+/// machine configuration.
+///
+/// Until v2.9.8 the handshake compared only the ROM hash, so two peers on the
+/// same game with different emulation options -- one on the Famicom model,
+/// one with a seeded power-on RAM, one with a Game Genie code -- connected and
+/// then desynced at the first frame the difference reached. Since v2.9.8
+/// [`Nes::rom_sha256`] also excludes the 16-byte header, so two differently
+/// corrected headers (another region, mapper or mirroring) shared a ROM hash
+/// too. `config_hash` covers both: it is [`rustynes_core::config_digest`],
+/// SHA-256 over the region, the parsed cartridge board and every
+/// [`rustynes_core::HardwareOptions`] field.
+///
+/// The two hashes are kept apart, rather than folded into one, so a refusal
+/// can say which kind of difference it is: another game, or the same game set
+/// up differently.
+///
+/// # Refuse, do not adopt
+///
+/// Peers whose `config_hash` differs refuse to connect
+/// ([`IdentityMismatch::Config`]); the guest does not adopt the host's
+/// options. Adoption would mean the session silently rewriting the guest's
+/// console model, RAM fill or cheats -- the same silent change this check
+/// exists to stop, made in the other direction -- and several options act
+/// only at power-on, so adopting them would also need a coordinated
+/// re-power-on of the guest after the handshake. A refusal that tells both
+/// players to match their settings is explicit and costs one retry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SessionIdentity {
+    /// [`Nes::rom_sha256`] — which game.
+    pub rom_hash: [u8; 32],
+    /// [`rustynes_core::config_digest`] — which machine runs it.
+    pub config_hash: [u8; 32],
+}
+
+/// Which half of a [`SessionIdentity`] two peers disagree on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityMismatch {
+    /// Different games.
+    Rom,
+    /// The same game on a differently configured machine (emulation options,
+    /// region or cartridge header).
+    Config,
+}
+
+impl SessionIdentity {
+    /// Build from explicit hashes (tests, or a host that computed them
+    /// elsewhere).
+    #[must_use]
+    pub const fn new(rom_hash: [u8; 32], config_hash: [u8; 32]) -> Self {
+        Self {
+            rom_hash,
+            config_hash,
+        }
+    }
+
+    /// The identity of the machine `nes` is right now. Take it after the
+    /// host's options are applied and before the session starts; a change
+    /// made afterwards is not covered by the handshake (the periodic desync
+    /// checksum is what catches it then).
+    #[must_use]
+    pub fn of(nes: &Nes) -> Self {
+        Self {
+            rom_hash: *nes.rom_sha256(),
+            config_hash: rustynes_core::config_digest(nes),
+        }
+    }
+
+    /// Compare a peer's announced identity with ours. The ROM is checked
+    /// first: a different game is the more fundamental difference, and its
+    /// message is the more useful one.
+    ///
+    /// # Errors
+    ///
+    /// Which half differs.
+    pub fn check(&self, peer: &Self) -> Result<(), IdentityMismatch> {
+        if peer.rom_hash != self.rom_hash {
+            Err(IdentityMismatch::Rom)
+        } else if peer.config_hash != self.config_hash {
+            Err(IdentityMismatch::Config)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Protocol version. Bumped if the wire layout of [`NetMessage`] changes so
 /// the [`NetMessage::SYNC_MAGIC`] handshake can reject mismatched peers.
 ///
@@ -27,8 +115,14 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 /// rejects the unknown tag cleanly (returns `None`), so a v2 peer simply drops
 /// a v3 `Roster` rather than mis-parsing it.
 ///
+/// `5` (v2.9.8): [`NetMessage::Sync`] carries a [`SessionIdentity`] -- the
+/// ROM hash plus a 32-byte configuration hash -- instead of the ROM hash
+/// alone, under a new magic (`"RNE5"`, [`NetMessage::SYNC_MAGIC`]). A v4 `Sync`
+/// is 32 bytes shorter and decodes to `None`, and a v4 peer rejects v5's
+/// magic, so neither side mistakes the other for a match; they never sync.
+///
 /// [`from_bytes`]: NetMessage::from_bytes
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Messages exchanged between two peers.
 ///
@@ -66,13 +160,14 @@ pub enum NetMessage {
         frame: u32,
     },
 
-    /// Connection handshake: confirms protocol compatibility and an
-    /// identical ROM. Sent at session start and until the peer replies.
+    /// Connection handshake: confirms protocol compatibility, an identical
+    /// ROM and (v2.9.8) an identically configured machine. Sent at session
+    /// start and until the peer replies.
     Sync {
         /// Magic constant — must equal [`NetMessage::SYNC_MAGIC`].
         magic: u32,
-        /// SHA-256 of the ROM both peers must be running.
-        rom_hash: [u8; 32],
+        /// The ROM and machine configuration both peers must be running.
+        identity: SessionIdentity,
     },
 
     /// Periodic state checksum for desync detection. Both peers compute a
@@ -126,7 +221,14 @@ pub enum NetMessage {
 
 impl NetMessage {
     /// The expected value of [`NetMessage::Sync::magic`].
-    pub const SYNC_MAGIC: u32 = 0x524E_4553; // "RNES"
+    ///
+    /// `"RNE5"` since protocol 5 (v2.9.8); `"RNES"` before. A v4 decoder reads
+    /// the magic and the 32-byte ROM hash and ignores the rest, so had v5 kept
+    /// v4's magic, a v4 peer would accept v5's longer `Sync` as its own and
+    /// consider the session synced while the v5 side waited for a reply it
+    /// refuses. Every version compares the magic, so a changed one is
+    /// rejected on both sides.
+    pub const SYNC_MAGIC: u32 = 0x524E_4535; // "RNE5"
 
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
@@ -169,10 +271,11 @@ impl NetMessage {
                 out.push(Self::TAG_INPUT_ACK);
                 out.extend_from_slice(&frame.to_le_bytes());
             }
-            Self::Sync { magic, rom_hash } => {
+            Self::Sync { magic, identity } => {
                 out.push(Self::TAG_SYNC);
                 out.extend_from_slice(&magic.to_le_bytes());
-                out.extend_from_slice(&rom_hash);
+                out.extend_from_slice(&identity.rom_hash);
+                out.extend_from_slice(&identity.config_hash);
             }
             Self::Checksum {
                 frame,
@@ -265,9 +368,18 @@ impl NetMessage {
                 Some(Self::InputAck { frame })
             }
             Self::TAG_SYNC => {
+                // Exactly magic + two hashes: a longer payload is a later
+                // protocol's, not this one's with junk on the end.
+                if rest.len() != 68 {
+                    return None;
+                }
                 let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
                 let rom_hash: [u8; 32] = rest.get(4..36)?.try_into().ok()?;
-                Some(Self::Sync { magic, rom_hash })
+                let config_hash: [u8; 32] = rest.get(36..68)?.try_into().ok()?;
+                Some(Self::Sync {
+                    magic,
+                    identity: SessionIdentity::new(rom_hash, config_hash),
+                })
             }
             Self::TAG_CHECKSUM => {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
@@ -350,7 +462,7 @@ mod tests {
         roundtrip(&NetMessage::InputAck { frame: 99 });
         roundtrip(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
-            rom_hash: [7u8; 32],
+            identity: SessionIdentity::new([7u8; 32], [9u8; 32]),
         });
         roundtrip(&NetMessage::Checksum {
             frame: 42,
@@ -361,6 +473,29 @@ mod tests {
             ping_ms: 33,
             frame_advantage: -4,
         });
+    }
+
+    /// v2.9.8 (`CodeRabbit` on the review slice #580) — a v4 peer cannot take a
+    /// v5 `Sync` for its own. A v4 decoder reads the magic and the 32-byte ROM
+    /// hash and ignores what follows, so with v4's magic it accepted v5's
+    /// longer message and marked the session synced while the v5 side, which
+    /// refuses v4's shorter reply, timed out. v5 changes the magic, which v4
+    /// compares, and decodes only a payload of exactly its own length.
+    #[test]
+    fn a_v5_sync_is_not_a_v4_sync() {
+        const V4_SYNC_MAGIC: u32 = 0x524E_4553; // "RNES"
+        assert_ne!(NetMessage::SYNC_MAGIC, V4_SYNC_MAGIC);
+        let mut bytes = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: SessionIdentity::new([7u8; 32], [9u8; 32]),
+        }
+        .to_bytes();
+        bytes.push(0);
+        assert_eq!(
+            NetMessage::from_bytes(&bytes),
+            None,
+            "trailing byte accepted"
+        );
     }
 
     #[test]

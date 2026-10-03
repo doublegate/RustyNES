@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-074-Waixing43-393/Ji Jia Zhan Shi (Ch).nes
+rom_sha256=a02e6d3e619a47930149298a6bc4f90a30af1939e7905a2a1c7115bc6eb92bf2
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=37653469c2541a96
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=5235c4b92f9e4612

@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-091-JYCompany91/Super Mario Kart Rider (Unl) [!].nes
+rom_sha256=97ff921b5dbcc048cb991a75fcc0103a9e6820d06ad5824d79e03be2719f85dc
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=8dbc89720dd32569
+checkpoint f900 fb_fnv1a64=90ad11fd21d8c96f
+checkpoint f1100 fb_fnv1a64=30d7a8501908b87f

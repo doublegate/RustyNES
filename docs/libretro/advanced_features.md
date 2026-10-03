@@ -90,7 +90,7 @@ core operation, not an FFI one.
 
 Every Vs. System cartridge, single or `DualSystem`:
 
-* **Palette and DIP switches.** After loading, the core looks the image's SHA-256 up in `rustynes_core::vs_db` and applies the entry's PPU type (the colour table) and factory DIP-switch setting, to both consoles of a cabinet — what the desktop's `apply_vs_db` does. An iNES 1.0 Vs. dump names no PPU, so the parser defaults it to the 2C03; until v2.9.0 the libretro core used the database only to recognise a cabinet, and every listed dump rendered in the 2C03's colours (7 of 7 local dumps measured by the re-audit). The desktop lets a config file override the DIP switches; the libretro core has no such option (see below).
+* **Palette and DIP switches.** After loading, the core looks the image up in `rustynes_core::vs_db` (by its header-independent identity first, then its whole-file SHA-256; v2.9.8) and applies the entry's PPU type (the colour table) and factory DIP-switch setting, to both consoles of a cabinet — what the desktop's `apply_vs_db` does. An iNES 1.0 Vs. dump names no PPU, so the parser defaults it to the 2C03; until v2.9.0 the libretro core used the database only to recognise a cabinet, and every listed dump rendered in the 2C03's colours (7 of 7 local dumps measured by the re-audit). The desktop lets a config file override the DIP switches; the libretro core has no such option (see below).
 * **Coins and service on the RetroPad**, named in the input descriptors only while a Vs. cartridge is loaded (the standard table is sent back at unload):
 
   | RetroPad | Single cartridge | `DualSystem` cabinet |

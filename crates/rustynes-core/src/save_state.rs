@@ -9,7 +9,7 @@
 //! ```text
 //! HEADER (16 bytes):
 //!     magic       : "RUSTYNES"  (8 bytes)
-//!     format ver  : u16 little-endian  (currently 2 -- see [`FORMAT_VERSION`])
+//!     format ver  : u16 little-endian  (currently 3 -- see [`FORMAT_VERSION`])
 //!     rom sha-256 : truncated to 6 bytes (sanity tag, not authoritative)
 //!
 //! BODY (sections in any order, each):
@@ -41,7 +41,22 @@ pub const MAGIC: &[u8; 8] = b"RUSTYNES";
 ///   example). This bump exists so a `.rns` file's header alone signals
 ///   which release line produced it, without needing to inspect every
 ///   section.
-pub const FORMAT_VERSION: u16 = 2;
+/// - **v3 (v2.9.8, ADR 0042)**: the second epoch. The layout is unchanged
+///   again; what changes is that a reader now also refuses any blob OLDER
+///   than [`MIN_FORMAT_VERSION`], with [`SnapshotError::FormatTooOld`]. v2.9.8
+///   removed every legacy-format reader in the section decoders (BUS section
+///   2, and the PPU, APU and mapper upconversions), and several sections kept
+///   their version numbers because their layouts did not move, so without a
+///   container check a v2.9.7 file would be refused only at whichever section
+///   happened to come first. One header check gives one clear message.
+pub const FORMAT_VERSION: u16 = 3;
+
+/// Oldest container-format version this build reads.
+///
+/// Since v2.9.8 that is the current one only (ADR 0042, following ADR 0028's
+/// v2.0.0 epoch). A `.rns` file from v2.9.7 or earlier carries 2 (or 1) and
+/// is refused at the header.
+pub const MIN_FORMAT_VERSION: u16 = 3;
 
 /// Length of the truncated ROM SHA-256 we embed in the header (sanity tag).
 pub const ROM_HASH_TAG_LEN: usize = 6;
@@ -104,6 +119,18 @@ pub enum SnapshotError {
         got: u16,
         /// Highest version we accept.
         max: u16,
+    },
+
+    /// The container is from an older release whose save states this build no
+    /// longer reads (v2.9.8, ADR 0042: v2.9.7 and earlier).
+    #[error(
+        "save state container format version {got} is from an older release; this build reads version {min} and later"
+    )]
+    FormatTooOld {
+        /// Version we read.
+        got: u16,
+        /// Oldest version we accept ([`MIN_FORMAT_VERSION`]).
+        min: u16,
     },
 
     /// A section body is shorter than its declared length.
@@ -458,6 +485,12 @@ pub fn parse_header(bytes: &[u8]) -> Result<(Header, usize), SnapshotError> {
             max: FORMAT_VERSION,
         });
     }
+    if format_version < MIN_FORMAT_VERSION {
+        return Err(SnapshotError::FormatTooOld {
+            got: format_version,
+            min: MIN_FORMAT_VERSION,
+        });
+    }
     let mut rom_hash_tag = [0u8; ROM_HASH_TAG_LEN];
     rom_hash_tag.copy_from_slice(&bytes[10..16]);
     Ok((
@@ -609,6 +642,25 @@ mod tests {
             parse_header(&out),
             Err(SnapshotError::UnsupportedFormat { .. })
         ));
+    }
+
+    /// v2.9.8 (ADR 0042): a container from v2.9.7 or earlier (format 2, or
+    /// the pre-v2.0.0 format 1) is refused at the header, with the typed
+    /// "older release" error rather than a section-level one.
+    #[test]
+    fn header_rejects_formats_older_than_the_minimum() {
+        for old in 0..MIN_FORMAT_VERSION {
+            let mut out = Vec::new();
+            out.extend_from_slice(MAGIC);
+            out.extend_from_slice(&old.to_le_bytes());
+            out.extend_from_slice(&[0u8; ROM_HASH_TAG_LEN]);
+            assert!(matches!(
+                parse_header(&out),
+                Err(SnapshotError::FormatTooOld { got, min })
+                    if got == old && min == MIN_FORMAT_VERSION
+            ));
+        }
+        assert_eq!(MIN_FORMAT_VERSION, FORMAT_VERSION);
     }
 
     #[test]

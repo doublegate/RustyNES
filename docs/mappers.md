@@ -124,8 +124,8 @@ append the 8 KiB PRG-RAM, then the 8 KiB CHR-RAM on a board without CHR-ROM,
 after every older field: VRC2 and VRC4 write section v2, VRC6 v3 (after its
 audio tail), and VRC7 v3 without `mapper-audio` / v4 with it (after the
 synthesizer tail, so the version still says whether that tail is present).
-Every older version still loads and leaves the RAM as it was, the old
-behaviour.
+Every older version loaded and left the RAM as it was until v2.9.8, which
+refuses them (see "Save-state versions" below).
 
 A sweep of every mapper id with the same shape of test, run while triaging
 AUD-02, found the same omission on boards beyond the VRC2/4/6/7 set it had
@@ -135,9 +135,9 @@ fixed, VRC1 among them: PRG-RAM on
 older field: MMC2 (9), MMC4 (10), Color Dreams (11), mapper 34 and VRC1 (75,
 and 151, which forwards its section to the VRC1 core) write section v2, FME-7
 (69) v3 (after its 5B audio tail) and Namco 163 (19) v4 (after its v3
-`chr_ram_disable` / `ciram_owned` bytes). Every older version still loads and
-leaves the RAM as it was; a new-version blob of the wrong length is refused
-before any field is written.
+`chr_ram_disable` / `ciram_owned` bytes). Every older version loaded and left
+the RAM as it was until v2.9.8, which refuses them; a blob of the wrong length
+is refused before any field is written.
 
 The sweep is now a standing test,
 `every_board_snapshot_carries_cartridge_ram` in
@@ -167,6 +167,24 @@ FW-01 variant, 241, 245); v2.7.2 gave them their 8 KiB
 (`tests/documented_wram.rs`). A read that drives only some data bits,
 like Sachen's 3-bit registers, reports the rest through `cpu_read_driven_mask`,
 and the bus keeps its floating value on them.
+
+### Save-state versions
+
+**Since v2.9.8 every mapper's `load_state` reads its current layout only**
+(ADR 0042). Before then most boards that grew their blob kept reading the
+older layouts: a lower version byte, or, where the version did not move, a
+shorter length, loaded with the new fields at a default or the RAM left as it
+was. All of those readers are gone. An older version byte is
+`MapperError::UnsupportedVersion`, a short or long blob `MapperError::Truncated`.
+The boards that had them: MMC1, MMC3, MMC5, MMC2, MMC4, Color Dreams, Bandai
+FCG, Namco 163, VRC2, VRC4, VRC6, VRC7, VRC1, mapper 34, FME-7, Namco 118, Vs.
+System (layout 1), FK23C, COOLBOY, Sachen 9602, the MMC3 clones, mappers 156,
+177 and 241, the mapper-15 and FW-01 multicarts, FDS and NSF (a v1 blob on an
+expansion-audio NSF). Two layouts per board survive where both are current:
+VRC7 writes v3 without `mapper-audio` and v4 with it, mapper 99 writes v2 with
+the `DualSystem` shared RAM and v3 without, and an NSF writes v1 or v2 by its
+expansion chips. A `.rns` file from v2.9.7 or earlier never reaches these
+readers: its container is refused at the header.
 
 ## Behavior
 
@@ -262,13 +280,13 @@ Sorted by number of commercial titles using each mapper.
 | 10 | — | MMC4 | 4 | — | — | landed (Phase 4 / S2) | Like MMC2 with full PRG banking. |
 | 11 | — | Color Dreams | 4 | — | — | landed (Phase 4 / S2) | Unlicensed; bus conflict. |
 | 13 | — | CPROM | 4 | — | — | landed (Phase 4 / S2) | Videomation. |
-| 19 | — | Namco 163 | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.2) | Mappy-Land, King of Kings, Final Lap, Rolling Thunder, Megami Tensei II.  1-8 wavetable channels playing 4-bit wavetables from 128 B mapper-internal sound RAM.  Address-port at `$F800-$FFFF` (bit 7 = auto-increment, bits 6-0 = 7-bit RAM address) + data-port at `$4800-$4FFF`; per-channel registers at the top of internal RAM (channel 8 at `$78-$7F`, channel 1 at `$40-$47`); 18-bit frequency + 24-bit phase + 6-bit wave-length + nibble-addressed wave start address + 4-bit volume per channel; `$E000` bit 6 = audio-disable.  Gated behind the `mapper-audio` cargo feature. Nametables and CIRAM-as-CHR (v2.7.2, `nesdev_wiki/INES_Mapper_019.xhtml`): `$C000/$C800/$D000/$D800` select each nametable quadrant (`< $E0` a read-only 1 KiB CHR-ROM page, `>= $E0` CIRAM A/B by the low bit), powering on as the header's layout; CHR values `>= $E0` map CIRAM as CHR-RAM unless `$E800` bit 6 (`$0000-$0FFF`) or bit 7 (`$1000-$1FFF`) disables it. Save state v3 carries the `$E800` bits; an older blob loads as both halves disabled, the pre-v2.7.2 behaviour. |
+| 19 | — | Namco 163 | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.2) | Mappy-Land, King of Kings, Final Lap, Rolling Thunder, Megami Tensei II.  1-8 wavetable channels playing 4-bit wavetables from 128 B mapper-internal sound RAM.  Address-port at `$F800-$FFFF` (bit 7 = auto-increment, bits 6-0 = 7-bit RAM address) + data-port at `$4800-$4FFF`; per-channel registers at the top of internal RAM (channel 8 at `$78-$7F`, channel 1 at `$40-$47`); 18-bit frequency + 24-bit phase + 6-bit wave-length + nibble-addressed wave start address + 4-bit volume per channel; `$E000` bit 6 = audio-disable.  Gated behind the `mapper-audio` cargo feature. Nametables and CIRAM-as-CHR (v2.7.2, `nesdev_wiki/INES_Mapper_019.xhtml`): `$C000/$C800/$D000/$D800` select each nametable quadrant (`< $E0` a read-only 1 KiB CHR-ROM page, `>= $E0` CIRAM A/B by the low bit), powering on as the header's layout; CHR values `>= $E0` map CIRAM as CHR-RAM unless `$E800` bit 6 (`$0000-$0FFF`) or bit 7 (`$1000-$1FFF`) disables it. Save state v3 carries the `$E800` bits; an older blob loads as both halves disabled, the pre-v2.7.2 behaviour. IRQ: a 15-bit up-counter at `$5000` (low) / `$5800` (`EHHH HHHH`, bit 7 = enable), clocked every CPU cycle while enabled, firing and stopping at `$7FFF`; a `$5800` write with bit 7 clear disables it, and the enable reads back in bit 7 (v2.9.8 -- before then every `$5800` write enabled the counter, which broke *Megami Tensei II*'s raster bands). |
 | 21 | 1, 2 | VRC4a / VRC4c | 4 | — | CPU | landed (Phase 4 / S3) | Konami; Wai Wai World. |
 | 22 | — | VRC2a | 4 | — | — | landed (Phase 4 / S3) | Konami. |
 | 23 | 1-3 | VRC4e / VRC4f / VRC2b | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
-| 24 | — | VRC6a | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Akumajou Densetsu.  3 extra audio channels (2 pulse + 1 sawtooth) gated behind the `mapper-audio` cargo feature. |
+| 24 | — | VRC6a | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Akumajou Densetsu.  3 extra audio channels (2 pulse + 1 sawtooth) gated behind the `mapper-audio` cargo feature.  **Power-on CHR = identity (ASSUMPTION, v2.9.8):** the eight 1 KiB CHR registers (`$D000-$E003`) start at 0-7. NESdev documents no VRC6 power-on state; *Pulsewave Invite* (PD) never writes them and draws its postcard only under this layout (all-zero, the old value, scattered its tiles). The other ten staged mapper 24/26 dumps boot to byte-identical frames either way. Power-on only: `Mapper::reset` keeps the registers, as a soft reset does on almost every board. PRG registers still start at 0 (no documentation or evidence for another value). Applies to mapper 26 as well. |
 | 25 | 1-3 | VRC4b / VRC4d / VRC2c | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
-| 26 | — | VRC6b | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Madara, Esper Dream 2.  Same channels as VRC6a; A0/A1 swap. |
+| 26 | — | VRC6b | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Madara, Esper Dream 2.  Same channels as VRC6a; A0/A1 swap.  Same identity power-on CHR assumption as mapper 24. |
 | 34 | 0-2 | BNROM / NINA-001 | 4 | — | — | landed (Phase 4 / S2) | Submapper 1 selects NINA-001. |
 | 66 | — | GxROM | 2 | — | — | landed (Phase 2) | Bus conflict. |
 | 69 | — | Sunsoft FME-7 | 4 | yes (5B, landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.1) | Gimmick!  Sunsoft 5B = YM2149F clone: 3 squares + 32-step envelope generator + 17-bit LFSR noise.  Two-write protocol via `$C000-$DFFF` (address latch) and `$E000-$FFFF` (data); audio gated behind the `mapper-audio` cargo feature. |
@@ -285,13 +303,13 @@ boot-smoke (no redistributable behavioral fixtures exist for these boards).
 |------|-----------|------|-------|-----|-------|
 | 16 / 159 | 0,4,5 | Bandai FCG | — | CPU | DBZ, Famicom Jump II, Datach. +minimal I2C EEPROM (24C02/24C01). |
 | 18 | — | Jaleco SS88006 | — (ADPCM decoded-not-emulated) | CPU | Goemon Gaiden, Doropie. Nibble-paired banking; selectable-width IRQ. |
-| 64 | — | Tengen RAMBO-1 | — | A12 + CPU | Klax, Skull & Crossbones. Dual-mode IRQ (reuses MMC3 A12 filter). |
+| 64 | — | Tengen RAMBO-1 | — | A12 + CPU | Klax, Skull & Crossbones. Dual-mode IRQ (reuses MMC3 A12 filter). The zero test follows a reload as well as a decrement, so a latch of 0 asserts on every clock (v2.9.8; *Skull & Crossbones* depends on it). The reload "+1 kick" and the IRQ delay are not modelled. |
 | 65 | — | Irem H3001 | — | CPU | Daiku no Gen-san, Spartan X 2. 16-bit reload-latch down-counter. |
 | 67 | — | Sunsoft-3 | — | CPU | Fantasy Zone 2. 16-bit write-twice-latch IRQ. |
 | 68 | — | Sunsoft-4 | — | — | After Burner, Maharaja. CHR-ROM-as-nametable. |
 | 70 | — | Bandai discrete | — | — | Kamen Rider Club, Family Trainer. UxROM-like. |
 | 73 | — | Konami VRC3 | — | CPU | Salamander. Simplest VRC; 8K CHR-RAM. |
-| 78 | 1,3 | Holy Diver / Cosmo Carrier | — | — | Submapper-selected mirroring. |
+| 78 | 1,3 | Holy Diver / Cosmo Carrier | — | — | Submapper-selected mirroring: 3 = Holy Diver (H/V), 1 = Cosmo Carrier (1scA/1scB). Without one (iNES 1.0, or NES 2.0 submapper 0) the header's alternative-nametables bit decides, per `INES_Mapper_078`: set = Holy Diver, clear = Cosmo Carrier (v2.9.8; it was always Holy Diver). The GoodNES *Uchuusen - Cosmo Carrier (J) [!]* sets the bit, so its header names Holy Diver and it stalls on a blue screen; the NES 2.0 image of the same PRG/CHR (submapper 1) plays. |
 | 88 / 206 | — | Namco 118 / DxROM | — | — | Dragon Spirit, Quinty, Family Circuit. MMC3 banking subset. |
 | 118 | — | TxSROM / TLSROM | — | A12 | Armadillo, NES Play Action Football. MMC3 + per-slot NT mirroring. |
 | 119 | — | TQROM | — | A12 | Pin\*Bot, High Speed. MMC3 + mixed CHR (64K CHR-ROM + 8K CHR-RAM; bank bit 6 = RAM select). |
@@ -309,7 +327,7 @@ RGB device.
 |------|-----------|------|-------|-----|-------|
 | 33 | — | Taito TC0190 / TC0350 | — | — | Don Doko Don, Power Blazer. 2x8K PRG + 2x2K + 4x1K CHR; software mirroring. (mapper 48 = TC0690, the +A12-IRQ variant.) |
 | 93 | — | Sunsoft-3R | — | — | Shanghai, Fantasy Zone. UxROM-like: PRG bits 4-6 + CHR-RAM-enable bit 0; 8K CHR-RAM. |
-| 99 | — | **Nintendo Vs. System** | — | — | **Vs. Excitebike, Vs. Clu Clu Land.** Fixed PRG (8/16/32K) + 8K CHR bank from `$4016` bit 2. Forces Vs. System + 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). |
+| 99 | — | **Nintendo Vs. System** | — | — | **Vs. Excitebike, Vs. Clu Clu Land.** Fixed PRG (8/16/32K) + 8K CHR bank from `$4016` bit 2. Forces Vs. System + 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). Since v2.9.8 a UniSystem cart also has the board's 2 KiB RAM at `$6000-$7FFF` (mirrored), which the CPU sees while the last `$4016` write had bit 1 (`OUT1`) set and as open bus otherwise (nesdev "Vs. System", `$4016` write; save-state layout v3). *Vs. Super Mario Bros.* keeps its state there and never left its first frame without it. The DualSystem path keeps its shared copy and does not gate on `OUT1`. The circulating `VS Super Mario Bros.nes` dump is headed mapper 3 with no Vs. flag, so it runs as CNROM and still cannot boot: its code banks CHR through `$4016` bit 2 and writes the `$4020` coin counter, so its board is mapper 99 (recorded, not forced). |
 | 152 | — | Bandai 74161/161 (1-screen) | — | — | Arkanoid II, Pocket Zaurus. UxROM-like (PRG bits 4-6, CHR bits 0-3) + bit-7 software 1-screen select. |
 
 ### Third long-tail batch (5 families, 43 → 48)
@@ -340,7 +358,7 @@ mapper 151 joins mapper 99 as a mapper-driven Vs. signal.
 |------|-----------|------|-------|-----|-------|
 | 80 | — | Taito X1-005 | — | — | Kyonshiizu 2, Kyoto Ryuu no Tera Satsujin Jiken. A `$7EF0-$7EFF` register window: two 2K CHR banks (`value & 0xFE`, each driving a pair of adjacent 1K slots) + four 1K CHR banks, **three** switchable 8K PRG banks (`$7EFA`→`$8000`, `$7EFC`→`$A000`, `$7EFE`→`$C000`; only `$E000` is fixed to the last bank), `$7EF6` bit-0 mirroring (0 = Horizontal, 1 = Vertical), plus an on-cart 128-byte battery RAM at `$7F00-$7FFF` enabled only after writing `$A3` to **both** `$7EF8` and `$7EF9`. No IRQ. Kyonshiizu 2 renders its title screen (visually verified) — the earlier blank boot was a missing `$7EFE` `$C000` PRG register that stranded the reset bank (also: the `$7EF6` polarity was inverted). |
 | 82 | — | Taito X1-017 | — | (decoded, unused) | Kyuukyoku Harikiri Koushien / Stadium III. Like the X1-005 plus a **CHR A12-inversion mode bit** (`$7EF6` bit 1 swaps the 2K/1K CHR halves between `$0000-$0FFF` and `$1000-$1FFF` — the non-linear X1-017 quirk), **value-shifted** registers (2K CHR banks `value >> 1`; PRG banks `$7EFA-$7EFC` `value >> 2`, ≤128K addressable), and three independently-protected 8K PRG-RAM sub-regions (`$7EF7`=`$CA`, `$7EF8`=`$69`, `$7EF9`=`$84`). The IRQ surface (`$7EFD-$7EFF`) is decoded but never clocked (the licensed games do not use it). `$7EF6` bit 0: 0 = Horizontal, 1 = Vertical. |
-| 151 | — | **Konami VS (VRC1 on Vs.)** | — | — | **Vs. Gradius, GVS VS. TKO Boxing.** Konami VRC1 silicon (banking byte-identical to mapper 75: three 8K PRG banks `$8000`/`$A000`/`$C000` + fixed last; two 4K CHR windows with `$9000`-driven MSB bits; `$9000` bit 0 = H/V) on a Vs. board. Like mapper 99 it forces `ConsoleType::VsSystem` + the 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). Verified in-game via Vs. Gradius / Vs. The Goonies (both mapper 151). |
+| 151 | — | **Konami VS (VRC1 on Vs.)** | — | — | **Vs. Gradius, Vs. The Goonies.** Konami VRC1 silicon (banking byte-identical to mapper 75: three 8K PRG banks `$8000`/`$A000`/`$C000` + fixed last; two 4K CHR windows with `$9000`-driven MSB bits; `$9000` bit 0 = H/V) on a Vs. board. Like mapper 99 it forces `ConsoleType::VsSystem` + the 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). Verified in-game via Vs. Gradius / Vs. The Goonies (both mapper 151). The unpatched Goonies dump (`Goonies, The (VS).nes`) gained its own `vs_db` row in v2.9.8 (RP2C04-0003, DSW0 `$80`, as the hack row); before it drew its title on the 2C03 palette. **Mislabelled, recorded not forced:** the circulating *Vs. T.K.O. Boxing* dumps (`GVS VS. TKO Boxing.nes` and `VS. TKO Boxing (VS) [!].nes`, byte-identical, SHA-256 `a6332035…`) carry a mapper-151 header, but their code drives a Namco 108: the reset handler writes `$8000 = 6, $8001 = 8, $8000 = 7, $8001 = 9`, and nothing writes `$9000`-`$F000`. VRC1 decodes `$8001` as another PRG write, so the boot goes nowhere (a grey frame). NESdev "Vs. System" lists the Namco 108 (mapper 206) with an extra protection IC for three third-party Vs. games; NES 2.0 encodes T.K.O. Boxing's as Vs. hardware type 2, which RustyNES does not model. The patched `VS TKO Boxing Hack.nes` (mapper 4 header) plays. |
 
 Mapper coverage was staged across Phases 1-4 (the matrix above) and extended
 across the engine lineage in the long-tail batches above (all shipping in
@@ -394,6 +412,19 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 |---|---|
 | 15 (K-1029 multicart), 36 (TXC 01-22000), 39 (Subor BNROM-like), 61, 62 (multicart), 72 / 92 (Jaleco JF-17/19), 77 (Irem, 4-screen CHR-RAM), 96 (Bandai Oeka Kids, PPU-bus CHR latch), 97 (Irem TAM-S1), 132 (TXC 22211), 133 / 145 / 146 (Sachen) | 147 (Sachen 3018), 148 / 149 (Sachen), 150 (Sachen SA-015, readable protection + custom mirroring), 180 (Nichibutsu UNROM-inverted), 185 (CNROM CHR-disable protection), 200 / 201 / 202 / 203 / 212 / 213 / 214 (multicart) |
 
+**Mapper 212, *999-in-1* (v2.9.8 survey): not a board defect.** Its menu
+shows `0` glyphs around the list because the nametable is never cleared. The
+reset handler waits for one vblank, then sets `PPUADDR` and writes 960 `$24`
+tiles; that `$2006` write lands about 27,400 CPU cycles after power-on, inside
+the documented NTSC warm-up in which `PPUCTRL`/`PPUMASK`/`PPUSCROLL`/`PPUADDR`
+writes are ignored (~29,658 cycles, NESdev "PPU power up state"), so the fill
+goes to pattern space and the nametable keeps tile `$00`, the font's `0`. The
+same page says a Famicom's PPU leaves reset about one frame before its CPU,
+which such pirate carts assume; with the warm-up removed in a scratch run the
+menu draws on a clean background. RustyNES emulates the front-loader here;
+whether to model a Famicom power-on is a console-model decision, not a mapper
+fix. The board itself matches `INES_Mapper_212`.
+
 ### Seventh long-tail batch — v1.3.0 "Bedrock" best-effort sweep (14 families, 87 → 101)
 
 The v1.3.0 Workstream D1 Tier-2 sweep, ported from the GeraNES reference.
@@ -414,7 +445,7 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 | 143 | — | Sachen TCA01 | — | — | landed (v1.3.0 / S8) | NROM-128 (mirrored) + a simple protection read at `$4020-$5FFF` returning `(~addr & 0x3F) \| 0x40`. |
 | 177 | — | Hengedianzi | — | — | landed (v1.3.0 / S8) | 32K PRG + mirroring bit (bit 5) from one `$8000-$FFFF` latch; CHR-RAM. |
 | 179 | — | Hengedianzi variant | — | — | landed (v1.3.0 / S8) | 32K PRG via `$5000-$5FFF` (data>>1) + mirroring bit (bit 0) via `$8000-$FFFF`; CHR-RAM. |
-| 218 | — | Magic Floor | — | — | landed (v1.3.0 / S8) | No PRG/CHR-ROM banking; the pattern table is served from the console CIRAM under a fixed custom mirroring mode. |
+| 218 | — | Magic Floor | — | — | landed (v1.3.0 / S8); single-screen wirings fixed v2.9.8 | No PRG/CHR-ROM banking; the pattern tables and nametables are both the console's 2 KiB CIRAM. The header wires CIRAM A10 to one PPU address line (NESdev `INES_Mapper_218`): flags 6 `$A1` = A10, `$A0` = A11, `$A8` = A12 (1 KiB per pattern table, one screen in bank 0), `$A9` = A13 (all pattern space bank 0, the nametable bank 1). `parse` re-reads raw bit 0 when bit 3 is set, because the generic parser folds it into `FourScreen`; before v2.9.8 both single-screen wirings fell back to A10, and *Magic Floor* (`$A9`) drew its nametable over its own tiles. |
 | 231 | — | 20-in-1 multicart | — | — | landed (v1.3.0 / S8) | Address-decoded dual 16K PRG banks + a mirroring bit; CHR-RAM. |
 | 234 | — | Maxi 15 / BNROM-like multicart | — | — | landed (v1.3.0 / S8) | Two latch regs (`$FF80-$FF9F` / `$FFE8-$FFF8`) selecting 32K PRG + 8K CHR in NINA-style or CNROM-style sub-mode. |
 
@@ -435,10 +466,10 @@ note below).
 | 76 | — | NAMCOT-3446 (Namco 109) | — | — | landed (v1.4.0 / S9) | MMC3-style `$8000`/`$8001` register pairs select two 8K PRG banks (fixed last two) + four 2K CHR banks; header-fixed mirroring. |
 | 174 | — | NTDEC 5-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG bank + 8K CHR bank + mirroring bit. |
 | 225 | — | ColorDreams 72-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded `A~[.HMO PPPP PPCC CCCC]`: CHR A0-A5, PRG A6-A11, mode A12 (16/32K), mirror A13, high bit A14; plus a `$5800-$5FFF` 4-nibble scratch-RAM block. |
-| 226 | — | 76-in-1 BMC | — | — | landed (v1.4.0 / S9) | Two `$8000-$FFFF` regs (even/odd): reg0 `[PMOP PPPP]` (bit6 mode 0=32K/1=16K, bit7 mirror 0=H/1=V), reg1 bit0 = high PRG bit; CHR-RAM. |
+| 226 | — | 76-in-1 BMC | — | — | landed (v1.4.0 / S9) | Two `$8000-$FFFF` regs (even/odd): reg0 `[PMOP PPPP]` (bits 4-0 = PRG bits 4-0, bit 5 mode 0=32K/1=16K, bit 6 mirror 0=H/1=V, bit 7 = PRG bit 5), reg1 bit0 = PRG bit 6; CHR-RAM; RESET clears both registers. Before v2.9.8 bits 5-7 were read as PRG bit 5 / mode / mirroring, so *76-in-1* drew one repeated tile and *Super 42-in-1* opened on its second page under the wrong mirroring. |
 | 227 | — | 1200-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG + fixed-high-bank mode + mirroring bit; CHR-RAM. |
 | 229 | — | 31-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded: low bits zero = fixed NROM-32 menu bank, else a 16K bank pair + 8K CHR + mirroring bit. |
-| 233 | — | 42-in-1 reset-based BMC | — | — | landed (v1.4.0 / S9) | DATA-driven `[MMOP PPPP]` (4-bit page, bit5 mode 0=16K/1=32K, bits6-7 mirroring); the reset-selected outer block is host-driven (fixed power-on `0`); CHR-RAM. |
+| 233 | — | 42-in-1 reset-based BMC | — | — | landed (v1.4.0 / S9) | DATA-driven `[MMOP PPPP]` (4-bit page, bit5 mode 0=16K/1=32K, bits6-7 mirroring); the reset-selected outer block is host-driven (fixed power-on `0`); CHR-RAM. **Not implementable from documentation (v2.9.8 survey):** `Unknown Multi Cart w-Galaxian [p1].nes` (512 KiB PRG + 256 KiB CHR) is solid blue at every capture point. It is the "Unknown Multicart 1" that `INES_Mapper_233` itself says "does *not* follow the description in this doc at all": 32 NROM-128 games, no menu, each game's CHR page eight below its PRG page, mirroring varying per game, "might even be assigned the wrong mapper number". No documented board fits it, so none is guessed. |
 | 242 | — | Waixing 43-in-1 (Wai Xing Zhan Shi) | — | — | landed (v1.4.0 / S9) | `$8000-$FFFF` address-decoded 32K PRG (inner = A2-A4, outer = A5-A6) + mirror bit (A1); 8K work-RAM at `$6000-$7FFF`; CHR-RAM. |
 | 246 | — | Fong Shen Bang / G0151-1 | — | — | landed (v1.4.0 / S9) | Four `$6000-$6003` PRG (8K) + four `$6004-$6007` CHR (2K) banking regs; 2K PRG-RAM at `$6800-$6FFF`; `$6003` powers on to `$FF` and `$FFE4-$FFFF`-family reads force PRG A17 high; CHR-ROM, header-fixed mirroring. |
 
@@ -548,9 +579,9 @@ shipped as:
 | PPU `$0000-$1FFF` | CHR-RAM writable in every mode | The board is CHR-RAM-only; write-protecting it in some banking modes was modelling a restriction the hardware does not have, and it blanked four ROMs. |
 
 The PRG-RAM is serialized, so it round-trips a save-state. Its arrival lengthened
-the state blob without a version bump, so `load_state` accepts **both** lengths
-and clears the RAM on the shorter one — a pre-v2.3.4 slot still loads rather than
-failing `Truncated` for a field it could not have contained.
+the state blob without a version bump, so until v2.9.8 `load_state` accepted
+**both** lengths and cleared the RAM on the shorter one. Since v2.9.8 (ADR 0042)
+the shorter, pre-v2.3.4 length is `Truncated`.
 
 #### Mapper 154 — NAMCOT-3453
 
@@ -573,7 +604,8 @@ nametable bit is read on every write in the range — odd addresses carrying ban
 
 This makes mirroring **mutable state** on a board family where it had been
 constant, so `SAVE_STATE_VERSION` moves to 2 to carry it. A v1 blob never held a
-mirroring byte and would have restored the wrong CIRAM page.
+mirroring byte and would have restored the wrong CIRAM page; it is refused since
+v2.9.8 (ADR 0042).
 
 Used by exactly one game, *Devil Man*, whose dump is headered mapper 88 and
 corrected to 154 by the per-game database.
@@ -633,6 +665,31 @@ transforms in the same file — a disclosed Mesen2 derivation, see `NOTICE` and
 `docs/originality-and-provenance.md` §1 — no reference-emulator source was
 consulted for any of the FS005 code.
 
+**v2.9.8 survey: staged dumps that are not the board their header names.**
+Recorded rather than forced, because the board code is right for the board the
+header names and no per-game override is added:
+
+- `21-in-1 [p1][!]` (labelled 133, Sachen SA-72008). 128 KiB PRG and 64 KiB
+  CHR, more than the 72008's `$4100` latch can address (one PRG bit, two CHR
+  bits, `INES_Mapper_133`), and it never writes `$4100`: its first writes go to
+  `$8001`, `$F000`, `$F020` and `$F001`, an address-encoded latch. Re-headed in
+  scratch as mapper 225 (ET-4310 / K-1010, `INES_Mapper_225`: banks and
+  mirroring in the address of a `$8000-$FFFF` write) it boots to its "21 GAME"
+  menu; as 133 it is tile noise.
+- *Zhan Guo Si Chuan Sheng (C&E) (Unl)* (labelled 132, TXC 22211). The
+  `INES_Mapper_132` page names this exact image: GoodNES sets it to 132, but it
+  is a mapper hack with the CHR banks rearranged for some emulators' mapper 132,
+  "not on the above implementation based on studying the circuit board"; the
+  correct board is mapper 173. Here its title and map screen render, and in-game
+  screens draw from the wrong CHR bank. Mapper 173 is not implemented.
+- *Uchuusen - Cosmo Carrier (J) [!]* (mapper 78): see the row in the first
+  long-tail table; its header's nametable bit names Holy Diver.
+
+*BB Car (Asia) (En) (Unl)* (mapper 152) is not a defect: it never writes a
+mapper register, and the "0123456789" screen it shows is its own. Its
+controller loop reads the Start bit and discards it, so the harness's START taps
+never leave that screen; an A press starts the race.
+
 ### Tenth batch — v2.9.6 "Roster" (17 families, 174 → 191)
 
 Every family here is written from its vendored NESdev page, named in the table;
@@ -652,22 +709,31 @@ the page gives only Disch's notes, or masks marked "probably".
 |------|-----|--------------|------|-----|-------|
 | 12 | 0 | Gouder SL-5020B (`INES_Mapper_012`) | Curated | MMC3A (the alternate / NEC behaviour) | `$4100` mask `$E100`: CHR A18 per pattern table (bit 0 for PPU A12=0, bit 4 for A12=1), outside the ASIC so unaffected by `$8000` bit 7. The *Dragon Ball Z 5* language bit read at the same address returns 0 on D0: the page says every known copy is hard-wired to Chinese but not which level that is, so this is an assumption. Submapper 1 (the Magic Card 4M extraction) is a different device and is not supported. |
 | 37 | — | SMB + Tetris + NWC (`INES_Mapper_037`) | Curated | MMC3 | The 74HC161 at `$6000-$7FFF`, written only while the MMC3's `$A001` allows a PRG-RAM write; PRG A16 = Q0·Q1 + Q2·M16, A17 = CHR A17 = Q2 (the page's NAND equations). Write-only (open bus). The CIC reset clears it (`Mapper::reset`). |
-| 45 | — | GA23C (`INES_Mapper_045`) | Curated | MMC3 | Four outer registers written in turn at `$6000` (mask `$F001`): CHR-OR, PRG-OR, CHR-AND + high bits, PRG-AND (inverted) + lock. `$6001` resets and unlocks, as does a soft reset. `$5000-$5FFF` reads the menu DIP switch on D0. WRAM only when a NES 2.0 header declares it. |
-| 47 | — | Spike V'Ball + NWC (`INES_Mapper_047`) | BestEffort | MMC3 | One block bit in the PRG-RAM window, gated like mapper 37. The page is Disch's notes only. |
-| 74 | — | Waixing 43-393 (`INES_Mapper_074`) | Curated | MMC3 | CHR banks 8 and 9 are 2 KiB of CHR-RAM. 8 KiB work RAM. |
+| 45 | — | GA23C (`INES_Mapper_045`) | Curated | MMC3 | Four outer registers written in turn at `$6000` (mask `$F001`): CHR-OR, PRG-OR, CHR-AND + high bits, PRG-AND (inverted) + lock. `$6001` resets and unlocks, as does a soft reset. `$5000-$5FFF` reads the menu DIP switch on D0. WRAM only when a NES 2.0 header declares it. The page gives no power-on value for the outer registers; *Famicom Yarou 54* depends on it and boots to a blue screen, pinned as such (T-GA23C-POWERON), while the board's other four dumps run. |
+| 47 | — | Spike V'Ball + NWC (`INES_Mapper_047`) | BestEffort | MMC3 | One block bit in the PRG-RAM window, gated like mapper 37. The page is Disch's notes only. The Kasheng *2-in-1 (Mortal Kombat 6, Samurai Spirits)* is often labelled 47 (512 KiB CHR, `$6000` written with `$C0`/`$60` while WRAM is disabled); it is NES 2.0 mapper 291 (`NES_2_0_Mapper_291`), which this project does not implement. |
+| 74 | — | Waixing 43-393 (`INES_Mapper_074`) | Curated | MMC3 | CHR banks 8 and 9 are 2 KiB of CHR-RAM. 8 KiB work RAM. A dump that writes `$A001` with bit 5 set (`$EC`/`$ED`), `$5FF3`, or MMC3 registers 8-11 is a Waixing FS005 re-release, mapper 176 submapper 2 (`INES_Mapper_176`), not this board. |
 | 83 | 0/1/2 | Cony / Yoko (`INES_Mapper_083`) | Curated | 16-bit M2, up or down | Three PRG modes, `$6000` ROM (subs 0/1) or 32 KiB banked WRAM (sub 2), 1 KiB / 2 KiB / outer-banked CHR. On iNES the submapper follows the page's CHR-size heuristic. The DIP and scratch-RAM masks are "probably" on the page and are decoded inside `$5000-$5FFF` only. |
 | 91 | 0 | JY830623C / YY840238C (`INES_Mapper_091`) | Curated | 64 unfiltered PPU A12 rises | 2 KiB CHR x4, 8 KiB PRG x2 + fixed 16 KiB, outer bank from the `$8000-$9FFF` write address. |
 | 91 | 1 | EJ-006-1 | BestEffort | M2, down by 5 every 4th cycle | The page does not say when it asserts; this board asserts on the decrement that would go below zero, then stops until `$7007`. |
 | 105 | — | NES-EVENT (`NES_EVENT`) | Curated | 30-bit M2 timer | An embedded `Mmc1` runs the serial port. PRG locked to the first 32 KiB until `$A000` I goes 0 then 1; `O` picks the chip; the timer fires at `$20000000 \| DIP<<25`, default the tournament setting (DIP C, `NWC_TOURNAMENT_DIP`). Reset relocks. |
 | 121 | — | Kasheng A9711 / A9713 (`INES_Mapper_121`) | BestEffort | MMC3 | Protection array at `$5000`, the bit-reversed `$8001` latch and `$8003` index overrides, CHR A18 from PPU A12 (A9711) or a `$5180` outer bank (A9713, told apart by 512 KiB PRG). The page's masks are "probably". |
-| 153 | — | Bandai LZ93D50 + WRAM (`INES_Mapper_153`) | Curated | LZ93D50 | In `m016_bandai_fcg.rs` (outside its EEPROM region): `$8000-$8003` bit 0 is the outer 256 KiB PRG bank, `$800D` bit 5 the WRAM enable; unbanked CHR-RAM; the WRAM is the battery save. |
+| 153 | — | Bandai LZ93D50 + WRAM (`INES_Mapper_153`) | Curated | LZ93D50 | In `m016_bandai_fcg.rs` (outside its EEPROM region): `$8000-$8003` bit 0 is the outer 256 KiB PRG bank, `$800D` bit 5 the WRAM enable; 8 KiB of unbanked CHR-RAM, addressed directly and never through the CHR bank registers (in v2.9.6 and v2.9.7 all eight 1 KiB windows aliased the first 1 KiB, which striped *Famicom Jump II*'s title); the WRAM is the battery save. Per the page, the game itself freezes on a black screen when it boots with zero-filled WRAM (the default fresh-cartridge state here) and runs after a soft reset. |
 | 163 | — | Nanjing FC-001 (`INES_Mapper_163`) | Curated | — | 32 KiB PRG from `$5000`/`$5200` with the mode register's D0/D1 swap (not on 1 MiB boards) and the boot-in-bank-3 rule; feedback register at `$5100`/`$5500`; the automatic CHR-RAM switch latches PPU A9 on each rise of A13, modelled as a nametable access that follows a pattern access. |
-| 191 | — | (`INES_Mapper_191`) | BestEffort | MMC3 | CHR bank bit 7 selects 2 KiB CHR-RAM. Disch's notes. |
+| 191 | — | (`INES_Mapper_191`) | BestEffort | MMC3 | CHR bank bit 7 selects 2 KiB CHR-RAM. Disch's notes. The 192 KiB / 160 KiB translations need the non-power-of-two mirroring below. *Q Boy* (Sachen, CHR-RAM) is often labelled 191 but writes only `$4100`/`$4101`: it is a Sachen 8259 board, mapper 141 (`Sachen_8259`), and does not boot as 191. |
 | 192 | — | Waixing FS308 (`INES_Mapper_192`) | Curated | MMC3 | CHR banks 8-11 are 4 KiB of CHR-RAM. |
 | 194 | — | (`INES_Mapper_194`) | BestEffort | MMC3 | CHR banks 0 and 1 are 2 KiB of CHR-RAM. Disch's notes. |
 | 195 | — | Waixing FS303 (`INES_Mapper_195`) | Curated | MMC3 | A PPU write to a bank mapped to ROM selects which banks are RAM, from that bank's number (the page's eight-row table; power-on `$80`). CHR A10-A12 reach the RAM, so `$80` and `$82` share it. The optional 4 KiB at `$5000` appears when a NES 2.0 header declares PRG-RAM. |
 | 228 | — | Action 52 / Cheetahmen II (`INES_Mapper_228`) | Curated | — | The register latches the write ADDRESS (mirroring, chip, page, size) and data (CHR low bits). On the 1.5 MiB image chip 3 is the third 512 KiB and chip 2 is open bus. Reset clears it. |
 | 249 | — | Waixing T9552 (`T9552`) | Curated | MMC3 | `$5000` selects a PRG A14-A17 / CHR A12-A17 scrambling pattern; the file is stored in the `$5000=$00` order. Pinned to the page's worked example. |
+
+**Non-power-of-two ROM sizes.** Every board in `mmc3_boards.rs` reduces a PRG
+or CHR-ROM bank onto the image by the doubling algorithm of
+`Non_power_of_two_ROM_size` (the smaller ROM is mirrored up to the next power of
+two: 192 KiB reads as `ABCC`, 160 KiB grows 20 -> 24 -> 32 banks), not by a plain
+modulo. A modulo sent the MMC3's all-ones fixed bank to bank 15 of a 24-bank
+image, which holds no reset vector, so the 192 KiB and 160 KiB mapper 191
+translations booted to a blank frame. For power-of-two images the two are
+identical.
 
 **Mapper 4, corrected.** The NES 2.0 submappers of mapper 4 were mis-assigned:
 submapper 1 was read as "NEC" and 4 as Sharp. `NES_2_0_submappers` defines 1 as
@@ -886,7 +952,7 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
 1. **MMC1 consecutive-write bug.** Writes on adjacent CPU cycles after the first are ignored — but only the **data** (bit 0): the bit-7 reset is never ignored (`nesdev_wiki/MMC1.xhtml`, "Consecutive-cycle writes"). *Bill & Ted's Excellent Adventure* needs the data half (an `INC` on `$FF` writes a reset, then a `$00` that must be dropped); *Shinsenden* needs the reset half (it sets bit 7 on an `RRA abs,X`'s second write and crashes if that reset is dropped). Until v2.8.2 the oracle filtered the reset too; the MiSTer RTL did not, and was right (RTL audit R-3.5a). Pinned by `a_reset_on_the_cycle_after_a_write_is_never_ignored` and `a_data_write_on_the_cycle_after_a_reset_is_ignored`.
 2. **MMC3 IRQ pattern-table revision differences.** MMC3A (Sharp) generates IRQ even with latch = $00; MMC3B (NEC) does not. *Star Trek: 25th Anniversary* requires MMC3A behavior. Default to MMC3A unless NES 2.0 submapper specifies MMC3B (subm. 1) or MMC3C (subm. 2).
 3. **MMC2/MMC4 latch on tile fetch.** PPU calls a "tile fetched" notification with the tile address; mapper switches CHR bank if tile == `$FD` or `$FE`. Used for Punch-Out's character animations.
-4. **MMC5 8x16 sprite CHR.** Two separate CHR banks for sprites (`$5120-$5127`) and BG (`$5128-$512B`). PPU must tell the mapper which fetch type is in progress. **Status (Phase 4 / S4 v1):** the PPU's sprite tile fetch path now calls `PpuBus::ppu_read_sprite`, which `LockstepBus` forwards to `Mapper::ppu_read_sprite`. The default impl forwards to `ppu_read`; MMC5 overrides it to consult the eight 1 KiB sprite-CHR bank registers. The BG fetch path is untouched. The 8x16-vs-8x8 decision is taken by the PPU; the mapper always uses sprite registers for sprite fetches, which matches the documented MMC5 behavior in 8x16 mode. (In 8x8 mode real MMC5 unifies the two bank sets via internal write mirroring; games that flip in and out of 8x16 typically rewrite the sprite registers anyway.)
+4. **MMC5 8x16 sprite CHR.** Two separate CHR banks for sprites (`$5120-$5127`) and BG (`$5128-$512B`). PPU must tell the mapper which fetch type is in progress. **Status (Phase 4 / S4 v1):** the PPU's sprite tile fetch path now calls `PpuBus::ppu_read_sprite`, which `SystemBus` forwards to `Mapper::ppu_read_sprite`. The default impl forwards to `ppu_read`; MMC5 overrides it to consult the eight 1 KiB sprite-CHR bank registers. The BG fetch path is untouched. The 8x16-vs-8x8 decision is taken by the PPU; the mapper always uses sprite registers for sprite fetches, which matches the documented MMC5 behavior in 8x16 mode. (In 8x8 mode real MMC5 unifies the two bank sets via internal write mirroring; games that flip in and out of 8x16 typically rewrite the sprite registers anyway.)
 5. **VRC2/4 mapping confusion.** Different VRC2/4 variants share iNES mapper IDs but route registers differently. NES 2.0 submappers disambiguate.
 6. **Namco 163 N163 audio enable bit.** Disabled by default; ROM must set it. Some ROMs forget; default-on causes glitches in those.
 7. **Bus conflict timing.** The bus-conflict-AND happens at the time of the write; emulators that compute the conflict after the bank-switch read get it wrong.

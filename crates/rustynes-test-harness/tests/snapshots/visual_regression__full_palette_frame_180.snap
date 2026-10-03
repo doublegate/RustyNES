@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/visual_regression.rs
+assertion_line: 71
 expression: snap
 ---
-rom=assorted/full_palette.nes frames=180 fb_bytes=245760 fnv1a64=bd2ad231dd9613fd
+rom=assorted/full_palette.nes frames=180 fb_bytes=245760 fnv1a64=f433692f81bb67b1

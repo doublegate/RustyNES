@@ -191,6 +191,8 @@ pub fn import_fcm(
     let movie = Movie {
         region: if pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
+        options: crate::HardwareOptions::default(),
+        board: None,
         start: StartPoint::PowerOn,
         frames,
         rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
@@ -409,6 +411,8 @@ pub fn import_fmv(
     let movie = Movie {
         region: Region::Ntsc, // Famtasia carries no reliable PAL flag.
         rom_sha256,
+        options: crate::HardwareOptions::default(),
+        board: None,
         start: StartPoint::PowerOn,
         frames,
         rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
@@ -530,6 +534,8 @@ pub fn import_vmv(
     let movie = Movie {
         region: if pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
+        options: crate::HardwareOptions::default(),
+        board: None,
         start: StartPoint::PowerOn,
         frames,
         rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),

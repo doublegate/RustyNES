@@ -190,6 +190,11 @@ pub fn import_bk2(
     let movie = Movie {
         region: if meta.pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
+        // v2.9.8 — the source format records no emulation options and no
+        // header, so the import states the stock NES explicitly and leaves the
+        // board unchecked (the ROM identity and region still are).
+        options: crate::HardwareOptions::default(),
+        board: None,
         start: StartPoint::PowerOn,
         frames,
         // Carry the `.bk2` rerecordCount through (saturating into the `.rnm` u32).
@@ -556,6 +561,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: varied_frames(),
             rerecord_count: 0,
@@ -587,6 +594,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: vec![
                 FrameInput::new(Buttons::A, Buttons::empty()),
@@ -714,6 +723,8 @@ mod tests {
         let pal_movie = Movie {
             region: Region::Pal,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::PowerOn,
             frames: vec![FrameInput::new(Buttons::empty(), Buttons::empty())],
             rerecord_count: 0,
@@ -824,6 +835,8 @@ mod tests {
         let movie = Movie {
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
+            options: crate::HardwareOptions::default(),
+            board: None,
             start: StartPoint::SaveState(vec![1, 2, 3]),
             frames: vec![],
             rerecord_count: 0,

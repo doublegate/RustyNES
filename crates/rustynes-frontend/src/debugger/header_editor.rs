@@ -16,10 +16,11 @@
 //! so the editor can never drift from the loader. Writing uses
 //! [`rustynes_core::rustynes_mappers::serialize_header_preserving`] over the
 //! bytes the file held: only the fields you changed are rewritten, and every
-//! bit the parser does not model (Vs. hardware types, the extended console
-//! type, bytes 14-15, NVRAM nibbles, iNES 1.0 padding) is kept. Until v2.9.3 it
-//! wrote the canonical encoding, which zeroed all of those. Source inspiration: FCEUX
-//! `iNesHeaderEditor.cpp`. See `docs/cartridge-format.md`.
+//! bit the parser does not model (reserved bits, reserved Vs. PPU nibbles,
+//! exponent-notation sizes you did not edit, iNES 1.0 padding) is kept. Until
+//! v2.9.3 it wrote the canonical encoding, which zeroed all of those; since
+//! v2.9.8 every header field is modelled and editable here. Source
+//! inspiration: FCEUX `iNesHeaderEditor.cpp`. See `docs/cartridge-format.md`.
 //!
 //! Native-only: editing a file on disk needs `std::fs` + the `rfd` picker,
 //! both native-only deps. The whole module is `cfg`-gated out of the wasm
@@ -28,7 +29,8 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use rustynes_core::rustynes_mappers::{
-    ConsoleType, Header, Mirroring, Region, VsPpuType, parse_header, serialize_header_preserving,
+    ConsoleType, ExpansionDevice, ExtendedConsoleType, Header, Mirroring, Region, VsHardwareType,
+    VsPpuType, parse_header, serialize_header_preserving,
 };
 
 /// Length of the iNES / NES 2.0 header in bytes.
@@ -55,7 +57,8 @@ struct Loaded {
     original: [u8; HEADER_LEN],
     /// Raw PRG/CHR unit counts shown for editing (16 KiB / 8 KiB units). Only
     /// meaningful when the size is expressible in the standard notation (which
-    /// the editor restricts to).
+    /// the editor restricts to: at most `$EFF` units, since a byte-9 nibble of
+    /// `$F` selects the exponent notation instead).
     prg_units: u16,
     chr_units: u16,
 }
@@ -134,7 +137,9 @@ fn info_pane(ui: &mut egui::Ui, h: &Header) {
                 &crate::tf!(HdrBytesKib, h.chr_size, h.chr_size / 1024),
             );
             row(ui, "PRG-RAM", &crate::tf!(HdrBytes, h.prg_ram_size));
+            row(ui, "PRG-NVRAM", &crate::tf!(HdrBytes, h.prg_nvram_size));
             row(ui, "CHR-RAM", &crate::tf!(HdrBytes, h.chr_ram_size));
+            row(ui, "CHR-NVRAM", &crate::tf!(HdrBytes, h.chr_nvram_size));
             row(
                 ui,
                 crate::t!(HdrBattery),
@@ -157,14 +162,28 @@ fn info_pane(ui: &mut egui::Ui, h: &Header) {
             row(ui, crate::t!(HdrConsole), &format!("{:?}", h.console_type));
             if h.console_type == ConsoleType::VsSystem {
                 row(ui, "Vs. PPU", &format!("{:?}", h.vs_ppu_type));
+                if let Some(hw) = h.vs_hardware_type {
+                    row(ui, "Vs. hardware", &format!("{hw:?}"));
+                }
                 row(
                     ui,
-                    "Vs. DualSystem",
-                    if h.vs_dual_system {
+                    crate::t!(HdrVsDualBoard),
+                    if h.is_vs_dual_system() {
                         crate::t!(HdrYes)
                     } else {
                         crate::t!(HdrNo)
                     },
+                );
+            }
+            if let Some(ext) = h.extended_console_type {
+                row(ui, "Extended console", &format!("{ext:?}"));
+            }
+            if h.is_nes2 {
+                row(ui, "Misc. ROMs", &format!("{}", h.misc_rom_count));
+                row(
+                    ui,
+                    "Expansion device",
+                    &format!("{:?}", h.default_expansion_device),
                 );
             }
             ui.end_row();
@@ -207,7 +226,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
     ui.horizontal(|ui| {
         ui.label(crate::t!(HdrPrgUnits));
         if ui
-            .add(egui::DragValue::new(&mut loaded.prg_units).range(0..=4095))
+            .add(egui::DragValue::new(&mut loaded.prg_units).range(0..=0xEFF))
             .changed()
         {
             h.prg_size = usize::from(loaded.prg_units) * 16 * 1024;
@@ -216,7 +235,7 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
     ui.horizontal(|ui| {
         ui.label(crate::t!(HdrChrUnits));
         if ui
-            .add(egui::DragValue::new(&mut loaded.chr_units).range(0..=4095))
+            .add(egui::DragValue::new(&mut loaded.chr_units).range(0..=0xEFF))
             .changed()
         {
             h.chr_size = usize::from(loaded.chr_units) * 8 * 1024;
@@ -247,19 +266,68 @@ fn editor(ui: &mut egui::Ui, loaded: &mut Loaded) {
                 );
                 ui.selectable_value(&mut h.console_type, ConsoleType::Extended, "Extended");
             });
+        // Byte 13 means something different per console type: keep only the
+        // field the chosen console type has, as `parse_header` would.
         if h.console_type == ConsoleType::VsSystem {
-            ui.checkbox(&mut h.vs_dual_system, crate::t!(HdrVsDualBoard));
+            let hw = h.vs_hardware_type.get_or_insert(VsHardwareType::UniSystem);
+            egui::ComboBox::from_label("Vs. hardware")
+                .selected_text(format!("{hw:?}"))
+                .show_ui(ui, |ui| {
+                    for code in 0..=6 {
+                        let t = VsHardwareType::from_nibble(code);
+                        ui.selectable_value(hw, t, format!("{t:?}"));
+                    }
+                });
         } else {
             h.vs_ppu_type = VsPpuType::None;
-            h.vs_dual_system = false;
+            h.vs_hardware_type = None;
+        }
+        if h.console_type == ConsoleType::Extended {
+            let ext = h
+                .extended_console_type
+                .get_or_insert(ExtendedConsoleType::Regular);
+            egui::ComboBox::from_label("Extended console")
+                .selected_text(format!("{ext:?}"))
+                .show_ui(ui, |ui| {
+                    for code in 0..=0xC {
+                        let t = ExtendedConsoleType::from_nibble(code);
+                        ui.selectable_value(ext, t, format!("{t:?}"));
+                    }
+                });
+        } else {
+            h.extended_console_type = None;
+        }
+        for (label, size) in [
+            ("PRG-RAM (bytes):", &mut h.prg_ram_size),
+            ("PRG-NVRAM (bytes):", &mut h.prg_nvram_size),
+            ("CHR-RAM (bytes):", &mut h.chr_ram_size),
+            ("CHR-NVRAM (bytes):", &mut h.chr_nvram_size),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                ui.add(egui::DragValue::new(size));
+            });
         }
         ui.horizontal(|ui| {
-            ui.label("PRG-RAM (bytes):");
-            ui.add(egui::DragValue::new(&mut h.prg_ram_size));
+            ui.label("Misc. ROMs:");
+            ui.add(egui::DragValue::new(&mut h.misc_rom_count).range(0..=3));
         });
         ui.horizontal(|ui| {
-            ui.label("CHR-RAM (bytes):");
-            ui.add(egui::DragValue::new(&mut h.chr_ram_size));
+            // Edited as the raw 7-bit byte-15 code (`$00-$7F`); the decoded
+            // device name is shown beside it.
+            ui.label("Expansion device code:");
+            let mut code = h.default_expansion_device.code();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut code)
+                        .range(0..=0x7F)
+                        .hexadecimal(2, false, true),
+                )
+                .changed()
+            {
+                h.default_expansion_device = ExpansionDevice::from_code(code);
+            }
+            ui.weak(format!("{:?}", h.default_expansion_device));
         });
     }
 

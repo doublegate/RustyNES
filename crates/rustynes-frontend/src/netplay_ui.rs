@@ -46,7 +46,8 @@ use std::net::SocketAddr;
 use rustynes_core::{Buttons, Nes};
 use rustynes_netplay::{
     AdvanceOutcome, ConnectionState, DisconnectReason, NetplayConnection, NetplayError,
-    RollbackSession, SessionConfig, SpectatorConfig, SpectatorSession, UdpTransport,
+    RollbackSession, SessionConfig, SessionIdentity, SpectatorConfig, SpectatorSession,
+    UdpTransport,
 };
 
 /// Default local UDP port a host binds when none is specified.
@@ -147,9 +148,10 @@ pub struct NetplayUi {
     /// `true` if this peer hosted (player 0). Recorded at connect so the HUD
     /// and `SessionConfig.local_player` agree.
     is_host: bool,
-    /// The loaded ROM's SHA-256, captured at connect for the handshake +
-    /// session. The peer must announce an identical hash.
-    rom_hash: [u8; 32],
+    /// The loaded ROM's identity and (v2.9.8) its machine configuration,
+    /// captured at connect for the handshake + session
+    /// ([`SessionIdentity::of`]). The peer must announce an identical one.
+    identity: SessionIdentity,
     /// Cached status for the HUD, refreshed each `tick`.
     status: NetplayStatus,
     /// Session config (input delay, rollback window, checksum interval). The
@@ -167,7 +169,7 @@ impl Default for NetplayUi {
         Self {
             state: NetplayState::Idle,
             is_host: false,
-            rom_hash: [0u8; 32],
+            identity: SessionIdentity::new([0u8; 32], [0u8; 32]),
             status: NetplayStatus::default(),
             config: SessionConfig::default(),
             spectator_delay_frames: 0,
@@ -245,13 +247,13 @@ impl NetplayUi {
     /// The host no longer needs to pre-enter the joiner's address — it just
     /// shares its own listening `IP:port` and the joiner dials in (see
     /// [`NetplayConnection::host`]).
-    pub fn start_host(&mut self, local_port: u16, num_players: u8, rom_hash: [u8; 32]) {
+    pub fn start_host(&mut self, local_port: u16, num_players: u8, identity: SessionIdentity) {
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         self.is_host = true;
-        self.rom_hash = rom_hash;
+        self.identity = identity;
         self.config.num_players = num_players.clamp(2, 4);
         self.config.local_player = 0; // host = player 0.
-        match NetplayConnection::host(local, rom_hash) {
+        match NetplayConnection::host(local, identity) {
             Ok(conn) => self.enter_connecting(conn, true),
             Err(e) => self.fail(format!("host bind failed: {e}")),
         }
@@ -259,17 +261,17 @@ impl NetplayUi {
 
     /// Join a session hosted at `remote`: bind an ephemeral local port and
     /// begin the handshake as player 1 (P2). Any previous session is dropped.
-    pub fn start_join(&mut self, remote: SocketAddr, rom_hash: [u8; 32]) {
+    pub fn start_join(&mut self, remote: SocketAddr, identity: SessionIdentity) {
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         self.is_host = false;
-        self.rom_hash = rom_hash;
+        self.identity = identity;
         // The 2-player UDP handshake does not yet carry num_players; a joiner
         // runs as player 1 of a 2-player session. (The N-player session core
         // is proven by the rustynes-netplay determinism harness; multi-joiner UDP
         // assignment is the deferred follow-up.)
         self.config.num_players = 2;
         self.config.local_player = 1; // joiner = player 1.
-        match NetplayConnection::connect(local, remote, rom_hash) {
+        match NetplayConnection::connect(local, remote, identity) {
             Ok(conn) => self.enter_connecting(conn, false),
             Err(e) => self.fail(format!("connect failed: {e}")),
         }
@@ -290,10 +292,10 @@ impl NetplayUi {
     /// matrix) — the frontend driver here is exercised by the loopback unit
     /// test. The local emulator is power-cycled to the deterministic cold-boot
     /// so frame 0 matches the players' canonical timeline.
-    pub fn start_spectate(&mut self, remote: SocketAddr, rom_hash: [u8; 32]) {
+    pub fn start_spectate(&mut self, remote: SocketAddr, identity: SessionIdentity) {
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         self.is_host = false;
-        self.rom_hash = rom_hash;
+        self.identity = identity;
         // A spectator does not own a controller port; the count is adopted from
         // the host's roster (defaults to 2 until then).
         self.config.num_players = 2;
@@ -304,7 +306,7 @@ impl NetplayUi {
                 use rustynes_netplay::{NetMessage, Transport as _};
                 transport.send(&NetMessage::Sync {
                     magic: NetMessage::SYNC_MAGIC,
-                    rom_hash,
+                    identity,
                 });
                 let session = SpectatorSession::new(
                     SpectatorConfig {
@@ -312,7 +314,7 @@ impl NetplayUi {
                         delay_frames: self.spectator_delay_frames,
                     },
                     transport,
-                    rom_hash,
+                    identity,
                 );
                 self.state = NetplayState::Spectating(Box::new(session));
                 self.status = NetplayStatus {
@@ -415,7 +417,7 @@ impl NetplayUi {
                 rustynes_core::power_on_for_movie(nes);
                 // Hand the bound + handshaken transport to a fresh session.
                 let transport = conn.into_transport();
-                let session = RollbackSession::new(self.config, transport, self.rom_hash);
+                let session = RollbackSession::new(self.config, transport, self.identity);
                 self.state = NetplayState::InGame(Box::new(session));
                 self.status.phase = NetplayPhase::InGame;
                 NetplayTick {
@@ -427,6 +429,13 @@ impl NetplayUi {
                 let why = match conn.disconnect_reason() {
                     Some(DisconnectReason::RomMismatch) => {
                         "peer is running a different ROM".to_string()
+                    }
+                    Some(DisconnectReason::ConfigMismatch) => {
+                        "peer runs this ROM with different emulation settings (console \
+                         model, power-on RAM, die revisions, overclock, Four Score, Vs. \
+                         settings, Game Genie codes, region or header); match them and \
+                         reconnect"
+                            .to_string()
                     }
                     Some(DisconnectReason::HandshakeTimeout) => {
                         "handshake timed out (no peer answered)".to_string()
@@ -487,6 +496,7 @@ impl NetplayUi {
                         format!("desync at frame {frame} ({kind})")
                     }
                     NetplayError::RomMismatch => "rom mismatch".to_string(),
+                    NetplayError::ConfigMismatch => format!("{e}"),
                     NetplayError::Restore(ref s) => format!("rollback restore failed: {s}"),
                     // `NetplayError` is `#[non_exhaustive]`; surface any future
                     // variant via its `Display` rather than panicking.
@@ -638,7 +648,7 @@ mod tests {
         // assert the simpler property: a successful host start enters
         // Connecting, and leaving returns to Idle cleanly.
         let mut ui = NetplayUi::default();
-        ui.start_host(0, 2, [0u8; 32]);
+        ui.start_host(0, 2, SessionIdentity::new([0u8; 32], [0u8; 32]));
         assert_eq!(ui.phase(), NetplayPhase::Connecting);
         assert!(ui.is_active());
         ui.leave();
@@ -656,7 +666,7 @@ mod tests {
     #[test]
     fn two_peers_reach_in_game_and_advance() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
 
         // Pick a free port for the host by binding + dropping a probe socket
         // (a small TOCTOU race, but fine for a loopback test). The host then
@@ -709,7 +719,7 @@ mod tests {
     fn two_peers_with_different_saves_start_equal() {
         let mut rom = synth_nrom();
         rom[6] |= 0x02; // the battery bit: NROM's work RAM becomes a save
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let probe = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
         let host_addr = probe.local_addr().unwrap();
         drop(probe);
@@ -754,7 +764,7 @@ mod tests {
     #[test]
     fn spectator_enters_phase_and_leaves_cleanly() {
         let rom = synth_nrom();
-        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
         let mut nes = Nes::from_rom(&rom).unwrap();
 
         let mut ui = NetplayUi::default();

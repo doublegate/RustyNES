@@ -26,8 +26,255 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.8] - 2026-10-02 - "Vanguard" (v3.0.0's breaks landed early, every staged game looked at, and the database's corrections on every platform)
+
+The ninth release of the v2.9.x line and the fifth of the line to v3.0.0. It
+began as the performance and MiSTer-menu release. At the maintainer's
+direction it became the preparation release for v3.0.0:
+
+- every planned breaking change landed here, along with the other permanent
+  improvements a break makes possible;
+- every one of the 748 staged dumps was booted and looked at, and the
+  defects that turned up were fixed from their documentation;
+- the game database's corrections now reach every platform.
+
+The maintainer's decisions are in `to-dos/plans/v2.9.8-vanguard-plan.md` and
+the 2026-10-01 amendments to ADR 0042 and ADR 0043.
+
+**Breaking changes at a glance.** This release carries the breaks planned for
+v3.0.0 ahead of it (ADR 0042 and 0043, amended 2026-10-01). It keeps the v2.9.x
+number as preparation for v3.0.0, whose notes will restate every one of them.
+
+- **Old saves are not found for cartridge games.** A ROM is now identified by
+  the bytes after its header, so save states, battery `.sav` files, cheats and
+  movies made by earlier versions are not picked up. FDS and NSF are unchanged.
+- **Save states from v2.9.7 and earlier are refused** with a clear error, and
+  **movies older than format 3 are refused**. Both say to re-record.
+- **Movies and netplay record the machine, not only the ROM.** A movie replays
+  with the options it was made with, and netplay peers must use the same
+  options.
+- **Public API:**
+  - `LockstepBus` is now `SystemBus`;
+  - the items deprecated at v2.7.5 and `serialize_header` are removed;
+  - `Header` and `FrameInput` are `#[non_exhaustive]`;
+  - `vs_db::lookup` takes the console.
+
+### Added
+
+- **The MiSTer core's menu gains aspect ratio, scaling, crop and palette
+  options.** The two custom aspect ratios from `MiSTer.ini` (`[ARC1]`,
+  `[ARC2]`), integer scaling through the framework's `video_freak`, a 224-line
+  vertical crop (448 when scan-doubled), and a choice of the FBX "Smooth"
+  palette or the 2C03 RGB palette of the Vs. System and PlayChoice-10. A new
+  co-simulation gate checks the core's palette output entry for entry against
+  this emulator. The options are compiled and timing-closed, and **not yet
+  seen on hardware**.
+
+- **Real-game coverage for the v2.9.6 mapper families.** 44 dumps are now
+  pinned by a baseline and a screenshot each. Every one of the 748 staged dumps
+  was booted and its final frame looked at. The dumps that drew garbage or
+  nothing led to most of the fixes below. Mislabelled dumps are recorded in
+  `docs/mappers.md` rather than forced. The screenshot corpus now holds 488
+  PNGs in 171 directories, plus 10 in `besteffort/`.
+
+- **Famicom console model (opt-in, off by default).** On a Famicom the PPU's
+  reset line is tied high, so the PPU starts about one frame before the CPU
+  and is past its ~29,658-cycle warm-up by the first instruction; the Reset
+  button reaches only the CPU (NESdev "PPU power up state", §Famicom). The NES
+  ignores `$2000`/`$2001`/`$2005`/`$2006` during that warm-up. The new model
+  closes the window at power-on and leaves the PPU alone on Reset. The
+  *999-in-1* multicart clears its nametable at about cycle 27,400 and showed a
+  screen of "0" tiles behind its menu; with the model on, the menu draws on a
+  clean background. Select it with Settings > Emulation > Accuracy > *Famicom
+  console*, `[emulation] famicom_console = true`, or `Nes::set_console_model`
+  (`rustynes_core::ConsoleModel`). The NES model stays the default, so every
+  output is byte-identical with it off. Movies record the setting and netplay
+  peers must match it (see the movie and netplay entries under Changed).
+
+### Changed
+
+- **CI builds the iOS app at release time.** `ios.yml` now compiles the Swift
+  app for the iOS Simulator, and fails if the build script modified a tracked
+  file. `release-auto.yml` calls `ios.yml` for every release: its tag trigger
+  never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
+  built the iOS host. macOS jobs still never run on pull requests.
+
+- **`LockstepBus` is renamed `SystemBus` (API break, ADR 0042).** The old
+  name described the pre-v2.0.0 dot-lockstep scheduler, which v2.0.0
+  retired. `Bus` was ruled out because `rustynes_cpu::Bus` is the trait the
+  type implements. **Migration:** replace `rustynes_core::LockstepBus` with
+  `rustynes_core::SystemBus`; nothing outside the workspace names it.
+
+- **Movies record the emulation options they were made with (breaks old
+  movies).** A `.rnm` used to record the ROM and the input and nothing else,
+  so a replay ran whatever the player had configured: record on the Famicom
+  model or with a seeded power-on RAM, replay with the defaults, and it
+  silently ran a different machine. Format 3 stores every option that changes
+  emulation -- console model, PPU and 2A03 die revisions, OAM decay, power-on
+  RAM fill, power-up palette, overclock scanlines, Four Score, Zapper light
+  model, Vs. DIP switches and PPU type, mirroring override and Game Genie codes
+  (`rustynes_core::HardwareOptions`) -- plus the cartridge board the header
+  described. Playback applies the options before frame 0 whatever your
+  settings, holds them while it runs, and puts yours back when it stops; it
+  refuses a ROM whose region or header differs and names what differs.
+  **Movies from earlier versions, and movies that start from a pre-v2.9.8 save
+  state, are refused** with an error that says to re-record them; the
+  maintainer accepted the break. Recording keeps OAM decay through its
+  power-on (the power cycle used to drop it); recording runs at stock timing,
+  so a recorded movie stores no overclock, while playback applies whatever
+  overclock a movie stores. Raw RAM cheats pause while a movie records or
+  plays because a `.rnm` cannot carry them. Foreign imports (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`)
+  record the stock NES. The full list of what is and is not recorded is in
+  `docs/frontend.md`; the decision is ADR 0044.
+
+- **Movies keep Four Score players 3 and 4 (API break).** `FrameInput` gains
+  `p3` and `p4` and is now `#[non_exhaustive]`: build one with
+  `FrameInput::new` or `FrameInput::four_players`. Recording captures all four
+  ports and playback drives them, and a `fourscore` `.fm2` import keeps pads 3
+  and 4 (they were dropped) and plugs the adapter in; `.fm2` export writes
+  them.
+
+- **Netplay peers must run the same machine, not only the same ROM (API and
+  protocol break).** The handshake carries a `SessionIdentity`: the ROM hash
+  plus a hash of the region, the cartridge header and every emulation option
+  (`rustynes_core::config_digest`). Peers whose settings differ refuse to
+  connect with a message saying so, instead of connecting and desyncing; the
+  guest does not adopt the host's options. The netplay constructors take a
+  `SessionIdentity` (`SessionIdentity::of(&nes)`), and `PROTOCOL_VERSION` is 5,
+  so v2.9.7 peers do not connect to this one.
+
+- **A ROM's identity no longer includes its header (breaks old saves once).**
+  `Nes::rom_sha256` names save-state slots, battery `.sav` files and cheats,
+  tags `.rns` states and movies, matches netplay peers, and is what Lua's
+  `cart:sha256()` returns. It hashed the whole image after the game database
+  had corrected its header, so every change to those corrections renamed
+  saves; this release changed them three times. For iNES / NES 2.0 images it
+  now hashes everything after the 16-byte header, which no correction
+  touches. FDS and NSF are unchanged. **Saves, states, cheats and movies from
+  earlier versions are not found for cartridge games**: the maintainer chose
+  a permanent identity over carrying the old one forward. Two dumps of one
+  game that differ only in their header now share saves. The Vs. System
+  database matches that identity too (next entry); `Nes::image_sha256` is the
+  whole-file hash it keeps as a fallback.
+
+- **The Vs. System database finds a dump by its identity, not its exact file
+  (API break).** Each of its 19 rows was keyed only by the SHA-256 of the
+  whole file, so a Vs. dump whose header had been corrected or rewritten lost
+  its palette and DIP row and fell back to the 2C03 colours and DIP 0. Every row
+  now also carries the dump's `Nes::rom_sha256`, computed from the staged dumps
+  themselves, and the lookup tries that first, then the whole-file hash, which
+  stays on every row so a row for a dump nobody has staged is still reachable.
+  `rustynes_core::vs_db::lookup` (and its re-export `vs_db_lookup`) now takes
+  the `Nes` rather than a hash; `vs_db::lookup_by_hashes(identity, image)` is
+  the hash form. The same file finds the same row it did before, so emulation
+  output is unchanged.
+
+- **`rustynes_mappers::Header` models every header field and is
+  `#[non_exhaustive]` (API break).** It gains the Vs. hardware type
+  (`vs_hardware_type`, the new `VsHardwareType`), the extended console type
+  (`extended_console_type`, `ExtendedConsoleType`), the miscellaneous ROM count
+  (`misc_rom_count`), the default expansion device (`default_expansion_device`,
+  `ExpansionDevice`, the NESdev codes by name) and the NVRAM sizes
+  (`prg_nvram_size`, `chr_nvram_size`), all read from the NES 2.0 page. An
+  iNES 1.0 header reports fixed values for them (`None`, 0, `Unspecified`),
+  whatever junk its bytes 8-15 hold. The header editor shows and edits all of
+  them. Migration: build a `Header` outside the crate with `Header::default()`
+  and field assignment, or with `parse_header`; `vs_dual_system` is now the
+  method `is_vs_dual_system()`; and `prg_ram_size` now holds only the volatile
+  PRG-RAM, with the old sum (volatile plus NVRAM, the window every board
+  allocates) as `prg_ram_window()`. ROM loading uses the window, so every board
+  allocates exactly what it did and emulation output is unchanged. The
+  canonical encoding now writes everything it reads, including sizes that need
+  the exponent notation, so `parse_header(canonical(h)) == h` for every header
+  `parse_header` produces; `serialize_header_preserving` still keeps every
+  reserved bit. The editor's PRG/CHR unit fields stop at `$EFF`: a larger count
+  used to be written with a byte-9 nibble of `$F`, which reads back as an
+  exponent-notation size. ADR 0042's 2026-10-01 amendment.
+
+- **Faster frames, with output unchanged.** Removing the dead /NMI edge
+  detector (ADR 0042) cut frame time by 4.9% to 6.1% on three benchmark
+  workloads and 1.4% on exact-path `nestest`, in two runs. Three of eleven
+  re-measured hot-path candidates were adopted: a cached unity-gain flag in the
+  mixer, two sprite-evaluation values computed only where used, and one
+  duplicate DMC read removed. Together they are 1.8% to 4.3% faster. Against
+  v2.9.7, the shipped `nestest` frame is 5% to 9% faster. On the other
+  workloads the end-to-end gain did not reproduce, and the cause is a v2.9.9
+  lead. The details and the rejected candidates are in `docs/performance.md`.
+
+- **Colour emphasis follows the documented hardware model.** PPUMASK bits 5-7
+  used to dim the other two colour channels to 13/16 per set bit, which turned
+  all three bits into an even, heavy dim. The console has one attenuator shared
+  by the three bits, active on 6, 10 or 12 of the 12 colour phases, and never on
+  the blacks in columns `$E`/`$F` (NESdev "NTSC video"). The emulator now models
+  that from the page's measured levels and applies the change to the default
+  palette (or a loaded `.pal`). One bit tints toward its complement, all three
+  darken without tinting, and frames without emphasis are unchanged. The MiSTer
+  core carries the same colours.
+
+- **Provenance: the raw NTSC signal model is recorded as derived** from
+  Bisqwit's `nes_ntsc` method and Mesen2's "raw palette" generator, which its
+  own documentation has said since v2.1.9. It had no `// Provenance:` header or
+  record row; it now has both, and a NOTICE entry, at the maintainer's
+  direction.
+
+- **VRC6 (mappers 24 and 26) powers on with its CHR banks in order.** The
+  eight 1 KiB CHR bank registers (`$D000-$E003`) now start at 0-7 instead of
+  all at 0. NESdev documents no power-on state for the VRC6, so this is an
+  assumption, recorded as one in the code and `docs/mappers.md`, and it
+  replaces an equally undocumented one, which is why it is listed here rather
+  than under Fixed. *Pulsewave Invite* never writes those registers and
+  relies on the identity layout; it showed scattered tiles and now shows its
+  postcard. A soft reset still keeps the registers, and the PRG registers
+  still start at 0. The other ten staged mapper 24/26 dumps boot to
+  byte-identical frames.
+
 ### Fixed
 
+- **Fixes from release review.** CodeRabbit could not review the 180-file
+  release PR, so its files were reviewed as two smaller review-only PRs
+  (#580, #581). Each fix below has a test that failed first.
+  - **A refused movie no longer changes the running game.** A movie refused
+    for an old start state or a bad Game Genie code had already applied its
+    options, refilling work RAM and palette RAM. `Movie::seek_to_start` now
+    takes a rollback point and restores it on any error.
+  - **A mapper correction of 16 or more survives a "DiskDude!" header.** A
+    non-zero byte in 12-15 of an iNES 1.0 header masks mapper bits 4-7. Both
+    the game database and the header editor wrote the new mapper and left
+    that tail, so the mapper read back as its low nibble. A PAL promotion
+    then fixed the wrong id into the NES 2.0 header. Both now clear the tail.
+  - **A `$4017` inhibit holds through the reset delay.** The flag was
+    cleared on the write while the inhibit waited for the timer reset, so a
+    write 1-3 cycles before the four-step IRQ let the IRQ through. No ROM in
+    the suite reaches this window.
+  - **Netplay v5 and v4 peers can no longer half-sync.** v5 kept v4's
+    `Sync` magic, and a v4 decoder ignores extra bytes. A v4 peer could
+    therefore accept v5's longer message while the v5 side waited. v5's
+    magic is now `"RNE5"`, and a `Sync` of the wrong length is refused.
+  - **Android netplay shows emphasis as everywhere else.** Android's netplay
+    path had its own Kotlin palette, with the old 13/16 emphasis. It now
+    reads the core's table over the bridge (`default_palette_argb`).
+  - **A refused save state or movie says so on screen.** On the desktop, a
+    load reported "State loaded" whatever happened, and the F4 hotkey
+    reported nothing. A refused state, such as one from v2.9.7, therefore
+    looked like it had loaded. The reason went only to stderr, as did an
+    old movie's "re-record" refusal. Every native save and load now shows
+    its real outcome, and a refused movie shows its reason. The browser
+    build's saves are asynchronous and still log their outcome. (Found by
+    the Antigravity review of #579.)
+  - **History-viewer exports never span an options change.** An exported
+    clip carries one set of options, and one taken across a mid-session
+    change replayed the later frames under the earlier options. The change
+    now places an anchor on its own frame, and an export ends there.
+  - **TAStudio replays and exports what its movie will play.** The editor
+    drove only controllers 1 and 2 while its export plays all four. It also
+    took the options at export time, not the ones frame 0 was built under.
+  - **Power Cycle no longer reads a `.pal` file under the emulation lock.**
+    A stalled drive could stall the emulation thread with it.
+  - The coverage tool warns when it cannot read every tier arm. Its dry
+    run now predicts the duplicates a real run would flag.
+  - A too-long APU snapshot is reported as `TrailingBytes`, not `Truncated`.
+  - The movie format comment shows 5 bytes per frame, and two save-state
+    comments no longer describe pre-v2.9.8 behaviour.
 - **The iOS app compiles again.** The first Xcode build on a Mac (Xcode 27)
   failed with 24 errors in v2.9.7's Swift. The app's own `NesButton` collided
   with the type UniFFI generates from `rustynes-mobile`, now renamed
@@ -51,13 +298,296 @@ cycle-accurate core later replaced.
   and `tests/roms/AccuracyCoin/README.md` were one file on a case-insensitive
   filesystem; the lowercase one is now `RUNTIME.md`.
 
-### Changed
+- **Desktop: Power Cycle works on a Vs. `DualSystem` cabinet.** It touched
+  only a single console, so with a cabinet loaded F3 and Emulation > Power
+  Cycle did nothing. It now cycles both consoles and configures each like a
+  single one, a running movie's options last. Cycling the two consoles one
+  by one is not enough: each rebuilt mapper loses the cabinet wiring (the
+  sub's half of the program, the shared RAM), and the sub then runs the
+  main's program. The new `VsDualSystem::power_cycle` cycles both and
+  re-wires them, so the result is the cabinet a fresh load builds; the
+  mobile bridge's fallback, which cycled the consoles one by one, uses it
+  too.
 
-- **CI builds the iOS app at release time.** `ios.yml` now compiles the Swift
-  app for the iOS Simulator, and fails if the build script modified a tracked
-  file. `release-auto.yml` calls `ios.yml` for every release: its tag trigger
-  never fires for auto-pushed tags, so no release from v2.3.9 to v2.9.7 had
-  built the iOS host. macOS jobs still never run on pull requests.
+- **A power cycle forgets when the controller ports were last read.** Each
+  port keeps the bus cycle of its last read, for the CLK-run model; a power
+  cycle restarted the cycle counter at 0 but kept those stamps from the old
+  run, so a cycled console differed from a freshly booted one by how long it
+  had run, and a stamp could line up with the new clock as the start of a run
+  of reads. Two netplay peers power-cycling from different states carried
+  different stamps. A power cycle now clears them, as a fresh boot has them.
+
+- **Desktop: a Vs. `DualSystem` ROM given on the command line runs as the
+  two-console cabinet.** Only the menu, drag-and-drop and Recent ROMs path
+  built the cabinet; `rustynes <rom>` installed the image as a single
+  console, which runs the main CPU alone and never finishes the boot
+  handshake with the sub. Every load path, desktop and browser, now makes
+  the same decision through one function, FDS and NSF images excluded.
+
+- **The mapper id is the cartridge's on every board.** `Nes::mapper_id` read
+  the mapper's debugger view, which names mapper 0 unless the board overrides
+  it, so `UxROM`, CNROM, `AxROM` and every other board without an override
+  reported mapper 0 to the Lua `cart:mapper_id()`, the ROM-info panel, the
+  debugger's mapper panel and the mobile `RomInfo`; an NSF reported 0 instead
+  of the 31 its synthetic cartridge carries. It now reads the cartridge,
+  after any load-time header correction. `Nes::submapper` is new and reads
+  the NES 2.0 submapper the same way.
+
+- **A power cycle keeps the settings stored in the PPU and the APU, on every
+  platform.** `Nes::power_cycle` rebuilds both chips, and with them it reset a
+  custom or NTSC palette, the overclock scanlines, the fast dot path, the
+  OAM-decay model, the channel mask, the per-channel gain and the filter model
+  to their defaults. Only the desktop's Power Cycle put them back: a Power
+  Cycle on Android or iOS dropped a loaded palette for the rest of the
+  session, and a power-on movie (`power_on_for_movie`) re-applied the options
+  it records but not the palette, mask, gain or filter. The core now carries
+  them across the rebuild itself
+  (`Ppu::adopt_settings_from`, `Apu::adopt_settings_from`), and the debugger's
+  provenance stores stay armed, as the code always said they did. The power-on
+  RAM and palette fills still re-apply on a cycle, as at boot. With every
+  setting at its default nothing changes. `Nes::custom_palette` and
+  `Nes::apu_filter_model` read the settings back.
+
+- **Android, iOS and the libretro core apply the game database's
+  corrections.** The database fixes a ROM whose header is wrong: the mapper,
+  the submapper (*Seicross* needs submapper 4 to clear its protection loop),
+  the region (an iNES 1.0 PAL image is promoted to the NES 2.0 header of the
+  same board) and a hardwired mirroring. Until now only the desktop, the
+  browser and the coverage harness applied it; the mobile bridge and the
+  libretro core handed the dump's bytes to the core as they were, so on a
+  phone or in RetroArch every such game ran with its wrong header. Every
+  platform now calls the same two functions, `rustynes_gamedb::correct_rom`
+  (the header, before the parse) and `correct_console` (the mirroring, on the
+  built console). The lightweight `wasm-canvas` web embed applied the header
+  half only and now applies both, and a Vs. `DualSystem` cabinet gets the
+  mirroring correction on both of its consoles, which no platform did before.
+  Save identities are unchanged: the save key leaves the header out.
+
+- **Desktop: a game's power-on settings are in place before its first
+  frame, and a Power Cycle keeps them.** On a ROM load the desktop installed
+  the new console first and then pushed its settings one at a time, while the
+  emulation thread was already free to run it (after the first game it never
+  stops for a load). A frame produced in between ran without the configured
+  power-on RAM fill, PPU revision, power-up palette, Famicom model, OAM decay,
+  filter, channel mask or palette, and the late RAM-fill push then rewrote the
+  work RAM of a game that had started; a configured HD pack, loaded in the
+  middle of that sequence, widened the window. Every setting and the saved
+  cheats now go onto the console before it is installed. A Power Cycle
+  rebuilds the PPU and the APU, and it re-applied only the channel mask and
+  gain, so the OAM-decay model, the filter model, a custom or NTSC palette
+  and the fast dot path setting were lost until the next load or Settings
+  change; it now re-applies all of them. The two consoles of a Vs. `DualSystem` cabinet get the settings too,
+  which they never did. With every setting at its default nothing changes.
+
+- **Mapper 19 (Namco 163) honours the IRQ enable bit in `$5800`.** The
+  register is `EHHH HHHH` on NESdev, bit 7 the enable, but every write
+  turned the counter on, so a game that stopped its raster IRQ with
+  `$5800 = $00` took a stray IRQ every 32,768 cycles instead. *Digital Devil
+  Story: Megami Tensei II* stops its IRQ that way after its last raster
+  band; the stray IRQ rewrote the background CHR banks mid-frame and covered
+  the title, the intro and the text screens with a repeated tile pattern.
+  They now render cleanly, and `$5800` reads back the enable in bit 7. The
+  other staged Namco 163 games are unchanged.
+
+- **Mapper 64 (Tengen RAMBO-1) raises its IRQ when a reload lands on 0.**
+  The counter tested for zero only after a decrement, but NESdev's
+  "RAMBO-1" page applies the test after a reload too, so a latch of 0
+  asserts the IRQ on every clock. *Skull & Crossbones* writes a latch of 0
+  every frame and waits on that IRQ; it showed a black screen with a
+  fragment of its hints page, and now runs its Tengen logo, title and hints
+  screens. The other staged RAMBO-1 games are unchanged.
+
+- **iNES 1.0 headers with a dirty tail no longer gain 64 on the mapper.** Old
+  ROM tools wrote signatures such as "DiskDude!" into bytes 7-15, and byte 7's
+  high nibble then read as mapper bits 4-7. The parser now follows the NESdev
+  "iNES" rule: when a header is not NES 2.0 and bytes 12-15 are not all zero,
+  the upper four mapper bits are masked off. The Russian *Balloon Fight*
+  translation, an NROM image marked "@iskDude!", loaded as mapper 64 and
+  filled its sky with banked tiles; it now plays correctly. *Asmik-kun Land*
+  and the *Kyatto Ninden Teyandee* hack, both MMC3 images whose tails made
+  them mapper 244, now boot instead of showing a blank screen. The
+  *Doraemon World 3* hack now reads as mapper 8 (FFE), which is not
+  implemented, and is refused with an error instead of booting blank as
+  mapper 72. Dumps the per-game database already corrects are unchanged.
+
+- **Mapper 153 (Bandai LZ93D50 + WRAM) CHR-RAM no longer aliases.** The board
+  has 8 KiB of unbanked CHR-RAM (NESdev `INES_Mapper_153`), but v2.9.6 routed
+  it through the CHR bank registers, which this board uses as the outer PRG
+  bank and never sets, so all eight 1 KiB windows landed on the first 1 KiB.
+  *Famicom Jump II*'s title screen was drawn as vertical stripes; it is now
+  correct. Its blank first boot with a fresh (zero-filled) save is the game's
+  own behaviour, documented on the same page, and a soft reset runs it.
+
+- **`$4017` IRQ inhibit now clears the frame IRQ on the write cycle.** It
+  waited for the 3-4 cycle timer reset, so a `CLI` right after the write could
+  still take the frame IRQ. *Nintendo World Championships 1990* (mapper 105)
+  does exactly that, with its IRQ vector in uninitialised WRAM, and showed a
+  blank screen forever; it now reaches its title screen. AccuracyCoin, blargg's
+  APU suites and the PAL APU suite are unchanged.
+
+- **Mapper 191 translations with 192 KiB and 160 KiB of PRG boot.** The
+  MMC3-based boards of `mmc3_boards.rs` reduced a bank number onto the image
+  with a plain modulo, which on a non-power-of-two image sends the MMC3's
+  fixed last bank (`$FF`) to bank 15 of 24 or 20, where there is no reset
+  vector: *Downtown Nekketsu Monogatari*, *Downtown Special* and *Mighty Final
+  Fight* (Chinese translations) booted to a blank frame. Banks now follow the
+  doubling algorithm of `Non_power_of_two_ROM_size` for PRG and CHR-ROM; for
+  power-of-two images nothing changes. Three blank dumps in the same survey are
+  mis-labelled boards, recorded in `docs/mappers.md` rather than forced: *Q Boy*
+  (Sachen 8259, mapper 141, not 191), *Chaos World* and *San Guo Zhi 2*
+  (Waixing FS005, mapper 176 submapper 2, not 74), and the Kasheng *2-in-1
+  (Mortal Kombat 6, Samurai Spirits)* (mapper 291, not 47).
+
+- **The game database no longer rewrites a NES 2.0 header's mapper.** Its
+  vendored table, built for iNES 1.0 images, lists a compatible mapper for many
+  boards rather than the real one, and the load path applied it to every image,
+  NES 2.0 included. Ten staged dumps whose own headers were right rendered wrong
+  or blank: *Youkai Club* (mapper 140 run as 66, which ignores its `$6000` bank
+  register, so a blue screen), the Sachen *Lightgun Game 2 in 1* (150 run as
+  243, garbage), *Dragon Ball Z - Kyoushuu! Saiya Jin* and both *Magical
+  Taruruuto-kun* games (159 as 16, grey), *Gegege no Kitarou 2* and *Saint
+  Seiya - Ougon Densetsu* (152 as 70), *Mississippi Satsujin Jiken* (140 as 66),
+  *Bakushou!! Jinsei Gekijou 3* (48 as 33) and *Fan Kong Jing Ying* (241 as
+  178). A vendored row's mapper and submapper now apply only to an iNES 1.0
+  header; your own overrides still apply to anything. Five of these games leave
+  the coverage sweep's known-blank list.
+
+- **Mapper 78 without a submapper follows the header's nametable bit.** The two
+  games wire the mirroring bit differently (Holy Diver H/V, Cosmo Carrier
+  single-screen), and an iNES 1.0 image chose Holy Diver whatever its header
+  said. NESdev's `INES_Mapper_078` gives the convention: the alternative
+  nametables bit set means Holy Diver, clear means Cosmo Carrier, which is also
+  the common emulator default. An image with NES 2.0 submapper 1 or 3 is
+  unchanged. No staged dump changes: the GoodNES *Uchuusen - Cosmo Carrier [!]*
+  sets the bit, so its header names Holy Diver and it still stalls; its NES 2.0
+  twin plays.
+
+- **Mapper 218 (Magic Floor) single-screen wirings.** The board has no CHR
+  chip: the console's 2 KiB nametable RAM is also the pattern table, and the
+  header wires its A10 to PPU A10, A11, A12 or A13 (NESdev
+  `INES_Mapper_218`). With the four-screen bit set, header bit 0 picks A13
+  over A12, but the generic parser had already folded that bit away, so both
+  single-screen layouts ran as A10 and the nametable shared memory with the
+  tiles it names. *Magic Floor* (`$A9`, A13) drew a field of garbage tiles; it
+  now draws its board and score line.
+
+- **Mapper 226 (76-in-1 BMC) register layout.** The first register is
+  `[PMOP PPPP]` (NESdev `INES_Mapper_226`): bit 7 is PRG bit 5, bit 6
+  mirroring and bit 5 the 16/32 KiB mode. The board read bits 5, 6 and 7 as
+  PRG bit 5, mode and mirroring, so *76-in-1* jumped to the wrong bank and
+  drew one repeated tile, and *Super 42-in-1* opened on its second menu page
+  under the wrong mirroring. Both now open on their first menu page. RESET
+  also clears both registers, as the page says, which returns to the menu.
+
+- **Vs. System (mapper 99) work RAM on a single-screen cabinet.** The CPU
+  board has 2 KiB of RAM at `$6000-$7FFF`, which the CPU owns while bit 1 of
+  its last `$4016` write is set (NESdev "Vs. System"). Only the two-screen
+  DualSystem path provided it; a UniSystem cart read 0 and lost every write.
+  *Vs. Super Mario Bros.* keeps its state there and stayed on a blank first
+  frame; with the RAM it runs its attract demo. The circulating `VS Super
+  Mario Bros.nes` dump is headed mapper 3 with no Vs. flag, so that file
+  still runs as CNROM; it is recorded in `docs/mappers.md`, not forced.
+  Mapper 99 save states gain the RAM (layout 3; older states still load).
+
+- **Vs. The Goonies (unpatched dump) uses its RP2C04-0003 palette.** The Vs.
+  database had a row only for the patched dump, so the original Konami file
+  fell back to the 2C03 and drew its title red on green. It now has its own
+  row with the same PPU and DIP default. The circulating *Vs. T.K.O. Boxing*
+  dumps are recorded in `docs/mappers.md` as mis-labelled: their header says
+  mapper 151, but their code drives a Namco 108 board, and the protection chip
+  that game uses is not modelled.
+
+- **Toggling "Fast PPU dot path" mid-game no longer wipes work RAM.** The
+  switch changes speed, not output, but its live update went through the
+  function that also re-applies the power-on RAM fill, which zero-filled the
+  console's 2 KiB of work RAM while a game was running. It now changes only the
+  dot path.
+
+- **The game database's region reaches iNES 1.0 games, and leaves NES 2.0
+  headers alone.** A PAL row wrote iNES 1.0 header byte 9 bit 0, which the
+  header parser ignores by design (dump tools left junk there), so every PAL
+  game in an iNES 1.0 header ran at NTSC timing. *Pin Bot (Europe)* uploads
+  CHR-RAM for the length of the PAL vblank; at NTSC the upload ran into
+  rendering and garbled the title. *Sidewinder*, a Sachen PAL release, froze
+  in its attract mode. A PAL or Dendy row now rewrites the iNES 1.0 header as
+  the NES 2.0 header of the same board with the region in byte 12, and the
+  rewrite is used only after the promoted image is parsed and shown to build
+  the same board (a unit sweep over every mapper id finds none refused); both
+  games now run. The other way round, a row no longer rewrites a NES 2.0
+  header's region: *Funblaster Pak (Australia)*, headed PAL, had been forced to
+  NTSC, and two Chinese titles headed Dendy to NTSC. The nine `(USA, Europe)`
+  rows, one image sold in both markets, carry no region, and Vs. System and
+  PlayChoice-10 carts stay NTSC. The rewrite touches only the header, which
+  the ROM identity leaves out (see the next entry), so no game's saves move
+  because of it.
+
+### Removed
+
+- **`rustynes_mappers::serialize_header` is removed (API break).** Deprecated
+  since v2.9.3, it encoded a `Header` from scratch and zeroed every bit the
+  type did not model. Use `serialize_header_preserving(header, original)`; to
+  encode a header with no file behind it, pass an empty iNES 1.0 header
+  (`"NES\x1A"` and twelve zeros) as `original`. The canonical encoder behind
+  both stays private to the crate. ADR 0042.
+
+- **The libretro `platform=libnx` build is dropped.** It targeted
+  `aarch64-nintendo-switch-freestanding`, a tier-3 Rust target without the
+  standard library, which the core needs; it could not build, and no libretro
+  buildbot job ever used it. `make platform=libnx` now stops with an error
+  naming the reason, instead of falling through to a build for the host.
+
+- **The bus surface deprecated at v2.7.5 is removed (API break, ADR 0042).**
+  The 18 `#[deprecated]` methods of `rustynes_cpu::Bus` (`poll_nmi`,
+  `poll_irq`, `poll_irq_at_phase`, `cpu_cycle_phi1` / `cpu_cycle_phi2`,
+  `internal_data_bus`, and the per-engine DMC / OAM / overlap DMA hooks) and
+  the `rustynes_apu::ApuBus` trait are gone, with the bus-side NMI edge
+  detector that ran on every PPU dot and fed only `poll_nmi`. So is the
+  machinery that only they reached: the pre-v2.0.0 `tick_one_cpu_cycle`, the
+  non-deprecated `oam_dma_overlap_cycle` and `take_dma_mc_consumed` hooks,
+  and `LockstepBus::current_m2_phase`. Emulation output is unchanged: none
+  of it ran on the one-clock scheduler. **Migration:** nothing outside the
+  workspace called these items. A test bus that overrode `poll_nmi` or
+  `poll_irq` should override `nmi_level` / `irq_level` (the CPU edge-detects
+  and delays them itself); one that relied on `take_dma_mc_consumed` drops it.
+- **Save states from v2.9.7 and earlier no longer load, and every legacy
+  save-state reader is gone (ADR 0042).** The `.rns` container format moves
+  to 3 and a reader refuses any older container at the header with one typed
+  error, `SnapshotError::FormatTooOld`. Behind it, the BUS section moves to
+  version 2 (the NMI detector's two fields and four that no longer carry
+  state are dropped, and every field is required), and the readers that
+  upconverted older section layouts are removed: the BUS section's
+  trailing-default tails (Four Score, expansion devices, mirroring override,
+  controller-run state, internal bus), the APU's version 1-3 migrations and
+  its trailing-optional DMC-DMA and Stage-4 tails, the PPU's version 1-10
+  upconversions, and the older layouts of 28 mapper implementations (listed in
+  `docs/mappers.md`). Short, long or older blobs are refused with typed
+  errors. Movies that embed a start state from an older version fail the
+  same way.
+
+### Verification
+
+- The full `cargo test --release --workspace --features
+  test-roms,commercial-roms --no-fail-fast` passes on the release tree:
+  3,367 tests, 0 failed, 19 ignored (3,148 / 0 / 14 without the commercial
+  suites). That covers every unit and
+  integration test, the test-ROM suites (AccuracyCoin 144/144, nestest
+  0-diff), and the local commercial suites. `external_real_games` is 60/0.
+  `external_extended` is 137/0: v2.9.7's 138 less the *Doraemon World 3* hack,
+  now refused as the mapper 8 image it is. The `external_coverage` sweep
+  covers all 744 staged ROMs.
+- Every fix has a test that failed before it, and reverting the fix makes the
+  test fail again. Every changed baseline was looked at and attributed, one of
+  them by `git bisect`.
+- fmt, clippy for every feature set and both wasm builds, rustdoc, the
+  `no_std` build and markdownlint are clean.
+- Performance is two `ab_check.sh` runs per claim, recorded in
+  `docs/performance.md`, including the end-to-end result that does not add up.
+- The MiSTer core: on-die ladder 175 passed, 0 failed, 1 expected failure, and
+  off-die 176 / 0 / 1. Both builds were re-swept at the build date, seed 2
+  stays pinned, and two clean compiles of each are byte-identical.
+  **No hardware has run any bitstream.**
+- The iOS Swift and the mobile device behaviour are unverified on this Linux
+  host, as before.
 
 ## [2.9.7] - 2026-09-30 - "Tandem" (the desktop's features on the web and on phones, full release binaries, and an A12 fix found by real games)
 

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-037-SMB-Tetris-NWC/Super Mario Bros. + Tetris + Nintendo World Cup (E) [!].nes
+rom_sha256=814763cdcc615c1988fd414a5a799a12fe2d4b902bdb4fb12b883c7e8f0bcac3
+frames=1141
+fb_bytes=245760
+cycles=37902150
+audio_samples=1005322
+audio_fnv1a64=53d740fd66181c84
+checkpoint f900 fb_fnv1a64=67ca09d784916533
+checkpoint f1100 fb_fnv1a64=67ca09d784916533

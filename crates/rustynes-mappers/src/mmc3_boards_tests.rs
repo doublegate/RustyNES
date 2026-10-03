@@ -611,3 +611,48 @@ fn t9552_register_decodes_on_mask_f000() {
     m.cpu_write(0x4FFF, 0x00); // not the register
     assert_eq!(prg_at(&mut m, 0x8000), 0x08);
 }
+
+// ---------------------------------------------------------------------------
+// Non-power-of-two ROM sizes (`Non_power_of_two_ROM_size.md`): the smaller
+// ROM is mirrored up to the next power of two by the page's doubling
+// algorithm, so the MMC3's all-ones fixed bank is the image's LAST bank.
+// ---------------------------------------------------------------------------
+
+/// 192 KiB (24 banks) doubles its last 64 KiB once: `ABCC`, 32 banks, where
+/// banks 24-31 repeat 16-23. 160 KiB (20 banks) doubles its last 32 KiB to
+/// 192 KiB and then the last 64 KiB to 256 KiB.
+#[test]
+fn non_power_of_two_prg_mirrors_by_the_doubling_algorithm() {
+    let mut m = board(Board::M191, 24, 128);
+    // `$E000` is the MMC3's `$FF` bank: the last of 32 virtual banks, which
+    // the doubling maps onto physical bank 23 (the reset vector's bank).
+    assert_eq!(prg_at(&mut m, 0xE000), 23);
+    assert_eq!(prg_at(&mut m, 0xC000), 22);
+    mmc3_reg(&mut m, 6, 0x11);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x11);
+    mmc3_reg(&mut m, 7, 0x19);
+    assert_eq!(prg_at(&mut m, 0xA000), 0x11);
+
+    let mut m = board(Board::M191, 20, 128);
+    assert_eq!(prg_at(&mut m, 0xE000), 19);
+    assert_eq!(prg_at(&mut m, 0xC000), 18);
+    // Virtual 20-23 repeat 16-19; 24-31 repeat 16-23, i.e. 16-19 twice.
+    for (virt, phys) in [(20, 16), (23, 19), (24, 16), (27, 19), (28, 16), (31, 19)] {
+        mmc3_reg(&mut m, 6, virt);
+        assert_eq!(prg_at(&mut m, 0x8000), phys, "virtual bank {virt}");
+    }
+}
+
+/// CHR-ROM follows the same rule: 384 KiB is 256 + 128, so 1 KiB banks
+/// 384-511 repeat 256-383.
+#[test]
+fn non_power_of_two_chr_mirrors_by_the_doubling_algorithm() {
+    let mut m = board(Board::M12, 32, 384);
+    // SL-5020B CHR A18 for the `$0000` pattern table is `$4100` bit 0.
+    m.cpu_write(0x4100, 0x01);
+    mmc3_reg(&mut m, 0, 0x80);
+    // Virtual bank 0x180 (A18 + $80) is past the image: it repeats 0x100.
+    assert_eq!(chr_at(&mut m, 0x0000), 0x100);
+    mmc3_reg(&mut m, 0, 0x7E);
+    assert_eq!(chr_at(&mut m, 0x0000), 0x17E);
+}

@@ -46,7 +46,8 @@ const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
 // v2 adds the FS005 RAM Configuration Register byte and the submapper-2 CHR-RAM
-// overlay, both of which change the serialized length.
+// overlay, both of which change the serialized length; v3 (v2.9.7) packs the
+// A12 filter into the old `last_a12` byte. Only v3 loads since v2.9.8 (ADR 0042).
 const SAVE_STATE_VERSION: u8 = 3;
 
 // ---------------------------------------------------------------------------
@@ -674,36 +675,29 @@ impl Mapper for Fk23c {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
-        // v1 had no `ram_cfg` byte and no CHR-RAM overlay, so it is exactly
-        // those two shorter. Accept it: a v1 state can only have come from
-        // submapper 0/1, where `ram_cfg` is inert and the overlay is empty
-        // anyway, so zeroing both restores the same machine. Only submapper 2
-        // uses them, and it is new here -- it has no v1 states to load.
-        // Rejecting them would break every existing FK23C slot for fields they
-        // could not have contained (ADR 0028 reserves format epochs for a MAJOR).
+        // Only the current version is read (v2.9.8, ADR 0042). v1 (no
+        // `ram_cfg` byte, no CHR-RAM overlay) used to load with both zeroed,
+        // and v2 with its bare A12 level in the filter byte. The version is
+        // checked before the length, so an old blob reports the version it is.
+        match data.first() {
+            None => {
+                return Err(MapperError::Truncated {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+            Some(&v) if v != SAVE_STATE_VERSION => {
+                return Err(MapperError::UnsupportedVersion(v));
+            }
+            Some(_) => {}
+        }
         let expected =
             1 + Self::SAVE_LEN + self.vram.len() + self.wram.len() + chr_ram + self.chr_ram.len();
-        let legacy = expected - 1 - self.chr_ram.len();
-        let is_v2 = match data.len() {
-            n if n == expected => true,
-            n if n == legacy => false,
-            got => {
-                return Err(MapperError::Truncated { expected, got });
-            }
-        };
-        // Length and version must AGREE. A v2 blob with a byte lopped off has
-        // the legacy length while still declaring version 2, and accepting that
-        // would silently reinterpret a corrupt state as an older one -- which is
-        // how a truncation turns into wrong emulation instead of an error.
-        // v3 (v2.9.7) has v2's length and packs the A12 filter into the old
-        // `last_a12` byte; a v1/v2 state's byte is the bare level.
-        let version_ok = if is_v2 {
-            data[0] == SAVE_STATE_VERSION || data[0] == 2
-        } else {
-            data[0] == 1
-        };
-        if !version_ok {
-            return Err(MapperError::UnsupportedVersion(data[0]));
+        if data.len() != expected {
+            return Err(MapperError::Truncated {
+                expected,
+                got: data.len(),
+            });
         }
         let mut c = 1;
         self.regs.copy_from_slice(&data[c..c + 8]);
@@ -716,11 +710,7 @@ impl Mapper for Fk23c {
         self.irq_reload = data[c + 5] != 0;
         self.irq_enabled = data[c + 6] != 0;
         self.irq_pending = data[c + 7] != 0;
-        self.a12 = if data[0] == SAVE_STATE_VERSION {
-            A12RiseFilter::from_byte(data[c + 8])
-        } else {
-            A12RiseFilter::from_legacy_level(data[c + 8] != 0)
-        };
+        self.a12 = A12RiseFilter::from_byte(data[c + 8]);
         c += 9;
         self.prg_banking_mode = data[c];
         self.outer_chr_64k = data[c + 1] != 0;
@@ -735,12 +725,8 @@ impl Mapper for Fk23c {
         self.cnrom_chr_reg = data[c + 1];
         self.mirroring = byte_to_mirroring(data[c + 2], self.mirroring);
         c += 3;
-        if is_v2 {
-            self.ram_cfg = data[c];
-            c += 1;
-        } else {
-            self.ram_cfg = 0;
-        }
+        self.ram_cfg = data[c];
+        c += 1;
         self.vram.copy_from_slice(&data[c..c + self.vram.len()]);
         c += self.vram.len();
         self.wram.copy_from_slice(&data[c..c + self.wram.len()]);
@@ -749,12 +735,8 @@ impl Mapper for Fk23c {
             self.chr.copy_from_slice(&data[c..c + self.chr.len()]);
             c += self.chr.len();
         }
-        if is_v2 {
-            let n = self.chr_ram.len();
-            self.chr_ram.copy_from_slice(&data[c..c + n]);
-        } else {
-            self.chr_ram.fill(0);
-        }
+        let n = self.chr_ram.len();
+        self.chr_ram.copy_from_slice(&data[c..c + n]);
         Ok(())
     }
 }
@@ -1138,10 +1120,10 @@ mod tests {
     }
 
     #[test]
-    fn fk23c_loads_a_v1_state_that_predates_ram_cfg_and_the_overlay() {
-        // v1 had neither the RAM Configuration byte nor the CHR-RAM overlay. A
-        // v1 state can only be submapper 0/1, where both are inert, so zeroing
-        // them restores the same machine.
+    fn fk23c_refuses_v1_and_v2_states() {
+        // v1 had neither the RAM Configuration byte nor the CHR-RAM overlay,
+        // and v2 stored a bare A12 level where v3 stores the filter. Both
+        // loaded until v2.9.8 (ADR 0042), which reads the current layout only.
         let mut m = new_m176(synth_prg_8k(32), synth_chr_1k(64), Mirroring::Vertical, 0).unwrap();
         m.cpu_write(0x8000, 0x06);
         m.cpu_write(0x8001, 5);
@@ -1156,16 +1138,18 @@ mod tests {
         v1[0] = 1;
 
         let mut m2 = new_m176(synth_prg_8k(32), synth_chr_1k(64), Mirroring::Vertical, 0).unwrap();
-        m2.load_state(&v1)
-            .expect("a v1 FK23C state must still load");
+        assert!(matches!(
+            m2.load_state(&v1),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
+        let mut old_v2 = v2.clone();
+        old_v2[0] = 2;
+        assert!(matches!(
+            m2.load_state(&old_v2),
+            Err(MapperError::UnsupportedVersion(2))
+        ));
+        m2.load_state(&v2).expect("the current state loads");
         assert_eq!(m2.cpu_read(0x8000), 5, "bank state round-trips");
-
-        let mut mismatched = v2.clone();
-        mismatched[0] = 1;
-        assert!(
-            m2.load_state(&mismatched).is_err(),
-            "a v2-length blob claiming v1 is corrupt, not legacy"
-        );
     }
 
     #[test]

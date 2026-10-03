@@ -91,7 +91,7 @@ hd-pack = ["rustynes-ppu/hd-pack"]
 ppu-octal-trace = ["rustynes-ppu/ppu-octal-trace"]
 # v2.0.0 R1/R2 closure attempt (2026-07-02) — forward to
 # `rustynes-mappers/mmc3-m2-phase-irq`. Threads the REAL M2-phase
-# (pre-access/M2-low vs post-access/M2-high) of `LockstepBus::run_ppu_to`'s
+# (pre-access/M2-low vs post-access/M2-high) of `SystemBus::run_ppu_to`'s
 # two per-cycle catch-up calls into `PpuBusAdapter`'s `sub_dot` field so
 # MMC3's (also feature-gated) phase-aware IRQ-pending-line deferral can be
 # evaluated against real per-dot phase data on the promoted v2.0.0 core.
@@ -102,7 +102,7 @@ ppu-octal-trace = ["rustynes-ppu/ppu-octal-trace"]
 mmc3-m2-phase-irq = ["rustynes-mappers/mmc3-m2-phase-irq"]
 # v2.1.5 "Fathom" F5.0 MMC3 R1/R2 residual instrumentation study — forward to
 # `rustynes-mappers/mmc3-a12-phase-probe`. Like `mmc3-m2-phase-irq` this makes
-# `LockstepBus::run_ppu_to` seed the REAL M2-phase (pre-access/M2-low `sub_dot`
+# `SystemBus::run_ppu_to` seed the REAL M2-phase (pre-access/M2-low `sub_dot`
 # 0 vs post-access/M2-high `sub_dot` 2) into `PpuBusAdapter::sub_dot`, so the
 # MMC3 probe can bucket qualifying A12 rises by half. UNLIKE `mmc3-m2-phase-irq`
 # the MMC3 side only COUNTS (no assertion deferral), so with this feature ON the

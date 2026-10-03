@@ -8,6 +8,6 @@ Single PNG for the MMC1 A12-control regression test ROM
 ROM displays the on-screen instruction "MMC1 WRAM DISABLE SCANLINE
 COUNTER TEST". Strong text fingerprint, complements the machine-readable
 hash in
-`crates/nes-test-harness/tests/snapshots/mmc1_a12__mmc1_a12_non_mmc3_a12_is_inert.snap`.
+`crates/rustynes-test-harness/tests/snapshots/mmc1_a12__mmc1_a12_non_mmc3_a12_is_inert.snap`.
 
 See `../README.md` for the regeneration recipe.

@@ -85,6 +85,40 @@ not the winit thread:
   `UdpSocket`); while a session is active the emu thread is paused so the two
   never both drive the core. **RetroAchievements stays on the winit thread**
   (`rc_client` is single-threaded C).
+- **A loaded console is configured before it is installed (v2.9.8).** The emu
+  thread produces whenever it can take the lock while `has_rom` is set, and on a
+  ROM-to-ROM load `has_rom` is still set from the previous game. So every
+  power-on setting -- APU channel mask, gain and filter model, OAM decay, PPU
+  revision, power-up palette, power-on RAM fill, fast dot path, console model,
+  palette, Port-2 device -- and the persisted cheats go onto the new `Nes`
+  through `configure_console` / `load_rom_cheats` BEFORE `EmuCore::set_nes`, and
+  the overclock and raw cheats are set under the install lock. Both load paths
+  (`load_rom_from_path`, `finish_start_nes`) and both consoles of a Vs. cabinet
+  follow this. Until v2.9.8 the settings were pushed after the install, one lock
+  at a time (with the HD-pack load in between on a menu load), so the thread
+  could run frames without them and `set_power_on_ram` then rewrote work RAM
+  under a running game. A **Power Cycle** re-applies the same configuration
+  under its own lock. Since v2.9.8 `Nes::power_cycle` itself keeps every
+  setting the PPU and APU hold across their rebuild (OAM decay, fast dot path,
+  custom palette, overclock scanlines, filter model, mask and gain), so what
+  the re-application still does is re-attach the device the cold boot unplugs
+  (the per-frame input latch re-attaches it too) and put the player's
+  configuration under a running movie's options; before v2.9.8 those settings
+  were lost in the cycle and it re-pushed only the mask and gain. A Vs.
+  `DualSystem` cabinet is cycled as a whole (`VsDualSystem::power_cycle`,
+  which re-installs the cabinet wiring the consoles' rebuilt mappers lose)
+  and each console then configured the same way, a movie's options last;
+  until v2.9.8 the Power Cycle did nothing to a cabinet.
+  While a movie records or plays, the Power Cycle then applies the movie's
+  `HardwareOptions` on top (`MovieUi::held_options`, power-on fills
+  included), so the movie's options still win, as `MovieUi::before_frame`
+  makes them win every frame. A ROM load adds no such step: the per-frame
+  re-assertion overrides every movie-recorded setting `configure_console`
+  touches except the two power-on fills, which on a load take the player's
+  values exactly as they did before v2.9.8. **Reset** needs nothing: it keeps the PPU, the APU and the
+  stored knobs.
+  Pinned by `every_load_path_configures_the_console_before_installing_it` and
+  `configure_console_restores_what_a_power_cycle_drops`.
 - Best-effort Linux priority elevation runs on the emu thread (SCHED_RR →
   `nice` → `PR_SET_TIMERSLACK`, degrading silently without the `realtime`
   rlimit).
@@ -718,7 +752,13 @@ default) or **stacked** (256×480) per `[graphics] dual_screen_layout`, blitted 
 the always-on dynamic `Gfx::render_dual` with an aspect-correct letterbox. Coin
 (F10) routes to the main acceptor. Detection + install happen at ROM load
 (`Emu::from_rom_with_sample_rate`), with the Vs.-DB DIP + RGB palette applied to
-both consoles. The single-console path is byte-identical (the dual path is a
+both consoles. Every load path makes the same decision through
+`App::cabinet_for_image` (FDS and NSF images excluded, then
+`App::build_dual_cabinet`): the menu, drag-and-drop and Recent ROMs through
+`load_rom_from_path`, a ROM given on the command line through
+`finish_start_nes`, and the browser through `install_nes_wasm`. Until v2.9.8 the
+command-line path installed a cabinet image as a single console, which runs the
+main CPU alone and never completes the boot handshake. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
 run-ahead, rewind, netplay, TAS, the debugger, and HD-pack — they snapshot a
 single `Nes`. **Save states work in dual mode since v2.9.7**, through the
@@ -978,12 +1018,27 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   **Overclock** (v2.9.7) reaches the core: `App::apply_overclock` hands the
   configured value to `EmuCore`, and `produce_one_frame` applies
   `effective_extra_scanlines` at the top of every frame. That clamps it to
-  `0..=80` and holds stock timing (0) while a movie records or plays. Both
+  `0..=80` and holds stock timing (0) while a movie records; from v2.9.8 a
+  playing movie runs the overclock its own options record
+  (`MovieUi::session_extra_scanlines`), which is 0 for every recording this
+  frontend makes. Both
   netplay drive sites call `force_stock_timing` before a tick, because every
   peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
   own `Nes` and never sets it. **Disable sprite limit** is still inert: the core
-  has no hook for it.
+  has no hook for it. The **Accuracy** group above it carries OAM decay and,
+  from v2.9.8, **Famicom console (PPU leaves reset early)** —
+  `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
+  `console_model_for` maps it to `rustynes_core::ConsoleModel`;
+  `Nes::set_console_model` is called on every ROM load and Power Cycle (through
+  `configure_console`, before the console runs), at startup, and on a
+  Settings change through its own `SettingsApply::console_model` flag (not the
+  `fast_dotloop` path, because `apply_ppu_hardware_config` also re-runs the
+  power-on work-RAM fill). A power-cycle keeps the model inside the core. The
+  model and its limits are specified in `docs/ppu-2c02.md` (§Famicom console
+  model); it takes full effect from the next power-cycle or ROM load. Movies
+  record it and netplay compares it (v2.9.8; see "What a movie records and a
+  netplay peer must match" below).
 - **Input** — the rebind grids + Port-2 device selector, now with contextual
   **device config** (v1.5.0 D4): SNES-mouse reported sensitivity + pointer-speed
   multiplier, Arkanoid Vaus pointer-speed, and the Power Pad / Family Trainer mat
@@ -1486,7 +1541,7 @@ the default (no-device) input path stays byte-identical:
 
   **v2.2.3 A3 — the beam-relative temporal model, default ON since v2.3.6.**
   That refinement landed as `Nes::set_zapper_temporal_light`, shipped off in
-  v2.2.3-v2.3.5 and promoted to the default in v2.3.6 (`LockstepBus::new`
+  v2.2.3-v2.3.5 and promoted to the default in v2.3.6 (`SystemBus::new`
   initialises it `true`; the core rustdoc on `set_zapper_temporal_light` says
   so). With it on,
   the light bit is derived from where the CRT beam is at the moment of the
@@ -1853,11 +1908,15 @@ stack stays `#![no_std]`; AccuracyCoin holds 139/141 (the two newest upstream PP
   Header Editor...**). Inspects (read-only by default) and optionally edits the
   16-byte header of a ROM **file on disk** — never the running core. The pane
   shows format / mapper / submapper / mirroring / PRG-CHR sizes / battery /
-  trainer / region / console type / RAM sizes (+ Vs. PPU + DualSystem for Vs.
-  carts). The editor exposes combo boxes + unit-count fields and, on "Write
+  trainer / region / console type / RAM and NVRAM sizes (+ Vs. PPU, Vs.
+  hardware type and DualSystem for Vs. carts, the extended console type for
+  console type 3, and the misc-ROM count and default expansion device of NES 2.0
+  headers; all modelled since v2.9.8). The editor exposes combo boxes +
+  unit-count fields for every one of them and, on "Write
   header to file", writes the edits over the bytes the file held via the core's
   `serialize_header_preserving` (since v2.9.3; the canonical `serialize_header`
-  it used before zeroed every bit `Header` does not model) and overwrites the
+  it used before zeroed every bit `Header` did not model, and was removed at
+  v2.9.8) and overwrites the
   file's first 16 bytes (the ROM body is untouched). Decoding reuses
   `parse_header`, so the editor can't drift from the loader.
 - **A3 — inline 6502 assembler** (`src/debugger/{cpu_panel,assembler}.rs`). An
@@ -2338,12 +2397,124 @@ headless; `wasm_idb` only moves the bytes.
   `put_battery`, the page-hide listener) runs only in a browser; its check is
   manual, recorded in the v2.9.7 notes.
 
+## What a movie records and a netplay peer must match (v2.9.8)
+
+**Maintainer decision, 2026-10-01: a replay or a peer must never silently
+diverge.** Until v2.9.8 a `.rnm` recorded the ROM and the input stream and
+nothing else, and netplay compared only the ROM, so every host knob that changes
+what the console does was whatever the player happened to have set. Record on
+the Famicom model, replay on the NES model, and the replay ran a different
+machine without a word.
+
+### The record
+
+`rustynes_core::HardwareOptions` holds every host-settable option that changes
+emulation; `rustynes_core::BoardDescription` holds what the cartridge header
+told the core to build. The `.rnm` format 3 epoch (`MOVIE_FORMAT_VERSION` 3,
+ADR 0028's rule) stores both in a length-prefixed OPTIONS block after the fixed
+header, and widens the per-frame record from 3 bytes to 5 so Four Score players
+3 and 4 are recorded too (`FrameInput` gained `p3` / `p4` and became
+`#[non_exhaustive]`).
+
+- **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
+  the replay does not depend on the player's settings, and the desktop and mobile
+  hosts re-assert them before every frame (`HardwareOptions::apply_live`) against
+  a Settings change, the cheat panel's per-frame resync or a game-database edit
+  made mid-movie. When playback stops, the player's options come back
+  (`HardwareOptions::restore_after_playback`; `MovieUi::stop_playback`). Settings
+  changed during playback therefore take effect when it stops.
+- **Recording captures the options once**, at the start, and holds them for the
+  length of the recording. The overclock is held at stock timing while recording
+  (the v2.9.7 rule), so a recording always says 0 extra scanlines; a playing
+  movie runs whatever its own record says.
+- **What cannot be applied is checked**: the ROM identity, the region, and the
+  board (mapper, submapper, mirroring, console type, `DualSystem`, PRG-/CHR-RAM
+  size, battery, trainer). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte
+  header, so the board is what tells a re-headered dump or a changed database
+  correction apart; a mismatch refuses with the field named
+  (`MovieError::BoardMismatch`, `RegionMismatch`).
+- **Older movies are refused** (`MovieError::FormatTooOld`): a v1 or v2 `.rnm`
+  does not say which machine it ran on. So is a movie whose start point embeds a
+  save state older than the `.rns` epoch 3 (`MovieError::StartStateTooOld`); both
+  errors say to re-record. The maintainer accepted breaking them.
+- **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) record the stock
+  NES explicitly (`HardwareOptions::default`) with no board, plus the one
+  option a format declares: an `.fm2` with `fourscore 1` records the Four Score
+  plugged in and keeps all four pads.
+- **Raw RAM cheats are suspended while a movie records or plays.** They are
+  frontend pokes after each frame that a `.rnm` cannot carry. Game Genie codes
+  are core state and are recorded.
+- **Power-on movies keep the options through their power cycle.**
+  `power_on_for_movie` captures the options, power-cycles, and re-applies the
+  live ones. Until v2.9.8 `Nes::power_cycle` rebuilt the PPU and dropped OAM
+  decay and the overclock, so a recording started with OAM decay off whatever
+  the player had set; the cycle now keeps them itself, and the re-application
+  guarantees the options whatever a cycle does.
+
+### Netplay
+
+The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the ROM hash
+plus `rustynes_core::config_digest`, SHA-256 over the region, the board and the
+options (`PROTOCOL_VERSION` 5). Peers that differ refuse to connect:
+`DisconnectReason::ConfigMismatch` / `NetplayError::ConfigMismatch` /
+`MeshError::ConfigMismatch`, and the HUD tells both players to match their
+emulation settings. **The guest does not adopt the host's options**: adoption
+would silently rewrite the guest's console model, RAM fill or cheats, the same
+silent change in the other direction, and the power-on options would need a
+coordinated re-power-on after the handshake. A refusal is explicit and costs one
+retry. The handshake covers the options at connect time; a change made during a
+session is caught by the periodic desync checksum, not prevented. Signaling
+rooms still match by ROM only, so a mismatch is reported at the UDP handshake,
+where it has its own reason.
+
+### The survey
+
+Every `Nes` setter (and the frontend-side knobs) with its verdict. "Yes" means
+it changes what the deterministic core computes and is therefore recorded or
+compared.
+
+| Knob | Determinism | Handling |
+| --- | --- | --- |
+| `set_console_model` (NES / Famicom) | yes: the PPU warm-up and Reset wiring | option |
+| `set_ppu_revision` | yes: the `$2003` OAM corruption on `Rp2c02G` | option |
+| `set_cpu_2a03_revision` | yes: the DMA unit's extra halt-read | option |
+| `set_oam_decay` | yes: OAM rows decay | option |
+| `set_power_on_ram` (Zeroed / Seeded / Filled) | yes: work RAM and open bus at power-on | option |
+| `set_power_up_palette` | yes: palette RAM at power-on, readable by games | option |
+| `set_extra_scanlines` (overclock) | yes: CPU time per frame | option |
+| `set_four_score` | yes: `$4016` / `$4017` reads 9-24 | option |
+| `set_zapper_temporal_light` | yes: the Zapper light answer | option |
+| `set_vs_dip` | yes: `$4016` / `$4017` upper bits on Vs. carts | option |
+| `set_vs_ppu_type` | yes: on a 2C05 the `$2002` ID bits and the `$2000` / `$2001` swap, not only the palette | option |
+| `set_mirroring_override` | yes: nametable mapping | option |
+| `add_genie_code` / `remove_genie_code` / `clear_genie_codes` | yes: CPU reads are substituted | option |
+| Region (header, after game-database correction) | yes: clock dividers | checked, not applied |
+| Cartridge header (mapper, submapper, mirroring, RAM, battery, trainer, console type) | yes: the machine built | checked (`BoardDescription`) |
+| `set_buttons` ports 0-3 | yes: input | the per-frame input stream |
+| `set_expansion_device`, `set_zapper`, `set_paddle`, `set_power_pad`, `set_snes_mouse`, keyboards, Family Trainer, Hyper Shots | yes: input | **not recorded**: per-frame device input a `.rnm` has no field for |
+| `set_microphone` | yes: `$4016` bit 2 | **not recorded** (input) |
+| `insert_coin` / `clear_coin` / `set_vs_service` | yes: Vs. inputs | **not recorded** (input) |
+| `set_disk_side` / `set_disk_write_protected` | yes: FDS drive state | **not recorded** (disk events during play) |
+| Raw RAM cheats (frontend) | yes: post-frame pokes | suspended while a movie records or plays |
+| `set_fast_dotloop` | no: byte-identical by proof (`fast_dotloop_diff`) | preserved across `power_on_for_movie`, not recorded |
+| `set_custom_palette` | no: presentation (the RGBA LUT) | not recorded |
+| `set_apu_channel_mask` / `set_apu_channel_gain` / `set_apu_filter_model` | no: applied to the mix after synthesis, never fed back | not recorded |
+| Sample rate (`from_rom_with_sample_rate`) | no: output resampling | not recorded |
+| SOCD / opposing-direction cancel (frontend) | input cleaning before `set_buttons`, so its result IS the recorded input; replays and remote streams are not cleaned again | nothing to record |
+| Run-ahead, rewind capture, frame skip, pacing | no: frontend timeline orchestration | not recorded |
+| Breakpoints, tracing, event / access / exec / interrupt logging, pixel / audio / write provenance | no: observability | not recorded |
+
+Two caveats the table cannot hold: `Movie::verify` hashes the RGBA framebuffer,
+so a custom palette or Vs. palette on the verifier changes the hash without
+changing emulation; and a movie whose ROM needs an expansion device replays
+with the device's input absent.
+
 ## ROM file handling
 
 - Drag-and-drop a `.nes` file → load it.
 - File menu → Open → native dialog.
 - Recent files list (last 10).
-- ROMs are *not* copied; the frontend stores absolute paths. (Save states are keyed by SHA-256 of the ROM, so moving the ROM doesn't break the save.)
+- ROMs are *not* copied; the frontend stores absolute paths. (Save states, battery `.sav` files and cheats are keyed by `Nes::rom_sha256`, so moving the ROM doesn't break the save. Since v2.9.8 that hash leaves out the 16-byte iNES header, so a header correction, from the game database or by hand, doesn't break it either. The Vs. System database stays keyed by the whole-file hash, `Nes::image_sha256`.)
 
 **Per-game database (nametable-mirroring override).** A CRC32-keyed game
 database (vendored from TetaNES, ~2.6k entries) auto-corrects ROMs whose iNES
@@ -2352,11 +2523,68 @@ ROM's CRC32 (over PRG-ROM + CHR-ROM) and, if listed, applies a nametable
 mirroring override via `Nes::set_mirroring_override`. The override lives in the
 bus's nametable translation (uniform across all mappers, no per-mapper edits),
 does not touch mapper-supplied VRAM (4-screen), and is persisted in the
-save-state so rollback / restore stay consistent. It is frontend-only and
+save-state so rollback / restore stay consistent. It is host-side (the core
+never consults the database itself) and
 `None` by default (the core test suites construct the `Nes` directly and never
 consult the database, so the suites stay byte-identical) and deterministic
-(same CRC ⇒ same mirroring, so netplay peers agree). Scope is mirroring only —
-region / mapper overrides and a Game Genie code database are not part of it.
+(same CRC ⇒ same mirroring, so netplay peers agree). A Game Genie code database
+is not part of it.
+
+**Header corrections, and when a NES 2.0 header wins (v2.9.8).** The same table
+also carries region / mapper / submapper columns, which
+`game_db::apply_header_overrides` writes into the header before the core parses
+it (v2.3.4 onward; the coverage harness runs the same path). The lookup the load
+path uses is `game_db::load_time_entry(crc, header)`: a **user-overlay** entry
+applies as written, but a **vendored** row's mapper and submapper are dropped
+when the image already has a NES 2.0 header. The vendored table was built for
+iNES 1.0 images and records a merely *compatible* mapper for many boards (140 as
+66, 150 as 243, 152 as 70, 159 as 16, ...); over the 32 staged NES 2.0 dumps it
+rewrote, 10 rendered wrong or blank under the substitute and correctly under
+their own header, and none the other way round (*Youkai Club*, whose bank
+register at `$6000` mapper 66 does not decode, sat on a blue screen). iNES 1.0
+corrections such as Seicross's mapper 185 submapper 4 still apply.
+
+**The database's region (v2.9.8).** A vendored row's region is dropped for a
+NES 2.0 header too -- the header states its own region in byte 12 -- and it is
+applied to an iNES 1.0 header, which states none the core reads. Until v2.9.8
+neither was true: the region column rewrote NES 2.0 byte 12 (forcing
+*Funblaster Pak (Australia)*, whose header says PAL, to NTSC), and on iNES 1.0
+it wrote byte 9 bit 0, which the header parser ignores by design, so no PAL row
+reached any iNES 1.0 game. *Pin Bot (Europe)* (TQROM) ran at NTSC, where its
+CHR-RAM upload, sized for the PAL vblank, overran into rendering and garbled the
+title; *Sidewinder* (Sachen, "(Asia) (PAL)") froze in its attract mode. A PAL
+or Dendy region now reaches the core by rewriting the iNES 1.0 header as the NES
+2.0 header of the same board, verified board-for-board before it is used
+(`docs/cartridge-format.md` §Region). It is still the one chokepoint: the
+desktop's File menu and CLI paths, the browser, the mobile bridge, the
+libretro core (both since v2.9.8) and the coverage harness all call
+`apply_header_overrides`, and a power cycle re-parses the corrected bytes,
+so nothing downstream needs to know the region came from the database. Two
+rows are not taken as written: a row titled for both markets -- the nine
+`(USA, Europe)` rows, one image sold in both, which the table's two-valued
+column had to call PAL -- carries no region, the multi-region reading a NES 2.0
+header gives the same image; and Vs. System / PlayChoice-10 carts stay NTSC
+(*PlayChoice-10 Baseball* shares its PRG/CHR with the home *Baseball (USA,
+Europe)*). The promotion rewrites only the header, and the ROM identity that
+names save-state directories and `.sav` files (`Nes::rom_sha256`) leaves the
+header out, so it does not rename any game's saves.
+
+**One correction path for every platform (v2.9.8).** The two stages are two
+functions in `rustynes-gamedb`, and every platform calls both, in this order:
+`correct_rom(&mut bytes)` rewrites the header (the lookup above, then
+`apply_header_overrides`) and returns the header-excluded CRC32; the console is
+built from the corrected bytes; `correct_console(&mut nes, crc)` applies the
+mirroring override, only on a board whose mirroring is hardwired (ADR 0031). The
+callers are the desktop's File-menu and CLI paths (through
+`apply_game_db_header_overrides` / `apply_game_db`), both browser builds, the
+Android / iOS bridge (`rustynes-mobile`'s `build_console`), the libretro core
+(`build_cartridge`) and the coverage harness. Until v2.9.8 the mobile bridge and
+the libretro core called neither, so Android, iOS and RetroArch ran every image
+with its dump's header; the `wasm-canvas` embed called the first stage only.
+A Vs. `DualSystem` cabinet gets the mirroring stage on both of its consoles
+(until v2.9.8, on no platform). The desktop's editable user overlay and its
+per-game `<rom>.json` overlay stay desktop-only second stages; the other
+platforms read the vendored table alone.
 
 **Per-game `<rom>.json` config overlay (v1.7.0 "Forge" Workstream H4).** Layered
 on the v1.2.0 game-DB, a small frontend-only overlay lets a single ROM carry its

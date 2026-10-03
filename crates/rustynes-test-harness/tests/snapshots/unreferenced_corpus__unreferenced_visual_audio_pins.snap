@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/unreferenced_corpus.rs
+assertion_line: 239
 expression: "lines.join(\"\\n\")"
 ---
 rom=extra/apu/apu_dmc_pitch.nes frames=600 fb_bytes=245760 fb_fnv1a64=89ee4c476c97a325 cycles=17838621 audio_samples=439526 audio_fnv1a64=8da657cdcfc4e532
@@ -13,4 +14,4 @@ rom=extra/apu/apu_sweep_sub.nes frames=600 fb_bytes=245760 fb_fnv1a64=89ee4c476c
 rom=extra/apu/apu_triangle_pitch.nes frames=600 fb_bytes=245760 fb_fnv1a64=89ee4c476c97a325 cycles=17838622 audio_samples=439526 audio_fnv1a64=f70b200b0f7cbbe7
 rom=extra/ppu/ppu_color.nes frames=600 fb_bytes=245760 fb_fnv1a64=af2ecd3ce6824828 cycles=17838520 audio_samples=439524 audio_fnv1a64=dda9e74ae2696052
 rom=extra/ppu/ppu_ntsc_torture.nes frames=600 fb_bytes=245760 fb_fnv1a64=21a4b0b54225d847 cycles=17838521 audio_samples=439524 audio_fnv1a64=dda9e74ae2696052
-rom=extra/ppu/ppu_palette.nes frames=600 fb_bytes=245760 fb_fnv1a64=f2140bc374ac8107 cycles=17838522 audio_samples=439524 audio_fnv1a64=dda9e74ae2696052
+rom=extra/ppu/ppu_palette.nes frames=600 fb_bytes=245760 fb_fnv1a64=f8ca2ddee5f89a07 cycles=17838522 audio_samples=439524 audio_fnv1a64=dda9e74ae2696052

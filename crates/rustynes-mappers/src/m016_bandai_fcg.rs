@@ -83,8 +83,9 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-/// v2 (v2.9.6) appends mapper 153's outer bank, WRAM enable and WRAM. A v1
-/// blob still loads on the variants that have neither.
+/// v2 (v2.9.6) appends mapper 153's outer bank, WRAM enable and WRAM. Since
+/// v2.9.8 (ADR 0042) a v1 blob is refused; it used to load on the variants
+/// that have neither.
 const SAVE_STATE_VERSION: u8 = 2;
 
 /// Mapper 153's WRAM.
@@ -518,6 +519,14 @@ impl BandaiFcg {
     }
 
     fn chr_offset(&self, addr: u16) -> usize {
+        // Mapper 153: "8 KiB unbanked CHR-RAM" and "No CHR banking is
+        // available" (`INES_Mapper_153`). Its `$8000-$8003` registers drive
+        // the outer PRG bank instead, so `chr_banks` is never written there
+        // and must not be consulted: routing through it mapped all eight
+        // 1 KiB windows onto the first 1 KiB.
+        if self.variant == FcgVariant::Lz93d50Wram {
+            return addr as usize & 0x1FFF;
+        }
         let slot = (addr as usize / CHR_BANK_1K) & 0x07;
         let total = (self.chr.len() / CHR_BANK_1K).max(1);
         let bank = (self.chr_banks[slot] as usize) % total;
@@ -788,13 +797,13 @@ impl Mapper for BandaiFcg {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let ee_len = self.eeprom.as_ref().map_or(0, |e| e.mem.len());
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let v1_len = 18 + self.vram.len() + ee_len + need_chr;
+        // Only the current version is read (v2.9.8, ADR 0042); a v1 blob,
+        // which carried no mapper-153 tail, used to load on boards without one.
+        let core_len = 18 + self.vram.len() + ee_len + need_chr;
         let expected = match data.first() {
-            // v1 carried no 153 tail, so it loads only where there is none.
-            Some(1) if self.wram.is_empty() => v1_len,
-            Some(&SAVE_STATE_VERSION) => v1_len + 2 + self.wram.len(),
+            Some(&SAVE_STATE_VERSION) => core_len + 2 + self.wram.len(),
             Some(&v) => return Err(MapperError::UnsupportedVersion(v)),
-            None => v1_len,
+            None => core_len,
         };
         if data.len() != expected {
             return Err(MapperError::Truncated {
@@ -839,16 +848,11 @@ impl Mapper for BandaiFcg {
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
             cursor += self.chr.len();
         }
-        if data[0] == SAVE_STATE_VERSION {
-            self.outer = data[cursor] & 0x01;
-            self.wram_enabled = data[cursor + 1] != 0;
-            cursor += 2;
-            self.wram
-                .copy_from_slice(&data[cursor..cursor + self.wram.len()]);
-        } else {
-            self.outer = 0;
-            self.wram_enabled = false;
-        }
+        self.outer = data[cursor] & 0x01;
+        self.wram_enabled = data[cursor + 1] != 0;
+        cursor += 2;
+        self.wram
+            .copy_from_slice(&data[cursor..cursor + self.wram.len()]);
         Ok(())
     }
 }
@@ -1237,6 +1241,35 @@ mod tests {
         assert!(m.irq_pending(), "latched counter 2 reaches zero");
     }
 
+    /// `INES_Mapper_153`: "PPU $0000-$1FFF: 8 KiB unbanked CHR-RAM" and "No
+    /// CHR banking is available". Every byte of the 8 KiB is its own cell, so
+    /// the eight 1 KiB windows must not alias one another. The v2.9.6 model
+    /// routed CHR-RAM through the CHR bank registers, which this board never
+    /// writes, so all eight windows landed on the first 1 KiB and *Famicom
+    /// Jump II*'s pattern tables overwrote each other (the striped title).
+    #[test]
+    fn m153_chr_ram_is_8k_with_no_aliasing_between_1k_windows() {
+        let mut m = m153(32);
+        // Writes to the CHR-register offsets are the outer bank on this board
+        // and must not reach the CHR mapping either.
+        for a in 0x8000..=0x8007u16 {
+            m.cpu_write(a, 0x05);
+        }
+        for slot in 0..8u16 {
+            m.ppu_write(slot * 0x400 + 0x123, 0xA0 | slot as u8);
+        }
+        for slot in 0..8u16 {
+            assert_eq!(
+                m.ppu_read(slot * 0x400 + 0x123),
+                0xA0 | slot as u8,
+                "1 KiB window {slot} aliased another window"
+            );
+        }
+        m.ppu_write(0x1FFF, 0x5A);
+        assert_eq!(m.ppu_read(0x1FFF), 0x5A);
+        assert_eq!(m.ppu_read(0x03FF), 0, "$1FFF must not alias $03FF");
+    }
+
     #[test]
     fn m153_state_round_trips_and_v1_is_refused() {
         let mut a = m153(32);
@@ -1256,7 +1289,8 @@ mod tests {
             b.load_state(&v1).is_err(),
             "a v1 blob has no WRAM to restore"
         );
-        // A v1 blob still loads on a board with no 153 tail.
+        // Since v2.9.8 (ADR 0042) a v1 blob is refused on a board with no 153
+        // tail too; it used to load there.
         let mut fcg = BandaiFcg::new(
             synth_prg(8),
             synth_chr(128),
@@ -1267,6 +1301,9 @@ mod tests {
         let mut v1 = fcg.save_state();
         v1[0] = 1;
         v1.truncate(v1.len() - 2);
-        fcg.load_state(&v1).unwrap();
+        assert!(matches!(
+            fcg.load_state(&v1),
+            Err(MapperError::UnsupportedVersion(1))
+        ));
     }
 }

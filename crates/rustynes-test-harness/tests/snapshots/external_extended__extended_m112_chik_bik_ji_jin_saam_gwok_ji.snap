@@ -1,5 +1,6 @@
 ---
 source: crates/rustynes-test-harness/tests/external_extended.rs
+assertion_line: 74
 expression: text
 ---
 rom=mapper-112-NTDEC-Asder/Chik Bik Ji Jin - Saam Gwok Ji (CN-20) (Asder) [!].nes
@@ -9,4 +10,4 @@ fb_bytes=245760
 cycles=17838531
 audio_samples=439524
 audio_fnv1a64=b36c2780e94a135b
-checkpoint f600 fb_fnv1a64=dedc4159b4789039
+checkpoint f600 fb_fnv1a64=6db5ce16ab671467

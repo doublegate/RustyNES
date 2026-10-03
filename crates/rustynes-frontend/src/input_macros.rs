@@ -90,11 +90,14 @@ impl MacroBank {
             let mut frames = Vec::with_capacity(frame_count);
             for _ in 0..frame_count {
                 let rec = r.take(3)?;
-                frames.push(FrameInput {
-                    p1: Buttons::from_bits_truncate(rec[0]),
-                    p2: Buttons::from_bits_truncate(rec[1]),
-                    expansion: rec[2],
-                });
+                // The macro bank keeps its own 3-byte, two-player record;
+                // `FrameInput` is `#[non_exhaustive]` since v2.9.8.
+                let mut f = FrameInput::new(
+                    Buttons::from_bits_truncate(rec[0]),
+                    Buttons::from_bits_truncate(rec[1]),
+                );
+                f.expansion = rec[2];
+                frames.push(f);
             }
             macros.push(InputMacro { name, frames });
         }

@@ -1407,10 +1407,15 @@ impl EmuCore {
         // timeline someone else replays (see `effective_extra_scanlines`).
         // Resolved per frame rather than at movie start/stop, so no start or
         // stop path can forget it.
-        let extra_lines = effective_extra_scanlines(
-            self.overclock_scanlines,
-            self.movie.mode() != crate::movie_ui::MovieMode::Idle,
-        );
+        //
+        // v2.9.8: a PLAYING movie runs the overclock it recorded (its options
+        // say so; it is 0 for every recording this frontend makes), not 0.
+        let extra_lines = self.movie.session_extra_scanlines().unwrap_or_else(|| {
+            effective_extra_scanlines(
+                self.overclock_scanlines,
+                self.movie.mode() != crate::movie_ui::MovieMode::Idle,
+            )
+        });
         let Some(nes) = self.nes.as_mut() else {
             return fx;
         };
@@ -1444,7 +1449,7 @@ impl EmuCore {
             // `false` return means the movie is exhausted — stop playback
             // and fall through to a normal live frame.
             if !self.movie.before_frame(nes) {
-                self.movie.stop_playback();
+                self.movie.stop_playback(Some(nes));
                 eprintln!("rustynes: movie playback finished");
             }
             // v1.7.0 "Forge" Workstream D1 — record this forward frame into the
@@ -1570,7 +1575,11 @@ impl EmuCore {
             // v1.7.0 — apply the enabled raw RAM cheats AFTER the frame,
             // caller-side. With run-ahead the pokes land on the PERSISTENT
             // state (post-rollback). Disabled under RA hardcore.
-            if !hardcore_blocked {
+            // v2.9.8 — and not while a movie records or plays: raw RAM cheats
+            // are frontend pokes a `.rnm` cannot carry, so a run that used one
+            // could never be replayed. Game Genie codes are core state the
+            // movie DOES record, so they stay.
+            if !hardcore_blocked && self.movie.mode() == crate::movie_ui::MovieMode::Idle {
                 for cheat in &self.raw_cheats {
                     match cheat.compare {
                         Some(c) if nes.bus_mut().debug_peek_cpu(cheat.address) != c => {}

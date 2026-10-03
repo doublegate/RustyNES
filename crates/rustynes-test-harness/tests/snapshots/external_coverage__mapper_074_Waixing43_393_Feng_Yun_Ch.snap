@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 673
+expression: text
+---
+rom=mapper-074-Waixing43-393/Feng Yun (Ch).nes
+rom_sha256=a420f32480c3287d3be4f9d583efe019fc6332d78094a70788f63dfe880805d6
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=1dc57329f2e7a13f
+checkpoint f900 fb_fnv1a64=b237213e81982de8
+checkpoint f1100 fb_fnv1a64=b237213e81982de8
