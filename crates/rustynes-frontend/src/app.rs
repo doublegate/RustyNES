@@ -1728,6 +1728,9 @@ impl App {
             // v2.7.3 (FE-01) — the final battery write goes before the ROM.
             #[cfg(not(target_arch = "wasm32"))]
             emu.detach_battery();
+            // v2.9.9 (NF-16) — detach wrote the disk; no game, no key.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.bind_fds_save(None, None);
             // v2.9.7 — and the browser's, handed to IndexedDB (the bytes are
             // copied now, so clearing the ROM cannot change them).
             #[cfg(target_arch = "wasm32")]
@@ -1891,10 +1894,16 @@ impl App {
         // BIOS + the writable-disk save path; the standard cartridge `.nes`
         // path is unchanged. Detect by the disk-image magic (never matches a
         // `"NES\x1A"` cartridge).
+        // v2.9.9 (NF-16) — the incoming disk's pristine hash, bound to its
+        // `.fds.sav` at the install below, AFTER the outgoing game's final disk
+        // write. Until v2.9.9 the key was set here, while the previous game was
+        // still running, so a flush in between wrote the old disk under the
+        // new game's name. `None` for a cartridge or an NSF.
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut fds_key: Option<[u8; 32]> = None;
         let mut nes = if is_nsf_image(&bytes) {
             // v1.1.0 beta.2 — NSF music file: no cartridge, no CHR; a synthetic
             // driver runs init/play through the standard lockstep loop.
-            self.emu.lock().fds_disk_sha256 = None;
             match Nes::from_nsf_with_sample_rate(&bytes, sample_rate) {
                 Ok(n) => n,
                 Err(e) => {
@@ -1909,14 +1918,15 @@ impl App {
             }
         } else if is_fds_image(&bytes) {
             match self.build_fds_nes(&bytes, sample_rate) {
-                Some(n) => n,
+                Some((n, pristine)) => {
+                    fds_key = Some(pristine);
+                    n
+                }
                 // BIOS cancelled / wrong size / unparseable disk: keep the
                 // running session (already logged), don't crash.
                 None => return,
             }
         } else {
-            // Not FDS — clear any prior FDS save key so a later flush is inert.
-            self.emu.lock().fds_disk_sha256 = None;
             match Nes::from_rom_with_sample_rate(&bytes, sample_rate) {
                 Ok(n) => n,
                 Err(e) => {
@@ -2001,7 +2011,7 @@ impl App {
         configure_console(&self.config, &mut nes);
         #[cfg(not(target_arch = "wasm32"))]
         let raw_cheats = if dual_cabinet.is_none() {
-            Some(self.load_rom_cheats(&mut nes))
+            Some(self.load_rom_cheats(&mut nes, fds_key))
         } else {
             None
         };
@@ -2037,6 +2047,9 @@ impl App {
             // before its `Nes` is replaced.
             #[cfg(not(target_arch = "wasm32"))]
             emu.detach_battery();
+            // v2.9.9 (NF-16) — the outgoing disk is written; bind the incoming.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.bind_fds_save(fds_key, data_dir.as_deref());
             emu.frame_duration = nes.frame_duration();
             emu.next_frame_time = Some(Instant::now() + emu.frame_duration);
             emu.audio_buf.clear();
@@ -2152,6 +2165,14 @@ impl App {
         eprintln!("rustynes: loaded {}", path.display());
     }
 
+    /// v2.9.9 (NF-16) — the FDS key `start_nes` bound before
+    /// `finish_start_nes` runs (the first game, so nothing else is running).
+    /// The lock is released before the caller reads the cheat file.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn bound_fds_key(&self) -> Option<[u8; 32]> {
+        self.emu.lock().fds_disk_sha256
+    }
+
     /// v1.6.0 — load the persisted cheat list for the console about to be
     /// installed: apply every ENABLED Game Genie code to `nes`, seed the
     /// debugger's cheat panel with both lists + the per-ROM persistence
@@ -2167,14 +2188,18 @@ impl App {
     /// list, where the old function returned early and left the PREVIOUS
     /// game's raw cheats armed against the new one.
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_rom_cheats(&mut self, nes: &mut Nes) -> Vec<crate::cheats::RawCheat> {
+    fn load_rom_cheats(
+        &mut self,
+        nes: &mut Nes,
+        fds_key: Option<[u8; 32]>,
+    ) -> Vec<crate::cheats::RawCheat> {
         let Some(dir) = self.data_dir.as_ref() else {
             return Vec::new();
         };
         // v2.9.9 (NF-17) — keyed on the save identity, which for an FDS disk
-        // is the pristine image (set by `build_fds_nes` before this runs), so
-        // a disk save does not lose the cheat file.
-        let rom_sha256 = crate::emu::save_identity(nes, self.emu.lock().fds_disk_sha256);
+        // is the pristine image (`fds_key`, from `build_fds_nes`), so a disk
+        // save does not lose the cheat file.
+        let rom_sha256 = crate::emu::save_identity(nes, fds_key);
         let loaded = crate::cheats::load(dir, &rom_sha256);
         nes.clear_genie_codes();
         for entry in &loaded.genie {
@@ -2466,13 +2491,16 @@ impl App {
 
     /// Construct an FDS `Nes` from `disk_bytes` (+ a resolved BIOS), preferring
     /// any persisted writable-disk `.fds.sav` so prior in-game writes carry
-    /// over. On success, stores the ORIGINAL disk image's SHA-256 in
-    /// [`Self::fds_disk_sha256`] so the `.fds.sav` stays keyed by the same hash
-    /// even though the running `Nes` may have been reloaded from the saved
-    /// bytes. Returns `None` (logging) if BIOS resolution is cancelled or the
-    /// disk/BIOS fails to parse. Native-only (filesystem + rfd).
+    /// over. On success, returns the console with the ORIGINAL disk image's
+    /// SHA-256, which the caller binds with `EmuCore::bind_fds_save` at the
+    /// install (v2.9.9: no longer written to the core here, while the previous
+    /// game still runs), so the `.fds.sav` and the game's save identity stay
+    /// keyed by the same hash even though the running `Nes` may have been
+    /// reloaded from the saved bytes. Returns `None` (logging) if BIOS
+    /// resolution is cancelled or the disk/BIOS fails to parse. Native-only
+    /// (filesystem + rfd).
     #[cfg(not(target_arch = "wasm32"))]
-    fn build_fds_nes(&mut self, disk_bytes: &[u8], sample_rate: u32) -> Option<Nes> {
+    fn build_fds_nes(&mut self, disk_bytes: &[u8], sample_rate: u32) -> Option<(Nes, [u8; 32])> {
         let bios = self.resolve_fds_bios()?;
         // Build from the ORIGINAL disk first so `rom_sha256()` reports the
         // canonical hash; that is the key under which the `.fds.sav` is stored.
@@ -2484,7 +2512,6 @@ impl App {
             }
         };
         let original_sha = *nes.rom_sha256();
-        self.emu.lock().fds_disk_sha256 = Some(original_sha);
 
         // If a writable-disk save exists, reload the `Nes` from the SAVED
         // (already-modified) `.fds` bytes so prior in-game writes persist. The
@@ -2498,7 +2525,7 @@ impl App {
             match Nes::from_disk_with_sample_rate(&saved, &bios, sample_rate) {
                 Ok(n) => {
                     eprintln!("rustynes: restored FDS writable disk from save");
-                    return Some(n);
+                    return Some((n, original_sha));
                 }
                 Err(e) => {
                     eprintln!(
@@ -2507,7 +2534,7 @@ impl App {
                 }
             }
         }
-        Some(nes)
+        Some((nes, original_sha))
     }
 
     /// The once-per-produced-frame host I/O: flush the FDS writable disk
@@ -2516,7 +2543,7 @@ impl App {
     /// reopen a dead audio stream (v2.7.3, DESK-04; retried every 2 s).
     #[cfg(not(target_arch = "wasm32"))]
     fn per_frame_host_io(&mut self) {
-        self.flush_fds_save();
+        self.flush_fds_save(false);
         self.flush_battery();
         self.recover_audio();
     }
@@ -2552,11 +2579,19 @@ impl App {
         }
     }
 
-    /// Flush the FDS writable disk (see [`crate::emu::EmuCore::flush_fds_save`]).
+    /// Write the FDS writable disk to its `.fds.sav` if a write is due (see
+    /// [`crate::emu::EmuCore::fds_due_write`]): `force` checks now (a disk
+    /// swap, quit), otherwise the check runs once a second. v2.9.9 (NF-16):
+    /// the copy is taken under a brief lock and written with it RELEASED, as
+    /// the battery is -- `write_atomic` fsyncs, and this used to run after
+    /// every produced frame with the emulation thread waiting on the lock.
     #[cfg(not(target_arch = "wasm32"))]
-    fn flush_fds_save(&self) {
-        let data_dir = self.data_dir.clone();
-        self.emu.lock().flush_fds_save(data_dir.as_deref());
+    fn flush_fds_save(&self, force: bool) {
+        let Some(write) = self.emu.lock().fds_due_write(force) else {
+            return;
+        };
+        let result = write.write();
+        self.emu.lock().fds_written(&write, &result);
     }
 
     /// Cycle the inserted FDS disk side: ejected -> side 0 -> side 1 -> ... ->
@@ -2566,7 +2601,7 @@ impl App {
         // Flush before swapping so an in-progress write isn't lost across the
         // eject. Native-only (the wasm build has no `.fds.sav` filesystem).
         #[cfg(not(target_arch = "wasm32"))]
-        self.flush_fds_save();
+        self.flush_fds_save(true);
         let mut guard = self.emu.lock();
         let Some(nes) = guard.nes.as_mut() else {
             return;
@@ -2593,7 +2628,7 @@ impl App {
     /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
     fn set_disk_side(&self, side: Option<usize>) {
         #[cfg(not(target_arch = "wasm32"))]
-        self.flush_fds_save();
+        self.flush_fds_save(true);
         let mut guard = self.emu.lock();
         let Some(nes) = guard.nes.as_mut() else {
             return;
@@ -9307,7 +9342,13 @@ impl App {
             let disk = std::mem::take(&mut self.rom_bytes);
             let built = self.build_fds_nes(&disk, sample_rate);
             self.rom_bytes = disk;
-            if let Some(nes) = built {
+            if let Some((nes, pristine)) = built {
+                // The first game: nothing is running yet, so the key can be
+                // bound before `finish_start_nes` installs the console.
+                let data_dir = self.data_dir.clone();
+                self.emu
+                    .lock()
+                    .bind_fds_save(Some(pristine), data_dir.as_deref());
                 return self.finish_start_nes(nes, sample_rate, event_loop);
             }
             // BIOS cancelled / wrong size: a startup FDS load can't proceed.
@@ -9338,9 +9379,7 @@ impl App {
         };
         // v2.2.0 — clear any prior FDS save key (standard cartridge path).
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.emu.lock().fds_disk_sha256 = None;
-        }
+        self.emu.lock().bind_fds_save(None, None);
         self.finish_start_nes(nes, sample_rate, event_loop);
     }
 
@@ -9564,7 +9603,7 @@ impl App {
         // A cabinet's consoles carry no cheats, as on the menu load path.
         #[cfg(not(target_arch = "wasm32"))]
         let raw_cheats = if dual_cabinet.is_none() {
-            Some(self.load_rom_cheats(&mut nes))
+            Some(self.load_rom_cheats(&mut nes, self.bound_fds_key()))
         } else {
             None
         };
@@ -11861,7 +11900,7 @@ impl ApplicationHandler<AppEvent> for App {
             // v2.2.0 — final FDS writable-disk flush so the last writes aren't
             // lost on quit. No-op when clean / non-FDS. Native-only.
             #[cfg(not(target_arch = "wasm32"))]
-            self.flush_fds_save();
+            self.flush_fds_save(true);
             // v2.7.3 (FE-01) — the final battery write on quit.
             #[cfg(not(target_arch = "wasm32"))]
             self.emu.lock().detach_battery();

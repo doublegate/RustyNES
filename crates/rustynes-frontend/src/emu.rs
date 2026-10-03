@@ -721,9 +721,19 @@ pub struct EmuCore {
     /// v2.3.3 F23 — the PREDICTED one-depth-up cost, ms, that the release arm
     /// accepted. See [`Self::thr_engage_cost_ms`].
     pub thr_release_pred_ms: f32,
-    /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
+    /// SHA-256 of the loaded FDS disk AS LOADED, before any disk write: the
+    /// game's save identity ([`save_identity`]) and the `.fds.sav` key. Set
+    /// with [`Self::bind_fds_save`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
+    /// v2.9.9 (NF-16) — the loaded disk's `.fds.sav` binding: where the
+    /// writable disk is persisted, and the write policy's state. `None` for a
+    /// non-FDS game, with no data directory, and for the rest of a ROM session
+    /// once a movie, `TAStudio` or netplay took the console over
+    /// ([`Self::release_battery_for_session`]), exactly as the cartridge
+    /// battery is released.
+    #[cfg(not(target_arch = "wasm32"))]
+    fds_save: Option<FdsSave>,
     /// v2.7.3 (FE-01) — the loaded cartridge's battery RAM, bound to its
     /// `.sav` file. `None` for a cart without a battery, before any ROM loads,
     /// and when an existing `.sav` could not be used (it is then left
@@ -778,6 +788,45 @@ pub struct EmuCore {
     /// or perturbs the deterministic timeline. Reset to 0 on ROM load / reset /
     /// power-cycle. Displayed (off by default) in the status bar.
     pub lag_frames: u32,
+}
+
+/// v2.9.9 (NF-16) — an FDS disk's `.fds.sav` binding and its write policy
+/// (see [`EmuCore::fds_due_write`]).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct FdsSave {
+    /// `<data_dir>/fds-saves/<pristine sha>.fds.sav`.
+    path: std::path::PathBuf,
+    /// Calls since the last periodic dirty check.
+    frames: u32,
+    /// The last write failed: write at the next check even if the disk is
+    /// clean (its dirty latch was cleared when that write's copy was taken).
+    retry: bool,
+}
+
+/// v2.9.9 (NF-16) — a copy of the FDS disk taken under the emu lock, to be
+/// written with it released ([`EmuCore::fds_due_write`]).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct FdsWrite {
+    path: std::path::PathBuf,
+    bytes: Vec<u8>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FdsWrite {
+    /// Write the copy (creating `fds-saves/` if needed) with `write_atomic`,
+    /// so a crash mid-write leaves the previous file intact.
+    ///
+    /// # Errors
+    ///
+    /// The directory creation's or the atomic write's I/O error.
+    pub fn write(&self) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::atomic_write::write_atomic(&self.path, &self.bytes)
+    }
 }
 
 /// v2.9.9 (NF-17) — the save identity of `nes`: the key of its save-state
@@ -997,6 +1046,8 @@ impl EmuCore {
             thr_release_pred_ms: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            fds_save: None,
             #[cfg(not(target_arch = "wasm32"))]
             battery: None,
             #[cfg(any(target_arch = "wasm32", test))]
@@ -1918,41 +1969,100 @@ impl EmuCore {
         if mean > 0.0 { 1000.0 / mean } else { 0.0 }
     }
 
-    /// Flush the FDS writable disk to `<data_dir>/fds-saves/<sha>.fds.sav`
-    /// when it has been modified since the last flush. Cheap when clean
-    /// (only a `disk_is_dirty()` check). Native-only (filesystem). No-op
-    /// for non-FDS games or when no data dir is available.
+    /// v2.9.9 (NF-16) — bind the FDS writable disk of the console being
+    /// installed to its `.fds.sav`: `pristine` is the hash of the disk image as
+    /// loaded (`None` for a cartridge or an NSF), the file is
+    /// `<data_dir>/fds-saves/<pristine>.fds.sav`. Sets [`Self::fds_disk_sha256`]
+    /// too, the game's save identity.
+    ///
+    /// Call at the install, AFTER [`Self::detach_battery`] wrote the outgoing
+    /// disk: until v2.9.9 the load path set the key while the previous game
+    /// was still running, so a flush in between would have written the old
+    /// disk under the new game's name.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn flush_fds_save(&mut self, data_dir: Option<&std::path::Path>) {
-        let Some(rom_sha256) = self.fds_disk_sha256 else {
-            return;
-        };
-        let Some(nes) = self.nes.as_mut() else { return };
-        if nes.disk_side_count() == 0 || !nes.disk_is_dirty() {
-            return;
+    pub fn bind_fds_save(
+        &mut self,
+        pristine: Option<[u8; 32]>,
+        data_dir: Option<&std::path::Path>,
+    ) {
+        self.fds_disk_sha256 = pristine;
+        self.fds_save = pristine.zip(data_dir).map(|(sha, dir)| FdsSave {
+            path: dir
+                .join("fds-saves")
+                .join(format!("{}.fds.sav", crate::save_state::hex_sha256(&sha))),
+            frames: 0,
+            retry: false,
+        });
+    }
+
+    /// v2.9.9 (NF-16) — the `.fds.sav` write that is due, if any, as a copy
+    /// that can be written with the emulator lock released.
+    ///
+    /// Until v2.9.9 the disk was written whenever it was dirty, after every
+    /// produced frame, with an `fsync` (`write_atomic`) under the emu lock --
+    /// and a game writing a file dirties the disk on many consecutive frames,
+    /// so a ~65 KiB-per-side copy and an `fsync` ran each frame while the
+    /// emulation thread waited. Now, as the battery does (FE-01): without
+    /// `force` the dirty check runs only every
+    /// [`crate::battery_policy::CHECK_PERIOD_FRAMES`] calls (the battery's period),
+    /// and the caller writes the copy with the lock dropped. `force` (a disk
+    /// swap, the ROM going away, quit, a session start) checks now.
+    ///
+    /// The dirty latch is cleared when the copy is taken, so a write the game
+    /// makes while the file is being written is caught by the next check; a
+    /// failed write is retried at the next check ([`Self::fds_written`]).
+    /// `None` when nothing is bound -- including for the rest of a sandboxed
+    /// session, which is what keeps a movie's disk off the player's file.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn fds_due_write(&mut self, force: bool) -> Option<FdsWrite> {
+        let (save, nes) = (self.fds_save.as_mut()?, self.nes.as_mut()?);
+        if nes.disk_side_count() == 0 {
+            return None;
+        }
+        if !force {
+            save.frames += 1;
+            if save.frames < crate::battery_policy::CHECK_PERIOD_FRAMES {
+                return None;
+            }
+        }
+        save.frames = 0;
+        if !nes.disk_is_dirty() && !save.retry {
+            return None;
         }
         let bytes = nes.disk_image_bytes();
-        let Some(path) = data_dir.map(|d| {
-            d.join("fds-saves").join(format!(
-                "{}.fds.sav",
-                crate::save_state::hex_sha256(&rom_sha256)
-            ))
-        }) else {
-            return;
-        };
-        if let Some(parent) = path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            eprintln!("rustynes: could not create fds-saves dir: {e}");
-            return;
+        nes.clear_disk_dirty();
+        Some(FdsWrite {
+            path: save.path.clone(),
+            bytes,
+        })
+    }
+
+    /// v2.9.9 (NF-16) — record the outcome of a write taken by
+    /// [`Self::fds_due_write`]: a failure is logged and retried at the next
+    /// check, even though the disk's dirty latch was already cleared.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn fds_written(&mut self, write: &FdsWrite, result: &std::io::Result<()>) {
+        if let Err(e) = result {
+            eprintln!(
+                "rustynes: FDS disk save failed {}: {e}",
+                write.path.display()
+            );
         }
-        match crate::atomic_write::write_atomic(&path, &bytes) {
-            Ok(()) => {
-                if let Some(nes) = self.nes.as_mut() {
-                    nes.clear_disk_dirty();
-                }
-            }
-            Err(e) => eprintln!("rustynes: FDS disk save failed {}: {e}", path.display()),
+        if let Some(save) = self.fds_save.as_mut() {
+            save.retry = result.is_err();
+        }
+    }
+
+    /// v2.9.9 (NF-16) — write the disk now, under the caller's lock, if it
+    /// changed: the outgoing game's final write ([`Self::detach_battery`]) and
+    /// the game's own progress before a session takes the console over
+    /// ([`Self::flush_battery_now`]). One-off sites, so the lock-held `fsync`
+    /// the periodic path avoids is acceptable here, as it is for the battery.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_fds_now(&mut self) {
+        if let Some(write) = self.fds_due_write(true) {
+            let result = write.write();
+            self.fds_written(&write, &result);
         }
     }
 
@@ -2068,6 +2178,9 @@ impl EmuCore {
     pub fn flush_battery_now(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_battery(true);
+        // v2.9.9 (NF-16) — the FDS disk is the game's save too.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_fds_now();
         #[cfg(target_arch = "wasm32")]
         if let Some(write) = self.web_battery_due(true) {
             crate::wasm_idb::spawn_battery_write(write);
@@ -2078,8 +2191,11 @@ impl EmuCore {
     /// this ROM session, WITHOUT writing it: the live RAM now belongs to a
     /// session. The second half of [`Self::start_sandboxed_session`].
     pub fn release_battery_for_session(&mut self) {
+        // v2.9.9 (NF-16) — and the FDS disk's `.fds.sav`, which v2.9.0 missed:
+        // a movie replayed on a disk game wrote the movie's saves over the
+        // player's file. `fds_disk_sha256` stays: it is the save identity.
         #[cfg(not(target_arch = "wasm32"))]
-        let released = self.battery.take().is_some();
+        let released = self.battery.take().is_some() | self.fds_save.take().is_some();
         // v2.9.7 — the browser record likewise. A read still in flight is
         // discarded when it lands, so it cannot overwrite the session's RAM.
         #[cfg(target_arch = "wasm32")]
@@ -2117,6 +2233,10 @@ impl EmuCore {
     pub fn detach_battery(&mut self) {
         self.flush_battery(true);
         self.battery = None;
+        // v2.9.9 (NF-16) — the outgoing FDS disk's final write. The periodic
+        // check is throttled, so up to a second of writes can be pending.
+        self.flush_fds_now();
+        self.fds_save = None;
     }
 
     /// v2.9.7 "Tandem" — bind the just-installed cartridge's battery RAM to
@@ -3055,5 +3175,123 @@ mod tests {
         assert_eq!(save_identity(&cart, Some(pristine_sha)), cart_sha);
         core.set_nes(cart);
         assert_eq!(core.loaded_rom_sha256(), Some(cart_sha));
+    }
+
+    /// A synthetic BIOS that writes to the disk: enable disk I/O (`$4023`),
+    /// put the drive in write mode with the motor on (`$4025 = $60`, the
+    /// core's own drive tests' value), then store `$AB` to `$4024` forever.
+    /// Every byte the drive stores marks the image dirty, which is the only
+    /// effect the save tests below need from it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn disk_writing_fds_bios() -> Vec<u8> {
+        let mut bios = synthetic_fds_bios();
+        bios[..18].copy_from_slice(&[
+            0xA9, 0x01, 0x8D, 0x23, 0x40, // LDA #$01; STA $4023
+            0xA9, 0x60, 0x8D, 0x25, 0x40, // LDA #$60; STA $4025
+            0xA9, 0xAB, 0x8D, 0x24, 0x40, // LDA #$AB; STA $4024
+            0x4C, 0x0A, 0xE0, // JMP $E00A
+        ]);
+        bios
+    }
+
+    /// Run `nes` until its disk is dirty (the drive spins up first).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run_until_disk_dirty(nes: &mut Nes) {
+        for _ in 0..600 {
+            if nes.disk_is_dirty() {
+                return;
+            }
+            nes.run_frame();
+        }
+        panic!("fixture: the synthetic BIOS never wrote to the disk");
+    }
+
+    /// v2.9.9 (NF-16) — a movie, `TAStudio` or netplay session's disk writes
+    /// never reach the player's `.fds.sav`.
+    ///
+    /// v2.9.0 sandboxed the cartridge battery for these sessions, and the FDS
+    /// writable disk -- the FDS game's save -- had no counterpart: the
+    /// per-frame flush wrote whatever the session's disk held over the
+    /// player's file. A player watching a TAS of an FDS game lost their own
+    /// disk save to the movie's progress.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_sandboxed_session_never_writes_the_fds_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk = synthetic_fds_disk();
+        let mut nes = Nes::from_disk(&disk, &disk_writing_fds_bios()).unwrap();
+        let pristine = *nes.rom_sha256();
+        let path = dir.path().join("fds-saves").join(format!(
+            "{}.fds.sav",
+            crate::save_state::hex_sha256(&pristine)
+        ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"the player's disk").unwrap();
+        run_until_disk_dirty(&mut nes);
+        let mut core = EmuCore::new();
+        core.set_nes(nes);
+        core.bind_fds_save(Some(pristine), Some(dir.path()));
+        // The game's own writes before the session are the player's: the
+        // session start persists them first.
+        let players = core.nes.as_ref().unwrap().disk_image_bytes();
+
+        assert!(core.start_sandboxed_session(|_| true));
+        assert_eq!(std::fs::read(&path).unwrap(), players, "pre-session flush");
+        // The session overwrites the disk; none of it may reach the file,
+        // periodic or forced.
+        let nes = core.nes.as_mut().unwrap();
+        nes.clear_disk_dirty();
+        let len = nes.disk_image_bytes().len();
+        for _ in 0..30 {
+            nes.run_frame();
+        }
+        assert!(nes.disk_is_dirty(), "fixture: the session wrote");
+        for _ in 0..crate::battery_policy::CHECK_PERIOD_FRAMES * 2 {
+            assert!(core.fds_due_write(false).is_none(), "periodic write");
+        }
+        assert!(core.fds_due_write(true).is_none(), "forced write");
+        core.detach_battery();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            players,
+            "the session's disk reached the player's .fds.sav"
+        );
+        assert_eq!(players.len(), len);
+    }
+
+    /// v2.9.9 (NF-16) — the periodic `.fds.sav` check runs once per
+    /// `CHECK_PERIOD_FRAMES` calls, not after every frame, and a failed write
+    /// is retried although the disk's dirty latch was cleared when the copy
+    /// was taken. (The write itself happens with the emu lock released; that
+    /// half is `App::flush_fds_save`, which only calls these two.)
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_fds_save_is_checked_once_a_period_and_retried_after_a_failure() {
+        let period = crate::battery_policy::CHECK_PERIOD_FRAMES;
+        let dir = tempfile::tempdir().unwrap();
+        // A FILE where the `fds-saves` directory belongs: every write fails.
+        std::fs::write(dir.path().join("fds-saves"), b"").unwrap();
+        let disk = synthetic_fds_disk();
+        let mut nes = Nes::from_disk(&disk, &disk_writing_fds_bios()).unwrap();
+        let pristine = *nes.rom_sha256();
+        run_until_disk_dirty(&mut nes);
+        let mut core = EmuCore::new();
+        core.set_nes(nes);
+        core.bind_fds_save(Some(pristine), Some(dir.path()));
+
+        for _ in 1..period {
+            assert!(core.fds_due_write(false).is_none(), "checked early");
+        }
+        let write = core.fds_due_write(false).expect("due at the period");
+        let result = write.write();
+        assert!(result.is_err(), "fixture: the write fails");
+        core.fds_written(&write, &result);
+        // The game stops writing (dirty cleared, and nothing re-dirties it
+        // here), yet the failed write comes back at the next check.
+        assert!(!core.nes.as_ref().unwrap().disk_is_dirty());
+        assert!(
+            core.fds_due_write(true).is_some(),
+            "the failed write retries"
+        );
     }
 }

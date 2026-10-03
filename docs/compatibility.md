@@ -276,7 +276,10 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   a one-time BIOS prompt (new `[fds]` config), an `F9` side-swap key + a disk
   indicator, `.fds.sav` persistence under `<data_dir>/fds-saves/` (keyed, like
   the game's save-state slots and cheat file since v2.9.9, on the disk image as
-  loaded before any write, so a disk save does not move them); wasm-winit has
+  loaded before any write, so a disk save does not move them; checked once a
+  second and written off the emulation lock, and released for a movie,
+  TAStudio or netplay session as the battery is, so a session's disk never
+  reaches the player's file); wasm-winit has
   an in-browser BIOS upload (session-only). **The BIOS is user-supplied (Nintendo
   copyright — NEVER committed); real-BIOS boot is unverified in CI by design** —
   the device + audio are unit-tested (56 FDS unit tests) + an env-gated
