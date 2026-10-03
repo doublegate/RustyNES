@@ -568,7 +568,8 @@ number as preparation for v3.0.0, whose notes will restate every one of them.
 
 - The full `cargo test --release --workspace --features
   test-roms,commercial-roms --no-fail-fast` passes on the release tree:
-  3,358 tests, 0 failed, 19 ignored. That covers every unit and
+  3,367 tests, 0 failed, 19 ignored (3,148 / 0 / 14 without the commercial
+  suites). That covers every unit and
   integration test, the test-ROM suites (AccuracyCoin 144/144, nestest
   0-diff), and the local commercial suites. `external_real_games` is 60/0.
   `external_extended` is 137/0: v2.9.7's 138 less the *Doraemon World 3* hack,
