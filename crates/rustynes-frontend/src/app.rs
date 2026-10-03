@@ -5268,6 +5268,9 @@ impl App {
             }
             // v1.7.0 "Forge" H4 — a reset starts a fresh lag-frame tally.
             guard.reset_lag_frames();
+            // v2.9.9 (NF-13) — and a fresh history timeline: a `.rnm` records
+            // input only, so a clip spanning the Reset could not replay it.
+            guard.history.clear();
         }
         // v2.1.10 "Creator Tools" (B9) — notify any Lua `reset` event callbacks.
         // Output-only (no `Nes`), fired outside the emu lock; a callback raise is
@@ -13116,5 +13119,30 @@ mod tests {
         );
         let clip = body("fn handle_history_export_clip(&mut self, seconds: f64) {");
         assert!(clip.contains("self.ui.set_status("));
+    }
+
+    /// v2.9.9 (NF-13) — a Reset clears the history viewer's timeline, as a
+    /// Power Cycle and a ROM load do (see the `emu` test for state loads and
+    /// rewind). `App::do_reset` needs a window, so this pins its body.
+    #[test]
+    fn a_reset_clears_the_history_timeline() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn a_reset_clears_the_history_timeline"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let (_, rest) = prod
+            .split_once("fn do_reset(&mut self) {")
+            .expect("do_reset exists");
+        let body = rest.split_once(" fn ").map_or(rest, |(b, _)| b);
+        assert!(
+            body.contains("guard.history.clear()"),
+            "a Reset leaves the history timeline running across it"
+        );
     }
 }

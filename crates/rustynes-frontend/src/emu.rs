@@ -947,14 +947,21 @@ impl EmuCore {
     /// The core's [`rustynes_core::SnapshotError`] for a malformed blob or one
     /// of the other kind; [`RestoreStateError::NoRom`] with nothing loaded.
     pub fn restore_state_blob(&mut self, blob: &[u8]) -> Result<(), RestoreStateError> {
-        if let Some(nes) = self.nes.as_mut() {
-            return nes.restore(blob).map_err(RestoreStateError::Snapshot);
+        let restored = if let Some(nes) = self.nes.as_mut() {
+            nes.restore(blob).map_err(RestoreStateError::Snapshot)
+        } else {
+            self.dual
+                .as_mut()
+                .map_or(Err(RestoreStateError::NoRom), |dual| {
+                    dual.restore(blob).map_err(RestoreStateError::Snapshot)
+                })
+        };
+        // v2.9.9 (NF-13) — the restored machine is not where the history
+        // viewer's input log continues from; start a fresh timeline.
+        if restored.is_ok() {
+            self.history.clear();
         }
-        self.dual
-            .as_mut()
-            .map_or(Err(RestoreStateError::NoRom), |dual| {
-                dual.restore(blob).map_err(RestoreStateError::Snapshot)
-            })
+        restored
     }
 
     /// Drop any loaded ROM and the cached name with it, so a stale mapper label
@@ -1580,6 +1587,9 @@ impl EmuCore {
             // truthful outcome. (Review catch on PR #356.)
             if nes.rewind_step_back() {
                 self.movie.invalidate_attestation();
+                // v2.9.9 (NF-13) — and the history viewer's timeline, whose
+                // input log no longer describes the machine's past.
+                self.history.clear();
             }
             // v2.8.0 Phase 3 — refresh the presented framebuffer from the
             // restored state.
@@ -3293,5 +3303,44 @@ mod tests {
             core.fds_due_write(true).is_some(),
             "the failed write retries"
         );
+    }
+
+    /// v2.9.9 (NF-13) — a state load or a rewind step clears the history
+    /// viewer's timeline.
+    ///
+    /// Its record index keeps counting across a discontinuity, so an exported
+    /// clip paired an anchor from before it with input from both sides and
+    /// did not replay (the re-audit's probe: 12,531 differing bytes after a
+    /// Reset or a 30-frame rewind). Power Cycle and ROM load already cleared
+    /// it; a state load, a rewind step and a Reset (`App::do_reset`) now do.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_state_load_or_a_rewind_clears_the_history_timeline() {
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.enable_rewind_with(rustynes_core::REWIND_DEFAULT_MAX_BYTES, 1);
+        core.set_nes(nes);
+        for _ in 0..10 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert!(!core.history.is_empty(), "fixture: frames recorded");
+        let (_, blob) = core.save_state_blob().unwrap();
+        core.restore_state_blob(&blob).unwrap();
+        assert!(core.history.is_empty(), "a state load left the timeline");
+
+        for _ in 0..10 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert!(!core.history.is_empty());
+        let mut rewind = inputs;
+        rewind.rewind_held = true;
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert!(core.history.is_empty(), "a rewind step left the timeline");
     }
 }
