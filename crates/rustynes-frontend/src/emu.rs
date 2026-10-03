@@ -887,6 +887,24 @@ impl EmuCore {
         self.dual = Some(dual);
     }
 
+    /// v2.9.9 (NF-22) — run `f` on every loaded console: the single console,
+    /// or BOTH consoles of a Vs. `DualSystem` cabinet (main, then sub).
+    ///
+    /// The live Settings applies (palette, APU mask / gain / filter, OAM
+    /// decay, fast dot path, console model) wrote `nes` alone, which is `None`
+    /// while a cabinet is installed, so a change reached a cabinet only at the
+    /// next Power Cycle (`build_dual_cabinet` configures both consoles at
+    /// load). A no-op with no ROM.
+    pub fn for_each_console(&mut self, mut f: impl FnMut(&mut Nes)) {
+        if let Some(nes) = self.nes.as_mut() {
+            f(nes);
+        } else if let Some(dual) = self.dual.as_mut() {
+            let (main, sub) = dual.split_mut();
+            f(main);
+            f(sub);
+        }
+    }
+
     /// v2.9.7 — the loaded game's identity (the save-state slot key): the
     /// single console's `rom_sha256`, or the MAIN console's for a Vs.
     /// `DualSystem` cabinet (both consoles run the same image). `None` with no
@@ -3342,5 +3360,25 @@ mod tests {
         rewind.rewind_held = true;
         core.produce_one_frame(&rewind, &mut sinks);
         assert!(core.history.is_empty(), "a rewind step left the timeline");
+    }
+
+    /// v2.9.9 (NF-22) — `for_each_console` visits both consoles of a cabinet
+    /// and the single console otherwise.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn for_each_console_reaches_both_cabinet_consoles() {
+        let mut core = EmuCore::new();
+        let mut seen = 0;
+        core.for_each_console(|_| seen += 1);
+        assert_eq!(seen, 0, "no ROM, no console");
+        core.set_nes(Nes::from_rom(&synth_nrom()).unwrap());
+        core.for_each_console(|nes| nes.set_oam_decay(true));
+        assert!(core.nes.as_ref().unwrap().oam_decay_enabled());
+        core.set_dual(Box::new(
+            rustynes_core::VsDualSystem::from_rom(&synth_nrom()).unwrap(),
+        ));
+        core.for_each_console(|nes| nes.set_oam_decay(true));
+        let dual = core.dual.as_ref().unwrap();
+        assert!(dual.main().oam_decay_enabled() && dual.sub().oam_decay_enabled());
     }
 }

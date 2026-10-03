@@ -2027,9 +2027,10 @@ impl App {
         // the console BEFORE it is installed. They used to be pushed after the
         // install lock was released, one lock at a time, while the emulation
         // thread was free to run the new game (`has_rom` was already set by the
-        // previous one); see `configure_console`. A two-console cabinet keeps
-        // what it had: the probe `nes` is discarded, and these never reached a
-        // cabinet's consoles before either.
+        // previous one); see `configure_console`. For a two-console cabinet the
+        // probe `nes` is discarded: `build_dual_cabinet` configured both of its
+        // consoles the same way, and since v2.9.9 the live Settings applies
+        // reach both too (`EmuCore::for_each_console`).
         configure_console(&self.config, &mut nes);
         #[cfg(not(target_arch = "wasm32"))]
         let raw_cheats = if dual_cabinet.is_none() {
@@ -6733,10 +6734,9 @@ impl App {
     /// runs; a Power Cycle keeps it in the core since v2.9.8.
     fn apply_apu_channel_mask(&self) {
         let mask = self.config.audio.channel_mask;
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_apu_channel_mask(mask);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_apu_channel_mask(mask));
     }
 
     /// v1.4.0 Workstream C — push the configured per-APU-channel output gain into
@@ -6750,10 +6750,9 @@ impl App {
     /// since v2.9.8.
     fn apply_apu_channel_gain(&self) {
         let gain = self.config.audio.channel_gain;
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_apu_channel_gain(gain);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_apu_channel_gain(gain));
     }
 
     /// v2.1.3 — push the configured APU analog output-filter model to the core.
@@ -6765,10 +6764,9 @@ impl App {
     /// default filter; the core now keeps it across the cycle.
     fn apply_apu_filter_model(&self) {
         let model = crate::config::parse_filter_model(&self.config.audio.filter_model);
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_apu_filter_model(model);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_apu_filter_model(model));
     }
 
     /// v2.1.4 F2.3 — push the configured optional OAM-decay accuracy toggle to the
@@ -6780,10 +6778,9 @@ impl App {
     /// model off; the core now keeps it across the cycle.
     fn apply_oam_decay(&self) {
         let enabled = self.config.emulation.oam_decay;
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_oam_decay(enabled);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_oam_decay(enabled));
     }
 
     /// v2.9.7 — hand the configured overclock (`[enhancements]
@@ -6823,10 +6820,10 @@ impl App {
     /// side effect. The other knobs that function pushes are power-on state
     /// and are only correct at load, power-cycle and startup.
     fn apply_fast_dotloop(&self) {
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_fast_dotloop(self.config.emulation.fast_dotloop);
-        }
+        let on = self.config.emulation.fast_dotloop;
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_fast_dotloop(on));
     }
 
     /// v2.9.8 — push the `[emulation] famicom_console` choice into the core as
@@ -6842,10 +6839,9 @@ impl App {
     /// work RAM, so it must not run on a mid-game Settings change for this knob.
     fn apply_console_model(&self) {
         let model = console_model_for(&self.config);
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_console_model(model);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_console_model(model));
     }
 
     /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
@@ -6877,10 +6873,10 @@ impl App {
         if pal.is_none() {
             return;
         }
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_custom_palette(pal);
-        }
+        // v2.9.9 (NF-22) — both consoles of a cabinet, as at load.
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_custom_palette(pal));
     }
 
     /// v1.1.0 beta.1 — open a `.pal` file dialog; on a valid pick, apply it to the
@@ -13144,5 +13140,45 @@ mod tests {
             body.contains("guard.history.clear()"),
             "a Reset leaves the history timeline running across it"
         );
+    }
+
+    /// v2.9.9 (NF-22) — every live Settings apply reaches a Vs. `DualSystem`
+    /// cabinet's two consoles, not only a single console.
+    ///
+    /// Each one wrote `guard.nes`, which is `None` while a cabinet is
+    /// installed in `emu.dual`, so a palette, filter, channel-mask, OAM-decay,
+    /// fast-dot-path or console-model change did nothing to a cabinet until
+    /// the next Power Cycle. `App` needs a window, so this pins the shape:
+    /// each live apply goes through `EmuCore::for_each_console`.
+    #[test]
+    fn every_live_settings_apply_reaches_a_cabinet() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn every_live_settings_apply_reaches_a_cabinet"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        for name in [
+            "apply_apu_channel_mask",
+            "apply_apu_channel_gain",
+            "apply_apu_filter_model",
+            "apply_oam_decay",
+            "apply_fast_dotloop",
+            "apply_console_model",
+            "apply_active_palette",
+        ] {
+            let (_, rest) = prod
+                .split_once(&format!("fn {name}(&self) {{"))
+                .unwrap_or_else(|| panic!("`{name}` is gone"));
+            let body = rest.split_once(" fn ").map_or(rest, |(b, _)| b);
+            assert!(
+                body.contains(".for_each_console(") && !body.contains("guard.nes.as_mut()"),
+                "`{name}` writes the single console only: {body}"
+            );
+        }
     }
 }

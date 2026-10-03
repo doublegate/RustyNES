@@ -891,6 +891,18 @@ fn refuse_on_cabinet(g: &Inner, what: &str) -> Result<(), MobileError> {
     }
 }
 
+/// v2.9.9 (NF-22) — run `f` on every loaded console: the single console, or
+/// both consoles of a Vs. `DualSystem` cabinet. Between calls the cabinet's
+/// MAIN console is the one seated in `g.nes` (see [`DualSwap`]), so the sub
+/// is the only one reached through the cabinet. The palette and Four Score
+/// setters used to write `g.nes` alone, so the two screens disagreed.
+fn for_each_console(g: &mut Inner, mut f: impl FnMut(&mut Nes)) {
+    f(&mut g.nes);
+    if let Some(cab) = g.dual.as_mut() {
+        f(cab.system.sub_mut());
+    }
+}
+
 /// v2.9.9 (NF-18) — whether a netplay session owns the timeline: present,
 /// connecting, or ended in an error not yet acknowledged with `np_leave`
 /// (the same test [`NesController::np_is_active`] answers the host with).
@@ -1438,7 +1450,8 @@ impl NesController {
 
     /// Enable/disable the Four Score adapter (4-controller multiplexer).
     pub fn set_four_score(&self, enabled: bool) {
-        self.lock().nes.set_four_score(enabled);
+        // v2.9.9 (NF-22) — both consoles of a cabinet.
+        for_each_console(&mut self.lock(), |nes| nes.set_four_score(enabled));
     }
 
     /// Soft-reset (the front-panel Reset button); preserves power-on alignment.
@@ -1489,10 +1502,19 @@ impl NesController {
         });
         match rebuilt {
             Some(Some((nes, system))) => {
+                // v2.9.9 (NF-22) — the rebuild boots both consoles from the
+                // ROM, which drops the host's palette and Four Score choice;
+                // carry them over from the outgoing main console.
+                let palette = g.nes.custom_palette();
+                let four_score = g.nes.four_score();
                 g.nes = nes;
                 if let Some(cab) = g.dual.as_mut() {
                     cab.system = system;
                 }
+                for_each_console(&mut g, |nes| {
+                    nes.set_custom_palette(palette);
+                    nes.set_four_score(four_score);
+                });
             }
             // v2.9.8: the fallback cycles the cabinet as a whole, which
             // re-wires the pair. Cycling the two consoles one by one (what
@@ -1804,13 +1826,15 @@ impl NesController {
         for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
             pal[i] = [chunk[0], chunk[1], chunk[2]];
         }
-        self.lock().nes.set_custom_palette(Some(pal));
+        // v2.9.9 (NF-22) — both consoles of a cabinet.
+        for_each_console(&mut self.lock(), |nes| nes.set_custom_palette(Some(pal)));
         Ok(())
     }
 
-    /// Clear the custom palette, restoring the built-in NES palette.
+    /// Clear the custom palette, restoring the built-in NES palette (on both
+    /// consoles of a cabinet, v2.9.9).
     pub fn clear_palette(&self) {
-        self.lock().nes.set_custom_palette(None);
+        for_each_console(&mut self.lock(), |nes| nes.set_custom_palette(None));
     }
 
     /// The per-pixel **palette-index** framebuffer (256×240 `u16`s as little-endian
@@ -4970,5 +4994,50 @@ mod tests {
             "the console changed under netplay"
         );
         ctrl.np_leave();
+    }
+
+    /// v2.9.9 (NF-22) — on a Vs. `DualSystem` cabinet the palette and Four
+    /// Score setters reach BOTH consoles, and a Power Cycle (which rebuilds
+    /// the cabinet from its ROM) keeps them.
+    ///
+    /// `set_four_score` and `load_palette` wrote `g.nes`, the main console
+    /// (seated outside the cabinet between calls), never the sub, so the two
+    /// screens used different palettes; and `power_cycle` rebuilt both
+    /// consoles from the ROM, which reset the main one to the default too.
+    #[test]
+    fn cabinet_palette_and_four_score_reach_both_consoles_and_survive_power_cycle() {
+        let ctrl = NesController::new(synthetic_dual_cabinet(), DEFAULT_SAMPLE_RATE)
+            .expect("cabinet loads");
+        let mut pal = vec![0u8; 192];
+        pal[0] = 0x12;
+        ctrl.load_palette(pal).unwrap();
+        ctrl.set_four_score(true);
+        let check = |when: &str| {
+            let g = ctrl.lock();
+            let sub = g.dual.as_ref().expect("a cabinet").system.sub();
+            for (name, nes) in [("main", &g.nes), ("sub", sub)] {
+                assert_eq!(
+                    nes.custom_palette().map(|p| p[0][0]),
+                    Some(0x12),
+                    "{when}: {name} palette"
+                );
+                assert!(nes.four_score(), "{when}: {name} Four Score");
+            }
+        };
+        check("after the setters");
+        ctrl.power_cycle();
+        check("after a Power Cycle");
+        ctrl.clear_palette();
+        let g = ctrl.lock();
+        let cleared = g.nes.custom_palette().is_none()
+            && g.dual
+                .as_ref()
+                .unwrap()
+                .system
+                .sub()
+                .custom_palette()
+                .is_none();
+        drop(g);
+        assert!(cleared, "clear_palette reaches both consoles");
     }
 }
