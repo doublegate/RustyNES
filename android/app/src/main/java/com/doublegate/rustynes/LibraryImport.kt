@@ -3,7 +3,9 @@ package com.doublegate.rustynes
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
-import java.security.MessageDigest
+import uniffi.rustynes_mobile.romIdentityOfFile
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 /**
  * Batch SAF-tree ROM import (v1.8.8 "Atlas", Workstream C).
@@ -11,7 +13,8 @@ import java.security.MessageDigest
  * Given a tree URI from `ACTION_OPEN_DOCUMENT_TREE` (with a persistable grant already
  * taken by the caller), enumerate the directory (one level, plus immediate
  * subfolders) for NES ROM files (`.nes` / `.fds` / `.unf` / `.unif` / `.zip`),
- * register each in the [GameLibrary] keyed by its real ROM SHA-256, and auto-link a
+ * register each in the [GameLibrary] keyed by its ROM identity (v2.9.9: the core's
+ * `romIdentityOfFile`, the key `prepareRom` uses), and auto-link a
  * sibling box-art image (`<romname>.png` / `.jpg` / `.jpeg` / `.webp`) when present.
  *
  * Runs entirely off the main thread (the caller wraps it in `Dispatchers.IO`). Dedups
@@ -23,6 +26,22 @@ object LibraryImport {
     private val IMG_EXTS = setOf("png", "jpg", "jpeg", "webp")
 
     private data class Child(val uri: Uri, val name: String, val isDir: Boolean)
+
+    /** The bridge's ROM size limit (`MAX_ROM_BYTES` in rustynes-mobile). */
+    private const val MAX_ROM_BYTES = 16 * 1024 * 1024
+
+    /** Read [stream] whole, or null once it passes [MAX_ROM_BYTES]. */
+    private fun readBounded(stream: InputStream): ByteArray? {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(64 * 1024)
+        while (true) {
+            val n = stream.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            if (out.size() > MAX_ROM_BYTES) return null
+        }
+        return out.toByteArray()
+    }
 
     /**
      * Import [treeUri]. [onProgress] is invoked as `(done, total)` while scanning so
@@ -86,18 +105,18 @@ object LibraryImport {
         var added = 0
         roms.forEachIndexed { i, rom ->
             runCatching {
-                // Stream the ROM/.zip through the digest in a fixed buffer rather than
-                // reading the whole file into memory (a large archive could OOM).
-                val sha = resolver.openInputStream(rom.uri)?.use { stream ->
-                    val md = MessageDigest.getInstance("SHA-256")
-                    val buf = ByteArray(64 * 1024)
-                    var any = false
-                    while (true) {
-                        val n = stream.read(buf)
-                        if (n < 0) break
-                        if (n > 0) { md.update(buf, 0, n); any = true }
+                // v2.9.9 (re-audit NF-21): keyed by the core's ROM identity (the
+                // bytes after the iNES header, of the unpacked image), as prepareRom
+                // keys a game it opens, so an import and an open agree. That needs
+                // the file's bytes; the read stops one byte past the bridge's 16 MiB
+                // ROM limit, so a large file is skipped rather than pulled in whole
+                // (the bridge would refuse to load it anyway). The pre-v2.9.9
+                // whole-file key is moved first, so a re-import does not duplicate.
+                val bytes = resolver.openInputStream(rom.uri)?.use { readBounded(it) }
+                val sha = bytes?.takeIf { it.isNotEmpty() }?.let { b ->
+                    runCatching { romIdentityOfFile(b) }.getOrNull()?.also { id ->
+                        RomKeyMigration.migrate(ctx.filesDir, sha256Hex(b), id)
                     }
-                    if (any) md.digest().joinToString("") { "%02x".format(it) } else null
                 }
                 if (sha != null) {
                     val display = rom.name

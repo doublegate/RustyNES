@@ -59,6 +59,17 @@ final class GameOverrides: ObservableObject {
         save()
     }
 
+    /// v2.9.9 (re-audit NF-21) — move `legacy`'s override to `identity`, once: only
+    /// when `identity` has none (an existing one is never overwritten, and the old
+    /// entry then stays). The map is written whole and atomically.
+    func rekey(from legacy: String, to identity: String) {
+        guard legacy != identity, overrides[identity] == nil,
+              let settings = overrides[legacy] else { return }
+        overrides[identity] = settings
+        overrides.removeValue(forKey: legacy)
+        save()
+    }
+
     /// Remove `sha`'s override (revert it to the global defaults).
     func clear(for sha: String) {
         overrides.removeValue(forKey: sha)

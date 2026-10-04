@@ -193,8 +193,30 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   determinism contract is untouched.
 - **ROM import (`ROMLibrary`):** `UIDocumentPicker` / `.fileImporter` /
   share-sheet, security-scoped, copied into `Application Support/RustyNES/roms/`
-  keyed by SHA-256 (the desktop save-identity scheme). **Never bundle commercial
-  ROMs.**
+  keyed by the core's ROM identity (the desktop save-identity scheme; see the
+  v2.9.9 key migration below). **Never bundle commercial ROMs.**
+- **Per-game keys are the core's ROM identity (v2.9.9, NF-21).** The library,
+  battery saves, save-state directories, per-game overrides and the RA progress
+  sidecar are keyed by `NesController.romIdentity()` (`EmulatorCore.romIdentity`):
+  `Nes::rom_sha256` as hex, the bytes after the 16-byte iNES header of the
+  UNPACKED image (the whole image for FDS, NSF and UNIF). The importer computes it
+  with `romIdentityOfFile` (`RomIdentity.identityHex`), which needs no FDS BIOS.
+  Until v2.9.9 the key was `RomIdentity.sha256Hex` of the whole file, header and
+  `.zip` container included, so two dumps differing only in their header did not
+  share saves and a re-zipped ROM lost them. `AppModel.openGame` moves a
+  pre-v2.9.9 entry once, library first (`ROMLibrary.rekey`: the ROM copy is
+  written under the new key, read back and compared, the index saved, and only
+  then the old file removed), then `battery/<k>.sav`, every file in
+  `states/<k>/` and `ra-progress/<k>.bin` (`RomKeyMigration.migrateFiles`), then
+  the override (`GameOverrides.rekey`). The rules are Android's
+  (`RomKeyMigration` in `Persistence.kt`, pinned by `RomKeyMigrationTest`): a
+  store moves only into an empty key, a taken key is never overwritten (the old
+  copy stays), and when the library entry cannot move nothing else does, so the
+  stores never split between two keys. Re-importing a pre-v2.9.9 file returns its
+  old entry rather than adding a second. **Not migrated:** CloudKit save-state
+  records (`state-<k>-<n>`), which the next upload writes under the new key.
+  **Uncompiled** (no Swift toolchain on the build host); device rows M5-M7 of
+  `docs/mobile-v2.9.3-run-sheet.md`.
 - **Storage + lifecycle:** `.rns` save-states + SRAM in the sandbox (the format is
   platform-independent -> cross-device save portability); SwiftUI `ScenePhase`
   pauses the loop / audio and drops the drawable on background, rebuilding on

@@ -15,7 +15,6 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
 import android.view.MotionEvent
-import java.security.MessageDigest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -755,7 +754,12 @@ private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: Stri
     // .fds disk boots; a cartridge or NSF ignores it. Without it a disk throws
     // MobileException.MissingFdsBios, which openRom turns into the BIOS prompt.
     val ctrl = NesController.newWithFdsBios(bytes, FdsBios.load(context), 48_000u)
-    val sha = sha256Hex(bytes)
+    // v2.9.9 (re-audit NF-21): key every per-game store by the core's ROM identity
+    // (the bytes after the iNES header, of the unpacked image), not the file as read.
+    // Before any store is touched, move whatever the pre-v2.9.9 whole-file key held
+    // (once; never over an existing store; see RomKeyMigration).
+    val sha = ctrl.romIdentity()
+    RomKeyMigration.migrate(context.filesDir, sha256Hex(bytes), sha)
     // Load the cartridge's `.sav` before its first frame, and before the auto-resume
     // state below (a save state is newer and restores cartridge RAM too).
     val (battery, batteryNotice) = attachBattery(context, ctrl, sha)
@@ -1603,8 +1607,11 @@ private fun EmulatorScreen(
                     if (!ctrl.raIsEnabled() || ctrl.raLoginStatus() != RaLoginStatus.LOGGED_IN) {
                         return@withContext
                     }
-                    val sha = MessageDigest.getInstance("SHA-256").digest(bytes)
-                    val shaHex = sha.joinToString("") { "%02x".format(it) }
+                    // v2.9.9 (NF-21): read the sidecar from the key raSaveProgress
+                    // writes it under (the ROM identity); until v2.9.9 this read the
+                    // whole file's hash while the write used emulator.romSha.
+                    val shaHex = emulator.romSha ?: return@withContext
+                    val sha = shaHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
                     val sidecar = RaProgressStore.load(context, shaHex)
                     ctrl.raLoadGame(bytes, sha, sidecar)
                 }

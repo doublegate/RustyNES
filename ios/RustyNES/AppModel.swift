@@ -334,6 +334,12 @@ final class AppModel: ObservableObject {
             let data = try await library.romData(for: entry)
             // v2.9.7: the stored FDS BIOS rides along (a cartridge or NSF ignores it).
             let core = try EmulatorCore(romData: data, fdsBios: FdsBiosStore.load())
+            // v2.9.9 (re-audit NF-21): key this game by the core's identity. An
+            // entry from before v2.9.9 is keyed by the whole file's hash; move it,
+            // then its saves, states, RA progress and overrides, once. The library
+            // goes first: when it cannot move, the old key stays for this session
+            // and nothing else moves, so the stores never split between two keys.
+            let entry = await migrateKey(entry, to: core.romIdentity)
             core.isMuted = muted
             // v2.9.2 (AUD-14): pace the gamepad turbo pulse by emulated frames.
             // Captures the manager (a plain class), not `self`, so the closure
@@ -371,6 +377,21 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = "Could not load \(entry.name): \(error.localizedDescription)"
         }
+    }
+
+    /// v2.9.9 (re-audit NF-21) — the one-time move of `entry` from the whole-file
+    /// key to `identity` (see `RomKeyMigration`). Returns the entry to open: the
+    /// moved one, the one already keyed by `identity`, or `entry` itself when the
+    /// keys are equal or the library entry could not move.
+    private func migrateKey(_ entry: LibraryEntry, to identity: String) async -> LibraryEntry {
+        guard entry.sha != identity else { return entry }
+        let legacy = entry.sha
+        guard let moved = library.rekey(from: legacy, to: identity) else { return entry }
+        await Task.detached(priority: .userInitiated) {
+            _ = RomKeyMigration.migrateFiles(legacy: legacy, identity: identity)
+        }.value
+        overrides.rekey(from: legacy, to: identity)
+        return moved
     }
 
     /// v2.9.7 "Tandem" (plan item 6): store the FDS BIOS the user picked (checked at

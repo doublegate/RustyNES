@@ -2196,6 +2196,22 @@ impl Nes {
         &self.rom_sha256
     }
 
+    /// The identity [`Self::rom_sha256`] reports for a console built from
+    /// `image`, computed without building one: SHA-256 of the bytes after the
+    /// 16-byte header of an iNES / NES 2.0 image, of the whole image otherwise
+    /// (FDS, NSF, UNIF).
+    ///
+    /// For a host that keys stores before, or without, constructing a console
+    /// -- a library import that must not need the FDS BIOS, or a key
+    /// migration (v2.9.9 re-audit NF-21: the mobile hosts keyed saves by the
+    /// whole file's hash). It is the same function every constructor uses, so
+    /// the two cannot drift. It does not include a later
+    /// [`Self::set_rom_identity`].
+    #[must_use]
+    pub fn rom_identity_of(image: &[u8]) -> [u8; 32] {
+        rom_identity_sha256(image)
+    }
+
     /// SHA-256 of the complete image as constructed, header included.
     ///
     /// The Vs. System database ([`crate::vs_db`]) keeps a whole-file key on
@@ -5769,6 +5785,25 @@ mod tests {
         // Exactly the body: the identity is SHA-256 of bytes[16..].
         assert_eq!(*a.rom_sha256(), sha256_of(&rom[16..]));
         assert_eq!(*a.image_sha256(), sha256_of(&rom));
+    }
+
+    /// v2.9.9 (NF-21) — `rom_identity_of` is the identity a console built
+    /// from the same image reports, for each image kind.
+    #[test]
+    fn rom_identity_of_matches_the_built_console() {
+        let rom = synth_nrom(16, 8);
+        assert_eq!(
+            Nes::rom_identity_of(&rom),
+            *Nes::from_rom(&rom).unwrap().rom_sha256()
+        );
+        let disk = synth_fds_disk();
+        let fds = Nes::from_disk(&disk, &synth_fds_bios()).unwrap();
+        assert_eq!(Nes::rom_identity_of(&disk), *fds.rom_sha256());
+        let nsf = synth_tone_nsf();
+        let tune = Nes::from_nsf(&nsf).unwrap();
+        assert_eq!(Nes::rom_identity_of(&nsf), *tune.rom_sha256());
+        // And it is not the whole-file hash for a cartridge.
+        assert_ne!(Nes::rom_identity_of(&rom), sha256_of(&rom));
     }
 
     /// A synthetic 8 KiB FDS BIOS: `JMP $E000` at the reset vector and an

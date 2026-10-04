@@ -1702,6 +1702,24 @@ impl NesController {
         self.lock().nes.set_disk_side(side);
     }
 
+    /// v2.9.9 (re-audit NF-21) — the loaded game's persistent identity,
+    /// `Nes::rom_sha256` as lowercase hex: SHA-256 of an iNES / NES 2.0
+    /// image's bytes after its 16-byte header, of the whole image for FDS, NSF
+    /// and UNIF, and of the unpacked image (never the archive) for a `.zip`.
+    ///
+    /// This is the key the desktop gives a game's save-state slots, battery
+    /// `.sav` and cheats, and what a movie and netplay record. Until v2.9.9 both
+    /// hosts keyed their stores by the whole FILE's SHA-256 instead, header
+    /// and zip container included, so two dumps differing only in their
+    /// header did not share saves and a re-zipped ROM lost them; the hosts
+    /// now key by this and move their old keys once
+    /// (`docs/android.md`, `docs/ios.md`). For a cabinet it is the main
+    /// console's, which runs the same image.
+    #[must_use]
+    pub fn rom_identity(&self) -> String {
+        hex_lower(&self.rom_sha256())
+    }
+
     /// v2.9.7 — the FDS disk image as it stands, including anything the game
     /// has written to it, in the headerless `.fds` layout. The host writes it
     /// to its own save file and, on the next launch, loads THAT file as the
@@ -3365,6 +3383,36 @@ fn injected_frame_fault() {
 #[uniffi::export]
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// v2.9.9 (re-audit NF-21) — the identity of `rom`, without building a console.
+///
+/// It is what [`NesController::rom_identity`] reports for a console built
+/// from `rom`, so a host can key a library entry without the FDS BIOS a disk
+/// would need to boot. Same preparation as a load: a
+/// buffer over the size limit is refused and a `.zip` is unpacked first (the
+/// game database's load-time correction rewrites only the header, which the
+/// identity leaves out).
+///
+/// # Errors
+/// [`MobileError::RomLoad`] for a buffer over the 16 MiB limit.
+#[uniffi::export]
+pub fn rom_identity_of_file(rom: Vec<u8>) -> Result<String, MobileError> {
+    check_rom_size(&rom)?;
+    let rom = decompress_rom(rom);
+    Ok(hex_lower(&Nes::rom_identity_of(&rom)))
+}
+
+/// Lowercase hex of a digest (the hosts' key spelling, as their own
+/// `sha256Hex` helpers write it).
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// The core's built-in 2C02 composite palette: 512 packed `0xAARRGGBB` values.
@@ -5039,5 +5087,57 @@ mod tests {
                 .is_none();
         drop(g);
         assert!(cleared, "clear_palette reaches both consoles");
+    }
+
+    /// v2.9.9 (re-audit NF-21) — the identity the hosts key their stores by is
+    /// the core's: the bytes after the header, so a header-only difference and
+    /// a zip container do not change it, and the free function agrees with a
+    /// built console without needing one.
+    #[test]
+    fn rom_identity_is_the_cores_and_ignores_the_header_and_the_zip() {
+        use std::io::Write as _;
+        let rom = tiny_nrom();
+        let ctrl = NesController::new(rom.clone(), DEFAULT_SAMPLE_RATE).expect("load");
+        let id = ctrl.rom_identity();
+        let built = Nes::from_rom(&rom).expect("parse");
+        assert_eq!(id, hex_lower(built.rom_sha256()));
+        assert_ne!(
+            id,
+            hex_lower(built.image_sha256()),
+            "the identity is not the whole file's hash"
+        );
+        assert_eq!(rom_identity_of_file(rom.clone()).expect("in range"), id);
+
+        // A header-only difference (unused iNES 1.0 padding byte).
+        let mut reheaded = rom.clone();
+        reheaded[12] = 0x01;
+        assert_eq!(rom_identity_of_file(reheaded).expect("in range"), id);
+
+        // The same image in a `.zip`.
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("game.nes", opts).expect("entry");
+        zip.write_all(&rom).expect("write");
+        let zipped = zip.finish().expect("finish").into_inner();
+        assert_eq!(rom_identity_of_file(zipped.clone()).expect("in range"), id);
+        let from_zip = NesController::new(zipped, DEFAULT_SAMPLE_RATE).expect("zip load");
+        assert_eq!(from_zip.rom_identity(), id);
+
+        // An FDS disk is keyed by the whole image, as the core does, and
+        // without the BIOS a console would need.
+        let disk = synthetic_fds_disk(1);
+        let fds = NesController::new_with_fds_bios(
+            disk.clone(),
+            Some(synthetic_fds_bios()),
+            DEFAULT_SAMPLE_RATE,
+        )
+        .expect("disk load");
+        assert_eq!(
+            rom_identity_of_file(disk).expect("in range"),
+            fds.rom_identity()
+        );
+        // Over the limit: refused, as a load is.
+        assert!(rom_identity_of_file(vec![0; MAX_ROM_BYTES + 1]).is_err());
     }
 }

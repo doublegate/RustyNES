@@ -116,6 +116,28 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
   during a movie (`np_*` return `Netplay`). Existing error variants, so the
   generated bindings are unchanged; the hosts should grey the controls to match.
   The desktop's rule (`docs/frontend.md`, "Session lockout"). Shared with iOS.
+- **Per-game stores are keyed by the core's ROM identity (v2.9.9, NF-21).**
+  `NesController.romIdentity()` returns `Nes::rom_sha256` as lowercase hex: the
+  bytes after the 16-byte iNES header, of the UNPACKED image (the whole image for
+  FDS, NSF and UNIF), the key the desktop gives slots, `.sav` and cheats.
+  `romIdentityOfFile(bytes)` computes the same without building a console (a
+  library import needs no FDS BIOS). Until v2.9.9 the app keyed everything by
+  `sha256Hex` of the file as read, header and `.zip` container included, so two
+  dumps differing only in their header did not share saves and a re-zipped ROM
+  lost them. `prepareRom` and the folder import now run
+  `RomKeyMigration.migrate(filesDir, legacy, identity)` (`Persistence.kt`) before
+  touching any store. It moves, once, `battery/<k>.sav`, every file in
+  `states/<k>/` (auto-resume, slots, thumbnails), `ra-progress/<k>.rap`,
+  `boxart/<k>.png`, the `game_config.json` entry and the `library.json` entry. A
+  store moves only into an EMPTY new key; a file is written atomically under the
+  new key, read back and compared before the old copy is deleted; a key already
+  taken is never overwritten (the old copy then stays as an orphan). Equal keys
+  (an FDS disk, an NSF or a UNIF board opened unzipped) do nothing.
+  `RomKeyMigrationTest` pins the rules on the JVM. **Not migrated:** Play Games
+  cloud snapshots (`rns.<k>.<slot>`, remote); the next push writes the slot
+  under the new key. The RA progress sidecar is now read from the same key it is
+  written to (`emulator.romSha`), where it used to read the whole-file hash.
+  Device rows: M1-M4 of `docs/mobile-v2.9.3-run-sheet.md`.
 - Save-states use the **platform-independent `.rns` format**, so a state saved on
   desktop loads on Android and a `.rnm` TAS replays bit-identically — desktop⇄
   Android cross-play stays valid.

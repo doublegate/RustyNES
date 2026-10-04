@@ -92,9 +92,13 @@ final class ROMLibrary: ObservableObject {
             throw AppError.fileAccessDenied
         }
         defer { url.stopAccessingSecurityScopedResource() }
-        let sha = try await Task.detached(priority: .userInitiated) {
+        // v2.9.9 (re-audit NF-21): keyed by the core's identity (`identityHex`), no
+        // longer the whole file's hash, which is kept as `legacy` only to find an
+        // entry imported before v2.9.9.
+        let (sha, legacy) = try await Task.detached(priority: .userInitiated) {
             let data = try Data(contentsOf: url)
-            let sha = RomIdentity.sha256Hex(data)
+            let sha = RomIdentity.identityHex(data)
+            let legacy = RomIdentity.sha256Hex(data)
             let dest = romsDir.appendingPathComponent("\(sha).nes")
 
             // Copy into the sandbox (idempotent: a re-import of the same ROM just
@@ -102,11 +106,22 @@ final class ROMLibrary: ObservableObject {
             if !FileManager.default.fileExists(atPath: dest.path) {
                 try data.write(to: dest, options: .atomic)
             }
-            return sha
+            return (sha, legacy)
         }.value
 
         let displayName = url.deletingPathExtension().lastPathComponent
         if let idx = entries.firstIndex(where: { $0.sha == sha }) {
+            entries[idx].name = displayName
+            save()
+            return entries[idx]
+        }
+        // An entry imported before v2.9.9 under the whole-file key: return it, and
+        // `AppModel.openGame` moves it and its saves to the identity. Adding a
+        // second entry here would leave its saves behind under the old key. The
+        // copy just written under the identity is dropped; the old entry's file
+        // is renamed to it at open.
+        if legacy != sha, let idx = entries.firstIndex(where: { $0.sha == legacy }) {
+            try? fileManager.removeItem(at: romURL(for: sha))
             entries[idx].name = displayName
             save()
             return entries[idx]
@@ -145,6 +160,38 @@ final class ROMLibrary: ObservableObject {
         // Re-sort most-recent-first.
         entries.sort { $0.lastPlayed > $1.lastPlayed }
         save()
+    }
+
+    /// v2.9.9 (re-audit NF-21) — move the entry keyed `legacy` (the whole file's
+    /// hash, the key until v2.9.9) to `identity`, the core's ROM identity, with its
+    /// ROM copy. Returns the entry the game now has under `identity`: an entry
+    /// already there is returned untouched (the legacy one then stays, as do its
+    /// files), and nil means nothing moved -- the caller keeps the legacy key for
+    /// this session. The ROM file is copied, read back and compared before the
+    /// index changes, and the old file is removed only after the index is saved.
+    func rekey(from legacy: String, to identity: String) -> LibraryEntry? {
+        if let existing = entries.first(where: { $0.sha == identity }) { return existing }
+        guard legacy != identity,
+              let idx = entries.firstIndex(where: { $0.sha == legacy }) else { return nil }
+        let src = romURL(for: legacy)
+        let dst = romURL(for: identity)
+        if fileManager.fileExists(atPath: dst.path) {
+            // An orphan under the identity (no entry names it): replace it.
+            try? fileManager.removeItem(at: dst)
+        }
+        guard RomKeyMigration.copyVerified(src, dst) else { return nil }
+        let old = entries[idx]
+        entries[idx] = LibraryEntry(
+            sha: identity,
+            name: old.name,
+            mapper: old.mapper,
+            region: old.region,
+            lastPlayed: old.lastPlayed,
+            favorite: old.favorite
+        )
+        save()
+        try? fileManager.removeItem(at: src)
+        return entries[idx]
     }
 
     func toggleFavorite(_ sha: String) {
