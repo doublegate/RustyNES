@@ -264,7 +264,7 @@ pub trait Mapper: Send {
     /// The CPU wrote `value` to the PPU register window (`$2000-$3FFF`), at
     /// the undecoded address `addr`.
     ///
-    /// Only MMC5 (mapper 5) uses it: the chip "listen[s] to the same address
+    /// Only MMC5 (mapper 5) uses it: the chip is "known to listen to the same address
     /// as the PPU to find out when to enable the 8x16 sprite mode", decoding
     /// `$2000` and `$2001` fully, so a write to a mirror such as `$2008` is
     /// not seen (`nesdev_wiki/output/MMC5.md`). The address is passed

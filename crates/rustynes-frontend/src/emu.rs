@@ -900,7 +900,7 @@ impl EmuCore {
     /// convention four call sites have to remember.
     ///
     /// v2.9.9 (NF-12): installing a game ends any movie session first (see
-    /// [`Self::end_movie_session`]). Call this only to install a game, never
+    /// `end_movie_session`). Call this only to install a game, never
     /// to put back a console taken out for a borrow split -- that would end a
     /// movie the player is still running.
     pub fn set_nes(&mut self, nes: Nes) {
