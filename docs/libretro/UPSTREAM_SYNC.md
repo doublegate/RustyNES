@@ -155,6 +155,26 @@ At this point, you can safely navigate to your repository settings on GitHub and
 
 ---
 
+## Sync for v3.0.0 (prepared 2026-10-04, not submitted)
+
+Both forks were synced to upstream `master` (`libretro-super` `a7054054af`,
+`docs` `36e9222824`) and carry a branch `rustynes-v3.0.0-sync`. No pull request
+is open; v3.0.0 submits them (ADR 0043).
+
+| repo | branch commit | change |
+| --- | --- | --- |
+| `doublegate/libretro-super` | `990e96f` | `dist/info/rustynes_libretro.info` copied byte-for-byte from this repository: `supported_extensions` gains `unf\|unif`, `core_options = "true"`, the description (191 families, the one-clock scheduler), `display_version` |
+| `doublegate/docs` | `a918cca` | `docs/library/rustynes.md`: `.unf` / `.unif`, Core Options ✔, the Background no longer says "lockstep", "User 1 - 4" input descriptors |
+
+Measured fresh against upstream on 2026-10-04: the `.info` differed in exactly
+those four fields; the licence is already `GPLv3+` upstream and the docs page
+already says GPL-3.0-or-later.
+
+**At the v3.0.0 cut, before opening the PRs:** re-sync both forks, copy the
+local `.info` again (its `display_version` will have moved), and re-check the
+hand-audited fields of the table above (`savestate`, `cheats`, firmware, the
+mapper count) against the crate.
+
 ## Sync of 2026-08-20 (done) — measured against upstream `master`
 
 > **Done.** This sync merged upstream as libretro-super #2074 (2026-08-28, `display_version` v2.3.9) and docs #1180 (2026-08-22, the license); #2069 (2026-08-16) was the license correction before it. It is kept as the worked example of the procedure. The next sync is prepared at v2.9.9 and submitted at v3.0.0 (ADR 0043); its diff is measured fresh then, not read from here.
