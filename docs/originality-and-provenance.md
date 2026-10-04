@@ -65,10 +65,14 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-core/src/bus.rs` | TriCNES | the `Fetch` address-bus-window block (`oam_dma_read_reg_active`, a direct port); the DMA flags the unified DMA engine models (`dmc_halt`, `uni_oam_*`) | MIT |
 | `crates/rustynes-ppu/src/raw_signal.rs` | Bisqwit; Mesen2 | The raw composite-signal model, which `docs/ppu-2c02.md` has called "the canonical Bisqwit `nes_ntsc` / Mesen2 'raw palette' generator" since v2.1.9 (recorded v2.9.8 at the maintainer's direction; found while the v2.9.8 emphasis model was written, which does not use it) | Bisqwit (see §6); GPL-3.0-or-later (Mesen2) |
 | `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares BSD-2/Apache-2.0 |
+| `crates/rustynes-apu/src/apu.rs` | TriCNES; Mesen2 | the DMC-DMA state model (`Emulator.cs` fields, cited by name and line in the field docs); `_needHalt` / `_needDummyRead` (`NesCpu`) (recorded v2.9.9, NC-17) | MIT / GPL-3.0-or-later |
+| `crates/rustynes-apu/src/frame_counter.rs` | Mesen2 | `ApuFrameCounter::GetIrqFlag` lazy `$4015` clear; `stepCyclesPal` (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
 | `crates/rustynes-apu/src/opll.rs` | emu2413 (upstream MIT; Mesen2 vendors it) | `emu2413.{h,cpp}` | MIT |
 | `crates/rustynes-frontend/src/ntsc_bisqwit.rs` | Bisqwit; Mesen2 | Bisqwit `nes_ntsc`-style composite model as implemented by Mesen2's `BisqwitNtscFilter`; **numeric tables ported verbatim** | GPL-3.0-or-later (Mesen2) |
 | `crates/rustynes-gfx-shaders/src/crt_stack.rs`, `src/lib.rs` | CRT-Royale, crt-guest-advanced, Sony Megatron | single-pass WGSL reimplementations of those shaders (see §6) | GPL-2.0-or-later / permissive |
+| `crates/rustynes-core/src/vs_dualsystem.rs` | Mesen2 | `NesConsole::RunFrame` / `RunVsSubConsole`, `VsControlManager` (reset seed, coin routing), `UpdateMainSubBit` (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/m019_namco163.rs` | Mesen2 | `NesSoundMixer::GetOutputVolume`: the N163 `* 20` output weight (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m016_bandai_fcg.rs` | Mesen2 | `Eeprom24C01` / `Eeprom24C02`, `Core/NES/Mappers/Bandai/` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m035_jy_asic.rs` | Mesen2 | `JyCompany` register decode, `InvertPrgBits` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m069_sunsoft_fme7.rs` | Mesen2 / Nestopia | Sunsoft 5B audio + FME-7 | GPL-3.0-or-later / GPL-2.0-or-later |
@@ -176,6 +180,15 @@ expression of the documented hardware (merger doctrine). No arbitrary,
 non-hardware-dictated choice coincides (identifiers, decomposition, and idiom are
 independent Rust), which is the signature distinguishing documented-fact
 convergence from copying.
+
+**UNROM 512 (mapper 30) mirroring, consulted (v2.9.9, NC-17).**
+`crates/rustynes-mappers/src/homebrew_boards.rs` says its byte-6 decode was
+"verified against Mesen2 `UnRom512::InitMapper`" and quotes a one-line
+expression (`value & 0x80 ? Vertical : Horizontal`). That records Mesen2's source
+as consulted. The behaviour is the NESdev "UNROM 512" page's register layout,
+and the maintainer classified it (2026-10-04) with the GeraNES case above:
+consulted for documented behaviour, not recorded as a §1 derivation. The
+comments are kept as written.
 
 **Status, not a verdict.** The paragraphs above record what was examined and what
 was found; they are deliberately not a clearance. This project's provenance rules

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the lazy `$4015` frame-IRQ clear (`irq_flag_clear_cycle`, the read that schedules a clear one or two cycles later) is derived from Mesen2 (GPL-3.0-or-later), `ApuFrameCounter::GetIrqFlag` / `_irqFlagClearClock`, and the PAL step table is Mesen2's `stepCyclesPal` (also published on the NESdev wiki). See docs/originality-and-provenance.md (Section 1) and NOTICE. Classified v2.9.9 (core re-audit NC-17, maintainer's decision 2026-10-04): the in-source citations below record the derivation and are kept as written.
+
 //! APU frame counter (sequencer).
 //!
 //! Per `docs/apu-2a03.md` §Frame counter and NESdev wiki "APU Frame Counter".

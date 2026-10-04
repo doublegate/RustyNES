@@ -181,6 +181,8 @@ pub trait Bus {
 
     /// W3-Stage-1 (`mc-r1-dma-unified`): ONE cycle of the unified DMC/OAM DMA
     /// engine — a direct port of the `TriCNES` `_6502` per-cycle DMA dispatch
+    /// (recorded as a derivation in the `// Provenance:` header of
+    /// `rustynes-core/src/bus.rs`, where the engine lives; v2.9.9, NC-17)
     /// table (the SINGLE driver standalone DMC, standalone OAM, and the
     /// overlap all ride), at FLOOR parity for this stage. `halted_addr` is
     /// the CPU read the DMA is preempting (the parked 6502 address bus).

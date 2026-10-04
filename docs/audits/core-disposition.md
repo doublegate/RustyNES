@@ -113,11 +113,11 @@ carry the evidence.
 | NC-14 | Too-long PPU/CPU/mapper states were reported as "truncated" | FIXED | PPU `TrailingBytes`; CPU and mapper messages say "wrong length" | v2.9.9 | `ba626e37` |
 | NC-15 | `run_frame`'s `# Panics` section was false | FIXED (docs) | A JAM ends the call early; documented | v2.9.9 | `ba626e37` |
 | NC-16 | `$4017` set the inhibit at once but cleared it at the timer reset | FIXED | Both directions on the write. Red: `write_4017_inhibit_clear_unmasks_on_the_write_cycle` (raised exactly when the lead is shorter than the reset delay) | v2.9.9 | `ba626e37` |
-| NC-17 | Seven core files cite reference-emulator source by file, function or line without a `// Provenance:` header | MAINTAINER | Classification proposed for the maintainer's review (below); nothing deleted or reworded | — | — |
+| NC-17 | Seven core files cite reference-emulator source by file, function or line without a `// Provenance:` header | CLASSIFIED | The maintainer applied the proposal below (2026-10-04): headers, §1 rows and `NOTICE` for `apu.rs`, `frame_counter.rs`, `vs_dualsystem.rs`, `m019_namco163.rs`; cross-references in `cpu/bus.rs` and `apu/snapshot.rs`; UNROM 512 recorded as consulted (§3). Nothing deleted or reworded; `provenance_record_audit` passes | v2.9.9 | this commit |
 | NL-12 | (libretro report, core scope) A restore restarted the BLEP resampler cold: audio and later serialized state differed from a straight run | FIXED | APU snapshot v5 carries the synthesis state (135 bytes, fixed size). Red: `a_restore_resumes_the_exact_audio_stream` (APU) and libretro `a_mid_run_round_trip_serializes_like_a_straight_run` | v2.9.9 | `ba626e37` |
 | NL-15 | (libretro report, core scope) Flash boards allocate their whole flash on every restore | OPEN (perf) | Unmeasured; measured with the v2.9.9 performance work under the `ab_check.sh` rule before any change | — | — |
 
-### NC-17: proposed classification (awaiting the maintainer)
+### NC-17: classification (proposed, then applied by the maintainer 2026-10-04)
 
 Read from our own files only; no reference source was opened. "Derivation"
 means the comment states or implies the source was read and its logic or

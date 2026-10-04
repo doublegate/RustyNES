@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Namco 163 output level (the `* 20` weight against the 2A03 pulse DAC behind `NAMCO163_MIX_SCALE`) is derived from Mesen2 (GPL-3.0-or-later), `NesSoundMixer::GetOutputVolume`. See docs/originality-and-provenance.md (Section 1) and NOTICE. Classified v2.9.9 (core re-audit NC-17, maintainer's decision 2026-10-04): the in-source citations below record the derivation and are kept as written.
+
 //! Namco 163 (mappers 19 and 210) -- banking, the CPU-cycle IRQ counter, and
 //! the on-cart Namco 163 wavetable synthesizer.
 //!

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Vs. DualSystem orchestration (main/sub stepping per `NesConsole::RunFrame` / `RunVsSubConsole`, the reset-time seed per `VsControlManager::Reset`, the main/sub bit per `UpdateMainSubBit`, and the coin routing per `VsControlManager`) is derived from Mesen2 (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1) and NOTICE. Classified v2.9.9 (core re-audit NC-17, maintainer's decision 2026-10-04): the in-source citations below record the derivation and are kept as written.
+
 //! Vs. `DualSystem` — two complete NES systems in one arcade cabinet
 //! (v2.0.0 beta.5, Workstream C of the "Timebase" plan).
 //!

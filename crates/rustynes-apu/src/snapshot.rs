@@ -1,5 +1,9 @@
 //! Save-state encoding / decoding for the [`Apu`].
 //!
+//! Some fields below serialize state of models derived from Mesen2 and
+//! TriCNES; those derivations are recorded in the `// Provenance:` headers of
+//! `apu.rs` and `frame_counter.rs` (v2.9.9, NC-17).
+//!
 //! Hand-rolled little-endian binary so the crate stays free of `serde` /
 //! `bincode`. The container that wraps this blob into a tagged section
 //! lives in `rustynes_core::save_state`.
