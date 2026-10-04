@@ -1816,6 +1816,38 @@ fn a_rollback_across_the_vs_coin_follows_the_replayed_input() {
     );
 }
 
+/// #583 review (CodeRabbit). A restore to the very frame the press was made
+/// on is still a restore: the frontend saved before frame N, the player
+/// pressed L during frame N, and the replay of frame N has no press (a
+/// netplay peer's corrected input, a rewind). The rollback test above only
+/// covered restores to frames BEFORE the press, and a record whose start was
+/// the restored frame survived, so the replay latched a coin nobody pressed.
+#[test]
+fn a_restore_to_the_press_frame_drops_a_coin_the_replay_does_not_press() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(false), true));
+    let mut at_press = vec![0_u8; serialize_size()];
+    let play = |from: usize, to: usize, press: Option<usize>| {
+        let mut seen = String::new();
+        for frame in from..to {
+            PADS[0].store(if press == Some(frame) { L } else { 0 }, SeqCst);
+            run_frame();
+            seen.push(if wram_head().0 & 0x20 == 0 { '.' } else { '1' });
+        }
+        seen
+    };
+    let lead_in = play(0, 5, None);
+    assert!(serialize(&mut at_press));
+    let first = play(5, 6, Some(5));
+    assert!(unserialize(&at_press));
+    let replay = play(5, 10, None);
+    PADS[0].store(0, SeqCst);
+    unload();
+    assert_eq!(lead_in, ".....");
+    assert_eq!(first, "1", "the first timeline's coin goes in on frame 5");
+    assert_eq!(replay, ".....", "the replay never presses L, so no coin");
+}
+
 /// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).
 fn oracle_frame(mut nes: Nes, frames: u32) -> Vec<u8> {
     for _ in 0..frames {

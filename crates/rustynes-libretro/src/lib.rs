@@ -742,7 +742,12 @@ struct VsCoin {
 /// * a frame number BEFORE the record's start means the frontend restored a
 ///   state from before the press: the record is dropped and the edge
 ///   detector forgets which buttons were down, so the replayed press is seen
-///   again on the frame it happens.
+///   again on the frame it happens;
+/// * so does a frame number EQUAL to the start when it does not advance past
+///   the last frame stepped (a restore to the start of the press's own
+///   frame): the replay of that frame decides afresh whether L is pressed.
+///   Telling that restore from the press's own frame needs the last frame
+///   stepped, since both see `frame == start` (#583 review).
 #[derive(Clone, Copy, Debug, Default)]
 struct VsPanel {
     /// Whether L was down on each port at the previous `retro_run` (edge
@@ -751,6 +756,9 @@ struct VsPanel {
     /// The latest coin press, if any since the game loaded (or since a restore
     /// to a frame before it).
     coin: Option<VsCoin>,
+    /// The console frame the previous `step` ran, or `None` before the first.
+    /// A frame number not past it means the frontend restored a state.
+    last_frame: Option<u64>,
 }
 
 impl VsPanel {
@@ -759,6 +767,7 @@ impl VsPanel {
         Self {
             coin_down: [false; 4],
             coin: None,
+            last_frame: None,
         }
     }
 
@@ -783,9 +792,15 @@ impl VsPanel {
     /// `frame` is the console's frame number ([`Nes::frame`], the main
     /// console's for a cabinet) BEFORE this frame runs.
     fn step(&mut self, pads: [JoypadState; 4], ports: usize, frame: u64) -> VsPanelFrame {
-        if self.coin.is_some_and(|coin| frame < coin.start) {
-            // Restored to before the press: forget it, and the buttons'
-            // previous state with it, so the replay sees the press again.
+        let restored = self.last_frame.is_some_and(|last| frame <= last);
+        self.last_frame = Some(frame);
+        if self
+            .coin
+            .is_some_and(|coin| frame < coin.start || (restored && frame == coin.start))
+        {
+            // Restored to before the press, or to the start of its frame:
+            // forget it, and the buttons' previous state with it, so the
+            // replay sees the press again only if it presses again.
             self.coin = None;
             self.coin_down = [false; 4];
         }
