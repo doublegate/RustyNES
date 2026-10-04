@@ -76,9 +76,18 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   carries the resampler, so a load resumes the exact stream, and a state
   serialized after a round trip equals one from a straight run (libretro
   re-audit NL-12; RetroArch netplay compares those bytes).
+- **MMC5 CHR images that are not a power of two reach every bank.** A 24 KiB
+  image (three 8 KiB banks) left bank 1 unreachable, because a register value
+  wrapped by a mask; it now wraps by the bank count, in the register sets and
+  in the ExGrafix and split-screen overrides. Every power-of-two image maps as
+  before (#583 review).
 - **A corrupt APU value no longer poisons the session.** A huge but finite
   filter value in a state was accepted, turned the audio to NaN and made every
-  later save state unloadable. Restore now bounds it (core re-audit NC-09).
+  later save state unloadable. Restore now bounds it (core re-audit NC-09), by
+  a rule over each filter stage's pair of values that the filter's own update
+  cannot step out of, so every state it accepts keeps its next save loadable
+  (the first form capped each value separately, which a state at the caps
+  could step past on the next sample; #583 review).
 - **Movies and netplay can tell more headers apart.** Two headers that split
   one ROM body differently between PRG and CHR, or that differ only in the
   four-screen bits mappers 30 and 218 wire from, shared an identity and a
@@ -94,7 +103,9 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   overflowing at the next write (NC-12). A too-long PPU, CPU or mapper state
   is no longer reported as "truncated" (NC-14).
 - **libretro:** a refused `retro_unserialize` logs why (NL-11); the Vs. coin
-  pulse lasts three emulated frames under run-ahead and rollback (NL-13).
+  pulse lasts three emulated frames under run-ahead and rollback (NL-13), and
+  a restore to the frame a coin was pressed on drops it unless the replay
+  presses again (#583 review).
 - **Desktop: a movie or netplay session can no longer be broken from a
   hotkey.** Reset, Power Cycle, disk swaps and state loads are refused on every
   route (menu, hotkey, Save States manager, browser grid, scripts) while a
@@ -111,12 +122,17 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   battery saves, auto-resume, the library and per-game settings by the whole
   file; they now use the header-excluded identity, and existing saves are
   moved to it once, each copy verified before the original is removed (NF-21).
-  Cloud copies are not moved: the next upload re-creates them. The mobile
-  bridge also refuses timeline changes during a movie or netplay (NF-18).
+  Cloud copies are not moved: the next upload re-creates them. A move that
+  fails part way is finished on a later open instead of leaving a store under
+  the old key, the old ROM is kept until the library index has saved, and a
+  file is counted as moved only once its original is gone (#583 review). The
+  mobile bridge also refuses timeline changes during a movie or netplay
+  (NF-18), checking under the same lock that starts the session.
 - **Smaller fixes:** history-viewer clips never span a load, rewind or reset
   (NF-13); TAStudio re-emulates under its frame-0 options (NF-14); a netplay
   spectator runs only a stream whose `Sync` matches it (NF-15); the browser
-  reports a state save or load's real outcome (NF-19); live settings reach
+  reports a state save or load's real outcome, a save only once its
+  IndexedDB transaction has committed (NF-19); live settings reach
   both consoles of a Vs. cabinet (NF-22); the command-line load applies the
   per-game overlay through the same guard as the menu (NF-23).
 
