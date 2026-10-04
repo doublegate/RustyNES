@@ -1942,6 +1942,17 @@ impl NesController {
         // pre-v2.0.0 "Timebase" warning (`HostWarning::PreTimebaseMovie`) that
         // used to be queued here can no longer arise.
         let mut g = self.lock();
+        // The checks above ran under guards since released, and a netplay
+        // session (or a cabinet load) can start on another thread in between;
+        // repeat them under the guard that installs the movie, so the refusal
+        // and the install are one step (#583 review, CodeRabbit). The early
+        // checks stay: they refuse before the movie is parsed.
+        refuse_on_cabinet(&g, "movie playback")?;
+        if netplay_owns_timeline(&g) {
+            return Err(MobileError::Movie {
+                reason: "leave netplay before playing a movie".into(),
+            });
+        }
         // v2.9.0 — held only if the seek succeeds: a refused seek (another
         // ROM, a bad start state) leaves the console, and saving, unchanged.
         let before = g.battery_held.is_none().then(|| Self::held_battery(&g));
@@ -2418,6 +2429,11 @@ impl NesController {
                 reason: format!("host:port '{address}' resolved to no addresses"),
             })?;
         let mut g = self.lock();
+        // Repeated under the guard that installs the session: the checks
+        // above were made under guards released before the DNS lookup, and a
+        // movie can start in between (#583 review, CodeRabbit).
+        refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         let conn = NetplayConnection::connect(local, remote, rom_hash).map_err(|e| {
