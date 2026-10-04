@@ -151,6 +151,14 @@ pub struct TraceRec {
     pub cycle: u64,
 }
 
+/// The largest extra-scanline overclock the core accepts.
+///
+/// [`Nes::set_extra_scanlines`] clamps to it, and a movie's options record
+/// above it is refused. 80 lines is the range the desktop's Settings field
+/// has offered since v2.9.7; the value moved here at v2.9.9 (NC-11) so every
+/// host and every file format meets the same bound.
+pub const MAX_EXTRA_SCANLINES: u16 = 80;
+
 /// Top-level NES emulator handle.
 ///
 /// Owns the CPU, PPU, mapper, RAM, and controller stub. Construct via
@@ -700,11 +708,11 @@ impl Nes {
 
     /// Run until the PPU finishes a frame. Returns the framebuffer slice.
     ///
-    /// # Panics
-    ///
-    /// Panics if the CPU JAMs without producing a frame. Real software
-    /// shouldn't JAM; if it does, the caller's run-loop should catch it
-    /// before the next frame.
+    /// A CPU JAM ends the call early, as the 150,000-cycle budget does: the
+    /// returned framebuffer is whatever the PPU had drawn, and later calls
+    /// return at once until a reset. It does not panic (until v2.9.9 this
+    /// section said it did; NC-15). Check [`Self::cpu`]'s `is_jammed` to tell
+    /// a JAM from a completed frame.
     pub fn run_frame(&mut self) -> &[u8] {
         // Hard cap: at NTSC the frame budget is 29,780.5 CPU cycles. Run
         // up to 5x that before bailing — gives breathing room for late
@@ -2446,6 +2454,13 @@ impl Nes {
             // the original error is still the one worth reporting. The core
             // has no logger (`no_std`), so the invariant is asserted in debug
             // and test builds rather than silently assumed.
+            //
+            // The invariant needs every value a running machine can hold to
+            // pass the validators. v2.9.9's re-audit (NC-09) found one that
+            // did not: a restored APU filter value accepted as merely finite
+            // overflowed to NaN, after which this backup's own APU section was
+            // refused part-way through the rollback. The validator now bounds
+            // that state, so the backup is again a state the core produced.
             let rolled_back = self.apply_snapshot(&backup);
             debug_assert!(
                 rolled_back.is_ok(),
@@ -2939,7 +2954,17 @@ impl Nes {
     /// commercial oracle, and nestest (which never set it) are unaffected.
     /// **Off by default**; a frontend config knob, not part of the save-state.
     /// Distinct from the CPU-multiplier overclock (a v2.0 timebase item).
+    ///
+    /// Clamped to [`MAX_EXTRA_SCANLINES`] (v2.9.9, NC-11): the cap used to
+    /// live only in the desktop frontend, so a movie's options record could
+    /// set 65,535 lines and leave every `run_frame` ending on its cycle
+    /// budget with no frame.
     pub const fn set_extra_scanlines(&mut self, lines: u16) {
+        let lines = if lines > MAX_EXTRA_SCANLINES {
+            MAX_EXTRA_SCANLINES
+        } else {
+            lines
+        };
         self.bus.set_extra_scanlines(lines);
     }
 

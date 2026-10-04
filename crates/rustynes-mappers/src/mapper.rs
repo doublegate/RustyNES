@@ -129,8 +129,10 @@ pub struct MapperFrameEvents {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum MapperError {
-    /// Save-state blob is shorter than expected for this mapper.
-    #[error("mapper save state truncated: expected {expected} bytes, got {got}")]
+    /// Save-state blob is not the length this mapper's state has: shorter
+    /// or longer. (Until v2.9.9 the message said "truncated" for a long blob
+    /// too; NC-14.)
+    #[error("mapper save state has the wrong length: expected {expected} bytes, got {got}")]
     Truncated {
         /// Expected byte count.
         expected: usize,

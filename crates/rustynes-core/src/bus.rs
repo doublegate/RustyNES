@@ -1043,6 +1043,7 @@ impl SystemBus {
             has_battery: false,
             has_trainer: false,
             is_nes2: false,
+            nametable_wiring_bits: 0,
         };
         Ok(Self::from_cart_and_mapper(cart, Box::new(fds), sample_rate))
     }
@@ -1078,6 +1079,7 @@ impl SystemBus {
             has_battery: false,
             has_trainer: false,
             is_nes2: false,
+            nametable_wiring_bits: 0,
         };
         Ok(Self::from_cart_and_mapper(
             cart,

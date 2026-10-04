@@ -358,6 +358,12 @@ impl HardwareOptions {
             _ => return Err("unknown power-up palette byte"),
         };
         let extra_scanlines = r.u16().map_err(|_| "truncated")?;
+        // NC-11 (v2.9.9): the core clamps the overclock, so a larger value
+        // could only come from an edited file, and would not replay as
+        // written.
+        if extra_scanlines > crate::nes::MAX_EXTRA_SCANLINES {
+            return Err("extra-scanline overclock is above the core's maximum");
+        }
         let four_score = flag(r, "Four Score flag is not 0 or 1")?;
         let zapper_temporal_light = flag(r, "Zapper light flag is not 0 or 1")?;
         let vs_dip = byte(r)?;
@@ -370,14 +376,20 @@ impl HardwareOptions {
             b => Some(mirroring_from_byte(b - 1).ok_or("unknown mirroring byte")?),
         };
         let count = usize::from(byte(r)?);
-        let mut genie_codes = Vec::with_capacity(count.min(r.remaining()));
+        // Canonical form, as `capture` records it and the console holds it:
+        // one code per address, the later one winning, in address order.
+        // A list in any other shape never compared equal to the live one,
+        // so `apply_live` cleared and re-added every code on every frame
+        // (NC-13, v2.9.9).
+        let mut by_addr = alloc::collections::BTreeMap::new();
         for _ in 0..count {
             let len = usize::from(byte(r)?);
             let raw = r.take(len).map_err(|_| "truncated")?;
             let text = core::str::from_utf8(raw).map_err(|_| "Game Genie code is not text")?;
             let code = GenieCode::new(text).map_err(|_| "Game Genie code does not decode")?;
-            genie_codes.push(code.code().to_string());
+            by_addr.insert(code.addr(), code.code().to_string());
         }
+        let genie_codes: Vec<String> = by_addr.into_values().collect();
         Ok(Self {
             console_model,
             ppu_revision,
@@ -471,12 +483,23 @@ pub struct BoardDescription {
     pub has_battery: bool,
     /// 512-byte trainer present.
     pub has_trainer: bool,
+    /// PRG-ROM bytes. The ROM identity hashes the body after the header, so
+    /// the same body split differently between PRG and CHR (2 x 16 KiB +
+    /// 4 x 8 KiB against 1 x 16 KiB + 6 x 8 KiB) shared an identity and a
+    /// description until v2.9.9 (core re-audit NC-10).
+    pub prg_rom_len: u32,
+    /// CHR-ROM bytes (0 for CHR-RAM boards); see `prg_rom_len`.
+    pub chr_rom_len: u32,
+    /// The raw header nametable bits mappers 30 and 218 wire from
+    /// ([`rustynes_mappers::Cartridge::nametable_wiring_bits`]); v2.9.9.
+    pub nametable_wiring_bits: u8,
 }
 
 impl BoardDescription {
     /// The board `nes` was built from.
     #[must_use]
-    pub const fn capture(nes: &Nes) -> Self {
+    #[allow(clippy::cast_possible_truncation)] // ROM sizes are far below 4 GiB
+    pub fn capture(nes: &Nes) -> Self {
         let c = nes.cartridge();
         Self {
             mapper_id: c.mapper_id,
@@ -488,6 +511,9 @@ impl BoardDescription {
             chr_ram_size: c.chr_ram_size,
             has_battery: c.has_battery,
             has_trainer: c.has_trainer,
+            prg_rom_len: c.prg_rom.len() as u32,
+            chr_rom_len: c.chr_rom.len() as u32,
+            nametable_wiring_bits: c.nametable_wiring_bits,
         }
     }
 
@@ -508,6 +534,12 @@ impl BoardDescription {
             (self.chr_ram_size != other.chr_ram_size, "CHR-RAM size"),
             (self.has_battery != other.has_battery, "battery"),
             (self.has_trainer != other.has_trainer, "trainer"),
+            (self.prg_rom_len != other.prg_rom_len, "PRG-ROM size"),
+            (self.chr_rom_len != other.chr_rom_len, "CHR-ROM size"),
+            (
+                self.nametable_wiring_bits != other.nametable_wiring_bits,
+                "header nametable wiring",
+            ),
         ]
         .into_iter()
         .find_map(|(differs, name)| differs.then_some(name))
@@ -515,7 +547,8 @@ impl BoardDescription {
 
     /// Append the canonical encoding to `w` (`u16` mapper, submapper,
     /// mirroring, console type, `DualSystem`, `u32` PRG-RAM, `u32` CHR-RAM,
-    /// battery, trainer).
+    /// battery, trainer, and from v2.9.9 `u32` PRG-ROM, `u32` CHR-ROM and the
+    /// wiring byte).
     pub fn write_to(&self, w: &mut BinWriter) {
         w.u16(self.mapper_id);
         w.u8(self.submapper);
@@ -531,6 +564,9 @@ impl BoardDescription {
         w.u32(self.chr_ram_size);
         w.u8(u8::from(self.has_battery));
         w.u8(u8::from(self.has_trainer));
+        w.u32(self.prg_rom_len);
+        w.u32(self.chr_rom_len);
+        w.u8(self.nametable_wiring_bits);
     }
 
     /// Decode what [`Self::write_to`] wrote. Strict, as
@@ -555,6 +591,12 @@ impl BoardDescription {
         let chr_ram_size = r.u32().map_err(|_| "truncated")?;
         let has_battery = flag(r, "battery flag is not 0 or 1")?;
         let has_trainer = flag(r, "trainer flag is not 0 or 1")?;
+        let prg_rom_len = r.u32().map_err(|_| "truncated")?;
+        let chr_rom_len = r.u32().map_err(|_| "truncated")?;
+        let nametable_wiring_bits = byte(r)?;
+        if nametable_wiring_bits & !0x09 != 0 {
+            return Err("header nametable wiring byte has bits other than 0 and 3");
+        }
         Ok(Self {
             mapper_id,
             submapper,
@@ -565,6 +607,9 @@ impl BoardDescription {
             chr_ram_size,
             has_battery,
             has_trainer,
+            prg_rom_len,
+            chr_rom_len,
+            nametable_wiring_bits,
         })
     }
 }
@@ -691,7 +736,46 @@ mod tests {
             vs_dip: 0xA5,
             vs_ppu_type: Some(VsPpuType::Rc2C05_03),
             mirroring_override: Some(Mirroring::SingleScreenB),
-            genie_codes: alloc::vec!["SXIOPO".to_string(), "AAEAULPA".to_string()],
+            // Address order, the canonical form `read_from` produces.
+            genie_codes: alloc::vec!["AAEAULPA".to_string(), "SXIOPO".to_string()],
+        }
+    }
+
+    /// NC-13 (v2.9.9 re-audit): a list in file order, or with a duplicate,
+    /// decodes to the console's own form, so `capture` of the machine it
+    /// configures compares equal and `apply_live` stops re-adding the codes.
+    #[test]
+    fn genie_codes_decode_to_the_canonical_order_without_duplicates() {
+        let canonical = non_default();
+        for list in [
+            alloc::vec!["SXIOPO", "AAEAULPA"],
+            alloc::vec!["AAEAULPA", "SXIOPO", "SXIOPO"],
+            alloc::vec!["sxiopo", "AAEAULPA"],
+        ] {
+            let opts = HardwareOptions {
+                genie_codes: list.iter().map(|c| (*c).to_string()).collect(),
+                ..non_default()
+            };
+            let decoded = HardwareOptions::read_from(&mut BinReader::new(&opts.to_bytes()));
+            assert_eq!(decoded, Ok(canonical.clone()), "list {list:?}");
+        }
+    }
+
+    /// NC-11 (v2.9.9 re-audit): an overclock above the core's maximum is
+    /// refused rather than replayed, and the maximum itself decodes.
+    #[test]
+    fn an_overclock_above_the_maximum_is_refused() {
+        for (lines, ok) in [
+            (crate::nes::MAX_EXTRA_SCANLINES, true),
+            (crate::nes::MAX_EXTRA_SCANLINES + 1, false),
+            (u16::MAX, false),
+        ] {
+            let opts = HardwareOptions {
+                extra_scanlines: lines,
+                ..HardwareOptions::default()
+            };
+            let decoded = HardwareOptions::read_from(&mut BinReader::new(&opts.to_bytes()));
+            assert_eq!(decoded.is_ok(), ok, "extra_scanlines {lines}");
         }
     }
 
@@ -792,5 +876,58 @@ mod tests {
         assert_eq!(base, config_digest(&Nes::from_rom(&rom).unwrap()));
         nes.set_oam_decay(true);
         assert_ne!(config_digest(&nes), base);
+    }
+
+    /// NC-10 (v2.9.9 re-audit): the identity hashes the body after the
+    /// header, so headers that build different machines from one body must
+    /// differ in the board description, which movies and netplay check.
+    #[test]
+    fn headers_that_build_different_machines_differ_in_the_description() {
+        // One 64 KiB body: CNROM read as 2 x 16 KiB PRG + 4 x 8 KiB CHR, and
+        // as 1 x 16 KiB PRG + 6 x 8 KiB CHR.
+        let body: Vec<u8> = (0u32..64 * 1024).map(|i| (i % 251) as u8).collect();
+        let image = |prg16: u8, chr8: u8, flags6: u8, mapper: u8| {
+            let mut v = alloc::vec![
+                b'N',
+                b'E',
+                b'S',
+                0x1A,
+                prg16,
+                chr8,
+                flags6 | (mapper << 4),
+                mapper & 0xF0
+            ];
+            v.extend_from_slice(&[0u8; 8]);
+            v.extend_from_slice(&body);
+            v
+        };
+        let a = Nes::from_rom(&image(2, 4, 0, 3)).unwrap();
+        let b = Nes::from_rom(&image(1, 6, 0, 3)).unwrap();
+        assert_eq!(a.rom_sha256(), b.rom_sha256(), "one identity");
+        assert_eq!(
+            BoardDescription::capture(&a).first_difference(&BoardDescription::capture(&b)),
+            Some("PRG-ROM size")
+        );
+        assert_ne!(config_digest(&a), config_digest(&b));
+
+        // Mapper 218: four-screen with bit 0 set or clear wires CIRAM A10 to
+        // a different PPU line; both read as `FourScreen`.
+        let c = Nes::from_rom(&image(2, 0, 0x08, 218)).unwrap();
+        let d = Nes::from_rom(&image(2, 0, 0x09, 218)).unwrap();
+        assert_eq!(
+            BoardDescription::capture(&c).first_difference(&BoardDescription::capture(&d)),
+            Some("header nametable wiring")
+        );
+    }
+
+    #[test]
+    fn a_wiring_byte_with_other_bits_is_refused() {
+        let board = BoardDescription::capture(&Nes::from_rom(&synth_nrom()).unwrap());
+        let mut w = BinWriter::with_capacity(32);
+        board.write_to(&mut w);
+        let mut bytes = w.into_vec();
+        let last = bytes.len() - 1;
+        bytes[last] = 0x02;
+        assert!(BoardDescription::read_from(&mut BinReader::new(&bytes)).is_err());
     }
 }

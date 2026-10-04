@@ -26,6 +26,57 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+**Breaking changes so far.** v2.9.9 follows v2.9.8's rule: a format that
+cannot be read correctly is refused, with a clear error, rather than read on a
+guess. v3.0.0's notes will restate these with v2.9.8's.
+
+- **Save states from v2.9.8 are refused.** The APU section is v5 (it now
+  carries the audio resampler's state), MMC3's mapper section is v4 (its IRQ
+  model changed) and MMC5's is v6 (it records the PPU sprite size it decodes).
+- **Movies older than format 4 are refused.** The board description a movie
+  and a netplay session check gained the PRG-ROM and CHR-ROM sizes and two
+  header bits; v2.9.8's format-3 movies cannot say them.
+- **Public API:** the `mmc3-m2-phase-irq` feature is removed (the behaviour is
+  now the default); `BoardDescription::capture` is no longer `const`;
+  `Cartridge` and `BoardDescription` have new fields; MMC3's mapper and the
+  CPU snapshot report a too-long state as "wrong length".
+
+### Fixed
+
+- **MMC3 IRQ timing (T-ORACLE-001).** The emulator raised the MMC3 IRQ a
+  scanline late in blargg's `4-scanline_timing`. The cause was a condition the
+  NESdev page does not have: a `$C001` reload to 0 asserted only when the
+  write had cleared a non-zero counter. It now follows the page's rule, and the
+  IRQ output reaches the CPU one cycle after the A12 rise that set it, as the
+  MiSTer core's registered output does. Both `4-scanline_timing` ROMs move from
+  sub-test 3 to sub-test 9, `mmc3_test/5-MMC3` passes, and AccuracyCoin
+  (144/144), nestest and every other MMC3 ROM are unchanged.
+- **Audio across a save state.** Loading a state restarted the band-limited
+  resampler cold: about 17 samples went missing, the level stepped (a click),
+  and the filter state never matched a run that had not loaded. The state now
+  carries the resampler, so a load resumes the exact stream, and a state
+  serialized after a round trip equals one from a straight run (libretro
+  re-audit NL-12; RetroArch netplay compares those bytes).
+- **A corrupt APU value no longer poisons the session.** A huge but finite
+  filter value in a state was accepted, turned the audio to NaN and made every
+  later save state unloadable. Restore now bounds it (core re-audit NC-09).
+- **Movies and netplay can tell more headers apart.** Two headers that split
+  one ROM body differently between PRG and CHR, or that differ only in the
+  four-screen bits mappers 30 and 218 wire from, shared an identity and a
+  board description, so a movie replayed silently on the wrong machine
+  (NC-10).
+- **A movie cannot overclock past the core's maximum.** The 80-line cap now
+  lives in the core, and a movie asking for more is refused (NC-11). A movie's
+  Game Genie list is read in the console's order, so playback no longer
+  re-applies every code each frame (NC-13).
+- **`$4017`'s interrupt-inhibit clear takes effect on the write**, as the set
+  did from v2.9.8 (NC-16). No ROM in the suite reaches the window.
+- **MMC1 refuses a restored serial port that cannot exist** rather than
+  overflowing at the next write (NC-12). A too-long PPU, CPU or mapper state
+  is no longer reported as "truncated" (NC-14).
+- **libretro:** a refused `retro_unserialize` logs why (NL-11); the Vs. coin
+  pulse lasts three emulated frames under run-ahead and rollback (NL-13).
+
 ## [2.9.8] - 2026-10-02 - "Vanguard" (v3.0.0's breaks landed early, every staged game looked at, and the database's corrections on every platform)
 
 The ninth release of the v2.9.x line and the fifth of the line to v3.0.0. It

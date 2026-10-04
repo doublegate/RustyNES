@@ -294,6 +294,14 @@ pub struct Cartridge {
     pub has_trainer: bool,
     /// True if the file format is NES 2.0 (vs. iNES 1.0).
     pub is_nes2: bool,
+    /// The raw iNES byte-6 nametable bits, `byte6 & 0x09` (bit 3 four-screen,
+    /// bit 0 the arrangement bit), before [`Self::mirroring`] folds them.
+    /// Mappers 30 (UNROM 512) and 218 (Magic Floor) wire CIRAM from these
+    /// bits directly, so two headers that both say `FourScreen` can build
+    /// different machines; v2.9.9 carries the bits so the movie and netplay
+    /// board check can tell them apart (core re-audit NC-10). Zero for
+    /// formats without an iNES header (FDS, NSF).
+    pub nametable_wiring_bits: u8,
 }
 
 impl Cartridge {

@@ -191,6 +191,15 @@ pub enum PpuSnapshotError {
     /// Blob is too short for the version-1 schema.
     #[error("PPU snapshot truncated at offset {0}")]
     Truncated(usize),
+    /// The blob decoded completely with bytes left over (v2.9.9, NC-14:
+    /// this used to be reported as `Truncated` at the end offset).
+    #[error("PPU snapshot has {extra} unexpected trailing bytes after offset {consumed}")]
+    TrailingBytes {
+        /// Bytes the schema consumed.
+        consumed: usize,
+        /// Bytes left over.
+        extra: usize,
+    },
     /// The blob's version byte is not understood by this build.
     #[error("PPU snapshot unsupported version {0}")]
     UnsupportedVersion(u8),
@@ -621,7 +630,7 @@ impl Ppu {
     // `snapshot` writer.
     #[allow(clippy::too_many_lines)]
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
-        // A valid v1..=8 snapshot always contains these fixed-size blocks (the
+        // A valid snapshot (only the current version loads since v2.9.8) always contains these fixed-size blocks (the
         // framebuffer, read unconditionally below at every version, dominates);
         // the version-specific tails only add to this. This is a *conservative
         // lower bound* — it deliberately omits the ~40 scalar register/latch
@@ -864,7 +873,10 @@ impl Ppu {
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
         if r.pos != data.len() {
-            return Err(PpuSnapshotError::Truncated(r.pos));
+            return Err(PpuSnapshotError::TrailingBytes {
+                consumed: r.pos,
+                extra: data.len() - r.pos,
+            });
         }
         Ok(())
     }
@@ -1530,6 +1542,22 @@ mod tests {
         let slim = p.snapshot_slim();
         let mut dst = Ppu::new(PpuRegion::Ntsc);
         assert!(dst.restore(&slim[..slim.len() / 2]).is_err());
+    }
+
+    /// NC-14 (v2.9.9 re-audit): a blob with a byte appended is refused as
+    /// trailing bytes, not as a truncation at its own end offset.
+    #[test]
+    fn a_long_blob_is_reported_as_trailing_bytes() {
+        let p = Ppu::new(PpuRegion::Ntsc);
+        let mut long = p.snapshot();
+        let len = long.len();
+        long.push(0);
+        let mut dst = Ppu::new(PpuRegion::Ntsc);
+        let err = dst.restore(&long).unwrap_err();
+        assert!(
+            matches!(err, PpuSnapshotError::TrailingBytes { consumed, extra: 1 } if consumed == len),
+            "got {err:?}"
+        );
     }
 
     #[test]

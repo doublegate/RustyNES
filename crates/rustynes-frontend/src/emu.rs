@@ -109,7 +109,7 @@ pub(crate) const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 /// v2.9.7 — the largest overclock the Settings field offers (`0..=80`). A
 /// hand-edited config above it is clamped here, where the value reaches the
 /// core, rather than trusted.
-pub(crate) const MAX_OVERCLOCK_SCANLINES: u16 = 80;
+pub(crate) const MAX_OVERCLOCK_SCANLINES: u16 = rustynes_core::MAX_EXTRA_SCANLINES;
 
 /// v2.9.7 — the extra-scanline overclock the core should run the next frame
 /// with.

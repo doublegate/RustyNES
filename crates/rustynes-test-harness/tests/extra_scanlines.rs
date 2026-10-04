@@ -180,3 +180,18 @@ fn extra_scanlines_getter_round_trips() {
     nes.set_extra_scanlines(0);
     assert_eq!(nes.extra_scanlines(), 0);
 }
+
+/// NC-11 (v2.9.9 re-audit): the core clamps the overclock to
+/// `MAX_EXTRA_SCANLINES`, so no host and no file can set more.
+#[test]
+fn extra_scanlines_clamp_to_the_core_maximum() {
+    let bytes = fs::read(rom_path(ROM)).unwrap();
+    let mut nes = Nes::from_rom(&bytes).unwrap();
+    let max = rustynes_core::MAX_EXTRA_SCANLINES;
+    nes.set_extra_scanlines(max);
+    assert_eq!(nes.extra_scanlines(), max);
+    nes.set_extra_scanlines(max + 1);
+    assert_eq!(nes.extra_scanlines(), max);
+    nes.set_extra_scanlines(u16::MAX);
+    assert_eq!(nes.extra_scanlines(), max);
+}

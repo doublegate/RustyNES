@@ -944,6 +944,43 @@ fn a_rejected_unserialize_leaves_the_machine_as_it_was() {
 /// format, and that older states have to be re-recorded), and a refusal for
 /// any other reason must say why too. The machine stays as it was in both
 /// cases (`a_rejected_unserialize_leaves_the_machine_as_it_was`).
+/// NL-12 (v2.9.9 libretro re-audit): a serialize/unserialize round trip in
+/// the middle of a run leaves the machine exactly where a run that never
+/// restored is, so the next state serializes to the same bytes. Until the
+/// APU section carried the resampler's synthesis state (APU v5) the two
+/// differed in 24 bytes of filter state, which RetroArch's netplay CRC check
+/// would report as a desync.
+#[test]
+fn a_mid_run_round_trip_serializes_like_a_straight_run() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    let size = serialize_size();
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut mid = vec![0_u8; size];
+    assert!(serialize(&mut mid));
+    assert!(unserialize(&mid));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut restored = vec![0_u8; size];
+    assert!(serialize(&mut restored));
+    unload();
+
+    assert!(load(NESTEST, true));
+    for _ in 0..20 {
+        run_frame();
+    }
+    let mut straight = vec![0_u8; size];
+    assert!(serialize(&mut straight));
+    unload();
+    assert!(
+        restored == straight,
+        "a round trip at frame 10 changed the state at frame 20"
+    );
+}
+
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn a_refused_unserialize_logs_the_reason() {
