@@ -101,11 +101,13 @@ whose field and pin v2.9.8 removed (annotated in the row). IMP-02 and NC-03
 held with a gap the new NC-09 names.
 
 Each fix below was pinned red first and its mutant caught; the commit bodies
-carry the evidence.
+carry the evidence. The report's new findings are the nine NC-09 to NC-17. The
+NL-12 and NL-15 rows are cross-listed from the libretro ledger because their
+fixes live in the core; they are not further core findings.
 
 | id | finding | verdict | evidence | release | commit |
 |---|---|---|---|---|---|
-| NC-09 | A finite-but-huge APU filter value was accepted on restore, poisoned the audio and made the machine's own snapshot unloadable (re-opening NC-03's half-applied rollback) | FIXED | Bounds closed under the resampler's motion: held <= 4, integrator and window partial sums <= 16 with drift <= 1, filter state <= 1024 (> 8a/(1-a) ~ 607). Red: `a_huge_filter_value_is_refused_so_the_next_snapshot_still_loads` plus the rejection sweep | v2.9.9 | `ba626e37` |
+| NC-09 | A finite-but-huge APU filter value was accepted on restore, poisoned the audio and made the machine's own snapshot unloadable (re-opening NC-03's half-applied rollback) | FIXED | Bounds closed under the resampler's motion: held <= 4, integrator and window partial sums <= 16 with drift <= 1, filter state bounded per chain stage by a closed PAIR rule, the magnitude of `prev_out - c*prev_in` at most `c*X + 1` for a high-pass with input bound X (16, 33, 67 down the chain). Red: `a_huge_filter_value_is_refused_so_the_next_snapshot_still_loads` plus the rejection sweep. **Corrected in #583 review (CodeRabbit):** the first form capped `prev_in` and `prev_out` at 1024 separately, which is not closed (the pair -1024 / 1024 steps to ~2022), and its `8a/(1-a)` argument failed for the 10 Hz `Clean` stage; red `every_accepted_filter_state_keeps_its_own_snapshot_loadable` | v2.9.9 | `ba626e37`, #583 |
 | NC-10 | Headers that build different machines from one body shared the identity and the BoardDescription (PRG/CHR split; mapper 30/218 raw byte-6 bits) | FIXED | BoardDescription gains `prg_rom_len`, `chr_rom_len`, `nametable_wiring_bits` (`Cartridge::nametable_wiring_bits`); movie format 4, 3 refused. Red: `headers_that_build_different_machines_differ_in_the_description` | v2.9.9 | `ba626e37` |
 | NC-11 | A movie's `extra_scanlines` was unbounded | FIXED | `MAX_EXTRA_SCANLINES` = 80 in the core; the setter clamps, a movie above it is refused | v2.9.9 | `ba626e37` |
 | NC-12 | MMC1 restored `shift_count` unbounded | FIXED | count > 4 or shift > `$1F` refused | v2.9.9 | `ba626e37` |

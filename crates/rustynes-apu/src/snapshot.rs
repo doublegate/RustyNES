@@ -179,15 +179,40 @@ fn finite_f32(v: f32, field: &'static str) -> Result<f32, ApuSnapshotError> {
 //   `RESAMPLER_DRIFT_MAX`, and every partial sum under
 //   `RESAMPLER_INTEGRATOR_MAX`, keeps every future integrator value near the
 //   clamped input.
-// - The filters are stable one-poles fed by that integrator. A high-pass's
-//   state can grow only by its input step (at most 8) times its coefficient,
-//   and shrinks by `1 - coeff` of itself each sample, so any bound above
-//   `8 * a / (1 - a)` (about 607 for the 90 Hz stage at 44.1 kHz) is closed
-//   under the filter. `RESAMPLER_FILTER_MAX` leaves margin above that.
+// - The filters are one-poles in a chain, `hp1 -> hp2 -> lp`, fed by that
+//   integrator. Each is bounded by a rule over its PAIR of state values,
+//   because separate caps on `prev_in` and `prev_out` are not closed: the
+//   high-pass update is `y' = c * (y + x' - x)`, so `x = -1024, y = 1024`
+//   passed two caps of 1024 and stepped to about `c * 2048` (#583 review,
+//   CodeRabbit; the cap of 1024 itself, and its `8a / (1 - a)` argument,
+//   also failed for the 10 Hz `Clean` stage, where that figure is ~5,700).
+//
+//   For a high-pass whose input stays within `X`, `y - c * x` is the
+//   quantity that is closed: `y' - c * x' = c * (y - x)
+//   = c * ((y - c * x) - (1 - c) * x)`, so `|y - c*x| <= c*X + S` gives
+//   `|y' - c*x'| <= c*(c*X + S) + c*(1 - c)*X <= c*X + S`, for ANY
+//   coefficient in `[0, 1]`, the slack `S` included. It follows that
+//   `|y| <= 2*X + S`, which bounds the next stage's input. A low-pass
+//   (`y' = y + c * (x' - y)`) is a convex step towards its input, so
+//   `|y| <= X + S` with `|x| <= X` is closed directly.
+//
+//   The input bounds chain from the integrator's: hp1 sees at most
+//   `RESAMPLER_INTEGRATOR_MAX`, hp2 at most hp1's `2*X + S`, the low-pass at
+//   most hp2's. `S` absorbs float rounding, which the contraction `(1 - c)*S`
+//   outpaces for every cutoff and host rate this emulator configures (1 Hz
+//   at 44.1 kHz gives ~1.4e-4 a sample against rounding near 1e-5). Real
+//   states sit far inside these bounds: the integrator stays near the
+//   clamped mixer level, under about 2.
 const RESAMPLER_HELD_MAX: f32 = 4.0;
 const RESAMPLER_INTEGRATOR_MAX: f32 = 16.0;
 const RESAMPLER_DRIFT_MAX: f32 = 1.0;
-const RESAMPLER_FILTER_MAX: f32 = 1024.0;
+const FILTER_SLACK: f32 = 1.0;
+/// The bound on each chain stage's input, in order `hp1`, `hp2`, `lp`.
+const FILTER_INPUT_MAX: [f32; 3] = [
+    RESAMPLER_INTEGRATOR_MAX,
+    2.0 * RESAMPLER_INTEGRATOR_MAX + FILTER_SLACK,
+    2.0 * (2.0 * RESAMPLER_INTEGRATOR_MAX + FILTER_SLACK) + FILTER_SLACK,
+];
 
 fn bounded_f32(v: f32, max: f32, field: &'static str) -> Result<f32, ApuSnapshotError> {
     let v = finite_f32(v, field)?;
@@ -575,7 +600,10 @@ fn write_onepole(w: &mut W, o: &OnePole) {
     w.f32(o.prev_out);
     w.bool(o.is_hpf);
 }
-fn read_onepole(r: &mut R<'_>) -> Result<OnePole, ApuSnapshotError> {
+/// Read one filter stage at chain position `pos` (`0` = hp1, `1` = hp2,
+/// `2` = lp), refusing a stage of the wrong kind or a state outside the
+/// position's closed bound (see the `FILTER_INPUT_MAX` note).
+fn read_onepole(r: &mut R<'_>, pos: usize) -> Result<OnePole, ApuSnapshotError> {
     let coeff = finite_f32(r.f32()?, "filter.coeff")?;
     // Both constructors keep the coefficient in [0, 1]: `exp(-2*pi*fc/fs)` for
     // the high-pass, `1 - exp(-2*pi*fc/fs)` for the low-pass. A finite value
@@ -585,9 +613,21 @@ fn read_onepole(r: &mut R<'_>) -> Result<OnePole, ApuSnapshotError> {
     if !(0.0..=1.0).contains(&coeff) {
         return Err(ApuSnapshotError::InvalidResampler("filter.coeff"));
     }
-    let prev_in = bounded_f32(r.f32()?, RESAMPLER_FILTER_MAX, "filter.prev_in")?;
-    let prev_out = bounded_f32(r.f32()?, RESAMPLER_FILTER_MAX, "filter.prev_out")?;
+    let x_max = FILTER_INPUT_MAX[pos];
+    let prev_in = bounded_f32(r.f32()?, x_max, "filter.prev_in")?;
+    let prev_out = finite_f32(r.f32()?, "filter.prev_out")?;
     let is_hpf = r.bool()?;
+    if is_hpf != (pos < 2) {
+        return Err(ApuSnapshotError::InvalidResampler("filter.kind"));
+    }
+    let excess = if is_hpf {
+        (prev_out - coeff * prev_in).abs() - coeff * x_max
+    } else {
+        prev_out.abs() - x_max
+    };
+    if excess > FILTER_SLACK {
+        return Err(ApuSnapshotError::InvalidResampler("filter.prev_out"));
+    }
     // Reconstruct by overriding fields of a default-shape filter; we use
     // either high_pass or low_pass to get the right shape, then patch the
     // mutable state.
@@ -609,9 +649,9 @@ fn write_filter(w: &mut W, f: &FilterChain) {
     write_onepole(w, &f.lp);
 }
 fn read_filter(r: &mut R<'_>) -> Result<FilterChain, ApuSnapshotError> {
-    let hp1 = read_onepole(r)?;
-    let hp2 = read_onepole(r)?;
-    let lp = read_onepole(r)?;
+    let hp1 = read_onepole(r, 0)?;
+    let hp2 = read_onepole(r, 1)?;
+    let lp = read_onepole(r, 2)?;
     Ok(FilterChain { hp1, hp2, lp })
 }
 
@@ -1066,6 +1106,87 @@ mod tests {
         }
         let mut d = Apu::new(Region::Ntsc, 44_100);
         d.restore(&c.snapshot()).expect("a real state loads");
+    }
+
+    /// #583 review (CodeRabbit): the filter bounds must be closed under the
+    /// filter's own update, not just per field. `hp1.prev_in = -1024` with
+    /// `prev_out = 1024` passed two independent caps of 1024 and stepped to
+    /// about `c * 2048` on the next sample, so the machine's next snapshot
+    /// was refused. Every state the validator accepts, on any stage, must
+    /// keep producing states it accepts.
+    #[test]
+    fn every_accepted_filter_state_keeps_its_own_snapshot_loadable() {
+        fn tone(a: &mut Apu) {
+            a.write_register(0x4015, 0x0F);
+            a.write_register(0x4000, 0xBF);
+            a.write_register(0x4002, 0x40);
+            a.write_register(0x4003, 0x01);
+            a.write_register(0x4008, 0xFF);
+            a.write_register(0x400A, 0x80);
+            a.write_register(0x400B, 0x02);
+        }
+        type Stage = fn(&mut Apu) -> &mut crate::mixer::OnePole;
+        let stages: [(&str, Stage); 3] = [
+            ("hp1", |a| &mut a.blip.filter.hp1),
+            ("hp2", |a| &mut a.blip.filter.hp2),
+            ("lp", |a| &mut a.blip.filter.lp),
+        ];
+        let values = [
+            -2048.0f32, -1024.0, -67.0, -33.0, -16.0, -8.0, 0.0, 8.0, 16.0, 33.0, 67.0, 1024.0,
+        ];
+        let mut accepted = 0;
+        for (name, stage) in stages {
+            for &pi in &values {
+                for &po in &values {
+                    let mut a = Apu::new(Region::Ntsc, 44_100);
+                    tone(&mut a);
+                    for _ in 0..2_000 {
+                        a.tick();
+                    }
+                    let _ = a.blip.drain_all();
+                    {
+                        let s = stage(&mut a);
+                        s.prev_in = pi;
+                        s.prev_out = po;
+                    }
+                    let mut b = Apu::new(Region::Ntsc, 44_100);
+                    if b.restore(&a.snapshot()).is_err() {
+                        continue;
+                    }
+                    accepted += 1;
+                    // A host can snapshot after any sample, and the overshoot
+                    // decays within a few hundred, so check every one of the
+                    // first fifty (about 41 CPU cycles each at 44.1 kHz).
+                    for step in 0..50 {
+                        for _ in 0..41 {
+                            b.tick();
+                        }
+                        let _ = b.blip.drain_all();
+                        let mut c = Apu::new(Region::Ntsc, 44_100);
+                        c.restore(&b.snapshot()).unwrap_or_else(|e| {
+                            panic!(
+                                "{name} prev_in {pi} prev_out {po} was accepted, but the snapshot \
+                                 {step} samples later is refused: {e:?}"
+                            )
+                        });
+                    }
+                }
+            }
+        }
+        assert!(accepted > 0, "the grid must include accepted states");
+    }
+
+    /// A filter stage whose kind does not match its position (a low-pass
+    /// in `hp1`, say) is not a state this emulator produces, and the bounds
+    /// for each position assume its kind.
+    #[test]
+    fn a_filter_stage_of_the_wrong_kind_is_refused() {
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        a.blip.filter.hp1.is_hpf = false;
+        assert!(matches!(
+            Apu::new(Region::Ntsc, 44_100).restore(&a.snapshot()),
+            Err(ApuSnapshotError::InvalidResampler("filter.kind"))
+        ));
     }
 
     #[test]
