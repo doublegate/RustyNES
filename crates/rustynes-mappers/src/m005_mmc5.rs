@@ -929,10 +929,25 @@ impl Mmc5 {
             (2, ChrSet::B) => (0x0800, self.bg_chr_banks[((a >> 11) & 1) * 2 + 1]),
             (_, ChrSet::B) => (0x0400, self.bg_chr_banks[(a >> 10) & 0x03]),
         };
-        // CHR sizes are powers of two, so the bank count is too; a CHR image
-        // smaller than one bank still maps (`max(1)`), offset `% len` later.
+        // A register value wraps modulo the image's bank count. `Mmc5::new`
+        // accepts any multiple of 1 KiB, so that count need not be a power
+        // of two (24 KiB is three 8 KiB banks), and a mask would leave banks
+        // unreachable (#583 review). A CHR image smaller than one bank still
+        // maps (`max(1)`), offset `% len` later.
         let banks = (self.chr.len() / size).max(1);
-        ((bank as usize) & (banks - 1)) * size + (a & (size - 1))
+        ((bank as usize) % banks) * size + (a & (size - 1))
+    }
+
+    /// The byte offset of `addr` within 4 KiB CHR bank `bank4k`, for the
+    /// split-screen and ExGrafix overrides, which both select 4 KiB banks.
+    /// The bank wraps modulo the image's 4 KiB bank count, as
+    /// [`Mmc5::chr_set_offset`] does for the register sets; the two used to
+    /// mask by the 1 KiB bank count, which reaches every bank only when that
+    /// count is a power of two. An image under 4 KiB maps as bank 0 and is
+    /// offset `% len` by the caller.
+    fn chr_4k_offset(&self, bank4k: usize, addr: u16) -> usize {
+        let banks = (self.chr.len() / 0x1000).max(1);
+        (bank4k % banks) * 0x1000 + (addr & 0x0FFF) as usize
     }
 
     /// Resolve a non-sprite PPU CHR address (`$0000-$1FFF`) to a byte offset
@@ -947,20 +962,11 @@ impl Mmc5 {
         // ExGrafix and standard BG bank decoding. 4 KiB bank from $5202
         // (latched at NT-fetch time by `bg_split_state`).
         if let Some(bank4k) = self.split_chr_bank_latch {
-            let total_banks_1k = self.chr.len() / CHR_BANK_1K;
-            let mask = total_banks_1k.saturating_sub(1);
-            let bank_1k = ((bank4k as usize) * 4) & mask;
-            let off_within_4k = (addr & 0x0FFF) as usize;
-            return bank_1k * CHR_BANK_1K + off_within_4k;
+            return self.chr_4k_offset(bank4k as usize, addr);
         }
         // ExGrafix override: per-tile 4 KiB bank from the latch.
         if let Some(bank4k) = self.ex_chr_bank_latch {
-            let total_banks_1k = self.chr.len() / CHR_BANK_1K;
-            let mask = total_banks_1k.saturating_sub(1);
-            // Bank is in 4 KiB units; convert to 1 KiB index.
-            let bank_1k = ((bank4k as usize) * 4) & mask;
-            let off_within_4k = (addr & 0x0FFF) as usize;
-            return bank_1k * CHR_BANK_1K + off_within_4k;
+            return self.chr_4k_offset(bank4k as usize, addr);
         }
 
         self.chr_set_offset(addr, self.non_sprite_set(read))
@@ -2077,6 +2083,26 @@ mod tests {
         m.cpu_write(0x512B, 3);
         assert_eq!(m.ppu_read(0x0000), 24);
         assert_eq!(m.ppu_read_sprite(0x0000), 8);
+    }
+
+    #[test]
+    fn a_chr_image_that_is_not_a_power_of_two_reaches_every_bank() {
+        // `Mmc5::new` accepts any multiple of 1 KiB. 24 KiB is three 8 KiB
+        // banks (1 KiB banks 0, 8 and 16); a power-of-two mask (`& 2`) could
+        // never select bank 1 and folded bank 3 onto bank 1 (#583 review).
+        let mut m = fresh(8, 24);
+        m.cpu_write(0x5101, 0);
+        for (reg, first_1k) in [(0u8, 0u8), (1, 8), (2, 16), (3, 0)] {
+            m.cpu_write(0x5127, reg);
+            assert_eq!(m.ppu_read(0x0000), first_1k, "8 KiB bank {reg}");
+        }
+        // The ExGrafix override indexes 4 KiB banks of the same image: six
+        // of them, so 4 KiB bank 2 is 1 KiB bank 8 and bank 6 wraps to 0.
+        m.cpu_write(0x5104, 1);
+        for (bank4k, first_1k) in [(2u16, 8u8), (5, 20), (6, 0)] {
+            m.ex_chr_bank_latch = Some(bank4k);
+            assert_eq!(m.ppu_read(0x0000), first_1k, "ExGrafix 4 KiB bank {bank4k}");
+        }
     }
 
     #[test]
