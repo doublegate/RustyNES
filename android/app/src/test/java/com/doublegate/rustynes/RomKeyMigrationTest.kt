@@ -6,6 +6,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -143,5 +144,51 @@ class RomKeyMigrationTest {
         put("states/$identity", byteArrayOf(0)) // a file where the directory would go
         assertEquals(0, RomKeyMigration.migrate(tmp.root, legacy, identity))
         assertArrayEquals(byteArrayOf(9), file("states/$legacy/auto.rns").readBytes())
+    }
+
+    /**
+     * A verified copy whose original cannot be deleted is NOT reported as moved
+     * (`File.delete`'s result was ignored), and the next run finishes the move
+     * rather than leaving the duplicate forever. The old state directory is made
+     * read-only so the delete fails while the copy into the new key succeeds.
+     */
+    @Test
+    fun a_failed_delete_is_not_a_move_and_the_next_run_finishes_it() {
+        put("states/$legacy/auto.rns", byteArrayOf(7, 7))
+        val oldDir = file("states/$legacy")
+        assertTrue(oldDir.setWritable(false))
+        try {
+            // Running as root ignores the mode bit; the test then proves nothing.
+            // (A refused create throws rather than returning false.)
+            val enforced = runCatching { !File(oldDir, "probe").createNewFile() }.getOrDefault(true)
+            assumeFalse("directory permissions are not enforced", !enforced)
+            assertEquals(0, RomKeyMigration.migrate(tmp.root, legacy, identity))
+            assertArrayEquals(byteArrayOf(7, 7), file("states/$legacy/auto.rns").readBytes())
+            assertArrayEquals(byteArrayOf(7, 7), file("states/$identity/auto.rns").readBytes())
+        } finally {
+            oldDir.setWritable(true)
+        }
+
+        assertEquals(1, RomKeyMigration.migrate(tmp.root, legacy, identity))
+        assertFalse(file("states/$legacy/auto.rns").exists())
+        assertFalse("the emptied state directory is removed", oldDir.exists())
+        assertArrayEquals(byteArrayOf(7, 7), file("states/$identity/auto.rns").readBytes())
+        assertEquals(0, RomKeyMigration.migrate(tmp.root, legacy, identity))
+    }
+
+    /** A leftover identical to the new key's copy is a duplicate: it goes. A different one stays. */
+    @Test
+    fun only_an_identical_leftover_is_removed() {
+        put("battery/$legacy.sav", byteArrayOf(1, 2))
+        put("battery/$identity.sav", byteArrayOf(1, 2))
+        put("ra-progress/$legacy.rap", byteArrayOf(3))
+        put("ra-progress/$identity.rap", byteArrayOf(4))
+
+        assertEquals(1, RomKeyMigration.migrate(tmp.root, legacy, identity))
+
+        assertFalse(file("battery/$legacy.sav").exists())
+        assertArrayEquals(byteArrayOf(1, 2), file("battery/$identity.sav").readBytes())
+        assertArrayEquals("different bytes are never touched", byteArrayOf(3), file("ra-progress/$legacy.rap").readBytes())
+        assertArrayEquals(byteArrayOf(4), file("ra-progress/$identity.rap").readBytes())
     }
 }

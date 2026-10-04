@@ -131,7 +131,10 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
   `boxart/<k>.png`, the `game_config.json` entry and the `library.json` entry. A
   store moves only into an EMPTY new key; a file is written atomically under the
   new key, read back and compared before the old copy is deleted; a key already
-  taken is never overwritten (the old copy then stays as an orphan). Equal keys
+  taken is never overwritten (the old copy then stays as an orphan). A store
+  counts as moved only once the old copy is deleted; when the delete fails, the
+  next open (every open runs the migration, the old key recomputed from the
+  file) finds the identical copy under the new key and finishes the move. Equal keys
   (an FDS disk, an NSF or a UNIF board opened unzipped) do nothing.
   `RomKeyMigrationTest` pins the rules on the JVM. **Not migrated:** Play Games
   cloud snapshots (`rns.<k>.<slot>`, remote); the next push writes the slot

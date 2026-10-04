@@ -229,6 +229,10 @@ object FdsBios {
  *   overwritten, and the old copy is then left where it was (an orphan, not a loss);
  * - a file is copied with [writeAtomic], read back and compared, and only then is
  *   the original deleted, so a failure at any point leaves the user's copy;
+ * - a store counts as moved only once its original is gone; a run that copied a
+ *   file but could not delete the original finishes the move on the next run,
+ *   which finds the identical copy already in place (every open runs this, with
+ *   the legacy key recomputed from the file, so a partial run is always retried);
  * - equal keys (an FDS disk, an NSF or a UNIF board opened unzipped, whose
  *   identity IS the whole image) touch nothing, and a second run finds nothing.
  *
@@ -259,19 +263,39 @@ object RomKeyMigration {
         return moved
     }
 
-    /** Copy [src] to an absent [dst], verify it, then delete [src]. 1 if moved. */
+    /**
+     * Copy [src] to an absent [dst], verify it, then delete [src]. 1 only when [src]
+     * is gone and [dst] holds its bytes; 0 for anything else, [src] then staying.
+     *
+     * A [dst] that already holds exactly [src]'s bytes is a move an earlier run left
+     * half done: the copy was written and verified but `File.delete` failed (its
+     * result used to be ignored, so that run still counted the file as moved). The
+     * leftover is a duplicate, not the only copy, so this run deletes it and counts
+     * the move then. Without that step the second run saw [dst] taken and left the
+     * duplicate forever. A [dst] holding DIFFERENT bytes is the never-overwrite rule:
+     * both stay. Every path is therefore safe to repeat on every launch.
+     */
     private fun moveFile(src: File, dst: File): Int {
-        if (!src.isFile || dst.exists()) return 0
+        if (!src.isFile) return 0
         return runCatching {
             val bytes = src.readBytes()
-            writeAtomic(dst, bytes)
-            check(dst.readBytes().contentEquals(bytes)) { "copy of $src differs" }
-            src.delete()
-            1
+            if (dst.exists()) {
+                if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) return 0
+            } else {
+                writeAtomic(dst, bytes)
+                check(dst.readBytes().contentEquals(bytes)) { "copy of $src differs" }
+            }
+            if (src.delete()) 1 else 0
         }.getOrDefault(0)
     }
 
-    /** [moveFile] for each file in [src]; removes [src] once it is empty. */
+    /**
+     * [moveFile] for each file in [src]; removes [src] once it is empty. Not
+     * `deleteRecursively`: a file kept by the never-overwrite rule, or one whose
+     * move failed, is still the user's only copy, so the directory goes only when
+     * nothing is left in it (a failed removal of the empty directory is retried by
+     * the next run, which finds it empty again).
+     */
     private fun moveDir(src: File, dst: File): Int {
         val files = src.listFiles()?.filter { it.isFile } ?: return 0
         val moved = files.sumOf { moveFile(it, File(dst, it.name)) }
