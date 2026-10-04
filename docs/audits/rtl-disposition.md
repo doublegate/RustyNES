@@ -92,14 +92,14 @@ for RTL findings.
 **Rows above: 52 re-verified (26 original, 14 from v2.9.0, 12 AUD); none
 REGRESSED.**
 
-The fixes are in the MiSTer sibling (branch `fix/v2.9.9-rtl-audit`), made by a
-Claude subagent and mutation-checked; Quartus confirmation of NR-15 and NR-16
-waits for the next compile.
+The fixes are in the MiSTer sibling (branch `fix/v2.9.9-rtl-audit`, fast-forwarded
+into its `release/v2.9.9-rc`), made by a Claude subagent and mutation-checked;
+NR-15 and NR-16 are confirmed by the release-candidate Quartus compiles.
 
 | id | finding | verdict | evidence | release | commit |
 |---|---|---|---|---|---|
 | NR-13 | The off-die bridge served a read of an address whose write was still held | FIXED | Both read-issue conditions hold off a same-address pending write; `cart-sdram-gate` section 8 (module level; console reachability unestablished) | v2.9.9 | sibling `5408823` |
 | NR-14 | NES 2.0 submappers were ignored | FIXED | `variant_ok` refuses boards `cart.sv` does not build; the bus-conflict submappers (2:2, 7:2, 3:1) are accepted as the base board with the gap named (maintainer, 2026-10-03) | v2.9.9 | sibling `1ac30b1`, `4d31c1e` |
-| NR-15 | `cart_loaded` had no power-up value; synthesis made it constant | FIXED | Power-up value; `tb/check_stuck_regs.py` gates stuck `emu.sv` registers (row removal to confirm on the next compile) | v2.9.9 | sibling `d0701ae` |
-| NR-16 | The release checks never read the suppressed-messages files | FIXED | `quartus_clean.py` reads the named `.smsg` files; the two `emu.sv` warnings fixed in source (to confirm on the next compile) | v2.9.9 | sibling `1c77b06` |
+| NR-15 | `cart_loaded` had no power-up value; synthesis made it constant | FIXED | Power-up value; `tb/check_stuck_regs.py` gates stuck `emu.sv` registers. Confirmed on the RC compiles (261004, seed 8): the check passes, `cart_loaded` no longer stuck | v2.9.9 | sibling `d0701ae` |
+| NR-16 | The release checks never read the suppressed-messages files | FIXED | `quartus_clean.py` reads the named `.smsg` files; the two `emu.sv` warnings fixed in source. Confirmed on the RC compiles: 26 messages across 3 reports and 2 `.smsg` files, none citing `rtl/` or `tb/` | v2.9.9 | sibling `1c77b06` |
 | NR-17 | `sdram-arb-gate`'s deadline check failed only on improvement | FIXED | Two-sided bound; superseded numbers re-quoted from the gate's own output | v2.9.9 | sibling `ca44360` |
