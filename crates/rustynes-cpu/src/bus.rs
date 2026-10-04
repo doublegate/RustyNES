@@ -118,7 +118,8 @@ pub trait Bus {
     /// `Cpu::start_cycle`, before the bus access — mirrors Mesen's
     /// `StartCpuCycle`), `true` for the post-access half (called from
     /// `Cpu::end_cycle`, after the bus access — mirrors `EndCpuCycle`).
-    /// R1c-3 (`mmc3-m2-phase-irq`, default-off experiment): `SystemBus`
+    /// R1c-3 (v2.0.0's `mmc3-m2-phase-irq`, removed at v2.9.9; the
+    /// `mmc3-a12-phase-probe` feature still uses it): `SystemBus`
     /// forwards this as the real M2-phase label on the `PpuBusAdapter` it
     /// constructs, replacing the previously call-local (and therefore
     /// almost-always-zero) `sub_dot` counter with a value that actually

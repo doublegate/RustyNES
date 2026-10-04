@@ -851,7 +851,15 @@ The MiSTer co-simulation is a two-way instrument. These are cases where the
 anticipated in writing ("the oracle can be wrong") and which the ladder is
 supposed to surface rather than absorb.
 
-### T-ORACLE-001 — MMC3 IRQ timing (mechanism RETRACTED v2.6.15)
+### T-ORACLE-001 — MMC3 IRQ timing (FIXED v2.9.9 to sub-test 9; mechanism RETRACTED v2.6.15)
+
+**v2.9.9: fixed as far as sub-test 9.** The late IRQ was the oracle's `$C001`
+reload discriminator, not the sample point: the page's reload rule plus a
+one-CPU-cycle deferral of the IRQ output moves both `4-scanline_timing` ROMs
+from sub-test 3 to sub-test 9 and makes `mmc3_test/5-MMC3` pass, with
+AccuracyCoin and nestest unchanged. ADR 0002's 2026-10-03 update has the sweep
+and the trace evidence. The sibling gate `mapper4mmc3irq065` can now be
+registered at the next pin move. Sub-test 9 (`$2000=$10`) stays open here.
 
 **v2.9.5 "Caliper" measurement, added above the older text.** Two candidate
 causes are now ruled out on this core, and the residual stands:
@@ -1096,6 +1104,18 @@ value. The frame has
 too many colours for `KNOWN_BLANK`'s blank test, which the list's ratchet would
 reject. Close it from documentation or a hardware measurement, never by trying
 values until the game boots (maintainer, 2026-10-01).
+
+**v2.9.9 search, still open.** Nothing found gives a value. The vendored
+`INES_Mapper_045.md` and its talk page say only that `$6001` "resets the outer
+bank registers as a soft reset would, clearing the 'Lock' bit"; the live wiki
+page (fetched 2026-10-03) says the same, and its Notes name no power-on state.
+Web searches for GA23C / mapper 45 power-up or reset values found no forum
+measurement. One lead is not about the registers: a dump note attributed to
+CaH4e3 (DCEmu's "New NES dumps by CaH4e3" archive) calls the cart copy
+protected. A protection check could produce the same blue screen, and so could
+the `$5000-$5FFF` DIP read, whose setting picks the menu. The next step is
+therefore black-box: trace the boot's CPU reads in `$5000-$7FFF` and find where
+it parks, before any register value is questioned again.
 
 ## T-EMPHASIS-MODEL — PPUMASK emphasis from the documented composite model (v2.9.8)
 

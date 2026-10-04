@@ -47,6 +47,28 @@
 //! Landing it is a CORE change: re-measure `AccuracyCoin` 141/141 (RAM decoder),
 //! re-run nestest, and report this whole battery before and after. Full record:
 //! `to-dos/ROADMAP.md` T-ORACLE-001 and `RustyNES_MiSTer/docs/rung7-mappers.md`.
+//!
+//! ## v2.9.9 — landed, and the pre-render A12 premise above was wrong
+//!
+//! A per-cycle diff of this emulator's trace against the DUT's (both ours,
+//! black-box only) found the pre-render clock present; what differed was the
+//! IRQ. Path 1 of `Mmc3::clock_irq` asserted on a `$C001` reload to 0 only
+//! when the `$C001` write had cleared a NON-zero counter, a condition the
+//! `NESdev` page does not have. It existed to pass sub-test 2, and it did so
+//! by raising the IRQ a scanline late, which is sub-test 3's failure. The
+//! page's rule plus a one-cycle deferral of the IRQ output (the DUT's
+//! register) is now the model:
+//!
+//! - `mmc3_test_2/4` and `mmc3_test/4` move from sub-test 3 to sub-test 9
+//!   ("Scanline 0 IRQ should occur sooner when `$2000=$10`");
+//! - `mmc3_test/5-MMC3` passes, so its `_strict` test runs and its probe is
+//!   gone;
+//! - `mmc3_test/6-MMC6` fails at the alternate-revision assertion "IRQ
+//!   shouldn't occur when reloading after counter normally reaches 0", which
+//!   this project fails by design, as it does `mmc3_test_2/6-MMC3_alt`;
+//! - every other MMC3 ROM, `AccuracyCoin` and nestest are unchanged.
+//!
+//! The two traces then agree for 6,253,826 cycles instead of 1,250,766.
 
 #![cfg(feature = "test-roms")]
 
@@ -94,7 +116,7 @@ fn mmc3_test_2_3_a12_clocking() {
 }
 
 #[test]
-#[ignore = "R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): the 1-CPU-cycle bracket did not flip on the one-clock/every-cycle substrate alone; the M2-phase sample-point campaign is CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002 + the v2.0.0 plan."]
+#[ignore = "Fails at sub-test 9 ($2000=$10) since v2.9.9 (T-ORACLE-001 moved it from 3; ADR 0002 2026-10-03). Earlier: R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): the 1-CPU-cycle bracket did not flip on the one-clock/every-cycle substrate alone; the M2-phase sample-point campaign is CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002 + the v2.0.0 plan."]
 fn mmc3_test_2_4_scanline_timing_strict() {
     let (s, m, _) = run("blargg/mmc3_test_2/4-scanline_timing.nes", 600);
     assert_eq!(s, 0, "mmc3_test_2 4-scanline_timing: {m}");
@@ -108,14 +130,13 @@ fn mmc3_test_2_4_scanline_timing_currently_fails() {
         "mmc3_test_2/4 unexpectedly PASSES — please flip the `_strict` test to non-ignored \
          and delete this probe; msg={m}"
     );
-    // Post-C1-step-B4: sub-tests #1 and #2 now PASS.  The residual is at
-    // sub-test #3 ("Scanline 0 IRQ should occur SOONER when $2000=$08"),
-    // a 1-CPU-cycle bracket distinct from the structural reload-pending
-    // discriminator that step B4 closed.  See ADR-0002 →
-    // "Empirical refinement (post-step B4 success, 2026-05-14)".
+    // v2.9.9 (T-ORACLE-001): sub-tests 1-8 pass. The residual is sub-test 9,
+    // "Scanline 0 IRQ should occur sooner when $2000=$10" (sprites at
+    // `$0000`, background at `$1000`). It was sub-test 3 from C1 step B4
+    // (2026-05-14) until the reload rule and the IRQ deferral landed.
     assert!(
-        m.contains("Scanline 0 IRQ should occur sooner") || m.contains("Failed #3"),
-        "mmc3_test_2/4 failure shape changed (was sub-test #3 after C1 step B4) — \
+        m.contains("should occur sooner when $2000=$10") && m.contains("#9"),
+        "mmc3_test_2/4 failure shape changed (was sub-test #9 from v2.9.9) — \
          please re-diagnose; got: {m}"
     );
 }
@@ -197,7 +218,7 @@ fn mmc3_test_v1_3_a12_clocking() {
 }
 
 #[test]
-#[ignore = "R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; M2-phase sample-point campaign CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002."]
+#[ignore = "Fails at sub-test 9 ($2000=$10) since v2.9.9 (T-ORACLE-001 moved it from 3; ADR 0002 2026-10-03). Earlier: R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; M2-phase sample-point campaign CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002."]
 fn mmc3_test_v1_4_scanline_timing_strict() {
     let (s, m, _) = run("blargg/mmc3_test/4-scanline_timing.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 4-scanline_timing: {m}");
@@ -211,33 +232,24 @@ fn mmc3_test_v1_4_scanline_timing_currently_fails() {
         "mmc3_test v1/4 unexpectedly PASSES — flip the `_strict` test on and delete this probe; msg={m}"
     );
     assert!(
-        m.contains("Scanline 0 IRQ should occur sooner") || m.contains("Failed #3"),
-        "mmc3_test v1/4 failure shape changed (was sub-test #3, the ADR-0002 axis) — re-diagnose; got: {m}"
+        m.contains("should occur sooner when $2000=$10") && m.contains("#9"),
+        "mmc3_test v1/4 failure shape changed (was sub-test #9 from v2.9.9) — re-diagnose; got: {m}"
     );
 }
 
+/// Passes from v2.9.9 (T-ORACLE-001). From v2.6.15 it was ignored as a
+/// superseded assertion: its sub-test 2 asserts on the `$C001`-pending reload
+/// to 0, which the oracle then declined in order to pass `4-scanline_timing`
+/// sub-test 2. The `NESdev` rule asserts there, and with the one-cycle IRQ
+/// deferral it no longer costs `4-scanline_timing` anything.
 #[test]
-#[ignore = "SUPERSEDED ASSERTION, reclassified v2.6.15 (was: R2 escape-hatched under ADR 0002 F5.0 as an IRQ-timing residual). It is not an IRQ-timing residual. Sub-test 2 of this ROM and of its successor carry the SAME set_test string -- \"Should reload and set IRQ every clock when reload is 0\" -- and differ by one instruction: v1 asserts after ONE clock_counter, so its verdict falls on the $C001-pending reload; mmc3_test_2/5-MMC3 inserts a SECOND clock_counter before the first should_be_set, deliberately declining to assert on that clock. The successor also ships a readme section on rev A vs rev B and the pathological $C001 behaviour that this corpus lacks entirely. blargg withdrew the assertion; adopting it is fitting to retracted evidence, and was measured to cost mmc3_test_2/4-scanline_timing a regression from sub-test 3 to sub-test 2. mmc3_test_2/5-MMC3 -- the successor, and the one that adjudicates this behaviour -- PASSES."]
-fn mmc3_test_v1_5_mmc3_strict() {
+fn mmc3_test_v1_5_mmc3() {
     let (s, m, _) = run("blargg/mmc3_test/5-MMC3.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 5-MMC3: {m}");
 }
 
 #[test]
-fn mmc3_test_v1_5_mmc3_currently_fails() {
-    let (s, m, _) = run("blargg/mmc3_test/5-MMC3.nes", 600);
-    assert_ne!(
-        s, 0,
-        "mmc3_test v1/5 unexpectedly PASSES — flip the `_strict` test on and delete this probe; msg={m}"
-    );
-    assert!(
-        m.contains("reload and set IRQ every clock when reload is 0") || m.contains("Failed #2"),
-        "mmc3_test v1/5 failure shape changed (was sub-test #2, the ADR-0002 axis) — re-diagnose; got: {m}"
-    );
-}
-
-#[test]
-#[ignore = "SUPERSEDED ASSERTION, reclassified v2.6.15 (was: R2 escape-hatched under ADR 0002 F5.0 as an IRQ-timing residual). Sub-test 2 rests on the same withdrawn clock as mmc3_test_v1/5-MMC3 #2 -- see that test's note. This ROM is ALSO the v1 corpus's ALTERNATE-revision ROM: its own header names Crystalis, the chip mmc3_test_2's readme identifies as revision A, and mmc3_test_2/6-MMC3_alt carries that header verbatim. This project models the NORMAL revision, so the alt-only assertions here fail BY DESIGN exactly as mmc3_test_2/6-MMC3_alt does. Two reasons, both structural; neither is an IRQ-timing residual."]
+#[ignore = "BY-DESIGN FAIL (reworded v2.9.9; reclassified v2.6.15 from an ADR 0002 F5.0 IRQ-timing residual). Its sub-test 2 used to fail on the $C001 reload rule T-ORACLE-001 replaced; it now passes. This ROM is the v1 corpus's ALTERNATE-revision ROM: its own header names Crystalis, the chip mmc3_test_2's readme identifies as revision A, and mmc3_test_2/6-MMC3_alt carries that header verbatim. This project models the NORMAL revision, so the alt-only assertions here fail BY DESIGN exactly as mmc3_test_2/6-MMC3_alt does. That is structural, not an IRQ-timing residual."]
 fn mmc3_test_v1_6_mmc6_strict() {
     let (s, m, _) = run("blargg/mmc3_test/6-MMC6.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 6-MMC6: {m}");
@@ -250,9 +262,12 @@ fn mmc3_test_v1_6_mmc6_currently_fails() {
         s, 0,
         "mmc3_test v1/6 unexpectedly PASSES — flip the `_strict` test on and delete this probe; msg={m}"
     );
+    // v2.9.9: the alternate-revision assertion, failed by design (see the
+    // `_strict` test's note). Until v2.9.9 it failed earlier, at sub-test 2,
+    // on the `$C001` reload rule T-ORACLE-001 replaced.
     assert!(
-        m.contains("IRQ should be set when reloading to 0 after clear") || m.contains("Failed #2"),
-        "mmc3_test v1/6 failure shape changed (was sub-test #2, the ADR-0002 axis) — re-diagnose; got: {m}"
+        m.contains("IRQ shouldn't occur when reloading after counter normally reaches 0"),
+        "mmc3_test v1/6 failure shape changed (was the alternate-revision assertion from v2.9.9) — re-diagnose; got: {m}"
     );
 }
 

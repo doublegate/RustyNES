@@ -1896,3 +1896,69 @@ assertion blargg withdrew. That leaves no target for this lever at all.
 The R1/R2 residual (`mmc3_test_2/4` #3 and `mmc3_test_v1/4` #3, one behaviour
 measured twice) stands as ADR 0002 F5.0 closed it: at least one PPU dot late,
 not reachable by the filter axis.
+
+## Decision update (2026-10-03, v2.9.9) — T-ORACLE-001: the reload discriminator was the late IRQ
+
+**What changed.** Two edits to `m004_mmc3.rs`, landed together:
+
+1. `clock_irq`'s path 1 (a `$C001`-pending reload) now asserts on Sharp
+   whenever the reload leaves the counter at 0 with IRQs enabled, which is the
+   NESdev page's rule. The `irq_reload_pending_with_nonzero_clear` latch
+   (C1 step B4, 2026-05-14) is removed. That latch asserted only when the
+   `$C001` write had cleared a non-zero counter; the page has no such
+   condition.
+2. A clocking A12 rise sets `irq_assert_pending_next_cycle`, and the next
+   `notify_cpu_cycle` raises the line. The CPU therefore sees the MMC3's IRQ
+   one CPU cycle after the rise, whatever half of the cycle the rise landed
+   in. MC-ACC's falling-edge path is unchanged.
+
+**How it was found.** Black-box, against the MiSTer sibling's MMC3 (our own
+RTL, written from the same page). A per-cycle diff of the two traces of
+`4-scanline_timing` showed the oracle's IRQ a scanline late at sub-test 3:
+cycle 1,250,873 against the DUT's 1,250,760, with the pre-render clock
+PRESENT in both (v2.6.15 had already retracted the "missing pre-render clock"
+reading). The lateness came from the discriminator: on the first rise after
+`$C001` it reloaded silently where the page asserts. The latch existed to pass
+sub-test 2, and it did so by moving the IRQ a whole scanline.
+
+The page's rule alone fails sub-test 2, which is why step B4 added the latch.
+The DUT passes it because its IRQ output is a register on the CPU clock enable,
+so the CPU's poll sees it a cycle after the counter reaches zero; its 0..8
+delay sweep picked 1 uniquely. The oracle was swept the same way:
+
+| model | `mmc3_test_2/4` | `mmc3_test/5` | other MMC3 ROMs |
+| --- | --- | --- | --- |
+| shipped (latch, no delay) | #3 | #2 | pass |
+| page rule, delay 0 | #2 | — | — |
+| page rule, delay 1 | **#9** | **pass** | pass |
+| page rule, delay 2 | #3 | — | — |
+| page rule + v2.0.0 `mmc3-m2-phase-irq` (defer M2-high rises only) | #9 | pass | pass |
+
+Delay 1 and the phase-conditional experiment pass the same set. The
+unconditional form is kept, because it needs no phase data from the bus and is
+what the DUT does; the `mmc3-m2-phase-irq` feature is removed. With the oracle
+at delay 1 the two per-cycle traces of the ROM agree for 6,253,826 cycles
+instead of 1,250,766.
+
+**Why this is not Attempts 1-4 again.** Those (2026-05) applied a constant
+delay on the old dot-lockstep scheduler and KEPT the reload rule that made the
+IRQ late, so a delay could only move a late IRQ later. Here the delay and the
+page's reload rule go in together, on the v2.0.0 one-clock scheduler.
+
+**Measured on the full battery** (`--release --workspace --features
+test-roms`, experiment form, 2026-10-03): 3,141 passed, 7 failed, 14 ignored.
+The seven were the pins this update rewrites: four `m004` unit tests that
+sampled the IRQ in the rise's own cycle, the `mmc3_test/5` and `/6` probes, and
+`mmc3_clone_a12`, which compared clones against the reference in the rise's
+own cycle. AccuracyCoin (144/144) and nestest (0-diff) held.
+
+**What remains.** Sub-test 9 of both `4-scanline_timing` ROMs, "Scanline 0 IRQ
+should occur sooner when `$2000=$10`" (sprites at `$0000`, background at
+`$1000`, so the clocking rise comes from the background fetch at dot 324 of
+the line before). The DUT fails sub-test 12. `mmc3_test/6-MMC6` now fails at
+the alternate-revision assertion "IRQ shouldn't occur when reloading after
+counter normally reaches 0", by design, as `mmc3_test_2/6-MMC3_alt` always has.
+
+**Save states.** MMC3's mapper section is v4: byte 19, which held the retired
+latch, holds `irq_assert_pending_next_cycle`. v3 states are refused (ADR 0042's
+current-version-only rule).

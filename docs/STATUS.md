@@ -1876,7 +1876,7 @@ without panicking (no `$6000` status protocol).
 | `apu_frame_clock_coincidence` | 10 | 10 | — | — | **v2.9.5.** blargg's `extra/apu/apu_test_{1..10}`: ten one-cycle probes of a `$4017` clock against the frame sequencer's step, in both modes. A mode-1 write whose clock lands in the same APU cycle as the step is one pulse, not two. 1, 2, 5 and 6 failed before v2.9.5. Each ROM's pass branch is decoded from its own code. |
 | `unreferenced_corpus` | 49 | 36 | — | 13 | **v2.9.5.** The committed ROMs no test ran. 13 pass blargg's `$6000` protocol (the `extra/ppu` sprite-hit set, `instr_test-v3` singles 11-15). 23 Holy Mapperel variants report detail `0000`. One data report (`cpu_flag_concurrency`) is pinned. 12 visual or audio ROMs are pinned by hash: regression pins, not verdicts (counted under Smoke). |
 | `dmc_dma_during_read4` | 5 | 5 | — | — | `dma_2007_read`, `dma_2007_write`, `dma_4016_read`, `double_2007_read`, `read_write_2007`. |
-| `mmc3_test_2` | 6 | 4 | 2 | — | `1-clocking`, `2-details`, `3-A12_clocking`, `5-MMC3` strict. `4-scanline_timing` `#[ignore]` (post-step-B4 + post-mid-cycle-snapshot rollback: sub-tests #1 + #2 PASS via the B4 reload-pending discriminator + post-fix trace at cycle 1,370,110 / scanline 0; sub-test #3 is the residual, a 1-CPU-cycle bracket empirically grounded as cross-cycle physics on the canonical CPU `T_last - 1` IRQ-sample-point axis — **CLOSED by-design-permanent** (v2.1.0 "Fathom" F5.0; ADR 0002): a differential 1-dot deficit structurally unreachable on the one-clock batched-catch-up scheduler, 21+ falsified levers, zero production-ROM impact. Stays `#[ignore]`'d permanently with a fail-loud `_currently_fails` companion). `6-MMC3_alt` `#[ignore]` by design (NEC rev B; project defaults to Sharp rev A). |
+| `mmc3_test_2` | 6 | 4 | 2 | — | `1-clocking`, `2-details`, `3-A12_clocking`, `5-MMC3` strict. `4-scanline_timing` `#[ignore]`: fails at sub-test **9** ("Scanline 0 IRQ should occur sooner when `$2000=$10`") since v2.9.9, when T-ORACLE-001 replaced the C1 step B4 reload discriminator with the NESdev rule and delayed the IRQ output one CPU cycle (it failed at sub-test 3 from 2026-05-14 to v2.9.8; ADR 0002, 2026-10-03 update). Fail-loud `_currently_fails` companion pins #9. The v1 suite (`mmc3_test/`) moved the same way: `4-scanline_timing` to #9, `5-MMC3` now passes strict, `6-MMC6` fails only at its alternate-revision assertion. `6-MMC3_alt` `#[ignore]` by design (NEC rev B; project defaults to Sharp rev A). |
 | `mmc3_irq_tests` | 6 | — | — | 6 | Visual-only protocol (no `$6000` status byte). Smoke-tested only. |
 | `mmc5` (smoke) | 3 | — | — | 3 | `mapper_mmc5test_v1.nes`, `mapper_mmc5test_v2.nes`, `mapper_mmc5exram.nes` from `christopherpow/nes-test-roms/mmc5test/`. Visual-only; smoke-tested. Deep features (split-screen ExGrafix, audio extension) tested via in-tree mapper unit tests. |
 | `holy_mapperel` | 19 | — | — | 19 | Damian Yerrick / tepples cartridge-PCB-assembly test (zlib license). 17 release ROMs across mappers 0/1/2/3/4/7/9/10/34/66/69, plus two 512 KiB MMC1 images (SUROM `M1_P512K_CR8K_S8K`, SXROM `M1_P512K_CR8K_S32K`) built from the v0.02 source tag in v2.7.2, whose build reproduces all 17 release ROMs byte-for-byte. Each screen is pinned by one combined framebuffer snapshot, with settled and non-blank guards, and each was read as `PASS 0000` by eye when it was pinned; there is no status-byte assertion, so none of the 19 is a strict pass by this table's definition (the column said 17 until v2.7.2, against this row's own "smoke-tested only"). Track B1. |
@@ -2142,14 +2142,15 @@ v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default bui
 - **`cpu_interrupts_v2` 5/5 strict** — the `2-nmi_and_brk` / `3-nmi_and_irq` /
   `5-branch_delays_irq` sub-ROMs this section formerly listed as "deferred to
   v2.0" pass strictly on the default build. `ppu_sprites` 19/19.
-- **The MMC3 R1/R2 scanline-IRQ residual is CLOSED — by-design-permanent**
-  (v2.1.0 "Fathom" F5.0, 2026-07-09; `docs/adr/0002-irq-timing-coordination.md`).
-  The remaining `mmc3_test_2/4` sub-test #3 (and the sibling `mmc3_test_v1/*`
-  brackets) are a **differential 1-dot IRQ-sample deficit that is structurally
-  unreachable** on the one-clock batched-catch-up scheduler — 21+ falsified
-  levers, **zero production-ROM impact**. They stay `#[ignore]`'d **permanently**
-  with fail-loud `*_currently_fails` companions; this is a closed decision, not a
-  deferral.
+- **The MMC3 R1/R2 scanline-IRQ residual moved in v2.9.9** (T-ORACLE-001;
+  `docs/adr/0002-irq-timing-coordination.md`, 2026-10-03 update). What v2.1.0
+  "Fathom" F5.0 closed as a structurally unreachable sample-point deficit was
+  the oracle's own `$C001` reload discriminator raising the IRQ a scanline
+  late. With the NESdev rule and the IRQ output delayed one CPU cycle, both
+  `4-scanline_timing` ROMs fail at sub-test 9 instead of 3 and
+  `mmc3_test_v1/5-MMC3` passes. Sub-test 9 (`$2000=$10`) stays `#[ignore]`'d
+  with fail-loud `*_currently_fails` companions; zero production-ROM impact
+  measured.
 
 The ROM-level edge cases that remain `#[ignore]`'d are **documented-by-design or
 externally-fixture-blocked, not deferred to any future refactor** (see the full

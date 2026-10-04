@@ -70,10 +70,6 @@ const UNTABLED: &[(&str, &str)] = &[
     ("ppu-fetch-trace", "diagnostic trace fixture"),
     ("ppu-octal-trace", "diagnostic calibration ring"),
     ("phi2-write-sweep", "v2.6.18 write-commit study knob"),
-    (
-        "mmc3-m2-phase-irq",
-        "open R1/R2 IRQ-timing experiment (ADR 0002)",
-    ),
     ("mmc3-a12-phase-probe", "R1/R2 A12-phase probe"),
     ("cosim-interrupt-inject", "co-simulation testbench hook"),
     // Test plumbing: enabled only from `[dev-dependencies]`, never in a build

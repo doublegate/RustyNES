@@ -170,6 +170,11 @@ fn run_scanlines(m: &mut dyn Mapper, latch: u8, scanlines: usize, ack: bool) -> 
     let mut fired = Vec::with_capacity(scanlines);
     for _ in 0..scanlines {
         scanline_rise(m);
+        // Sample in the CPU cycle after the rise. From v2.9.9 the reference
+        // MMC3 raises its IRQ there rather than in the rise's own cycle
+        // (T-ORACLE-001); the clones still assert at the rise, so this is
+        // the sample point at which both show the same scanline.
+        m.notify_cpu_cycle();
         let pending = m.irq_pending();
         fired.push(pending);
         if pending && ack {
