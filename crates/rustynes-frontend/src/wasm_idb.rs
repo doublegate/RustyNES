@@ -53,7 +53,9 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{IdbDatabase, IdbObjectStore, IdbOpenDbRequest, IdbRequest, IdbTransactionMode};
+use web_sys::{
+    IdbDatabase, IdbObjectStore, IdbOpenDbRequest, IdbRequest, IdbTransaction, IdbTransactionMode,
+};
 
 use crate::save_state::hex_sha256;
 use crate::wasm_io::log;
@@ -93,6 +95,33 @@ fn request_to_promise(request: &IdbRequest) -> js_sys::Promise {
             let _ = reject.call1(&JsValue::NULL, &JsValue::UNDEFINED);
         });
         request.set_onerror(Some(on_error.unchecked_ref()));
+    })
+}
+
+/// Wrap a write transaction's outcome in a Promise: resolves on `complete`,
+/// rejects on `abort` or `error`.
+///
+/// A request's `success` is not the write being stored: the transaction can
+/// still abort afterwards (a quota or I/O failure at commit), and
+/// `complete` is the event IndexedDB fires only after a successful commit
+/// (#583 review, CodeRabbit). Call this before awaiting any request in the
+/// transaction, so the handlers are in place before the events can fire.
+fn transaction_to_promise(tx: &IdbTransaction) -> js_sys::Promise {
+    let tx = tx.clone();
+    js_sys::Promise::new(&mut |resolve, reject| {
+        let on_complete = Closure::once_into_js(move |_evt: web_sys::Event| {
+            let _ = resolve.call0(&JsValue::NULL);
+        });
+        tx.set_oncomplete(Some(on_complete.unchecked_ref()));
+        let reject_abort = reject.clone();
+        let on_abort = Closure::once_into_js(move |_evt: web_sys::Event| {
+            let _ = reject_abort.call0(&JsValue::NULL);
+        });
+        tx.set_onabort(Some(on_abort.unchecked_ref()));
+        let on_error = Closure::once_into_js(move |_evt: web_sys::Event| {
+            let _ = reject.call0(&JsValue::NULL);
+        });
+        tx.set_onerror(Some(on_error.unchecked_ref()));
     })
 }
 
@@ -160,6 +189,7 @@ pub async fn put_state(rom_sha256: [u8; 32], slot: u8, blob: Vec<u8>) -> Result<
         log("save state: IndexedDB object store missing");
         return Err("IndexedDB object store missing".into());
     };
+    let committed = transaction_to_promise(&tx);
     let key = idb_key(&rom_sha256, slot);
     // Store the raw bytes as a Uint8Array (no base64 — IDB is binary-safe).
     let value = js_sys::Uint8Array::from(blob.as_slice());
@@ -167,17 +197,22 @@ pub async fn put_state(rom_sha256: [u8; 32], slot: u8, blob: Vec<u8>) -> Result<
         log("save state: IndexedDB put failed");
         return Err("IndexedDB put failed".into());
     };
-    if JsFuture::from(request_to_promise(&req)).await.is_ok() {
-        log(&format!(
-            "state saved to IndexedDB slot {} ({} bytes)",
-            slot + 1,
-            blob.len()
-        ));
-        Ok(())
-    } else {
+    if JsFuture::from(request_to_promise(&req)).await.is_err() {
         log("save state: IndexedDB write rejected (quota?)");
-        Err("the browser refused the write (storage full?)".into())
+        return Err("the browser refused the write (storage full?)".into());
     }
+    // The put succeeded; the state is stored only once its transaction
+    // commits (see `transaction_to_promise`).
+    if JsFuture::from(committed).await.is_err() {
+        log("save state: IndexedDB transaction aborted at commit");
+        return Err("the browser did not commit the write (storage full?)".into());
+    }
+    log(&format!(
+        "state saved to IndexedDB slot {} ({} bytes)",
+        slot + 1,
+        blob.len()
+    ));
+    Ok(())
 }
 
 /// Read a save-state blob back from the IDB slot, falling back to (and
