@@ -86,6 +86,44 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   is no longer reported as "truncated" (NC-14).
 - **libretro:** a refused `retro_unserialize` logs why (NL-11); the Vs. coin
   pulse lasts three emulated frames under run-ahead and rollback (NL-13).
+- **Desktop: a movie or netplay session can no longer be broken from a
+  hotkey.** Reset, Power Cycle, disk swaps and state loads are refused on every
+  route (menu, hotkey, Save States manager, browser grid, scripts) while a
+  movie plays or records or netplay runs, through one policy (NF-11).
+  Loading or closing a ROM ends a movie session, and a recording in progress
+  is offered for saving (NF-12). Exporting a movie keeps the recording, and
+  movie outcomes appear on the status line (NF-20).
+- **FDS disk saves.** A movie, TAStudio or netplay session no longer writes
+  the player's `.fds.sav`, and the save is written off the emulation lock and
+  retried on failure (NF-16). An FDS game keeps one identity after its first
+  disk save, so its save states, cheats, movies, HD pack and RetroAchievements
+  progress are found again (NF-17).
+- **Mobile saves follow the v2.9.8 ROM identity.** Android and iOS keyed
+  battery saves, auto-resume, the library and per-game settings by the whole
+  file; they now use the header-excluded identity, and existing saves are
+  moved to it once, each copy verified before the original is removed (NF-21).
+  Cloud copies are not moved: the next upload re-creates them. The mobile
+  bridge also refuses timeline changes during a movie or netplay (NF-18).
+- **Smaller fixes:** history-viewer clips never span a load, rewind or reset
+  (NF-13); TAStudio re-emulates under its frame-0 options (NF-14); a netplay
+  spectator runs only a stream whose `Sync` matches it (NF-15); the browser
+  reports a state save or load's real outcome (NF-19); live settings reach
+  both consoles of a Vs. cabinet (NF-22); the command-line load applies the
+  per-game overlay through the same guard as the menu (NF-23).
+
+### Changed
+
+- **Provenance records.** Four more files are recorded as derived, at the
+  re-audit's prompt (NC-17): the APU's DMC-DMA state model (TriCNES, Mesen2),
+  the frame counter's lazy `$4015` clear and PAL table (Mesen2), the Vs.
+  DualSystem orchestration (Mesen2) and the Namco 163 output weight (Mesen2).
+  Each has a `// Provenance:` header, a row in
+  `docs/originality-and-provenance.md` and a `NOTICE` entry. Nothing was
+  reworded or removed, and the licence is unchanged.
+- **MiSTer core (sibling):** a NES 2.0 header naming a board variant the core
+  does not build is refused with an OSD message; the bus-conflict variants
+  load as the base board, a named inaccuracy (NR-14). The release checks read
+  Quartus's suppressed-message files and gate stuck registers (NR-15, NR-16).
 
 ## [2.9.8] - 2026-10-02 - "Vanguard" (v3.0.0's breaks landed early, every staged game looked at, and the database's corrections on every platform)
 
