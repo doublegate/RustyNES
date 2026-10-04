@@ -61,13 +61,23 @@ final class GameOverrides: ObservableObject {
 
     /// v2.9.9 (re-audit NF-21) — move `legacy`'s override to `identity`, once: only
     /// when `identity` has none (an existing one is never overwritten, and the old
-    /// entry then stays). The map is written whole and atomically.
-    func rekey(from legacy: String, to identity: String) {
+    /// entry then stays). The map is written whole and atomically. True when
+    /// nothing is left to do (moved, nothing to move, or kept by that rule); false
+    /// when the map could not be written, in which case the move is rolled back in
+    /// memory too, so this session and `overrides.json` agree and a later open (the
+    /// library entry's `pendingLegacyKey`) retries it.
+    @discardableResult
+    func rekey(from legacy: String, to identity: String) -> Bool {
         guard legacy != identity, overrides[identity] == nil,
-              let settings = overrides[legacy] else { return }
+              let settings = overrides[legacy] else { return true }
         overrides[identity] = settings
         overrides.removeValue(forKey: legacy)
-        save()
+        guard save() else {
+            overrides[legacy] = settings
+            overrides.removeValue(forKey: identity)
+            return false
+        }
+        return true
     }
 
     /// Remove `sha`'s override (revert it to the global defaults).
@@ -83,11 +93,18 @@ final class GameOverrides: ObservableObject {
         }
     }
 
-    private func save() {
+    /// Write the map atomically. True when `overrides.json` now holds `overrides`.
+    @discardableResult
+    private func save() -> Bool {
         let dir = fileURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(overrides) {
-            try? data.write(to: fileURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(overrides)
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            NSLog("RustyNES: per-game overrides not saved: \(error)")
+            return false
         }
     }
 }

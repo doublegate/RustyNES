@@ -206,14 +206,22 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   share saves and a re-zipped ROM lost them. `AppModel.openGame` moves a
   pre-v2.9.9 entry once, library first (`ROMLibrary.rekey`: the ROM copy is
   written under the new key, read back and compared, the index saved, and only
-  then the old file removed), then `battery/<k>.sav`, every file in
-  `states/<k>/` and `ra-progress/<k>.bin` (`RomKeyMigration.migrateFiles`), then
-  the override (`GameOverrides.rekey`). The rules are Android's
+  then the old file removed; when the index cannot be saved the key is rolled
+  back, the copy dropped and the old file kept), then `battery/<k>.sav`, every
+  file in `states/<k>/` and `ra-progress/<k>.bin` (`RomKeyMigration.migrateFiles`),
+  then the override (`GameOverrides.rekey`). The rules are Android's
   (`RomKeyMigration` in `Persistence.kt`, pinned by `RomKeyMigrationTest`): a
   store moves only into an empty key, a taken key is never overwritten (the old
-  copy stays), and when the library entry cannot move nothing else does, so the
-  stores never split between two keys. Re-importing a pre-v2.9.9 file returns its
-  old entry rather than adding a second. **Not migrated:** CloudKit save-state
+  copy stays), a file counts as moved only once its original is gone, and when
+  the library entry cannot move nothing else does. **A partial move is
+  retried:** the rekeyed entry records the old key (`LibraryEntry.pendingLegacyKey`,
+  written in the same index save), every open of an entry carrying it re-runs the
+  file and override moves, and the marker is cleared only when nothing is
+  pending. A run that copied a file but could not remove the original finishes
+  the move next time (an identical copy under the new key is a duplicate, so the
+  original goes). Re-importing a pre-v2.9.9 file returns its old entry rather
+  than adding a second; if that entry's ROM file is missing, the copy just
+  imported is kept as the only one and the entry is pointed at it, marked. **Not migrated:** CloudKit save-state
   records (`state-<k>-<n>`), which the next upload writes under the new key.
   **Uncompiled** (no Swift toolchain on the build host); device rows M5-M7 of
   `docs/mobile-v2.9.3-run-sheet.md`.

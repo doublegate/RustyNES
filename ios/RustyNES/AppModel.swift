@@ -383,15 +383,34 @@ final class AppModel: ObservableObject {
     /// key to `identity` (see `RomKeyMigration`). Returns the entry to open: the
     /// moved one, the one already keyed by `identity`, or `entry` itself when the
     /// keys are equal or the library entry could not move.
+    ///
+    /// Recoverable after a partial failure: the library rekey records the old key
+    /// in the entry (`pendingLegacyKey`, in the same index save), and every open of
+    /// an entry still carrying it re-runs the file and override moves, which are
+    /// idempotent. The marker is cleared only when both report nothing pending, so
+    /// a battery, state or RA file whose move failed on one launch is retried on
+    /// the next instead of being stranded under a key nothing names any more.
     private func migrateKey(_ entry: LibraryEntry, to identity: String) async -> LibraryEntry {
-        guard entry.sha != identity else { return entry }
-        let legacy = entry.sha
-        guard let moved = library.rekey(from: legacy, to: identity) else { return entry }
-        await Task.detached(priority: .userInitiated) {
-            _ = RomKeyMigration.migrateFiles(legacy: legacy, identity: identity)
+        let legacy: String
+        var current = entry
+        if entry.sha != identity {
+            legacy = entry.sha
+            guard let moved = library.rekey(from: legacy, to: identity) else { return entry }
+            current = moved
+        } else if let pending = entry.pendingLegacyKey, pending != identity {
+            legacy = pending
+        } else {
+            return entry
+        }
+        let files = await Task.detached(priority: .userInitiated) {
+            RomKeyMigration.migrateFiles(legacy: legacy, identity: identity)
         }.value
-        overrides.rekey(from: legacy, to: identity)
-        return moved
+        let overridesDone = overrides.rekey(from: legacy, to: identity)
+        guard files.isComplete, overridesDone else {
+            NSLog("RustyNES: key migration of \(identity) left \(files.pending) file(s) pending; retried on next open")
+            return current
+        }
+        return library.finishMigration(of: identity, from: legacy) ?? current
     }
 
     /// v2.9.7 "Tandem" (plan item 6): store the FDS BIOS the user picked (checked at

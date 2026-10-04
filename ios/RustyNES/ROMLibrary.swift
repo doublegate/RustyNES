@@ -30,6 +30,13 @@ struct LibraryEntry: Identifiable, Codable, Hashable {
     var lastPlayed: TimeInterval
     /// User favorite flag.
     var favorite: Bool
+    /// v2.9.9 (re-audit NF-21) — the pre-v2.9.9 whole-file key this entry was moved
+    /// from, while stores under it may still need moving (see `RomKeyMigration`).
+    /// Written in the same index save as the rekey, so a store whose move failed is
+    /// retried on a later open, not stranded under a key nothing remembers; cleared
+    /// once nothing is pending. nil for every other entry, and absent from an index
+    /// written before v2.9.9 (an Optional decodes as nil when its key is missing).
+    var pendingLegacyKey: String? = nil
 
     var id: String { sha }
 }
@@ -117,11 +124,21 @@ final class ROMLibrary: ObservableObject {
         }
         // An entry imported before v2.9.9 under the whole-file key: return it, and
         // `AppModel.openGame` moves it and its saves to the identity. Adding a
-        // second entry here would leave its saves behind under the old key. The
-        // copy just written under the identity is dropped; the old entry's file
-        // is renamed to it at open.
+        // second entry here would leave its saves behind under the old key.
         if legacy != sha, let idx = entries.firstIndex(where: { $0.sha == legacy }) {
-            try? fileManager.removeItem(at: romURL(for: sha))
+            if fileManager.fileExists(atPath: romURL(for: legacy).path) {
+                // The old entry has its bytes: the copy under the identity is a
+                // duplicate, dropped here; `ROMLibrary.rekey` re-creates it from the
+                // old file at open.
+                try? fileManager.removeItem(at: romURL(for: sha))
+            } else {
+                // The old entry's file is missing, so the copy under the identity is
+                // the ONLY copy of these bytes: keep it and point the entry at it
+                // now, marked so `openGame` still moves the stores the old key holds.
+                // Should the index not save, the entry keeps its old key and the copy
+                // stays; a later import retries.
+                _ = replaceKey(at: idx, with: sha, pendingLegacyKey: legacy)
+            }
             entries[idx].name = displayName
             save()
             return entries[idx]
@@ -168,7 +185,10 @@ final class ROMLibrary: ObservableObject {
     /// already there is returned untouched (the legacy one then stays, as do its
     /// files), and nil means nothing moved -- the caller keeps the legacy key for
     /// this session. The ROM file is copied, read back and compared before the
-    /// index changes, and the old file is removed only after the index is saved.
+    /// index changes, and the old file is removed only after the index is SAVED:
+    /// when the save fails the in-memory key is rolled back, the copy removed and
+    /// the old file kept, so `library.json` never names a key whose file is gone.
+    /// The moved entry carries `pendingLegacyKey` until `finishMigration` clears it.
     func rekey(from legacy: String, to identity: String) -> LibraryEntry? {
         if let existing = entries.first(where: { $0.sha == identity }) { return existing }
         guard legacy != identity,
@@ -180,6 +200,33 @@ final class ROMLibrary: ObservableObject {
             try? fileManager.removeItem(at: dst)
         }
         guard RomKeyMigration.copyVerified(src, dst) else { return nil }
+        guard replaceKey(at: idx, with: identity, pendingLegacyKey: legacy) else {
+            // The index still names `legacy`: keep its file, drop the copy (a
+            // verified duplicate of it), and let the caller keep the old key.
+            try? fileManager.removeItem(at: dst)
+            return nil
+        }
+        removeLegacyROM(legacy)
+        return entries[idx]
+    }
+
+    /// v2.9.9 (re-audit NF-21) — the migration of `identity` from `legacy` left
+    /// nothing pending: clear the entry's marker. Also retries the removal of the
+    /// old ROM file, which `rekey` may have failed to remove (a duplicate by then).
+    /// Returns the updated entry; when the index cannot be saved the marker stays,
+    /// in memory and on disk, and the next open repeats the (idempotent) migration.
+    func finishMigration(of identity: String, from legacy: String) -> LibraryEntry? {
+        guard let idx = entries.firstIndex(where: { $0.sha == identity }) else { return nil }
+        guard entries[idx].pendingLegacyKey == legacy else { return entries[idx] }
+        entries[idx].pendingLegacyKey = nil
+        if !save() { entries[idx].pendingLegacyKey = legacy }
+        removeLegacyROM(legacy)
+        return entries[idx]
+    }
+
+    /// Point the entry at `idx` at `identity`, keeping its user fields, and save.
+    /// False, with the entry unchanged in memory, when the index cannot be written.
+    private func replaceKey(at idx: Int, with identity: String, pendingLegacyKey: String) -> Bool {
         let old = entries[idx]
         entries[idx] = LibraryEntry(
             sha: identity,
@@ -187,11 +234,28 @@ final class ROMLibrary: ObservableObject {
             mapper: old.mapper,
             region: old.region,
             lastPlayed: old.lastPlayed,
-            favorite: old.favorite
+            favorite: old.favorite,
+            pendingLegacyKey: pendingLegacyKey
         )
-        save()
-        try? fileManager.removeItem(at: src)
-        return entries[idx]
+        guard save() else {
+            entries[idx] = old
+            return false
+        }
+        return true
+    }
+
+    /// Remove the old key's ROM file once no entry names that key. Its bytes are
+    /// then under the identity, so a failure leaves a duplicate (logged, retried by
+    /// `finishMigration`), never the only copy.
+    private func removeLegacyROM(_ legacy: String) {
+        guard !entries.contains(where: { $0.sha == legacy }) else { return }
+        let url = romURL(for: legacy)
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            NSLog("RustyNES: could not remove the pre-v2.9.9 ROM copy \(legacy): \(error)")
+        }
     }
 
     func toggleFavorite(_ sha: String) {
@@ -224,10 +288,20 @@ final class ROMLibrary: ObservableObject {
         }
     }
 
-    private func save() {
+    /// Write the index atomically. True when `library.json` now holds `entries`.
+    /// Most callers ignore a failure (the in-memory list stays right and the next
+    /// save rewrites it whole); the key migration does not, because removing a file
+    /// the on-disk index still names would strand that entry.
+    @discardableResult
+    private func save() -> Bool {
         ensureDirectories()
-        if let data = try? JSONEncoder().encode(entries) {
-            try? data.write(to: indexURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(entries)
+            try data.write(to: indexURL, options: .atomic)
+            return true
+        } catch {
+            NSLog("RustyNES: library index not saved: \(error)")
+            return false
         }
     }
 }

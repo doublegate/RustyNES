@@ -50,76 +50,174 @@ enum RomIdentity {
 ///   overwritten, and the old copy is then left where it was (an orphan, not a loss);
 /// - a file is written atomically under the new key, read back and compared, and
 ///   only then is the original removed, so a failure at any point keeps it;
+/// - a file counts as moved only once its original is gone. A run that copied a
+///   file but could not remove the original reports it PENDING, and the next run
+///   finishes the move: it finds the identical copy already in place and removes
+///   the leftover, which is a duplicate, never the only copy;
 /// - equal keys touch nothing, and a second run finds nothing.
+///
+/// Retrying needs the legacy key, which iOS cannot recompute once the library entry
+/// is rekeyed (the entry keeps no file to hash). `ROMLibrary` therefore stores it in
+/// the entry (`LibraryEntry.pendingLegacyKey`, written with the rekey in one index
+/// save) until `migrateFiles` reports nothing pending; `AppModel.openGame` re-runs
+/// the migration on every open while it is set. Android needs no marker: it
+/// recomputes the legacy key from the file on every open.
 ///
 /// Moved here: `battery/<k>.sav`, every file in `states/<k>/` (slots, their
 /// metadata and thumbnails) and `ra-progress/<k>.bin`, under
 /// Application Support/RustyNES. NOT moved: iCloud save-state records
 /// (`state-<k>-<n>`, remote), which the next upload re-creates under the new key.
 enum RomKeyMigration {
+    /// What one file's move did.
+    enum Step {
+        /// The file is under the new key and the original is gone.
+        case moved
+        /// Nothing under the old key: nothing to do.
+        case absent
+        /// The new key already holds DIFFERENT bytes: both stay, by rule. Final.
+        case kept
+        /// The copy, its check or the removal of the original failed. The original
+        /// is still there and a later run retries it.
+        case failed
+    }
+
+    /// What `migrateFiles` did: `moved` files, and `pending` files still under the
+    /// old key that a later run can move. A file `kept` by rule is neither.
+    struct Outcome {
+        var moved = 0
+        var pending = 0
+        /// True when nothing is left for a later run to do.
+        var isComplete: Bool { pending == 0 }
+
+        mutating func add(_ step: Step) {
+            switch step {
+            case .moved: moved += 1
+            case .failed: pending += 1
+            case .absent, .kept: break
+            }
+        }
+
+        mutating func add(_ other: Outcome) {
+            moved += other.moved
+            pending += other.pending
+        }
+    }
+
     /// Application Support/RustyNES, the root every store lives under.
     static var root: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RustyNES", isDirectory: true)
     }
 
-    /// Move the file stores keyed by `legacy` to `identity`. Returns how many
-    /// files moved; never throws (a file that cannot be moved stays under `legacy`).
+    /// Move the file stores keyed by `legacy` to `identity`. Never throws: a file
+    /// that cannot be moved stays under `legacy` and is counted in `pending`. Safe
+    /// to repeat; a run after a complete one finds nothing.
     @discardableResult
     static func migrateFiles(
         legacy: String, identity: String, root: URL = RomKeyMigration.root
-    ) -> Int {
-        guard !legacy.isEmpty, !identity.isEmpty, legacy != identity else { return 0 }
-        var moved = 0
-        moved += moveFile(
+    ) -> Outcome {
+        var outcome = Outcome()
+        guard !legacy.isEmpty, !identity.isEmpty, legacy != identity else { return outcome }
+        outcome.add(moveFile(
             root.appendingPathComponent("battery/\(legacy).sav"),
             root.appendingPathComponent("battery/\(identity).sav")
-        )
-        moved += moveDir(
+        ))
+        outcome.add(moveDir(
             root.appendingPathComponent("states/\(legacy)", isDirectory: true),
             root.appendingPathComponent("states/\(identity)", isDirectory: true)
-        )
-        moved += moveFile(
+        ))
+        outcome.add(moveFile(
             root.appendingPathComponent("ra-progress/\(legacy).bin"),
             root.appendingPathComponent("ra-progress/\(identity).bin")
-        )
-        return moved
+        ))
+        return outcome
     }
 
-    /// Copy `src` to an absent `dst`, verify it, then remove `src`. 1 if moved.
-    static func moveFile(_ src: URL, _ dst: URL) -> Int {
-        guard copyVerified(src, dst) else { return 0 }
-        return (try? FileManager.default.removeItem(at: src)) != nil ? 1 : 0
+    /// Copy `src` to an absent `dst`, verify it, then remove `src`.
+    ///
+    /// Until v2.9.9's review a `removeItem` that threw was swallowed by `try?` and
+    /// reported "not moved" although the verified copy was already in place, so the
+    /// file then sat under both keys and the next run, seeing `dst` taken, left the
+    /// duplicate forever. Now a `dst` holding exactly `src`'s bytes is treated as
+    /// that half-done move and finished, and a failed removal is `.failed` (pending),
+    /// not a silent zero.
+    static func moveFile(_ src: URL, _ dst: URL) -> Step {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: src.path, isDirectory: &isDir), !isDir.boolValue else {
+            return .absent
+        }
+        if fm.fileExists(atPath: dst.path) {
+            let original: Data
+            let copy: Data
+            do {
+                original = try Data(contentsOf: src)
+                copy = try Data(contentsOf: dst)
+            } catch {
+                NSLog("RustyNES: key migration could not compare \(src.lastPathComponent): \(error)")
+                return .failed
+            }
+            // Different bytes: the never-overwrite rule keeps both.
+            guard original == copy else { return .kept }
+        } else if !copyVerified(src, dst) {
+            return .failed
+        }
+        do {
+            try fm.removeItem(at: src)
+            return .moved
+        } catch {
+            NSLog("RustyNES: key migration copied \(src.lastPathComponent) but could not remove the original: \(error)")
+            return .failed
+        }
     }
 
     /// Copy the regular file `src` to an absent `dst` atomically and read it back.
     /// True only when `dst` now holds exactly `src`'s bytes; `src` is untouched.
+    /// Every failure is logged (it used to be swallowed without a trace).
     static func copyVerified(_ src: URL, _ dst: URL) -> Bool {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: src.path, isDirectory: &isDir), !isDir.boolValue,
-              !fm.fileExists(atPath: dst.path),
-              let bytes = try? Data(contentsOf: src) else { return false }
+              !fm.fileExists(atPath: dst.path) else { return false }
+        let bytes: Data
         do {
+            bytes = try Data(contentsOf: src)
             try fm.createDirectory(
                 at: dst.deletingLastPathComponent(), withIntermediateDirectories: true
             )
             try bytes.write(to: dst, options: .atomic)
         } catch {
+            NSLog("RustyNES: key migration could not copy \(src.lastPathComponent): \(error)")
             return false
         }
-        return (try? Data(contentsOf: dst)) == bytes
+        guard (try? Data(contentsOf: dst)) == bytes else {
+            NSLog("RustyNES: key migration copy of \(src.lastPathComponent) reads back different")
+            return false
+        }
+        return true
     }
 
-    /// `moveFile` for each file in `src`; removes `src` once it is empty.
-    private static func moveDir(_ src: URL, _ dst: URL) -> Int {
+    /// `moveFile` for each file in `src`; removes `src` once it is empty. A
+    /// directory that cannot be listed although it exists is pending.
+    private static func moveDir(_ src: URL, _ dst: URL) -> Outcome {
         let fm = FileManager.default
+        var outcome = Outcome()
+        guard fm.fileExists(atPath: src.path) else { return outcome }
         guard let files = try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil)
-        else { return 0 }
-        let moved = files.reduce(0) { $0 + moveFile($1, dst.appendingPathComponent($1.lastPathComponent)) }
+        else {
+            NSLog("RustyNES: key migration could not list \(src.lastPathComponent)")
+            outcome.pending += 1
+            return outcome
+        }
+        for file in files {
+            outcome.add(moveFile(file, dst.appendingPathComponent(file.lastPathComponent)))
+        }
+        // Only an EMPTY directory goes: a file kept by rule, or one whose move
+        // failed, is still the user's copy. A failed removal of the empty directory
+        // loses nothing and the next run, finding it empty again, retries it.
         if (try? fm.contentsOfDirectory(atPath: src.path))?.isEmpty == true {
             try? fm.removeItem(at: src)
         }
-        return moved
+        return outcome
     }
 }
