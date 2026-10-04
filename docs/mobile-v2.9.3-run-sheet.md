@@ -138,8 +138,9 @@ Both apps now key per-game stores by the core's ROM identity
 header, of the unpacked image) instead of the whole file's SHA-256, and move a
 game's stores from the old key the first time it is opened. The bridge half is
 under host test (`rom_identity_is_the_cores_and_ignores_the_header_and_the_zip`)
-and the Android rules under `RomKeyMigrationTest`. **None of the Swift has been
-compiled.** Prepare each row by installing the PREVIOUS release (v2.9.8) first,
+and the Android rules under `RomKeyMigrationTest`. **The Swift compiles but has
+not run:** the iOS workflow built it for the Simulator on `c0b04195` (run
+37242884341); only these device rows test what it does. Prepare each row by installing the PREVIOUS release (v2.9.8) first,
 creating the saves under it, then installing this build over it (an upgrade, not
 a fresh install).
 
@@ -153,7 +154,7 @@ a fresh install).
 | M6 | iOS | After M5, re-import the same file through the importer | No second library entry; the saves are still there | NOT RUN |
 | M7 | iOS | Under v2.9.8 import an `.nsf` or an unzipped `.fds` (identity equals the whole-file key); upgrade; open it | Opens normally; nothing renamed (the keys are equal) | NOT RUN |
 
-Swift changes these rows exercise (all uncompiled): `RomIdentity.identityHex`,
+Swift changes these rows exercise (compiled in CI, not run on a device): `RomIdentity.identityHex`,
 `RomKeyMigration` (`RomIdentity.swift`); `ROMLibrary.importROM` (keys by
 identity, returns a pre-v2.9.9 entry for the same file instead of adding one) and
 `ROMLibrary.rekey`; `GameOverrides.rekey`; `AppModel.openGame` /

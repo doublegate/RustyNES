@@ -223,7 +223,9 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   than adding a second; if that entry's ROM file is missing, the copy just
   imported is kept as the only one and the entry is pointed at it, marked. **Not migrated:** CloudKit save-state
   records (`state-<k>-<n>`), which the next upload writes under the new key.
-  **Uncompiled** (no Swift toolchain on the build host); device rows M5-M7 of
+  **Compiled, not run on a device:** the iOS workflow built every Swift source
+  for the Simulator on `c0b04195`, the review-round head (run 37242884341,
+  `BUILD SUCCEEDED`); the behaviour is device rows M5-M7 of
   `docs/mobile-v2.9.3-run-sheet.md`.
 - **Storage + lifecycle:** `.rns` save-states + SRAM in the sandbox (the format is
   platform-independent -> cross-device save portability); SwiftUI `ScenePhase`
@@ -419,8 +421,9 @@ Vs. machine). A cabinet's save state is the core's `RVSD` container; netplay,
 movies and Lua are refused on a cabinet. FDS disk writes are exposed by the bridge
 (`diskImageBytes` / `diskIsDirty`) but **not yet persisted by the app**. Settings >
 Controls also gains **Cancel opposite directions** (default on). **All of this
-Swift is uncompiled** on the Linux build host; the checks are rows T5-T7, T10 and
-T12 of `docs/mobile-v2.9.3-run-sheet.md`.
+Swift compiles** (the iOS workflow's Simulator build, most recently run
+37242884341 on `c0b04195`) **and none of it has run on a device**; the checks are
+rows T5-T7, T10 and T12 of `docs/mobile-v2.9.3-run-sheet.md`.
 
 **The game database's load-time corrections (v2.9.8).** The shared bridge now
 corrects a cartridge before the core parses it (`rustynes_gamedb::correct_rom`:
