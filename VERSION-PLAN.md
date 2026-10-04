@@ -64,7 +64,6 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 
 | Version | Scope | Plan |
 |---------|-------|------|
-| v2.9.9 | **Release candidate**: all four audit scopes re-run, the sibling's oracle pin moved with its RTL parity work, four open accuracy tickets taken on, v2.9.8's performance leads chased, the libretro `.info` sync prepared, and the RC bitstream pair cut on its sweep day (the v3.0.0 removals already shipped in v2.9.8) | [`v2.9.9-rc-plan.md`](to-dos/plans/v2.9.9-rc-plan.md) |
 | v3.0.0 | **The API major and a release-candidate core** ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)): ADR 0042's removals, the `LockstepBus` rename and `.rns` BUS section v2 (moved into v2.9.8 by ADR 0042's 2026-10-01 amendment); both bitstreams swept and labelled **not hardware-verified**; the libretro `.info` upstream sync | [`v2.9.4-to-v3.0.0-line-plan.md`](to-dos/plans/v2.9.4-to-v3.0.0-line-plan.md) |
 | v3.x | **Hardware verification**: the SuperStation One board session (Strands A-F), the mobile device runs, and the fixes each produces | [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
 

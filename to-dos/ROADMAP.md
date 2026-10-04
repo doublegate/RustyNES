@@ -1110,10 +1110,19 @@ values until the game boots (maintainer, 2026-10-01).
 bank registers as a soft reset would, clearing the 'Lock' bit"; the live wiki
 page (fetched 2026-10-03) says the same, and its Notes name no power-on state.
 Web searches for GA23C / mapper 45 power-up or reset values found no forum
-measurement. One lead is not about the registers: a dump note attributed to
-CaH4e3 (DCEmu's "New NES dumps by CaH4e3" archive) calls the cart copy
-protected. A protection check could produce the same blue screen, and so could
-the `$5000-$5FFF` DIP read, whose setting picks the menu. The next step is
+measurement. One lead was a dump note attributed to CaH4e3 calling the cart
+copy protected, seen through DCEmu's "New NES dumps by CaH4e3" threads; those
+URLs now redirect off-site (checked 2026-10-04, #583 review asked for the
+citation). The primary source is CaH4e3's own page,
+<https://cah4e3.shedevr.org.ru/dumping_2011.php>, whose 15 August 2011 entry
+for *Famicom Yarou 54 (Unl) [!]* says "Generic 45 mapper, now able to read
+whole PRG rom with my new equipment, so all games now working fine": the dump
+is called a standard mapper 45, and the earlier one incomplete. The
+copy-protection remark in search summaries is about other versions on mappers
+116 and 187; it was not found on the 2010 or 2011 page. The local dump is the
+`[!]` one (1 MiB PRG + 1 MiB CHR), so the protection lead is weaker than it
+looked, and a blue screen from the `$5000-$5FFF` DIP read, whose setting picks
+the menu, remains. The next step is
 therefore black-box: trace the boot's CPU reads in `$5000-$7FFF` and find where
 it parks, before any register value is questioned again.
 

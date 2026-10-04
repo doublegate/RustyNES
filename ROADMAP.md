@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
 **Document Version:** 2.0.4
-**Last Updated:** 2026-10-02
-**Project Status:** v2.9.9 "Ballast" released — the preparation release for v3.0.0: v3.0.0's breaking changes landed early (a save identity that ignores the header, older save states and movies refused, movies and netplay that record the machine, the ADR 0042 API removals), every staged game was booted and the defects found were fixed, and the game database's corrections reach every platform; the ninth release of the v2.9.x line and the fifth of the line to v3.0.0 (ADR 0043, amended). Built on **v2.9.8 "Vanguard"** and **v2.9.7 "Tandem"**: the desktop's features on the web and on phones, and a PPU A12 fix found by real games. **No hardware has run any bitstream**; the mobile device runs and the SuperStation One board session move after v3.0.0 (maintainer, 2026-09-29).
+**Last Updated:** 2026-10-04
+**Project Status:** v2.9.9 "Ballast" released — the release candidate for v3.0.0: all four audit scopes re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it with the release-candidate bitstream pair; the tenth release of the v2.9.x line and the sixth of the line to v3.0.0 (ADR 0043, amended). Built on **v2.9.8 "Vanguard"** (v3.0.0's breaking changes landed early) and **v2.9.7 "Tandem"** (the desktop's features on the web and on phones). **No hardware has run any bitstream**; the mobile device runs and the SuperStation One board session move after v3.0.0 (maintainer, 2026-09-29).
 
 ---
 

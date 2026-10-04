@@ -2440,7 +2440,13 @@ told the core to build. The `.rnm` format 3 epoch (`MOVIE_FORMAT_VERSION` 3,
 ADR 0028's rule) stores both in a length-prefixed OPTIONS block after the fixed
 header, and widens the per-frame record from 3 bytes to 5 so Four Score players
 3 and 4 are recorded too (`FrameInput` gained `p3` / `p4` and became
-`#[non_exhaustive]`).
+`#[non_exhaustive]`). **v2.9.9 moved the epoch to format 4**
+(`MOVIE_FORMAT_VERSION` 4, core re-audit NC-10): the board description also
+carries the PRG-ROM and CHR-ROM sizes and the header's byte-6 nametable wiring
+bits (`Cartridge::nametable_wiring_bits`, bits 0 and 3), because one ROM body
+split 2x16K PRG + 4x8K CHR or 1x16K + 6x8K, or a mapper 30/218 image differing
+only in those bits, builds a different machine under the same identity. A
+format-3 movie is refused, as format 1 and 2 already were.
 
 - **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
   the replay does not depend on the player's settings, and the desktop and mobile
@@ -2461,12 +2467,14 @@ header, and widens the per-frame record from 3 bytes to 5 so Four Score players
   the old game's mirroring override and Game Genie codes against the new game.
 - **What cannot be applied is checked**: the ROM identity, the region, and the
   board (mapper, submapper, mirroring, console type, `DualSystem`, PRG-/CHR-RAM
-  size, battery, trainer). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte
+  size, battery, trainer, and since format 4 the PRG-/CHR-ROM sizes and the
+  nametable wiring bits). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte
   header, so the board is what tells a re-headered dump or a changed database
   correction apart; a mismatch refuses with the field named
   (`MovieError::BoardMismatch`, `RegionMismatch`).
 - **Older movies are refused** (`MovieError::FormatTooOld`): a v1 or v2 `.rnm`
-  does not say which machine it ran on. So is a movie whose start point embeds a
+  does not say which machine it ran on, and a v3 one does not say which ROM
+  split or wiring it ran on. So is a movie whose start point embeds a
   save state older than the `.rns` epoch 3 (`MovieError::StartStateTooOld`); both
   errors say to re-record. The maintainer accepted breaking them.
 - **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) record the stock
