@@ -88,3 +88,48 @@ Not done, by measurement: the dual restore still allocates its main backup per
 call. v2.9.1 pooled it and the A/B moved by exactly its order-bias drift in both
 runs, so it was reverted (`docs/performance.md` v2.9.1). The `vs_dualsystem` ROM suite needs local dumps; only the synthetic
 dual suite exercised the dual path here.
+
+## v2.9.9 re-audit
+
+Report: [`v2.9.9-core-reaudit.md`](v2.9.9-core-reaudit.md) (a Claude subagent,
+read-only, on `8b277044`).
+
+**Rows above: 56 re-verified; 50 HOLD, 6 CHANGED, 0 REGRESSED.** The six
+CHANGED rows are v2.9.8's recorded removals (§3.1, §4.2-§4.4), the Provenance
+header count (§6.3, 30 files; `provenance_record_audit.rs` passes), and F-01,
+whose field and pin v2.9.8 removed (annotated in the row). IMP-02 and NC-03
+held with a gap the new NC-09 names.
+
+Each fix below was pinned red first and its mutant caught; the commit bodies
+carry the evidence.
+
+| id | finding | verdict | evidence | release | commit |
+|---|---|---|---|---|---|
+| NC-09 | A finite-but-huge APU filter value was accepted on restore, poisoned the audio and made the machine's own snapshot unloadable (re-opening NC-03's half-applied rollback) | FIXED | Bounds closed under the resampler's motion: held <= 4, integrator and window partial sums <= 16 with drift <= 1, filter state <= 1024 (> 8a/(1-a) ~ 607). Red: `a_huge_filter_value_is_refused_so_the_next_snapshot_still_loads` plus the rejection sweep | v2.9.9 | `ba626e37` |
+| NC-10 | Headers that build different machines from one body shared the identity and the BoardDescription (PRG/CHR split; mapper 30/218 raw byte-6 bits) | FIXED | BoardDescription gains `prg_rom_len`, `chr_rom_len`, `nametable_wiring_bits` (`Cartridge::nametable_wiring_bits`); movie format 4, 3 refused. Red: `headers_that_build_different_machines_differ_in_the_description` | v2.9.9 | `ba626e37` |
+| NC-11 | A movie's `extra_scanlines` was unbounded | FIXED | `MAX_EXTRA_SCANLINES` = 80 in the core; the setter clamps, a movie above it is refused | v2.9.9 | `ba626e37` |
+| NC-12 | MMC1 restored `shift_count` unbounded | FIXED | count > 4 or shift > `$1F` refused | v2.9.9 | `ba626e37` |
+| NC-13 | A movie's Game Genie list was not canonical, so playback re-applied it every frame | FIXED | Decoded to one code per address in address order, the later winning (the console's own form) | v2.9.9 | `ba626e37` |
+| NC-14 | Too-long PPU/CPU/mapper states were reported as "truncated" | FIXED | PPU `TrailingBytes`; CPU and mapper messages say "wrong length" | v2.9.9 | `ba626e37` |
+| NC-15 | `run_frame`'s `# Panics` section was false | FIXED (docs) | A JAM ends the call early; documented | v2.9.9 | `ba626e37` |
+| NC-16 | `$4017` set the inhibit at once but cleared it at the timer reset | FIXED | Both directions on the write. Red: `write_4017_inhibit_clear_unmasks_on_the_write_cycle` (raised exactly when the lead is shorter than the reset delay) | v2.9.9 | `ba626e37` |
+| NC-17 | Seven core files cite reference-emulator source by file, function or line without a `// Provenance:` header | MAINTAINER | Classification proposed for the maintainer's review (below); nothing deleted or reworded | — | — |
+| NL-12 | (libretro report, core scope) A restore restarted the BLEP resampler cold: audio and later serialized state differed from a straight run | FIXED | APU snapshot v5 carries the synthesis state (135 bytes, fixed size). Red: `a_restore_resumes_the_exact_audio_stream` (APU) and libretro `a_mid_run_round_trip_serializes_like_a_straight_run` | v2.9.9 | `ba626e37` |
+| NL-15 | (libretro report, core scope) Flash boards allocate their whole flash on every restore | OPEN (perf) | Unmeasured; measured with the v2.9.9 performance work under the `ab_check.sh` rule before any change | — | — |
+
+### NC-17: proposed classification (awaiting the maintainer)
+
+Read from our own files only; no reference source was opened. "Derivation"
+means the comment states or implies the source was read and its logic or
+constants used, which §1 requires to be recorded; "comparison" means the
+reference was run as an oracle.
+
+| file | citations | proposed |
+|---|---|---|
+| `rustynes-cpu/src/bus.rs` | :183 "a direct port of the TriCNES `_6502` per-cycle DMA dispatch table"; :65, :111-:134 Mesen function names | Derivation (TriCNES, MIT) of the DMA engine, which lives in `rustynes-core/src/bus.rs` and already carries that header (v2.9.2); this doc only describes it. Proposed: a cross-reference to that header, no new one |
+| `rustynes-apu/src/apu.rs` | :69-:234 TriCNES field names with `Emulator.cs` line numbers; :184, :195 Mesen2 `_needHalt` / `_needDummyRead` | Derivation (TriCNES MIT, Mesen2 GPL-3.0) of the DMC-DMA state model: header + §1 row + `NOTICE` |
+| `rustynes-apu/src/frame_counter.rs` | :105, :260 "mirroring Mesen2's `GetIrqFlag` lazy algorithm (`ApuFrameCounter.h` lines 214-227)"; :25 the PAL step table | Derivation (Mesen2) of the lazy `$4015` clear: header + §1 row. The PAL step values are also on the wiki; proposed recorded with the same row |
+| `rustynes-apu/src/snapshot.rs` | :44, :538, :726 | Describes the fields of the two models above: cross-reference only |
+| `rustynes-core/src/vs_dualsystem.rs` | :44 "Stepping mirrors Mesen2 `NesConsole::RunFrame`", :171 `VsControlManager::Reset`, :227, :287 | Derivation (Mesen2) of the DualSystem orchestration: header + §1 row |
+| `rustynes-mappers/src/homebrew_boards.rs` | :1124, :1250 "verified against Mesen2 `UnRom512::InitMapper`", expression quoted at :1149, :1444 | Source consulted for a behaviour the wiki also documents (the GeraNES precedent in §3): record as consulted, not derived, unless the maintainer prefers §1 |
+| `rustynes-mappers/src/m019_namco163.rs` | :69 Mesen2 `NesSoundMixer::GetOutputVolume`'s `* 20` N163 weight | Derivation (Mesen2) of a mixing constant: §1 row + header |

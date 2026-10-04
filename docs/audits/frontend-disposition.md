@@ -104,3 +104,31 @@ direction -- see the Power Cycle row below.
 
 Not established: anything on a device (no Swift or Android run), and the
 responsiveness effect of the winit-thread HD-audio decode.
+
+## v2.9.9 re-audit
+
+Report: [`v2.9.9-frontend-reaudit.md`](v2.9.9-frontend-reaudit.md) (a Claude
+subagent, read-only, on `8b277044`).
+
+**Rows above: 76 re-verified (67 frontend, 9 from the v2.9.2 audit); 74 HOLD,
+2 CHANGED, 0 REGRESSED.**
+
+The fixes were made by a Claude subagent in a worktree and cherry-picked onto
+`release/v2.9.9-rc`; each was red first with its mutant caught (commit bodies
+carry the evidence).
+
+| id | finding | verdict | evidence | release | commit |
+|---|---|---|---|---|---|
+| NF-11 | Hotkeys and two other routes bypassed the movie / netplay lockouts | FIXED | One `session_policy::refusal` table; every route asks it (12 menu, hotkey, manager and browser arms; scripts honour `writes_locked`) | v2.9.9 | `74291b04` |
+| NF-12 | A movie kept recording or playing across a ROM load | FIXED | Installing or closing a ROM ends the session; a recording in progress is offered for saving | v2.9.9 | `15143382` |
+| NF-13 | History-viewer clips spanning a discontinuity did not replay | FIXED | Exports start only from anchors the kept input covers; the timeline clears on load, rewind and reset | v2.9.9 | `80910d31` |
+| NF-14 | A mid-session cheat reached TAStudio's re-emulation | FIXED | Frame-0 options held on each seek and recorded frame | v2.9.9 | `26d38f51` |
+| NF-15 | A spectator ran a stream for a different ROM or configuration | FIXED | Nothing runs until a matching `Sync`; a mismatched one is terminal. Contract change: a relay must forward `Sync` | v2.9.9 | `cae0f67b` |
+| NF-16 | The FDS disk save was not sandboxed and was written under the emu lock | FIXED | `FdsSave` binding released for sandboxed sessions; written off the lock, retried on failure | v2.9.9 | `9159d455` |
+| NF-17 | An FDS game's save identity changed after its first disk save | FIXED (desktop keys); core half in progress | Save states and cheats keyed on the pristine disk; the core-wide identity is a separate change | v2.9.9 | `2bfd1857` |
+| NF-18 | The mobile bridge allowed timeline changes inside a movie or netplay | FIXED | Bridge refuses them with existing error variants (generated bindings unchanged) | v2.9.9 | `87e6420f` |
+| NF-19 | The browser reported "State saved/loaded" whatever happened | FIXED | Real outcome on the status line (wasm clippy only; no browser run) | v2.9.9 | `92751e29` |
+| NF-20 | Movie export ended the recording before the dialog | FIXED | Exports a snapshot of the recorder; outcomes on the status line | v2.9.9 | `adfd6ac4` |
+| NF-21 | Mobile hosts keyed saves by the whole file's hash | IN PROGRESS | Maintainer chose migration (2026-10-03) | v2.9.9 | — |
+| NF-22 | A Vs. cabinet missed live settings; mobile reached the main console only | FIXED | `for_each_console` on desktop and in the bridge; survives a cabinet Power Cycle | v2.9.9 | `4dc305bc` |
+| NF-23 | The command-line load applied the per-game mirroring override unguarded | FIXED | One guarded `apply_per_game_overlay` for both load paths | v2.9.9 | `d15f12b5` |
