@@ -25,12 +25,14 @@
 //! - 4-byte fill mode (`$5105` per-NT selector 0b11). Nametable byte reads
 //!   in those tables return `$5106` (fill tile); attribute byte reads
 //!   return `$5107` low 2 bits replicated 4 ways.
-//! - Dual sprite vs. background CHR banks. The PPU's sprite tile fetch
-//!   path calls `Mapper::ppu_read_sprite`, which we resolve through the
-//!   eight 1 KiB sprite-CHR bank registers (`$5120-$5127`). BG fetches
-//!   continue to use `$5128-$512B`. In 8x16 sprite mode this matches the
-//!   documented MMC5 behavior; in 8x8 mode the registers tend to be
-//!   programmed identically.
+//! - Two CHR bank sets, A (`$5120-$5127`) and B (`$5128-$512B`). Sprite
+//!   fetches (`Mapper::ppu_read_sprite`) always use A. In 8x8 mode the B set
+//!   is ignored and A serves background fetches and `$2007` too; in 8x16
+//!   mode background fetches use B while rendering and `$2007` uses the set
+//!   written last. The chip learns the sprite size and render enables by
+//!   decoding the PPU's `$2000` / `$2001` itself
+//!   (`Mapper::notify_ppu_register_write`). `$5101` selects which registers
+//!   drive which window, and a value indexes banks of the selected size.
 //! - Scanline IRQ at PPU cycle 4 of each visible scanline. The scanline
 //!   counter ticks via `Mapper::notify_scanline_start`; the in-frame flag
 //!   is cleared on vertical blank (`Mapper::notify_vblank`).
@@ -115,7 +117,18 @@ const PRG_RAM_BANK: usize = 0x2000;
 const EXRAM_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 5;
+/// v6 (v2.9.9): the `$2000` / `$2001` snoop (`ppu_sprites_8x16`,
+/// `ppu_rendering`) follows `last_chr_write_was_sprite`.
+const SAVE_STATE_VERSION: u8 = 6;
+
+/// The MMC5's two CHR bank-register sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChrSet {
+    /// `$5120-$5127`: sprites always; everything in 8x8 mode.
+    A,
+    /// `$5128-$512B`: background tiles in 8x16 mode.
+    B,
+}
 /// The PRG-RAM address space the MMC5 always presents: 64 KiB, the wiki's
 /// "compatible superset for all games" (see [`Mmc5::prg_ram_offset`]).
 const PRG_RAM_SUPERSET: usize = 0x1_0000;
@@ -479,23 +492,33 @@ pub struct Mmc5 {
     prg_ram_bank: u8,
     /// `$5114-$5117` PRG bank registers.
     prg_banks: [PrgSlot; 4],
-    /// `$5128-$512B` BG CHR bank registers. 10-bit values: low 8 bits from the
-    /// register, high 2 bits from `$5130`.
+    /// `$5128-$512B`, the "B" CHR bank set. 10-bit values: low 8 bits from
+    /// the register, high 2 bits from `$5130`. Used only while 8x16 sprites
+    /// are selected: for background fetches while rendering, and for `$2007`
+    /// when this set was written last. In 8x8 mode the MMC5 ignores it.
     bg_chr_banks: [u16; 4],
-    /// `$5120-$5127` sprite CHR bank registers — used for 8x16 sprite pattern
-    /// fetches (CHR mode 3). Eight registers because the sprite CHR layout is up
-    /// to 8x1 KiB.
+    /// `$5120-$5127`, the "A" CHR bank set. Sprite fetches always use it; in
+    /// 8x8 mode background fetches and `$2007` use it too. Which registers
+    /// drive which window depends on `$5101` (see [`Mmc5::chr_set_offset`]).
     sprite_chr_banks: [u16; 8],
     /// `$5130` upper 2 bits applied to the CHR bank registers (high bits of the
     /// bank index).
     chr_upper: u8,
-    /// Last register set written to (BG `$5128-$512B` or sprite
-    /// `$5120-$5127`). Per nesdev, in 8x16 sprite mode the most-recent of
-    /// these write groups determines which bank set the BG fetch path
-    /// consults — but for our purposes BG always reads from BG and
-    /// sprites always read from sprite, so this is purely informational.
-    /// We keep it for save-state diagnostic continuity.
+    /// Whether the A set (`$5120-$5127`) was written after the B set. In 8x16
+    /// mode `$2007` uses the set written last; selecting 8x8 sprites resets
+    /// it to the A set (loopy's hardware tests on the NESdev thread the MMC5
+    /// page cites: "Switching back to 8x16, it still uses $5120-27 (until
+    /// 5128-2B is written again)").
     last_chr_write_was_sprite: bool,
+    /// `$2000` bit 5 as the MMC5 last saw it written. The chip decodes the
+    /// PPU's `$2000` itself (exactly `$2000`, not a mirror), which is how it
+    /// knows 8x16 sprites are selected (MMC5 page, "8x16 mode enable").
+    ppu_sprites_8x16: bool,
+    /// `$2001` bits 3-4 (show background / show sprites) as the MMC5 last saw
+    /// them written, at exactly `$2001`. "Only when Z is set and at least one
+    /// E bit is set does the MMC5 draw 8x16 sprites from eight independent
+    /// banks."
+    ppu_rendering: bool,
     /// MMC5 ExGrafix per-tile CHR bank latch. Set by `peek_ex_attribute`
     /// at NT-fetch time, consumed by the next BG `ppu_read` call(s).
     /// 4 KiB bank index (combined with the in-tile 12-bit offset).
@@ -639,7 +662,10 @@ impl Mmc5 {
             bg_chr_banks: [0; 4],
             sprite_chr_banks: [0; 8],
             chr_upper: 0,
-            last_chr_write_was_sprite: false,
+            // The PPU powers on with 8x8 sprites, which selects the A set.
+            last_chr_write_was_sprite: true,
+            ppu_sprites_8x16: false,
+            ppu_rendering: false,
             ex_chr_bank_latch: None,
             split_enable: false,
             split_side_right: false,
@@ -834,52 +860,89 @@ impl Mmc5 {
         }
     }
 
-    /// CHR fetch flavors. The PPU uses different bank-register banks for
-    /// sprite vs. BG fetches when 8x16 sprites are enabled.
+    /// Resolve a sprite pattern fetch. Sprites always use the A set
+    /// (`$5120-$5127`), in 8x8 and 8x16 mode alike, laid out by `$5101`
+    /// exactly as the MMC5 page's "CHR select $5120-$512B" table gives it.
     ///
-    /// Note: outside 8x16 mode real MMC5 hardware unifies the two register
-    /// banks (sprite writes update BG too). We approximate that by reading
-    /// the BG registers for both BG and sprite fetches in 8x8 sprite mode.
-    /// In 8x16 mode, sprite fetches use the sprite bank registers
-    /// (`$5120-$5127`) and BG fetches use BG (`$5128-$512B`).
-    ///
-    /// `Sprite` callers should pass `kind = ChrFetchKind::Sprite`. The
-    /// 8x8-vs-8x16 decision is taken by the caller (the PPU is responsible
-    /// for routing only sprite-tile fetches into `Sprite` regardless).
-    /// In MMC5's interpretation, when 8x16 mode is *off*, BG and sprite
-    /// fetches share the BG bank set; we model this by always using the
-    /// BG bank set unless 8x16 is on.
-    ///
-    /// Caller: PPU sprite tile fetch path.
+    /// Until v2.9.9 this read the A registers as eight 1 KiB banks whatever
+    /// `$5101` said; a game in 4 KiB or 8 KiB mode drew its sprites from the
+    /// wrong place (T-MMC5-8X8-SET).
     fn chr_offset_sprite(&self, addr: u16) -> usize {
-        // In 8x16 mode there are 8 sprite-CHR registers (`$5120-$5127`)
-        // and they always behave as 1 KiB banks regardless of `$5101` —
-        // per nesdev §"CHR Bank Switching": in 8x16 mode, sprite tile
-        // pattern fetches always access CHR via the eight sprite bank
-        // registers indexed by the high 3 bits of the pattern address.
-        //
-        // We assume the PPU only routes sprite *tile* fetches here; the
-        // mode decision is captured by checking whether the BG path is
-        // being driven differently. To stay simple and faithful, when
-        // sprite_chr_banks[*] match the BG group (i.e. user wrote to the
-        // BG group only), this will produce equivalent results.
-        let a = (addr & 0x1FFF) as usize;
-        let slot = (a / CHR_BANK_1K) & 0x07;
-        let bank = self.sprite_chr_banks[slot] as usize;
-        let total_banks_1k = self.chr.len() / CHR_BANK_1K;
-        let mask = total_banks_1k.saturating_sub(1);
-        let bank = bank & mask;
-        let byte_off_within_bank = a & (CHR_BANK_1K - 1);
-        bank * CHR_BANK_1K + byte_off_within_bank
+        self.chr_set_offset(addr, ChrSet::A)
     }
 
-    /// Resolve a PPU CHR address (`$0000-$1FFF`) to a byte offset in `chr`,
-    /// using the BG bank registers (`$5128-$512B`).
+    /// The bank set a non-sprite CHR access uses: a background fetch while
+    /// rendering, or a `$2007` access.
+    ///
+    /// The MMC5 page and the hardware tests it cites (loopy, on the NESdev
+    /// thread its footnotes link) give:
+    ///
+    /// - **8x8 sprites:** "only registers $5120-$5127 are used. Registers
+    ///   $5128-$512B are completely ignored", for background tiles and
+    ///   `$2007` as well as sprites.
+    /// - **8x16 sprites, rendering:** background tiles use the B set
+    ///   (`$5128-$512B`).
+    /// - **8x16 sprites, `$2007`:** "the last set of registers written to";
+    ///   but with extended attributes on, `$2007` READS always use the A set
+    ///   (Sour's result on the same thread). `read` selects that case.
+    ///
+    /// The MMC5 tells a rendering fetch from a `$2007` access by counting
+    /// PPU reads since its last scanline detection. The model's equivalent is
+    /// its in-frame flag together with the snooped `$2001` render enables:
+    /// a fetch made while both say "rendering" is a background fetch.
+    fn non_sprite_set(&self, read: bool) -> ChrSet {
+        if !self.ppu_sprites_8x16 {
+            ChrSet::A
+        } else if self.in_frame && self.ppu_rendering {
+            ChrSet::B
+        } else if self.last_chr_write_was_sprite || (read && self.exram_mode & 0x03 == 1) {
+            ChrSet::A
+        } else {
+            ChrSet::B
+        }
+    }
+
+    /// Resolve `addr` (`$0000-$1FFF`) through one CHR bank set, per the
+    /// MMC5 page's table:
+    ///
+    /// | `$5101` | size  | A set (`$5120-$5127`)        | B set (`$5128-$512B`)                 |
+    /// |---------|-------|------------------------------|---------------------------------------|
+    /// | 0       | 8 KiB | `$5127`                      | `$512B`                               |
+    /// | 1       | 4 KiB | `$5123`, `$5127`             | `$512B` for both halves               |
+    /// | 2       | 2 KiB | `$5121`, `$5123`, `$5125`, `$5127` | `$5129`, `$512B`, repeated per 4 KiB |
+    /// | 3       | 1 KiB | `$5120`-`$5127`              | `$5128`-`$512B`, repeated per 4 KiB   |
+    ///
+    /// "The banks are always indexed by the currently selected size": a
+    /// register value N in 4 KiB mode selects the N-th 4 KiB bank, and its
+    /// low bits are not ignored. Before v2.9.9 the 8 KiB, 4 KiB and 2 KiB
+    /// modes masked the value and indexed 1 KiB banks, and modes 1 and 2
+    /// read B registers the table does not use.
+    fn chr_set_offset(&self, addr: u16, set: ChrSet) -> usize {
+        let a = (addr & 0x1FFF) as usize;
+        let (size, bank) = match (self.chr_mode & 0x03, set) {
+            (0, ChrSet::A) => (0x2000, self.sprite_chr_banks[7]),
+            (1, ChrSet::A) => (0x1000, self.sprite_chr_banks[(a >> 12) * 4 + 3]),
+            (2, ChrSet::A) => (0x0800, self.sprite_chr_banks[(a >> 11) * 2 + 1]),
+            (_, ChrSet::A) => (0x0400, self.sprite_chr_banks[a >> 10]),
+            (0, ChrSet::B) => (0x2000, self.bg_chr_banks[3]),
+            (1, ChrSet::B) => (0x1000, self.bg_chr_banks[3]),
+            (2, ChrSet::B) => (0x0800, self.bg_chr_banks[((a >> 11) & 1) * 2 + 1]),
+            (_, ChrSet::B) => (0x0400, self.bg_chr_banks[(a >> 10) & 0x03]),
+        };
+        // CHR sizes are powers of two, so the bank count is too; a CHR image
+        // smaller than one bank still maps (`max(1)`), offset `% len` later.
+        let banks = (self.chr.len() / size).max(1);
+        ((bank as usize) & (banks - 1)) * size + (a & (size - 1))
+    }
+
+    /// Resolve a non-sprite PPU CHR address (`$0000-$1FFF`) to a byte offset
+    /// in `chr`: a background fetch or a `$2007` access, `read` telling a
+    /// `$2007` read from a write. The bank set is [`Mmc5::non_sprite_set`]'s.
     ///
     /// In MMC5 ExGrafix mode (`$5104` mode 01) the per-tile CHR bank
     /// latched at the most recent NT-byte fetch overrides the standard
     /// BG bank decoding; we apply that override here.
-    fn chr_offset(&self, addr: u16) -> usize {
+    fn chr_offset(&self, addr: u16, read: bool) -> usize {
         // Vertical split-screen override: take precedence over both
         // ExGrafix and standard BG bank decoding. 4 KiB bank from $5202
         // (latched at NT-fetch time by `bg_split_state`).
@@ -900,58 +963,7 @@ impl Mmc5 {
             return bank_1k * CHR_BANK_1K + off_within_4k;
         }
 
-        let addr = (addr & 0x1FFF) as usize;
-        let total_banks_1k = self.chr.len() / CHR_BANK_1K;
-        let mask = total_banks_1k.saturating_sub(1);
-        let mode = self.chr_mode & 0x03;
-
-        // Each CHR mode lays out the 8 KiB pattern window from a small set
-        // of bank registers. We always use the "BG" bank set in v0.
-        // Bank-register selection per nesdev:
-        //   Mode 0 (8 K):     register $512B drives all 8 KiB.
-        //   Mode 1 (4+4 K):   $5129 drives $0000-$0FFF, $512B drives $1000-$1FFF.
-        //   Mode 2 (2 K x 4): $5128/$5129/$512A/$512B drive each 2 KiB tile of
-        //                     the BG window.
-        //   Mode 3 (1 K x 8): $5128/$5129/$512A/$512B repeat: each register's
-        //                     value is used as a 1 KiB bank, but only four
-        //                     registers exist for the BG side, so banks repeat
-        //                     with the second 4 KiB mirroring the first.
-        //
-        // We model the four BG registers indexed 0..=3 corresponding to
-        // `$5128`..`$512B`.
-        let (slot_size_in_1k, bank_index) = match mode {
-            0 => {
-                // Single 8 KiB bank. Use register index 3 ($512B), mask
-                // bottom 3 bits (8K = 8 x 1K).
-                let bank = (self.bg_chr_banks[3] as usize) & !0x07;
-                (8usize, bank)
-            }
-            1 => {
-                // Two 4 KiB banks: low half from register 1 ($5129),
-                // high half from register 3 ($512B). Mask bottom 2 bits.
-                let reg = if addr < 0x1000 { 1 } else { 3 };
-                let bank = (self.bg_chr_banks[reg] as usize) & !0x03;
-                (4usize, bank)
-            }
-            2 => {
-                // Four 2 KiB banks. Region index = (addr / 0x800) & 3.
-                let reg = (addr / 0x0800) & 0x03;
-                let bank = (self.bg_chr_banks[reg] as usize) & !0x01;
-                (2usize, bank)
-            }
-            _ => {
-                // Eight 1 KiB banks. With only 4 BG registers the pattern
-                // repeats (per nesdev: BG fetches in 1K mode take `$5128
-                // + (slot & 3)` for each 1K slot).
-                let slot = (addr / CHR_BANK_1K) & 0x03;
-                let bank = self.bg_chr_banks[slot] as usize;
-                (1usize, bank)
-            }
-        };
-
-        let bank = bank_index & mask;
-        let byte_off_within_bank = addr & ((slot_size_in_1k * CHR_BANK_1K) - 1);
-        bank * CHR_BANK_1K + byte_off_within_bank
+        self.chr_set_offset(addr, self.non_sprite_set(read))
     }
 
     /// Decode the per-1KiB nametable source for logical table 0..=3.
@@ -1272,7 +1284,7 @@ impl Mapper for Mmc5 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                let off = self.chr_offset(addr);
+                let off = self.chr_offset(addr, true);
                 let len = self.chr.len();
                 self.chr[off % len]
             }
@@ -1318,7 +1330,7 @@ impl Mapper for Mmc5 {
         match addr {
             0x0000..=0x1FFF => {
                 if self.chr_is_ram {
-                    let off = self.chr_offset(addr);
+                    let off = self.chr_offset(addr, false);
                     let len = self.chr.len();
                     self.chr[off % len] = value;
                 }
@@ -1602,6 +1614,22 @@ impl Mapper for Mmc5 {
         }
     }
 
+    fn notify_ppu_register_write(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x2000 => {
+                self.ppu_sprites_8x16 = value & 0x20 != 0;
+                // "being in 8x8 resets what set of registers was written
+                // last" (loopy's hardware result): 8x16 then uses the A set
+                // for `$2007` until the B set is written again.
+                if !self.ppu_sprites_8x16 {
+                    self.last_chr_write_was_sprite = true;
+                }
+            }
+            0x2001 => self.ppu_rendering = value & 0x18 != 0,
+            _ => {}
+        }
+    }
+
     fn notify_vblank(&mut self) {
         // Vertical blank: clear the in-frame flag (the next rendered line
         // re-enters "in-frame" via notify_scanline_start).
@@ -1686,6 +1714,8 @@ impl Mapper for Mmc5 {
         }
         out.push(self.chr_upper);
         out.push(u8::from(self.last_chr_write_was_sprite));
+        out.push(u8::from(self.ppu_sprites_8x16));
+        out.push(u8::from(self.ppu_rendering));
         // ExGrafix CHR bank latch: 1 byte tag (0/1 = absent/present)
         // followed by 2 bytes of bank value.
         if let Some(b) = self.ex_chr_bank_latch {
@@ -1739,6 +1769,7 @@ impl Mapper for Mmc5 {
         //   1 (version) + 9 (prg_mode..prg_ram_bank) + 4 (prg_banks)
         //   + 8 (4 * 2 bytes BG) + 16 (8 * 2 bytes sprite)
         //   + 1 (chr_upper) + 1 (last_chr_write_was_sprite)
+        //   + 2 (ppu_sprites_8x16, ppu_rendering; v6)
         //   + 1 (ex_chr_bank_latch tag) + 2 (ex_chr_bank_latch value)
         //   + 1 (irq_compare) + 1 (irq_enabled) + 1 (irq_pending)
         //   + 1 (in_frame) + 1 (scanline_counter) + 1 (mul_a) + 1 (mul_b)
@@ -1747,12 +1778,14 @@ impl Mapper for Mmc5 {
         //   split_enable + split_side_right + split_tile + split_v_scroll
         //   + split_chr_bank + split_chr_bank_latch (tag + value)
         let scalar_len: usize =
-            1 + 9 + 4 + 8 + 16 + 1 + 1 + 1 + 2 + 7 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
+            1 + 9 + 4 + 8 + 16 + 1 + 1 + 2 + 1 + 2 + 7 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
         let core_expected =
             scalar_len + self.prg_ram.len() + self.vram.len() + self.exram.len() + chr_part;
         // Only the current version is read (v2.9.8, ADR 0042): v3 (no audio
         // tail) and v4 (no superset pages) used to load with those parts at
-        // their defaults.
+        // their defaults. v5 (v2.9.8, no `$2000` / `$2001` snoop) is refused
+        // too: a v5 state restored with 8x8 assumed would draw an 8x16 game
+        // from the wrong bank set until its next `$2000` write.
         let version = if data.is_empty() { 0 } else { data[0] };
         if version != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(version));
@@ -1798,6 +1831,10 @@ impl Mapper for Mmc5 {
         self.chr_upper = data[cur];
         cur += 1;
         self.last_chr_write_was_sprite = data[cur] != 0;
+        cur += 1;
+        self.ppu_sprites_8x16 = data[cur] != 0;
+        cur += 1;
+        self.ppu_rendering = data[cur] != 0;
         cur += 1;
         // ExGrafix CHR bank latch: tag + 2-byte value.
         let tag = data[cur];
@@ -2012,51 +2049,94 @@ mod tests {
         assert_eq!(m.cpu_read(0xE000), 7);
     }
 
+    /// Put the MMC5 in 8x16 mode while rendering, the only state in which the
+    /// B set (`$5128-$512B`) drives background fetches.
+    fn rendering_8x16(m: &mut Mmc5) {
+        m.notify_ppu_register_write(0x2000, 0x20);
+        m.notify_ppu_register_write(0x2001, 0x18);
+        m.notify_scanline_start();
+    }
+
+    // The CHR tests below are written from the MMC5 page's "CHR select
+    // $5120-$512B" table and its rule that "the banks are always indexed by
+    // the currently selected size" (`nesdev_wiki/output/MMC5.md`). Before
+    // v2.9.9 the model masked the value and indexed 1 KiB banks in the 8, 4
+    // and 2 KiB modes, read B registers the table does not use, and used the
+    // B set for background tiles in 8x8 mode (T-MMC5-8X8-SET).
+
     #[test]
-    fn chr_mode_0_8k_bank_via_512b() {
-        let mut m = fresh(8, 8);
-        m.cpu_write(0x5101, 0); // 8K mode
-        // $512B drives 8K (low 3 bits ignored: bank & ~7).
-        m.cpu_write(0x512B, 4); // page 4 -> bank 4 (4 & ~7 = 0). Hmm!
-        // 4 & ~7 == 0, so $0000 reads bank 0. Use 8 instead -> 8 & ~7 = 8 -> mask.
-        // With 8 1K banks of CHR, we need banks 0..=7. 4 & ~7 = 0 yields bank 0.
-        assert_eq!(m.ppu_read(0x0000), 0);
-        // $1000 (1K slot 4 within 8K window) -> bank 0 + 4 = 4.
-        assert_eq!(m.ppu_read(0x1000), 4);
+    fn chr_mode_0_indexes_8k_banks() {
+        // 32 KiB of CHR = four 8 KiB banks; bank N starts at 1 KiB bank 8N.
+        let mut m = fresh(8, 32);
+        m.cpu_write(0x5101, 0);
+        m.cpu_write(0x5127, 1); // A set, 8x8 mode: background too
+        assert_eq!(m.ppu_read(0x0000), 8);
+        assert_eq!(m.ppu_read(0x1C00), 15);
+        assert_eq!(m.ppu_read_sprite(0x0400), 9);
+        rendering_8x16(&mut m);
+        m.cpu_write(0x512B, 3);
+        assert_eq!(m.ppu_read(0x0000), 24);
+        assert_eq!(m.ppu_read_sprite(0x0000), 8);
     }
 
     #[test]
-    fn chr_mode_1_two_4k_banks() {
-        let mut m = fresh(8, 8);
-        m.cpu_write(0x5101, 1); // 4+4K mode
-        // $5129 drives low 4K, $512B drives high 4K. Bank value masked & ~3.
-        m.cpu_write(0x5129, 4); // 4 & ~3 = 4
-        m.cpu_write(0x512B, 0); // 0 & ~3 = 0
-        assert_eq!(m.ppu_read(0x0000), 4); // low 4K starts at bank 4
-        assert_eq!(m.ppu_read(0x0400), 5);
-        assert_eq!(m.ppu_read(0x1000), 0); // high 4K starts at bank 0
-        assert_eq!(m.ppu_read(0x1400), 1);
+    fn chr_mode_1_indexes_4k_banks() {
+        let mut m = fresh(8, 32);
+        m.cpu_write(0x5101, 1);
+        m.cpu_write(0x5123, 1); // $0000-$0FFF -> 4 KiB bank 1 (1 KiB 4)
+        m.cpu_write(0x5127, 6); // $1000-$1FFF -> 4 KiB bank 6 (1 KiB 24)
+        m.cpu_write(0x5121, 7); // not used in 4 KiB mode
+        assert_eq!(m.ppu_read(0x0000), 4);
+        assert_eq!(m.ppu_read(0x0C00), 7);
+        assert_eq!(m.ppu_read(0x1000), 24);
+        assert_eq!(m.ppu_read_sprite(0x1400), 25);
+        // B set: `$512B` drives both halves; `$5129` is unused.
+        rendering_8x16(&mut m);
+        m.cpu_write(0x5129, 5);
+        m.cpu_write(0x512B, 2);
+        assert_eq!(m.ppu_read(0x0000), 8);
+        assert_eq!(m.ppu_read(0x1000), 8);
+        assert_eq!(m.ppu_read_sprite(0x0000), 4);
     }
 
     #[test]
-    fn chr_mode_2_four_2k_banks() {
-        let mut m = fresh(8, 8);
+    fn chr_mode_2_indexes_2k_banks() {
+        let mut m = fresh(8, 32);
         m.cpu_write(0x5101, 2);
-        m.cpu_write(0x5128, 0); // $0000-$07FF -> bank 0 (& ~1) | 0
-        m.cpu_write(0x5129, 2); // $0800-$0FFF -> bank 2
-        m.cpu_write(0x512A, 4); // $1000-$17FF -> bank 4
-        m.cpu_write(0x512B, 6); // $1800-$1FFF -> bank 6
-        assert_eq!(m.ppu_read(0x0000), 0);
-        assert_eq!(m.ppu_read(0x0800), 2);
-        assert_eq!(m.ppu_read(0x1000), 4);
-        assert_eq!(m.ppu_read(0x1800), 6);
+        m.cpu_write(0x5120, 15); // not used in 2 KiB mode
+        m.cpu_write(0x5121, 1); // $0000-$07FF -> 1 KiB 2
+        m.cpu_write(0x5123, 3); // $0800-$0FFF -> 1 KiB 6
+        m.cpu_write(0x5125, 5); // $1000-$17FF -> 1 KiB 10
+        m.cpu_write(0x5127, 7); // $1800-$1FFF -> 1 KiB 14
+        assert_eq!(m.ppu_read(0x0000), 2);
+        assert_eq!(m.ppu_read(0x0400), 3);
+        assert_eq!(m.ppu_read(0x0800), 6);
+        assert_eq!(m.ppu_read(0x1000), 10);
+        assert_eq!(m.ppu_read_sprite(0x1800), 14);
+        // B set: `$5129` for $0000-$07FF and $1000-$17FF, `$512B` for the
+        // other two; `$5128` / `$512A` are unused.
+        rendering_8x16(&mut m);
+        m.cpu_write(0x5128, 15);
+        m.cpu_write(0x5129, 4);
+        m.cpu_write(0x512A, 15);
+        m.cpu_write(0x512B, 9);
+        assert_eq!(m.ppu_read(0x0000), 8);
+        assert_eq!(m.ppu_read(0x0800), 18);
+        assert_eq!(m.ppu_read(0x1000), 8);
+        assert_eq!(m.ppu_read(0x1800), 18);
     }
 
     #[test]
     fn chr_mode_3_eight_1k_banks() {
         let mut m = fresh(8, 8);
         m.cpu_write(0x5101, 3);
-        // BG side has 4 registers; the second 4K mirrors the first.
+        for i in 0..8u8 {
+            m.cpu_write(0x5120 + u16::from(i), 7 - i);
+        }
+        assert_eq!(m.ppu_read(0x0000), 7);
+        assert_eq!(m.ppu_read(0x1C00), 0);
+        // B set: four registers, the second 4 KiB repeating the first.
+        rendering_8x16(&mut m);
         m.cpu_write(0x5128, 1);
         m.cpu_write(0x5129, 3);
         m.cpu_write(0x512A, 5);
@@ -2065,6 +2145,146 @@ mod tests {
         assert_eq!(m.ppu_read(0x0400), 3);
         assert_eq!(m.ppu_read(0x0800), 5);
         assert_eq!(m.ppu_read(0x0C00), 7);
+        assert_eq!(m.ppu_read(0x1000), 1);
+        assert_eq!(m.ppu_read(0x1C00), 7);
+    }
+
+    #[test]
+    fn eight_by_eight_mode_ignores_the_b_set() {
+        // "When using 8x8 sprites, only registers $5120-$5127 are used.
+        // Registers $5128-$512B are completely ignored." That holds while
+        // rendering as well as for `$2007`.
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        for i in 0..8u8 {
+            m.cpu_write(0x5120 + u16::from(i), 8 + i);
+        }
+        for i in 0..4u8 {
+            m.cpu_write(0x5128 + u16::from(i), i);
+        }
+        m.notify_ppu_register_write(0x2000, 0x00);
+        m.notify_ppu_register_write(0x2001, 0x18);
+        m.notify_scanline_start();
+        assert_eq!(m.ppu_read(0x0000), 8);
+        assert_eq!(m.ppu_read(0x1C00), 15);
+        assert_eq!(m.ppu_read_sprite(0x1000), 12);
+        m.notify_vblank();
+        assert_eq!(m.ppu_read(0x0400), 9);
+    }
+
+    #[test]
+    fn data_port_in_8x16_mode_uses_the_last_written_set() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        m.notify_ppu_register_write(0x2000, 0x20);
+        m.cpu_write(0x5120, 4); // A
+        m.cpu_write(0x5128, 2); // B, written last
+        assert_eq!(m.ppu_read(0x0000), 2);
+        m.cpu_write(0x5120, 5); // A, written last
+        assert_eq!(m.ppu_read(0x0000), 5);
+        m.cpu_write(0x5128, 3);
+        assert_eq!(m.ppu_read(0x0000), 3);
+        // Rendering fetches use the B set regardless; `$2007` outside the
+        // frame goes back to the set written last.
+        m.cpu_write(0x5120, 6);
+        rendering_8x16(&mut m);
+        assert_eq!(m.ppu_read(0x0000), 3);
+        m.notify_vblank();
+        assert_eq!(m.ppu_read(0x0000), 6);
+    }
+
+    #[test]
+    fn forced_blank_mid_frame_returns_the_data_port_to_the_last_written_set() {
+        // "The 'In Frame' flag is cleared when the PPU is no longer rendering"
+        // (3 CPU cycles without a PPU read). The model has no read counter;
+        // the snooped `$2001` enables stand in for it, so a `$2007` access
+        // after `$2001 = 0` mid-frame is not taken for a background fetch.
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        m.cpu_write(0x5128, 2);
+        m.cpu_write(0x5120, 4); // A written last
+        rendering_8x16(&mut m);
+        assert_eq!(m.ppu_read(0x0000), 2);
+        m.notify_ppu_register_write(0x2001, 0x00);
+        assert_eq!(m.ppu_read(0x0000), 4);
+    }
+
+    #[test]
+    fn selecting_8x8_resets_the_last_written_set_to_a() {
+        // loopy's hardware result: "Switching back to 8x16, it still uses
+        // $5120-27 (until 5128-2B is written again)".
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        m.notify_ppu_register_write(0x2000, 0x20);
+        m.cpu_write(0x5120, 4);
+        m.cpu_write(0x5128, 2);
+        assert_eq!(m.ppu_read(0x0000), 2);
+        m.notify_ppu_register_write(0x2000, 0x00);
+        m.notify_ppu_register_write(0x2000, 0x20);
+        assert_eq!(m.ppu_read(0x0000), 4);
+    }
+
+    #[test]
+    fn extended_attributes_in_8x16_mode_read_the_a_set() {
+        // Sour's result: with 8x16 sprites and extended attributes, "$2007
+        // reads always use $5120-5127, no matter which register was last
+        // written to".
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        m.cpu_write(0x5104, 1);
+        m.notify_ppu_register_write(0x2000, 0x20);
+        m.cpu_write(0x5120, 4);
+        m.cpu_write(0x5128, 2);
+        assert_eq!(m.ppu_read(0x0000), 4);
+    }
+
+    #[test]
+    fn only_the_exact_ppu_register_addresses_are_snooped() {
+        // The MMC5 decodes `$2000` / `$2001` fully: a mirror write reaches the
+        // PPU but not the MMC5 ("A game could write to a mirror of a PPU
+        // register to get the MMC5 out of sync").
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        m.cpu_write(0x5120, 4);
+        m.cpu_write(0x5128, 2);
+        m.notify_ppu_register_write(0x2008, 0x20);
+        m.notify_ppu_register_write(0x2009, 0x18);
+        m.notify_scanline_start();
+        assert_eq!(m.ppu_read(0x0000), 4);
+    }
+
+    #[test]
+    fn eight_by_sixteen_sprites_use_the_a_set_and_background_the_b_set() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x5101, 3);
+        for i in 0..8u8 {
+            m.cpu_write(0x5120 + u16::from(i), (i + 2) & 0x07);
+        }
+        for i in 0..4u8 {
+            m.cpu_write(0x5128 + u16::from(i), 0);
+        }
+        rendering_8x16(&mut m);
+        assert_eq!(m.ppu_read(0x0000), 0);
+        assert_eq!(m.ppu_read_sprite(0x0000), 2);
+        assert_eq!(m.ppu_read_sprite(0x0400), 3);
+        assert_eq!(m.ppu_read_sprite(0x1C00), 1);
+    }
+
+    #[test]
+    fn ppu_snoop_survives_a_save_state_round_trip() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5101, 3);
+        m.cpu_write(0x5120, 4);
+        m.cpu_write(0x5128, 2);
+        m.notify_ppu_register_write(0x2000, 0x20);
+        m.notify_ppu_register_write(0x2001, 0x08);
+        let state = m.save_state();
+        let mut other = fresh(8, 16);
+        other.load_state(&state).unwrap();
+        assert!(other.ppu_sprites_8x16);
+        assert!(other.ppu_rendering);
+        assert!(!other.last_chr_write_was_sprite);
+        assert_eq!(other.ppu_read(0x0000), 2);
     }
 
     #[test]
@@ -2284,28 +2504,6 @@ mod tests {
         // Writes should NOT be absorbed; the PPU is responsible for CIRAM.
         let consumed = m.nametable_write(0x2000, 0xCC);
         assert!(!consumed);
-    }
-
-    #[test]
-    fn dual_chr_for_sprites_uses_sprite_bank_set() {
-        let mut m = fresh(8, 8);
-        // Set sprite CHR registers to bank=2,3,4,5,6,7,0,1 (1K each).
-        for i in 0..8u8 {
-            m.cpu_write(0x5120 + u16::from(i), (i + 2) & 0x07);
-        }
-        // BG CHR registers to all 0 -> BG fetches read bank 0..3 (mode 3).
-        m.cpu_write(0x5101, 3); // 1K x 8 mode
-        for i in 0..4u8 {
-            m.cpu_write(0x5128 + u16::from(i), 0);
-        }
-        // BG fetch at $0000 -> bg bank 0 -> CHR offset 0 -> first byte = 0.
-        assert_eq!(m.ppu_read(0x0000), 0);
-        // Sprite fetch at $0000 -> sprite bank 2 -> first byte of bank 2.
-        assert_eq!(m.ppu_read_sprite(0x0000), 2);
-        // Sprite fetch at $0400 -> sprite bank 3 -> first byte of bank 3.
-        assert_eq!(m.ppu_read_sprite(0x0400), 3);
-        // Sprite fetch at $1C00 -> sprite bank 1 -> first byte of bank 1.
-        assert_eq!(m.ppu_read_sprite(0x1C00), 1);
     }
 
     #[test]

@@ -3718,6 +3718,9 @@ impl SystemBus {
 
     /// PPU register write with side effects.
     fn ppu_register_write(&mut self, addr: u16, value: u8) {
+        // MMC5 decodes `$2000` / `$2001` itself (8x16 mode, render enables);
+        // it sees the undecoded address, so a mirror write is not snooped.
+        self.mapper.notify_ppu_register_write(addr, value);
         let reg = (addr & 7) as u8;
         let mut adapter = PpuBusAdapter {
             mapper: self.mapper.as_mut(),

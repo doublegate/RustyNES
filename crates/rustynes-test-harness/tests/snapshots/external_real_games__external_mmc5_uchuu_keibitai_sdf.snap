@@ -9,4 +9,4 @@ fb_bytes=245760
 cycles=17838523
 audio_samples=439524
 audio_fnv1a64=1ec544fcca1eee29
-checkpoint f600 fb_fnv1a64=e92577ce853d78bc
+checkpoint f600 fb_fnv1a64=889d0e8c5630b7fc

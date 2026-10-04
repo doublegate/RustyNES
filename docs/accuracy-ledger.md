@@ -140,11 +140,21 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
   places, so the nametable contents look displaced, not the CHR banks. The
   next step is a per-access comparison against a reference run of the intro.
   It stays open under the same ticket.
-- **MMC5 8x8 CHR set, a deviation from the page (found v2.9.7, not changed).**
-  `MMC5.md`: "When using 8x8 sprites, only registers $5120-$5127 are used." The
-  model uses the background set `$5128-$512B` for both kinds of fetch in 8x8
-  mode (`m005_mmc5.rs`, `chr_offset_sprite`'s doc). Changing it moves every
-  8x8 MMC5 game, so it needs its own commercial run: `T-MMC5-8X8-SET`.
+  **Fixed v2.9.9:** the game reads CHR data through `$2007` with 8x16 sprites
+  selected and the A set written last, so the MMC5 serves it from the A set;
+  the model always used the B set. The "displaced nametable" was correct
+  nametable data read from the wrong CHR bank. Closed by the MMC5 page's
+  `$2007` rule (T-MMC5-8X8-SET below), with no game-specific code.
+- **MMC5 CHR bank sets, fixed v2.9.9 (`T-MMC5-8X8-SET`, found v2.9.7).**
+  `MMC5.md`: "When using 8x8 sprites, only registers $5120-$5127 are used."
+  The model had used the background set for both kinds of fetch in 8x8 mode,
+  ignored `$5101` for sprites, indexed 1 KiB banks in the 8/4/2 KiB modes and
+  served `$2007` from the background set always. It now follows the page's
+  table and the hardware results the page cites (8x8: A set for everything;
+  8x16: B for background while rendering, last-written for `$2007`, A for
+  `$2007` reads under extended attributes), learning the sprite size from its
+  own decode of `$2000` / `$2001`. Five of six local MMC5 dumps are
+  byte-identical; *Uchuu Keibitai SDF* is fixed.
 - **Terminator 2 (MC-ACC) pause screen, unexplained.** Pressing Start shows a
   "PAUSED" screen overlaid with CPU-register-like text (`ADC $0C15`, `TAX`,
   `CLI`). It looks the same under MC-ACC and standard-MMC3 timing, and the

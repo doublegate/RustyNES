@@ -43,6 +43,16 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
 
 ### Fixed
 
+- **MMC5 picks its CHR bank set the way the chip does (T-MMC5-8X8-SET), and
+  *Uchuu Keibitai SDF*'s intro draws correctly (T-COMMERCIAL-GARBLE).** The
+  MMC5 now reads the PPU's sprite size and render enables from its own decode
+  of `$2000` / `$2001`. In 8x8 mode it uses only `$5120-$5127`; in 8x16 mode
+  the background uses `$5128-$512B` while rendering, and `$2007` uses the set
+  written last. The 8, 4 and 2 KiB CHR modes now index banks of that size,
+  and sprites follow `$5101`. *Uchuu Keibitai SDF* reads data out of CHR
+  through `$2007`, so its intro had drawn from the wrong bank; it is now
+  correct. Castlevania III, Bandit Kings, Gemfire, L'Empereur and Laser
+  Invasion are unchanged.
 - **MMC3 IRQ timing (T-ORACLE-001).** The emulator raised the MMC3 IRQ a
   scanline late in blargg's `4-scanline_timing`. The cause was a condition the
   NESdev page does not have: a `$C001` reload to 0 asserted only when the

@@ -1132,7 +1132,20 @@ measured levels, phases and decode, and supplies the CHANGE emphasis makes as a
 512 colours. Open beyond it, as choices rather than defects: the page's
 differential phase distortion, and the PAL/Dendy red-green swap.
 
-## T-MMC5-8X8-SET — the MMC5 CHR set in 8x8 sprite mode (found v2.9.7)
+## T-MMC5-8X8-SET — the MMC5 CHR set in 8x8 sprite mode (found v2.9.7, FIXED v2.9.9)
+
+**v2.9.9: fixed, and wider than the ticket.** The MMC5 now decodes the PPU's
+`$2000` / `$2001` itself (`Mapper::notify_ppu_register_write`), uses only the A
+set in 8x8 mode, the B set for background fetches in 8x16 mode while rendering,
+and the last-written set for `$2007` (A set for reads under extended
+attributes), per the page and the hardware tests on the thread it cites
+(loopy's and Sour's results). Writing it from the page's table also exposed two
+deviations the ticket did not name: sprite fetches ignored `$5101` (always
+1 KiB banks), and the 8/4/2 KiB modes masked the register and indexed 1 KiB
+banks, reading B registers the table does not use. Ten mutants caught. Of the
+six local MMC5 dumps, five are unchanged and *Uchuu Keibitai SDF* is fixed
+(T-COMMERCIAL-GARBLE below). The other titles the ticket names (Just Breed,
+Metal Slader Glory, the remaining Koei titles) have no local dump.
 
 `MMC5.md`: "When using 8x8 sprites, only registers $5120-$5127 are used.
 Registers $5128-$512B are completely ignored." `m005_mmc5.rs` does the opposite:
@@ -1142,7 +1155,15 @@ why nothing has shown it. Fix from the page, pin it with a unit test, and run th
 commercial MMC5 corpus (Castlevania III, Just Breed, Metal Slader Glory, the Koei
 titles) before and after; any title whose frames move gets looked at.
 
-## T-COMMERCIAL-GARBLE — two commercial titles render garbage (found v2.9.6)
+## T-COMMERCIAL-GARBLE — two commercial titles render garbage (found v2.9.6, CLOSED v2.9.9)
+
+**v2.9.9: *Uchuu Keibitai SDF* fixed** by T-MMC5-8X8-SET's `$2007` rule. The
+game keeps non-pattern data in CHR-ROM and reads it through `$2007` (the MMC5
+page names it for this); it selects 8x16 sprites and writes the A set last, so
+the MMC5 serves `$2007` from the A set. The model always read through the B
+set, so the intro drew from the wrong bank: frames 200, 300 and 600 were tile
+garbage and are now the launch tube and the starfield, rendered and looked at.
+Both titles are now fixed, so the ticket is closed.
 
 **v2.9.7:** *Time Diver: Avenger* fixed (mapper 250's IRQ is the MMC3 scanline
 counter). *Uchuu Keibitai SDF* localised to its intro (frames 120-400) and the

@@ -261,6 +261,17 @@ pub trait Mapper: Send {
     /// Added in v2.9.6.
     fn notify_floating_read(&mut self, _addr: u16, _value: u8) {}
 
+    /// The CPU wrote `value` to the PPU register window (`$2000-$3FFF`), at
+    /// the undecoded address `addr`.
+    ///
+    /// Only MMC5 (mapper 5) uses it: the chip "listen[s] to the same address
+    /// as the PPU to find out when to enable the 8x16 sprite mode", decoding
+    /// `$2000` and `$2001` fully, so a write to a mirror such as `$2008` is
+    /// not seen (`nesdev_wiki/output/MMC5.md`). The address is passed
+    /// undecoded for that reason. Called once per PPU register write, never
+    /// per cycle. Default: nothing. Added in v2.9.9.
+    fn notify_ppu_register_write(&mut self, _addr: u16, _value: u8) {}
+
     /// Whether PPU `$3000-$3EFF` is independent RAM on this cartridge rather
     /// than a mirror of `$2000-$2EFF`.
     ///
