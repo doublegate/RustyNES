@@ -2540,12 +2540,14 @@ impl App {
         // (already-modified) `.fds` bytes so prior in-game writes persist. The
         // saved image is a full `.fds` container, so this is the simplest
         // correct restore. We keep `fds_disk_sha256` = the original hash so the
-        // save keeps the same on-disk key.
+        // save keeps the same on-disk key, and (v2.9.9, NF-17) the console
+        // reports that hash as its `rom_sha256` too, so a disk save does not
+        // move the game's slots, cheats, movies, netplay or per-game keys.
         if let Some(saved) = self
             .fds_save_path(&original_sha)
             .and_then(|p| std::fs::read(&p).ok())
         {
-            match Nes::from_disk_with_sample_rate(&saved, &bios, sample_rate) {
+            match crate::emu::boot_saved_disk(&saved, &bios, sample_rate, original_sha) {
                 Ok(n) => {
                     eprintln!("rustynes: restored FDS writable disk from save");
                     return Some((n, original_sha));

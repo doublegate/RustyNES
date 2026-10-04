@@ -472,7 +472,9 @@ impl Nes {
     ///
     /// The reported `rom_sha256` hashes the disk-image bytes (not the BIOS), so
     /// save-states / movies key off the disk the way cartridge builds key off
-    /// the ROM.
+    /// the ROM. A host booting a SAVED (game-written) copy of the disk passes
+    /// the pristine image's hash to [`Nes::set_rom_identity`] afterwards, so
+    /// the identity does not move with the game's disk saves (v2.9.9, NF-17).
     ///
     /// # Errors
     ///
@@ -1694,7 +1696,9 @@ impl Nes {
 
     /// Re-serialize the (possibly-modified) FDS disk image to the headerless
     /// `.fds` byte layout so the host can write it to a side-car `.fds.sav`
-    /// (keyed by [`Self::rom_sha256`]). Empty for cartridge builds.
+    /// (keyed by [`Self::rom_sha256`]; a console booted from that file reports
+    /// the same key once the host calls [`Self::set_rom_identity`]). Empty for
+    /// cartridge builds.
     #[must_use]
     pub fn disk_image_bytes(&self) -> Vec<u8> {
         self.bus.disk_image_bytes()
@@ -2172,7 +2176,10 @@ impl Nes {
     /// Everything that persists per game is keyed by it: save-state slot
     /// directories, the battery `.sav`, cheats, the `.rns` header's ROM tag
     /// ([`Self::rom_hash_tag`]), movies and netplay's ROM match. Computed once
-    /// at construction; subsequent calls are O(1).
+    /// at construction; subsequent calls are O(1). A host that boots a saved
+    /// copy of an FDS disk replaces it with the pristine disk's hash
+    /// ([`Self::set_rom_identity`], v2.9.9), so a game's own disk saves never
+    /// move its identity.
     ///
     /// **Why the header is excluded (v2.9.8).** Until v2.9.8 this hashed the
     /// whole image as constructed, which on the desktop is the image AFTER the
@@ -2199,6 +2206,40 @@ impl Nes {
     #[must_use]
     pub const fn image_sha256(&self) -> &[u8; 32] {
         &self.image_sha256
+    }
+
+    /// Replace this console's persistent identity ([`Self::rom_sha256`]) with
+    /// `sha256`, for a host that boots a game from a SAVED copy of its image.
+    ///
+    /// The case it exists for is a Famicom Disk System disk. FDS games save by
+    /// writing to the disk, so a host persists the written image
+    /// ([`Self::disk_image_bytes`]) and boots from THAT file on the next
+    /// launch, which is how a disk game's progress carries over. Every
+    /// constructor hashes the bytes it is given, so from the game's first disk
+    /// save on, an `Nes` booted that way reported the MODIFIED disk's hash, and
+    /// everything keyed on [`Self::rom_sha256`] changed identity with it:
+    /// save-state slots and the `.rns` ROM tag ([`Self::rom_hash_tag`]),
+    /// cheats, movies and `TAStudio`, netplay's ROM match, the HD-pack and
+    /// per-game keys, the RA progress sidecar (v2.9.9 re-audit NF-17). The
+    /// host knows the pristine image's hash (it keys the saved disk with it),
+    /// so it passes that here, right after construction, and the console then
+    /// reports the identity of the game rather than of one of its saves.
+    ///
+    /// Only the identity moves. [`Self::image_sha256`] stays the hash of the
+    /// bytes actually loaded: its one consumer is the Vs. System database's
+    /// whole-file fallback, which must describe the image in hand (and a disk
+    /// never matches it). Emulation is untouched: nothing in the chips reads
+    /// the identity.
+    ///
+    /// A setter rather than a constructor variant because the identity is the
+    /// one field the host has to supply, and each image kind already has two
+    /// constructors (with and without a sample rate); a setter covers all of
+    /// them, including a host that builds the console through `Emu`. It is the
+    /// host's word: the core cannot check that `sha256` belongs to an earlier
+    /// state of the loaded image. Call it before anything is keyed on the
+    /// identity (a movie recorded before the call stamps the old one).
+    pub const fn set_rom_identity(&mut self, sha256: [u8; 32]) {
+        self.rom_sha256 = sha256;
     }
 
     /// Truncated ROM hash tag stored in the save-state header.
@@ -5728,6 +5769,61 @@ mod tests {
         // Exactly the body: the identity is SHA-256 of bytes[16..].
         assert_eq!(*a.rom_sha256(), sha256_of(&rom[16..]));
         assert_eq!(*a.image_sha256(), sha256_of(&rom));
+    }
+
+    /// A synthetic 8 KiB FDS BIOS: `JMP $E000` at the reset vector and an
+    /// `RTI` for NMI / IRQ. Enough for the disk constructors to boot.
+    fn synth_fds_bios() -> Vec<u8> {
+        let mut bios = vec![0u8; 8 * 1024];
+        bios[..3].copy_from_slice(&[0x4C, 0x00, 0xE0]); // $E000: JMP $E000
+        bios[0x80] = 0x40; // $E080: RTI
+        bios[0x1FFA..].copy_from_slice(&[0x80, 0xE0, 0x00, 0xE0, 0x80, 0xE0]);
+        bios
+    }
+
+    /// A one-sided fwNES-headed disk: the disk-info block signature is all the
+    /// container parser needs.
+    fn synth_fds_disk() -> Vec<u8> {
+        let mut disk = vec![0u8; 16 + 65_500];
+        disk[..4].copy_from_slice(b"FDS\x1A");
+        disk[4] = 1;
+        disk[16] = 0x01;
+        disk[17..31].copy_from_slice(b"*NINTENDO-HVC*");
+        disk
+    }
+
+    /// v2.9.9 (NF-17) — a console booted from a saved copy of an FDS disk
+    /// reports the pristine disk's identity once the host supplies it, so
+    /// everything keyed on `rom_sha256` (slots and the `.rns` tag, cheats,
+    /// movies, netplay, per-game keys, RA progress) survives the game's own
+    /// disk saves. `image_sha256` keeps describing the bytes in hand.
+    #[test]
+    fn a_saved_disk_boot_reports_the_pristine_identity() {
+        let bios = synth_fds_bios();
+        let pristine = synth_fds_disk();
+        let pristine_sha = *Nes::from_disk(&pristine, &bios).unwrap().rom_sha256();
+        // The game wrote to its disk; the host boots the written image.
+        let mut saved = pristine;
+        saved[16 + 0x40] = 0x5A;
+        let mut booted = Nes::from_disk(&saved, &bios).unwrap();
+        let saved_sha = *booted.rom_sha256();
+        assert_ne!(saved_sha, pristine_sha, "fixture: the images differ");
+
+        booted.set_rom_identity(pristine_sha);
+        assert_eq!(
+            *booted.rom_sha256(),
+            pristine_sha,
+            "a disk save moved the game's identity"
+        );
+        assert_eq!(booted.rom_hash_tag()[..], pristine_sha[..ROM_HASH_TAG_LEN]);
+        assert_eq!(
+            *booted.image_sha256(),
+            saved_sha,
+            "the image hash must stay the bytes actually loaded"
+        );
+        // The identity is not state: a cold boot keeps it.
+        booted.power_cycle();
+        assert_eq!(*booted.rom_sha256(), pristine_sha);
     }
 
     #[test]

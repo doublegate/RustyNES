@@ -2546,7 +2546,7 @@ with the device's input absent.
 - Drag-and-drop a `.nes` file → load it.
 - File menu → Open → native dialog.
 - Recent files list (last 10).
-- ROMs are *not* copied; the frontend stores absolute paths. (Save states, battery `.sav` files and cheats are keyed by `Nes::rom_sha256`, so moving the ROM doesn't break the save. Since v2.9.8 that hash leaves out the 16-byte iNES header, so a header correction, from the game database or by hand, doesn't break it either. The Vs. System database stays keyed by the whole-file hash, `Nes::image_sha256`.)
+- ROMs are *not* copied; the frontend stores absolute paths. (Save states, battery `.sav` files and cheats are keyed by `Nes::rom_sha256`, so moving the ROM doesn't break the save. Since v2.9.8 that hash leaves out the 16-byte iNES header, so a header correction, from the game database or by hand, doesn't break it either. The Vs. System database stays keyed by the whole-file hash, `Nes::image_sha256`. An FDS disk keeps the identity of the image as first loaded: the desktop boots the game's written `.fds.sav` copy through `emu::boot_saved_disk`, which passes the pristine hash to `Nes::set_rom_identity`, so the game's own disk saves never move its slots, cheats, movies, netplay match or per-game keys (v2.9.9, NF-17).)
 
 **Per-game database (nametable-mirroring override).** A CRC32-keyed game
 database (vendored from TetaNES, ~2.6k entries) auto-corrects ROMs whose iNES

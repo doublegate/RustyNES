@@ -844,10 +844,14 @@ impl FdsWrite {
 /// `fds_pristine` is ignored for a console with no disk drive, so a stale key
 /// left from an earlier FDS game can never relabel a cartridge.
 ///
-/// The complete fix is in the core: an `Nes` whose identity is the pristine
-/// image even when booted from a saved one (then this returns `rom_sha256`
-/// for every console, and movies, netplay, the HD-pack and per-game keys that
-/// still read `rom_sha256` directly agree with it).
+/// Since the core half of NF-17, the load path boots a saved disk through
+/// [`boot_saved_disk`], which hands the pristine hash to
+/// [`Nes::set_rom_identity`]; `rom_sha256` itself is then the pristine image's,
+/// so this returns `rom_sha256` for every console the desktop builds, and
+/// movies, netplay, the HD-pack and per-game keys and RA progress, which read
+/// `rom_sha256` directly, agree with it. It is kept, not removed, as the guard
+/// for a console that reaches the core without that call: the two keys it
+/// covers are the ones a user loses outright when the identity moves.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn save_identity(nes: &Nes, fds_pristine: Option<[u8; 32]>) -> [u8; 32] {
@@ -855,6 +859,34 @@ pub fn save_identity(nes: &Nes, fds_pristine: Option<[u8; 32]>) -> [u8; 32] {
         Some(sha) if nes.disk_side_count() > 0 => sha,
         _ => *nes.rom_sha256(),
     }
+}
+
+/// v2.9.9 (NF-17, core half) — boot the SAVED copy of an FDS disk (the
+/// `.fds.sav` the game last wrote) under the identity of the pristine image
+/// whose hash is `pristine`.
+///
+/// `Nes::from_disk*` hashes the bytes it is given, so without the
+/// [`Nes::set_rom_identity`] call the console would report the written disk's
+/// hash and every store keyed on `rom_sha256` -- slots and the `.rns` tag,
+/// cheats, movies and `TAStudio`, netplay's ROM match, the HD-pack and
+/// per-game keys, the RA progress sidecar, the history viewer -- would change
+/// identity at the game's first disk save. The `.fds.sav` itself is already
+/// keyed by `pristine`, so after this call the two agree.
+///
+/// # Errors
+///
+/// The core's [`rustynes_core::rustynes_mappers::RomError`] when the saved
+/// image or the BIOS does not parse; the caller falls back to the pristine disk.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn boot_saved_disk(
+    saved: &[u8],
+    bios: &[u8],
+    sample_rate: u32,
+    pristine: [u8; 32],
+) -> Result<Nes, rustynes_core::rustynes_mappers::RomError> {
+    let mut nes = Nes::from_disk_with_sample_rate(saved, bios, sample_rate)?;
+    nes.set_rom_identity(pristine);
+    Ok(nes)
 }
 
 impl EmuCore {
@@ -3195,6 +3227,17 @@ mod tests {
         assert_eq!(core.loaded_rom_sha256(), Some(pristine_sha));
         let (key, _) = core.save_state_blob().unwrap();
         assert_eq!(key, pristine_sha, "the slot key moved with the disk save");
+
+        // v2.9.9 (NF-17, core half) — the load path's boot of the saved image
+        // reports the pristine identity from the core itself, so the keys that
+        // read `rom_sha256` directly (movies, netplay, per-game, RA) agree.
+        let restored = boot_saved_disk(&saved, &bios, 44_100, pristine_sha).unwrap();
+        assert_eq!(
+            *restored.rom_sha256(),
+            pristine_sha,
+            "the saved-disk boot kept the written disk's identity"
+        );
+        assert_eq!(save_identity(&restored, None), pristine_sha);
 
         // A cartridge ignores a stale FDS key (the load path clears it, but
         // the identity must not depend on that ordering).
