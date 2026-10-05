@@ -33,7 +33,7 @@ desktop does, so a renamed or updated ROM can load an older flash image, and
 that image includes program code as well as the save.
 
 * RetroArch automatically manages the lifecycle. Upon game load, the frontend injects data from the host's `.srm` file directly into this pointer.
-* Upon shutdown (`retro_deinit`), RetroArch reads the pointer and flushes the data to the disk.
+* The frontend reads the pointer and writes the data back to the `.srm` when it saves it. `libretro.h` does not define when that is; RetroArch's timing (on unload, on exit, and on its own autosave interval if one is set) is inferred, not traced in its source, so do not rely on a write at any particular hook.
 * A `.srm` a pre-v2.9.0 core wrote for a cartridge without a battery is no longer used: with a size of 0 there is nothing to load it into and nothing to write, so the file stays on disk untouched (inferred from the `libretro.h` contract, not traced in RetroArch's source). A game whose header wrongly omits the battery bit loses its save the same way on the desktop; the fix is the header.
 
 This architectural inversion ensures compatibility with RetroArch Cloud Sync, mobile sandboxes (iOS/Android), and cross-platform save transfers without touching native filesystem APIs.
@@ -58,8 +58,9 @@ its own screen. The core already models them (`rustynes_core::Emu::Dual` /
 both screens, matching the desktop frontend.
 
 * **Detection:** `on_load_game` calls `Emu::from_rom`, which OR's the NES 2.0
-  header Vs.-hardware type with the SHA-keyed `vs_db` — the identical detection the
-  desktop frontend uses. The core then holds either `nes: Option<Nes>` **or**
+  header Vs.-hardware type with the `vs_db` lookup (matched on the header-excluded
+  ROM identity first, then the whole-image hash, since v2.9.8) — the identical
+  detection the desktop frontend uses. The core then holds either `nes: Option<Nes>` **or**
   `dual: Option<Box<VsDualSystem>>` (mutually exclusive). Without this, a
   `DualSystem` dump would boot a single console that hangs waiting on its absent
   cross-wired partner.
@@ -102,7 +103,7 @@ Every Vs. System cartridge, single or `DualSystem`:
   | Port 4 L | — | sub console, acceptor 2 |
   | Port 3 R | — | sub console's service |
 
-  A coin is a pulse: pressing L latches it for three frames (the desktop's `VS_COIN_HOLD_FRAMES`, 50 ms; the core documents the real switch as 40-70 ms) however long L is held. L and R are free on a NES pad, and each player's coin is on their own controller. Before v2.9.0 no libretro input reached the coin acceptors or the service button at all.
+  A coin is a pulse: pressing L latches it for three frames (the desktop's `VS_COIN_HOLD_FRAMES`, 50 ms; the core documents the real switch as 40-70 ms) however long L is held. L and R are free on a NES pad, and each player's coin is on their own controller. Before v2.9.0 no libretro input reached the coin acceptors or the service button at all. Since v2.9.9 the three frames are EMULATED frames, timed against the console's own frame counter (which a save state carries), so run-ahead, preemptive frames, rewind and netplay rollback no longer shorten the pulse or lose it from a replayed timeline; before, it was counted in `retro_run` calls and lasted one frame (17 ms) at run-ahead 2 (re-audit NL-13). A restore to the frame a coin was pressed on, or to any frame before it, drops the coin, so the replay inserts one only if it presses L again (#583 review: a restore to the press's own frame used to keep it).
 * **Not done: user-set DIP switches.** The database default is applied; a core option to change the switches is not implemented. Eight switches do not fit the one-list-per-option `SET_VARIABLES` form without either eight options or a 256-value list, and the core-options v2 form this would want is not used by this core yet.
 
 ## Famicom Disk System (FDS) Loading & Disk Control (implemented)

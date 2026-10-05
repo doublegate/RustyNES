@@ -53,7 +53,9 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{IdbDatabase, IdbObjectStore, IdbOpenDbRequest, IdbRequest, IdbTransactionMode};
+use web_sys::{
+    IdbDatabase, IdbObjectStore, IdbOpenDbRequest, IdbRequest, IdbTransaction, IdbTransactionMode,
+};
 
 use crate::save_state::hex_sha256;
 use crate::wasm_io::log;
@@ -93,6 +95,33 @@ fn request_to_promise(request: &IdbRequest) -> js_sys::Promise {
             let _ = reject.call1(&JsValue::NULL, &JsValue::UNDEFINED);
         });
         request.set_onerror(Some(on_error.unchecked_ref()));
+    })
+}
+
+/// Wrap a write transaction's outcome in a Promise: resolves on `complete`,
+/// rejects on `abort` or `error`.
+///
+/// A request's `success` is not the write being stored: the transaction can
+/// still abort afterwards (a quota or I/O failure at commit), and
+/// `complete` is the event IndexedDB fires only after a successful commit
+/// (#583 review, CodeRabbit). Call this before awaiting any request in the
+/// transaction, so the handlers are in place before the events can fire.
+fn transaction_to_promise(tx: &IdbTransaction) -> js_sys::Promise {
+    let tx = tx.clone();
+    js_sys::Promise::new(&mut |resolve, reject| {
+        let on_complete = Closure::once_into_js(move |_evt: web_sys::Event| {
+            let _ = resolve.call0(&JsValue::NULL);
+        });
+        tx.set_oncomplete(Some(on_complete.unchecked_ref()));
+        let reject_abort = reject.clone();
+        let on_abort = Closure::once_into_js(move |_evt: web_sys::Event| {
+            let _ = reject_abort.call0(&JsValue::NULL);
+        });
+        tx.set_onabort(Some(on_abort.unchecked_ref()));
+        let on_error = Closure::once_into_js(move |_evt: web_sys::Event| {
+            let _ = reject.call0(&JsValue::NULL);
+        });
+        tx.set_onerror(Some(on_error.unchecked_ref()));
     })
 }
 
@@ -136,37 +165,54 @@ async fn open_db() -> Option<IdbDatabase> {
 
 /// Persist `blob` to the IDB slot keyed by the ROM SHA-256 + `slot`.
 ///
-/// Async + best-effort: logs and returns on any browser failure. Callers
-/// drive this from a gesture handler via `spawn_local`.
-pub async fn put_state(rom_sha256: [u8; 32], slot: u8, blob: Vec<u8>) {
+/// Async: logs any browser failure. Callers drive this from a gesture
+/// handler via `spawn_local`.
+///
+/// # Errors
+///
+/// v2.9.9 (NF-19): a short reason when the state was NOT stored, so the
+/// caller can show it (the outcome used to reach the browser console only).
+pub async fn put_state(rom_sha256: [u8; 32], slot: u8, blob: Vec<u8>) -> Result<(), String> {
     let Some(db) = open_db().await else {
         log("save state: IndexedDB unavailable — falling back to localStorage");
-        crate::wasm_io::localstorage_save_state(&rom_sha256, slot, &blob);
-        return;
+        return if crate::wasm_io::localstorage_save_state(&rom_sha256, slot, &blob) {
+            Ok(())
+        } else {
+            Err("browser storage unavailable or full".into())
+        };
     };
     let Ok(tx) = db.transaction_with_str_and_mode(STORE, IdbTransactionMode::Readwrite) else {
         log("save state: IndexedDB transaction failed");
-        return;
+        return Err("IndexedDB transaction failed".into());
     };
     let Ok(store) = tx.object_store(STORE) else {
         log("save state: IndexedDB object store missing");
-        return;
+        return Err("IndexedDB object store missing".into());
     };
+    let committed = transaction_to_promise(&tx);
     let key = idb_key(&rom_sha256, slot);
     // Store the raw bytes as a Uint8Array (no base64 — IDB is binary-safe).
     let value = js_sys::Uint8Array::from(blob.as_slice());
     let Ok(req) = store.put_with_key(value.as_ref(), &JsValue::from_str(&key)) else {
         log("save state: IndexedDB put failed");
-        return;
+        return Err("IndexedDB put failed".into());
     };
-    match JsFuture::from(request_to_promise(&req)).await {
-        Ok(_) => log(&format!(
-            "state saved to IndexedDB slot {} ({} bytes)",
-            slot + 1,
-            blob.len()
-        )),
-        Err(_) => log("save state: IndexedDB write rejected (quota?)"),
+    if JsFuture::from(request_to_promise(&req)).await.is_err() {
+        log("save state: IndexedDB write rejected (quota?)");
+        return Err("the browser refused the write (storage full?)".into());
     }
+    // The put succeeded; the state is stored only once its transaction
+    // commits (see `transaction_to_promise`).
+    if JsFuture::from(committed).await.is_err() {
+        log("save state: IndexedDB transaction aborted at commit");
+        return Err("the browser did not commit the write (storage full?)".into());
+    }
+    log(&format!(
+        "state saved to IndexedDB slot {} ({} bytes)",
+        slot + 1,
+        blob.len()
+    ));
+    Ok(())
 }
 
 /// Read a save-state blob back from the IDB slot, falling back to (and
@@ -184,7 +230,8 @@ pub async fn get_state(rom_sha256: [u8; 32], slot: u8) -> Option<Vec<u8>> {
                 "migrating slot {} from localStorage -> IndexedDB",
                 slot + 1
             ));
-            put_state(rom_sha256, slot, bytes.clone()).await;
+            // Best-effort migration: the bytes are returned either way.
+            let _ = put_state(rom_sha256, slot, bytes.clone()).await;
             return Some(bytes);
         }
         return None;
@@ -373,6 +420,10 @@ thread_local! {
     /// refused record), waiting for the frontend's next tick.
     static BATTERY_NOTICES: core::cell::RefCell<Vec<String>> =
         const { core::cell::RefCell::new(Vec::new()) };
+    /// v2.9.9 (NF-19) — the outcomes of the asynchronous save-state tasks
+    /// (`true` = success), waiting for the frontend's next tick.
+    static STATE_NOTICES: core::cell::RefCell<Vec<(bool, String)>> =
+        const { core::cell::RefCell::new(Vec::new()) };
 }
 
 /// Store `write` asynchronously and queue its outcome for
@@ -400,6 +451,18 @@ pub fn push_battery_notice(notice: String) {
 #[must_use]
 pub fn take_battery_notices() -> Vec<String> {
     BATTERY_NOTICES.with(|q| core::mem::take(&mut *q.borrow_mut()))
+}
+
+/// v2.9.9 (NF-19) — queue a save-state task's outcome for the status line
+/// (`ok` selects success or error styling).
+pub fn push_state_notice(ok: bool, text: String) {
+    STATE_NOTICES.with(|q| q.borrow_mut().push((ok, text)));
+}
+
+/// v2.9.9 (NF-19) — take the save-state outcomes queued since the last call.
+#[must_use]
+pub fn take_state_notices() -> Vec<(bool, String)> {
+    STATE_NOTICES.with(|q| core::mem::take(&mut *q.borrow_mut()))
 }
 
 #[cfg(test)]

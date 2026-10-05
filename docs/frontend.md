@@ -1098,6 +1098,17 @@ reorganized the order and regrouped several items — see the per-menu notes):
   overhauled in v1.7.0 beta.5 #53 with word-wrap, colorization, navigable
   sub-pages, and intra-doc links), Keyboard Shortcuts, About.
 
+**Session lockout (v2.9.9, NF-11).** A movie and a netplay session both carry
+controller input only, so anything that changes the machine outside that
+stream breaks them: a Reset, a Power Cycle, an FDS disk change and a state load
+are refused while a movie records or plays, or a netplay session runs, and a
+state load is also refused in RA hardcore. The rule is one pure function,
+`session_policy::refusal`, and every route asks it — the menu (which greys the
+items), the hotkeys, the Save-States manager, the browser grid; a script's load
+honours the `writes_locked` gate its `SetInput` already did. The F8 movie
+branch refuses netplay, as record, play and import do. Until v2.9.9 only the
+menu enforced this, so a hotkey reached the same handler unguarded.
+
 **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only,
 determinism-neutral (the core stays byte-identical; AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps).
 (#51) The two input HUDs were **consolidated into one "Input Display" panel** —
@@ -2118,6 +2129,14 @@ the live match by the network latency; the status bar shows `NET spectate fN
 broadcast/relay is a documented maintainer-manual carryover — see
 `docs/netplay-webrtc.md` §4.
 
+Since v2.9.9 (NF-15) a spectator shows nothing until it has seen a player's
+`Sync` with its own identity (same ROM, same machine configuration); inputs
+arriving first are buffered. A `Sync` for another ROM or configuration ends the
+session with the reason, as the player handshake does. Before, a mismatched
+spectator ran the stream anyway and showed a different game. A relay that fans
+the match out to spectators must therefore forward a `Sync`, as it forwards
+`Roster`.
+
 ### v1.7.0 "Forge" Workstream H9 — power-user niceties
 
 All additive + frontend-only; the core stays byte-identical.
@@ -2338,6 +2357,13 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   instead; `the_frame0_anchor_is_the_state_the_exported_movie_starts_from` pins
   it.
 
+  **TAStudio holds its frame-0 options (v2.9.9, NF-14).** The export records
+  the options the frame-0 state was built under, and every seek and recorded
+  frame now runs under them too (`HardwareOptions::apply_live`, as movie
+  playback holds a movie's). A cheat or a Settings change made while the editor
+  is open therefore does not reach its re-emulation; before, the greenzone
+  showed the changed run and the exported movie replayed the original one.
+
   *Correction:* v2.7.3 recorded this as a known limitation, saying playback
   "power-cycles the console, which does not clear cartridge RAM". That was
   wrong in the other direction: the power cycle did clear it, battery RAM
@@ -2414,7 +2440,13 @@ told the core to build. The `.rnm` format 3 epoch (`MOVIE_FORMAT_VERSION` 3,
 ADR 0028's rule) stores both in a length-prefixed OPTIONS block after the fixed
 header, and widens the per-frame record from 3 bytes to 5 so Four Score players
 3 and 4 are recorded too (`FrameInput` gained `p3` / `p4` and became
-`#[non_exhaustive]`).
+`#[non_exhaustive]`). **v2.9.9 moved the epoch to format 4**
+(`MOVIE_FORMAT_VERSION` 4, core re-audit NC-10): the board description also
+carries the PRG-ROM and CHR-ROM sizes and the header's byte-6 nametable wiring
+bits (`Cartridge::nametable_wiring_bits`, bits 0 and 3), because one ROM body
+split 2x16K PRG + 4x8K CHR or 1x16K + 6x8K, or a mapper 30/218 image differing
+only in those bits, builds a different machine under the same identity. A
+format-3 movie is refused, as format 1 and 2 already were.
 
 - **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
   the replay does not depend on the player's settings, and the desktop and mobile
@@ -2427,14 +2459,22 @@ header, and widens the per-frame record from 3 bytes to 5 so Four Score players
   length of the recording. The overclock is held at stock timing while recording
   (the v2.9.7 rule), so a recording always says 0 extra scanlines; a playing
   movie runs whatever its own record says.
+- **A ROM change ends the session** (v2.9.9, NF-12). Every install and Close ROM
+  goes through `EmuCore::set_nes` / `set_dual` / `clear_rom`, which stop playback
+  (nothing to restore: the new console is built from the player's settings) and
+  finish a recording, which the app then offers through the usual `.rnm` save
+  dialog (a download in the browser). Before v2.9.9 the session ran on and held
+  the old game's mirroring override and Game Genie codes against the new game.
 - **What cannot be applied is checked**: the ROM identity, the region, and the
   board (mapper, submapper, mirroring, console type, `DualSystem`, PRG-/CHR-RAM
-  size, battery, trainer). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte
+  size, battery, trainer, and since format 4 the PRG-/CHR-ROM sizes and the
+  nametable wiring bits). Since v2.9.8 `Nes::rom_sha256` excludes the 16-byte
   header, so the board is what tells a re-headered dump or a changed database
   correction apart; a mismatch refuses with the field named
   (`MovieError::BoardMismatch`, `RegionMismatch`).
 - **Older movies are refused** (`MovieError::FormatTooOld`): a v1 or v2 `.rnm`
-  does not say which machine it ran on. So is a movie whose start point embeds a
+  does not say which machine it ran on, and a v3 one does not say which ROM
+  split or wiring it ran on. So is a movie whose start point embeds a
   save state older than the `.rns` epoch 3 (`MovieError::StartStateTooOld`); both
   errors say to re-record. The maintainer accepted breaking them.
 - **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) record the stock
@@ -2514,7 +2554,7 @@ with the device's input absent.
 - Drag-and-drop a `.nes` file → load it.
 - File menu → Open → native dialog.
 - Recent files list (last 10).
-- ROMs are *not* copied; the frontend stores absolute paths. (Save states, battery `.sav` files and cheats are keyed by `Nes::rom_sha256`, so moving the ROM doesn't break the save. Since v2.9.8 that hash leaves out the 16-byte iNES header, so a header correction, from the game database or by hand, doesn't break it either. The Vs. System database stays keyed by the whole-file hash, `Nes::image_sha256`.)
+- ROMs are *not* copied; the frontend stores absolute paths. (Save states, battery `.sav` files and cheats are keyed by `Nes::rom_sha256`, so moving the ROM doesn't break the save. Since v2.9.8 that hash leaves out the 16-byte iNES header, so a header correction, from the game database or by hand, doesn't break it either. The Vs. System database stays keyed by the whole-file hash, `Nes::image_sha256`. An FDS disk keeps the identity of the image as first loaded: the desktop boots the game's written `.fds.sav` copy through `emu::boot_saved_disk`, which passes the pristine hash to `Nes::set_rom_identity`, so the game's own disk saves never move its slots, cheats, movies, netplay match or per-game keys (v2.9.9, NF-17).)
 
 **Per-game database (nametable-mirroring override).** A CRC32-keyed game
 database (vendored from TetaNES, ~2.6k entries) auto-corrects ROMs whose iNES

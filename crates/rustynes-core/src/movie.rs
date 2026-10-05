@@ -16,7 +16,7 @@
 //! ```text
 //! HEADER:
 //!     magic           : "RNESMOV1"   (8 bytes)
-//!     format version  : u16 LE        (currently 3 = MOVIE_FORMAT_VERSION)
+//!     format version  : u16 LE        (currently 4 = MOVIE_FORMAT_VERSION)
 //!     region          : u8            (0 = NTSC, 1 = PAL, 2 = Dendy)
 //!     flags           : u8            (bit0 = embedded save-state start point,
 //!                                      bit1 = board description recorded)
@@ -79,12 +79,18 @@ pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 ///   settings are. A v1 or v2 movie does not say which machine it ran on, so
 ///   it is refused ([`MIN_MOVIE_FORMAT_VERSION`]) rather than replayed on a
 ///   guess; the maintainer accepted breaking them (2026-10-01).
-pub const MOVIE_FORMAT_VERSION: u16 = 3;
+/// - **v4 (v2.9.9, core re-audit NC-10)**: the [`BoardDescription`] gains the
+///   PRG-ROM and CHR-ROM sizes and the raw header nametable bits. v3 could
+///   not tell two headers that split one body differently, or that differ
+///   only in the bits mappers 30 and 218 wire from, so a movie replayed
+///   silently on a different machine. v3 is refused, as v1 and v2 are, under
+///   the same "enduring over compatible" rule.
+pub const MOVIE_FORMAT_VERSION: u16 = 4;
 
-/// The oldest container version this build replays: v3, the first that
-/// records its emulation options. Older movies fail with
-/// [`MovieError::FormatTooOld`].
-pub const MIN_MOVIE_FORMAT_VERSION: u16 = 3;
+/// The oldest container version this build replays: v4, whose board
+/// description identifies the machine (v3 was the first to record options).
+/// Older movies fail with [`MovieError::FormatTooOld`].
+pub const MIN_MOVIE_FORMAT_VERSION: u16 = 4;
 
 /// Peek a `.rnm` blob's header to learn its recording epoch.
 ///
@@ -2208,7 +2214,10 @@ mod tests {
         assert!(matches!(recorded_before_v2_timebase(&v1_bytes), Ok(true)));
         assert!(matches!(
             Movie::deserialize(&v1_bytes),
-            Err(MovieError::FormatTooOld { got: 1, min: 3 })
+            Err(MovieError::FormatTooOld {
+                got: 1,
+                min: MIN_MOVIE_FORMAT_VERSION
+            })
         ));
 
         // Malformed input still surfaces the normal header errors.

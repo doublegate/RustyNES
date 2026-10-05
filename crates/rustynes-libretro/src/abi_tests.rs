@@ -935,6 +935,95 @@ fn a_rejected_unserialize_leaves_the_machine_as_it_was() {
     assert!(unchanged, "a rejected dual unserialize changed the cabinet");
 }
 
+/// v2.9.9 re-audit NL-11. v2.9.8 made every state from v2.9.7 and earlier
+/// unloadable (`.rns` container epoch 3, ADR 0042), and the CHANGELOG promises
+/// such a state is "refused with a clear error". `retro_unserialize` refused
+/// it, but dropped the `SnapshotError` and returned a bare `false`, so the
+/// frontend's log received nothing and the user saw only the frontend's own
+/// generic failure. The refusal must now reach the log with the reason (the
+/// format, and that older states have to be re-recorded), and a refusal for
+/// any other reason must say why too. The machine stays as it was in both
+/// cases (`a_rejected_unserialize_leaves_the_machine_as_it_was`).
+/// NL-12 (v2.9.9 libretro re-audit): a serialize/unserialize round trip in
+/// the middle of a run leaves the machine exactly where a run that never
+/// restored is, so the next state serializes to the same bytes. Until the
+/// APU section carried the resampler's synthesis state (APU v5) the two
+/// differed in 24 bytes of filter state, which RetroArch's netplay CRC check
+/// would report as a desync.
+#[test]
+fn a_mid_run_round_trip_serializes_like_a_straight_run() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    let size = serialize_size();
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut mid = vec![0_u8; size];
+    assert!(serialize(&mut mid));
+    assert!(unserialize(&mid));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut restored = vec![0_u8; size];
+    assert!(serialize(&mut restored));
+    unload();
+
+    assert!(load(NESTEST, true));
+    for _ in 0..20 {
+        run_frame();
+    }
+    let mut straight = vec![0_u8; size];
+    assert!(serialize(&mut straight));
+    unload();
+    assert!(
+        restored == straight,
+        "a round trip at frame 10 changed the state at frame 20"
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn a_refused_unserialize_logs_the_reason() {
+    use rustynes_core::save_state::MIN_FORMAT_VERSION;
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let size = serialize_size();
+    let mut state = vec![0_u8; size];
+    assert!(serialize(&mut state));
+    // The container header: 8-byte magic, then the little-endian format.
+    let mut old = state.clone();
+    old[8..10].copy_from_slice(&(MIN_FORMAT_VERSION - 1).to_le_bytes());
+    held(&LOGGED).clear();
+    let old_accepted = unserialize(&old);
+    let old_logged = held(&LOGGED).clone();
+
+    let mut damaged = state;
+    reject_last_cpu_section(&mut damaged);
+    held(&LOGGED).clear();
+    let damaged_accepted = unserialize(&damaged);
+    let damaged_logged = held(&LOGGED).clone();
+    unload();
+
+    assert!(!old_accepted, "a pre-v2.9.8 state must not load");
+    let old_line = old_logged.join("\n");
+    assert!(
+        old_line.contains("older RustyNES")
+            && old_line.contains(&format!("format {}", MIN_FORMAT_VERSION - 1))
+            && old_line.contains("re-record"),
+        "an old state's refusal must name the format and the remedy, got {old_logged:?}"
+    );
+    assert!(!damaged_accepted, "a damaged state must not load");
+    assert!(
+        damaged_logged
+            .iter()
+            .any(|line| line.contains("save state refused") && line.contains("CPU ")),
+        "any other refusal must carry the core's reason, got {damaged_logged:?}"
+    );
+}
+
 /// v2.9.1 (NL-09): a Vs. `DualSystem` state now leaves `retro_serialize`
 /// through `VsDualSystem::snapshot_into`. The test above only shows a state
 /// being REFUSED; this one shows the frontend's own state coming back. Save
@@ -1636,6 +1725,127 @@ fn vs_dual_system_coins_reach_the_main_console() {
         0,
         "port 3 L is the sub console's: {sub_coin:#04x}"
     );
+}
+
+/// Drive the Vs. probe cartridge for `real` presented frames with L held on
+/// port 1 for frames 5 and 6, the way `RetroArch` run-ahead of `ahead` frames
+/// drives a core: each presented frame is one `retro_run`, a
+/// `retro_serialize`, `ahead` speculative `retro_run`s and a
+/// `retro_unserialize` back. Returns the coin bit (`$00 & $20`) the game read
+/// in each presented frame, as `1` / `.`.
+fn vs_coin_under_run_ahead(ahead: usize, real: usize) -> String {
+    assert!(load(vs_probe_rom(false), true));
+    let mut buf = vec![0_u8; serialize_size()];
+    let mut seen = String::new();
+    for frame in 0..real {
+        PADS[0].store(if (5..=6).contains(&frame) { L } else { 0 }, SeqCst);
+        run_frame();
+        let (b0, _) = wram_head();
+        seen.push(if b0 & 0x20 == 0 { '.' } else { '1' });
+        if ahead > 0 {
+            assert!(serialize(&mut buf));
+            for _ in 0..ahead {
+                run_frame();
+            }
+            assert!(unserialize(&buf));
+        }
+    }
+    PADS[0].store(0, SeqCst);
+    unload();
+    seen
+}
+
+/// v2.9.9 re-audit NL-13. The Vs. coin pulse was counted in `retro_run`
+/// calls, not emulated frames, and the latch it drives is host input that a
+/// save state does not carry. Run-ahead (and preemptive frames, rewind,
+/// netplay rollback) call `retro_run` more than once per presented frame, so
+/// the 3-frame (50 ms) pulse shrank to 2 frames at run-ahead 1 and to 1
+/// frame (17 ms) at run-ahead 2 -- under the 40-70 ms the real coin switch
+/// closes for. The pulse is now timed against the console's own frame
+/// counter, which a restore rewinds, so it is the same three frames whatever
+/// the run-ahead setting.
+#[test]
+fn the_vs_coin_pulse_is_three_emulated_frames_under_run_ahead() {
+    let _frontend = frontend();
+    let expected = ".....111............";
+    for ahead in 0..=2 {
+        assert_eq!(
+            vs_coin_under_run_ahead(ahead, expected.len()),
+            expected,
+            "coin bit per presented frame at run-ahead {ahead}"
+        );
+    }
+}
+
+/// NL-13's rollback half. A frontend that restores a state from before the
+/// coin went in and replays (netplay rollback, rewind) must see the coin
+/// where the REPLAYED input puts it. Counting calls, the latch kept whatever
+/// the last call before the restore left in it -- host input is not in the
+/// state -- so the replay began with a coin nobody had inserted yet; and a
+/// panel that remembered the press across the restore would latch it on the
+/// original frame even when the replayed input presses L later (a netplay
+/// peer's corrected input).
+#[test]
+fn a_rollback_across_the_vs_coin_follows_the_replayed_input() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(false), true));
+    let mut before = vec![0_u8; serialize_size()];
+    let play = |from: usize, to: usize, press: std::ops::RangeInclusive<usize>| {
+        let mut seen = String::new();
+        for frame in from..to {
+            PADS[0].store(if press.contains(&frame) { L } else { 0 }, SeqCst);
+            run_frame();
+            seen.push(if wram_head().0 & 0x20 == 0 { '.' } else { '1' });
+        }
+        seen
+    };
+    let lead_in = play(0, 4, 5..=6);
+    assert!(serialize(&mut before));
+    // The first timeline presses L on frames 5 and 6. Roll back to the end
+    // of frame 3 with L still held, and replay with L on frames 7 and 8.
+    let first = play(4, 7, 5..=6);
+    assert!(unserialize(&before));
+    let replay = play(4, 12, 7..=8);
+    PADS[0].store(0, SeqCst);
+    unload();
+    assert_eq!(lead_in, "....");
+    assert_eq!(first, ".11", "the first timeline's coin goes in on frame 5");
+    assert_eq!(
+        replay, "...111..",
+        "the replayed timeline's coin goes in on frame 7, and only there"
+    );
+}
+
+/// #583 review (CodeRabbit). A restore to the very frame the press was made
+/// on is still a restore: the frontend saved before frame N, the player
+/// pressed L during frame N, and the replay of frame N has no press (a
+/// netplay peer's corrected input, a rewind). The rollback test above only
+/// covered restores to frames BEFORE the press, and a record whose start was
+/// the restored frame survived, so the replay latched a coin nobody pressed.
+#[test]
+fn a_restore_to_the_press_frame_drops_a_coin_the_replay_does_not_press() {
+    let _frontend = frontend();
+    assert!(load(vs_probe_rom(false), true));
+    let mut at_press = vec![0_u8; serialize_size()];
+    let play = |from: usize, to: usize, press: Option<usize>| {
+        let mut seen = String::new();
+        for frame in from..to {
+            PADS[0].store(if press == Some(frame) { L } else { 0 }, SeqCst);
+            run_frame();
+            seen.push(if wram_head().0 & 0x20 == 0 { '.' } else { '1' });
+        }
+        seen
+    };
+    let lead_in = play(0, 5, None);
+    assert!(serialize(&mut at_press));
+    let first = play(5, 6, Some(5));
+    assert!(unserialize(&at_press));
+    let replay = play(5, 10, None);
+    PADS[0].store(0, SeqCst);
+    unload();
+    assert_eq!(lead_in, ".....");
+    assert_eq!(first, "1", "the first timeline's coin goes in on frame 5");
+    assert_eq!(replay, ".....", "the replay never presses L, so no coin");
 }
 
 /// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).

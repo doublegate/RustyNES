@@ -1043,6 +1043,7 @@ impl SystemBus {
             has_battery: false,
             has_trainer: false,
             is_nes2: false,
+            nametable_wiring_bits: 0,
         };
         Ok(Self::from_cart_and_mapper(cart, Box::new(fds), sample_rate))
     }
@@ -1078,6 +1079,7 @@ impl SystemBus {
             has_battery: false,
             has_trainer: false,
             is_nes2: false,
+            nametable_wiring_bits: 0,
         };
         Ok(Self::from_cart_and_mapper(
             cart,
@@ -3716,6 +3718,9 @@ impl SystemBus {
 
     /// PPU register write with side effects.
     fn ppu_register_write(&mut self, addr: u16, value: u8) {
+        // MMC5 decodes `$2000` / `$2001` itself (8x16 mode, render enables);
+        // it sees the undecoded address, so a mirror write is not snooped.
+        self.mapper.notify_ppu_register_write(addr, value);
         let reg = (addr & 7) as u8;
         let mut adapter = PpuBusAdapter {
             mapper: self.mapper.as_mut(),
@@ -4228,8 +4233,8 @@ impl Bus for SystemBus {
     /// R1 double catch-up: tick whole PPU dots while
     /// `ppu_clock + ppu_divider <= target`.
     ///
-    /// R1c-3 (`mmc3-m2-phase-irq`, default-off): when the feature is
-    /// enabled, `sub_dot` is seeded from the REAL M2-phase of this catch-up
+    /// R1c-3 (v2.0.0's `mmc3-m2-phase-irq`, removed at v2.9.9; now
+    /// `mmc3-a12-phase-probe` only): when the feature is enabled, `sub_dot` is seeded from the REAL M2-phase of this catch-up
     /// call (`0` = pre-access / M2-low, called from `Cpu::start_cycle`
     /// before the bus access; `2` = post-access / M2-high, called from
     /// `Cpu::end_cycle` after it) instead of always restarting at `0`. Prior
@@ -4256,13 +4261,14 @@ impl Bus for SystemBus {
     fn run_ppu_to(&mut self, target: u64, is_post_access: bool) {
         let ppu_div = u64::from(self.ppu_div_cached);
         // Seed the real M2-phase into `sub_dot` (0 = pre-access/M2-low catch-up,
-        // 2 = post-access/M2-high catch-up) for the `mmc3-m2-phase-irq` deferral
-        // AND for the v2.1.5 F5.0 `mmc3-a12-phase-probe` observational tally.
+        // 2 = post-access/M2-high catch-up) for the v2.1.5 F5.0
+        // `mmc3-a12-phase-probe` observational tally (v2.0.0's
+        // `mmc3-m2-phase-irq` deferral also read it; removed at v2.9.9).
         // The probe only counts, so the emulated timeline stays byte-identical
         // even with its feature on. See ADR 0002.
-        #[cfg(any(feature = "mmc3-m2-phase-irq", feature = "mmc3-a12-phase-probe"))]
+        #[cfg(feature = "mmc3-a12-phase-probe")]
         let mut sub_dot = if is_post_access { 2u8 } else { 0u8 };
-        #[cfg(not(any(feature = "mmc3-m2-phase-irq", feature = "mmc3-a12-phase-probe")))]
+        #[cfg(not(feature = "mmc3-a12-phase-probe"))]
         let (mut sub_dot, _) = (0u8, is_post_access);
         while self.ppu_clock + ppu_div <= target {
             let mut adapter = PpuBusAdapter {

@@ -44,7 +44,7 @@ citations of `AGENTS.md`.
 | Id | Finding | Verdict | Evidence | Release | PR |
 | --- | --- | --- | --- | --- | --- |
 | T-01 | Pulse-1 sweep with negate and shift 0 (the `$4001=$08` idiom) computes `per - per - 1 = 0xFFFF` and mutes | FIXED | CONFIRMED by `pulse1_negate_shift0_clamps_to_zero_and_does_not_mute`, red on v2.6.23. Fix: a negated target saturates at zero (NESdev "APU Sweep"). `pulse1_negate_clamp_is_inert_for_nonzero_shift` shows the clamp changes nothing for shift 1-7 over periods 8-`$7FF`. Full `--features test-roms` suite with this fix alone: 2,612 passed, 0 failed, no golden moved (2,622 on the final release tree, which adds the later tests). The v2.8.2 co-sim gate still follows | v2.7.0 | |
-| F-01 | Restored `dma_mc_consumed` trips `Cpu::end_cycle`'s structural-zero `debug_assert_eq!` (not in the report) | FIXED | Found by the v2.7.0 fuzz target in 6,848 runs. Dev/test/fuzz builds only: release drains and discards the value, so it is now discarded on restore (bytes still consumed). Test `a_restored_dma_mc_consumed_is_discarded_not_loaded`; mutation CAUGHT | v2.7.0 | |
+| F-01 | Restored `dma_mc_consumed` trips `Cpu::end_cycle`'s structural-zero `debug_assert_eq!` (not in the report) | FIXED | Found by the v2.7.0 fuzz target in 6,848 runs. Dev/test/fuzz builds only: release drains and discards the value, so it is now discarded on restore (bytes still consumed). Test `a_restored_dma_mc_consumed_is_discarded_not_loaded`; mutation CAUGHT **v2.9.9 note:** BUS section v2 (v2.9.8) no longer carries `dma_mc_consumed`, and the pin `a_restored_dma_mc_consumed_is_discarded_not_loaded` was deleted with it in `0bd814d3`; the defect class cannot recur because the field is gone (v2.9.9 re-audit) | v2.7.0 | |
 | F-02 | Restored OAM-DMA byte index `uni_oam_addr` unbounded (not in the report) | FIXED | Found by the fuzz target in 287,867 runs (`bus.rs:3871`, add overflow). An active transfer at 256 or above never completes and overflows the `u16`. Bounds: `<= 255` while active, `<= 256` otherwise. Test `an_out_of_range_oam_dma_index_is_rejected`; both halves mutated, CAUGHT | v2.7.0 | |
 | F-03 | Restored PPU raster position unbounded (not in the report) | FIXED | Found by the fuzz target once its base machine had a live APU, in 76,381 runs (`ppu.rs:6078`, `dot += 1` overflow). The per-dot advance wraps only at dot 340 and the pre-render line, so a position past either never produces a frame. `PpuSnapshotError::InvalidRasterPosition`: dot `<= 340`, scanline `-1..=` pre-render line (-1 is the power-on position, which an existing round-trip test caught when the first draft excluded it). Test `an_out_of_range_raster_position_is_rejected`; 4 mutations, all CAUGHT | v2.7.0 | |
 | F-04 | Restored PPU fine X and ten sprite-evaluation / OAM-bus counters unbounded (not in the report) | FIXED | The fuzz target found fine X (`ppu.rs:4788`, `0x8000 >> x` shift overflow) in 92,496 runs; the rest were then swept by reading every field `restore` loads rather than left to the fuzzer one run at a time. `PpuSnapshotError::FieldOutOfRange` bounds `x` 7, sprite-eval `n` 63 / `m` 3 / `found` 8 / `sec_idx` 32, OAM-bus address 63 / 3, secondary address 32, overflow counter 3, `oam2_addr` 31, corruption index 32 -- each the range the running PPU keeps it in. One existing round-trip test set the overflow counter to 5, a marker value the PPU cannot reach (it loads 3 and counts down); changed to 2. Test `every_ppu_counter_and_index_is_bounded_on_restore`; 11 mutations, all CAUGHT | v2.7.0 | |
@@ -88,3 +88,52 @@ Not done, by measurement: the dual restore still allocates its main backup per
 call. v2.9.1 pooled it and the A/B moved by exactly its order-bias drift in both
 runs, so it was reverted (`docs/performance.md` v2.9.1). The `vs_dualsystem` ROM suite needs local dumps; only the synthetic
 dual suite exercised the dual path here.
+
+## v2.9.9 re-audit
+
+Report: [`v2.9.9-core-reaudit.md`](v2.9.9-core-reaudit.md) (a Claude subagent,
+read-only, on `8b277044`).
+
+**Rows above: 56 re-verified; 50 HOLD, 6 CHANGED, 0 REGRESSED.** The six
+CHANGED rows are v2.9.8's recorded removals (§3.1, §4.2-§4.4), the Provenance
+header count (§6.3, 30 files; `provenance_record_audit.rs` passes), and F-01,
+whose field and pin v2.9.8 removed (annotated in the row). IMP-02 and NC-03
+held with a gap the new NC-09 names.
+
+Each fix below was pinned red first and its mutant caught; the commit bodies
+carry the evidence. The report's new findings are the nine NC-09 to NC-17. The
+NL-12 and NL-15 rows are cross-listed from the libretro ledger because they
+are core-scoped; they are not further core findings. NL-12 is fixed in the
+core; NL-15, a performance item, is fixed after the v2.9.9 performance
+campaign measured it.
+
+| id | finding | verdict | evidence | release | commit |
+|---|---|---|---|---|---|
+| NC-09 | A finite-but-huge APU filter value was accepted on restore, poisoned the audio and made the machine's own snapshot unloadable (re-opening NC-03's half-applied rollback) | FIXED | Bounds closed under the resampler's motion: held <= 4, integrator and window partial sums <= 16 with drift <= 1, filter state bounded per chain stage by a closed PAIR rule, the magnitude of `prev_out - c*prev_in` at most `c*X + 1` for a high-pass with input bound X (16, 33, 67 down the chain). Red: `a_huge_filter_value_is_refused_so_the_next_snapshot_still_loads` plus the rejection sweep. **Corrected in #583 review (CodeRabbit):** the first form capped `prev_in` and `prev_out` at 1024 separately, which is not closed (the pair -1024 / 1024 steps to ~2022), and its `8a/(1-a)` argument failed for the 10 Hz `Clean` stage; red `every_accepted_filter_state_keeps_its_own_snapshot_loadable` | v2.9.9 | `ba626e37`, #583 |
+| NC-10 | Headers that build different machines from one body shared the identity and the BoardDescription (PRG/CHR split; mapper 30/218 raw byte-6 bits) | FIXED | BoardDescription gains `prg_rom_len`, `chr_rom_len`, `nametable_wiring_bits` (`Cartridge::nametable_wiring_bits`); movie format 4, 3 refused. Red: `headers_that_build_different_machines_differ_in_the_description` | v2.9.9 | `ba626e37` |
+| NC-11 | A movie's `extra_scanlines` was unbounded | FIXED | `MAX_EXTRA_SCANLINES` = 80 in the core; the setter clamps, a movie above it is refused | v2.9.9 | `ba626e37` |
+| NC-12 | MMC1 restored `shift_count` unbounded | FIXED | count > 4 or shift > `$1F` refused | v2.9.9 | `ba626e37` |
+| NC-13 | A movie's Game Genie list was not canonical, so playback re-applied it every frame | FIXED | Decoded to one code per address in address order, the later winning (the console's own form) | v2.9.9 | `ba626e37` |
+| NC-14 | Too-long PPU/CPU/mapper states were reported as "truncated" | FIXED | PPU `TrailingBytes`; CPU and mapper messages say "wrong length" | v2.9.9 | `ba626e37` |
+| NC-15 | `run_frame`'s `# Panics` section was false | FIXED (docs) | A JAM ends the call early; documented | v2.9.9 | `ba626e37` |
+| NC-16 | `$4017` set the inhibit at once but cleared it at the timer reset | FIXED | Both directions on the write. Red: `write_4017_inhibit_clear_unmasks_on_the_write_cycle` (raised exactly when the lead is shorter than the reset delay) | v2.9.9 | `ba626e37` |
+| NC-17 | Seven core files cite reference-emulator source by file, function or line without a `// Provenance:` header | CLASSIFIED | The maintainer applied the proposal below (2026-10-04): headers, §1 rows and `NOTICE` for `apu.rs`, `frame_counter.rs`, `vs_dualsystem.rs`, `m019_namco163.rs`; cross-references in `cpu/bus.rs` and `apu/snapshot.rs`; UNROM 512 recorded as consulted (§3). Nothing deleted or reworded; `provenance_record_audit` passes | v2.9.9 | this commit |
+| NL-12 | (libretro report, core scope) A restore restarted the BLEP resampler cold: audio and later serialized state differed from a straight run | FIXED | APU snapshot v5 carries the synthesis state (135 bytes, fixed size). Red: `a_restore_resumes_the_exact_audio_stream` (APU) and libretro `a_mid_run_round_trip_serializes_like_a_straight_run` | v2.9.9 | `ba626e37` |
+| NL-15 | (libretro report, core scope) Flash boards allocate their whole flash on every restore | FIXED (perf) | Decoded in place: restores −11.1% to −12.0% on GTROM and UNROM 512, two `ab_check.sh` runs; byte-identical by construction (`docs/performance.md`, v2.9.9 campaign) | v2.9.9 | — |
+
+### NC-17: classification (proposed, then applied by the maintainer 2026-10-04)
+
+Read from our own files only; no reference source was opened. "Derivation"
+means the comment states or implies the source was read and its logic or
+constants used, which §1 requires to be recorded; "comparison" means the
+reference was run as an oracle.
+
+| file | citations | proposed |
+|---|---|---|
+| `rustynes-cpu/src/bus.rs` | :183 "a direct port of the TriCNES `_6502` per-cycle DMA dispatch table"; :65, :111-:134 Mesen function names | Derivation (TriCNES, MIT) of the DMA engine, which lives in `rustynes-core/src/bus.rs` and already carries that header (v2.9.2); this doc only describes it. Proposed: a cross-reference to that header, no new one |
+| `rustynes-apu/src/apu.rs` | :69-:234 TriCNES field names with `Emulator.cs` line numbers; :184, :195 Mesen2 `_needHalt` / `_needDummyRead` | Derivation (TriCNES MIT, Mesen2 GPL-3.0) of the DMC-DMA state model: header + §1 row + `NOTICE` |
+| `rustynes-apu/src/frame_counter.rs` | :105, :260 "mirroring Mesen2's `GetIrqFlag` lazy algorithm (`ApuFrameCounter.h` lines 214-227)"; :25 the PAL step table | Derivation (Mesen2) of the lazy `$4015` clear: header + §1 row. The PAL step values are also on the wiki; proposed recorded with the same row |
+| `rustynes-apu/src/snapshot.rs` | :44, :538, :726 | Describes the fields of the two models above: cross-reference only |
+| `rustynes-core/src/vs_dualsystem.rs` | :44 "Stepping mirrors Mesen2 `NesConsole::RunFrame`", :171 `VsControlManager::Reset`, :227, :287 | Derivation (Mesen2) of the DualSystem orchestration: header + §1 row |
+| `rustynes-mappers/src/homebrew_boards.rs` | :1124, :1250 "verified against Mesen2 `UnRom512::InitMapper`", expression quoted at :1149, :1444 | Source consulted for a behaviour the wiki also documents (the GeraNES precedent in §3): record as consulted, not derived, unless the maintainer prefers §1 |
+| `rustynes-mappers/src/m019_namco163.rs` | :69 Mesen2 `NesSoundMixer::GetOutputVolume`'s `* 20` N163 weight | Derivation (Mesen2) of a mixing constant: §1 row + header |

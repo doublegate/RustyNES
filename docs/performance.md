@@ -1149,6 +1149,68 @@ hardware-option and power-cycle plumbing, and the Header and identity changes
 are the candidates. No release-wide speed-up is claimed beyond the one
 established path.
 
+### v2.9.9 campaign — the leads, measured (one adopted)
+
+Every row is two `scripts/perf/ab_check.sh` runs on a quiet host. A run starts
+only when both the one- and five-minute loads are under 1.5; the start loads
+were 0.37-0.74, except the first two bisect steps (1.44 and 1.46). A run is
+void if its order-bias control drifts more than 2%. One run (D2, run 1) was
+voided and repeated. Each "correct" candidate first passed a byte-identity
+gate of 20 harness suites (AccuracyCoin, nestest, the visual-regression and
+snapshot-schema audits and 16 others): all five gates pass, and none moved a
+golden. Figures are mid estimates, run 1 / run 2, with an asterisk where
+p > 0.05.
+
+| candidate | kind | `nestest` | `palette` | `nestest_fast` (shipped) | `palette_fast` (shipped) | decision |
+| --- | --- | --- | --- | --- | --- | --- |
+| **NL-15** decode flash restores in place | correct | | | | | **adopted**: −11.1% to −12.0% on all four restore workloads, both runs (below) |
+| G9 skip `bg_split_state` when no board splits | correct | −1.5 / −0.7 | −2.5 / −2.5 | **+0.7 / +1.1** | −2.0 / −2.7 | rejected: mixed sign |
+| D2 `FrameCounter::tick` skips quiet cycles | correct | **+1.6 / +1.3** | −2.0 / −1.9 | +0.8 / +0.0\* | −2.7 / −2.3 | rejected: mixed sign |
+| D4 cache `Pulse::muted` | correct | +1.1 / +0.8 | +0.6 / −1.2 | +0.8 / +0.5 | +0.2\* / −0.7 | rejected: inconsistent across runs; run 2's control drifted −1.2% on `palette` |
+| U1 one read for an unmapped address (the never-measured lead) | correct | −0.3 / −0.5 | −1.4 / −1.7 | **+0.7 / +0.4** | −1.8 / −0.5 | rejected: mixed sign |
+| G4 no index-framebuffer store | ceiling | −1.0 / −1.0 | −0.4 / −0.6 | −0.8 / −1.2 | −2.0 / −1.0 | room of about 1% (the runs now agree) |
+| G5 no open-bus decay loop | ceiling | −0.3\* / −0.1\* | +0.2\* / −0.1\* | −0.4 / +0.5 | +0.1\* / +1.1 | no room: nothing significant in a consistent direction |
+| G6 no BG-pattern A12 reports | ceiling | −0.5 / −1.9 | +0.3 / +0.6 | −1.9 / −2.3 | −0.1\* / −0.7 | room of under 2%, and it is a ceiling: the reports are what the MMC3 counts |
+
+**NL-15**, on `nes_restore_flash_*` and `nes_restore_quiet_flash_*` (GTROM
+and UNROM 512): run 1 −11.7 / −11.7 / −11.7 / −11.1%, run 2 −11.4 / −11.7 /
+−11.4 / −12.0%. Every control is within 0.4%, except one at −0.8%. The
+restore used to decode the flash diff into a fresh buffer the size of the whole
+flash (512 KiB on the largest board) and then copy it in; run-ahead does that
+every frame. `decode_sector_diff` already checks the whole diff before its
+first write and rebuilds the entire buffer from the original image plus the
+flashed sectors, so decoding straight into the live flash gives the same bytes,
+and a refused diff still leaves it untouched (pinned by
+`sector_diff_length_is_exact_and_refusal_writes_nothing`). The commit point is
+also unchanged: the old code copied into the flash at exactly the point where
+the in-place decode now writes.
+
+**What the three "room" ceilings bought.** v2.9.8's ceilings put G9, D2 and D4
+at 2-7%. Their correct versions capture part of it on the palette workloads,
+about 2-2.7%, but G9 and D2 each cost about 1% on one `nestest` workload, and
+a mixed sign is a rejection, not an average. They stay leads; each would need
+a version that does not tax the other path.
+
+**The palette-workload offset, bisected** (v2.9.8's lead). Measured on the
+v2.9.8 feature branch, `palette_fast`, run against an earlier commit:
+
+| step | span (commits after v2.9.7) | `palette` / `palette_fast` | `nestest_fast` |
+| --- | --- | --- | --- |
+| `e3debc9c` → `ccd695db` | 0 → 20 (includes the emphasis model `508bc5fc`) | +1.6 / +1.7 | +0.8 |
+| `e3debc9c` → `8f26671a` | 0 → 36 | +2.6 / +2.5 | +1.1 |
+| `63850aa7` → `33ea0572` | 37 → 41 (after the /NMI removal) | +5.0 / +4.3 | +0.9 |
+| `63850aa7` → `02a956cb` | 37 → 55 | +3.0 / +3.7 | +0.3 |
+
+So the offset has two parts. About 2.5% arrives before the /NMI removal, and
+about half of that before commit 20, which is where the emphasis model is.
+About 4% arrives in the four commits after it. Of those, `41ab28f4` is a rename,
+`5fe98006` changes only the save-state load path, and `8f449691` deletes tests.
+That leaves **`33ea0572`** (movies and netplay carry every emulation option) as
+the one step those four commits contain that can reach the per-frame path. It
+is named as the suspect, not established: one more step, `8f449691` →
+`33ea0572` alone, would settle it. **Found and localized; not fixed in
+v2.9.9.** Nothing here is claimed as a speed-up beyond NL-15.
+
 ### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
 
 **Finding: presents are even in every configuration measured; run-ahead

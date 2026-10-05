@@ -416,6 +416,11 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.19.1@aar")
     // v2.7.4: JVM unit tests (app/src/test). None existed before this release.
     testImplementation("junit:junit:4.13.2")
+    // v2.9.9 (NF-21): the real org.json for the JVM tests. The android.jar copy is
+    // a stub, and with `isReturnDefaultValues` it returns null / 0 instead of
+    // throwing, so a test of the JSON stores (game_config.json, library.json)
+    // would pass or fail on stub defaults, not on the code.
+    testImplementation("org.json:json:20250517")
     // v2.0.1 (ADR 0025): the optional Google Play services below are PLAY-FLAVOR ONLY.
     // `playImplementation` keeps these proprietary Google-Play SDKs out of the `foss`
     // (F-Droid/sideload) artifact entirely — the `foss` variant links none of them (its

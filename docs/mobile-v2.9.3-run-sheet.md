@@ -27,8 +27,10 @@ known issue.
 - The RetroAchievements struct layout on a 32-bit `time_t` target (i686 Linux,
   run), and on armeabi-v7a (compiled only).
 
-**No Swift has been compiled.** B1 is the first compile of every Swift change
-since v2.7.4.
+**Compiled, not run.** Since v2.9.8 (#578), the release workflow's iOS job builds
+the app for the iOS Simulator, unsigned, on every release, so B1's compile half
+is checked there. Nothing has run on a device: B1's run half and every other row
+below still need one.
 
 ## Build
 
@@ -128,6 +130,37 @@ FDS disk writes are not persisted by either app yet: the bridge exposes
 `disk_image_bytes` / `disk_is_dirty` / `clear_disk_dirty`, but neither host
 writes the image back. A game saved to disk loses the save when the app closes;
 that is known, not a row to fail.
+
+## Rows added for v2.9.9 (NF-21: the ROM-identity key migration)
+
+Both apps now key per-game stores by the core's ROM identity
+(`NesController.romIdentity()` / `romIdentityOfFile`: the bytes after the iNES
+header, of the unpacked image) instead of the whole file's SHA-256, and move a
+game's stores from the old key the first time it is opened. The bridge half is
+under host test (`rom_identity_is_the_cores_and_ignores_the_header_and_the_zip`)
+and the Android rules under `RomKeyMigrationTest`. **The Swift compiles but has
+not run:** the iOS workflow built it for the Simulator on `c0b04195` (run
+37242884341); only these device rows test what it does. Prepare each row by installing the PREVIOUS release (v2.9.8) first,
+creating the saves under it, then installing this build over it (an upgrade, not
+a fresh install).
+
+| # | Platform | Step | Expect | Result |
+| --- | --- | --- | --- | --- |
+| M1 | Android | Under v2.9.8: open a battery cartridge (e.g. *Zelda*) from a `.zip`, save in game, save slot 1, set a per-game filter, favourite it in the library; background the app (auto-resume). Upgrade; open the same `.zip` | The in-game save, slot 1 (with its thumbnail), the auto-resume state and the filter are all there; the library shows ONE entry for the game, still a favourite. `filesDir/battery/` and `filesDir/states/` hold only the new key's files (`adb shell run-as com.doublegate.rustynes ls files/battery files/states`) | NOT RUN |
+| M2 | Android | After M1, open the same game from the unzipped `.nes` | The same saves and slots (one key for both files); no second library entry | NOT RUN |
+| M3 | Android | Under v2.9.8: import a ROM folder (library import). Upgrade; import the folder again | No duplicate entries; favourites and box art kept | NOT RUN |
+| M4 | Android | RetroAchievements: under v2.9.8 make progress in a game; upgrade; open it | The progress sidecar is found (no "reset" of in-progress achievements) | NOT RUN |
+| M5 | iOS | As M1: a battery game imported under v2.9.8, with an in-game save, slots 1-2, a per-game override; upgrade; open it from the library | Saves, slots, override and favourite all present; the library entry's ROM still opens; `RustyNES/roms/` holds the game under the new key only | NOT RUN |
+| M6 | iOS | After M5, re-import the same file through the importer | No second library entry; the saves are still there | NOT RUN |
+| M7 | iOS | Under v2.9.8 import an `.nsf` or an unzipped `.fds` (identity equals the whole-file key); upgrade; open it | Opens normally; nothing renamed (the keys are equal) | NOT RUN |
+
+Swift changes these rows exercise (compiled in CI, not run on a device): `RomIdentity.identityHex`,
+`RomKeyMigration` (`RomIdentity.swift`); `ROMLibrary.importROM` (keys by
+identity, returns a pre-v2.9.9 entry for the same file instead of adding one) and
+`ROMLibrary.rekey`; `GameOverrides.rekey`; `AppModel.openGame` /
+`AppModel.migrateKey`; `EmulatorCore.romIdentity`. Not migrated on either
+platform: cloud save-state records (Play Games snapshots, CloudKit), which the
+next upload writes under the new key.
 
 ## Android
 

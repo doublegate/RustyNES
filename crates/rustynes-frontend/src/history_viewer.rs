@@ -214,6 +214,11 @@ impl HistoryViewer {
 
     /// Drop all recorded history (on ROM load / power-cycle). Header metadata
     /// is cleared too — it is recaptured on the next [`Self::record_frame`].
+    ///
+    /// v2.9.9 (NF-13): also on every discontinuity the input stream cannot
+    /// describe -- a Reset, a state load, a rewind step. The record index
+    /// keeps counting across one, so an exported clip paired an anchor from
+    /// before it with input from both sides and did not replay.
     pub fn clear(&mut self) {
         self.inputs.clear();
         self.anchors.clear();
@@ -305,18 +310,23 @@ impl HistoryViewer {
     ///
     /// As [`Self::export_last_seconds`].
     pub fn export_from(&self, want_start: u64) -> Result<Movie, ExportError> {
-        if self.inputs.is_empty() {
+        let Some(&InputRec { seq: oldest, .. }) = self.inputs.front() else {
             return Err(ExportError::Empty);
-        }
-        // Nearest anchor at or before `want_start`. Anchors are in record order.
-        let anchor = self
-            .anchors
-            .iter()
+        };
+        // Only an anchor the retained input covers can start a clip: eviction
+        // keeps one anchor OLDER than the oldest kept input (so a base always
+        // exists), and pairing it with the inputs that survived skips the
+        // evicted ones, so the clip did not replay (v2.9.9, NF-13). The
+        // request is therefore clamped forward to the oldest kept input.
+        let want_start = want_start.max(oldest);
+        let covered = || self.anchors.iter().filter(|a| a.seq >= oldest);
+        // Nearest covered anchor at or before `want_start`, in record order.
+        let anchor = covered()
             .rev()
             .find(|a| a.seq <= want_start)
-            // Fall back to the earliest anchor if the window predates them all
-            // (the clip then simply starts a little earlier than requested).
-            .or_else(|| self.anchors.front())
+            // Else the first covered anchor after it: the clip then starts a
+            // little LATER than requested, never on a state it cannot replay.
+            .or_else(|| covered().next())
             .ok_or(ExportError::NoAnchor)?;
 
         let region = self.region.ok_or(ExportError::NoAnchor)?;
@@ -363,8 +373,8 @@ impl HistoryViewer {
         }
         // Drop anchors strictly older than the oldest retained input EXCEPT
         // keep at least one (so an export always has a base). The kept-oldest
-        // anchor may sit slightly before the input window; `export_from`
-        // tolerates that (it only emits inputs at-or-after the anchor record).
+        // anchor may sit slightly before the input window; `export_from` never
+        // starts from it (v2.9.9: it used to, and replayed the wrong frames).
         if let Some(&InputRec { seq: oldest, .. }) = self.inputs.front() {
             while self.anchors.len() > 1 {
                 let drop = self
@@ -535,5 +545,54 @@ mod tests {
         hv.clear();
         assert!(hv.is_empty());
         assert_eq!(hv.anchor_count(), 0);
+    }
+
+    /// v2.9.9 (NF-13) — an export whose window predates the retained input
+    /// never starts from an anchor older than the oldest kept input.
+    ///
+    /// Eviction keeps one anchor older than the oldest retained input (so a
+    /// base always exists); `export_from` then paired that anchor's state with
+    /// the inputs that survived, skipping the evicted ones, and the clip did
+    /// not replay (the re-audit's probe: anchor 60, inputs 70..=369, 12,531
+    /// differing bytes). The export now steps forward to the first anchor the
+    /// retained input covers.
+    #[test]
+    fn an_export_never_starts_from_an_anchor_older_than_the_kept_input() {
+        let bytes = rom("assorted/flowing_palette.nes");
+        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+        let mut hv = HistoryViewer::new(300, 60);
+        for f in 0..370u64 {
+            nes.set_buttons(0, buttons_for(f));
+            hv.record_frame(&nes);
+            nes.run_frame();
+        }
+        let live = nes.framebuffer().to_vec();
+        let live_cycle = nes.cycle();
+        assert_eq!(hv.frame_span(), Some((70, 369)), "fixture: inputs 70..=369");
+        assert_eq!(
+            hv.anchor_frames().next(),
+            Some(60),
+            "fixture: anchor 60 kept"
+        );
+
+        let movie = hv.export_from(70).expect("export");
+        let mut replay = Nes::from_rom(&bytes).expect("rom parses");
+        movie.seek_to_start(&mut replay).expect("seek");
+        let mut player = MoviePlayer::new(&movie);
+        while player.apply_next(&mut replay) {
+            replay.run_frame();
+        }
+        // The cycle count catches a clip that ends on the wrong frame even
+        // where this palette demo's picture happens to repeat.
+        assert_eq!(
+            replay.cycle(),
+            live_cycle,
+            "the clip ends on the live frame"
+        );
+        assert_eq!(
+            replay.framebuffer(),
+            live.as_slice(),
+            "the clip replays the live session"
+        );
     }
 }

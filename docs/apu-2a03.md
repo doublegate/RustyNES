@@ -95,7 +95,14 @@ would hang or poison the audio, with a typed `ApuSnapshotError`:
 | `sample_rate / cpu_rate` | at most one host sample per CPU cycle | `InvalidResampler` |
 | resampler `phase` | `[0, 1)` | `InvalidResampler` |
 | filter `coeff` | finite, `[0, 1]` | `InvalidResampler` |
-| filter `prev_in` / `prev_out`, `held_value` | finite | `InvalidResampler` |
+| filter stage kind | high-pass, high-pass, low-pass, in that order | `InvalidResampler` |
+| filter `prev_in` | magnitude at most the stage's input bound `X`: 16, 33, 67 for hp1, hp2, lp | `InvalidResampler` |
+| high-pass `prev_out` | magnitude of `prev_out - coeff * prev_in` at most `coeff * X + 1` | `InvalidResampler` |
+| low-pass `prev_out` | magnitude at most `X + 1` | `InvalidResampler` |
+| resampler `held_value` | finite, magnitude at most 4 (`add_sample`'s clamp) | `InvalidResampler` |
+| resampler `integrator`, and every partial sum `integrator + window[0..=i]` | finite, magnitude at most 16 | `InvalidResampler` |
+| `integrator + sum(window) - held_value` | magnitude at most 1 | `InvalidResampler` |
+| resampler ring `head` | any `u16`; masked to the ring size on install | — |
 
 The register-width rows prevent out-of-bounds indexing on the next tick (the
 duty and triangle tables, and the mixer's 31- and 203-entry lookup tables that
@@ -103,6 +110,47 @@ duty and triangle tables, and the mixer's 31- and 203-entry lookup tables that
 never panicked: a zero, non-finite or merely huge rate ratio hung
 `BlipBuf::add_sample`'s `while phase >= 1.0` loop, and a high-pass coefficient
 above 1 diverges to NaN.
+
+**The signal-state bounds (v2.9.9, core re-audit NC-09).** Until v2.9.9 the
+filter state and `held_value` were checked for finiteness only. A finite value
+near `f32::MAX` (`-2.05e38`, say) overflowed within a frame, the audio stayed
+NaN for the session, and the machine's next own snapshot was refused by the
+same validator, which also broke `Nes::restore`'s rollback, since that restores
+the machine's own snapshot. The bounds are chosen to be **closed under the
+resampler's motion**, so a state inside them can only produce states inside
+them: `held_value` is clamped by `add_sample`; once every delta in flight is
+integrated the integrator equals `held_value`, so `integrator + sum(window) -
+held_value` is a constant of the motion (zero, up to rounding, for a state this
+emulator produced); and each filter bound holds a PAIR, not a field: for a high-pass `y' = c(y + x' - x)`
+whose input stays within `X`, the quantity `y - c*x` is closed, since
+`y' - c*x' = c((y - c*x) - (1 - c)x)`; so `|y - c*x| <= c*X + 1` stays true
+for any coefficient in `[0, 1]`, and gives `|y| <= 2X + 1`, the next stage's
+input bound. The low-pass is a convex step towards its input, so `|y| <= X + 1`
+is closed directly. The input bounds chain from the integrator's 16: hp1 16,
+hp2 33, low-pass 67. Two earlier forms were not closed. A cap of 16 on every
+value let a state at the cap step past it on the next sample. Separate caps of
+1024 on `prev_in` and `prev_out` let the pair `(-1024, 1024)` step to about
+2022 (#583 review), and the `8a / (1 - a)` argument behind 1024 failed for the
+10 Hz `Clean` stage, where that figure is about 5,700. Pinned by
+`every_accepted_filter_state_keeps_its_own_snapshot_loadable`, which checks the
+snapshot after each of the first fifty samples from every accepted state on a
+grid, and `a_filter_stage_of_the_wrong_kind_is_refused`.
+
+**The resampler's live state is saved (APU snapshot v5, v2.9.9, NL-12).**
+Before v5 a restore rebuilt the band-limited resampler from scratch, losing its
+integrator, its warm-up flag and the 32 delta-ring slots still in flight. A
+load then delivered about 17 fewer samples (717 instead of 734 in the audit's
+probe), stepped the output by the lost integrator value (an audible click), and
+the filter state never re-converged, so a state saved after a round trip
+differed from a straight run's in 24 bytes. v5 carries the ring head, the
+warm-up flag, the integrator and the 32-slot window (fixed size, so libretro's
+`retro_serialize_size`, read once at load, still covers it), and a restore
+resumes the exact stream: rollback, run-ahead and netplay stay bit-for-bit. The
+undrained output queue is still not saved; it is output, not machine state,
+its length varies, and every host drains it at frame end, where snapshots are
+taken. A v4 APU section is refused. Pinned by
+`a_restore_resumes_the_exact_audio_stream` and, through the C ABI, by
+libretro's `a_mid_run_round_trip_serializes_like_a_straight_run`.
 
 ## Behavior
 
@@ -368,7 +416,7 @@ AccuracyCoin stays 144/144 and nestest 0-diff with the change.
 ## Edge cases and gotchas
 
 1. **DMC DMA stalls CPU mid-instruction.** Per `ref-docs/research-report.md` §DMA, halt only on read cycles. The 2A03 register-readout bug (extra reads of `$2007`, `$4015`-`$4017` while halted) must be reproduced — required by `dmc_dma_during_read4`.
-2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag — on the write cycle itself (both `$4015` bit 6 and the CPU /IRQ line); only the timer reset waits the 3-4 cycles. The wiki states the two separately. Until v2.9.8 the clear waited for the timer reset, and *Nintendo World Championships 1990* (`STA $4017` with `$40`, then `CLI`, with the frame flag set since cycle 29,828 and its IRQ vector in uninitialised WRAM) took the IRQ and never drew a frame. Pinned by `write_4017_inhibit_drops_the_irq_on_the_write_cycle` in `crates/rustynes-apu/src/frame_counter.rs`. The inhibit itself takes effect with the write as well (v2.9.8, found in review): with the flag cleared on the write but the inhibit left to the timer reset, a write 1-3 cycles before step 29,828 let the OLD sequence raise the IRQ again inside the reset delay, an interrupt the program had just inhibited. No source states the cycle directly. This reading is the wiki's, which ties the flag clear to the inhibit bit and not to the reset. No ROM in the suite reaches that window: the APU and AccuracyCoin suites pass under either model. Pinned by `write_4017_inhibit_holds_through_the_reset_delay`.
+2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag — on the write cycle itself (both `$4015` bit 6 and the CPU /IRQ line); only the timer reset waits the 3-4 cycles. The wiki states the two separately. Until v2.9.8 the clear waited for the timer reset, and *Nintendo World Championships 1990* (`STA $4017` with `$40`, then `CLI`, with the frame flag set since cycle 29,828 and its IRQ vector in uninitialised WRAM) took the IRQ and never drew a frame. Pinned by `write_4017_inhibit_drops_the_irq_on_the_write_cycle` in `crates/rustynes-apu/src/frame_counter.rs`. The inhibit itself takes effect with the write as well (v2.9.8, found in review): with the flag cleared on the write but the inhibit left to the timer reset, a write 1-3 cycles before step 29,828 let the OLD sequence raise the IRQ again inside the reset delay, an interrupt the program had just inhibited. No source states the cycle directly. This reading is the wiki's, which ties the flag clear to the inhibit bit and not to the reset. No ROM in the suite reaches that window: the APU and AccuracyCoin suites pass under either model. Pinned by `write_4017_inhibit_holds_through_the_reset_delay`. Since v2.9.9 the CLEAR direction is immediate too (re-audit NC-16): v2.9.8 set the inhibit on the write but cleared it only at the timer reset, so a `$4017 = $00` written 1-3 cycles before step 29,828 with the inhibit set kept the old sequence's IRQ masked. The bit is now a latch the write sets or clears at once; the old sequence's IRQ is raised whenever it reaches 29,828 before the reset restarts it (the write lead shorter than the 3- or 4-cycle delay). Same evidence class: the wiki's reading, no ROM in the window. Pinned by `write_4017_inhibit_clear_unmasks_on_the_write_cycle`.
 3. **Length counter halt / reload race (v1.7.0 F2a; ordering fixed v2.1.5).** The effective halt flag is consulted at the half-frame length clock; a `$400x` halt-bit write — or a length **reload** — on the CPU cycle of that clock races over whether the counter is clocked this step. Silicon resolves the halt change *after* the clock and drops a reload that lands on a non-zero clock. This is modeled by the deferral mechanism in `length.rs` (`new_halt` / `reload_val` / `previous_count`, promoted by `LengthCounter::reload` after the half-frame clock and before the mixer sample — see §Length halt/reload ordering above). blargg `10.len_halt_timing` + `11.len_reload_timing` bracket the exact cycle and pass strictly on **both** the NTSC (`blargg_apu_2005.07.30`) and PAL (`pal_apu_tests`) builds. The `f2a_*` tests in `crates/rustynes-test-harness/tests/f2_accuracy_audit.rs` are the named NTSC regression pin.
 4. **Triangle disabled silently when length counter or linear counter reaches 0.** Holds the last sequencer step (does not produce a click).
    - **Ultrasonic silence (timer period < 2).** When the triangle timer period is below 2 (frequency above ~55.9 kHz), real hardware cannot follow the sequencer and the channel effectively halts. We freeze the sequencer in `Triangle::clock_timer` (the step does not advance and the output holds its current value) rather than emitting the aliasing tone, matching the common-emulator convention; Mega Man 2's "Crash Man" stage relies on this to silence the triangle. The threshold is strictly `< 2` (period 2 still clocks). See `crates/rustynes-apu/src/triangle.rs`.

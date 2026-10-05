@@ -203,6 +203,43 @@ impl BlipBuf {
         self.integrator = 0.0;
     }
 
+    /// The resampler state a save state must carry for a restore to resume
+    /// the exact sample stream (v2.9.9, NL-12): the head's ring position,
+    /// whether warm-up is over, the integrator, and the `TAPS` delta-ring
+    /// slots a scatter can still reach. Every other slot is zero: an emitted
+    /// slot is zeroed as it is consumed, and no scatter writes outside
+    /// `[head - TAPS/2, head + TAPS/2)`.
+    pub(crate) fn live_state(&self) -> (u16, bool, f32, [f32; TAPS]) {
+        let mut window = [0.0; TAPS];
+        let start = self.head.wrapping_sub(TAPS / 2);
+        for (i, v) in window.iter_mut().enumerate() {
+            *v = self.delta_ring[start.wrapping_add(i) & RING_MASK];
+        }
+        // RING_SIZE is 4096, so the masked head fits a u16.
+        #[allow(clippy::cast_possible_truncation)]
+        let head = (self.head & RING_MASK) as u16;
+        (head, self.primed, self.integrator, window)
+    }
+
+    /// Install a state [`Self::live_state`] produced. The caller validates
+    /// the values; `head` is masked into the ring here.
+    pub(crate) fn set_live_state(
+        &mut self,
+        head: u16,
+        primed: bool,
+        integrator: f32,
+        window: &[f32; TAPS],
+    ) {
+        self.delta_ring = [0.0; RING_SIZE];
+        self.head = usize::from(head) & RING_MASK;
+        self.primed = primed;
+        self.integrator = integrator;
+        let start = self.head.wrapping_sub(TAPS / 2);
+        for (i, &v) in window.iter().enumerate() {
+            self.delta_ring[start.wrapping_add(i) & RING_MASK] = v;
+        }
+    }
+
     /// Add one mixed sample at CPU resolution. The buffer accumulates
     /// host-rate samples internally; drain via [`Self::drain`] or
     /// [`Self::drain_all`].

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the lazy `$4015` frame-IRQ clear (`irq_flag_clear_cycle`, the read that schedules a clear one or two cycles later) is derived from Mesen2 (GPL-3.0-or-later), `ApuFrameCounter::GetIrqFlag` / `_irqFlagClearClock`, and the PAL step table is Mesen2's `stepCyclesPal` (also published on the NESdev wiki). See docs/originality-and-provenance.md (Section 1) and NOTICE. Classified v2.9.9 (core re-audit NC-17, maintainer's decision 2026-10-04): the in-source citations below record the derivation and are kept as written.
+
 //! APU frame counter (sequencer).
 //!
 //! Per `docs/apu-2a03.md` §Frame counter and NESdev wiki "APU Frame Counter".
@@ -227,6 +231,15 @@ impl FrameCounter {
         // Pinned by `write_4017_inhibit_drops_the_irq_on_the_write_cycle`;
         // Nintendo World Championships 1990 runs `CLI` on the next
         // instruction and crashed into WRAM without it.
+        // The inhibit bit is a latch the write sets or clears at once, in
+        // both directions (v2.9.9, NC-16). v2.9.8 applied the SET at the
+        // write and left the CLEAR to the timer reset 3-4 cycles later, so a
+        // `$4017 = $00` written 1-3 cycles before 29828 with the inhibit set
+        // kept the old sequence's IRQ masked. The wiki gives bit 6 one
+        // effect and the 3-4 cycle delay to "the timer" only, which reads
+        // the same for both directions; no test ROM reaches the window.
+        // Pinned by `write_4017_inhibit_clear_unmasks_on_the_write_cycle`.
+        self.irq_inhibit = self.pending_inhibit;
         if self.pending_inhibit {
             // The inhibit itself takes effect with the write too. Clearing
             // the flag here while leaving `irq_inhibit` to the timer reset
@@ -237,7 +250,6 @@ impl FrameCounter {
             // pass either way); the reading is the wiki's, which ties the
             // flag clear to the inhibit bit, not to the reset. Pinned by
             // `write_4017_inhibit_holds_through_the_reset_delay`.
-            self.irq_inhibit = true;
             self.irq_flag = false;
             self.irq_line_active = false;
             self.irq_flag_clear_cycle = 0;
@@ -749,6 +761,38 @@ mod tests {
                          before 29828 (aligned={aligned})"
                     );
                 }
+            }
+        }
+    }
+
+    /// NC-16 (v2.9.9 re-audit): the mirror of the test above. With the
+    /// inhibit set, a `$4017 = $00` written just before 29828 unmasks the old
+    /// sequence's IRQ at once rather than at the timer reset.
+    #[test]
+    fn write_4017_inhibit_clear_unmasks_on_the_write_cycle() {
+        for lead in 1..=3u32 {
+            for aligned in [true, false] {
+                let mut fc = FrameCounter::new();
+                let mut cyc = 0u64;
+                // Inhibited from power-on, as a matured `$4017 = $40` leaves
+                // it, without a write that would restart the sequence.
+                fc.irq_inhibit = true;
+                fc.pending_inhibit = true;
+                for _ in 0..(29828 - lead) {
+                    drive_tick(&mut fc, &mut cyc, aligned);
+                }
+                assert!(!fc.irq_line_active, "inhibited before the write");
+                fc.write(0x00, aligned);
+                let mut raised = false;
+                for _ in 0..8 {
+                    drive_tick(&mut fc, &mut cyc, aligned);
+                    raised |= fc.irq_line_active;
+                }
+                // The old sequence reaches 29828 after `lead` cycles; the
+                // timer reset restarts it after 3 (aligned) or 4. When the
+                // reset lands first the old sequence never gets there.
+                let reset_delay = if aligned { 3 } else { 4 };
+                assert_eq!(raised, lead < reset_delay, "lead {lead} aligned {aligned}");
             }
         }
     }

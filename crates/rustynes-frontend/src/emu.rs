@@ -109,7 +109,7 @@ pub(crate) const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 /// v2.9.7 — the largest overclock the Settings field offers (`0..=80`). A
 /// hand-edited config above it is clamped here, where the value reaches the
 /// core, rather than trusted.
-pub(crate) const MAX_OVERCLOCK_SCANLINES: u16 = 80;
+pub(crate) const MAX_OVERCLOCK_SCANLINES: u16 = rustynes_core::MAX_EXTRA_SCANLINES;
 
 /// v2.9.7 — the extra-scanline overclock the core should run the next frame
 /// with.
@@ -527,6 +527,10 @@ pub struct EmuCore {
     pub dual: Option<Box<rustynes_core::VsDualSystem>>,
     /// TAS movie record/playback state machine.
     pub movie: MovieUi,
+    /// v2.9.9 (NF-12) — a recording that a ROM install or Close ROM ended
+    /// (see [`Self::set_nes`]), held for the app to offer for saving through
+    /// its usual save path. Taken with [`Self::take_interrupted_recording`].
+    interrupted_recording: Option<rustynes_core::Movie>,
     /// Frame-pacing / audio instrumentation (Phase 0).
     pub perf: PerfStats,
     /// The framebuffer the renderer presents (with run-ahead active it is
@@ -717,9 +721,19 @@ pub struct EmuCore {
     /// v2.3.3 F23 — the PREDICTED one-depth-up cost, ms, that the release arm
     /// accepted. See [`Self::thr_engage_cost_ms`].
     pub thr_release_pred_ms: f32,
-    /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
+    /// SHA-256 of the loaded FDS disk AS LOADED, before any disk write: the
+    /// game's save identity ([`save_identity`]) and the `.fds.sav` key. Set
+    /// with [`Self::bind_fds_save`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
+    /// v2.9.9 (NF-16) — the loaded disk's `.fds.sav` binding: where the
+    /// writable disk is persisted, and the write policy's state. `None` for a
+    /// non-FDS game, with no data directory, and for the rest of a ROM session
+    /// once a movie, `TAStudio` or netplay took the console over
+    /// ([`Self::release_battery_for_session`]), exactly as the cartridge
+    /// battery is released.
+    #[cfg(not(target_arch = "wasm32"))]
+    fds_save: Option<FdsSave>,
     /// v2.7.3 (FE-01) — the loaded cartridge's battery RAM, bound to its
     /// `.sav` file. `None` for a cart without a battery, before any ROM loads,
     /// and when an existing `.sav` could not be used (it is then left
@@ -776,6 +790,105 @@ pub struct EmuCore {
     pub lag_frames: u32,
 }
 
+/// v2.9.9 (NF-16) — an FDS disk's `.fds.sav` binding and its write policy
+/// (see [`EmuCore::fds_due_write`]).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct FdsSave {
+    /// `<data_dir>/fds-saves/<pristine sha>.fds.sav`.
+    path: std::path::PathBuf,
+    /// Calls since the last periodic dirty check.
+    frames: u32,
+    /// The last write failed: write at the next check even if the disk is
+    /// clean (its dirty latch was cleared when that write's copy was taken).
+    retry: bool,
+}
+
+/// v2.9.9 (NF-16) — a copy of the FDS disk taken under the emu lock, to be
+/// written with it released ([`EmuCore::fds_due_write`]).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct FdsWrite {
+    path: std::path::PathBuf,
+    bytes: Vec<u8>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FdsWrite {
+    /// Write the copy (creating `fds-saves/` if needed) with `write_atomic`,
+    /// so a crash mid-write leaves the previous file intact.
+    ///
+    /// # Errors
+    ///
+    /// The directory creation's or the atomic write's I/O error.
+    pub fn write(&self) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::atomic_write::write_atomic(&self.path, &self.bytes)
+    }
+}
+
+/// v2.9.9 (NF-17) — the save identity of `nes`: the key of its save-state
+/// slots and its cheat file.
+///
+/// For a cartridge (and an NSF) this is [`Nes::rom_sha256`], the v2.9.8
+/// identity. For an FDS disk it is the image AS LOADED, before any disk write
+/// -- `fds_pristine`, the hash the load path takes from the pristine image and
+/// keeps in [`EmuCore::fds_disk_sha256`] to key the `.fds.sav`. The desktop
+/// boots the `.fds.sav` image when one exists, and `Nes::from_disk*` hashes
+/// whatever bytes it is given, so `rom_sha256` changed with every launch after
+/// the game's first disk save and the previous session's slots and cheats were
+/// not found.
+///
+/// `fds_pristine` is ignored for a console with no disk drive, so a stale key
+/// left from an earlier FDS game can never relabel a cartridge.
+///
+/// Since the core half of NF-17, the load path boots a saved disk through
+/// [`boot_saved_disk`], which hands the pristine hash to
+/// [`Nes::set_rom_identity`]; `rom_sha256` itself is then the pristine image's,
+/// so this returns `rom_sha256` for every console the desktop builds, and
+/// movies, netplay, the HD-pack and per-game keys and RA progress, which read
+/// `rom_sha256` directly, agree with it. It is kept, not removed, as the guard
+/// for a console that reaches the core without that call: the two keys it
+/// covers are the ones a user loses outright when the identity moves.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn save_identity(nes: &Nes, fds_pristine: Option<[u8; 32]>) -> [u8; 32] {
+    match fds_pristine {
+        Some(sha) if nes.disk_side_count() > 0 => sha,
+        _ => *nes.rom_sha256(),
+    }
+}
+
+/// v2.9.9 (NF-17, core half) — boot the SAVED copy of an FDS disk (the
+/// `.fds.sav` the game last wrote) under the identity of the pristine image
+/// whose hash is `pristine`.
+///
+/// `Nes::from_disk*` hashes the bytes it is given, so without the
+/// [`Nes::set_rom_identity`] call the console would report the written disk's
+/// hash and every store keyed on `rom_sha256` -- slots and the `.rns` tag,
+/// cheats, movies and `TAStudio`, netplay's ROM match, the HD-pack and
+/// per-game keys, the RA progress sidecar, the history viewer -- would change
+/// identity at the game's first disk save. The `.fds.sav` itself is already
+/// keyed by `pristine`, so after this call the two agree.
+///
+/// # Errors
+///
+/// The core's [`rustynes_core::rustynes_mappers::RomError`] when the saved
+/// image or the BIOS does not parse; the caller falls back to the pristine disk.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn boot_saved_disk(
+    saved: &[u8],
+    bios: &[u8],
+    sample_rate: u32,
+    pristine: [u8; 32],
+) -> Result<Nes, rustynes_core::rustynes_mappers::RomError> {
+    let mut nes = Nes::from_disk_with_sample_rate(saved, bios, sample_rate)?;
+    nes.set_rom_identity(pristine);
+    Ok(nes)
+}
+
 impl EmuCore {
     /// Install a freshly-loaded single-console emulator, refreshing the cached
     /// [`Self::mapper_name`] in the same step.
@@ -785,7 +898,13 @@ impl EmuCore {
     /// sites (ROM load, reset-with-new-config, netplay session start, movie
     /// load). Routing them through one setter makes that structural instead of a
     /// convention four call sites have to remember.
+    ///
+    /// v2.9.9 (NF-12): installing a game ends any movie session first (see
+    /// `end_movie_session`). Call this only to install a game, never
+    /// to put back a console taken out for a borrow split -- that would end a
+    /// movie the player is still running.
     pub fn set_nes(&mut self, nes: Nes) {
+        self.end_movie_session();
         self.mapper_name = nes.mapper_info().name;
         self.dual = None;
         self.nes = Some(nes);
@@ -794,21 +913,59 @@ impl EmuCore {
     /// Install a Vs. `DualSystem` cabinet, refreshing the cached mapper name from
     /// the MAIN console (the one whose status the shell reports).
     pub fn set_dual(&mut self, dual: Box<rustynes_core::VsDualSystem>) {
+        self.end_movie_session();
         self.mapper_name = dual.main().mapper_info().name;
         self.nes = None;
         self.dual = Some(dual);
     }
 
+    /// v2.9.9 (NF-22) — run `f` on every loaded console: the single console,
+    /// or BOTH consoles of a Vs. `DualSystem` cabinet (main, then sub).
+    ///
+    /// The live Settings applies (palette, APU mask / gain / filter, OAM
+    /// decay, fast dot path, console model) wrote `nes` alone, which is `None`
+    /// while a cabinet is installed, so a change reached a cabinet only at the
+    /// next Power Cycle (`build_dual_cabinet` configures both consoles at
+    /// load). A no-op with no ROM.
+    pub fn for_each_console(&mut self, mut f: impl FnMut(&mut Nes)) {
+        if let Some(nes) = self.nes.as_mut() {
+            f(nes);
+        } else if let Some(dual) = self.dual.as_mut() {
+            let (main, sub) = dual.split_mut();
+            f(main);
+            f(sub);
+        }
+    }
+
     /// v2.9.7 — the loaded game's identity (the save-state slot key): the
     /// single console's `rom_sha256`, or the MAIN console's for a Vs.
     /// `DualSystem` cabinet (both consoles run the same image). `None` with no
-    /// ROM loaded.
+    /// ROM loaded. v2.9.9 (NF-17): an FDS disk's is the pristine image's
+    /// ([`save_identity`]), so a disk save does not move the slots.
     #[must_use]
     pub fn loaded_rom_sha256(&self) -> Option<[u8; 32]> {
         self.nes
             .as_ref()
-            .map(|nes| *nes.rom_sha256())
+            .map(|nes| self.identity_of(nes))
             .or_else(|| self.dual.as_ref().map(|d| *d.main().rom_sha256()))
+    }
+
+    /// v2.9.9 (NF-17) — [`save_identity`] with this core's FDS key; plain
+    /// `rom_sha256` on wasm32, whose FDS loads always boot the pristine image
+    /// (the browser keeps no `.fds.sav`).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
+    )]
+    fn identity_of(&self, nes: &Nes) -> [u8; 32] {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            save_identity(nes, self.fds_disk_sha256)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            *nes.rom_sha256()
+        }
     }
 
     /// v2.9.7 (`T-PS-dual-savestate`) — a save-state blob of whatever is
@@ -824,7 +981,7 @@ impl EmuCore {
     #[must_use]
     pub fn save_state_blob(&self) -> Option<([u8; 32], Vec<u8>)> {
         if let Some(nes) = self.nes.as_ref() {
-            return Some((*nes.rom_sha256(), nes.snapshot()));
+            return Some((self.identity_of(nes), nes.snapshot()));
         }
         self.dual
             .as_ref()
@@ -840,22 +997,63 @@ impl EmuCore {
     /// The core's [`rustynes_core::SnapshotError`] for a malformed blob or one
     /// of the other kind; [`RestoreStateError::NoRom`] with nothing loaded.
     pub fn restore_state_blob(&mut self, blob: &[u8]) -> Result<(), RestoreStateError> {
-        if let Some(nes) = self.nes.as_mut() {
-            return nes.restore(blob).map_err(RestoreStateError::Snapshot);
+        let restored = if let Some(nes) = self.nes.as_mut() {
+            nes.restore(blob).map_err(RestoreStateError::Snapshot)
+        } else {
+            self.dual
+                .as_mut()
+                .map_or(Err(RestoreStateError::NoRom), |dual| {
+                    dual.restore(blob).map_err(RestoreStateError::Snapshot)
+                })
+        };
+        // v2.9.9 (NF-13) — the restored machine is not where the history
+        // viewer's input log continues from; start a fresh timeline.
+        if restored.is_ok() {
+            self.history.clear();
         }
-        self.dual
-            .as_mut()
-            .map_or(Err(RestoreStateError::NoRom), |dual| {
-                dual.restore(blob).map_err(RestoreStateError::Snapshot)
-            })
+        restored
     }
 
     /// Drop any loaded ROM and the cached name with it, so a stale mapper label
     /// cannot outlive the ROM it described.
     pub fn clear_rom(&mut self) {
+        self.end_movie_session();
         self.nes = None;
         self.dual = None;
         self.mapper_name.clear();
+    }
+
+    /// v2.9.9 (NF-12) — end the movie session because the game is going away.
+    ///
+    /// A movie belongs to the ROM it was recorded on, and while it runs
+    /// `MovieUi::before_frame` holds that game's options -- mirroring override,
+    /// Game Genie codes, Vs. DIP and PPU, console model -- against the console
+    /// every frame. Left running across an install, it forced them onto the
+    /// NEW game (an MMC3 game with a forced mirroring override is the hazard
+    /// ADR 0031 guards against), and `stop_playback` later "restored" the old
+    /// game's player options onto it, so the damage outlived the movie. A
+    /// recording kept appending the new game's input under the old game's
+    /// identity, which never replays.
+    ///
+    /// Playback is stopped with no console (the incoming one is built from
+    /// the player's own settings, so there is nothing to restore). A recording
+    /// is finished and kept in `interrupted_recording` for the app to save:
+    /// everything recorded up to the swap is a valid movie of the old game.
+    /// Every install path goes through [`Self::set_nes`] / [`Self::set_dual`]
+    /// / [`Self::clear_rom`], so the native, command-line and browser loads
+    /// are all covered here rather than at each call site.
+    fn end_movie_session(&mut self) {
+        self.movie.stop_playback(None);
+        if let Some(movie) = self.movie.finish_recording() {
+            self.interrupted_recording = Some(movie);
+        }
+    }
+
+    /// v2.9.9 (NF-12) — the recording a ROM install or Close ROM ended, if
+    /// any, for the app to save (native: the `.rnm` dialog; browser: a
+    /// download). Its `rom_sha256` is the game it was recorded on.
+    pub const fn take_interrupted_recording(&mut self) -> Option<rustynes_core::Movie> {
+        self.interrupted_recording.take()
     }
 
     /// Empty core (no ROM).
@@ -866,6 +1064,7 @@ impl EmuCore {
             mapper_name: String::new(),
             dual: None,
             movie: MovieUi::default(),
+            interrupted_recording: None,
             perf: PerfStats::default(),
             present_fb: Vec::new(),
             present_fb_sub: Vec::new(),
@@ -904,6 +1103,8 @@ impl EmuCore {
             thr_release_pred_ms: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            fds_save: None,
             #[cfg(not(target_arch = "wasm32"))]
             battery: None,
             #[cfg(any(target_arch = "wasm32", test))]
@@ -1436,6 +1637,9 @@ impl EmuCore {
             // truthful outcome. (Review catch on PR #356.)
             if nes.rewind_step_back() {
                 self.movie.invalidate_attestation();
+                // v2.9.9 (NF-13) — and the history viewer's timeline, whose
+                // input log no longer describes the machine's past.
+                self.history.clear();
             }
             // v2.8.0 Phase 3 — refresh the presented framebuffer from the
             // restored state.
@@ -1825,41 +2029,100 @@ impl EmuCore {
         if mean > 0.0 { 1000.0 / mean } else { 0.0 }
     }
 
-    /// Flush the FDS writable disk to `<data_dir>/fds-saves/<sha>.fds.sav`
-    /// when it has been modified since the last flush. Cheap when clean
-    /// (only a `disk_is_dirty()` check). Native-only (filesystem). No-op
-    /// for non-FDS games or when no data dir is available.
+    /// v2.9.9 (NF-16) — bind the FDS writable disk of the console being
+    /// installed to its `.fds.sav`: `pristine` is the hash of the disk image as
+    /// loaded (`None` for a cartridge or an NSF), the file is
+    /// `<data_dir>/fds-saves/<pristine>.fds.sav`. Sets [`Self::fds_disk_sha256`]
+    /// too, the game's save identity.
+    ///
+    /// Call at the install, AFTER [`Self::detach_battery`] wrote the outgoing
+    /// disk: until v2.9.9 the load path set the key while the previous game
+    /// was still running, so a flush in between would have written the old
+    /// disk under the new game's name.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn flush_fds_save(&mut self, data_dir: Option<&std::path::Path>) {
-        let Some(rom_sha256) = self.fds_disk_sha256 else {
-            return;
-        };
-        let Some(nes) = self.nes.as_mut() else { return };
-        if nes.disk_side_count() == 0 || !nes.disk_is_dirty() {
-            return;
+    pub fn bind_fds_save(
+        &mut self,
+        pristine: Option<[u8; 32]>,
+        data_dir: Option<&std::path::Path>,
+    ) {
+        self.fds_disk_sha256 = pristine;
+        self.fds_save = pristine.zip(data_dir).map(|(sha, dir)| FdsSave {
+            path: dir
+                .join("fds-saves")
+                .join(format!("{}.fds.sav", crate::save_state::hex_sha256(&sha))),
+            frames: 0,
+            retry: false,
+        });
+    }
+
+    /// v2.9.9 (NF-16) — the `.fds.sav` write that is due, if any, as a copy
+    /// that can be written with the emulator lock released.
+    ///
+    /// Until v2.9.9 the disk was written whenever it was dirty, after every
+    /// produced frame, with an `fsync` (`write_atomic`) under the emu lock --
+    /// and a game writing a file dirties the disk on many consecutive frames,
+    /// so a ~65 KiB-per-side copy and an `fsync` ran each frame while the
+    /// emulation thread waited. Now, as the battery does (FE-01): without
+    /// `force` the dirty check runs only every
+    /// [`crate::battery_policy::CHECK_PERIOD_FRAMES`] calls (the battery's period),
+    /// and the caller writes the copy with the lock dropped. `force` (a disk
+    /// swap, the ROM going away, quit, a session start) checks now.
+    ///
+    /// The dirty latch is cleared when the copy is taken, so a write the game
+    /// makes while the file is being written is caught by the next check; a
+    /// failed write is retried at the next check ([`Self::fds_written`]).
+    /// `None` when nothing is bound -- including for the rest of a sandboxed
+    /// session, which is what keeps a movie's disk off the player's file.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn fds_due_write(&mut self, force: bool) -> Option<FdsWrite> {
+        let (save, nes) = (self.fds_save.as_mut()?, self.nes.as_mut()?);
+        if nes.disk_side_count() == 0 {
+            return None;
+        }
+        if !force {
+            save.frames += 1;
+            if save.frames < crate::battery_policy::CHECK_PERIOD_FRAMES {
+                return None;
+            }
+        }
+        save.frames = 0;
+        if !nes.disk_is_dirty() && !save.retry {
+            return None;
         }
         let bytes = nes.disk_image_bytes();
-        let Some(path) = data_dir.map(|d| {
-            d.join("fds-saves").join(format!(
-                "{}.fds.sav",
-                crate::save_state::hex_sha256(&rom_sha256)
-            ))
-        }) else {
-            return;
-        };
-        if let Some(parent) = path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            eprintln!("rustynes: could not create fds-saves dir: {e}");
-            return;
+        nes.clear_disk_dirty();
+        Some(FdsWrite {
+            path: save.path.clone(),
+            bytes,
+        })
+    }
+
+    /// v2.9.9 (NF-16) — record the outcome of a write taken by
+    /// [`Self::fds_due_write`]: a failure is logged and retried at the next
+    /// check, even though the disk's dirty latch was already cleared.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn fds_written(&mut self, write: &FdsWrite, result: &std::io::Result<()>) {
+        if let Err(e) = result {
+            eprintln!(
+                "rustynes: FDS disk save failed {}: {e}",
+                write.path.display()
+            );
         }
-        match crate::atomic_write::write_atomic(&path, &bytes) {
-            Ok(()) => {
-                if let Some(nes) = self.nes.as_mut() {
-                    nes.clear_disk_dirty();
-                }
-            }
-            Err(e) => eprintln!("rustynes: FDS disk save failed {}: {e}", path.display()),
+        if let Some(save) = self.fds_save.as_mut() {
+            save.retry = result.is_err();
+        }
+    }
+
+    /// v2.9.9 (NF-16) — write the disk now, under the caller's lock, if it
+    /// changed: the outgoing game's final write ([`Self::detach_battery`]) and
+    /// the game's own progress before a session takes the console over
+    /// ([`Self::flush_battery_now`]). One-off sites, so the lock-held `fsync`
+    /// the periodic path avoids is acceptable here, as it is for the battery.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_fds_now(&mut self) {
+        if let Some(write) = self.fds_due_write(true) {
+            let result = write.write();
+            self.fds_written(&write, &result);
         }
     }
 
@@ -1975,6 +2238,9 @@ impl EmuCore {
     pub fn flush_battery_now(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_battery(true);
+        // v2.9.9 (NF-16) — the FDS disk is the game's save too.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_fds_now();
         #[cfg(target_arch = "wasm32")]
         if let Some(write) = self.web_battery_due(true) {
             crate::wasm_idb::spawn_battery_write(write);
@@ -1985,8 +2251,11 @@ impl EmuCore {
     /// this ROM session, WITHOUT writing it: the live RAM now belongs to a
     /// session. The second half of [`Self::start_sandboxed_session`].
     pub fn release_battery_for_session(&mut self) {
+        // v2.9.9 (NF-16) — and the FDS disk's `.fds.sav`, which v2.9.0 missed:
+        // a movie replayed on a disk game wrote the movie's saves over the
+        // player's file. `fds_disk_sha256` stays: it is the save identity.
         #[cfg(not(target_arch = "wasm32"))]
-        let released = self.battery.take().is_some();
+        let released = self.battery.take().is_some() | self.fds_save.take().is_some();
         // v2.9.7 — the browser record likewise. A read still in flight is
         // discarded when it lands, so it cannot overwrite the session's RAM.
         #[cfg(target_arch = "wasm32")]
@@ -2024,6 +2293,10 @@ impl EmuCore {
     pub fn detach_battery(&mut self) {
         self.flush_battery(true);
         self.battery = None;
+        // v2.9.9 (NF-16) — the outgoing FDS disk's final write. The periodic
+        // check is throttled, so up to a second of writes can be pending.
+        self.flush_fds_now();
+        self.fds_save = None;
     }
 
     /// v2.9.7 "Tandem" — bind the just-installed cartridge's battery RAM to
@@ -2819,5 +3092,336 @@ mod tests {
         assert!(core.attach_battery(Some(dir.path())).is_none());
         assert!(!core.start_sandboxed_session(|_| false));
         assert!(core.battery.is_some());
+    }
+
+    /// v2.9.9 (NF-12) — installing a new game ends the movie session.
+    ///
+    /// A `.rnm` belongs to the ROM it was recorded on, and both halves of a
+    /// session hold that game's options against the console every frame
+    /// (`MovieUi::before_frame` -> `apply_live`). Before v2.9.9 no install
+    /// touched `emu.movie`, so after Open ROM the old game's mirroring
+    /// override and Game Genie codes were forced onto the new one -- and stayed
+    /// after the movie ended, since `stop_playback` then "restored" the old
+    /// game's player options -- while a recording kept saving the new game's
+    /// input under the old game's identity. The re-audit's probe showed an
+    /// MMC3 game left with a forced Horizontal override and a foreign code.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn installing_a_new_game_ends_the_movie_session() {
+        use rustynes_core::rustynes_mappers::Mirroring;
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let rom_a = synth_nrom();
+        // Same program, another image: a distinct identity.
+        let mut rom_b = synth_nrom();
+        rom_b[16 + 0x100] = 0xEA;
+
+        // Game A carries an override and a code into its movie options.
+        let game_a = || {
+            let mut a = Nes::from_rom(&rom_a).unwrap();
+            a.set_mirroring_override(Some(Mirroring::Horizontal));
+            a.add_genie_code("SXIOPO").unwrap();
+            a
+        };
+        let a_sha = *game_a().rom_sha256();
+
+        for record in [true, false] {
+            let mut core = EmuCore::new();
+            core.set_nes(game_a());
+            if record {
+                core.movie
+                    .start_recording_branch(core.nes.as_mut().unwrap(), false);
+            } else {
+                let mut probe = game_a();
+                let mut rec = rustynes_core::MovieRecorder::from_current_state(&probe);
+                for _ in 0..30 {
+                    rec.capture(&probe);
+                    probe.run_frame();
+                }
+                let movie = rec.finish();
+                core.movie
+                    .start_playback(core.nes.as_mut().unwrap(), movie)
+                    .unwrap();
+            }
+            core.produce_one_frame(&inputs, &mut sinks);
+
+            core.set_nes(Nes::from_rom(&rom_b).unwrap());
+            assert!(
+                !core.movie.is_recording() && !core.movie.is_playing(),
+                "record={record}: the movie survived the ROM install"
+            );
+            for _ in 0..3 {
+                core.produce_one_frame(&inputs, &mut sinks);
+            }
+            let b = core.nes.as_ref().unwrap();
+            assert_eq!(b.mirroring_override(), None, "record={record}");
+            assert_eq!(b.genie_codes().count(), 0, "record={record}");
+            // A recording is handed back for the caller to offer for saving,
+            // under the game it was recorded on.
+            let handed = core.take_interrupted_recording();
+            if record {
+                let m = handed.expect("the interrupted recording is kept");
+                assert_eq!(m.rom_sha256, a_sha);
+            } else {
+                assert!(handed.is_none(), "playback has nothing to save");
+            }
+        }
+    }
+
+    /// A synthetic 8 KiB FDS BIOS: a `JMP $E000` idle loop at the reset vector
+    /// and an `RTI` for NMI / IRQ (the mobile bridge's test fixture). Enough
+    /// for the core to build the disk system; the real `disksys.rom` is
+    /// Nintendo IP and is never committed.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn synthetic_fds_bios() -> Vec<u8> {
+        let mut bios = vec![0u8; 8 * 1024];
+        bios[..3].copy_from_slice(&[0x4C, 0x00, 0xE0]); // $E000: JMP $E000
+        bios[0x80] = 0x40; // $E080: RTI
+        bios[0x1FFA..].copy_from_slice(&[0x80, 0xE0, 0x00, 0xE0, 0x80, 0xE0]);
+        bios
+    }
+
+    /// A one-sided fwNES-headed disk image: the disk-info block signature is
+    /// all the container parser needs.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn synthetic_fds_disk() -> Vec<u8> {
+        let mut disk = vec![0u8; 16 + 65_500];
+        disk[..4].copy_from_slice(b"FDS\x1A");
+        disk[4] = 1;
+        disk[16] = 0x01;
+        disk[17..31].copy_from_slice(b"*NINTENDO-HVC*");
+        disk
+    }
+
+    /// v2.9.9 (NF-17) — an FDS game keeps one save identity across its own
+    /// disk saves.
+    ///
+    /// The desktop boots the `.fds.sav` image when one exists, and
+    /// `Nes::from_disk*` hashes the bytes it is given, so after the game's
+    /// first disk save every launch reported a DIFFERENT `rom_sha256`: the
+    /// save-state slots and the cheat file, both keyed on it, were not found
+    /// ("slot 1 is empty and the cheat list is gone"). The identity is the
+    /// image as loaded before any disk write -- the hash the app already
+    /// keeps in `fds_disk_sha256` to key the `.fds.sav` itself.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_fds_game_keeps_its_identity_after_a_disk_save() {
+        let bios = synthetic_fds_bios();
+        let pristine = synthetic_fds_disk();
+        let pristine_sha = *Nes::from_disk(&pristine, &bios).unwrap().rom_sha256();
+        // The game wrote to its disk; the next launch boots this image.
+        let mut saved = pristine;
+        saved[16 + 0x40] = 0x5A;
+        let booted = Nes::from_disk(&saved, &bios).unwrap();
+        assert_ne!(*booted.rom_sha256(), pristine_sha, "fixture: images differ");
+
+        // The load path's key for the cheat file, and the core's slot key.
+        assert_eq!(save_identity(&booted, Some(pristine_sha)), pristine_sha);
+        let mut core = EmuCore::new();
+        core.set_nes(booted);
+        core.fds_disk_sha256 = Some(pristine_sha);
+        assert_eq!(core.loaded_rom_sha256(), Some(pristine_sha));
+        let (key, _) = core.save_state_blob().unwrap();
+        assert_eq!(key, pristine_sha, "the slot key moved with the disk save");
+
+        // v2.9.9 (NF-17, core half) — the load path's boot of the saved image
+        // reports the pristine identity from the core itself, so the keys that
+        // read `rom_sha256` directly (movies, netplay, per-game, RA) agree.
+        let restored = boot_saved_disk(&saved, &bios, 44_100, pristine_sha).unwrap();
+        assert_eq!(
+            *restored.rom_sha256(),
+            pristine_sha,
+            "the saved-disk boot kept the written disk's identity"
+        );
+        assert_eq!(save_identity(&restored, None), pristine_sha);
+
+        // A cartridge ignores a stale FDS key (the load path clears it, but
+        // the identity must not depend on that ordering).
+        let cart = Nes::from_rom(&synth_nrom()).unwrap();
+        let cart_sha = *cart.rom_sha256();
+        assert_eq!(save_identity(&cart, Some(pristine_sha)), cart_sha);
+        core.set_nes(cart);
+        assert_eq!(core.loaded_rom_sha256(), Some(cart_sha));
+    }
+
+    /// A synthetic BIOS that writes to the disk: enable disk I/O (`$4023`),
+    /// put the drive in write mode with the motor on (`$4025 = $60`, the
+    /// core's own drive tests' value), then store `$AB` to `$4024` forever.
+    /// Every byte the drive stores marks the image dirty, which is the only
+    /// effect the save tests below need from it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn disk_writing_fds_bios() -> Vec<u8> {
+        let mut bios = synthetic_fds_bios();
+        bios[..18].copy_from_slice(&[
+            0xA9, 0x01, 0x8D, 0x23, 0x40, // LDA #$01; STA $4023
+            0xA9, 0x60, 0x8D, 0x25, 0x40, // LDA #$60; STA $4025
+            0xA9, 0xAB, 0x8D, 0x24, 0x40, // LDA #$AB; STA $4024
+            0x4C, 0x0A, 0xE0, // JMP $E00A
+        ]);
+        bios
+    }
+
+    /// Run `nes` until its disk is dirty (the drive spins up first).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run_until_disk_dirty(nes: &mut Nes) {
+        for _ in 0..600 {
+            if nes.disk_is_dirty() {
+                return;
+            }
+            nes.run_frame();
+        }
+        panic!("fixture: the synthetic BIOS never wrote to the disk");
+    }
+
+    /// v2.9.9 (NF-16) — a movie, `TAStudio` or netplay session's disk writes
+    /// never reach the player's `.fds.sav`.
+    ///
+    /// v2.9.0 sandboxed the cartridge battery for these sessions, and the FDS
+    /// writable disk -- the FDS game's save -- had no counterpart: the
+    /// per-frame flush wrote whatever the session's disk held over the
+    /// player's file. A player watching a TAS of an FDS game lost their own
+    /// disk save to the movie's progress.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_sandboxed_session_never_writes_the_fds_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk = synthetic_fds_disk();
+        let mut nes = Nes::from_disk(&disk, &disk_writing_fds_bios()).unwrap();
+        let pristine = *nes.rom_sha256();
+        let path = dir.path().join("fds-saves").join(format!(
+            "{}.fds.sav",
+            crate::save_state::hex_sha256(&pristine)
+        ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"the player's disk").unwrap();
+        run_until_disk_dirty(&mut nes);
+        let mut core = EmuCore::new();
+        core.set_nes(nes);
+        core.bind_fds_save(Some(pristine), Some(dir.path()));
+        // The game's own writes before the session are the player's: the
+        // session start persists them first.
+        let players = core.nes.as_ref().unwrap().disk_image_bytes();
+
+        assert!(core.start_sandboxed_session(|_| true));
+        assert_eq!(std::fs::read(&path).unwrap(), players, "pre-session flush");
+        // The session overwrites the disk; none of it may reach the file,
+        // periodic or forced.
+        let nes = core.nes.as_mut().unwrap();
+        nes.clear_disk_dirty();
+        let len = nes.disk_image_bytes().len();
+        for _ in 0..30 {
+            nes.run_frame();
+        }
+        assert!(nes.disk_is_dirty(), "fixture: the session wrote");
+        for _ in 0..crate::battery_policy::CHECK_PERIOD_FRAMES * 2 {
+            assert!(core.fds_due_write(false).is_none(), "periodic write");
+        }
+        assert!(core.fds_due_write(true).is_none(), "forced write");
+        core.detach_battery();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            players,
+            "the session's disk reached the player's .fds.sav"
+        );
+        assert_eq!(players.len(), len);
+    }
+
+    /// v2.9.9 (NF-16) — the periodic `.fds.sav` check runs once per
+    /// `CHECK_PERIOD_FRAMES` calls, not after every frame, and a failed write
+    /// is retried although the disk's dirty latch was cleared when the copy
+    /// was taken. (The write itself happens with the emu lock released; that
+    /// half is `App::flush_fds_save`, which only calls these two.)
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_fds_save_is_checked_once_a_period_and_retried_after_a_failure() {
+        let period = crate::battery_policy::CHECK_PERIOD_FRAMES;
+        let dir = tempfile::tempdir().unwrap();
+        // A FILE where the `fds-saves` directory belongs: every write fails.
+        std::fs::write(dir.path().join("fds-saves"), b"").unwrap();
+        let disk = synthetic_fds_disk();
+        let mut nes = Nes::from_disk(&disk, &disk_writing_fds_bios()).unwrap();
+        let pristine = *nes.rom_sha256();
+        run_until_disk_dirty(&mut nes);
+        let mut core = EmuCore::new();
+        core.set_nes(nes);
+        core.bind_fds_save(Some(pristine), Some(dir.path()));
+
+        for _ in 1..period {
+            assert!(core.fds_due_write(false).is_none(), "checked early");
+        }
+        let write = core.fds_due_write(false).expect("due at the period");
+        let result = write.write();
+        assert!(result.is_err(), "fixture: the write fails");
+        core.fds_written(&write, &result);
+        // The game stops writing (dirty cleared, and nothing re-dirties it
+        // here), yet the failed write comes back at the next check.
+        assert!(!core.nes.as_ref().unwrap().disk_is_dirty());
+        assert!(
+            core.fds_due_write(true).is_some(),
+            "the failed write retries"
+        );
+    }
+
+    /// v2.9.9 (NF-13) — a state load or a rewind step clears the history
+    /// viewer's timeline.
+    ///
+    /// Its record index keeps counting across a discontinuity, so an exported
+    /// clip paired an anchor from before it with input from both sides and
+    /// did not replay (the re-audit's probe: 12,531 differing bytes after a
+    /// Reset or a 30-frame rewind). Power Cycle and ROM load already cleared
+    /// it; a state load, a rewind step and a Reset (`App::do_reset`) now do.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_state_load_or_a_rewind_clears_the_history_timeline() {
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.enable_rewind_with(rustynes_core::REWIND_DEFAULT_MAX_BYTES, 1);
+        core.set_nes(nes);
+        for _ in 0..10 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert!(!core.history.is_empty(), "fixture: frames recorded");
+        let (_, blob) = core.save_state_blob().unwrap();
+        core.restore_state_blob(&blob).unwrap();
+        assert!(core.history.is_empty(), "a state load left the timeline");
+
+        for _ in 0..10 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert!(!core.history.is_empty());
+        let mut rewind = inputs;
+        rewind.rewind_held = true;
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert!(core.history.is_empty(), "a rewind step left the timeline");
+    }
+
+    /// v2.9.9 (NF-22) — `for_each_console` visits both consoles of a cabinet
+    /// and the single console otherwise.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn for_each_console_reaches_both_cabinet_consoles() {
+        let mut core = EmuCore::new();
+        let mut seen = 0;
+        core.for_each_console(|_| seen += 1);
+        assert_eq!(seen, 0, "no ROM, no console");
+        core.set_nes(Nes::from_rom(&synth_nrom()).unwrap());
+        core.for_each_console(|nes| nes.set_oam_decay(true));
+        assert!(core.nes.as_ref().unwrap().oam_decay_enabled());
+        core.set_dual(Box::new(
+            rustynes_core::VsDualSystem::from_rom(&synth_nrom()).unwrap(),
+        ));
+        core.for_each_console(|nes| nes.set_oam_decay(true));
+        let dual = core.dual.as_ref().unwrap();
+        assert!(dual.main().oam_decay_enabled() && dual.sub().oam_decay_enabled());
     }
 }

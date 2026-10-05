@@ -67,3 +67,19 @@ was shown red first and mutation-checked (commit bodies carry the evidence).
 | NL-09 | Dual-cabinet save states slow and allocating | RECORDED, not changed | Two independent runs, same sign in 12 of 12 rounds: dual `snapshot()` 314-1,630 us against 46-78 us for a pooled candidate. `ab_check.sh` judges only the `full_frame` workloads, so it cannot rule on a serialize change; the fix belongs in `VsDualSystem` beside the NC-03 restore work. `architecture.md`'s "does not allocate" corrected | v2.9.1 | `1aee5565` |
 | NL-09 (v2.9.1) | Dual-cabinet save states slow and allocating | FIXED (serialize); restore pooling REJECTED | `VsDualSystem::snapshot_into` into the core's reused buffer, no thumbnails: serialize **-88.9% / -88.5%** in two independent A/B runs (44-45 us against about 370 us; order-bias drift -7.1% / -4.2%). A pooled restore backup moved by exactly its drift both times and was reverted. The first A/B reported no change because `ab_check.sh` ran the reference's binary as the candidate (shared target dir), fixed in the same release; `docs/performance.md` v2.9.1 | v2.9.1 | (PR) |
 | — | Makefile maps `libnx` to a freestanding target (suspected unbuildable) | CLOSED (mapping dropped) | Tier-3, no rust-std from rustup, and the core needs std; recorded in `architecture.md` from reading only, no build attempted, buildbot matrix unchanged. **v2.9.8:** the mapping is dropped at the maintainer's direction; `make platform=libnx` stops with an explicit error (see L-3.2) | v2.9.8 | `1aee5565`; v2.9.8 |
+
+## v2.9.9 re-audit
+
+Report: [`v2.9.9-libretro-reaudit.md`](v2.9.9-libretro-reaudit.md) (a Claude
+subagent, read-only, on `8b277044`).
+
+**Rows above: 39 re-verified; 39 HOLD, 0 REGRESSED.** NL-08 has one changed
+fact (the identity-first `vs_db` lookup, recorded by NL-14's comment fix).
+
+| id | finding | verdict | evidence | release | commit |
+|---|---|---|---|---|---|
+| NL-11 | A refused `retro_unserialize` told the user nothing | FIXED | The reason is logged at `RETRO_LOG_WARN`; a pre-v2.9.8 state gets its own message. Red: `a_refused_unserialize_logs_the_reason` | v2.9.9 | `c1b60a63` |
+| NL-12 | A save/load round trip changed the console's later audio and serialized state | FIXED (core) | See the core ledger; ABI pin `a_mid_run_round_trip_serializes_like_a_straight_run` | v2.9.9 | `ba626e37` |
+| NL-13 | The Vs. coin pulse counted `retro_run` calls, not emulated frames | FIXED | Counted in the console's own frame number; survives run-ahead and rollback. Red: two ABI tests | v2.9.9 | `37bf3e7c` |
+| NL-14 | Stale scheduler and `vs_db` wording; two doc gaps | FIXED (docs) | Plus `libretro_source_names_no_retired_design` | v2.9.9 | `947d03fd` |
+| NL-15 | Flash boards allocate their whole flash on every restore | FIXED (perf) | Core scope. Decoded in place: restores −11.1% to −12.0% on GTROM and UNROM 512, two `ab_check.sh` runs; byte-identical by construction (`docs/performance.md`, v2.9.9 campaign) | v2.9.9 | — |

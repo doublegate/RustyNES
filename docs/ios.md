@@ -193,8 +193,41 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   determinism contract is untouched.
 - **ROM import (`ROMLibrary`):** `UIDocumentPicker` / `.fileImporter` /
   share-sheet, security-scoped, copied into `Application Support/RustyNES/roms/`
-  keyed by SHA-256 (the desktop save-identity scheme). **Never bundle commercial
-  ROMs.**
+  keyed by the core's ROM identity (the desktop save-identity scheme; see the
+  v2.9.9 key migration below). **Never bundle commercial ROMs.**
+- **Per-game keys are the core's ROM identity (v2.9.9, NF-21).** The library,
+  battery saves, save-state directories, per-game overrides and the RA progress
+  sidecar are keyed by `NesController.romIdentity()` (`EmulatorCore.romIdentity`):
+  `Nes::rom_sha256` as hex, the bytes after the 16-byte iNES header of the
+  UNPACKED image (the whole image for FDS, NSF and UNIF). The importer computes it
+  with `romIdentityOfFile` (`RomIdentity.identityHex`), which needs no FDS BIOS.
+  Until v2.9.9 the key was `RomIdentity.sha256Hex` of the whole file, header and
+  `.zip` container included, so two dumps differing only in their header did not
+  share saves and a re-zipped ROM lost them. `AppModel.openGame` moves a
+  pre-v2.9.9 entry once, library first (`ROMLibrary.rekey`: the ROM copy is
+  written under the new key, read back and compared, the index saved, and only
+  then the old file removed; when the index cannot be saved the key is rolled
+  back, the copy dropped and the old file kept), then `battery/<k>.sav`, every
+  file in `states/<k>/` and `ra-progress/<k>.bin` (`RomKeyMigration.migrateFiles`),
+  then the override (`GameOverrides.rekey`). The rules are Android's
+  (`RomKeyMigration` in `Persistence.kt`, pinned by `RomKeyMigrationTest`): a
+  store moves only into an empty key, a key holding DIFFERENT bytes is never
+  overwritten (the old copy stays), a key already holding the SAME bytes is a
+  move an earlier run left half done (the old copy goes, see below), a file counts as moved only once its original is gone, and when
+  the library entry cannot move nothing else does. **A partial move is
+  retried:** the rekeyed entry records the old key (`LibraryEntry.pendingLegacyKey`,
+  written in the same index save), every open of an entry carrying it re-runs the
+  file and override moves, and the marker is cleared only when nothing is
+  pending. A run that copied a file but could not remove the original finishes
+  the move next time (an identical copy under the new key is a duplicate, so the
+  original goes). Re-importing a pre-v2.9.9 file returns its old entry rather
+  than adding a second; if that entry's ROM file is missing, the copy just
+  imported is kept as the only one and the entry is pointed at it, marked. **Not migrated:** CloudKit save-state
+  records (`state-<k>-<n>`), which the next upload writes under the new key.
+  **Compiled, not run on a device:** the iOS workflow built every Swift source
+  for the Simulator on `c0b04195`, the review-round head (run 37242884341,
+  `BUILD SUCCEEDED`); the behaviour is device rows M5-M7 of
+  `docs/mobile-v2.9.3-run-sheet.md`.
 - **Storage + lifecycle:** `.rns` save-states + SRAM in the sandbox (the format is
   platform-independent -> cross-device save portability); SwiftUI `ScenePhase`
   pauses the loop / audio and drops the drawable on background, rebuilding on
@@ -389,8 +422,9 @@ Vs. machine). A cabinet's save state is the core's `RVSD` container; netplay,
 movies and Lua are refused on a cabinet. FDS disk writes are exposed by the bridge
 (`diskImageBytes` / `diskIsDirty`) but **not yet persisted by the app**. Settings >
 Controls also gains **Cancel opposite directions** (default on). **All of this
-Swift is uncompiled** on the Linux build host; the checks are rows T5-T7, T10 and
-T12 of `docs/mobile-v2.9.3-run-sheet.md`.
+Swift compiles** (the iOS workflow's Simulator build, most recently run
+37242884341 on `c0b04195`) **and none of it has run on a device**; the checks are
+rows T5-T7, T10 and T12 of `docs/mobile-v2.9.3-run-sheet.md`.
 
 **The game database's load-time corrections (v2.9.8).** The shared bridge now
 corrects a cartridge before the core parses it (`rustynes_gamedb::correct_rom`:

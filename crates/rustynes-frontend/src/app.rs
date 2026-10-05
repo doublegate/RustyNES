@@ -127,6 +127,7 @@ use crate::gfx::{Gfx, NES_H, NES_W};
 use crate::input::{InputState, SysAction};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::save_state;
+use crate::session_policy::TimelineAction;
 use crate::ui_shell::StatusMessage;
 
 /// v1.3.0 Sprint 1.4 — winit custom user-event type, used by both
@@ -370,6 +371,46 @@ fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::P
 /// NES 2.0 header.
 pub(crate) fn apply_game_db_header_overrides(bytes: &mut [u8]) -> Option<u32> {
     crate::game_db::correct_rom(bytes)
+}
+
+/// v1.7.0 "Forge" H4 — apply a per-game overlay's post-construction settings
+/// to a freshly built console: its mirroring override and its Vs. DIP byte,
+/// layered ON TOP of the game-DB / Vs.-DB results so the per-game file has the
+/// final say. A no-op for `None` or an inert overlay, so the default path is
+/// byte-identical.
+///
+/// A static mirroring override is valid only on a board with hardwired
+/// mirroring; on a mapper-controlled board (MMC1, MMC3, ...) it corrupts
+/// rendering, so it is declined there with a note -- the hazard ADR 0031 and
+/// `rustynes_gamedb::correct_console` guard against.
+///
+/// v2.9.9 (NF-23): one function for both native load paths. The command-line
+/// load had its own copy WITHOUT the guard, so `rustynes game.nes` applied an
+/// override the menu would have declined.
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_per_game_overlay(nes: &mut Nes, cfg: Option<&crate::per_game::PerGameConfig>) {
+    let Some(cfg) = cfg else {
+        return;
+    };
+    if let Some(m) = cfg
+        .overrides
+        .mirroring
+        .as_deref()
+        .and_then(crate::per_game::mirroring_from_token)
+    {
+        if nes.mapper_has_hardwired_mirroring() {
+            nes.set_mirroring_override(Some(m));
+        } else {
+            eprintln!(
+                "rustynes: ignoring per-game mirroring override ({m:?}) — this \
+                 mapper controls its own mirroring; a static override would \
+                 corrupt rendering"
+            );
+        }
+    }
+    if let Some(dip) = cfg.dip_switches {
+        nes.set_vs_dip(dip);
+    }
 }
 
 /// Hand the game-DB crate its overlay directory, then apply the load-time header
@@ -887,6 +928,11 @@ struct AvFinalize {
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     rom_bytes: Vec<u8>,
+    /// v2.9.9 (NF-23) — the command-line ROM's path, so the startup load
+    /// resolves the per-game overlay (`<rom>.json` beside the ROM) with it, as
+    /// the menu load does and as its own header stage already did.
+    #[cfg(not(target_arch = "wasm32"))]
+    startup_rom_path: PathBuf,
     rom_label: String,
     /// v2.8.0 Phase 5 — the emulation core: ALL per-frame produce state
     /// (the `Nes`, movie, run-ahead, perf, presented framebuffer, pacing
@@ -1327,6 +1373,7 @@ impl App {
         let prev_par_correction = config.ui.pixel_aspect_correction;
         Ok(Self {
             rom_bytes,
+            startup_rom_path: rom_path.to_path_buf(),
             rom_label,
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
@@ -1727,6 +1774,9 @@ impl App {
             // v2.7.3 (FE-01) — the final battery write goes before the ROM.
             #[cfg(not(target_arch = "wasm32"))]
             emu.detach_battery();
+            // v2.9.9 (NF-16) — detach wrote the disk; no game, no key.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.bind_fds_save(None, None);
             // v2.9.7 — and the browser's, handed to IndexedDB (the bytes are
             // copied now, so clearing the ROM cannot change them).
             #[cfg(target_arch = "wasm32")]
@@ -1741,6 +1791,8 @@ impl App {
             emu.next_frame_time = None;
         }
         self.dual_mode = false;
+        // v2.9.9 (NF-12) — `clear_rom` ended any movie; offer a recording.
+        self.deliver_interrupted_recording();
         // v1.6.0 "Studio" A2 — a TAStudio session anchors on the closed ROM; end it.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
@@ -1888,10 +1940,16 @@ impl App {
         // BIOS + the writable-disk save path; the standard cartridge `.nes`
         // path is unchanged. Detect by the disk-image magic (never matches a
         // `"NES\x1A"` cartridge).
+        // v2.9.9 (NF-16) — the incoming disk's pristine hash, bound to its
+        // `.fds.sav` at the install below, AFTER the outgoing game's final disk
+        // write. Until v2.9.9 the key was set here, while the previous game was
+        // still running, so a flush in between wrote the old disk under the
+        // new game's name. `None` for a cartridge or an NSF.
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut fds_key: Option<[u8; 32]> = None;
         let mut nes = if is_nsf_image(&bytes) {
             // v1.1.0 beta.2 — NSF music file: no cartridge, no CHR; a synthetic
             // driver runs init/play through the standard lockstep loop.
-            self.emu.lock().fds_disk_sha256 = None;
             match Nes::from_nsf_with_sample_rate(&bytes, sample_rate) {
                 Ok(n) => n,
                 Err(e) => {
@@ -1906,14 +1964,15 @@ impl App {
             }
         } else if is_fds_image(&bytes) {
             match self.build_fds_nes(&bytes, sample_rate) {
-                Some(n) => n,
+                Some((n, pristine)) => {
+                    fds_key = Some(pristine);
+                    n
+                }
                 // BIOS cancelled / wrong size / unparseable disk: keep the
                 // running session (already logged), don't crash.
                 None => return,
             }
         } else {
-            // Not FDS — clear any prior FDS save key so a later flush is inert.
-            self.emu.lock().fds_disk_sha256 = None;
             match Nes::from_rom_with_sample_rate(&bytes, sample_rate) {
                 Ok(n) => n,
                 Err(e) => {
@@ -1961,44 +2020,21 @@ impl App {
         // DIP value wins over the `[vs] dip` / Vs.-DB precedence. Both flow
         // through the same core setters the game-DB editor uses; a no-op for a
         // non-Vs. cart / absent override, so the default path is byte-identical.
-        if let Some(cfg) = per_game.as_ref() {
-            if let Some(m) = cfg
-                .overrides
-                .mirroring
-                .as_deref()
-                .and_then(crate::per_game::mirroring_from_token)
-            {
-                // Same hazard as the game-DB path: a static mirroring override is
-                // only valid for a hardwired-mirroring board. Honor an explicit
-                // per-game override there; on a mapper-controlled board, decline
-                // it (with a note) so a stray value can't corrupt rendering.
-                if nes.mapper_has_hardwired_mirroring() {
-                    nes.set_mirroring_override(Some(m));
-                } else {
-                    eprintln!(
-                        "rustynes: ignoring per-game mirroring override ({m:?}) — this \
-                         mapper controls its own mirroring; a static override would \
-                         corrupt rendering"
-                    );
-                }
-            }
-            if let Some(dip) = cfg.dip_switches {
-                nes.set_vs_dip(dip);
-            }
-        }
+        apply_per_game_overlay(&mut nes, per_game.as_ref());
         // v2.9.8 — every power-on setting (mask, gain, filter, OAM decay, PPU
         // revision, power-up palette, power-on RAM, fast dot path, console
         // model, palette, expansion device) and the persisted cheats go onto
         // the console BEFORE it is installed. They used to be pushed after the
         // install lock was released, one lock at a time, while the emulation
         // thread was free to run the new game (`has_rom` was already set by the
-        // previous one); see `configure_console`. A two-console cabinet keeps
-        // what it had: the probe `nes` is discarded, and these never reached a
-        // cabinet's consoles before either.
+        // previous one); see `configure_console`. For a two-console cabinet the
+        // probe `nes` is discarded: `build_dual_cabinet` configured both of its
+        // consoles the same way, and since v2.9.9 the live Settings applies
+        // reach both too (`EmuCore::for_each_console`).
         configure_console(&self.config, &mut nes);
         #[cfg(not(target_arch = "wasm32"))]
         let raw_cheats = if dual_cabinet.is_none() {
-            Some(self.load_rom_cheats(&mut nes))
+            Some(self.load_rom_cheats(&mut nes, fds_key))
         } else {
             None
         };
@@ -2034,6 +2070,9 @@ impl App {
             // before its `Nes` is replaced.
             #[cfg(not(target_arch = "wasm32"))]
             emu.detach_battery();
+            // v2.9.9 (NF-16) — the outgoing disk is written; bind the incoming.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.bind_fds_save(fds_key, data_dir.as_deref());
             emu.frame_duration = nes.frame_duration();
             emu.next_frame_time = Some(Instant::now() + emu.frame_duration);
             emu.audio_buf.clear();
@@ -2078,6 +2117,9 @@ impl App {
         if let Some(notice) = battery_notice {
             self.ui.set_status(StatusMessage::error(notice));
         }
+        // v2.9.9 (NF-12) — the install ended any movie session; a recording
+        // of the outgoing game is offered for saving.
+        self.deliver_interrupted_recording();
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
         // (it anchored on the previous game); end it so the editor can't
         // replay inputs/branches against a different `Nes`.
@@ -2146,6 +2188,14 @@ impl App {
         eprintln!("rustynes: loaded {}", path.display());
     }
 
+    /// v2.9.9 (NF-16) — the FDS key `start_nes` bound before
+    /// `finish_start_nes` runs (the first game, so nothing else is running).
+    /// The lock is released before the caller reads the cheat file.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn bound_fds_key(&self) -> Option<[u8; 32]> {
+        self.emu.lock().fds_disk_sha256
+    }
+
     /// v1.6.0 — load the persisted cheat list for the console about to be
     /// installed: apply every ENABLED Game Genie code to `nes`, seed the
     /// debugger's cheat panel with both lists + the per-ROM persistence
@@ -2161,11 +2211,18 @@ impl App {
     /// list, where the old function returned early and left the PREVIOUS
     /// game's raw cheats armed against the new one.
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_rom_cheats(&mut self, nes: &mut Nes) -> Vec<crate::cheats::RawCheat> {
+    fn load_rom_cheats(
+        &mut self,
+        nes: &mut Nes,
+        fds_key: Option<[u8; 32]>,
+    ) -> Vec<crate::cheats::RawCheat> {
         let Some(dir) = self.data_dir.as_ref() else {
             return Vec::new();
         };
-        let rom_sha256 = *nes.rom_sha256();
+        // v2.9.9 (NF-17) — keyed on the save identity, which for an FDS disk
+        // is the pristine image (`fds_key`, from `build_fds_nes`), so a disk
+        // save does not lose the cheat file.
+        let rom_sha256 = crate::emu::save_identity(nes, fds_key);
         let loaded = crate::cheats::load(dir, &rom_sha256);
         nes.clear_genie_codes();
         for entry in &loaded.genie {
@@ -2457,13 +2514,16 @@ impl App {
 
     /// Construct an FDS `Nes` from `disk_bytes` (+ a resolved BIOS), preferring
     /// any persisted writable-disk `.fds.sav` so prior in-game writes carry
-    /// over. On success, stores the ORIGINAL disk image's SHA-256 in
-    /// [`Self::fds_disk_sha256`] so the `.fds.sav` stays keyed by the same hash
-    /// even though the running `Nes` may have been reloaded from the saved
-    /// bytes. Returns `None` (logging) if BIOS resolution is cancelled or the
-    /// disk/BIOS fails to parse. Native-only (filesystem + rfd).
+    /// over. On success, returns the console with the ORIGINAL disk image's
+    /// SHA-256, which the caller binds with `EmuCore::bind_fds_save` at the
+    /// install (v2.9.9: no longer written to the core here, while the previous
+    /// game still runs), so the `.fds.sav` and the game's save identity stay
+    /// keyed by the same hash even though the running `Nes` may have been
+    /// reloaded from the saved bytes. Returns `None` (logging) if BIOS
+    /// resolution is cancelled or the disk/BIOS fails to parse. Native-only
+    /// (filesystem + rfd).
     #[cfg(not(target_arch = "wasm32"))]
-    fn build_fds_nes(&mut self, disk_bytes: &[u8], sample_rate: u32) -> Option<Nes> {
+    fn build_fds_nes(&mut self, disk_bytes: &[u8], sample_rate: u32) -> Option<(Nes, [u8; 32])> {
         let bios = self.resolve_fds_bios()?;
         // Build from the ORIGINAL disk first so `rom_sha256()` reports the
         // canonical hash; that is the key under which the `.fds.sav` is stored.
@@ -2475,21 +2535,22 @@ impl App {
             }
         };
         let original_sha = *nes.rom_sha256();
-        self.emu.lock().fds_disk_sha256 = Some(original_sha);
 
         // If a writable-disk save exists, reload the `Nes` from the SAVED
         // (already-modified) `.fds` bytes so prior in-game writes persist. The
         // saved image is a full `.fds` container, so this is the simplest
         // correct restore. We keep `fds_disk_sha256` = the original hash so the
-        // save keeps the same on-disk key.
+        // save keeps the same on-disk key, and (v2.9.9, NF-17) the console
+        // reports that hash as its `rom_sha256` too, so a disk save does not
+        // move the game's slots, cheats, movies, netplay or per-game keys.
         if let Some(saved) = self
             .fds_save_path(&original_sha)
             .and_then(|p| std::fs::read(&p).ok())
         {
-            match Nes::from_disk_with_sample_rate(&saved, &bios, sample_rate) {
+            match crate::emu::boot_saved_disk(&saved, &bios, sample_rate, original_sha) {
                 Ok(n) => {
                     eprintln!("rustynes: restored FDS writable disk from save");
-                    return Some(n);
+                    return Some((n, original_sha));
                 }
                 Err(e) => {
                     eprintln!(
@@ -2498,7 +2559,7 @@ impl App {
                 }
             }
         }
-        Some(nes)
+        Some((nes, original_sha))
     }
 
     /// The once-per-produced-frame host I/O: flush the FDS writable disk
@@ -2507,7 +2568,7 @@ impl App {
     /// reopen a dead audio stream (v2.7.3, DESK-04; retried every 2 s).
     #[cfg(not(target_arch = "wasm32"))]
     fn per_frame_host_io(&mut self) {
-        self.flush_fds_save();
+        self.flush_fds_save(false);
         self.flush_battery();
         self.recover_audio();
     }
@@ -2543,11 +2604,19 @@ impl App {
         }
     }
 
-    /// Flush the FDS writable disk (see [`crate::emu::EmuCore::flush_fds_save`]).
+    /// Write the FDS writable disk to its `.fds.sav` if a write is due (see
+    /// [`crate::emu::EmuCore::fds_due_write`]): `force` checks now (a disk
+    /// swap, quit), otherwise the check runs once a second. v2.9.9 (NF-16):
+    /// the copy is taken under a brief lock and written with it RELEASED, as
+    /// the battery is -- `write_atomic` fsyncs, and this used to run after
+    /// every produced frame with the emulation thread waiting on the lock.
     #[cfg(not(target_arch = "wasm32"))]
-    fn flush_fds_save(&self) {
-        let data_dir = self.data_dir.clone();
-        self.emu.lock().flush_fds_save(data_dir.as_deref());
+    fn flush_fds_save(&self, force: bool) {
+        let Some(write) = self.emu.lock().fds_due_write(force) else {
+            return;
+        };
+        let result = write.write();
+        self.emu.lock().fds_written(&write, &result);
     }
 
     /// Cycle the inserted FDS disk side: ejected -> side 0 -> side 1 -> ... ->
@@ -2557,7 +2626,7 @@ impl App {
         // Flush before swapping so an in-progress write isn't lost across the
         // eject. Native-only (the wasm build has no `.fds.sav` filesystem).
         #[cfg(not(target_arch = "wasm32"))]
-        self.flush_fds_save();
+        self.flush_fds_save(true);
         let mut guard = self.emu.lock();
         let Some(nes) = guard.nes.as_mut() else {
             return;
@@ -2584,7 +2653,7 @@ impl App {
     /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
     fn set_disk_side(&self, side: Option<usize>) {
         #[cfg(not(target_arch = "wasm32"))]
-        self.flush_fds_save();
+        self.flush_fds_save(true);
         let mut guard = self.emu.lock();
         let Some(nes) = guard.nes.as_mut() else {
             return;
@@ -3056,7 +3125,7 @@ impl App {
     /// finish the movie, serialize it, and prompt for a `.rnm` save path
     /// via the rfd dialog. No-op if no ROM is loaded.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_record_toggle(&self) {
+    fn handle_movie_record_toggle(&mut self) {
         if self.emu.lock().movie.is_recording() {
             // Finish under a short lock; the (blocking) rfd save dialog runs
             // with the guard dropped.
@@ -3064,7 +3133,8 @@ impl App {
             let Some(movie) = finished else {
                 return;
             };
-            self.movie_save_dialog(&movie);
+            let outcome = self.movie_save_dialog(&movie);
+            self.ui.set_status(outcome);
         } else {
             // v2.3.0 — movies and netplay are mutually exclusive.
             if self.netplay.is_active() {
@@ -3194,6 +3264,12 @@ impl App {
     /// continuation. No-op if no ROM is loaded.
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_branch(&self) {
+        // v2.9.9 (NF-11) — movies and netplay are mutually exclusive (v2.3.0);
+        // record, play and import refused already, the branch did not.
+        if self.netplay.is_active() {
+            eprintln!("rustynes: leave netplay before branching a movie");
+            return;
+        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
@@ -3206,10 +3282,42 @@ impl App {
         eprintln!("rustynes: movie branch — recording from current state");
     }
 
+    /// v2.9.9 (NF-12) — save a recording that a ROM install or Close ROM
+    /// ended (`EmuCore::end_movie_session`), through the same path a stopped
+    /// recording takes: the `.rnm` save dialog natively, a download in the
+    /// browser. A no-op when nothing was interrupted. Called after the install
+    /// lock is released, so the (blocking) native dialog never holds it.
+    fn deliver_interrupted_recording(&mut self) {
+        let Some(movie) = self.emu.lock().take_interrupted_recording() else {
+            return;
+        };
+        self.ui.set_status(StatusMessage::info(format!(
+            "Movie recording ended by the ROM change ({} frames)",
+            movie.len()
+        )));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let outcome = self.movie_save_dialog(&movie);
+            self.ui.set_status(outcome);
+        }
+        #[cfg(target_arch = "wasm32")]
+        crate::wasm_io::save_file_with_fallback(
+            "rustynes-movie.rnm",
+            "RustyNES TAS movie",
+            ".rnm",
+            "application/octet-stream",
+            movie.serialize(),
+        );
+    }
+
     /// Serialize + write `movie` to a `.rnm` file chosen via the rfd save
     /// dialog (native). Defaults the directory to `<data_dir>/movies/`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn movie_save_dialog(&self, movie: &rustynes_core::Movie) {
+    ///
+    /// v2.9.9 (NF-20): returns the outcome for the caller's status line; it
+    /// was on stderr only, so a cancelled dialog discarded a recording with
+    /// nothing on screen to say so.
+    fn movie_save_dialog(&self, movie: &rustynes_core::Movie) -> StatusMessage {
         let dir = self.movies_dir();
         if let Some(d) = dir.as_ref() {
             // Best-effort: create the movies dir so the dialog opens there.
@@ -3223,17 +3331,23 @@ impl App {
         }
         let Some(path) = dialog.save_file() else {
             eprintln!("rustynes: movie save cancelled; recording discarded");
-            return;
+            return StatusMessage::info("Movie not saved; recording discarded");
         };
         let bytes = movie.serialize();
         match crate::atomic_write::write_atomic(&path, &bytes) {
-            Ok(()) => eprintln!(
-                "rustynes: movie saved ({} frames, {} bytes) -> {}",
-                movie.len(),
-                bytes.len(),
-                path.display()
-            ),
-            Err(e) => eprintln!("rustynes: movie save failed {}: {e}", path.display()),
+            Ok(()) => {
+                eprintln!(
+                    "rustynes: movie saved ({} frames, {} bytes) -> {}",
+                    movie.len(),
+                    bytes.len(),
+                    path.display()
+                );
+                StatusMessage::success(format!("Movie saved ({} frames)", movie.len()))
+            }
+            Err(e) => {
+                eprintln!("rustynes: movie save failed {}: {e}", path.display());
+                StatusMessage::error(format!("Movie save failed: {e}"))
+            }
         }
     }
 
@@ -3402,11 +3516,15 @@ impl App {
     /// checksum (MD5 for `.fm2`, SHA-1 for `.bk2`) is recomputed and stamped on so
     /// the movie is verifiable on `TASVideos`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_export(&self) {
+    fn handle_movie_export(&mut self) {
         // Prefer an open, non-empty TAStudio edit — it carries the TAS
         // re-record count (and is the most likely thing a user means by
-        // "export" while the piano-roll is up). Else the in-progress recording
-        // (finished here), else the loaded playback movie.
+        // "export" while the piano-roll is up). Else a snapshot of the
+        // in-progress recording, else the loaded playback movie.
+        //
+        // v2.9.9 (NF-20): a SNAPSHOT -- the recording keeps going. This used to
+        // end the recording here, before the dialog, so cancelling the export
+        // threw the whole recording away.
         let movie = {
             let tas_movie = self
                 .debugger
@@ -3418,15 +3536,17 @@ impl App {
                     guard.nes.as_ref().map(|nes| ed.to_movie(nes))
                 });
             tas_movie.or_else(|| {
-                let mut guard = self.emu.lock();
+                let guard = self.emu.lock();
                 guard
                     .movie
-                    .finish_recording()
+                    .recording_snapshot()
                     .or_else(|| guard.movie.playing_movie())
             })
         };
         let Some(movie) = movie else {
             eprintln!("rustynes: movie export: nothing to export");
+            self.ui
+                .set_status(StatusMessage::info("No movie to export"));
             return;
         };
         let dir = self.movies_dir();
@@ -3441,6 +3561,8 @@ impl App {
         }
         let Some(path) = dialog.save_file() else {
             eprintln!("rustynes: movie export cancelled");
+            self.ui
+                .set_status(StatusMessage::info("Movie export cancelled"));
             return;
         };
         // v1.7.0 "Forge" G4 — recompute the ROM digests the interchange formats
@@ -3449,12 +3571,18 @@ impl App {
         let hashes = self.movie_rom_hashes();
         if let Err(e) = Self::write_movie_file(&path, &movie, hashes.as_ref()) {
             eprintln!("rustynes: movie export failed {}: {e}", path.display());
+            self.ui
+                .set_status(StatusMessage::error(format!("Movie export failed: {e}")));
         } else {
             eprintln!(
                 "rustynes: exported movie ({} frames) -> {}",
                 movie.len(),
                 path.display()
             );
+            self.ui.set_status(StatusMessage::success(format!(
+                "Movie exported ({} frames)",
+                movie.len()
+            )));
         }
     }
 
@@ -3548,7 +3676,9 @@ impl App {
     /// window and replays bit-identically (its `StartPoint` is a real
     /// save-state + the recorded input stream).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_history_export_clip(&self, seconds: f64) {
+    ///
+    /// v2.9.9 (NF-20): every outcome reaches the status line, not stderr only.
+    fn handle_history_export_clip(&mut self, seconds: f64) {
         let movie = {
             let guard = self.emu.lock();
             // The region frame rate (NTSC ~60, PAL/Dendy ~50) for seconds->frames.
@@ -3562,6 +3692,8 @@ impl App {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("rustynes: history clip export: {e}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Clip export: {e}")));
                 return;
             }
         };
@@ -3577,20 +3709,29 @@ impl App {
         }
         let Some(path) = dialog.save_file() else {
             eprintln!("rustynes: history clip export cancelled");
+            self.ui
+                .set_status(StatusMessage::info("Clip export cancelled"));
             return;
         };
-        match crate::atomic_write::write_atomic(&path, &movie.serialize()) {
-            Ok(()) => eprintln!(
-                "rustynes: exported {:.0}s history clip ({} frames) -> {}",
-                seconds,
-                movie.len(),
-                path.display()
-            ),
-            Err(e) => eprintln!(
-                "rustynes: history clip export failed {}: {e}",
-                path.display()
-            ),
-        }
+        let status = match crate::atomic_write::write_atomic(&path, &movie.serialize()) {
+            Ok(()) => {
+                eprintln!(
+                    "rustynes: exported {:.0}s history clip ({} frames) -> {}",
+                    seconds,
+                    movie.len(),
+                    path.display()
+                );
+                StatusMessage::success(format!("Clip exported ({} frames)", movie.len()))
+            }
+            Err(e) => {
+                eprintln!(
+                    "rustynes: history clip export failed {}: {e}",
+                    path.display()
+                );
+                StatusMessage::error(format!("Clip export failed: {e}"))
+            }
+        };
+        self.ui.set_status(status);
     }
 
     /// Serialize `movie` to a `.fm2` / `.bk2` file (extension selects the
@@ -4020,10 +4161,18 @@ impl App {
         // shows a placeholder for a cabinet slot, as the desktop grid does.
         let Some((sha, blob)) = self.emu.lock().save_state_blob() else {
             crate::wasm_io::log("save state: no ROM loaded");
+            crate::wasm_idb::push_state_notice(false, "No game loaded".into());
             return;
         };
+        // v2.9.9 (NF-19) — the task reports what actually happened; the
+        // caller showed only "Saving state...". A quota failure used to show
+        // "State saved".
         wasm_bindgen_futures::spawn_local(async move {
-            crate::wasm_idb::put_state(sha, slot, blob).await;
+            let (ok, text) = match crate::wasm_idb::put_state(sha, slot, blob).await {
+                Ok(()) => (true, format!("Saved to slot {}", slot + 1)),
+                Err(e) => (false, format!("Save state failed: {e}")),
+            };
+            crate::wasm_idb::push_state_notice(ok, text);
         });
     }
 
@@ -4039,12 +4188,20 @@ impl App {
     fn handle_load_state_wasm(&self, slot: u8) {
         let Some(sha) = self.emu.lock().loaded_rom_sha256() else {
             crate::wasm_io::log("load state: no ROM loaded");
+            crate::wasm_idb::push_state_notice(false, "No game loaded".into());
             return;
         };
         let emu = self.emu.clone();
+        // v2.9.9 (NF-19) — every outcome is queued for the status line (the
+        // caller showed only "Loading state..."); an empty slot, a refused
+        // state or a ROM change used to show "State loaded".
         wasm_bindgen_futures::spawn_local(async move {
             let Some(blob) = crate::wasm_idb::get_state(sha, slot).await else {
                 crate::wasm_io::log(&format!("load state: no saved state in slot {}", slot + 1));
+                crate::wasm_idb::push_state_notice(
+                    false,
+                    format!("No saved state in slot {}", slot + 1),
+                );
                 return;
             };
             let mut guard = emu.lock();
@@ -4052,12 +4209,28 @@ impl App {
             // flight; only restore if it is still the same game. v2.9.7: the
             // key and the restore cover a Vs. DualSystem cabinet too.
             if guard.loaded_rom_sha256() != Some(sha) {
+                drop(guard);
                 crate::wasm_io::log("load state: ROM changed during load — skipped");
+                crate::wasm_idb::push_state_notice(
+                    false,
+                    "State not loaded: the game changed during the read".into(),
+                );
                 return;
             }
-            match guard.restore_state_blob(&blob) {
-                Ok(()) => crate::wasm_io::log("state loaded"),
-                Err(e) => crate::wasm_io::log(&format!("load state: restore failed: {e:?}")),
+            let restored = guard.restore_state_blob(&blob);
+            drop(guard);
+            match restored {
+                Ok(()) => {
+                    crate::wasm_io::log("state loaded");
+                    crate::wasm_idb::push_state_notice(
+                        true,
+                        format!("Loaded from slot {}", slot + 1),
+                    );
+                }
+                Err(e) => {
+                    crate::wasm_io::log(&format!("load state: restore failed: {e:?}"));
+                    crate::wasm_idb::push_state_notice(false, format!("State refused: {e}"));
+                }
             }
         });
     }
@@ -4095,6 +4268,12 @@ impl App {
                 movie.len(),
             ));
         } else {
+            // v2.9.9 (NF-11) — see the native record path. `netplay_is_active`
+            // reads `browser_netplay`, not the emu lock held here.
+            if self.netplay_is_active() {
+                crate::wasm_io::log("leave netplay before recording a movie");
+                return;
+            }
             let Some(nes) = emu.nes.as_mut() else {
                 crate::wasm_io::log("movie record: no ROM loaded");
                 return;
@@ -4136,6 +4315,12 @@ impl App {
             return;
         }
         drop(guard);
+        // v2.9.9 (NF-11) — movies and netplay are mutually exclusive in the
+        // browser too: the native handlers have refused since v2.3.0.
+        if self.netplay_is_active() {
+            crate::wasm_io::log("leave netplay before playing a movie");
+            return;
+        }
         crate::wasm_io::click_file_input("rnm-input");
     }
 
@@ -4143,6 +4328,11 @@ impl App {
     /// (wasm32). The browser counterpart of [`Self::handle_movie_branch`].
     #[cfg(target_arch = "wasm32")]
     fn handle_movie_branch_wasm(&self) {
+        // v2.9.9 (NF-11) — see the native branch.
+        if self.netplay_is_active() {
+            crate::wasm_io::log("leave netplay before branching a movie");
+            return;
+        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
@@ -4932,6 +5122,33 @@ impl App {
         emu.movie.is_recording() || emu.movie.is_playing()
     }
 
+    /// v2.9.9 (NF-11) — refuse `action` when a movie, a netplay session or RA
+    /// hardcore owns the timeline; returns `true` (and puts the reason on the
+    /// status line) when refused, `false` when the caller may proceed.
+    ///
+    /// Every dispatch site of a Reset, Power Cycle, disk change or state load
+    /// calls this first — the hotkeys, the menu, the Save-States manager and
+    /// the browser grid alike. Before v2.9.9 only the menu greyed these, so the
+    /// bound key reached the same handler unguarded (F3 during a recording
+    /// made a movie that no longer replays). The rule itself is
+    /// [`crate::session_policy::refusal`]; this only gathers the three owners
+    /// from the live session.
+    fn refuse_timeline_action(&mut self, action: TimelineAction) -> bool {
+        let owners = crate::session_policy::SessionOwners {
+            movie: self.replay_interaction_locked(),
+            netplay: self.netplay_is_active(),
+            hardcore: self.ra_hardcore_blocks(),
+        };
+        match crate::session_policy::refusal(action, owners) {
+            Some(reason) => {
+                self.ui
+                    .set_status(StatusMessage::info(reason.message(action)));
+                true
+            }
+            None => false,
+        }
+    }
+
     /// v2.7.0 — the per-ROM RA progress sidecar directory
     /// (`<data_dir>/ra-progress/`). `None` if no data dir is available.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -5086,6 +5303,9 @@ impl App {
             }
             // v1.7.0 "Forge" H4 — a reset starts a fresh lag-frame tally.
             guard.reset_lag_frames();
+            // v2.9.9 (NF-13) — and a fresh history timeline: a `.rnm` records
+            // input only, so a clip spanning the Reset could not replay it.
+            guard.history.clear();
         }
         // v2.1.10 "Creator Tools" (B9) — notify any Lua `reset` event callbacks.
         // Output-only (no `Nes`), fired outside the emu lock; a callback raise is
@@ -5144,31 +5364,26 @@ impl App {
                     let result = self.handle_save_state(self.active_save_slot);
                     self.report_state_result(result, "State saved".into());
                 }
-                // The browser write is asynchronous; its outcome is logged.
+                // The browser write is asynchronous: a neutral status now, the
+                // real outcome when the task finishes (v2.9.9, NF-19).
                 #[cfg(target_arch = "wasm32")]
                 {
                     self.handle_save_state_wasm(self.active_save_slot);
-                    self.ui.set_status(StatusMessage::success("State saved"));
+                    self.ui.set_status(StatusMessage::info("Saving state..."));
                 }
             }
             MenuAction::LoadState => {
-                if self.ra_hardcore_blocks() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled (hardcore)"));
-                } else if self.replay_interaction_locked() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled during movie"));
-                } else {
+                if !self.refuse_timeline_action(TimelineAction::LoadState) {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let result = self.handle_load_state(self.active_save_slot);
                         self.report_state_result(result, "State loaded".into());
                     }
-                    // The browser read is asynchronous; its outcome is logged.
+                    // The browser read is asynchronous; see the save above.
                     #[cfg(target_arch = "wasm32")]
                     {
                         self.handle_load_state_wasm(self.active_save_slot);
-                        self.ui.set_status(StatusMessage::success("State loaded"));
+                        self.ui.set_status(StatusMessage::info("Loading state..."));
                     }
                 }
             }
@@ -5184,12 +5399,16 @@ impl App {
                 self.set_paused(!self.ui.paused);
             }
             MenuAction::Reset => {
-                self.do_reset();
-                self.ui.set_status(StatusMessage::info("Reset"));
+                if !self.refuse_timeline_action(TimelineAction::Reset) {
+                    self.do_reset();
+                    self.ui.set_status(StatusMessage::info("Reset"));
+                }
             }
             MenuAction::PowerCycle => {
-                self.do_power_cycle();
-                self.ui.set_status(StatusMessage::info("Power cycled"));
+                if !self.refuse_timeline_action(TimelineAction::PowerCycle) {
+                    self.do_power_cycle();
+                    self.ui.set_status(StatusMessage::info("Power cycled"));
+                }
             }
             MenuAction::ToggleFullscreen => {
                 self.toggle_fullscreen();
@@ -5201,10 +5420,14 @@ impl App {
                 self.set_window_scale(scale);
             }
             MenuAction::CycleDiskSide => {
-                self.cycle_disk_side();
+                if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
+                    self.cycle_disk_side();
+                }
             }
             MenuAction::SetDiskSide(side) => {
-                self.set_disk_side(side);
+                if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
+                    self.set_disk_side(side);
+                }
             }
             MenuAction::Screenshot => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -5220,36 +5443,28 @@ impl App {
                     .set_status(StatusMessage::info(format!("Save slot {}", slot + 1)));
             }
             MenuAction::SaveStateSlot(slot) => {
-                let ok = format!("Saved to slot {}", slot + 1);
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let result = self.handle_save_state(slot);
-                    self.report_state_result(result, ok);
+                    self.report_state_result(result, format!("Saved to slot {}", slot + 1));
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
                     self.handle_save_state_wasm(slot);
-                    self.ui.set_status(StatusMessage::success(ok));
+                    self.ui.set_status(StatusMessage::info("Saving state..."));
                 }
             }
             MenuAction::LoadStateSlot(slot) => {
-                if self.ra_hardcore_blocks() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled (hardcore)"));
-                } else if self.replay_interaction_locked() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled during movie"));
-                } else {
-                    let ok = format!("Loaded from slot {}", slot + 1);
+                if !self.refuse_timeline_action(TimelineAction::LoadState) {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let result = self.handle_load_state(slot);
-                        self.report_state_result(result, ok);
+                        self.report_state_result(result, format!("Loaded from slot {}", slot + 1));
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
                         self.handle_load_state_wasm(slot);
-                        self.ui.set_status(StatusMessage::success(ok));
+                        self.ui.set_status(StatusMessage::info("Loading state..."));
                     }
                 }
             }
@@ -6380,10 +6595,12 @@ impl App {
                     self.ui.set_status(StatusMessage::error(e));
                 }
             }
+            // v2.9.9 (NF-11) — a script's load honours the same determinism
+            // gate `SetInput` does (`writes_locked` folds netplay, a movie and
+            // hardcore together); before this it checked hardcore only, so a
+            // script could rewrite a recording's timeline under it.
             ControlCmd::LoadState(slot) => {
-                if !self.ra_hardcore_blocks()
-                    && let Err(e) = self.handle_load_state(*slot)
-                {
+                if !writes_locked && let Err(e) = self.handle_load_state(*slot) {
                     self.ui.set_status(StatusMessage::error(e));
                 }
             }
@@ -6550,10 +6767,9 @@ impl App {
     /// runs; a Power Cycle keeps it in the core since v2.9.8.
     fn apply_apu_channel_mask(&self) {
         let mask = self.config.audio.channel_mask;
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_apu_channel_mask(mask);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_apu_channel_mask(mask));
     }
 
     /// v1.4.0 Workstream C — push the configured per-APU-channel output gain into
@@ -6567,10 +6783,9 @@ impl App {
     /// since v2.9.8.
     fn apply_apu_channel_gain(&self) {
         let gain = self.config.audio.channel_gain;
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_apu_channel_gain(gain);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_apu_channel_gain(gain));
     }
 
     /// v2.1.3 — push the configured APU analog output-filter model to the core.
@@ -6582,10 +6797,9 @@ impl App {
     /// default filter; the core now keeps it across the cycle.
     fn apply_apu_filter_model(&self) {
         let model = crate::config::parse_filter_model(&self.config.audio.filter_model);
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_apu_filter_model(model);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_apu_filter_model(model));
     }
 
     /// v2.1.4 F2.3 — push the configured optional OAM-decay accuracy toggle to the
@@ -6597,10 +6811,9 @@ impl App {
     /// model off; the core now keeps it across the cycle.
     fn apply_oam_decay(&self) {
         let enabled = self.config.emulation.oam_decay;
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_oam_decay(enabled);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_oam_decay(enabled));
     }
 
     /// v2.9.7 — hand the configured overclock (`[enhancements]
@@ -6640,10 +6853,10 @@ impl App {
     /// side effect. The other knobs that function pushes are power-on state
     /// and are only correct at load, power-cycle and startup.
     fn apply_fast_dotloop(&self) {
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_fast_dotloop(self.config.emulation.fast_dotloop);
-        }
+        let on = self.config.emulation.fast_dotloop;
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_fast_dotloop(on));
     }
 
     /// v2.9.8 — push the `[emulation] famicom_console` choice into the core as
@@ -6659,10 +6872,9 @@ impl App {
     /// work RAM, so it must not run on a mid-game Settings change for this knob.
     fn apply_console_model(&self) {
         let model = console_model_for(&self.config);
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_console_model(model);
-        }
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_console_model(model));
     }
 
     /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
@@ -6694,10 +6906,10 @@ impl App {
         if pal.is_none() {
             return;
         }
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            nes.set_custom_palette(pal);
-        }
+        // v2.9.9 (NF-22) — both consoles of a cabinet, as at load.
+        self.emu
+            .lock()
+            .for_each_console(|nes| nes.set_custom_palette(pal));
     }
 
     /// v1.1.0 beta.1 — open a `.pal` file dialog; on a valid pick, apply it to the
@@ -6924,13 +7136,9 @@ impl App {
             SysAction::LoadState => {
                 // v2.7.0 — load-state disabled in RA hardcore mode; PR #75 (H1)
                 // — also disabled while a movie records/plays (matches the greyed
-                // menu item, so the hotkey can't bypass it).
-                if self.ra_hardcore_blocks() {
-                    self.toast_hardcore("Load state disabled (hardcore)");
-                } else if self.replay_interaction_locked() {
-                    self.ui
-                        .set_status(StatusMessage::info("Load state disabled during movie"));
-                } else {
+                // menu item, so the hotkey can't bypass it); v2.9.9 (NF-11) —
+                // and during netplay, through the one shared rule.
+                if !self.refuse_timeline_action(TimelineAction::LoadState) {
                     // v2.9.8: the hotkey reported nothing, so a refused state
                     // (one from v2.9.7 or earlier) failed in silence.
                     #[cfg(not(target_arch = "wasm32"))]
@@ -6948,8 +7156,19 @@ impl App {
                 // fast-forward state is picked up via `publish_shared_input` (emu
                 // thread) or read directly on the sync / wasm produce paths.
             }
-            SysAction::Reset => self.do_reset(),
-            SysAction::PowerCycle => self.do_power_cycle(),
+            // v2.9.9 (NF-11) — the hotkeys obey the same lockout the menu's
+            // greyed items show; before this, F2 / F3 / F9 reached the handler
+            // during a recording, a playback or a netplay session.
+            SysAction::Reset => {
+                if !self.refuse_timeline_action(TimelineAction::Reset) {
+                    self.do_reset();
+                }
+            }
+            SysAction::PowerCycle => {
+                if !self.refuse_timeline_action(TimelineAction::PowerCycle) {
+                    self.do_power_cycle();
+                }
+            }
             SysAction::ToggleDebug => {
                 // v1.7.0 "Forge" beta.5 (#55) — the backtick (`` ` ``) key no
                 // longer toggles the debugger overlay: every chip inspector now
@@ -6984,7 +7203,11 @@ impl App {
                 #[cfg(target_arch = "wasm32")]
                 self.handle_movie_branch_wasm();
             }
-            SysAction::DiskSwap => self.cycle_disk_side(),
+            SysAction::DiskSwap => {
+                if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
+                    self.cycle_disk_side();
+                }
+            }
             SysAction::InsertCoin => {
                 // v2.5.0 — insert a Vs. System coin (acceptor #1). No-op for
                 // non-Vs. games. The coin latch clears a few frames later.
@@ -7227,23 +7450,6 @@ impl App {
         };
         ra.reset(&mut |a| nes.cpu_bus_peek(a));
     }
-
-    /// v2.7.0 — log a "blocked in hardcore mode" message (and, when an RA
-    /// session is active, surface it as an on-screen toast). A plain no-op-ish
-    /// helper available in both feature states so the gated call sites compile
-    /// uniformly.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-    #[allow(clippy::unused_self)]
-    fn toast_hardcore(&self, msg: &str) {
-        eprintln!("rustynes: {msg}");
-    }
-
-    /// v2.7.0 — `toast_hardcore` stub for builds without the RA feature; it is
-    /// never reached (`ra_hardcore_blocks()` is `const false` there), so it
-    /// just keeps the call site compiling.
-    #[cfg(not(all(not(target_arch = "wasm32"), feature = "retroachievements")))]
-    #[allow(clippy::unused_self)]
-    const fn toast_hardcore(&self, _msg: &str) {}
 
     /// v2.3.0 — the netplay produce path, used in place of the single-player
     /// `produce_one_frame` body while a session is active. Feeds this peer's
@@ -9231,7 +9437,13 @@ impl App {
             let disk = std::mem::take(&mut self.rom_bytes);
             let built = self.build_fds_nes(&disk, sample_rate);
             self.rom_bytes = disk;
-            if let Some(nes) = built {
+            if let Some((nes, pristine)) = built {
+                // The first game: nothing is running yet, so the key can be
+                // bound before `finish_start_nes` installs the console.
+                let data_dir = self.data_dir.clone();
+                self.emu
+                    .lock()
+                    .bind_fds_save(Some(pristine), data_dir.as_deref());
                 return self.finish_start_nes(nes, sample_rate, event_loop);
             }
             // BIOS cancelled / wrong size: a startup FDS load can't proceed.
@@ -9262,9 +9474,7 @@ impl App {
         };
         // v2.2.0 — clear any prior FDS save key (standard cartridge path).
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.emu.lock().fds_disk_sha256 = None;
-        }
+        self.emu.lock().bind_fds_save(None, None);
         self.finish_start_nes(nes, sample_rate, event_loop);
     }
 
@@ -9310,6 +9520,9 @@ impl App {
             }
             emu.begin_web_battery()
         };
+        // v2.9.9 (NF-12) — every browser load lands here; a recording the
+        // install ended is handed to a download.
+        self.deliver_interrupted_recording();
         if self.dual_mode {
             crate::wasm_io::log(
                 "Vs. DualSystem cabinet: both consoles run (P1/P2 main, P3/P4 sub); \
@@ -9360,6 +9573,16 @@ impl App {
         }
         for notice in notices {
             self.ui.set_status(StatusMessage::error(notice));
+        }
+        // v2.9.9 (NF-19) — the outcomes of the asynchronous state saves and
+        // loads, shown when their task finishes rather than claimed when it
+        // starts.
+        for (ok, text) in crate::wasm_idb::take_state_notices() {
+            self.ui.set_status(if ok {
+                StatusMessage::success(text)
+            } else {
+                StatusMessage::error(text)
+            });
         }
     }
 
@@ -9452,29 +9675,18 @@ impl App {
         self.apply_vs_db(&mut nes);
         // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override.
         Self::apply_game_db(&mut nes, &self.rom_bytes);
-        // v1.7.0 "Forge" Workstream H4 — resolve + apply the per-game overlay's
-        // post-construction settings (mirroring / Vs. DIP) for the CLI/startup
-        // ROM too, layered on top of the game-DB / Vs.-DB results above. (The
-        // overlay's load-time iNES header `overrides` are applied at the menu /
-        // drag load chokepoint; a CLI ROM uses the unrewritten image — its
-        // mirroring/DIP still take effect here.) Absent / inert ⇒ no-op.
+        // v1.7.0 "Forge" Workstream H4 — the per-game overlay's
+        // post-construction settings (mirroring / Vs. DIP) for the startup ROM
+        // too, layered on top of the game-DB / Vs.-DB results above. Its
+        // header `overrides` were applied in `App::new`
+        // (`configure_game_db_and_patch_startup_rom`). v2.9.9 (NF-23): through
+        // the menu path's function, so the hardwired-mirroring guard applies
+        // here as well, and resolved with the ROM's path like the header stage.
         #[cfg(not(target_arch = "wasm32"))]
         {
             let per_game = crate::game_db::rom_crc32(&self.rom_bytes)
-                .and_then(|crc| crate::per_game::resolve(crc, None));
-            if let Some(cfg) = per_game.as_ref() {
-                if let Some(m) = cfg
-                    .overrides
-                    .mirroring
-                    .as_deref()
-                    .and_then(crate::per_game::mirroring_from_token)
-                {
-                    nes.set_mirroring_override(Some(m));
-                }
-                if let Some(dip) = cfg.dip_switches {
-                    nes.set_vs_dip(dip);
-                }
-            }
+                .and_then(|crc| crate::per_game::resolve(crc, Some(&self.startup_rom_path)));
+            apply_per_game_overlay(&mut nes, per_game.as_ref());
         }
         // v2.9.8 — every power-on setting and the persisted cheats go onto the
         // console BEFORE it is installed, as on the menu load path (see
@@ -9485,7 +9697,7 @@ impl App {
         // A cabinet's consoles carry no cheats, as on the menu load path.
         #[cfg(not(target_arch = "wasm32"))]
         let raw_cheats = if dual_cabinet.is_none() {
-            Some(self.load_rom_cheats(&mut nes))
+            Some(self.load_rom_cheats(&mut nes, self.bound_fds_key()))
         } else {
             None
         };
@@ -11455,16 +11667,18 @@ impl ApplicationHandler<AppEvent> for App {
                     // the running `Nes` here on the same reload path.
                     // v2.7.0 — re-apply Four Score + the effective DIP (and the
                     // DB palette, idempotent) so a live DIP edit takes effect;
-                    // explicit config dip wins over the DB preset. Take/restore
-                    // the `Nes` to borrow-split `&self` (config) from the
-                    // `&mut Nes` the helper needs (taken under one short lock,
-                    // restored under another — `apply_vs_db` reads config only).
-                    let taken = self.emu.lock().nes.take();
-                    if let Some(mut nes) = taken {
+                    // explicit config dip wins over the DB preset. Edited in
+                    // place under one lock: `apply_vs_db` takes `&self` and reads
+                    // config only, so it shares the borrow with the guard.
+                    // v2.9.9 (NF-12): this used to take the `Nes` out and put it
+                    // back through `set_nes`, which now ends the movie session
+                    // (it is the install point) -- a binding edit must not.
+                    let mut guard = self.emu.lock();
+                    if let Some(nes) = guard.nes.as_mut() {
                         nes.set_four_score(self.config.input.four_score);
-                        self.apply_vs_db(&mut nes);
-                        self.emu.lock().set_nes(nes);
+                        self.apply_vs_db(nes);
                     }
+                    drop(guard);
                     // v2.1.0 — the expansion-device menu selection also flags
                     // the bindings dirty; re-sync the attached device here.
                     #[cfg(not(target_arch = "wasm32"))]
@@ -11644,12 +11858,10 @@ impl ApplicationHandler<AppEvent> for App {
                             self.save_states_ui.invalidate_slot(slot);
                             self.report_state_result(result, format!("Saved to slot {}", slot + 1));
                         }
+                        // v2.9.9 (NF-11) — the manager checked hardcore only;
+                        // a movie or netplay session now refuses it too.
                         SaveStateRequest::Load(slot) => {
-                            if self.ra_hardcore_blocks() {
-                                self.ui.set_status(StatusMessage::info(
-                                    "Load state disabled (hardcore)",
-                                ));
-                            } else {
+                            if !self.refuse_timeline_action(TimelineAction::LoadState) {
                                 let result = self.handle_load_state(slot);
                                 self.report_state_result(
                                     result,
@@ -11671,26 +11883,12 @@ impl ApplicationHandler<AppEvent> for App {
                             self.handle_save_state_wasm(slot);
                             let sha = self.emu.lock().loaded_rom_sha256();
                             crate::wasm_save_states::open(sha);
-                            self.ui.set_status(StatusMessage::success(format!(
-                                "Saved to slot {}",
-                                slot + 1
-                            )));
+                            self.ui.set_status(StatusMessage::info("Saving state..."));
                         }
                         SlotRequest::Load(slot) => {
-                            if self.ra_hardcore_blocks() {
-                                self.ui.set_status(StatusMessage::info(
-                                    "Load state disabled (hardcore)",
-                                ));
-                            } else if self.replay_interaction_locked() {
-                                self.ui.set_status(StatusMessage::info(
-                                    "Load state disabled during movie",
-                                ));
-                            } else {
+                            if !self.refuse_timeline_action(TimelineAction::LoadState) {
                                 self.handle_load_state_wasm(slot);
-                                self.ui.set_status(StatusMessage::success(format!(
-                                    "Loaded from slot {}",
-                                    slot + 1
-                                )));
+                                self.ui.set_status(StatusMessage::info("Loading state..."));
                             }
                         }
                     }
@@ -11790,7 +11988,7 @@ impl ApplicationHandler<AppEvent> for App {
             // v2.2.0 — final FDS writable-disk flush so the last writes aren't
             // lost on quit. No-op when clean / non-FDS. Native-only.
             #[cfg(not(target_arch = "wasm32"))]
-            self.flush_fds_save();
+            self.flush_fds_save(true);
             // v2.7.3 (FE-01) — the final battery write on quit.
             #[cfg(not(target_arch = "wasm32"))]
             self.emu.lock().detach_battery();
@@ -11885,7 +12083,7 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_load_time_header_overrides;
+    use super::{apply_load_time_header_overrides, apply_per_game_overlay};
     use rustynes_core::Nes;
 
     /// The CLI / initial-ROM path must apply the same load-time header
@@ -12740,6 +12938,343 @@ mod tests {
         assert!(
             !helper.contains("set_power_on_ram"),
             "apply_fast_dotloop refills work RAM"
+        );
+    }
+
+    /// v2.9.9 (NF-11) — every route to a timeline-changing action asks the
+    /// one policy in `session_policy`, not only the menu.
+    ///
+    /// The re-audit found the menu greying Reset, Power Cycle, the disk items
+    /// and Load State during a movie (and the hardware items during netplay),
+    /// while the bound hotkeys, the Save-States manager and a script reached
+    /// the same handlers unguarded: F3 during a recording produced a movie that
+    /// no longer replays, with no warning. `App` needs a window, so this is a
+    /// source-shape gate like the ones above: each dispatch arm must open with
+    /// the shared guard for its action, and the F8 branch must refuse netplay
+    /// as record, play and import already do.
+    #[test]
+    fn every_timeline_action_route_asks_the_session_policy() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn every_timeline_action_route_asks_the_session_policy"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        // (arm header, the guard it must call within its first 500 chars --
+        // room for the arm's comment, short of the next arm's guard).
+        let arms: &[(&str, &str)] = &[
+            ("SysAction::Reset =>", "TimelineAction::Reset"),
+            ("SysAction::PowerCycle =>", "TimelineAction::PowerCycle"),
+            ("SysAction::DiskSwap =>", "TimelineAction::DiskSwap"),
+            ("SysAction::LoadState =>", "TimelineAction::LoadState"),
+            ("MenuAction::Reset =>", "TimelineAction::Reset"),
+            ("MenuAction::PowerCycle =>", "TimelineAction::PowerCycle"),
+            ("MenuAction::CycleDiskSide =>", "TimelineAction::DiskSwap"),
+            (
+                "MenuAction::SetDiskSide(side) =>",
+                "TimelineAction::DiskSwap",
+            ),
+            ("MenuAction::LoadState =>", "TimelineAction::LoadState"),
+            (
+                "MenuAction::LoadStateSlot(slot) =>",
+                "TimelineAction::LoadState",
+            ),
+            (
+                "SaveStateRequest::Load(slot) =>",
+                "TimelineAction::LoadState",
+            ),
+            ("SlotRequest::Load(slot) =>", "TimelineAction::LoadState"),
+        ];
+        for (header, action) in arms {
+            let at = prod
+                .find(header)
+                .unwrap_or_else(|| panic!("dispatch arm `{header}` is gone"));
+            // Cut at the next arm (`=>`) so a neighbour's guard for the same
+            // action (CycleDiskSide / SetDiskSide) cannot satisfy this one.
+            let body = &prod[at + header.len()..];
+            let body = body.split_once(" => ").map_or(body, |(b, _)| b);
+            let window: String = body.chars().take(500).collect();
+            let guard = format!("self.refuse_timeline_action({action})");
+            assert!(
+                window.contains(&guard),
+                "`{header}` runs without `{guard}`: {window}"
+            );
+        }
+        // A script's LoadState honours the determinism gate it is handed
+        // (netplay, movie and hardcore are all folded into `writes_locked`).
+        let at = prod
+            .find("ControlCmd::LoadState(slot) =>")
+            .expect("the script LoadState arm is gone");
+        let window: String = prod[at..].chars().take(200).collect();
+        assert!(
+            window.contains("writes_locked"),
+            "a script LoadState ignores writes_locked: {window}"
+        );
+        // The F8 branch refuses netplay, as record / play / import do.
+        let body = prod
+            .split_once("fn handle_movie_branch(&self) {")
+            .map(|(_, rest)| rest.split_once(" fn ").map_or(rest, |(b, _)| b))
+            .expect("handle_movie_branch exists");
+        assert!(
+            body.contains("self.netplay.is_active()"),
+            "the F8 movie branch starts a recording during netplay"
+        );
+    }
+
+    /// v2.9.9 (NF-23) — the per-game overlay's post-construction settings go
+    /// through one function on every load path, guard included.
+    ///
+    /// The command-line load applied the `<rom>.json` mirroring override
+    /// unconditionally, where the menu load declines it on a board that
+    /// controls its own mirroring (MMC1, MMC3: the Wizards & Warriors class a
+    /// static override corrupts), and it resolved the overlay with no ROM path,
+    /// so a `<rom>.json` beside the ROM corrected the header but not the
+    /// mirroring or DIP. `App` needs a window, so this pins the shape: exactly
+    /// one production call of `set_mirroring_override`, inside the shared
+    /// function and behind the hardwired check, and no path-less resolve.
+    #[test]
+    fn the_per_game_overlay_is_applied_through_one_guarded_function() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn the_per_game_overlay_is_applied_through_one_guarded_function"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        assert_eq!(
+            prod.matches(".set_mirroring_override(").count(),
+            1,
+            "a load path sets the per-game mirroring outside the shared function"
+        );
+        let body = prod
+            .split_once("fn apply_per_game_overlay(")
+            .map(|(_, rest)| rest.split_once(" fn ").map_or(rest, |(b, _)| b))
+            .expect("the shared per-game function exists");
+        let guard = body
+            .find("mapper_has_hardwired_mirroring()")
+            .expect("the shared function checks for hardwired mirroring");
+        let set = body.find(".set_mirroring_override(").expect("and sets it");
+        assert!(guard < set, "the check must come before the override");
+        assert_eq!(
+            prod.matches("apply_per_game_overlay(&mut nes").count(),
+            2,
+            "both the menu and the command-line load use it"
+        );
+        assert!(
+            !prod.contains("per_game::resolve(crc, None)"),
+            "a load path resolves the overlay without the ROM's path"
+        );
+    }
+
+    /// v2.9.9 (NF-23) — the shared function honours a mirroring override on
+    /// a hardwired board and declines it on a mapper-controlled one (MMC3),
+    /// and always applies the DIP byte.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_per_game_mirroring_override_is_declined_on_a_mapper_controlled_board() {
+        let rom = |mapper: u8| {
+            let mut v = vec![0u8; 16 + 2 * 16 * 1024 + 8 * 1024];
+            v[..4].copy_from_slice(b"NES\x1A");
+            v[4] = 2;
+            v[5] = 1;
+            v[6] = (mapper & 0x0F) << 4;
+            v[7] = mapper & 0xF0;
+            v
+        };
+        let mut cfg = crate::per_game::PerGameConfig::default();
+        cfg.overrides.mirroring = Some("Horizontal".into());
+        cfg.dip_switches = Some(0x5A);
+
+        let mut nrom = Nes::from_rom(&rom(0)).unwrap();
+        apply_per_game_overlay(&mut nrom, Some(&cfg));
+        assert_eq!(
+            nrom.mirroring_override(),
+            Some(rustynes_core::rustynes_mappers::Mirroring::Horizontal)
+        );
+
+        let mut mmc3 = Nes::from_rom(&rom(4)).unwrap();
+        assert!(!mmc3.mapper_has_hardwired_mirroring(), "fixture: MMC3");
+        apply_per_game_overlay(&mut mmc3, Some(&cfg));
+        assert_eq!(mmc3.mirroring_override(), None, "MMC3 declines it");
+
+        let mut untouched = Nes::from_rom(&rom(0)).unwrap();
+        apply_per_game_overlay(&mut untouched, None);
+        assert_eq!(untouched.mirroring_override(), None);
+    }
+
+    /// v2.9.9 (NF-20) — exporting a recording keeps it, and every movie and
+    /// clip outcome reaches the status line.
+    ///
+    /// `handle_movie_export` took `finish_recording()` BEFORE its save dialog,
+    /// so cancelling the dialog discarded the recording, with only an
+    /// `eprintln!` ("cancelled") to say so; `movie_save_dialog` and the
+    /// history-clip export reported success, failure and cancel on stderr
+    /// only. `App` needs a window, so this pins the shape: the export takes a
+    /// snapshot of the recording, the save dialog returns its outcome, and the
+    /// two export handlers put theirs on the status line.
+    #[test]
+    fn movie_export_keeps_the_recording_and_reports_on_the_status_line() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn movie_export_keeps_the_recording_and_reports_on_the_status_line"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let body = |name: &str| -> String {
+            let (_, rest) = prod
+                .split_once(name)
+                .unwrap_or_else(|| panic!("`{name}` is gone"));
+            rest.split_once(" fn ").map_or(rest, |(b, _)| b).to_owned()
+        };
+        let export = body("fn handle_movie_export(&mut self) {");
+        assert!(
+            !export.contains("finish_recording"),
+            "the export ends the recording before the dialog"
+        );
+        assert!(export.contains("recording_snapshot()"));
+        assert!(export.contains("self.ui.set_status("));
+        assert!(
+            prod.contains(
+                "fn movie_save_dialog(&self, movie: &rustynes_core::Movie) -> StatusMessage {"
+            ),
+            "the .rnm save dialog does not return its outcome"
+        );
+        let clip = body("fn handle_history_export_clip(&mut self, seconds: f64) {");
+        assert!(clip.contains("self.ui.set_status("));
+    }
+
+    /// v2.9.9 (NF-13) — a Reset clears the history viewer's timeline, as a
+    /// Power Cycle and a ROM load do (see the `emu` test for state loads and
+    /// rewind). `App::do_reset` needs a window, so this pins its body.
+    #[test]
+    fn a_reset_clears_the_history_timeline() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn a_reset_clears_the_history_timeline"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let (_, rest) = prod
+            .split_once("fn do_reset(&mut self) {")
+            .expect("do_reset exists");
+        let body = rest.split_once(" fn ").map_or(rest, |(b, _)| b);
+        assert!(
+            body.contains("guard.history.clear()"),
+            "a Reset leaves the history timeline running across it"
+        );
+    }
+
+    /// v2.9.9 (NF-22) — every live Settings apply reaches a Vs. `DualSystem`
+    /// cabinet's two consoles, not only a single console.
+    ///
+    /// Each one wrote `guard.nes`, which is `None` while a cabinet is
+    /// installed in `emu.dual`, so a palette, filter, channel-mask, OAM-decay,
+    /// fast-dot-path or console-model change did nothing to a cabinet until
+    /// the next Power Cycle. `App` needs a window, so this pins the shape:
+    /// each live apply goes through `EmuCore::for_each_console`.
+    #[test]
+    fn every_live_settings_apply_reaches_a_cabinet() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn every_live_settings_apply_reaches_a_cabinet"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        for name in [
+            "apply_apu_channel_mask",
+            "apply_apu_channel_gain",
+            "apply_apu_filter_model",
+            "apply_oam_decay",
+            "apply_fast_dotloop",
+            "apply_console_model",
+            "apply_active_palette",
+        ] {
+            let (_, rest) = prod
+                .split_once(&format!("fn {name}(&self) {{"))
+                .unwrap_or_else(|| panic!("`{name}` is gone"));
+            let body = rest.split_once(" fn ").map_or(rest, |(b, _)| b);
+            assert!(
+                body.contains(".for_each_console(") && !body.contains("guard.nes.as_mut()"),
+                "`{name}` writes the single console only: {body}"
+            );
+        }
+    }
+
+    /// v2.9.9 (NF-19) — the browser reports a state save or load's REAL
+    /// outcome, not a success it has not had.
+    ///
+    /// Every browser site set "State saved" / "State loaded" right after
+    /// spawning the asynchronous `IndexedDB` task, so an empty slot, a refused
+    /// state, a ROM change during the read or a quota failure all showed
+    /// success; the real outcome reached the browser console only. The wasm
+    /// target has no test harness here, so this pins the shape: no call site
+    /// claims success, both handlers queue their outcome
+    /// (`wasm_idb::push_state_notice`), and the per-tick drain shows it.
+    #[test]
+    fn the_browser_reports_the_real_state_save_and_load_outcome() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prod = squash(production);
+        assert!(
+            !prod.contains("fn the_browser_reports_the_real_state_save_and_load_outcome"),
+            "the test-module split failed, so this test is searching its own source"
+        );
+        let mut sites = 0;
+        for call in [
+            "self.handle_save_state_wasm(",
+            "self.handle_load_state_wasm(",
+        ] {
+            for (at, _) in prod.match_indices(call) {
+                sites += 1;
+                let after: String = prod[at..].chars().take(220).collect();
+                assert!(
+                    !after.contains("StatusMessage::success"),
+                    "a browser call site claims success before the task ran: {after}"
+                );
+            }
+        }
+        assert_eq!(
+            sites, 8,
+            "expected the eight browser save / load call sites"
+        );
+        for handler in [
+            "fn handle_save_state_wasm(&self, slot: u8) {",
+            "fn handle_load_state_wasm(&self, slot: u8) {",
+        ] {
+            let (_, rest) = prod
+                .split_once(handler)
+                .unwrap_or_else(|| panic!("`{handler}` is gone"));
+            let body = rest.split_once(" fn ").map_or(rest, |(b, _)| b);
+            assert!(
+                body.contains("push_state_notice("),
+                "`{handler}` does not report its outcome"
+            );
+        }
+        assert!(
+            prod.contains("crate::wasm_idb::take_state_notices()"),
+            "nothing shows the queued outcomes"
         );
     }
 }

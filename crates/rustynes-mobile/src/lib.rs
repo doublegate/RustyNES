@@ -891,6 +891,63 @@ fn refuse_on_cabinet(g: &Inner, what: &str) -> Result<(), MobileError> {
     }
 }
 
+/// v2.9.9 (NF-22) — run `f` on every loaded console: the single console, or
+/// both consoles of a Vs. `DualSystem` cabinet. Between calls the cabinet's
+/// MAIN console is the one seated in `g.nes` (see [`DualSwap`]), so the sub
+/// is the only one reached through the cabinet. The palette and Four Score
+/// setters used to write `g.nes` alone, so the two screens disagreed.
+fn for_each_console(g: &mut Inner, mut f: impl FnMut(&mut Nes)) {
+    f(&mut g.nes);
+    if let Some(cab) = g.dual.as_mut() {
+        f(cab.system.sub_mut());
+    }
+}
+
+/// v2.9.9 (NF-18) — whether a netplay session owns the timeline: present,
+/// connecting, or ended in an error not yet acknowledged with `np_leave`
+/// (the same test [`NesController::np_is_active`] answers the host with).
+const fn netplay_owns_timeline(g: &Inner) -> bool {
+    g.netplay.is_some() || g.netplay_error.is_some()
+}
+
+/// v2.9.9 (NF-18) — whether a movie is recording or playing back.
+const fn movie_owns_timeline(g: &Inner) -> bool {
+    g.recorder.is_some() || g.playback.is_some()
+}
+
+/// v2.9.9 (NF-18) — why a Reset, a Power Cycle or a state load must not run
+/// now, or `None` when it may.
+///
+/// A `.rnm` and a netplay session both carry controller input and nothing
+/// else, so an action outside that stream breaks them: a recording no longer
+/// replays, playback continues from a state it never recorded, and a netplay
+/// peer desyncs (the action happens on this device only). The desktop has
+/// refused these since v2.9.9 (`session_policy`) and refused movies under
+/// netplay since v2.3.0; the bridge checked only for a cabinet or hardcore,
+/// and neither host gated the calls.
+const fn timeline_refusal(g: &Inner) -> Option<&'static str> {
+    if movie_owns_timeline(g) {
+        Some("a movie is recording or playing")
+    } else if netplay_owns_timeline(g) {
+        Some("a netplay session is active")
+    } else {
+        None
+    }
+}
+
+/// v2.9.9 (NF-18) — refuse to start netplay while a movie records or plays
+/// (the desktop's v2.3.0 rule). Uses the existing `Netplay` error, so the
+/// generated Kotlin / Swift bindings are unchanged.
+fn refuse_netplay_during_movie(g: &Inner) -> Result<(), MobileError> {
+    if movie_owns_timeline(g) {
+        Err(MobileError::Netplay {
+            reason: "stop the movie before starting netplay".into(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// Run `f` on the loaded cabinet with its main console seated (see
 /// [`DualSwap`]). `None` when no cabinet is loaded.
 fn with_cabinet<T>(g: &mut Inner, f: impl FnOnce(&mut VsDualSystem) -> T) -> Option<T> {
@@ -1393,13 +1450,22 @@ impl NesController {
 
     /// Enable/disable the Four Score adapter (4-controller multiplexer).
     pub fn set_four_score(&self, enabled: bool) {
-        self.lock().nes.set_four_score(enabled);
+        // v2.9.9 (NF-22) — both consoles of a cabinet.
+        for_each_console(&mut self.lock(), |nes| nes.set_four_score(enabled));
     }
 
     /// Soft-reset (the front-panel Reset button); preserves power-on alignment.
     /// On a cabinet both consoles reset.
+    ///
+    /// v2.9.9 (NF-18): a no-op while a movie or a netplay session owns the
+    /// timeline (see `timeline_refusal`); the call returns nothing, so the
+    /// host learns of it only by the console not resetting, and should grey
+    /// the control the same way.
     pub fn reset(&self) {
         let mut g = self.lock();
+        if timeline_refusal(&g).is_some() {
+            return;
+        }
         let cabinet = with_cabinet(&mut g, |cab| {
             cab.main_mut().reset();
             cab.sub_mut().reset();
@@ -1417,8 +1483,14 @@ impl NesController {
     /// were). The rebuild re-parses a ROM that already parsed once; should it
     /// fail anyway, the cabinet power-cycles in place
     /// (`VsDualSystem::power_cycle`, v2.9.8, which re-wires the pair).
+    ///
+    /// v2.9.9 (NF-18): a no-op while a movie or a netplay session owns the
+    /// timeline, as [`Self::reset`] is.
     pub fn power_cycle(&self) {
         let mut g = self.lock();
+        if timeline_refusal(&g).is_some() {
+            return;
+        }
         let sample_rate = g.sample_rate;
         let rebuilt = g.dual.as_ref().map(|cab| {
             Emu::from_rom_with_sample_rate(&cab.rom, sample_rate)
@@ -1430,10 +1502,19 @@ impl NesController {
         });
         match rebuilt {
             Some(Some((nes, system))) => {
+                // v2.9.9 (NF-22) — the rebuild boots both consoles from the
+                // ROM, which drops the host's palette and Four Score choice;
+                // carry them over from the outgoing main console.
+                let palette = g.nes.custom_palette();
+                let four_score = g.nes.four_score();
                 g.nes = nes;
                 if let Some(cab) = g.dual.as_mut() {
                     cab.system = system;
                 }
+                for_each_console(&mut g, |nes| {
+                    nes.set_custom_palette(palette);
+                    nes.set_four_score(four_score);
+                });
             }
             // v2.9.8: the fallback cycles the cabinet as a whole, which
             // re-wires the pair. Cycling the two consoles one by one (what
@@ -1477,6 +1558,13 @@ impl NesController {
         {
             drop(g);
             return Err(MobileError::HardcoreBlocked);
+        }
+        // v2.9.9 (NF-18) — nor during a movie or a netplay session.
+        if let Some(why) = timeline_refusal(&g) {
+            drop(g);
+            return Err(MobileError::SaveState {
+                reason: format!("state load refused: {why}"),
+            });
         }
         with_cabinet(&mut g, |cab| cab.restore(&data))
             .unwrap_or_else(|| g.nes.restore(&data))
@@ -1614,6 +1702,24 @@ impl NesController {
         self.lock().nes.set_disk_side(side);
     }
 
+    /// v2.9.9 (re-audit NF-21) — the loaded game's persistent identity,
+    /// `Nes::rom_sha256` as lowercase hex: SHA-256 of an iNES / NES 2.0
+    /// image's bytes after its 16-byte header, of the whole image for FDS, NSF
+    /// and UNIF, and of the unpacked image (never the archive) for a `.zip`.
+    ///
+    /// This is the key the desktop gives a game's save-state slots, battery
+    /// `.sav` and cheats, and what a movie and netplay record. Until v2.9.9 both
+    /// hosts keyed their stores by the whole FILE's SHA-256 instead, header
+    /// and zip container included, so two dumps differing only in their
+    /// header did not share saves and a re-zipped ROM lost them; the hosts
+    /// now key by this and move their old keys once
+    /// (`docs/android.md`, `docs/ios.md`). For a cabinet it is the main
+    /// console's, which runs the same image.
+    #[must_use]
+    pub fn rom_identity(&self) -> String {
+        hex_lower(&self.rom_sha256())
+    }
+
     /// v2.9.7 — the FDS disk image as it stands, including anything the game
     /// has written to it, in the headerless `.fds` layout. The host writes it
     /// to its own save file and, on the next launch, loads THAT file as the
@@ -1738,13 +1844,15 @@ impl NesController {
         for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
             pal[i] = [chunk[0], chunk[1], chunk[2]];
         }
-        self.lock().nes.set_custom_palette(Some(pal));
+        // v2.9.9 (NF-22) — both consoles of a cabinet.
+        for_each_console(&mut self.lock(), |nes| nes.set_custom_palette(Some(pal)));
         Ok(())
     }
 
-    /// Clear the custom palette, restoring the built-in NES palette.
+    /// Clear the custom palette, restoring the built-in NES palette (on both
+    /// consoles of a cabinet, v2.9.9).
     pub fn clear_palette(&self) {
-        self.lock().nes.set_custom_palette(None);
+        for_each_console(&mut self.lock(), |nes| nes.set_custom_palette(None));
     }
 
     /// The per-pixel **palette-index** framebuffer (256×240 `u16`s as little-endian
@@ -1769,10 +1877,13 @@ impl NesController {
 
     /// Start recording a TAS movie from a fresh power-on (the ROM is power-cycled so
     /// the recording starts from the same state a replay reconstructs).
+    ///
+    /// v2.9.9 (NF-18): nothing starts during netplay (movies and netplay are
+    /// mutually exclusive; the netplay tick never captures a frame anyway).
     pub fn movie_record_from_power_on(&self) {
         let mut g = self.lock();
         // v2.9.7: a `.rnm` holds one console; a cabinet records nothing.
-        if g.dual.is_some() {
+        if g.dual.is_some() || netplay_owns_timeline(&g) {
             return;
         }
         // v2.9.0 — the session replaces the save RAM; keep reporting the
@@ -1789,10 +1900,12 @@ impl NesController {
 
     /// Start recording a TAS movie branching from the current state (embeds a
     /// save-state as the start point).
+    ///
+    /// v2.9.9 (NF-18): nothing starts during netplay, as above.
     pub fn movie_record_from_here(&self) {
         let mut g = self.lock();
         // v2.9.7: a `.rnm` holds one console; a cabinet records nothing.
-        if g.dual.is_some() {
+        if g.dual.is_some() || netplay_owns_timeline(&g) {
             return;
         }
         // v2.9.8 — a branch continues the machine as it is, movie options
@@ -1816,6 +1929,12 @@ impl NesController {
     /// [`MobileError::Movie`] if the bytes are not a valid movie or the ROM differs.
     pub fn movie_play(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
         refuse_on_cabinet(&self.lock(), "movie playback")?;
+        // v2.9.9 (NF-18) — movies and netplay are mutually exclusive.
+        if netplay_owns_timeline(&self.lock()) {
+            return Err(MobileError::Movie {
+                reason: "leave netplay before playing a movie".into(),
+            });
+        }
         let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
             reason: e.to_string(),
         })?;
@@ -1823,6 +1942,17 @@ impl NesController {
         // pre-v2.0.0 "Timebase" warning (`HostWarning::PreTimebaseMovie`) that
         // used to be queued here can no longer arise.
         let mut g = self.lock();
+        // The checks above ran under guards since released, and a netplay
+        // session (or a cabinet load) can start on another thread in between;
+        // repeat them under the guard that installs the movie, so the refusal
+        // and the install are one step (#583 review, CodeRabbit). The early
+        // checks stay: they refuse before the movie is parsed.
+        refuse_on_cabinet(&g, "movie playback")?;
+        if netplay_owns_timeline(&g) {
+            return Err(MobileError::Movie {
+                reason: "leave netplay before playing a movie".into(),
+            });
+        }
         // v2.9.0 — held only if the seek succeeds: a refused seek (another
         // ROM, a bad start state) leaves the console, and saving, unchanged.
         let before = g.battery_held.is_none().then(|| Self::held_battery(&g));
@@ -2253,6 +2383,7 @@ impl NesController {
     pub fn np_host(&self, local_port: u16, num_players: u8) -> Result<u16, MobileError> {
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         let conn = NetplayConnection::host(local, rom_hash).map_err(|e| MobileError::Netplay {
@@ -2283,6 +2414,7 @@ impl NesController {
     /// socket bind/connect fails.
     pub fn np_join(&self, address: String) -> Result<(), MobileError> {
         refuse_on_cabinet(&self.lock(), "netplay")?;
+        refuse_netplay_during_movie(&self.lock())?;
         // Resolve via `ToSocketAddrs` so a hostname (`my-laptop.local:7000`) works
         // as well as a raw IP — `SocketAddr::parse` rejects hostnames. This runs
         // off the UI thread (the host calls `np_join` on a worker), so the brief
@@ -2297,6 +2429,11 @@ impl NesController {
                 reason: format!("host:port '{address}' resolved to no addresses"),
             })?;
         let mut g = self.lock();
+        // Repeated under the guard that installs the session: the checks
+        // above were made under guards released before the DNS lookup, and a
+        // movie can start in between (#583 review, CodeRabbit).
+        refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         let conn = NetplayConnection::connect(local, remote, rom_hash).map_err(|e| {
@@ -2337,6 +2474,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let players = num_players.clamp(2, 4);
         // Seed the room-code + STUN-transaction PRNG from a non-deterministic
@@ -2375,6 +2513,7 @@ impl NesController {
         let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         refuse_on_cabinet(&g, "netplay")?;
+        refuse_netplay_during_movie(&g)?;
         let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
         let seed = nondeterministic_seed();
         let nat = NatConnect::join(&room_code, rom_hash, nat_cfg, seed).map_err(|e| {
@@ -3260,6 +3399,36 @@ fn injected_frame_fault() {
 #[uniffi::export]
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// v2.9.9 (re-audit NF-21) — the identity of `rom`, without building a console.
+///
+/// It is what [`NesController::rom_identity`] reports for a console built
+/// from `rom`, so a host can key a library entry without the FDS BIOS a disk
+/// would need to boot. Same preparation as a load: a
+/// buffer over the size limit is refused and a `.zip` is unpacked first (the
+/// game database's load-time correction rewrites only the header, which the
+/// identity leaves out).
+///
+/// # Errors
+/// [`MobileError::RomLoad`] for a buffer over the 16 MiB limit.
+#[uniffi::export]
+pub fn rom_identity_of_file(rom: Vec<u8>) -> Result<String, MobileError> {
+    check_rom_size(&rom)?;
+    let rom = decompress_rom(rom);
+    Ok(hex_lower(&Nes::rom_identity_of(&rom)))
+}
+
+/// Lowercase hex of a digest (the hosts' key spelling, as their own
+/// `sha256Hex` helpers write it).
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// The core's built-in 2C02 composite palette: 512 packed `0xAARRGGBB` values.
@@ -4827,5 +4996,164 @@ mod tests {
             relay_stop.store(true, Ordering::Relaxed);
             let _ = stun_handle.join();
         }
+    }
+
+    /// v2.9.9 (NF-18) — movies and netplay are mutually exclusive in the
+    /// bridge, and neither lets a Reset, a Power Cycle or a state load change
+    /// the machine under it -- the desktop's rule since v2.3.0.
+    ///
+    /// A `.rnm` and a netplay session both carry controller input only, so an
+    /// action outside that stream breaks them: a recording no longer replays,
+    /// and a netplay peer desyncs. Before v2.9.9 these entry points checked
+    /// only for a cabinet or hardcore, and neither host gated them.
+    #[test]
+    fn a_movie_or_netplay_session_refuses_timeline_changes() {
+        // A recording: Reset, Power Cycle and a state load leave the machine
+        // as it is; netplay refuses to start.
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let blob = ctrl.save_state();
+        ctrl.movie_record_from_here();
+        for _ in 0..3 {
+            ctrl.step_frame();
+        }
+        let before = ctrl.save_state();
+        ctrl.reset();
+        ctrl.power_cycle();
+        assert_eq!(
+            ctrl.save_state(),
+            before,
+            "Reset / Power Cycle during a movie"
+        );
+        assert!(
+            ctrl.load_state(blob.clone()).is_err(),
+            "load during a movie"
+        );
+        assert_eq!(ctrl.save_state(), before, "the load changed the machine");
+        assert!(
+            ctrl.np_host(0, 2).is_err(),
+            "netplay started during a movie"
+        );
+        assert!(!ctrl.np_is_active());
+        let movie = ctrl.movie_stop_recording();
+
+        // Netplay (connecting is enough: the session owns the timeline): no
+        // movie may start, and the console is left alone.
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.np_host(0, 2).expect("host bind");
+        let before = ctrl.save_state();
+        ctrl.movie_record_from_power_on();
+        ctrl.movie_record_from_here();
+        assert!(
+            !ctrl.movie_is_recording(),
+            "a recording started during netplay"
+        );
+        assert!(ctrl.movie_play(movie).is_err(), "playback during netplay");
+        assert!(!ctrl.movie_is_playing());
+        ctrl.reset();
+        ctrl.power_cycle();
+        assert!(ctrl.load_state(blob).is_err(), "load during netplay");
+        assert_eq!(
+            ctrl.save_state(),
+            before,
+            "the console changed under netplay"
+        );
+        ctrl.np_leave();
+    }
+
+    /// v2.9.9 (NF-22) — on a Vs. `DualSystem` cabinet the palette and Four
+    /// Score setters reach BOTH consoles, and a Power Cycle (which rebuilds
+    /// the cabinet from its ROM) keeps them.
+    ///
+    /// `set_four_score` and `load_palette` wrote `g.nes`, the main console
+    /// (seated outside the cabinet between calls), never the sub, so the two
+    /// screens used different palettes; and `power_cycle` rebuilt both
+    /// consoles from the ROM, which reset the main one to the default too.
+    #[test]
+    fn cabinet_palette_and_four_score_reach_both_consoles_and_survive_power_cycle() {
+        let ctrl = NesController::new(synthetic_dual_cabinet(), DEFAULT_SAMPLE_RATE)
+            .expect("cabinet loads");
+        let mut pal = vec![0u8; 192];
+        pal[0] = 0x12;
+        ctrl.load_palette(pal).unwrap();
+        ctrl.set_four_score(true);
+        let check = |when: &str| {
+            let g = ctrl.lock();
+            let sub = g.dual.as_ref().expect("a cabinet").system.sub();
+            for (name, nes) in [("main", &g.nes), ("sub", sub)] {
+                assert_eq!(
+                    nes.custom_palette().map(|p| p[0][0]),
+                    Some(0x12),
+                    "{when}: {name} palette"
+                );
+                assert!(nes.four_score(), "{when}: {name} Four Score");
+            }
+        };
+        check("after the setters");
+        ctrl.power_cycle();
+        check("after a Power Cycle");
+        ctrl.clear_palette();
+        let g = ctrl.lock();
+        let cleared = g.nes.custom_palette().is_none()
+            && g.dual
+                .as_ref()
+                .unwrap()
+                .system
+                .sub()
+                .custom_palette()
+                .is_none();
+        drop(g);
+        assert!(cleared, "clear_palette reaches both consoles");
+    }
+
+    /// v2.9.9 (re-audit NF-21) — the identity the hosts key their stores by is
+    /// the core's: the bytes after the header, so a header-only difference and
+    /// a zip container do not change it, and the free function agrees with a
+    /// built console without needing one.
+    #[test]
+    fn rom_identity_is_the_cores_and_ignores_the_header_and_the_zip() {
+        use std::io::Write as _;
+        let rom = tiny_nrom();
+        let ctrl = NesController::new(rom.clone(), DEFAULT_SAMPLE_RATE).expect("load");
+        let id = ctrl.rom_identity();
+        let built = Nes::from_rom(&rom).expect("parse");
+        assert_eq!(id, hex_lower(built.rom_sha256()));
+        assert_ne!(
+            id,
+            hex_lower(built.image_sha256()),
+            "the identity is not the whole file's hash"
+        );
+        assert_eq!(rom_identity_of_file(rom.clone()).expect("in range"), id);
+
+        // A header-only difference (unused iNES 1.0 padding byte).
+        let mut reheaded = rom.clone();
+        reheaded[12] = 0x01;
+        assert_eq!(rom_identity_of_file(reheaded).expect("in range"), id);
+
+        // The same image in a `.zip`.
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("game.nes", opts).expect("entry");
+        zip.write_all(&rom).expect("write");
+        let zipped = zip.finish().expect("finish").into_inner();
+        assert_eq!(rom_identity_of_file(zipped.clone()).expect("in range"), id);
+        let from_zip = NesController::new(zipped, DEFAULT_SAMPLE_RATE).expect("zip load");
+        assert_eq!(from_zip.rom_identity(), id);
+
+        // An FDS disk is keyed by the whole image, as the core does, and
+        // without the BIOS a console would need.
+        let disk = synthetic_fds_disk(1);
+        let fds = NesController::new_with_fds_bios(
+            disk.clone(),
+            Some(synthetic_fds_bios()),
+            DEFAULT_SAMPLE_RATE,
+        )
+        .expect("disk load");
+        assert_eq!(
+            rom_identity_of_file(disk).expect("in range"),
+            fds.rom_identity()
+        );
+        // Over the limit: refused, as a load is.
+        assert!(rom_identity_of_file(vec![0; MAX_ROM_BYTES + 1]).is_err());
     }
 }

@@ -72,7 +72,7 @@ report.
 | NR-05 | Off-die loader: no backpressure, and a silent drop | FIXED | CONFIRMED and larger than reported: `cart-sdram-gate` section 5 (one byte per console cycle) lost 176 of 512 on the old bridge and reported 12 -- 164 silent. Now 176 lost, 176 reported; with the new `load_wait` → `ioctl_wait` (section 6) a flat-out load loses 0 of 512, and 0 of 64 sent before the controller was ready (section 0). Mutating `load_wait` to 0 is caught | v2.9.0 | sibling `62e3306` |
 | NR-06 | The co-simulation waits for `sdram_ready`; `emu.sv` did not | FIXED | The off-die console reset now includes `!sdram_ready`; the co-simulation's comment is dated. Not co-simulated (`emu.sv` is in no testbench); both lint configurations and the reset-wiring check pass | v2.9.0 | sibling `62e3306` |
 | NR-07 | The core PLL is reset by the framework's RESET | CHANGED (board check open) | `.rst (1'b0)` as `Template_MiSTer` has it; `pll_locked` stays in every reset. Whether the old wiring ever bit, and whether the new one behaves, is a v2.9.2 board observation (core reset from the HPS, MGL load) | v2.9.0 / v2.9.2 | sibling `62e3306` |
-| NR-08 | PRG and CHR share SDRAM bank 0 | OPEN (recorded) | CONFIRMED by address arithmetic. Moving CHR to bank 1 may close the CPU's 2-cycle shortfall; a measured latency change for v2.9.1's optimisation pass, not a re-audit fix. Recorded in the sibling's `docs/sdram.md` | v2.9.1 | |
+| NR-08 | PRG and CHR share SDRAM bank 0 | FIXED (v2.9.1) | CONFIRMED by address arithmetic. **v2.9.1 moved CHR to SDRAM bank 1** (byte `$1000000`; sibling `rtl/cart_sdram.sv:80-98`, `docs/sdram.md` "v2.9.1: CHR in its own bank"); this row said OPEN until v2.9.9. The bank move did NOT close the CPU's 2-cycle shortfall: measured at v2.9.9, `sdram-arb-gate` still prints a worst PRG latency of 26 cycles against the 24 the CPU samples at (14 with CHR silent), so the shortfall is contention, not row conflict (`v2.9.9-rtl-reaudit.md`, NR-08). Recorded in the sibling's `docs/sdram.md` | v2.9.1 | |
 | NR-09 | `CHR_REGION_BASE` not passed to the bridge | FIXED | `.CHR_BASE (CHR_REGION_BASE)` in `emu.sv` and the co-simulation | v2.9.0 | sibling `62e3306` |
 | NR-10 | Off-die loader took the unregistered `ioctl_dout` | FIXED | `.load_data (cart_load_data)`, the byte registered on the same edge as the enable and address | v2.9.0 | sibling `62e3306` |
 | NR-11 | `emu.sv` had no width lint | FIXED | `check_pins.py` fails on `WIDTH*` in `rtl/emu.sv` (self-tests both ways: `sys/` warnings stay out of scope); `pin-check` lints the on-die AND off-die configurations; the four warnings fixed (red run named exactly those four) | v2.9.0 | sibling `62e3306` |
@@ -82,3 +82,24 @@ report.
 
 Not established by any of the above: behaviour on a board. **No hardware has run
 any bitstream.**
+
+## v2.9.9 re-audit
+
+Report: [`v2.9.9-rtl-reaudit.md`](v2.9.9-rtl-reaudit.md) (a Claude subagent,
+read-only). Its claims were re-derived before acting, per the README's rule
+for RTL findings.
+
+**Rows above: 52 re-verified (26 original, 14 from v2.9.0, 12 AUD); none
+REGRESSED.**
+
+The fixes are in the MiSTer sibling (branch `fix/v2.9.9-rtl-audit`, fast-forwarded
+into its `release/v2.9.9-rc`), made by a Claude subagent and mutation-checked;
+NR-15 and NR-16 are confirmed by the release-candidate Quartus compiles.
+
+| id | finding | verdict | evidence | release | commit |
+|---|---|---|---|---|---|
+| NR-13 | The off-die bridge served a read of an address whose write was still held | FIXED | Both read-issue conditions hold off a same-address pending write; `cart-sdram-gate` section 8 (module level; console reachability unestablished) | v2.9.9 | sibling `5408823` |
+| NR-14 | NES 2.0 submappers were ignored | FIXED | `variant_ok` refuses boards `cart.sv` does not build; the bus-conflict submappers (2:2, 7:2, 3:1) are accepted as the base board with the gap named (maintainer, 2026-10-03) | v2.9.9 | sibling `1ac30b1`, `4d31c1e` |
+| NR-15 | `cart_loaded` had no power-up value; synthesis made it constant | FIXED | Power-up value; `tb/check_stuck_regs.py` gates stuck `emu.sv` registers. Confirmed on the RC compiles (261005, seed 6, both builds): the check passes, `cart_loaded` no longer stuck | v2.9.9 | sibling `d0701ae` |
+| NR-16 | The release checks never read the suppressed-messages files | FIXED | `quartus_clean.py` reads the named `.smsg` files; the two `emu.sv` warnings fixed in source. Confirmed on the RC compiles: 26 messages across 3 reports and 2 `.smsg` files, none citing `rtl/` or `tb/` | v2.9.9 | sibling `1c77b06` |
+| NR-17 | `sdram-arb-gate`'s deadline check failed only on improvement | FIXED | Two-sided bound; superseded numbers re-quoted from the gate's own output | v2.9.9 | sibling `ca44360` |

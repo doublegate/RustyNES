@@ -7,8 +7,9 @@
 //! # Architecture
 //!
 //! The Libretro wrapper operates as a thin, safe facade over the `Nes` emulator struct.
-//! Because the emulator guarantees strict cycle-accuracy (a lockstep master clock for the
-//! CPU/PPU/APU) and strict determinism, this crate avoids mutating emulation flow.
+//! Because the emulator guarantees strict cycle-accuracy (one master clock, every CPU
+//! cycle clocked in two halves with the PPU brought up to date at each; ADR 0002 /
+//! ADR 0029) and strict determinism, this crate avoids mutating emulation flow.
 //!
 //! - **Video**: Native 256x240 framebuffers are handed off directly to `VideoContext`.
 //!   A Vs. `DualSystem` cabinet (two cross-wired consoles) instead composes its two
@@ -57,7 +58,8 @@
 //! The core already models the four Vs. `DualSystem` arcade boards (`Emu::Dual`,
 //! `rustynes_core::VsDualSystem`). This wrapper detects them at load through
 //! [`rustynes_core::Emu::from_rom`] — which OR's the NES 2.0 header Vs. type with the
-//! SHA-keyed `vs_db` — and, when a cabinet is loaded, steps BOTH consoles each
+//! `vs_db` lookup, keyed by the header-excluded ROM identity first and the whole-image
+//! hash second (v2.9.8) — and, when a cabinet is loaded, steps BOTH consoles each
 //! `retro_run`, composes their framebuffers side-by-side, and presents the 512x240
 //! result. The deterministic core is untouched; the dual branch is purely a parallel
 //! present/serialize path, exactly mirroring the desktop frontend's `emu.dual` branch.
@@ -518,10 +520,7 @@ impl Default for RustyNesLibretro {
             options_declared: false,
             fds_save_path: None,
             fds_flush_countdown: 0,
-            vs_panel: VsPanel {
-                coin_down: [false; 4],
-                coin_frames: 0,
-            },
+            vs_panel: VsPanel::new(),
             vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
@@ -680,14 +679,26 @@ const VS_COIN_HOLD_FRAMES: u8 = 3;
 /// What one frame of the Vs. System panel does (libretro re-audit NL-08).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct VsPanelFrame {
-    /// Release every latched coin before this frame (`clear_coin`).
-    clear_coins: bool,
-    /// Acceptors to latch a coin on this frame: for a single cartridge 0-1,
-    /// for a `DualSystem` cabinet 0-1 main and 2-3 sub
-    /// (`VsDualSystem::insert_coin`).
-    insert: [bool; 4],
+    /// The coin acceptors latched for this frame, as a bitmask: for a single
+    /// cartridge bits 0-1, for a `DualSystem` cabinet bits 0-1 main and 2-3
+    /// sub (`VsDualSystem::insert_coin`). A LEVEL, applied whole every frame
+    /// (clear, then latch these), so what the game sees on a frame depends
+    /// only on the panel's record and the console's frame number -- never on
+    /// what an earlier `retro_run` left in the latch (v2.9.9 re-audit NL-13).
+    coins: u8,
     /// The service button of panel 0 (main) and 1 (a cabinet's sub).
     service: [bool; 2],
+}
+
+/// The latest coin press: the acceptors its pulse latches and the console
+/// frame the pulse started on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VsCoin {
+    /// The console frame number ([`Nes::frame`]) on which the latest press
+    /// latched a coin.
+    start: u64,
+    /// The acceptors latched (bit `n` = acceptor `n`).
+    acceptors: u8,
 }
 
 /// The Vs. System coin and service inputs, on the RetroPad (libretro
@@ -711,47 +722,117 @@ struct VsPanelFrame {
 /// [`VS_COIN_HOLD_FRAMES`] frames however long L is held, as the desktop
 /// does, because a coin switch that stayed closed is not something a game
 /// counts as coins.
+///
+/// # The pulse is timed in EMULATED frames (v2.9.9 re-audit NL-13)
+///
+/// Until v2.9.9 the pulse was a countdown decremented once per `retro_run`.
+/// Run-ahead, preemptive frames, rewind and netplay rollback call `retro_run`
+/// more than once per presented frame, with `retro_unserialize` in between,
+/// and the coin latch is host input that a save state does not carry
+/// (`snapshot_schema_audit`), so the pulse shrank with the run-ahead setting
+/// -- 3 frames at run-ahead 0, 2 at 1, 1 (17 ms, under the switch's 40-70 ms)
+/// at 2 -- and a rollback across the press lost the coin from the replayed
+/// timeline. The pulse is now recorded against the console's own frame
+/// counter, which is part of the state and so rewinds with every restore:
+///
+/// * a press latches its acceptor and records the frame it happened on;
+/// * every frame, the latch is set to the record's acceptors while the frame
+///   number is inside `start .. start + VS_COIN_HOLD_FRAMES`, and cleared
+///   outside it (the record itself is kept; see [`VsPanel::latched`]);
+/// * a frame number BEFORE the record's start means the frontend restored a
+///   state from before the press: the record is dropped and the edge
+///   detector forgets which buttons were down, so the replayed press is seen
+///   again on the frame it happens;
+/// * so does a frame number EQUAL to the start when it does not advance past
+///   the last frame stepped (a restore to the start of the press's own
+///   frame): the replay of that frame decides afresh whether L is pressed.
+///   Telling that restore from the press's own frame needs the last frame
+///   stepped, since both see `frame == start` (#583 review).
 #[derive(Clone, Copy, Debug, Default)]
 struct VsPanel {
-    /// Whether L was down on each port last frame (edge detection).
+    /// Whether L was down on each port at the previous `retro_run` (edge
+    /// detection).
     coin_down: [bool; 4],
-    /// Frames until the latched coins are released; 0 when none is latched.
-    coin_frames: u8,
+    /// The latest coin press, if any since the game loaded (or since a restore
+    /// to a frame before it).
+    coin: Option<VsCoin>,
+    /// The console frame the previous `step` ran, or `None` before the first.
+    /// A frame number not past it means the frontend restored a state.
+    last_frame: Option<u64>,
 }
 
 impl VsPanel {
+    /// An idle panel: no button down, no coin in flight.
+    const fn new() -> Self {
+        Self {
+            coin_down: [false; 4],
+            coin: None,
+            last_frame: None,
+        }
+    }
+
+    /// The acceptors latched on console frame `frame`: the record's while
+    /// `frame` is inside its pulse, none otherwise.
+    ///
+    /// The record is deliberately KEPT once its pulse is over rather than
+    /// dropped: run-ahead runs frames past the pulse's end and then restores
+    /// to inside it, and a record dropped on that speculative frame would
+    /// cut the pulse short exactly as the call-counted countdown did.
+    fn latched(&self, frame: u64) -> u8 {
+        match self.coin {
+            Some(coin) if frame.wrapping_sub(coin.start) < u64::from(VS_COIN_HOLD_FRAMES) => {
+                coin.acceptors
+            }
+            _ => 0,
+        }
+    }
+
     /// Advance one frame given the four RetroPads; `ports` is how many of
     /// them carry a Vs. panel (2 for a single cartridge, 4 for a cabinet).
-    fn step(&mut self, pads: [JoypadState; 4], ports: usize) -> VsPanelFrame {
-        let mut frame = VsPanelFrame::default();
-        if self.coin_frames > 0 {
-            self.coin_frames -= 1;
-            frame.clear_coins = self.coin_frames == 0;
+    /// `frame` is the console's frame number ([`Nes::frame`], the main
+    /// console's for a cabinet) BEFORE this frame runs.
+    fn step(&mut self, pads: [JoypadState; 4], ports: usize, frame: u64) -> VsPanelFrame {
+        let restored = self.last_frame.is_some_and(|last| frame <= last);
+        self.last_frame = Some(frame);
+        if self
+            .coin
+            .is_some_and(|coin| frame < coin.start || (restored && frame == coin.start))
+        {
+            // Restored to before the press, or to the start of its frame:
+            // forget it, and the buttons' previous state with it, so the
+            // replay sees the press again only if it presses again.
+            self.coin = None;
+            self.coin_down = [false; 4];
         }
         for (port, pad) in pads.iter().enumerate().take(ports) {
             let down = pad.contains(JoypadState::L);
             if down && !self.coin_down[port] {
-                frame.insert[port] = true;
-                self.coin_frames = VS_COIN_HOLD_FRAMES;
-                // A new coin extends the pulse; nothing is cleared this frame.
-                frame.clear_coins = false;
+                // A new coin restarts the pulse and keeps any acceptor
+                // already latched, as the desktop does.
+                let acceptors = self.latched(frame) | (1 << port);
+                self.coin = Some(VsCoin {
+                    start: frame,
+                    acceptors,
+                });
             }
             self.coin_down[port] = down;
         }
-        frame.service[0] = pads[0].contains(JoypadState::R);
-        frame.service[1] = ports > 2 && pads[2].contains(JoypadState::R);
-        frame
+        VsPanelFrame {
+            coins: self.latched(frame),
+            service: [
+                pads[0].contains(JoypadState::R),
+                ports > 2 && pads[2].contains(JoypadState::R),
+            ],
+        }
     }
 
     /// Apply a frame to a single Vs. console (acceptors 0-1, service 0).
     const fn apply_single(frame: VsPanelFrame, nes: &mut Nes) {
-        if frame.clear_coins {
-            nes.clear_coin();
-        }
-        if frame.insert[0] {
+        nes.clear_coin();
+        if frame.coins & 0b01 != 0 {
             nes.insert_coin(0);
         }
-        if frame.insert[1] {
+        if frame.coins & 0b10 != 0 {
             nes.insert_coin(1);
         }
         nes.set_vs_service(frame.service[0]);
@@ -760,11 +841,9 @@ impl VsPanel {
     /// Apply a frame to a Vs. `DualSystem` cabinet (acceptors 0-3,
     /// service panels 0-1).
     fn apply_dual(frame: VsPanelFrame, dual: &mut VsDualSystem) {
-        if frame.clear_coins {
-            dual.clear_coin();
-        }
-        for (acceptor, insert) in (0u8..).zip(frame.insert) {
-            if insert {
+        dual.clear_coin();
+        for acceptor in 0..4 {
+            if frame.coins & (1 << acceptor) != 0 {
                 dual.insert_coin(acceptor);
             }
         }
@@ -778,7 +857,9 @@ impl VsPanel {
 ///
 /// iNES 1.0 Vs. dumps carry no PPU type, so the parser gives every one the
 /// 2C03 palette; many Vs. games used a 2C04 whose colour table differs, and
-/// the SHA-keyed [`rustynes_core::vs_db`] supplies the right one. Before
+/// [`rustynes_core::vs_db`] supplies the right one (matched on the
+/// header-excluded ROM identity first, then the whole-image hash, since
+/// v2.9.8). Before
 /// v2.9.0 the libretro core loaded through `Emu::from_rom` alone, which uses
 /// the database only to recognise a `DualSystem` cabinet, so every Vs. dump
 /// in the database rendered in the wrong colours (7 of 7 local dumps
@@ -1127,7 +1208,8 @@ impl RustyNesLibretro {
         } else {
             // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
             // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
-            // the SHA-keyed `vs_db`), else a standard single `Nes`. This is the SAME
+            // the `vs_db`, matched on the header-excluded ROM identity first and the
+            // whole-image hash second since v2.9.8), else a standard single `Nes`. This is the SAME
             // detection the desktop frontend uses, so the libretro core presents dual
             // cabinets identically (two consoles side-by-side) instead of booting a
             // single console that would hang waiting on its cross-wired partner.
@@ -1571,11 +1653,12 @@ impl RustyNesLibretro {
         let zapper_ports = self.lightgun_ports();
         // A Vs. System cartridge's coin and service inputs, from L and R on
         // ports 1-2 (see `VsPanel`); nothing for any other cartridge.
-        let vs = if self.nes.as_ref().is_some_and(Nes::is_vs_system) {
-            let none = JoypadState::empty();
-            Some(self.vs_panel.step([jp0, jp1, none, none], 2))
-        } else {
-            None
+        let vs = match self.nes.as_ref() {
+            Some(nes) if nes.is_vs_system() => {
+                let none = JoypadState::empty();
+                Some(self.vs_panel.step([jp0, jp1, none, none], 2, nes.frame()))
+            }
+            _ => None,
         };
         {
             let Some(nes) = self.nes.as_mut() else {
@@ -1605,8 +1688,8 @@ impl RustyNesLibretro {
                     poll_zapper(ctx, nes, port as u32);
                 }
             }
-            // Advance the emulator clock by precisely one frame (the lockstep routine
-            // that drives CPU/PPU/APU progression). The returned framebuffer borrow is
+            // Advance the emulator by precisely one frame (the core's one-clock
+            // scheduler drives CPU/PPU/APU progression). The returned framebuffer borrow is
             // dropped immediately; we re-read it below via `framebuffer()` to keep the
             // video copy disjoint from the audio drain.
             nes.run_frame();
@@ -1648,11 +1731,13 @@ impl RustyNesLibretro {
             read_joypad(ctx, 3),
         ];
         // Both panels of the cabinet: coins and service on L and R.
-        let vs = self.vs_panel.step(pads, 4);
         {
             let Some(dual) = self.dual.as_mut() else {
                 return;
             };
+            // The pulse is timed on the MAIN console's frame counter; the two
+            // consoles advance together, one frame each per call.
+            let vs = self.vs_panel.step(pads, 4, dual.main().frame());
             VsPanel::apply_dual(vs, dual);
             for (port, pad) in pads.into_iter().enumerate() {
                 dual.set_buttons(port, nes_buttons(pad));
@@ -1860,6 +1945,40 @@ unsafe fn register_disk_control(cb: retro_environment_t) {
                 add_image_index: Some(rust_libretro::retro_add_image_index_callback),
             },
         );
+    }
+}
+
+/// The log line for a save state `retro_unserialize` refused (v2.9.9
+/// re-audit NL-11), phrased for the user reading the frontend's log.
+///
+/// Until v2.9.9 the core dropped the [`SnapshotError`] and returned a bare
+/// `false`, so the frontend could show only its own generic failure, although
+/// v2.9.8's CHANGELOG promises a pre-v2.9.8 state "is refused with a clear
+/// error". The common case gets its own wording: v2.9.8 (ADR 0042) stopped
+/// reading container formats below [`MIN_FORMAT_VERSION`], so a state saved
+/// by RustyNES v2.9.7 or earlier can only be replaced, not converted. Every
+/// other refusal (a different game's or board's state, a truncated or
+/// damaged file) carries the core's own reason.
+///
+/// This runs only when a restore FAILS. Run-ahead, rewind and netplay hand
+/// the core its own states, which do not fail, so nothing here is on the
+/// per-frame path.
+///
+/// [`SnapshotError`]: rustynes_core::save_state::SnapshotError
+/// [`MIN_FORMAT_VERSION`]: rustynes_core::save_state::MIN_FORMAT_VERSION
+fn refused_state_message(err: &rustynes_core::save_state::SnapshotError) -> String {
+    use rustynes_core::save_state::SnapshotError;
+    match err {
+        SnapshotError::FormatTooOld { got, min } => format!(
+            "save state refused: it is from an older RustyNES (container format {got}; \
+             this core reads format {min} and later, so states saved by RustyNES v2.9.7 \
+             or earlier cannot be loaded); re-record it from the game or an in-game save. \
+             The running game was left as it was."
+        ),
+        other => format!(
+            "save state refused: {other}. It may be from a different game or core version, \
+             or damaged. The running game was left as it was."
+        ),
     }
 }
 
@@ -2590,14 +2709,26 @@ impl Core for RustyNesLibretro {
 
     fn on_unserialize(&mut self, slice: &mut [u8], _ctx: &mut UnserializeContext) -> bool {
         self.contained("retro_unserialize", false, |core| {
-            // Restores the cycle-accurate lockstep hardware state from the serialized blob.
-            if let Some(nes) = core.nes.as_mut() {
-                return nes.restore_quiet(slice).is_ok();
+            // Restores the console's (or the cabinet's two consoles') state
+            // from the serialized blob. A refused state leaves the machine as
+            // it was (NL-01); the reason goes to the frontend's log (NL-11).
+            let result = if let Some(nes) = core.nes.as_mut() {
+                nes.restore_quiet(slice)
+            } else if let Some(dual) = core.dual.as_mut() {
+                dual.restore(slice)
+            } else {
+                return false;
+            };
+            match result {
+                Ok(()) => true,
+                Err(err) => {
+                    core.log(
+                        retro_log_level::RETRO_LOG_WARN,
+                        &refused_state_message(&err),
+                    );
+                    false
+                }
             }
-            if let Some(dual) = core.dual.as_mut() {
-                return dual.restore(slice).is_ok();
-            }
-            false
         })
     }
 
@@ -2746,10 +2877,7 @@ retro_core!(RustyNesLibretro {
     options_declared: false,
     fds_save_path: None,
     fds_flush_countdown: 0,
-    vs_panel: VsPanel {
-        coin_down: [false; 4],
-        coin_frames: 0,
-    },
+    vs_panel: VsPanel::new(),
     vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });

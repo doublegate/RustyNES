@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the DMC-DMA state model (the get/put flip-flop, the delayed-`$4015` DMC status machinery, the implicit-abort and re-enable timing fields) is derived from TriCNES (MIT), as the field docs cite by name and `Emulator.cs` line, and the `_needHalt` / `_needDummyRead` latches from Mesen2 (GPL-3.0-or-later), `NesCpu`. See docs/originality-and-provenance.md (Section 1) and NOTICE. Classified v2.9.9 (core re-audit NC-17, maintainer's decision 2026-10-04): the in-source citations below record the derivation and are kept as written.
+
 //! Top-level 2A03 APU.
 //!
 //! Per `docs/apu-2a03.md`.  Owns the four wave channels plus DMC, the frame

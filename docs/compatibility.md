@@ -274,7 +274,15 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   volume, behind `mapper-audio`, via `mix_audio`→`tick_with_external`). Construct
   via `Nes::from_disk(disk_bytes, bios_bytes)`. Frontend: `.fds` open/drag-drop,
   a one-time BIOS prompt (new `[fds]` config), an `F9` side-swap key + a disk
-  indicator, `.fds.sav` persistence under `<data_dir>/fds-saves/`; wasm-winit has
+  indicator, `.fds.sav` persistence under `<data_dir>/fds-saves/` (keyed, like
+  the game's save-state slots and cheat file since v2.9.9, on the disk image as
+  loaded before any write, so a disk save does not move them; since the core
+  half of that fix the console booted from the `.fds.sav` reports the pristine
+  image as its `Nes::rom_sha256` (`Nes::set_rom_identity`), so movies,
+  netplay, the per-game and HD-pack keys and RA progress keep it too; checked once a
+  second and written off the emulation lock, and released for a movie,
+  TAStudio or netplay session as the battery is, so a session's disk never
+  reaches the player's file); wasm-winit has
   an in-browser BIOS upload (session-only). **The BIOS is user-supplied (Nintendo
   copyright — NEVER committed); real-BIOS boot is unverified in CI by design** —
   the device + audio are unit-tested (56 FDS unit tests) + an env-gated

@@ -571,6 +571,15 @@ impl Mapper for Mmc1 {
                 got: data.len(),
             });
         }
+        // The serial port holds at most four bits between commits (the fifth
+        // write commits and resets), in a 5-bit register. A restored count
+        // above 4 would wrap or overflow at the next write (NC-12, v2.9.9).
+        if data[6] > 4 || data[5] > 0x1F {
+            return Err(MapperError::Invalid(format!(
+                "MMC1 serial port out of range: shift {:#04x}, count {}",
+                data[5], data[6]
+            )));
+        }
         self.control = data[1];
         self.chr0 = data[2];
         self.chr1 = data[3];
@@ -1042,5 +1051,31 @@ mod tests {
             Err(MapperError::UnsupportedVersion(1))
         ));
         assert!(m.load_state(&[9]).is_err(), "an unknown version is refused");
+    }
+
+    /// NC-12 (v2.9.9 re-audit): a restored serial count above 4, or a shift
+    /// register with bits above 4, is refused rather than wrapping (release)
+    /// or overflowing (debug) at the next serial write.
+    #[test]
+    fn an_out_of_range_serial_port_is_refused_on_restore() {
+        let m = Mmc1::new(synth_prg(4), synth_chr(2), Mirroring::Vertical, 0).unwrap();
+        let good = m.save_state();
+        let mut probe = Mmc1::new(synth_prg(4), synth_chr(2), Mirroring::Vertical, 0).unwrap();
+        assert!(probe.load_state(&good).is_ok());
+        for (idx, value) in [(6usize, 5u8), (6, 0xFF), (5, 0x20), (5, 0xFF)] {
+            let mut bad = good.clone();
+            bad[idx] = value;
+            assert!(
+                matches!(probe.load_state(&bad), Err(MapperError::Invalid(_))),
+                "byte {idx} = {value:#04x} must be refused"
+            );
+        }
+        let mut edge = good;
+        edge[6] = 4;
+        edge[5] = 0x1F;
+        assert!(
+            probe.load_state(&edge).is_ok(),
+            "count 4, shift $1F is a real state"
+        );
     }
 }

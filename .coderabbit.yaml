@@ -164,8 +164,10 @@ reviews:
       instructions: >
         Docs are the spec here, not a changelog. Flag documentation that
         drifts from the code it describes rather than just prose nits.
-        This repo's markdownlint gate is pinned to v0.39.0 via pre-commit
-        (see CLAUDE.md) — don't flag rules that version doesn't have.
+        This repo's markdownlint gate is pinned to v0.49.1 via pre-commit
+        (`.pre-commit-config.yaml`; v0.39.0 until v2.6.3), with MD060 set to
+        `leading_and_trailing` in `.markdownlint.json` — don't flag rules
+        that version doesn't have.
 
   tools:
     clippy:

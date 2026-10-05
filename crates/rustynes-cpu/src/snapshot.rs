@@ -75,8 +75,9 @@ const ENCODED_LEN: usize = ENCODED_LEN_V2 + 1;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CpuSnapshotError {
-    /// Blob length doesn't match the schema for the version tag we read.
-    #[error("CPU snapshot truncated: expected {expected} bytes, got {got}")]
+    /// Blob length doesn't match the schema, short or long. (Until v2.9.9
+    /// the message said "truncated" for a long blob too; NC-14.)
+    #[error("CPU snapshot has the wrong length: expected {expected} bytes, got {got}")]
     Truncated {
         /// Expected byte count.
         expected: usize,

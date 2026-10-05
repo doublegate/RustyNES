@@ -52,7 +52,7 @@ every RTL claim and number is re-derived. The work is v2.9.2's
 less well. The pattern held for the fifth time:
 
 - **Rust:** 16 of 20 findings are real: all nine netplay, frontend and mobile
-  findings, four of five core findings (AUD-04 deferred to v3.0.0), and three
+  findings, four of five core findings (AUD-04 removed at v2.9.8), and three
   of six libretro findings. The framing was often wrong even where the defect
   was real. AUD-01's overflow exists only on 32-bit, and its OOM does not exist
   at all. AUD-12's allocation is on the native heap, not the JVM heap. AUD-16's

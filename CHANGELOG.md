@@ -26,6 +26,189 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.9.9] - 2026-10-04 - "Ballast" (the release candidate: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it)
+
+The last release of the line to v3.0.0. It re-audits all four scopes, fixes
+what that found, corrects the MMC3 interrupt timing and the MMC5's CHR banking
+from their documentation, makes audio exact across a save state, moves the
+MiSTer core's reference onto this release with the parity work that opens, and
+cuts the release-candidate bitstream pair. The maintainer's decisions are in
+`to-dos/plans/v2.9.9-rc-plan.md`.
+
+**Breaking changes at a glance.** v2.9.9 follows v2.9.8's rule: a format that
+cannot be read correctly is refused, with a clear error, rather than read on a
+guess. v3.0.0's notes will restate these with v2.9.8's.
+
+- **Save states from v2.9.8 are refused.** The APU section is v5 (it now
+  carries the audio resampler's state), MMC3's mapper section is v4 (its IRQ
+  model changed) and MMC5's is v6 (it records the PPU sprite size it decodes).
+- **Movies older than format 4 are refused.** The board description a movie
+  and a netplay session check gained the PRG-ROM and CHR-ROM sizes and two
+  header bits; v2.9.8's format-3 movies cannot say them.
+- **Public API:** the `mmc3-m2-phase-irq` feature is removed (the behaviour is
+  now the default); `BoardDescription::capture` is no longer `const`;
+  `Cartridge` and `BoardDescription` have new fields; MMC3's mapper and the
+  CPU snapshot report a too-long state as "wrong length".
+
+### Fixed
+
+- **MMC5 picks its CHR bank set the way the chip does (T-MMC5-8X8-SET), and
+  *Uchuu Keibitai SDF*'s intro draws correctly (T-COMMERCIAL-GARBLE).** The
+  MMC5 now reads the PPU's sprite size and render enables from its own decode
+  of `$2000` / `$2001`. In 8x8 mode it uses only `$5120-$5127`; in 8x16 mode
+  the background uses `$5128-$512B` while rendering, and `$2007` uses the set
+  written last. The 8, 4 and 2 KiB CHR modes now index banks of that size,
+  and sprites follow `$5101`. *Uchuu Keibitai SDF* reads data out of CHR
+  through `$2007`, so its intro had drawn from the wrong bank; it is now
+  correct. Castlevania III, Bandit Kings, Gemfire, L'Empereur and Laser
+  Invasion are unchanged.
+- **MMC3 IRQ timing (T-ORACLE-001).** The emulator raised the MMC3 IRQ a
+  scanline late in blargg's `4-scanline_timing`. The cause was a condition the
+  NESdev page does not have: a `$C001` reload to 0 asserted only when the
+  write had cleared a non-zero counter. It now follows the page's rule, and the
+  IRQ output is raised at the next per-cycle hook after the A12 rise that set
+  it: a rise caught up after the CPU's access is seen from the next cycle, as
+  the MiSTer core's registered output is, and the two are now bus-exact on the
+  core's MMC3 IRQ gate. Both `4-scanline_timing` ROMs move from
+  sub-test 3 to sub-test 9, `mmc3_test/5-MMC3` passes, and AccuracyCoin
+  (144/144), nestest and every other MMC3 test ROM are unchanged. Sixteen
+  local commercial MMC3 baselines moved, by their audio and at most three
+  cycles (Burai Fighter's attract sequence by its timing), each attributed.
+- **Audio across a save state.** Loading a state restarted the band-limited
+  resampler cold: about 17 samples went missing, the level stepped (a click),
+  and the filter state never matched a run that had not loaded. The state now
+  carries the resampler, so a load resumes the exact stream, and a state
+  serialized after a round trip equals one from a straight run (libretro
+  re-audit NL-12; RetroArch netplay compares those bytes).
+- **MMC5 CHR images that are not a power of two reach every bank.** A 24 KiB
+  image (three 8 KiB banks) left bank 1 unreachable, because a register value
+  wrapped by a mask; it now wraps by the bank count, a partial final bank
+  included (10 KiB in 8 KiB mode is two banks), in the register sets and
+  in the ExGrafix and split-screen overrides. Every power-of-two image maps as
+  before (#583 review).
+- **A corrupt APU value no longer poisons the session.** A huge but finite
+  filter value in a state was accepted, turned the audio to NaN and made every
+  later save state unloadable. Restore now bounds it (core re-audit NC-09), by
+  a rule over each filter stage's pair of values that the filter's own update
+  cannot step out of, so every state it accepts keeps its next save loadable
+  (the first form capped each value separately, which a state at the caps
+  could step past on the next sample; #583 review).
+- **Movies and netplay can tell more headers apart.** Two headers that split
+  one ROM body differently between PRG and CHR, or that differ only in the
+  four-screen bits mappers 30 and 218 wire from, shared an identity and a
+  board description, so a movie replayed silently on the wrong machine
+  (NC-10).
+- **A movie cannot overclock past the core's maximum.** The 80-line cap now
+  lives in the core, and a movie asking for more is refused (NC-11). A movie's
+  Game Genie list is read in the console's order, so playback no longer
+  re-applies every code each frame (NC-13).
+- **`$4017`'s interrupt-inhibit clear takes effect on the write**, as the set
+  did from v2.9.8 (NC-16). No ROM in the suite reaches the window.
+- **MMC1 refuses a restored serial port that cannot exist** rather than
+  overflowing at the next write (NC-12). A too-long PPU, CPU or mapper state
+  is no longer reported as "truncated" (NC-14).
+- **libretro:** a refused `retro_unserialize` logs why (NL-11); the Vs. coin
+  pulse lasts three emulated frames under run-ahead and rollback (NL-13), and
+  a restore to the frame a coin was pressed on drops it unless the replay
+  presses again (#583 review).
+- **Desktop: a movie or netplay session can no longer be broken from a
+  hotkey.** Reset, Power Cycle, disk swaps and state loads are refused on every
+  route (menu, hotkey, Save States manager, browser grid, scripts) while a
+  movie plays or records or netplay runs, through one policy (NF-11).
+  Loading or closing a ROM ends a movie session, and a recording in progress
+  is offered for saving (NF-12). Exporting a movie keeps the recording, and
+  movie outcomes appear on the status line (NF-20).
+- **FDS disk saves.** A movie, TAStudio or netplay session no longer writes
+  the player's `.fds.sav`, and the save is written off the emulation lock and
+  retried on failure (NF-16). An FDS game keeps one identity after its first
+  disk save, so its save states, cheats, movies, HD pack and RetroAchievements
+  progress are found again (NF-17).
+- **Mobile saves follow the v2.9.8 ROM identity.** Android and iOS keyed
+  battery saves, auto-resume, the library and per-game settings by the whole
+  file; they now use the header-excluded identity, and existing saves are
+  moved to it once, each copy verified before the original is removed (NF-21).
+  Cloud copies are not moved: the next upload re-creates them. A move that
+  fails part way is finished on a later open instead of leaving a store under
+  the old key, the old ROM is kept until the library index has saved, and a
+  file is counted as moved only once its original is gone (#583 review). The
+  mobile bridge also refuses timeline changes during a movie or netplay
+  (NF-18), checking under the same lock that starts the session.
+- **Smaller fixes:** history-viewer clips never span a load, rewind or reset
+  (NF-13); TAStudio re-emulates under its frame-0 options (NF-14); a netplay
+  spectator runs only a stream whose `Sync` matches it (NF-15); the browser
+  reports a state save or load's real outcome, a save only once its
+  IndexedDB transaction has committed (NF-19); live settings reach
+  both consoles of a Vs. cabinet (NF-22); the command-line load applies the
+  per-game overlay through the same guard as the menu (NF-23).
+
+### Changed
+
+- **Restoring a state on a flash board is about 11% faster** (GTROM and
+  UNROM 512; NL-15). The restore decodes the flash diff straight into the
+  flash instead of into a full-size copy, and the result is the same bytes.
+  Run-ahead restores every frame, so this is per-frame work. The release's
+  other performance leads were measured and not adopted; `docs/performance.md`
+  records each one.
+- **Provenance records.** Four more files are recorded as derived, at the
+  re-audit's prompt (NC-17): the APU's DMC-DMA state model (TriCNES, Mesen2),
+  the frame counter's lazy `$4015` clear and PAL table (Mesen2), the Vs.
+  DualSystem orchestration (Mesen2) and the Namco 163 output weight (Mesen2).
+  Each has a `// Provenance:` header, a row in
+  `docs/originality-and-provenance.md` and a `NOTICE` entry. Nothing was
+  reworded or removed, and the licence is unchanged.
+- **MiSTer core (sibling):**
+  - Its oracle pin moved from v2.9.2 to this release. Every golden that changed
+    (75 artifacts in 38 stems) was traced to an emulator change first: v2.9.8's
+    `$4017` inhibit (31 stems), v2.9.5's OAM-DMA latch (4), v2.9.5's scanline-0
+    sprite re-arm (2) and this release's MMC3 fix (1).
+  - The RTL gained the same `$4017` inhibit rule, one clock when a mode-1
+    write meets the sequencer's step, and the odd-frame scanline-0 sprite.
+    It also lost a defect of its own: the frame sequencer stopped while a
+    `$4017` reset was pending, which only blargg's `apu_test_9` and `_10`
+    can see. Review found a second: an inhibit write landing exactly on
+    frame-IRQ point A, B or C must clear last, as the emulator's per-cycle
+    output on placed stimuli shows, and the RTL let the IRQ set win. No ROM
+    in the corpus reaches that cycle, so four directed stimuli
+    (`apuirqwr076`-`079`) gate it.
+  - New gates: `apu_test` 1-10 (bus), `mapper4mmc3irq065` (bus, now exact),
+    and four AccuracyCoin checkpoint streams.
+  - A NES 2.0 header naming a board variant the core does not build is
+    refused with an OSD message; the bus-conflict variants load as the base
+    board, a named inaccuracy (NR-14). The release checks read Quartus's
+    suppressed-message files and gate stuck registers (NR-15, NR-16).
+  - The release-candidate bitstreams are compiled at fitter seed 6, from a
+    sweep of eight seeds of both builds at one build date (261005). A first
+    pair (seed 8, 261004) was withdrawn because the `$4017` fix above
+    changed the RTL after it; at 261005 seed 8 no longer closes on-die.
+
+### Verification
+
+- `cargo test --release --workspace --features test-roms --no-fail-fast`:
+  3,201 passed, 0 failed, 13 ignored (v2.9.8: 3,148 / 0 / 14; the ignore that
+  went is `mmc3_test/5-MMC3`, which now passes). AccuracyCoin 144/144,
+  nestest 0-diff.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0, `external_extended` 137/0, and
+  `external_coverage` 6/0 over every staged ROM. Every moved baseline was
+  attributed: sixteen MMC3-family snapshots (audio and at most three cycles;
+  Burai Fighter's attract timing, rendered and looked at) and *Uchuu Keibitai
+  SDF*'s, which the MMC5 fix corrects.
+- Every fix has a test that failed before it, and reverting the fix makes the
+  test fail again (mutants recorded in each commit body, all caught).
+- fmt, clippy for every feature set and both wasm builds, rustdoc, the
+  `no_std` build, the cosim crate and markdownlint are clean.
+- The MiSTer core: on-die ladder 199 passed, 0 failed, 1 expected failure,
+  off-die 200 / 0 / 1, each one frozen-worktree run of the final sibling RTL.
+  Both builds were swept at seeds 1-8 on one build date (261005). Seed 6 is
+  pinned (on-die +0.474 / +0.092 ns, off-die +0.377 / +0.080 ns, SDRAM read
+  +0.451 / +1.183 ns), and two clean compiles of each are byte-identical
+  (on-die `10c2b2ce...`, off-die `909e91c2...`). The stuck-register and
+  suppressed-message checks pass on both. That pair ships.
+  **No hardware has run any bitstream.**
+- The Android unit tests pass on the JVM; the iOS Swift and the mobile device
+  behaviour (including the key migration, run-sheet rows M1-M7) are
+  unverified on this Linux host.
+
 ## [2.9.8] - 2026-10-02 - "Vanguard" (v3.0.0's breaks landed early, every staged game looked at, and the database's corrections on every platform)
 
 The ninth release of the v2.9.x line and the fifth of the line to v3.0.0. It

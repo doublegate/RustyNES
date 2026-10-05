@@ -473,6 +473,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         has_battery: h.has_battery,
         has_trainer: h.has_trainer,
         is_nes2: h.is_nes2,
+        nametable_wiring_bits: bytes[6] & 0x09,
     };
 
     let mapper: Box<dyn Mapper> = match h.mapper_id {

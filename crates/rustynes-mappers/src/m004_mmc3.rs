@@ -82,7 +82,7 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// v3 (v2.9.6) appends the MMC6 PRG-RAM state and the MC-ACC prescaler.
 /// Only v3 is read since v2.9.8 (ADR 0042); v1 and v2 used to load with the
 /// later fields at defaults.
-const SAVE_STATE_VERSION: u8 = 3;
+const SAVE_STATE_VERSION: u8 = 4;
 
 /// MMC6 internal PRG-RAM: 1 KiB, two 512-byte halves (`MMC6.md`).
 const MMC6_RAM: usize = 0x0400;
@@ -165,18 +165,35 @@ pub struct Mmc3 {
     irq_reload_pending: bool,
     irq_enabled: bool,
     irq_pending_line: bool,
-    // Latched at every `$C001` write: whether the counter was non-zero
-    // at the time of the write.  Consumed by `clock_irq` on the next
-    // filtered A12 rise: a non-zero-to-zero $C001 clear ALLOWS Sharp's
-    // reload-to-zero assertion (see `mmc3_test_2/2-details` sub-test #7
-    // "IRQ should be set when non-zero and reloading to 0 after clear"),
-    // while a zero-to-zero $C001 SUPPRESSES it (see
-    // `mmc3_test_2/4-scanline_timing` sub-test #2 "Scanline 0 IRQ should
-    // occur later when $2000=$08").  This is the cycle-precise
-    // discriminator that makes both blargg sub-tests pass together —
-    // collapsing the two into a single "reload_pending implies assert"
-    // path (the v0.8.x implementation) forces one or the other to fail.
-    irq_reload_pending_with_nonzero_clear: bool,
+    // A clocking A12 rise sets this instead of the IRQ line, and the first
+    // `notify_cpu_cycle` after the rise moves it to `irq_pending_line`
+    // (T-ORACLE-001, v2.9.9). WHICH cycle that is depends on the bus, not on
+    // this mapper: `Cpu::start_cycle` catches the PPU up to the access and
+    // then calls `SystemBus::cpu_clock`, which calls `notify_cpu_cycle`. So a
+    // rise caught up before the access is raised in its own cycle, and one
+    // caught up after the access (`end_cycle`) from the next cycle on. (This
+    // comment said "one CPU cycle after the rise" for every rise until the
+    // #583 review; ADR 0002's 2026-10-05 correction has the detail.)
+    //
+    // Why: the oracle raised it a cycle early relative to the MiSTer
+    // sibling's MMC3, which registers its IRQ output on the CPU clock enable
+    // as a synchronous design must. Its per-cycle trace of
+    // `mapper4mmc3irq065` and of blargg's `4-scanline_timing` put the /IRQ
+    // fall one cycle apart, and with the oracle deferred by one cycle the two
+    // traces agree for 6,253,826 cycles instead of 1,250,766. The deferral
+    // also makes `mmc3_test` v1 `5-MMC3` pass and moves `4-scanline_timing`'s
+    // first failure from sub-test 3 to sub-test 9. It is not a filter: which
+    // rises clock the counter is unchanged, only when the line is seen.
+    //
+    // This replaced v2.0.0's `mmc3-m2-phase-irq` experiment, which deferred
+    // only rises seen in the M2-high half of a cycle. Measured against the
+    // same ROMs it passed the same set, because the split above is in effect
+    // the same one; this form is kept because it gets it from the order of
+    // the catch-up and the per-cycle hook, with no phase data from the bus.
+    // A delay of one cycle for EVERY rise cannot be built here: a pre-access
+    // rise of cycle N and a post-access rise of cycle N-1 both arrive between
+    // the same two `notify_cpu_cycle` calls.
+    irq_assert_pending_next_cycle: bool,
 
     // A12 filter state.
     last_a12: bool,
@@ -193,18 +210,6 @@ pub struct Mmc3 {
     mmc6_protect: u8,
     /// MC-ACC: falling A12 edges counted, modulo 8.
     mcacc_prescaler: u8,
-
-    // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`, default-off):
-    // a qualifying A12 rise observed during the POST-access (M2-high, φ2)
-    // half of a CPU cycle sets this instead of asserting `irq_pending_line`
-    // synchronously. `notify_cpu_cycle` (called once per CPU cycle, at the
-    // START of the NEXT cycle) promotes it — modeling a 1-M2-cycle
-    // propagation delay for the IRQ output latching late in the cycle. Rises
-    // seen during the PRE-access (M2-low, φ1) half assert immediately, same
-    // as the unconditional (feature-off) behavior. Compiled out entirely
-    // when the feature is off (zero footprint on the default build).
-    #[cfg(feature = "mmc3-m2-phase-irq")]
-    irq_assert_pending_next_cycle: bool,
 
     // v2.1.5 F5.0 MMC3 R1/R2 residual instrumentation study (`mmc3-a12-phase-
     // probe`, default-off): purely OBSERVATIONAL tallies of *qualifying*
@@ -309,7 +314,7 @@ impl Mmc3 {
             irq_counter: 0,
             irq_reload_value: 0,
             irq_reload_pending: false,
-            irq_reload_pending_with_nonzero_clear: false,
+            irq_assert_pending_next_cycle: false,
             irq_enabled: false,
             irq_pending_line: false,
             last_a12: false,
@@ -320,8 +325,6 @@ impl Mmc3 {
             mmc6_ram_enabled: false,
             mmc6_protect: 0,
             mcacc_prescaler: 0,
-            #[cfg(feature = "mmc3-m2-phase-irq")]
-            irq_assert_pending_next_cycle: false,
             #[cfg(feature = "mmc3-a12-phase-probe")]
             probe: Mmc3A12PhaseProbe::default(),
         })
@@ -513,60 +516,40 @@ impl Mmc3 {
         }
     }
 
-    /// Clock the IRQ counter on a filtered A12 rising edge.  Implements
-    /// the Sharp/NEC distinction at cycle-precise resolution.
+    /// Clock the IRQ counter on a filtered A12 rising edge, and report
+    /// whether the IRQ should assert.
     ///
-    /// Three-way branch (C1 step B4):
-    /// 1. `irq_reload_pending` (set by a `$C001` write): reload the
-    ///    counter from `irq_reload_value` and clear the pending flag.
-    ///    Sharp asserts the IRQ line if and only if the `$C001` write
-    ///    cleared a non-zero counter AND `irq_reload_value == 0`
-    ///    (`irq_reload_pending_with_nonzero_clear` was latched true).
-    ///    A `$C001` written while the counter was already zero is a
-    ///    "no-op clear" — the next A12 rise reloads silently. This
-    ///    distinguishes `mmc3_test_2/2-details` sub-test #7 ("IRQ should
-    ///    be set when non-zero and reloading to 0 after clear", expects
-    ///    assertion) from `mmc3_test_2/4-scanline_timing` sub-test #2
-    ///    ("Scanline 0 IRQ should occur later when `$2000=$08`",
-    ///    expects no assertion on the first pre-render A12 rise after
-    ///    `$C001`).
-    /// 2. `was_zero` (counter naturally at 0 from a prior decrement-to-0
-    ///    or a prior reload, with no pending `$C001`): reload from
-    ///    `irq_reload_value`.  Sharp (rev A) asserts here if the new
-    ///    counter value is 0 (i.e. `irq_reload_value == 0`); NEC (rev B)
-    ///    does not.  This is the path `mmc3_test_2/5-MMC3.nes` ("set IRQ
-    ///    every clock when reload is 0") exercises.
-    /// 3. Otherwise (counter > 0, no pending reload): decrement.  Assert
-    ///    IRQ on transition to 0 (both Sharp and NEC).
+    /// The NESdev MMC3 page's rule: "When the IRQ is clocked (filtered A12
+    /// 0→1), the counter value is checked - if zero or the reload flag is
+    /// true, it's reloaded with the IRQ latched value at $C000; otherwise, it
+    /// decrements. If the IRQ counter is zero and IRQs are enabled ($E001),
+    /// an IRQ is triggered." That is the Sharp chip; the NEC chip asserts
+    /// only on a decrement to zero, not on a reload that leaves the counter
+    /// at zero ("Old/alternate behavior").
     ///
-    /// This separation is the C1 step B4 structural fix: collapsing
-    /// `irq_reload_pending` into the `was_zero` branch (the v0.8.x
-    /// implementation) made every first A12 rise after `$C001` assert
-    /// IRQ when `irq_reload_value == 0` and the revision was Sharp.
-    /// That over-eager assertion produced the residual
-    /// `mmc3_test_2/4-scanline_timing` sub-test #2 failure because the
-    /// FIRST sprite-fetch A12 rise on the pre-render scanline (PPU dot
-    /// 260) clocked an unwanted IRQ assertion, instead of the
-    /// test-expected assertion on scanline 0's first sprite fetch.
-    /// The cycle-precise discriminator is "did `$C001` clear a non-zero
-    /// counter" — only then does Sharp's reload-to-zero rule apply.
-    /// See `docs/adr/0002-irq-timing-coordination.md` → "Empirical
-    /// refinement (2026-05-14)" for the four rolled-back attempts that
-    /// did not separate these paths.
+    /// 1. `irq_reload_pending` (set by a `$C001` write): reload from
+    ///    `irq_reload_value`, clear the flag.
+    /// 2. Counter already zero: reload from `irq_reload_value`.
+    /// 3. Otherwise: decrement.
+    ///
+    /// After any of the three, Sharp asserts when the counter is zero and
+    /// IRQs are enabled; NEC only after path 3.
+    ///
+    /// **Changed in v2.9.9 (T-ORACLE-001).** Path 1 used to assert only when
+    /// the `$C001` write had cleared a non-zero counter (a latch named
+    /// `irq_reload_pending_with_nonzero_clear`). The page has no such
+    /// condition; the latch existed so `4-scanline_timing` sub-test 2 would
+    /// pass, and it did so by raising the IRQ a scanline late, which is what
+    /// failed sub-test 3. With the IRQ output deferred to the next per-cycle hook
+    /// (`irq_assert_pending_next_cycle`) the page's rule passes sub-test 2
+    /// by itself. ADR 0002 keeps the history of the earlier attempts.
     fn clock_irq(&mut self) -> bool {
-        // Returns `true` if this clock event would assert the IRQ line
-        // (so the caller can apply M2-phase-aware deferral if needed).
-        // Currently the caller asserts immediately on `true`; a future
-        // iteration of C1 may defer the assertion for M2-high rises.
         let mut would_assert = false;
         if self.irq_reload_pending {
             // Path 1: explicit $C001 reload.
-            let assert_on_reload = self.irq_reload_pending_with_nonzero_clear;
             self.irq_counter = self.irq_reload_value;
             self.irq_reload_pending = false;
-            self.irq_reload_pending_with_nonzero_clear = false;
-            if assert_on_reload
-                && self.irq_enabled
+            if self.irq_enabled
                 && self.irq_counter == 0
                 && matches!(self.revision, Mmc3Revision::Sharp)
             {
@@ -706,12 +689,8 @@ impl Mapper for Mmc3 {
                 if addr & 1 == 0 {
                     self.irq_reload_value = value;
                 } else {
-                    // $C001: latch "was the counter non-zero at the moment
-                    // of this clear?" — consumed by `clock_irq` on the
-                    // next filtered A12 rise to decide whether the
-                    // reload-pending path asserts (Sharp).  See the field
-                    // doc on `irq_reload_pending_with_nonzero_clear`.
-                    self.irq_reload_pending_with_nonzero_clear = self.irq_counter != 0;
+                    // $C001: clear the counter; the next filtered A12 rise
+                    // reloads it (`clock_irq` path 1).
                     self.irq_counter = 0;
                     self.irq_reload_pending = true;
                     // MC-ACC: "Writing to $C001 resets pulse counter".
@@ -722,13 +701,9 @@ impl Mapper for Mmc3 {
                 if addr & 1 == 0 {
                     self.irq_enabled = false;
                     self.irq_pending_line = false;
-                    // R1/R2 closure attempt: an ack/disable write cancels an
-                    // in-flight deferred assertion too — it models the same
-                    // physical IRQ line the synchronous path clears.
-                    #[cfg(feature = "mmc3-m2-phase-irq")]
-                    {
-                        self.irq_assert_pending_next_cycle = false;
-                    }
+                    // The ack/disable also cancels an assertion still in
+                    // flight: it is the same IRQ line, one cycle earlier.
+                    self.irq_assert_pending_next_cycle = false;
                 } else {
                     self.irq_enabled = true;
                 }
@@ -803,28 +778,14 @@ impl Mapper for Mmc3 {
         // Track the M2-cycles-since-last-fall filter.  A rising edge that
         // arrives < 3 CPU cycles after the prior fall is filtered.
         //
-        // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`,
-        // default-off): with the feature OFF, `sub_dot` stays unused (see
-        // the `let _ = sub_dot;` below) and this is byte-identical to the
-        // pre-attempt behavior (synchronous assertion regardless of
-        // phase). With the feature ON — and paired with
-        // `rustynes-core/mmc3-m2-phase-irq`, which is what actually makes
-        // `sub_dot` carry real M2-phase data on the live R1 scheduler path
-        // instead of an almost-always-zero call-local counter — a
-        // qualifying rise seen during the POST-access (M2-high, φ2,
-        // `sub_dot >= 2`) half of the cycle defers the `irq_pending_line`
-        // assertion to the NEXT `notify_cpu_cycle` boundary; a rise during
-        // the PRE-access (M2-low, φ1, `sub_dot < 2`) half asserts
-        // immediately, matching the unconditional behavior. See the field
-        // doc on `irq_assert_pending_next_cycle` and
-        // `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
-        // `sub_dot` is consumed by the `mmc3-m2-phase-irq` deferral AND by the
-        // `mmc3-a12-phase-probe` observational tally below; suppress the unused
-        // binding only when NEITHER feature is enabled (the default build).
-        #[cfg(all(
-            not(feature = "mmc3-m2-phase-irq"),
-            not(feature = "mmc3-a12-phase-probe")
-        ))]
+        //
+        // `sub_dot` (the M2 half of the CPU cycle the rise landed in) is read
+        // only by the `mmc3-a12-phase-probe` tally below. Until v2.9.9 the
+        // `mmc3-m2-phase-irq` experiment also used it to defer M2-high rises.
+        // The deferral that replaced it (`irq_assert_pending_next_cycle`)
+        // needs no phase: the bus's order gives it the same split (see that
+        // field's doc and ADR 0002's 2026-10-05 correction).
+        #[cfg(not(feature = "mmc3-a12-phase-probe"))]
         let _ = sub_dot;
         if self.variant == Mmc3Variant::McAcc {
             // Falling edges through the divide-by-8 prescaler; the counter
@@ -874,18 +835,9 @@ impl Mapper for Mmc3 {
                             self.probe.irq_clock_pre += 1;
                         }
                     }
-                    #[cfg(feature = "mmc3-m2-phase-irq")]
-                    {
-                        if sub_dot >= 2 {
-                            self.irq_assert_pending_next_cycle = true;
-                        } else {
-                            self.irq_pending_line = true;
-                        }
-                    }
-                    #[cfg(not(feature = "mmc3-m2-phase-irq"))]
-                    {
-                        self.irq_pending_line = true;
-                    }
+                    // Seen by the CPU from the next cycle on; see the field
+                    // doc on `irq_assert_pending_next_cycle`.
+                    self.irq_assert_pending_next_cycle = true;
                 }
             }
         } else if self.last_a12 && !level {
@@ -897,7 +849,6 @@ impl Mapper for Mmc3 {
 
     fn notify_cpu_cycle(&mut self) {
         self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
-        #[cfg(feature = "mmc3-m2-phase-irq")]
         if self.irq_assert_pending_next_cycle {
             self.irq_assert_pending_next_cycle = false;
             self.irq_pending_line = true;
@@ -990,7 +941,7 @@ impl Mapper for Mmc3 {
         out.push(self.irq_counter);
         out.push(self.irq_reload_value);
         out.push(u8::from(self.irq_reload_pending));
-        out.push(u8::from(self.irq_reload_pending_with_nonzero_clear));
+        out.push(u8::from(self.irq_assert_pending_next_cycle));
         out.push(u8::from(self.irq_enabled));
         out.push(u8::from(self.irq_pending_line));
         out.push(u8::from(self.last_a12));
@@ -1016,8 +967,10 @@ impl Mapper for Mmc3 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_part = if self.chr_is_ram { self.chr.len() } else { 0 };
         // Tagged scalars laid out below. Only the current version is read
-        // (v2.9.8, ADR 0042): v1 (no `irq_reload_pending_with_nonzero_clear`)
-        // and v2 (no three-byte tail) used to load with defaults.
+        // (v2.9.8, ADR 0042): v1 and v2 used to load with defaults. v3
+        // (v2.9.8) is refused too: its byte 19 was the retired
+        // `irq_reload_pending_with_nonzero_clear` latch, which v4 replaces
+        // with `irq_assert_pending_next_cycle` (T-ORACLE-001).
         if data.is_empty() {
             return Err(MapperError::Truncated {
                 expected: 1,
@@ -1061,7 +1014,7 @@ impl Mapper for Mmc3 {
         self.irq_reload_value = data[17];
         self.irq_reload_pending = data[18] != 0;
         let mut cur = 19usize;
-        self.irq_reload_pending_with_nonzero_clear = data[cur] != 0;
+        self.irq_assert_pending_next_cycle = data[cur] != 0;
         cur += 1;
         self.irq_enabled = data[cur] != 0;
         cur += 1;
@@ -1239,7 +1192,9 @@ mod tests {
             }
             m.notify_a12(true);
         }
-        // First edge: reload to 3.  Edges 2,3,4: decrement to 2,1,0 (assert).
+        // First edge: reload to 3.  Edges 2,3,4: decrement to 2,1,0 (assert),
+        // visible from the next CPU cycle.
+        m.notify_cpu_cycle();
         assert!(m.irq_pending());
     }
 
@@ -1289,14 +1244,16 @@ mod tests {
     }
 
     /// Helper: emit one filter-accepted A12 toggle (low ≥ 3 M2 cycles
-    /// then high).  Used by the Sharp/NEC reload-to-zero unit tests
-    /// below to drive the counter through deterministic transitions.
+    /// then high), then run the CPU cycle after it, from which an IRQ the
+    /// rise asserted is visible (`irq_assert_pending_next_cycle`). Used by
+    /// the Sharp/NEC reload-to-zero unit tests below.
     fn a12_rise<F: Mapper>(m: &mut F) {
         m.notify_a12(false);
         for _ in 0..4 {
             m.notify_cpu_cycle();
         }
         m.notify_a12(true);
+        m.notify_cpu_cycle();
     }
 
     /// Sharp asserts IRQ when the counter is decremented to 0 via a
@@ -1334,13 +1291,9 @@ mod tests {
     /// This is the path `mmc3_test_2/5-MMC3.nes` ("set IRQ every clock
     /// when reload is 0") exercises in the steady state.
     ///
-    /// Setup: $C001 clears a **non-zero** counter — that's the
-    /// discriminator (see `irq_reload_pending_with_nonzero_clear`).  Real
-    /// silicon: after a non-zero-to-zero clear, the next A12 rise
-    /// reloads the counter, and if the reload landed at 0, Sharp
-    /// asserts.  The follow-up A12 rise (after IRQ is acked) also
-    /// asserts on Sharp because the natural was_zero path keeps
-    /// reloading to 0.
+    /// Setup: `$C001` clears a non-zero counter; the next A12 rise reloads
+    /// it to 0 and Sharp asserts. Whether the cleared counter was non-zero
+    /// does not matter (see the next test); before v2.9.9 it did.
     #[test]
     fn sharp_asserts_on_reload_to_zero_after_nonzero_clear() {
         let mut m = fresh(8, 8);
@@ -1366,29 +1319,29 @@ mod tests {
         );
     }
 
-    /// `$C001` written while the counter was already 0 is a "no-op
-    /// clear" — the next A12 rise reloads silently regardless of
-    /// `reload_value`.  This is the cycle-precise discriminator that
-    /// makes `mmc3_test_2/4-scanline_timing` sub-test #2 pass without
-    /// regressing `mmc3_test_2/2-details` sub-test #7.
+    /// The page's rule has no "was the cleared counter non-zero" condition:
+    /// a `$C001` written while the counter is already 0 still reloads on the
+    /// next rise, and a reload to 0 with IRQs enabled asserts on Sharp.
+    ///
+    /// Until v2.9.9 this test pinned the opposite (a "no-op clear" that
+    /// reloaded silently), which existed only to pass `4-scanline_timing`
+    /// sub-test 2 and raised that test's IRQ a scanline late
+    /// (T-ORACLE-001). The IRQ output deferral passes sub-test 2 under
+    /// the page's rule.
     #[test]
-    fn sharp_silent_on_reload_after_zero_to_zero_clear() {
+    fn sharp_asserts_on_reload_to_zero_after_zero_to_zero_clear() {
         let mut m = fresh(8, 8);
-        // Counter is 0 from start-up (`fresh`).  $C001 writes here are
-        // zero-to-zero clears.
         m.cpu_write(0xC000, 0);
-        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xC001, 0); // counter already 0
         m.cpu_write(0xE001, 0);
         a12_rise(&mut m);
         assert_eq!(m.irq_counter, 0);
         assert!(
-            !m.irq_pending(),
-            "zero-to-zero $C001 clear must reload silently on the first A12 rise"
+            m.irq_pending(),
+            "a reload to 0 asserts on Sharp whatever the cleared counter held"
         );
-        // The follow-up A12 rise (now via the natural was_zero path with
-        // no pending reload) DOES assert on Sharp — this is the same path
-        // that fires the IRQ on scanline 0 in the failing-mode of
-        // `mmc3_test_2/4-scanline_timing` sub-test #2.
+        m.cpu_write(0xE000, 0);
+        m.cpu_write(0xE001, 0);
         a12_rise(&mut m);
         assert!(
             m.irq_pending(),
@@ -1456,6 +1409,7 @@ mod tests {
                 m.notify_cpu_cycle();
             }
             m.notify_a12(true);
+            m.notify_cpu_cycle();
             m.irq_pending()
         }
 
@@ -1584,107 +1538,117 @@ mod tests {
         assert_eq!(other.irq_enabled, m.irq_enabled);
     }
 
-    // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`): direct
-    // mechanism-level unit tests for the phase-conditional IRQ-visibility
-    // deferral, independent of the full ROM run. These prove the plumbing
-    // actually fires (a qualifying M2-high rise is genuinely deferred one
-    // `notify_cpu_cycle`, an M2-low rise is not) — the ROM-level probes in
-    // `crates/rustynes-test-harness/tests/m004_mmc3.rs` only prove whether the
-    // deferral moves the target bracket, not whether it engaged at all.
-    #[cfg(feature = "mmc3-m2-phase-irq")]
+    // T-ORACLE-001 (v2.9.9): a clocking A12 rise raises the IRQ line at the
+    // first `notify_cpu_cycle` after it, whatever `sub_dot` the rise carries.
+    // Which CPU cycle that is comes from the bus's order (see the field doc on
+    // `irq_assert_pending_next_cycle`): the next test pins both cases.
+
     #[test]
-    fn m2_high_rise_defers_irq_pending_one_cycle() {
-        let mut m = fresh(8, 8);
-        m.cpu_write(0xC000, 1); // reload = 1
-        m.cpu_write(0xC001, 0); // reload pending
-        m.cpu_write(0xE001, 0); // IRQ enabled
-        // First (silent) reload via a low-sub-dot (M2-low) rise so the
-        // counter is primed to 1 before the edge under test.
-        m.notify_a12_at_sub_dot(false, 0);
-        for _ in 0..4 {
+    fn irq_becomes_visible_one_cpu_cycle_after_the_rise() {
+        for sub_dot in [0u8, 2] {
+            let mut m = fresh(8, 8);
+            m.cpu_write(0xC000, 1);
+            m.cpu_write(0xC001, 0);
+            m.cpu_write(0xE001, 0);
+            a12_rise(&mut m); // reload to 1, silent
+            m.notify_a12_at_sub_dot(false, 0);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
+            }
+            m.notify_a12_at_sub_dot(true, sub_dot);
+            assert_eq!(m.irq_counter, 0, "the counter itself moves at the rise");
+            assert!(
+                !m.irq_pending(),
+                "sub_dot {sub_dot}: not visible in the rise's own cycle"
+            );
             m.notify_cpu_cycle();
+            assert!(
+                m.irq_pending(),
+                "sub_dot {sub_dot}: visible from the next cycle"
+            );
         }
-        m.notify_a12_at_sub_dot(true, 0);
-        assert_eq!(m.irq_counter, 1, "first filtered rise reloads to 1");
-        assert!(!m.irq_pending(), "reload-to-1 must not assert");
-
-        // Second filtered rise, decrementing 1 -> 0 (asserts), delivered at
-        // sub_dot 2 (M2-high / post-access). The assertion must NOT be
-        // visible synchronously...
-        m.notify_a12_at_sub_dot(false, 0);
-        for _ in 0..4 {
-            m.notify_cpu_cycle();
-        }
-        m.notify_a12_at_sub_dot(true, 2);
-        assert_eq!(m.irq_counter, 0, "decrement to 0 happens synchronously");
-        assert!(
-            !m.irq_pending(),
-            "M2-high rise must defer irq_pending visibility by one cycle"
-        );
-
-        // ...until the NEXT notify_cpu_cycle boundary promotes it.
-        m.notify_cpu_cycle();
-        assert!(
-            m.irq_pending(),
-            "deferred M2-high assertion must become visible after one \
-             notify_cpu_cycle"
-        );
     }
 
-    #[cfg(feature = "mmc3-m2-phase-irq")]
+    /// #583 review (Copilot): the deferral is "until the next per-cycle
+    /// hook", not "one cycle for every rise". In the bus, `start_cycle` runs
+    /// the pre-access PPU catch-up and then the hook, so a rise caught up
+    /// there is followed by its own cycle's hook and raised in that cycle,
+    /// while a rise caught up after the access waits for the next cycle's.
+    /// Both orders, as the mapper sees them.
     #[test]
-    fn m2_low_rise_asserts_irq_pending_synchronously() {
+    fn irq_line_is_raised_at_the_first_cpu_cycle_hook_after_the_rise() {
+        let armed = || {
+            let mut m = fresh(8, 8);
+            m.cpu_write(0xC000, 1);
+            m.cpu_write(0xC001, 0);
+            m.cpu_write(0xE001, 0);
+            a12_rise(&mut m); // reload to 1, silent
+            m.notify_a12(false);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
+            }
+            m
+        };
+        // Pre-access: the rise, then this cycle's hook in `cpu_clock`.
+        let mut pre = armed();
+        pre.notify_a12(true);
+        pre.notify_cpu_cycle();
+        assert!(
+            pre.irq_pending(),
+            "a pre-access rise is raised in its own cycle"
+        );
+        // Post-access: this cycle's hook already ran; the rise comes after it
+        // and is raised only by the next cycle's.
+        let mut post = armed();
+        post.notify_cpu_cycle();
+        post.notify_a12(true);
+        assert!(
+            !post.irq_pending(),
+            "a post-access rise is not raised in its own cycle"
+        );
+        post.notify_cpu_cycle();
+        assert!(post.irq_pending(), "it is raised from the next cycle on");
+    }
+
+    #[test]
+    fn e000_ack_cancels_an_assertion_in_flight() {
         let mut m = fresh(8, 8);
         m.cpu_write(0xC000, 1);
         m.cpu_write(0xC001, 0);
         m.cpu_write(0xE001, 0);
-        m.notify_a12_at_sub_dot(false, 0);
+        a12_rise(&mut m);
+        m.notify_a12(false);
         for _ in 0..4 {
             m.notify_cpu_cycle();
         }
-        m.notify_a12_at_sub_dot(true, 0);
-        assert_eq!(m.irq_counter, 1);
+        m.notify_a12(true); // assertion queued
         assert!(!m.irq_pending());
-
-        // Decrement 1 -> 0 delivered at sub_dot 0 (M2-low / pre-access):
-        // asserts SYNCHRONOUSLY, matching the unconditional (feature-off)
-        // behavior — no notify_cpu_cycle needed.
-        m.notify_a12_at_sub_dot(false, 0);
-        for _ in 0..4 {
-            m.notify_cpu_cycle();
-        }
-        m.notify_a12_at_sub_dot(true, 0);
-        assert_eq!(m.irq_counter, 0);
+        m.cpu_write(0xE000, 0); // ack/disable before it lands
+        m.notify_cpu_cycle();
         assert!(
-            m.irq_pending(),
-            "M2-low rise must assert irq_pending synchronously"
+            !m.irq_pending(),
+            "an ack write must cancel an in-flight assertion"
         );
     }
 
-    #[cfg(feature = "mmc3-m2-phase-irq")]
     #[test]
-    fn e000_ack_cancels_deferred_m2_high_assertion() {
+    fn assertion_in_flight_survives_a_save_state_round_trip() {
         let mut m = fresh(8, 8);
         m.cpu_write(0xC000, 1);
         m.cpu_write(0xC001, 0);
         m.cpu_write(0xE001, 0);
-        m.notify_a12_at_sub_dot(false, 0);
+        a12_rise(&mut m);
+        m.notify_a12(false);
         for _ in 0..4 {
             m.notify_cpu_cycle();
         }
-        m.notify_a12_at_sub_dot(true, 0);
-        m.notify_a12_at_sub_dot(false, 0);
-        for _ in 0..4 {
-            m.notify_cpu_cycle();
-        }
-        m.notify_a12_at_sub_dot(true, 2); // deferred assertion queued
-        assert!(!m.irq_pending());
-        m.cpu_write(0xE000, 0); // ack/disable before the deferred cycle lands
-        m.notify_cpu_cycle();
-        assert!(
-            !m.irq_pending(),
-            "an ack write must cancel an in-flight deferred assertion"
-        );
+        m.notify_a12(true);
+        let state = m.save_state();
+        let mut other = fresh(8, 8);
+        other.load_state(&state).unwrap();
+        assert!(!other.irq_pending());
+        other.notify_cpu_cycle();
+        assert!(other.irq_pending(), "the queued assertion was restored");
     }
 
     // ---- v2.9.6: the NES 2.0 submapper variants --------------------------

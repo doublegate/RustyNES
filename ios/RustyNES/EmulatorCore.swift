@@ -157,6 +157,12 @@ final class EmulatorCore {
     /// Metadata for the loaded cartridge.
     let info: RomInfo
 
+    /// v2.9.9 (re-audit NF-21) — the loaded game's persistent identity, the core's
+    /// `rom_sha256` as lowercase hex (the bytes after the iNES header, of the
+    /// unpacked image). The key the library, battery saves, save states, per-game
+    /// overrides and RA progress use; see `RomKeyMigration`.
+    let romIdentity: String
+
     /// Construct from a ROM buffer. Opens the audio sink first so the core can
     /// synthesise for the device's real sample rate.
     ///
@@ -182,6 +188,7 @@ final class EmulatorCore {
         self.audio = sink
         self.sampleRate = effectiveRate
         self.info = controller.info()
+        self.romIdentity = controller.romIdentity()
     }
 
     // MARK: - Surface lifecycle

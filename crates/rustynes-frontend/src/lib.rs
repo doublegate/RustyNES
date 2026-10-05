@@ -39,6 +39,13 @@ pub mod battery_policy;
 /// `web_battery` (an IndexedDB record, v2.9.7).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod battery_save;
+/// v2.9.9 (NF-11) — which timeline-changing actions a running movie, netplay
+/// session or RA hardcore session refuses.
+///
+/// One pure rule asked by every dispatch site (menu, hotkey, Save-States
+/// manager, browser grid), so a new route to Reset, Power Cycle, a disk swap or
+/// a state load cannot bypass the lockout the menu shows.
+pub mod session_policy;
 /// v2.9.7 "Tandem" — cartridge battery RAM in the browser.
 ///
 /// The state machine (restore gate, write policy, in-flight ordering) behind

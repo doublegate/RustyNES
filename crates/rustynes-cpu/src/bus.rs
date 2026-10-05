@@ -118,7 +118,8 @@ pub trait Bus {
     /// `Cpu::start_cycle`, before the bus access — mirrors Mesen's
     /// `StartCpuCycle`), `true` for the post-access half (called from
     /// `Cpu::end_cycle`, after the bus access — mirrors `EndCpuCycle`).
-    /// R1c-3 (`mmc3-m2-phase-irq`, default-off experiment): `SystemBus`
+    /// R1c-3 (v2.0.0's `mmc3-m2-phase-irq`, removed at v2.9.9; the
+    /// `mmc3-a12-phase-probe` feature still uses it): `SystemBus`
     /// forwards this as the real M2-phase label on the `PpuBusAdapter` it
     /// constructs, replacing the previously call-local (and therefore
     /// almost-always-zero) `sub_dot` counter with a value that actually
@@ -180,6 +181,8 @@ pub trait Bus {
 
     /// W3-Stage-1 (`mc-r1-dma-unified`): ONE cycle of the unified DMC/OAM DMA
     /// engine — a direct port of the `TriCNES` `_6502` per-cycle DMA dispatch
+    /// (recorded as a derivation in the `// Provenance:` header of
+    /// `rustynes-core/src/bus.rs`, where the engine lives; v2.9.9, NC-17)
     /// table (the SINGLE driver standalone DMC, standalone OAM, and the
     /// overlap all ride), at FLOOR parity for this stage. `halted_addr` is
     /// the CPU read the DMA is preempting (the parked 6502 address bus).

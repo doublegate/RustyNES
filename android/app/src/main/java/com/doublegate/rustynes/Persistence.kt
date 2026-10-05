@@ -1,7 +1,10 @@
 package com.doublegate.rustynes
 
 import android.content.Context
+import android.util.Log
 import androidx.core.util.AtomicFile
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.OutputStream
 import java.security.MessageDigest
@@ -48,7 +51,12 @@ fun writeAtomic(file: File, bytes: ByteArray) = writeAtomic(file) { it.write(byt
 /** A recently-opened ROM: a persistable SAF content URI + its display name. */
 data class RecentRom(val uri: String, val name: String)
 
-/** Lowercase hex SHA-256 of the ROM bytes — the per-ROM save-state directory key. */
+/**
+ * Lowercase hex SHA-256 of the bytes as given. Until v2.9.9 this was every per-game
+ * store's key (the whole file, header and any `.zip` container included); it is now
+ * the legacy key [RomKeyMigration] moves stores from. The key is the core's
+ * identity, `NesController.romIdentity()` / `romIdentityOfFile`.
+ */
 fun sha256Hex(bytes: ByteArray): String =
     MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
@@ -200,5 +208,136 @@ object FdsBios {
         if (bytes.size != SIZE) return false
         writeAtomic(file(ctx), bytes)
         return true
+    }
+}
+
+/**
+ * v2.9.9 (re-audit NF-21) — the one-time move of a game's stores from the key the
+ * app used until v2.9.9 to the core's ROM identity.
+ *
+ * Until v2.9.9 every per-game store here was keyed by [sha256Hex] of the bytes as
+ * read: the whole file, header included, and for a `.zip` the ARCHIVE. v2.9.8 moved
+ * the core's identity (`Nes::rom_sha256`, the key the desktop gives slots, `.sav`
+ * and cheats, and what movies and netplay record) to the bytes after the 16-byte
+ * iNES header, of the unpacked image. So on Android two dumps differing only in
+ * their header did not share saves, a re-zipped ROM lost them, and no key matched
+ * the desktop's. The app now keys by `NesController.romIdentity()` and, the first
+ * time a game is opened under it, moves what the old key held.
+ *
+ * The rules, pinned by `RomKeyMigrationTest`:
+ *
+ * - a store moves only into an EMPTY new key; one already there is never
+ *   overwritten, and the old copy is then left where it was (an orphan, not a loss);
+ * - a file is copied with [writeAtomic], read back and compared, and only then is
+ *   the original deleted, so a failure at any point leaves the user's copy;
+ * - a store counts as moved only once its original is gone; a run that copied a
+ *   file but could not delete the original finishes the move on the next run,
+ *   which finds the identical copy already in place (every open runs this, with
+ *   the legacy key recomputed from the file, so a partial run is always retried);
+ * - equal keys (an FDS disk, an NSF or a UNIF board opened unzipped, whose
+ *   identity IS the whole image) touch nothing, and a second run finds nothing.
+ *
+ * Moved: `battery/<k>.sav`, every file in `states/<k>/` (auto-resume, the slots and
+ * their thumbnails), `ra-progress/<k>.rap`, `boxart/<k>.png`, the `game_config.json`
+ * entry and the `library.json` entry (its user fields included). NOT moved: Play
+ * Games cloud snapshots (`rns.<k>.<slot>`, remote), which the next push re-creates
+ * under the new key.
+ */
+object RomKeyMigration {
+    /**
+     * Logcat tag for migration failures (#583 review, agy). Every store's move is
+     * wrapped in `runCatching` so one bad file cannot stop the others, and until
+     * this tag the caught exception was dropped with the result, so a failure the
+     * next launch retries left no trace of why. iOS logs the same failures with
+     * `NSLog`.
+     */
+    private const val TAG = "RomKeyMigration"
+
+    /**
+     * Move every store keyed by [legacy] under [filesDir] to [identity]. Returns how
+     * many stores moved (a file, or a JSON entry). Never throws for a store that
+     * cannot be moved; that store stays under [legacy].
+     */
+    fun migrate(filesDir: File, legacy: String, identity: String): Int {
+        if (legacy.isEmpty() || identity.isEmpty() || legacy == identity) return 0
+        var moved = 0
+        moved += moveFile(File(filesDir, "battery/$legacy.sav"), File(filesDir, "battery/$identity.sav"))
+        moved += moveDir(File(filesDir, "states/$legacy"), File(filesDir, "states/$identity"))
+        moved += moveFile(
+            File(filesDir, "ra-progress/$legacy.rap"),
+            File(filesDir, "ra-progress/$identity.rap"),
+        )
+        moved += moveFile(File(filesDir, "boxart/$legacy.png"), File(filesDir, "boxart/$identity.png"))
+        moved += moveConfigKey(File(filesDir, "game_config.json"), legacy, identity)
+        moved += moveLibraryEntry(File(filesDir, "library.json"), legacy, identity)
+        return moved
+    }
+
+    /**
+     * Copy [src] to an absent [dst], verify it, then delete [src]. 1 only when [src]
+     * is gone and [dst] holds its bytes; 0 for anything else, [src] then staying.
+     *
+     * A [dst] that already holds exactly [src]'s bytes is a move an earlier run left
+     * half done: the copy was written and verified but `File.delete` failed (its
+     * result used to be ignored, so that run still counted the file as moved). The
+     * leftover is a duplicate, not the only copy, so this run deletes it and counts
+     * the move then. Without that step the second run saw [dst] taken and left the
+     * duplicate forever. A [dst] holding DIFFERENT bytes is the never-overwrite rule:
+     * both stay. Every path is therefore safe to repeat on every launch.
+     */
+    private fun moveFile(src: File, dst: File): Int {
+        if (!src.isFile) return 0
+        return runCatching {
+            val bytes = src.readBytes()
+            if (dst.exists()) {
+                if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) return 0
+            } else {
+                writeAtomic(dst, bytes)
+                check(dst.readBytes().contentEquals(bytes)) { "copy of $src differs" }
+            }
+            if (src.delete()) 1 else 0
+        }.onFailure { Log.w(TAG, "moving $src to $dst failed", it) }.getOrDefault(0)
+    }
+
+    /**
+     * [moveFile] for each file in [src]; removes [src] once it is empty. Not
+     * `deleteRecursively`: a file kept by the never-overwrite rule, or one whose
+     * move failed, is still the user's only copy, so the directory goes only when
+     * nothing is left in it (a failed removal of the empty directory is retried by
+     * the next run, which finds it empty again).
+     */
+    private fun moveDir(src: File, dst: File): Int {
+        val files = src.listFiles()?.filter { it.isFile } ?: return 0
+        val moved = files.sumOf { moveFile(it, File(dst, it.name)) }
+        if (src.listFiles()?.isEmpty() == true) src.delete()
+        return moved
+    }
+
+    /** Re-key the `game_config.json` object entry, if the new key is free. */
+    private fun moveConfigKey(file: File, legacy: String, identity: String): Int {
+        if (!file.isFile) return 0
+        return runCatching {
+            val all = JSONObject(file.readText())
+            if (!all.has(legacy) || all.has(identity)) return 0
+            all.put(identity, all.get(legacy))
+            all.remove(legacy)
+            writeAtomic(file, all.toString().toByteArray())
+            1
+        }.onFailure { Log.w(TAG, "re-keying $legacy in $file failed", it) }.getOrDefault(0)
+    }
+
+    /** Re-key the `library.json` entry, keeping its user fields, if the new key is free. */
+    private fun moveLibraryEntry(file: File, legacy: String, identity: String): Int {
+        if (!file.isFile) return 0
+        return runCatching {
+            val arr = JSONArray(file.readText())
+            val entries = (0 until arr.length()).map { GameEntry.fromJson(arr.getJSONObject(it)) }
+            val idx = entries.indexOfFirst { it.sha == legacy }
+            if (idx < 0 || entries.any { it.sha == identity }) return 0
+            val out = JSONArray()
+            entries.forEachIndexed { i, e -> out.put((if (i == idx) e.copy(sha = identity) else e).toJson()) }
+            writeAtomic(file, out.toString().toByteArray())
+            1
+        }.onFailure { Log.w(TAG, "re-keying library entry $legacy in $file failed", it) }.getOrDefault(0)
     }
 }
