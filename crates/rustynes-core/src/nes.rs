@@ -4564,6 +4564,39 @@ mod tests {
         );
     }
 
+    /// v3.0.0: a state from another release fails a section's version
+    /// check, not the container's (v2.9.9's states carry PPU section 11,
+    /// where v3.0.0 reads 12), and the message must say which way the
+    /// versions differ. Until v3.0.0 it gave only the two numbers, which
+    /// players read as a damaged file.
+    #[test]
+    fn a_state_from_another_release_says_older_or_newer() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        nes.run_frame();
+        let current = nes.snapshot();
+        let (_h, body_off) = save_state::parse_header(&current).unwrap();
+        for (delta, words) in [(-1i16, "older release"), (1, "newer release")] {
+            let mut patched = current[..body_off].to_vec();
+            for s in save_state::SectionIter::new(&current[body_off..]) {
+                let s = s.unwrap();
+                let version = if s.tag == save_state::tag::PPU {
+                    u8::try_from(i16::from(s.version) + delta).unwrap()
+                } else {
+                    s.version
+                };
+                save_state::write_section(&mut patched, s.tag, version, s.body);
+            }
+            let err = nes.restore(&patched).unwrap_err();
+            let text = format!("{err}");
+            assert!(
+                matches!(err, SnapshotError::VersionMismatch { ref tag, .. } if tag == "PPU "),
+                "expected a PPU VersionMismatch, got {err:?}"
+            );
+            assert!(text.contains(words), "{text}");
+        }
+    }
+
     /// v2.7.4 (frontend audit MOB-08): a load that fails leaves the machine as
     /// it was. `restore_inner` applies the bus sections first and checks the
     /// CPU section after, so on v2.7.3 a blob rejected at the CPU stage left

@@ -39,7 +39,7 @@
 
 use rustynes_core::{Buttons, Nes};
 
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
 use crate::session::MAX_PLAYERS;
 use crate::transport::Transport;
 
@@ -313,12 +313,14 @@ impl<T: Transport> SpectatorSession<T> {
             match msg {
                 NetMessage::Sync { magic, identity } => {
                     // A foreign magic is a different protocol, ignored like any
-                    // stray datagram; a matching magic with another identity is
-                    // the players' stream for another machine, and terminal.
-                    if magic == NetMessage::SYNC_MAGIC && self.mismatch.is_none() {
-                        match self.identity.check(&identity) {
-                            Ok(()) => self.synced = true,
-                            Err(why) => self.mismatch = Some(why),
+                    // stray datagram; our magic with another identity, or an
+                    // older RustyNES's magic (v3.0.0), is the players' stream
+                    // for another machine or emulator, and terminal.
+                    if self.mismatch.is_none() {
+                        match self.identity.check_sync(magic, &identity) {
+                            SyncVerdict::Ignore => {}
+                            SyncVerdict::Accept => self.synced = true,
+                            SyncVerdict::Refuse(why) => self.mismatch = Some(why),
                         }
                     }
                 }

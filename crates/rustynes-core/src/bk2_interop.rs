@@ -188,6 +188,7 @@ pub fn import_bk2(
     let meta = parse_header(header)?;
     let frames = parse_input_log(input_log)?;
     let movie = Movie {
+        epoch: crate::EMULATION_EPOCH,
         region: if meta.pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
         // v2.9.8 — the source format records no emulation options and no
@@ -559,6 +560,7 @@ mod tests {
     #[test]
     fn round_trip_power_on_ntsc() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),
@@ -592,6 +594,7 @@ mod tests {
     fn exact_bit_and_char_mapping() {
         // Only A set -> char index 7 pressed (the last column), others released.
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),
@@ -721,6 +724,7 @@ mod tests {
         assert!(meta.pal);
 
         let pal_movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Pal,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),
@@ -734,6 +738,7 @@ mod tests {
         assert!(out.header.lines().any(|l| l == "PAL 1"));
 
         let ntsc_movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             ..pal_movie
         };
@@ -833,6 +838,7 @@ mod tests {
     #[test]
     fn export_rejects_save_state_movie() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),

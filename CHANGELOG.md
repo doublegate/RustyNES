@@ -26,6 +26,33 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Movies and netplay record which emulator behaviour they expect (ADR
+  0045).**
+  - **The epoch:** `rustynes_core::EMULATION_EPOCH`, 1 at v3.0.0. It rises
+    whenever a change alters what the core produces from the same inputs.
+  - **Movies:** `.rnm` format 5 records it in the fixed header, and a movie
+    from another epoch is refused, naming both. **Every v2.9.9 movie (format 4)
+    is refused as too old; re-record it.** The too-old message no longer
+    claims such a movie lacks its options, which format 4 did record.
+  - **Netplay:** protocol 6 (magic `"RNE6"`) sends the epoch in the
+    handshake, checked before the ROM and the settings. A v2.9.9 or older peer
+    is now told apart and refused as "an older version of RustyNES" instead of
+    the handshake timing out with no reason. On the older peer's side it still
+    times out.
+- **A save state from another release says so.** v2.9.8 and v2.9.9 states fail
+  a section's version check (PPU 11, where v3.0.0 reads 12). The message now
+  says it was saved by an older (or newer) release, instead of giving two
+  numbers that read as a damaged file. Libretro, desktop and mobile all show
+  it.
+- **Rust API:** `Movie` is `#[non_exhaustive]` and gains `epoch`; build one
+  with `Movie::new`. `SessionIdentity` gains `epoch`, `IdentityMismatch`
+  gains `Emulator { ours, theirs }`, and `DisconnectReason`, `NetplayError`
+  and `MeshError` each gain an `EmulatorMismatch` variant, rendered by
+  `rustynes_netplay::emulator_mismatch_text`. `SessionIdentity::check_sync` is
+  the one handshake decision every site now makes.
+
 ### Fixed
 
 - **MMC3 interrupts with the background at `$1000` (T-MMC3-BG-A12).** Two
