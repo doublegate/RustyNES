@@ -159,15 +159,21 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
     write meets the sequencer's step, and the odd-frame scanline-0 sprite.
     It also lost a defect of its own: the frame sequencer stopped while a
     `$4017` reset was pending, which only blargg's `apu_test_9` and `_10`
-    can see.
+    can see. Review found a second: an inhibit write landing exactly on
+    frame-IRQ point A, B or C must clear last, as the emulator's per-cycle
+    output on placed stimuli shows, and the RTL let the IRQ set win. No ROM
+    in the corpus reaches that cycle, so four directed stimuli
+    (`apuirqwr076`-`079`) gate it.
   - New gates: `apu_test` 1-10 (bus), `mapper4mmc3irq065` (bus, now exact),
     and four AccuracyCoin checkpoint streams.
   - A NES 2.0 header naming a board variant the core does not build is
     refused with an OSD message; the bus-conflict variants load as the base
     board, a named inaccuracy (NR-14). The release checks read Quartus's
     suppressed-message files and gate stuck registers (NR-15, NR-16).
-  - The release-candidate bitstreams are compiled at fitter seed 8, from a
-    sweep of eight seeds of both builds at one build date (261004).
+  - The release-candidate bitstreams are compiled at fitter seed 6, from a
+    sweep of eight seeds of both builds at one build date (261005). A first
+    pair (seed 8, 261004) was withdrawn because the `$4017` fix above
+    changed the RTL after it; at 261005 seed 8 no longer closes on-die.
 
 ### Verification
 
@@ -185,11 +191,13 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   test fail again (mutants recorded in each commit body, all caught).
 - fmt, clippy for every feature set and both wasm builds, rustdoc, the
   `no_std` build, the cosim crate and markdownlint are clean.
-- The MiSTer core: on-die ladder 191 passed, 0 failed, 1 expected failure, off-die 192 / 0 / 1, each one
-  frozen-worktree run of the final sibling tree. Both builds were swept at
-  seeds 1-8 on one build date (261004); seed 8 is pinned, and two clean
-  compiles of each are byte-identical (on-die `687a6206...`, off-die
-  `c2871d19...`, a third on-die compile matching too). That pair ships.
+- The MiSTer core: on-die ladder 199 passed, 0 failed, 1 expected failure,
+  off-die 200 / 0 / 1, each one frozen-worktree run of the final sibling RTL.
+  Both builds were swept at seeds 1-8 on one build date (261005). Seed 6 is
+  pinned (on-die +0.474 / +0.092 ns, off-die +0.377 / +0.080 ns, SDRAM read
+  +0.451 / +1.183 ns), and two clean compiles of each are byte-identical
+  (on-die `10c2b2ce...`, off-die `909e91c2...`). The stuck-register and
+  suppressed-message checks pass on both. That pair ships.
   **No hardware has run any bitstream.**
 - The Android unit tests pass on the JVM; the iOS Swift and the mobile device
   behaviour (including the key migration, run-sheet rows M1-M7) are
