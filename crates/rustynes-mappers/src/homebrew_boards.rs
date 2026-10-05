@@ -824,10 +824,13 @@ impl Mapper for Gtrom111 {
                 got: data.len(),
             });
         }
-        let mut flash = vec![0u8; self.flash.len()];
-        decode_sector_diff(&mut flash, &self.original, &data[fixed..])
+        // v2.9.9 (libretro re-audit NL-15): straight into the live flash.
+        // `decode_sector_diff` checks the whole diff before its first write
+        // and leaves the buffer untouched when it refuses, so the scratch
+        // copy this used to decode into (512 KiB on the largest board, on
+        // every restore, which run-ahead makes every frame) bought nothing.
+        decode_sector_diff(&mut self.flash, &self.original, &data[fixed..])
             .ok_or_else(|| MapperError::Invalid("mapper 111 flash diff".into()))?;
-        self.flash.copy_from_slice(&flash);
         self.prg_bank = prg_bank;
         self.chr_bank = chr_bank;
         self.nt_bank = nt_bank;
@@ -1519,10 +1522,10 @@ impl Mapper for Unrom512M30 {
             });
         }
         if self.flashable() {
-            let mut flash = vec![0u8; self.prg_rom.len()];
-            decode_sector_diff(&mut flash, &self.original, &data[fixed..])
+            // v2.9.9 NL-15: decoded in place, as for mapper 111 above;
+            // a refused diff leaves the flash as it was.
+            decode_sector_diff(&mut self.prg_rom, &self.original, &data[fixed..])
                 .ok_or_else(|| MapperError::Invalid("mapper 30 flash diff".into()))?;
-            self.prg_rom.copy_from_slice(&flash);
         }
         self.chip = chip;
         // Mask the register indices to their live-invariant widths so a

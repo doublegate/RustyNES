@@ -143,6 +143,12 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
 
 ### Changed
 
+- **Restoring a state on a flash board is about 11% faster** (GTROM and
+  UNROM 512; NL-15). The restore decodes the flash diff straight into the
+  flash instead of into a full-size copy, and the result is the same bytes.
+  Run-ahead restores every frame, so this is per-frame work. The release's
+  other performance leads were measured and not adopted; `docs/performance.md`
+  records each one.
 - **Provenance records.** Four more files are recorded as derived, at the
   re-audit's prompt (NC-17): the APU's DMC-DMA state model (TriCNES, Mesen2),
   the frame counter's lazy `$4015` clear and PAL table (Mesen2), the Vs.

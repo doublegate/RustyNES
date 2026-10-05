@@ -104,8 +104,8 @@ Each fix below was pinned red first and its mutant caught; the commit bodies
 carry the evidence. The report's new findings are the nine NC-09 to NC-17. The
 NL-12 and NL-15 rows are cross-listed from the libretro ledger because they
 are core-scoped; they are not further core findings. NL-12 is fixed in the
-core; NL-15 is an open performance item, measured with the v2.9.9 performance
-work.
+core; NL-15, a performance item, is fixed after the v2.9.9 performance
+campaign measured it.
 
 | id | finding | verdict | evidence | release | commit |
 |---|---|---|---|---|---|
@@ -119,7 +119,7 @@ work.
 | NC-16 | `$4017` set the inhibit at once but cleared it at the timer reset | FIXED | Both directions on the write. Red: `write_4017_inhibit_clear_unmasks_on_the_write_cycle` (raised exactly when the lead is shorter than the reset delay) | v2.9.9 | `ba626e37` |
 | NC-17 | Seven core files cite reference-emulator source by file, function or line without a `// Provenance:` header | CLASSIFIED | The maintainer applied the proposal below (2026-10-04): headers, §1 rows and `NOTICE` for `apu.rs`, `frame_counter.rs`, `vs_dualsystem.rs`, `m019_namco163.rs`; cross-references in `cpu/bus.rs` and `apu/snapshot.rs`; UNROM 512 recorded as consulted (§3). Nothing deleted or reworded; `provenance_record_audit` passes | v2.9.9 | this commit |
 | NL-12 | (libretro report, core scope) A restore restarted the BLEP resampler cold: audio and later serialized state differed from a straight run | FIXED | APU snapshot v5 carries the synthesis state (135 bytes, fixed size). Red: `a_restore_resumes_the_exact_audio_stream` (APU) and libretro `a_mid_run_round_trip_serializes_like_a_straight_run` | v2.9.9 | `ba626e37` |
-| NL-15 | (libretro report, core scope) Flash boards allocate their whole flash on every restore | OPEN (perf) | Unmeasured; measured with the v2.9.9 performance work under the `ab_check.sh` rule before any change | — | — |
+| NL-15 | (libretro report, core scope) Flash boards allocate their whole flash on every restore | FIXED (perf) | Decoded in place: restores −11.1% to −12.0% on GTROM and UNROM 512, two `ab_check.sh` runs; byte-identical by construction (`docs/performance.md`, v2.9.9 campaign) | v2.9.9 | — |
 
 ### NC-17: classification (proposed, then applied by the maintainer 2026-10-04)
 

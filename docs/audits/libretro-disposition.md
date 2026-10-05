@@ -82,4 +82,4 @@ fact (the identity-first `vs_db` lookup, recorded by NL-14's comment fix).
 | NL-12 | A save/load round trip changed the console's later audio and serialized state | FIXED (core) | See the core ledger; ABI pin `a_mid_run_round_trip_serializes_like_a_straight_run` | v2.9.9 | `ba626e37` |
 | NL-13 | The Vs. coin pulse counted `retro_run` calls, not emulated frames | FIXED | Counted in the console's own frame number; survives run-ahead and rollback. Red: two ABI tests | v2.9.9 | `37bf3e7c` |
 | NL-14 | Stale scheduler and `vs_db` wording; two doc gaps | FIXED (docs) | Plus `libretro_source_names_no_retired_design` | v2.9.9 | `947d03fd` |
-| NL-15 | Flash boards allocate their whole flash on every restore | OPEN (perf) | Core scope; measured with the v2.9.9 performance work | — | — |
+| NL-15 | Flash boards allocate their whole flash on every restore | FIXED (perf) | Core scope. Decoded in place: restores −11.1% to −12.0% on GTROM and UNROM 512, two `ab_check.sh` runs; byte-identical by construction (`docs/performance.md`, v2.9.9 campaign) | v2.9.9 | — |
