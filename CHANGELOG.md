@@ -71,7 +71,9 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   the MiSTer core's registered output is, and the two are now bus-exact on the
   core's MMC3 IRQ gate. Both `4-scanline_timing` ROMs move from
   sub-test 3 to sub-test 9, `mmc3_test/5-MMC3` passes, and AccuracyCoin
-  (144/144), nestest and every other MMC3 ROM are unchanged.
+  (144/144), nestest and every other MMC3 test ROM are unchanged. Sixteen
+  local commercial MMC3 baselines moved, by their audio and at most three
+  cycles (Burai Fighter's attract sequence by its timing), each attributed.
 - **Audio across a save state.** Loading a state restarted the band-limited
   resampler cold: about 17 samples went missing, the level stepped (a click),
   and the filter state never matched a run that had not loaded. The state now

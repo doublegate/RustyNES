@@ -2113,14 +2113,14 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 
 ---
 
-## Accuracy residuals — CLOSED by the v1.0.0 master-clock core
+## Accuracy residuals — CLOSED by the v1.0.0 master-clock core, except one
 
 > **Authoritative scoreboard: `docs/accuracy-ledger.md`.** That ledger is the
 > single source of truth for the current per-suite pass counts and the full
 > `#[ignore]` catalogue. This section is the narrative companion; where the two
 > ever disagree, the ledger wins.
 
-**These are closed.** The master-clock-precise scheduler that the engine lineage
+**These are closed, except one:** the MMC3 `4-scanline_timing` sub-test 9 residual below is OPEN (v2.9.9). The master-clock-precise scheduler that the engine lineage
 called the "v2.0 refactor" shipped as the **default and only** core in RustyNES
 v1.0.0 — the `mc-r1-full-cpu` umbrella was promoted to default and the feature
 flag no longer exists. The subsequent v2.0.0 "Timebase" one-clock rewrite and the
@@ -2142,7 +2142,7 @@ v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default bui
 - **`cpu_interrupts_v2` 5/5 strict** — the `2-nmi_and_brk` / `3-nmi_and_irq` /
   `5-branch_delays_irq` sub-ROMs this section formerly listed as "deferred to
   v2.0" pass strictly on the default build. `ppu_sprites` 19/19.
-- **The MMC3 R1/R2 scanline-IRQ residual moved in v2.9.9** (T-ORACLE-001;
+- **OPEN: the MMC3 R1/R2 scanline-IRQ residual, moved in v2.9.9** (T-ORACLE-001;
   `docs/adr/0002-irq-timing-coordination.md`, 2026-10-03 update). What v2.1.0
   "Fathom" F5.0 closed as a structurally unreachable sample-point deficit was
   the oracle's own `$C001` reload discriminator raising the IRQ a scanline
@@ -2154,8 +2154,9 @@ v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default bui
 
 The ROM-level edge cases that remain `#[ignore]`'d are **documented-by-design or
 externally-fixture-blocked, not deferred to any future refactor** (see the full
-20-test catalogue in `docs/accuracy-ledger.md`): the MMC3 scanline-IRQ brackets +
-NEC-rev-B `mmc3_test_2/6` (by-design), the pre-master-clock mock-bus unit pins
+20-test catalogue in `docs/accuracy-ledger.md`): the NEC-rev-B `mmc3_test_2/6`
+(by-design; the MMC3 `4-scanline_timing` sub-test 9 residual above is the one
+OPEN item, not a by-design one), the pre-master-clock mock-bus unit pins
 (`apu_reset` / interrupt-dispatch / BG-shifter — superseded by AccuracyCoin 100%),
 the Vs. `DualSystem` GVS boots (need a combined dual-CPU dump), and the live-STUN /
 TURN + HD-pack fixture tests. Each carries a permanent or external-blocker
