@@ -205,9 +205,21 @@ fn bench_dual(c: &mut Criterion) {
 /// work, not the copy of flashed sectors.
 fn flash_board_rom(mapper: u8, battery: bool) -> Vec<u8> {
     const PRG: usize = 512 * 1024;
+    // Derived from `PRG` so the header cannot disagree with the image. The
+    // assert runs at compile time and turns a future `PRG` past the header's
+    // 255-bank field into a build error, so the cast below cannot truncate.
+    // (`u8::try_from` would say this directly, but `TryFrom` is not const.)
+    #[allow(clippy::cast_possible_truncation)] // guarded by the assert
+    const PRG_BANKS: u8 = {
+        assert!(
+            PRG / 0x4000 <= u8::MAX as usize,
+            "PRG exceeds the iNES bank count"
+        );
+        (PRG / 0x4000) as u8
+    };
     let mut rom = vec![0u8; 16 + PRG];
     rom[0..4].copy_from_slice(b"NES\x1a");
-    rom[4] = 32; // 32 x 16 KiB PRG
+    rom[4] = PRG_BANKS; // 32 x 16 KiB PRG
     rom[5] = 0; // CHR-RAM
     rom[6] = ((mapper & 0x0F) << 4) | if battery { 0x02 } else { 0 };
     rom[7] = mapper & 0xF0;
