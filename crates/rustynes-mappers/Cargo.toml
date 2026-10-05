@@ -28,8 +28,9 @@ test-roms = []
 # builds still load cleanly) but the channel oscillators are not advanced.
 mapper-audio = []
 # `mmc3-m2-phase-irq` (v2.0.0's phase-conditional MMC3 IRQ deferral) was
-# removed at v2.9.9: the one-cycle deferral is now unconditional (T-ORACLE-001,
-# `m004_mmc3.rs`, `irq_assert_pending_next_cycle`).
+# removed at v2.9.9: the IRQ output deferral to the next per-cycle hook replaced it
+# (T-ORACLE-001, `m004_mmc3.rs`, `irq_assert_pending_next_cycle`); the bus's order
+# gives it the same split without phase data (ADR 0002, 2026-10-05 correction).
 # v2.1.5 "Fathom" F5.0 MMC3 R1/R2 residual instrumentation study — a PURELY
 # OBSERVATIONAL probe (no behavior change) that answers the one open question
 # left in ADR 0002's F5.0 closure: on the four failing sub-tests, does any

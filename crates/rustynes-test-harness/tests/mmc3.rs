@@ -56,8 +56,9 @@
 //! when the `$C001` write had cleared a NON-zero counter, a condition the
 //! `NESdev` page does not have. It existed to pass sub-test 2, and it did so
 //! by raising the IRQ a scanline late, which is sub-test 3's failure. The
-//! page's rule plus a one-cycle deferral of the IRQ output (the DUT's
-//! register) is now the model:
+//! page's rule plus a deferral of the IRQ output to the next per-cycle hook
+//! (the DUT's register; ADR 0002's 2026-10-05 correction says which cycle
+//! that is) is now the model:
 //!
 //! - `mmc3_test_2/4` and `mmc3_test/4` move from sub-test 3 to sub-test 9
 //!   ("Scanline 0 IRQ should occur sooner when `$2000=$10`");

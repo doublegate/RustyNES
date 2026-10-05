@@ -540,7 +540,7 @@ impl Mmc3 {
     /// `irq_reload_pending_with_nonzero_clear`). The page has no such
     /// condition; the latch existed so `4-scanline_timing` sub-test 2 would
     /// pass, and it did so by raising the IRQ a scanline late, which is what
-    /// failed sub-test 3. With the one-cycle deferral at the caller
+    /// failed sub-test 3. With the IRQ output deferred to the next per-cycle hook
     /// (`irq_assert_pending_next_cycle`) the page's rule passes sub-test 2
     /// by itself. ADR 0002 keeps the history of the earlier attempts.
     fn clock_irq(&mut self) -> bool {
@@ -781,8 +781,10 @@ impl Mapper for Mmc3 {
         //
         // `sub_dot` (the M2 half of the CPU cycle the rise landed in) is read
         // only by the `mmc3-a12-phase-probe` tally below. Until v2.9.9 the
-        // `mmc3-m2-phase-irq` experiment also used it to defer M2-high rises;
-        // the deferral is now unconditional and needs no phase.
+        // `mmc3-m2-phase-irq` experiment also used it to defer M2-high rises.
+        // The deferral that replaced it (`irq_assert_pending_next_cycle`)
+        // needs no phase: the bus's order gives it the same split (see that
+        // field's doc and ADR 0002's 2026-10-05 correction).
         #[cfg(not(feature = "mmc3-a12-phase-probe"))]
         let _ = sub_dot;
         if self.variant == Mmc3Variant::McAcc {
@@ -1324,7 +1326,7 @@ mod tests {
     /// Until v2.9.9 this test pinned the opposite (a "no-op clear" that
     /// reloaded silently), which existed only to pass `4-scanline_timing`
     /// sub-test 2 and raised that test's IRQ a scanline late
-    /// (T-ORACLE-001). The one-cycle IRQ deferral passes sub-test 2 under
+    /// (T-ORACLE-001). The IRQ output deferral passes sub-test 2 under
     /// the page's rule.
     #[test]
     fn sharp_asserts_on_reload_to_zero_after_zero_to_zero_clear() {
