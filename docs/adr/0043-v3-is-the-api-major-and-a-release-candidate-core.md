@@ -87,7 +87,7 @@ The Consequence that "`to-dos/plans/v3.0.0-superstation-core-plan.md` is
 rewritten" is carried out as a split. The old file, with its bring-up gate, is
 renamed [`v3.x-hardware-verification-plan.md`](../../to-dos/plans/v3.x-hardware-verification-plan.md),
 the starting point for the hardware-verification release. v3.0.0's own plan
-is [`v3.0.0-plan.md`](../../to-dos/plans/v3.0.0-plan.md).
+is [`v3.0.0-cornerstone-plan.md`](../../to-dos/plans/v3.0.0-cornerstone-plan.md).
 
 The maintainer's decisions for v3.0.0 (2026-10-05):
 
