@@ -37,6 +37,8 @@
 //! frames are buffered but not yet shown, so the frontend can fast-forward to
 //! catch up when it falls behind.
 
+use std::collections::VecDeque;
+
 use rustynes_core::{Buttons, Nes};
 
 use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
@@ -56,6 +58,17 @@ use crate::transport::Transport;
 /// unbounded `Vec` resize (an OOM `DoS`). A frame beyond this horizon is simply
 /// dropped (mirrors the beta.4 movie-parser bounds hardening).
 const MAX_SPECTATOR_FRAME_LOOKAHEAD: u32 = 1024;
+
+/// v3.0.0 (T-SPECTATOR-HISTORY) — the most frames of input the spectator
+/// holds past the frame it shows next. The lookahead above bounds one
+/// packet's jump from the confirmed horizon, not how far that horizon walks:
+/// contiguous inputs keep confirming frames whether or not any are shown.
+/// 65,536 frames is about 18 minutes of play at about 5 bytes a frame, about
+/// 320 KiB, so a spectator that falls that far behind (a paused window) still
+/// catches up, while a peer streaming faster than real time can no longer
+/// grow the buffer without limit. A frame past it is dropped, as an
+/// out-of-window frame is.
+const MAX_SPECTATOR_BUFFER_FRAMES: u32 = 65_536;
 
 /// Configuration for a [`SpectatorSession`].
 #[derive(Clone, Copy, Debug)]
@@ -150,8 +163,13 @@ pub struct SpectatorSession<T: Transport> {
     /// see [`Self::mismatch`].
     mismatch: Option<IdentityMismatch>,
 
-    /// Per-frame confirmed input history, indexed by frame. Append-only.
-    history: Vec<FrameInputs>,
+    /// Per-frame input history for the frames not yet shown: the front is
+    /// [`Self::current_frame`], so frame `f` lives at `f - current_frame`.
+    /// Shown frames are released (v3.0.0, T-SPECTATOR-HISTORY; until then
+    /// this was an append-only `Vec` indexed by absolute frame, which grew
+    /// for the whole session), and its length never passes
+    /// [`MAX_SPECTATOR_BUFFER_FRAMES`].
+    history: VecDeque<FrameInputs>,
 }
 
 impl<T: Transport> SpectatorSession<T> {
@@ -182,7 +200,7 @@ impl<T: Transport> SpectatorSession<T> {
             last_confirmed_frame: None,
             synced: false,
             mismatch: None,
-            history: Vec::new(),
+            history: VecDeque::new(),
         }
     }
 
@@ -298,6 +316,9 @@ impl<T: Transport> SpectatorSession<T> {
         }
 
         self.apply_and_run(nes, frame);
+        // The frame is shown: release it (the front of `history` is always
+        // `current_frame`).
+        self.history.pop_front();
         self.current_frame += 1;
         SpectatorOutcome {
             produced_frame: true,
@@ -351,8 +372,20 @@ impl<T: Transport> SpectatorSession<T> {
                     if frame > horizon.saturating_add(MAX_SPECTATOR_FRAME_LOOKAHEAD) {
                         continue;
                     }
-                    self.ensure_frame(frame);
-                    let slot = &mut self.history[frame as usize];
+                    // v3.0.0 (T-SPECTATOR-HISTORY): and within the buffer.
+                    // The check above bounds one packet's jump from the
+                    // confirmed horizon, but the horizon itself walks forward
+                    // with every contiguous frame of input, shown or not.
+                    // Without this cap, a peer streaming faster than real
+                    // time, or a stream that never sends a matching `Sync`,
+                    // grew the history without limit. A frame already shown
+                    // is past, and dropped too.
+                    if frame < self.current_frame
+                        || frame - self.current_frame >= MAX_SPECTATOR_BUFFER_FRAMES
+                    {
+                        continue;
+                    }
+                    let slot = self.slot_mut(frame);
                     slot.inputs[player as usize] = input;
                     slot.arrived |= 1 << player;
                 }
@@ -384,27 +417,36 @@ impl<T: Transport> SpectatorSession<T> {
         }
     }
 
-    /// Grow the history so index `frame` is addressable.
-    fn ensure_frame(&mut self, frame: u32) {
-        let need = frame as usize + 1;
-        if self.history.len() < need {
-            self.history.resize(need, FrameInputs::default());
+    /// The history slot for `frame`, growing the buffer to reach it. The
+    /// caller has checked `current_frame <= frame` and that the distance is
+    /// under [`MAX_SPECTATOR_BUFFER_FRAMES`], so the growth is bounded.
+    fn slot_mut(&mut self, frame: u32) -> &mut FrameInputs {
+        let idx = (frame - self.current_frame) as usize;
+        if self.history.len() <= idx {
+            self.history.resize(idx + 1, FrameInputs::default());
         }
+        &mut self.history[idx]
     }
 
     /// Recompute `last_confirmed_frame` = the newest frame, contiguously from
     /// the current confirmed prefix, for which every player's input arrived.
+    /// Frames before `current_frame` were shown, so they were confirmed and
+    /// have been released; the walk starts at whichever is later.
     fn recompute_confirmed(&mut self) {
         let n = self.config.num_players;
         let all = if n >= 8 { u8::MAX } else { (1u8 << n) - 1 };
-        let start = self.last_confirmed_frame.map_or(0, |c| c + 1);
-        // Frame indices are addressed as `u32` on the wire (`NetMessage::Input`'s
-        // `frame`), so a history longer than `u32::MAX` is impossible; saturate
-        // for the bound rather than cast-truncate.
-        let len = u32::try_from(self.history.len()).unwrap_or(u32::MAX);
+        let start = self
+            .last_confirmed_frame
+            .map_or(0, |c| c + 1)
+            .max(self.current_frame);
+        // The buffer is bounded by `MAX_SPECTATOR_BUFFER_FRAMES` (65,536), so
+        // its length always fits `u32`; saturate rather than cast-truncate.
+        let end = self
+            .current_frame
+            .saturating_add(u32::try_from(self.history.len()).unwrap_or(u32::MAX));
         let mut confirmed = self.last_confirmed_frame;
-        for f in start..len {
-            if self.history[f as usize].arrived & all == all {
+        for f in start..end {
+            if self.history[(f - self.current_frame) as usize].arrived & all == all {
                 confirmed = Some(f);
             } else {
                 break;
@@ -416,8 +458,9 @@ impl<T: Transport> SpectatorSession<T> {
     /// Apply every player's confirmed input for `frame` and run one emulator
     /// frame. Mirrors `RollbackSession::apply_and_run` so the spectator's
     /// per-port routing + Four Score gating are byte-identical to the players'.
+    /// `frame` is always `current_frame`, the front of the buffer.
     fn apply_and_run(&self, nes: &mut Nes, frame: u32) {
-        let slot = self.history[frame as usize];
+        let slot = self.history[(frame - self.current_frame) as usize];
         let n = self.config.num_players as usize;
         nes.set_four_score(n > 2);
         for (port, &input) in slot.inputs.iter().enumerate().take(n) {
@@ -554,6 +597,64 @@ mod tests {
     /// framebuffer** to a reference `Nes` run directly over those inputs. This
     /// is exactly the cross-peer determinism the players' rollback session
     /// relies on, exercised through the receive-only spectator path.
+    /// T-SPECTATOR-HISTORY (v3.0.0): the input history is bounded however
+    /// long the stream runs. `MAX_SPECTATOR_FRAME_LOOKAHEAD` stopped one
+    /// packet jumping far ahead, but not the horizon walking: every
+    /// contiguous frame of input advanced the confirmed frame, and the window
+    /// with it, whether or not anything was shown, so a peer streaming
+    /// faster than real time (or a stream that never sends a matching
+    /// `Sync`) grew `history` without limit. Here 70,000 frames arrive with
+    /// no `Sync`, and `advance` runs every 512 frames, well inside the
+    /// lookahead, so every frame passes the jump guard and only the buffer
+    /// cap can stop it. (A first draft advanced every 4,096 frames: the jump
+    /// guard then dropped most inputs between calls, so the history never
+    /// neared the cap, and removing the cap went NOT CAUGHT.) Then, once
+    /// synced, every shown frame must be released, so a long session does
+    /// not accumulate.
+    #[test]
+    fn the_input_history_is_bounded_and_releases_shown_frames() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        for frame in 0..70_000u32 {
+            for player in 0..2 {
+                feeder.send(&NetMessage::Input {
+                    player,
+                    frame,
+                    input: 0,
+                });
+            }
+            if frame % 512 == 0 {
+                let _ = spec.advance(&mut nes);
+            }
+        }
+        let _ = spec.advance(&mut nes);
+        assert_eq!(
+            spec.history.len(),
+            MAX_SPECTATOR_BUFFER_FRAMES as usize,
+            "the buffer fills to the cap and stops there"
+        );
+        assert!(
+            spec.history.len() <= MAX_SPECTATOR_BUFFER_FRAMES as usize,
+            "unsynced history grew to {} frames",
+            spec.history.len()
+        );
+        // Synced now: the buffered frames play, and each shown frame leaves
+        // the buffer.
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let before = spec.history.len();
+        let shown = (0..64)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 64, "the buffered stream plays once synced");
+        assert_eq!(spec.history.len(), before - 64, "shown frames are released");
+    }
+
     /// A peer-supplied `Input.frame` far beyond the confirmed horizon must be
     /// dropped WITHOUT growing `history` (otherwise a `frame` near `u32::MAX`
     /// would resize the `Vec` unboundedly — an OOM `DoS`). The in-window frame

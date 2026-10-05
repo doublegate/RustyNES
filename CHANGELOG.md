@@ -70,6 +70,13 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **A netplay spectator's input buffer is bounded (T-SPECTATOR-HISTORY).** It
+  kept every frame's input for the whole session, and a peer streaming
+  inputs faster than real time, or a stream that never announced itself,
+  could grow it without limit. It now holds at most 65,536 frames past the one
+  it shows next (about 18 minutes of play, about 320 KiB), so a spectator
+  that falls behind can still catch up. Shown frames are released, so a long
+  session no longer accumulates them.
 - **MMC3 interrupts with the background at `$1000` (T-MMC3-BG-A12).** Two
   PPU timing details the NESdev pages document and the emulator missed, both
   in the A12 signal an MMC3 counts. The background fetches reported A12 at

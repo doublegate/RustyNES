@@ -1163,7 +1163,16 @@ the menu, remains. The next step is
 therefore black-box: trace the boot's CPU reads in `$5000-$7FFF` and find where
 it parks, before any register value is questioned again.
 
-## T-SPECTATOR-HISTORY — the spectator's input history grows without bound (found v2.9.9, for v3.0.0)
+## T-SPECTATOR-HISTORY — the spectator's input history grows without bound (found v2.9.9, FIXED v3.0.0)
+
+**Fixed for v3.0.0.** `history` is a `VecDeque` whose front is the frame
+shown next. Shown frames are released, and an input more than
+`MAX_SPECTATOR_BUFFER_FRAMES` (65,536) past the shown frame is dropped. Inputs
+that arrive before a matching `Sync` are still buffered, as NF-15 requires
+(the relay may forward the `Sync` late), so ingestion was bounded rather than
+stopped. Pinned by `the_input_history_is_bounded_and_releases_shown_frames`;
+removing either the cap or the release fails it. The original analysis
+follows.
 
 Raised by the agy review of #583 (2026-10-05) and confirmed by reading the
 code. It was already true on `main`; the v2.9.9 change gates *playback* on a
