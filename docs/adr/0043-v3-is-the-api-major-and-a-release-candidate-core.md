@@ -80,3 +80,29 @@ date). v3.0.0 therefore no longer carries the API break. Its other content, the
 release-candidate core and both bitstreams labelled not hardware-verified, is
 unchanged. The release that carries the break stays v2.9.8 (maintainer,
 2026-10-01): it is preparation for v3.0.0, not a major of its own.
+
+## Amendment (2026-10-05, v3.0.0): the plan split, and what v3.0.0 adds
+
+The Consequence that "`to-dos/plans/v3.0.0-superstation-core-plan.md` is
+rewritten" is carried out as a split. The old file, with its bring-up gate, is
+renamed [`v3.x-hardware-verification-plan.md`](../../to-dos/plans/v3.x-hardware-verification-plan.md),
+the starting point for the hardware-verification release. v3.0.0's own plan
+is [`v3.0.0-plan.md`](../../to-dos/plans/v3.0.0-plan.md).
+
+The maintainer's decisions for v3.0.0 (2026-10-05):
+
+- **The headline build is on-die.** The off-die file keeps the name it has
+  carried since v2.8.4, `RustyNES_MiSTer-<tag>-offdie.rbf`, now final, as the
+  labelled secondary.
+- **v3.0.0 adds a core timing epoch** to the session and movie identity, with
+  netplay protocol 6 and `.rnm` format 5. v2.9.9 and v3.0.0 emulate MMC3
+  games with the background at `$1000` differently (T-MMC3-BG-A12), and
+  without the epoch nothing would refuse a mixed-version peer or movie. See
+  ADR 0045.
+- **v3.0.0 takes the last struct-extensibility breaks before 4.0.**
+  `Cartridge`, `BoardDescription`, `HardwareOptions` and `Movie` become
+  `#[non_exhaustive]`, and `MapperError::Truncated` is renamed.
+
+Decision 1 (an API major plus a release-candidate core, both bitstreams
+labelled not hardware-verified) and Decision 4 (only the libretro sync goes
+upstream) are unchanged.

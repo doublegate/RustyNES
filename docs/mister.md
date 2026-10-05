@@ -10,7 +10,9 @@ change to `crates/rustynes-cosim` or the golden formats it emits.
 [`v2.7.x`](../to-dos/plans/v2.7.x-core-frontend-audit-plan.md) (the core and frontend audits; oracle-only, so the bitstream does not change),
 [`v2.8.x`](../to-dos/plans/v2.8.x-libretro-rtl-audit-plan.md) (the RTL audit and the off-die build),
 [`v2.9.x`](../to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (the board) and
-[`v3.0.0`](../to-dos/plans/v3.0.0-superstation-core-plan.md). Before that,
+[`v3.0.0`](../to-dos/plans/v3.0.0-plan.md), which ADR 0043 made the API major with a
+release-candidate core; the hardware-verified core is the later
+[`v3.x`](../to-dos/plans/v3.x-hardware-verification-plan.md) release. Before that,
 [`to-dos/plans/v2.7.0-mister-core-plan.md`](../to-dos/plans/v2.7.0-mister-core-plan.md) (superseded)
 -- which **superseded** [`v2.5.0-fabric-plan.md`](../to-dos/plans/v2.5.0-fabric-plan.md),
 which is delivered.

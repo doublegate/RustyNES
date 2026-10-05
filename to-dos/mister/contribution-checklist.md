@@ -236,7 +236,8 @@ Settled at **v2.6.6**, except the one item that needs a board.
       linkable today (`docs/rung1-6502.md` through `docs/rung7-mappers.md`, the
       142-gate suite, the mutation records). What is missing is the act of
       pointing a reviewer at it, which happens in the submission email.
-      **Unblocks at v3.0.0.**
+      **Unblocks at the hardware-verification release (v3.x)**, which is the
+      submission (ADR 0043; it was v3.0.0 under ADR 0041).
 
 ## Provenance
 
@@ -277,13 +278,14 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Submission
 
-Every item here is **BLOCKED — the submission IS v3.0.0**, by the programme's own
+Every item here is **BLOCKED — the submission IS the hardware-verification release
+(v3.x)** (ADR 0043; it was v3.0.0 under ADR 0041), by the programme's own
 definition, and three of the four are somebody else's action rather than this
 project's. They are listed so the sequence is visible, not because they are
 outstanding work.
 
 - [ ] Email `newcores@misterfpga.org` with the repository link
-      **BLOCKED — v3.0.0.** Sending it before the quality bar closes is the
+      **BLOCKED — the hardware-verification release (v3.x).** Sending it before the quality bar closes is the
       whole thing the checklist exists to prevent.
 - [ ] Await review (the page says days)
       **BLOCKED — not ours to do**, and it follows the email.

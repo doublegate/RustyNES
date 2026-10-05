@@ -55,10 +55,14 @@ pub trait Bus {
     ///
     /// On the production `SystemBus`, this is `self.cycle` —
     /// the total number of CPU cycles the bus has ticked, INCLUDING
-    /// DMC DMA halt + dummy + alignment + transfer cycles (which
-    /// the CPU's own `Cpu::cycles` field does NOT count because
-    /// they advance through `bus.tick_one_cpu_cycle()` rather than
-    /// the CPU's `idle_tick`).
+    /// DMC DMA halt + dummy + alignment + transfer cycles. Every one of
+    /// them, DMA or not, runs through `Cpu::start_cycle`, which calls the
+    /// bus's per-cycle `cpu_clock` (the only place `self.cycle` advances) and
+    /// then copies this count into `Cpu::cycles`. (Until v2.9.8 this said
+    /// the DMA cycles advanced through `bus.tick_one_cpu_cycle()` and that
+    /// `Cpu::cycles` missed them; that path was removed at v2.9.8, ADR 0042,
+    /// and the copy has made the two counts agree since the v2.0.0 one-clock
+    /// scheduler.)
     ///
     /// Used by the SH* unstable-store family (`SHA / SHX / SHY /
     /// SHS / TAS`) to detect when DMC DMA interrupted the
@@ -226,8 +230,10 @@ pub trait Bus {
 
     /// Diagnostic-only hook fired once per R1 CPU cycle from `Cpu::end_cycle`
     /// (after `handle_interrupts`), so the `irq-timing-trace` tooling can
-    /// record a `CycleRecord` for the R1 access path (which bypasses the
-    /// `SystemBus` `tick_one_cpu_cycle` push). Default no-op; the production
+    /// record a `CycleRecord` for each CPU cycle. (Until v2.9.8 this said the
+    /// R1 path bypassed a `tick_one_cpu_cycle` push; that method was removed
+    /// at v2.9.8, ADR 0042, and this hook is now the trace's per-cycle point.)
+    /// Default no-op; the production
     /// bus overrides it only under the `irq-timing-trace` feature, so non-trace
     /// R1 builds compile this to an empty call.
     fn trace_end_cycle(&mut self) {}
