@@ -34,12 +34,15 @@ cycle-accurate core later replaced.
   their read dots, two dots after the MMC3 page's "PPU cycle 324". And a
   visible line's dot 0 drives "the same CHR address that is later used to
   fetch the low background tile byte" (the PPU rendering page), except scanline
-  0's on an odd frame, which the skipped dot replaces with a nametable fetch;
-  that is why the MMC3 page says the counter "decrement[s] twice every other
-  vertical redraw". blargg's `4-scanline_timing` now passes all 13 sub-tests
-  on both ROMs (it failed at sub-test 9). Nothing changes with the background
-  at `$0000`, the arrangement almost every MMC3 game uses. Save states:
-  `PPU_SNAPSHOT_VERSION` 12, and older states are refused.
+  0's on an odd frame, which the skipped dot replaces with a nametable fetch,
+  consistent with the MMC3 page's counter that can "decrement twice every
+  other vertical redraw". blargg's `4-scanline_timing` now passes all 13
+  sub-tests on both ROMs (it failed at sub-test 9). Nothing changes with the
+  background at `$0000`, the arrangement almost every MMC3 game uses. Of 744
+  staged commercial ROMs one moved: the fighting game on *Super New Year Cart
+  15-in-1* (mapper 45), whose status bar was torn at a raster split and now
+  draws whole. Save states: `PPU_SNAPSHOT_VERSION` 12, and older states are
+  refused.
 
 ## [2.9.9] - 2026-10-04 - "Ballast" (the release candidate: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it)
 

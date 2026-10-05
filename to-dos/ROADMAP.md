@@ -1111,9 +1111,12 @@ has the evidence.
 sub-tests. Before it lands:
 
 - [ ] Rebase onto `main` after the v2.9.9 merge.
-- [ ] The local commercial suites, every moved snapshot attributed. Boards
-      that count raw A12 edges (MC-ACC, mapper 91, the J.Y. ASIC) see the
-      background's edges earlier when it is at `$1000`, plus a dot-0 edge.
+- [x] The local commercial suites (2026-10-05, on this branch's final state):
+      `external_real_games` 60/0, `external_extended` 137/0, and
+      `external_coverage` 1 of 744 moved. That one is *Super New Year Cart
+      15-in-1* (mapper 45): cycles -3, and its status bar, torn at a raster
+      split on the old code, now draws whole (frames 900 and 1100 compared side
+      by side). Re-blessed with its screenshot. Re-run after the rebase.
 - [ ] The `.rns` epoch: `PPU_SNAPSHOT_VERSION` 12 refuses v11 states; record it
       in v3.0.0's notes with the other breaks.
 - [x] Sibling RTL: branch `fix/ppu-a12-mmc3` (2026-10-05). Only the dot-0 rule
