@@ -190,10 +190,71 @@ fn bench_dual(c: &mut Criterion) {
     });
 }
 
+/// v2.9.9 (libretro re-audit NL-15): a 512 KiB self-flashable image for the
+/// two flash boards, GTROM (mapper 111) and UNROM 512 (mapper 30 with the
+/// battery bit, whose `$8000-$BFFF` window is the SST39SF040 flash). Their
+/// `load_state` rebuilds the whole flash from a sector diff, so a restore's
+/// cost scales with the chip, not the game; run-ahead and rollback pay it
+/// every frame.
+///
+/// One image serves both boards. Every 16 KiB bank starts with `JMP $C000`
+/// and ends with all three vectors at `$C000`, so whichever bank is mapped
+/// at `$C000-$FFFF` (UNROM 512's fixed last bank, GTROM's odd half of a
+/// 32 KiB bank) loops in place. The flash content is unflashed ROM, so the
+/// sector diff is the bitmap alone: what is measured is the board's restore
+/// work, not the copy of flashed sectors.
+fn flash_board_rom(mapper: u8, battery: bool) -> Vec<u8> {
+    const PRG: usize = 512 * 1024;
+    // Derived from `PRG` so the header cannot disagree with the image. The
+    // assert runs at compile time and turns a future `PRG` past the header's
+    // 255-bank field into a build error, so the cast below cannot truncate.
+    // (`u8::try_from` would say this directly, but `TryFrom` is not const.)
+    #[allow(clippy::cast_possible_truncation)] // guarded by the assert
+    const PRG_BANKS: u8 = {
+        assert!(
+            PRG / 0x4000 <= u8::MAX as usize,
+            "PRG exceeds the iNES bank count"
+        );
+        (PRG / 0x4000) as u8
+    };
+    let mut rom = vec![0u8; 16 + PRG];
+    rom[0..4].copy_from_slice(b"NES\x1a");
+    rom[4] = PRG_BANKS; // 32 x 16 KiB PRG
+    rom[5] = 0; // CHR-RAM
+    rom[6] = ((mapper & 0x0F) << 4) | if battery { 0x02 } else { 0 };
+    rom[7] = mapper & 0xF0;
+    for bank in rom[16..].chunks_exact_mut(0x4000) {
+        bank[0..3].copy_from_slice(&[0x4C, 0x00, 0xC0]); // JMP $C000
+        bank[0x3FFA..0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    }
+    rom
+}
+
+fn bench_flash_restore(c: &mut Criterion, label: &str, rom: &[u8]) {
+    c.bench_function(&format!("nes_restore_flash_{label}"), |b| {
+        let mut nes = warmed_nes(rom);
+        let blob = nes.snapshot();
+        b.iter(|| {
+            nes.restore(black_box(&blob)).expect("restore round-trips");
+        });
+    });
+    c.bench_function(&format!("nes_restore_quiet_flash_{label}"), |b| {
+        let mut nes = warmed_nes(rom);
+        let mut blob = Vec::new();
+        nes.snapshot_core_into(&mut blob);
+        b.iter(|| {
+            nes.restore_quiet(black_box(&blob))
+                .expect("restore round-trips");
+        });
+    });
+}
+
 fn bench_snapshot_restore(c: &mut Criterion) {
     bench_rom(c, "flowing_palette", "assorted/flowing_palette.nes");
     bench_rom(c, "mmc3", "holy_mapperel/M4_P128K_CR8K.nes");
     bench_dual(c);
+    bench_flash_restore(c, "gtrom", &flash_board_rom(111, false));
+    bench_flash_restore(c, "unrom512", &flash_board_rom(30, true));
 }
 
 criterion_group!(benches, bench_snapshot_restore);
