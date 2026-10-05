@@ -121,8 +121,7 @@ resampler's motion**, so a state inside them can only produce states inside
 them: `held_value` is clamped by `add_sample`; once every delta in flight is
 integrated the integrator equals `held_value`, so `integrator + sum(window) -
 held_value` is a constant of the motion (zero, up to rounding, for a state this
-emulator produced); and a stable one-pole high-pass grows by at most its input
-filter bound holds a PAIR, not a field: for a high-pass `y' = c(y + x' - x)`
+emulator produced); and each filter bound holds a PAIR, not a field: for a high-pass `y' = c(y + x' - x)`
 whose input stays within `X`, the quantity `y - c*x` is closed, since
 `y' - c*x' = c((y - c*x) - (1 - c)x)`; so `|y - c*x| <= c*X + 1` stays true
 for any coefficient in `[0, 1]`, and gives `|y| <= 2X + 1`, the next stage's
