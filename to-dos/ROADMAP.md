@@ -854,11 +854,13 @@ supposed to surface rather than absorb.
 ### T-ORACLE-001 — MMC3 IRQ timing (FIXED v2.9.9 to sub-test 9; mechanism RETRACTED v2.6.15)
 
 **v2.9.9: fixed as far as sub-test 9.** The late IRQ was the oracle's `$C001`
-reload discriminator, not the sample point: the page's reload rule plus a
-one-CPU-cycle deferral of the IRQ output moves both `4-scanline_timing` ROMs
-from sub-test 3 to sub-test 9 and makes `mmc3_test/5-MMC3` pass, with
-AccuracyCoin and nestest unchanged. ADR 0002's 2026-10-03 update has the sweep
-and the trace evidence. The sibling gate `mapper4mmc3irq065` can now be
+reload discriminator, not the sample point: the page's reload rule plus the IRQ
+output deferred to the next per-cycle hook (a rise caught up after the CPU's
+access is seen a cycle later, one before it in its own cycle) moves both
+`4-scanline_timing` ROMs from sub-test 3 to sub-test 9 and makes
+`mmc3_test/5-MMC3` pass, with AccuracyCoin and nestest unchanged. ADR 0002's
+2026-10-03 update has the sweep and the trace evidence, and its 2026-10-05
+correction the deferral's exact shape. The sibling gate `mapper4mmc3irq065` can now be
 registered at the next pin move. Sub-test 9 (`$2000=$10`) stays open here.
 
 **v2.9.5 "Caliper" measurement, added above the older text.** Two candidate
