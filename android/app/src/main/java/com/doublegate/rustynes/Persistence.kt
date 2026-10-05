@@ -1,6 +1,7 @@
 package com.doublegate.rustynes
 
 import android.content.Context
+import android.util.Log
 import androidx.core.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -244,6 +245,15 @@ object FdsBios {
  */
 object RomKeyMigration {
     /**
+     * Logcat tag for migration failures (#583 review, agy). Every store's move is
+     * wrapped in `runCatching` so one bad file cannot stop the others, and until
+     * this tag the caught exception was dropped with the result, so a failure the
+     * next launch retries left no trace of why. iOS logs the same failures with
+     * `NSLog`.
+     */
+    private const val TAG = "RomKeyMigration"
+
+    /**
      * Move every store keyed by [legacy] under [filesDir] to [identity]. Returns how
      * many stores moved (a file, or a JSON entry). Never throws for a store that
      * cannot be moved; that store stays under [legacy].
@@ -286,7 +296,7 @@ object RomKeyMigration {
                 check(dst.readBytes().contentEquals(bytes)) { "copy of $src differs" }
             }
             if (src.delete()) 1 else 0
-        }.getOrDefault(0)
+        }.onFailure { Log.w(TAG, "moving $src to $dst failed", it) }.getOrDefault(0)
     }
 
     /**
@@ -313,7 +323,7 @@ object RomKeyMigration {
             all.remove(legacy)
             writeAtomic(file, all.toString().toByteArray())
             1
-        }.getOrDefault(0)
+        }.onFailure { Log.w(TAG, "re-keying $legacy in $file failed", it) }.getOrDefault(0)
     }
 
     /** Re-key the `library.json` entry, keeping its user fields, if the new key is free. */
@@ -328,6 +338,6 @@ object RomKeyMigration {
             entries.forEachIndexed { i, e -> out.put((if (i == idx) e.copy(sha = identity) else e).toJson()) }
             writeAtomic(file, out.toString().toByteArray())
             1
-        }.getOrDefault(0)
+        }.onFailure { Log.w(TAG, "re-keying library entry $legacy in $file failed", it) }.getOrDefault(0)
     }
 }
