@@ -3270,6 +3270,39 @@ impl Ppu {
         }
     }
 
+    /// Report a background fetch group's A12 level where the `NESdev` MMC3
+    /// page puts it: the pattern fetches' high level at group phase 3 (dot
+    /// 324 for the next line's first prefetched tile, dot 4 for a line's own
+    /// first group), one dot before the pattern-low fetch's ALE dot, and the
+    /// return to the nametable fetch's low level at phase 7.
+    ///
+    /// The page: "if the BG uses `$1000`, and the sprites use `$0000`, the
+    /// IRQ counter should decrement on PPU cycle 324 of the previous
+    /// scanline", and for the opposite arrangement "on PPU cycle 260". The
+    /// sprite path already reported at that convention (its rises land at
+    /// 260, 268, ... 316). The background reported at its READ dots (phase
+    /// 5 for the pattern, phase 1 for the nametable), two dots later than
+    /// the page, so a rise that landed on the first dot of a CPU cycle's
+    /// catch-up was seen by an MMC3 a cycle late. blargg `4-scanline_timing`
+    /// failed at sub-test 9 ("Scanline 0 IRQ should occur sooner when
+    /// `$2000=$10`") on exactly that case; with this it fails at 12, the
+    /// sub-test the `MiSTer` DUT fails (T-MMC3-BG-A12).
+    ///
+    /// The read halves still report their own addresses, and with the level
+    /// already set those reports change nothing. Only the level the mapper
+    /// sees, and when, moves: with the background at `$0000` (almost every
+    /// MMC3 game) both reports here are low and nothing changes.
+    fn observe_bg_a12_lead<B: PpuBus>(&mut self, bus: &mut B, phase: u16) {
+        match phase {
+            3 => {
+                let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
+                self.observe_a12_addr(bus, bg_table);
+            }
+            7 => self.observe_a12_addr(bus, 0x2000),
+            _ => {}
+        }
+    }
+
     /// Notify the mapper of an A12 transition implied by an explicit
     /// pattern-table fetch address (BG / sprite fetches that bypass `v`).
     fn observe_a12_addr<B: PpuBus>(&mut self, bus: &mut B, addr: u16) {
@@ -4132,6 +4165,7 @@ impl Ppu {
                     7 => self.fetch_bg_hi(bus),
                     _ => {}
                 }
+                self.observe_bg_a12_lead(bus, phase);
                 if phase == 7 {
                     self.inc_hori_v();
                     // Pre-fetch region only (dots 328 and 336): explicit
@@ -4433,6 +4467,7 @@ impl Ppu {
             7 => self.fetch_bg_hi(bus),
             _ => {}
         }
+        self.observe_bg_a12_lead(bus, phase);
         // Phase 7 (cycle 8 of the group): coarse-X increment. The dots
         // 321..=336 prefetch `<<= 8` is out of the 1..=256 range, so it never
         // applies here.
@@ -7514,6 +7549,85 @@ mod tests {
         assert_eq!(
             b.filtered_rises, 241,
             "an MMC3-style filter still sees one rise per rendered line"
+        );
+    }
+
+    /// T-MMC3-BG-A12: with the background at `$1000` and sprites at `$0000`,
+    /// the `NESdev` MMC3 page says the counter "should decrement on PPU cycle
+    /// 324 of the previous scanline" -- one dot before the pattern-low
+    /// fetch's ALE dot (325), the same convention the sprite path follows
+    /// (its rises land at 260, the page's figure for the other arrangement).
+    /// Until this change the background reported A12 at its READ dot, two
+    /// dots later (326, and 6 for the line's own first tile), which put a
+    /// rise caught at the first dot of a CPU cycle one cycle late and failed
+    /// blargg `4-scanline_timing` at sub-test 9.
+    #[test]
+    fn background_a12_rises_at_the_mmc3_pages_dot_324() {
+        struct RiseBus {
+            chr: [u8; 0x2000],
+            last_a12: bool,
+            rises: alloc::vec::Vec<(i16, u16)>,
+        }
+        impl PpuBus for RiseBus {
+            fn ppu_read(&mut self, addr: u16) -> u8 {
+                if addr < 0x2000 {
+                    self.chr[addr as usize]
+                } else {
+                    0
+                }
+            }
+            fn ppu_write(&mut self, _addr: u16, _value: u8) {}
+            fn notify_a12(&mut self, level: bool) {
+                if level && !self.last_a12 {
+                    self.rises.push((0, 0));
+                }
+                self.last_a12 = level;
+            }
+            fn nametable_address(&self, addr: u16) -> u16 {
+                addr & 0x07FF
+            }
+        }
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.post_reset_mask_remaining = 0;
+        let mut b = RiseBus {
+            chr: [0u8; 0x2000],
+            last_a12: false,
+            rises: alloc::vec::Vec::new(),
+        };
+        p.cpu_write_register(0, PpuCtrl::BG_PATTERN_HIGH.bits(), &mut b);
+        p.cpu_write_register(1, (PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE).bits(), &mut b);
+        // Run to scanline 9, then record lines 9-10.
+        while p.scanline() != 9 {
+            p.tick(&mut b);
+        }
+        b.rises.clear();
+        // `tick` advances to the next dot and then processes it, so a rise is
+        // stamped with the position AFTER the tick that produced it.
+        while p.scanline() != 11 {
+            let before = b.rises.len();
+            p.tick(&mut b);
+            if b.rises.len() > before {
+                *b.rises.last_mut().unwrap() = (p.scanline(), p.dot());
+            }
+        }
+        // Scanline 10's first tile: the prefetch on line 9, and the line's
+        // own fetches (first visible-tile group starts at dot 1).
+        let prefetch: alloc::vec::Vec<u16> = b
+            .rises
+            .iter()
+            .filter(|r| r.0 == 9 && r.1 > 320)
+            .map(|r| r.1)
+            .collect();
+        assert_eq!(
+            prefetch,
+            [324, 332],
+            "the next line's two prefetched tiles rise at 324 and 332"
+        );
+        let first = b.rises.iter().find(|r| r.0 == 10).map(|r| r.1);
+        assert_eq!(
+            first,
+            Some(4),
+            "a visible line's first group rises at dot 4"
         );
     }
 

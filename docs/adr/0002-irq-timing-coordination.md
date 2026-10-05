@@ -1983,3 +1983,43 @@ counter normally reaches 0", by design, as `mmc3_test_2/6-MMC3_alt` always has.
 **Save states.** MMC3's mapper section is v4: byte 19, which held the retired
 latch, holds `irq_assert_pending_next_cycle`. v3 states are refused (ADR 0042's
 current-version-only rule).
+
+## Decision update (2026-10-05, for v3.0.0) — T-MMC3-BG-A12: sub-test 9 was the background's A12 timing
+
+**What changed.** The PPU reports a background fetch group's A12 level one
+dot before the pattern-low fetch's ALE dot (group phase 3, dot 324 for the
+prefetch) and its return low at phase 7, instead of at the read dots (phases
+5 and 1). `rustynes-ppu`, `observe_bg_a12_lead`. The MMC3 is unchanged.
+
+**How it was found (rung 3, black box).** The MiSTer DUT, written from the
+NESdev MMC3 page, passed sub-test 9 and failed 12, so a per-cycle diff of the
+two on `mmc3_test_2/4-scanline_timing` (8,040,769 cycles) named the case. Of
+the run's nine IRQ assertions, eight agreed to the cycle. The ninth was frame
+210's "Scanline 0" IRQ, background at `$1000`: the oracle raised /IRQ one CPU
+cycle after the DUT, and the CPU took the interrupt one instruction later.
+Instrumenting the oracle's A12 rises (sub-dot and PPU position) showed the
+only rise caught at `sub_dot` 0, the first dot of a cycle's pre-access
+catch-up, was the disagreeing one. The same pre-render fetch caught at
+`sub_dot` 1 agreed. Since a later rise cannot be seen sooner on a single
+signal, the background rise had to be timed differently in the two models.
+
+**Why this dot.** The page puts the counter's clock at "PPU cycle 260" for
+the background at `$0000` and sprites at `$1000`, and at "PPU cycle 324 of
+the previous scanline" for the opposite arrangement. Both are one dot before
+the pattern-low ALE dot (261 and 325). The sprite path already reported
+there (260, 268, ... 316) and agreed with the DUT on every sample. The
+background reported at its read dots, two dots later. Reporting at the ALE
+dot (325), tried first, moved the rise but not the outcome: the rise then
+landed in the previous cycle's post-access half and was still deferred.
+
+**Result.** Both `4-scanline_timing` ROMs fail at sub-test 12 ("Scanline 239
+IRQ should occur later when `$2000=$10`"), the DUT's sub-test, instead of 9.
+`--features test-roms`: every suite unchanged except the two
+`_currently_fails` probes, re-pinned to #12. AccuracyCoin 144/144 and nestest
+held. With the background at `$0000` both new reports are low, so nothing
+changes there. Pinned by `background_a12_rises_at_the_mmc3_pages_dot_324`
+(red on the old timing: `[326, 334]` against `[324, 332]`).
+
+**Held for v3.0.0** (maintainer, 2026-10-05): landing it in v2.9.9 would have
+moved the sibling's oracle pin and its goldens after the record ladders and
+the RC sweep. Sub-test 12 remains open on both sides.

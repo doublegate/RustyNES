@@ -26,6 +26,17 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **MMC3 interrupts with the background at `$1000` (T-MMC3-BG-A12).** With
+  the background at `$1000` and sprites at `$0000`, the NESdev MMC3 page puts
+  the counter's clock at dot 324 of the previous scanline. The PPU reported
+  the background fetches' A12 at their read dots, two dots later, so a rise
+  that landed on the first dot of a CPU cycle's catch-up reached the MMC3 a
+  cycle late. blargg `4-scanline_timing` now fails at sub-test 12, the same
+  sub-test the MiSTer core fails, instead of 9. Nothing changes with the
+  background at `$0000`, the arrangement almost every MMC3 game uses.
+
 ## [2.9.9] - 2026-10-04 - "Ballast" (the release candidate: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it)
 
 The last release of the line to v3.0.0. It re-audits all four scopes, fixes

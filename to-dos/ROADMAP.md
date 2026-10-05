@@ -1095,6 +1095,30 @@ later in v2.9.8, the vendored database had been rewriting this dump to mapper
 and it is still blank there. *Famicom Yarou 54* is T-GA23C-POWERON.
 Mappers 194 and 195 still have no dump.
 
+## T-MMC3-BG-A12 — the background's A12 at the MMC3 page's dot 324 (found v2.9.9, for v3.0.0)
+
+blargg `4-scanline_timing` failed at sub-test 9, "Scanline 0 IRQ should occur
+sooner when `$2000=$10`", after T-ORACLE-001. A per-cycle diff against the
+MiSTer DUT (which passes 9) found one disagreeing IRQ among nine: a background
+fetch's A12 rise at the first dot of a CPU cycle's catch-up, seen a cycle late.
+The PPU reported background A12 at its read dots; the NESdev MMC3 page puts the
+clock at dot 324 (and 260 for sprites, where the sprite path already reported).
+
+**Fixed on branch `fix/mmc3-subtest9`, held for v3.0.0** (maintainer,
+2026-10-05: no re-run of v2.9.9's ladders and sweeps). Sub-test 9 passes; both
+ROMs now fail at sub-test 12, the DUT's. ADR 0002's 2026-10-05 decision update
+has the evidence. Before it lands:
+
+- [ ] Rebase onto `main` after the v2.9.9 merge.
+- [ ] Run the local commercial suites and attribute any moved snapshot. Boards
+      that count raw A12 edges (MC-ACC, mapper 91, the J.Y. ASIC) see the
+      background's edges two dots earlier when it is at `$1000`.
+- [ ] Sibling: move the oracle pin with it, regenerate, attribute, re-run both
+      ladders (`mapper4mmc3irq065` and `blargg-mmc3`'s `4-scanline_timing`
+      expectation, still `$0C`).
+- [ ] Sub-test 12 ("Scanline 239 IRQ should occur later when `$2000=$10`"),
+      open on both sides, is the next investigation.
+
 ## T-GA23C-POWERON — mapper 45's register-2 power-on value (found v2.9.8)
 
 *Famicom Yarou 54* (mapper 45, GA23C) boots to a blue screen while the board's

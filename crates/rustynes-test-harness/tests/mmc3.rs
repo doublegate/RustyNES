@@ -117,7 +117,7 @@ fn mmc3_test_2_3_a12_clocking() {
 }
 
 #[test]
-#[ignore = "Fails at sub-test 9 ($2000=$10) since v2.9.9 (T-ORACLE-001 moved it from 3; ADR 0002 2026-10-03). Earlier: R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): the 1-CPU-cycle bracket did not flip on the one-clock/every-cycle substrate alone; the M2-phase sample-point campaign is CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002 + the v2.0.0 plan."]
+#[ignore = "Fails at sub-test 12 (\"Scanline 239 IRQ should occur later when $2000=$10\") since T-MMC3-BG-A12 (fix/mmc3-subtest9; background A12 at the MMC3 page's dot 324), the same sub-test the MiSTer DUT fails; sub-test 9 from v2.9.9 (T-ORACLE-001, ADR 0002 2026-10-03). Earlier: R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): the 1-CPU-cycle bracket did not flip on the one-clock/every-cycle substrate alone; the M2-phase sample-point campaign is CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002 + the v2.0.0 plan."]
 fn mmc3_test_2_4_scanline_timing_strict() {
     let (s, m, _) = run("blargg/mmc3_test_2/4-scanline_timing.nes", 600);
     assert_eq!(s, 0, "mmc3_test_2 4-scanline_timing: {m}");
@@ -131,13 +131,15 @@ fn mmc3_test_2_4_scanline_timing_currently_fails() {
         "mmc3_test_2/4 unexpectedly PASSES — please flip the `_strict` test to non-ignored \
          and delete this probe; msg={m}"
     );
-    // v2.9.9 (T-ORACLE-001): sub-tests 1-8 pass. The residual is sub-test 9,
-    // "Scanline 0 IRQ should occur sooner when $2000=$10" (sprites at
-    // `$0000`, background at `$1000`). It was sub-test 3 from C1 step B4
-    // (2026-05-14) until the reload rule and the IRQ deferral landed.
+    // Sub-tests 1-11 pass. The residual is sub-test 12, "Scanline 239 IRQ
+    // should occur later when $2000=$10" (sprites at `$0000`, background at
+    // `$1000`), the same sub-test the MiSTer co-simulation DUT fails. It was
+    // sub-test 9 from v2.9.9 (T-ORACLE-001) until the background fetches
+    // reported A12 at the MMC3 page's dot 324 (T-MMC3-BG-A12), and sub-test 3
+    // from C1 step B4 (2026-05-14) before that.
     assert!(
-        m.contains("should occur sooner when $2000=$10") && m.contains("#9"),
-        "mmc3_test_2/4 failure shape changed (was sub-test #9 from v2.9.9) — \
+        m.contains("should occur later when $2000=$10") && m.contains("#12"),
+        "mmc3_test_2/4 failure shape changed (was sub-test #12 from T-MMC3-BG-A12) — \
          please re-diagnose; got: {m}"
     );
 }
@@ -219,7 +221,7 @@ fn mmc3_test_v1_3_a12_clocking() {
 }
 
 #[test]
-#[ignore = "Fails at sub-test 9 ($2000=$10) since v2.9.9 (T-ORACLE-001 moved it from 3; ADR 0002 2026-10-03). Earlier: R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; M2-phase sample-point campaign CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002."]
+#[ignore = "Fails at sub-test 12 (\"Scanline 239 IRQ should occur later when $2000=$10\") since T-MMC3-BG-A12 (fix/mmc3-subtest9; background A12 at the MMC3 page's dot 324), the same sub-test the MiSTer DUT fails; sub-test 9 from v2.9.9 (T-ORACLE-001, ADR 0002 2026-10-03). Earlier: R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; M2-phase sample-point campaign CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002."]
 fn mmc3_test_v1_4_scanline_timing_strict() {
     let (s, m, _) = run("blargg/mmc3_test/4-scanline_timing.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 4-scanline_timing: {m}");
@@ -232,9 +234,10 @@ fn mmc3_test_v1_4_scanline_timing_currently_fails() {
         s, 0,
         "mmc3_test v1/4 unexpectedly PASSES — flip the `_strict` test on and delete this probe; msg={m}"
     );
+    // Same residual as `mmc3_test_2/4`: sub-test 12 since T-MMC3-BG-A12.
     assert!(
-        m.contains("should occur sooner when $2000=$10") && m.contains("#9"),
-        "mmc3_test v1/4 failure shape changed (was sub-test #9 from v2.9.9) — re-diagnose; got: {m}"
+        m.contains("should occur later when $2000=$10") && m.contains("#12"),
+        "mmc3_test v1/4 failure shape changed (was sub-test #12 from T-MMC3-BG-A12) — re-diagnose; got: {m}"
     );
 }
 
