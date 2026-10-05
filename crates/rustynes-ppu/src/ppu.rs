@@ -468,6 +468,19 @@ pub struct Ppu {
     /// the boundary.
     pub(crate) mask_for_skip_check: PpuMask,
     pub(crate) mask_skip_pipe1: PpuMask,
+    /// True from the odd-frame skip until the dot it lands on has run:
+    /// scanline 0's dot 0, which the skip REPLACED rather than reached. The
+    /// `NESdev` PPU rendering page: the skip jumps "(339,261) to (0,0),
+    /// replacing the idle tick at the beginning of the first visible scanline
+    /// with the last tick of the last dummy nametable fetch". That tick
+    /// belongs to the dummy fetch, so it drives a nametable address, and the
+    /// dot-0 rule in `tick` (a visible line's dot 0 drives the background CHR
+    /// address) must not apply to it (T-MMC3-BG-A12).
+    ///
+    /// Snapshotted (`PPU_SNAPSHOT_VERSION` 12): a state saved between the skip
+    /// and that dot would otherwise restore into a dot 0 that raises A12 the
+    /// uninterrupted run did not.
+    pub(crate) dot0_replaced: bool,
     pub(crate) status: PpuStatus,
     /// `$2003` OAMADDR.
     pub(crate) oam_addr: u8,
@@ -1475,6 +1488,7 @@ impl Ppu {
             ctrl: PpuCtrl::empty(),
             mask: PpuMask::empty(),
             mask_for_skip_check: PpuMask::empty(),
+            dot0_replaced: false,
             mask_skip_pipe1: PpuMask::empty(),
             status: PpuStatus::empty(),
             oam_addr: 0,
@@ -3918,6 +3932,27 @@ impl Ppu {
         // mappers default to no-op.
         if render_line && self.dot == 0 {
             bus.notify_scanline_start();
+            // T-MMC3-BG-A12, rule 2: a visible line's dot 0 "appears to be
+            // the same CHR address that is later used to fetch the low
+            // background tile byte starting at dot 5" (`NESdev` PPU
+            // rendering, "Cycle 0"), so with the background at `$1000` A12 is
+            // already high here. Not on the pre-render line, which the page
+            // does not extend the statement to and where giving it the rule
+            // failed blargg `4-scanline_timing` at sub-test 8; and not on the
+            // dot the odd-frame skip replaced (`dot0_replaced`), which is the
+            // dummy nametable fetch's tick. The rule is what closes sub-test 12
+            // (removing it returns both 4-scanline ROMs there); the second
+            // exception is documented behaviour that no ROM in the corpus
+            // reaches, pinned by the unit test
+            // `scanline_0_dot_0_drives_bg_chr_only_when_the_skip_did_not_replace_it`.
+            if self.mask.rendering_enabled()
+                && !self.dot0_replaced
+                && self.scanline != self.region.prerender_line()
+            {
+                let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
+                self.observe_a12_addr(bus, bg_table);
+            }
+            self.dot0_replaced = false;
         }
 
         // === Background rendering pipeline (visible + pre-render lines) ===
@@ -6301,6 +6336,7 @@ impl Ppu {
             self.frame = self.frame.wrapping_add(1);
             self.frame_complete = true;
             self.snapshot_ntsc_phase();
+            self.dot0_replaced = true;
             // The skipped dot is where the loaded shifters would have seen the
             // dot-339 re-arm, so it has not happened yet: they enter scanline 0
             // drawing, and `emit_pixel` releases them after pixel 0 (see
@@ -7623,12 +7659,81 @@ mod tests {
             [324, 332],
             "the next line's two prefetched tiles rise at 324 and 332"
         );
+        // A visible line's dot 0 drives "the same CHR address that is later
+        // used to fetch the low background tile byte starting at dot 5"
+        // (NESdev PPU rendering, "Cycle 0"), so with the background at
+        // `$1000` A12 is already high there.
         let first = b.rises.iter().find(|r| r.0 == 10).map(|r| r.1);
         assert_eq!(
             first,
-            Some(4),
-            "a visible line's first group rises at dot 4"
+            Some(0),
+            "a visible line's dot 0 drives the BG CHR address"
         );
+    }
+
+    /// T-MMC3-BG-A12: scanline 0's dot 0 drives the background CHR address
+    /// (A12 high with the background at `$1000`) on an EVEN frame, and not on
+    /// an odd frame whose pre-render skip "replac[es] the idle tick at the
+    /// beginning of the first visible scanline with the last tick of the last
+    /// dummy nametable fetch" (`NESdev` PPU rendering). This test is the
+    /// exception's only pin: blargg `4-scanline_timing` synchronises with
+    /// `sync_vbl_even`, so no ROM in the corpus reaches the odd-frame case,
+    /// and removing the exception leaves both 4-scanline ROMs passing
+    /// (measured 2026-10-05).
+    #[test]
+    fn scanline_0_dot_0_drives_bg_chr_only_when_the_skip_did_not_replace_it() {
+        struct LevelBus {
+            chr: [u8; 0x2000],
+            level: bool,
+        }
+        impl PpuBus for LevelBus {
+            fn ppu_read(&mut self, addr: u16) -> u8 {
+                if addr < 0x2000 {
+                    self.chr[addr as usize]
+                } else {
+                    0
+                }
+            }
+            fn ppu_write(&mut self, _addr: u16, _value: u8) {}
+            fn notify_a12(&mut self, level: bool) {
+                self.level = level;
+            }
+            fn nametable_address(&self, addr: u16) -> u16 {
+                addr & 0x07FF
+            }
+        }
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.post_reset_mask_remaining = 0;
+        let mut b = LevelBus {
+            chr: [0u8; 0x2000],
+            level: false,
+        };
+        p.cpu_write_register(0, PpuCtrl::BG_PATTERN_HIGH.bits(), &mut b);
+        p.cpu_write_register(1, (PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE).bits(), &mut b);
+        let (mut skipped, mut kept) = (0, 0);
+        for _ in 0..4 {
+            // Run to the end of the pre-render line, remembering the parity
+            // of the frame being completed.
+            while !(p.scanline() == p.region.prerender_line() && p.dot() == 338) {
+                p.tick(&mut b);
+            }
+            let odd = p.frame() & 1 == 1;
+            // Step until scanline 0's dot 0 has been processed.
+            while !(p.scanline() == 0 && p.dot() == 0) {
+                p.tick(&mut b);
+            }
+            if odd {
+                assert!(
+                    !b.level,
+                    "an odd frame's skip replaces dot 0: A12 stays low"
+                );
+                skipped += 1;
+            } else {
+                assert!(b.level, "an even frame's dot 0 drives the BG CHR address");
+                kept += 1;
+            }
+        }
+        assert!(skipped > 0 && kept > 0, "both parities were exercised");
     }
 
     #[test]

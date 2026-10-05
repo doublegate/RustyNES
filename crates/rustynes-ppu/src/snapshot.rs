@@ -156,7 +156,14 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   save states snapshot. This is a `.rns` epoch, because the container compares
 ///   the PPU section version for equality (ADR 0028); v1..=10 blobs upconvert to
 ///   `false` on the direct `Ppu::restore` path.
-pub const PPU_SNAPSHOT_VERSION: u8 = 11;
+/// - v12 (T-MMC3-BG-A12, for v3.0.0): appends `dot0_replaced` (1 byte), set
+///   when the odd-frame skip replaces scanline 0's idle dot 0 with the last
+///   dummy nametable tick, so that dot does not drive the background CHR
+///   address (and its A12) the way a visible line's dot 0 does. Like
+///   `spr_rearm_deferred` it is live only across the frame boundary, where
+///   run-ahead and save states snapshot; dropping it would let a restored
+///   frame raise A12 at a dot 0 the skip removed, which an MMC3 counts.
+pub const PPU_SNAPSHOT_VERSION: u8 = 12;
 
 /// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
 /// field except the 245,760-byte framebuffer.
@@ -617,6 +624,10 @@ impl Ppu {
         // sprites at their normal X instead of the composite PPU's X=0.
         w.u8(u8::from(self.spr_rearm_deferred));
 
+        // v12 tail — the odd-frame skip replaced scanline 0's dot 0 (set at
+        // the skip, consumed at that dot), live across the frame boundary.
+        w.u8(u8::from(self.dot0_replaced));
+
         w.buf
     }
 
@@ -856,6 +867,9 @@ impl Ppu {
         // odd-frame skip).
         self.spr_rearm_deferred = r.u8()? != 0;
 
+        // v12: the odd-frame skip replaced scanline 0's dot 0.
+        self.dot0_replaced = r.u8()? != 0;
+
         // Derived-cache fixup: the scanline-classification cache
         // is a pure function of `scanline` + `region`, so it is recomputed rather
         // than carried. Resetting the key to the `Ppu::new` sentinel forces the
@@ -943,9 +957,42 @@ mod tests {
     const V10_TAIL: usize = 1;
     /// v11: the odd-frame-deferred sprite re-arm (`spr_rearm_deferred`).
     const V11_TAIL: usize = 1;
+    /// v12: the odd-frame skip replaced scanline 0's dot 0 (`dot0_replaced`).
+    const V12_TAIL: usize = 1;
     /// Everything a v1 blob does not carry, from `ex_attr_latch` onward.
-    const V3_THROUGH_V11_TAILS: usize =
-        V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL + V10_TAIL + V11_TAIL;
+    const V3_THROUGH_V12_TAILS: usize = V3_TAIL
+        + V4_TAIL
+        + V5_TAIL
+        + V6_TAIL
+        + V7_TAIL
+        + V8_TAIL
+        + V9_TAIL
+        + V10_TAIL
+        + V11_TAIL
+        + V12_TAIL;
+
+    /// v12: `dot0_replaced` must survive the round trip TRUE (a dropped or
+    /// inverted byte would read back as the default `false`), and a v11 blob
+    /// is refused.
+    #[test]
+    fn snapshot_v12_carries_the_replaced_dot_0() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.dot0_replaced = true;
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&p.snapshot()).unwrap();
+        assert!(q.dot0_replaced, "a true flag must survive the round trip");
+        p.dot0_replaced = false;
+        q.dot0_replaced = true;
+        q.restore(&p.snapshot()).unwrap();
+        assert!(!q.dot0_replaced, "a false flag must overwrite a stale true");
+        let cur = p.snapshot();
+        let mut v11 = cur[..cur.len() - V12_TAIL].to_vec();
+        v11[0] = 11;
+        assert!(matches!(
+            q.restore(&v11),
+            Err(PpuSnapshotError::UnsupportedVersion(11))
+        ));
+    }
 
     /// v11: `spr_rearm_deferred` is the reason for the epoch, and it is only
     /// ever `true` across the frame boundary, where every run-ahead and save
@@ -1073,8 +1120,9 @@ mod tests {
         let cur = Ppu::new(PpuRegion::Ntsc).snapshot();
         let tails = [
             V3_TAIL, V4_TAIL, V5_TAIL, V6_TAIL, V7_TAIL, V8_TAIL, V9_TAIL, V10_TAIL, V11_TAIL,
+            V12_TAIL,
         ];
-        assert_eq!(tails.iter().sum::<usize>(), V3_THROUGH_V11_TAILS);
+        assert_eq!(tails.iter().sum::<usize>(), V3_THROUGH_V12_TAILS);
         for v in 1..PPU_SNAPSHOT_VERSION {
             // Versions 1 and 2 carry none of the v3+ tails; version N >= 3
             // carries the tails up to and including its own.

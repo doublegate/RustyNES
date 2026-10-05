@@ -1876,7 +1876,7 @@ without panicking (no `$6000` status protocol).
 | `apu_frame_clock_coincidence` | 10 | 10 | — | — | **v2.9.5.** blargg's `extra/apu/apu_test_{1..10}`: ten one-cycle probes of a `$4017` clock against the frame sequencer's step, in both modes. A mode-1 write whose clock lands in the same APU cycle as the step is one pulse, not two. 1, 2, 5 and 6 failed before v2.9.5. Each ROM's pass branch is decoded from its own code. |
 | `unreferenced_corpus` | 49 | 36 | — | 13 | **v2.9.5.** The committed ROMs no test ran. 13 pass blargg's `$6000` protocol (the `extra/ppu` sprite-hit set, `instr_test-v3` singles 11-15). 23 Holy Mapperel variants report detail `0000`. One data report (`cpu_flag_concurrency`) is pinned. 12 visual or audio ROMs are pinned by hash: regression pins, not verdicts (counted under Smoke). |
 | `dmc_dma_during_read4` | 5 | 5 | — | — | `dma_2007_read`, `dma_2007_write`, `dma_4016_read`, `double_2007_read`, `read_write_2007`. |
-| `mmc3_test_2` | 6 | 4 | 2 | — | `1-clocking`, `2-details`, `3-A12_clocking`, `5-MMC3` strict. `4-scanline_timing` `#[ignore]`: fails at sub-test **12** ("Scanline 239 IRQ should occur later when `$2000=$10`"), the sub-test the MiSTer DUT fails, since T-MMC3-BG-A12 reported the background's A12 at the MMC3 page's dot 324; it failed at sub-test 9 ("Scanline 0 IRQ should occur sooner") from v2.9.9, when T-ORACLE-001 replaced the C1 step B4 reload discriminator with the NESdev rule and deferred the IRQ output to the next per-cycle hook (it failed at sub-test 3 from 2026-05-14 to v2.9.8; ADR 0002, 2026-10-03 update). Fail-loud `_currently_fails` companion pins #12. The v1 suite (`mmc3_test/`) moved the same way: `4-scanline_timing` to #9, then #12, `5-MMC3` now passes strict, `6-MMC6` fails only at its alternate-revision assertion. `6-MMC3_alt` `#[ignore]` by design (NEC rev B; project defaults to Sharp rev A). |
+| `mmc3_test_2` | 6 | 5 | 1 | — | `1-clocking`, `2-details`, `3-A12_clocking`, `4-scanline_timing`, `5-MMC3` strict. `4-scanline_timing` passes all 13 sub-tests since T-MMC3-BG-A12 (v3.0.0): the background fetches report A12 at the MMC3 page's dot 324, and a visible line's dot 0 drives the background CHR address except where the odd-frame skip replaced scanline 0's (NESdev PPU rendering, "Cycle 0"). Before it, it failed at sub-test 9 from v2.9.9 (T-ORACLE-001) and at sub-test 3 from 2026-05-14 to v2.9.8 (ADR 0002). The v1 suite (`mmc3_test/`) moved the same way: `4-scanline_timing` now passes, `5-MMC3` passes strict, `6-MMC6` fails only at its alternate-revision assertion. `6-MMC3_alt` `#[ignore]` by design (NEC rev B; project defaults to Sharp rev A). |
 | `mmc3_irq_tests` | 6 | — | — | 6 | Visual-only protocol (no `$6000` status byte). Smoke-tested only. |
 | `mmc5` (smoke) | 3 | — | — | 3 | `mapper_mmc5test_v1.nes`, `mapper_mmc5test_v2.nes`, `mapper_mmc5exram.nes` from `christopherpow/nes-test-roms/mmc5test/`. Visual-only; smoke-tested. Deep features (split-screen ExGrafix, audio extension) tested via in-tree mapper unit tests. |
 | `holy_mapperel` | 19 | — | — | 19 | Damian Yerrick / tepples cartridge-PCB-assembly test (zlib license). 17 release ROMs across mappers 0/1/2/3/4/7/9/10/34/66/69, plus two 512 KiB MMC1 images (SUROM `M1_P512K_CR8K_S8K`, SXROM `M1_P512K_CR8K_S32K`) built from the v0.02 source tag in v2.7.2, whose build reproduces all 17 release ROMs byte-for-byte. Each screen is pinned by one combined framebuffer snapshot, with settled and non-blank guards, and each was read as `PASS 0000` by eye when it was pinned; there is no status-byte assertion, so none of the 19 is a strict pass by this table's definition (the column said 17 until v2.7.2, against this row's own "smoke-tested only"). Track B1. |
@@ -1950,7 +1950,7 @@ ROM dumps under `tests/roms/external/`, not committed):
 | 1 | MMC1 (SUROM, SXROM, …) | landed (Phase 2) | — | — | Serial 5-write protocol; consecutive-write bug. |
 | 2 | UxROM | landed (Phase 2) | — | — | UNROM, UOROM. CHR-RAM only. |
 | 3 | CNROM | landed (Phase 2) | — | — | Bus conflict modeled. |
-| 4 | MMC3 (Sharp rev A default; NEC rev B available) | landed (Phase 4 S1) | — | A12 edge | Default revision is **Sharp** (`Star Trek: 25th Anniversary` requires it). 4 of 6 `mmc3_test_2/*` sub-ROMs pass strictly; `4-scanline_timing` first fails at sub-test #12, a `$2000=$10` case and the one the MiSTer DUT fails (T-MMC3-BG-A12 moved it from #9 by reporting the background's A12 at the MMC3 page's dot 324; v2.9.9's T-ORACLE-001 had moved it from #3: the IRQ now follows the NESdev counter rule and is raised at the next per-cycle hook after the A12 rise; ADR 0002), and `6-MMC3_alt` is the by-design NEC-rev-B skip. |
+| 4 | MMC3 (Sharp rev A default; NEC rev B available) | landed (Phase 4 S1) | — | A12 edge | Default revision is **Sharp** (`Star Trek: 25th Anniversary` requires it). 5 of 6 `mmc3_test_2/*` sub-ROMs pass strictly, `4-scanline_timing` included since T-MMC3-BG-A12 (the background's A12 at the MMC3 page's dot 324 and the visible lines' dot-0 CHR address; before it, sub-test #12, and #9 from v2.9.9's T-ORACLE-001, ADR 0002), and `6-MMC3_alt` is the by-design NEC-rev-B skip. |
 | 5 | MMC5 | landed (Phase 4 S4 v0+v1) | **landed** (`mapper-audio`, Track C2 / Phase 2.3; 2 pulse + raw PCM) | Scanline (PPU dot 0 + scanline 241 dot 1) | Banking, ExRAM modes 10/11 + multiplier, scanline IRQ, dual sprite/BG CHR for 8×16, 4-byte fill mode, ExGrafix (mode 01), vertical split-screen (`$5200-$5202`), `$5113` PRG-RAM bank select. Save-state v3. (Phase 7 T-74-002: MMC5 confirmed feature-complete for v1.x; >8 KiB multi-chip PRG-RAM configs are long-tail, no corpus fixture.) |
 | 7 | AxROM | landed (Phase 2) | — | — | Single-screen mirroring control. |
 | 9 | MMC2 | landed (Phase 4 S2) | — | — | Punch-Out; latched CHR per fetch (`$FD`/`$FE`). |
@@ -2113,14 +2113,14 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 
 ---
 
-## Accuracy residuals — CLOSED by the v1.0.0 master-clock core, except one
+## Accuracy residuals — CLOSED by the v1.0.0 master-clock core
 
 > **Authoritative scoreboard: `docs/accuracy-ledger.md`.** That ledger is the
 > single source of truth for the current per-suite pass counts and the full
 > `#[ignore]` catalogue. This section is the narrative companion; where the two
 > ever disagree, the ledger wins.
 
-**These are closed, except one:** the MMC3 `4-scanline_timing` sub-test 12 residual below is OPEN. The master-clock-precise scheduler that the engine lineage
+**These are closed.** The last one, the MMC3 `4-scanline_timing` residual, closed with T-MMC3-BG-A12 (below). The master-clock-precise scheduler that the engine lineage
 called the "v2.0 refactor" shipped as the **default and only** core in RustyNES
 v1.0.0 — the `mc-r1-full-cpu` umbrella was promoted to default and the feature
 flag no longer exists. The subsequent v2.0.0 "Timebase" one-clock rewrite and the
@@ -2142,7 +2142,7 @@ v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default bui
 - **`cpu_interrupts_v2` 5/5 strict** — the `2-nmi_and_brk` / `3-nmi_and_irq` /
   `5-branch_delays_irq` sub-ROMs this section formerly listed as "deferred to
   v2.0" pass strictly on the default build. `ppu_sprites` 19/19.
-- **OPEN: the MMC3 R1/R2 scanline-IRQ residual, moved in v2.9.9** (T-ORACLE-001;
+- **CLOSED: the MMC3 R1/R2 scanline-IRQ residual** (T-ORACLE-001 at v2.9.9, T-MMC3-BG-A12 for v3.0.0;
   `docs/adr/0002-irq-timing-coordination.md`, 2026-10-03 update). What v2.1.0
   "Fathom" F5.0 closed as a structurally unreachable sample-point deficit was
   the oracle's own `$C001` reload discriminator raising the IRQ a scanline
@@ -2151,15 +2151,21 @@ v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default bui
   `mmc3_test_v1/5-MMC3` passes. T-MMC3-BG-A12 then moved the background
   fetches' A12 to the MMC3 page's dot 324 (from the read dot, two dots
   later), and both ROMs now fail at sub-test 12 ("Scanline 239 IRQ should
-  occur later when `$2000=$10`"), the sub-test the MiSTer DUT fails. It stays
-  `#[ignore]`'d with fail-loud `*_currently_fails` companions; zero
-  production-ROM impact measured.
+  occur later when `$2000=$10`"), the sub-test the MiSTer DUT fails. The last
+  step was the visible lines' dot 0, which "appears to be the same CHR address
+  that is later used to fetch the low background tile byte" (NESdev PPU
+  rendering), except scanline 0's on an odd frame, which the skip replaces
+  with a nametable tick: that is the MMC3 page's "the pre-render scanline will
+  decrement the counter twice every other vertical redraw". Both ROMs now pass
+  all 13 sub-tests, and their `*_currently_fails` probes are deleted. It is
+  the dot-0 rule that closes sub-test 12: removing it returns both ROMs to 12.
+  The skip exception is documented behaviour that no ROM here exercises, and
+  removing it leaves both passing; a unit test pins it.
 
 The ROM-level edge cases that remain `#[ignore]`'d are **documented-by-design or
 externally-fixture-blocked, not deferred to any future refactor** (see the full
-20-test catalogue in `docs/accuracy-ledger.md`): the NEC-rev-B `mmc3_test_2/6`
-(by-design; the MMC3 `4-scanline_timing` sub-test 12 residual above is the one
-OPEN item, not a by-design one), the pre-master-clock mock-bus unit pins
+catalogue in `docs/accuracy-ledger.md`): the NEC-rev-B `mmc3_test_2/6`
+(by-design), the pre-master-clock mock-bus unit pins
 (`apu_reset` / interrupt-dispatch / BG-shifter — superseded by AccuracyCoin 100%),
 the Vs. `DualSystem` GVS boots (need a combined dual-CPU dump), and the live-STUN /
 TURN + HD-pack fixture tests. Each carries a permanent or external-blocker

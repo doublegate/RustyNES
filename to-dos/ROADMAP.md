@@ -861,7 +861,8 @@ access is seen a cycle later, one before it in its own cycle) moves both
 `mmc3_test/5-MMC3` pass, with AccuracyCoin and nestest unchanged. ADR 0002's
 2026-10-03 update has the sweep and the trace evidence, and its 2026-10-05
 correction the deferral's exact shape. The sibling gate `mapper4mmc3irq065` can now be
-registered at the next pin move. Sub-test 9 (`$2000=$10`) stays open here.
+registered at the next pin move. Sub-test 9 (`$2000=$10`) stayed open at
+v2.9.9; it and sub-test 12 close for v3.0.0 under T-MMC3-BG-A12, below.
 
 **v2.9.5 "Caliper" measurement, added above the older text.** Two candidate
 causes are now ruled out on this core, and the residual stands:
@@ -1095,29 +1096,36 @@ later in v2.9.8, the vendored database had been rewriting this dump to mapper
 and it is still blank there. *Famicom Yarou 54* is T-GA23C-POWERON.
 Mappers 194 and 195 still have no dump.
 
-## T-MMC3-BG-A12 — the background's A12 at the MMC3 page's dot 324 (found v2.9.9, for v3.0.0)
+## T-MMC3-BG-A12 — the PPU's A12 stream for the MMC3 (found v2.9.9, for v3.0.0)
 
-blargg `4-scanline_timing` failed at sub-test 9, "Scanline 0 IRQ should occur
-sooner when `$2000=$10`", after T-ORACLE-001. A per-cycle diff against the
-MiSTer DUT (which passes 9) found one disagreeing IRQ among nine: a background
-fetch's A12 rise at the first dot of a CPU cycle's catch-up, seen a cycle late.
-The PPU reported background A12 at its read dots; the NESdev MMC3 page puts the
-clock at dot 324 (and 260 for sprites, where the sprite path already reported).
+blargg `4-scanline_timing` failed at sub-test 9, then (after the first fix)
+12, both `$2000=$10` cases. Two PPU details the NESdev pages document were
+missing: the background fetches reported A12 two dots after the MMC3 page's
+"PPU cycle 324", and a visible line's dot 0 did not drive "the same CHR
+address that is later used to fetch the low background tile byte", nor did
+the odd-frame skip replace scanline 0's. ADR 0002's 2026-10-05 decision update
+has the evidence.
 
 **Fixed on branch `fix/mmc3-subtest9`, held for v3.0.0** (maintainer,
-2026-10-05: no re-run of v2.9.9's ladders and sweeps). Sub-test 9 passes; both
-ROMs now fail at sub-test 12, the DUT's. ADR 0002's 2026-10-05 decision update
-has the evidence. Before it lands:
+2026-10-05: no re-run of v2.9.9's ladders and sweeps). Both ROMs pass all 13
+sub-tests. Before it lands:
 
 - [ ] Rebase onto `main` after the v2.9.9 merge.
-- [ ] Run the local commercial suites and attribute any moved snapshot. Boards
+- [ ] The local commercial suites, every moved snapshot attributed. Boards
       that count raw A12 edges (MC-ACC, mapper 91, the J.Y. ASIC) see the
-      background's edges two dots earlier when it is at `$1000`.
-- [ ] Sibling: move the oracle pin with it, regenerate, attribute, re-run both
-      ladders (`mapper4mmc3irq065` and `blargg-mmc3`'s `4-scanline_timing`
-      expectation, still `$0C`).
-- [ ] Sub-test 12 ("Scanline 239 IRQ should occur later when `$2000=$10`"),
-      open on both sides, is the next investigation.
+      background's edges earlier when it is at `$1000`, plus a dot-0 edge.
+- [ ] The `.rns` epoch: `PPU_SNAPSHOT_VERSION` 12 refuses v11 states; record it
+      in v3.0.0's notes with the other breaks.
+- [x] Sibling RTL: branch `fix/ppu-a12-mmc3` (2026-10-05). Only the dot-0 rule
+      was needed: the RTL's bus already presented the background pattern at
+      the instant the oracle's dot 324 describes, and moving it a dot earlier
+      failed sub-test 8. The new `mmc3_a12` passes all six blargg MMC3 ROMs
+      (`4-scanline_timing` `$00`), and removing the rule gives `$0C` (CAUGHT).
+      The gate's expectation is moved to `$00`. Ladders are NOT run yet
+      (maintainer, 2026-10-05: wait for the v3.0.0 finalisation).
+- [ ] Sibling: move the oracle pin to this branch's commit, then run
+      `VERIFY=1 fetch-goldens` and attribute every difference, regenerate,
+      mutation-check, and run both ladders.
 
 ## T-GA23C-POWERON — mapper 45's register-2 power-on value (found v2.9.8)
 
