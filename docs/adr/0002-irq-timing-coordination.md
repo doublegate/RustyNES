@@ -1908,9 +1908,10 @@ not reachable by the filter axis.
    `$C001` write had cleared a non-zero counter; the page has no such
    condition.
 2. A clocking A12 rise sets `irq_assert_pending_next_cycle`, and the next
-   `notify_cpu_cycle` raises the line. The CPU therefore sees the MMC3's IRQ
-   one CPU cycle after the rise, whatever half of the cycle the rise landed
-   in. MC-ACC's falling-edge path is unchanged.
+   `notify_cpu_cycle` raises the line. MC-ACC's falling-edge path is
+   unchanged. (This item said the CPU then sees the IRQ "one CPU cycle after
+   the rise, whatever half of the cycle the rise landed in". That is not what
+   the code does; see the correction after the table.)
 
 **How it was found.** Black-box, against the MiSTer sibling's MMC3 (our own
 RTL, written from the same page). A per-cycle diff of the two traces of
@@ -1935,10 +1936,30 @@ delay sweep picked 1 uniquely. The oracle was swept the same way:
 | page rule + v2.0.0 `mmc3-m2-phase-irq` (defer M2-high rises only) | #9 | pass | pass |
 
 Delay 1 and the phase-conditional experiment pass the same set. The
-unconditional form is kept, because it needs no phase data from the bus and is
-what the DUT does; the `mmc3-m2-phase-irq` feature is removed. With the oracle
-at delay 1 the two per-cycle traces of the ROM agree for 6,253,826 cycles
-instead of 1,250,766.
+`notify_cpu_cycle` form is kept, because it needs no phase data from the bus,
+and the `mmc3-m2-phase-irq` feature is removed. With the oracle at delay 1 the
+two per-cycle traces of the ROM agree for 6,253,826 cycles instead of
+1,250,766.
+
+**Correction (2026-10-05, #583 review, Copilot).** This update first called
+delay 1 "unconditional": one CPU cycle after the rise, whatever half of the
+cycle it landed in. It is not, and the reason is the bus's order rather than
+the mapper. `Cpu::start_cycle` catches the PPU up to the access and then calls
+`SystemBus::cpu_clock`, which calls the mapper's `notify_cpu_cycle`. A rise
+caught up in that pre-access half is therefore raised by the same cycle's
+`notify_cpu_cycle` and seen in that cycle. Only a rise caught up after the
+access (`end_cycle`) waits for the next cycle's. That is the same split the
+removed `mmc3-m2-phase-irq` feature made from bus phase data, which explains
+why the two passed the same ROMs: they are, in effect, the same behaviour,
+reached without the phase data. A truly unconditional delay cannot be built in
+the mapper. A pre-access rise of cycle N and a post-access rise of cycle N-1
+both arrive between the same two `notify_cpu_cycle` calls, so telling them
+apart needs the phase data this form avoids. The behaviour is unchanged
+by this correction and stays the measured one: it makes the sibling's
+`mapper4mmc3irq065` gate bus-exact (178,676 of 178,676 cycles) and gives the
+table's results. What changed is the description, in this ADR,
+`m004_mmc3.rs`, `docs/mappers.md`, `CHANGELOG.md` and the v2.9.9 notes, and a
+test now pins both halves (`irq_line_is_raised_at_the_first_cpu_cycle_hook_after_the_rise`).
 
 **Why this is not Attempts 1-4 again.** Those (2026-05) applied a constant
 delay on the old dot-lockstep scheduler and KEPT the reload rule that made the

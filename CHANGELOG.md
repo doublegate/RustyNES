@@ -66,8 +66,10 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   scanline late in blargg's `4-scanline_timing`. The cause was a condition the
   NESdev page does not have: a `$C001` reload to 0 asserted only when the
   write had cleared a non-zero counter. It now follows the page's rule, and the
-  IRQ output reaches the CPU one cycle after the A12 rise that set it, as the
-  MiSTer core's registered output does. Both `4-scanline_timing` ROMs move from
+  IRQ output is raised at the next per-cycle hook after the A12 rise that set
+  it: a rise caught up after the CPU's access is seen from the next cycle, as
+  the MiSTer core's registered output is, and the two are now bus-exact on the
+  core's MMC3 IRQ gate. Both `4-scanline_timing` ROMs move from
   sub-test 3 to sub-test 9, `mmc3_test/5-MMC3` passes, and AccuracyCoin
   (144/144), nestest and every other MMC3 ROM are unchanged.
 - **Audio across a save state.** Loading a state restarted the band-limited

@@ -165,10 +165,15 @@ pub struct Mmc3 {
     irq_reload_pending: bool,
     irq_enabled: bool,
     irq_pending_line: bool,
-    // A clocking A12 rise sets this instead of the IRQ line; the next
-    // `notify_cpu_cycle` (the start of the following CPU cycle) moves it to
-    // `irq_pending_line`, so the CPU's interrupt poll sees the MMC3's IRQ one
-    // CPU cycle after the rise that caused it (T-ORACLE-001, v2.9.9).
+    // A clocking A12 rise sets this instead of the IRQ line, and the first
+    // `notify_cpu_cycle` after the rise moves it to `irq_pending_line`
+    // (T-ORACLE-001, v2.9.9). WHICH cycle that is depends on the bus, not on
+    // this mapper: `Cpu::start_cycle` catches the PPU up to the access and
+    // then calls `SystemBus::cpu_clock`, which calls `notify_cpu_cycle`. So a
+    // rise caught up before the access is raised in its own cycle, and one
+    // caught up after the access (`end_cycle`) from the next cycle on. (This
+    // comment said "one CPU cycle after the rise" for every rise until the
+    // #583 review; ADR 0002's 2026-10-05 correction has the detail.)
     //
     // Why: the oracle raised it a cycle early relative to the MiSTer
     // sibling's MMC3, which registers its IRQ output on the CPU clock enable
@@ -181,9 +186,13 @@ pub struct Mmc3 {
     // rises clock the counter is unchanged, only when the line is seen.
     //
     // This replaced v2.0.0's `mmc3-m2-phase-irq` experiment, which deferred
-    // only rises seen in the M2-high half of a cycle; measured against the
-    // same ROMs it passed the same set, so the unconditional form, which
-    // needs no phase data from the bus, is the one kept.
+    // only rises seen in the M2-high half of a cycle. Measured against the
+    // same ROMs it passed the same set, because the split above is in effect
+    // the same one; this form is kept because it gets it from the order of
+    // the catch-up and the per-cycle hook, with no phase data from the bus.
+    // A delay of one cycle for EVERY rise cannot be built here: a pre-access
+    // rise of cycle N and a post-access rise of cycle N-1 both arrive between
+    // the same two `notify_cpu_cycle` calls.
     irq_assert_pending_next_cycle: bool,
 
     // A12 filter state.
@@ -1527,8 +1536,10 @@ mod tests {
         assert_eq!(other.irq_enabled, m.irq_enabled);
     }
 
-    // T-ORACLE-001 (v2.9.9): a clocking A12 rise asserts the IRQ from the
-    // next CPU cycle, whichever half of the cycle the rise landed in.
+    // T-ORACLE-001 (v2.9.9): a clocking A12 rise raises the IRQ line at the
+    // first `notify_cpu_cycle` after it, whatever `sub_dot` the rise carries.
+    // Which CPU cycle that is comes from the bus's order (see the field doc on
+    // `irq_assert_pending_next_cycle`): the next test pins both cases.
 
     #[test]
     fn irq_becomes_visible_one_cpu_cycle_after_the_rise() {
@@ -1554,6 +1565,47 @@ mod tests {
                 "sub_dot {sub_dot}: visible from the next cycle"
             );
         }
+    }
+
+    /// #583 review (Copilot): the deferral is "until the next per-cycle
+    /// hook", not "one cycle for every rise". In the bus, `start_cycle` runs
+    /// the pre-access PPU catch-up and then the hook, so a rise caught up
+    /// there is followed by its own cycle's hook and raised in that cycle,
+    /// while a rise caught up after the access waits for the next cycle's.
+    /// Both orders, as the mapper sees them.
+    #[test]
+    fn irq_line_is_raised_at_the_first_cpu_cycle_hook_after_the_rise() {
+        let armed = || {
+            let mut m = fresh(8, 8);
+            m.cpu_write(0xC000, 1);
+            m.cpu_write(0xC001, 0);
+            m.cpu_write(0xE001, 0);
+            a12_rise(&mut m); // reload to 1, silent
+            m.notify_a12(false);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
+            }
+            m
+        };
+        // Pre-access: the rise, then this cycle's hook in `cpu_clock`.
+        let mut pre = armed();
+        pre.notify_a12(true);
+        pre.notify_cpu_cycle();
+        assert!(
+            pre.irq_pending(),
+            "a pre-access rise is raised in its own cycle"
+        );
+        // Post-access: this cycle's hook already ran; the rise comes after it
+        // and is raised only by the next cycle's.
+        let mut post = armed();
+        post.notify_cpu_cycle();
+        post.notify_a12(true);
+        assert!(
+            !post.irq_pending(),
+            "a post-access rise is not raised in its own cycle"
+        );
+        post.notify_cpu_cycle();
+        assert!(post.irq_pending(), "it is raised from the next cycle on");
     }
 
     #[test]

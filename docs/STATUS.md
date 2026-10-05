@@ -2146,7 +2146,7 @@ v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default bui
   `docs/adr/0002-irq-timing-coordination.md`, 2026-10-03 update). What v2.1.0
   "Fathom" F5.0 closed as a structurally unreachable sample-point deficit was
   the oracle's own `$C001` reload discriminator raising the IRQ a scanline
-  late. With the NESdev rule and the IRQ output delayed one CPU cycle, both
+  late. With the NESdev rule and the IRQ output deferred to the next per-cycle hook, both
   `4-scanline_timing` ROMs fail at sub-test 9 instead of 3 and
   `mmc3_test_v1/5-MMC3` passes. Sub-test 9 (`$2000=$10`) stays `#[ignore]`'d
   with fail-loud `*_currently_fails` companions; zero production-ROM impact
