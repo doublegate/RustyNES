@@ -327,7 +327,7 @@ impl Mapper for Multicart15 {
         // short one is a truncation.
         let with_ram = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
         if data.len() != with_ram {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: with_ram,
                 got: data.len(),
             });
@@ -472,7 +472,7 @@ impl Mapper for Multicart61 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 4 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -632,7 +632,7 @@ impl Mapper for Multicart62 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -779,7 +779,7 @@ impl Mapper for Multicart200 {
         let chr_extra = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -946,7 +946,7 @@ impl Mapper for Multicart201 {
         };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1142,7 +1142,7 @@ impl Mapper for Multicart202 {
         };
         let expected = 4 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1312,7 +1312,7 @@ impl Mapper for Multicart203 {
         };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1510,7 +1510,7 @@ impl Mapper for Multicart212 {
         };
         let expected = 4 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1677,7 +1677,7 @@ impl Mapper for Multicart213 {
         };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1845,7 +1845,7 @@ impl Mapper for Multicart214 {
         };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1989,7 +1989,7 @@ impl Mapper for Multicart58 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2115,7 +2115,7 @@ impl Mapper for Multicart60 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 2 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2252,7 +2252,7 @@ impl Mapper for Multicart231 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 4 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2421,7 +2421,7 @@ impl Mapper for Maxi15M234 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2594,7 +2594,7 @@ impl Mapper for Multicart225 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + 4 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2768,7 +2768,7 @@ impl Mapper for Multicart226 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2979,7 +2979,7 @@ impl Mapper for Multicart227 {
         // board built without WRAM (no battery header) has `wram.len() == 0`.
         let expected = 6 + self.vram.len() + self.chr_ram.len() + self.wram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -3142,7 +3142,7 @@ impl Mapper for Multicart229 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 4 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -3305,7 +3305,7 @@ impl Mapper for Multicart233 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -3658,7 +3658,7 @@ impl Mapper for DiscreteMapper {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 6 + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -3893,7 +3893,7 @@ impl Mapper for Bmc204 {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 1 + 12 + 1 + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -4078,7 +4078,7 @@ impl Mapper for Bmc11160 {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 1 + 8 + 1 + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -4786,7 +4786,7 @@ mod tests {
         let mut m2 = new_m299(prg(8), chr(8), Mirroring::Horizontal).unwrap();
         assert!(matches!(
             m2.load_state(&t),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
         // Bad version.
         s[0] = 0xFF;
@@ -4907,7 +4907,7 @@ mod tests {
         m2.cpu_write(0x6000, 0xFF);
         assert!(matches!(
             m2.load_state(&legacy),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
 
         // And the current form still round-trips its contents.

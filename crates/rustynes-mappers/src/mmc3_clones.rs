@@ -704,7 +704,7 @@ impl Mapper for Mmc3CloneMapper {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let version = *data.first().ok_or(MapperError::Truncated {
+        let version = *data.first().ok_or(MapperError::WrongLength {
             expected: 1,
             got: 0,
         })?;
@@ -714,7 +714,7 @@ impl Mapper for Mmc3CloneMapper {
         let wram_len = self.wram.len();
         let expected = 3 + Mmc3Clone::SAVE_LEN + self.vram.len() + chr_ram + wram_len;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

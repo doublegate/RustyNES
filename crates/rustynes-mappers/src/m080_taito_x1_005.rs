@@ -295,7 +295,7 @@ impl Mapper for TaitoX1005 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         // Check the version byte FIRST: a version-1 blob has a different length
         // (the PRG bank array grew 2 -> 3), so checking length first would mask
-        // the real cause with a `Truncated` error. An empty blob has no version
+        // the real cause with a `WrongLength` error. An empty blob has no version
         // byte to read, so fall through to the length check in that case.
         if let Some(&ver) = data.first()
             && ver != SAVE_STATE_VERSION
@@ -305,7 +305,7 @@ impl Mapper for TaitoX1005 {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 15 + RAM_LEN + self.vram.len() + need_chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -430,7 +430,7 @@ mod tests {
         // A version-1 blob (the pre-fix 2-entry PRG layout) is one byte shorter
         // than the current version-2 header. The version byte is checked first,
         // so it must surface a clean `UnsupportedVersion(1)` rather than a
-        // confusing `Truncated` length mismatch.
+        // confusing `WrongLength` length mismatch.
         let mut m = TaitoX1005::new(synth_prg(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
         let mut blob = m.save_state();
         blob[0] = 1; // masquerade as a legacy version-1 state

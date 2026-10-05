@@ -224,7 +224,7 @@ impl Mapper for Waixing242 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.prg_ram.len() + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -392,7 +392,7 @@ impl Mapper for WaixingFs304M162 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -594,7 +594,7 @@ impl Mapper for Waixing178 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + self.prg_ram.len() + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -864,7 +864,7 @@ impl Mapper for Waixing253 {
         let chr_ram_main = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 1 + Self::SAVE_LEN + self.vram.len() + self.chr_ram.len() + chr_ram_main;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

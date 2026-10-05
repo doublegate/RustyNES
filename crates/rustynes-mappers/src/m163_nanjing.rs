@@ -279,7 +279,7 @@ impl Mapper for Nanjing163 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 7 + CHR_RAM + WRAM;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

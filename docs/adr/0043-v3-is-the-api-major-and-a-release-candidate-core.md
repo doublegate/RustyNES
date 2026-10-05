@@ -101,7 +101,7 @@ The maintainer's decisions for v3.0.0 (2026-10-05):
   ADR 0045.
 - **v3.0.0 takes the last struct-extensibility breaks before 4.0.**
   `Cartridge`, `BoardDescription`, `HardwareOptions` and `Movie` become
-  `#[non_exhaustive]`, and `MapperError::Truncated` is renamed.
+  `#[non_exhaustive]`, and `MapperError::WrongLength` is renamed.
 
 Decision 1 (an API major plus a release-candidate core, both bitstreams
 labelled not hardware-verified) and Decision 4 (only the libretro sync goes

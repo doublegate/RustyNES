@@ -872,7 +872,7 @@ impl Mapper for JyAsic {
         let scalar_len = 1 + 4 + 8 + 8 + 4 + 4 + 2 + 23 + 2;
         let expected = scalar_len + chr_part;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1390,7 +1390,7 @@ mod tests {
         let blob = m.save_state();
         assert!(matches!(
             m.load_state(&blob[..blob.len() - 1]),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
     }
 

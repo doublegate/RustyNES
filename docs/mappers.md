@@ -175,7 +175,7 @@ and the bus keeps its floating value on them.
 older layouts: a lower version byte, or, where the version did not move, a
 shorter length, loaded with the new fields at a default or the RAM left as it
 was. All of those readers are gone. An older version byte is
-`MapperError::UnsupportedVersion`, a short or long blob `MapperError::Truncated`.
+`MapperError::UnsupportedVersion`, a short or long blob `MapperError::WrongLength`.
 The boards that had them: MMC1, MMC3, MMC5, MMC2, MMC4, Color Dreams, Bandai
 FCG, Namco 163, VRC2, VRC4, VRC6, VRC7, VRC1, mapper 34, FME-7, Namco 118, Vs.
 System (layout 1), FK23C, COOLBOY, Sachen 9602, the MMC3 clones, mappers 156,
@@ -581,7 +581,8 @@ shipped as:
 The PRG-RAM is serialized, so it round-trips a save-state. Its arrival lengthened
 the state blob without a version bump, so until v2.9.8 `load_state` accepted
 **both** lengths and cleared the RAM on the shorter one. Since v2.9.8 (ADR 0042)
-the shorter, pre-v2.3.4 length is `Truncated`.
+the shorter, pre-v2.3.4 length is `MapperError::WrongLength` (named `Truncated`
+before v3.0.0).
 
 #### Mapper 154 — NAMCOT-3453
 

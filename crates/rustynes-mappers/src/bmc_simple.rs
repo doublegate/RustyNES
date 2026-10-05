@@ -456,7 +456,7 @@ impl Mapper for SimpleBmc {
         let scratch = 1 + 12 + 16 + 16 + 4 + 1;
         let expected = scratch + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

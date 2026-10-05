@@ -320,7 +320,7 @@ impl Mapper for IremH3001 {
         let scalar_len = 1 + 1 + 1 + 1 + 8 + 1 + 2 + 2 + 1 + 1;
         let expected = scalar_len + self.vram.len() + chr_part;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

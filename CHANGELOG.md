@@ -52,6 +52,21 @@ cycle-accurate core later replaced.
   and `MeshError` each gain an `EmulatorMismatch` variant, rendered by
   `rustynes_netplay::emulator_mismatch_text`. `SessionIdentity::check_sync` is
   the one handshake decision every site now makes.
+- **Rust API: the last struct-extensibility breaks before 4.0
+  (T-API-EXTENSIBLE).** These four structs are now `#[non_exhaustive]`, so a
+  field added later is no longer a breaking change (v2.9.9 added three to
+  `BoardDescription` and one to `Cartridge`, each a break):
+  - `Cartridge`: use `rustynes_mappers::parse` or the new
+    `Cartridge::synthetic(mapper_id, prg_ram_size, chr_ram_size)`;
+  - `BoardDescription`: use `capture`;
+  - `HardwareOptions`: use `default()` or `capture`, then set fields. Struct
+    update syntax (`..HardwareOptions::default()`) no longer compiles outside
+    the core;
+  - `Movie`: see above.
+
+  **`MapperError::Truncated` is renamed `MapperError::WrongLength`**, with the
+  same `{ expected, got }` fields. Since v2.9.9 it also reports a state that is
+  too long, and "truncated" said the opposite of those cases.
 
 ### Fixed
 

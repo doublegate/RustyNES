@@ -343,7 +343,7 @@ impl Mapper for TaitoTc0690 {
         let header = 32;
         let expected = header + self.vram.len() + need_chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

@@ -316,7 +316,7 @@ impl Mapper for Namco175 {
         let scalar_len = 1 + 3 + 8 + 1 + 1 + 1;
         let expected = scalar_len + self.prg_ram.len() + self.vram.len() + chr_part;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

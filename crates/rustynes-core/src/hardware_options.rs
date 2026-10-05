@@ -103,7 +103,13 @@ pub const EMULATION_EPOCH: u32 = 1;
 /// a property of the cartridge header that a host may override, so its
 /// default is `None`, meaning "whatever the header declares" — applying a
 /// stock `VsPpuType::None` to a Vs. cartridge would strip its RGB PPU.
+///
+/// `#[non_exhaustive]` since v3.0.0 (T-API-EXTENSIBLE): outside this crate,
+/// start from [`HardwareOptions::default`] (the stock NES) or
+/// [`HardwareOptions::capture`] and set the fields that differ. A later
+/// option is then not a break.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub struct HardwareOptions {
     /// Which console's reset wiring is modelled ([`Nes::set_console_model`]).
     pub console_model: ConsoleModel,
@@ -489,7 +495,12 @@ impl HardwareOptions {
 ///
 /// Region is not here: a movie has always recorded it in its fixed header,
 /// and netplay folds it into [`config_digest`] beside this.
+///
+/// `#[non_exhaustive]` since v3.0.0 (T-API-EXTENSIBLE): build one with
+/// [`BoardDescription::capture`]. v2.9.9 added three fields to it, each a
+/// break; a later field no longer is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub struct BoardDescription {
     /// iNES / NES 2.0 mapper number.
     pub mapper_id: u16,

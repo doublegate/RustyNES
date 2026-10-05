@@ -174,7 +174,7 @@ impl Mapper for Hengedianzi177 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let version = *data.first().ok_or(MapperError::Truncated {
+        let version = *data.first().ok_or(MapperError::WrongLength {
             expected: 1,
             got: 0,
         })?;
@@ -184,7 +184,7 @@ impl Mapper for Hengedianzi177 {
         let wram_len = self.wram.len();
         let expected = 3 + self.vram.len() + self.chr_ram.len() + wram_len;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

@@ -268,7 +268,7 @@ impl Mapper for M78 {
         let scalar_len = 5;
         let expected = scalar_len + self.vram.len() + chr_part;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

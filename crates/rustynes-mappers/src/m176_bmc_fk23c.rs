@@ -681,7 +681,7 @@ impl Mapper for Fk23c {
         // checked before the length, so an old blob reports the version it is.
         match data.first() {
             None => {
-                return Err(MapperError::Truncated {
+                return Err(MapperError::WrongLength {
                     expected: 1,
                     got: 0,
                 });
@@ -694,7 +694,7 @@ impl Mapper for Fk23c {
         let expected =
             1 + Self::SAVE_LEN + self.vram.len() + self.wram.len() + chr_ram + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

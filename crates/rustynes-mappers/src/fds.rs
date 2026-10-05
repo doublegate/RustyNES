@@ -1113,7 +1113,7 @@ impl FdsAudio {
 
     fn read_tail(&mut self, src: &[u8]) -> Result<(), MapperError> {
         if src.len() < Self::TAIL_LEN {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: Self::TAIL_LEN,
                 got: src.len(),
             });
@@ -2068,7 +2068,7 @@ impl Fds {
                 ))
             })?;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2495,7 +2495,7 @@ impl Mapper for Fds {
         // here and the full length once the count is known.
         let min = base + FdsAudio::TAIL_LEN + 4;
         if data.len() < min {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: min,
                 got: data.len(),
             });
@@ -3088,7 +3088,7 @@ mod tests {
         let mut fds = make_device(1);
         assert!(matches!(
             fds.load_state(&[FDS_SAVE_VERSION, 0, 0]),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
     }
 

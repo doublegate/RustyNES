@@ -217,7 +217,7 @@ impl Mapper for Tqrom {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let header = 1 + self.chr_ram.len();
         if data.len() < header {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: header,
                 got: data.len(),
             });

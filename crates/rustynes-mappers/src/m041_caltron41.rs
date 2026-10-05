@@ -178,7 +178,7 @@ impl Mapper for Caltron41 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 6 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

@@ -841,7 +841,7 @@ impl Mapper for Mmc3Board {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         const HEAD: usize = 2 + 4 + 2 + 6 + 2 + 4;
         if data.len() < HEAD {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: HEAD,
                 got: data.len(),
             });
@@ -865,7 +865,7 @@ impl Mapper for Mmc3Board {
             .checked_add(core_len)
             .and_then(|n| n.checked_add(chr + self.chr_ram.len() + self.wram.len()));
         if expected != Some(data.len()) {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: expected.unwrap_or(usize::MAX),
                 got: data.len(),
             });

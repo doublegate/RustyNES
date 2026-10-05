@@ -494,7 +494,7 @@ impl Mapper for Rambo1 {
         let scalar_len = 1 + 16 + 13 + 8 + 8;
         let expected = scalar_len + self.vram.len() + chr_part;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
