@@ -102,8 +102,10 @@ held with a gap the new NC-09 names.
 
 Each fix below was pinned red first and its mutant caught; the commit bodies
 carry the evidence. The report's new findings are the nine NC-09 to NC-17. The
-NL-12 and NL-15 rows are cross-listed from the libretro ledger because their
-fixes live in the core; they are not further core findings.
+NL-12 and NL-15 rows are cross-listed from the libretro ledger because they
+are core-scoped; they are not further core findings. NL-12 is fixed in the
+core; NL-15 is an open performance item, measured with the v2.9.9 performance
+work.
 
 | id | finding | verdict | evidence | release | commit |
 |---|---|---|---|---|---|

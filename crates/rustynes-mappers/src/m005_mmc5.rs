@@ -932,21 +932,24 @@ impl Mmc5 {
         // A register value wraps modulo the image's bank count. `Mmc5::new`
         // accepts any multiple of 1 KiB, so that count need not be a power
         // of two (24 KiB is three 8 KiB banks), and a mask would leave banks
-        // unreachable (#583 review). A CHR image smaller than one bank still
-        // maps (`max(1)`), offset `% len` later.
-        let banks = (self.chr.len() / size).max(1);
+        // unreachable (#583 review). It counts a PARTIAL final bank too
+        // (`div_ceil`: 10 KiB in 8 KiB mode is two banks), whose missing
+        // tail the caller's `% len` wraps; floor division left that bank's
+        // bytes unreachable (#583 review, round 4). Every image that is a
+        // multiple of the bank size maps as before.
+        let banks = self.chr.len().div_ceil(size).max(1);
         ((bank as usize) % banks) * size + (a & (size - 1))
     }
 
     /// The byte offset of `addr` within 4 KiB CHR bank `bank4k`, for the
     /// split-screen and ExGrafix overrides, which both select 4 KiB banks.
-    /// The bank wraps modulo the image's 4 KiB bank count, as
-    /// [`Mmc5::chr_set_offset`] does for the register sets; the two used to
-    /// mask by the 1 KiB bank count, which reaches every bank only when that
-    /// count is a power of two. An image under 4 KiB maps as bank 0 and is
-    /// offset `% len` by the caller.
+    /// The bank wraps modulo the image's 4 KiB bank count, a partial final
+    /// bank included, as [`Mmc5::chr_set_offset`] does for the register
+    /// sets; the two used to mask by the 1 KiB bank count, which reaches
+    /// every bank only when that count is a power of two. Offsets past the
+    /// image's end are wrapped `% len` by the caller.
     fn chr_4k_offset(&self, bank4k: usize, addr: u16) -> usize {
-        let banks = (self.chr.len() / 0x1000).max(1);
+        let banks = self.chr.len().div_ceil(0x1000).max(1);
         (bank4k % banks) * 0x1000 + (addr & 0x0FFF) as usize
     }
 
@@ -2103,6 +2106,25 @@ mod tests {
             m.ex_chr_bank_latch = Some(bank4k);
             assert_eq!(m.ppu_read(0x0000), first_1k, "ExGrafix 4 KiB bank {bank4k}");
         }
+    }
+
+    #[test]
+    fn a_partial_final_chr_bank_is_selectable() {
+        // #583 review round 4 (CodeRabbit): a bank count by floor division
+        // leaves a partial final bank unreachable. 10 KiB in 8 KiB mode is
+        // one whole bank and 2 KiB of a second; register 1 must reach that
+        // second bank's bytes (1 KiB bank 8), not wrap to bank 0. The
+        // byte-offset wrap (`% len`) keeps the read in range.
+        let mut m = fresh(8, 10);
+        m.cpu_write(0x5101, 0);
+        m.cpu_write(0x5127, 1);
+        assert_eq!(m.ppu_read(0x0000), 8, "8 KiB bank 1 starts at 1 KiB bank 8");
+        assert_eq!(m.ppu_read(0x0400), 9);
+        // 6 KiB under the 4 KiB ExGrafix override: 4 KiB bank 1 is 1 KiB 4.
+        let mut m = fresh(8, 6);
+        m.cpu_write(0x5104, 1);
+        m.ex_chr_bank_latch = Some(1);
+        assert_eq!(m.ppu_read(0x0000), 4, "4 KiB bank 1 starts at 1 KiB bank 4");
     }
 
     #[test]

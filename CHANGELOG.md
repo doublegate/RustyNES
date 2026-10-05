@@ -80,7 +80,8 @@ guess. v3.0.0's notes will restate these with v2.9.8's.
   re-audit NL-12; RetroArch netplay compares those bytes).
 - **MMC5 CHR images that are not a power of two reach every bank.** A 24 KiB
   image (three 8 KiB banks) left bank 1 unreachable, because a register value
-  wrapped by a mask; it now wraps by the bank count, in the register sets and
+  wrapped by a mask; it now wraps by the bank count, a partial final bank
+  included (10 KiB in 8 KiB mode is two banks), in the register sets and
   in the ExGrafix and split-screen overrides. Every power-of-two image maps as
   before (#583 review).
 - **A corrupt APU value no longer poisons the session.** A huge but finite

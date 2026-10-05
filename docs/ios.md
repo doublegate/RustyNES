@@ -211,8 +211,9 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   file in `states/<k>/` and `ra-progress/<k>.bin` (`RomKeyMigration.migrateFiles`),
   then the override (`GameOverrides.rekey`). The rules are Android's
   (`RomKeyMigration` in `Persistence.kt`, pinned by `RomKeyMigrationTest`): a
-  store moves only into an empty key, a taken key is never overwritten (the old
-  copy stays), a file counts as moved only once its original is gone, and when
+  store moves only into an empty key, a key holding DIFFERENT bytes is never
+  overwritten (the old copy stays), a key already holding the SAME bytes is a
+  move an earlier run left half done (the old copy goes, see below), a file counts as moved only once its original is gone, and when
   the library entry cannot move nothing else does. **A partial move is
   retried:** the rekeyed entry records the old key (`LibraryEntry.pendingLegacyKey`,
   written in the same index save), every open of an entry carrying it re-runs the
