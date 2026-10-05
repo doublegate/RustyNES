@@ -1128,6 +1128,33 @@ the menu, remains. The next step is
 therefore black-box: trace the boot's CPU reads in `$5000-$7FFF` and find where
 it parks, before any register value is questioned again.
 
+## T-SPECTATOR-HISTORY — the spectator's input history grows without bound (found v2.9.9, for v3.0.0)
+
+Raised by the agy review of #583 (2026-10-05) and confirmed by reading the
+code. It was already true on `main`; the v2.9.9 change gates *playback* on a
+matching Sync, not *ingestion*. `SpectatorSession`
+(`crates/rustynes-netplay/src/spectator.rs`) keeps `history: Vec<FrameInputs>`
+append-only, one slot per frame. `MAX_SPECTATOR_FRAME_LOOKAHEAD` (1024) stops
+one packet jumping to an attacker-chosen index. But `recompute_confirmed` runs
+before the Sync gate in `advance`, so the confirmed horizon, and with it the
+lookahead window, advances whenever every player's input for the next frame
+arrives, whether or not anything is shown. A peer streaming contiguous inputs
+faster than real time therefore grows the history at about 9 bytes a frame,
+bounded only by its send rate, and a stream that never sends a matching Sync
+is never consumed at all.
+
+Fix from the spectator's own position, not from a new magic number:
+
+- keep a window from `current_frame` (a shown frame is never revisited) to
+  `current_frame + delay + MAX_SPECTATOR_FRAME_LOOKAHEAD`, and drop inputs
+  outside it;
+- store the history as a ring, or rebase it as frames are shown;
+- stop ingesting inputs, not only stop showing them, while unsynced or after a
+  mismatch.
+
+Pin it red first: a test that streams N frames of inputs without a Sync and
+asserts that the history length stays within the window.
+
 ## T-EMPHASIS-MODEL — PPUMASK emphasis from the documented composite model (v2.9.8)
 
 Found by the MiSTer core's first `palette-gate` (v2.9.8): the emulator dimmed
