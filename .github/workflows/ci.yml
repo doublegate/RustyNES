@@ -1099,5 +1099,22 @@ jobs:
           echo "A required CI job failed or was cancelled:"
           echo '${{ toJSON(needs) }}'
           exit 1
+      # v3.0.0 — `changes` runs on EVERY event, and `setup` on every event
+      # whose `changes` found code. Anything else -- `changes` not succeeding,
+      # or `setup` not succeeding when there WAS code -- means the run never
+      # evaluated the code. The step above
+      # cannot see that case: on 2026-10-05 (run 37373901726, the #585 merge)
+      # no hosted runner ever acquired `changes` ("The job was not acquired by
+      # Runner of type hosted even after multiple attempts"), the API showed
+      # it `cancelled`, yet `needs.*.result` matched neither value, so every
+      # gate was skipped and this check reported success having tested
+      # nothing. A docs-only change still passes: `changes` succeeds with
+      # `code` false, and `setup` is skipped for exactly that reason.
+      - name: Fail unless the code-change detection ran
+        if: ${{ needs.changes.result != 'success' || (needs.changes.outputs.code == 'true' && needs.setup.result != 'success') }}
+        run: |
+          echo "changes: ${{ needs.changes.result }} (code=${{ needs.changes.outputs.code }}), setup: ${{ needs.setup.result }}"
+          echo "The detection that decides what to test did not complete, so nothing was tested."
+          exit 1
       - name: All required jobs succeeded
         run: echo "CI success."
