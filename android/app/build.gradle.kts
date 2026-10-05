@@ -60,8 +60,13 @@ android {
         // fastlane listing metadata + version bump) on the byte-identical v2.0.3 core,
         // so the host advances 20003 -> 20004. The monotonic versionCode is the Play
         // upload ordinal; the internal/closed testing (RC) track uploads this AAB.
-        versionCode = 20004
-        versionName = "2.0.4"
+        // Realigned to the workspace version during v3.0.0's development (it
+        // was left at 2.0.4 from v2.0.4 to v2.9.9), and moved by
+        // `scripts/release-automation/bump_release.py` from now on, starting
+        // with the 3.0.0 cut. versionCode = MAJOR * 10000 + MINOR * 100 +
+        // PATCH, so 20909 still rises past 20004.
+        versionCode = 20909
+        versionName = "2.9.9"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD is set per-flavor below (`false` for `foss`, `true` for `play`),

@@ -53,12 +53,34 @@ CHANGELOG = "CHANGELOG.md"
 # `## [2.4.5] - 2026-08-22 - "Compass" (theme)`
 SECTION = re.compile(r'^## \[(?P<v>\d+\.\d+\.\d+)\] - (?P<d>\d{4}-\d{2}-\d{2}) - "(?P<c>[^"]+)"')
 
-# Manifests that carry the version and cannot inherit it.
+# Manifests that carry the version and cannot inherit it. `{v}` is the version
+# string; `{code}` is `version_code(v)`, the integer form Android needs.
+#
+# The two mobile entries joined at v3.0.0. Until then nothing moved them, so
+# Android sat at 2.0.4 / 20004 and iOS at 2.0.8 while the workspace reached
+# 2.9.9 -- the iOS file's own comment said "keep in step with the workspace
+# version" and nothing enforced it. They were realigned by hand to the
+# workspace version (2.9.9) during v3.0.0's development, so the 3.0.0 cut is
+# the first bump that moves them.
 MANIFESTS = [
     ("Cargo.toml", 'version = "{v}"'),
     ("crates/rustynes-cosim/Cargo.toml", 'version = "{v}"'),
     ("crates/rustynes-libretro/rustynes_libretro.info", 'display_version = "v{v}"'),
+    ("android/app/build.gradle.kts", 'versionName = "{v}"'),
+    ("android/app/build.gradle.kts", 'versionCode = {code}'),
+    ("ios/project.yml", 'MARKETING_VERSION: "{v}"'),
 ]
+
+
+def version_code(v: str) -> int:
+    """Android's `versionCode` for version `v`: MAJOR * 10000 + MINOR * 100 +
+    PATCH, the scheme the app has used since v2.0.1 (2.0.4 -> 20004). Play
+    requires it to rise with every upload, which this does as long as MINOR and
+    PATCH stay below 100."""
+    major, minor, patch = (int(x) for x in v.split("."))
+    if not (0 <= minor < 100 and 0 <= patch < 100):
+        raise ValueError(f"version {v} does not fit the versionCode scheme")
+    return major * 10000 + minor * 100 + patch
 
 
 @dataclass
@@ -510,6 +532,18 @@ def selftest() -> int:
         check("chain tail: absence is not a finding",
               chains_needing_a_summary({}, _root, new), [])
 
+    # Android's versionCode (v3.0.0): the scheme, its ordering, and refusal of a
+    # version it cannot encode without colliding.
+    check("version_code 2.0.4", version_code("2.0.4"), 20004)
+    check("version_code 3.0.0", version_code("3.0.0"), 30000)
+    check("version_code rises across a minor", version_code("3.1.0") > version_code("3.0.99"), True)
+    try:
+        version_code("3.100.0")
+        ok = False
+        print("  FAIL version_code accepted a minor of 100")
+    except ValueError:
+        print("  ok   version_code refuses a minor of 100")
+
     # An unclassifiable line must raise, never be bumped mechanically.
     try:
         demote('**Current release: v2.4.4 "Ignition"** blah', "**Current release: v", old, new, LEAD)
@@ -600,11 +634,13 @@ def main() -> int:
     for path, pat in MANIFESTS:
         p = root / path
         text = edits.get(p, p.read_text())
-        want = pat.format(v=old.version)
+        want = pat.format(v=old.version, code=version_code(old.version))
         if text.count(want) != 1:
             unknown.append(f"{path}: expected exactly one {want!r}, found {text.count(want)}")
             continue
-        edits[p] = text.replace(want, pat.format(v=new.version), 1)
+        edits[p] = text.replace(
+            want, pat.format(v=new.version, code=version_code(new.version)), 1
+        )
 
     if unknown:
         print("REFUSING to write. These anchors were not classified:\n", file=sys.stderr)

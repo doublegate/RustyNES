@@ -68,6 +68,15 @@ cycle-accurate core later replaced.
   same `{ expected, got }` fields. Since v2.9.9 it also reports a state that is
   too long, and "truncated" said the opposite of those cases.
 
+### Changed
+
+- **The Android and iOS apps carry the release's version again.** Android
+  stayed at 2.0.4 and iOS at 2.0.8 from v2.0.x to v2.9.9, because nothing
+  moved them. Both now follow the workspace version, and
+  `scripts/release-automation/bump_release.py` moves them with every release
+  (Android's `versionCode` = MAJOR x 10000 + MINOR x 100 + PATCH, which still
+  rises past 20004).
+
 ### Fixed
 
 - **A netplay spectator's input buffer is bounded (T-SPECTATOR-HISTORY).** It
