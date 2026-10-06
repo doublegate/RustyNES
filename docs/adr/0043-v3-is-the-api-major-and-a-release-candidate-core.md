@@ -104,6 +104,13 @@ The maintainer's decisions for v3.0.0 (2026-10-05):
   `#[non_exhaustive]`, and `MapperError::Truncated` is renamed
   `MapperError::WrongLength`.
 
+These two decisions supersede the 2026-10-01 amendment's conclusion that
+"v3.0.0 therefore no longer carries the API break". The break ADR 0042 planned
+did ship in v2.9.8, as that amendment records. v3.0.0 nonetheless carries
+breaks of its own: the epoch in the movie and netplay formats, and the
+extensibility changes above. It is an API major in its own right, and its
+release notes restate every break since v2.x.
+
 Decision 1 (an API major plus a release-candidate core, both bitstreams
 labelled not hardware-verified) and Decision 4 (only the libretro sync goes
 upstream) are unchanged.

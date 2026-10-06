@@ -64,7 +64,6 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 
 | Version | Scope | Plan |
 |---------|-------|------|
-| v3.0.0 | **The API major and a release-candidate core** ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)). The planned API break shipped early in v2.9.8 (ADR 0042's 2026-10-01 amendment). v3.0.0 carries T-MMC3-BG-A12 in both repositories, the core timing epoch (netplay protocol 6, `.rnm` format 5), the last `#[non_exhaustive]` breaks before 4.0, both bitstreams swept and labelled **release candidate, not hardware-verified**, notes restating every break since v2.x, and the libretro `.info` upstream sync | [`v3.0.0-cornerstone-plan.md`](to-dos/plans/v3.0.0-cornerstone-plan.md) |
 | v3.x | **Hardware verification**: the SuperStation One board session (Strands A-F), the mobile device runs, and the fixes each produces | [`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md), [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
 
 ### Post-1.0 release line (v1.1.0 → current)
