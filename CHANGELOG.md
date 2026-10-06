@@ -101,6 +101,16 @@ cycle-accurate core later replaced.
   15-in-1* (mapper 45), whose status bar was torn at a raster split and now
   draws whole. Save states: `PPU_SNAPSHOT_VERSION` 12, and older states are
   refused.
+- **Mapper 45 (GA23C) multicart menus that draw before programming the
+  board (T-GA23C-POWERON).** The NESdev page gives no power-on value for the
+  four outer registers, and RustyNES powered them on at 0, which maps every
+  CHR bank onto one 1 KiB page. A trace showed two *Famicom Yarou* menus
+  drawing with CHR banks 0-7 before their first outer-register write, so the
+  cartridges need CHR-AND to pass at least three bits. Power-on, a soft reset
+  and `$6001` now set CHR-AND to `$F` (every bit), the maintainer's choice.
+  *Famicom Yarou 54* shows its menu instead of a blue screen, and *Vol.5* its
+  scenery instead of font tiles. *Vol.1*, a CHR-RAM cart, still shows noise
+  for a separate reason (T-GA23C-CHRRAM, open).
 
 ## [2.9.9] - 2026-10-04 - "Ballast" (the release candidate: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it)
 

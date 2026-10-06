@@ -244,6 +244,18 @@ enum Chr {
 /// Mapper 195's power-on CHR-RAM selection (`$80`: banks `$28-$2B`).
 const M195_POWER_ON_MODE: u8 = 0x80;
 
+/// Mapper 45's outer registers at power-on, after a soft reset and after a
+/// `$6001` write (T-GA23C-POWERON). The page gives no value: it says only that
+/// `$6001` resets them "as a soft reset would". Register 2's CHR-AND is `$F`
+/// (all eight MMC3 CHR bits) because two *Famicom Yarou* menus draw with CHR
+/// banks 0-7 before their first outer-register write, which needs at least
+/// three bits. A black-box trace of both dumps showed no `$5000-$7FFF` access
+/// before rendering. The maintainer chose `$F` over the bare minimum
+/// (2026-10-05), matching the PRG-AND's inverted encoding, where 0 is the full
+/// window. PRG-OR, PRG-AND and CHR-OR stay 0, so the power-on PRG window is
+/// unchanged.
+const M45_RESET_REGS: [u8; 4] = [0x00, 0x00, 0x0F, 0x00];
+
 /// The four-entry protection array mapper 121 returns at `$5000-$5FFF`.
 const M121_PROTECTION: [u8; 4] = [0x83, 0x83, 0x42, 0x00];
 
@@ -356,7 +368,11 @@ impl Mmc3Board {
             chr_is_ram,
             chr_ram: vec![0u8; overlay].into_boxed_slice(),
             wram: vec![0u8; wram].into_boxed_slice(),
-            regs: [0; 4],
+            regs: if board == Board::M45 {
+                M45_RESET_REGS
+            } else {
+                [0; 4]
+            },
             index: 0,
             locked: false,
             prg_override: [None; 3],
@@ -608,7 +624,7 @@ impl Mapper for Mmc3Board {
             Board::M37 => self.regs[0] = 0,
             // "resets the outer bank registers as a soft reset would".
             Board::M45 => {
-                self.regs = [0; 4];
+                self.regs = M45_RESET_REGS;
                 self.index = 0;
                 self.locked = false;
             }
@@ -690,7 +706,7 @@ impl Mapper for Mmc3Board {
                         self.index = (self.index + 1) & 3;
                     }
                     0x6001 => {
-                        self.regs = [0; 4];
+                        self.regs = M45_RESET_REGS;
                         self.index = 0;
                         self.locked = false;
                     }

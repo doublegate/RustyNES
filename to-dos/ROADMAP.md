@@ -1130,7 +1130,17 @@ sub-tests. Before it lands:
       `VERIFY=1 fetch-goldens` and attribute every difference, regenerate,
       mutation-check, and run both ladders.
 
-## T-GA23C-POWERON — mapper 45's register-2 power-on value (found v2.9.8)
+## T-GA23C-POWERON — mapper 45's register-2 power-on value (found v2.9.8, FIXED v3.0.0)
+
+**Fixed for v3.0.0** (maintainer, 2026-10-05). Power-on, a soft reset and a
+`$6001` write all set the outer registers to `[$00, $00, $0F, $00]`
+(`M45_RESET_REGS` in `mmc3_boards.rs`), so CHR-AND passes every MMC3 CHR bit.
+The value comes from the two menus' own code (below), not from trying values:
+any CHR-AND from `$A` to `$F` satisfies them, and `$F` matches the PRG-AND's
+inverted encoding, where 0 is the full window. *Famicom Yarou 54* now draws its
+"54 in 1" menu and *Vol.5* its scenery. Pinned by
+`m45_power_on_and_reset_pass_every_mmc3_chr_bit`; reverting any of the three
+sites fails it. The record of the search follows.
 
 *Famicom Yarou 54* (mapper 45, GA23C) boots to a blue screen while the board's
 other four dumps run. An earlier investigation traced it to the outer registers'
@@ -1162,6 +1172,52 @@ looked, and a blue screen from the `$5000-$5FFF` DIP read, whose setting picks
 the menu, remains. The next step is
 therefore black-box: trace the boot's CPU reads in `$5000-$7FFF` and find where
 it parks, before any register value is questioned again.
+
+**v3.0.0 black-box trace (2026-10-05): the DIP lead is refuted, and a second
+dump has the same defect.** The probe used the core's `debug-hooks` access log
+(every CPU access, indexed and indirect included) over 300 frames:
+
+- *Famicom Yarou 54* makes **no** access to `$5000-$7FFF` at all. It does not
+  read the DIP and does not write an outer register. It does not park: its main
+  loop at `$C988` waits on an NMI flag (`$0397`) and its NMI runs every frame.
+  The only mapper writes are the MMC3 CHR banks, R0-R5 = 0, 2, 4, 5, 6, 7,
+  every frame.
+- The reset vector sits in PRG bank `$3F`, the power-on bank (`$F2A8`). That
+  bank's only `$6000` stores are the four at `$EEC0-$EED2`. They belong to the
+  game-launch routine, which copies itself to `$0100` and writes the outer
+  registers from a per-game table at `$0560-$0563`. That routine runs only once
+  a game is chosen. **The menu therefore draws under the power-on outer state.**
+- Under our power-on state (all four registers 0), CHR-AND is 0. Every MMC3 CHR
+  bank then maps to one 1 KiB page, so the menu's tiles and font collapse onto
+  each other.
+- **The same holds for *Famicom Yarou Vol.5 7-in-1*** (128 KiB CHR-ROM): same
+  CHR banks, no `$6000` write before rendering. Its committed screenshot is
+  **not** a working menu: font glyphs ("ABCDEFGHIJKL", "012 3456") fill the
+  grass and clouds, where scenery tiles belong. v2.9.8's corpus review accepted
+  it as running. *Vol.1* is CHR-RAM, and *Super 3-in-1* and *Super New Year
+  Cart* write all four outer registers before they enable rendering (frames 1
+  and 2), which is why those three are correct under any power-on value.
+
+So two dumps from the same series assume CHR-AND passes at least 3 bits
+(`$A` or more) before any write. That rules out the all-zero power-on value,
+but does not pin a value. The maintainer chose `$F`.
+
+## T-GA23C-CHRRAM — *Famicom Yarou Vol.1*'s CHR-RAM is uploaded unbanked (found v3.0.0)
+
+*Famicom Yarou Vol.1 7-in-1* (mapper 45, 256 KiB PRG, CHR-RAM) shows noise,
+both before and after T-GA23C-POWERON. Its committed screenshot was noise in
+v2.9.8 too, and that review accepted it as running. Traced on 2026-10-05:
+
+- The menu writes all 8 KiB of pattern data through `$2007` (1,024 writes into
+  each 1 KiB window) while every MMC3 CHR register is still 0.
+- It then displays with R0-R5 = 0, 2, 4, 5, 6, 7.
+- Under MMC3 CHR banking, that upload lands in banks 0-1 only, whatever the
+  outer registers hold, so banks 2-7 are never written.
+
+The program behaves as if this cart's CHR-RAM is addressed straight from PPU
+A10-A12, bypassing the MMC3's CHR banks. The mapper 45 page does not mention
+CHR-RAM at all. Open: fix only from a document or a hardware measurement, as
+for T-GA23C-POWERON.
 
 ## T-SPECTATOR-HISTORY — the spectator's input history grows without bound (found v2.9.9, FIXED v3.0.0)
 
