@@ -999,12 +999,15 @@ impl Movie {
     ///
     /// # Errors
     ///
-    /// [`MovieError::RomMismatch`], [`MovieError::RegionMismatch`] or
-    /// [`MovieError::BoardMismatch`] for a different machine;
+    /// [`MovieError::EpochMismatch`] for a movie recorded under another
+    /// emulation epoch (ADR 0045); [`MovieError::RomMismatch`],
+    /// [`MovieError::RegionMismatch`] or [`MovieError::BoardMismatch`] for a
+    /// different machine;
     /// [`MovieError::OptionNotApplicable`] for a Game Genie code that does
     /// not decode; [`MovieError::BadSaveState`] if the embedded snapshot is
     /// malformed.
     pub fn seek_to_start(&self, nes: &mut Nes) -> Result<(), MovieError> {
+        self.check_epoch()?;
         if nes.rom_sha256() != &self.rom_sha256 {
             return Err(MovieError::RomMismatch);
         }
@@ -1037,6 +1040,21 @@ impl Movie {
             debug_assert!(options_back.is_ok() && state_back.is_ok());
         }
         result
+    }
+
+    /// v3.0.0 (ADR 0045): refuse a movie recorded under another emulation
+    /// epoch. [`Self::deserialize`] checks the field it parses; this checks
+    /// the field as it stands, because `epoch` is public and a [`Movie`] can
+    /// be built or edited in memory, and playback must not trust that it came
+    /// through `deserialize` (a review finding on #588).
+    const fn check_epoch(&self) -> Result<(), MovieError> {
+        if self.epoch != crate::EMULATION_EPOCH {
+            return Err(MovieError::EpochMismatch {
+                movie: self.epoch,
+                core: crate::EMULATION_EPOCH,
+            });
+        }
+        Ok(())
     }
 
     /// The mutating half of [`Self::seek_to_start`], after the identity
@@ -1090,12 +1108,18 @@ impl Movie {
     ///
     /// # Errors
     ///
-    /// [`MovieError::RomMismatch`] if `nes` is running a different ROM, or
-    /// [`MovieError::BadSaveState`] if an embedded start point is malformed.
+    /// [`MovieError::EpochMismatch`] for a movie from another emulation epoch
+    /// (checked first, attested or not), [`MovieError::RomMismatch`] if `nes`
+    /// is running a different ROM, or [`MovieError::BadSaveState`] if an
+    /// embedded start point is malformed.
     /// A movie with no attestation is **not** an error; it returns
     /// [`VerifyOutcome::NotAttested`], because "this movie makes no claim" and
     /// "this movie makes a false claim" are different answers.
     pub fn verify(&self, nes: &mut Nes) -> Result<VerifyOutcome, MovieError> {
+        // Before the attestation question: a movie from another epoch cannot
+        // be replayed here at all, which is a stronger answer than "makes no
+        // claim".
+        self.check_epoch()?;
         let Some(att) = self.attestation.as_ref() else {
             return Ok(VerifyOutcome::NotAttested);
         };
@@ -2313,6 +2337,43 @@ mod tests {
             Err(MovieError::EpochMismatch { movie, core })
                 if movie == crate::EMULATION_EPOCH + 1 && core == crate::EMULATION_EPOCH
         ));
+    }
+
+    /// v3.0.0: the epoch is enforced on PLAYBACK too, not only when parsing.
+    /// `Movie::epoch` is a public field and a `Movie` can be built in memory,
+    /// so a deserialize-only check left `seek_to_start` and `verify` open to
+    /// a movie from another epoch (a review finding on #588). Both refuse it, with
+    /// the machine untouched, and `verify` refuses it before reporting that
+    /// the movie is unattested.
+    #[test]
+    fn playback_refuses_a_movie_from_another_epoch() {
+        let mut nes = Nes::from_rom(&synth_nrom_battery()).unwrap();
+        let mut movie = Movie::new(
+            nes.region(),
+            *nes.rom_sha256(),
+            crate::HardwareOptions::default(),
+            None,
+            StartPoint::PowerOn,
+            synthetic_inputs(1),
+        );
+        movie.epoch = crate::EMULATION_EPOCH + 1;
+        nes.sram_mut().fill(0xA5);
+        let refused = |r: &Result<(), MovieError>| {
+            matches!(r, Err(MovieError::EpochMismatch { movie, core })
+                if *movie == crate::EMULATION_EPOCH + 1 && *core == crate::EMULATION_EPOCH)
+        };
+        assert!(
+            refused(&movie.seek_to_start(&mut nes)),
+            "seek_to_start refuses"
+        );
+        assert!(
+            nes.sram().iter().all(|&b| b == 0xA5),
+            "the machine is untouched"
+        );
+        assert!(
+            refused(&movie.verify(&mut nes).map(|_| ())),
+            "verify refuses before NotAttested"
+        );
     }
 
     /// v3.0.0: a format-4 movie (v2.9.9) does not record the epoch, so it is
