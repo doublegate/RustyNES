@@ -65,10 +65,16 @@ so a state written by a newer version that adds (for example) a
 ignored.
 
 The format is intentionally simple — no `serde`, no `bincode`, no
-`bitflags-serde`. Cross-version compatibility within v1.x is
-best-effort, not guaranteed: a chip section's version byte is bumped any
-time its on-disk layout changes, and loading an incompatible version
-returns an error rather than silently corrupting state.
+`bitflags-serde`. A chip section's version byte is bumped any time its
+on-disk layout changes, and loading an incompatible version returns an
+error rather than silently corrupting state.
+
+**States are not carried across releases that change a section.** v3.0.0
+refuses every state written by v2.9.9 or earlier (its PPU section is
+version 12), as v2.9.8 and v2.9.9 refused their predecessors' states. The
+message says the state was saved by an older (or newer) release, and the
+running game is left untouched. Re-create the state from the game, or from an
+in-game save, which the battery `.sav` keeps.
 
 ### Determinism guarantee
 
@@ -85,9 +91,17 @@ the running emulator state isn't affected. Common causes:
 - You renamed or re-dumped the ROM, changing its SHA-256.
 - You moved the data directory.
 - The slot file is from an older RustyNES with an incompatible chip
-  section version.
+  section version. Since v3.0.0 the message says so: "saved by an older
+  release".
 
 The current state continues running; nothing crashes.
+
+**Movies (`.rnm`) follow the same rule, and also record which emulator
+behaviour they were made with** (the emulation epoch, v3.0.0). A movie
+recorded by v2.9.9 or earlier, or by a version that emulates differently, is
+refused with a message naming the reason, instead of replaying into a
+desync. Movies imported from other emulators (`.fm2`, `.bk2`, `.fcm`, `.fmv`,
+`.vmv`) still import.
 
 ## Rewind
 

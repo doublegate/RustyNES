@@ -46,7 +46,7 @@ crates/
 ├── rustynes-cpu/            # Ricoh 2A03 CPU (6502 + interrupt logic). No PPU/APU deps.
 ├── rustynes-ppu/            # 2C02 PPU. Depends on rustynes-mappers (for CHR/nametable bus).
 ├── rustynes-apu/            # 2A03 APU. Depends on rustynes-cpu only for shared DMC DMA hooks.
-├── rustynes-mappers/        # Cartridge + mapper trait + 168 mapper families.
+├── rustynes-mappers/        # Cartridge + mapper trait + 191 mapper families.
 ├── rustynes-frontend/       # The rustynes binary: winit + wgpu + cpal + egui.
 └── rustynes-test-harness/   # Test ROM runner, golden-master comparator, screenshot diff.
 ```

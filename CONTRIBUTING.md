@@ -50,7 +50,7 @@ Areas where help is especially valued:
 
 ### Prerequisites
 
-- **Rust 1.86** (pinned in `rust-toolchain.toml`; `rustup` auto-installs it, including the `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` targets).
+- **Rust 1.96** (pinned in `rust-toolchain.toml`; `rustup` auto-installs it, including the `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` targets).
 - **Git**.
 - **System libraries** for the `winit` + `wgpu` + `cpal` frontend.
 

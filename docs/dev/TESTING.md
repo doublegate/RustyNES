@@ -19,10 +19,10 @@ RustyNES employs a comprehensive testing strategy combining unit tests, integrat
 
 ### Testing Goals
 
-- **AccuracyCoin 139/141 (98.58%)** — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") are known gaps; the core held 139/139 byte-identically across every release before the v2.0.1 catalog re-sync grew it to 141 assigned tests
+- **AccuracyCoin 144/144 (100.00%)** since v2.6.18, on the catalog re-synced at v2.6.17 (144 assigned tests). It read 139/139 before the v2.0.1 re-sync grew it to 141, and 141/141 from v2.0.3
 - **Unit test coverage** for all components
 - **Integration tests** for component interactions
-- **Regression tests** for mapper edge cases (168 mapper families)
+- **Regression tests** for mapper edge cases (191 mapper families)
 - **Game compatibility matrix** validation
 
 > `docs/STATUS.md` is the single source of truth for per-suite pass counts and

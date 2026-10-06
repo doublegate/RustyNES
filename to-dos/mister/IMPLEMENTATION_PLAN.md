@@ -1,16 +1,21 @@
 # RustyNES MiSTer core — implementation plan, v2.5.1 → v2.7.0
 
-> **Re-targeted 2026-09-22 by [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md).**
-> The hardware-verified core and the contribution package are **v3.0.0**, after the
-> v2.7.x–v2.9.x audit lines; read "v2.7.0" below as the milestone that became v3.0.0.
-> The execution view from here is `to-dos/plans/v2.8.x-*`, `v2.9.x-*` and `v3.0.0-*`.
+> **Re-targeted twice.** [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md)
+> (2026-09-22) made the hardware-verified core and the contribution package v3.0.0;
+> [ADR 0043](../../docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)
+> (2026-09-29) then made v3.0.0 the API major with a **release-candidate** core, and
+> moved hardware verification and the contribution package to a later **v3.x**
+> release. v3.0.0 shipped on 2026-10-06. Read "v2.7.0" below as the milestone that
+> became v3.x. The execution view from here is
+> [`v3.x-hardware-verification-plan.md`](../plans/v3.x-hardware-verification-plan.md).
 
 **Companion to** `to-dos/plans/v2.7.0-mister-core-plan.md` (the narrative plan) and
 `docs/mister.md` (the living spec). This file is the execution view: what is done,
 what is next, and what each release owes.
 
 **Goal:** a functioning, feature-complete RustyNES core for MiSTer FPGA at
-**v3.0.0** (v2.7.0 until ADR 0041), suitable for contributing per
+**v3.x**, the hardware-verification release (v2.7.0 until ADR 0041, v3.0.0
+until ADR 0043), suitable for contributing per
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`.
 
 ## Where the core actually is
@@ -38,7 +43,7 @@ what is next, and what each release owes.
 - **Hardware: both boards** — DE10-Nano + the mandatory SDRAM add-on, and a
   SuperStation One. One `.rbf` must boot both.
 - **Not in this line:** FDS, expansion audio, savestates, Vs. System, NSF, the
-  remaining ~168 mapper families, AccuracyCoin beyond a stated floor.
+  remaining ~185 mapper families (191 in the emulator at v3.0.0), AccuracyCoin beyond a stated floor.
 
 ## The arithmetic, stated up front
 

@@ -19,7 +19,7 @@ documented in `docs/cartridge-format.md`.
 
 ## Supported mappers
 
-iNES mapper numbers handled (**168 mapper families**; the table below lists the
+iNES mapper numbers handled (**191 mapper families**; the table below lists the
 most common; the most popular set covers well over 95% of the licensed
 library). Mappers are tracked in three accuracy tiers — Core, Curated, and
 BestEffort — so the breadth count is honest about which families are
@@ -92,15 +92,15 @@ for how the region is determined.
 
 ## Accuracy
 
-RustyNES clears the headline accuracy bar all but exhaustively: the kevtris
-**AccuracyCoin** suite at **98.58% (139/141)** — only the two newest upstream PPU
-tests ("ALE + Read", "Hybrid Addresses") are known gaps — **nestest** with zero
+RustyNES clears the headline accuracy bar: 100thCoin's **AccuracyCoin** suite
+at **100.00% (144/144)** (the "ALE + Read" and "Hybrid Addresses" gaps closed in
+v2.0.3, the last failing entry in v2.6.18), **nestest** with zero
 golden-log diff over 8,991 instructions, and the entire blargg
 `instr_test_v5`, `instr_misc`, `instr_timing`, `cpu_timing_test6`,
 `cpu_interrupts_v2`, `ppu_open_bus`, `ppu_vbl_nmi`, `apu_test`,
 `apu_mixer`, and `dmc_dma_during_read4` corpora, plus `mmc3_irq_tests`
 and the kevtris `mmc3_test_2` sub-ROMs. A 60-ROM commercial-ROM oracle
-and a 52-entry extended oracle are tracked byte-identically as
+and a 137-entry extended oracle are tracked byte-identically as
 regression gates (the ROMs themselves are user-supplied, never shipped).
 
 This accuracy was developed across the emulation engine's lineage — the
@@ -110,12 +110,12 @@ cpu_interrupts_v2 / MMC3-IRQ closures — and is re-measured on every release;
 
 ### Remaining edge cases
 
-One kevtris sub-test, `mmc3_test_2/4-scanline_timing` sub-test #3
-("Scanline 0 IRQ should occur sooner when $2000=$08"), is a known
-1-PPU-clock bracket on the MMC3 A12-to-IRQ discriminator. It is not
-known to affect any commercial game, and the AccuracyCoin battery (which
-exercises the same surface) passes. The full diagnosis lives in the
-project's developer documentation.
+The MMC3 interrupt-timing edge case this section used to describe,
+`mmc3_test_2/4-scanline_timing`, passes all 13 sub-tests since v3.0.0. What
+remains in the MMC3 suites is by design: RustyNES models the Sharp MMC3, so the
+tests for the NEC revision (`6-MMC3_alt`) and the MMC6's alternate reload
+behaviour (`6-MMC6`) do not pass. Every known approximation is listed in the
+project's accuracy ledger (`docs/accuracy-ledger.md`).
 
 If you find a game that misbehaves, please file an issue with the
 exact ROM (sha256), the symptom, and ideally a save state at the

@@ -445,7 +445,7 @@ applied to this ROM, produced this output.*
 
 **Hashing the core snapshot instead** would be strictly stronger at detecting
 divergence, and was rejected: the snapshot schema is versioned and bumps between
-releases (`PPU_SNAPSHOT_VERSION` has reached 8), so every bump would silently
+releases (`PPU_SNAPSHOT_VERSION` had reached 8 then, and is 12 at v3.0.0), so every bump would silently
 invalidate every previously-recorded attestation. A 256x240 RGBA framebuffer is
 stable for as long as the NES is the NES, and an attestation is only worth
 recording if it can still be checked years later.

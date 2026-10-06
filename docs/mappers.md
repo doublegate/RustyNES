@@ -32,6 +32,9 @@ pub trait Mapper: Send {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError>;
 }
 
+// `#[non_exhaustive]` since v3.0.0: outside `rustynes-mappers`, build one with
+// `rustynes_mappers::parse` or `Cartridge::synthetic`, never a struct literal.
+#[non_exhaustive]
 pub struct Cartridge {
     pub prg_rom: Box<[u8]>,
     pub chr_rom: Box<[u8]>,          // empty if cart uses CHR-RAM
@@ -40,11 +43,14 @@ pub struct Cartridge {
     pub mirroring: Mirroring,
     pub region: Region,
     pub console_type: ConsoleType,
+    pub vs_ppu_type: VsPpuType,
+    pub vs_dual_system: bool,
     pub prg_ram_size: u32,
     pub chr_ram_size: u32,
     pub has_battery: bool,
     pub has_trainer: bool,
     pub is_nes2: bool,
+    pub nametable_wiring_bits: u8,   // the header's raw nametable bits (v2.9.9)
 }
 
 pub enum Mirroring { Horizontal, Vertical, SingleScreenA, SingleScreenB, FourScreen, MapperControlled }

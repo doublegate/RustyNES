@@ -52,7 +52,7 @@ The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` 
 | APU PAL (v2.1.5) | `pal_apu_tests/*` (10, forced PAL, on-screen verdict via `run_nes_screen`) | 10/10 strict-pass: `01`/`02`/`03` (region-independent length/table/IRQ-flag) + `04`-`08` (PAL frame-counter-timing, passing since the v2.1.5 region-gated PAL step positions) + `10`/`11` (length halt/reload timing, passing since the v2.1.5 deferred halt/reload write-ordering fix in `length.rs`). Corrects a prior `$6000` false oracle (these NROM ROMs have no PRG-RAM). NTSC byte-identity preserved. Documented in `docs/apu-2a03.md` + `docs/accuracy-ledger.md` |
 | APU NTSC (v2.6.2) | `blargg_apu_2005.07.30/*` (11, on-screen **numeric result code** via `run_nes_result_code`) | 11/11 strict-pass. **The verdict was read wrongly twice before this.** (1) The suite asserted `$6000 == 0` through `run_nes_blargg`; these NROM ROMs have no PRG-RAM, so `$6000` reads `0` forever and `0` is blargg's *success* code — eleven vacuous assertions, the same false oracle corrected for the PAL half in v2.1.5 and never migrated here. (2) `run_nes_screen` is also wrong for this corpus: these ROMs never print `PASSED`/`FAILED`, so it returns `Unresolved` for all eleven while the screen reads `$01`. Their `tests.txt` states the convention — *"a result code of 1 always indicates that all tests were passed"*. Demonstrated to fail: half-frame 14913→14914 caught by 2 ROMs, frame IRQ 29828→29827 by 7; the quarter clock is **not** caught and `tests.txt` says why (the corpus does not test envelope, sweep or linear-counter clocking). `vacuity_of_the_6000_protocol_on_this_corpus` pins reason (1) executably |
 | DMC DMA | `dmc_dma_during_read4/*` (4) | All |
-| MMC3 | `mmc3_test_2/*` (5), `mmc3_irq_tests/*` (6), `mmc3_test` v1 (6) | `mmc3_test_2` 1/2/3/5 + `mmc3_test` v1 1/2/3 strict; `mmc3_test_2/4` #3 + `mmc3_test` v1 4/5/6 are the ADR-0002 scanline-IRQ-cadence residuals (`#[ignore]`'d; expected-fail probes pin the failure shape) |
+| MMC3 | `mmc3_test_2/*` (6), `mmc3_irq_tests/*` (6), `mmc3_test` v1 (6) | `mmc3_test_2` 1-5 strict, including `4-scanline_timing` (all 13 sub-tests since v3.0.0, T-MMC3-BG-A12), and `mmc3_test` v1 1-5 strict; v1 `6-MMC6` fails only at its alternate-revision assertion and `mmc3_test_2/6-MMC3_alt` tests the NEC revision, both by design (the project models the Sharp MMC3) |
 | TASVideos / extended (C1) | `dpcmletterbox` (DMC-IRQ raster split, visual smoke) | Frame-hash sentinel; committable corpus only — see below |
 | Mapper coverage | `holy_mapperel`, `holy_diver_battery_test`; `vrc24test` → in-tree VRC2/4 unit tests + `m22` baseline (T-71-005) | Pass for implemented mappers |
 | Input | standard-controller strobe/read tests (T-71-004); DMC-conflict / Four Score / Zapper documented in `compatibility.md` | Standard-pad path strict; expansion devices deferred |
@@ -270,8 +270,11 @@ committable tests BEYOND the 139 AccuracyCoin battery. Findings (pinned
 
 - **`mmc3_test` v1 (6 sub-ROMs)** — wired (`tests/m004_mmc3.rs`). The older
   kevtris/blargg MMC3 suite (distinct ROMs from the already-wired
-  `mmc3_test_2`; same `$6000` protocol). **1/2/3 strict-PASS.** **4/5/6 are
-  expected-fail** and converge on the *same* ADR-0002
+  `mmc3_test_2`; same `$6000` protocol). *(Status as of this section's
+  writing. Since v3.0.0, `4-scanline_timing` and `5-MMC3` pass strictly in
+  both suites, and only `6-MMC6`'s alternate-revision assertion remains, by
+  design; `docs/STATUS.md` has the current rows.)* **1/2/3 strict-PASS.** **4/5/6 were
+  expected-fail** and converged on the *same* ADR-0002
   fractional-master-clock axis as the existing `mmc3_test_2/4` #3 residual:
   - `4-scanline_timing` #3 — "Scanline 0 IRQ should occur sooner when
     `$2000=$08`" (1-CPU-cycle scanline-IRQ bracket).

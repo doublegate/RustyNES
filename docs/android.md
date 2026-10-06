@@ -1,6 +1,6 @@
 # RustyNES on Android
 
-> **Current distribution (checked 2026-09-29, v2.9.4).** The store-launch
+> **Current distribution (checked 2026-10-06, v3.0.0).** The store-launch
 > targets below (v2.1.0, later v2.2.0 and v2.3.0) were retired and **no store
 > launch has happened**. Android ships as **GitHub-sideload** APKs. A free store
 > listing (Google Play, F-Droid) waits until after the v3.x hardware-verification

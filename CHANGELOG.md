@@ -69,6 +69,12 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
     is now told apart and refused as "an older version of RustyNES" instead of
     the handshake timing out with no reason. On the older peer's side it still
     times out.
+    In a mesh session both protocol-6 peers name the mismatch: the host
+    answers a refused joiner with its own handshake, so the joiner reports
+    the reason (epoch, ROM or settings) instead of a timeout.
+  - **Playback checks it too:** a movie built or edited in memory is refused
+    by `seek_to_start` and `verify` when its epoch differs, not only when it
+    is read from a file.
 - **A save state from another release says so.** v2.9.8 and v2.9.9 states fail
   a section's version check (PPU 11, where v3.0.0 reads 12). The message now
   says it was saved by an older (or newer) release, instead of giving two
@@ -104,6 +110,11 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
   `scripts/release-automation/bump_release.py` moves them with every release
   (Android's `versionCode` = MAJOR x 10000 + MINOR x 100 + PATCH, which still
   rises past 20004).
+- **Release tooling.** `bump_release.py` moves the workspace's internal
+  `rustynes-*` version requirements on a MAJOR bump. They had read `2.0.0`
+  since v2.0.0, a range no 3.x satisfies, so the 3.0.0 bump left the
+  workspace unresolvable. The script also no longer gives a new release
+  the previous release's description in a "Built on ..." lineage line.
 - **CI cannot report success without testing.** A GitHub runner outage once
   left every job skipped while `CI success` passed. It now fails unless the
   change detection ran, and, when code changed, unless the setup job did.
@@ -149,7 +160,7 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
 ### Verification
 
 - `cargo test --release --workspace --features test-roms --no-fail-fast`:
-  3,218 passed, 0 failed, 11 ignored (v2.9.9: 3,201 / 0 / 13; the two
+  3,223 passed, 0 failed, 11 ignored on the merged release (v2.9.9: 3,201 / 0 / 13; the two
   ignores that went are the `4-scanline_timing` pins, which now pass).
   AccuracyCoin 144/144, nestest 0-diff.
 - The local commercial suites (`--features test-roms,commercial-roms`):

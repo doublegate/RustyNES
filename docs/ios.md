@@ -343,7 +343,7 @@ run-ahead / TAS-playback). The v1.9.x train then shipped the deferred connectivi
 and scripting: **Lua scripting (v1.9.6), RetroAchievements (v1.9.6), and netplay
 (v1.9.6/v1.9.7)** are all live (the shared bridge already exposed them, so each
 reduced to SwiftUI chrome), plus iCloud save-state sync (v1.9.7) and the
-Google-Play-parity polish (v1.9.8). The current line is **v1.9.9 "Workshop"** —
+Google-Play-parity polish (v1.9.8). At that point the line was **v1.9.9 "Workshop"** —
 the creator / power-tools release (read-only debugger inspector, raw-RAM editor,
 Game Genie codes, foreign-movie import `.fm2`/`.bk2`/`.fcm`/`.fmv`/`.vmv`, the
 TAStudio piano-roll, custom palettes, HD-packs, and the audio-depth controls). The
@@ -354,7 +354,7 @@ is a host shell off-device.
 
 **v2.0.5 "Landfall" — the iOS re-port onto Timebase.** The v2.0.x "Harbor" train
 re-ports the frozen v1.9.9 line onto the **v2.0.0 "Timebase"** core (the iOS analogue
-of the Android v2.0.1 re-port), so the current line is now **v2.0.5** and AccuracyCoin
+of the Android v2.0.1 re-port), so the line then stood at **v2.0.5** and AccuracyCoin
 is back to **141/141** (the shipped v2.0.3 default, unchanged by this host-only cut).
 v2.0.5 surfaces + localizes (**EN + ES**) the **pre-Timebase movie warning**: loading a
 pre-v2.0.0 `.rnm` still replays its input, but a non-blocking notice — drained via

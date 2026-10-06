@@ -6,7 +6,7 @@ change to `crates/rustynes-cosim` or the golden formats it emits.
 **Decision records:** [ADR 0037](adr/0037-mister-fpga-core-independent-hdl-implementation.md)
 (the programme and the HDL firewall) ·
 [ADR 0038](adr/0038-cosim-interrupt-injection-api.md) (the interrupt-injection API).
-**Execution plan:** the line to **v3.0.0** ([ADR 0041](adr/0041-hardware-release-is-v3.0.0.md)):
+**Execution plan:** the line to **v3.0.0**, which shipped on 2026-10-06 ([ADR 0041](adr/0041-hardware-release-is-v3.0.0.md), as amended by ADR 0043):
 [`v2.7.x`](../to-dos/plans/v2.7.x-core-frontend-audit-plan.md) (the core and frontend audits; oracle-only, so the bitstream does not change),
 [`v2.8.x`](../to-dos/plans/v2.8.x-libretro-rtl-audit-plan.md) (the RTL audit and the off-die build),
 [`v2.9.x`](../to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (the board) and
