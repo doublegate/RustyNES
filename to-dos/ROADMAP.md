@@ -1227,8 +1227,20 @@ shown next. Shown frames are released, and an input more than
 that arrive before a matching `Sync` are still buffered, as NF-15 requires
 (the relay may forward the `Sync` late), so ingestion was bounded rather than
 stopped. Pinned by `the_input_history_is_bounded_and_releases_shown_frames`;
-removing either the cap or the release fails it. The original analysis
-follows.
+removing either the cap or the release fails it.
+
+**And a dropped input is reported, not waited on** (CodeRabbit on #588, before
+the merge). The players acknowledge each other, not the spectator, so an input
+dropped at the cap is never resent. The first fix therefore let a spectator
+play every frame it kept and then wait at the gap forever, with no reason
+given. The test above stopped after 64 shown frames, short of the gap. The
+first dropped frame is now recorded. When playback reaches it with its input
+still missing, `SpectatorSession::stream_lost` reports that frame and
+`advance` stops, which is terminal like `mismatch`. The desktop frontend fails
+the session with the reason. Pinned by
+`a_spectator_that_drops_input_at_the_cap_reports_it`, with the cap lowered to
+32 through a test-only field. Not recording the drop and not reporting it are
+each CAUGHT. The original analysis follows.
 
 Raised by the agy review of #583 (2026-10-05) and confirmed by reading the
 code. It was already true on `main`; the v2.9.9 change gates *playback* on a

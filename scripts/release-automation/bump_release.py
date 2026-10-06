@@ -231,7 +231,8 @@ def terminate(lead: str) -> str:
     return s if s[-1] in '.!?,;:' else s + "."
 
 
-def extend_chain(line: str, marker: str, old: Release, new: Release) -> tuple[str, str]:
+def extend_chain(line: str, marker: str, old: Release, new: Release,
+                 lead: str | None = None) -> tuple[str, str]:
     """Swap the head of a lineage chain and insert the outgoing release into it.
 
     Returns `(line, error)`; `error` is "" when the insertion succeeded.
@@ -258,7 +259,29 @@ def extend_chain(line: str, marker: str, old: Release, new: Release) -> tuple[st
 
     So `Built on ` is tried FIRST, because it names the head of the chain, and
     `, on ` only when there is no `Built on ` to find.
+
+    A HEAD CAN CARRY ITS OWN DESCRIPTION, and it belongs to the outgoing
+    release. Root `ROADMAP.md` reads `**Project Status:** vX "C" released —
+    <what vX is>. Built on ...`. Swapping only the version left that text
+    under the new release: the v3.0.0 cut published v3.0.0 as "the release
+    candidate for v3.0.0 ... the tenth release of the v2.9.x line"
+    (CodeRabbit on #588). So a described head takes `lead` as its new
+    description, and the old text moves into the chain beside its own
+    release, as `**vX "C"** (<old text>)`. Without a lead there is nothing
+    true to write at the head, so that case is refused.
     """
+    m = re.search(
+        re.escape(f'{marker}{old.version} "{old.codename}"')
+        + r'(?P<rel>\s+released\s+(?:—|--)\s+)(?P<desc>.+?)\.\s+Built on\s+',
+        line)
+    if m:
+        if not lead:
+            return line, "CHAIN head carries a description; a lead is needed to replace it"
+        desc = m["desc"].rstrip()
+        return (line[:m.start()]
+                + f'{marker}{new.version} "{new.codename}"{m["rel"]}{terminate(lead)} '
+                + f'Built on **v{old.version} "{old.codename}"** ({desc}) and '
+                + line[m.end():]), ""
     line = line.replace(
         f'{marker}{old.version} "{old.codename}"',
         f'{marker}{new.version} "{new.codename}"', 1)
@@ -530,10 +553,22 @@ def selftest() -> int:
     chain_built = ('**Project Status:** v2.4.4 "Ignition" released — the head. '
                    'Built on **v2.4.3 "Touchstone"** and v2.4.2 "Cairn", '
                    'on the v2.0.0 "Timebase" MAJOR cut.')
-    got, err = extend_chain(chain_built, "**Project Status:** v", old, new)
+    got, err = extend_chain(chain_built, "**Project Status:** v", old, new, LEAD)
     check("chain: `Built on ` shape extends", err, "")
+    # The head's own description belongs to the OUTGOING release. Until v3.0.0
+    # the swap kept it under the new version, so the v3.0.0 cut published
+    # `v3.0.0 "Cornerstone" released — the release candidate for v3.0.0 ...
+    # the tenth release of the v2.9.x line` (CodeRabbit on #588). This case
+    # contained that very shape and asserted only where the insertion landed.
+    check("chain: the new head carries the lead, not the old description",
+          got.startswith(f'**Project Status:** v2.4.5 "Compass" released — {terminate(LEAD)} Built on'),
+          True)
+    check("chain: the old description moves with the old release",
+          'Built on **v2.4.4 "Ignition"** (the head) and' in got, True)
+    _, err = extend_chain(chain_built, "**Project Status:** v", old, new)
+    check("chain: a described head without a lead is refused", bool(err), True)
     check("chain: inserts at the HEAD, not the tail",
-          'Built on **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"**' in got, True)
+          'Built on **v2.4.4 "Ignition"** (the head) and **v2.4.3 "Touchstone"**' in got, True)
     check("chain: the tail is left alone",
           'on the v2.0.0 "Timebase" MAJOR cut' in got, True)
     check("chain: predecessor still appears exactly once",
@@ -663,7 +698,7 @@ def main() -> int:
                     # rules and the reason they matter are in `extend_chain`,
                     # which is a function precisely so the selftest can call
                     # the code that ships rather than a copy of it.
-                    line, err = extend_chain(line, marker, old, new)
+                    line, err = extend_chain(line, marker, old, new, args.lead)
                     if err:
                         unknown.append(f"{path}: {err}: {line[:100]}")
                     counts["CHAIN"] += 1

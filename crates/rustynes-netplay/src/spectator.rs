@@ -170,6 +170,16 @@ pub struct SpectatorSession<T: Transport> {
     /// for the whole session), and its length never passes
     /// [`MAX_SPECTATOR_BUFFER_FRAMES`].
     history: VecDeque<FrameInputs>,
+    /// The buffer's capacity, in frames past `current_frame`:
+    /// [`MAX_SPECTATOR_BUFFER_FRAMES`], lowered only by this module's tests.
+    buffer_cap: u32,
+    /// v3.0.0 — the first frame dropped because it lay beyond the buffer.
+    /// It is not resent (the players acknowledge each other, not the
+    /// spectator), so playback cannot pass it; see [`Self::stream_lost`].
+    dropped_from: Option<u32>,
+    /// Set once playback has reached `dropped_from` with that frame still
+    /// missing. Terminal, like [`Self::mismatch`].
+    lost: Option<u32>,
 }
 
 impl<T: Transport> SpectatorSession<T> {
@@ -201,6 +211,9 @@ impl<T: Transport> SpectatorSession<T> {
             synced: false,
             mismatch: None,
             history: VecDeque::new(),
+            buffer_cap: MAX_SPECTATOR_BUFFER_FRAMES,
+            dropped_from: None,
+            lost: None,
         }
     }
 
@@ -260,6 +273,18 @@ impl<T: Transport> SpectatorSession<T> {
         self.mismatch
     }
 
+    /// v3.0.0 — the frame playback stopped at because its input was dropped:
+    /// the match ran more than [`MAX_SPECTATOR_BUFFER_FRAMES`] (65,536, about
+    /// 18 minutes) ahead of what this spectator had shown. Every frame kept
+    /// before it plays first; then this is set and [`Self::advance`] produces
+    /// nothing more. Terminal: the dropped input is never resent, so the
+    /// frontend reports it and the viewer spectates again. Before v3.0.0 the
+    /// spectator waited at the gap forever, with no reason given.
+    #[must_use]
+    pub const fn stream_lost(&self) -> Option<u32> {
+        self.lost
+    }
+
     /// How many fully-confirmed frames are buffered but not yet shown — i.e.
     /// how far the spectator is *behind* the live match. The frontend can
     /// fast-forward (call [`Self::advance`] repeatedly) to catch up.
@@ -300,7 +325,7 @@ impl<T: Transport> SpectatorSession<T> {
     pub fn advance(&mut self, nes: &mut Nes) -> SpectatorOutcome {
         self.ingest();
         self.recompute_confirmed();
-        if !self.synced || self.mismatch.is_some() {
+        if !self.synced || self.mismatch.is_some() || self.lost.is_some() {
             return SpectatorOutcome::default();
         }
 
@@ -312,6 +337,11 @@ impl<T: Transport> SpectatorSession<T> {
         let frame = self.current_frame;
         let ready = self.reveal_horizon().is_some_and(|h| frame <= h);
         if !ready {
+            // Waiting is right unless this frame's input was dropped at the
+            // cap: that input never comes, so say so instead of waiting.
+            if self.dropped_from.is_some_and(|f| frame >= f) {
+                self.lost = self.dropped_from;
+            }
             return SpectatorOutcome::default();
         }
 
@@ -380,9 +410,13 @@ impl<T: Transport> SpectatorSession<T> {
                     // time, or a stream that never sends a matching `Sync`,
                     // grew the history without limit. A frame already shown
                     // is past, and dropped too.
-                    if frame < self.current_frame
-                        || frame - self.current_frame >= MAX_SPECTATOR_BUFFER_FRAMES
-                    {
+                    if frame < self.current_frame {
+                        continue;
+                    }
+                    if frame - self.current_frame >= self.buffer_cap {
+                        // Dropped, and not resent: remember where playback
+                        // will have to stop (v3.0.0, `stream_lost`).
+                        self.dropped_from = Some(self.dropped_from.map_or(frame, |f| f.min(frame)));
                         continue;
                     }
                     let slot = self.slot_mut(frame);
@@ -653,6 +687,50 @@ mod tests {
             .count();
         assert_eq!(shown, 64, "the buffered stream plays once synced");
         assert_eq!(spec.history.len(), before - 64, "shown frames are released");
+    }
+
+    /// v3.0.0 — a frame dropped at the buffer cap is never resent (the
+    /// players acknowledge each other, not the spectator), so a spectator
+    /// that plays its retained frames reached the gap and waited forever,
+    /// with no reason given (a review finding on #588; the 64-frame window of the
+    /// test above stopped short of it). It now plays every frame it kept and
+    /// then reports the stream lost, at the first dropped frame. The cap is
+    /// lowered to 32 here so the test reaches it in 32 emulated frames.
+    #[test]
+    fn a_spectator_that_drops_input_at_the_cap_reports_it() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        spec.buffer_cap = 32;
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        for frame in 0..40u32 {
+            for player in 0..2 {
+                feeder.send(&NetMessage::Input {
+                    player,
+                    frame,
+                    input: 0,
+                });
+            }
+        }
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let shown = (0..32)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 32, "every retained frame plays");
+        assert_eq!(spec.stream_lost(), None, "not lost while frames remain");
+        assert!(
+            !spec.advance(&mut nes).produced_frame,
+            "frame 32 was dropped"
+        );
+        assert_eq!(
+            spec.stream_lost(),
+            Some(32),
+            "the gap is reported, not waited on"
+        );
     }
 
     /// A peer-supplied `Input.frame` far beyond the confirmed horizon must be

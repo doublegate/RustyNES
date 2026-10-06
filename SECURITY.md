@@ -10,7 +10,8 @@ Report against the latest release or `main`.
 | Version       | Supported | Notes |
 | ------------- | --------- | ----- |
 | main          | Yes       | Where fixes land first |
-| 2.9.x         | Yes       | The current line |
+| 3.0.x         | Yes       | The current line |
+| 2.9.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.8.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.7.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.6.x         | Partial   | Fixes are shipped forward into the current line, not backported |
@@ -23,10 +24,13 @@ Report against the latest release or `main`.
 Two boundaries are worth stating explicitly, because they change what a report
 means rather than merely how old it is:
 
-- **v2.0.0 "Timebase"** is the one deliberate breaking release (ADR 0003 /
-  ADR 0028). A `.rns` save state or `.rnm` movie written before it is refused
-  with a clear error rather than reinterpreted, so a pre-v2.0.0 parsing report
-  is not reproducible against a current build by design.
+- **Three releases break formats by design.** v2.0.0 "Timebase" (ADR 0003 /
+  ADR 0028), v2.9.8 "Vanguard" and v3.0.0 "Cornerstone" (ADR 0043 / 0044 /
+  0045). A `.rns` save state or `.rnm` movie written before the current
+  format is refused with a clear error rather than reinterpreted, so a parsing
+  report against an older format is not reproducible against a current build
+  by design. From v3.0.0 a movie or netplay peer from another emulation epoch
+  is refused the same way.
 - **v2.2.9** relicensed the project to **GPL-3.0-or-later** (ADR 0036). That is
   a licensing correction, not a SemVer break — no public API or format moved.
 
