@@ -37,7 +37,7 @@
 //! frames are buffered but not yet shown, so the frontend can fast-forward to
 //! catch up when it falls behind.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use rustynes_core::{Buttons, Nes};
 
@@ -173,17 +173,27 @@ pub struct SpectatorSession<T: Transport> {
     /// The buffer's capacity, in frames past `current_frame`:
     /// [`MAX_SPECTATOR_BUFFER_FRAMES`], lowered only by this module's tests.
     buffer_cap: u32,
-    /// v3.0.0 — the frames dropped because they lay beyond the buffer, as
-    /// `(first, last)`. Drops are contiguous from the first to the stream's
-    /// head: everything past the window is dropped until the spectator
-    /// catches up. They are not resent (the players acknowledge each other,
-    /// not the spectator), so playback cannot pass them; see
-    /// [`Self::stream_lost`]. A dropped frame that does arrive again inside
-    /// the window plays normally. Only a wait ON a frame inside the range is
-    /// a loss, so a later ordinary wait past it is never mistaken for one.
-    /// (The range is not trimmed as frames are shown: the check only ever
-    /// asks about the frame shown next, so a trim could not change it.)
-    dropped: Option<(u32, u32)>,
+    /// v3.0.0 — the frames whose input was dropped because they lay beyond
+    /// the buffer, each with the mask of players whose input was dropped and
+    /// has not arrived since. The players acknowledge each other, not the
+    /// spectator, so such input is normally never resent, and playback cannot
+    /// pass it; see [`Self::stream_lost`]. If a dropped input does arrive
+    /// again inside the window, its bit is cleared and the frame plays
+    /// normally. Only a wait ON a frame still listed here is a loss, so an
+    /// ordinary wait elsewhere is never mistaken for one.
+    ///
+    /// Precise per frame on purpose. A `(first, last)` range of drops also
+    /// covered frames between two drops that were never dropped, which made
+    /// an ordinary wait on them fatal (the commit security review of
+    /// `6475dd3f`). Bounded: a frame is listed only when it lies at least
+    /// `buffer_cap` past the shown frame and within
+    /// `MAX_SPECTATOR_FRAME_LOOKAHEAD` of the confirmed horizon, which is
+    /// itself inside the buffer. A frame is shown only once every player's
+    /// input has arrived, and each arrival clears that player's bit, so no
+    /// shown frame is ever still listed (a prune on show was tried and could
+    /// never remove anything). At most `buffer_cap +
+    /// MAX_SPECTATOR_FRAME_LOOKAHEAD + 1` frames are listed.
+    dropped: BTreeMap<u32, u8>,
     /// Set once playback has reached a dropped frame with its input still
     /// missing. Terminal, like [`Self::mismatch`].
     lost: Option<u32>,
@@ -219,7 +229,7 @@ impl<T: Transport> SpectatorSession<T> {
             mismatch: None,
             history: VecDeque::new(),
             buffer_cap: MAX_SPECTATOR_BUFFER_FRAMES,
-            dropped: None,
+            dropped: BTreeMap::new(),
             lost: None,
         }
     }
@@ -346,10 +356,7 @@ impl<T: Transport> SpectatorSession<T> {
         if !ready {
             // Waiting is right unless this frame's input was dropped at the
             // cap: that input never comes, so say so instead of waiting.
-            if self
-                .dropped
-                .is_some_and(|(first, last)| (first..=last).contains(&frame))
-            {
+            if self.dropped.contains_key(&frame) {
                 self.lost = Some(frame);
             }
             return SpectatorOutcome::default();
@@ -426,11 +433,16 @@ impl<T: Transport> SpectatorSession<T> {
                     if frame - self.current_frame >= self.buffer_cap {
                         // Dropped, and not resent: remember where playback
                         // will have to stop (v3.0.0, `stream_lost`).
-                        self.dropped = Some(
-                            self.dropped
-                                .map_or((frame, frame), |(f, l)| (f.min(frame), l.max(frame))),
-                        );
+                        *self.dropped.entry(frame).or_default() |= 1 << player;
                         continue;
+                    }
+                    // A dropped input that arrives again in the window is
+                    // no longer missing.
+                    if let Some(mask) = self.dropped.get_mut(&frame) {
+                        *mask &= !(1 << player);
+                        if *mask == 0 {
+                            self.dropped.remove(&frame);
+                        }
                     }
                     let slot = self.slot_mut(frame);
                     slot.inputs[player as usize] = input;
@@ -795,6 +807,76 @@ mod tests {
         );
         send(&mut feeder, 10..11);
         assert!(spec.advance(&mut nes).produced_frame, "the session goes on");
+
+        // A later drop must not condemn the frames between it and the earlier
+        // one. Frame 30 drops (past the window [11, 19)); frames 11-12 are
+        // complete and 13 has only player 0 so far. Waiting on 13 is an
+        // ordinary wait: 13 was never dropped. A `(first, last)` range of
+        // drops, 8..=30, covered it and made the wait fatal (the security
+        // review of 6475dd3f).
+        for player in 0..2 {
+            feeder.send(&NetMessage::Input {
+                player,
+                frame: 30,
+                input: 0,
+            });
+        }
+        send(&mut feeder, 11..13);
+        feeder.send(&NetMessage::Input {
+            player: 0,
+            frame: 13,
+            input: 0,
+        });
+        let shown = (0..2)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 2);
+        assert!(
+            !spec.advance(&mut nes).produced_frame,
+            "frame 13 is incomplete"
+        );
+        assert_eq!(
+            spec.stream_lost(),
+            None,
+            "a frame never dropped is not lost"
+        );
+    }
+
+    /// v3.0.0 — a frame is lost only while a DROPPED input is missing. Here
+    /// frame 8 drops for player 0 only; player 0's input arrives again inside
+    /// the window, and player 1's (never dropped) is simply late. The wait on
+    /// frame 8 is then ordinary, not a loss.
+    #[test]
+    fn a_frame_whose_dropped_input_returned_is_an_ordinary_wait() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        spec.buffer_cap = 8;
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let input = |player: u8, frame: u32| NetMessage::Input {
+            player,
+            frame,
+            input: 0,
+        };
+        for frame in 0..8u32 {
+            feeder.send(&input(0, frame));
+            feeder.send(&input(1, frame));
+        }
+        feeder.send(&input(0, 8)); // beyond the cap: dropped for player 0
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let shown = (0..8)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 8);
+        feeder.send(&input(0, 8)); // player 0's input returns, in the window
+        assert!(!spec.advance(&mut nes).produced_frame, "player 1 is late");
+        assert_eq!(spec.stream_lost(), None, "no dropped input is missing");
+        feeder.send(&input(1, 8));
+        assert!(spec.advance(&mut nes).produced_frame, "frame 8 plays");
     }
 
     /// A peer-supplied `Input.frame` far beyond the confirmed horizon must be
