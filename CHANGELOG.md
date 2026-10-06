@@ -162,7 +162,13 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
 - The MiSTer core: on-die ladder 199 passed, 0 failed, 1 expected failure,
   off-die 200 / 0 / 1, each one frozen-worktree run of the final sibling RTL
   against the oracle pinned at this release branch, nothing skipped; blargg's
-  `4-scanline_timing` reads `$00` on the DUT. SEED-LINE
+  `4-scanline_timing` reads `$00` on the DUT. Both builds were swept at
+  seeds 1-8 on one build date (261006), and every seed closes on both. Seed
+  5 is pinned (on-die +0.408 / +0.116 ns, off-die +0.221 / +0.109 ns, SDRAM
+  read +0.439 / +1.181 ns), and two clean compiles of each are
+  byte-identical (on-die `3cfeb968...`, off-die `834f4681...`). The
+  stuck-register and suppressed-message checks pass on both. That pair ships
+  as a release candidate.
   **No hardware has run any bitstream.**
 - The Android unit tests pass on the JVM; the iOS Swift and the mobile device
   behaviour are unverified on this Linux host.
