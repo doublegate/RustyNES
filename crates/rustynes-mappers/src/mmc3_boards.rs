@@ -246,14 +246,15 @@ const M195_POWER_ON_MODE: u8 = 0x80;
 
 /// Mapper 45's outer registers at power-on, after a soft reset and after a
 /// `$6001` write (T-GA23C-POWERON). The page gives no value: it says only that
-/// `$6001` resets them "as a soft reset would". Register 2's CHR-AND is `$F`
-/// (all eight MMC3 CHR bits) because two *Famicom Yarou* menus draw with CHR
-/// banks 0-7 before their first outer-register write, which needs at least
-/// three bits. A black-box trace of both dumps showed no `$5000-$7FFF` access
-/// before rendering. The maintainer chose `$F` over the bare minimum
-/// (2026-10-05), matching the PRG-AND's inverted encoding, where 0 is the full
-/// window. PRG-OR, PRG-AND and CHR-OR stay 0, so the power-on PRG window is
-/// unchanged.
+/// `$6001` resets them "as a soft reset would". Register 2's 4-bit CHR-AND
+/// field is `$F`, which `chr_target` decodes to the 8-bit mask `$FF`: every
+/// MMC3 CHR bank bit passes. It is `$F` because two *Famicom Yarou* menus draw
+/// with CHR banks 0-7 before their first outer-register write, which needs a
+/// mask of at least three bits. A black-box trace of both dumps showed no
+/// `$5000-$7FFF` access before rendering. The maintainer chose `$F` over the
+/// bare minimum (2026-10-05), matching the PRG-AND's inverted encoding, where 0
+/// is the full window. PRG-OR, PRG-AND and CHR-OR stay 0, so the power-on PRG
+/// window is unchanged.
 const M45_RESET_REGS: [u8; 4] = [0x00, 0x00, 0x0F, 0x00];
 
 /// The four-entry protection array mapper 121 returns at `$5000-$5FFF`.
