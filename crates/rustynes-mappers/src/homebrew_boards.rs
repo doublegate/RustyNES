@@ -45,7 +45,7 @@ const PRG_BANK_4K: usize = 0x1000;
 
 /// The exact length of a flash board's save state: `fixed` bytes, then the
 /// sector diff (`sst39sf040.rs`). A diff whose bitmap is cut short is
-/// `Truncated`, reporting the length the bitmap alone needs. A bitmap bit past
+/// `WrongLength`, reporting the length the bitmap alone needs. A bitmap bit past
 /// the end of the chip is one `encode_sector_diff` never writes, so `Invalid`
 /// (`docs/mappers.md` gotcha 12). The caller has already checked
 /// `data.len() >= fixed`.
@@ -58,7 +58,7 @@ fn flash_state_len(
     let tail = &data[fixed..];
     let bitmap = sector_bitmap_len(flash_len);
     if tail.len() < bitmap {
-        return Err(MapperError::Truncated {
+        return Err(MapperError::WrongLength {
             expected: fixed + bitmap,
             got: data.len(),
         });
@@ -204,7 +204,7 @@ impl Mapper for Inl31 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 1 + 8 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -400,7 +400,7 @@ impl Mapper for MagicFloor218 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 1 + self.ciram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -536,7 +536,7 @@ impl Mapper for Cufrom29 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -788,7 +788,7 @@ impl Mapper for Gtrom111 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let fixed = 7 + self.chr_ram.len() + self.nt_ram.len();
         if data.len() < fixed {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: fixed,
                 got: data.len(),
             });
@@ -819,7 +819,7 @@ impl Mapper for Gtrom111 {
         })?;
         let expected = flash_state_len(111, fixed, self.flash.len(), data)?;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1062,7 +1062,7 @@ impl Mapper for Action53M28 {
         // Version 1 (before v2.9.3) carried 8 KiB of CHR RAM; it restores into
         // bank 0 with the other three banks cleared. Its register bytes mean
         // the same thing, so only the CHR length differs.
-        let version = *data.first().ok_or(MapperError::Truncated {
+        let version = *data.first().ok_or(MapperError::WrongLength {
             expected: 1,
             got: 0,
         })?;
@@ -1073,7 +1073,7 @@ impl Mapper for Action53M28 {
         };
         let expected = 6 + self.vram.len() + chr_len;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1494,7 +1494,7 @@ impl Mapper for Unrom512M30 {
         let chr_len = if self.chr_is_rom { 0 } else { self.chr.len() };
         let fixed = 6 + self.vram.len() + chr_len;
         if data.len() < fixed {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: fixed,
                 got: data.len(),
             });
@@ -1516,7 +1516,7 @@ impl Mapper for Unrom512M30 {
             fixed
         };
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -2179,7 +2179,7 @@ mod tests {
             .load_state(&blob[..blob.len() - 100])
             .unwrap_err();
         assert!(
-            matches!(err, MapperError::Truncated { expected, .. } if expected == blob.len()),
+            matches!(err, MapperError::WrongLength { expected, .. } if expected == blob.len()),
             "{err:?}"
         );
     }

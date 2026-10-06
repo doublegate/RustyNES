@@ -660,7 +660,7 @@ impl Mapper for Vrc7 {
         let scalar_len = 1 + 3 + 8 + 1 + 1 + 10 + 3 + 64;
         let core_expected = scalar_len + self.vram.len();
         if data.len() < core_expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: core_expected,
                 got: data.len(),
             });
@@ -689,7 +689,7 @@ impl Mapper for Vrc7 {
         // Strict about the whole length, validated before anything is
         // written.
         if data.len() != core_expected + audio_len + ram_len {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: core_expected + audio_len + ram_len,
                 got: data.len(),
             });
@@ -715,7 +715,7 @@ impl Mapper for Vrc7 {
         let staged_opll = if has_audio_tail {
             let tail = &data[core_expected..];
             if tail.len() < VRC7_V2_TAIL_LEN {
-                return Err(MapperError::Truncated {
+                return Err(MapperError::WrongLength {
                     expected: core_expected + VRC7_V2_TAIL_LEN,
                     got: data.len(),
                 });
@@ -745,7 +745,7 @@ impl Mapper for Vrc7 {
         // panicking. Not worth leaving a correctness proof spread across two
         // distant statements to save an addition.
         if has_audio_tail && data.len() < core_expected + VRC7_V2_TAIL_LEN {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: core_expected + VRC7_V2_TAIL_LEN,
                 got: data.len(),
             });
@@ -1345,8 +1345,8 @@ mod tests {
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated v4 blob must be rejected");
         assert!(
-            matches!(err, MapperError::Truncated { .. }),
-            "expected Truncated, got {err:?}"
+            matches!(err, MapperError::WrongLength { .. }),
+            "expected WrongLength, got {err:?}"
         );
 
         // The half this test used to be missing. Returning `Err` is not enough:
@@ -1397,7 +1397,7 @@ mod tests {
         let err = target
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated RAM tail must be rejected");
-        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
+        assert!(matches!(err, MapperError::WrongLength { .. }), "{err:?}");
         assert_eq!(
             target.save_state(),
             pristine,

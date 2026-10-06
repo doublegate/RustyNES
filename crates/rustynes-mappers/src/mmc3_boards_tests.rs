@@ -229,6 +229,30 @@ fn m45_soft_reset_clears_the_outer_registers() {
     assert_eq!(prg_at(&mut m, 0x8000), 0x10);
 }
 
+/// T-GA23C-POWERON. The page gives no power-on or reset value, but two
+/// *Famicom Yarou* menus draw with MMC3 CHR banks 0-7 before their first
+/// outer-register write, which works only if CHR-AND passes at least three
+/// bits. The maintainer chose CHR-AND `$F` (2026-10-05) for power-on, for a
+/// soft reset and for `$6001` alike, since the page says `$6001` acts "as a
+/// soft reset would". The other three registers stay 0, so PRG is unchanged.
+#[test]
+fn m45_power_on_and_reset_pass_every_mmc3_chr_bit() {
+    let check = |m: &mut Mmc3Board, when: &str| {
+        mmc3_reg(m, 2, 0xC5);
+        assert_eq!(chr_at(m, 0x1000), 0xC5, "{when}: all 8 MMC3 CHR bits pass");
+        mmc3_reg(m, 6, 0x23);
+        assert_eq!(prg_at(m, 0x8000), 0x23, "{when}: PRG is the full 512 KiB");
+    };
+    let mut m = board(Board::M45, 64, 1024);
+    check(&mut m, "power-on");
+    m45_outer(&mut m, [0x00, 0x00, 0x07, 0x00]);
+    m.reset();
+    check(&mut m, "soft reset");
+    m45_outer(&mut m, [0x00, 0x00, 0x07, 0x00]);
+    m.cpu_write(0x6001, 0x00);
+    check(&mut m, "$6001");
+}
+
 #[test]
 fn m45_dip_switch_reads_on_d0() {
     let mut m = board(Board::M45, 16, 8);

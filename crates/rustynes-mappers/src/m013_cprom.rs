@@ -138,7 +138,7 @@ impl Mapper for Cprom {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 2 + self.chr_ram.len() + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

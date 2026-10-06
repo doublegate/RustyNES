@@ -187,7 +187,7 @@ impl Mapper for FongShenBang246 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 1 + 4 + 4 + self.prg_ram.len() + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

@@ -698,7 +698,7 @@ impl Mapper for Vrc6 {
         let scalar_len = 1 + 1 + 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4 + 1;
         let core_expected = scalar_len + self.vram.len();
         if data.len() < core_expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: core_expected,
                 got: data.len(),
             });
@@ -715,7 +715,7 @@ impl Mapper for Vrc6 {
         let tail_off = core_expected;
         let expected = tail_off + VRC6_AUDIO_TAIL_LEN + self.ram_block_len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1046,6 +1046,6 @@ mod tests {
         let err = m2
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated v3 blob must be rejected");
-        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
+        assert!(matches!(err, MapperError::WrongLength { .. }), "{err:?}");
     }
 }

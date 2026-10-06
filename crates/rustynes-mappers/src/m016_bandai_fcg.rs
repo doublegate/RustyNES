@@ -806,7 +806,7 @@ impl Mapper for BandaiFcg {
             None => core_len,
         };
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

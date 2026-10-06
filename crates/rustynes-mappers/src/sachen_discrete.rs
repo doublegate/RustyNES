@@ -167,7 +167,7 @@ impl Mapper for Sachen133 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -296,7 +296,7 @@ impl Mapper for Sachen145 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 2 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -432,7 +432,7 @@ impl Mapper for Sachen146 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -692,7 +692,7 @@ impl Mapper for Sachen3018M147 {
         };
         let expected = 7 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -869,7 +869,7 @@ impl Mapper for Sachen148 {
         };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1005,7 +1005,7 @@ impl Mapper for Sachen149 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 2 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1313,7 +1313,7 @@ impl Mapper for Sachen150 {
         };
         let expected = 2 + 8 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1487,7 +1487,7 @@ impl Mapper for SachenTca01M143 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 1 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

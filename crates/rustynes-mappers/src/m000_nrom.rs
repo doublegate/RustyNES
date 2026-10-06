@@ -225,7 +225,7 @@ impl Mapper for Nrom {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 1 + self.prg_ram.len() + self.vram.len() + need_chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

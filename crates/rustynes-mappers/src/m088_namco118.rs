@@ -346,7 +346,7 @@ impl Mapper for Namco118 {
         // length, so an old blob reports the version it is.
         match data.first() {
             None => {
-                return Err(MapperError::Truncated {
+                return Err(MapperError::WrongLength {
                     expected: 1,
                     got: 0,
                 });
@@ -358,7 +358,7 @@ impl Mapper for Namco118 {
         }
         let expected = 11 + self.vram.len() + need_chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -669,7 +669,7 @@ mod tests {
         // ... and a v2 blob one byte short is a truncation, not a v1 state.
         assert!(matches!(
             m2.load_state(&v2[..v2.len() - 1]),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
         m2.load_state(&v2).expect("the current blob loads");
         assert_eq!(m2.cpu_read(0x8000), 3, "bank state round-trips");

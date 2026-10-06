@@ -600,7 +600,7 @@ impl Sunsoft5BAudio {
 
     fn read_tail(&mut self, src: &[u8]) -> Result<(), MapperError> {
         if src.len() < Self::TAIL_LEN {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: Self::TAIL_LEN,
                 got: src.len(),
             });
@@ -1004,7 +1004,7 @@ impl Mapper for Fme7 {
         let scalar_len = 1 + 1 + 8 + 4 + 1 + 1 + 1 + 2 + 1 + 1 + 1;
         let core_expected = scalar_len + self.prg_ram.len() + self.vram.len();
         if data.len() < core_expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: core_expected,
                 got: data.len(),
             });
@@ -1020,7 +1020,7 @@ impl Mapper for Fme7 {
         // Validated before the first field is written.
         let expected = core_expected + Sunsoft5BAudio::TAIL_LEN + self.chr_ram_tail_len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1338,7 +1338,7 @@ mod tests {
         let err = m2
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated v3 blob must be rejected");
-        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
+        assert!(matches!(err, MapperError::WrongLength { .. }), "{err:?}");
         assert_eq!(m2.prg_banks[1], 0, "untouched");
     }
 
