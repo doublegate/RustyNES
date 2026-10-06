@@ -113,9 +113,8 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
 - **Release tooling.** `bump_release.py` moves the workspace's internal
   `rustynes-*` version requirements on a MAJOR bump. They had read `2.0.0`
   since v2.0.0, a range no 3.x satisfies, so the 3.0.0 bump left the
-  workspace unresolvable. A lineage line whose head carries its own
-  description now keeps that description with its own release when a new
-  one is added.
+  workspace unresolvable. The script also no longer gives a new release
+  the previous release's description in a "Built on ..." lineage line.
 - **CI cannot report success without testing.** A GitHub runner outage once
   left every job skipped while `CI success` passed. It now fails unless the
   change detection ran, and, when code changed, unless the setup job did.

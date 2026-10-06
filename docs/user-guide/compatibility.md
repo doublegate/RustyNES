@@ -92,15 +92,15 @@ for how the region is determined.
 
 ## Accuracy
 
-RustyNES clears the headline accuracy bar all but exhaustively: the kevtris
-**AccuracyCoin** suite at **98.58% (139/141)** — only the two newest upstream PPU
-tests ("ALE + Read", "Hybrid Addresses") are known gaps — **nestest** with zero
+RustyNES clears the headline accuracy bar: 100thCoin's **AccuracyCoin** suite
+at **100.00% (144/144)** (the "ALE + Read" and "Hybrid Addresses" gaps closed in
+v2.0.3, the last failing entry in v2.6.18), **nestest** with zero
 golden-log diff over 8,991 instructions, and the entire blargg
 `instr_test_v5`, `instr_misc`, `instr_timing`, `cpu_timing_test6`,
 `cpu_interrupts_v2`, `ppu_open_bus`, `ppu_vbl_nmi`, `apu_test`,
 `apu_mixer`, and `dmc_dma_during_read4` corpora, plus `mmc3_irq_tests`
 and the kevtris `mmc3_test_2` sub-ROMs. A 60-ROM commercial-ROM oracle
-and a 52-entry extended oracle are tracked byte-identically as
+and a 137-entry extended oracle are tracked byte-identically as
 regression gates (the ROMs themselves are user-supplied, never shipped).
 
 This accuracy was developed across the emulation engine's lineage — the
