@@ -26,6 +26,34 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-06 - "Cornerstone" (the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core)
+
+The MAJOR release the v2.9.x line prepared for (ADR 0043). v2.9.8 and v2.9.9
+carried most of the save, movie, netplay and Rust API breaks ahead of it;
+v3.0.0 adds the last few, closes the remaining MMC3 interrupt-timing gap
+against blargg's tests in the emulator and in the MiSTer core, and ships that
+core's bitstreams as a **release candidate, not hardware-verified**. Hardware
+verification moves to a later v3.x release. The maintainer's decisions are in
+`to-dos/plans/v3.0.0-cornerstone-plan.md`.
+
+**Breaking changes since v2.x, at a glance.** The release notes restate each
+one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
+
+- **Game identity** (v2.9.8): a game is identified by its ROM without the
+  16-byte header, so earlier saves, cheats, movies, HD-pack assignments and
+  RetroAchievements progress files are not found on the desktop and the web.
+  The mobile apps migrated theirs once in v2.9.9.
+- **Save states** from any earlier release are refused, with a message that
+  says so (container 3 since v2.9.8; PPU section 12 at v3.0.0).
+- **Movies** made before v3.0.0 are refused: format 5 records the emulation
+  epoch (ADR 0045).
+- **Netplay** needs the same game, options and emulator version on both
+  sides (protocol 6).
+- **Rust API:** the v2.7.5 deprecations removed and `LockstepBus` renamed
+  `SystemBus` (v2.9.8); `Header`, `FrameInput`, `Cartridge`,
+  `BoardDescription`, `HardwareOptions` and `Movie` are `#[non_exhaustive]`;
+  `MapperError::Truncated` is `WrongLength`.
+
 ### Changed (breaking)
 
 - **Movies and netplay record which emulator behaviour they expect (ADR
@@ -76,6 +104,9 @@ cycle-accurate core later replaced.
   `scripts/release-automation/bump_release.py` moves them with every release
   (Android's `versionCode` = MAJOR x 10000 + MINOR x 100 + PATCH, which still
   rises past 20004).
+- **CI cannot report success without testing.** A GitHub runner outage once
+  left every job skipped while `CI success` passed. It now fails unless the
+  change detection ran, and, when code changed, unless the setup job did.
 
 ### Fixed
 
@@ -111,6 +142,30 @@ cycle-accurate core later replaced.
   *Famicom Yarou 54* shows its menu instead of a blue screen, and *Vol.5* its
   scenery instead of font tiles. *Vol.1*, a CHR-RAM cart, still shows noise
   for a separate reason (T-GA23C-CHRRAM, open).
+
+### Verification
+
+- `cargo test --release --workspace --features test-roms --no-fail-fast`:
+  3,218 passed, 0 failed, 11 ignored (v2.9.9: 3,201 / 0 / 13; the two
+  ignores that went are the `4-scanline_timing` pins, which now pass).
+  AccuracyCoin 144/144, nestest 0-diff.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0, `external_extended` 137/0, and
+  `external_coverage` 6/0 over every staged ROM. The moved baselines, all
+  attributed and looked at: *Super New Year Cart 15-in-1* (T-MMC3-BG-A12),
+  *Famicom Yarou 54* and *Vol.5* (T-GA23C-POWERON), and *Vol.1*, re-pinned as
+  still broken (T-GA23C-CHRRAM).
+- Every fix has a test that failed before it, and reverting the fix makes the
+  test fail again (mutants recorded in each commit body, all caught).
+- fmt, clippy for every feature set and both wasm builds, rustdoc, the
+  `no_std` build, the cosim crate and markdownlint are clean.
+- The MiSTer core: on-die ladder 199 passed, 0 failed, 1 expected failure,
+  off-die 200 / 0 / 1, each one frozen-worktree run of the final sibling RTL
+  against the oracle pinned at this release branch, nothing skipped; blargg's
+  `4-scanline_timing` reads `$00` on the DUT. SEED-LINE
+  **No hardware has run any bitstream.**
+- The Android unit tests pass on the JVM; the iOS Swift and the mobile device
+  behaviour are unverified on this Linux host.
 
 ## [2.9.9] - 2026-10-04 - "Ballast" (the release candidate: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it)
 

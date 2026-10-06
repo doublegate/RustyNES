@@ -72,6 +72,38 @@ MANIFESTS = [
 ]
 
 
+# An internal path dependency with a version requirement:
+# `rustynes-apu = { path = "crates/rustynes-apu", version = "2.0.0", ... }`.
+# The requirement is a caret range, so `"2.0.0"` admits every 2.x and no 3.x.
+INTERNAL_REQ = re.compile(
+    r'(?P<head>rustynes-[a-z0-9-]+ = \{[^}\n]*?version = ")(?P<req>\d+)\.\d+\.\d+(?P<tail>")'
+)
+
+
+def bump_internal_requirements(text: str, new_version: str) -> tuple[str, int]:
+    """Move every internal `rustynes-*` version requirement to `new_version`'s
+    major, returning the new text and how many requirements moved.
+
+    Found at the v3.0.0 cut: the workspace's path dependencies had carried
+    `version = "2.0.0"` since v2.0.0, and the version move to 3.0.0 left
+    `cargo` unable to resolve the workspace at all ("failed to select a version
+    for the requirement `rustynes-apu = ^2.0.0`"). No minor or patch bump can
+    see it, because `^2.0.0` admits every 2.x; only a MAJOR bump trips it, so
+    the first such bump in this script's life was the one that found it. A
+    requirement already on the new major is left exactly as written."""
+    major = new_version.split(".")[0]
+    moved = 0
+
+    def sub(m: re.Match) -> str:
+        nonlocal moved
+        if m.group("req") == major:
+            return m.group(0)
+        moved += 1
+        return f'{m.group("head")}{major}.0.0{m.group("tail")}'
+
+    return INTERNAL_REQ.sub(sub, text), moved
+
+
 def version_code(v: str) -> int:
     """Android's `versionCode` for version `v`: MAJOR * 10000 + MINOR * 100 +
     PATCH, the scheme the app has used since v2.0.1 (2.0.4 -> 20004). Play
@@ -544,6 +576,16 @@ def selftest() -> int:
     except ValueError:
         print("  ok   version_code refuses a minor of 100")
 
+    # Internal requirements (v3.0.0): a MAJOR bump moves them, anything else
+    # leaves them byte-identical.
+    manifest = ('rustynes-apu = { path = "crates/rustynes-apu", version = "2.0.0", '
+                'default-features = false }\nserde = { version = "1.0.0" }\n')
+    got, n = bump_internal_requirements(manifest, "3.0.0")
+    check("internal requirement moves on a major bump", (n, '"3.0.0", default-features' in got), (1, True))
+    check("an external crate is never touched", 'serde = { version = "1.0.0" }' in got, True)
+    got, n = bump_internal_requirements(manifest, "2.9.9")
+    check("a minor bump leaves requirements alone", (n, got), (0, manifest))
+
     # An unclassifiable line must raise, never be bumped mechanically.
     try:
         demote('**Current release: v2.4.4 "Ignition"** blah', "**Current release: v", old, new, LEAD)
@@ -641,6 +683,17 @@ def main() -> int:
         edits[p] = text.replace(
             want, pat.format(v=new.version, code=version_code(new.version)), 1
         )
+
+    # Internal requirements must follow a MAJOR bump, or the workspace stops
+    # resolving. Every manifest that declares one is scanned, not a list, so a
+    # crate added later cannot be missed.
+    for p in [root / "Cargo.toml", *sorted((root / "crates").glob("*/Cargo.toml"))]:
+        text = edits.get(p, p.read_text())
+        text, moved = bump_internal_requirements(text, new.version)
+        if moved:
+            edits[p] = text
+            print(f"{p.relative_to(root)}: {moved} internal requirement(s) moved to "
+                  f"{new.version.split('.')[0]}.0.0")
 
     if unknown:
         print("REFUSING to write. These anchors were not classified:\n", file=sys.stderr)

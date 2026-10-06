@@ -45,7 +45,7 @@ settings:
     # 2.0.8 through v2.9.9, since nothing moved it), and moved by
     # `scripts/release-automation/bump_release.py` from now on, starting with
     # the 3.0.0 cut.
-    MARKETING_VERSION: "2.9.9"
+    MARKETING_VERSION: "3.0.0"
     # The build (not marketing) number. Each TestFlight upload needs a UNIQUE one;
     # the fastlane `beta` lane overrides this with the CI run number at build time
     # (xcargs CURRENT_PROJECT_VERSION), so this checked-in "1" is only the local /
