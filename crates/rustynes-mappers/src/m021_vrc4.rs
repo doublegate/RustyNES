@@ -450,7 +450,7 @@ impl Mapper for Vrc4 {
         let core_len = scalar_len + self.vram.len();
         let expected = core_len + ram_len;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -585,6 +585,6 @@ mod tests {
         let err = m2
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated v2 blob must be rejected");
-        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
+        assert!(matches!(err, MapperError::WrongLength { .. }), "{err:?}");
     }
 }

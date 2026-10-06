@@ -273,6 +273,7 @@ pub fn import_fm2(text: &str, rom_sha256: [u8; 32]) -> Result<(Movie, Fm2Meta), 
     }
 
     let movie = Movie {
+        epoch: crate::EMULATION_EPOCH,
         region: if meta.pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
         // v2.9.8 — `.fm2` records no emulation options and no header, so the
@@ -516,6 +517,7 @@ mod tests {
     #[test]
     fn round_trip_power_on_ntsc() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),
@@ -551,6 +553,7 @@ mod tests {
     fn exact_bit_and_char_mapping() {
         // Only A set -> char index 7 pressed, others released.
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),
@@ -608,6 +611,7 @@ mod tests {
 
         // Export of a Pal movie emits palFlag 1.
         let pal_movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Pal,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),
@@ -625,6 +629,7 @@ mod tests {
 
         // Ntsc exports palFlag 0.
         let ntsc_movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             ..pal_movie
         };
@@ -817,6 +822,7 @@ mod tests {
     #[test]
     fn export_rejects_save_state_movie() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: TEST_SHA,
             options: crate::HardwareOptions::default(),

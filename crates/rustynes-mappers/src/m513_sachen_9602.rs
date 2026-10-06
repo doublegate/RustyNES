@@ -305,7 +305,7 @@ impl Mapper for Sachen9602 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 1 + Self::SAVE_LEN + self.vram.len() + self.chr.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

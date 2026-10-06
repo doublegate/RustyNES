@@ -1,0 +1,8 @@
+v3.0.0 "Cornerstone"
+
+- Saves now follow the game, not its header; they moved once, in v2.9.9.
+- Save states and movies from earlier versions are refused with a clear message. Re-create them.
+- Netplay refuses a peer whose RustyNES emulates differently, and says why.
+- MMC3 interrupt timing now passes blargg's 4-scanline test.
+- Two mapper 45 multicart menus display correctly.
+- The app now carries the release's version number.

@@ -37,9 +37,11 @@
 //! frames are buffered but not yet shown, so the frontend can fast-forward to
 //! catch up when it falls behind.
 
+use std::collections::{BTreeMap, VecDeque};
+
 use rustynes_core::{Buttons, Nes};
 
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
 use crate::session::MAX_PLAYERS;
 use crate::transport::Transport;
 
@@ -56,6 +58,17 @@ use crate::transport::Transport;
 /// unbounded `Vec` resize (an OOM `DoS`). A frame beyond this horizon is simply
 /// dropped (mirrors the beta.4 movie-parser bounds hardening).
 const MAX_SPECTATOR_FRAME_LOOKAHEAD: u32 = 1024;
+
+/// v3.0.0 (T-SPECTATOR-HISTORY) — the most frames of input the spectator
+/// holds past the frame it shows next. The lookahead above bounds one
+/// packet's jump from the confirmed horizon, not how far that horizon walks:
+/// contiguous inputs keep confirming frames whether or not any are shown.
+/// 65,536 frames is about 18 minutes of play at about 5 bytes a frame, about
+/// 320 KiB, so a spectator that falls that far behind (a paused window) still
+/// catches up, while a peer streaming faster than real time can no longer
+/// grow the buffer without limit. A frame past it is dropped, as an
+/// out-of-window frame is.
+const MAX_SPECTATOR_BUFFER_FRAMES: u32 = 65_536;
 
 /// Configuration for a [`SpectatorSession`].
 #[derive(Clone, Copy, Debug)]
@@ -150,8 +163,40 @@ pub struct SpectatorSession<T: Transport> {
     /// see [`Self::mismatch`].
     mismatch: Option<IdentityMismatch>,
 
-    /// Per-frame confirmed input history, indexed by frame. Append-only.
-    history: Vec<FrameInputs>,
+    /// Per-frame input history for the frames not yet shown: the front is
+    /// [`Self::current_frame`], so frame `f` lives at `f - current_frame`.
+    /// Shown frames are released (v3.0.0, T-SPECTATOR-HISTORY; until then
+    /// this was an append-only `Vec` indexed by absolute frame, which grew
+    /// for the whole session), and its length never passes
+    /// [`MAX_SPECTATOR_BUFFER_FRAMES`].
+    history: VecDeque<FrameInputs>,
+    /// The buffer's capacity, in frames past `current_frame`:
+    /// [`MAX_SPECTATOR_BUFFER_FRAMES`], lowered only by this module's tests.
+    buffer_cap: u32,
+    /// v3.0.0 — the frames whose input was dropped because they lay beyond
+    /// the buffer, each with the mask of players whose input was dropped and
+    /// has not arrived since. The players acknowledge each other, not the
+    /// spectator, so such input is normally never resent, and playback cannot
+    /// pass it; see [`Self::stream_lost`]. If a dropped input does arrive
+    /// again inside the window, its bit is cleared and the frame plays
+    /// normally. Only a wait ON a frame still listed here is a loss, so an
+    /// ordinary wait elsewhere is never mistaken for one.
+    ///
+    /// Precise per frame on purpose. A `(first, last)` range of drops also
+    /// covered frames between two drops that were never dropped, which made
+    /// an ordinary wait on them fatal (the commit security review of
+    /// `6475dd3f`). Bounded: a frame is listed only when it lies at least
+    /// `buffer_cap` past the shown frame and within
+    /// `MAX_SPECTATOR_FRAME_LOOKAHEAD` of the confirmed horizon, which is
+    /// itself inside the buffer. A frame is shown only once every player's
+    /// input has arrived, and each arrival clears that player's bit, so no
+    /// shown frame is ever still listed (a prune on show was tried and could
+    /// never remove anything). At most `buffer_cap +
+    /// MAX_SPECTATOR_FRAME_LOOKAHEAD + 1` frames are listed.
+    dropped: BTreeMap<u32, u8>,
+    /// Set once playback has reached a dropped frame with its input still
+    /// missing. Terminal, like [`Self::mismatch`].
+    lost: Option<u32>,
 }
 
 impl<T: Transport> SpectatorSession<T> {
@@ -182,7 +227,10 @@ impl<T: Transport> SpectatorSession<T> {
             last_confirmed_frame: None,
             synced: false,
             mismatch: None,
-            history: Vec::new(),
+            history: VecDeque::new(),
+            buffer_cap: MAX_SPECTATOR_BUFFER_FRAMES,
+            dropped: BTreeMap::new(),
+            lost: None,
         }
     }
 
@@ -242,6 +290,18 @@ impl<T: Transport> SpectatorSession<T> {
         self.mismatch
     }
 
+    /// v3.0.0 — the frame playback stopped at because its input was dropped:
+    /// the match ran more than `MAX_SPECTATOR_BUFFER_FRAMES` (65,536, about
+    /// 18 minutes) ahead of what this spectator had shown. Every frame kept
+    /// before it plays first; then this is set and [`Self::advance`] produces
+    /// nothing more. Terminal: the dropped input is never resent, so the
+    /// frontend reports it and the viewer spectates again. Before v3.0.0 the
+    /// spectator waited at the gap forever, with no reason given.
+    #[must_use]
+    pub const fn stream_lost(&self) -> Option<u32> {
+        self.lost
+    }
+
     /// How many fully-confirmed frames are buffered but not yet shown — i.e.
     /// how far the spectator is *behind* the live match. The frontend can
     /// fast-forward (call [`Self::advance`] repeatedly) to catch up.
@@ -282,7 +342,7 @@ impl<T: Transport> SpectatorSession<T> {
     pub fn advance(&mut self, nes: &mut Nes) -> SpectatorOutcome {
         self.ingest();
         self.recompute_confirmed();
-        if !self.synced || self.mismatch.is_some() {
+        if !self.synced || self.mismatch.is_some() || self.lost.is_some() {
             return SpectatorOutcome::default();
         }
 
@@ -294,10 +354,18 @@ impl<T: Transport> SpectatorSession<T> {
         let frame = self.current_frame;
         let ready = self.reveal_horizon().is_some_and(|h| frame <= h);
         if !ready {
+            // Waiting is right unless this frame's input was dropped at the
+            // cap: that input never comes, so say so instead of waiting.
+            if self.dropped.contains_key(&frame) {
+                self.lost = Some(frame);
+            }
             return SpectatorOutcome::default();
         }
 
         self.apply_and_run(nes, frame);
+        // The frame is shown: release it (the front of `history` is always
+        // `current_frame`).
+        self.history.pop_front();
         self.current_frame += 1;
         SpectatorOutcome {
             produced_frame: true,
@@ -313,12 +381,14 @@ impl<T: Transport> SpectatorSession<T> {
             match msg {
                 NetMessage::Sync { magic, identity } => {
                     // A foreign magic is a different protocol, ignored like any
-                    // stray datagram; a matching magic with another identity is
-                    // the players' stream for another machine, and terminal.
-                    if magic == NetMessage::SYNC_MAGIC && self.mismatch.is_none() {
-                        match self.identity.check(&identity) {
-                            Ok(()) => self.synced = true,
-                            Err(why) => self.mismatch = Some(why),
+                    // stray datagram; our magic with another identity, or an
+                    // older RustyNES's magic (v3.0.0), is the players' stream
+                    // for another machine or emulator, and terminal.
+                    if self.mismatch.is_none() {
+                        match self.identity.check_sync(magic, &identity) {
+                            SyncVerdict::Ignore => {}
+                            SyncVerdict::Accept => self.synced = true,
+                            SyncVerdict::Refuse(why) => self.mismatch = Some(why),
                         }
                     }
                 }
@@ -349,8 +419,32 @@ impl<T: Transport> SpectatorSession<T> {
                     if frame > horizon.saturating_add(MAX_SPECTATOR_FRAME_LOOKAHEAD) {
                         continue;
                     }
-                    self.ensure_frame(frame);
-                    let slot = &mut self.history[frame as usize];
+                    // v3.0.0 (T-SPECTATOR-HISTORY): and within the buffer.
+                    // The check above bounds one packet's jump from the
+                    // confirmed horizon, but the horizon itself walks forward
+                    // with every contiguous frame of input, shown or not.
+                    // Without this cap, a peer streaming faster than real
+                    // time, or a stream that never sends a matching `Sync`,
+                    // grew the history without limit. A frame already shown
+                    // is past, and dropped too.
+                    if frame < self.current_frame {
+                        continue;
+                    }
+                    if frame - self.current_frame >= self.buffer_cap {
+                        // Dropped, and not resent: remember where playback
+                        // will have to stop (v3.0.0, `stream_lost`).
+                        *self.dropped.entry(frame).or_default() |= 1 << player;
+                        continue;
+                    }
+                    // A dropped input that arrives again in the window is
+                    // no longer missing.
+                    if let Some(mask) = self.dropped.get_mut(&frame) {
+                        *mask &= !(1 << player);
+                        if *mask == 0 {
+                            self.dropped.remove(&frame);
+                        }
+                    }
+                    let slot = self.slot_mut(frame);
                     slot.inputs[player as usize] = input;
                     slot.arrived |= 1 << player;
                 }
@@ -382,27 +476,36 @@ impl<T: Transport> SpectatorSession<T> {
         }
     }
 
-    /// Grow the history so index `frame` is addressable.
-    fn ensure_frame(&mut self, frame: u32) {
-        let need = frame as usize + 1;
-        if self.history.len() < need {
-            self.history.resize(need, FrameInputs::default());
+    /// The history slot for `frame`, growing the buffer to reach it. The
+    /// caller has checked `current_frame <= frame` and that the distance is
+    /// under [`MAX_SPECTATOR_BUFFER_FRAMES`], so the growth is bounded.
+    fn slot_mut(&mut self, frame: u32) -> &mut FrameInputs {
+        let idx = (frame - self.current_frame) as usize;
+        if self.history.len() <= idx {
+            self.history.resize(idx + 1, FrameInputs::default());
         }
+        &mut self.history[idx]
     }
 
     /// Recompute `last_confirmed_frame` = the newest frame, contiguously from
     /// the current confirmed prefix, for which every player's input arrived.
+    /// Frames before `current_frame` were shown, so they were confirmed and
+    /// have been released; the walk starts at whichever is later.
     fn recompute_confirmed(&mut self) {
         let n = self.config.num_players;
         let all = if n >= 8 { u8::MAX } else { (1u8 << n) - 1 };
-        let start = self.last_confirmed_frame.map_or(0, |c| c + 1);
-        // Frame indices are addressed as `u32` on the wire (`NetMessage::Input`'s
-        // `frame`), so a history longer than `u32::MAX` is impossible; saturate
-        // for the bound rather than cast-truncate.
-        let len = u32::try_from(self.history.len()).unwrap_or(u32::MAX);
+        let start = self
+            .last_confirmed_frame
+            .map_or(0, |c| c + 1)
+            .max(self.current_frame);
+        // The buffer is bounded by `MAX_SPECTATOR_BUFFER_FRAMES` (65,536), so
+        // its length always fits `u32`; saturate rather than cast-truncate.
+        let end = self
+            .current_frame
+            .saturating_add(u32::try_from(self.history.len()).unwrap_or(u32::MAX));
         let mut confirmed = self.last_confirmed_frame;
-        for f in start..len {
-            if self.history[f as usize].arrived & all == all {
+        for f in start..end {
+            if self.history[(f - self.current_frame) as usize].arrived & all == all {
                 confirmed = Some(f);
             } else {
                 break;
@@ -414,8 +517,9 @@ impl<T: Transport> SpectatorSession<T> {
     /// Apply every player's confirmed input for `frame` and run one emulator
     /// frame. Mirrors `RollbackSession::apply_and_run` so the spectator's
     /// per-port routing + Four Score gating are byte-identical to the players'.
+    /// `frame` is always `current_frame`, the front of the buffer.
     fn apply_and_run(&self, nes: &mut Nes, frame: u32) {
-        let slot = self.history[frame as usize];
+        let slot = self.history[(frame - self.current_frame) as usize];
         let n = self.config.num_players as usize;
         nes.set_four_score(n > 2);
         for (port, &input) in slot.inputs.iter().enumerate().take(n) {
@@ -552,6 +656,229 @@ mod tests {
     /// framebuffer** to a reference `Nes` run directly over those inputs. This
     /// is exactly the cross-peer determinism the players' rollback session
     /// relies on, exercised through the receive-only spectator path.
+    /// T-SPECTATOR-HISTORY (v3.0.0): the input history is bounded however
+    /// long the stream runs. `MAX_SPECTATOR_FRAME_LOOKAHEAD` stopped one
+    /// packet jumping far ahead, but not the horizon walking: every
+    /// contiguous frame of input advanced the confirmed frame, and the window
+    /// with it, whether or not anything was shown, so a peer streaming
+    /// faster than real time (or a stream that never sends a matching
+    /// `Sync`) grew `history` without limit. Here 70,000 frames arrive with
+    /// no `Sync`, and `advance` runs every 512 frames, well inside the
+    /// lookahead, so every frame passes the jump guard and only the buffer
+    /// cap can stop it. (A first draft advanced every 4,096 frames: the jump
+    /// guard then dropped most inputs between calls, so the history never
+    /// neared the cap, and removing the cap went NOT CAUGHT.) Then, once
+    /// synced, every shown frame must be released, so a long session does
+    /// not accumulate.
+    #[test]
+    fn the_input_history_is_bounded_and_releases_shown_frames() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        for frame in 0..70_000u32 {
+            for player in 0..2 {
+                feeder.send(&NetMessage::Input {
+                    player,
+                    frame,
+                    input: 0,
+                });
+            }
+            if frame % 512 == 0 {
+                let _ = spec.advance(&mut nes);
+            }
+        }
+        let _ = spec.advance(&mut nes);
+        assert_eq!(
+            spec.history.len(),
+            MAX_SPECTATOR_BUFFER_FRAMES as usize,
+            "the buffer fills to the cap and stops there"
+        );
+        assert!(
+            spec.history.len() <= MAX_SPECTATOR_BUFFER_FRAMES as usize,
+            "unsynced history grew to {} frames",
+            spec.history.len()
+        );
+        // Synced now: the buffered frames play, and each shown frame leaves
+        // the buffer.
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let before = spec.history.len();
+        let shown = (0..64)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 64, "the buffered stream plays once synced");
+        assert_eq!(spec.history.len(), before - 64, "shown frames are released");
+    }
+
+    /// v3.0.0 — a frame dropped at the buffer cap is never resent (the
+    /// players acknowledge each other, not the spectator), so a spectator
+    /// that plays its retained frames reached the gap and waited forever,
+    /// with no reason given (a review finding on #588; the 64-frame window of the
+    /// test above stopped short of it). It now plays every frame it kept and
+    /// then reports the stream lost, at the first dropped frame. The cap is
+    /// lowered to 32 here so the test reaches it in 32 emulated frames.
+    #[test]
+    fn a_spectator_that_drops_input_at_the_cap_reports_it() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        spec.buffer_cap = 32;
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        for frame in 0..40u32 {
+            for player in 0..2 {
+                feeder.send(&NetMessage::Input {
+                    player,
+                    frame,
+                    input: 0,
+                });
+            }
+        }
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let shown = (0..32)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 32, "every retained frame plays");
+        assert_eq!(spec.stream_lost(), None, "not lost while frames remain");
+        assert!(
+            !spec.advance(&mut nes).produced_frame,
+            "frame 32 was dropped"
+        );
+        assert_eq!(
+            spec.stream_lost(),
+            Some(32),
+            "the gap is reported, not waited on"
+        );
+    }
+
+    /// v3.0.0 — the record of dropped frames must not outlive them. If a
+    /// dropped frame's input does arrive later inside the window (a relay
+    /// that replays), it is shown normally. After that, an ordinary wait for
+    /// a later frame must NOT be reported as a lost stream. The first version
+    /// kept `dropped_from` forever, so any wait past it was terminal (found
+    /// by the commit's security review).
+    #[test]
+    fn a_dropped_frame_that_arrives_later_clears_the_record() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        spec.buffer_cap = 8;
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let send = |feeder: &mut MemoryTransport, frames: std::ops::Range<u32>| {
+            for frame in frames {
+                for player in 0..2 {
+                    feeder.send(&NetMessage::Input {
+                        player,
+                        frame,
+                        input: 0,
+                    });
+                }
+            }
+        };
+        send(&mut feeder, 0..10); // frames 8 and 9 fall beyond the cap
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let shown = (0..8)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 8);
+        // The dropped frames arrive again, now inside the window, and play.
+        send(&mut feeder, 8..10);
+        let shown = (0..2)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 2, "the recovered frames play");
+        // Frame 10 has simply not arrived yet: an ordinary wait.
+        assert!(!spec.advance(&mut nes).produced_frame);
+        assert_eq!(
+            spec.stream_lost(),
+            None,
+            "a wait past a recovered gap is not a loss"
+        );
+        send(&mut feeder, 10..11);
+        assert!(spec.advance(&mut nes).produced_frame, "the session goes on");
+
+        // A later drop must not condemn the frames between it and the earlier
+        // one. Frame 30 drops (past the window [11, 19)); frames 11-12 are
+        // complete and 13 has only player 0 so far. Waiting on 13 is an
+        // ordinary wait: 13 was never dropped. A `(first, last)` range of
+        // drops, 8..=30, covered it and made the wait fatal (the security
+        // review of 6475dd3f).
+        for player in 0..2 {
+            feeder.send(&NetMessage::Input {
+                player,
+                frame: 30,
+                input: 0,
+            });
+        }
+        send(&mut feeder, 11..13);
+        feeder.send(&NetMessage::Input {
+            player: 0,
+            frame: 13,
+            input: 0,
+        });
+        let shown = (0..2)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 2);
+        assert!(
+            !spec.advance(&mut nes).produced_frame,
+            "frame 13 is incomplete"
+        );
+        assert_eq!(
+            spec.stream_lost(),
+            None,
+            "a frame never dropped is not lost"
+        );
+    }
+
+    /// v3.0.0 — a frame is lost only while a DROPPED input is missing. Here
+    /// frame 8 drops for player 0 only; player 0's input arrives again inside
+    /// the window, and player 1's (never dropped) is simply late. The wait on
+    /// frame 8 is then ordinary, not a loss.
+    #[test]
+    fn a_frame_whose_dropped_input_returned_is_an_ordinary_wait() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        spec.buffer_cap = 8;
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let input = |player: u8, frame: u32| NetMessage::Input {
+            player,
+            frame,
+            input: 0,
+        };
+        for frame in 0..8u32 {
+            feeder.send(&input(0, frame));
+            feeder.send(&input(1, frame));
+        }
+        feeder.send(&input(0, 8)); // beyond the cap: dropped for player 0
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let shown = (0..8)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 8);
+        feeder.send(&input(0, 8)); // player 0's input returns, in the window
+        assert!(!spec.advance(&mut nes).produced_frame, "player 1 is late");
+        assert_eq!(spec.stream_lost(), None, "no dropped input is missing");
+        feeder.send(&input(1, 8));
+        assert!(spec.advance(&mut nes).produced_frame, "frame 8 plays");
+    }
+
     /// A peer-supplied `Input.frame` far beyond the confirmed horizon must be
     /// dropped WITHOUT growing `history` (otherwise a `frame` near `u32::MAX`
     /// would resize the `Vec` unboundedly — an OOM `DoS`). The in-window frame

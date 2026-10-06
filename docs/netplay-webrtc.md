@@ -170,7 +170,18 @@ hash plus `rustynes_core::config_digest` (SHA-256 over the region, the parsed
 cartridge board and every `HardwareOptions` field), and a difference fails with
 `MeshError::ConfigMismatch` / `DisconnectReason::ConfigMismatch` /
 `NetplayError::ConfigMismatch`. Peers refuse rather than adopt the host's
-options (ADR 0044). Signaling rooms still match by ROM only.
+options (ADR 0044). From v3.0.0 (`PROTOCOL_VERSION` 6, magic `"RNE6"`, ADR
+0045) the identity also carries the emulation epoch. Another epoch, or an
+older RustyNES's `Sync` (`"RNES"`, `"RNE5"`, decoded at exactly its own length
+and magic), fails with `MeshError::EmulatorMismatch` and its counterparts, so
+a mixed-version session is refused with a reason instead of timing out.
+**Only a v3.0.0-or-later peer can give that reason.** A v2.9.9 or older peer
+ignores the `"RNE6"` magic as a foreign datagram and still times out on its
+side. Between two protocol-6 peers both sides name it: a mesh host answers a
+refused joiner's `Sync` with its own before returning the error, so the
+joiner reports `EmulatorMismatch` (or the ROM / configuration mismatch) as
+well (`epoch_mismatch_is_named_at_both_ends`). Signaling rooms still match by
+ROM only.
 
 **Verification.** The loopback integration test `tests/mesh_udp.rs` stands up a
 host + 2-3 joiners on `127.0.0.1` ephemeral ports, completes the multi-joiner

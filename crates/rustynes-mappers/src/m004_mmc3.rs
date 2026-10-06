@@ -972,7 +972,7 @@ impl Mapper for Mmc3 {
         // `irq_reload_pending_with_nonzero_clear` latch, which v4 replaces
         // with `irq_assert_pending_next_cycle` (T-ORACLE-001).
         if data.is_empty() {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: 1,
                 got: 0,
             });
@@ -985,7 +985,7 @@ impl Mapper for Mmc3 {
         let scalar_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 8 + 8 + 1 + 1;
         let expected = scalar_len + self.prg_ram.len() + self.vram.len() + chr_part + tail;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

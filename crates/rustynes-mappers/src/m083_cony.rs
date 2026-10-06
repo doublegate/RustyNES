@@ -388,7 +388,7 @@ impl Mapper for Cony83 {
         let chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = HEAD + self.vram.len() + self.wram.len() + chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

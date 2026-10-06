@@ -26,6 +26,156 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-06 - "Cornerstone" (the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core)
+
+The MAJOR release the v2.9.x line prepared for (ADR 0043). v2.9.8 and v2.9.9
+carried most of the save, movie, netplay and Rust API breaks ahead of it;
+v3.0.0 adds the last few, closes the remaining MMC3 interrupt-timing gap
+against blargg's tests in the emulator and in the MiSTer core, and ships that
+core's bitstreams as a **release candidate, not hardware-verified**. Hardware
+verification moves to a later v3.x release. The maintainer's decisions are in
+`to-dos/plans/v3.0.0-cornerstone-plan.md`.
+
+**Breaking changes since v2.x, at a glance.** The release notes restate each
+one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
+
+- **Game identity** (v2.9.8): a game is identified by its ROM without the
+  16-byte header, so earlier saves, cheats, movies, HD-pack assignments and
+  RetroAchievements progress files are not found on the desktop and the web.
+  The mobile apps migrated theirs once in v2.9.9.
+- **Save states** from any earlier release are refused, with a message that
+  says so (container 3 since v2.9.8; PPU section 12 at v3.0.0).
+- **Movies** made before v3.0.0 are refused: format 5 records the emulation
+  epoch (ADR 0045).
+- **Netplay** needs the same game, options and emulation epoch on both
+  sides (protocol 6); releases that keep the epoch still play together.
+- **Rust API:** the v2.7.5 deprecations removed and `LockstepBus` renamed
+  `SystemBus` (v2.9.8); `Header`, `FrameInput`, `Cartridge`,
+  `BoardDescription`, `HardwareOptions` and `Movie` are `#[non_exhaustive]`;
+  `MapperError::Truncated` is `WrongLength`.
+
+### Changed (breaking)
+
+- **Movies and netplay record which emulator behaviour they expect (ADR
+  0045).**
+  - **The epoch:** `rustynes_core::EMULATION_EPOCH`, 1 at v3.0.0. It rises
+    whenever a change alters what the core produces from the same inputs.
+  - **Movies:** `.rnm` format 5 records it in the fixed header, and a movie
+    from another epoch is refused, naming both. **Every v2.9.9 movie (format 4)
+    is refused as too old; re-record it.** The too-old message no longer
+    claims such a movie lacks its options, which format 4 did record.
+  - **Netplay:** protocol 6 (magic `"RNE6"`) sends the epoch in the
+    handshake, checked before the ROM and the settings. A v2.9.9 or older peer
+    is now told apart and refused as "an older version of RustyNES" instead of
+    the handshake timing out with no reason. On the older peer's side it still
+    times out.
+- **A save state from another release says so.** v2.9.8 and v2.9.9 states fail
+  a section's version check (PPU 11, where v3.0.0 reads 12). The message now
+  says it was saved by an older (or newer) release, instead of giving two
+  numbers that read as a damaged file. Libretro, desktop and mobile all show
+  it.
+- **Rust API:** `Movie` is `#[non_exhaustive]` and gains `epoch`; build one
+  with `Movie::new`. `SessionIdentity` gains `epoch`, `IdentityMismatch`
+  gains `Emulator { ours, theirs }`, and `DisconnectReason`, `NetplayError`
+  and `MeshError` each gain an `EmulatorMismatch` variant, rendered by
+  `rustynes_netplay::emulator_mismatch_text`. `SessionIdentity::check_sync` is
+  the one handshake decision every site now makes.
+- **Rust API: the last struct-extensibility breaks before 4.0
+  (T-API-EXTENSIBLE).** These four structs are now `#[non_exhaustive]`, so a
+  field added later is no longer a breaking change (v2.9.9 added three to
+  `BoardDescription` and one to `Cartridge`, each a break):
+  - `Cartridge`: use `rustynes_mappers::parse` or the new
+    `Cartridge::synthetic(mapper_id, prg_ram_size, chr_ram_size)`;
+  - `BoardDescription`: use `capture`;
+  - `HardwareOptions`: use `default()` or `capture`, then set fields. Struct
+    update syntax (`..HardwareOptions::default()`) no longer compiles outside
+    the core;
+  - `Movie`: see above.
+
+  **`MapperError::Truncated` is renamed `MapperError::WrongLength`**, with the
+  same `{ expected, got }` fields. Since v2.9.9 it also reports a state that is
+  too long, and "truncated" said the opposite of those cases.
+
+### Changed
+
+- **The Android and iOS apps carry the release's version again.** Android
+  stayed at 2.0.4 and iOS at 2.0.8 from v2.0.x to v2.9.9, because nothing
+  moved them. Both now follow the workspace version, and
+  `scripts/release-automation/bump_release.py` moves them with every release
+  (Android's `versionCode` = MAJOR x 10000 + MINOR x 100 + PATCH, which still
+  rises past 20004).
+- **CI cannot report success without testing.** A GitHub runner outage once
+  left every job skipped while `CI success` passed. It now fails unless the
+  change detection ran, and, when code changed, unless the setup job did.
+
+### Fixed
+
+- **A netplay spectator's input buffer is bounded (T-SPECTATOR-HISTORY).** It
+  kept every frame's input for the whole session, and a peer streaming
+  inputs faster than real time, or a stream that never announced itself,
+  could grow it without limit. It now holds at most 65,536 frames past the one
+  it shows next (about 18 minutes of play, about 320 KiB), so a spectator
+  that falls behind can still catch up. Shown frames are released, so a long
+  session no longer accumulates them. A spectator that falls further behind
+  than that loses input the players never resend: it plays every frame it
+  kept, then reports the stream lost (`SpectatorSession::stream_lost`; the
+  desktop says so and asks to spectate again) instead of freezing there.
+- **MMC3 interrupts with the background at `$1000` (T-MMC3-BG-A12).** Two
+  PPU timing details the NESdev pages document and the emulator missed, both
+  in the A12 signal an MMC3 counts. The background fetches reported A12 at
+  their read dots, two dots after the MMC3 page's "PPU cycle 324". And a
+  visible line's dot 0 drives "the same CHR address that is later used to
+  fetch the low background tile byte" (the PPU rendering page), except scanline
+  0's on an odd frame, which the skipped dot replaces with a nametable fetch,
+  consistent with the MMC3 page's counter that can "decrement twice every
+  other vertical redraw". blargg's `4-scanline_timing` now passes all 13
+  sub-tests on both ROMs (it failed at sub-test 9). Nothing changes with the
+  background at `$0000`, the arrangement almost every MMC3 game uses. Of 744
+  staged commercial ROMs one moved: the fighting game on *Super New Year Cart
+  15-in-1* (mapper 45), whose status bar was torn at a raster split and now
+  draws whole. Save states: `PPU_SNAPSHOT_VERSION` 12, and older states are
+  refused.
+- **Mapper 45 (GA23C) multicart menus that draw before programming the
+  board (T-GA23C-POWERON).** The NESdev page gives no power-on value for the
+  four outer registers, and RustyNES powered them on at 0, which maps every
+  CHR bank onto one 1 KiB page. A trace showed two *Famicom Yarou* menus
+  drawing with CHR banks 0-7 before their first outer-register write, so the
+  cartridges need CHR-AND to pass at least three bits. Power-on, a soft reset
+  and `$6001` now set CHR-AND to `$F` (every bit), the maintainer's choice.
+  *Famicom Yarou 54* shows its menu instead of a blue screen, and *Vol.5* its
+  scenery instead of font tiles. *Vol.1*, a CHR-RAM cart, still shows noise
+  for a separate reason (T-GA23C-CHRRAM, open).
+
+### Verification
+
+- `cargo test --release --workspace --features test-roms --no-fail-fast`:
+  3,218 passed, 0 failed, 11 ignored (v2.9.9: 3,201 / 0 / 13; the two
+  ignores that went are the `4-scanline_timing` pins, which now pass).
+  AccuracyCoin 144/144, nestest 0-diff.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0, `external_extended` 137/0, and
+  `external_coverage` 6/0 over every staged ROM. The moved baselines, all
+  attributed and looked at: *Super New Year Cart 15-in-1* (T-MMC3-BG-A12),
+  *Famicom Yarou 54* and *Vol.5* (T-GA23C-POWERON), and *Vol.1*, re-pinned as
+  still broken (T-GA23C-CHRRAM).
+- Every fix has a test that failed before it, and reverting the fix makes the
+  test fail again (mutants recorded in each commit body, all caught).
+- fmt, clippy for every feature set and both wasm builds, rustdoc, the
+  `no_std` build, the cosim crate and markdownlint are clean.
+- The MiSTer core: on-die ladder 199 passed, 0 failed, 1 expected failure,
+  off-die 200 / 0 / 1, each one frozen-worktree run of the final sibling RTL
+  against the oracle pinned at this release branch, nothing skipped; blargg's
+  `4-scanline_timing` reads `$00` on the DUT. Both builds were swept at
+  seeds 1-8 on one build date (261006), and every seed closes on both. Seed
+  5 is pinned (on-die +0.408 / +0.116 ns, off-die +0.221 / +0.109 ns, SDRAM
+  read +0.439 / +1.181 ns), and two clean compiles of each are
+  byte-identical (on-die `3cfeb968...`, off-die `834f4681...`). The
+  stuck-register and suppressed-message checks pass on both. That pair ships
+  as a release candidate.
+  **No hardware has run any bitstream.**
+- The Android unit tests pass on the JVM; the iOS Swift and the mobile device
+  behaviour are unverified on this Linux host.
+
 ## [2.9.9] - 2026-10-04 - "Ballast" (the release candidate: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it)
 
 The last release of the line to v3.0.0. It re-audits all four scopes, fixes

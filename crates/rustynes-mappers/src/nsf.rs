@@ -818,7 +818,7 @@ impl Mapper for NsfMapper {
         // v1 must match exactly; v2 carries a 1-byte expansion tail.
         let expected = core_len + usize::from(version == 2);
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

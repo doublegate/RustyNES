@@ -216,7 +216,7 @@ impl Mapper for TxSrom {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         const HEADER: usize = 1 + 6 + 1 + 1;
         if data.len() < HEADER {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: HEADER,
                 got: data.len(),
             });

@@ -188,7 +188,7 @@ impl Mapper for Bxrom241 {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_extra = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let version = *data.first().ok_or(MapperError::Truncated {
+        let version = *data.first().ok_or(MapperError::WrongLength {
             expected: 1,
             got: 0,
         })?;
@@ -198,7 +198,7 @@ impl Mapper for Bxrom241 {
         let wram_len = self.wram.len();
         let expected = 2 + self.vram.len() + chr_extra + wram_len;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

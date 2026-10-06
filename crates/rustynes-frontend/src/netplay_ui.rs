@@ -437,6 +437,9 @@ impl NetplayUi {
                          reconnect"
                             .to_string()
                     }
+                    Some(DisconnectReason::EmulatorMismatch { ours, theirs }) => {
+                        rustynes_netplay::emulator_mismatch_text(ours, theirs)
+                    }
                     Some(DisconnectReason::HandshakeTimeout) => {
                         "handshake timed out (no peer answered)".to_string()
                     }
@@ -496,7 +499,9 @@ impl NetplayUi {
                         format!("desync at frame {frame} ({kind})")
                     }
                     NetplayError::RomMismatch => "rom mismatch".to_string(),
-                    NetplayError::ConfigMismatch => format!("{e}"),
+                    NetplayError::ConfigMismatch | NetplayError::EmulatorMismatch { .. } => {
+                        format!("{e}")
+                    }
                     NetplayError::Restore(ref s) => format!("rollback restore failed: {s}"),
                     // `NetplayError` is `#[non_exhaustive]`; surface any future
                     // variant via its `Display` rather than panicking.
@@ -539,7 +544,24 @@ impl NetplayUi {
                      match them and spectate again"
                         .to_string()
                 }
+                rustynes_netplay::IdentityMismatch::Emulator { ours, theirs } => format!(
+                    "the watched match cannot be shown: {}",
+                    rustynes_netplay::emulator_mismatch_text(ours, theirs)
+                ),
             });
+            return NetplayTick {
+                active: true,
+                produced_frame: false,
+            };
+        }
+        // v3.0.0 — the spectator fell so far behind that input was dropped,
+        // and the players never resend it. Say so rather than freezing on
+        // the last frame kept.
+        if let Some(frame) = session.stream_lost() {
+            self.fail(format!(
+                "the spectator fell too far behind the match (about 18 minutes) and \
+                 the input from frame {frame} on was not kept; spectate again to rejoin"
+            ));
             return NetplayTick {
                 active: true,
                 produced_frame: false,

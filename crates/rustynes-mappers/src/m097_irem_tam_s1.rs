@@ -183,7 +183,7 @@ impl Mapper for Irem97 {
         let chr_extra = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 3 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

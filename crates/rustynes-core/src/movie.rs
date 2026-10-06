@@ -16,7 +16,8 @@
 //! ```text
 //! HEADER:
 //!     magic           : "RNESMOV1"   (8 bytes)
-//!     format version  : u16 LE        (currently 4 = MOVIE_FORMAT_VERSION)
+//!     format version  : u16 LE        (currently 5 = MOVIE_FORMAT_VERSION)
+//!     emulation epoch : u32 LE        (format 5+; `EMULATION_EPOCH`, ADR 0045)
 //!     region          : u8            (0 = NTSC, 1 = PAL, 2 = Dendy)
 //!     flags           : u8            (bit0 = embedded save-state start point,
 //!                                      bit1 = board description recorded)
@@ -85,12 +86,19 @@ pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 ///   only in the bits mappers 30 and 218 wire from, so a movie replayed
 ///   silently on a different machine. v3 is refused, as v1 and v2 are, under
 ///   the same "enduring over compatible" rule.
-pub const MOVIE_FORMAT_VERSION: u16 = 4;
+/// - **v5 (v3.0.0, ADR 0045)**: the fixed header carries the
+///   [`EMULATION_EPOCH`](crate::EMULATION_EPOCH) the movie was recorded under,
+///   straight after the format version so a tool can read it without parsing
+///   the rest. v2.9.9 and v3.0.0 emulate MMC3 games with the background at
+///   `$1000` differently (T-MMC3-BG-A12), and a format-4 movie does not say
+///   which behaviour it assumes, so v4 is refused. A v5 movie from another
+///   epoch is refused with [`MovieError::EpochMismatch`].
+pub const MOVIE_FORMAT_VERSION: u16 = 5;
 
-/// The oldest container version this build replays: v4, whose board
-/// description identifies the machine (v3 was the first to record options).
-/// Older movies fail with [`MovieError::FormatTooOld`].
-pub const MIN_MOVIE_FORMAT_VERSION: u16 = 4;
+/// The oldest container version this build replays: v5, the first to record
+/// the emulation epoch (v4 identified the board, v3 the options). Older
+/// movies fail with [`MovieError::FormatTooOld`].
+pub const MIN_MOVIE_FORMAT_VERSION: u16 = 5;
 
 /// Peek a `.rnm` blob's header to learn its recording epoch.
 ///
@@ -555,13 +563,15 @@ pub enum MovieError {
         max: u16,
     },
 
-    /// v2.9.8 — the movie predates the options record, so it does not say
-    /// which console model, power-on RAM, die revisions or cheats it ran
-    /// with, and replaying it would run whatever the player has configured.
+    /// v2.9.8 — the movie was written by an older release whose format does
+    /// not record everything a faithful replay needs: before format 3 the
+    /// emulation options, before 4 the full board, before 5 (v3.0.0) the
+    /// emulation epoch. (Until v3.0.0 the message named only the options,
+    /// which stopped being the whole story at format 4.)
     #[error(
-        "movie format version {got} is older than {min}: it does not record the \
-         emulation options it was made with, so it cannot be replayed faithfully; \
-         re-record it with this version"
+        "movie format version {got} was written by an older release of RustyNES \
+         (this version replays format {min} and later), and it does not record \
+         everything a faithful replay needs; re-record it with this version"
     )]
     FormatTooOld {
         /// Version we read.
@@ -652,17 +662,43 @@ pub enum MovieError {
     /// The running ROM's hash does not match the movie's recorded hash.
     #[error("movie ROM hash mismatch (this movie was recorded against a different ROM)")]
     RomMismatch,
+
+    /// v3.0.0 (ADR 0045) — the movie was recorded by a version of `RustyNES`
+    /// that emulates differently: its [`EMULATION_EPOCH`](crate::EMULATION_EPOCH)
+    /// is not this build's. Replaying it would run the recorded inputs on
+    /// different timing, so it is refused rather than allowed to diverge.
+    #[error(
+        "movie was recorded by a version of RustyNES that emulates differently \
+         (emulation epoch {movie}; this version is epoch {core}); replay it with \
+         that version, or re-record it with this one"
+    )]
+    EpochMismatch {
+        /// The epoch the movie records.
+        movie: u32,
+        /// This build's [`EMULATION_EPOCH`](crate::EMULATION_EPOCH).
+        core: u32,
+    },
 }
 
 /// A complete TAS movie: a versioned header, a start point, and the
 /// per-frame input stream.
+///
+/// `#[non_exhaustive]` since v3.0.0 (T-API-EXTENSIBLE): build one with
+/// [`Movie::new`] (or a [`MovieRecorder`] / an importer), then set the public
+/// fields that differ from its defaults. A later field is then not a break.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Movie {
     /// Cartridge region the movie was recorded under. Checked, not applied:
     /// [`Movie::seek_to_start`] refuses a machine of another region.
     pub region: Region,
     /// [`Nes::rom_sha256`] of the ROM the movie was recorded against.
     pub rom_sha256: [u8; 32],
+    /// v3.0.0 (ADR 0045) — the [`EMULATION_EPOCH`](crate::EMULATION_EPOCH)
+    /// the movie was recorded under. [`Movie::new`] and every recorder and
+    /// importer stamp the current one; [`Movie::deserialize`] refuses
+    /// another.
+    pub epoch: u32,
     /// v2.9.8 — every emulation-affecting host option the movie was recorded
     /// with. [`Movie::seek_to_start`] applies them before frame 0, so the
     /// replay does not depend on the player's settings. A foreign import
@@ -694,6 +730,33 @@ pub struct Movie {
 }
 
 impl Movie {
+    /// v3.0.0 — a movie at the current [`EMULATION_EPOCH`](crate::EMULATION_EPOCH)
+    /// with no re-records and no attestation. Set
+    /// [`Self::rerecord_count`] or [`Self::attestation`] afterwards when they
+    /// apply; the struct is `#[non_exhaustive]`, so this is how code outside
+    /// `rustynes-core` builds one.
+    #[must_use]
+    pub const fn new(
+        region: Region,
+        rom_sha256: [u8; 32],
+        options: HardwareOptions,
+        board: Option<BoardDescription>,
+        start: StartPoint,
+        frames: Vec<FrameInput>,
+    ) -> Self {
+        Self {
+            region,
+            rom_sha256,
+            epoch: crate::EMULATION_EPOCH,
+            options,
+            board,
+            start,
+            frames,
+            rerecord_count: 0,
+            attestation: None,
+        }
+    }
+
     /// Number of input frames in the movie.
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -716,6 +779,9 @@ impl Movie {
         let mut w = BinWriter::with_capacity(48 + body_hint);
         w.bytes(MOVIE_MAGIC);
         w.u16(MOVIE_FORMAT_VERSION);
+        // v3.0.0 (format 5, ADR 0045): the emulation epoch, beside the
+        // version so a tool can read both without parsing further.
+        w.u32(self.epoch);
         w.u8(region_to_byte(self.region));
         let mut flags = match &self.start {
             StartPoint::PowerOn => 0,
@@ -775,9 +841,10 @@ impl Movie {
     /// version, an unknown region byte, a frame width this build can't
     /// parse, or a truncated body. Never panics on malformed input.
     pub fn deserialize(bytes: &[u8]) -> Result<Self, MovieError> {
-        // Fixed header: magic(8) + version(2) + region(1) + flags(1) +
-        // sha256(32) + frame_count(4) + bytes_per_frame(1) = 49 bytes.
-        const HEADER_LEN: usize = 8 + 2 + 1 + 1 + 32 + 4 + 1;
+        // Fixed header: magic(8) + version(2) + epoch(4, format 5+) +
+        // region(1) + flags(1) + sha256(32) + frame_count(4) +
+        // bytes_per_frame(1) = 53 bytes.
+        const HEADER_LEN: usize = 8 + 2 + 4 + 1 + 1 + 32 + 4 + 1;
         if bytes.len() < HEADER_LEN {
             return Err(MovieError::HeaderTruncated {
                 expected: HEADER_LEN,
@@ -803,6 +870,16 @@ impl Movie {
             return Err(MovieError::FormatTooOld {
                 got: format_version,
                 min: MIN_MOVIE_FORMAT_VERSION,
+            });
+        }
+        // v3.0.0 (format 5, ADR 0045): the emulation epoch. Checked before
+        // anything else is parsed: a movie from a core that emulates
+        // differently is refused whatever the rest of it holds.
+        let epoch = r.u32().map_err(map_eof)?;
+        if epoch != crate::EMULATION_EPOCH {
+            return Err(MovieError::EpochMismatch {
+                movie: epoch,
+                core: crate::EMULATION_EPOCH,
             });
         }
         // Region + flags.
@@ -860,7 +937,7 @@ impl Movie {
         let width = usize::from(bytes_per_frame);
         // SECURITY: `frame_count` is an untrusted 4-byte field (up to ~4.3
         // billion). Pre-sizing `Vec::with_capacity(frame_count)` from it lets a
-        // 49-byte header claim a multi-gigabyte allocation — an OOM DoS (found
+        // 53-byte header claim a multi-gigabyte allocation — an OOM DoS (found
         // by the `movie` fuzz target). A real movie carries exactly
         // `frame_count * width` more bytes, so cap the reservation at what the
         // remaining input could actually hold: for a valid file this equals
@@ -889,6 +966,7 @@ impl Movie {
         Ok(Self {
             region,
             rom_sha256,
+            epoch,
             options,
             board,
             start,
@@ -921,12 +999,15 @@ impl Movie {
     ///
     /// # Errors
     ///
-    /// [`MovieError::RomMismatch`], [`MovieError::RegionMismatch`] or
-    /// [`MovieError::BoardMismatch`] for a different machine;
+    /// [`MovieError::EpochMismatch`] for a movie recorded under another
+    /// emulation epoch (ADR 0045); [`MovieError::RomMismatch`],
+    /// [`MovieError::RegionMismatch`] or [`MovieError::BoardMismatch`] for a
+    /// different machine;
     /// [`MovieError::OptionNotApplicable`] for a Game Genie code that does
     /// not decode; [`MovieError::BadSaveState`] if the embedded snapshot is
     /// malformed.
     pub fn seek_to_start(&self, nes: &mut Nes) -> Result<(), MovieError> {
+        self.check_epoch()?;
         if nes.rom_sha256() != &self.rom_sha256 {
             return Err(MovieError::RomMismatch);
         }
@@ -959,6 +1040,21 @@ impl Movie {
             debug_assert!(options_back.is_ok() && state_back.is_ok());
         }
         result
+    }
+
+    /// v3.0.0 (ADR 0045): refuse a movie recorded under another emulation
+    /// epoch. [`Self::deserialize`] checks the field it parses; this checks
+    /// the field as it stands, because `epoch` is public and a [`Movie`] can
+    /// be built or edited in memory, and playback must not trust that it came
+    /// through `deserialize` (a review finding on #588).
+    const fn check_epoch(&self) -> Result<(), MovieError> {
+        if self.epoch != crate::EMULATION_EPOCH {
+            return Err(MovieError::EpochMismatch {
+                movie: self.epoch,
+                core: crate::EMULATION_EPOCH,
+            });
+        }
+        Ok(())
     }
 
     /// The mutating half of [`Self::seek_to_start`], after the identity
@@ -1012,12 +1108,18 @@ impl Movie {
     ///
     /// # Errors
     ///
-    /// [`MovieError::RomMismatch`] if `nes` is running a different ROM, or
-    /// [`MovieError::BadSaveState`] if an embedded start point is malformed.
+    /// [`MovieError::EpochMismatch`] for a movie from another emulation epoch
+    /// (checked first, attested or not), [`MovieError::RomMismatch`] if `nes`
+    /// is running a different ROM, or [`MovieError::BadSaveState`] if an
+    /// embedded start point is malformed.
     /// A movie with no attestation is **not** an error; it returns
     /// [`VerifyOutcome::NotAttested`], because "this movie makes no claim" and
     /// "this movie makes a false claim" are different answers.
     pub fn verify(&self, nes: &mut Nes) -> Result<VerifyOutcome, MovieError> {
+        // Before the attestation question: a movie from another epoch cannot
+        // be replayed here at all, which is a stronger answer than "makes no
+        // claim".
+        self.check_epoch()?;
         let Some(att) = self.attestation.as_ref() else {
             return Ok(VerifyOutcome::NotAttested);
         };
@@ -1273,6 +1375,7 @@ impl MovieRecorder {
         Movie {
             region: self.region,
             rom_sha256: self.rom_sha256,
+            epoch: crate::EMULATION_EPOCH,
             options: self.options,
             board: Some(self.board),
             start: self.start,
@@ -1788,6 +1891,7 @@ mod tests {
         assert!(!nes.sram().is_empty(), "NROM exposes its PRG-RAM");
         nes.sram_mut().fill(0xA5); // a loaded .sav, or a previous session
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: nes.region(),
             rom_sha256: *nes.rom_sha256(),
             options: crate::HardwareOptions::default(),
@@ -1819,6 +1923,7 @@ mod tests {
     fn format_round_trip_power_on() {
         let inputs = synthetic_inputs(120);
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0xAB; 32],
             options: crate::HardwareOptions::default(),
@@ -1836,6 +1941,7 @@ mod tests {
     #[test]
     fn rerecord_count_round_trips_and_defaults_for_legacy_rnm() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0x5A; 32],
             options: crate::HardwareOptions::default(),
@@ -1860,6 +1966,7 @@ mod tests {
     #[test]
     fn format_round_trip_with_save_state_start() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Pal,
             rom_sha256: [0x11; 32],
             options: crate::HardwareOptions::default(),
@@ -1876,7 +1983,7 @@ mod tests {
 
     #[test]
     fn deserialize_rejects_bad_magic_cleanly() {
-        let mut bytes = vec![0u8; 49];
+        let mut bytes = vec![0u8; 53];
         bytes[..8].copy_from_slice(b"NOTAMOVI");
         assert!(matches!(
             Movie::deserialize(&bytes),
@@ -1887,6 +1994,7 @@ mod tests {
     #[test]
     fn deserialize_rejects_too_new_format_cleanly() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),
@@ -1918,13 +2026,15 @@ mod tests {
     fn deserialize_hostile_frame_count_does_not_oom() {
         // frame_count is the 4-byte LE field right after the 32-byte rom hash
         // (offset 8 + 2 + 1 + 1 + 32 = 44).
-        const FRAME_COUNT_OFF: usize = 8 + 2 + 1 + 1 + 32;
+        // magic + version + epoch (format 5) + region + flags + sha256.
+        const FRAME_COUNT_OFF: usize = 8 + 2 + 4 + 1 + 1 + 32;
         // A tiny (header-only) movie whose `frame_count` field claims ~4.3
         // billion frames. The old `Vec::with_capacity(frame_count)` would try to
         // reserve multiple gigabytes before the input-stream read failed (an OOM
         // DoS found by the `movie` fuzz target). It must now reject cleanly with
         // an EOF: the capacity is capped at the remaining bytes / width.
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),
@@ -1946,6 +2056,7 @@ mod tests {
     #[test]
     fn deserialize_rejects_truncated_input_stream() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),
@@ -2020,6 +2131,7 @@ mod tests {
     fn replay_is_internally_deterministic() {
         let rom = synth_nrom();
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: *Nes::from_rom(&rom).unwrap().rom_sha256(),
             options: crate::HardwareOptions::default(),
@@ -2114,6 +2226,7 @@ mod tests {
     fn seek_rejects_rom_mismatch() {
         let rom = synth_nrom();
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0xFF; 32], // deliberately wrong
             options: crate::HardwareOptions::default(),
@@ -2135,6 +2248,7 @@ mod tests {
         // The on-wire byte for a frame is exactly Buttons::bits() (FCEUX
         // .fm2 layout). Verify the serialize path preserves it.
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),
@@ -2150,15 +2264,15 @@ mod tests {
             attestation: None,
         };
         let bytes = movie.serialize();
-        // Input stream begins after the 49-byte fixed header and the
+        // Input stream begins after the 53-byte fixed header and the
         // length-prefixed OPTIONS block (no board, no save state).
-        let at = 49 + 4 + crate::HardwareOptions::default().to_bytes().len();
+        let at = 53 + 4 + crate::HardwareOptions::default().to_bytes().len();
         assert_eq!(bytes[at], (Buttons::A | Buttons::RIGHT).bits());
         assert_eq!(bytes[at + 1], (Buttons::B | Buttons::START).bits());
         assert_eq!(bytes[at + 2], Buttons::UP.bits(), "player 3");
         assert_eq!(bytes[at + 3], Buttons::SELECT.bits(), "player 4");
         assert_eq!(bytes[at + 4], 0, "expansion byte reserved/zero");
-        assert_eq!(bytes[48], BYTES_PER_FRAME, "the header states the width");
+        assert_eq!(bytes[52], BYTES_PER_FRAME, "the header states the width");
     }
 
     /// A narrower record still reads: the fields it does not reach default.
@@ -2167,6 +2281,7 @@ mod tests {
     #[test]
     fn a_two_byte_record_defaults_players_three_and_four() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),
@@ -2182,11 +2297,104 @@ mod tests {
             attestation: None,
         };
         let mut bytes = movie.serialize();
-        let at = 49 + 4 + crate::HardwareOptions::default().to_bytes().len();
-        bytes[48] = 2;
+        let at = 53 + 4 + crate::HardwareOptions::default().to_bytes().len();
+        bytes[52] = 2; // bytes_per_frame, the fixed header's last byte
         bytes.drain(at + 2..at + 5);
         let back = Movie::deserialize(&bytes).expect("narrow record");
         assert_eq!(back.frames, [FrameInput::new(Buttons::A, Buttons::B)]);
+    }
+
+    /// v3.0.0 (ADR 0045): a movie records the emulation epoch beside its
+    /// format version, and a movie from another epoch is refused before
+    /// anything else is parsed, naming both epochs. Without the check, a
+    /// movie recorded by a core that emulates differently (v2.9.9's MMC3
+    /// timing, say) would replay its inputs on the new timing and diverge
+    /// with no explanation.
+    #[test]
+    fn a_movie_from_another_emulation_epoch_is_refused() {
+        let movie = Movie::new(
+            Region::Ntsc,
+            [7; 32],
+            crate::HardwareOptions::default(),
+            None,
+            StartPoint::PowerOn,
+            vec![FrameInput::new(Buttons::A, Buttons::B)],
+        );
+        assert_eq!(movie.epoch, crate::EMULATION_EPOCH);
+        let bytes = movie.serialize();
+        // The epoch sits straight after the format version (bytes 10..14).
+        assert_eq!(&bytes[8..10], &MOVIE_FORMAT_VERSION.to_le_bytes());
+        assert_eq!(&bytes[10..14], &crate::EMULATION_EPOCH.to_le_bytes());
+        assert_eq!(
+            Movie::deserialize(&bytes).expect("same epoch").epoch,
+            crate::EMULATION_EPOCH
+        );
+
+        let mut other = bytes;
+        other[10..14].copy_from_slice(&(crate::EMULATION_EPOCH + 1).to_le_bytes());
+        assert!(matches!(
+            Movie::deserialize(&other),
+            Err(MovieError::EpochMismatch { movie, core })
+                if movie == crate::EMULATION_EPOCH + 1 && core == crate::EMULATION_EPOCH
+        ));
+    }
+
+    /// v3.0.0: the epoch is enforced on PLAYBACK too, not only when parsing.
+    /// `Movie::epoch` is a public field and a `Movie` can be built in memory,
+    /// so a deserialize-only check left `seek_to_start` and `verify` open to
+    /// a movie from another epoch (a review finding on #588). Both refuse it, with
+    /// the machine untouched, and `verify` refuses it before reporting that
+    /// the movie is unattested.
+    #[test]
+    fn playback_refuses_a_movie_from_another_epoch() {
+        let mut nes = Nes::from_rom(&synth_nrom_battery()).unwrap();
+        let mut movie = Movie::new(
+            nes.region(),
+            *nes.rom_sha256(),
+            crate::HardwareOptions::default(),
+            None,
+            StartPoint::PowerOn,
+            synthetic_inputs(1),
+        );
+        movie.epoch = crate::EMULATION_EPOCH + 1;
+        nes.sram_mut().fill(0xA5);
+        let refused = |r: &Result<(), MovieError>| {
+            matches!(r, Err(MovieError::EpochMismatch { movie, core })
+                if *movie == crate::EMULATION_EPOCH + 1 && *core == crate::EMULATION_EPOCH)
+        };
+        assert!(
+            refused(&movie.seek_to_start(&mut nes)),
+            "seek_to_start refuses"
+        );
+        assert!(
+            nes.sram().iter().all(|&b| b == 0xA5),
+            "the machine is untouched"
+        );
+        assert!(
+            refused(&movie.verify(&mut nes).map(|_| ())),
+            "verify refuses before NotAttested"
+        );
+    }
+
+    /// v3.0.0: a format-4 movie (v2.9.9) does not record the epoch, so it is
+    /// refused as too old rather than replayed under a timing it may not
+    /// have been recorded on.
+    #[test]
+    fn a_format_4_movie_is_refused_as_too_old() {
+        let mut bytes = Movie::new(
+            Region::Ntsc,
+            [0; 32],
+            crate::HardwareOptions::default(),
+            None,
+            StartPoint::PowerOn,
+            vec![],
+        )
+        .serialize();
+        bytes[8..10].copy_from_slice(&4u16.to_le_bytes());
+        assert!(matches!(
+            Movie::deserialize(&bytes),
+            Err(MovieError::FormatTooOld { got: 4, min: 5 })
+        ));
     }
 
     #[test]
@@ -2194,6 +2402,7 @@ mod tests {
         // ADR 0028: a freshly-serialized movie carries the current
         // MOVIE_FORMAT_VERSION (>= 2) and must NOT be flagged.
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),
@@ -2340,6 +2549,7 @@ mod tests {
     #[test]
     fn a_movie_older_than_the_options_epoch_is_rejected() {
         let movie = Movie {
+            epoch: crate::EMULATION_EPOCH,
             region: Region::Ntsc,
             rom_sha256: [0; 32],
             options: crate::HardwareOptions::default(),

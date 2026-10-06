@@ -435,7 +435,7 @@ impl Namco163Audio {
 
     fn read_tail(&mut self, src: &[u8]) -> Result<(), MapperError> {
         if src.len() < Self::TAIL_LEN {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: Self::TAIL_LEN,
                 got: src.len(),
             });
@@ -905,7 +905,7 @@ impl Mapper for Namco163 {
         let scalar_len = 1 + 4 + 8 + 4 + 1 + 2 + 1;
         let core_expected = scalar_len + self.prg_ram.len() + self.vram.len();
         if data.len() < core_expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: core_expected,
                 got: data.len(),
             });
@@ -923,7 +923,7 @@ impl Mapper for Namco163 {
         // safely.
         let expected = core_expected + 1 + Namco163Audio::TAIL_LEN + 2 + self.chr_ram_tail_len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1513,7 +1513,7 @@ mod tests {
         let mut n = n163(0x100);
         assert!(matches!(
             n.load_state(&blob[..blob.len() - 1]),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
         assert_eq!(n.nta, Namco163::nta_for(Mirroring::Vertical), "untouched");
         n.load_state(&blob).expect("the whole blob loads");
@@ -1555,7 +1555,7 @@ mod tests {
         let err = n
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated v4 blob must be rejected");
-        assert!(matches!(err, MapperError::Truncated { .. }), "{err:?}");
+        assert!(matches!(err, MapperError::WrongLength { .. }), "{err:?}");
         assert_eq!(n.prg[0], 0, "untouched");
     }
 }

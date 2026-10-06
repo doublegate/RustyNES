@@ -328,7 +328,7 @@ impl Mapper for Jy91 {
         let chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = HEAD + self.vram.len() + chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

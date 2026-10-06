@@ -164,3 +164,22 @@ movies. No migration/transcoding code for either.**
    earns its keep only when a format breaks compatibility" stance — the
    MAJOR-boundary event itself is the sanctioned point to NOT write
    migration code, by design.
+
+## Later decisions that change this one (pointer added 2026-10-05)
+
+This ADR's policies held through v2.9.7. Later releases changed both:
+
+- **Save states.** v2.9.8 raised the `.rns` container to format 3 and refuses
+  every older state with a clear error, and removed the legacy readers
+  ([ADR 0042](0042-v3-removes-the-v2-7-5-deprecations-and-the-dead-nmi-edge-detector.md),
+  its 2026-10-01 amendment).
+- **Movies: "warn, don't reject" no longer holds.** v2.9.8 made `.rnm` format
+  3 and refuses older movies, because a movie now carries the emulation
+  options it was recorded under
+  ([ADR 0044](0044-movies-and-netplay-carry-the-emulation-options.md)).
+  v2.9.9 raised the minimum to format 4, and v3.0.0 to format 5 (the core
+  timing epoch,
+  [ADR 0045](0045-a-core-timing-epoch-guards-movies-and-netplay.md)).
+
+The reasoning above is kept as written; it was right for v2.0.0's
+circumstances.

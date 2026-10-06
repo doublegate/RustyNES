@@ -51,7 +51,7 @@
 use rustynes_core::{Buttons, Nes};
 
 use crate::diagnostics::DesyncDiagnostics;
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, fnv1a64};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict, fnv1a64};
 use crate::transport::Transport;
 
 /// The maximum number of players.
@@ -141,6 +141,15 @@ pub enum NetplayError {
          Vs. settings, Game Genie codes, region or header); match them and reconnect"
     )]
     ConfigMismatch,
+    /// v3.0.0 (ADR 0045) — the peer runs a version of `RustyNES` that emulates
+    /// differently, so the two timelines would diverge whatever the settings.
+    #[error("{}", crate::message::emulator_mismatch_text(*ours, *theirs))]
+    EmulatorMismatch {
+        /// This build's emulation epoch.
+        ours: u32,
+        /// The peer's epoch; `None` when it predates the epoch (v2.9.9 or earlier).
+        theirs: Option<u32>,
+    },
 }
 
 /// Configuration for a [`RollbackSession`].
@@ -639,14 +648,17 @@ impl<T: Transport> RollbackSession<T> {
         for msg in messages {
             match msg {
                 NetMessage::Sync { magic, identity } => {
-                    if magic != NetMessage::SYNC_MAGIC {
-                        continue;
-                    }
-                    match self.identity.check(&identity) {
-                        Ok(()) => {}
-                        Err(IdentityMismatch::Rom) => return Err(NetplayError::RomMismatch),
-                        Err(IdentityMismatch::Config) => {
+                    match self.identity.check_sync(magic, &identity) {
+                        SyncVerdict::Ignore => continue,
+                        SyncVerdict::Accept => {}
+                        SyncVerdict::Refuse(IdentityMismatch::Rom) => {
+                            return Err(NetplayError::RomMismatch);
+                        }
+                        SyncVerdict::Refuse(IdentityMismatch::Config) => {
                             return Err(NetplayError::ConfigMismatch);
+                        }
+                        SyncVerdict::Refuse(IdentityMismatch::Emulator { ours, theirs }) => {
+                            return Err(NetplayError::EmulatorMismatch { ours, theirs });
                         }
                     }
                     self.synced = true;

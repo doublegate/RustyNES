@@ -77,7 +77,7 @@ default-members = ["crates/rustynes-libretro"]
 # `release-auto.yml` reads the `## [X.Y.Z]` line for BOTH the release body
 # fallback and the title codename — so the date and quoted codename are load-
 # bearing, not decoration.
-version = "2.9.9"
+version = "3.0.0"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
@@ -88,30 +88,30 @@ keywords = ["nes", "emulator", "famicom", "6502", "retro"]
 categories = ["emulators", "games"]
 
 [workspace.dependencies]
-rustynes-core = { path = "crates/rustynes-core", version = "2.0.0" }
-rustynes-cpu = { path = "crates/rustynes-cpu", version = "2.0.0" }
-rustynes-ppu = { path = "crates/rustynes-ppu", version = "2.0.0" }
-rustynes-apu = { path = "crates/rustynes-apu", version = "2.0.0", default-features = false }
-rustynes-mappers = { path = "crates/rustynes-mappers", version = "2.0.0" }
-rustynes-netplay = { path = "crates/rustynes-netplay", version = "2.0.0" }
-rustynes-script = { path = "crates/rustynes-script", version = "2.0.0" }
-rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "2.0.0" }
+rustynes-core = { path = "crates/rustynes-core", version = "3.0.0" }
+rustynes-cpu = { path = "crates/rustynes-cpu", version = "3.0.0" }
+rustynes-ppu = { path = "crates/rustynes-ppu", version = "3.0.0" }
+rustynes-apu = { path = "crates/rustynes-apu", version = "3.0.0", default-features = false }
+rustynes-mappers = { path = "crates/rustynes-mappers", version = "3.0.0" }
+rustynes-netplay = { path = "crates/rustynes-netplay", version = "3.0.0" }
+rustynes-script = { path = "crates/rustynes-script", version = "3.0.0" }
+rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "3.0.0" }
 # v1.8.0 "Android" — the shared mobile bridge, consumed by rustynes-android (and
 # v1.9.0's rustynes-ios). Path dep; the version req is a floor.
-rustynes-mobile = { path = "crates/rustynes-mobile", version = "2.0.0" }
+rustynes-mobile = { path = "crates/rustynes-mobile", version = "3.0.0" }
 # v1.8.4 — shared WGSL presentation shaders for both the desktop frontend and the
 # Android wgpu renderer (single source of truth, no copy-paste drift).
-rustynes-gfx-shaders = { path = "crates/rustynes-gfx-shaders", version = "2.0.0" }
+rustynes-gfx-shaders = { path = "crates/rustynes-gfx-shaders", version = "3.0.0" }
 # v1.8.5 — HD-pack loader + compositor + HD audio, extracted from the frontend so
 # the mobile bridge can reach it (the core is no_std, so it can't live there).
-rustynes-hdpack = { path = "crates/rustynes-hdpack", version = "2.0.0" }
+rustynes-hdpack = { path = "crates/rustynes-hdpack", version = "3.0.0" }
 # v2.7.0 (cheevos line) — the safe RaClient over vendored rcheevos. Native-only
 # (empty crate on wasm32). Consumed by rustynes-ra (and, transitively, the
 # frontend's `retroachievements` feature + the mobile bridge).
-rustynes-cheevos = { path = "crates/rustynes-cheevos", version = "2.0.0" }
+rustynes-cheevos = { path = "crates/rustynes-cheevos", version = "3.0.0" }
 # v1.8.6 — RetroAchievements session state extracted from the frontend so the
 # mobile bridge can reach it (RaClient is now Send). Native-only.
-rustynes-ra = { path = "crates/rustynes-ra", version = "2.0.0" }
+rustynes-ra = { path = "crates/rustynes-ra", version = "3.0.0" }
 
 # v1.1.0 beta.3 (Workstream E) — Lua scripting. `vendored` compiles Lua 5.4
 # from source (no system Lua needed); native-only (the wasm/no_std builds never

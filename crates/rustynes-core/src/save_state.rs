@@ -92,6 +92,17 @@ pub const THUMBNAIL_LEN: usize = THUMBNAIL_WIDTH * THUMBNAIL_HEIGHT * 4;
 /// Body version byte for the `THM ` section.
 pub const THUMBNAIL_VERSION: u8 = 1;
 
+/// v3.0.0 — which way a section version differs, in words a player can act
+/// on ([`SnapshotError::VersionMismatch`]).
+const fn section_version_hint(file_version: u8, this_build: u8) -> &'static str {
+    if file_version < this_build {
+        "it was saved by an older release of RustyNES, whose states this version \
+         cannot load; re-create it from the game or an in-game save"
+    } else {
+        "it was saved by a newer release of RustyNES; load it with that version"
+    }
+}
+
 /// Errors produced by save-state encode / decode.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -145,8 +156,17 @@ pub enum SnapshotError {
     },
 
     /// A section had a version this build does not handle.
+    ///
+    /// Every section reader accepts only its current layout (v2.9.8, ADR
+    /// 0042), so this is what a state saved by another release of `RustyNES`
+    /// fails with, when its container format is still current: v2.9.8's and
+    /// v2.9.9's states, at v3.0.0. The message therefore says which way the
+    /// versions differ (v3.0.0; until then it gave only the two numbers, and
+    /// players read it as a damaged file).
     #[error(
-        "save state section {tag} version {file_version} not supported (chip supports {chip_supports})"
+        "save state section {tag} version {file_version} not supported (this build reads \
+         {chip_supports}): {}",
+        section_version_hint(*file_version, *chip_supports)
     )]
     VersionMismatch {
         /// 4-byte tag (printable ASCII).

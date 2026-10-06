@@ -131,9 +131,10 @@ pub struct MapperFrameEvents {
 pub enum MapperError {
     /// Save-state blob is not the length this mapper's state has: shorter
     /// or longer. (Until v2.9.9 the message said "truncated" for a long blob
-    /// too; NC-14.)
+    /// too; NC-14. Until v3.0.0 the variant itself was named `Truncated`,
+    /// which said the opposite of half its uses; T-API-EXTENSIBLE.)
     #[error("mapper save state has the wrong length: expected {expected} bytes, got {got}")]
-    Truncated {
+    WrongLength {
         /// Expected byte count.
         expected: usize,
         /// Actual byte count.

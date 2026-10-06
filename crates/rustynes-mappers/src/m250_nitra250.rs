@@ -295,7 +295,7 @@ impl Mapper for Nitra250 {
         // truncated v2 (agy on #577).
         match data.first() {
             None => {
-                return Err(MapperError::Truncated {
+                return Err(MapperError::WrongLength {
                     expected: 1,
                     got: 0,
                 });
@@ -307,7 +307,7 @@ impl Mapper for Nitra250 {
         }
         let expected = 19 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -427,7 +427,7 @@ mod tests {
         ));
         assert!(matches!(
             m.load_state(&[]),
-            Err(MapperError::Truncated { .. })
+            Err(MapperError::WrongLength { .. })
         ));
     }
 }

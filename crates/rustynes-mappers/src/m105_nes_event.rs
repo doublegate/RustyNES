@@ -282,7 +282,7 @@ impl Mapper for NesEvent105 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         const HEAD: usize = 13;
         if data.len() < HEAD {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: HEAD,
                 got: data.len(),
             });
@@ -298,7 +298,7 @@ impl Mapper for NesEvent105 {
             .checked_add(inner_len)
             .and_then(|n| n.checked_add(CHR_RAM + WRAM));
         if expected != Some(data.len()) {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected: expected.unwrap_or(usize::MAX),
                 got: data.len(),
             });

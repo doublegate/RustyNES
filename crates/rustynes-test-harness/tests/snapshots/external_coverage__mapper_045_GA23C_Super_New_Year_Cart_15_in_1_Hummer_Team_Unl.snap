@@ -1,14 +1,13 @@
 ---
 source: crates/rustynes-test-harness/tests/external_coverage.rs
-assertion_line: 673
 expression: text
 ---
 rom=mapper-045-GA23C/Super New Year Cart 15-in-1 (Hummer Team) (Unl) [!].nes
 rom_sha256=0439aa3f188f4697f302c1737badf716dcc4eea5745937c3694730c1fd031afb
 frames=1141
 fb_bytes=245760
-cycles=33949780
+cycles=33949777
 audio_samples=836505
-audio_fnv1a64=3421a2c6691b995c
-checkpoint f900 fb_fnv1a64=43dcdb1910fbe758
-checkpoint f1100 fb_fnv1a64=c9b86c112f56bba4
+audio_fnv1a64=edddd247494065b1
+checkpoint f900 fb_fnv1a64=ae8cae6ad9eeb0da
+checkpoint f1100 fb_fnv1a64=9e2bab7e8ce30df6

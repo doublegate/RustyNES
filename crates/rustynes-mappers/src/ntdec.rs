@@ -206,7 +206,7 @@ impl Mapper for Ntdec63 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 4 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -359,7 +359,7 @@ impl Mapper for Ntdec174 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 5 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -524,7 +524,7 @@ impl Mapper for Ntdec2722M40 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 6 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -664,7 +664,7 @@ impl Mapper for Ntdec81 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -820,7 +820,7 @@ impl Mapper for NtdecAsder112 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 11 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1005,7 +1005,7 @@ impl Mapper for NtdecTc112 {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 1 + 4 + 16 + 1 + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -1213,7 +1213,7 @@ impl Mapper for NtdecN625092 {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 1 + 2 + 1 + 8 + 1 + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

@@ -1801,7 +1801,7 @@ impl Mapper for Mmc5 {
         }
         let expected = core_expected + 1 + Mmc5Audio::TAIL_LEN + self.prg_ram_extra.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

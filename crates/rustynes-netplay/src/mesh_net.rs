@@ -49,7 +49,7 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
 use crate::transport::Transport;
 
 /// Largest datagram read in one `recv_from`. The longest [`NetMessage`] is a
@@ -165,6 +165,14 @@ pub enum MeshError {
     /// v2.9.8 — a joiner / the host runs the same ROM on a differently
     /// configured machine (emulation options, region or header).
     ConfigMismatch,
+    /// v3.0.0 (ADR 0045) — a joiner / the host runs a version of `RustyNES` that
+    /// emulates differently.
+    EmulatorMismatch {
+        /// This build's emulation epoch.
+        ours: u32,
+        /// The peer's epoch; `None` when it predates the epoch.
+        theirs: Option<u32>,
+    },
 }
 
 impl std::fmt::Display for MeshError {
@@ -177,6 +185,9 @@ impl std::fmt::Display for MeshError {
                  power-on RAM, die revisions, overclock, Four Score, Vs. settings, Game \
                  Genie codes, region or header); match them and reconnect",
             ),
+            Self::EmulatorMismatch { ours, theirs } => {
+                f.write_str(&crate::message::emulator_mismatch_text(*ours, *theirs))
+            }
         }
     }
 }
@@ -186,6 +197,7 @@ impl std::error::Error for MeshError {}
 impl From<IdentityMismatch> for MeshError {
     fn from(m: IdentityMismatch) -> Self {
         match m {
+            IdentityMismatch::Emulator { ours, theirs } => Self::EmulatorMismatch { ours, theirs },
             IdentityMismatch::Rom => Self::RomMismatch,
             IdentityMismatch::Config => Self::ConfigMismatch,
         }
@@ -340,10 +352,28 @@ impl MeshHost {
 
         for (msg, from) in inbound {
             if let NetMessage::Sync { magic, identity } = msg {
-                if magic != NetMessage::SYNC_MAGIC {
-                    continue;
+                match self.identity.check_sync(magic, &identity) {
+                    SyncVerdict::Ignore => continue,
+                    SyncVerdict::Accept => {}
+                    SyncVerdict::Refuse(m) => {
+                        // Answer with our own identity before refusing, so
+                        // the joiner can name the disagreement too. Without
+                        // it the joiner, which waits for a `Sync` or a
+                        // `Roster`, heard nothing and reported a bare timeout
+                        // (Copilot on #586): the silent failure ADR 0045
+                        // exists to remove. Its `pump` already refuses a
+                        // mismatched `Sync` with the reason. A peer older than
+                        // protocol 6 ignores this datagram's magic, so it is
+                        // no worse off than before.
+                        let reply = NetMessage::Sync {
+                            magic: NetMessage::SYNC_MAGIC,
+                            identity: self.identity,
+                        }
+                        .to_bytes();
+                        let _ = socket.send_to(&reply, from);
+                        return Err(MeshError::from(m));
+                    }
                 }
-                self.identity.check(&identity).map_err(MeshError::from)?;
                 // Adopt this source as a new joiner IF there is still room and it
                 // is not already known (idempotent — a re-sent Sync from a known
                 // joiner must not shift indices).
@@ -510,10 +540,10 @@ impl MeshJoiner {
             match socket.recv_from(&mut buf) {
                 Ok((len, _from)) => match NetMessage::from_bytes(&buf[..len]) {
                     Some(NetMessage::Roster { peers }) => roster = Some(peers),
-                    Some(NetMessage::Sync { magic, identity })
-                        if magic == NetMessage::SYNC_MAGIC =>
-                    {
-                        self.identity.check(&identity).map_err(MeshError::from)?;
+                    Some(NetMessage::Sync { magic, identity }) => {
+                        if let SyncVerdict::Refuse(m) = self.identity.check_sync(magic, &identity) {
+                            return Err(MeshError::from(m));
+                        }
                     }
                     _ => {}
                 },
@@ -734,6 +764,47 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(rejected, "host rejected the differently configured joiner");
+    }
+
+    /// v3.0.0 (ADR 0045) — a joiner from another emulation epoch is refused by
+    /// the host, AND the joiner itself learns why: the host answers with its
+    /// own identity before refusing, so the joiner reports `EmulatorMismatch`
+    /// instead of timing out with no reason (Copilot on #586).
+    #[test]
+    fn epoch_mismatch_is_named_at_both_ends() {
+        let probe = UdpSocket::bind(loopback()).unwrap();
+        let port = probe.local_addr().unwrap();
+        drop(probe);
+        let ours = SessionIdentity::new([0x11u8; 32], [1; 32]);
+        let mut theirs = ours;
+        theirs.epoch = ours.epoch + 1;
+        let mut host = MeshHost::bind(port, port, 3, ours).unwrap();
+        let mut joiner = MeshJoiner::connect(loopback(), port, 1, theirs).unwrap();
+        let (mut host_err, mut joiner_err) = (None, None);
+        for _ in 0..500 {
+            if joiner_err.is_none()
+                && let Err(e) = joiner.pump()
+            {
+                joiner_err = Some(e);
+            }
+            if host_err.is_none()
+                && let Err(e) = host.pump()
+            {
+                host_err = Some(e);
+            }
+            if host_err.is_some() && joiner_err.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            matches!(host_err, Some(MeshError::EmulatorMismatch { .. })),
+            "host names the epoch: {host_err:?}"
+        );
+        assert!(
+            matches!(joiner_err, Some(MeshError::EmulatorMismatch { .. })),
+            "joiner names the epoch too, not a timeout: {joiner_err:?}"
+        );
     }
 
     #[test]

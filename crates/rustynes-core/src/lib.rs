@@ -79,7 +79,9 @@ pub use bus_snapshot::{EXPANSION_DEVICE_MAX_LEN, SAVE_STATE_DEVICE_HEADROOM};
 pub use controller::{Buttons, Controller};
 pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 pub use genie::{GenieCode, GenieError};
-pub use hardware_options::{BoardDescription, HardwareOptions, OptionsDecodeError, config_digest};
+pub use hardware_options::{
+    BoardDescription, EMULATION_EPOCH, HardwareOptions, OptionsDecodeError, config_digest,
+};
 pub use input_device::{
     BandaiHyperShotState, FamilyKeyboardState, InputDevice, KonamiHyperShotState, PowerPadState,
     SnesMouseState, VausState, ZapperState,

@@ -257,8 +257,15 @@ pub enum RomError {
 /// boxed `dyn Mapper` from `docs/mappers.md`) is constructed by
 /// [`crate::parse`] and stored on the cartridge separately from this metadata
 /// header so the metadata is cheap to clone.
+///
+/// `#[non_exhaustive]` since v3.0.0 (T-API-EXTENSIBLE): outside this crate a
+/// cartridge comes from [`crate::parse`] (or the other loaders), or from
+/// [`Cartridge::synthetic`] for a device with no cartridge header; set the
+/// public fields that differ afterwards. A later header field is then not a
+/// break, as `nametable_wiring_bits` was at v2.9.9.
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)] // header flags map 1:1 to NES 2.0 bits
+#[non_exhaustive]
 pub struct Cartridge {
     /// PRG-ROM bytes. Length is a multiple of 16 KiB for standard sizes; may
     /// be irregular when the NES 2.0 exponent-multiplier encoding is used.
@@ -305,6 +312,33 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
+    /// v3.0.0 — metadata for a machine whose program does not come from a
+    /// cartridge header (the FDS, an NSF player): empty PRG/CHR-ROM, NTSC,
+    /// horizontal mirroring, a stock NES, no battery, trainer or NES 2.0
+    /// header, and the given mapper id and RAM sizes. The bus consults little
+    /// of it for such a machine; the device owns its own storage. Set any
+    /// field that differs after construction.
+    #[must_use]
+    pub fn synthetic(mapper_id: u16, prg_ram_size: u32, chr_ram_size: u32) -> Self {
+        Self {
+            prg_rom: Box::default(),
+            chr_rom: Box::default(),
+            mapper_id,
+            submapper: 0,
+            mirroring: Mirroring::Horizontal,
+            region: Region::Ntsc,
+            console_type: ConsoleType::Nes,
+            vs_ppu_type: VsPpuType::None,
+            vs_dual_system: false,
+            prg_ram_size,
+            chr_ram_size,
+            has_battery: false,
+            has_trainer: false,
+            is_nes2: false,
+            nametable_wiring_bits: 0,
+        }
+    }
+
     /// Returns `true` when this cartridge ships PRG-ROM only (no CHR-ROM bank).
     #[must_use]
     pub fn uses_chr_ram(&self) -> bool {

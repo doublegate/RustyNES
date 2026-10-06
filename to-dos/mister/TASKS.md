@@ -328,6 +328,20 @@ something as blocked, check the blocker applies to the WHOLE item.**
       it is written**: before recording something as blocked, check the blocker
       applies to the whole item. It applied to *hardware acceptance*, not to
       building the controller or to verifying it against a documented part.
+- [ ] **A stimulus for the odd-frame exception to the dot-0 A12 rule**
+      (T-MMC3-BG-A12; raised by Copilot on sibling #53, 2026-10-06). The
+      RTL's exception for scanline 0 after an odd frame's skip is
+      **stimulus-blind**, not inert. blargg's `4-scanline_timing`
+      synchronises to an even frame, so mutating the exception is NOT CAUGHT.
+      On this core it can change an MMC3 clock only when rendering is
+      switched on during dots 337-339 of the pre-render line: otherwise the
+      second prefetched tile holds A12 high through dot 336, leaving four low
+      dots, where the filter needs three M2 edges (the derivation is the
+      comment above `mmc3_a12` in `rtl/ppu2c02.sv`). The gate: a cycle-timed
+      `$2001` write landing in those dots on an odd frame with the background
+      at `$1000` and the MMC3 IRQ armed, compared per cycle against the
+      oracle, with the exception's mutant CAUGHT. No effect on the shipped
+      bitstream; the exception follows the documented tick.
 - [ ] The remaining ~169 mapper families, as needed
       **DEFERRED — out of the approved scope**, which is the top six families
       and is now complete. Not a backlog item; a decision recorded in the

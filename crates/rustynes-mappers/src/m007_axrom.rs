@@ -156,7 +156,7 @@ impl Mapper for AxRom {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 3 + self.vram.len() + need_chr;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

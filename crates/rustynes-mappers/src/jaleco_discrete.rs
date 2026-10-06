@@ -154,7 +154,7 @@ impl Mapper for Jaleco86 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -282,7 +282,7 @@ impl Mapper for Jaleco140 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 3 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -466,7 +466,7 @@ impl JalecoLatch {
         let chr_extra = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 5 + self.vram.len() + chr_extra;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -703,7 +703,7 @@ impl Mapper for Jaleco101 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 2 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

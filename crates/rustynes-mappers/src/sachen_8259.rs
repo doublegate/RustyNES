@@ -213,7 +213,7 @@ impl Mapper for Sachen8259M137 {
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let expected = 9 + self.vram.len();
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
@@ -427,7 +427,7 @@ impl Mapper for Sachen8259 {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 11 + self.vram.len() + chr_ram;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

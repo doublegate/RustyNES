@@ -101,3 +101,13 @@ What is recorded and what is not, knob by knob, is the survey table in
   documented limit is unchanged.
 - A change of options during a netplay session is detected by the existing
   desync checksum, not prevented.
+
+## Amendment (2026-10-05): the movie minimum moved after this ADR
+
+- **v2.9.9 raised `.rnm` to format 4, and `MIN_MOVIE_FORMAT_VERSION` to 4.**
+  The board description gained the PRG/CHR sizes and two header bits, so a
+  format-3 movie no longer identifies its board completely. Decision 2's "MIN
+  is 3" stopped being true then, and this amendment records it.
+- **v3.0.0 raises it to format 5 for the core timing epoch.** That adds no
+  option; it records which emulator behaviour a movie was recorded under. See
+  [ADR 0045](0045-a-core-timing-epoch-guards-movies-and-netplay.md).

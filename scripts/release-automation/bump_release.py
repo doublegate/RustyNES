@@ -53,12 +53,66 @@ CHANGELOG = "CHANGELOG.md"
 # `## [2.4.5] - 2026-08-22 - "Compass" (theme)`
 SECTION = re.compile(r'^## \[(?P<v>\d+\.\d+\.\d+)\] - (?P<d>\d{4}-\d{2}-\d{2}) - "(?P<c>[^"]+)"')
 
-# Manifests that carry the version and cannot inherit it.
+# Manifests that carry the version and cannot inherit it. `{v}` is the version
+# string; `{code}` is `version_code(v)`, the integer form Android needs.
+#
+# The two mobile entries joined at v3.0.0. Until then nothing moved them, so
+# Android sat at 2.0.4 / 20004 and iOS at 2.0.8 while the workspace reached
+# 2.9.9 -- the iOS file's own comment said "keep in step with the workspace
+# version" and nothing enforced it. They were realigned by hand to the
+# workspace version (2.9.9) during v3.0.0's development, so the 3.0.0 cut is
+# the first bump that moves them.
 MANIFESTS = [
     ("Cargo.toml", 'version = "{v}"'),
     ("crates/rustynes-cosim/Cargo.toml", 'version = "{v}"'),
     ("crates/rustynes-libretro/rustynes_libretro.info", 'display_version = "v{v}"'),
+    ("android/app/build.gradle.kts", 'versionName = "{v}"'),
+    ("android/app/build.gradle.kts", 'versionCode = {code}'),
+    ("ios/project.yml", 'MARKETING_VERSION: "{v}"'),
 ]
+
+
+# An internal path dependency with a version requirement:
+# `rustynes-apu = { path = "crates/rustynes-apu", version = "2.0.0", ... }`.
+# The requirement is a caret range, so `"2.0.0"` admits every 2.x and no 3.x.
+INTERNAL_REQ = re.compile(
+    r'(?P<head>rustynes-[a-z0-9-]+ = \{[^}\n]*?version = ")(?P<req>\d+)\.\d+\.\d+(?P<tail>")'
+)
+
+
+def bump_internal_requirements(text: str, new_version: str) -> tuple[str, int]:
+    """Move every internal `rustynes-*` version requirement to `new_version`'s
+    major, returning the new text and how many requirements moved.
+
+    Found at the v3.0.0 cut: the workspace's path dependencies had carried
+    `version = "2.0.0"` since v2.0.0, and the version move to 3.0.0 left
+    `cargo` unable to resolve the workspace at all ("failed to select a version
+    for the requirement `rustynes-apu = ^2.0.0`"). No minor or patch bump can
+    see it, because `^2.0.0` admits every 2.x; only a MAJOR bump trips it, so
+    the first such bump in this script's life was the one that found it. A
+    requirement already on the new major is left exactly as written."""
+    major = new_version.split(".")[0]
+    moved = 0
+
+    def sub(m: re.Match) -> str:
+        nonlocal moved
+        if m.group("req") == major:
+            return m.group(0)
+        moved += 1
+        return f'{m.group("head")}{major}.0.0{m.group("tail")}'
+
+    return INTERNAL_REQ.sub(sub, text), moved
+
+
+def version_code(v: str) -> int:
+    """Android's `versionCode` for version `v`: MAJOR * 10000 + MINOR * 100 +
+    PATCH, the scheme the app has used since v2.0.1 (2.0.4 -> 20004). Play
+    requires it to rise with every upload, which this does as long as MINOR and
+    PATCH stay below 100."""
+    major, minor, patch = (int(x) for x in v.split("."))
+    if not (0 <= minor < 100 and 0 <= patch < 100):
+        raise ValueError(f"version {v} does not fit the versionCode scheme")
+    return major * 10000 + minor * 100 + patch
 
 
 @dataclass
@@ -177,7 +231,8 @@ def terminate(lead: str) -> str:
     return s if s[-1] in '.!?,;:' else s + "."
 
 
-def extend_chain(line: str, marker: str, old: Release, new: Release) -> tuple[str, str]:
+def extend_chain(line: str, marker: str, old: Release, new: Release,
+                 lead: str | None = None) -> tuple[str, str]:
     """Swap the head of a lineage chain and insert the outgoing release into it.
 
     Returns `(line, error)`; `error` is "" when the insertion succeeded.
@@ -204,7 +259,29 @@ def extend_chain(line: str, marker: str, old: Release, new: Release) -> tuple[st
 
     So `Built on ` is tried FIRST, because it names the head of the chain, and
     `, on ` only when there is no `Built on ` to find.
+
+    A HEAD CAN CARRY ITS OWN DESCRIPTION, and it belongs to the outgoing
+    release. Root `ROADMAP.md` reads `**Project Status:** vX "C" released —
+    <what vX is>. Built on ...`. Swapping only the version left that text
+    under the new release: the v3.0.0 cut published v3.0.0 as "the release
+    candidate for v3.0.0 ... the tenth release of the v2.9.x line"
+    (CodeRabbit on #588). So a described head takes `lead` as its new
+    description, and the old text moves into the chain beside its own
+    release, as `**vX "C"** (<old text>)`. Without a lead there is nothing
+    true to write at the head, so that case is refused.
     """
+    m = re.search(
+        re.escape(f'{marker}{old.version} "{old.codename}"')
+        + r'(?P<rel>\s+released\s+(?:—|--)\s+)(?P<desc>.+?)\.\s+Built on\s+',
+        line)
+    if m:
+        if not lead:
+            return line, "CHAIN head carries a description; a lead is needed to replace it"
+        desc = m["desc"].rstrip()
+        return (line[:m.start()]
+                + f'{marker}{new.version} "{new.codename}"{m["rel"]}{terminate(lead)} '
+                + f'Built on **v{old.version} "{old.codename}"** ({desc}) and '
+                + line[m.end():]), ""
     line = line.replace(
         f'{marker}{old.version} "{old.codename}"',
         f'{marker}{new.version} "{new.codename}"', 1)
@@ -476,10 +553,22 @@ def selftest() -> int:
     chain_built = ('**Project Status:** v2.4.4 "Ignition" released — the head. '
                    'Built on **v2.4.3 "Touchstone"** and v2.4.2 "Cairn", '
                    'on the v2.0.0 "Timebase" MAJOR cut.')
-    got, err = extend_chain(chain_built, "**Project Status:** v", old, new)
+    got, err = extend_chain(chain_built, "**Project Status:** v", old, new, LEAD)
     check("chain: `Built on ` shape extends", err, "")
+    # The head's own description belongs to the OUTGOING release. Until v3.0.0
+    # the swap kept it under the new version, so the v3.0.0 cut published
+    # `v3.0.0 "Cornerstone" released — the release candidate for v3.0.0 ...
+    # the tenth release of the v2.9.x line` (CodeRabbit on #588). This case
+    # contained that very shape and asserted only where the insertion landed.
+    check("chain: the new head carries the lead, not the old description",
+          got.startswith(f'**Project Status:** v2.4.5 "Compass" released — {terminate(LEAD)} Built on'),
+          True)
+    check("chain: the old description moves with the old release",
+          'Built on **v2.4.4 "Ignition"** (the head) and' in got, True)
+    _, err = extend_chain(chain_built, "**Project Status:** v", old, new)
+    check("chain: a described head without a lead is refused", bool(err), True)
     check("chain: inserts at the HEAD, not the tail",
-          'Built on **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"**' in got, True)
+          'Built on **v2.4.4 "Ignition"** (the head) and **v2.4.3 "Touchstone"**' in got, True)
     check("chain: the tail is left alone",
           'on the v2.0.0 "Timebase" MAJOR cut' in got, True)
     check("chain: predecessor still appears exactly once",
@@ -509,6 +598,28 @@ def selftest() -> int:
         stale.write_text('nothing here at all\n')
         check("chain tail: absence is not a finding",
               chains_needing_a_summary({}, _root, new), [])
+
+    # Android's versionCode (v3.0.0): the scheme, its ordering, and refusal of a
+    # version it cannot encode without colliding.
+    check("version_code 2.0.4", version_code("2.0.4"), 20004)
+    check("version_code 3.0.0", version_code("3.0.0"), 30000)
+    check("version_code rises across a minor", version_code("3.1.0") > version_code("3.0.99"), True)
+    try:
+        version_code("3.100.0")
+        ok = False
+        print("  FAIL version_code accepted a minor of 100")
+    except ValueError:
+        print("  ok   version_code refuses a minor of 100")
+
+    # Internal requirements (v3.0.0): a MAJOR bump moves them, anything else
+    # leaves them byte-identical.
+    manifest = ('rustynes-apu = { path = "crates/rustynes-apu", version = "2.0.0", '
+                'default-features = false }\nserde = { version = "1.0.0" }\n')
+    got, n = bump_internal_requirements(manifest, "3.0.0")
+    check("internal requirement moves on a major bump", (n, '"3.0.0", default-features' in got), (1, True))
+    check("an external crate is never touched", 'serde = { version = "1.0.0" }' in got, True)
+    got, n = bump_internal_requirements(manifest, "2.9.9")
+    check("a minor bump leaves requirements alone", (n, got), (0, manifest))
 
     # An unclassifiable line must raise, never be bumped mechanically.
     try:
@@ -587,7 +698,7 @@ def main() -> int:
                     # rules and the reason they matter are in `extend_chain`,
                     # which is a function precisely so the selftest can call
                     # the code that ships rather than a copy of it.
-                    line, err = extend_chain(line, marker, old, new)
+                    line, err = extend_chain(line, marker, old, new, args.lead)
                     if err:
                         unknown.append(f"{path}: {err}: {line[:100]}")
                     counts["CHAIN"] += 1
@@ -600,11 +711,24 @@ def main() -> int:
     for path, pat in MANIFESTS:
         p = root / path
         text = edits.get(p, p.read_text())
-        want = pat.format(v=old.version)
+        want = pat.format(v=old.version, code=version_code(old.version))
         if text.count(want) != 1:
             unknown.append(f"{path}: expected exactly one {want!r}, found {text.count(want)}")
             continue
-        edits[p] = text.replace(want, pat.format(v=new.version), 1)
+        edits[p] = text.replace(
+            want, pat.format(v=new.version, code=version_code(new.version)), 1
+        )
+
+    # Internal requirements must follow a MAJOR bump, or the workspace stops
+    # resolving. Every manifest that declares one is scanned, not a list, so a
+    # crate added later cannot be missed.
+    for p in [root / "Cargo.toml", *sorted((root / "crates").glob("*/Cargo.toml"))]:
+        text = edits.get(p, p.read_text())
+        text, moved = bump_internal_requirements(text, new.version)
+        if moved:
+            edits[p] = text
+            print(f"{p.relative_to(root)}: {moved} internal requirement(s) moved to "
+                  f"{new.version.split('.')[0]}.0.0")
 
     if unknown:
         print("REFUSING to write. These anchors were not classified:\n", file=sys.stderr)

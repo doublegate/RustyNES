@@ -372,7 +372,7 @@ impl Mapper for VsSystem {
         };
         let expected = 2 + self.vram.len() + need_chr + need_wram + need_uni;
         if data.len() != expected {
-            return Err(MapperError::Truncated {
+            return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });

@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-The current release is **v2.9.9 "Ballast"**. Built on **v2.9.8 "Vanguard"** and **v2.9.7 "Tandem"** and **v2.9.6 "Roster"** and **v2.9.5 "Caliper"** and **v2.9.4 "Plumb"** and **v2.9.3 "Handset"** and **v2.9.2 "Candidate"** and **v2.9.1 "Hone"** and **v2.9.0 "Survey"** and **v2.8.4 "Tether"** and **v2.8.3 "Rivet"** and **v2.8.2 "Solder"** and **v2.8.1 "Gasket"** and **v2.8.0 "Bulkhead"** and **v2.7.6 "Recount"** and **v2.7.5 "Tally"** and **v2.7.4 "Pocket"** and **v2.7.3 "Hearth"** and **v2.7.2 "Bankroll"** and **v2.7.1 "Keepsake"** and **v2.7.0 "Palisade"** and **v2.6.23 "Pulse"** and **v2.6.22 "Rigging"** and **v2.6.21 "Steward"** and **v2.6.20 "Telltale"** and **v2.6.19 "Accession"** and **v2.6.18 "Errata"** and **v2.6.17 "Terminus"** and **v2.6.16 "Interlock"** and **v2.6.15 "Warrant"** and **v2.6.14 "Docket"** and **v2.6.13 "Slack"** and **v2.6.12 "Groundwork"** and **v2.6.11 "Exposure"** and **v2.6.10 "Inference"** and **v2.6.9 "Abeyance"** and **v2.6.8 "Arrears"** and **v2.6.7 "Detent"** and **v2.6.6 "Chassis"** and **v2.6.5 "Muster"** and **v2.6.4 "Rubric"** and **v2.6.3 "Mainspring"** and **v2.6.2 "Witness"** and **v2.6.1 "Interleave"** and **v2.6.0 "Assay"** and **v2.5.9 "Overture"** and **v2.5.8 "Blanking"** and **v2.5.7 "Collimation"** and **v2.5.6 "Vestige"** and **v2.5.5 "Raster"** and **v2.5.4 "Escapement"** and **v2.5.3 "Hysteresis"** and **v2.5.2 "Dormant"** and **v2.5.1 "Retrace"** and **v2.5.0 "Rungwork"** and **v2.4.9 "Plumbline II"** and **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"** and **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
+The current release is **v3.0.0 "Cornerstone"**. Built on **v2.9.9 "Ballast"** and **v2.9.8 "Vanguard"** and **v2.9.7 "Tandem"** and **v2.9.6 "Roster"** and **v2.9.5 "Caliper"** and **v2.9.4 "Plumb"** and **v2.9.3 "Handset"** and **v2.9.2 "Candidate"** and **v2.9.1 "Hone"** and **v2.9.0 "Survey"** and **v2.8.4 "Tether"** and **v2.8.3 "Rivet"** and **v2.8.2 "Solder"** and **v2.8.1 "Gasket"** and **v2.8.0 "Bulkhead"** and **v2.7.6 "Recount"** and **v2.7.5 "Tally"** and **v2.7.4 "Pocket"** and **v2.7.3 "Hearth"** and **v2.7.2 "Bankroll"** and **v2.7.1 "Keepsake"** and **v2.7.0 "Palisade"** and **v2.6.23 "Pulse"** and **v2.6.22 "Rigging"** and **v2.6.21 "Steward"** and **v2.6.20 "Telltale"** and **v2.6.19 "Accession"** and **v2.6.18 "Errata"** and **v2.6.17 "Terminus"** and **v2.6.16 "Interlock"** and **v2.6.15 "Warrant"** and **v2.6.14 "Docket"** and **v2.6.13 "Slack"** and **v2.6.12 "Groundwork"** and **v2.6.11 "Exposure"** and **v2.6.10 "Inference"** and **v2.6.9 "Abeyance"** and **v2.6.8 "Arrears"** and **v2.6.7 "Detent"** and **v2.6.6 "Chassis"** and **v2.6.5 "Muster"** and **v2.6.4 "Rubric"** and **v2.6.3 "Mainspring"** and **v2.6.2 "Witness"** and **v2.6.1 "Interleave"** and **v2.6.0 "Assay"** and **v2.5.9 "Overture"** and **v2.5.8 "Blanking"** and **v2.5.7 "Collimation"** and **v2.5.6 "Vestige"** and **v2.5.5 "Raster"** and **v2.5.4 "Escapement"** and **v2.5.3 "Hysteresis"** and **v2.5.2 "Dormant"** and **v2.5.1 "Retrace"** and **v2.5.0 "Rungwork"** and **v2.4.9 "Plumbline II"** and **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"** and **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
 rolling patch cadence rather than maintaining long-lived release branches, so
 security fixes land in the next patch release rather than being backported.
 Report against the latest release or `main`.
@@ -10,7 +10,8 @@ Report against the latest release or `main`.
 | Version       | Supported | Notes |
 | ------------- | --------- | ----- |
 | main          | Yes       | Where fixes land first |
-| 2.9.x         | Yes       | The current line |
+| 3.0.x         | Yes       | The current line |
+| 2.9.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.8.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.7.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.6.x         | Partial   | Fixes are shipped forward into the current line, not backported |
@@ -23,10 +24,13 @@ Report against the latest release or `main`.
 Two boundaries are worth stating explicitly, because they change what a report
 means rather than merely how old it is:
 
-- **v2.0.0 "Timebase"** is the one deliberate breaking release (ADR 0003 /
-  ADR 0028). A `.rns` save state or `.rnm` movie written before it is refused
-  with a clear error rather than reinterpreted, so a pre-v2.0.0 parsing report
-  is not reproducible against a current build by design.
+- **Three releases break formats by design.** v2.0.0 "Timebase" (ADR 0003 /
+  ADR 0028), v2.9.8 "Vanguard" and v3.0.0 "Cornerstone" (ADR 0043 / 0044 /
+  0045). A `.rns` save state or `.rnm` movie written before the current
+  format is refused with a clear error rather than reinterpreted, so a parsing
+  report against an older format is not reproducible against a current build
+  by design. From v3.0.0 a movie or netplay peer from another emulation epoch
+  is refused the same way.
 - **v2.2.9** relicensed the project to **GPL-3.0-or-later** (ADR 0036). That is
   a licensing correction, not a SemVer break — no public API or format moved.
 

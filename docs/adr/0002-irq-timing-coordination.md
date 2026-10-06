@@ -1983,3 +1983,78 @@ counter normally reaches 0", by design, as `mmc3_test_2/6-MMC3_alt` always has.
 **Save states.** MMC3's mapper section is v4: byte 19, which held the retired
 latch, holds `irq_assert_pending_next_cycle`. v3 states are refused (ADR 0042's
 current-version-only rule).
+
+## Decision update (2026-10-05, for v3.0.0) — T-MMC3-BG-A12: the residual was the PPU's A12 stream, and it is closed
+
+**What changed.** Two PPU changes; the MMC3 is unchanged.
+
+1. A background fetch group reports its A12 level one dot before the
+   pattern-low fetch's ALE dot (group phase 3, dot 324 for the prefetch) and
+   its return low at phase 7, instead of at the read dots (phases 5 and 1).
+   `observe_bg_a12_lead`.
+2. A visible line's dot 0 drives the background CHR address, so A12 takes
+   the background table's level there, except scanline 0's dot 0 on an odd
+   frame, which the pre-render skip replaces with a nametable tick
+   (`dot0_replaced`, `PPU_SNAPSHOT_VERSION` 12). The pre-render line's own
+   dot 0 does not.
+
+**Sub-test 9 (step 1), found by rung 3, black box.** The MiSTer DUT, written
+from the NESdev MMC3 page, passed sub-test 9 and failed 12, so a per-cycle diff
+of the two on `mmc3_test_2/4-scanline_timing` (8,040,769 cycles) named the
+case. Of the run's nine IRQ assertions, eight agreed to the cycle. The ninth,
+frame 210's "Scanline 0" IRQ with the background at `$1000`, was raised by the
+oracle one CPU cycle after the DUT. It was the only clocking rise the oracle
+caught at `sub_dot` 0; the same pre-render fetch caught at `sub_dot` 1 agreed,
+so the background rise had to be timed differently in the two models. The page
+puts the clock at "PPU cycle 260" (sprites at `$1000`) and "PPU cycle 324 of
+the previous scanline" (background at `$1000`), one dot before each pattern
+fetch's ALE dot. The sprite path reported there already (260, 268, ... 316);
+the background reported at its read dots, two dots later. Reporting at the ALE
+dot itself was tried first and moved nothing.
+
+**Sub-test 12 (step 2), from the documentation and the test's source.** No
+reference passes 12; the DUT fails it too. blargg's source
+(`mmc3_test_2/source/4-scanline_timing.s`) times the `$2000=$10` IRQs from the
+VBL flag: scanline 0 at the pre-render line's first fetch, scanline 1 at its
+dot 324, and scanline 239 exactly one clock per line after. It synchronises
+with `sync_vbl_even` ("next frame will NOT skip PPU clock"). Sub-test 12
+reported the line-239 IRQ early, one clock too many: scanline 0's first
+pattern rise was counted again after the dummy nametable fetches' low. The PPU
+rendering page says why hardware does not: dot 0 "appears to be the same CHR
+address that is later used to fetch the low background tile byte", which
+holds A12 high there with the background at `$1000`. On an odd frame the skip
+replaces that dot with a nametable tick, which is the MMC3 page's "decrement
+the counter twice every other vertical redraw". The pre-render line's dot 0
+was tried too and failed sub-test 8: the line before it made no fetches, and
+the page's "possibly calculated during the two unused NT fetches at the end of
+the previous scanline" says it needs them.
+
+**Result.** Both `4-scanline_timing` ROMs pass all 13 sub-tests; their strict
+tests run un-ignored and the `_currently_fails` probes are deleted.
+AccuracyCoin 144/144 and nestest held. Pinned by
+`background_a12_rises_at_the_mmc3_pages_dot_324` (red on the old timing:
+`[326, 334]`) and
+`scanline_0_dot_0_drives_bg_chr_only_when_the_skip_did_not_replace_it` (red
+with the skip exception removed).
+
+**What closed sub-test 12, measured by mutation.** The dot-0 rule: removing it
+returns both ROMs to sub-test 12. The skip exception does NOT decide it.
+Removing `!self.dot0_replaced` leaves both strict tests passing, because
+sub-test 12 runs on an even frame. The exception is kept because it is the
+documented tick replacement, and it is pinned only by the unit test above. No
+ROM in this corpus exercises it.
+
+**The MiSTer DUT needs only the dot-0 rule** (sibling branch
+`fix/ppu-a12-mmc3`, for v3.0.0). The two models report A12 at different points
+in a dot. The oracle updates the level at the END of the dot it processes. The
+RTL presents an address DURING its dot, so its bus already carried the
+background pattern from dot 325, which is the same instant as the oracle's
+324. Moving the RTL a dot earlier failed sub-test 8. Its new `mmc3_a12` drives
+the background table's A12 on dots 1-2 of a visible line, the oracle's dot 0
+in its convention, and the DUT then passes all 13 sub-tests. Removing that rule
+gives `$0C` (CAUGHT). Its skip exception is NOT CAUGHT, and provably so for
+the MMC3: on the RTL the post-skip rise follows only four low dots.
+
+**Held for v3.0.0** (maintainer, 2026-10-05): landing it in v2.9.9 would have
+moved the sibling's oracle pin and its goldens after the record ladders and the
+RC sweep.

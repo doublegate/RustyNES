@@ -217,8 +217,10 @@ fn m45_lock_holds_until_6001() {
     assert_eq!(prg_at(&mut m, 0x8000), 0x20);
 }
 
+/// A soft reset restores the outer registers' power-on values
+/// (`M45_RESET_REGS`): PRG-OR returns to 0 here, and the write index restarts.
 #[test]
-fn m45_soft_reset_clears_the_outer_registers() {
+fn m45_soft_reset_restores_the_power_on_registers() {
     let mut m = board(Board::M45, 64, 8);
     mmc3_reg(&mut m, 6, 0x00);
     m45_outer(&mut m, [0x00, 0x08, 0x0F, 0x40]);
@@ -227,6 +229,30 @@ fn m45_soft_reset_clears_the_outer_registers() {
     // The write index restarted too: the next write is register 0.
     m45_outer(&mut m, [0x00, 0x10, 0x0F, 0x00]);
     assert_eq!(prg_at(&mut m, 0x8000), 0x10);
+}
+
+/// T-GA23C-POWERON. The page gives no power-on or reset value, but two
+/// *Famicom Yarou* menus draw with MMC3 CHR banks 0-7 before their first
+/// outer-register write, which works only if CHR-AND passes at least three
+/// bits. The maintainer chose CHR-AND `$F` (2026-10-05) for power-on, for a
+/// soft reset and for `$6001` alike, since the page says `$6001` acts "as a
+/// soft reset would". The other three registers stay 0, so PRG is unchanged.
+#[test]
+fn m45_power_on_and_reset_pass_every_mmc3_chr_bit() {
+    let check = |m: &mut Mmc3Board, when: &str| {
+        mmc3_reg(m, 2, 0xC5);
+        assert_eq!(chr_at(m, 0x1000), 0xC5, "{when}: all 8 MMC3 CHR bits pass");
+        mmc3_reg(m, 6, 0x23);
+        assert_eq!(prg_at(m, 0x8000), 0x23, "{when}: PRG is the full 512 KiB");
+    };
+    let mut m = board(Board::M45, 64, 1024);
+    check(&mut m, "power-on");
+    m45_outer(&mut m, [0x00, 0x00, 0x07, 0x00]);
+    m.reset();
+    check(&mut m, "soft reset");
+    m45_outer(&mut m, [0x00, 0x00, 0x07, 0x00]);
+    m.cpu_write(0x6001, 0x00);
+    check(&mut m, "$6001");
 }
 
 #[test]

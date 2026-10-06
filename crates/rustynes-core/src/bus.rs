@@ -1028,23 +1028,7 @@ impl SystemBus {
         // Synthetic cartridge metadata: the bus only consults `cart.region`
         // (verified — see `docs/audit` FDS Stage 1). The FDS device owns all
         // PRG/CHR/BIOS storage, so the ROM byte fields are empty.
-        let cart = Cartridge {
-            prg_rom: Box::default(),
-            chr_rom: Box::default(),
-            mapper_id: 20,
-            submapper: 0,
-            mirroring: rustynes_mappers::Mirroring::Horizontal,
-            region: rustynes_mappers::Region::Ntsc,
-            console_type: rustynes_mappers::ConsoleType::Nes,
-            vs_ppu_type: rustynes_mappers::VsPpuType::None,
-            vs_dual_system: false,
-            prg_ram_size: 0x8000,
-            chr_ram_size: 0x2000,
-            has_battery: false,
-            has_trainer: false,
-            is_nes2: false,
-            nametable_wiring_bits: 0,
-        };
+        let cart = Cartridge::synthetic(20, 0x8000, 0x2000);
         Ok(Self::from_cart_and_mapper(cart, Box::new(fds), sample_rate))
     }
 
@@ -1060,27 +1044,12 @@ impl SystemBus {
         let nsf = rustynes_mappers::parse_nsf(nsf_bytes)
             .map_err(|e| RomError::InvalidConfig(alloc::format!("{e}")))?;
         let mapper = rustynes_mappers::NsfMapper::new(&nsf);
-        let cart = Cartridge {
-            prg_rom: Box::default(),
-            chr_rom: Box::default(),
-            mapper_id: 31, // NSF banking is conventionally documented as mapper 31-like
-            submapper: 0,
-            mirroring: rustynes_mappers::Mirroring::Horizontal,
-            // Playback is NTSC 60 Hz (vblank-NMI-driven) regardless of the
-            // file's region preference; the PAL flag only feeds the driver's
-            // init X-register. Exact non-60 Hz play rates are a documented
-            // deferral (see `nsf.rs` module docs).
-            region: rustynes_mappers::Region::Ntsc,
-            console_type: rustynes_mappers::ConsoleType::Nes,
-            vs_ppu_type: rustynes_mappers::VsPpuType::None,
-            vs_dual_system: false,
-            prg_ram_size: 0x2000,
-            chr_ram_size: 0,
-            has_battery: false,
-            has_trainer: false,
-            is_nes2: false,
-            nametable_wiring_bits: 0,
-        };
+        // Mapper 31: NSF banking is conventionally documented as mapper
+        // 31-like. `synthetic` plays NTSC 60 Hz (vblank-NMI-driven) regardless
+        // of the file's region preference; the PAL flag only feeds the
+        // driver's init X-register. Exact non-60 Hz play rates are a
+        // documented deferral (see `nsf.rs` module docs).
+        let cart = Cartridge::synthetic(31, 0x2000, 0);
         Ok(Self::from_cart_and_mapper(
             cart,
             Box::new(mapper),

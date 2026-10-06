@@ -348,20 +348,19 @@ impl HistoryViewer {
             .map(|r| r.input)
             .collect();
 
-        Ok(Movie {
+        // An exported rewind window is a straight capture, so `Movie::new`'s
+        // zero re-records apply. No attestation either: the rewind ring stores
+        // state, not the per-frame video output an attestation hashes, so one
+        // cannot be reconstructed after the fact. Re-record the run with
+        // attestation on to get one.
+        Ok(Movie::new(
             region,
             rom_sha256,
-            options: anchor.options.clone(),
-            board: Some(anchor.board),
-            start: StartPoint::SaveState(anchor.blob.clone()),
+            anchor.options.clone(),
+            Some(anchor.board),
+            StartPoint::SaveState(anchor.blob.clone()),
             frames,
-            // An exported rewind window is a straight capture — no re-records.
-            rerecord_count: 0,
-            // No attestation: the rewind ring stores state, not the per-frame
-            // video output an attestation hashes, so one cannot be reconstructed
-            // after the fact. Re-record the run with attestation on to get one.
-            attestation: None,
-        })
+        ))
     }
 
     /// Trim the input log + anchors back to the frame budget. Anchors are
