@@ -24,10 +24,11 @@ emulator) → `v0.9.0…v0.9.7` (engine-lineage integration stages) → **`v1.0.
 production polish) → **`v1.1.0` "Scriptable" → `v1.2.0` "Curator" → `v1.3.0`
 "Bedrock" → `v1.4.0` "Fidelity"** (+ `v1.4.1`) **→ `v1.5.0` "Lens" → `v1.6.0`
 "Studio" → `v1.7.0` "Forge"** (+ `v1.7.1`) **→ `v1.8.0` … `v1.8.8` "Atlas"** (the
-Android platform train). The current shipped tag is **v1.8.8 "Atlas"**, with
-**v1.8.9** in development. The forward path then targets **`v2.0.0` "Timebase"**
-(the master-clock rewrite, ADR 0002) and the **v2.0.1 → v2.1.0** mobile-finalization
-train (the joint Android + iOS + F-Droid launch at v2.1.0). Version markers in the
+Android platform train), and from there through **`v2.0.0` "Timebase"** (the
+master-clock rewrite, ADR 0002), the v2.x accuracy, platform and audit lines,
+to the current release, **`v3.0.0` "Cornerstone"** (2026-10-06, the API major).
+`to-dos/ROADMAP.md` and `docs/STATUS.md` carry the current state; this file's
+v1.8.x-era sections below are kept as history. Version markers in the
 phase bodies that read `v1.x`/`v2.x` are the inbound **engine's** prior lineage
 (developed across its v2.0–v2.8 line, shipped here at v1.0.0), not RustyNES
 releases of their own.
@@ -67,9 +68,9 @@ notes; when it cites pass/fail numbers they should be read against
 
 ---
 
-## Forward roadmap (post-v1.8.8)
+## Forward roadmap as it stood after v1.8.8 (historical)
 
-**v1.8.8 "Atlas" is shipped** — the latest in the Android platform train on the
+*(Historical snapshot; the current plan is `to-dos/ROADMAP.md`.)* **v1.8.8 "Atlas" was shipped** — then the latest in the Android platform train on the
 v1.0.0 production core. The release-named folders that staged the early feature
 releases (`v1.0.1-compat-hygiene/`, `v1.1.0-features/`, the engine-lineage
 `phase-N` plans) are archived under [`archive/`](./archive/README.md); the

@@ -49,6 +49,7 @@ pub struct Cartridge {
     pub chr_ram_size: u32,
     pub has_battery: bool,
     pub has_trainer: bool,
+    pub is_nes2: bool,
     pub nametable_wiring_bits: u8,   // the header's raw nametable bits (v2.9.9)
 }
 
