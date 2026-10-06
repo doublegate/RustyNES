@@ -26,6 +26,21 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mapper 45 (GA23C) CHR-RAM is unbanked (T-GA23C-CHRRAM).** *Famicom Yarou
+  Vol.1 7-in-1* now draws its menu instead of noise. Its CHR-RAM is addressed
+  straight from PPU A10-A12, so the MMC3 CHR banks and the outer CHR registers
+  no longer apply to it. The mapper 45 page says nothing about CHR-RAM; the
+  GA23C variant with a ROM/RAM switch (mapper 372) documents its RAM as
+  unbanked. The four mapper 45 carts with CHR-ROM are unchanged.
+
+### Changed
+
+- **`EMULATION_EPOCH` is 2.** The mapper 45 fix changes what *Famicom Yarou
+  Vol.1* produces, so movies recorded and netplay peers running v3.0.0 are
+  refused, naming both epochs (ADR 0045).
+
 ## [3.0.0] - 2026-10-06 - "Cornerstone" (the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core)
 
 The MAJOR release the v2.9.x line prepared for (ADR 0043). v2.9.8 and v2.9.9

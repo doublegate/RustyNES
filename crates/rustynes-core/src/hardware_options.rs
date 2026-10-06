@@ -87,10 +87,15 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// from) do not bump it. A release that moved goldens without raising it
 /// breaks the promise this constant exists to keep.
 ///
-/// It is 1 at v3.0.0, the first release to carry it. Earlier builds have no
+/// It was 1 at v3.0.0, the first release to carry it. Earlier builds have no
 /// epoch, and are refused by the movie format (5) and the protocol (6)
 /// instead.
-pub const EMULATION_EPOCH: u32 = 1;
+///
+/// | epoch | release | what moved |
+/// | --- | --- | --- |
+/// | 1 | v3.0.0 | the MMC3 background-at-`$1000` A12 rule (T-MMC3-BG-A12) |
+/// | 2 | v3.0.1 | mapper 45 CHR-RAM unbanked (T-GA23C-CHRRAM; *Famicom Yarou Vol.1*) |
+pub const EMULATION_EPOCH: u32 = 2;
 
 /// Every host-settable option that changes what the emulated console does.
 ///

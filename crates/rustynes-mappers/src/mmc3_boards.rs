@@ -469,6 +469,11 @@ impl Mmc3Board {
                 rom((raw & 0xFF) | (a18 << 8))
             }
             Board::M37 => rom((raw & 0x7F) | (((r(0) >> 2) & 1) << 7)),
+            // T-GA23C-CHRRAM: CHR-RAM is addressed straight from PPU
+            // A10-A12, bypassing every CHR bank. The mapper 45 page is
+            // silent on CHR-RAM; mapper 372's page, the GA23C with a
+            // ROM/RAM switch, documents its RAM as "unbanked".
+            Board::M45 if self.chr_is_ram => Chr::Rom(usize::from(addr & 0x1FFF)),
             Board::M45 => {
                 let c = r(2) & 0x0F;
                 let mask = if c >= 7 { 0xFF >> (15 - c) } else { 0 };

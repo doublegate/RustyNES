@@ -1205,7 +1205,18 @@ So two dumps from the same series assume CHR-AND passes at least 3 bits
 (`$A` or more) before any write. That rules out the all-zero power-on value,
 but does not pin a value. The maintainer chose `$F`.
 
-## T-GA23C-CHRRAM — *Famicom Yarou Vol.1*'s CHR-RAM is uploaded unbanked (found v3.0.0)
+## T-GA23C-CHRRAM — *Famicom Yarou Vol.1*'s CHR-RAM is uploaded unbanked (found v3.0.0, FIXED v3.0.1)
+
+**Fixed in v3.0.1, from a document.** NESdev's mapper 372 page describes that
+board as "INES Mapper 045 but with one bit of outer bank register #2 working
+as a CHR-ROM/RAM switch" and documents the RAM side as "CHR-RAM (1,
+unbanked)". That is the GA23C family's own CHR-RAM wiring, and it is what the
+trace below requires. A mapper 45 board with CHR-RAM now addresses it
+straight from PPU A10-A12 (`mmc3_boards.rs`, `chr_target`). Pinned by
+`m45_chr_ram_is_unbanked`, which replays the traced upload-then-bank sequence
+and fails without the fix. Only *Vol.1* moved among the five local mapper 45
+dumps (the other four have CHR-ROM); its menu now draws, and
+`EMULATION_EPOCH` rose to 2 with it. The original analysis follows.
 
 *Famicom Yarou Vol.1 7-in-1* (mapper 45, 256 KiB PRG, CHR-RAM) shows noise,
 both before and after T-GA23C-POWERON. Its committed screenshot was noise in
@@ -1220,7 +1231,7 @@ v2.9.8 too, and that review accepted it as running. Traced on 2026-10-05:
 The program behaves as if this cart's CHR-RAM is addressed straight from PPU
 A10-A12, bypassing the MMC3's CHR banks. The mapper 45 page does not mention
 CHR-RAM at all. Open: fix only from a document or a hardware measurement, as
-for T-GA23C-POWERON.
+for T-GA23C-POWERON. (The document turned out to be the mapper 372 page.)
 
 ## T-SPECTATOR-HISTORY — the spectator's input history grows without bound (found v2.9.9, FIXED v3.0.0)
 
