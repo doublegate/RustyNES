@@ -173,11 +173,18 @@ pub struct SpectatorSession<T: Transport> {
     /// The buffer's capacity, in frames past `current_frame`:
     /// [`MAX_SPECTATOR_BUFFER_FRAMES`], lowered only by this module's tests.
     buffer_cap: u32,
-    /// v3.0.0 — the first frame dropped because it lay beyond the buffer.
-    /// It is not resent (the players acknowledge each other, not the
-    /// spectator), so playback cannot pass it; see [`Self::stream_lost`].
-    dropped_from: Option<u32>,
-    /// Set once playback has reached `dropped_from` with that frame still
+    /// v3.0.0 — the frames dropped because they lay beyond the buffer, as
+    /// `(first, last)`. Drops are contiguous from the first to the stream's
+    /// head: everything past the window is dropped until the spectator
+    /// catches up. They are not resent (the players acknowledge each other,
+    /// not the spectator), so playback cannot pass them; see
+    /// [`Self::stream_lost`]. A dropped frame that does arrive again inside
+    /// the window plays normally. Only a wait ON a frame inside the range is
+    /// a loss, so a later ordinary wait past it is never mistaken for one.
+    /// (The range is not trimmed as frames are shown: the check only ever
+    /// asks about the frame shown next, so a trim could not change it.)
+    dropped: Option<(u32, u32)>,
+    /// Set once playback has reached a dropped frame with its input still
     /// missing. Terminal, like [`Self::mismatch`].
     lost: Option<u32>,
 }
@@ -212,7 +219,7 @@ impl<T: Transport> SpectatorSession<T> {
             mismatch: None,
             history: VecDeque::new(),
             buffer_cap: MAX_SPECTATOR_BUFFER_FRAMES,
-            dropped_from: None,
+            dropped: None,
             lost: None,
         }
     }
@@ -339,8 +346,11 @@ impl<T: Transport> SpectatorSession<T> {
         if !ready {
             // Waiting is right unless this frame's input was dropped at the
             // cap: that input never comes, so say so instead of waiting.
-            if self.dropped_from.is_some_and(|f| frame >= f) {
-                self.lost = self.dropped_from;
+            if self
+                .dropped
+                .is_some_and(|(first, last)| (first..=last).contains(&frame))
+            {
+                self.lost = Some(frame);
             }
             return SpectatorOutcome::default();
         }
@@ -416,7 +426,10 @@ impl<T: Transport> SpectatorSession<T> {
                     if frame - self.current_frame >= self.buffer_cap {
                         // Dropped, and not resent: remember where playback
                         // will have to stop (v3.0.0, `stream_lost`).
-                        self.dropped_from = Some(self.dropped_from.map_or(frame, |f| f.min(frame)));
+                        self.dropped = Some(
+                            self.dropped
+                                .map_or((frame, frame), |(f, l)| (f.min(frame), l.max(frame))),
+                        );
                         continue;
                     }
                     let slot = self.slot_mut(frame);
@@ -731,6 +744,57 @@ mod tests {
             Some(32),
             "the gap is reported, not waited on"
         );
+    }
+
+    /// v3.0.0 — the record of dropped frames must not outlive them. If a
+    /// dropped frame's input does arrive later inside the window (a relay
+    /// that replays), it is shown normally. After that, an ordinary wait for
+    /// a later frame must NOT be reported as a lost stream. The first version
+    /// kept `dropped_from` forever, so any wait past it was terminal (found
+    /// by the commit's security review).
+    #[test]
+    fn a_dropped_frame_that_arrives_later_clears_the_record() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig::default(), spec_link, hash);
+        spec.buffer_cap = 8;
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let send = |feeder: &mut MemoryTransport, frames: std::ops::Range<u32>| {
+            for frame in frames {
+                for player in 0..2 {
+                    feeder.send(&NetMessage::Input {
+                        player,
+                        frame,
+                        input: 0,
+                    });
+                }
+            }
+        };
+        send(&mut feeder, 0..10); // frames 8 and 9 fall beyond the cap
+        feeder.send(&NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: hash,
+        });
+        let shown = (0..8)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 8);
+        // The dropped frames arrive again, now inside the window, and play.
+        send(&mut feeder, 8..10);
+        let shown = (0..2)
+            .filter(|_| spec.advance(&mut nes).produced_frame)
+            .count();
+        assert_eq!(shown, 2, "the recovered frames play");
+        // Frame 10 has simply not arrived yet: an ordinary wait.
+        assert!(!spec.advance(&mut nes).produced_frame);
+        assert_eq!(
+            spec.stream_lost(),
+            None,
+            "a wait past a recovered gap is not a loss"
+        );
+        send(&mut feeder, 10..11);
+        assert!(spec.advance(&mut nes).produced_frame, "the session goes on");
     }
 
     /// A peer-supplied `Input.frame` far beyond the confirmed horizon must be
