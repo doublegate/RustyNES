@@ -117,12 +117,29 @@ half-restored; reset or reload the ROM if an older build did that.)
 | stderr says | Meaning | Fix |
 |-------------|---------|-----|
 | `load state failed: save-state I/O at <path>: No such file` | You haven't saved into this slot yet for this ROM (or the SHA-256 changed) | Save first (`F1`), then load |
+| `... saved by an older release of RustyNES ...` or `... is from an older release ...` | The state was written by an earlier release whose states this one cannot read; v3.0.0 refuses every state from v2.9.9 and earlier | Re-create the state from the game (an in-game save survives in the battery `.sav`) |
 | `restore failed: ...` (any other variant) | The slot file is corrupt or from an incompatible version | Delete the slot file from `<data_dir>/saves/<rom_sha256>/slot{N}.rns` and re-save |
 
 Each ROM has its own save directory keyed by SHA-256 — if you re-dumped
 the ROM (or downloaded a different copy), the new SHA-256 means a fresh
 save directory. The old slot files remain untouched in the original
-directory.
+directory. Since v2.9.8 the SHA-256 covers the ROM without its 16-byte
+header, so correcting a header no longer loses saves, but saves made by
+v2.9.7 or earlier are under the old key and are not found.
+
+## "Netplay refuses to connect"
+
+Since v3.0.0 a refused session says why, on a v3.0.0 (or later) client:
+
+| Message | Meaning | Fix |
+|---------|---------|-----|
+| "a different ROM" | The peers loaded different games | Load the same dump on both sides |
+| "...different emulation settings..." | An emulation option differs (console model, chip revisions, power-on state, overclock...) | Match the settings on both sides |
+| "the peer runs an older version of RustyNES (v2.9.9 or earlier)..." | The other player runs a version from before the emulation epoch | Both players update to the same release |
+| "...a version of RustyNES that emulates differently (emulation epoch ...)" | The two releases emulate differently | Both players use releases with the same epoch |
+
+A v2.9.9 or older client cannot read a v3.0.0 handshake, so on its side the
+connection simply times out.
 
 See [Save states and rewind](./save-states-and-rewind.md) for the file
 layout and [File locations](./file-locations.md) for `<data_dir>` per

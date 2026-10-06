@@ -19,7 +19,7 @@ documented in `docs/cartridge-format.md`.
 
 ## Supported mappers
 
-iNES mapper numbers handled (**168 mapper families**; the table below lists the
+iNES mapper numbers handled (**191 mapper families**; the table below lists the
 most common; the most popular set covers well over 95% of the licensed
 library). Mappers are tracked in three accuracy tiers — Core, Curated, and
 BestEffort — so the breadth count is honest about which families are
@@ -110,12 +110,12 @@ cpu_interrupts_v2 / MMC3-IRQ closures — and is re-measured on every release;
 
 ### Remaining edge cases
 
-One kevtris sub-test, `mmc3_test_2/4-scanline_timing` sub-test #3
-("Scanline 0 IRQ should occur sooner when $2000=$08"), is a known
-1-PPU-clock bracket on the MMC3 A12-to-IRQ discriminator. It is not
-known to affect any commercial game, and the AccuracyCoin battery (which
-exercises the same surface) passes. The full diagnosis lives in the
-project's developer documentation.
+The MMC3 interrupt-timing edge case this section used to describe,
+`mmc3_test_2/4-scanline_timing`, passes all 13 sub-tests since v3.0.0. What
+remains in the MMC3 suites is by design: RustyNES models the Sharp MMC3, so the
+tests for the NEC revision (`6-MMC3_alt`) and the MMC6's alternate reload
+behaviour (`6-MMC6`) do not pass. Every known approximation is listed in the
+project's accuracy ledger (`docs/accuracy-ledger.md`).
 
 If you find a game that misbehaves, please file an issue with the
 exact ROM (sha256), the symptom, and ideally a save state at the

@@ -1,4 +1,4 @@
-# RustyNES for iOS / iPadOS (v1.9.0 "Sunrise")
+# RustyNES for iOS / iPadOS
 
 The native SwiftUI host for RustyNES, the cycle-accurate pure-Rust NES emulator.
 This is the **interim TestFlight foundation** for the iOS/iPadOS app: an
@@ -6,8 +6,11 @@ additive, off-by-default platform shell over the byte-identical Rust core. The
 Rust core, the shared `rustynes-mobile` UniFFI bridge, and the `rustynes-ios`
 Metal/audio glue crate are unchanged by this app.
 
-The App Store launch is deferred until after RustyNES v2.0.0 "Timebase"; v1.9.0
-ships only as a TestFlight build for on-device validation.
+The app began with v1.9.0 "Sunrise" and now carries the workspace version
+(`MARKETING_VERSION` 3.0.0 at v3.0.0, moved by `bump_release.py` with every
+release). It ships to TestFlight. A free App Store listing is an unversioned
+later step with no monetization (ADR 0035), and the on-device run of this
+app's changes is part of the v3.x hardware-verification release.
 
 ## Architecture
 

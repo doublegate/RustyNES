@@ -342,7 +342,7 @@ something as blocked, check the blocker applies to the WHOLE item.**
       at `$1000` and the MMC3 IRQ armed, compared per cycle against the
       oracle, with the exception's mutant CAUGHT. No effect on the shipped
       bitstream; the exception follows the documented tick.
-- [ ] The remaining ~169 mapper families, as needed
+- [ ] The remaining ~185 mapper families (191 in the emulator at v3.0.0, six in the core), as needed
       **DEFERRED — out of the approved scope**, which is the top six families
       and is now complete. Not a backlog item; a decision recorded in the
       programme plan.
@@ -415,9 +415,9 @@ something as blocked, check the blocker applies to the WHOLE item.**
       are unregistered in `regress.sh` and therefore have no recorded address to
       resolve through — named here rather than guessed.
 
-## v3.0.0 — the contribution package
+## v3.x — the contribution package
 
-*Was v2.7.0; re-targeted by [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) on 2026-09-22.*
+*Was v2.7.0; re-targeted to v3.0.0 by [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) on 2026-09-22, then to v3.x, the hardware-verification release, by [ADR 0043](../../docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) on 2026-09-29. v3.0.0 (2026-10-06) shipped a release-candidate core, not a hardware-verified one.*
 
 - [ ] Requirements checklist green (`contribution-checklist.md`)
       **BLOCKED — on the submission itself; the HARDWARE blocker has cleared.**
@@ -440,7 +440,7 @@ something as blocked, check the blocker applies to the WHOLE item.**
       `"RustyNES;;"` gives `/media/fat/games/RustyNES`, and it is unique because
       the incumbent core's internal name is `NES`.
 - [ ] Email `newcores@misterfpga.org`
-      **BLOCKED — the submission is v3.0.0 by definition**, and sending it
+      **BLOCKED — the submission is the v3.x hardware-verification release by definition**, and sending it
       before the quality bar closes is what the checklist exists to prevent.
 - [ ] **Decide deliberately** whether to transfer the repository to MiSTer-devel —
       acceptance means the repo moves, and that is one-way

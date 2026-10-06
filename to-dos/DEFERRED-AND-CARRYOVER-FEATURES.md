@@ -590,7 +590,7 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 
 ## 7. Mapper / coverage gaps
 
-Mapper coverage is **172 families** on `main` (BestEffort, honesty-gated). Gaps
+Mapper coverage is **191 families** on `main` at v3.0.0 (51 Core / 109 Curated / 31 BestEffort, honesty-gated). Gaps
 are ROM-availability/coverage and a detection follow-up — none affect the oracle.
 
 > Corrected 2026-08-14 (v2.3.4 Workstream D): this said **168**, the pre-v2.2.3
