@@ -1,0 +1,8 @@
+v3.0.0 "Cornerstone"
+
+- Las partidas guardadas siguen al juego, no a su cabecera; se movieron una vez, en v2.9.9.
+- Los estados y películas de versiones anteriores se rechazan con un mensaje claro. Vuelve a crearlos.
+- El juego en red exige la misma versión en ambos lados y avisa si difiere.
+- Las interrupciones del MMC3 superan la prueba 4-scanline de blargg.
+- Dos menús de multicartuchos del mapper 45 se muestran correctamente.
+- La aplicación lleva el número de versión de la publicación.
