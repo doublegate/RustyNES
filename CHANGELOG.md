@@ -116,7 +116,10 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
   could grow it without limit. It now holds at most 65,536 frames past the one
   it shows next (about 18 minutes of play, about 320 KiB), so a spectator
   that falls behind can still catch up. Shown frames are released, so a long
-  session no longer accumulates them.
+  session no longer accumulates them. A spectator that falls further behind
+  than that loses input the players never resend: it plays every frame it
+  kept, then reports the stream lost (`SpectatorSession::stream_lost`; the
+  desktop says so and asks to spectate again) instead of freezing there.
 - **MMC3 interrupts with the background at `$1000` (T-MMC3-BG-A12).** Two
   PPU timing details the NESdev pages document and the emulator missed, both
   in the A12 signal an MMC3 counts. The background fetches reported A12 at

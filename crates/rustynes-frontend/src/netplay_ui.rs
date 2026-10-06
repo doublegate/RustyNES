@@ -554,6 +554,19 @@ impl NetplayUi {
                 produced_frame: false,
             };
         }
+        // v3.0.0 — the spectator fell so far behind that input was dropped,
+        // and the players never resend it. Say so rather than freezing on
+        // the last frame kept.
+        if let Some(frame) = session.stream_lost() {
+            self.fail(format!(
+                "the spectator fell too far behind the match (about 18 minutes) and \
+                 the input from frame {frame} on was not kept; spectate again to rejoin"
+            ));
+            return NetplayTick {
+                active: true,
+                produced_frame: false,
+            };
+        }
         self.status.phase = NetplayPhase::Spectating;
         self.status.is_host = false;
         self.status.current_frame = session.current_frame();
