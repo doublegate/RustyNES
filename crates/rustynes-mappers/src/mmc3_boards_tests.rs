@@ -217,8 +217,10 @@ fn m45_lock_holds_until_6001() {
     assert_eq!(prg_at(&mut m, 0x8000), 0x20);
 }
 
+/// A soft reset restores the outer registers' power-on values
+/// (`M45_RESET_REGS`): PRG-OR returns to 0 here, and the write index restarts.
 #[test]
-fn m45_soft_reset_clears_the_outer_registers() {
+fn m45_soft_reset_restores_the_power_on_registers() {
     let mut m = board(Board::M45, 64, 8);
     mmc3_reg(&mut m, 6, 0x00);
     m45_outer(&mut m, [0x00, 0x08, 0x0F, 0x40]);
