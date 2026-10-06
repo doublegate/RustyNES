@@ -154,7 +154,10 @@ pub use connection::{
 pub use diagnostics::{CrcCompare, DesyncDiagnostics, DesyncStatus};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
-pub use message::{IdentityMismatch, NetMessage, PROTOCOL_VERSION, SessionIdentity, fnv1a64};
+pub use message::{
+    IdentityMismatch, NetMessage, PROTOCOL_VERSION, SessionIdentity, SyncVerdict,
+    emulator_mismatch_text, fnv1a64,
+};
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 pub use nat_connect::{NatConfig, NatConnect, NatPhase};
 #[cfg(not(target_arch = "wasm32"))]

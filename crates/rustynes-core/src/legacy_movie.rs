@@ -189,6 +189,7 @@ pub fn import_fcm(
     let stream = &bytes[first_frame..];
     let frames = decode_fcm_stream(stream, frame_count)?;
     let movie = Movie {
+        epoch: crate::EMULATION_EPOCH,
         region: if pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
         options: crate::HardwareOptions::default(),
@@ -409,6 +410,7 @@ pub fn import_fmv(
     }
 
     let movie = Movie {
+        epoch: crate::EMULATION_EPOCH,
         region: Region::Ntsc, // Famtasia carries no reliable PAL flag.
         rom_sha256,
         options: crate::HardwareOptions::default(),
@@ -532,6 +534,7 @@ pub fn import_vmv(
     }
 
     let movie = Movie {
+        epoch: crate::EMULATION_EPOCH,
         region: if pal { Region::Pal } else { Region::Ntsc },
         rom_sha256,
         options: crate::HardwareOptions::default(),

@@ -468,6 +468,19 @@ pub struct Ppu {
     /// the boundary.
     pub(crate) mask_for_skip_check: PpuMask,
     pub(crate) mask_skip_pipe1: PpuMask,
+    /// True from the odd-frame skip until the dot it lands on has run:
+    /// scanline 0's dot 0, which the skip REPLACED rather than reached. The
+    /// `NESdev` PPU rendering page: the skip jumps "(339,261) to (0,0),
+    /// replacing the idle tick at the beginning of the first visible scanline
+    /// with the last tick of the last dummy nametable fetch". That tick
+    /// belongs to the dummy fetch, so it drives a nametable address, and the
+    /// dot-0 rule in `tick` (a visible line's dot 0 drives the background CHR
+    /// address) must not apply to it (T-MMC3-BG-A12).
+    ///
+    /// Snapshotted (`PPU_SNAPSHOT_VERSION` 12): a state saved between the skip
+    /// and that dot would otherwise restore into a dot 0 that raises A12 the
+    /// uninterrupted run did not.
+    pub(crate) dot0_replaced: bool,
     pub(crate) status: PpuStatus,
     /// `$2003` OAMADDR.
     pub(crate) oam_addr: u8,
@@ -1475,6 +1488,7 @@ impl Ppu {
             ctrl: PpuCtrl::empty(),
             mask: PpuMask::empty(),
             mask_for_skip_check: PpuMask::empty(),
+            dot0_replaced: false,
             mask_skip_pipe1: PpuMask::empty(),
             status: PpuStatus::empty(),
             oam_addr: 0,
@@ -3270,6 +3284,39 @@ impl Ppu {
         }
     }
 
+    /// Report a background fetch group's A12 level where the `NESdev` MMC3
+    /// page puts it: the pattern fetches' high level at group phase 3 (dot
+    /// 324 for the next line's first prefetched tile, dot 4 for a line's own
+    /// first group), one dot before the pattern-low fetch's ALE dot, and the
+    /// return to the nametable fetch's low level at phase 7.
+    ///
+    /// The page: "if the BG uses `$1000`, and the sprites use `$0000`, the
+    /// IRQ counter should decrement on PPU cycle 324 of the previous
+    /// scanline", and for the opposite arrangement "on PPU cycle 260". The
+    /// sprite path already reported at that convention (its rises land at
+    /// 260, 268, ... 316). The background reported at its READ dots (phase
+    /// 5 for the pattern, phase 1 for the nametable), two dots later than
+    /// the page, so a rise that landed on the first dot of a CPU cycle's
+    /// catch-up was seen by an MMC3 a cycle late. blargg `4-scanline_timing`
+    /// failed at sub-test 9 ("Scanline 0 IRQ should occur sooner when
+    /// `$2000=$10`") on exactly that case; with this it fails at 12, the
+    /// sub-test the `MiSTer` DUT fails (T-MMC3-BG-A12).
+    ///
+    /// The read halves still report their own addresses, and with the level
+    /// already set those reports change nothing. Only the level the mapper
+    /// sees, and when, moves: with the background at `$0000` (almost every
+    /// MMC3 game) both reports here are low and nothing changes.
+    fn observe_bg_a12_lead<B: PpuBus>(&mut self, bus: &mut B, phase: u16) {
+        match phase {
+            3 => {
+                let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
+                self.observe_a12_addr(bus, bg_table);
+            }
+            7 => self.observe_a12_addr(bus, 0x2000),
+            _ => {}
+        }
+    }
+
     /// Notify the mapper of an A12 transition implied by an explicit
     /// pattern-table fetch address (BG / sprite fetches that bypass `v`).
     fn observe_a12_addr<B: PpuBus>(&mut self, bus: &mut B, addr: u16) {
@@ -3885,6 +3932,27 @@ impl Ppu {
         // mappers default to no-op.
         if render_line && self.dot == 0 {
             bus.notify_scanline_start();
+            // T-MMC3-BG-A12, rule 2: a visible line's dot 0 "appears to be
+            // the same CHR address that is later used to fetch the low
+            // background tile byte starting at dot 5" (`NESdev` PPU
+            // rendering, "Cycle 0"), so with the background at `$1000` A12 is
+            // already high here. Not on the pre-render line, which the page
+            // does not extend the statement to and where giving it the rule
+            // failed blargg `4-scanline_timing` at sub-test 8; and not on the
+            // dot the odd-frame skip replaced (`dot0_replaced`), which is the
+            // dummy nametable fetch's tick. The rule is what closes sub-test 12
+            // (removing it returns both 4-scanline ROMs there); the second
+            // exception is documented behaviour that no ROM in the corpus
+            // reaches, pinned by the unit test
+            // `scanline_0_dot_0_drives_bg_chr_only_when_the_skip_did_not_replace_it`.
+            if self.mask.rendering_enabled()
+                && !self.dot0_replaced
+                && self.scanline != self.region.prerender_line()
+            {
+                let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
+                self.observe_a12_addr(bus, bg_table);
+            }
+            self.dot0_replaced = false;
         }
 
         // === Background rendering pipeline (visible + pre-render lines) ===
@@ -4132,6 +4200,7 @@ impl Ppu {
                     7 => self.fetch_bg_hi(bus),
                     _ => {}
                 }
+                self.observe_bg_a12_lead(bus, phase);
                 if phase == 7 {
                     self.inc_hori_v();
                     // Pre-fetch region only (dots 328 and 336): explicit
@@ -4433,6 +4502,7 @@ impl Ppu {
             7 => self.fetch_bg_hi(bus),
             _ => {}
         }
+        self.observe_bg_a12_lead(bus, phase);
         // Phase 7 (cycle 8 of the group): coarse-X increment. The dots
         // 321..=336 prefetch `<<= 8` is out of the 1..=256 range, so it never
         // applies here.
@@ -6266,6 +6336,7 @@ impl Ppu {
             self.frame = self.frame.wrapping_add(1);
             self.frame_complete = true;
             self.snapshot_ntsc_phase();
+            self.dot0_replaced = true;
             // The skipped dot is where the loaded shifters would have seen the
             // dot-339 re-arm, so it has not happened yet: they enter scanline 0
             // drawing, and `emit_pixel` releases them after pixel 0 (see
@@ -7515,6 +7586,154 @@ mod tests {
             b.filtered_rises, 241,
             "an MMC3-style filter still sees one rise per rendered line"
         );
+    }
+
+    /// T-MMC3-BG-A12: with the background at `$1000` and sprites at `$0000`,
+    /// the `NESdev` MMC3 page says the counter "should decrement on PPU cycle
+    /// 324 of the previous scanline" -- one dot before the pattern-low
+    /// fetch's ALE dot (325), the same convention the sprite path follows
+    /// (its rises land at 260, the page's figure for the other arrangement).
+    /// Until this change the background reported A12 at its READ dot, two
+    /// dots later (326, and 6 for the line's own first tile), which put a
+    /// rise caught at the first dot of a CPU cycle one cycle late and failed
+    /// blargg `4-scanline_timing` at sub-test 9.
+    #[test]
+    fn background_a12_rises_at_the_mmc3_pages_dot_324() {
+        struct RiseBus {
+            chr: [u8; 0x2000],
+            last_a12: bool,
+            rises: alloc::vec::Vec<(i16, u16)>,
+        }
+        impl PpuBus for RiseBus {
+            fn ppu_read(&mut self, addr: u16) -> u8 {
+                if addr < 0x2000 {
+                    self.chr[addr as usize]
+                } else {
+                    0
+                }
+            }
+            fn ppu_write(&mut self, _addr: u16, _value: u8) {}
+            fn notify_a12(&mut self, level: bool) {
+                if level && !self.last_a12 {
+                    self.rises.push((0, 0));
+                }
+                self.last_a12 = level;
+            }
+            fn nametable_address(&self, addr: u16) -> u16 {
+                addr & 0x07FF
+            }
+        }
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.post_reset_mask_remaining = 0;
+        let mut b = RiseBus {
+            chr: [0u8; 0x2000],
+            last_a12: false,
+            rises: alloc::vec::Vec::new(),
+        };
+        p.cpu_write_register(0, PpuCtrl::BG_PATTERN_HIGH.bits(), &mut b);
+        p.cpu_write_register(1, (PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE).bits(), &mut b);
+        // Run to scanline 9, then record lines 9-10.
+        while p.scanline() != 9 {
+            p.tick(&mut b);
+        }
+        b.rises.clear();
+        // `tick` advances to the next dot and then processes it, so a rise is
+        // stamped with the position AFTER the tick that produced it.
+        while p.scanline() != 11 {
+            let before = b.rises.len();
+            p.tick(&mut b);
+            if b.rises.len() > before {
+                *b.rises.last_mut().unwrap() = (p.scanline(), p.dot());
+            }
+        }
+        // Scanline 10's first tile: the prefetch on line 9, and the line's
+        // own fetches (first visible-tile group starts at dot 1).
+        let prefetch: alloc::vec::Vec<u16> = b
+            .rises
+            .iter()
+            .filter(|r| r.0 == 9 && r.1 > 320)
+            .map(|r| r.1)
+            .collect();
+        assert_eq!(
+            prefetch,
+            [324, 332],
+            "the next line's two prefetched tiles rise at 324 and 332"
+        );
+        // A visible line's dot 0 drives "the same CHR address that is later
+        // used to fetch the low background tile byte starting at dot 5"
+        // (NESdev PPU rendering, "Cycle 0"), so with the background at
+        // `$1000` A12 is already high there.
+        let first = b.rises.iter().find(|r| r.0 == 10).map(|r| r.1);
+        assert_eq!(
+            first,
+            Some(0),
+            "a visible line's dot 0 drives the BG CHR address"
+        );
+    }
+
+    /// T-MMC3-BG-A12: scanline 0's dot 0 drives the background CHR address
+    /// (A12 high with the background at `$1000`) on an EVEN frame, and not on
+    /// an odd frame whose pre-render skip "replac[es] the idle tick at the
+    /// beginning of the first visible scanline with the last tick of the last
+    /// dummy nametable fetch" (`NESdev` PPU rendering). This test is the
+    /// exception's only pin: blargg `4-scanline_timing` synchronises with
+    /// `sync_vbl_even`, so no ROM in the corpus reaches the odd-frame case,
+    /// and removing the exception leaves both 4-scanline ROMs passing
+    /// (measured 2026-10-05).
+    #[test]
+    fn scanline_0_dot_0_drives_bg_chr_only_when_the_skip_did_not_replace_it() {
+        struct LevelBus {
+            chr: [u8; 0x2000],
+            level: bool,
+        }
+        impl PpuBus for LevelBus {
+            fn ppu_read(&mut self, addr: u16) -> u8 {
+                if addr < 0x2000 {
+                    self.chr[addr as usize]
+                } else {
+                    0
+                }
+            }
+            fn ppu_write(&mut self, _addr: u16, _value: u8) {}
+            fn notify_a12(&mut self, level: bool) {
+                self.level = level;
+            }
+            fn nametable_address(&self, addr: u16) -> u16 {
+                addr & 0x07FF
+            }
+        }
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.post_reset_mask_remaining = 0;
+        let mut b = LevelBus {
+            chr: [0u8; 0x2000],
+            level: false,
+        };
+        p.cpu_write_register(0, PpuCtrl::BG_PATTERN_HIGH.bits(), &mut b);
+        p.cpu_write_register(1, (PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE).bits(), &mut b);
+        let (mut skipped, mut kept) = (0, 0);
+        for _ in 0..4 {
+            // Run to the end of the pre-render line, remembering the parity
+            // of the frame being completed.
+            while !(p.scanline() == p.region.prerender_line() && p.dot() == 338) {
+                p.tick(&mut b);
+            }
+            let odd = p.frame() & 1 == 1;
+            // Step until scanline 0's dot 0 has been processed.
+            while !(p.scanline() == 0 && p.dot() == 0) {
+                p.tick(&mut b);
+            }
+            if odd {
+                assert!(
+                    !b.level,
+                    "an odd frame's skip replaces dot 0: A12 stays low"
+                );
+                skipped += 1;
+            } else {
+                assert!(b.level, "an even frame's dot 0 drives the BG CHR address");
+                kept += 1;
+            }
+        }
+        assert!(skipped > 0 && kept > 0, "both parities were exercised");
     }
 
     #[test]

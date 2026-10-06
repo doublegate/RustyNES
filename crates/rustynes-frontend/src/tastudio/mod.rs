@@ -413,20 +413,20 @@ impl TasEditor {
     /// state the editor was built on (v2.9.8; see `start_options`).
     #[must_use]
     pub fn to_movie(&self, nes: &Nes) -> Movie {
-        Movie {
-            region: nes.region(),
-            rom_sha256: *nes.rom_sha256(),
-            options: self.start_options.clone(),
-            board: Some(rustynes_core::BoardDescription::capture(nes)),
-            start: StartPoint::PowerOn,
-            frames: self.input_log.clone(),
-            rerecord_count: self.rerecord_count,
-            // No attestation: a TAStudio export is an EDITED input stream, so
-            // there is no single continuous run whose output an attestation
-            // could honestly describe. Attesting an edited movie would be the
-            // one thing this feature must not do.
-            attestation: None,
-        }
+        // No attestation (`Movie::new` leaves it `None`): a TAStudio export is
+        // an EDITED input stream, so there is no single continuous run whose
+        // output an attestation could honestly describe. Attesting an edited
+        // movie would be the one thing this feature must not do.
+        let mut movie = Movie::new(
+            nes.region(),
+            *nes.rom_sha256(),
+            self.start_options.clone(),
+            Some(rustynes_core::BoardDescription::capture(nes)),
+            StartPoint::PowerOn,
+            self.input_log.clone(),
+        );
+        movie.rerecord_count = self.rerecord_count;
+        movie
     }
 
     /// The greenzone (for the piano-roll's row colouring / diagnostics).

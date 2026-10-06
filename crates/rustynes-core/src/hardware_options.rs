@@ -66,6 +66,32 @@ pub type OptionsDecodeError = &'static str;
 /// express, so it costs no legitimate list.
 const MAX_GENIE_CODES: usize = u8::MAX as usize;
 
+/// v3.0.0 (ADR 0045) — which emulator *behaviour* a movie or a netplay peer
+/// expects, beside the options and the board that [`HardwareOptions`] and
+/// [`BoardDescription`] describe.
+///
+/// Two builds with identical options can still emulate a game differently
+/// whenever an accuracy fix lands: v3.0.0's T-MMC3-BG-A12, for instance,
+/// moves the MMC3 IRQ for games with the background at `$1000`. Without a
+/// record of which behaviour a recording assumes, a movie replays under the
+/// new timing and a mixed-version netplay session desyncs, and neither says
+/// why. `.rnm` format 5 records this number, and netplay protocol 6 sends it
+/// in the handshake; a mismatch is refused, naming both epochs.
+///
+/// **The bump rule.** Increment it, in the same change, whenever a change
+/// makes the core produce a different framebuffer, audio sample or bus cycle
+/// from the same inputs than the last release did. Every such change already
+/// re-blesses a golden or moves a commercial snapshot, so that is the
+/// trigger to look for. Refactors, byte-identical performance work, frontend
+/// features and new mapper families (which have no earlier output to differ
+/// from) do not bump it. A release that moved goldens without raising it
+/// breaks the promise this constant exists to keep.
+///
+/// It is 1 at v3.0.0, the first release to carry it. Earlier builds have no
+/// epoch, and are refused by the movie format (5) and the protocol (6)
+/// instead.
+pub const EMULATION_EPOCH: u32 = 1;
+
 /// Every host-settable option that changes what the emulated console does.
 ///
 /// [`Default`] is the stock NES: the configuration every release before the
@@ -77,7 +103,13 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// a property of the cartridge header that a host may override, so its
 /// default is `None`, meaning "whatever the header declares" — applying a
 /// stock `VsPpuType::None` to a Vs. cartridge would strip its RGB PPU.
+///
+/// `#[non_exhaustive]` since v3.0.0 (T-API-EXTENSIBLE): outside this crate,
+/// start from [`HardwareOptions::default`] (the stock NES) or
+/// [`HardwareOptions::capture`] and set the fields that differ. A later
+/// option is then not a break.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub struct HardwareOptions {
     /// Which console's reset wiring is modelled ([`Nes::set_console_model`]).
     pub console_model: ConsoleModel,
@@ -463,7 +495,12 @@ impl HardwareOptions {
 ///
 /// Region is not here: a movie has always recorded it in its fixed header,
 /// and netplay folds it into [`config_digest`] beside this.
+///
+/// `#[non_exhaustive]` since v3.0.0 (T-API-EXTENSIBLE): build one with
+/// [`BoardDescription::capture`]. v2.9.9 added three fields to it, each a
+/// break; a later field no longer is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub struct BoardDescription {
     /// iNES / NES 2.0 mapper number.
     pub mapper_id: u16,

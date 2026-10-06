@@ -689,7 +689,7 @@ fn describe_err(e: &NetplayError) -> String {
             }
         ),
         NetplayError::RomMismatch => "rom mismatch".to_string(),
-        NetplayError::ConfigMismatch => e.to_string(),
+        NetplayError::ConfigMismatch | NetplayError::EmulatorMismatch { .. } => e.to_string(),
         other => format!("netplay error: {other}"),
     }
 }

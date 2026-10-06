@@ -46,7 +46,7 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
 use crate::relay::RelayUdpSocket;
 use crate::transport::Transport;
 
@@ -359,6 +359,16 @@ pub enum DisconnectReason {
     /// overclock, Four Score, Vs. setting, Game Genie code, region or
     /// cartridge header. Both players must match their emulation settings.
     ConfigMismatch,
+    /// v3.0.0 (ADR 0045) — the peer runs a version of `RustyNES` that emulates
+    /// differently (`theirs` is its emulation epoch, `None` when it predates
+    /// the epoch: v2.9.9 or earlier). Render with
+    /// [`crate::emulator_mismatch_text`].
+    EmulatorMismatch {
+        /// This build's emulation epoch.
+        ours: u32,
+        /// The peer's epoch, if it sent one.
+        theirs: Option<u32>,
+    },
     /// The peer was synced but then went silent past the disconnect timeout
     /// (no datagram of any kind received for [`NetplayConnection`]'s
     /// `peer_disconnect_timeout`). See [`PeerLink`] for the graded liveness
@@ -716,15 +726,21 @@ impl NetplayConnection {
             }
             match msg {
                 NetMessage::Sync { magic, identity } => {
-                    if magic != NetMessage::SYNC_MAGIC {
-                        continue; // foreign / corrupt — ignore, never panic.
-                    }
-                    if let Err(m) = self.identity.check(&identity) {
-                        // A mismatched ROM or configuration is rejected the
-                        // same way whether or not we have adopted this peer
-                        // yet.
+                    let m = match self.identity.check_sync(magic, &identity) {
+                        // Foreign / corrupt — ignore, never panic.
+                        SyncVerdict::Ignore => continue,
+                        SyncVerdict::Accept => None,
+                        SyncVerdict::Refuse(m) => Some(m),
+                    };
+                    if let Some(m) = m {
+                        // A mismatched emulator, ROM or configuration is
+                        // rejected the same way whether or not we have adopted
+                        // this peer yet.
                         self.state = ConnectionState::Disconnected;
                         self.disconnect_reason = Some(match m {
+                            IdentityMismatch::Emulator { ours, theirs } => {
+                                DisconnectReason::EmulatorMismatch { ours, theirs }
+                            }
                             IdentityMismatch::Rom => DisconnectReason::RomMismatch,
                             IdentityMismatch::Config => DisconnectReason::ConfigMismatch,
                         });
@@ -1083,6 +1099,46 @@ mod tests {
         let a_rejected = a.disconnect_reason() == Some(DisconnectReason::RomMismatch);
         let b_rejected = b.disconnect_reason() == Some(DisconnectReason::RomMismatch);
         assert!(a_rejected || b_rejected, "a rom mismatch must be rejected");
+        assert!(!a.is_synced() && !b.is_synced());
+    }
+
+    /// v3.0.0 (ADR 0045) — same ROM and configuration on a build that
+    /// emulates differently (another emulation epoch): refused, with the
+    /// reason that says so, not a configuration mismatch and not a timeout.
+    #[test]
+    fn handshake_rejects_another_emulation_epoch() {
+        let (ta, tb) = transport_pair();
+        let id = SessionIdentity::new([0x11u8; 32], [0xC0; 32]);
+        let mut other = id;
+        other.epoch = id.epoch + 1;
+        let mut a = NetplayConnection::with_transport(ta, id);
+        let mut b = NetplayConnection::with_transport(tb, other);
+
+        let mut rounds = 0;
+        while !matches!(
+            (a.state(), b.state()),
+            (ConnectionState::Disconnected, _) | (_, ConnectionState::Disconnected)
+        ) && rounds < 200
+        {
+            a.pump(0);
+            b.pump(0);
+            rounds += 1;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let a_rejected = a.disconnect_reason()
+            == Some(DisconnectReason::EmulatorMismatch {
+                ours: id.epoch,
+                theirs: Some(other.epoch),
+            });
+        let b_rejected = b.disconnect_reason()
+            == Some(DisconnectReason::EmulatorMismatch {
+                ours: other.epoch,
+                theirs: Some(id.epoch),
+            });
+        assert!(
+            a_rejected || b_rejected,
+            "another epoch must be refused with that reason"
+        );
         assert!(!a.is_synced() && !b.is_synced());
     }
 

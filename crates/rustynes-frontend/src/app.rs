@@ -12390,11 +12390,11 @@ mod tests {
         use rustynes_core::{ConsoleModel, HardwareOptions, PowerOnRam};
         let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
         let player = crate::config::Config::default();
-        let movie = HardwareOptions {
-            console_model: ConsoleModel::Famicom,
-            power_on_ram: PowerOnRam::Seeded(0x5EED),
-            ..HardwareOptions::default()
-        };
+        // `HardwareOptions` is `#[non_exhaustive]` (v3.0.0): start from the
+        // stock NES and set the fields that differ.
+        let mut movie = HardwareOptions::default();
+        movie.console_model = ConsoleModel::Famicom;
+        movie.power_on_ram = PowerOnRam::Seeded(0x5EED);
         let mut nes = Nes::from_rom(rom).expect("nestest loads");
         movie.apply(&mut nes).expect("applies");
         nes.power_cycle();

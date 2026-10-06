@@ -3260,6 +3260,9 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
                      reconnect"
                         .to_string()
                 }
+                Some(DisconnectReason::EmulatorMismatch { ours, theirs }) => {
+                    rustynes_netplay::emulator_mismatch_text(ours, theirs)
+                }
                 Some(DisconnectReason::HandshakeTimeout) => {
                     "handshake timed out (no peer answered)".to_string()
                 }

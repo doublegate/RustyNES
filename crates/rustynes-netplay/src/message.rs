@@ -40,17 +40,35 @@ use rustynes_core::Nes;
 /// only at power-on, so adopting them would also need a coordinated
 /// re-power-on of the guest after the handshake. A refusal that tells both
 /// players to match their settings is explicit and costs one retry.
+///
+/// # The emulator itself (v3.0.0, ADR 0045)
+///
+/// Two peers can agree on the game and every option and still emulate it
+/// differently, when an accuracy fix lies between their versions. `epoch` is
+/// [`rustynes_core::EMULATION_EPOCH`], checked before the hashes, and a
+/// difference is refused as [`IdentityMismatch::Emulator`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SessionIdentity {
+    /// v3.0.0 — [`rustynes_core::EMULATION_EPOCH`]: which emulator behaviour.
+    pub epoch: u32,
     /// [`Nes::rom_sha256`] — which game.
     pub rom_hash: [u8; 32],
     /// [`rustynes_core::config_digest`] — which machine runs it.
     pub config_hash: [u8; 32],
 }
 
-/// Which half of a [`SessionIdentity`] two peers disagree on.
+/// What two peers' [`SessionIdentity`] values disagree on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IdentityMismatch {
+    /// v3.0.0 (ADR 0045) — a version of `RustyNES` that emulates differently.
+    /// `theirs` is the peer's emulation epoch, or `None` when the peer
+    /// predates the epoch (it announced protocol 4 or 5, v2.9.9 or earlier).
+    Emulator {
+        /// This build's [`rustynes_core::EMULATION_EPOCH`].
+        ours: u32,
+        /// The peer's epoch, if it sent one.
+        theirs: Option<u32>,
+    },
     /// Different games.
     Rom,
     /// The same game on a differently configured machine (emulation options,
@@ -58,12 +76,50 @@ pub enum IdentityMismatch {
     Config,
 }
 
+/// v3.0.0 (ADR 0045) — the one wording for an
+/// [`IdentityMismatch::Emulator`] refusal, shared by every error type and
+/// frontend so the players read the same sentence everywhere.
+#[must_use]
+pub fn emulator_mismatch_text(ours: u32, theirs: Option<u32>) -> String {
+    theirs.map_or_else(
+        || {
+            String::from(
+                "the peer runs an older version of RustyNES (v2.9.9 or earlier) that \
+                 emulates differently; both players need the same version",
+            )
+        },
+        |theirs| {
+            format!(
+                "the peer runs a version of RustyNES that emulates differently (emulation \
+                 epoch {theirs}; this one is {ours}); both players need versions with the \
+                 same epoch"
+            )
+        },
+    )
+}
+
+/// v3.0.0 — what a received [`NetMessage::Sync`] means for the handshake
+/// ([`SessionIdentity::check_sync`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncVerdict {
+    /// Not `RustyNES`'s handshake (an unknown magic, a stray or corrupt
+    /// datagram): ignore it, as before.
+    Ignore,
+    /// Our protocol, and the identities agree.
+    Accept,
+    /// Refuse the peer, for this reason.
+    Refuse(IdentityMismatch),
+}
+
 impl SessionIdentity {
     /// Build from explicit hashes (tests, or a host that computed them
     /// elsewhere).
+    /// The epoch is this build's [`rustynes_core::EMULATION_EPOCH`]; set the
+    /// public field to model another build.
     #[must_use]
     pub const fn new(rom_hash: [u8; 32], config_hash: [u8; 32]) -> Self {
         Self {
+            epoch: rustynes_core::EMULATION_EPOCH,
             rom_hash,
             config_hash,
         }
@@ -76,25 +132,56 @@ impl SessionIdentity {
     #[must_use]
     pub fn of(nes: &Nes) -> Self {
         Self {
+            epoch: rustynes_core::EMULATION_EPOCH,
             rom_hash: *nes.rom_sha256(),
             config_hash: rustynes_core::config_digest(nes),
         }
     }
 
-    /// Compare a peer's announced identity with ours. The ROM is checked
-    /// first: a different game is the more fundamental difference, and its
-    /// message is the more useful one.
+    /// Compare a peer's announced identity with ours. The emulator epoch is
+    /// checked first, then the ROM: the more fundamental the difference, the
+    /// more useful its message (no setting can reconcile two emulators).
     ///
     /// # Errors
     ///
-    /// Which half differs.
+    /// What differs.
     pub fn check(&self, peer: &Self) -> Result<(), IdentityMismatch> {
-        if peer.rom_hash != self.rom_hash {
+        if peer.epoch != self.epoch {
+            Err(IdentityMismatch::Emulator {
+                ours: self.epoch,
+                theirs: Some(peer.epoch),
+            })
+        } else if peer.rom_hash != self.rom_hash {
             Err(IdentityMismatch::Rom)
         } else if peer.config_hash != self.config_hash {
             Err(IdentityMismatch::Config)
         } else {
             Ok(())
+        }
+    }
+
+    /// v3.0.0 — the one decision every handshake site makes on a received
+    /// `Sync`, kept here so the sites cannot disagree.
+    ///
+    /// Our magic: [`Self::check`] decides. One of `RustyNES`'s own older
+    /// magics (protocol 4 `"RNES"`, protocol 5 `"RNE5"`): refused as another
+    /// emulator version. Until v3.0.0 those were ignored like any foreign
+    /// datagram, so a session across versions simply timed out with no
+    /// reason. Anything else: ignored, as before.
+    #[must_use]
+    pub fn check_sync(&self, magic: u32, peer: &Self) -> SyncVerdict {
+        if magic == NetMessage::SYNC_MAGIC {
+            match self.check(peer) {
+                Ok(()) => SyncVerdict::Accept,
+                Err(why) => SyncVerdict::Refuse(why),
+            }
+        } else if NetMessage::OLDER_SYNC_MAGICS.contains(&magic) {
+            SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                ours: self.epoch,
+                theirs: None,
+            })
+        } else {
+            SyncVerdict::Ignore
         }
     }
 }
@@ -121,8 +208,16 @@ impl SessionIdentity {
 /// is 32 bytes shorter and decodes to `None`, and a v4 peer rejects v5's
 /// magic, so neither side mistakes the other for a match; they never sync.
 ///
+/// `6` (v3.0.0, ADR 0045): [`SessionIdentity`] gains the emulation epoch, so
+/// a `Sync` is 4 bytes longer, under the magic `"RNE6"`. A v5 or v4 `Sync`
+/// still decodes (each at exactly its own length, under its own magic) so the
+/// handshake can refuse it *with a reason*, "another emulator version",
+/// instead of ignoring it until the session times out
+/// ([`SessionIdentity::check_sync`]). A v5 peer ignores our magic, as v4
+/// ignored v5's, so on its side the session still times out.
+///
 /// [`from_bytes`]: NetMessage::from_bytes
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Messages exchanged between two peers.
 ///
@@ -228,7 +323,13 @@ impl NetMessage {
     /// consider the session synced while the v5 side waited for a reply it
     /// refuses. Every version compares the magic, so a changed one is
     /// rejected on both sides.
-    pub const SYNC_MAGIC: u32 = 0x524E_4535; // "RNE5"
+    pub const SYNC_MAGIC: u32 = 0x524E_4536; // "RNE6"
+
+    /// `RustyNES`'s own earlier `Sync` magics: protocol 4 (`"RNES"`, v2.5.x to
+    /// v2.9.7) and protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9). Recognised so a
+    /// peer on an older version is refused with a reason
+    /// ([`SessionIdentity::check_sync`]).
+    pub const OLDER_SYNC_MAGICS: [u32; 2] = [0x524E_4553, 0x524E_4535];
 
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
@@ -274,6 +375,8 @@ impl NetMessage {
             Self::Sync { magic, identity } => {
                 out.push(Self::TAG_SYNC);
                 out.extend_from_slice(&magic.to_le_bytes());
+                // v3.0.0 (protocol 6): the emulation epoch.
+                out.extend_from_slice(&identity.epoch.to_le_bytes());
                 out.extend_from_slice(&identity.rom_hash);
                 out.extend_from_slice(&identity.config_hash);
             }
@@ -368,18 +471,46 @@ impl NetMessage {
                 Some(Self::InputAck { frame })
             }
             Self::TAG_SYNC => {
-                // Exactly magic + two hashes: a longer payload is a later
-                // protocol's, not this one's with junk on the end.
-                if rest.len() != 68 {
-                    return None;
-                }
                 let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
-                let rom_hash: [u8; 32] = rest.get(4..36)?.try_into().ok()?;
-                let config_hash: [u8; 32] = rest.get(36..68)?.try_into().ok()?;
-                Some(Self::Sync {
-                    magic,
-                    identity: SessionIdentity::new(rom_hash, config_hash),
-                })
+                match rest.len() {
+                    // Protocol 6: magic + epoch + two hashes. Exactly that
+                    // length: a longer payload is a later protocol's, not this
+                    // one's with junk on the end.
+                    72 => {
+                        let epoch = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
+                        let rom_hash: [u8; 32] = rest.get(8..40)?.try_into().ok()?;
+                        let config_hash: [u8; 32] = rest.get(40..72)?.try_into().ok()?;
+                        Some(Self::Sync {
+                            magic,
+                            identity: SessionIdentity {
+                                epoch,
+                                rom_hash,
+                                config_hash,
+                            },
+                        })
+                    }
+                    // An older RustyNES's `Sync`, accepted only at exactly its
+                    // own length AND under its own magic, so the handshake can
+                    // refuse it with a reason (`check_sync`). Its hashes are
+                    // never compared; the epoch field is meaningless (0).
+                    68 if magic == Self::OLDER_SYNC_MAGICS[1] => Some(Self::Sync {
+                        magic,
+                        identity: SessionIdentity {
+                            epoch: 0,
+                            rom_hash: rest.get(4..36)?.try_into().ok()?,
+                            config_hash: rest.get(36..68)?.try_into().ok()?,
+                        },
+                    }),
+                    36 if magic == Self::OLDER_SYNC_MAGICS[0] => Some(Self::Sync {
+                        magic,
+                        identity: SessionIdentity {
+                            epoch: 0,
+                            rom_hash: rest.get(4..36)?.try_into().ok()?,
+                            config_hash: [0; 32],
+                        },
+                    }),
+                    _ => None,
+                }
             }
             Self::TAG_CHECKSUM => {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
@@ -496,6 +627,76 @@ mod tests {
             None,
             "trailing byte accepted"
         );
+    }
+
+    /// v3.0.0 (ADR 0045) — a protocol-6 `Sync` carries the emulation epoch
+    /// (72-byte payload), and a peer on another epoch is refused as another
+    /// emulator, checked before the ROM and the configuration.
+    #[test]
+    fn a_sync_carries_the_epoch_and_another_epoch_is_refused() {
+        let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
+        assert_eq!(ours.epoch, rustynes_core::EMULATION_EPOCH);
+        let bytes = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: ours,
+        }
+        .to_bytes();
+        assert_eq!(bytes.len(), 1 + 72);
+        assert_eq!(&bytes[5..9], &ours.epoch.to_le_bytes());
+
+        let mut theirs = ours;
+        theirs.epoch += 1;
+        theirs.rom_hash = [1u8; 32]; // a ROM difference too: the epoch wins
+        assert_eq!(
+            ours.check_sync(NetMessage::SYNC_MAGIC, &theirs),
+            SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                ours: ours.epoch,
+                theirs: Some(theirs.epoch),
+            })
+        );
+        assert_eq!(
+            ours.check_sync(NetMessage::SYNC_MAGIC, &ours),
+            SyncVerdict::Accept
+        );
+    }
+
+    /// v3.0.0 — `RustyNES`'s own older `Sync` messages (protocol 5 `"RNE5"`,
+    /// 68 bytes; protocol 4 `"RNES"`, 36 bytes) decode at exactly their own
+    /// length under their own magic, and are refused as another emulator
+    /// version with no epoch. Until v3.0.0 they were dropped as foreign, so a
+    /// session across versions timed out with no reason. A foreign magic is
+    /// still ignored, and an older length under the wrong magic is not
+    /// decoded at all.
+    #[test]
+    fn an_older_rustynes_sync_is_refused_with_a_reason() {
+        let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
+        for (magic, payload) in [
+            (NetMessage::OLDER_SYNC_MAGICS[1], 68usize), // protocol 5
+            (NetMessage::OLDER_SYNC_MAGICS[0], 36usize), // protocol 4
+        ] {
+            let mut bytes = vec![NetMessage::TAG_SYNC];
+            bytes.extend_from_slice(&magic.to_le_bytes());
+            bytes.resize(1 + payload, 0x5A);
+            let Some(NetMessage::Sync {
+                magic: got,
+                identity,
+            }) = NetMessage::from_bytes(&bytes)
+            else {
+                panic!("an older RustyNES Sync of {payload} bytes must decode");
+            };
+            assert_eq!(got, magic);
+            assert_eq!(
+                ours.check_sync(got, &identity),
+                SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                    ours: ours.epoch,
+                    theirs: None,
+                })
+            );
+            // The same length under a magic that is not that protocol's.
+            bytes[1..5].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+            assert_eq!(NetMessage::from_bytes(&bytes), None);
+        }
+        assert_eq!(ours.check_sync(0xDEAD_BEEF, &ours), SyncVerdict::Ignore);
     }
 
     #[test]

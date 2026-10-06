@@ -2446,7 +2446,14 @@ carries the PRG-ROM and CHR-ROM sizes and the header's byte-6 nametable wiring
 bits (`Cartridge::nametable_wiring_bits`, bits 0 and 3), because one ROM body
 split 2x16K PRG + 4x8K CHR or 1x16K + 6x8K, or a mapper 30/218 image differing
 only in those bits, builds a different machine under the same identity. A
-format-3 movie is refused, as format 1 and 2 already were.
+format-3 movie is refused, as format 1 and 2 already were. **v3.0.0 moved it
+to format 5** (`MOVIE_FORMAT_VERSION` 5, ADR 0045): the fixed header records
+`rustynes_core::EMULATION_EPOCH` straight after the format version, so a movie
+says which emulator *behaviour* it was recorded on as well as which options
+and board. A format-4 movie is refused as too old, and a format-5 movie from
+another epoch fails with `MovieError::EpochMismatch`, naming both epochs. The
+epoch is raised whenever a change alters emulated output; the bump rule is in
+ADR 0045.
 
 - **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
   the replay does not depend on the player's settings, and the desktop and mobile
@@ -2493,9 +2500,23 @@ format-3 movie is refused, as format 1 and 2 already were.
 
 ### Netplay
 
-The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the ROM hash
-plus `rustynes_core::config_digest`, SHA-256 over the region, the board and the
-options (`PROTOCOL_VERSION` 5). Peers that differ refuse to connect:
+The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the
+emulation epoch, the ROM hash, and `rustynes_core::config_digest`, SHA-256 over
+the region, the board and the options (`PROTOCOL_VERSION` 6, magic `"RNE6"`,
+ADR 0045).
+
+- **Another epoch is refused first**, as another emulator version:
+  `DisconnectReason::EmulatorMismatch` / `NetplayError::EmulatorMismatch` /
+  `MeshError::EmulatorMismatch`, worded by
+  `rustynes_netplay::emulator_mismatch_text`.
+- **Older peers are named, not timed out.** A `Sync` under RustyNES's own older
+  magics (`"RNES"`, `"RNE5"`) decodes at exactly its own length and is refused
+  the same way, so a v3.0.0 player is told the peer runs an older version
+  instead of watching the handshake time out. The older peer cannot be changed,
+  so on its side it still times out.
+- **Another configuration is refused next.**
+
+Peers whose configuration differs refuse to connect:
 `DisconnectReason::ConfigMismatch` / `NetplayError::ConfigMismatch` /
 `MeshError::ConfigMismatch`, and the HUD tells both players to match their
 emulation settings. **The guest does not adopt the host's options**: adoption
