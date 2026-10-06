@@ -47,8 +47,8 @@ one by audience; v2.9.8's and v2.9.9's sections below hold the detail.
   says so (container 3 since v2.9.8; PPU section 12 at v3.0.0).
 - **Movies** made before v3.0.0 are refused: format 5 records the emulation
   epoch (ADR 0045).
-- **Netplay** needs the same game, options and emulator version on both
-  sides (protocol 6).
+- **Netplay** needs the same game, options and emulation epoch on both
+  sides (protocol 6); releases that keep the epoch still play together.
 - **Rust API:** the v2.7.5 deprecations removed and `LockstepBus` renamed
   `SystemBus` (v2.9.8); `Header`, `FrameInput`, `Cartridge`,
   `BoardDescription`, `HardwareOptions` and `Movie` are `#[non_exhaustive]`;
