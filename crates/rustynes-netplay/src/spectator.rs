@@ -291,7 +291,7 @@ impl<T: Transport> SpectatorSession<T> {
     }
 
     /// v3.0.0 — the frame playback stopped at because its input was dropped:
-    /// the match ran more than [`MAX_SPECTATOR_BUFFER_FRAMES`] (65,536, about
+    /// the match ran more than `MAX_SPECTATOR_BUFFER_FRAMES` (65,536, about
     /// 18 minutes) ahead of what this spectator had shown. Every frame kept
     /// before it plays first; then this is set and [`Self::advance`] produces
     /// nothing more. Terminal: the dropped input is never resent, so the
