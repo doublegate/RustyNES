@@ -3233,6 +3233,16 @@ the column existed passes but is reported as *"validity UNKNOWN, not verified"* 
 it cannot be proven valid, and saying "window was on screen" of a log that never
 measured it would be a small version of exactly the error F14 is about.
 
+A fourth state since v3.0.1. Until then, `0` with the column present was reported
+as *"capture VALID — window was on screen throughout"* even when the run had **no
+presentation clock** — and the section above says zero cannot carry that claim,
+because the counter is written through a `map_or(0, ...)` on the clock. The
+checker now reads the header's `measured_refresh_hz`, which is set only from that
+clock's answer: when it is `none`, a zero count is reported as *"validity
+UNVERIFIED (no presentation clock)"*. The header is written when logging starts,
+so a clock that answered later is also reported unverified — an understatement,
+never an overclaim. This changes the report line only; pass and fail are as before.
+
 Every pacing conclusion in this document that predates the column therefore
 carries an unverifiable assumption: that the window was actually on screen. The
 sixteen scanout-bearing captures almost certainly were — they *have* `presented`
