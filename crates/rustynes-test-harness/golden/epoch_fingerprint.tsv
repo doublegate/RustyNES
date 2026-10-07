@@ -1,0 +1,15 @@
+# T-EPOCH-FINGERPRINT: what the panel in tests/epoch_fingerprint.rs produces
+# under the epoch below. Generated; re-bless with
+# RUSTYNES_BLESS_EPOCH_FINGERPRINT=1. `last_release_epoch` is the epoch
+# the last release shipped, set by hand at each release cut: output may
+# move only while EMULATION_EPOCH is above it.
+# epoch	3
+# last_release_epoch	2
+# rom	frames	framebuffer_fnv	audio_fnv	ram_fnv	cpu_cycles
+accuracycoin/AccuracyCoin.nes	3200	e5edb57f59c38538	47e9857638ba5d28	b93b7feacb471f53	95268158
+nes-test-roms/ny2011/ny2011.nes	600	118f6b763cc1c58a	dda9e74ae2696052	538041de1d7bd79f	17838523
+nes-test-roms/spritecans-2011/spritecans.nes	300	e8caa6ca3d863712	fbdef8039c470bda	e53aaa23069253a9	8904372
+nes-test-roms/dmc_tests/latency.nes	240	b112947dcb56f813	2b4cacae717f270b	286ebb8ad39d4642	7117579
+nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes	120	c1423fdfef9a85fa	cceb1ba4374551ca	73baf7b42fa5860e	3543898
+nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes	120	bb655ab4bc5277ac	9a8fbf6de707b966	a0779243e8ce2902	3543900
+nes-test-roms/full_palette/flowing_palette.nes	120	72990514f3e3bfb3	8a91bbbb1ead50e8	27337e564377faba	3543884
