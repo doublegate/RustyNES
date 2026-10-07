@@ -947,8 +947,10 @@ jobs:
       # differently-configured lookalike.
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target ${{ matrix.target }}
       # Until this job existed there was ZERO libretro coverage in GitHub
-      # Actions, so breakage only surfaced on libretro's own GitLab buildbot —
-      # where we can't push, can't re-run, and turnaround is days. Pipeline
+      # Actions, so breakage only surfaced on libretro's own GitLab buildbot,
+      # whose job logs need a login and whose turnaround was days (it does build
+      # every pushed branch, so a release branch is tested there too; see
+      # docs/agents/libretro.md). Pipeline
       # #91899 failed 9 of 10 jobs on problems this job reproduces in seconds:
       # a missing cross target (see `rust-toolchain.toml`) and an upstream
       # `rust-libretro` MinGW-ABI bug (see `.cargo/config.toml`).

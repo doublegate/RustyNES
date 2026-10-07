@@ -81,8 +81,10 @@
     # `rustynes-libretro` on 1.96.0 (`libretro-cross`), so the floor this pin
     # relies on is checked on every PR rather than discovered on the buildbot.
     # The `-C ar` fix that would let this pin go is recorded in
-    # `rust-toolchain.toml`; it is not taken blind because no pipeline here can
-    # be run before `main` moves.
+    # `rust-toolchain.toml`. It CAN be tried before merge: libretro's mirror
+    # builds every pushed branch, not only `main` (the v3.0.1 branch's own
+    # pipeline, 119606, ran all 15 jobs green on this pin, Apple included),
+    # so a release branch carrying the fix is its own test.
     RUSTUP_TOOLCHAIN: "1.96.0"
 
 # Shared `before_script` for the jobs whose upstream template defines none
