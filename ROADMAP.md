@@ -1,7 +1,7 @@
 # RustyNES Development Roadmap
 
 **Document Version:** 2.0.4
-**Last Updated:** 2026-10-04
+**Last Updated:** 2026-10-06
 **Project Status:** v3.0.0 "Cornerstone" released — the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core. Built on **v2.9.9 "Ballast"** (the release candidate for v3.0.0: all four audit scopes re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it with the release-candidate bitstream pair; the tenth release of the v2.9.x line and the sixth of the line to v3.0.0 (ADR 0043, amended)) and **v2.9.8 "Vanguard"** (v3.0.0's breaking changes landed early) and **v2.9.7 "Tandem"** (the desktop's features on the web and on phones). **No hardware has run any bitstream**; the mobile device runs and the SuperStation One board session move after v3.0.0 (maintainer, 2026-09-29).
 
 ---

@@ -452,7 +452,7 @@ AccuracyCoin stays 144/144 and nestest 0-diff with the change.
 
 ## Expansion-chip audio
 
-Six on-cart expansion sound chips are synthesized and summed into the external-audio mix via the `Mapper::mix_audio(&mut self) -> i16` hook (default 0). Each synth core lives in the owning mapper crate, **not** the 2A03 APU crate, because they are cartridge hardware:
+Six on-cart expansion sound chips are synthesized and summed into the external-audio mix via the `Mapper::mix_audio(&mut self) -> i32` hook (default 0; `i16` until v2.2.3). Each synth core lives in the owning mapper crate, **not** the 2A03 APU crate, because they are cartridge hardware:
 
 | Chip       | Mapper(s)        | Synth core                                            | Clock cadence                  |
 |------------|------------------|-------------------------------------------------------|--------------------------------|

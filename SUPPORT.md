@@ -9,7 +9,7 @@ Thank you for using RustyNES! This document provides guidance on how to get help
 1. **Check the Documentation**
    - [README.md](README.md) - Project overview and quick start
    - [docs/](docs/) - Comprehensive documentation
-   - [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) - Current development status (the root `ROADMAP.md` is a pre-1.0 historical snapshot)
+   - [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) - Current development status (the root `ROADMAP.md` is the project-level roadmap, updated with each release)
    - [FAQ](#frequently-asked-questions) - Common questions (below)
 
 2. **Search Existing Resources**

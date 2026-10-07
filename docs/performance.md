@@ -3367,11 +3367,17 @@ ring — and nothing else uses them. Free win, apparently.
 | bench | full | slim | saving |
 | --- | ---: | ---: | ---: |
 | `nes_restore_quiet_flowing_palette` | 122.8 µs | 115.9 µs | **6.9 µs** |
-| `nes_restore_quiet_mmc3` | 123.7 µs | 116.2 µs | **7.4 µs** |
+| `nes_restore_quiet_mmc3` | 123.7 µs | 116.2 µs | **7.5 µs** |
 
 Against the 2.802 ms `nes_runahead_budget` increment that is **0.25%** — an
 order of magnitude under the project's >3% bar. **Rejected before
 implementation.**
+
+*Corrected at v3.0.1:* the `nes_restore_quiet_mmc3` saving was first printed
+as 7.4 µs, but the rounded columns subtract to 7.5 µs and the unrounded
+criterion means were not recorded (commit `697495c3` gives the same rounded
+figures), so the table now shows the difference of what it prints. The 0.25%
+conclusion is unchanged either way.
 
 > The first version of this table read 8.4 µs, from a **confounded** probe: it
 > booted a fresh `Nes` and ran one frame, while every other bench here uses
@@ -3384,7 +3390,8 @@ implementation.**
 
 It came from the project's own (correct) statement that the framebuffer is **94%
 of the snapshot BYTES**, and that was carried silently into a claim about
-**TIME**. 245,760 bytes is ~12-25 µs of memcpy at ordinary bandwidth, so it could
+**TIME**. 245,760 bytes is ~12-25 µs of memcpy at an ordinary ~10-20 GB/s
+(245,760 B / 20 GB/s = 12.3 µs; / 10 GB/s = 24.6 µs), so it could
 never have been 94% of a 122 µs restore. The measured share is ~7%. The estimate
 was off by 13x.
 
@@ -3705,7 +3712,7 @@ square. Five paired rounds for the two live arms:
 | reset — rejected | 4.00 s | 2.02% | **1.00 (3 of 3)** |
 
 **5/5 paired rounds favour `predict` on both convergence and cadence, exact
-one-sided sign p = 0.0312** — at the floor for n = 5, which is why five rounds
+one-sided sign p = 1/32 = 0.03125** — at the floor for n = 5, which is why five rounds
 were run rather than three (three floors at 0.125 and could not have reached
 significance whatever it showed).
 

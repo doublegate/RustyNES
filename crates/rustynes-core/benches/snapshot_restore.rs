@@ -101,8 +101,9 @@ fn bench_rom(c: &mut Criterion, label: &str, rel: &str) {
     //
     // Written because the estimate that motivated F19 was unsound: the
     // framebuffer is 94% of the snapshot BYTES, and that was silently carried
-    // over into a claim about TIME. A 245 KiB memcpy is ~12-25 us at ordinary
-    // bandwidth, so if `restore_quiet` costs 121 us the framebuffer cannot be
+    // over into a claim about TIME. A 245 KiB memcpy is ~12-25 us at an
+    // ordinary ~10-20 GB/s (245,760 B / 20 GB/s = 12.3 us; / 10 GB/s =
+    // 24.6 us), so if `restore_quiet` costs 121 us the framebuffer cannot be
     // 94% of it, and the win could be a fraction of what F19 assumed. Measure
     // the pair rather than reason about the ratio.
     c.bench_function(&format!("nes_restore_quiet_slim_{label}"), |b| {

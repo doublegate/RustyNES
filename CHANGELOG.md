@@ -8316,8 +8316,9 @@ against the sweep: five CAUGHT, two NOT CAUGHT and both explained.
 
 This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was never
 tagged; entries below marked *(v2.4.0 item)* belong to it. Two further entries — the
-standing release-anchor audit and the deferred-backlog sweep — belong to neither, having
-landed between the two, and are called out where they appear.
+standing release-anchor audit and the deferred-backlog sweep — belong to neither: they
+landed separately in #427, after v2.3.9 and before v2.4.0 merged, and ship in v2.4.1.
+They are called out where they appear.
 
 ### Added
 
@@ -8526,7 +8527,7 @@ landed between the two, and are called out where they appear.
   that diagnostic.
 
 - **A standing release-anchor audit — the drift v2.3.9 corrected by hand cannot
-  recur silently.** (Landed between v2.4.0 and v2.4.1; part of neither.) `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
+  recur silently.** (Landed separately in #427, after v2.3.9 and before v2.4.0 merged; part of neither, shipped in v2.4.1.) `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
   pins **15 anchors across 10 documents** against `[workspace.package] version`:
   the README badge and Current Release section, `docs/STATUS.md`, both `AGENTS.md`
   anchors plus its "never claim a later version" guard, `VERSION-PLAN.md` (header
@@ -8598,7 +8599,7 @@ landed between the two, and are called out where they appear.
   immediately** — the rule that incident produced in the first place.
 
 - **`to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md` swept entry by entry** (landed
-  between v2.4.0 and v2.4.1; part of neither), against
+  separately in #427, after v2.3.9 and before v2.4.0 merged; part of neither), against
   `main` @ `fdfb2c04`. Eleven entries struck, each carrying its evidence inline —
   a file that exists, a workflow line number, a test that says so — rather than a
   bare tick, so a closure can be disagreed with.
@@ -10028,7 +10029,7 @@ optimization campaign is closed on the strength of three measured rejections.
   where the prediction fits, which a test pins directly. Measured at
   `run_ahead = 3` over five paired, Latin-square rounds: convergence **12.12 s →
   2.80 s**, frames held for the wrong duration **4.82% → 2.24%**, 5/5 pairs on
-  both, exact one-sided sign p = 0.0312. An alternative arm that cleared the
+  both, exact one-sided sign p = 1/32 = 0.03125. An alternative arm that cleared the
   produce-cost ring on each depth change converged in 4.0 s and matched on
   cadence but produced an audio underrun in **every** capture, and was rejected.
   Additive-only (65 insertions, 0 deletions) inside the engage branch, which the

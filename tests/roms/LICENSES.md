@@ -162,7 +162,7 @@ deterministic frame-hash visual smoke (no input) in
 | `AccuracyCoin/sub-tests/frame-counter-irq.nes` | derived from `AccuracyCoin.asm` (suite 13 / test 2 — `TEST_FrameCounterIRQ`) | NROM (0) | derivative of Chris Siebert | MIT (inherits) |
 | `AccuracyCoin/sub-tests/apu-reg-activation.nes` | derived from `AccuracyCoin.asm` (suite 13 / test 6 — `TEST_APURegActivation`) | NROM (0) | derivative of Chris Siebert | MIT (inherits) |
 
-The sub-test ROMs under `AccuracyCoin/sub-tests/` (26 in total; the four
+The sub-test ROMs under `AccuracyCoin/sub-tests/` (33 in total; the four
 with dedicated Rust regression tests are tabulated above, and the rest follow
 the identical build + MIT-inheritance pattern) are derivative
 works produced by patching the upstream `AccuracyCoin.asm` source to
@@ -188,7 +188,7 @@ AccuracyCoin is a single-NROM-cartridge battery of NES accuracy tests. The ROM i
 plus hex error codes) with no `$6000` status protocol. The integration test in
 `crates/rustynes-test-harness/tests/accuracycoin.rs` decodes the per-test result
 state from RAM and asserts the measured pass rate, which RustyNES holds at
-**141/141 (100.00%)** (see `docs/STATUS.md`).
+**144/144 (100.00%)** (see `docs/STATUS.md`).
 
 ## "full palette" ROMs
 
@@ -280,10 +280,10 @@ none is commercial software.
   domain), Damian Yerrick Holy Mapperel variants (zlib, including the mapper 28
   / 78.3 / 118 / 180 boards), and related homebrew — kept out of the
   actively-gated set but retained for manual investigation.
-- `AccuracyCoin/sub-tests/` (26 `.nes`): the boot-into-one-test derivatives of
+- `AccuracyCoin/sub-tests/` (33 `.nes`): the boot-into-one-test derivatives of
   `AccuracyCoin.asm` described above, all MIT (inheriting upstream).
 
-The authoritative running total is 328 committed `.nes` files under
+The authoritative running total is 338 committed `.nes` files under
 `tests/roms/` (per `git ls-files`; excluding the gitignored `tests/roms/external/`
 and any untracked clone contents); no commercial
 ROM is among them.
