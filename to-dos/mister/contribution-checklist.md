@@ -234,7 +234,8 @@ Settled at **v2.6.6**, except the one item that needs a board.
       against the repository while there was still time to find one that does
       not hold. The evidence exists and is
       linkable today (`docs/rung1-6502.md` through `docs/rung7-mappers.md`, the
-      142-gate suite, the mutation records). What is missing is the act of
+      co-simulation ladder — 199 passed, 0 failed, 1 expected failure on-die and
+      200 / 0 / 1 off-die at v3.0.0 — and the mutation records). What is missing is the act of
       pointing a reviewer at it, which happens in the submission email.
       **Unblocks at the hardware-verification release (v3.x)**, which is the
       submission (ADR 0043; it was v3.0.0 under ADR 0041).

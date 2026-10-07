@@ -449,13 +449,16 @@ something as blocked, check the blocker applies to the WHOLE item.**
       artifact at v2.6.15. Re-measure it rather than quoting this line; every
       unticked box carries a named verdict and a gate
       (`contribution_checklist_audit.rs`) keeps it that way.
-- [x] `releases/RustyNES_MiSTer-vX.Y.Z.rbf` — **since v2.6.7**, committed to the
-      sibling's `releases/` and attached to the GitHub release on both
-      repositories, produced by `scripts/release-rbf.sh`, which refuses a
-      compile with errors or negative slack at any corner. The **filename**
-      remains a known divergence from MiSTer's date convention — see the
-      checklist, where it is measured against `Main_MiSTer/file_io.cpp` rather
-      than the wiki's paraphrase.
+- [x] A release `.rbf` — **since v2.6.7**, produced by `scripts/release-rbf.sh`,
+      which refuses a compile with errors or negative slack at any corner.
+      **Since v2.6.15 it carries two names:** `releases/RustyNES_YYYYMMDD.rbf`
+      is committed to the sibling's `releases/` (the date form is the only one
+      `Distribution_MiSTer`'s builder and the `Main_MiSTer` core menu accept,
+      measured against `Main_MiSTer/file_io.cpp` rather than the wiki's
+      paraphrase), and `RustyNES_MiSTer-vX.Y.Z.rbf` is attached to the GitHub
+      release on both repositories. Through v2.6.14 the version-named file was
+      the one committed, a divergence from MiSTer's date convention that
+      v2.6.15 closed (the sibling's `docs/bitstream-release.md`).
 - [x] Unique Home folder chosen — **since v2.6.7**, resolved against
       `Main_MiSTer`'s own parser rather than an example: `CONF_STR`'s opening
       `"RustyNES;;"` gives `/media/fat/games/RustyNES`, and it is unique because

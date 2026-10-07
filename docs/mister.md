@@ -31,9 +31,12 @@ reviewer can **check** about it.
 The contributing page states the bar for AI-assisted code in one sentence --
 *"Fully AI generated code should meet a minimum reasonable bar for readability
 and include some evidence of quality and accuracy testing."* This programme's
-evidence is 148 co-simulation gates with a mutation record apiece -- 142 at the
-start of v2.6.15, plus the five it added and the one v2.6.16 added. 147 of them
-run on the die; the 148th measures the off-die memory system and reports N/A
+evidence is 148 co-simulation gates -- 142 at the start of v2.6.15, plus the five
+it added and the one v2.6.16 added. Every gate but five carries a mutation
+record; the exceptions are the five blargg `cpu_interrupts_v2` verdict gates
+v2.6.15 added, which are independent-oracle verdicts with no mutation recorded
+against them (no rung document and neither `tb/mutate.sh` nor
+`tb/mutate_apu.sh` names them; noted at v3.0.1). 147 of them run on the die; the 148th measures the off-die memory system and reports N/A
 there, because a gate on the SDRAM path cannot exist in a build with no SDRAM. And
 `tb/regress.sh` says in its own header that it *"is NOT a CI gate and cannot
 be"*, because it needs the oracle's goldens and a cargo build of a crate in
@@ -251,8 +254,11 @@ gate can adjudicate. It is allowed and named, not resolved.
 repositories. This reverses v2.6.6, which produced a bitstream and deliberately
 did not publish it.
 
-**Why the reversal is right.** The MiSTer distribution mechanism reads
-`releases/RustyNES_MiSTer-vX.Y.Z.rbf` out of the *repository*, so an empty
+**Why the reversal is right.** The MiSTer distribution mechanism reads the
+`.rbf` out of the *repository*'s `releases/` — since v2.6.15 as
+`releases/RustyNES_YYYYMMDD.rbf`, the only form both MiSTer parsers accept, with
+the version-named `RustyNES_MiSTer-vX.Y.Z.rbf` attached to the GitHub releases
+for people (the sibling's `docs/bitstream-release.md`) — so an empty
 `releases/` does not describe a cautious core — it describes an undistributable
 one, withheld from exactly the people who own the boards this project does not.
 And a claim nobody made is not the same as a claim marked unverified: only the
@@ -600,10 +606,12 @@ written from public hardware documentation**, in a sibling repository
 private), with **RustyNES as its verification oracle**. This document specifies
 the boundary between the two - the one part that lives in this repository.
 
-The sibling repository holds the harness at rung 0 and **no RTL**, which is the
-ladder's design rather than a gap: the testbench must be shown able to recognise
-agreement before anything is compared. Two of its files matter to readers of
-this document, because they are the other half of what is specified here.
+When this section was written (2026-08-20, first shipped in v2.4.2), the sibling repository held only the
+rung-0 harness and **no RTL**, which was the ladder's design rather than a gap:
+the testbench had to be shown able to recognise agreement before anything was
+compared. It has carried RTL since v2.4.4 and now holds a complete core (see the
+release sections above). Two of its harness files matter to readers of this
+document, because they are the other half of what is specified here.
 
 `tb/checkpoint.h` reimplements this repository's checkpoint encoding in C++, and
 `tb/checkpoint_selftest.cpp` asserts it against **the same hardcoded vector**
@@ -617,9 +625,12 @@ first thing to run after touching either.
 
 Its licence audit also settled a question this side had left open. ADR 0037
 recorded that a GPL-2.0-**only** file anywhere in the MiSTer framework's `sys/`
-would force the RTL to GPL-2.0-or-later. All 57 files were read: **there is no
-such file**, and four are GPL-3.0-or-later - including `hps_io.sv`, which no core
-functions without. GPL-2.0-or-later combines upward and GPL-3.0-or-later does not
+would force the RTL to GPL-2.0-or-later. All 57 files of an upstream clone were
+read at v2.4.3: **there is no such file**, and four are GPL-3.0-or-later -
+including `hps_io.sv`, which no core functions without. v2.6.6 re-verified this
+against the tree actually vendored (`Template_MiSTer@3ea1134c`): **40** HDL files,
+the same four GPL-3.0-or-later, nine GPL-2.0-or-later, **zero** GPL-2.0-only (the
+sibling's `docs/licence-audit-2026-08-20.md`, "Re-verified at v2.6.6"). GPL-2.0-or-later combines upward and GPL-3.0-or-later does not
 reduce, so the combined bitstream must be **GPL-3.0-or-later**, which is already
 this project's licence. The hedge is inverted by the evidence rather than
 confirmed by it.
