@@ -141,7 +141,11 @@ jobs:
         run: |
           set -euo pipefail
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          # `yes` answers the licence prompt. Under `pipefail` its own exit
+          # status (EPIPE / SIGPIPE once sdkmanager closes the pipe, 141 here)
+          # failed the step even when the install succeeded, so it is absorbed;
+          # sdkmanager's status, and the clang check below, still decide.
+          (yes || true) | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
           ndk="$sdk/ndk/$NDK_VERSION"
           test -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
             || { echo "::error::NDK $NDK_VERSION did not install at $ndk"; exit 1; }
@@ -223,7 +227,11 @@ jobs:
         run: |
           set -euo pipefail
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          # `yes` answers the licence prompt. Under `pipefail` its own exit
+          # status (EPIPE / SIGPIPE once sdkmanager closes the pipe, 141 here)
+          # failed the step even when the install succeeded, so it is absorbed;
+          # sdkmanager's status, and the clang check below, still decide.
+          (yes || true) | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
           ndk="$sdk/ndk/$NDK_VERSION"
           test -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
             || { echo "::error::NDK $NDK_VERSION did not install at $ndk"; exit 1; }
@@ -293,7 +301,11 @@ jobs:
         run: |
           set -euo pipefail
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          # `yes` answers the licence prompt. Under `pipefail` its own exit
+          # status (EPIPE / SIGPIPE once sdkmanager closes the pipe, 141 here)
+          # failed the step even when the install succeeded, so it is absorbed;
+          # sdkmanager's status, and the clang check below, still decide.
+          (yes || true) | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
           ndk="$sdk/ndk/$NDK_VERSION"
           test -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
             || { echo "::error::NDK $NDK_VERSION did not install at $ndk"; exit 1; }

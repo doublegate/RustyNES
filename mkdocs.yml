@@ -183,6 +183,7 @@ nav:
 exclude_docs: |
   adr/
   agents/
+  history/
   audits/
   archive/
   audit/
