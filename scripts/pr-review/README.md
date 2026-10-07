@@ -28,6 +28,7 @@ gh api graphql -f query='
 | `list_all_threads.py` | Every thread with its `isResolved` / `isOutdated` flags — the audit view, for confirming nothing was missed. |
 | `reply_and_resolve.py` | Applies prepared replies and resolves **only** the threads that were addressed. Dry run by default. |
 | `reply_and_resolve_selftest.py` | No-network selftest of the two above it. Run it after editing either. |
+| `list_unresolved_threads_selftest.py` | No-network selftest of `list_unresolved_threads.py`: a payload with no thread list, or a partial thread node, must exit non-zero with a named error rather than print `0 unresolved thread(s)` (added v3.0.1). Run it after editing that script. |
 
 ## Writing the outcome back
 
