@@ -148,7 +148,29 @@ fn parse_mirroring(token: &str) -> Option<Mirroring> {
 /// PrgRamBanks, Battery, Mirroring, Title` row into a [`GameDbEntry`]. Returns
 /// `None` for comment / blank / malformed lines. The title is the final field
 /// and may contain commas (it is split off with `splitn`).
+///
+/// This is the **vendored-table** reader: a Mapper column of `0` is read as
+/// "unspecified" (see the comment in [`parse_row_from`]). The user overlay is
+/// read by [`parse_overlay_row`], which keeps a `0`.
 fn parse_row(line: &str) -> Option<GameDbEntry> {
+    parse_row_from(line, true)
+}
+
+/// Parse one row of the **user overlay** (`game_db_user.txt`).
+///
+/// Same format as the vendored table, with one difference: a Mapper column of
+/// `0` is a real override. The overlay writer ([`serialize_row`]) leaves the
+/// column EMPTY for "no override", so a `0` there can only be a deliberate NROM
+/// correction saved from the ROM Database panel. Until v3.0.1 the overlay was
+/// read through the vendored reader, which dropped that `0`: the override
+/// applied in-session and vanished on the next start.
+fn parse_overlay_row(line: &str) -> Option<GameDbEntry> {
+    parse_row_from(line, false)
+}
+
+/// The shared row parser. `zero_mapper_is_unset` is `true` for the vendored
+/// table only.
+fn parse_row_from(line: &str, zero_mapper_is_unset: bool) -> Option<GameDbEntry> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
         return None;
@@ -180,7 +202,14 @@ fn parse_row(line: &str) -> Option<GameDbEntry> {
     // should not have; the first was the mirroring column freezing Wizards &
     // Warriors (ADR 0031), fixed the same way -- by refusing to apply an override
     // that cannot be distinguished from "no data".
-    let mapper = fields[2].parse::<u16>().ok().filter(|&m| m != 0);
+    //
+    // The rule is the VENDORED table's only. The user overlay has an empty
+    // marker (its writer leaves the column blank), so a `0` there is a
+    // deliberate correction and is kept -- see `parse_overlay_row`.
+    let mapper = fields[2]
+        .parse::<u16>()
+        .ok()
+        .filter(|&m| !(zero_mapper_is_unset && m == 0));
     let submapper = fields[3].parse::<u8>().ok();
     let mirroring = parse_mirroring(fields[8]);
     let title = fields
@@ -349,7 +378,7 @@ fn load_overlay() -> Vec<GameDbEntry> {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
-    let mut rows: Vec<GameDbEntry> = text.lines().filter_map(parse_row).collect();
+    let mut rows: Vec<GameDbEntry> = text.lines().filter_map(parse_overlay_row).collect();
     rows.sort_unstable_by_key(|e| e.crc);
     rows.dedup_by_key(|e| e.crc);
     rows
@@ -1385,6 +1414,40 @@ mod tests {
             title: "Homebrew".into(),
         };
         assert_eq!(parse_row(&serialize_row(&sparse)), Some(sparse));
+    }
+
+    /// A mapper-0 override saved to the USER OVERLAY must survive a restart.
+    ///
+    /// The `0`-means-unspecified rule belongs to the vendored table, whose
+    /// unfilled rows carry `0`. The overlay writer leaves the column empty for
+    /// "no override", so an overlay `0` is a deliberate NROM correction. Until
+    /// v3.0.1 the overlay reader shared the vendored filter, and the override
+    /// applied in-session (`upsert_user_entry`) then vanished on reload.
+    #[test]
+    fn an_overlay_mapper_zero_override_survives_reload() {
+        let entry = GameDbEntry {
+            crc: 0x1234_5678,
+            region: None,
+            mapper: Some(0),
+            submapper: None,
+            mirroring: None,
+            title: "Homebrew NROM".into(),
+        };
+        let row = serialize_row(&entry);
+        assert_eq!(parse_overlay_row(&row), Some(entry));
+        // The vendored reader keeps its rule: the same text from the vendored
+        // table is "unspecified".
+        assert_eq!(parse_row(&row).expect("row parses").mapper, None);
+        // An empty overlay column is still "no override".
+        let sparse = GameDbEntry {
+            crc: 0x1234_5678,
+            region: None,
+            mapper: None,
+            submapper: None,
+            mirroring: None,
+            title: "Homebrew NROM".into(),
+        };
+        assert_eq!(parse_overlay_row(&serialize_row(&sparse)), Some(sparse));
     }
 
     #[test]
