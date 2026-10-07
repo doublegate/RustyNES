@@ -438,8 +438,19 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
         }
         // Refuse rather than emitting a short stream: a hash over a trace that
         // dropped records covers fewer cycles than it claims, and the DUT would
-        // be blamed for our truncation.
-        Err(e) => panic!("  ERROR: {e}"),
+        // be blamed for our truncation. First remove any CSV and checkpoints a
+        // previous run left under this stem (v3.0.1): they look complete, and
+        // beside this run's `obs.bin` they would read as its output.
+        Err(e) => {
+            for stale in [suffixed(base, "irq.csv"), suffixed(base, "ckpt.bin")] {
+                match std::fs::remove_file(&stale) {
+                    Ok(()) => eprintln!("  removed stale {}", stale.display()),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => eprintln!("  WARNING: could not remove {}: {err}", stale.display()),
+                }
+            }
+            panic!("  ERROR: {e}")
+        }
     }
 }
 
@@ -1143,16 +1154,23 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let base = dir.join("overflow");
+        // A previous, SUCCESSFUL run with the same stem (v3.0.1, Copilot on
+        // #591): its complete-looking CSV and checkpoints must not survive a
+        // failed rerun, or they read as that run's output.
+        std::fs::write(suffixed(&base, "irq.csv"), b"stale csv").expect("stale csv");
+        std::fs::write(suffixed(&base, "ckpt.bin"), b"stale ckpt").expect("stale ckpt");
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             super::write_irq_artifacts(&mut o, &base, 4096)
         }));
         let csv_exists = suffixed(&base, "irq.csv").exists();
+        let ckpt_exists = suffixed(&base, "ckpt.bin").exists();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(result.is_err(), "an overflowed trace must still refuse");
         assert!(
             !csv_exists,
-            "a truncated irq.csv with no overflow marker was left on disk"
+            "an irq.csv (truncated, or a previous run's) was left on disk"
         );
+        assert!(!ckpt_exists, "a previous run's ckpt.bin was left on disk");
     }
 
     /// Pinned against an independently-known digest, not against our own output.

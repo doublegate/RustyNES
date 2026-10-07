@@ -63,6 +63,21 @@ def main() -> None:
             "GraphQL response has no reviewThreads.nodes list "
             "(check that the query selects reviewThreads { nodes { ... } })"
         )
+    # A TRUNCATED list must fail closed too (v3.0.1, Copilot on #590): the query
+    # asks for `first:100`, and a PR with more threads used to print an
+    # all-clear for page one while later pages held open threads. The payload
+    # must say whether more pages exist, and this gate refuses if they do.
+    page = (pr.get("reviewThreads") or {}).get("pageInfo")
+    if not isinstance(page, dict) or not isinstance(page.get("hasNextPage"), bool):
+        raise SystemExit(
+            "GraphQL response has no reviewThreads.pageInfo.hasNextPage "
+            "(select it, so a truncated thread list cannot read as complete)"
+        )
+    if page["hasNextPage"]:
+        raise SystemExit(
+            "more review threads than one page: refusing a partial count "
+            "(raise first:, or page with after: endCursor and check each page)"
+        )
     shown = 0
     for i, thread in enumerate(threads):
         # A partial node used to die on a bare KeyError/TypeError traceback;
@@ -71,11 +86,16 @@ def main() -> None:
             raise SystemExit(f"review thread #{i} has no boolean isResolved")
         if thread["isResolved"]:
             continue
+        if not thread.get("id"):
+            raise SystemExit(f"review thread #{i} has no id")
         comments = (thread.get("comments") or {}).get("nodes")
         if not isinstance(comments, list):
             raise SystemExit(f"review thread #{i} ({safe(thread.get('id'))}) has no comments.nodes list")
+        # A real review thread always has a comment, so an empty list means a
+        # partial query (`comments(first:0)`) -- skipping it would let an open
+        # thread reach the all-clear (v3.0.1, Copilot on #592).
         if not comments:
-            continue
+            raise SystemExit(f"review thread #{i} ({safe(thread.get('id'))}) has no comments")
         c = comments[0]
         if not isinstance(c, dict) or c.get("databaseId") is None:
             raise SystemExit(

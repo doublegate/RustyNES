@@ -12,10 +12,13 @@ gh api graphql -f query='
   query($owner:String!,$repo:String!,$pr:Int!){
     repository(owner:$owner,name:$repo){
       pullRequest(number:$pr){
-        reviewThreads(first:100){ nodes{
-          id isResolved isOutdated path line
-          comments(first:1){ nodes{ databaseId body author{login} } }
-        }}
+        reviewThreads(first:100){
+          pageInfo{ hasNextPage endCursor }
+          nodes{
+            id isResolved isOutdated path line
+            comments(first:1){ nodes{ databaseId body author{login} } }
+          }
+        }
       }
     }
   }' -F owner=doublegate -F repo=RustyNES -F pr=325 \
@@ -28,7 +31,7 @@ gh api graphql -f query='
 | `list_all_threads.py` | Every thread with its `isResolved` / `isOutdated` flags — the audit view, for confirming nothing was missed. |
 | `reply_and_resolve.py` | Applies prepared replies and resolves **only** the threads that were addressed. Dry run by default. |
 | `reply_and_resolve_selftest.py` | No-network selftest of the two above it. Run it after editing either. |
-| `list_unresolved_threads_selftest.py` | No-network selftest of `list_unresolved_threads.py`: a payload with no thread list, or a partial thread node, must exit non-zero with a named error rather than print `0 unresolved thread(s)` (added v3.0.1). Run it after editing that script. |
+| `list_unresolved_threads_selftest.py` | No-network selftest of `list_unresolved_threads.py`: a payload with no thread list, or a partial thread node, must exit non-zero with a named error rather than print `0 unresolved thread(s)`, and so must a list that does not carry `pageInfo.hasNextPage` or says more pages exist (added v3.0.1). Run it after editing that script. |
 
 ## Writing the outcome back
 
