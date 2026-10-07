@@ -62,9 +62,15 @@ SECTION = re.compile(r'^## \[(?P<v>\d+\.\d+\.\d+)\] - (?P<d>\d{4}-\d{2}-\d{2}) -
 # version" and nothing enforced it. They were realigned by hand to the
 # workspace version (2.9.9) during v3.0.0's development, so the 3.0.0 cut is
 # the first bump that moves them.
+#
+# The two `Cargo.toml` patterns are anchored to a WHOLE LINE (`\nversion = ...\n`).
+# Unanchored, `version = "3.0.0"` also matched every internal path dependency's
+# `version = "3.0.0"` requirement, which v3.0.0 moved to the new major: the v3.0.1
+# cut found 14 matches and refused. The collision exists only while the outgoing
+# release is an X.0.0, so no cut before v3.0.1 could have seen it.
 MANIFESTS = [
-    ("Cargo.toml", 'version = "{v}"'),
-    ("crates/rustynes-cosim/Cargo.toml", 'version = "{v}"'),
+    ("Cargo.toml", '\nversion = "{v}"\n'),
+    ("crates/rustynes-cosim/Cargo.toml", '\nversion = "{v}"\n'),
     ("crates/rustynes-libretro/rustynes_libretro.info", 'display_version = "v{v}"'),
     ("android/app/build.gradle.kts", 'versionName = "{v}"'),
     ("android/app/build.gradle.kts", 'versionCode = {code}'),
@@ -702,6 +708,14 @@ def selftest() -> int:
     check("an external crate is never touched", 'serde = { version = "1.0.0" }' in got, True)
     got, n = bump_internal_requirements(manifest, "2.9.9")
     check("a minor bump leaves requirements alone", (n, got), (0, manifest))
+
+    # The workspace version anchor must not match an internal requirement that
+    # happens to carry the same string (v3.0.1: every requirement read "3.0.0").
+    ws = ('[workspace.package]\nversion = "3.0.0"\nedition = "2024"\n\n'
+          '[workspace.dependencies]\n'
+          'rustynes-core = { path = "crates/rustynes-core", version = "3.0.0" }\n')
+    want = dict(MANIFESTS)["Cargo.toml"].format(v="3.0.0")
+    check("the Cargo.toml anchor matches the package line only", ws.count(want), 1)
 
     # An unclassifiable line must raise, never be bumped mechanically.
     try:

@@ -26,6 +26,21 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-07 - "Mortar" (the open items closed, one game's graphics fixed, the last MMC3 rule exception tested in the MiSTer core, Rust 1.99 everywhere, every unanswered bot review answered, and a roadmap to v4.0.0)
+
+A maintenance release on v3.0.0. It closes the items v3.0.0 left open:
+*Famicom Yarou Vol.1*'s CHR-RAM, the MiSTer core's odd-frame A12 exception
+(now reached by a test ROM, which found a real one-cycle defect). It moves the toolchain and every dependency to its
+newest release (the libretro buildbot included, once a test pipeline proved its
+build image no longer blocks it), answers every bot review left unanswered since
+PR #1, settles two provenance questions, and writes the plan from v3.1.0 to
+v4.0.0 from 29 maintainer decisions. **Movies and netplay from v3.0.0 are
+refused**: the mapper 45 fix changes one game's output, so `EMULATION_EPOCH`
+rises to 2 (ADR 0045). Save states are unaffected. The MiSTer bitstreams are
+rebuilt, because the A12 fix is RTL, and remain a **release candidate, not
+hardware-verified**. The maintainer's decisions are in
+`to-dos/plans/v3.0.1-mortar-plan.md` and `to-dos/plans/v3.1-to-v4.0-line-plan.md`.
+
 ### Fixed
 
 - **Mapper 45 (GA23C) CHR-RAM is unbanked (T-GA23C-CHRRAM).** *Famicom Yarou
@@ -84,6 +99,16 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **The plan from v3.1.0 to v4.0.0.** `to-dos/plans/v3.1-to-v4.0-line-plan.md`
+  and one plan per release, written from three research passes (the oracle's
+  backlog, the MiSTer core's, and the outside ecosystem) and 29 maintainer
+  decisions taken on 2026-10-07. v4.0.0 is the remaining public enums made
+  `#[non_exhaustive]` plus MiSTer feature parity. The hardware-verification
+  release (the SuperStation One board session and the mobile device run) moves
+  to the end of the v3.9.x line, so it tests the near-final core, and is
+  numbered after the session. `VERSION-PLAN.md` now lets save-state, movie,
+  netplay and epoch breaks land in any release that says so; a MAJOR is a
+  public Rust API break or a new kind of deliverable (ADR 0043 amendments).
 - **Rust 1.99, everywhere.** The pinned toolchain moves from 1.96.0 to 1.99.0,
   the newest stable, and the libretro buildbot moves with it. The release first
   held the buildbot on 1.96.0, because its build image passed `-C ar`, a hard
@@ -110,6 +135,37 @@ cycle-accurate core later replaced.
 - **`EMULATION_EPOCH` is 2.** The mapper 45 fix changes what *Famicom Yarou
   Vol.1* produces, so movies recorded and netplay peers running v3.0.0 are
   refused, naming both epochs (ADR 0045).
+
+### Verification
+
+- `cargo test --release --workspace --features test-roms --no-fail-fast`:
+  3,234 passed, 0 failed, 11 ignored on the release tree (v3.0.0: 3,223 / 0 /
+  11). `cargo test --workspace`: 2,886 / 0 / 7; the cosim crate 54 / 0.
+  AccuracyCoin 144/144, nestest 0-diff.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0, `external_extended` 137/0, `external_coverage`
+  6/0. The one moved baseline is *Famicom Yarou Vol.1* (T-GA23C-CHRRAM), which
+  now draws its menu.
+- fmt; clippy for all 18 feature combinations, including `retroachievements`,
+  `full` and both wasm builds; rustdoc `-D warnings`; the `no_std` build; the
+  release audits; markdownlint. The code fixes carry tests, with the mutation
+  that checks each one recorded in its commit body.
+- The libretro buildbot: a test branch on Rust 1.99.0 (pipeline 119614) passed
+  all 15 jobs, the four Apple ones included, before the pin was lifted.
+- The MiSTer core: on-die ladder 200 passed, 0 failed, 1 expected failure,
+  off-die 201 / 0 / 1, each one frozen-worktree run of the final sibling RTL
+  against the oracle pinned at this release branch, nothing skipped. The new
+  odd-frame A12 gate matches all 2,978,055 cycles and the cycle of every /IRQ
+  rise; its three mutants were classified (two caught, the third inert by
+  construction and documented at the site). Both builds were swept at seeds
+  1-8 on one build date (261007), and every seed closes on both. Seed 2 is
+  pinned (on-die +0.448 / +0.113 ns, off-die +0.401 / +0.096 ns, SDRAM read
+  +0.447 / +1.184 ns), and two clean compiles of each are byte-identical
+  (on-die `7e81a718...`, off-die `88d1dfa5...`). The stuck-register and
+  suppressed-message checks pass on both. That pair ships as a release
+  candidate. **No hardware has run any bitstream.**
+- The Android unit tests run in CI on the release PR; the iOS Swift and the
+  mobile device behaviour are unverified on this Linux host.
 
 ## [3.0.0] - 2026-10-06 - "Cornerstone" (the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core)
 
