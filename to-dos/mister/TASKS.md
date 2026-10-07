@@ -328,7 +328,28 @@ something as blocked, check the blocker applies to the WHOLE item.**
       it is written**: before recording something as blocked, check the blocker
       applies to the whole item. It applied to *hardware acceptance*, not to
       building the controller or to verifying it against a documented part.
-- [ ] **A stimulus for the odd-frame exception to the dot-0 A12 rule**
+- [x] **DONE v3.0.1 — and it found a DUT defect first.** The sibling's
+      `mapper4mmc3oddskip080` (`tb/roms/mkmapper.py mmc3oddskip`) turns
+      rendering off at vblank and on near the pre-render line's end with a
+      latch-0 IRQ armed; the oracle's trace counts 3 of 100 frames that reach
+      the exception. Before it could gate the exception it showed the rule
+      itself was gated on the live `rendering` at dots 1-2, so a `$2001` write
+      taking effect at dot 2 got the rule; fixed to "was dot 1 rendering"
+      (sibling ledger 3.49). The exception's mutant is CAUGHT on the new
+      `IRQ_RISE` surface (`tb/irq_rise_diff.py`): the bus alone cannot see a
+      one-cycle /IRQ shift. Two predictions below were wrong: the window is
+      dots 333-336, not 337-339 (rendering takes effect a few dots after the
+      write, and a write in 337-339 usually lands too late for the skip), and
+      the bitstream DOES change, because the rule's fix is RTL. The original
+      item follows.
+- [ ] **Does a `$2006` `v <- t` copy on a `v_pipeline` load dot match the
+      oracle?** (raised by agy on sibling #28, left UNSURE by the v3.0.1
+      sweep). The ordering is confirmed: the copy commits before the pipeline
+      in the same dot, so the pipeline's value wins on a load dot, and that
+      precedence predates `v_pipeline`. Whether it diverges from the oracle is
+      unmeasured; settling it needs a stimulus that lands the copy on dot 257
+      or on an increment dot, compared per cycle (fetch or bus gate).
+- [x] **A stimulus for the odd-frame exception to the dot-0 A12 rule**
       (T-MMC3-BG-A12; raised by Copilot on sibling #53, 2026-10-06). The
       RTL's exception for scanline 0 after an odd frame's skip is
       **stimulus-blind**, not inert. blargg's `4-scanline_timing`
