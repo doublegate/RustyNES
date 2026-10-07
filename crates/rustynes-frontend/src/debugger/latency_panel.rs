@@ -968,7 +968,7 @@ mod tests {
             None,
             "the previous game's run-ahead depth was still queued to apply"
         );
-        assert!(panel.status.is_empty());
+        assert_eq!(panel.status, "");
         assert!(!panel.measure_requested);
     }
 

@@ -1535,9 +1535,7 @@ fn fds_disk_writes_survive_closing_the_game() {
         .join(format!("{sha}.fds.sav"));
     let _ = std::fs::remove_file(&file);
     let written = |file: &std::path::Path| {
-        std::fs::read(file)
-            .ok()
-            .is_some_and(|b| b.get(15..15 + DISK_MARKER.len()) == Some(DISK_MARKER))
+        std::fs::read(file).is_ok_and(|b| b.get(15..15 + DISK_MARKER.len()) == Some(DISK_MARKER))
     };
 
     // A clean boot: nothing written yet.
@@ -1854,7 +1852,7 @@ fn oracle_frame(mut nes: Nes, frames: u32) -> Vec<u8> {
         nes.run_frame();
     }
     let mut out = nes.framebuffer().to_vec();
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     out

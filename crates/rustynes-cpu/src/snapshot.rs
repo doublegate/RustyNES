@@ -48,8 +48,10 @@ use crate::status::Status;
 ///   BRANCH, so suppressing the poll needs the flag's value on the previous
 ///   cycle as well as this one. It is genuine emulation state read back on
 ///   the next tick, not derivable from the rest of the blob — a restore that
-///   dropped it would resume with the NMI edge detector re-armed a cycle
-///   early on any snapshot landing inside a taken branch. Serialized rather
+///   dropped it would resume with the NMI dispatch gate (the
+///   `mc_prev_need_nmi` copy; the edge latch `mc_need_nmi` runs every cycle
+///   regardless) re-opened a cycle early on any snapshot landing inside a
+///   taken branch. Serialized rather
 ///   than allowlisted, which `snapshot_schema_audit` says has been the right
 ///   answer every time it has come up.
 pub const CPU_SNAPSHOT_VERSION: u8 = 4;

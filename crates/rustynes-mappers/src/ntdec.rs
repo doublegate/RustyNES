@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Provenance: the NTDEC boards are derived from Mesen2 (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// Provenance: the NTDEC boards are derived from Mesen2 (GPL-3.0-or-later), `Ntdec/NtdecTc112.h` (mapper 193), `Unlicensed/Mapper204.h` (mapper 204) and `Txc/Bmc11160.h` (mapper 299). See docs/originality-and-provenance.md (Section 1)
 // and NOTICE for the complete, audited derivation record.
 //! NTDEC boards decoded from the address bus: mappers 63 and 174.
 //!

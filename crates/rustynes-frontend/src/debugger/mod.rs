@@ -394,13 +394,15 @@ pub fn take_detached_size(id: &'static str) -> Option<(u32, u32)> {
 ///
 /// - **Main-window pass** (`target == None`): if `id` is docked, render the normal
 ///   [`egui::Window`] seeded with `cfg` (first-open position / size / resizability)
-///   plus a small "⧉ Detach" button that adds `id` to `detached`. If `id` is
+///   plus a small Detach button (the Font Awesome `icons::glyph::EXPAND` glyph)
+///   that adds `id` to `detached`. If `id` is
 ///   detached, render NOTHING here — it now lives in its own OS window, which the
 ///   [`crate::detached::DetachedManager`] created when `App` reconciled the
 ///   `detached` set.
 /// - **Detached pass** (`target == Some(t)`): render content ONLY when `id == t`,
-///   as a [`egui::CentralPanel`] filling that OS window, with a "⧉ Reattach"
-///   button (the OS window's close button reattaches too, handled in `App`).
+///   as an [`egui::Area`] + central-panel [`egui::Frame`] filling that OS window,
+///   with a "Reattach to main window" button (the `icons::glyph::COMPRESS`
+///   glyph; the OS window's close button reattaches too, handled in `App`).
 ///   Non-matching panels early-return so one dispatch paints exactly one panel.
 ///
 /// **Native-only** detach — on wasm (`target` always `None`, no `detached` inserts)

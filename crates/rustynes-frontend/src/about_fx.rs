@@ -135,7 +135,9 @@ fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => buf
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], 0xFF])
             .collect(),
         _ => return None,

@@ -757,7 +757,7 @@ impl PpuStateTrace {
         }
         let n = body.len() / RECORD_SIZE;
         let mut records = Vec::with_capacity(n);
-        for chunk in body.chunks_exact(RECORD_SIZE) {
+        for chunk in body.as_chunks::<RECORD_SIZE>().0 {
             let rec = PpuStateRecord::from_bytes(chunk)
                 .ok_or_else(|| String::from("PpuStateRecord::from_bytes returned None"))?;
             records.push(rec);

@@ -891,7 +891,7 @@ mod tests {
         };
         p.clear();
         assert_eq!(p.take_watch_request(), None);
-        assert!(p.status.is_empty());
+        assert_eq!(p.status, "");
     }
 
     /// A ROM change must discard the whole atlas. Two thousand labels describing
@@ -907,10 +907,10 @@ mod tests {
             ..AtlasPanel::default()
         };
         p.clear();
-        assert!(p.labels.is_empty());
+        assert_eq!(p.labels, [] as [rustynes_probe::atlas::Label; 0]);
         assert_eq!(p.frames, 0);
         assert_eq!(p.selected, None);
-        assert!(p.status.is_empty());
+        assert_eq!(p.status, "");
     }
 
     /// A batch must never spend trials on untouched addresses: they are the bulk

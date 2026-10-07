@@ -373,7 +373,7 @@ pub fn export_fm2(movie: &Movie, opts: &Fm2ExportOpts) -> Result<String, Fm2Erro
 /// is written as its mnemonic letter; a released one as `'.'`.
 fn write_pad(buttons: Buttons, out: &mut [u8; 8]) {
     // Mnemonic letters in column order, matching `PAD_COLUMNS`.
-    const LETTERS: [u8; 8] = [b'R', b'L', b'D', b'U', b'T', b'S', b'B', b'A'];
+    const LETTERS: [u8; 8] = *b"RLDUTSBA";
     for i in 0..8 {
         out[i] = if buttons.contains(PAD_COLUMNS[i]) {
             LETTERS[i]

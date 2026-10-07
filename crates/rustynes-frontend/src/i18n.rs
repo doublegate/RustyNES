@@ -917,8 +917,8 @@ mod tests {
             Key::ButtonOk,
             Key::StatusIdle,
         ] {
-            assert!(!tr_in(Locale::Spanish, key).is_empty());
-            assert!(!tr_in(Locale::English, key).is_empty());
+            assert_ne!(tr_in(Locale::Spanish, key), "");
+            assert_ne!(tr_in(Locale::English, key), "");
         }
     }
 
@@ -967,7 +967,7 @@ mod tests {
                 !english(key).is_empty(),
                 "{key:?} has an empty English string"
             );
-            assert!(!tr_in(Locale::English, key).is_empty());
+            assert_ne!(tr_in(Locale::English, key), "");
         }
     }
 

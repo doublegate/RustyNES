@@ -485,7 +485,7 @@ fn apply_signed_offset(cursor: &mut usize, raw: u64) -> Result<(), PatchError> {
 }
 
 /// Read a little-endian `u32` from a 4-byte slice.
-fn read_le_u32(bytes: &[u8]) -> u32 {
+const fn read_le_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 

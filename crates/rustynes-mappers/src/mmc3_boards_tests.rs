@@ -255,6 +255,45 @@ fn m45_power_on_and_reset_pass_every_mmc3_chr_bit() {
     check(&mut m, "$6001");
 }
 
+/// T-GA23C-CHRRAM. A GA23C board with CHR-RAM addresses it straight from PPU
+/// A10-A12: the MMC3's CHR banks and the outer CHR registers do not reach it.
+/// The mapper 45 page is silent on CHR-RAM; the GA23C variant that switches
+/// to CHR-RAM, mapper 372 (`NES_2_0_Mapper_372.md`), documents that RAM as
+/// "unbanked". *Famicom Yarou Vol.1 7-in-1* depends on it: its menu uploads
+/// 8 KiB through `$2007` with every CHR register 0, then draws with R0-R5 =
+/// 0, 2, 4, 5, 6, 7. That sequence is replayed here; under MMC3 banking the
+/// upload lands in banks 0-1 only and banks 2-7 read back as zero.
+#[test]
+fn m45_chr_ram_is_unbanked() {
+    let mut m = Mmc3Board::new(
+        Board::M45,
+        prg_image(32),
+        Box::default(),
+        Mirroring::Vertical,
+        0,
+        0,
+    )
+    .expect("valid sizes");
+    for r in 0..6 {
+        mmc3_reg(&mut m, r, 0);
+    }
+    for addr in 0..0x2000u16 {
+        m.ppu_write(addr, (addr >> 10) as u8 ^ addr as u8);
+    }
+    for (r, v) in [0, 2, 4, 5, 6, 7].into_iter().enumerate() {
+        mmc3_reg(&mut m, r as u8, v);
+    }
+    // Outer registers that would move a banked CHR elsewhere change nothing.
+    m45_outer(&mut m, [0x10, 0x00, 0x07, 0x00]);
+    for addr in 0..0x2000u16 {
+        assert_eq!(
+            m.ppu_read(addr),
+            (addr >> 10) as u8 ^ addr as u8,
+            "CHR-RAM byte ${addr:04X}"
+        );
+    }
+}
+
 #[test]
 fn m45_dip_switch_reads_on_d0() {
     let mut m = board(Board::M45, 16, 8);

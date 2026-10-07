@@ -35,3 +35,8 @@ port = 8081
 # library are released in lockstep and version-check each other.
 # Check with `grep -A1 'name = "wasm-bindgen"' Cargo.lock`.
 wasm_bindgen = "0.2.129"
+# v3.0.1: wasm-opt (binaryen) pinned too. Unset, trunk 0.21.14 falls back to
+# its built-in default (`version_123`, about two years old), so the optimiser
+# that shapes the shipped demo was whatever that trunk release happened to
+# carry. version_133 is binaryen's newest release (2026-09-21).
+wasm_opt = "version_133"

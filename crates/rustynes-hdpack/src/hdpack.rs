@@ -953,7 +953,7 @@ fn decode_png_pixels<R: std::io::BufRead + std::io::Seek>(
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => {
             let mut out = Vec::with_capacity(rgba_len);
-            for px in buf.chunks_exact(3) {
+            for px in buf.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
             }
             out
@@ -967,7 +967,7 @@ fn decode_png_pixels<R: std::io::BufRead + std::io::Seek>(
         }
         png::ColorType::GrayscaleAlpha => {
             let mut out = Vec::with_capacity(rgba_len);
-            for px in buf.chunks_exact(2) {
+            for px in buf.as_chunks::<2>().0 {
                 out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
             }
             out
@@ -2629,7 +2629,7 @@ fn blend_over(
 /// it bit-for-bit or no tile matches.
 fn calculate_hash(key: &[u8]) -> u32 {
     let mut result: u32 = 0;
-    for chunk in key.chunks_exact(4) {
+    for chunk in key.as_chunks::<4>().0 {
         let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
         result = result.wrapping_add(val).rotate_left(2);
     }
@@ -3122,7 +3122,7 @@ mod tests {
         assert_eq!(rule.image, 0, "bitmap index 0 = first <img>");
         assert_eq!(rule.x, 16);
         assert_eq!(rule.y, 0);
-        assert!(rule.conditions.is_empty());
+        assert_eq!(rule.conditions, [] as [usize; 0]);
         assert_eq!(parsed.image_names, vec!["tiles.png".to_string()]);
     }
 
@@ -3392,7 +3392,7 @@ mod tests {
         assert_eq!(parsed.backgrounds[0].y, 0);
         // No priority field present -> Mesen default priority 10.
         assert_eq!(parsed.backgrounds[0].priority, 10);
-        assert!(parsed.backgrounds[0].conditions.is_empty());
+        assert_eq!(parsed.backgrounds[0].conditions, [] as [usize; 0]);
         assert_eq!(parsed.backgrounds[1].priority, 3);
         assert_eq!(parsed.backgrounds[1].x, 16);
         assert_eq!(parsed.backgrounds[1].y, 32);

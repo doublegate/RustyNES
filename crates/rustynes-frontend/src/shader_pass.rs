@@ -977,7 +977,10 @@ mod tests {
 
     #[test]
     fn ignores_non_pragma_lines() {
-        assert!(parse_pragma_parameters("let x = 1.0;\n// a comment\n").is_empty());
+        assert_eq!(
+            parse_pragma_parameters("let x = 1.0;\n// a comment\n"),
+            [] as [crate::shader_pass::ShaderParam; 0]
+        );
     }
 
     #[test]
@@ -1053,7 +1056,10 @@ mod tests {
         // The load-bearing invariant at the config level.
         let cfg = ShaderStackConfig::default();
         assert!(!cfg.has_enabled_passes());
-        assert!(cfg.effective_passes().is_empty());
+        assert_eq!(
+            cfg.effective_passes(),
+            [] as [&crate::shader_pass::ShaderPassDesc; 0]
+        );
     }
 
     #[test]
@@ -1098,7 +1104,10 @@ mod tests {
             passes: vec![ShaderPassDesc::new("from-a-newer-build")],
         };
         assert!(!cfg.has_enabled_passes());
-        assert!(cfg.effective_passes().is_empty());
+        assert_eq!(
+            cfg.effective_passes(),
+            [] as [&crate::shader_pass::ShaderPassDesc; 0]
+        );
     }
 
     #[test]
@@ -1129,7 +1138,10 @@ mod tests {
         // family (the legacy `crt` scanline pass or, since v2.1.9, one of the
         // marquee CRT-stack / raw-signal passes) and must resolve to a builtin.
         let presets = ShaderPresetBank::builtins();
-        assert!(!presets.is_empty());
+        assert_ne!(
+            presets,
+            [] as [(std::string::String, crate::shader_pass::ShaderStackConfig); 0]
+        );
         for (name, stack) in presets {
             assert!(stack.has_enabled_passes(), "{name}");
             assert_eq!(stack.passes.len(), 1, "{name} should be a single pass");

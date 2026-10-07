@@ -254,7 +254,11 @@ pub struct Cpu {
     /// taken / page-cross cycles do *not* re-sample IRQ.  The branch
     /// dispatch sets this flag *before* the operand fetch and `step()`
     /// clears it at the top of every instruction.
-    /// NMI sampling is unaffected — the quirk is IRQ-only.
+    /// Since v2.6.7 the same rule defers NMI *dispatch*: while this flag and
+    /// `skip_irq_sample_q` are both set, `handle_interrupts` freezes the
+    /// dispatch copy `mc_prev_need_nmi`. The NMI edge latch (`mc_need_nmi`)
+    /// keeps running every cycle, so an edge is never lost, only recognised
+    /// after the branch.
     pub(crate) skip_irq_sample: bool,
     /// `skip_irq_sample` as it stood on the PREVIOUS cycle. The NMI dispatch
     /// gate freezes on this rather than on the live flag, because the two
@@ -851,9 +855,7 @@ impl Cpu {
     #[inline(always)]
     #[allow(clippy::inline_always)]
     fn implied_dummy_read<B: Bus>(&mut self, bus: &mut B) {
-        {
-            let _ = self.read1(bus, self.pc);
-        }
+        let _ = self.read1(bus, self.pc);
     }
 
     /// Read a byte at `addr` *and* consume one CPU cycle (with bus tick
@@ -2858,7 +2860,7 @@ impl Cpu {
             // W1 (`mc-r1-branch-poll-points`): a page-cross taken branch
             // polls a SECOND time at C4-start — TriCNES's
             // `PollInterrupts_CantDisableIRQ` in the BPL microcode
-            // (`golden/tricnes/tricnes-full-src/Emulator.cs`): if the C2-start
+            // (`100thCoin/TriCNES` `Emulator.cs` at `94f1b117`): if the C2-start
             // poll already saw the IRQ this one cannot un-see it (can-SET-
             // not-clear). `mc_run_irq` is frozen across the branch's
             // remaining cycles by the `handle_interrupts` early-return, so

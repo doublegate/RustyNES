@@ -2230,7 +2230,7 @@ mod tests {
     #[test]
     fn m30_non_flashable_board_has_no_flash() {
         let mut m = Unrom512M30::new(synth_prg_16k(16), &[], false, true, 0, false).unwrap();
-        assert!(m.save_data().is_empty());
+        assert_eq!(m.save_data(), []);
         m.cpu_write(0x9555, 0xAA);
         assert!(m.cpu_read_unmapped(0x6000));
     }

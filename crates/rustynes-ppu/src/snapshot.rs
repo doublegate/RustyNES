@@ -1386,6 +1386,75 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_round_trips_the_v6_tail_at_non_default_values() {
+        // The v6 tail -- per-sprite `spr_halted` plus the six rendering /
+        // OAM-corruption fields after it -- was round-tripped only at its
+        // power-on defaults, so a reader that disagreed with the writer about
+        // ORDER still passed: every field read back the value it already had.
+        // `snapshot_schema_audit` proves only that each field is written.
+        //
+        // So flip ONE field at a time away from its default and compare the
+        // whole tail after restore. A swapped pair of adjacent bools then
+        // reads back as two wrong fields instead of two right ones.
+        type Tail = ([bool; 8], bool, bool, bool, u8, bool, bool);
+        fn tail(p: &Ppu) -> Tail {
+            (
+                p.spr_halted,
+                p.prev_rendering_enabled,
+                p.rendering_enabled_delayed,
+                p.oam_corruption_pending,
+                p.oam_corruption_index,
+                p.oam_corruption_disabled,
+                p.oam_corruption_disabled_instant,
+            )
+        }
+        type Setter = fn(&mut Ppu);
+        let cases: [(&str, Setter); 14] = [
+            ("spr_halted[0]", |p| p.spr_halted[0] = false),
+            ("spr_halted[1]", |p| p.spr_halted[1] = false),
+            ("spr_halted[2]", |p| p.spr_halted[2] = false),
+            ("spr_halted[3]", |p| p.spr_halted[3] = false),
+            ("spr_halted[4]", |p| p.spr_halted[4] = false),
+            ("spr_halted[5]", |p| p.spr_halted[5] = false),
+            ("spr_halted[6]", |p| p.spr_halted[6] = false),
+            ("spr_halted[7]", |p| p.spr_halted[7] = false),
+            ("prev_rendering_enabled", |p| {
+                p.prev_rendering_enabled = true;
+            }),
+            ("rendering_enabled_delayed", |p| {
+                p.rendering_enabled_delayed = true;
+            }),
+            ("oam_corruption_pending", |p| {
+                p.oam_corruption_pending = true;
+            }),
+            ("oam_corruption_index", |p| p.oam_corruption_index = 0x1F),
+            ("oam_corruption_disabled", |p| {
+                p.oam_corruption_disabled = true;
+            }),
+            ("oam_corruption_disabled_instant", |p| {
+                p.oam_corruption_disabled_instant = true;
+            }),
+        ];
+        let default_tail = tail(&Ppu::new(PpuRegion::Ntsc));
+        for (name, set) in cases {
+            let mut p = Ppu::new(PpuRegion::Ntsc);
+            set(&mut p);
+            let expected = tail(&p);
+            assert_ne!(
+                expected, default_tail,
+                "{name}: the case must change something"
+            );
+            let mut q = Ppu::new(PpuRegion::Ntsc);
+            q.restore(&p.snapshot()).unwrap();
+            assert_eq!(
+                tail(&q),
+                expected,
+                "{name} did not survive snapshot/restore"
+            );
+        }
+    }
+
+    #[test]
     fn snapshot_round_trips_sprite_evaluation_state() {
         // v8: a snapshot taken with a sprite-evaluation pass in flight (dots
         // 65..=256) must restore the FSM's pointers and phase, not just the

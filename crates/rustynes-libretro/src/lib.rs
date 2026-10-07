@@ -1701,7 +1701,7 @@ impl RustyNesLibretro {
             return;
         };
         self.video_buffer.extend_from_slice(nes.framebuffer());
-        for chunk in self.video_buffer.chunks_exact_mut(4) {
+        for chunk in self.video_buffer.as_chunks_mut::<4>().0 {
             chunk.swap(0, 2); // RGBA8 → XRGB8888 (in-memory B G R X).
         }
         ctx.draw_frame(&self.video_buffer, NES_W as u32, NES_H as u32, NES_W * 4);
@@ -3513,7 +3513,7 @@ mod tests {
         let mut expected = Vec::with_capacity(DUAL_W * NES_H * 4);
         for y in 0..NES_H {
             for fb in [dual.main_framebuffer(), dual.sub_framebuffer()] {
-                for px in fb[y * NES_W * 4..(y + 1) * NES_W * 4].chunks_exact(4) {
+                for px in fb[y * NES_W * 4..(y + 1) * NES_W * 4].as_chunks::<4>().0 {
                     expected.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
                 }
             }

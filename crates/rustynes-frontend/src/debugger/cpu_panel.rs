@@ -496,7 +496,7 @@ mod tests {
             status.contains("work RAM"),
             "expected a work-RAM rejection, got {status:?}"
         );
-        assert!(pending.is_empty());
+        assert_eq!(pending, [] as [crate::emu::DebugPoke; 0]);
     }
 
     #[test]
@@ -507,6 +507,6 @@ mod tests {
             status.contains("work RAM"),
             "expected an overrun rejection, got {status:?}"
         );
-        assert!(pending.is_empty());
+        assert_eq!(pending, [] as [crate::emu::DebugPoke; 0]);
     }
 }

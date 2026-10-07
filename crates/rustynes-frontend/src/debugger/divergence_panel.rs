@@ -527,7 +527,7 @@ mod tests {
         );
         assert!(panel.audio.is_none(), "a located cycle outlived its ROM");
         assert!(panel.requested.is_none(), "a queued run outlived its ROM");
-        assert!(panel.status.is_empty());
+        assert_eq!(panel.status, "");
         assert_eq!(panel.addr, 0, "the perturbation target is ROM-bound too");
     }
 }

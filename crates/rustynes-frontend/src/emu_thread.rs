@@ -316,16 +316,23 @@ pub struct EmuControl {
     ///
     /// * `tick_lat_ns` — send to receipt, i.e. the winit->emu hop: scheduler
     ///   wake-up latency, the last completely unmeasured step in the chain.
-    /// * `tick_iv_ns` — the interval between successive SENDS, i.e. how
-    ///   regularly the winit thread asked for a frame, independent of how long
-    ///   the ask took to arrive.
+    /// * `tick_iv_ns` — the interval between the send stamps of successive
+    ///   DELIVERED ticks, i.e. how regularly the winit thread asked for a frame,
+    ///   independent of how long the ask took to arrive. It is differenced on
+    ///   the receiver, so a tick dropped on the full depth-1 channel
+    ///   ([`Self::tick_dropped`]) is never seen and the next interval spans two
+    ///   sends. It equals the send cadence only while `tick_dropped` is 0;
+    ///   drops were measured at 0 (`run_ahead` 2) and 0-1 (`run_ahead` 0) per
+    ///   45 s capture (`docs/performance.md`, "Suspect A"). Until v3.0.1 this
+    ///   said "between successive SENDS", which holds only while nothing drops.
     ///
     /// Aimed by measurement, not by guess: produce-interval standard deviation
     /// tracks missed presents at r = 0.937 across eighteen captures, and these
     /// two plus the existing `produce_cost` are the three terms that make up
     /// that interval.
     tick_lat_ns: AtomicU64,
-    /// Interval between successive tick sends. See [`Self::tick_lat_ns`].
+    /// Interval between the send stamps of successive delivered ticks. See
+    /// [`Self::tick_lat_ns`].
     tick_iv_ns: AtomicU64,
     /// Previous send stamp, for differencing into [`Self::tick_iv_ns`]. Zero
     /// means "no previous tick", which suppresses the first interval rather

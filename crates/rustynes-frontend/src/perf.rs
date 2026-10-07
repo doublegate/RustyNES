@@ -1096,7 +1096,7 @@ mod tests {
         // More than available -> the whole ring.
         assert_eq!(r.recent(100).len(), 10);
         // Empty ring -> empty vec.
-        assert!(SampleRing::default().recent(5).is_empty());
+        assert_eq!(SampleRing::default().recent(5), [] as [f32; 0]);
     }
 
     // v1.3.0 Workstream B — the present/produce mismatch diagnostics (the
