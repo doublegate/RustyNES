@@ -104,6 +104,12 @@
 # offset, 0x10B5, 0x02 -> 0x03 (the `LDX #test` immediate; `LDY #suite` sits at
 # 0x10AB).
 #
+# v3.1.0: `sprite-eval-misaligned-oam` settles on frame 211 (212 before). The
+# misaligned-evaluation fixes make its tests 3, 6 and 7 pass on their own
+# path; before, each failed and fell through the ROM's unpopped fail path,
+# which ran a different number of cycles. Verdict unchanged (Pass); the
+# generator's output differs from the old data in that one field only.
+#
 # REGENERATE WITH THE GENERATOR, AND THE SCHEMA LINE BELOW COMES FROM IT:
 #
 #   cargo run -p rustynes-test-harness --release --features test-roms \
@@ -147,6 +153,6 @@ sh-shx-9E	9	4	0x044A	$9E   SHX absolute,Y	Pass	27	legacy-unrecorded
 sh-shy-9C	9	3	0x0449	$9C   SHY absolute,X	Pass	27	legacy-unrecorded
 sprite-eval-2002-flag-timing	17	2	0x048D	$2002 flag timing	Pass	73	legacy-unrecorded
 sprite-eval-arbitrary-sprite-zero	17	4	0x0458	Arbitrary Sprite zero	Fail(1)	29	legacy-unrecorded
-sprite-eval-misaligned-oam	17	5	0x045A	Misaligned OAM behavior	Pass	212	legacy-unrecorded
+sprite-eval-misaligned-oam	17	5	0x045A	Misaligned OAM behavior	Pass	211	legacy-unrecorded
 sprite-eval-oam-corruption	17	7	0x047B	OAM Corruption	Pass	111	legacy-unrecorded
 sprite-zero-hit-behavior	17	1	0x0457	Sprite 0 Hit behavior	Fail(1)	29	legacy-unrecorded

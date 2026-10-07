@@ -71,14 +71,14 @@ Unofficial Instructions: SH*	$9B   SHS absolute,Y	0x0448
 Unofficial Instructions: SH*	$9C   SHY absolute,X	0x0449
 Unofficial Instructions: SH*	$9E   SHX absolute,Y	0x044A
 Unofficial Instructions: SH*	$BB   LAE absolute,Y	0x044B
-Unofficial Immediates	$0B   ANC Immediate	0x0410
-Unofficial Immediates	$2B   ANC Immediate	0x0411
-Unofficial Immediates	$4B   ASR Immediate	0x0412
-Unofficial Immediates	$6B   ARR Immediate	0x0413
-Unofficial Immediates	$8B   ANE Immediate	0x0414
-Unofficial Immediates	$AB   LXA Immediate	0x0415
-Unofficial Immediates	$CB   AXS Immediate	0x0416
-Unofficial Immediates	$EB   SBC Immediate	0x0417
+Unofficial Immediates	$0B   ANC immediate	0x0410
+Unofficial Immediates	$2B   ANC immediate	0x0411
+Unofficial Immediates	$4B   ASR immediate	0x0412
+Unofficial Immediates	$6B   ARR immediate	0x0413
+Unofficial Immediates	$8B   ANE immediate	0x0414
+Unofficial Immediates	$AB   LXA immediate	0x0415
+Unofficial Immediates	$CB   AXS immediate	0x0416
+Unofficial Immediates	$EB   SBC immediate	0x0417
 CPU Interrupts	Interrupt flag latency	0x0461
 CPU Interrupts	NMI Overlap BRK	0x0462
 CPU Interrupts	NMI Overlap IRQ	0x0463
@@ -106,6 +106,8 @@ CPU Behavior 2	Implied Dummy Reads	0x046D
 CPU Behavior 2	Branch Dummy Reads	0x048B
 CPU Behavior 2	JSR Edge Cases	0x047C
 CPU Behavior 2	Internal Data Bus	0x0490
+CPU Behavior 2	DMA Landing on Write	0x0496
+CPU Behavior 2	DMC Reload Timing	0x0497
 Power On State	PPU Reset Flag	0x03FF
 Power On State	CPU RAM	0x03FF
 Power On State	CPU Registers	0x03FF

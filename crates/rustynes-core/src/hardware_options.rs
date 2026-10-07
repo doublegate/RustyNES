@@ -95,7 +95,8 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// | --- | --- | --- |
 /// | 1 | v3.0.0 | the MMC3 background-at-`$1000` A12 rule (T-MMC3-BG-A12) |
 /// | 2 | v3.0.1 | mapper 45 CHR-RAM unbanked (T-GA23C-CHRRAM; *Famicom Yarou Vol.1*) |
-pub const EMULATION_EPOCH: u32 = 2;
+/// | 3 | v3.1.0 | a DMC load DMA refused by a write takes four cycles; sprite evaluation starts at OAMADDR as of dot 65 and keeps a misaligned OAMADDR when X is in range (AccuracyCoin re-sync to `f5f41dc2`) |
+pub const EMULATION_EPOCH: u32 = 3;
 
 /// Every host-settable option that changes what the emulated console does.
 ///

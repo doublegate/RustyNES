@@ -82,7 +82,9 @@ A small inner struct that tracks:
 
 Scheduling rules per `ref-docs/research-report.md` §DMA:
 
-- DMA can only halt on a CPU read cycle.
+- DMA can only halt on a CPU read cycle. A load DMA a write refuses enters
+  on the next read whichever half it is (four cycles after one refusing
+  write; `docs/apu-2a03.md`, v3.1.0).
 - DMC DMA gets precedence over OAM DMA.
 - OAM DMA: 1 halt + (0 or 1 alignment) + 256 read/write pairs = 513 or 514 cycles.
 - DMC DMA: 1 halt + 1 dummy + (0 or 1 alignment) + 1 read = 3 or 4 cycles.

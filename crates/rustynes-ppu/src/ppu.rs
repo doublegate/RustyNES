@@ -5762,6 +5762,23 @@ impl Ppu {
                 }
             }
             65..=256 => {
+                if self.dot == 65 {
+                    // v3.1.0: OAMADDR AT TICK 65 sets where evaluation
+                    // starts (nesdev "PPU registers" -> OAMADDR, "Values
+                    // during rendering"), so re-seed `(n, m)` here. The dot-0
+                    // capture above stays as the reset value, but a `$2003`
+                    // write (or a rendering-time `$2004` bump) during the
+                    // dots 1-64 clear must still move the start. Until
+                    // v3.1.0 only the dot-0 value counted, which was
+                    // invisible while every test wrote `$2003` before dot 0:
+                    // AccuracyCoin f5f41dc2 moved its "Misaligned OAM
+                    // behavior" write to dots 28-29 of scanline 0 (one
+                    // `JSR`/`RTS` pair later) and test 3 failed, evaluating
+                    // from the stale address. The OAM-bus model above has
+                    // always seeded at cycle 65.
+                    self.sprite_eval_n = (self.oam_addr >> 2) & 0x3F;
+                    self.sprite_eval_m = self.oam_addr & 0x03;
+                }
                 if !self.sprite_eval_done {
                     let next_line: i16 = if self.scanline == self.region.prerender_line() {
                         -1
@@ -5881,7 +5898,23 @@ impl Ppu {
                     // Finished this sprite. found was already
                     // incremented when the y-byte landed.
                     self.sprite_eval_copying = false;
-                    self.sprite_eval_m = 0;
+                    // v3.1.0: the fourth byte copied is the X position, and
+                    // the PPU range-tests it exactly as it tests Y. Out of
+                    // range: OAMADDR += 1 then &= $FC, re-aligning. IN range:
+                    // only += 1, so a misaligned start STAYS misaligned
+                    // (AccuracyCoin "Misaligned OAM behavior" tests 4-7, the
+                    // "+4* behavior ... Only +1 with the X Position" rule,
+                    // stated in the ROM's comments). `m` already holds the
+                    // += 1 (the `m == 4` wrap above covers the aligned
+                    // case, where both rules agree), so only the
+                    // out-of-range case clears it. Until v3.1.0 this cleared
+                    // `m` unconditionally; the ROM's pre-f5f41dc2 fail path
+                    // returned into the test body without popping its return
+                    // address, which recorded that failure as a pass.
+                    let x_row = next_line - (latch as i16);
+                    if !(x_row >= 0 && x_row < sprite_height) {
+                        self.sprite_eval_m = 0;
+                    }
                     // Under feature: the m==4 wrap above already
                     // advanced n once.  Don't double-increment.
                     // Under legacy: m never wrapped, so n advances
@@ -5937,10 +5970,15 @@ impl Ppu {
                     {
                         self.sprite_eval_m += 1;
                         if self.sprite_eval_m == 4 {
-                            // Wrapped past end of sprite — already
-                            // "copied" the whole sprite from its
-                            // misaligned start.  Advance n, reset m.
-                            self.sprite_eval_copying = false;
+                            // The Y byte was the LAST byte of slot `n`
+                            // (evaluation started at m = 3). OAMADDR steps
+                            // on into slot n + 1 and the copy continues:
+                            // the PPU copies four bytes whatever the
+                            // alignment. Until v3.1.0 this ended the copy
+                            // here, putting one byte in secondary OAM
+                            // instead of four (AccuracyCoin "Misaligned OAM
+                            // behavior" test 7, offset 3; masked like test
+                            // 6 by the ROM's pre-f5f41dc2 fail path).
                             self.sprite_eval_m = 0;
                             if self.sprite_eval_n == 63 {
                                 self.sprite_eval_done = true;
@@ -6592,6 +6630,81 @@ mod tests {
             (2, 2),
             "secondary OAM full: OAMADDR += 5, so both the sprite index and the \
              byte index advance"
+        );
+    }
+
+    /// v3.1.0 — the three misaligned-evaluation rules the `AccuracyCoin`
+    /// `f5f41dc2` re-sync exposed, each pinned on its own so a regression
+    /// names the rule it broke:
+    ///
+    /// 1. evaluation starts at OAMADDR **as of dot 65**, not dot 0 (nesdev
+    ///    "PPU registers" -> OAMADDR), so a write during the clear counts;
+    /// 2. an in-range Y copies **four** bytes whatever the alignment, also from
+    ///    `m = 3`, where the copy crosses into slot `n + 1`;
+    /// 3. the fourth byte (X) is range-tested: in range, OAMADDR only steps by
+    ///    one and stays misaligned; out of range, it steps and ANDs with `$FC`.
+    ///
+    /// Each assertion failed against the pre-v3.1.0 FSM (dot-0 seed, a
+    /// one-byte copy from `m = 3`, an unconditional realign).
+    #[test]
+    fn misaligned_oam_eval_starts_at_dot_65_copies_four_bytes_and_tests_x() {
+        /// A PPU on scanline 10 whose dot-0 reset has already run with
+        /// OAMADDR 0, so only a later seed can pick up `oam_addr`.
+        fn ppu_after_dot0(oam_addr: u8, oam: &[(usize, u8)]) -> Ppu {
+            let mut ppu = Ppu::new(PpuRegion::Ntsc);
+            ppu.mask = PpuMask::SHOW_SPRITE;
+            ppu.scanline = 10;
+            ppu.oam.fill(0xFF);
+            for &(i, v) in oam {
+                ppu.oam[i] = v;
+            }
+            ppu.oam_addr = 0;
+            ppu.dot = 0;
+            ppu.tick_sprite_eval_per_dot();
+            // The write lands during the clear, after the dot-0 reset.
+            ppu.oam_addr = oam_addr;
+            ppu
+        }
+        fn run_dots(ppu: &mut Ppu, from: u16, to: u16) {
+            for d in from..=to {
+                ppu.dot = d;
+                ppu.tick_sprite_eval_per_dot();
+            }
+        }
+
+        // (1) Seed at dot 65: OAMADDR 2 written after dot 0. Y at OAM[2] is in
+        // range for scanline 10 (Y = 8), and the walk must start there.
+        let mut ppu = ppu_after_dot0(0x02, &[(2, 8), (3, 0x11), (4, 0x22), (5, 0x33)]);
+        run_dots(&mut ppu, 65, 66);
+        assert_eq!(
+            ppu.secondary_oam[0], 8,
+            "evaluation must read its first Y from OAMADDR as of dot 65 (OAM[2])"
+        );
+
+        // (2) Four bytes from m = 3: OAM[3] is Y, OAM[4..=6] belong to slot 1.
+        let mut ppu = ppu_after_dot0(0x03, &[(3, 8), (4, 0xA1), (5, 0xA2), (6, 0xA3)]);
+        run_dots(&mut ppu, 65, 72);
+        assert_eq!(
+            ppu.secondary_oam[..4],
+            [8, 0xA1, 0xA2, 0xA3],
+            "a misaligned in-range sprite copies four bytes, across the slot edge"
+        );
+
+        // (3) X range test, from OAMADDR 1: Y = OAM[1], X = OAM[4].
+        let x_case = |x: u8| {
+            let mut ppu = ppu_after_dot0(0x01, &[(1, 8), (2, 0x11), (3, 0x22), (4, x)]);
+            run_dots(&mut ppu, 65, 72);
+            u16::from(ppu.sprite_eval_n) * 4 + u16::from(ppu.sprite_eval_m)
+        };
+        assert_eq!(
+            x_case(8),
+            0x05,
+            "X in range: OAMADDR += 1 only, so the walk stays misaligned at $05"
+        );
+        assert_eq!(
+            x_case(0xF0),
+            0x04,
+            "X out of range: OAMADDR += 1 then & $FC, realigning to $04"
         );
     }
 

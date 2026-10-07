@@ -26,6 +26,45 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Movies and netplay from v3.0.1 are refused, and so are its save states.**
+  `EMULATION_EPOCH` rises from 2 to 3 (the two accuracy fixes below change bus
+  cycles and sprite evaluation), and the BUS save-state section moves to
+  version 3 for the DMC latch it now carries.
+
+### Fixed
+
+- **AccuracyCoin re-synced to upstream `f5f41dc2`: 146 of 146.** The catalog
+  grows to 151 rows / 146 scored with `DMA Landing on Write` and `DMC Reload
+  Timing`. The new ROM found two defects:
+  - **A DMC load DMA refused by a write took three cycles, not four.** It now
+    enters on the next read whichever half that is (`DMA Landing on Write`
+    test 9), found by a per-cycle comparison with TriCNES's output.
+  - **Misaligned sprite evaluation.** Evaluation now takes its start from
+    OAMADDR at dot 65 (it used dot 0), copies four bytes from a start at the
+    last byte of a slot (it copied one), and stays misaligned after an
+    in-range X (it always realigned). The old ROM recorded these failures as
+    a pass: its fail path returned into the test without popping the return
+    address, fixed upstream in `adacbc23`.
+- **The AccuracyCoin tooling reads upstream's new row macros.**
+  `extract_catalog.py` returned 85 of 151 rows and exited 0 when upstream
+  compressed the unofficial-opcode rows into `tblf1` / `tblf2`; it now
+  rebuilds their names from the ROM's own string table and aborts on any row
+  it cannot read. `derive_indices.py` shares that grammar, and no longer
+  refuses to run: it read the provenance TSV's columns by position, which went
+  stale when an address column was added. The eight `Unofficial Immediates`
+  rows are now spelled `immediate`, as the ROM prints them.
+- **The AccuracyCoin mirror ROM is rebuilt from `f5f41dc2`.**
+
+### Added
+
+- **A test now enforces the emulation-epoch rule** (`T-EPOCH-FINGERPRINT`).
+  It fingerprints seven test ROMs (frames, audio, RAM, CPU cycles) and fails
+  when that output moves while `EMULATION_EPOCH` still equals the last
+  release's, refusing a re-bless in that state. Until now the rule was kept
+  by hand.
+
 ## [3.0.1] - 2026-10-07 - "Mortar" (the open items closed, one game's graphics fixed, the last MMC3 rule exception tested in the MiSTer core, Rust 1.99 everywhere, every unanswered bot review answered, and a roadmap to v4.0.0)
 
 A maintenance release on v3.0.0. It closes the items v3.0.0 left open:

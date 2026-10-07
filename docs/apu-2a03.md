@@ -326,6 +326,25 @@ why the predicate is `put_cycle` rather than `!put_cycle`). The behavior is
 end-to-end via `dmc_tests/latency.nes` (a deterministic DMC fetch-latency audio
 signature) and the strictly-passing `sprdma_and_dmc_dma` alignment ROM.
 
+#### A load DMA refused by a write takes four cycles (v3.1.0)
+
+RDY cannot halt a write. When a pending LOAD DMA reaches the get half on which
+it would enter and that cycle is a CPU write, the load is refused and enters
+on the very next read **whichever half that is**: refused by one write it
+lands on a put half and takes four cycles (`[Put (halt)] [Get] [Put] [Get]`);
+refused by two consecutive writes it lands on a get half and takes three. The
+get-half deferral above therefore does not apply a second time to a
+write-refused load. The bus records the refusal in a one-shot latch
+(`dmc_load_write_delayed`, `crates/rustynes-core/src/bus.rs`), set in
+`Bus::write`, consumed by the DMC entry in `unified_dma_cycle_impl` and cleared
+by the next CPU read; it is in the BUS save-state section (version 3), because
+the refusing write is the last cycle of a store and a snapshot can fall between
+it and the next opcode fetch. Written from AccuracyCoin `DMA Landing on Write`
+test 9 (upstream `f5f41dc2`) and its cycle comments, and confirmed by a
+black-box per-cycle comparison with TriCNES's output at the test's
+`STA $5000`: before the fix the CPU ran the opcode fetch the hardware spends
+halted, one cycle ahead from then on.
+
 ### Mixer
 
 Per `ref-docs/research-report.md` §APU Mixer, two implementations:

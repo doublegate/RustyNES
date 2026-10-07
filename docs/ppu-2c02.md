@@ -279,10 +279,25 @@ Per `ref-docs/research-report.md` §Sprite evaluation:
 - **Cycles 1..=64** — clear secondary OAM to `$FF` (forced reads).
 - **Cycles 65..=256** — alternate odd (read primary OAM) / even (write secondary OAM).
   - Read Y from `OAM[n][m]` — `m` is normally 0, but `OAMADDR` seeds `n` and
-    `m` at dot 0 (`n = (OAMADDR >> 2) & $3F`, `m = OAMADDR & 3`), so a
-    misaligned `OAMADDR` starts the walk on a tile / attribute / X byte and
-    the y-test reads *that* byte. If in range for the next scanline, copy
-    bytes 1..=3.
+    `m` **at dot 65** (`n = (OAMADDR >> 2) & $3F`, `m = OAMADDR & 3`; nesdev
+    "PPU registers" -> OAMADDR: "the value of OAMADDR at this tick determines
+    the starting address"), so a misaligned `OAMADDR` starts the walk on a
+    tile / attribute / X byte and the y-test reads *that* byte. A `$2003`
+    write during the dots 1-64 clear therefore still moves the start. (Until
+    v3.1.0 the FSM seeded at dot 0 only; AccuracyCoin `f5f41dc2` writes
+    `$2003` at dots 28-29 of scanline 0 and exposed it.)
+  - If in range for the next scanline, copy **four bytes** from the walk
+    position, `OAMADDR` stepping by one each, whatever the alignment: a start
+    at `m = 3` copies the last byte of slot `n` and the first three of slot
+    `n + 1` (until v3.1.0 the FSM stopped after one byte there).
+  - The fourth byte copied is the X position, and it is range-tested like Y.
+    **X in range: `OAMADDR += 1` only**, so a misaligned walk stays misaligned.
+    **X out of range: `OAMADDR += 1`, then AND with `$FC`**, realigning.
+    Aligned, both give the next multiple of four, so only misaligned OAM sees
+    the difference (AccuracyCoin `Misaligned OAM behavior` tests 4-7; until
+    v3.1.0 the FSM always realigned, and the pre-`f5f41dc2` ROM recorded the
+    resulting failures as a pass because its fail path did not pop its return
+    address).
   - Not in range, secondary OAM **not** full: `OAMADDR += 4`, **then AND with
     `$FC`** — so `n` advances and `m` is *cleared*, realigning the walk after
     the first out-of-range sprite. When `n` overflows to 0, evaluation

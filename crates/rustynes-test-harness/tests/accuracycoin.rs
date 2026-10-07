@@ -77,17 +77,27 @@ const MIN_PASS_RATE: f64 = 0.60;
 /// the authority and this prose must agree with it; the drift mechanism was
 /// that the list was emptied and the sentence above it was not.
 ///
+/// **v3.1.0 re-sync to upstream `f5f41dc2`: 146 of 146.** The catalog grew
+/// 144 -> 146 scored rows (`DMA Landing on Write`, `DMC Reload Timing`).
+/// The new ROM failed two tests, both fixed in the same change: `DMA Landing
+/// on Write` (a load DMA refused by a write took three cycles, not four) and
+/// `Misaligned OAM behavior`, which the old ROM had recorded as a PASS while
+/// tests 3, 6 and 7 failed: its fail path returned into the test body
+/// without popping the return address (upstream `adacbc23`), so every
+/// failure after test 2 fell through to the pass at the end.
+///
 /// Asserted alongside the known-failing set so that a battery which
 /// *under-executes* (early bail, skipped suite, decoder that stops
 /// assigning cells) fails as loudly as one that regresses — an empty
 /// failing list is not by itself evidence of success. Re-bless this
 /// together with `docs/STATUS.md` if an upstream ROM update changes the
 /// catalog.
-const EXPECTED_PASS_COUNT: u32 = 144;
+const EXPECTED_PASS_COUNT: u32 = 146;
 
 /// The `AccuracyCoin` tests this build is known to fail, pinned BY NAME.
 ///
-/// **Empty as of v2.6.18** — the battery reads 144/144. The list stays, and
+/// **Empty as of v2.6.18** — the battery reads 144/144 (146/146 since the
+/// v3.1.0 re-sync). The list stays, and
 /// stays documented, because it is the mechanism that makes a future gap
 /// explicit rather than absorbed into a lowered count.
 ///

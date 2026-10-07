@@ -262,7 +262,7 @@ pub fn run_battery_with_budget(max_frames: u64) -> BatteryResult {
 /// for backward-compatibility (and as a cross-check), but new
 /// diagnostic tooling should prefer the RAM-direct path because it
 /// (a) is independent of the result-grid display layout, (b) decodes
-/// per-test names + error codes, and (c) covers all 144 tests rather
+/// per-test names + error codes, and (c) covers all 146 tests rather
 /// than the subset visible on the summary screen.
 ///
 /// # Panics

@@ -624,6 +624,21 @@ pub struct SystemBus {
     /// re-read or the actual sample fetch. Read and written by the unified
     /// DMA engine (`unified_dma_cycle_impl`).
     dmc_halt: bool,
+    /// v3.1.0 (`AccuracyCoin` "DMA Landing on Write", test 9): a pending LOAD
+    /// DMC DMA reached the get half on which it would have entered, but that
+    /// cycle was a CPU WRITE, and RDY cannot halt a write. The load then
+    /// enters on the very next read whichever half it is, so a load refused
+    /// by one write takes four cycles (`[Put (halt)] [Get] [Put] [Get]`)
+    /// instead of being deferred a second cycle to its get half and taking
+    /// three. Without this latch the CPU ran one real cycle the hardware
+    /// spends halted. Set in [`Bus::write`], consumed by the DMC entry in
+    /// `unified_dma_cycle_impl`, and cleared by the next CPU read either way.
+    ///
+    /// Written from the test ROM's own description (`TEST_DMALandingOnWrite`
+    /// test 9 and its cycle comments) and pinned by a black-box per-cycle
+    /// comparison against `TriCNES`'s output at the test's `STA $5000`. No
+    /// emulator source was consulted.
+    dmc_load_write_delayed: bool,
     /// W3-Stage-1 (`mc-r1-dma-unified`): the unified engine's OAM-DMA-active
     /// flag (`TriCNES` `DoOAMDMA` once latched). The 513/514 length is EMERGENT
     /// from `uni_oam_halt`/`uni_oam_aligned` + the per-cycle dispatch — no
@@ -966,6 +981,7 @@ impl SystemBus {
             uni_oam_addr: 0,
             cpu_2a03_revision: Cpu2A03Revision::default(),
             dmc_halt: false,
+            dmc_load_write_delayed: false,
             genie_codes: BTreeMap::new(),
             #[cfg(feature = "irq-timing-trace")]
             irq_snapshot_apu_at_low: false,
@@ -1179,6 +1195,7 @@ impl SystemBus {
         self.last_read_addr = 0;
         self.in_dmc_dma = false;
         self.dmc_halt = false;
+        self.dmc_load_write_delayed = false;
         self.controller_write_pending = 0;
         self.controller_write_value = 0;
         // v2.9.8 — the ports' last-read stamps are bus cycles of the OLD
@@ -2769,6 +2786,7 @@ impl SystemBus {
             // the engine feature is off) so the BUS section layout is
             // identical across feature builds.
             dmc_halt: self.dmc_halt,
+            dmc_load_write_delayed: self.dmc_load_write_delayed,
             uni_oam_active: self.uni_oam_active,
             uni_oam_halt: self.uni_oam_halt,
             uni_oam_aligned: self.uni_oam_aligned,
@@ -2800,6 +2818,7 @@ impl SystemBus {
         // same inactive state the clear imposed -- but a restored blob
         // reproduces them EXACTLY instead of by assumption.
         self.dmc_halt = s.dmc_halt;
+        self.dmc_load_write_delayed = s.dmc_load_write_delayed;
         self.uni_oam_active = s.uni_oam_active;
         self.uni_oam_halt = s.uni_oam_halt;
         self.uni_oam_aligned = s.uni_oam_aligned;
@@ -3434,10 +3453,13 @@ impl SystemBus {
         // the original activation).
         let dmc_serviceable = self.apu.dmc_dma_serviceable();
         if self.apu.dmc_dma_pending() && dmc_serviceable && !self.in_dmc_dma {
-            let defer_load = self.apu.dmc_dma_is_load() && dmc_noop_half;
+            // A load refused by a write enters here regardless of the half.
+            let defer_load =
+                self.apu.dmc_dma_is_load() && dmc_noop_half && !self.dmc_load_write_delayed;
             if !defer_load {
                 self.in_dmc_dma = true;
                 self.dmc_halt = true;
+                self.dmc_load_write_delayed = false;
                 self.capture_deferred_dma_replay();
             }
         }
@@ -4188,10 +4210,26 @@ impl Bus for SystemBus {
     /// [`Bus::cpu_clock`]; Phase 3 will split the drain out of `cpu_read`).
     /// Phase 1 delegates to the legacy path so the contract compiles.
     fn read(&mut self, addr: u16) -> u8 {
+        // A CPU read cycle ran, so any write-refused load either entered on
+        // the DMA cycles before it (clearing the latch there) or was not
+        // serviceable; the latch spans exactly one write-to-read boundary.
+        self.dmc_load_write_delayed = false;
         self.cpu_read(addr)
     }
 
     fn write(&mut self, addr: u16, value: u8) {
+        // RDY cannot halt a write. A pending load that would have entered on
+        // this cycle (the get half: the access-point label is `!put_cycle`,
+        // as in `unified_dma_cycle_impl`) is refused, and enters on the next
+        // read without the get-half deferral (`dmc_load_write_delayed`).
+        if self.apu.dmc_dma_pending()
+            && self.apu.dmc_dma_is_load()
+            && self.apu.dmc_dma_serviceable()
+            && !self.in_dmc_dma
+            && !self.apu.put_cycle()
+        {
+            self.dmc_load_write_delayed = true;
+        }
         self.cpu_write(addr, value);
     }
 
@@ -4398,6 +4436,8 @@ impl Bus for SystemBus {
                 && self.apu.dmc_dma_is_load()
                 && lands_on_noop_half
                 && !self.in_dmc_dma
+                // A load refused by a write may not be deferred again.
+                && !self.dmc_load_write_delayed
         }
     }
 
