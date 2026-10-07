@@ -232,7 +232,6 @@ fn main() {
         let _ = nes.drain_audio_into(&mut discard);
 
         let (centre, bright_px) = aperture_stats(nes.framebuffer(), aim_x_runtime, aim_y_runtime);
-        let bright = bright_px >= 2;
         let reads: Vec<u8> = nes
             .accesses()
             .iter()
@@ -250,7 +249,6 @@ fn main() {
             .map(|p| u32::from(p[1]))
             .sum::<u32>()
             / u32::try_from(fb.len() / 4).unwrap_or(1);
-        let _ = bright;
         if let Ok(dir) = std::env::var("ZAPPER_PROBE_PNG_DIR") {
             write_png(
                 &Path::new(&dir).join(format!("f{f:03}.png")),

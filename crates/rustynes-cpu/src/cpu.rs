@@ -855,9 +855,7 @@ impl Cpu {
     #[inline(always)]
     #[allow(clippy::inline_always)]
     fn implied_dummy_read<B: Bus>(&mut self, bus: &mut B) {
-        {
-            let _ = self.read1(bus, self.pc);
-        }
+        let _ = self.read1(bus, self.pc);
     }
 
     /// Read a byte at `addr` *and* consume one CPU cycle (with bus tick

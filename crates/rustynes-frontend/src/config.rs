@@ -2291,7 +2291,6 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use tempfile::TempDir;
 

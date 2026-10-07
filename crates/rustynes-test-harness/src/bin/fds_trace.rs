@@ -55,7 +55,7 @@ fn main() {
     // from the raw .fds (header-less form; each side is FDS_SIDE_LEN bytes).
     // A headered `.fds` starts with "FDS\x1a" + a 16-byte header; require the
     // full header before slicing it off so a short/corrupt file can't panic.
-    let body = if disk.len() >= 16 && &disk[..3] == b"FDS" {
+    let body = if disk.len() >= 16 && disk.starts_with(b"FDS\x1a") {
         &disk[16..]
     } else {
         &disk[..]
