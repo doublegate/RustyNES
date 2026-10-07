@@ -110,8 +110,13 @@ fn release_notes_are_not_hard_wrapped() {
     let dir = repo_root().join(".github/release-notes");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .flatten()
-        .map(|e| e.path())
+        // Fail closed per entry too. Until v3.0.1 this was `.flatten()`, which
+        // drops an entry whose metadata cannot be read -- a release note the
+        // audit then never examines, and never says it skipped.
+        .map(|e| {
+            e.unwrap_or_else(|e| panic!("read an entry of {}: {e}", dir.display()))
+                .path()
+        })
         .filter(|p| {
             p.extension().is_some_and(|x| x == "md")
                 && p.file_name()
@@ -131,7 +136,11 @@ fn release_notes_are_not_hard_wrapped() {
 
     let mut findings = Vec::new();
     for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
+        // A read error (or a non-UTF-8 file) is a failure, not an empty file:
+        // until v3.0.1 `unwrap_or_default()` turned it into "" -- zero
+        // paragraphs, zero findings, a pass for a file nobody read.
+        let text =
+            std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));
         let name = f
             .file_name()
             .unwrap_or_default()
