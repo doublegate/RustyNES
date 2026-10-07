@@ -157,8 +157,9 @@ This guarantees that save/load round-trips and a re-played input sequence produc
 
 > These are the original **design-phase aspirations**, not gates. The frame-cost
 > figure was not met and is knowingly accepted — the implemented cycle-accurate
-> core measures **~3.95 ms** (nestest) / **~2.65 ms** (flowing palette) on the
-> shipped fast dot path, ~23% of the 16.639 ms NTSC budget (the v2.7.0 core,
+> core measures **~3.95 ms** (nestest) on the shipped fast dot path, ~23% of the
+> 16.639 ms NTSC budget, and **~2.65 ms** on flowing palette, a rendering-disabled
+> control whose fast-path variant never enters that path (its guard bails) (the v2.7.0 core,
 > 2026-09-23; v2.9.7's A12 change added about 1.9% on nestest). See
 > `docs/performance.md` §"Current figures" for the measured numbers, the
 > exact-path pair, and why the main optimization levers were measured and

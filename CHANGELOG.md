@@ -141,7 +141,8 @@ hardware-verified**. The maintainer's decisions are in
 - `cargo test --release --workspace --features test-roms --no-fail-fast`:
   3,234 passed, 0 failed, 11 ignored on the release tree (v3.0.0: 3,223 / 0 /
   11). `cargo test --workspace`: 2,886 / 0 / 7; the cosim crate 54 / 0.
-  AccuracyCoin 144/144, nestest 0-diff.
+  AccuracyCoin 144/144, nestest 0-diff. The per-suite counts and the mapper
+  matrix are in [`docs/STATUS.md`](docs/STATUS.md).
 - The local commercial suites (`--features test-roms,commercial-roms`):
   `external_real_games` 60/0, `external_extended` 137/0, `external_coverage`
   6/0. The one moved baseline is *Famicom Yarou Vol.1* (T-GA23C-CHRRAM), which
