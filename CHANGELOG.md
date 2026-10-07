@@ -84,16 +84,19 @@ cycle-accurate core later replaced.
 
 ### Changed
 
-- **Rust 1.99.** The pinned toolchain moves from 1.96.0 to 1.99.0, the newest
-  stable. The libretro buildbot stays on 1.96.0 (`RUSTUP_TOOLCHAIN` in
-  `.gitlab-ci.yml`), because its build image passes `-C ar`, a hard error from
-  Rust 1.97; the seven crates it builds keep `rust-version = "1.96"`, and CI's
-  `libretro-cross` job builds them on 1.96.0. That check caught a clippy 1.99
-  rewrite in `rustynes-core` that only 1.97+ accepts. Rust 1.99's new
-  `extern "C"` variadic definitions do not simplify the RetroAchievements
-  bridge: none of the rcheevos functions it calls is variadic. About 70 new
-  clippy findings were fixed, all exact rewrites (`as_chunks`, `fill`,
-  `assert_eq!` against an empty value so a failure shows the contents).
+- **Rust 1.99, everywhere.** The pinned toolchain moves from 1.96.0 to 1.99.0,
+  the newest stable, and the libretro buildbot moves with it. The release first
+  held the buildbot on 1.96.0, because its build image passed `-C ar`, a hard
+  error from Rust 1.97; the image turned out to have dropped that flag on
+  2026-09-03, and a test branch built on 1.99.0 passed all 15 buildbot jobs,
+  the four Apple ones included. CI's `libretro-cross` job now fails if
+  `.gitlab-ci.yml`'s toolchain differs from `rust-toolchain.toml`. While the
+  split stood, the 1.96 build caught a clippy 1.99 rewrite in `rustynes-core`
+  that only 1.97+ accepts. Rust 1.99's new `extern "C"` variadic definitions do
+  not simplify the RetroAchievements bridge: none of the rcheevos functions it
+  calls is variadic. About 70 new clippy findings were fixed, all exact
+  rewrites (`as_chunks`, `fill`, `assert_eq!` against an empty value so a
+  failure shows the contents).
 - **Every dependency at its newest release.** Crates (`cargo update`; the only
   holds are forced upstream: `getrandom` 0.2/0.3 by `piccolo` 0.3.3, and
   `generic-array` 0.14.7 by `crypto-common` 0.1.7). GitHub Actions:

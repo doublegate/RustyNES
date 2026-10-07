@@ -1443,7 +1443,7 @@ re-minted: `T-PS-dual-runahead` (ADR 0032), `T-MISTER-SAVESTATE`,
 | Ticket | What | Backlog | Slot |
 | --- | --- | --- | --- |
 | `T-ECOSYSTEM-WATCH` | Every minor: the wgpu/egui pair, the AccuracyCoin upstream diff, rcheevos, the libretro build image, the Android/iOS policy calendar, the Rust pin | ecosystem survey | every minor |
-| `T-LIBRETRO-TOOLCHAIN` | Drop the libretro build's Rust 1.96 pin if a branch pipeline on 1.99 passes all 15 jobs (D5) | LR-02 | v3.0.1, else v3.1.0 |
+| `T-LIBRETRO-TOOLCHAIN` | Drop the libretro build's Rust 1.96 pin if a branch pipeline on 1.99 passes all 15 jobs (D5). **Dropped in v3.0.1** (pipeline 119614, 15/15); closes when the first `main` pipeline after merge is green | LR-02 | v3.0.1 |
 | `T-ACCURACYCOIN-RESYNC-2610` | Re-sync AccuracyCoin to upstream HEAD (two new tests and a "Misaligned OAM Behavior" fix since 2026-09-19) and triage red first (D25) | ecosystem 7 | v3.1.0 |
 | `T-EPOCH-FINGERPRINT` | A committed panel of output hashes that fails CI when it moves without an `EMULATION_EPOCH` rise | CI-02 | v3.1.0 |
 | `T-CPU-OVERCLOCK` | The CPU-multiplier overclock, in `HardwareOptions`, movies and netplay (D22) | FE-01 | v3.1.0 |

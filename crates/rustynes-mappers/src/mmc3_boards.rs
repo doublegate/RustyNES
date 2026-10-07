@@ -226,11 +226,13 @@ fn mirror_bank(bank: usize, count: usize) -> usize {
     let mut bank = bank & (count.next_power_of_two() - 1);
     while bank >= count {
         // Find the doubling stage whose copied region holds `bank`.
+        // `isolate_lowest_one` is `lowbit(size)` (`size & size.wrapping_neg()`,
+        // spelled that way until v3.0.1 moved these crates to Rust 1.99).
         let mut size = count;
-        while size + (size & size.wrapping_neg()) <= bank {
-            size += size & size.wrapping_neg();
+        while size + size.isolate_lowest_one() <= bank {
+            size += size.isolate_lowest_one();
         }
-        bank -= size & size.wrapping_neg();
+        bank -= size.isolate_lowest_one();
     }
     bank
 }

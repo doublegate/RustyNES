@@ -153,7 +153,7 @@ cargo bench -p rustynes-mappers
 cargo bench -p rustynes-core
 ```
 
-Toolchain is **Rust 1.99** pinned in `rust-toolchain.toml` (1.86 until v1.3.0, 1.96 until v3.0.1). **The libretro buildbot stays on 1.96.0** (`RUSTUP_TOOLCHAIN` in `.gitlab-ci.yml`): its image passes `-C ar`, which Rust 1.97 made a hard error, so the seven crates it builds (`rustynes-{cpu,ppu,apu,mappers,core,gamedb,libretro}`) declare `rust-version = "1.96"` and CI's `libretro-cross` job builds them on 1.96.0. **Clippy on 1.99 will suggest rewrites those crates cannot use**: it rewrote a `Box<[u8; N]>` loop that only compiles on 1.97+, and only the 1.96 build caught it. CI runs the tests on the pinned toolchain across Linux/macOS/Windows.
+Toolchain is **Rust 1.99** pinned in `rust-toolchain.toml` (1.86 until v1.3.0, 1.96 until v3.0.1). **The libretro buildbot follows the same pin**: `.gitlab-ci.yml`'s `RUSTUP_TOOLCHAIN` must equal `rust-toolchain.toml`'s `channel`, and CI's `libretro-cross` job fails if they differ, so move both in one change. v3.0.1 first held the buildbot on 1.96.0 (its image passed `-C ar`, a hard error from Rust 1.97), then lifted the hold once a test branch proved the image had dropped the flag (pipeline 119614, all 15 jobs on 1.99.0); every crate now inherits the workspace `rust-version`. A pushed branch gets its own buildbot pipeline, so test a toolchain move there before merging (`docs/agents/libretro.md`). CI runs the tests on the pinned toolchain across Linux/macOS/Windows.
 
 On Linux, anything that pulls in `rustynes-frontend` (which `cargo test --workspace` does) needs the wgpu/winit/cpal system deps:
 

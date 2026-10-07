@@ -73,7 +73,7 @@ day.)
 
 | Version | Scope | Plan |
 |---------|-------|------|
-| v3.0.1 "Mortar" | The open items (the palette-offset A/B, T-GA23C-CHRRAM, the MiSTer odd-frame A12 stimulus), every dependency and the Rust 1.99 toolchain, the libretro 1.96 pin test, every unanswered review comment back to #1 | [`v3.0.1-mortar-plan.md`](to-dos/plans/v3.0.1-mortar-plan.md) |
+| v3.0.1 "Mortar" | The open items (the palette-offset A/B, T-GA23C-CHRRAM, the MiSTer odd-frame A12 stimulus), every dependency and the Rust 1.99 toolchain, the libretro buildbot on 1.99 too (its 1.96 hold tested and dropped), every unanswered review comment back to #1 | [`v3.0.1-mortar-plan.md`](to-dos/plans/v3.0.1-mortar-plan.md) |
 | v3.1.0 | The AccuracyCoin re-sync; the CPU overclock and sprite-limit options in movies and netplay; PAL emphasis; opt-in composite artifacts; the NEC MMC3 option; rewind and run-ahead in Vs. dual mode; an epoch fingerprint gate. MiSTer: small RTL items, the self-hosted runner, submission documents | [`v3.1.0-plan.md`](to-dos/plans/v3.1.0-plan.md) |
 | v3.2.0 | Mapper breadth by real titles, the dump corpus, KNOWN_BLANK triage, tier promotions. MiSTer F1: options and about ten cheap families, paddle, Four Score, cheats | [`v3.2.0-plan.md`](to-dos/plans/v3.2.0-plan.md) |
 | v3.3.0 | Phi2 write placement and the sprite-0 stale shifter; wgpu 31 / egui 0.37. MiSTer F2: the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline | [`v3.3.0-plan.md`](to-dos/plans/v3.3.0-plan.md) |

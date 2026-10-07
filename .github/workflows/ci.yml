@@ -502,8 +502,8 @@ jobs:
   # Cross-platform behaviour: full `cargo test` on stable across the three
   # shipped OSes. The previous ubuntu MSRV *test* entry is dropped — the
   # `lint` job above already compiles the whole workspace (`clippy
-  # --all-targets`) on the pin, which IS the MSRV compile gate (the 1.96 floor
-  # of the libretro-path crates is `libretro-cross`'s job), and the core's
+  # --all-targets`) on the pin, which IS the MSRV compile gate (one floor for
+  # every crate since v3.0.1; `libretro-cross` builds the buildbot's), and the core's
   # determinism makes "tests pass on the pin" equivalent to "tests pass on stable".
   test:
     name: test (${{ matrix.os }})
@@ -831,17 +831,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # v3.0.1: the buildbot stays on an older toolchain than
-      # `rust-toolchain.toml` (it runs 1.96.0, the workspace 1.99.0; the
-      # reason is in `.gitlab-ci.yml`'s `.core-defs`). This job rehearses the
-      # buildbot, so it runs the buildbot's toolchain, read from
-      # `.gitlab-ci.yml`'s `RUSTUP_TOOLCHAIN` -- the one place that version is
-      # written, so `.github/` still carries no version literal
-      # (`docs/agents/ci-and-release.md`). Exporting the variable makes every
-      # later `cargo` here use it, exactly as on the buildbot, which makes
-      # this job the check behind the seven libretro-path crates'
-      # `rust-version = "1.96"`. Table-scoped and fail-closed, like
-      # `rust-setup`'s own resolver: a missing or unquoted value aborts.
+      # This job rehearses the libretro buildbot, so it runs the buildbot's
+      # toolchain, read from `.gitlab-ci.yml`'s `RUSTUP_TOOLCHAIN`, and it
+      # FAILS if that differs from `rust-toolchain.toml`'s `channel`. The two
+      # must move together: v3.0.1 briefly held the buildbot on 1.96.0 (the
+      # build image's `-C ar`, a hard error from 1.97) and lifted the hold the
+      # same release once the image dropped the flag (pipeline 119614, 15/15
+      # on 1.99.0). The check keeps a drift from being found on the buildbot
+      # after merge. `.github/` still carries no version literal
+      # (`docs/agents/ci-and-release.md`). Both parsers are table-scoped and
+      # fail-closed, like `rust-setup`'s own resolver.
       - name: Resolve the buildbot toolchain
         id: buildbot
         shell: bash
@@ -858,7 +857,21 @@ jobs:
             echo "::error::No RUSTUP_TOOLCHAIN under .core-defs in .gitlab-ci.yml"
             exit 1
           fi
-          echo "Buildbot toolchain: $tc"
+          pin="$(awk '
+            /^\[/ { in_tc = ($0 == "[toolchain]"); next }
+            in_tc && $1 == "channel" {
+              v = $3; gsub(/"/, "", v); print v; exit
+            }
+          ' rust-toolchain.toml)"
+          if [ -z "$pin" ]; then
+            echo "::error::No channel under [toolchain] in rust-toolchain.toml"
+            exit 1
+          fi
+          if [ "$tc" != "$pin" ]; then
+            echo "::error::.gitlab-ci.yml RUSTUP_TOOLCHAIN ($tc) differs from rust-toolchain.toml channel ($pin); move them together"
+            exit 1
+          fi
+          echo "Buildbot toolchain: $tc (matches rust-toolchain.toml)"
           echo "toolchain=$tc" >> "$GITHUB_OUTPUT"
           echo "RUSTUP_TOOLCHAIN=$tc" >> "$GITHUB_ENV"
       - uses: ./.github/actions/rust-setup

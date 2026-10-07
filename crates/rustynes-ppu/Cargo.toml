@@ -4,7 +4,7 @@ description = "Cycle-accurate Ricoh 2C02 PPU (Picture Processing Unit) for the N
 version.workspace = true
 edition.workspace = true
 # The libretro buildbot builds this crate on Rust 1.96.0 (`.gitlab-ci.yml`).
-rust-version = "1.96"
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
