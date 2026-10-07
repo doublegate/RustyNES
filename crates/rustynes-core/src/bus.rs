@@ -3345,8 +3345,8 @@ impl SystemBus {
 
     /// W3-Stage-1 (`mc-r1-dma-unified`): ONE cycle of the unified DMC/OAM DMA
     /// engine — a direct port of the `TriCNES` `_6502` per-cycle DMA dispatch
-    /// table (`crates/rustynes-test-harness/golden/tricnes/tricnes-harness-src/
-    /// Emulator.cs` ~4233-4357), the SINGLE driver that standalone DMC,
+    /// table (the instrumented harness's `Emulator.cs` ~4233-4357; out of the
+    /// repository since v3.0.1, at `~/reference-oracles/TriCNES-rustynes-harness`), the SINGLE driver that standalone DMC,
     /// standalone OAM, and the DMC-during-OAM overlap all ride — AT FLOOR
     /// PARITY for this stage (the structural-equivalence proof; Stage 2 flips
     /// the one engine to the breakthrough parity).

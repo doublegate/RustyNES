@@ -2860,7 +2860,7 @@ impl Cpu {
             // W1 (`mc-r1-branch-poll-points`): a page-cross taken branch
             // polls a SECOND time at C4-start — TriCNES's
             // `PollInterrupts_CantDisableIRQ` in the BPL microcode
-            // (`golden/tricnes/tricnes-full-src/Emulator.cs`): if the C2-start
+            // (`100thCoin/TriCNES` `Emulator.cs` at `94f1b117`): if the C2-start
             // poll already saw the IRQ this one cannot un-see it (can-SET-
             // not-clear). `mc_run_irq` is frozen across the branch's
             // remaining cycles by the `handle_interrupts` early-return, so
