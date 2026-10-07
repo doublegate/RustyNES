@@ -76,7 +76,7 @@ const APU_REC_LEN: usize = 16;
 /// Upper bound on `--apu-trace`'s capacity, in RECORDS.
 ///
 /// One record is one CPU cycle, so this is 8,388,608 cycles -- roughly 281 NTSC
-/// frames, and 134 MB once multiplied by [`APU_REC_LEN`]. Comfortably above any
+/// frames, and 134 MB once multiplied by `APU_REC_LEN`. Comfortably above any
 /// legitimate rung-4 stimulus (a 24-frame run wants ~715,000) and bounded.
 ///
 /// The bound exists because the capacity is external input that reaches

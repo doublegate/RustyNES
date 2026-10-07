@@ -361,6 +361,13 @@ jobs:
           --all-targets -- -D warnings
       - name: "test (excluded crate: rustynes-cosim)"
         run: cargo test --manifest-path crates/rustynes-cosim/Cargo.toml
+      # v3.0.1: the workspace rustdoc step above does not reach the excluded
+      # crate either, and a public doc linking a private constant sat there
+      # unseen until a review fix ran it by hand.
+      - name: "rustdoc (excluded crate: rustynes-cosim)"
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --manifest-path crates/rustynes-cosim/Cargo.toml
       # ... and again WITH `ppu-state-trace`, because that crate's
       # `state_trace_records_carry_their_cpu_cycle` test is itself gated on the
       # feature and so ran NOWHERE in CI. It exists to catch a field that is
