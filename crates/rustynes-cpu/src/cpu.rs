@@ -254,7 +254,11 @@ pub struct Cpu {
     /// taken / page-cross cycles do *not* re-sample IRQ.  The branch
     /// dispatch sets this flag *before* the operand fetch and `step()`
     /// clears it at the top of every instruction.
-    /// NMI sampling is unaffected — the quirk is IRQ-only.
+    /// Since v2.6.7 the same rule defers NMI *dispatch*: while this flag and
+    /// `skip_irq_sample_q` are both set, `handle_interrupts` freezes the
+    /// dispatch copy `mc_prev_need_nmi`. The NMI edge latch (`mc_need_nmi`)
+    /// keeps running every cycle, so an edge is never lost, only recognised
+    /// after the branch.
     pub(crate) skip_irq_sample: bool,
     /// `skip_irq_sample` as it stood on the PREVIOUS cycle. The NMI dispatch
     /// gate freezes on this rather than on the live flag, because the two
