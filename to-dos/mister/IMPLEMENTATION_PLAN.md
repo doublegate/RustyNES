@@ -1,11 +1,13 @@
 # RustyNES MiSTer core — implementation plan
 
-## v3.1 → v4.0: the hardware release, then feature parity (current, 2026-10-07)
+## v3.1 → v4.0: feature parity, then the hardware release (current, 2026-10-07)
 
 The execution view of the MiSTer half of
 [`v3.1-to-v4.0-line-plan.md`](../plans/v3.1-to-v4.0-line-plan.md). The
-decisions it cites (D1-D28) were taken by the maintainer on 2026-10-07 and are
-tabled there. The narrative for the hardware release is
+decisions it cites (D1-D29) were taken by the maintainer on 2026-10-07 and are
+tabled there. **D29, later that day, moved Phase H from right after v3.1.0 to
+the end of v3.9.x**, after every feature phase, so the board verifies the most
+complete core; the phase table below is in the new order. The narrative for the hardware release is
 [`v3.x-hardware-verification-plan.md`](../plans/v3.x-hardware-verification-plan.md).
 
 ### Where the core actually is (after v3.0.1)
@@ -29,18 +31,25 @@ tabled there. The narrative for the hardware release is
 
 | Phase | Release slot | Content | Decisions |
 |---|---|---|---|
-| **S** (submission prep, docs only) | v3.1.0, then alongside H | SUB-1 (a dated `ref-docs/` record of the live contribution page; it changed on 2026-09-26), SUB-2 (re-scope the checklist), SUB-5 (refresh `submission-case.md`); TL-5 (this file, done) | D10, D14 (the RTL keeps its long comments) |
-| **H** (hardware) | the hardware release, numbered after the session, no later than v4.0.0 | HW-0, Strands A-F on the SuperStation One, HW-O6, fixes as gates, the re-sweep, the anchors flipped. No feature RTL | D1, D11, D13 |
+| **S** (submission prep, docs only) | v3.1.0, then kept current through to H | SUB-1 (a dated `ref-docs/` record of the live contribution page; it changed on 2026-09-26), SUB-2 (re-scope the checklist), SUB-5 (refresh `submission-case.md`); TL-5 (this file, done) | D10, D14 (the RTL keeps its long comments) |
 | **F1** (cheap breadth) | v3.2.0 | FB-16 options first (custom palette, +8 sprites), FB-2 SUROM/SXROM, the 206 family, 66, 11, 79, 9/10, 118/119, 71/232, 34, the trivial discretes, FB-10 paddle, FB-8 Four Score, FB-6 cheats | D12, D26 |
 | **F2** (the memory platform) | v3.3.0 | FB-20 arbiter (RTL-9 closes), DDR3, FB-4 save states, FB-5 rewind, the real `hps_io` under Verilator; **the off-die build becomes the headline** and on-die a "lite" build | D4, D12, D16 |
 | **F3** (big boards, audio) | v3.4.0-v3.5.0 | MMC2/4, FME-7/5B, VRC2/4, the Zapper (v3.4.0); MMC5, N163, VRC6, VRC7, Bandai FCG with expansion audio, Famicom peripherals (v3.5.0) | D15 |
 | **F4** (region and media) | v3.6.0-v3.8.0 | PAL/Dendy with VMODE (v3.6.0); FDS (v3.7.0); NSF, Vs. System, band-limited audio (v3.8.0) | D15 |
+| **Freeze** | v3.9.0 | the RTL feature freeze, the parity re-measure, the release-candidate pair the board session runs on | D29 |
+| **H** (hardware) | the last v3.9.x (D29), numbered after the session, no later than v4.0.0 | HW-0, Strands A-F on the SuperStation One on the frozen pair, HW-O6, fixes as gates, the re-sweep, the anchors flipped. No feature RTL | D1, D11, D13, D29 |
 | **Parity** | v4.0.0 | save states, cheats, PAL/Dendy, FDS with expansion audio, the Zapper, Four Score, the licensed-library mapper list, the re-measured incumbent | D3 |
 | **After** | v4.x | the SuperStation One distribution channel, then an openFPGA (Analogue Pocket) port | D17 |
 
 Open RTL items slot into the start of any release: RTL-1, RTL-5 and RTL-10 at
 v3.1.0. RTL-2 and RTL-4 are investigations. RTL-3 (OAM corruption) and RTL-6
-(APU power-on phase) wait on the board.
+(APU power-on phase) wait on the board, which since D29 means the end of v3.9.x.
+
+**Risk of D29, for this half:** features F1-F4 land verified in simulation
+only, and HW-A8/HW-A9 (the FPGA device and SDRAM part) are read last. Write each
+feature's `bringup-log.md` rows as it lands, so the session's checklist is ready
+rather than assembled at the end. The full list:
+[Risks of D29](../plans/v3.1-to-v4.0-line-plan.md#risks-of-d29).
 
 ### Scope, re-decided 2026-10-07
 
@@ -61,6 +70,10 @@ v3.1.0. RTL-2 and RTL-4 are investigations. RTL-3 (OAM corruption) and RTL-6
 recorded ladder run. That is the frozen worktree until the self-hosted runner
 exists, and both afterwards. CI's nine rung-1 gates are a subset and never
 stand in for the ladder. Rules 2-7 below are unchanged.
+
+**Rung 6 is the exception, by D29.** Rung 6 (hardware) stays open while the
+feature phases above it proceed: they need a green ladder, not a board. It
+closes at the hardware release, at the end of v3.9.x.
 
 ---
 

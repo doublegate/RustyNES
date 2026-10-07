@@ -165,7 +165,10 @@
 > date). Mobile signing and the free store listings come at about **v3.9.x**,
 > right before v4.0.0's final activities. That covers Android developer
 > verification, which is global from 2027 and covers sideloads too, and iOS
-> signing so that TestFlight uploads run.)*
+> signing so that TestFlight uploads run. D29, later the same day, put the v3.x
+> hardware release itself at the end of v3.9.x, so "after the v3.x hardware
+> release" above now means the last v3.9.x: signing is set up at v3.9.0, and
+> the listings follow the hardware release's device run.)*
 
 ---
 
@@ -950,7 +953,9 @@ app stores (**after the v3.x hardware release**).)*
 the bridge at v2.9.7; their device rows are T1-T12 of the run sheet. In the
 [v3.1 → v4.0 line plan](plans/v3.1-to-v4.0-line-plan.md):
 
-- the device run belongs to the hardware release (ADR 0043 Decision 2);
+- the device run belongs to the hardware release (ADR 0043 Decision 2), which
+  D29 placed at the end of v3.9.x, so the stores ("after the v3.x hardware
+  release", above) come at the end of v3.9.x too;
 - the mobile extras are **v3.7.0** (D24): iOS box art, widget and external
   display, and the EQ and cheat database on both apps;
 - the zero-copy framebuffer (MOB-06) follows UniFFI 0.33;
