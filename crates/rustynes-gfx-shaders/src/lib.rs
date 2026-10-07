@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: `BISQWIT_WGSL` (`bisqwit.wgsl`) is a generated verbatim copy of the desktop's Bisqwit NES composite-NTSC pass, whose numeric coefficient tables were ported verbatim from Bisqwit's C via Mesen2's `BisqwitNtscFilter` (Mesen2: GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Shared WGSL presentation-shader sources for the RustyNES wgpu render path.
 //!
 //! These `pub const` strings are the single source of truth for the presentation
@@ -307,8 +311,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 /// The Bisqwit-style composite NES NTSC post-pass.
 ///
-/// An independent implementation of the NES composite signal model documented at
-/// the NESdev wiki ("NTSC video"); no third-party emulator code is incorporated.
+/// Derived: the numeric coefficient tables were ported verbatim from Bisqwit's C
+/// via Mesen2's `BisqwitNtscFilter` (GPL-3.0-or-later), the same derivation
+/// `rustynes-frontend`'s `ntsc_bisqwit.rs` records; the two-level composite signal
+/// shape is documented at the NESdev wiki ("NTSC video"). This sentence said
+/// "independent" until v3.0.1 (T-NTSC-PROVENANCE): it was a self-certification on a
+/// generated copy of code already recorded as derived.
 ///
 /// Unlike CRT/LMP it samples the **palette-index** framebuffer as an `R16Uint`
 /// texture (`@group(0) @binding(0) idx_tex`), not the RGBA, plus the per-frame NTSC

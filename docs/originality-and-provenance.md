@@ -70,7 +70,8 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
 | `crates/rustynes-apu/src/opll.rs` | emu2413 (upstream MIT; Mesen2 vendors it) | `emu2413.{h,cpp}` | MIT |
 | `crates/rustynes-frontend/src/ntsc_bisqwit.rs` | Bisqwit; Mesen2 | Bisqwit `nes_ntsc`-style composite model as implemented by Mesen2's `BisqwitNtscFilter`; **numeric tables ported verbatim** | GPL-3.0-or-later (Mesen2) |
-| `crates/rustynes-gfx-shaders/src/crt_stack.rs`, `src/lib.rs` | CRT-Royale, crt-guest-advanced, Sony Megatron | single-pass WGSL reimplementations of those shaders (see §6) | GPL-2.0-or-later / permissive |
+| `crates/rustynes-gfx-shaders/src/crt_stack.rs` | CRT-Royale, crt-guest-advanced, Sony Megatron | single-pass WGSL reimplementations of those shaders (see §6); `src/lib.rs` re-exports them | GPL-2.0-or-later / permissive |
+| `crates/rustynes-gfx-shaders/src/lib.rs` | Bisqwit; Mesen2 | `BISQWIT_WGSL` (`src/bisqwit.wgsl`), a generated verbatim copy of `ntsc_bisqwit.rs`'s pass, tables ported from Bisqwit's C via Mesen2's `BisqwitNtscFilter` (recorded v3.0.1, T-NTSC-PROVENANCE: its doc comment had called it independent) | GPL-3.0-or-later (Mesen2) |
 | `crates/rustynes-core/src/vs_dualsystem.rs` | Mesen2 | `NesConsole::RunFrame` / `RunVsSubConsole`, `VsControlManager` (reset seed, coin routing), `UpdateMainSubBit` (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m019_namco163.rs` | Mesen2 | `NesSoundMixer::GetOutputVolume`: the N163 `* 20` output weight (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m016_bandai_fcg.rs` | Mesen2 | `Eeprom24C01` / `Eeprom24C02`, `Core/NES/Mappers/Bandai/` | GPL-3.0-or-later |

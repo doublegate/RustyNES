@@ -222,7 +222,8 @@ Video shaders and NTSC filters
 --------------------------------------------------------------------------------
 
 RustyNES's optional CRT shader stack (crates/rustynes-gfx-shaders/) and NTSC
-filters (crates/rustynes-frontend/src/ntsc_bisqwit.rs, ntsc_lmp88959.rs):
+filters (crates/rustynes-frontend/src/ntsc_bisqwit.rs, ntsc_lmp88959.rs, and the
+generated copy of the Bisqwit pass in crates/rustynes-gfx-shaders/src/bisqwit.wgsl):
 
 * The Bisqwit NTSC filter's numeric coefficient tables were ported verbatim (via
   Mesen2's implementation) and are therefore GPL-derived (listed above and in

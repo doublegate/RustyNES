@@ -1233,7 +1233,17 @@ A10-A12, bypassing the MMC3's CHR banks. The mapper 45 page does not mention
 CHR-RAM at all. Open: fix only from a document or a hardware measurement, as
 for T-GA23C-POWERON. (The document turned out to be the mapper 372 page.)
 
-## T-NTSC-PROVENANCE — is the Bisqwit-style NTSC pass derived from Bisqwit's published code? (raised v3.0.1, OPEN for the maintainer)
+## T-NTSC-PROVENANCE — is the Bisqwit-style NTSC pass derived from Bisqwit's published code? (raised v3.0.1, CLOSED v3.0.1: recorded as derived)
+
+**Closed in v3.0.1 (maintainer, 2026-10-07: treat it as derived).** The answer
+was already in the tree: `BISQWIT_WGSL` is generated verbatim from
+`rustynes-frontend`'s `ntsc_bisqwit.rs`, whose header and section 1 row have
+long recorded its tables as ported from Bisqwit's C via Mesen2's
+`BisqwitNtscFilter`. The "independent" sentence sat on a copy of that same
+code. `lib.rs` now carries a `// Provenance:` header and its own section 1
+row, `NOTICE` names the generated file, and `provenance_record_audit.rs` lost
+its one exception (`ROW_WITHOUT_HEADER` is empty; deleting the new header
+fails the audit). The record below is kept as it was raised.
 
 `crates/rustynes-gfx-shaders/src/lib.rs` (around line 311) documents the
 Bisqwit-style composite NTSC post-pass as "an independent implementation of
