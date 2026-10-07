@@ -112,10 +112,10 @@ mod tests {
     #[test]
     fn empty_markers_make_empty_srt() {
         let s = markers_to_srt(Vec::<(u64, String)>::new(), NTSC_NUM, NTSC_DEN, 120);
-        assert!(s.is_empty());
+        assert_eq!(s, "");
         // Blank labels are skipped too.
         let s = markers_to_srt(vec![(0u64, "  ".to_string())], NTSC_NUM, NTSC_DEN, 120);
-        assert!(s.is_empty());
+        assert_eq!(s, "");
     }
 
     #[test]

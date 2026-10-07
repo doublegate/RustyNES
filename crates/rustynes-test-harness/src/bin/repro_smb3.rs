@@ -224,8 +224,8 @@ fn replay_movie(nes: &mut Nes, movie_path: &str, out_dir: &Path, dump_every: u64
             // On-screen sprites only, in OAM order, so we can see which compete on
             // Mario's scanline and in what order (the drop is order-dependent).
             let mut onlist: Vec<(usize, u8, u8, u8)> = Vec::new();
-            for (i, s) in oam.chunks_exact(4).enumerate() {
-                let (y, tile, _attr, x) = (s[0], s[1], s[2], s[3]);
+            for (i, s) in oam.as_chunks::<4>().0.iter().enumerate() {
+                let [y, tile, _attr, x] = *s;
                 if y < 0xEF {
                     onscreen += 1;
                     if (40..96).contains(&y) {
@@ -299,7 +299,7 @@ fn observe_idle(nes: &mut Nes, n: usize) {
         // Mario; detect "any on-screen sprite in his centre box".
         // Precise detector: small-Mario's body tiles (0x05/0x07) on-screen,
         // not a loose box (which catches coins/enemies/projectiles as noise).
-        let mario_present = oam.chunks_exact(4).any(|s| {
+        let mario_present = oam.as_chunks::<4>().0.iter().any(|s| {
             let (y, tile) = (s[0], s[1]);
             y < 0xEF && matches!(tile, 0x05 | 0x07)
         });
@@ -330,7 +330,7 @@ fn observe_idle(nes: &mut Nes, n: usize) {
 /// Mario's body tiles in the OAM/RAM sprite buffer (small Mario, idle).
 #[cfg(feature = "debug-hooks")]
 fn mario_in_buf(buf: &[u8]) -> bool {
-    buf.chunks_exact(4).any(|s| {
+    buf.as_chunks::<4>().0.iter().any(|s| {
         let (y, tile) = (s[0], s[1]);
         y < 0xEF && matches!(tile, 0x05 | 0x07)
     })
@@ -428,7 +428,9 @@ fn diag_idle(nes: &mut Nes, n: usize) {
         if ram_mario && !oam_mario {
             // Find where Mario's tile pair (0x05 at some +1 offset) sits in RAM.
             let ram_idx = ram_buf
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .position(|s| s[0] < 0xEF && matches!(s[1], 0x05 | 0x07));
             // Detect a global byte-shift: best offset k minimising sum|oam[i]-ram[i-k]|.
             let mut best_k = 0i32;

@@ -1759,7 +1759,7 @@ impl VmBackend for MluaBackend {
                     let nes = nes_cell.borrow();
                     let fb = nes.framebuffer();
                     let t = lua.create_table_with_capacity(fb.len() / 4, 0)?;
-                    for (i, px) in fb.chunks_exact(4).enumerate() {
+                    for (i, px) in fb.as_chunks::<4>().0.iter().enumerate() {
                         let argb = (u32::from(px[0]) << 24)
                             | (u32::from(px[1]) << 16)
                             | (u32::from(px[2]) << 8)

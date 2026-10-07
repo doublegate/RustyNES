@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn differences_name_each_differing_option() {
         let a = HardwareOptions::default();
-        assert!(a.differences(&a).is_empty());
+        assert_eq!(a.differences(&a), [] as [&str; 0]);
         let b = HardwareOptions {
             oam_decay: true,
             console_model: ConsoleModel::Famicom,

@@ -223,7 +223,7 @@ fn flash_board_rom(mapper: u8, battery: bool) -> Vec<u8> {
     rom[5] = 0; // CHR-RAM
     rom[6] = ((mapper & 0x0F) << 4) | if battery { 0x02 } else { 0 };
     rom[7] = mapper & 0xF0;
-    for bank in rom[16..].chunks_exact_mut(0x4000) {
+    for bank in rom[16..].as_chunks_mut::<0x4000>().0 {
         bank[0..3].copy_from_slice(&[0x4C, 0x00, 0xC0]); // JMP $C000
         bank[0x3FFA..0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
     }

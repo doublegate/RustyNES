@@ -195,12 +195,8 @@ impl SimpleBmc {
             SimpleBoard::M286 => {
                 let last8 = self.prg_count_8k() - 1;
                 let last_chr2 = (self.chr.len() / CHR_BANK_2K).max(1) - 1;
-                for s in &mut self.prg8 {
-                    *s = last8;
-                }
-                for c in &mut self.chr2 {
-                    *c = last_chr2;
-                }
+                self.prg8.fill(last8);
+                self.chr2.fill(last_chr2);
             }
             SimpleBoard::M320 => self.update_m320(),
             SimpleBoard::M289 => self.update_m289(),

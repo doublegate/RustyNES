@@ -26,7 +26,9 @@ use rustynes_core::irq_trace::BusAccess;
 use rustynes_core::{Buttons, Movie, MoviePlayer, Nes};
 
 fn mario_in_buf(buf: &[u8]) -> bool {
-    buf.chunks_exact(4)
+    buf.as_chunks::<4>()
+        .0
+        .iter()
         .any(|s| s[0] < 0xEF && matches!(s[1], 0x05 | 0x07))
 }
 

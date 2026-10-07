@@ -162,16 +162,37 @@ fn release_notes_are_not_hard_wrapped() {
 #[test]
 fn the_paragraph_scanner_recognises_the_shapes_release_notes_use() {
     // One line per paragraph -- the required form.
-    assert!(wrapped_paragraphs("A single long paragraph line.\n\nAnother one.\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("A single long paragraph line.\n\nAnother one.\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
     // Two lines of one paragraph -- the defect.
     assert_eq!(wrapped_paragraphs("wrapped here\nand continued\n").len(), 1);
     // Structure that legitimately occupies several short lines.
-    assert!(wrapped_paragraphs("| a | b |\n| - | - |\n").is_empty());
-    assert!(wrapped_paragraphs("- one\n- two\n").is_empty());
-    assert!(wrapped_paragraphs("> quoted\n> more\n").is_empty());
-    assert!(wrapped_paragraphs("# head\n## head2\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("| a | b |\n| - | - |\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(
+        wrapped_paragraphs("- one\n- two\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(
+        wrapped_paragraphs("> quoted\n> more\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(
+        wrapped_paragraphs("# head\n## head2\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
     // Fenced code keeps its own line structure.
-    assert!(wrapped_paragraphs("```text\nline one\nline two\n```\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("```text\nline one\nline two\n```\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
     // A deliberate hard break (two trailing spaces) is not a wrap.
-    assert!(wrapped_paragraphs("line one  \nline two\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("line one  \nline two\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
 }

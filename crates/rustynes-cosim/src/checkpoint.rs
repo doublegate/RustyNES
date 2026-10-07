@@ -303,8 +303,10 @@ pub fn observables_from_bytes(bytes: &[u8]) -> Result<Vec<Observable>, &'static 
         return Err("observable stream length is not a multiple of 16 bytes");
     }
     bytes
-        .chunks_exact(ENCODED_LEN)
-        .map(Observable::decode)
+        .as_chunks::<ENCODED_LEN>()
+        .0
+        .iter()
+        .map(|c| Observable::decode(c))
         .collect()
 }
 
@@ -649,7 +651,9 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Vec<Checkpoint>, &'static str> {
         return Err("checkpoint stream length is not a multiple of 16 bytes");
     }
     Ok(bytes
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .map(|c| Checkpoint {
             through_cycle: u64::from_le_bytes(c[0..8].try_into().expect("8 bytes")),
             hash: u64::from_le_bytes(c[8..16].try_into().expect("8 bytes")),

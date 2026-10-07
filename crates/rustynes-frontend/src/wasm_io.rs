@@ -149,8 +149,7 @@ pub fn download_bytes(filename: &str, bytes: &[u8]) {
 pub fn fs_access_supported() -> bool {
     web_sys::window().is_some_and(|w| {
         js_sys::Reflect::get(&w, &JsValue::from_str("showSaveFilePicker"))
-            .ok()
-            .is_some_and(|f| f.is_function())
+            .is_ok_and(|f| f.is_function())
     })
 }
 

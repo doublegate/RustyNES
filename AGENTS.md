@@ -152,7 +152,7 @@ cargo bench -p rustynes-mappers
 cargo bench -p rustynes-core
 ```
 
-Toolchain is **Rust 1.96** pinned in `rust-toolchain.toml` (bumped from 1.86 in v1.3.0 to unblock the edition-2024 + egui 0.34 / wgpu 29 / rfd 0.17 dependency tier). CI runs the test job on stable across Linux/macOS/Windows plus an MSRV pin at 1.96 on Linux.
+Toolchain is **Rust 1.99** pinned in `rust-toolchain.toml` (1.86 until v1.3.0, 1.96 until v3.0.1). **The libretro buildbot stays on 1.96.0** (`RUSTUP_TOOLCHAIN` in `.gitlab-ci.yml`): its image passes `-C ar`, which Rust 1.97 made a hard error, so the seven crates it builds (`rustynes-{cpu,ppu,apu,mappers,core,gamedb,libretro}`) declare `rust-version = "1.96"` and CI's `libretro-cross` job builds them on 1.96.0. **Clippy on 1.99 will suggest rewrites those crates cannot use**: it rewrote a `Box<[u8; N]>` loop that only compiles on 1.97+, and only the 1.96 build caught it. CI runs the tests on the pinned toolchain across Linux/macOS/Windows.
 
 On Linux, anything that pulls in `rustynes-frontend` (which `cargo test --workspace` does) needs the wgpu/winit/cpal system deps:
 

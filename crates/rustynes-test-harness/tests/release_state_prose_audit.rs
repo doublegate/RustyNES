@@ -276,11 +276,23 @@ fn the_current_label_scanner_ignores_prose_quoting_the_defect() {
         "2.3.5"
     );
     // The historical quotation, which is correct prose and must not be flagged.
-    assert!(current_labels("v2.3.5, still marked `(current)`").is_empty());
-    assert!(current_labels("the table stopped at v2.3.5, still marked `(current)`").is_empty());
+    assert_eq!(
+        current_labels("v2.3.5, still marked `(current)`"),
+        [] as [(usize, std::string::String); 0]
+    );
+    assert_eq!(
+        current_labels("the table stopped at v2.3.5, still marked `(current)`"),
+        [] as [(usize, std::string::String); 0]
+    );
     // A version with no codename, or no label, is not a claim.
-    assert!(current_labels("**v2.4.5** (current)").is_empty());
-    assert!(current_labels(r#"**v2.4.5 "Compass"** shipped"#).is_empty());
+    assert_eq!(
+        current_labels("**v2.4.5** (current)"),
+        [] as [(usize, std::string::String); 0]
+    );
+    assert_eq!(
+        current_labels(r#"**v2.4.5 "Compass"** shipped"#),
+        [] as [(usize, std::string::String); 0]
+    );
 }
 
 /// Phrases that name a release as the one currently tagged.
@@ -409,9 +421,15 @@ fn the_tag_claim_scanner_reads_backward_and_needs_a_version() {
         "2.3.9"
     );
     // No version in reach is not a claim about any release.
-    assert!(tag_claims("its version can lag behind the latest tag").is_empty());
+    assert_eq!(
+        tag_claims("its version can lag behind the latest tag"),
+        [] as [(usize, std::string::String); 0]
+    );
     // A version far outside the lookback is not the subject of the phrase.
-    assert!(tag_claims(&format!("v2.3.9{} the current tag", " ".repeat(400))).is_empty());
+    assert_eq!(
+        tag_claims(&format!("v2.3.9{} the current tag", " ".repeat(400))),
+        [] as [(usize, std::string::String); 0]
+    );
     // Multibyte prose must not panic the backward scan.
     assert_eq!(
         tag_claims("— v2.4.6 → “Abacus” — the current tag")[0].1,
@@ -533,7 +551,7 @@ fn versions_are_found_only_within_the_window() {
     assert_eq!(versions_near(line, 0, 60), vec!["1.8.9".to_string()]);
     // Outside the window, the same version is not attributed to the label.
     let far = format!("In development{} v1.8.9", " ".repeat(80));
-    assert!(versions_near(&far, 0, 60).is_empty());
+    assert_eq!(versions_near(&far, 0, 60), [] as [std::string::String; 0]);
 }
 
 #[test]

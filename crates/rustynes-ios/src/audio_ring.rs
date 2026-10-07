@@ -369,7 +369,7 @@ impl Producer {
 /// before v2.7.4. (Unreachable with cpal 0.18 on iOS, which always negotiates
 /// stereo, but a surround route would otherwise play only the left side there.)
 pub fn fan_out(frame: &mut [f32], l: f32, r: f32) {
-    let centre = 0.5 * (l + r);
+    let centre = f32::midpoint(l, r);
     match frame {
         [] => {}
         [c0] => *c0 = centre,

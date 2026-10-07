@@ -275,7 +275,7 @@ mod tests {
         let reference = vec![0x5Au8; INFO_BLOCK_LEN];
         let (v, diffs) = compare_info_block(&reference[..20], &reference);
         assert_eq!(v, BlockVerdict::Truncated { compared: 20 });
-        assert!(diffs.is_empty());
+        assert_eq!(diffs, [] as [(usize, u8, u8); 0]);
     }
 
     #[test]

@@ -848,7 +848,7 @@ impl Mapper for Mmc3Board {
             out.push(u8::from(o.is_some()));
             out.push(o.unwrap_or(0));
         }
-        out.push(self.sticky.map_or(0xFF, |s| s));
+        out.push(self.sticky.unwrap_or(0xFF));
         out.push(self.dip);
         out.extend_from_slice(&(core.len() as u32).to_le_bytes());
         out.extend_from_slice(&core);

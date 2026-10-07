@@ -361,7 +361,7 @@ fn a_bare_filename_is_rejected() {
         "nesdev_wiki/APU_Sweep.xhtml".to_owned(),
         "docs/apu-2a03.md".to_owned(),
     ];
-    assert!(bare_filenames(&clean).is_empty());
+    assert_eq!(bare_filenames(&clean), [] as [&std::string::String; 0]);
 
     let dirty = vec![
         "nesdev_wiki/APU_Pulse.xhtml".to_owned(),
@@ -390,7 +390,7 @@ fn a_citation_with_an_unrecognised_extension_is_reported_not_dropped() {
 
     // And a span that is not path-shaped must not be reported as one.
     let prose = "the `v` register, `$2005`, and `ppu-state-trace`";
-    assert!(unrecognised_extensions(prose).is_empty());
+    assert_eq!(unrecognised_extensions(prose), [] as [&str; 0]);
 
     // A VERSION STRING is the realistic false positive, and these documents are
     // full of them. `v2.5.3` passes the character set and contains dots, so
@@ -403,7 +403,7 @@ fn a_citation_with_an_unrecognised_extension_is_reported_not_dropped() {
     // both -- the bare-filename blindness again, one extension away.
     let bare_pdf = "see `board.pdf` for the pinout";
     assert_eq!(unrecognised_extensions(bare_pdf), vec!["board.pdf"]);
-    assert!(cited_paths(bare_pdf).is_empty());
+    assert_eq!(cited_paths(bare_pdf), [] as [std::string::String; 0]);
 
     let versions = "shipped in `v2.5.3`, built on `v2.4.9`";
     assert!(

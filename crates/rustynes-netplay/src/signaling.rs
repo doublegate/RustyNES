@@ -1275,7 +1275,7 @@ mod tests {
         assert_eq!(relay.room_count(), 1);
         // Peer 2 leaves → room is dropped.
         let acts = relay.disconnect(2);
-        assert!(acts.is_empty());
+        assert_eq!(acts, [] as [crate::signaling::Action; 0]);
         assert_eq!(relay.room_count(), 0);
     }
 

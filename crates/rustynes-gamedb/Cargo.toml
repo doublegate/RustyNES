@@ -11,7 +11,8 @@
 name = "rustynes-gamedb"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# The libretro buildbot builds this crate on Rust 1.96.0 (`.gitlab-ci.yml`).
+rust-version = "1.96"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

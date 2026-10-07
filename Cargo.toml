@@ -79,7 +79,11 @@ default-members = ["crates/rustynes-libretro"]
 # bearing, not decoration.
 version = "3.0.0"
 edition = "2024"
-rust-version = "1.96"
+# The toolchain is 1.99 (rust-toolchain.toml). The seven crates the libretro
+# core compiles override this with "1.96", because the libretro buildbot stays
+# on 1.96.0 (see `.gitlab-ci.yml`); CI builds `rustynes-libretro` on 1.96 so
+# that floor is checked, not just declared.
+rust-version = "1.99"
 license = "GPL-3.0-or-later"
 authors = ["DoubleGate <parobek@gmail.com>"]
 repository = "https://github.com/doublegate/RustyNES"

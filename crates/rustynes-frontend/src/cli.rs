@@ -540,7 +540,7 @@ mod tests {
                 "topic id must be lowercase"
             );
             assert!(seen.insert(t.id), "duplicate topic id: {}", t.id);
-            assert!(!t.title.is_empty());
+            assert_ne!(t.title, "");
             assert!(!t.body.is_empty(), "empty body for topic {}", t.id);
         }
     }

@@ -37,6 +37,26 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Rust 1.99.** The pinned toolchain moves from 1.96.0 to 1.99.0, the newest
+  stable. The libretro buildbot stays on 1.96.0 (`RUSTUP_TOOLCHAIN` in
+  `.gitlab-ci.yml`), because its build image passes `-C ar`, a hard error from
+  Rust 1.97; the seven crates it builds keep `rust-version = "1.96"`, and CI's
+  `libretro-cross` job builds them on 1.96.0. That check caught a clippy 1.99
+  rewrite in `rustynes-core` that only 1.97+ accepts. Rust 1.99's new
+  `extern "C"` variadic definitions do not simplify the RetroAchievements
+  bridge: none of the rcheevos functions it calls is variadic. About 70 new
+  clippy findings were fixed, all exact rewrites (`as_chunks`, `fill`,
+  `assert_eq!` against an empty value so a failure shows the contents).
+- **Every dependency at its newest release.** Crates (`cargo update`; the only
+  holds are forced upstream: `getrandom` 0.2/0.3 by `piccolo` 0.3.3, and
+  `generic-array` 0.14.7 by `crypto-common` 0.1.7). GitHub Actions:
+  `taiki-e/install-action` 2.87.26 (supersedes Dependabot's PR for 2.87.22)
+  and `dtolnay/rust-toolchain` at its current `v1`. Android: `cargo-ndk` 4,
+  NDK r30, Gradle run on Temurin 25, `org.json` 20260814. Web: wasm-opt is
+  now pinned (`version_133`; it was unpinned, so trunk used its built-in
+  `version_123`). Docs build on Python 3.14; Docker images on Rust 1.99 and
+  Debian 13 (the signaling image still named Rust 1.86); `ruff` 0.16.10.
+  macOS jobs move from the deprecated `macos-14` image to `macos-15`.
 - **`EMULATION_EPOCH` is 2.** The mapper 45 fix changes what *Famicom Yarou
   Vol.1* produces, so movies recorded and netplay peers running v3.0.0 are
   refused, naming both epochs (ADR 0045).

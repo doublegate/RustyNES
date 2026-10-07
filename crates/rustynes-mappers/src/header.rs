@@ -1528,7 +1528,7 @@ mod tests {
 
     #[test]
     fn truncated_header() {
-        let bytes = [b'N', b'E', b'S'];
+        let bytes = *b"NES";
         assert!(matches!(
             parse_header(&bytes),
             Err(RomError::Truncated { needed: 16, got: 3 })

@@ -425,7 +425,7 @@ dependencies {
     // a stub, and with `isReturnDefaultValues` it returns null / 0 instead of
     // throwing, so a test of the JSON stores (game_config.json, library.json)
     // would pass or fail on stub defaults, not on the code.
-    testImplementation("org.json:json:20250517")
+    testImplementation("org.json:json:20260814")
     // v2.0.1 (ADR 0025): the optional Google Play services below are PLAY-FLAVOR ONLY.
     // `playImplementation` keeps these proprietary Google-Play SDKs out of the `foss`
     // (F-Droid/sideload) artifact entirely — the `foss` variant links none of them (its

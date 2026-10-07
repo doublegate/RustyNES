@@ -1294,7 +1294,7 @@ mod tests {
         assert_eq!(draws.len(), 2);
         assert!(matches!(&draws[0], DrawCmd::Text { text, .. } if text == "HP: 3"));
         // Drained — a second drain is empty.
-        assert!(eng.drain_controls().is_empty());
+        assert_eq!(eng.drain_controls(), [] as [types::ControlCmd; 0]);
     }
 
     /// v2.1.10 "Creator Tools" (B9) — `emu.drawLine` queues a `DrawCmd::Line`
@@ -2112,7 +2112,7 @@ mod tests {
             "error should name the port rule: {err}"
         );
         // Nothing was staged, so a follow-up apply produces no command.
-        assert!(eng.drain_tas_commands().is_empty());
+        assert_eq!(eng.drain_tas_commands(), [] as [types::TasCmd; 0]);
 
         let mut eng = ScriptEngine::new().expect("engine");
         eng.load(

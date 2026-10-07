@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn empty_freeze_is_empty() {
         let s = MemoryComparePanelState::default();
-        assert!(s.freeze_cheats().is_empty());
+        assert_eq!(s.freeze_cheats(), [] as [crate::cheats::RawCheat; 0]);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

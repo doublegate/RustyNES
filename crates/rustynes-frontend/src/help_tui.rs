@@ -51,7 +51,7 @@ impl HelpApp {
         }
     }
 
-    fn current(&self) -> &'static HelpTopic {
+    const fn current(&self) -> &'static HelpTopic {
         &HELP_TOPICS[self.selected]
     }
 

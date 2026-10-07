@@ -154,8 +154,8 @@ const OP_JMP_ABS: u8 = 0x4C;
 const OP_JMP_IND: u8 = 0x6C;
 
 impl CallstackTracker {
-    /// The current call stack, outermost first.
-    #[must_use]
+    /// The current call stack, outermost first. (No `#[must_use]`: an
+    /// iterator already carries it.)
     pub fn frames(&self) -> impl ExactSizeIterator<Item = &StackFrame> + DoubleEndedIterator {
         self.stack.iter()
     }

@@ -633,7 +633,10 @@ mod tests {
     #[test]
     fn requests_drain_in_order_then_empty() {
         let mut s = TasStudioPanelState::default();
-        assert!(s.take_requests().is_empty());
+        assert_eq!(
+            s.take_requests(),
+            [] as [crate::debugger::tastudio_panel::TasRequest; 0]
+        );
         s.emit(TasRequest::Seek(5));
         s.emit(TasRequest::DeleteBranch(2));
         let drained = s.take_requests();

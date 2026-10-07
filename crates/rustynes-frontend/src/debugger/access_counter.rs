@@ -121,7 +121,7 @@ impl MemoryAccessCounter {
     /// Zero every counter + clear the uninitialized-read state (e.g. on
     /// reset / power-cycle / a user "clear" click).
     pub fn reset(&mut self) {
-        for c in self.counters.iter_mut() {
+        for c in &mut self.counters {
             *c = AddressCounters::default();
         }
         self.uninit_total = 0;

@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn empty_freeze_is_empty_cheats() {
         let s = MemoryPanelState::default();
-        assert!(s.freeze_cheats().is_empty());
+        assert_eq!(s.freeze_cheats(), [] as [crate::cheats::RawCheat; 0]);
         assert!(!s.wants_access_log());
     }
 

@@ -5163,7 +5163,7 @@ mod tests {
 
         // Removal empties the list.
         nes.remove_breakpoint(target);
-        assert!(nes.breakpoints().is_empty());
+        assert_eq!(nes.breakpoints(), []);
 
         // Regression (gemini #41): a breakpoint sitting at the frame's STARTING
         // PC must fire immediately — the old `first_iter` skip missed it.
@@ -5727,7 +5727,7 @@ mod tests {
         for k in all {
             assert_eq!(seen & k.bit(), 0, "{} bit collides", k.label());
             seen |= k.bit();
-            assert!(!k.label().is_empty());
+            assert_ne!(k.label(), "");
         }
         assert_eq!(seen.count_ones() as usize, all.len(), "11 distinct bits");
     }

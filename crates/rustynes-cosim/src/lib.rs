@@ -1081,7 +1081,7 @@ mod tests {
             .take_irq_artifacts(checkpoint::DEFAULT_INTERVAL)
             .expect("armed");
         assert!(a.csv.starts_with("cpu_cycle,"));
-        assert!(!a.checkpoints.expect("no overflow").is_empty());
+        assert_ne!(a.checkpoints.expect("no overflow").len(), 0);
     }
 
     /// The `CpuBootTrace` wire format, pinned to a literal.

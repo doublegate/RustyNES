@@ -194,8 +194,8 @@ mod tests {
     fn load_missing_file_is_empty() {
         let tmp = TempDir::new().unwrap();
         let back = load(tmp.path(), &h(0x00));
-        assert!(back.genie.is_empty());
-        assert!(back.raw.is_empty());
+        assert_eq!(back.genie, [] as [crate::cheats::CheatEntry; 0]);
+        assert_eq!(back.raw, [] as [crate::cheats::RawCheat; 0]);
     }
 
     #[test]
@@ -265,8 +265,8 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "this is = = not toml").unwrap();
         let back = load(tmp.path(), &h(0x07));
-        assert!(back.genie.is_empty());
-        assert!(back.raw.is_empty());
+        assert_eq!(back.genie, [] as [crate::cheats::CheatEntry; 0]);
+        assert_eq!(back.raw, [] as [crate::cheats::RawCheat; 0]);
     }
 
     /// Back-compat: a pre-v1.7.0 cheat file (Game Genie only, no `raw` key)
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(back.genie.len(), 1);
         assert_eq!(back.genie[0].code, "SXIOPO");
         assert!(back.genie[0].enabled);
-        assert!(back.raw.is_empty());
+        assert_eq!(back.raw, [] as [crate::cheats::RawCheat; 0]);
     }
 
     /// A raw cheat with no `compare` key deserializes to `compare: None`.

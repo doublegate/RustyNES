@@ -79,7 +79,7 @@ pub fn encode_8(addr: u16, data: u8, compare: u8) -> String {
 ///   + (((h3 & 7) << 12) | ((h5 & 7) << 8) | ((h4 & 8) << 8)
 ///      | ((h2 & 7) << 4) | ((h1 & 8) << 4) | (h4 & 7) | (h3 & 8))
 /// ```
-fn write_addr_nibbles(hex: &mut [u8], addr: u16) {
+const fn write_addr_nibbles(hex: &mut [u8], addr: u16) {
     let a = addr & 0x7FFF; // the $8000 base is implicit in the encoding.
     hex[3] |= ((a >> 12) & 7) as u8; // bits 12..15
     hex[5] |= ((a >> 8) & 7) as u8; // bits 8..11

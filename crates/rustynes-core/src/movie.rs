@@ -369,12 +369,10 @@ impl RollingHash {
     /// zero-padded, which is unambiguous here because every input is a
     /// fixed-size framebuffer.
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for c in &mut chunks {
-            let w = u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
-            self.0 = (self.0 ^ w).wrapping_mul(Self::PRIME);
+        let (words, rem) = bytes.as_chunks::<8>();
+        for w in words {
+            self.0 = (self.0 ^ u64::from_le_bytes(*w)).wrapping_mul(Self::PRIME);
         }
-        let rem = chunks.remainder();
         if !rem.is_empty() {
             let mut buf = [0u8; 8];
             buf[..rem.len()].copy_from_slice(rem);

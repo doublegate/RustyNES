@@ -804,9 +804,9 @@ fn sha1(data: &[u8]) -> [u8; 20] {
         msg.push(0);
     }
     msg.extend_from_slice(&ml.to_be_bytes());
-    for chunk in msg.chunks_exact(64) {
+    for chunk in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 80];
-        for (i, word) in chunk.chunks_exact(4).enumerate() {
+        for (i, word) in chunk.as_chunks::<4>().0.iter().enumerate() {
             w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
         }
         for i in 16..80 {
@@ -936,9 +936,9 @@ fn md5(data: &[u8]) -> [u8; 16] {
         msg.push(0);
     }
     msg.extend_from_slice(&ml.to_le_bytes());
-    for chunk in msg.chunks_exact(64) {
+    for chunk in msg.as_chunks::<64>().0 {
         let mut m = [0u32; 16];
-        for (i, word) in chunk.chunks_exact(4).enumerate() {
+        for (i, word) in chunk.as_chunks::<4>().0.iter().enumerate() {
             m[i] = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
         }
         let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);

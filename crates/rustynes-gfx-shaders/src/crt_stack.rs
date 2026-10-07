@@ -124,8 +124,8 @@ mod tests {
     fn every_shader_has_nonempty_source() {
         for s in CrtStackShader::ALL {
             assert!(!s.wgsl().is_empty(), "{s:?} has empty WGSL");
-            assert!(!s.slug().is_empty());
-            assert!(!s.display_name().is_empty());
+            assert_ne!(s.slug(), "");
+            assert_ne!(s.display_name(), "");
         }
     }
 
