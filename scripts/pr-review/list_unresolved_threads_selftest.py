@@ -42,7 +42,9 @@ def run(doc) -> subprocess.CompletedProcess:
 def pr(review_threads) -> dict:
     """A payload; a thread list gets a complete single page unless it says otherwise."""
     if isinstance(review_threads.get("reviewThreads"), dict):
-        review_threads["reviewThreads"].setdefault("pageInfo", {"hasNextPage": False})
+        review_threads["reviewThreads"].setdefault(
+            "pageInfo", {"hasNextPage": False, "hasPreviousPage": False}
+        )
     return {"data": {"repository": {"pullRequest": review_threads}}}
 
 
@@ -103,6 +105,21 @@ def main() -> None:
         refused(
             pr({"reviewThreads": {"nodes": [thread("T1", resolved=True)], "pageInfo": {"hasNextPage": True}}}),
             "more review threads than one page",
+        ),
+    )
+
+    check(
+        "a FINAL page with earlier pages is refused, not counted",
+        refused(
+            pr({"reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": False, "hasPreviousPage": True}}}),
+            "not the first page",
+        ),
+    )
+    check(
+        "a page without hasPreviousPage is refused",
+        refused(
+            pr({"reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": False}}}),
+            "no reviewThreads.pageInfo.hasPreviousPage",
         ),
     )
 

@@ -13,7 +13,7 @@ gh api graphql -f query='
     repository(owner:$owner,name:$repo){
       pullRequest(number:$pr){
         reviewThreads(first:100){
-          pageInfo{ hasNextPage endCursor }
+          pageInfo{ hasNextPage hasPreviousPage endCursor }
           nodes{
             id isResolved isOutdated path line
             comments(first:1){ nodes{ databaseId body author{login} } }
@@ -31,7 +31,7 @@ gh api graphql -f query='
 | `list_all_threads.py` | Every thread with its `isResolved` / `isOutdated` flags — the audit view, for confirming nothing was missed. |
 | `reply_and_resolve.py` | Applies prepared replies and resolves **only** the threads that were addressed. Dry run by default. |
 | `reply_and_resolve_selftest.py` | No-network selftest of the two above it. Run it after editing either. |
-| `list_unresolved_threads_selftest.py` | No-network selftest of `list_unresolved_threads.py`: a payload with no thread list, or a partial thread node, must exit non-zero with a named error rather than print `0 unresolved thread(s)`, and so must a list that does not carry `pageInfo.hasNextPage` or says more pages exist (added v3.0.1). Run it after editing that script. |
+| `list_unresolved_threads_selftest.py` | No-network selftest of `list_unresolved_threads.py`: a payload with no thread list, or a partial thread node, must exit non-zero with a named error rather than print `0 unresolved thread(s)`, and so must a list that does not carry `pageInfo.hasNextPage` and `hasPreviousPage`, or says another page exists before or after it (added v3.0.1). Run it after editing that script. |
 
 ## Writing the outcome back
 
