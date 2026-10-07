@@ -1233,6 +1233,27 @@ A10-A12, bypassing the MMC3's CHR banks. The mapper 45 page does not mention
 CHR-RAM at all. Open: fix only from a document or a hardware measurement, as
 for T-GA23C-POWERON. (The document turned out to be the mapper 372 page.)
 
+## T-NTSC-PROVENANCE — is the Bisqwit-style NTSC pass derived from Bisqwit's published code? (raised v3.0.1, OPEN for the maintainer)
+
+`crates/rustynes-gfx-shaders/src/lib.rs` (around line 311) documents the
+Bisqwit-style composite NTSC post-pass as "an independent implementation of
+the NES composite signal model documented at the NESdev wiki ('NTSC video');
+no third-party emulator code is incorporated". Two problems, found while
+restoring the softened Sunsoft 5B comment in v3.0.1:
+
+- The sentence is a self-certification, which
+  `docs/ai-emulator-provenance-guardrails.md` forbids as a finished claim.
+- The NESdev "NTSC video" page carries Bisqwit's own published code, and the
+  pass is named after him, so whether the WGSL derives from that code is a
+  real question. If it does, it needs the same treatment as every other
+  derived region (a site note, a `// Provenance:` header, a section 1 row in
+  `docs/originality-and-provenance.md`, `NOTICE`), and the code's licence on
+  that page decides compatibility.
+
+Not changed in v3.0.1: deciding it needs a careful comparison of the pass
+against the published code (the wiki page is public documentation, so reading
+it is permitted) and a maintainer decision, not an edit to the sentence.
+
 ## T-SPECTATOR-HISTORY — the spectator's input history grows without bound (found v2.9.9, FIXED v3.0.0)
 
 **Fixed for v3.0.0.** `history` is a `VecDeque` whose front is the frame
