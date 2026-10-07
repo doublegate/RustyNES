@@ -40,6 +40,9 @@ def run(doc) -> subprocess.CompletedProcess:
 
 
 def pr(review_threads) -> dict:
+    """A payload; a thread list gets a complete single page unless it says otherwise."""
+    if isinstance(review_threads.get("reviewThreads"), dict):
+        review_threads["reviewThreads"].setdefault("pageInfo", {"hasNextPage": False})
     return {"data": {"repository": {"pullRequest": review_threads}}}
 
 
@@ -90,7 +93,30 @@ def main() -> None:
         refused(pr({"reviewThreads": {"nodes": None}}), "no reviewThreads.nodes list"),
     )
 
+    # Truncation: a list that does not say it is complete is refused.
+    check(
+        "a list without pageInfo is refused, not counted",
+        refused(pr({"reviewThreads": {"nodes": [], "pageInfo": None}}), "no reviewThreads.pageInfo.hasNextPage"),
+    )
+    check(
+        "a list with more pages is refused, not counted",
+        refused(
+            pr({"reviewThreads": {"nodes": [thread("T1", resolved=True)], "pageInfo": {"hasNextPage": True}}}),
+            "more review threads than one page",
+        ),
+    )
+
     # Partial nodes: a named error, never a bare KeyError traceback.
+    noid = thread("T1")
+    del noid["id"]
+    check(
+        "an open node without an id is refused by name",
+        refused(pr({"reviewThreads": {"nodes": [noid]}}), "has no id"),
+    )
+    check(
+        "an open node with an EMPTY comment list is refused, not skipped",
+        refused(pr({"reviewThreads": {"nodes": [thread("T1", comments=[])]}}), "has no comments"),
+    )
     check(
         "a node without isResolved is refused by name",
         refused(pr({"reviewThreads": {"nodes": [{"id": "T1"}]}}), "has no boolean isResolved"),

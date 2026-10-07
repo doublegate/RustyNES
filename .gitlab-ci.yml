@@ -30,12 +30,18 @@
 # ---------------------------------------------------------------------------
 # Why every job carries a `before_script` (pipeline #91899 post-mortem)
 # ---------------------------------------------------------------------------
+# (History, 2026-07-20. The mechanism still holds; two details moved since:
+# the pin is whatever `rust-toolchain.toml` says (1.99.0 at v3.0.1), and since
+# v3.0.1 each job runs `rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile
+# minimal --target ${RUST_TARGET}`, which installs the pinned toolchain WITH
+# its target in one step, where this record says `rustup target add`.)
+#
 # The first buildbot run passed only `libretro-build-linux-x64`; the other
 # nine died with `E0463: can't find crate for core`. Root cause is entirely
 # on our side, not the build images:
 #
-# This repo pins its toolchain in `rust-toolchain.toml` (`channel =
-# "1.96.0"`). The build image ships its own default toolchain with every
+# This repo pinned its toolchain in `rust-toolchain.toml` (`channel =
+# "1.96.0"` then). The build image ships its own default toolchain with every
 # libretro cross target pre-provisioned — but our pin makes rustup download
 # and install a SEPARATE, pristine 1.96.0 toolchain on the first `cargo`
 # invocation, and that toolchain carries only the host `rust-std` plus the
@@ -360,8 +366,8 @@ libretro-build-tvos-arm64:
 # Built in libretro's webOS image, which has its own rustup, libclang and the
 # LG webOS SDKs. The template's `before_script` sources the SDK environment,
 # so it is kept via `!reference`, and the #91899 `rustup target add` follows
-# it: the `channel` pin makes rustup fetch a pristine 1.96.0 here too, without
-# the targets the image installed on its own default toolchain.
+# it: the pinned toolchain (`RUSTUP_TOOLCHAIN`) is a pristine install here too,
+# without the targets the image installed on its own default toolchain.
 libretro-build-webos-armv7a:
   extends:
     - .libretro-rust-webos-armv7a-default
