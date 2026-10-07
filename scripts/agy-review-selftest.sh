@@ -61,7 +61,7 @@ log() { :; }
 # otherwise extract EMPTY, and an empty guard sources fine and asserts nothing -- the same
 # absence-reads-as-agreement failure the markers were adopted to prevent.
 for guard in "service-error guard" "oauth guard" "ours-comment filter" "duration parser" \
-             "numeric env validation" "diff-size scaling"; do
+             "numeric env validation" "diff-size scaling" "diff-limit classifier"; do
   blk="$(extract_block "$guard")"
   [ -n "$blk" ] || { echo "FAIL: SELFTEST-EXTRACT block '$guard' is missing or empty" >&2; exit 1; }
   printf '%s\n' "$blk" | bash -n - 2>/dev/null \
@@ -396,6 +396,18 @@ check "numeric env: canonical value is arithmetic-safe" "9" \
   "$(bash -c 'set -e; echo $(( 1048576 * '"$T"' / 1048576 ))' 2>/dev/null || echo CRASHED)"
 check "numeric env: the RAW value would have crashed"   "CRASHED" \
   "$(bash -c 'set -e; echo $(( 1048576 * 09 / 1048576 ))' 2>/dev/null || echo CRASHED)"
+
+# --- the 406 diff-limit classifier -------------------------------------------------------
+# GitHub's two "too big for the API" refusals must BOTH reach the local-diff fallback, and the
+# log must name the limit that fired. Matching only the lines variant failed a wide-but-shallow
+# PR outright; the label is what a reader triages from. Anything else is a real failure.
+dl() { printf '%s\n' "$1" > "$TMPD/derr"; diff_limit_hit "$TMPD/derr" || printf 'NO-FALLBACK'; }
+check "406, lines variant: falls back, named 20,000-line" "20,000-line" \
+  "$(dl 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000)')"
+check "406, files variant: falls back, named 300-file" "300-file" \
+  "$(dl 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300)')"
+check "an unrelated gh error does not fall back" "NO-FALLBACK" \
+  "$(dl 'could not find pull request diff: HTTP 404: Not Found')"
 
 # --- the print-timeout guard -------------------------------------------------------------
 # agy exits 0 on its own --print-timeout and prints a notice, alone or after a partial review.
