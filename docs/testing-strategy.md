@@ -209,7 +209,7 @@ fails if any job it aggregates failed):
   feature set the project enumerates (including `retroachievements`, `full` and
   both wasm32 builds), rustdoc `-D warnings`.
 - **Tests:** `cargo test --workspace` on Linux (plus macOS and Windows on full
-  runs), on the pinned toolchain (`rust-toolchain.toml`, 1.96). Since v2.9.4 the
+  runs), on the pinned toolchain (`rust-toolchain.toml`, 1.99). Since v2.9.4 the
   Linux leg also runs the tests behind non-default features: the frontend with
   `full`, `rustynes-core` and `rustynes-ppu` with `debug-hooks,hd-pack`,
   `rustynes-apu` with `debug-hooks`, `rustynes-script` with

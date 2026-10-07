@@ -70,12 +70,13 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
 | `crates/rustynes-apu/src/opll.rs` | emu2413 (upstream MIT; Mesen2 vendors it) | `emu2413.{h,cpp}` | MIT |
 | `crates/rustynes-frontend/src/ntsc_bisqwit.rs` | Bisqwit; Mesen2 | Bisqwit `nes_ntsc`-style composite model as implemented by Mesen2's `BisqwitNtscFilter`; **numeric tables ported verbatim** | GPL-3.0-or-later (Mesen2) |
-| `crates/rustynes-gfx-shaders/src/crt_stack.rs`, `src/lib.rs` | CRT-Royale, crt-guest-advanced, Sony Megatron | single-pass WGSL reimplementations of those shaders (see §6) | GPL-2.0-or-later / permissive |
+| `crates/rustynes-gfx-shaders/src/crt_stack.rs` | CRT-Royale, crt-guest-advanced, Sony Megatron | single-pass WGSL reimplementations of those shaders (see §6); `src/lib.rs` re-exports them | GPL-2.0-or-later / permissive |
+| `crates/rustynes-gfx-shaders/src/lib.rs` | Bisqwit; Mesen2 | `BISQWIT_WGSL` (`src/bisqwit.wgsl`), a generated verbatim copy of `ntsc_bisqwit.rs`'s pass, tables ported from Bisqwit's C via Mesen2's `BisqwitNtscFilter` (recorded v3.0.1, T-NTSC-PROVENANCE: its doc comment had called it independent) | GPL-3.0-or-later (Mesen2) |
 | `crates/rustynes-core/src/vs_dualsystem.rs` | Mesen2 | `NesConsole::RunFrame` / `RunVsSubConsole`, `VsControlManager` (reset seed, coin routing), `UpdateMainSubBit` (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m019_namco163.rs` | Mesen2 | `NesSoundMixer::GetOutputVolume`: the N163 `* 20` output weight (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m016_bandai_fcg.rs` | Mesen2 | `Eeprom24C01` / `Eeprom24C02`, `Core/NES/Mappers/Bandai/` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m035_jy_asic.rs` | Mesen2 | `JyCompany` register decode, `InvertPrgBits` | GPL-3.0-or-later |
-| `crates/rustynes-mappers/src/m069_sunsoft_fme7.rs` | Mesen2 / Nestopia | Sunsoft 5B audio + FME-7 | GPL-3.0-or-later / GPL-2.0-or-later |
+| `crates/rustynes-mappers/src/m069_sunsoft_fme7.rs` | Mesen2 / Nestopia | Sunsoft 5B audio + FME-7; the 5B level target from Mesen2's `NesSoundMixer::GetOutputVolume` (`* 15` weight) over `Sunsoft5bAudio::_volumeLut`, as this file's pre-v2.2.5 "derived from Mesen2" comment recorded (recorded here v3.0.1); no Nestopia file is recorded | GPL-3.0-or-later / GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/m085_vrc7.rs` | Mesen2 | `Vrc7Audio.h`: the `$9010`/`$9030` register-write path and the `$E000` silence flag (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m099_vs_system.rs` | Mesen2 | `VsSystem.h`: DualSystem sub-console `chrOuter` / `prgOuter` banking (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m176_bmc_fk23c.rs` | Mesen2 | `Waixing/Fk23C.h`, `Mmc3Variants/MMC3_Coolboy.h` | GPL-3.0-or-later |
@@ -85,7 +86,7 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-mappers/src/m513_sachen_9602.rs` | Mesen2 | `Sachen/Sachen9602.h`, `Txc/TxcChip.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/mmc3_clones.rs` | Mesen2 | `Waixing/Mapper253.h`, `Sachen/Sachen8259.h`, `InvertPrgBits`, MMC3 variants | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/multicart_discrete.rs` | Mesen2 | `Ntdec/Mapper221.h`, `Txc/Bmc11160.h` | GPL-3.0-or-later |
-| `crates/rustynes-mappers/src/ntdec.rs` | Mesen2 | NTDEC boards, `Txc/Bmc11160.h` | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/ntdec.rs` | Mesen2 | NTDEC boards, `Txc/Bmc11160.h`; also `Ntdec/NtdecTc112.h` (mapper 193) and `Unlicensed/Mapper204.h` (mapper 204), named by this file's own pre-v2.2.5 "Ported from" comments (recorded v3.0.1) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/sachen_discrete.rs` | Mesen2 | `Sachen/Sachen8259.h`, `Txc/TxcChip.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/kaiser.rs` | Mesen2 | Kaiser boards, `Waixing/Mapper253.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/fds.rs` | puNES | `fds.c` per-CRC drive-timing table | GPL-2.0-or-later |

@@ -16,7 +16,7 @@ Coding conventions and best practices for contributing to RustyNES.
 ```toml
 [package]
 edition = "2024"
-rust-version = "1.96"  # Minimum Supported Rust Version (pinned in rust-toolchain.toml)
+rust-version.workspace = true  # 1.99; the seven libretro-path crates declare "1.96"
 ```
 
 ### Formatting

@@ -26,6 +26,147 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-07 - "Mortar" (the open items closed, one game's graphics fixed, the last MMC3 rule exception tested in the MiSTer core, Rust 1.99 everywhere, every unanswered bot review answered, and a roadmap to v4.0.0)
+
+A maintenance release on v3.0.0. It closes the items v3.0.0 left open:
+*Famicom Yarou Vol.1*'s CHR-RAM, the MiSTer core's odd-frame A12 exception
+(now reached by a test ROM, which found a real one-cycle defect). It moves the toolchain and every dependency to its
+newest release (the libretro buildbot included, once a test pipeline proved its
+build image no longer blocks it), answers every bot review left unanswered since
+PR #1, settles two provenance questions, and writes the plan from v3.1.0 to
+v4.0.0 from 29 maintainer decisions. **Movies and netplay from v3.0.0 are
+refused**: the mapper 45 fix changes one game's output, so `EMULATION_EPOCH`
+rises to 2 (ADR 0045). Save states are unaffected. The MiSTer bitstreams are
+rebuilt, because the A12 fix is RTL, and remain a **release candidate, not
+hardware-verified**. The maintainer's decisions are in
+`to-dos/plans/v3.0.1-mortar-plan.md` and `to-dos/plans/v3.1-to-v4.0-line-plan.md`.
+
+### Fixed
+
+- **Mapper 45 (GA23C) CHR-RAM is unbanked (T-GA23C-CHRRAM).** *Famicom Yarou
+  Vol.1 7-in-1* now draws its menu instead of noise. Its CHR-RAM is addressed
+  straight from PPU A10-A12, so the MMC3 CHR banks and the outer CHR registers
+  no longer apply to it. The mapper 45 page says nothing about CHR-RAM; the
+  GA23C variant with a ROM/RAM switch (mapper 372) documents its RAM as
+  unbanked. The four mapper 45 carts with CHR-ROM are unchanged.
+- **Provenance: a softened comment restored.** In the Sunsoft 5B mixer
+  (`m069_sunsoft_fme7.rs`), v2.2.5 had reworded "Target, derived from Mesen2"
+  to "calibrated against Mesen2 ... as an oracle", which reads as a black-box
+  comparison. The derivation was always disclosed in the file's `Provenance`
+  header and in `docs/originality-and-provenance.md`, but the site said
+  otherwise; it says "derived from" again (maintainer, 2026-10-06). The ten
+  other site comments that release reworded had already been restored.
+- **Provenance: the shared Bisqwit NTSC pass recorded as derived
+  (T-NTSC-PROVENANCE).** `rustynes-gfx-shaders` called `BISQWIT_WGSL` "an
+  independent implementation ... no third-party emulator code is incorporated",
+  but it is a generated verbatim copy of `ntsc_bisqwit.rs`, whose tables have
+  long been recorded as ported from Bisqwit's C via Mesen2. It now carries a
+  `Provenance` header and its own row in `docs/originality-and-provenance.md`,
+  `NOTICE` names it, and the provenance audit lost the exception that had hidden
+  it (maintainer, 2026-10-07).
+- **Provenance: the TriCNES source moved out of the repository.** The vendored
+  MIT TriCNES trees under `crates/rustynes-test-harness/golden/tricnes/` were
+  removed so no repository search reaches reference-emulator source; the
+  committed cross-diff outputs stay. TriCNES remains the one reference whose
+  source may be consulted, for AccuracyCoin work and always attributed
+  (`docs/ai-emulator-provenance-guardrails.md` section 3a; maintainer,
+  2026-10-07). `NOTICE` also corrects the last vendored commit to `94f1b117`.
+- **MiSTer core: the dot-0 A12 rule now asks whether cycle 0 was rendering.**
+  T-MMC3-BG-A12's rule (a visible line's cycle 0 drives the background CHR
+  address) was gated on the live rendering state at the two dots where this
+  core shows it, so a `$2001` write taking effect one dot late still applied
+  it, and the MMC3 IRQ came one CPU cycle early. A new generated test ROM
+  (`mapper4mmc3oddskip080`, written to reach the rule's odd-frame exception,
+  which nothing could) found it; the core and the emulator now agree on all
+  2,978,055 cycles of it. The exception itself is now gated: a new comparison
+  of the cycle each /IRQ rises on catches its mutant, which the bus gate alone
+  could not. The bitstreams are rebuilt for v3.0.1 because this is RTL.
+- **Every unanswered bot review, back to PR #1, answered.** 290 unanswered
+  review threads, review-body findings and Antigravity reviews across both
+  repositories became 473 verdicts; the 80 still valid were fixed, among them:
+  the Bisqwit NTSC filter kept showing the last game frame after a ROM was
+  closed; a mapper-0 override saved from the ROM Database panel vanished on
+  restart; `bump_release.py` could exit 0 with a stale co-simulation lockfile,
+  garble a non-ASCII anchor marker, and append a stray stop after a quote;
+  three release audits could pass on prose they should fail; a review-thread
+  lister reported "0 unresolved" for a malformed response; a perf-log check
+  called a capture with no presentation clock VALID; and Dependabot's titles
+  read `chore(deps)(deps)`, with stale egui holds that blocked every future
+  egui and wgpu update (now a group that moves the five together). The
+  co-simulation crate's checkpoint parser rejects a corrupt stream instead of
+  underflowing, and CI now builds its rustdoc. Every reply is posted and every
+  open thread resolved.
+
+### Changed
+
+- **The plan from v3.1.0 to v4.0.0.** `to-dos/plans/v3.1-to-v4.0-line-plan.md`
+  and one plan per release, written from three research passes (the oracle's
+  backlog, the MiSTer core's, and the outside ecosystem) and 29 maintainer
+  decisions taken on 2026-10-07. v4.0.0 is the remaining public enums made
+  `#[non_exhaustive]` plus MiSTer feature parity. The hardware-verification
+  release (the SuperStation One board session and the mobile device run) moves
+  to the end of the v3.9.x line, so it tests the near-final core, and is
+  numbered after the session. `VERSION-PLAN.md` now lets save-state, movie,
+  netplay and epoch breaks land in any release that says so; a MAJOR is a
+  public Rust API break or a new kind of deliverable (ADR 0043 amendments).
+- **Rust 1.99, everywhere.** The pinned toolchain moves from 1.96.0 to 1.99.0,
+  the newest stable, and the libretro buildbot moves with it. The release first
+  held the buildbot on 1.96.0, because its build image passed `-C ar`, a hard
+  error from Rust 1.97; the image turned out to have dropped that flag on
+  2026-09-03, and a test branch built on 1.99.0 passed all 15 buildbot jobs,
+  the four Apple ones included. CI's `libretro-cross` job now fails if
+  `.gitlab-ci.yml`'s toolchain differs from `rust-toolchain.toml`. While the
+  split stood, the 1.96 build caught a clippy 1.99 rewrite in `rustynes-core`
+  that only 1.97+ accepts. Rust 1.99's new `extern "C"` variadic definitions do
+  not simplify the RetroAchievements bridge: none of the rcheevos functions it
+  calls is variadic. About 70 new clippy findings were fixed, all exact
+  rewrites (`as_chunks`, `fill`, `assert_eq!` against an empty value so a
+  failure shows the contents).
+- **Every dependency at its newest release.** Crates (`cargo update`; the only
+  holds are forced upstream: `getrandom` 0.2/0.3 by `piccolo` 0.3.3, and
+  `generic-array` 0.14.7 by `crypto-common` 0.1.7). GitHub Actions:
+  `taiki-e/install-action` 2.87.26 (supersedes Dependabot's PR for 2.87.22)
+  and `dtolnay/rust-toolchain` at its current `v1`. Android: `cargo-ndk` 4,
+  NDK r30, Gradle run on Temurin 25, `org.json` 20260814. Web: wasm-opt is
+  now pinned (`version_133`; it was unpinned, so trunk used its built-in
+  `version_123`). Docs build on Python 3.14; Docker images on Rust 1.99 and
+  Debian 13 (the signaling image still named Rust 1.86); `ruff` 0.16.10.
+  macOS jobs move from the deprecated `macos-14` image to `macos-15`.
+- **`EMULATION_EPOCH` is 2.** The mapper 45 fix changes what *Famicom Yarou
+  Vol.1* produces, so movies recorded and netplay peers running v3.0.0 are
+  refused, naming both epochs (ADR 0045).
+
+### Verification
+
+- `cargo test --release --workspace --features test-roms --no-fail-fast`:
+  3,234 passed, 0 failed, 11 ignored on the release tree (v3.0.0: 3,223 / 0 /
+  11). `cargo test --workspace`: 2,886 / 0 / 7; the cosim crate 54 / 0.
+  AccuracyCoin 144/144, nestest 0-diff.
+- The local commercial suites (`--features test-roms,commercial-roms`):
+  `external_real_games` 60/0, `external_extended` 137/0, `external_coverage`
+  6/0. The one moved baseline is *Famicom Yarou Vol.1* (T-GA23C-CHRRAM), which
+  now draws its menu.
+- fmt; clippy for all 18 feature combinations, including `retroachievements`,
+  `full` and both wasm builds; rustdoc `-D warnings`; the `no_std` build; the
+  release audits; markdownlint. The code fixes carry tests, with the mutation
+  that checks each one recorded in its commit body.
+- The libretro buildbot: a test branch on Rust 1.99.0 (pipeline 119614) passed
+  all 15 jobs, the four Apple ones included, before the pin was lifted.
+- The MiSTer core: on-die ladder 200 passed, 0 failed, 1 expected failure,
+  off-die 201 / 0 / 1, each one frozen-worktree run of the final sibling RTL
+  against the oracle pinned at this release branch, nothing skipped. The new
+  odd-frame A12 gate matches all 2,978,055 cycles and the cycle of every /IRQ
+  rise; its three mutants were classified (two caught, the third inert by
+  construction and documented at the site). Both builds were swept at seeds
+  1-8 on one build date (261007), and every seed closes on both. Seed 2 is
+  pinned (on-die +0.448 / +0.113 ns, off-die +0.401 / +0.096 ns, SDRAM read
+  +0.447 / +1.184 ns), and two clean compiles of each are byte-identical
+  (on-die `7e81a718...`, off-die `88d1dfa5...`). The stuck-register and
+  suppressed-message checks pass on both. That pair ships as a release
+  candidate. **No hardware has run any bitstream.**
+- The Android unit tests run in CI on the release PR; the iOS Swift and the
+  mobile device behaviour are unverified on this Linux host.
+
 ## [3.0.0] - 2026-10-06 - "Cornerstone" (the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core)
 
 The MAJOR release the v2.9.x line prepared for (ADR 0043). v2.9.8 and v2.9.9
@@ -8281,8 +8422,9 @@ against the sweep: five CAUGHT, two NOT CAUGHT and both explained.
 
 This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was never
 tagged; entries below marked *(v2.4.0 item)* belong to it. Two further entries — the
-standing release-anchor audit and the deferred-backlog sweep — belong to neither, having
-landed between the two, and are called out where they appear.
+standing release-anchor audit and the deferred-backlog sweep — belong to neither: they
+landed separately in #427, after v2.3.9 and before v2.4.0 merged, and ship in v2.4.1.
+They are called out where they appear.
 
 ### Added
 
@@ -8491,7 +8633,7 @@ landed between the two, and are called out where they appear.
   that diagnostic.
 
 - **A standing release-anchor audit — the drift v2.3.9 corrected by hand cannot
-  recur silently.** (Landed between v2.4.0 and v2.4.1; part of neither.) `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
+  recur silently.** (Landed separately in #427, after v2.3.9 and before v2.4.0 merged; part of neither, shipped in v2.4.1.) `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
   pins **15 anchors across 10 documents** against `[workspace.package] version`:
   the README badge and Current Release section, `docs/STATUS.md`, both `AGENTS.md`
   anchors plus its "never claim a later version" guard, `VERSION-PLAN.md` (header
@@ -8563,7 +8705,7 @@ landed between the two, and are called out where they appear.
   immediately** — the rule that incident produced in the first place.
 
 - **`to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md` swept entry by entry** (landed
-  between v2.4.0 and v2.4.1; part of neither), against
+  separately in #427, after v2.3.9 and before v2.4.0 merged; part of neither), against
   `main` @ `fdfb2c04`. Eleven entries struck, each carrying its evidence inline —
   a file that exists, a workflow line number, a test that says so — rather than a
   bare tick, so a closure can be disagreed with.
@@ -9993,7 +10135,7 @@ optimization campaign is closed on the strength of three measured rejections.
   where the prediction fits, which a test pins directly. Measured at
   `run_ahead = 3` over five paired, Latin-square rounds: convergence **12.12 s →
   2.80 s**, frames held for the wrong duration **4.82% → 2.24%**, 5/5 pairs on
-  both, exact one-sided sign p = 0.0312. An alternative arm that cleared the
+  both, exact one-sided sign p = 1/32 = 0.03125. An alternative arm that cleared the
   produce-cost ring on each depth change converged in 4.0 s and matched on
   cadence but produced an audio underrun in **every** capture, and was rejected.
   Additive-only (65 insertions, 0 deletions) inside the engage branch, which the

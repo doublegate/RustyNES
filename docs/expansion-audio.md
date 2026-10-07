@@ -5,7 +5,7 @@
 Several NES cartridge boards carry their **own** sound hardware that mixes into
 the console's external-audio input alongside the 2A03. RustyNES synthesizes six
 such expansion chips and sums each into the mix through the
-`Mapper::mix_audio(&mut self) -> i16` hook (default `0` for boards with no audio
+`Mapper::mix_audio(&mut self) -> i32` hook (default `0` for boards with no audio
 hardware). Each synth core lives in the **owning mapper crate**, not the 2A03
 APU crate, because it is cartridge hardware.
 

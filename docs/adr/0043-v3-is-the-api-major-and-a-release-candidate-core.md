@@ -114,3 +114,73 @@ release notes restate every break since v2.x.
 Decision 1 (an API major plus a release-candidate core, both bitstreams
 labelled not hardware-verified) and Decision 4 (only the libretro sync goes
 upstream) are unchanged.
+
+## Amendment (2026-10-07, after v3.0.0): the hardware release's number, and v4.0.0
+
+The maintainer settled the question Decision 2 left open, and defined the next
+MAJOR, while the line after v3.0.0 was planned
+([`v3.1-to-v4.0-line-plan.md`](../../to-dos/plans/v3.1-to-v4.0-line-plan.md),
+decisions D1-D3).
+
+- **D1: the hardware-verification release is numbered after the board session,
+  and no later than v4.0.0.** It is planned as the slot "HW", after v3.1.0 and
+  before any feature RTL. The number is chosen with the session's evidence in
+  hand: the next free minor if the fixes are small, or as the maintainer then
+  decides if the session finds an L-sized re-target (the FPGA device question,
+  HW-A8). ADR 0041's "new deliverable class" trigger stays available to it.
+- **D2: a format break alone no longer makes a MAJOR.** Save-state, movie,
+  netplay-protocol and `EMULATION_EPOCH` breaks may land in any release with
+  notes; MAJOR is a public Rust API break or a new deliverable class.
+  `VERSION-PLAN.md` was rewritten to match. This states the practice of v2.9.5,
+  v2.9.8, v2.9.9 and v3.0.1.
+- **D3: v4.0.0 is the remaining public enums made `#[non_exhaustive]`, plus
+  MiSTer feature parity.** The enum change is the half of v3.0.0's
+  `T-API-EXTENSIBLE` that v3.0.0 did not take. Parity covers save states,
+  cheats, PAL/Dendy, FDS with expansion audio, the Zapper, Four Score, and
+  mapper families covering the incumbent core's licensed-library list.
+
+Decisions 1, 3 and 4 above stand as history. This amendment changes no shipped
+artefact.
+
+## Amendment (2026-10-07, later the same day): the hardware release moves to the end of v3.9.x (D29)
+
+### Context
+
+The amendment above placed the hardware-verification release right after
+v3.1.0 and before any feature RTL, so the board would verify the six-mapper core
+of v3.0.x and every MiSTer feature after it would be built on a verified base.
+On reading the drafted line, the maintainer asked for the opposite: the whole of
+the hardware release, the board session and the mobile device run, toward the
+end of v3.9.x, "so as much as possible has been implemented, integrated, fixed,
+enhanced, improved and optimized" before it runs.
+
+### Decision
+
+**D29.** The hardware release is the last release of v3.9.x, after v3.9.0's
+RTL feature freeze and release-candidate pair, and immediately before v4.0.0.
+It still carries no feature RTL of its own, only board fixes, each a simulation
+gate first where simulation reaches it. Its number is still chosen after the
+session (D1); if its fixes are large it folds into v4.0.0. The mobile device run
+moves with it (Decision 2), and the store listings (ADR 0035's 2026-10-07
+amendment, D18) follow that run.
+
+This supersedes only the ordering clause of the amendment above ("after v3.1.0
+and before any feature RTL"). Its D1 numbering rule, D2 and D3 stand.
+
+### Consequences
+
+- The MiSTer features of v3.2.0 to v3.8.0 land verified in simulation only, and
+  rung 6 stays open under them; the feature phases need a green ladder, not a
+  board.
+- The board verifies the near-parity core, so v4.0.0 ships a hardware-verified
+  parity core, and the submission decision (D10) is taken just before v4.0.0
+  with nearly the whole feature delta in hand.
+- The FPGA device (HW-A8) and SDRAM part (HW-A9) are read last. A wrong part
+  means an L-sized re-target of the parity core rather than the six-mapper core.
+  An optional read-only reading of the chip markings before then is recorded as
+  an open decision, not planned.
+- The off-die build is the headline from v3.3.0 (D4) while its SDRAM
+  constraints stay provisional until HW-O6, at the end.
+- Board-against-oracle corrections (D13) cluster just before v4.0.0, each with
+  an oracle change and usually an `EMULATION_EPOCH` rise.
+- The full risk list is in the line plan's "Risks of D29".
