@@ -119,6 +119,26 @@ sandbox mounts, etc.), express the firewall there. A rule the runtime enforces b
 agent is merely asked to follow — because the failure mode is precisely an agent that *doesn't*
 follow the asked rule.
 
+### 3a. The one named exception: TriCNES (maintainer decision, 2026-10-07)
+
+TriCNES (Chris "100th_Coin" Siebert, the AccuracyCoin author; MIT, verified against
+`100thCoin/TriCNES` on 2026-10-07) is the single reference whose **source** may be consulted,
+and only on these terms:
+
+- **For AccuracyCoin work only**, when a test its author has already passed in TriCNES is being
+  troubleshot, and only after documentation, the Internet and black-box comparison (rungs 1-3 of
+  the AGENTS.md escalation ladder) have not settled it.
+- **From outside the repository.** Since v3.0.1 the upstream clone lives at
+  `~/reference-oracles/TriCNES` (commit `94f1b117`) and the instrumented harness at
+  `~/reference-oracles/TriCNES-rustynes-harness`. Rules 1 and 2 above still hold: nothing of it
+  goes back into the working tree.
+- **Anything written after consulting it is a port, and is attributed as one:** a `// Provenance:`
+  header, a section 1 row in `docs/originality-and-provenance.md`, and `NOTICE`, in the same
+  change. MIT requires the copyright notice; this project requires the rest.
+- **It is not a precedent.** It rests on TriCNES being permissive and written by the author of the
+  test suite. No GPL reference and no third-party HDL gains anything from it, and for the MiSTer
+  sibling the AGENTS.md per-region rung-4 declaration still applies.
+
 ---
 
 ## 4. Attribution: four surfaces, always consistent

@@ -1841,7 +1841,7 @@ impl NesController {
             });
         }
         let mut pal = [[0u8; 3]; 64];
-        for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
+        for (i, chunk) in bytes[..192].as_chunks::<3>().0.iter().enumerate() {
             pal[i] = [chunk[0], chunk[1], chunk[2]];
         }
         // v2.9.9 (NF-22) — both consoles of a cabinet.
@@ -3688,7 +3688,7 @@ mod tests {
         let ctrl = NesController::new(battery_nrom(false), DEFAULT_SAMPLE_RATE).expect("load");
         assert!(!ctrl.has_battery());
         ctrl.step_frame();
-        assert!(ctrl.battery_ram().is_empty());
+        assert_eq!(ctrl.battery_ram(), [] as [u8; 0]);
         assert!(matches!(
             ctrl.load_battery_ram(vec![0; 0x2000]),
             Err(MobileError::Battery { .. })
@@ -4212,7 +4212,7 @@ mod tests {
         ctrl.set_disk_side(Some(7));
         assert_eq!(ctrl.inserted_disk_side(), None, "out of range is ignored");
         assert!(!ctrl.disk_is_dirty());
-        assert!(!ctrl.disk_image_bytes().is_empty());
+        assert_ne!(ctrl.disk_image_bytes(), [] as [u8; 0]);
         assert_eq!(ctrl.nsf_song_count(), 0, "a disk is not an NSF");
     }
 
@@ -4286,7 +4286,7 @@ mod tests {
         let single = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
         assert!(ctrl.load_state(single.save_state()).is_err());
         assert!(!single.is_dual_system());
-        assert!(single.sub_framebuffer().is_empty());
+        assert_eq!(single.sub_framebuffer(), [] as [u8; 0]);
     }
 
     /// Plan item 7: the features the core scopes out of a cabinet (one
@@ -4419,7 +4419,7 @@ mod tests {
         );
         // Recovered once, warned once: later calls are ordinary.
         ctrl.step_frame();
-        assert!(ctrl.drain_warning_codes().is_empty());
+        assert_eq!(ctrl.drain_warning_codes(), [] as [HostWarning; 0]);
     }
 
     /// v2.7.4 (review of MOB-03): a panic while a frame runs must not reach the
@@ -4539,7 +4539,7 @@ mod tests {
         let frozen = ctrl.frame();
         ctrl.run_frame();
         assert_eq!(ctrl.frame(), frozen, "no cycle may run after the panic");
-        assert!(ctrl.composite_hd_frame().is_empty());
+        assert_eq!(ctrl.composite_hd_frame(), [] as [u8; 0]);
         assert!(ctrl.drain_warning_codes().is_empty(), "warned once");
 
         // A fresh start thaws it.

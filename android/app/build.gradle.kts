@@ -65,8 +65,8 @@ android {
         // `scripts/release-automation/bump_release.py` from now on, starting
         // with the 3.0.0 cut. versionCode = MAJOR * 10000 + MINOR * 100 +
         // PATCH, so 20909 still rises past 20004.
-        versionCode = 30000
-        versionName = "3.0.0"
+        versionCode = 30001
+        versionName = "3.0.1"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD is set per-flavor below (`false` for `foss`, `true` for `play`),
@@ -425,7 +425,7 @@ dependencies {
     // a stub, and with `isReturnDefaultValues` it returns null / 0 instead of
     // throwing, so a test of the JSON stores (game_config.json, library.json)
     // would pass or fail on stub defaults, not on the code.
-    testImplementation("org.json:json:20250517")
+    testImplementation("org.json:json:20260814")
     // v2.0.1 (ADR 0025): the optional Google Play services below are PLAY-FLAVOR ONLY.
     // `playImplementation` keeps these proprietary Google-Play SDKs out of the `foss`
     // (F-Droid/sideload) artifact entirely — the `foss` variant links none of them (its

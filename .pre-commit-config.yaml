@@ -70,7 +70,7 @@ repos:
   # here, like every other hook, so a new ruff release cannot redden unchanged
   # scripts.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.9
+    rev: v0.16.10
     hooks:
       - id: ruff-check
 

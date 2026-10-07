@@ -30,12 +30,18 @@
 # ---------------------------------------------------------------------------
 # Why every job carries a `before_script` (pipeline #91899 post-mortem)
 # ---------------------------------------------------------------------------
+# (History, 2026-07-20. The mechanism still holds; two details moved since:
+# the pin is whatever `rust-toolchain.toml` says (1.99.0 at v3.0.1), and since
+# v3.0.1 each job runs `rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile
+# minimal --target ${RUST_TARGET}`, which installs the pinned toolchain WITH
+# its target in one step, where this record says `rustup target add`.)
+#
 # The first buildbot run passed only `libretro-build-linux-x64`; the other
 # nine died with `E0463: can't find crate for core`. Root cause is entirely
 # on our side, not the build images:
 #
-# This repo pins its toolchain in `rust-toolchain.toml` (`channel =
-# "1.96.0"`). The build image ships its own default toolchain with every
+# This repo pinned its toolchain in `rust-toolchain.toml` (`channel =
+# "1.96.0"` then). The build image ships its own default toolchain with every
 # libretro cross target pre-provisioned — but our pin makes rustup download
 # and install a SEPARATE, pristine 1.96.0 toolchain on the first `cargo`
 # invocation, and that toolchain carries only the host `rust-std` plus the
@@ -70,12 +76,25 @@
     # per-package `panic`, hence the profile environment variable; every job
     # here extends `.core-defs`, and GitLab merges `variables` across `extends`.
     CARGO_PROFILE_RELEASE_PANIC: "unwind"
+    # The toolchain every job here installs and builds with. It MUST equal
+    # `rust-toolchain.toml`'s `channel`: GitHub CI's `libretro-cross` job
+    # fails if the two differ. The variable outranks `rust-toolchain.toml`,
+    # and each job installs exactly this toolchain with its target.
+    #
+    # History: v3.0.1 first held this at 1.96.0 while the workspace moved to
+    # 1.99.0, because the libretro build image injected `-Car=...` into every
+    # Apple job and `-C ar` is a hard error from Rust 1.97. The image dropped
+    # that flag on 2026-09-03 (libretro-build-rust `841f3619`, "Remove -C usage
+    # as no longer supported by rust"), and a test branch built on 1.99.0
+    # (pipeline 119614) passed all 15 jobs, the four Apple ones included, so
+    # the hold was lifted in the same release.
+    RUSTUP_TOOLCHAIN: "1.99.0"
 
 # Shared `before_script` for the jobs whose upstream template defines none
 # (Windows, Linux, and all four Android). See the post-mortem above.
 .rust-target-install:
   before_script:
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 include:
   ################################## DESKTOPS ################################
@@ -143,7 +162,7 @@ libretro-build-windows-i686:
     RUST_TARGET: i686-pc-windows-gnu
   before_script:
     - !reference [.libretro-rust-windows-i686, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # Linux 64-bit
 # `RUST_TARGET` is the host triple here, so the `rustup target add` is a
@@ -169,7 +188,7 @@ libretro-build-linux-i686:
     RUST_TARGET: i686-unknown-linux-gnu
   before_script:
     - !reference [.libretro-rust-linux-i686, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # Linux aarch64
 # Cross-compiled from the same image as the x64 job. This job used to install
@@ -186,7 +205,7 @@ libretro-build-linux-aarch64:
     RUST_TARGET: aarch64-unknown-linux-gnu
   before_script:
     - !reference [.libretro-rust-linux-aarch64, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # macOS 64-bit
 #
@@ -209,7 +228,7 @@ libretro-build-osx-x64:
   before_script:
     - !reference [.libretro-rust-osx-x86_64-default, before_script]
     - export SDKROOT=$OSX_SDKROOT
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # macOS ARM 64-bit
 libretro-build-osx-arm64:
@@ -221,7 +240,7 @@ libretro-build-osx-arm64:
   before_script:
     - !reference [.libretro-rust-osx-arm64-default, before_script]
     - export SDKROOT=$OSX_SDKROOT
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 ################################### CELLULAR #################################
 # Android ARMv7a
@@ -272,7 +291,7 @@ libretro-build-ios-arm64:
     RUST_TARGET: aarch64-apple-ios
   before_script:
     - !reference [.libretro-rust-ios-arm64-default, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # tvOS
 #
@@ -290,7 +309,7 @@ libretro-build-ios-arm64:
 # among them) and `cargo check --release -p rustynes-libretro --target
 # aarch64-apple-tvos` compiles the entire graph, bindgen included.
 #
-# Restoring the shared script puts tvOS on the same pinned 1.96.0 as every
+# Restoring the shared script puts tvOS on the same pinned toolchain as every
 # other job, and dissolves three separate workarounds this job used to need
 # rather than accumulating a fourth:
 #
@@ -318,7 +337,8 @@ libretro-build-ios-arm64:
 #      long-deprecated no-op became a hard error in Rust 1.97 (bisected:
 #      1.96.1 warns, 1.97.1 errors). On the pinned 1.96.0 it is still only a
 #      warning — exactly as it already was for the three Apple jobs that
-#      were green throughout.
+#      were green throughout. (The image stopped injecting it on 2026-09-03;
+#      see `.core-defs`.)
 #
 # `!reference [.libretro-rust-apple-base, script]` pulls in the generic Apple
 # build/package steps instead of duplicating them here, so upstream fixes to
@@ -326,9 +346,9 @@ libretro-build-ios-arm64:
 # tvOS template already sets to `aarch64-apple-tvos`, and honours the same
 # `STRIP_CORE_LIB` / `DSYM_CORE_LIB` flags the template sets.
 #
-# NOTE: `-C ar` is still a latent hazard for ALL FOUR Apple jobs, now
-# including this one. Read `rust-toolchain.toml` before bumping `channel` to
-# 1.97 or newer.
+# NOTE: `-C ar` WAS a latent hazard for all four Apple jobs until the build
+# image stopped injecting it (2026-09-03). If a future image brings it back,
+# the two-line `before_script` fix is recorded in `rust-toolchain.toml`.
 libretro-build-tvos-arm64:
   extends:
     - .libretro-rust-tvos-arm64-default
@@ -337,7 +357,7 @@ libretro-build-tvos-arm64:
     RUST_TARGET: aarch64-apple-tvos
   before_script:
     - !reference [.libretro-rust-tvos-arm64-default, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
   script:
     - !reference [.libretro-rust-apple-base, script]
 
@@ -346,8 +366,8 @@ libretro-build-tvos-arm64:
 # Built in libretro's webOS image, which has its own rustup, libclang and the
 # LG webOS SDKs. The template's `before_script` sources the SDK environment,
 # so it is kept via `!reference`, and the #91899 `rustup target add` follows
-# it: the `channel` pin makes rustup fetch a pristine 1.96.0 here too, without
-# the targets the image installed on its own default toolchain.
+# it: the pinned toolchain (`RUSTUP_TOOLCHAIN`) is a pristine install here too,
+# without the targets the image installed on its own default toolchain.
 libretro-build-webos-armv7a:
   extends:
     - .libretro-rust-webos-armv7a-default
@@ -356,7 +376,7 @@ libretro-build-webos-armv7a:
     RUST_TARGET: armv7-unknown-linux-gnueabi
   before_script:
     - !reference [.libretro-rust-webos, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # webOS aarch64
 # The image points bindgen at the SDK sysroot for armv7 only
@@ -379,4 +399,4 @@ libretro-build-webos-aarch64:
     BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: "--sysroot=/developer/aarch64-webos-linux-gnu_sdk-buildroot/aarch64-webos-linux-gnu/sysroot"
   before_script:
     - !reference [.libretro-rust-webos, before_script]
-    - rustup target add ${RUST_TARGET}
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}

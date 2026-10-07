@@ -11,8 +11,12 @@
 # reach it. Pair with a STUN/TURN server (coturn) for NAT traversal.
 
 # --- build stage ---------------------------------------------------------------
-# Pin to the workspace MSRV (rust-toolchain.toml channel = 1.86.0).
-FROM rust:1.86-bookworm AS build
+# Match the workspace toolchain (rust-toolchain.toml channel = 1.99.0, v3.0.1).
+# rustup inside the image reads that file from the copied workspace and
+# installs the pinned channel regardless, so this tag mainly saves the
+# download; keep the two equal. (It said 1.86 for two years after the pin
+# moved to 1.96; the build was still correct only because of that override.)
+FROM rust:1.99-trixie AS build
 WORKDIR /src
 
 # Copy the whole workspace (the example depends on the rustynes-netplay crate +
@@ -27,7 +31,9 @@ RUN cargo build --release --locked \
     -p rustynes-netplay --features signaling-server --example signaling_server
 
 # --- runtime stage -------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+# Same Debian release as the build stage, so the binary links against the
+# glibc it was built with.
+FROM debian:trixie-slim AS runtime
 # Non-root user for the long-running service.
 RUN useradd --system --create-home --shell /usr/sbin/nologin signal
 COPY --from=build /src/target/release/examples/signaling_server /usr/local/bin/signaling_server

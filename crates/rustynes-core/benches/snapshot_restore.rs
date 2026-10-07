@@ -101,8 +101,9 @@ fn bench_rom(c: &mut Criterion, label: &str, rel: &str) {
     //
     // Written because the estimate that motivated F19 was unsound: the
     // framebuffer is 94% of the snapshot BYTES, and that was silently carried
-    // over into a claim about TIME. A 245 KiB memcpy is ~12-25 us at ordinary
-    // bandwidth, so if `restore_quiet` costs 121 us the framebuffer cannot be
+    // over into a claim about TIME. A 245 KiB memcpy is ~12-25 us at an
+    // ordinary ~10-20 GB/s (245,760 B / 20 GB/s = 12.3 us; / 10 GB/s =
+    // 24.6 us), so if `restore_quiet` costs 121 us the framebuffer cannot be
     // 94% of it, and the win could be a fraction of what F19 assumed. Measure
     // the pair rather than reason about the ratio.
     c.bench_function(&format!("nes_restore_quiet_slim_{label}"), |b| {
@@ -223,7 +224,7 @@ fn flash_board_rom(mapper: u8, battery: bool) -> Vec<u8> {
     rom[5] = 0; // CHR-RAM
     rom[6] = ((mapper & 0x0F) << 4) | if battery { 0x02 } else { 0 };
     rom[7] = mapper & 0xF0;
-    for bank in rom[16..].chunks_exact_mut(0x4000) {
+    for bank in rom[16..].as_chunks_mut::<0x4000>().0 {
         bank[0..3].copy_from_slice(&[0x4C, 0x00, 0xC0]); // JMP $C000
         bank[0x3FFA..0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
     }

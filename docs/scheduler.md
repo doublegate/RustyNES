@@ -157,11 +157,15 @@ This guarantees that save/load round-trips and a re-played input sequence produc
 
 > These are the original **design-phase aspirations**, not gates. The frame-cost
 > figure was not met and is knowingly accepted — the implemented cycle-accurate
-> core measures **~3.9 ms** (nestest) / **~2.5 ms** (flowing palette), ~23% of the
-> 16.639 ms NTSC budget. See `docs/performance.md` §Targets for the measured
-> numbers and why the main optimization levers were measured and rejected.
+> core measures **~3.95 ms** (nestest) on the shipped fast dot path, ~23% of the
+> 16.639 ms NTSC budget, and **~2.65 ms** on flowing palette, a rendering-disabled
+> control whose fast-path variant never enters that path (its guard bails) (the v2.7.0 core,
+> 2026-09-23; v2.9.7's A12 change added about 1.9% on nestest). See
+> `docs/performance.md` §"Current figures" for the measured numbers, the
+> exact-path pair, and why the main optimization levers were measured and
+> rejected.
 
-- Frame cost (single-thread, headless core — no frontend, no present): ≤ 2 ms on a 2018-era laptop x86_64 (Skylake-era) — **aspirational; ~3.8 ms measured and accepted** (`nes_run_frame_nestest`, which renders; the render-light `flowing_palette` workload measures ~2.6 ms).
+- Frame cost (single-thread, headless core — no frontend, no present): ≤ 2 ms on a 2018-era laptop x86_64 (Skylake-era) — **aspirational; ~3.95 ms measured and accepted** (`nes_run_frame_nestest_fast`, the shipped fast dot path, which renders; the render-light `flowing_palette` workload measures ~2.65 ms).
 - Frame cost including wgpu present + cpal callback: ≤ 5 ms (well under the 16.67 ms budget for 60 fps NTSC).
 - Audio callback: lock-free SPSC ring buffer; never block the audio thread.
 

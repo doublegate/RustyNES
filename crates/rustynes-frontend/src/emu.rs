@@ -190,6 +190,18 @@ const THROTTLE_MIN_SAMPLES: usize = 120;
 #[cfg(not(target_arch = "wasm32"))]
 const RUNAHEAD_THROTTLE_RELEASE: f32 = 0.70;
 
+/// The throttle's per-frame-linear cost model: the median produce cost at
+/// `running` run-ahead frames, divided over the `running + 1` frames it pays
+/// for (F18: +4.49 and +4.21 ms per depth, equal within 6%).
+///
+/// One function because the engage cascade and the release arm both need it,
+/// and until v3.0.1 each wrote the formula out separately, free to drift.
+/// `f64` so both conversions are total and lossless (see the engage arm).
+#[cfg(not(target_arch = "wasm32"))]
+fn per_frame_cost(produce_p50_ms: f32, running: u32) -> f64 {
+    f64::from(produce_p50_ms) / (f64::from(running) + 1.0)
+}
+
 /// The two must not be swapped back. A minimum-to-report at or above the ring's
 /// capacity would mean the throttle either never reports or reports only on a
 /// full ring, and the F27 defect was precisely a confusion between these two
@@ -1414,7 +1426,7 @@ impl EmuCore {
             // configuration that is over budget" is worse than no fallback.
             // Raised by both reviewers on PR #371.
             let band = f64::from(engage_band);
-            let per_frame = f64::from(produce_p50_ms) / (f64::from(running) + 1.0);
+            let per_frame = per_frame_cost(produce_p50_ms, running);
             while self.runahead_throttle_steps < bounded {
                 let from = bounded.saturating_sub(self.runahead_throttle_steps);
                 let predicted = per_frame * (f64::from(from) + 1.0);
@@ -1474,7 +1486,7 @@ impl EmuCore {
             // would predict the cost of a SINGLE frame and release into a
             // configuration that cannot afford it. Fixed in both places at once
             // rather than only in the code review happened to be looking at.
-            let per_frame = f64::from(produce_p50_ms) / (f64::from(running) + 1.0);
+            let per_frame = per_frame_cost(produce_p50_ms, running);
             let predicted_one_more = per_frame * (f64::from(running) + 2.0);
             let release_band = f64::from(target) * f64::from(RUNAHEAD_THROTTLE_RELEASE);
             let release = predicted_one_more < release_band;
@@ -2409,6 +2421,15 @@ pub(crate) fn drive_ra(
 #[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
 mod tests {
     use super::*;
+
+    /// The shared cost model divides the measured cost over `running + 1`
+    /// frames: depth 0 is one frame, depth 2 is three.
+    #[test]
+    fn per_frame_cost_divides_over_running_plus_one() {
+        assert!((per_frame_cost(9.0, 0) - 9.0).abs() < 1e-12);
+        assert!((per_frame_cost(9.0, 2) - 3.0).abs() < 1e-12);
+        assert!((per_frame_cost(12.0, 3) - 3.0).abs() < 1e-12);
+    }
 
     // ---- v2.3.3 F21: the run-ahead budget throttle state machine ----------
     //

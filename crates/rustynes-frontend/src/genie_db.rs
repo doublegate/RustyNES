@@ -288,7 +288,10 @@ mod tests {
 
     #[test]
     fn lookup_miss_is_empty() {
-        assert!(codes_for_crc(0xDEAD_BEEF).is_empty());
+        assert_eq!(
+            codes_for_crc(0xDEAD_BEEF),
+            [] as [crate::genie_db::GenieDbCode; 0]
+        );
         assert_eq!(game_for_crc(0xDEAD_BEEF), None);
     }
 
@@ -333,7 +336,7 @@ mod tests {
             Some("Super Mario Bros.")
         );
         // The empty key set matches nothing.
-        assert!(codes_for_crcs(&[]).is_empty());
+        assert_eq!(codes_for_crcs(&[]), [] as [crate::genie_db::GenieDbCode; 0]);
         assert_eq!(game_for_crcs(&[]), None);
         // The by-category union covers the same codes as the flat union.
         let flat = codes_for_crcs(&[0x3337_EC46]);

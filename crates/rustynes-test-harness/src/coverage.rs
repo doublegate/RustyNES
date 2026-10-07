@@ -101,7 +101,9 @@ pub fn frame_health(fb: &[u8]) -> FrameHealth {
     // per-pixel hashing, a single allocation). The distinct-colour count and
     // dominant-colour fraction are identical to the map-based tally.
     let mut pixels: Vec<u32> = fb
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|px| u32::from_le_bytes([px[0], px[1], px[2], px[3]]))
         .collect();
     let total = pixels.len();

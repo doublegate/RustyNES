@@ -56,7 +56,7 @@ fn image(mapper: u16, chr_rom: bool) -> Vec<u8> {
 /// Write a 12-bit mapper number into an NES 2.0 header (bytes 6-8), keeping the
 /// battery and NES 2.0 identifier bits. The sweep patches one template image
 /// per CHR variant with this instead of rebuilding 384 KiB for every number.
-fn set_mapper(h: &mut [u8], mapper: u16) {
+const fn set_mapper(h: &mut [u8], mapper: u16) {
     h[6] = (((mapper & 0x0F) as u8) << 4) | 0b0000_0010;
     h[7] = ((mapper & 0xF0) as u8) | 0b0000_1000;
     h[8] = ((mapper >> 8) & 0x0F) as u8;

@@ -52,15 +52,65 @@ def main() -> None:
             "GraphQL response has no repository/pullRequest data "
             "(check the owner/repo/pr arguments and token scope)"
         )
-    threads = (pr.get("reviewThreads") or {}).get("nodes") or []
+    # FAIL CLOSED. This is a closeout gate: "0 unresolved thread(s)" is the line
+    # that lets a merge go ahead, so it must mean "the payload listed threads and
+    # none was open" -- never "the payload had no thread list". Until v3.0.1 a
+    # missing or null `reviewThreads.nodes` (a query without the field, a partial
+    # response) collapsed to `[]` and printed exactly that all-clear.
+    threads = (pr.get("reviewThreads") or {}).get("nodes")
+    if not isinstance(threads, list):
+        raise SystemExit(
+            "GraphQL response has no reviewThreads.nodes list "
+            "(check that the query selects reviewThreads { nodes { ... } })"
+        )
+    # A TRUNCATED list must fail closed too (v3.0.1, Copilot on #590): the query
+    # asks for `first:100`, and a PR with more threads used to print an
+    # all-clear for page one while later pages held open threads. The payload
+    # must say whether more pages exist, and this gate refuses if they do.
+    page = (pr.get("reviewThreads") or {}).get("pageInfo")
+    if not isinstance(page, dict) or not isinstance(page.get("hasNextPage"), bool):
+        raise SystemExit(
+            "GraphQL response has no reviewThreads.pageInfo.hasNextPage "
+            "(select it, so a truncated thread list cannot read as complete)"
+        )
+    if page["hasNextPage"]:
+        raise SystemExit(
+            "more review threads than one page: refusing a partial count "
+            "(raise first:, or page with after: endCursor and check each page)"
+        )
+    # The other end too (CodeRabbit on #592): a page fetched with `after:` can
+    # be the LAST page, with `hasNextPage: false`, while earlier pages hold
+    # open threads. Only a payload that starts at the first page is complete.
+    if not isinstance(page.get("hasPreviousPage"), bool):
+        raise SystemExit(
+            "GraphQL response has no reviewThreads.pageInfo.hasPreviousPage "
+            "(select it, so a later page cannot read as the whole list)"
+        )
+    if page["hasPreviousPage"]:
+        raise SystemExit("this thread list is not the first page: refusing a partial count")
     shown = 0
-    for thread in threads:
+    for i, thread in enumerate(threads):
+        # A partial node used to die on a bare KeyError/TypeError traceback;
+        # name the node and the field instead.
+        if not isinstance(thread, dict) or not isinstance(thread.get("isResolved"), bool):
+            raise SystemExit(f"review thread #{i} has no boolean isResolved")
         if thread["isResolved"]:
             continue
-        comments = thread["comments"]["nodes"]
+        if not thread.get("id"):
+            raise SystemExit(f"review thread #{i} has no id")
+        comments = (thread.get("comments") or {}).get("nodes")
+        if not isinstance(comments, list):
+            raise SystemExit(f"review thread #{i} ({safe(thread.get('id'))}) has no comments.nodes list")
+        # A real review thread always has a comment, so an empty list means a
+        # partial query (`comments(first:0)`) -- skipping it would let an open
+        # thread reach the all-clear (v3.0.1, Copilot on #592).
         if not comments:
-            continue
+            raise SystemExit(f"review thread #{i} ({safe(thread.get('id'))}) has no comments")
         c = comments[0]
+        if not isinstance(c, dict) or c.get("databaseId") is None:
+            raise SystemExit(
+                f"review thread #{i} ({safe(thread.get('id'))}): first comment has no databaseId"
+            )
         author = (c.get("author") or {}).get("login")
         print(
             f"TID={safe(thread['id'])} dbId={safe(c['databaseId'])} "

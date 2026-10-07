@@ -16,8 +16,9 @@ Set quantitative performance targets, identify expected hot paths, and lay out t
 > **These are DESIGN-PHASE targets, written before the cycle-accurate core
 > existed — they are aspirations, not gates.** The frame-cost row in particular
 > was never met and is knowingly accepted: the implemented core measures
-> **~3.95 ms** (`nes_run_frame_nestest_fast`) / **~2.65 ms**
-> (`nes_run_frame_flowing_palette_fast`) on the shipped fast dot path, and
+> **~3.95 ms** (`nes_run_frame_nestest_fast`) on the shipped fast dot path and
+> **~2.65 ms** (`nes_run_frame_flowing_palette_fast`, a rendering-disabled
+> control: the fast path's guard bails, so it never enters that path), and
 > ~4.46 / ~2.67 ms on the exact path, on a 2020 desktop (i9-10850K; see
 > "Current figures" below, measured 2026-09-23). The gate that
 > actually runs in CI is the **relative, same-runner regression check** (§CI
@@ -3233,6 +3234,16 @@ the column existed passes but is reported as *"validity UNKNOWN, not verified"* 
 it cannot be proven valid, and saying "window was on screen" of a log that never
 measured it would be a small version of exactly the error F14 is about.
 
+A fourth state since v3.0.1. Until then, `0` with the column present was reported
+as *"capture VALID — window was on screen throughout"* even when the run had **no
+presentation clock** — and the section above says zero cannot carry that claim,
+because the counter is written through a `map_or(0, ...)` on the clock. The
+checker now reads the header's `measured_refresh_hz`, which is set only from that
+clock's answer: when it is `none`, a zero count is reported as *"validity
+UNVERIFIED (no presentation clock)"*. The header is written when logging starts,
+so a clock that answered later is also reported unverified — an understatement,
+never an overclaim. This changes the report line only; pass and fail are as before.
+
 Every pacing conclusion in this document that predates the column therefore
 carries an unverifiable assumption: that the window was actually on screen. The
 sixteen scanout-bearing captures almost certainly were — they *have* `presented`
@@ -3357,11 +3368,17 @@ ring — and nothing else uses them. Free win, apparently.
 | bench | full | slim | saving |
 | --- | ---: | ---: | ---: |
 | `nes_restore_quiet_flowing_palette` | 122.8 µs | 115.9 µs | **6.9 µs** |
-| `nes_restore_quiet_mmc3` | 123.7 µs | 116.2 µs | **7.4 µs** |
+| `nes_restore_quiet_mmc3` | 123.7 µs | 116.2 µs | **7.5 µs** |
 
 Against the 2.802 ms `nes_runahead_budget` increment that is **0.25%** — an
 order of magnitude under the project's >3% bar. **Rejected before
 implementation.**
+
+*Corrected at v3.0.1:* the `nes_restore_quiet_mmc3` saving was first printed
+as 7.4 µs, but the rounded columns subtract to 7.5 µs and the unrounded
+criterion means were not recorded (commit `697495c3` gives the same rounded
+figures), so the table now shows the difference of what it prints. The 0.25%
+conclusion is unchanged either way.
 
 > The first version of this table read 8.4 µs, from a **confounded** probe: it
 > booted a fresh `Nes` and ran one frame, while every other bench here uses
@@ -3374,7 +3391,8 @@ implementation.**
 
 It came from the project's own (correct) statement that the framebuffer is **94%
 of the snapshot BYTES**, and that was carried silently into a claim about
-**TIME**. 245,760 bytes is ~12-25 µs of memcpy at ordinary bandwidth, so it could
+**TIME**. 245,760 bytes is ~12-25 µs of memcpy at an ordinary ~10-20 GB/s
+(245,760 B / 20 GB/s = 12.3 µs; / 10 GB/s = 24.6 µs), so it could
 never have been 94% of a 122 µs restore. The measured share is ~7%. The estimate
 was off by 13x.
 
@@ -3422,6 +3440,13 @@ screen and confirmed valid by F16's gate, 18 post-warmup rows):
 | `tick_lat` — winit→emu hop | **0.033 ms** | **0.043 ms** | **0.050 ms** |
 | `tick_iv` — between tick *sends* | 16.289 ms | **24.578 ms** | 28.637 ms |
 | `produced` — resulting interval | 16.269 ms | **24.635 ms** | — |
+
+> Correction (v3.0.1): `tick_iv` is differenced on the receiver, between the
+> send stamps of successive *delivered* ticks. A tick dropped on the full depth-1
+> channel is never seen, so the next interval spans two sends. It equals the
+> interval between sends only while `tick_dropped` is 0. Drops were measured at
+> 0 (`run_ahead` 2) and 0-1 (`run_ahead` 0) per 45 s capture under "Suspect A",
+> so the conclusion below is not affected in practice; the row label is.
 
 #### The result
 
@@ -3695,7 +3720,7 @@ square. Five paired rounds for the two live arms:
 | reset — rejected | 4.00 s | 2.02% | **1.00 (3 of 3)** |
 
 **5/5 paired rounds favour `predict` on both convergence and cadence, exact
-one-sided sign p = 0.0312** — at the floor for n = 5, which is why five rounds
+one-sided sign p = 1/32 = 0.03125** — at the floor for n = 5, which is why five rounds
 were run rather than three (three floors at 0.125 and could not have reached
 significance whatever it showed).
 

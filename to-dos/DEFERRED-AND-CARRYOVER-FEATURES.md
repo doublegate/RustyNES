@@ -19,6 +19,19 @@
 > **and cited**, and absence means it was never catalogued rather than that it was
 > finished.
 >
+> **Re-targeted 2026-10-07 for the v3.1 → v4.0 line.**
+> [`plans/v3.1-to-v4.0-line-plan.md`](plans/v3.1-to-v4.0-line-plan.md) now
+> schedules what was still open, under maintainer decisions D1-D28. Each entry
+> that changed carries a dated `(2026-10-07 ...)` annotation naming the release
+> slot and the ticket. Two entries were closed against the tree, not the prose:
+>
+> - R1 (§6b) shipped as `T-MMC3-BG-A12` in v3.0.0;
+> - §7's six header/size mismatches were adjudicated, as refusals, in v2.9.6.
+>
+> The rest of the 2026-10-06 backlog survey's stale-entry list (the ROADMAP,
+> `docs/compatibility.md`, `docs/mappers.md` and others) is v3.1.0's records
+> item.
+>
 > **Reconciled against `main` at v2.9.3 (2026-09-29) for v2.9.4.** Every open
 > box and `[~]` below was re-checked against the tree, not against the prose;
 > each change carries a dated `(2026-09-29 ...)` annotation naming the file and
@@ -147,6 +160,15 @@
 > apps still ship as GitHub sideload + TestFlight; app stores and F-Droid are now
 > targeted **after the v3.x hardware release** per the
 > [line plan](plans/v2.9.4-to-v3.0.0-line-plan.md) "After v3.0.0 — External".)*
+>
+> *(2026-10-07: placed by the maintainer (D18, and ADR 0035's amendment of that
+> date). Mobile signing and the free store listings come at about **v3.9.x**,
+> right before v4.0.0's final activities. That covers Android developer
+> verification, which is global from 2027 and covers sideloads too, and iOS
+> signing so that TestFlight uploads run. D29, later the same day, put the v3.x
+> hardware release itself at the end of v3.9.x, so "after the v3.x hardware
+> release" above now means the last v3.9.x: signing is set up at v3.9.0, and
+> the listings follow the hardware release's device run.)*
 
 ---
 
@@ -286,6 +308,11 @@ remains are the optional/SQLite tails and any beta.5 polish.
   unverifiable in CI. Source: `docs/netplay-webrtc.md` §4. Target:
   **maintainer-manual**. *(2026-09-29: still open; target **after v3.0.0**
   with the hosted signalling, as above.)*
+  *(2026-10-07: both `[M]` entries above are scheduled in **v3.4.0** as
+  `T-HOSTED-NETPLAY`. The hosting is Cloudflare (maintainer decision D19): a
+  Worker with Durable Objects for the lobby, and Cloudflare TURN with
+  short-lived credentials. Native 3-4 player netplay over `mesh_net.rs`
+  (`T-NETPLAY-MESH-NATIVE`) lands in the same release.)*
 - `[x]` **Spectator netplay (H8)** — *(shipped; v1.8.9 reconcile: complete in
   `crates/rustynes-netplay/src/spectator.rs` — `SpectatorSession<T: Transport>`,
   receive-only, determinism-safe, `MAX_SPECTATOR_FRAME_LOOKAHEAD` DoS bound, unit-tested;
@@ -340,6 +367,15 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
   code change. Source: [ROADMAP](ROADMAP.md) "Beyond v2.0.0". Target:
   **maintainer-manual**. *(2026-09-29: still open; the line plan lists
   "RetroAchievements allowlisting" under **after v3.0.0 — External**.)*
+  *(2026-10-07: the three entries above are scheduled in **v3.4.0**: the proxy
+  on Cloudflare as `T-RA-PROXY` (D19), and RA hardcore compliance as
+  `T-RA-HARDCORE` (D25).
+  - RA's current requirement page asks for a privacy policy, offline unlock
+    queueing, and hardcore blocks on Lua and TAS playback as well as the usual
+    ones.
+  - It also specifies a User-Agent format that `RustyNES/<ver> rcheevos/<ver>`
+    may not match.
+  - `docs/ra-integration-request.md` still says v1.8.8 and MIT/Apache.)*
 
 ---
 
@@ -439,7 +475,13 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 
 ### 6b. The residuals it unlocks (R1–R5)
 
-- `[ ]` **R1 — `mmc3_test_2/4` #3 (1-CPU-cycle "IRQ sooner" bracket)** — the
+- `[x]` **R1 — `mmc3_test_2/4` #3 (1-CPU-cycle "IRQ sooner" bracket)** —
+  *(CLOSED v3.0.0 "Cornerstone" as `T-MMC3-BG-A12`, `to-dos/ROADMAP.md`: both
+  4-scanline ROMs pass all 13 sub-tests.
+  `crates/rustynes-test-harness/tests/mmc3.rs:119-120`
+  `mmc3_test_2_4_scanline_timing_strict` and `:201-202`
+  `mmc3_test_v1_4_scanline_timing_strict` are plain `#[test]`s, with no
+  `#[ignore]`. Verified 2026-10-07. The annotations below are history.)* the
   CPU `T_last-1` IRQ-sample M2 sub-cycle phase; the integer 3-dots-per-cycle
   timebase **cannot represent** it. **The 17-rollback graveyard / hard target with
   a bounded-effort escape hatch** (fall back to by-design `#[ignore]` rather than
@@ -516,6 +558,10 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   `docs/nesdev-hardware-emulation-checklist.md` "residual stale-shifter cases
   tracked". Falls in the **v2.9.5** accuracy release by theme, but is not a named
   item there; the attempt-only-if-a-game-demands-it condition stands.)*
+  *(2026-10-07: the maintainer lifted that condition (D20): the item is to be
+  attempted without a motivating game, in **v3.3.0** as `T-SPRITE0-STALE`. It is
+  kept only if AccuracyCoin stays all-pass; otherwise it is recorded as refuted.
+  [Line plan](plans/v3.1-to-v4.0-line-plan.md).)*
 
 ### 6c. Other v2.0-axis items
 
@@ -538,6 +584,11 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   `Nes::set_extra_scanlines`, held at 0 under a movie or netplay; see
   `docs/frontend.md`. The CPU-multiplier overclock and the sprite-limit
   toggle stay open.)*
+  *(2026-10-07: both are scheduled for **v3.1.0** (maintainer decision D22):
+  `T-CPU-OVERCLOCK` and `T-SPRITE-LIMIT`. Both go in `HardwareOptions`, so
+  movies and netplay carry them, with one `.rnm` format and protocol bump. The
+  sprite limit is render-only, so the overflow flag and evaluation timing stay
+  exact.)*
 - `[x]` **Full Vs. DualSystem dual-core (C)** — *(shipped v2.0.0 "Timebase"
   beta.5, commit `9fe44a19`: `crates/rustynes-core/src/vs_dualsystem.rs`,
   `pub enum Emu` (Single / Dual); desktop presentation v2.1.2 (`render_dual` in
@@ -582,7 +633,10 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 ### 6d. By-design non-targets (recorded for completeness — do NOT implement)
 
 - `mmc3_test_2/6` (NEC rev B) — RustyNES defaults to Sharp rev A; mutually
-  exclusive (R6).
+  exclusive (R6). *(2026-10-07: the default stays rev A. An opt-in per-game or
+  config override that runs the ROM under NEC is scheduled for **v3.1.0** as
+  `T-MMC3-NEC-OVERRIDE` (D20). The NEC variant has been selectable by NES 2.0
+  submapper since v2.9.6.)*
 - `cpu_reset` full-protocol ×2 (interactive) — needs an externally-timed reset the
   headless handler can't supply (R7).
 
@@ -612,6 +666,12 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   continuation stays partial; the next batch — 37/47, 12, 44/45/49,
   74/191/192/194/195, 105, 115/121, 163, 228, 83/91/153 over the existing MMC3
   and FCG/MMC1 cores — is **v2.9.6** in the line plan.)*
+  *(2026-10-07: v2.9.6 shipped 17 families (174 → 191). The next batch is
+  ranked by real titles (maintainer decision D26): 8 (FFE), 158, 207, 116,
+  114/182/215, 197, 165, 172/173, 230, 235, 252, in **v3.2.0**
+  (`T-MAPPER-BREADTH-V3`). The long tail continues in **v3.8.0**. Each family is
+  first checked against the maintainer's library in `~/Dropbox/ROMs/` (D21).
+  [Line plan](plans/v3.1-to-v4.0-line-plan.md).)*
 - `[~]` **Zero-library mappers (no freely-available ROM)** — families 28, 29, 31,
   39, 81, 174, 179 have no freely-available dump, so they have no committed
   screenshots (register-decode unit-tested only). Source: the standing
@@ -624,6 +684,12 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   `screenshots/besteffort/mapper-031-INL-NSF/`. Still none for **29, 39, 81,
   174, 179** (`tests/roms/external/mapper-029-RET-CUFROM/` exists but is empty).
   Target: **v2.9.6** tier promotions, where a legal homebrew ROM exists.)*
+  *(2026-10-07: v3.2.0's dump-corpus sweep (`T-DUMP-CORPUS`, D21) searches
+  `~/Dropbox/ROMs/` for 29, 39, 81, 104, 174, 179, 238, 261, 194, 195 and the 16
+  high-id boards. A local dump now counts as evidence for promotion when the
+  committed record names the title, the hash, the frames checked and a
+  screenshot (D23, `T-CURATED-EVIDENCE`). The dumps themselves are never
+  committed.)*
 - `[x]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
   are misdetected as m30 (UNROM-512). Not an m30 bug. Source: the blank-boot-fixes
   memory note. Files: `crates/rustynes-mappers`, frontend `game_db`.
@@ -803,6 +869,14 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   *(2026-09-29: still open. `Chu Liu Xiang` still renders no tiles
   (`docs/mappers.md` "remains open"), and the six header/size mismatches are
   still unadjudicated. Target: **v2.9.6**, the mapper release.)*
+  *(2026-10-07: the header/size mismatches **are** adjudicated, by v2.9.6:
+  rejected. `UNSUPPORTED` in
+  `crates/rustynes-test-harness/tests/external_coverage.rs:141-182` refuses
+  each by name with a typed reason: three CPROM, m58 *Study and Game*, two m146
+  *Lucky 777*, and a non-iNES Vs. hack. *Chu Liu Xiang* is still blank and sits
+  in the KNOWN_BLANK list. It is scheduled for **v3.2.0** as `T-KNOWN-BLANK`,
+  with a CPU trace first and the mirroring-register power-on hypothesis to
+  test.)*
 - `[x]` **`m301` / `m348` UNIF board-map entries** — *(done; verified against the
   tree 2026-08-14, v2.3.4 Workstream D: `unif.rs:246` maps board `"8157"` -> 301
   and `unif.rs:270` maps `"830118C"` -> 348, both covered by the board-map tests
@@ -828,6 +902,12 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   [v1.0.0 synthesis](plans/v1.0.0-synthesis-plan.md); [ROADMAP](ROADMAP.md).
   Target: **long-tail / no fixed version**. *(2026-09-29: unchanged — 174
   families; **v2.9.6** adds the next batch, the rest stays long-tail.)*
+  *(2026-10-07: 191 families at v3.0.0. Breadth now follows real titles (D26):
+  **v3.2.0**, then **v3.8.0** for the long tail. "100% TASVideos" stays a
+  direction, not a gate. The 2026-10-06 ecosystem survey found no fixed
+  TASVideos NES compatibility set to measure against: its NESAccuracyTests page
+  is a results table, and which emulators it currently accepts was not
+  verified.)*
 
 ---
 
@@ -869,6 +949,19 @@ bridge, Vs. DualSystem on mobile and the SOCD switch (**v2.9.7**), the device
 run and the iOS first compile (**after v3.0.0**, line plan "Mobile"), and the
 app stores (**after the v3.x hardware release**).)*
 
+*(2026-10-07: FDS/NSF loading, Vs. DualSystem and the SOCD switch shipped on
+the bridge at v2.9.7; their device rows are T1-T12 of the run sheet. In the
+[v3.1 → v4.0 line plan](plans/v3.1-to-v4.0-line-plan.md):
+
+- the device run belongs to the hardware release (ADR 0043 Decision 2), which
+  D29 placed at the end of v3.9.x, so the stores ("after the v3.x hardware
+  release", above) come at the end of v3.9.x too;
+- the mobile extras are **v3.7.0** (D24): iOS box art, widget and external
+  display, and the EQ and cheat database on both apps;
+- the zero-copy framebuffer (MOB-06) follows UniFFI 0.33;
+- Android API 37 is **v3.6.0**;
+- signing and the store listings are **v3.9.x** (D18).)*
+
 - `[x]` **v1.8.0 "Android" MVP** — *(shipped v1.8.0, commit `e83f8d35`:
   `crates/rustynes-mobile` (UniFFI bridge) + `crates/rustynes-android` (JNI/NDK
   host) + the Compose app under `android/`; ADR 0024.)* a hybrid + focused-MVP Android frontend.
@@ -907,7 +1000,9 @@ app stores (**after the v3.x hardware release**).)*
   (CPU registers, disassembly, RAM hex, step-frame), v1.9.9 "Workshop", commit
   `70a971bf`. Android has no debugger surface; the egui spike in
   `crates/rustynes-android/src/lib.rs` was replaced. Remaining: an Android
-  surface, if wanted. Target: **unscheduled**.)* kept only as an optional sideload
+  surface, if wanted. Target: **unscheduled**.)* *(2026-10-07: wanted (D24). The
+  Android debugger is scheduled with the zero-copy bridge (MOB-06), in **v3.7.0**
+  or the first release after UniFFI 0.33 releases `&mut [u8]`.)* kept only as an optional sideload
   power-user overlay (Android) / a future hybrid embed (iOS), not a first-class
   mobile surface. Source: [v1.8.0](plans/v1.8.0-android-plan.md),
   [v1.9.0](plans/v1.9.0-ios-plan.md). Target: **v1.8.x / v1.9.x**.
@@ -1025,6 +1120,10 @@ broken-boot fix re-blesses its own snapshots, which next applies in **v2.9.6**.)
   `gh api repos/doublegate/RustyNES/rulesets` on 2026-09-29). So the remaining
   work is one repository setting, still a maintainer decision. Target:
   **unscheduled**.)*
+  *(2026-10-07: offered to the maintainer with the v3.1 → v4.0 planning
+  decisions, and not chosen (D25 took the AccuracyCoin re-sync, the v1.8.x
+  checklist and RA hardcore approval, and left the merge queue out). It stays
+  open and unscheduled; turning it on is still one repository setting.)*
 - `[x]` **`cargo-nextest` adoption** — *(REJECTED, WONT-FIX in v1.8.9-beta.1,
   commit `a4b494cd`. The NOTE on the `test` job in `.github/workflows/ci.yml`
   records why: nextest runs `cargo metadata --all-features` internally, which

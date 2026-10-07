@@ -68,3 +68,23 @@ Concretely, in v2.2.6 "Almanac":
   reversing this ADR — which is the intended bar.
 - **Follow-up:** `docs/originality-and-provenance.md` and `NOTICE` disclose the TriCNES
   behavioral-calibration caveat (see ADR 0030) as part of the same honesty pass.
+
+## Amendment (2026-10-07): when the free store listings happen
+
+The Decision allowed a free store listing as an unversioned later step, and the
+v2.9.4-to-v3.0.0 line plan placed it "after the v3.x hardware release". The
+maintainer has now placed it (decision D18 in
+[`v3.1-to-v4.0-line-plan.md`](../../to-dos/plans/v3.1-to-v4.0-line-plan.md)):
+**mobile signing and the store listings come at about v3.9, right before
+v4.0.0's final development, test and release activities.**
+
+That covers:
+
+- Android developer verification, which covers the ordinary installation path
+  (from 2026-09-30 in four countries, worldwide on certified devices in 2027);
+  ADB and Android's "advanced flow" can still install an unregistered app;
+- iOS signing, so that TestFlight uploads run;
+- the Google Play, F-Droid or IzzyOnDroid, and App Store listings.
+
+Nothing in the Decision changes. Every listing is free, with no ads, no
+tracking and no paid unlock, and the `foss`/`play` flavour split stays.

@@ -1,5 +1,25 @@
 # RustyNES Libretro Core Exhaustive Implementation & Integration Sprint Plan
 
+## The v3.x line (current, 2026-10-07)
+
+Everything from "Phase 1" down shipped (v1.10.0 "Arcade" onward) and is kept as
+the record of how the core was built. The forward work is below. The decisions
+it cites (D5, D28) were taken by the maintainer on 2026-10-07 and are tabled in
+[`v3.1-to-v4.0-line-plan.md`](../plans/v3.1-to-v4.0-line-plan.md).
+
+| Sprint | Release | Deliverable | Gate | Status |
+| --- | --- | --- | --- | --- |
+| L1 | v3.0.1 | **The Rust 1.96 pin** (D5). libretro's build image stopped passing `-C ar` on 2026-09-03 (`libretro-build-rust` `841f3619`; the rebuilt image passed 2026-09-23). Push a short-lived branch with `RUSTUP_TOOLCHAIN` removed and run its pipeline on 1.99. The mirror builds every pushed branch | All 15 jobs green, Apple included: drop the pin, the seven crates' `rust-version = "1.96"`, and the `libretro-cross` 1.96 leg. Any red job: keep the pin and record the job and error in `docs/agents/libretro.md`. Watch the Apple link lines either way, because the image's `-C link-arg` flags now reach the linker | **Done in v3.0.1.** Branch `test/libretro-rust-1.99` (only `RUSTUP_TOOLCHAIN: "1.99.0"`): pipeline 119614, 15/15 green. The pin now equals `rust-toolchain.toml`, the seven crates inherit the workspace `rust-version`, and `libretro-cross` fails on a mismatch instead of building a 1.96 leg |
+| L2 | v3.1.0 | `libretro/docs#1215` (the v3.0.0 page) answered and merged; `docs/libretro/UPSTREAM_SYNC.md` brought up to date (it still says no PR is open) | The upstream state recorded | — |
+| L3 | v3.6.0 | Core Options v2 (`SET_CORE_OPTIONS_V2`, v0 fallback), float-audio negotiation (`GET_AUDIO_SAMPLE_BATCH_FLOAT`, behind a capability check), LR-03, the Vs. DIP option | `abi_tests.rs` covers each path; every existing option keeps its key | — |
+| L4 | v3.6.0 | **Console targets** (D28): Switch, PS Vita and 3DS, investigated for a Rust libretro core. `libnx` was dropped at v2.9.8; re-check why rather than assume | A recorded go or no-go per target; any target that goes ahead gets a green buildbot job | — |
+| L5 | each release | Re-sync the forks and the upstream `.info` when the version, mapper count or capabilities change | `libretro_info` audit green; the upstream PR opened after the tag | — |
+
+Out of scope, as before: turbo and SOCD in the core (RetroArch provides both),
+HDR output, and the VFS v5 API.
+
+---
+
 This document is the absolute source of truth for the Antigravity IDE (and any other developers or autonomous agents) when implementing the `rustynes-libretro` core integration for RetroArch. It expands upon the original architectural blueprint, defining strict code-level constraints, integration mechanisms, mathematics, and file structures.
 
 This must be followed sequentially.

@@ -226,11 +226,13 @@ fn mirror_bank(bank: usize, count: usize) -> usize {
     let mut bank = bank & (count.next_power_of_two() - 1);
     while bank >= count {
         // Find the doubling stage whose copied region holds `bank`.
+        // `isolate_lowest_one` is `lowbit(size)` (`size & size.wrapping_neg()`,
+        // spelled that way until v3.0.1 moved these crates to Rust 1.99).
         let mut size = count;
-        while size + (size & size.wrapping_neg()) <= bank {
-            size += size & size.wrapping_neg();
+        while size + size.isolate_lowest_one() <= bank {
+            size += size.isolate_lowest_one();
         }
-        bank -= size & size.wrapping_neg();
+        bank -= size.isolate_lowest_one();
     }
     bank
 }
@@ -469,6 +471,11 @@ impl Mmc3Board {
                 rom((raw & 0xFF) | (a18 << 8))
             }
             Board::M37 => rom((raw & 0x7F) | (((r(0) >> 2) & 1) << 7)),
+            // T-GA23C-CHRRAM: CHR-RAM is addressed straight from PPU
+            // A10-A12, bypassing every CHR bank. The mapper 45 page is
+            // silent on CHR-RAM; mapper 372's page, the GA23C with a
+            // ROM/RAM switch, documents its RAM as "unbanked".
+            Board::M45 if self.chr_is_ram => Chr::Rom(usize::from(addr & 0x1FFF)),
             Board::M45 => {
                 let c = r(2) & 0x0F;
                 let mask = if c >= 7 { 0xFF >> (15 - c) } else { 0 };
@@ -843,7 +850,7 @@ impl Mapper for Mmc3Board {
             out.push(u8::from(o.is_some()));
             out.push(o.unwrap_or(0));
         }
-        out.push(self.sticky.map_or(0xFF, |s| s));
+        out.push(self.sticky.unwrap_or(0xFF));
         out.push(self.dip);
         out.extend_from_slice(&(core.len() as u32).to_le_bytes());
         out.extend_from_slice(&core);

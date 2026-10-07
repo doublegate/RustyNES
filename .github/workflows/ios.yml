@@ -129,7 +129,7 @@ jobs:
             echo "::warning title=Xcode 26 not on runner::Building with $(xcodebuild -version | head -1). App Store uploads require Xcode 26 / the iOS 26 SDK from 2026-04-28 (App Store submission floor); ensure the release runner image has Xcode 26 before the v2.1.0 store launch."
           fi
 
-      # The project toolchain (rust-toolchain.toml = 1.96) plus the iOS targets:
+      # The project toolchain (rust-toolchain.toml = 1.99) plus the iOS targets:
       # the device ABI + both simulator ABIs (the sim slice is lipo'd from the
       # Apple-silicon + Intel sim builds).
       - name: Install iOS Rust targets

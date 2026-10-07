@@ -444,7 +444,7 @@ mod tests {
         let _ = b.drain_all();
         let kept = b.samples.capacity();
         let empty = b.drain_all();
-        assert!(empty.is_empty());
+        assert_eq!(empty, [] as [f32; 0]);
         assert_eq!(empty.capacity(), 0, "no buffer handed out for nothing");
         assert_eq!(b.samples.capacity(), kept, "the kept buffer stays");
     }

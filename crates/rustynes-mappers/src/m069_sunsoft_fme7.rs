@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Provenance: the Sunsoft FME-7 / 5B audio detail is derived from Mesen2 (GPL-3.0-or-later) and cross-referenced with Nestopia UE (GPL-2.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// Provenance: the Sunsoft FME-7 / 5B audio detail is derived from Mesen2 (GPL-3.0-or-later), `NesSoundMixer::GetOutputVolume` (the 5B `* 15` output weight) over `Sunsoft5bAudio::_volumeLut`, and cross-referenced with Nestopia UE (GPL-2.0-or-later; no upstream file is recorded). See docs/originality-and-provenance.md (Section 1)
 // and NOTICE for the complete, audited derivation record.
 //! Sunsoft FME-7 (mapper 69) -- banking, the CPU-cycle IRQ counter, and the
 //! on-cart Sunsoft 5B audio chip.
@@ -154,8 +154,12 @@ const SUNSOFT5B_DC_BIAS: i32 = 0;
 /// lets the shape stay pinned by its own unit test while the level is pinned
 /// by a ROM oracle.
 ///
-/// **Target, calibrated against Mesen2 (the project's accuracy bar) as an
-/// oracle rather than against our own prior numbers.** Using the standard
+/// **Target, derived from Mesen2 (the project's accuracy bar) rather than from
+/// our own prior numbers** (see this file's `Provenance` header and
+/// `docs/originality-and-provenance.md` section 1). v2.2.5 reworded this to
+/// "calibrated against Mesen2 ... as an oracle", which describes a black-box
+/// comparison and so understated a derivation; v3.0.1 restored it
+/// (maintainer, 2026-10-06). Using the standard
 /// blargg nonlinear-mixer approximation (nesdev "APU Mixer"), a full-volume
 /// 2A03 square is `(95.88 * 5000) / (8128/15 + 100) = 746.9` units, and the 5B
 /// is summed with weight `* 15` over the documented 5B log-DAC volume table

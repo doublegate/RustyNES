@@ -110,8 +110,13 @@ fn release_notes_are_not_hard_wrapped() {
     let dir = repo_root().join(".github/release-notes");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .flatten()
-        .map(|e| e.path())
+        // Fail closed per entry too. Until v3.0.1 this was `.flatten()`, which
+        // drops an entry whose metadata cannot be read -- a release note the
+        // audit then never examines, and never says it skipped.
+        .map(|e| {
+            e.unwrap_or_else(|e| panic!("read an entry of {}: {e}", dir.display()))
+                .path()
+        })
         .filter(|p| {
             p.extension().is_some_and(|x| x == "md")
                 && p.file_name()
@@ -131,7 +136,11 @@ fn release_notes_are_not_hard_wrapped() {
 
     let mut findings = Vec::new();
     for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
+        // A read error (or a non-UTF-8 file) is a failure, not an empty file:
+        // until v3.0.1 `unwrap_or_default()` turned it into "" -- zero
+        // paragraphs, zero findings, a pass for a file nobody read.
+        let text =
+            std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));
         let name = f
             .file_name()
             .unwrap_or_default()
@@ -162,16 +171,37 @@ fn release_notes_are_not_hard_wrapped() {
 #[test]
 fn the_paragraph_scanner_recognises_the_shapes_release_notes_use() {
     // One line per paragraph -- the required form.
-    assert!(wrapped_paragraphs("A single long paragraph line.\n\nAnother one.\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("A single long paragraph line.\n\nAnother one.\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
     // Two lines of one paragraph -- the defect.
     assert_eq!(wrapped_paragraphs("wrapped here\nand continued\n").len(), 1);
     // Structure that legitimately occupies several short lines.
-    assert!(wrapped_paragraphs("| a | b |\n| - | - |\n").is_empty());
-    assert!(wrapped_paragraphs("- one\n- two\n").is_empty());
-    assert!(wrapped_paragraphs("> quoted\n> more\n").is_empty());
-    assert!(wrapped_paragraphs("# head\n## head2\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("| a | b |\n| - | - |\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(
+        wrapped_paragraphs("- one\n- two\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(
+        wrapped_paragraphs("> quoted\n> more\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(
+        wrapped_paragraphs("# head\n## head2\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
     // Fenced code keeps its own line structure.
-    assert!(wrapped_paragraphs("```text\nline one\nline two\n```\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("```text\nline one\nline two\n```\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
     // A deliberate hard break (two trailing spaces) is not a wrap.
-    assert!(wrapped_paragraphs("line one  \nline two\n").is_empty());
+    assert_eq!(
+        wrapped_paragraphs("line one  \nline two\n"),
+        [] as [(usize, std::vec::Vec<std::string::String>); 0]
+    );
 }

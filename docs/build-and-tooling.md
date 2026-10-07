@@ -5,8 +5,8 @@
 ## Toolchain
 
 - **Rust edition**: 2024.
-- **MSRV (minimum supported Rust version)**: 1.96.0. Pinned via `rust-toolchain.toml`. (Bumped from 1.86 in v1.3.0 "Bedrock" to unblock the edition-2024 + egui 0.34.3 / wgpu 29 / rfd 0.17.2 dependency tier.)
-- **Channel**: the pinned `1.96.0` stable release — *not* a floating `stable`. `rust-toolchain.toml` is the single source of truth: every GitHub Actions job resolves its toolchain from that file (`.github/actions/rust-setup` parses the `channel` and fails closed if it cannot), the libretro buildbot builds all ten of its jobs on it, and local builds pick it up automatically as a directory override. There is no `toolchain:` version literal anywhere in `.github/`, so bumping the pin is a one-line edit here — but read the `-C ar` warning in `rust-toolchain.toml` before bumping to 1.97 or newer.
+- **MSRV (minimum supported Rust version)**: 1.99, the pinned toolchain, for every crate. The libretro buildbot builds on the same toolchain (`RUSTUP_TOOLCHAIN` in `.gitlab-ci.yml`, which CI's `libretro-cross` checks against `rust-toolchain.toml`); v3.0.1 held its seven crates at 1.96 for one day, until a test pipeline showed the build image no longer passed `-C ar`. (History: 1.86 until v1.3.0 "Bedrock", which moved to 1.96 for the edition-2024 + egui 0.34.3 / wgpu 29 / rfd 0.17.2 dependency tier; 1.96 until v3.0.1.)
+- **Channel**: the pinned `1.99.0` stable release — *not* a floating `stable`. `rust-toolchain.toml` is the single source of truth: every GitHub Actions job resolves its toolchain from that file (`.github/actions/rust-setup` parses the `channel` and fails closed if it cannot), and local builds pick it up automatically as a directory override. **The libretro buildbot uses the same toolchain**: `RUSTUP_TOOLCHAIN` in `.gitlab-ci.yml` (which outranks the file) must equal the pin, and CI's `libretro-cross` job fails if the two differ, so a pin move edits both files in one change. There is no `toolchain:` version literal anywhere in `.github/`. (Until v3.0.1 the buildbot was a 1.96.0 exception, because its build image passed `-C ar`, a hard error from Rust 1.97; the image dropped the flag on 2026-09-03, and `rust-toolchain.toml` keeps the two-line fix should it return.)
 - **Nightly** is used for exactly one thing, outside CI and not a gate: `cargo fuzz`, which requires it for the sanitizer flags it threads through `rustc` (`cargo +nightly fuzz run <target>` — see `fuzz/README.md`). No build, test, lint, docs, release, or packaging path uses nightly.
 - **Targets supported**: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`. Tier 2: `aarch64-unknown-linux-gnu`. Cross-compile targets declared in `rust-toolchain.toml` (auto-installed): `thumbv7em-none-eabihf` (the `no_std` chip-stack gate) and `wasm32-unknown-unknown` (browser). Android arm64/arm/x86_64 via `cargo ndk` (see `docs/android.md`). The `x86_64-apple-darwin` release target was retired (ADR 0009).
 
@@ -14,7 +14,7 @@
 
 ```text
 Cargo.toml                  # workspace manifest
-rust-toolchain.toml         # pin 1.96.0 stable + thumbv7em + wasm32 targets
+rust-toolchain.toml         # pin 1.99.0 stable + thumbv7em + wasm32 targets
 crates/
 ├── rustynes-core/               # public re-exports + Nes facade + scheduler + save state
 ├── rustynes-cpu/                # 2A03 CPU
@@ -148,7 +148,7 @@ cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-feature
 - `actions/rust-setup/action.yml` — shared composite action (toolchain +
   Linux wgpu/winit/cpal deps + cargo cache) used by all three workflows, so
   the setup steps + the apt package list live in exactly one place.
-- `workflows/ci.yml` — lint (fmt + clippy + rustdoc on the pinned 1.96
+- `workflows/ci.yml` — lint (fmt + clippy + rustdoc on the pinned 1.99
   toolchain, so the gate matches local) + the cross-platform test matrix +
   test-roms + no_std + wasm32 clippy + the frame-time bench gate. Runs the
   feature-combo clippy gates (`scripting`, `hd-pack`, `retroachievements`, and

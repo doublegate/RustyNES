@@ -520,7 +520,7 @@ fn a_markdown_link_bullet_is_not_a_checkbox() {
     let md = format!("{GOOD}- [NESDev documentation](https://www.nesdev.org/wiki/)\n");
     let items = parse(&md).expect("a link bullet is ordinary prose, not a malformed checkbox");
     assert_eq!(items.len(), 2, "the link must not become an item");
-    assert!(violations(&items).is_empty());
+    assert_eq!(violations(&items), [] as [std::string::String; 0]);
 }
 
 #[test]

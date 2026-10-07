@@ -1,5 +1,11 @@
 # RustyNES Libretro Core Implementation Plan
 
+> **Historical (2026-10-07).** Every phase below shipped, at v1.10.0 "Arcade"
+> and in the releases after it; `TASKS.md` has every box ticked. The forward
+> libretro work, v3.0.1 to v4.0.0, is under "The v3.x line" in
+> [`SPRINT_PLAN.md`](SPRINT_PLAN.md) and in
+> [`v3.1-to-v4.0-line-plan.md`](../plans/v3.1-to-v4.0-line-plan.md).
+
 This document outlines the exact execution sequence to build out the `rustynes-libretro` core integration, strictly adhering to the architectural constraints established in `to-dos/libretro/SPRINT_PLAN.md` and `docs/libretro/*`.
 
 ## Proposed Changes

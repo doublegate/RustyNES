@@ -34,7 +34,7 @@ file with no install step.
 
 ### Option 2: build from source
 
-Building from source requires Rust 1.96 (pinned via `rust-toolchain.toml`)
+Building from source requires Rust 1.99 (pinned via `rust-toolchain.toml`)
 and a working system-library set for the windowing / audio stack.
 
 **Linux build deps (Debian / Ubuntu):**

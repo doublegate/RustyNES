@@ -1190,7 +1190,7 @@ pub fn parse_pal(bytes: &[u8]) -> Option<[[u8; 3]; 64]> {
         return None;
     }
     let mut pal = [[0u8; 3]; 64];
-    for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
+    for (i, chunk) in bytes[..192].as_chunks::<3>().0.iter().enumerate() {
         pal[i] = [chunk[0], chunk[1], chunk[2]];
     }
     Some(pal)
@@ -2291,7 +2291,6 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use tempfile::TempDir;
 

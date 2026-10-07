@@ -37,12 +37,11 @@ fn workspace_root() -> PathBuf {
 
 /// §1 rows that name a file with no header of its own, each with the reason.
 /// The list is where a reviewer sees the exception argued.
-const ROW_WITHOUT_HEADER: &[(&str, &str)] = &[(
-    "crates/rustynes-gfx-shaders/src/lib.rs",
-    "named in the crt_stack.rs row because it re-exports CRT_ROYALE_WGSL / CRT_GUEST_WGSL / \
-     MEGATRON_WGSL; the reimplemented shaders themselves live in crt_stack.rs, which carries \
-     the header",
-)];
+const ROW_WITHOUT_HEADER: &[(&str, &str)] = &[];
+// `crates/rustynes-gfx-shaders/src/lib.rs` was the one entry until v3.0.1: it was
+// named in the crt_stack.rs row only because it re-exports the CRT shaders. It also
+// carries `BISQWIT_WGSL`, a generated copy of derived code, so it now has a header and
+// a row of its own (T-NTSC-PROVENANCE).
 
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     // An unreadable directory fails the test rather than being skipped: a

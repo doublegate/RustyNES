@@ -166,7 +166,9 @@ fn fnv1a64(fb: &[u8]) -> u64 {
 /// has two (text + backdrop); a blanked crash screen collapses to one.
 fn distinct_colors(fb: &[u8]) -> usize {
     let mut px: Vec<u32> = fb
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
         .collect();
     px.sort_unstable();

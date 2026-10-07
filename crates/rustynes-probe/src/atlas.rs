@@ -195,7 +195,7 @@ where
 
     let n = frames as usize;
     let mut data = vec![0u8; WRAM_LEN * n];
-    for (f, chunk) in frame_major.chunks_exact(WRAM_LEN).enumerate() {
+    for (f, chunk) in frame_major.as_chunks::<WRAM_LEN>().0.iter().enumerate() {
         for (a, &v) in chunk.iter().enumerate() {
             data[a * n + f] = v;
         }

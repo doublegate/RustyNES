@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v3.0.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v3.0.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.99-orange.svg" alt="Rust: 1.99"></a><br>
   <a href="#accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="docs/mappers.md"><img src="https://img.shields.io/badge/mapper%20families-191-informational.svg" alt="Mapper families"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platforms"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS%20%7C%20RetroArch-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -109,7 +109,7 @@ Launch it without a ROM and use **F12**, the File menu, or drag and drop a
 
 ### Build from source
 
-You need **Rust 1.96** (pinned in `rust-toolchain.toml`; [rustup](https://rustup.rs)
+You need **Rust 1.99** (pinned in `rust-toolchain.toml`; [rustup](https://rustup.rs)
 installs it) and Git.
 
 ```bash
@@ -357,7 +357,7 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 
 ## Current release
 
-RustyNES's current release is **v3.0.0 "Cornerstone"** (2026-10-06) — the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core. Built on **v2.9.9 "Ballast"** (2026-10-04) — the release candidate for v3.0.0: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it. Built on **v2.9.8 "Vanguard"** (2026-10-02) — the preparation release for v3.0.0: v3.0.0's breaking changes landed early (a save identity that ignores the header, old states and movies refused, movies and netplay that record the machine, the API removals), every staged game was booted and the defects found were fixed, and the game database's corrections reach every platform. Built on **v2.9.7 "Tandem"** (2026-09-30) — the desktop's features on the web and on phones, the release binaries built with every native feature, and a PPU A12 fix found by real games: Acclaim's MC-ACC games, the J.Y. ASIC and mapper 91 now count at their documented rates. Built on **v2.9.6 "Roster"** (2026-09-30) — seventeen mapper families written from their NESdev pages (174 → 191), GTROM promoted to Curated with a modelled flash chip whose saves persist, mapper 4's NES 2.0 submappers corrected (MMC6, NEC, MC-ACC, T9552), and the local commercial suites re-baselined after drifting unread since about v2.0.0.
+RustyNES's current release is **v3.0.1 "Mortar"** (2026-10-07) — a maintenance release: one game's graphics fixed, the MiSTer core's last MMC3 rule exception tested, Rust 1.99 everywhere, every unanswered bot review answered, and the plan to v4.0.0. Built on **v3.0.0 "Cornerstone"** (2026-10-06) — the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core. Built on **v2.9.9 "Ballast"** (2026-10-04) — the release candidate for v3.0.0: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it. Built on **v2.9.8 "Vanguard"** (2026-10-02) — the preparation release for v3.0.0: v3.0.0's breaking changes landed early (a save identity that ignores the header, old states and movies refused, movies and netplay that record the machine, the API removals), every staged game was booted and the defects found were fixed, and the game database's corrections reach every platform. Built on **v2.9.7 "Tandem"** (2026-09-30) — the desktop's features on the web and on phones, the release binaries built with every native feature, and a PPU A12 fix found by real games: Acclaim's MC-ACC games, the J.Y. ASIC and mapper 91 now count at their documented rates. Built on **v2.9.6 "Roster"** (2026-09-30) — seventeen mapper families written from their NESdev pages (174 → 191), GTROM promoted to Curated with a modelled flash chip whose saves persist, mapper 4's NES 2.0 submappers corrected (MMC6, NEC, MC-ACC, T9552), and the local commercial suites re-baselined after drifting unread since about v2.0.0.
 
 **v3.0.0 is the API major** ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
 It gathers every breaking change since v2.x, most of them made early in v2.9.8 and
@@ -397,10 +397,10 @@ one, cycle by cycle.
 
 Its co-simulation ladder covers the 6502, the bus and interrupts, the 2C02, the
 2A03, AccuracyCoin parity and six mapper boards. Each release attaches a timing-closed
-bitstream pair; v3.0.0's (on-die and off-die, both at fitter seed 5, each compiled
+bitstream pair; v3.0.1's (on-die and off-die, both at fitter seed 2, each compiled
 twice to the same bytes) is a **release candidate, not hardware-verified**. Its
-co-simulation ladder reads 199 passed, 0 failed, 1 expected failure on-die and
-200 / 0 / 1 off-die. **No hardware has run any bitstream yet**, so a booting core, a synced
+co-simulation ladder reads 200 passed, 0 failed, 1 expected failure on-die and
+201 / 0 / 1 off-die. **No hardware has run any bitstream yet**, so a booting core, a synced
 display, audible sound and a working pad are not claimed. The details, and what
 each rung can and cannot verify, are in [`docs/mister.md`](docs/mister.md).
 

@@ -395,8 +395,23 @@ def main() -> int:
     # reporting that as "VALID — window was on screen" would assert something
     # never measured. The gate still passes it (see above), but it must not claim
     # to have checked.
+    #
+    # And a fourth (v3.0.1): ZERO is not proof of health either. The frontend
+    # writes `present_discarded` through a `map_or(0, ...)` on the presentation
+    # clock, so a run with no clock at all (non-Wayland, or the global never
+    # bound) logs 0 on every row -- and this branch used to call that "on screen
+    # throughout", the very claim docs/performance.md says zero cannot carry.
+    # `measured_refresh_hz` is set ONLY from that clock's answer, so a header
+    # value other than `none` is the evidence the counter was live. The header
+    # is written when logging starts, so a clock that answered later still
+    # reads `none`: that run is reported UNVERIFIED, which understates rather
+    # than overclaims. Reporting only -- the rate gate above is unchanged.
+    clock_seen = meta.get("measured_refresh_hz", "none").strip().lower() not in ("", "none")
     if not has_col:
         validity = "capture predates the column — validity UNKNOWN, not verified"
+    elif discarded == 0 and not clock_seen:
+        validity = ("validity UNVERIFIED (no presentation clock) — "
+                    "measured_refresh_hz = none, so a zero count was never measured")
     elif discarded == 0:
         validity = "capture VALID — window was on screen throughout"
     elif disc_rate <= 1.0:

@@ -1817,11 +1817,21 @@ impl App {
         // `NES_W*NES_H*4` frame so the next upload uploads black, not nothing.
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         self.present_buffer.reset();
-        self.present_staging.clear();
-        self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+        // v3.0.1 — the palette-index half is blanked the same way when an index
+        // consumer is active, not merely cleared: an empty slice makes `Gfx`
+        // skip the upload and keep the last game frame in the index texture.
+        let want_index = self
+            .gfx
+            .as_ref()
+            .is_some_and(|g| g.ntsc_bisqwit_active() || g.shader_stack_needs_index());
+        self.present_index_staging.clear();
+        Self::blank_present_staging(
+            &mut self.present_staging,
+            &mut self.present_index_staging,
+            want_index,
+        );
         // Drop the sibling presentation buffers too, so a stale frame can't be
         // re-presented after the ROM is closed.
-        self.present_index_staging.clear();
         #[cfg(feature = "hd-pack")]
         {
             self.present_hd_tiles.clear();
@@ -8857,6 +8867,26 @@ impl App {
         }
     }
 
+    /// Fill the present staging with a BLACK NES frame: a zeroed
+    /// `NES_W*NES_H*4` RGBA image and, when `want_index` (the true composite
+    /// `NES_NTSC` filter, or a shader pass that samples the index texture), a
+    /// full `NES_W*NES_H` palette-index frame of colour `$0F` (black, no
+    /// emphasis).
+    ///
+    /// The index half matters because `Gfx` skips the index upload on a length
+    /// mismatch and keeps the texture's previous contents. Until v3.0.1 the
+    /// no-ROM paths refilled only the RGBA half and `close_rom` cleared the
+    /// index half to empty, so with the Bisqwit filter on, the last game frame
+    /// stayed on screen after the ROM was closed instead of black.
+    fn blank_present_staging(rgba: &mut Vec<u8>, index: &mut Vec<u16>, want_index: bool) {
+        rgba.clear();
+        rgba.resize((NES_W * NES_H * 4) as usize, 0);
+        if want_index {
+            index.clear();
+            index.resize((NES_W * NES_H) as usize, 0x0F);
+        }
+    }
+
     /// v1.1.0 beta.1 (T-110-A1) — select the gfx NTSC post-pass to match the
     /// `[graphics] ntsc_filter` mode, keeping the two NTSC filters mutually
     /// exclusive: `"composite-rt"` = the true composite Bisqwit filter,
@@ -10926,8 +10956,11 @@ impl ApplicationHandler<AppEvent> for App {
                                 }
                             }
                         } else {
-                            self.present_staging.clear();
-                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                            Self::blank_present_staging(
+                                &mut self.present_staging,
+                                &mut self.present_index_staging,
+                                want_index,
+                            );
                         }
                         // `guard` drops here, releasing the emu lock BEFORE the
                         // CPU-heavy composite below.
@@ -11328,9 +11361,13 @@ impl ApplicationHandler<AppEvent> for App {
                             }
                         } else {
                             // No ROM: present a black NES image (the shell still
-                            // draws on top).
-                            self.present_staging.clear();
-                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                            // draws on top) -- the index half too, when the
+                            // Bisqwit filter or an index-sampling pass is on.
+                            Self::blank_present_staging(
+                                &mut self.present_staging,
+                                &mut self.present_index_staging,
+                                want_index,
+                            );
                         }
                     }
                     // v1.2.0 C3 — lock dropped: now run the CPU-heavy HD composite
@@ -12086,6 +12123,37 @@ mod tests {
     use super::{apply_load_time_header_overrides, apply_per_game_overlay};
     use rustynes_core::Nes;
 
+    /// The no-ROM present must stage a BLACK index frame for the Bisqwit
+    /// filter, not leave the last game's index frame (or an empty slice, which
+    /// `Gfx` skips, keeping the old texture) in place.
+    #[test]
+    fn a_blank_present_stages_a_black_index_frame() {
+        use crate::gfx::{NES_H, NES_W};
+        let n = (NES_W * NES_H) as usize;
+        // Stale game frame in both halves, as after a ROM has run.
+        let mut rgba = vec![0xAB; n * 4];
+        let mut index = vec![0x21_u16; n];
+        super::App::blank_present_staging(&mut rgba, &mut index, true);
+        assert_eq!(rgba.len(), n * 4);
+        assert!(rgba.iter().all(|&b| b == 0), "RGBA half is black");
+        assert_eq!(index.len(), n, "a full frame, or Gfx skips the upload");
+        assert!(
+            index.iter().all(|&i| i == 0x0F),
+            "index half is black ($0F)"
+        );
+
+        // `close_rom` cleared the index half to EMPTY; that must not survive
+        // a blank present either.
+        let mut empty: Vec<u16> = Vec::new();
+        super::App::blank_present_staging(&mut rgba, &mut empty, true);
+        assert_eq!(empty.len(), n);
+
+        // Without an index consumer the index half is left alone (zero cost).
+        let mut untouched: Vec<u16> = Vec::new();
+        super::App::blank_present_staging(&mut rgba, &mut untouched, false);
+        assert_eq!(untouched, [] as [u16; 0]);
+    }
+
     /// The CLI / initial-ROM path must apply the same load-time header
     /// corrections as the File-menu path.
     ///
@@ -12094,8 +12162,48 @@ mod tests {
     /// image, so `rustynes <rom>` skipped every mapper / submapper / region fix
     /// that opening the same ROM from the menu applied. Seicross is the case
     /// that matters -- it needs submapper 4 to clear its protection loop.
+    ///
+    /// Until v3.0.1 the synthetic image never matched a DB row, so the test
+    /// always took an early return that checked only "the helper is a no-op on
+    /// an unknown CRC" and never reached the comparison below. The image now
+    /// carries the real Seicross key: its last four hashed bytes are forged so
+    /// the header-excluded CRC32 equals the vendored row's.
     #[test]
     fn the_startup_path_applies_the_same_header_overrides_as_the_menu_path() {
+        /// Seicross (Japan) in the vendored table: mapper 185, submapper 4.
+        const SEICROSS_CRC: u32 = 0x0F05_FF0A;
+        const POLY: u32 = 0xEDB8_8320;
+        /// The reflected CRC-32 register after `data`, without the final XOR.
+        fn crc_reg(mut reg: u32, data: &[u8]) -> u32 {
+            for &b in data {
+                reg ^= u32::from(b);
+                for _ in 0..8 {
+                    reg = if reg & 1 != 0 {
+                        (reg >> 1) ^ POLY
+                    } else {
+                        reg >> 1
+                    };
+                }
+            }
+            reg
+        }
+        /// Four bytes that, appended to `prefix`, give CRC-32 `target`. CRC is
+        /// linear, so 4 bytes `w` take register `s` to `step32(s ^ w)`;
+        /// running the 32 bit-steps backwards from the wanted register gives
+        /// `s ^ w`. A reverse step is unambiguous because `POLY` has bit 31
+        /// set: a set top bit means the low bit shifted out was 1.
+        fn forge_tail(prefix: &[u8], target: u32) -> [u8; 4] {
+            let mut reg = !target;
+            for _ in 0..32 {
+                reg = if reg & 0x8000_0000 != 0 {
+                    ((reg ^ POLY) << 1) | 1
+                } else {
+                    reg << 1
+                };
+            }
+            (reg ^ crc_reg(0xFFFF_FFFF, prefix)).to_le_bytes()
+        }
+
         // Seicross: iNES 1.0, mapper 185, no submapper field of its own.
         // 32 KiB PRG + 8 KiB CHR so the header-excluded CRC is well defined.
         let mut rom = vec![0u8; 16 + 0x8000 + 0x2000];
@@ -12104,34 +12212,25 @@ mod tests {
         rom[5] = 1; // 8 KiB CHR
         rom[6] = 0x90; // mapper low nibble 9
         rom[7] = 0xB0; // mapper high nibble B -> 185
+        let end = rom.len();
+        let tail = forge_tail(&rom[16..end - 4], SEICROSS_CRC);
+        rom[end - 4..].copy_from_slice(&tail);
 
         let crc = crate::game_db::rom_crc32(&rom).expect("iNES header parses");
-        let Some(entry) = crate::game_db::load_time_entry(crc, &rom) else {
-            // Synthetic bytes will not match a real DB row; the point of the
-            // test is the CALL, so drive the helper with a known entry instead.
-            let mut a = rom.clone();
-            let mut b = rom.clone();
-            let e = crate::game_db::GameDbEntry {
-                crc,
-                region: None,
-                mapper: Some(4),
-                submapper: Some(4),
-                mirroring: None,
-                title: String::new(),
-            };
-            crate::game_db::apply_header_overrides(&mut a, &e);
-            apply_load_time_header_overrides(&mut b, None);
-            assert_ne!(a, rom, "premise: the override does change the header");
-            assert_eq!(
-                b, rom,
-                "no DB row for these synthetic bytes, so the helper is a no-op"
-            );
-            return;
-        };
+        assert_eq!(
+            crc, SEICROSS_CRC,
+            "premise: the forged image carries the key"
+        );
+        let entry = crate::game_db::load_time_entry(crc, &rom).expect("Seicross row is listed");
+
         let mut via_helper = rom.clone();
         apply_load_time_header_overrides(&mut via_helper, None);
         let mut via_direct = rom.clone();
         crate::game_db::apply_header_overrides(&mut via_direct, &entry);
+        assert_ne!(
+            via_helper, rom,
+            "the startup helper must rewrite the header (submapper 4)"
+        );
         assert_eq!(
             via_helper, via_direct,
             "the startup helper must produce the same header as the DB rewrite"

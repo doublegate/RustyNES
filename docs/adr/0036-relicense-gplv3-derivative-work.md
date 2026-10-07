@@ -97,3 +97,20 @@ component is "or-later" and no incorporated component is v3-only.
   emulation-core code change, and the release checks verify it: AccuracyCoin passes
   141/141 and nestest is 0-diff. `docs/STATUS.md` is authoritative for the pass
   counts.
+
+## Amendment (2026-10-06, v3.0.1): the terms of earlier releases
+
+The first Consequences bullet says distributors who relied on the permissive terms
+of prior tagged releases "keep those terms *for those releases*". That asserts the
+earlier `MIT OR Apache-2.0` grant was effective for those releases, which sits
+uneasily with this ADR's own Context: the prior dual license "was not a license the
+project was entitled to offer". Whether those terms held for the GPL-derived code is a
+legal question this ADR does not decide, and the sentence should not have read as if
+it did.
+
+The position of record is the neutral wording `docs/originality-and-provenance.md`
+already uses: source released in prior tagged releases remains under whatever terms
+accompanied it at the time, and that history cannot be retroactively changed, but the
+current tree and every release from v2.2.9 onward is GPL-3.0-or-later. Nothing here
+states whether the earlier permissive terms were valid for the GPL-derived portions.
+The bullet above is left as written, as the record of what was decided on 2026-08-04.

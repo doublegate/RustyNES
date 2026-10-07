@@ -326,7 +326,7 @@ mod tests {
         // With zero latency, the message is deliverable on b's next poll.
         let got = b.poll();
         assert_eq!(got, vec![NetMessage::InputAck { frame: 5 }]);
-        assert!(b.poll().is_empty());
+        assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
     }
 
     #[test]
@@ -334,9 +334,9 @@ mod tests {
         let (mut a, mut b) = MemoryTransport::pair(LinkConditions::fixed_latency(3), 7);
         a.send(&NetMessage::InputAck { frame: 1 });
         // Three polls of nothing, then delivery.
-        assert!(b.poll().is_empty());
-        assert!(b.poll().is_empty());
-        assert!(b.poll().is_empty());
+        assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
+        assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
+        assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
         assert_eq!(b.poll(), vec![NetMessage::InputAck { frame: 1 }]);
     }
 

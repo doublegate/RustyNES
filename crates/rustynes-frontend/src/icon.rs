@@ -21,7 +21,9 @@ fn decode() -> Option<(Vec<u8>, u32, u32)> {
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => buf
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], 0xFF])
             .collect(),
         // The shipped icon is 8-bit RGBA; anything else is unexpected.

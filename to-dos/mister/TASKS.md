@@ -328,7 +328,28 @@ something as blocked, check the blocker applies to the WHOLE item.**
       it is written**: before recording something as blocked, check the blocker
       applies to the whole item. It applied to *hardware acceptance*, not to
       building the controller or to verifying it against a documented part.
-- [ ] **A stimulus for the odd-frame exception to the dot-0 A12 rule**
+- [x] **DONE v3.0.1 — and it found a DUT defect first.** The sibling's
+      `mapper4mmc3oddskip080` (`tb/roms/mkmapper.py mmc3oddskip`) turns
+      rendering off at vblank and on near the pre-render line's end with a
+      latch-0 IRQ armed; the oracle's trace counts 3 of 100 frames that reach
+      the exception. Before it could gate the exception it showed the rule
+      itself was gated on the live `rendering` at dots 1-2, so a `$2001` write
+      taking effect at dot 2 got the rule; fixed to "was dot 1 rendering"
+      (sibling ledger 3.49). The exception's mutant is CAUGHT on the new
+      `IRQ_RISE` surface (`tb/irq_rise_diff.py`): the bus alone cannot see a
+      one-cycle /IRQ shift. Two predictions below were wrong: the window is
+      dots 333-336, not 337-339 (rendering takes effect a few dots after the
+      write, and a write in 337-339 usually lands too late for the skip), and
+      the bitstream DOES change, because the rule's fix is RTL. The original
+      item follows.
+- [ ] **Does a `$2006` `v <- t` copy on a `v_pipeline` load dot match the
+      oracle?** (raised by agy on sibling #28, left UNSURE by the v3.0.1
+      sweep). The ordering is confirmed: the copy commits before the pipeline
+      in the same dot, so the pipeline's value wins on a load dot, and that
+      precedence predates `v_pipeline`. Whether it diverges from the oracle is
+      unmeasured; settling it needs a stimulus that lands the copy on dot 257
+      or on an increment dot, compared per cycle (fetch or bus gate).
+- [x] **A stimulus for the odd-frame exception to the dot-0 A12 rule**
       (T-MMC3-BG-A12; raised by Copilot on sibling #53, 2026-10-06). The
       RTL's exception for scanline 0 after an odd frame's skip is
       **stimulus-blind**, not inert. blargg's `4-scanline_timing`
@@ -428,13 +449,16 @@ something as blocked, check the blocker applies to the WHOLE item.**
       artifact at v2.6.15. Re-measure it rather than quoting this line; every
       unticked box carries a named verdict and a gate
       (`contribution_checklist_audit.rs`) keeps it that way.
-- [x] `releases/RustyNES_MiSTer-vX.Y.Z.rbf` — **since v2.6.7**, committed to the
-      sibling's `releases/` and attached to the GitHub release on both
-      repositories, produced by `scripts/release-rbf.sh`, which refuses a
-      compile with errors or negative slack at any corner. The **filename**
-      remains a known divergence from MiSTer's date convention — see the
-      checklist, where it is measured against `Main_MiSTer/file_io.cpp` rather
-      than the wiki's paraphrase.
+- [x] A release `.rbf` — **since v2.6.7**, produced by `scripts/release-rbf.sh`,
+      which refuses a compile with errors or negative slack at any corner.
+      **Since v2.6.15 it carries two names:** `releases/RustyNES_YYYYMMDD.rbf`
+      is committed to the sibling's `releases/` (the date form is the only one
+      `Distribution_MiSTer`'s builder and the `Main_MiSTer` core menu accept,
+      measured against `Main_MiSTer/file_io.cpp` rather than the wiki's
+      paraphrase), and `RustyNES_MiSTer-vX.Y.Z.rbf` is attached to the GitHub
+      release on both repositories. Through v2.6.14 the version-named file was
+      the one committed, a divergence from MiSTer's date convention that
+      v2.6.15 closed (the sibling's `docs/bitstream-release.md`).
 - [x] Unique Home folder chosen — **since v2.6.7**, resolved against
       `Main_MiSTer`'s own parser rather than an example: `CONF_STR`'s opening
       `"RustyNES;;"` gives `/media/fat/games/RustyNES`, and it is unique because

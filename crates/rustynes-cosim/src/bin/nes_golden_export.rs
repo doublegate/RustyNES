@@ -410,7 +410,6 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
         eprintln!("  WARNING: irq trace was armed but returned nothing");
         return (0, 0);
     };
-    write(&suffixed(base, "irq.csv"), a.csv.as_bytes());
 
     // Written BEFORE the checkpoints, and outside the `Err` arm below, on
     // purpose. This is the full-capture stream: it is the only artifact the
@@ -427,6 +426,10 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
 
     match a.checkpoints {
         Ok(ck) => {
+            // The CSV is written only here, unlike `obs.bin` above: it carries
+            // no overflow marker, so a CSV from an overflowed trace would be a
+            // truncated file indistinguishable from a complete one.
+            write(&suffixed(base, "irq.csv"), a.csv.as_bytes());
             write(
                 &suffixed(base, "ckpt.bin"),
                 &rustynes_cosim::checkpoint::to_bytes(&ck),
@@ -435,8 +438,19 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
         }
         // Refuse rather than emitting a short stream: a hash over a trace that
         // dropped records covers fewer cycles than it claims, and the DUT would
-        // be blamed for our truncation.
-        Err(e) => panic!("  ERROR: {e}"),
+        // be blamed for our truncation. First remove any CSV and checkpoints a
+        // previous run left under this stem (v3.0.1): they look complete, and
+        // beside this run's `obs.bin` they would read as its output.
+        Err(e) => {
+            for stale in [suffixed(base, "irq.csv"), suffixed(base, "ckpt.bin")] {
+                match std::fs::remove_file(&stale) {
+                    Ok(()) => eprintln!("  removed stale {}", stale.display()),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => eprintln!("  WARNING: could not remove {}: {err}", stale.display()),
+                }
+            }
+            panic!("  ERROR: {e}")
+        }
     }
 }
 
@@ -1110,6 +1124,53 @@ mod tests {
             suffixed(Path::new("/out/nestest"), "boot.bin"),
             Path::new("/out/nestest.boot.bin")
         );
+    }
+
+    /// An overflowed trace must not leave a truncated `irq.csv` behind.
+    ///
+    /// The CSV carries no overflow marker (`IrqTrace::to_csv` has no such
+    /// field), so a CSV written before the refusal below is indistinguishable
+    /// from a complete one. `obs.bin` is kept on overflow deliberately and says
+    /// why; the CSV has no such rationale, so it is written only once the
+    /// checkpoints are known to be good.
+    #[test]
+    fn an_overflowed_trace_writes_no_irq_csv() {
+        // A 16 KiB NROM whose reset vector points at `JMP $8000`.
+        let mut rom = vec![0u8; 16 + 16384 + 8192];
+        rom[..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 1;
+        rom[5] = 1;
+        rom[16..19].copy_from_slice(&[0x4C, 0x00, 0x80]);
+        let vec_base = 16 + 16384 - 6;
+        rom[vec_base..vec_base + 6].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+
+        let mut o = rustynes_cosim::Oracle::new(&rom, 0).expect("rom");
+        o.enable_irq_trace(64); // far below one frame of CPU cycles
+        o.advance_frames(1);
+
+        let dir = std::env::temp_dir().join(format!(
+            "rustynes-cosim-overflow-csv-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let base = dir.join("overflow");
+        // A previous, SUCCESSFUL run with the same stem (v3.0.1, Copilot on
+        // #591): its complete-looking CSV and checkpoints must not survive a
+        // failed rerun, or they read as that run's output.
+        std::fs::write(suffixed(&base, "irq.csv"), b"stale csv").expect("stale csv");
+        std::fs::write(suffixed(&base, "ckpt.bin"), b"stale ckpt").expect("stale ckpt");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::write_irq_artifacts(&mut o, &base, 4096)
+        }));
+        let csv_exists = suffixed(&base, "irq.csv").exists();
+        let ckpt_exists = suffixed(&base, "ckpt.bin").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "an overflowed trace must still refuse");
+        assert!(
+            !csv_exists,
+            "an irq.csv (truncated, or a previous run's) was left on disk"
+        );
+        assert!(!ckpt_exists, "a previous run's ckpt.bin was left on disk");
     }
 
     /// Pinned against an independently-known digest, not against our own output.

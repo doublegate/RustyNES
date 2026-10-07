@@ -120,13 +120,17 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   test-driven accuracy"); its
   PPU address/data-multiplex (ALE / octal-latch), OAM-corruption, per-cycle
   DMA-dispatch and DMC-DMA state models are ported into RustyNES
-  (crates/rustynes-ppu, rustynes-cpu, rustynes-core, rustynes-apu), and its full source is vendored as a golden
-  oracle at crates/rustynes-test-harness/golden/tricnes/tricnes-full-src/.
+  (crates/rustynes-ppu, rustynes-cpu, rustynes-core, rustynes-apu). Its full
+  source was vendored as a golden oracle under
+  crates/rustynes-test-harness/golden/tricnes/ until v3.0.1, when it moved
+  outside the repository (the committed cross-diff outputs remain).
   https://github.com/100thCoin/TriCNES
-  Ported models were taken from commit 9199870; the VENDORED oracle is commit
-  f388af0b (re-synced 2026-09-11). The two are stated separately on purpose --
-  one records what was derived from, the other what is in the tree, and this
-  entry previously gave one id for both after the vendored copy moved on.
+  Ported models were taken from commit 9199870; the last VENDORED oracle was
+  commit 94f1b117 (re-synced 2026-09-19; this line said f388af0b until v3.0.1,
+  one re-sync stale). The two are stated separately on purpose --
+  one records what was derived from, the other what was in the tree until the
+  v3.0.1 removal, and this entry previously gave one id for both after the
+  vendored copy moved on.
       Copyright (c) 2025 Chris Siebert -- MIT
   Note (v2.2.6 -> resolved v2.3.0): v2.2.6 disclosed that the octal-latch /
   hybrid-address *timing* had been calibrated to TriCNES's per-dot behavior
@@ -141,7 +145,8 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   current behavior is therefore documentation/oracle-derived -- it matches the
   NESdev-documented delayed-`CopyV`-during-render timing and is pinned by the
   MIT AccuracyCoin test ROM plus an exact-141/141 CI gate. TriCNES (MIT) remains
-  the original cross-reference; its source is vendored with attribution. See
+  the original cross-reference; its source was vendored with attribution until
+  v3.0.1 and now lives outside the repository. See
   docs/originality-and-provenance.md sec. 4 and ADR 0030.
 
 * egui-winit 0.36.2 -- winit integration for egui, vendored with a three-site
@@ -222,7 +227,8 @@ Video shaders and NTSC filters
 --------------------------------------------------------------------------------
 
 RustyNES's optional CRT shader stack (crates/rustynes-gfx-shaders/) and NTSC
-filters (crates/rustynes-frontend/src/ntsc_bisqwit.rs, ntsc_lmp88959.rs):
+filters (crates/rustynes-frontend/src/ntsc_bisqwit.rs, ntsc_lmp88959.rs, and the
+generated copy of the Bisqwit pass in crates/rustynes-gfx-shaders/src/bisqwit.wgsl):
 
 * The Bisqwit NTSC filter's numeric coefficient tables were ported verbatim (via
   Mesen2's implementation) and are therefore GPL-derived (listed above and in

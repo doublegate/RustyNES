@@ -1,24 +1,26 @@
-# TriCNES — vendored reference oracle (MIT)
+# TriCNES cross-diff evidence (the source now lives outside the repository)
 
-TriCNES is the AccuracyCoin author's own emulator (Chris "100th_Coin" Siebert), which passes the full
-144-test battery — the gold oracle for these tests. Re-synced 2026-09-19 to upstream `94f1b117`
-(previously `f388af0`, 2026-09-11, and `f54d8be`, 2026-05-05); that window carries the OAM2-address
-and OAM-evaluation fixes matching AccuracyCoin's new `Advanced Sprite Evaluation` page, the 6502
-internal-data-bus fix, Mapper 66 (GxROM), and — in `94f1b117` — a one-line RESET fix
-(`CPU_SYNC = true;` in `Reset()`). `tricnes-full-src/` is byte-identical to upstream `94f1b117`;
-the same one line was applied by hand to the instrumented `tricnes-harness-src/Emulator.cs`, whose
-delta against the full source stays at its established 88 instrumentation lines. Vendored here under its **MIT License** (see
-`tricnes-full-src/LICENSE`) as the per-cycle cross-diff oracle for the DMA-tail / Program-M work,
-salvaged from `/tmp` so it survives reboot.
+TriCNES is the AccuracyCoin author's own emulator (Chris "100th_Coin" Siebert, **MIT**), which
+passes the full AccuracyCoin battery and served as the per-cycle cross-diff oracle for the
+DMA-tail / Program-M work. Several of its models are ported into RustyNES and attributed in
+`NOTICE` and `docs/originality-and-provenance.md` section 1.
 
-- **`tricnes-harness-src/`** — the trimmed, **instrumented** harness actually used for the cross-diff:
-  `Emulator.cs` (with the per-cycle window logger), `Program.cs`, `6502Documentation.cs`, `mappers/`
-  (all 11 `Mapper_*.cs`, required to build — the re-sync added `Mapper_GxROM.cs`), `tricnes-harness.csproj`. Build: `dotnet build -c Release`
-  (.NET 10 SDK). The MIT license in `../tricnes-full-src/LICENSE` covers this trimmed copy too.
-- **`tricnes-full-src/`** — the complete upstream TriCNES source (`.cs`/`.csproj`/`.resx` + `LICENSE`,
-  no build artifacts), for reference / re-trimming the harness.
-- **`implicit_abort_*_xdiff_*.txt` / `implicit_abort_region.txt`** — committed cross-diff outputs.
+**Moved out in v3.0.1 (maintainer decision, 2026-10-07).** The vendored source trees
+(`tricnes-full-src/`, byte-identical to upstream `94f1b117`, and `tricnes-harness-src/`, that
+source plus 88 instrumentation lines) were removed from the repository so no search over it
+reaches reference-emulator source. They now live at:
 
-Upstream: `github.com/100thCoin/TriCNES`. Reverse-engineered model:
-`docs/audit/v2.0-f2-tricnes-reference-model-2026-06-02.md`. Setup/regeneration:
-`docs/tooling/oracle-tooling-setup.md` §2 / §2a.
+- `~/reference-oracles/TriCNES`: a clone of `github.com/100thCoin/TriCNES` at `94f1b117`
+  (checked file-for-file against the vendored copy before removal; upstream additionally carries
+  its `.sln`, `icon.ico`, `SDL2.dll` and settings file, which were never vendored);
+- `~/reference-oracles/TriCNES-rustynes-harness`: the instrumented harness, with `LICENSE`.
+  Build: `dotnet build -c Release` (.NET 10 SDK).
+
+On another machine, re-create them from upstream; the harness is in this repository's history
+before the v3.0.1 removal commit. When and how the source may be consulted (AccuracyCoin work,
+after rungs 1-3, always attributed) is `docs/ai-emulator-provenance-guardrails.md` section 3a.
+
+What stays here is evidence, not source: the committed cross-diff outputs
+(`implicit_abort_*_xdiff_*.txt`, `implicit_abort_region.txt`, `implicit_540_grid_xdiff_*.txt`).
+Reverse-engineered model: `docs/audit/v2.0-f2-tricnes-reference-model-2026-06-02.md`. Tooling:
+`docs/tooling/oracle-tooling-setup.md` sections 2 and 2a.

@@ -25,9 +25,11 @@ corpus for that reason.
 
 ## Source
 
-All files were copied from `christopherpow/nes-test-roms` (specific
-upstream paths are in `tests/roms/LICENSES.md` "blargg's NES test ROMs"
-section).
+All files were copied from `christopherpow/nes-test-roms`. The specific
+upstream paths are in the per-ROM rows of `tests/roms/LICENSES.md`: the
+"blargg's NES test ROMs" section carries the CPU, branch-timing, OAM, reset
+and APU ROMs, and the "full palette" ROMs section carries `full_palette.nes`,
+`flowing_palette.nes` and `nestest.nes` (kevtris).
 
 ## What they test
 

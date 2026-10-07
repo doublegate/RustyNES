@@ -2156,19 +2156,27 @@ All additive + frontend-only; the core stays byte-identical.
   subtitle track at the region's frame rate (NTSC's 60.0988 fps stays
   drift-free), for muxing into an A/V dump (`movie_srt::markers_to_srt`).
 
-A detach / pop-out affordance for tool windows shipped in **v2.2.9 "Studio II"** —
-the shared `detachable_window` helper (`debugger/mod.rs`) pops any of 18 tool
-panels out via `ctx.show_viewport_immediate`, with a Reattach affordance and its
-prior first-open geometry (a `WindowCfg`); native-only (wasm keeps the docked
-`egui::Window`). **Honest scope:** the frontend is currently a single-viewport
-`egui_winit` integration (one `take_egui_input` / `handle_platform_output` for the
-main window, no `viewport_output` handling, `embed_viewports` left at its default
-`true`), so `show_viewport_immediate` renders the panel **embedded in the main
-window** rather than a separate OS window. True OS-window detach — the Windows-10
-trapped-window fix — requires wiring multi-viewport into the render loop
-(`set_embed_viewports(false)`, per-`ViewportId` winit windows + egui states +
-wgpu surfaces, and routing their events); the affordance and geometry plumbing are
-in place for when that lands. Tracked as follow-up.
+**Detached tool windows (v2.3.0 "Datum II").** Every tool panel can be detached
+into its **own real OS window** (`crates/rustynes-frontend/src/detached.rs`) —
+the fix for the Windows-10 "every tool window is trapped inside the main window"
+report. RustyNES does not use egui's native multi-viewport path: each detached
+window owns its own `egui::Context`, `egui_winit::State`, `egui_wgpu::Renderer`
+and `wgpu::Surface`, shares the main `Gfx`'s one instance / adapter / device /
+queue, and is rendered on its own `RedrawRequested`, where the panel's borrows
+(`&mut Nes`, panel state) are re-acquired by re-running the panel dispatch under a
+thread-local render-target filter (`DebuggerOverlay::render_detached_body`).
+Nothing is stashed across frames, so no `unsafe` and no lifetime erasure are
+needed; the module's preamble gives the full reasoning. Native-only: wasm is
+single-canvas and keeps every tool panel docked as an `egui::Window`.
+
+*History:* the detach affordance first shipped in **v2.2.9 "Studio II"** as the
+shared `detachable_window` helper (`debugger/mod.rs`), which popped any of 18 tool
+panels out via `ctx.show_viewport_immediate` with a Reattach affordance and its
+prior first-open geometry (a `WindowCfg`). Because the frontend was then a
+single-viewport `egui_winit` integration (`embed_viewports` left at its default
+`true`), that rendered the panel **embedded in the main window** rather than in a
+separate OS window; v2.3.0's `detached.rs` replaced that embedding (the
+`detachable_window` helper itself remains in `debugger/mod.rs`).
 
 **Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
 controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,

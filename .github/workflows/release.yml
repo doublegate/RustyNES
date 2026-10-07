@@ -77,7 +77,10 @@ jobs:
           # a shrinking cohort, the release matrix ships aarch64 macOS only;
           # Intel-Mac users build from source (`cargo build --release -p
           # rustynes-frontend`). See docs/adr/0009-drop-x86_64-darwin-release-target.md.
-          - os: macos-14
+          # v3.0.1: macos-14 is deprecated (runner-images#13518: brownouts
+          # from 2026-10-05, unsupported from 2026-11-02); macos-15 is the
+          # next Apple-silicon image, still aarch64.
+          - os: macos-15
             target: aarch64-apple-darwin
             archive_ext: tar.gz
             bin_name: rustynes

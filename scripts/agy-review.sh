@@ -486,27 +486,35 @@ esac
 # ambient credential helper.
 # ($diff_err was allocated alongside $diff_file / $meta_file above, so the cleanup
 # trap never references it before it exists.)
+# >>> SELFTEST-EXTRACT: diff-limit classifier
+# GitHub refuses an oversized diff TWO ways, with different wording: over
+# 20,000 lines, and over 300 FILES. Both are HTTP 406 and both mean the same
+# thing here -- the PR is too big for the API, not that anything went wrong --
+# so both must reach the local fallback. Matching only the `lines` variant made
+# a wide-but-shallow PR -- hundreds of files, well under the line limit, as a
+# bulk regeneration of test baselines produces -- fail the review outright
+# instead of falling back.
+#
+# On a match, print the limit that actually fired and succeed. Reporting
+# "20,000-line" for a file-count refusal is the same class of misleading triage
+# signal that made this bug look like a runner auth failure in the first place.
+# A function, not inline, so the self-test executes the real matcher and label
+# against both GitHub messages rather than grepping for its text.
+diff_limit_hit() {
+  grep -qiE 'diff exceeded the maximum number of (lines|files)' "$1" || return 1
+  if grep -qi 'maximum number of files' "$1"; then
+    printf '300-file'
+  else
+    printf '20,000-line'
+  fi
+}
+# <<< SELFTEST-EXTRACT
 if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
-  # GitHub refuses an oversized diff TWO ways, with different wording: over
-  # 20,000 lines, and over 300 FILES. Both are HTTP 406 and both mean the same
-  # thing here -- the PR is too big for the API, not that anything went wrong --
-  # so both must reach the local fallback. Matching only the `lines` variant made
-  # a wide-but-shallow PR -- hundreds of files, well under the line limit, as a
-  # bulk regeneration of test baselines produces -- fail the review outright
-  # instead of falling back.
-  if grep -qiE 'diff exceeded the maximum number of (lines|files)' "$diff_err"; then
+  if hit="$(diff_limit_hit "$diff_err")"; then
     base_ref="$(jq -r '.baseRefName // empty' "$meta_file")"
     if [ -z "$base_ref" ] || [ "$base_ref" = "null" ]; then
       log "diff exceeds the API limit and the base branch is unknown; cannot fall back"
       exit 1
-    fi
-    # Name the limit that actually fired. Reporting "20,000-line" for a
-    # file-count refusal is the same class of misleading triage signal that
-    # made this bug look like a runner auth failure in the first place.
-    if grep -qi 'maximum number of files' "$diff_err"; then
-      hit="300-file"
-    else
-      hit="20,000-line"
     fi
     log "diff exceeds GitHub's ${hit} API limit; falling back to a local git diff"
     pr_ref="refs/agy/pr-${PR}"
@@ -565,8 +573,20 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
       if [ -n "$api_base" ] && [ "$api_base" != "null" ]; then
         if git fetch --no-tags --quiet origin "$api_base" 2>/dev/null \
            || git fetch --no-tags --quiet --deepen=250 origin "${fetch_refspecs[@]}" 2>/dev/null; then
-          merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || echo "$api_base")"
-          log "shallow clone: merge base ${merge_base} resolved via the compare API"
+          merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || true)"
+          # Fall back to the API's merge base only if that commit is actually
+          # here. When the SHA fetch fails and `--deepen=250` succeeds without
+          # reaching it, the object is absent, and using it anyway surfaced later
+          # as the generic "local git diff failed" -- the wrong diagnosis.
+          if [ -z "$merge_base" ]; then
+            if git cat-file -e "${api_base}^{commit}" 2>/dev/null; then
+              merge_base="$api_base"
+            else
+              log "compare API merge base ${api_base} is not in the local clone after both fetches"
+            fi
+          fi
+          [ -z "$merge_base" ] \
+            || log "shallow clone: merge base ${merge_base} resolved via the compare API"
         fi
       fi
     fi

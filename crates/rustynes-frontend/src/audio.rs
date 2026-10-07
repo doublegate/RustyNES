@@ -1323,7 +1323,7 @@ fn fill<S: cpal::SizedSample + cpal::FromSample<f32>>(
             let v = match c {
                 0 => l,
                 1 => r,
-                _ => 0.5 * (l + r),
+                _ => f32::midpoint(l, r),
             };
             data[out_idx] = S::from_sample(v);
         }

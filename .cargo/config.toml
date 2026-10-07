@@ -21,8 +21,9 @@
 # handled by the `getrandom` `js`-feature shim in the frontend's wasm32 deps.)
 rustflags = ["--cfg=web_sys_unstable_apis", "--cfg=getrandom_backend=\"wasm_js\""]
 
-# MSRV-aware (v1.3.0 bumped 1.86 -> 1.96) dependency resolution. The workspace pins
-# rust-version = "1.96"; `fallback` makes `cargo update` prefer dependency
+# MSRV-aware (v1.3.0 bumped 1.86 -> 1.96, v3.0.1 -> 1.99) dependency resolution.
+# Every crate inherits the workspace's rust-version = "1.99" (seven libretro-path
+# crates declared "1.96" for one day in v3.0.1); `fallback` makes `cargo update` prefer dependency
 # versions compatible with that MSRV over the newest available. Without it, a
 # future `cargo update` could pull a past-MSRV crate (e.g. `image` >= 0.26, a
 # transitive dep of `arboard`'s clipboard image support, which needs a newer
@@ -54,7 +55,7 @@ full-build = "build --release -p rustynes-frontend --features full"
 # self-heal instead of failing the job. This is repo-wide, so it covers EVERY
 # cargo invocation: ci.yml, android.yml's `:app:cargoNdkBuild`, pgo.yml, web.yml,
 # release.yml, and local builds. (Index fetches already use the sparse protocol
-# by default on the pinned 1.96 toolchain; these settings harden the crate
+# by default on the pinned toolchain; these settings harden the crate
 # *download* step, which is where the failures occurred.)
 [net]
 retry = 10

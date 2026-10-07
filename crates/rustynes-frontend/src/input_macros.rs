@@ -170,7 +170,10 @@ mod tests {
     #[test]
     fn empty_bank_round_trips() {
         let bytes = MacroBank::default().serialize();
-        assert!(MacroBank::deserialize(&bytes).unwrap().macros.is_empty());
+        assert_eq!(
+            MacroBank::deserialize(&bytes).unwrap().macros,
+            [] as [crate::input_macros::InputMacro; 0]
+        );
     }
 
     #[test]
