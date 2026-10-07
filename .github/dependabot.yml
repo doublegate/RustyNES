@@ -19,8 +19,9 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
-    reviewers:
-      - "doublegate"
+    # No `reviewers:` key: GitHub retired it in 2025 in favour of CODEOWNERS
+    # (github.blog changelog 2025-08-08), and `.github/CODEOWNERS` assigns
+    # @doublegate to every path. Removed in v3.0.1.
     assignees:
       - "doublegate"
     # From 2026-09-12 to 2026-09-28 an `ignore` block here held egui,
@@ -152,7 +153,5 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "chore(ci)"
-    reviewers:
-      - "doublegate"
     assignees:
       - "doublegate"
