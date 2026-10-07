@@ -34,6 +34,13 @@ cycle-accurate core later replaced.
   no longer apply to it. The mapper 45 page says nothing about CHR-RAM; the
   GA23C variant with a ROM/RAM switch (mapper 372) documents its RAM as
   unbanked. The four mapper 45 carts with CHR-ROM are unchanged.
+- **Provenance: a softened comment restored.** In the Sunsoft 5B mixer
+  (`m069_sunsoft_fme7.rs`), v2.2.5 had reworded "Target, derived from Mesen2"
+  to "calibrated against Mesen2 ... as an oracle", which reads as a black-box
+  comparison. The derivation was always disclosed in the file's `Provenance`
+  header and in `docs/originality-and-provenance.md`, but the site said
+  otherwise; it says "derived from" again (maintainer, 2026-10-06). The ten
+  other site comments that release reworded had already been restored.
 
 ### Changed
 
