@@ -58,3 +58,23 @@ misread. The slot grid shows a cabinet slot without a thumbnail, because
 Run-ahead, rewind, netplay and TAS stay out of dual mode (`T-PS-dual-runahead`,
 `T-PS-dual-netplay`), and so do the debugger and HD packs. The overclock is not
 applied to a cabinet either (v2.9.7).
+
+## Amendment (2026-10-07): rewind and run-ahead in dual mode
+
+The maintainer decided to lift two of Decision 4's exclusions: **rewind and
+run-ahead** (decision D27 in
+[`v3.1-to-v4.0-line-plan.md`](../../to-dos/plans/v3.1-to-v4.0-line-plan.md),
+scheduled for v3.1.0 as `T-PS-dual-runahead`).
+
+The 2026-09-30 amendment supplies the means. The "RVSD" container already
+snapshots both consoles and the latch that wires them, and restores them
+atomically. Rewind and run-ahead are built on that container rather than on a
+single `Nes`.
+
+The gate:
+
+- a rewind across a cabinet frame restores both framebuffers byte-identically;
+- run-ahead gives the same output as a run without it.
+
+Netplay and TAS (`T-PS-dual-netplay`), the debugger and HD packs stay out of
+dual mode.

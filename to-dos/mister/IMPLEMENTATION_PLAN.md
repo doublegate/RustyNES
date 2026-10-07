@@ -1,4 +1,70 @@
-# RustyNES MiSTer core — implementation plan, v2.5.1 → v2.7.0
+# RustyNES MiSTer core — implementation plan
+
+## v3.1 → v4.0: the hardware release, then feature parity (current, 2026-10-07)
+
+The execution view of the MiSTer half of
+[`v3.1-to-v4.0-line-plan.md`](../plans/v3.1-to-v4.0-line-plan.md). The
+decisions it cites (D1-D28) were taken by the maintainer on 2026-10-07 and are
+tabled there. The narrative for the hardware release is
+[`v3.x-hardware-verification-plan.md`](../plans/v3.x-hardware-verification-plan.md).
+
+### Where the core actually is (after v3.0.1)
+
+<!-- Present tense, so it goes stale silently. Update it in the same change as
+     the thing it describes, or delete the row. -->
+
+| Component | State |
+|---|---|
+| Rungs 1-5, 7 (banking) | Closed. The CPU, PPU, APU, the six mappers and the full system are cycle-exact against the oracle on every gate. Ladder **199 passed / 0 failed / 1 expected failure** on-die and **200 / 0 / 1** off-die at v3.0.0; v3.0.1 adds `mapper4mmc3oddskip080` and the dot-0 A12 fix (ledger 3.49) |
+| Rung 6 (hardware) | **Open.** The SuperStation One is in hand. **No hardware has run any bitstream** |
+| Mappers | 0 NROM, 1 MMC1 (up to 256 KiB PRG; SUROM/SXROM refused), 2 UxROM, 3 CNROM, 4 MMC3 (rev A; NES 2.0 board-variant submappers refused), 7 AxROM (`rtl/ines_header.sv`) |
+| Cartridge size | on-die 256 K PRG / 128 K CHR; off-die 512 K / 256 K |
+| Saves, OSD, input | Battery saves through the HPS (v2.6.21, not yet seen on hardware); aspect, scandoubler, scale, crop and palette options (v2.9.8, not yet seen); two pads |
+| Region, audio | NTSC only; the 2A03 only, with no band-limiting and no expansion audio |
+| Absent | Save states, cheats, FDS, NSF, Vs. System, the Zapper, Four Score, paddle, keyboard, PAL |
+| Fit | On-die 22,922 / 41,910 ALMs (55%), **468 / 553 M10K (85%)**, 33 / 112 DSP; off-die 24,570 ALMs, 84 M10K (15%) |
+| CI | Nine rung-1 gates against a pinned oracle, plus the module gates. The full ladder runs by hand from a frozen worktree, and from v3.1.0 on a self-hosted runner (D16) |
+
+### The phases
+
+| Phase | Release slot | Content | Decisions |
+|---|---|---|---|
+| **S** (submission prep, docs only) | v3.1.0, then alongside H | SUB-1 (a dated `ref-docs/` record of the live contribution page; it changed on 2026-09-26), SUB-2 (re-scope the checklist), SUB-5 (refresh `submission-case.md`); TL-5 (this file, done) | D10, D14 (the RTL keeps its long comments) |
+| **H** (hardware) | the hardware release, numbered after the session, no later than v4.0.0 | HW-0, Strands A-F on the SuperStation One, HW-O6, fixes as gates, the re-sweep, the anchors flipped. No feature RTL | D1, D11, D13 |
+| **F1** (cheap breadth) | v3.2.0 | FB-16 options first (custom palette, +8 sprites), FB-2 SUROM/SXROM, the 206 family, 66, 11, 79, 9/10, 118/119, 71/232, 34, the trivial discretes, FB-10 paddle, FB-8 Four Score, FB-6 cheats | D12, D26 |
+| **F2** (the memory platform) | v3.3.0 | FB-20 arbiter (RTL-9 closes), DDR3, FB-4 save states, FB-5 rewind, the real `hps_io` under Verilator; **the off-die build becomes the headline** and on-die a "lite" build | D4, D12, D16 |
+| **F3** (big boards, audio) | v3.4.0-v3.5.0 | MMC2/4, FME-7/5B, VRC2/4, the Zapper (v3.4.0); MMC5, N163, VRC6, VRC7, Bandai FCG with expansion audio, Famicom peripherals (v3.5.0) | D15 |
+| **F4** (region and media) | v3.6.0-v3.8.0 | PAL/Dendy with VMODE (v3.6.0); FDS (v3.7.0); NSF, Vs. System, band-limited audio (v3.8.0) | D15 |
+| **Parity** | v4.0.0 | save states, cheats, PAL/Dendy, FDS with expansion audio, the Zapper, Four Score, the licensed-library mapper list, the re-measured incumbent | D3 |
+| **After** | v4.x | the SuperStation One distribution channel, then an openFPGA (Analogue Pocket) port | D17 |
+
+Open RTL items slot into the start of any release: RTL-1, RTL-5 and RTL-10 at
+v3.1.0. RTL-2 and RTL-4 are investigations. RTL-3 (OAM corruption) and RTL-6
+(APU power-on phase) wait on the board.
+
+### Scope, re-decided 2026-10-07
+
+- **Mappers: ranked by real titles** (D26). This replaces the 2026-08-23 "top
+  six" scope, under which `TASKS.md` recorded the remaining families as out of
+  scope.
+- **Hardware: the SuperStation One** (D11). The DE10-Nano is optional.
+- **Provenance-headered families** use rungs 1-3. Rung 4 needs an ADR 0037
+  amendment naming the maintainer, per family (D15). Those families are N163,
+  FME-7/5B, VRC7, Bandai FCG, FDS and Vs., and anything else the command finds:
+  `grep -rln "^// Provenance:" crates`.
+- **Not planned:** run-ahead, rollback netplay, HD packs, HD audio, TAS, Lua,
+  the debugger.
+
+### Standing rule 1, restated
+
+"A rung may not start until the one below is green" now means green on a
+recorded ladder run. That is the frozen worktree until the self-hosted runner
+exists, and both afterwards. CI's nine rung-1 gates are a subset and never
+stand in for the ladder. Rules 2-7 below are unchanged.
+
+---
+
+## History: the v2.5.1 → v3.0.0 plan
 
 > **Re-targeted twice.** [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md)
 > (2026-09-22) made the hardware-verified core and the contribution package v3.0.0;
@@ -18,7 +84,7 @@ what is next, and what each release owes.
 until ADR 0043), suitable for contributing per
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`.
 
-## Where the core actually is
+## Where the core was (as of v2.6.x; superseded by the table at the top)
 
 <!-- This table is present tense, so it goes stale silently. It was eight
      releases out of date when v2.6.15 swept it -- claiming the APU, the

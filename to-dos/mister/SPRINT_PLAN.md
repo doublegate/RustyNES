@@ -1,5 +1,43 @@
 # RustyNES MiSTer core — sprint plan
 
+## v3.1 → v4.0 (current, 2026-10-07)
+
+One release per phase step. The release plans in `to-dos/plans/` carry the
+gates per row. Decisions D1-D28 are tabled in
+[`v3.1-to-v4.0-line-plan.md`](../plans/v3.1-to-v4.0-line-plan.md).
+
+| Sprint | Release | Deliverable | Gate | Status |
+|---|---|---|---|---|
+| M21 | v3.1.0 | RTL-1, RTL-5, RTL-10; TL-1; the self-hosted ladder runner (D16); Phase S documents (SUB-1, SUB-2, SUB-5) | Each RTL item measured per cycle; the runner runs one PR's ladder end to end; `contribution_checklist_audit.rs` green | — |
+| M16 | HW (numbered after the session, D1) | **Hardware bring-up on the SuperStation One** (D11): Strands A-F, HW-O6, the fixes as gates, the anchors flipped | Every `bringup-log.md` row PASS against the console's md5; the ladder green on the tagged commit. **Rung 6 closes** | **Waiting on the session**; no longer blocked on a second board |
+| M20 | after HW | The contribution decision (D10): the feature delta, the incumbent number, then public repository and submission yes or no | The maintainer's decision recorded | — |
+| M22 | v3.2.0 | Phase F1: options, SUROM/SXROM, about ten cheap families, paddle, Four Score, cheats | Per family: bus, checkpoint and commercial-frame gates, a caught mutant; one seed sweep | — |
+| M23 | v3.3.0 | Phase F2: the arbiter, DDR3, save states, rewind, the real `hps_io`; off-die becomes the headline (D4) | Save states oracle-gated by a round trip; no SDRAM request over budget | — |
+| M24 | v3.4.0 | Phase F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | As M22, plus audio gates | — |
+| M25 | v3.5.0 | Phase F3b: MMC5, N163, VRC6, VRC7, Bandai FCG, expansion audio, Famicom peripherals | As M24 | — |
+| M26 | v3.6.0 | Phase F4a: PAL and Dendy, VMODE | PAL goldens gated | — |
+| M27 | v3.7.0 | Phase F4b: FDS with its audio | FDS goldens gated; a disk write round-tripped through the HPS | — |
+| M28 | v3.8.0 | Phase F4c: NSF, Vs. System, band-limited audio | Each gated against the oracle | — |
+| M29 | v3.9.x | The parity re-measure; the RC pair | Two clean compiles of each build byte-identical | — |
+| M30 | v4.0.0 | **Feature parity** (D3) | The parity table complete, with the re-measured incumbent | — |
+
+### Re-planning triggers
+
+- **HW-A8 says the device is the 5CSXFC6D6F31.** Stop feature work. A second
+  Quartus target and sweep is an L-sized re-target. The hardware release's
+  number (D1) is chosen with that cost known.
+- **On-die M10K passes about 95%.** Move that release's memory-hungry family to
+  off-die only, rather than shrinking something that already works.
+- **A Provenance-headered family will not yield to rungs 1-3.** Escalate to an
+  ADR 0037 amendment naming the maintainer (D15) before anything is read, or
+  defer the family.
+- **A seed sweep has no seed that closes on both builds.** Ship the previous
+  timing-clean pair, as v2.9.3 and v2.9.8 did, and record it.
+
+---
+
+## History: v2.5.1 → v3.0.0
+
 > **The version numbers in this section are STALE.** Rung 7 sits above rung 6 in a
 > ladder where a rung may not start until the one below is green, and rung 6 is
 > blocked on hardware this machine does not have. v2.6.7 – v2.6.9 went to the

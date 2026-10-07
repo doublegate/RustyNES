@@ -19,9 +19,9 @@ v1.0.0 is the **production cut that integrates the cycle-accurate emulation engi
 MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 
-- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028), or the first release of a new deliverable class ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md): the first hardware-verified FPGA core). **v3.0.0 is MAJOR by the first trigger** (ADR 0042's API and save-state breaks) and ships an unverified release-candidate core; the hardware-verified core is a later v3.x release ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
-- **MINOR** — backwards-compatible features (new mappers, new frontend features, new platforms).
-- **PATCH** — backwards-compatible bug fixes and accuracy refinements.
+- **MAJOR** — an incompatible break of the public Rust API (`rustynes-core` and the chip-crate types it re-exports), or the first release of a new deliverable class ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md): the first hardware-verified FPGA core). Now at `3`: **v3.0.0 "Cornerstone"** was MAJOR by the first trigger and shipped an unverified release-candidate core; the hardware-verified core is a later v3.x release, numbered after the board session and no later than v4.0.0 ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) and its 2026-10-07 amendment). **A format break alone is not a MAJOR trigger since 2026-10-07** (maintainer decision; see "Breaking-change policy" below).
+- **MINOR** — features (new mappers, new frontend features, new platforms). May carry a documented format break.
+- **PATCH** — bug fixes and accuracy refinements. May carry a documented format break when the fix needs one (v3.0.1 raised `EMULATION_EPOCH`).
 - **PRERELEASE** — `-alpha.N` / `-beta.N` / `-rc.N` when stabilizing a future minor/major.
 
 ## Version history
@@ -62,9 +62,26 @@ The cycle-accurate engine was integrated as the core in a sequence of documentar
 Scoped but unreleased. The `(current)` row in the table below stays on the
 released version; these are plans, and `to-dos/plans/` holds the detail.
 
+The line from v3.1.0 to v4.0.0 is indexed in
+[`v3.1-to-v4.0-line-plan.md`](to-dos/plans/v3.1-to-v4.0-line-plan.md), drafted
+2026-10-07 with the maintainer's decisions D1-D28. Version numbers after v3.1.0
+are slots: the hardware release takes a number only after its board session
+(D1), and the slots after it move up by one if it takes a minor.
+
 | Version | Scope | Plan |
 |---------|-------|------|
-| v3.x | **Hardware verification**: the SuperStation One board session (Strands A-F), the mobile device runs, and the fixes each produces | [`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md), [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
+| v3.0.1 "Mortar" | The open items (the palette-offset A/B, T-GA23C-CHRRAM, the MiSTer odd-frame A12 stimulus), every dependency and the Rust 1.99 toolchain, the libretro 1.96 pin test, every unanswered review comment back to #1 | [`v3.0.1-mortar-plan.md`](to-dos/plans/v3.0.1-mortar-plan.md) |
+| v3.1.0 | The AccuracyCoin re-sync; the CPU overclock and sprite-limit options in movies and netplay; PAL emphasis; opt-in composite artifacts; the NEC MMC3 option; rewind and run-ahead in Vs. dual mode; an epoch fingerprint gate. MiSTer: small RTL items, the self-hosted runner, submission documents | [`v3.1.0-plan.md`](to-dos/plans/v3.1.0-plan.md) |
+| HW (numbered after the session) | **Hardware verification**: the SuperStation One board session (Strands A-F), the mobile device run, and the fixes each produces. No feature RTL | [`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md), [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
+| v3.2.0 | Mapper breadth by real titles, the dump corpus, KNOWN_BLANK triage, tier promotions. MiSTer F1: options and about ten cheap families, paddle, Four Score, cheats | [`v3.2.0-plan.md`](to-dos/plans/v3.2.0-plan.md) |
+| v3.3.0 | Phi2 write placement and the sprite-0 stale shifter; wgpu 31 / egui 0.37. MiSTer F2: the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline | [`v3.3.0-plan.md`](to-dos/plans/v3.3.0-plan.md) |
+| v3.4.0 | Hosted netplay and the browser RA proxy on Cloudflare, RA hardcore compliance, native 3-4 player netplay. MiSTer F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | [`v3.4.0-plan.md`](to-dos/plans/v3.4.0-plan.md) |
+| v3.5.0 | The full movie input stream, Lua sockets and shared memory, desktop polish. MiSTer F3b: MMC5, N163, VRC6/7, Bandai FCG, expansion audio | [`v3.5.0-plan.md`](to-dos/plans/v3.5.0-plan.md) |
+| v3.6.0 | Libretro Core Options v2, float audio, console targets; Android API 37. MiSTer F4a: PAL and Dendy | [`v3.6.0-plan.md`](to-dos/plans/v3.6.0-plan.md) |
+| v3.7.0 | The mobile extras (iOS box art, widget and external display; EQ and cheat DB; zero-copy frames after UniFFI 0.33). MiSTer F4b: FDS | [`v3.7.0-plan.md`](to-dos/plans/v3.7.0-plan.md) |
+| v3.8.0 | The remaining accuracy residuals, Vs. cabinets, the long-tail mappers. MiSTer F4c: NSF, Vs. System, band-limited audio | [`v3.8.0-plan.md`](to-dos/plans/v3.8.0-plan.md) |
+| v3.9.x | Mobile signing and store listings; the enum-break trial; the audits re-run; the MiSTer RC pair | [`v3.9.0-plan.md`](to-dos/plans/v3.9.0-plan.md) |
+| v4.0.0 | **The API major**: the remaining public enums `#[non_exhaustive]`; MiSTer feature parity | [`v4.0.0-plan.md`](to-dos/plans/v4.0.0-plan.md) |
 
 ### Post-1.0 release line (v1.1.0 → current)
 
@@ -167,15 +184,17 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 ## Versioning guidelines
 
-- **Bump MINOR** (the middle digit — e.g. `vMAJOR.MINOR.0`) for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything backwards-compatible that adds capability.
-- **Bump PATCH** (the last digit — e.g. `vMAJOR.MINOR.PATCH`) for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior.
-- **Bump MAJOR** (`vMAJOR.0.0`) for either of two things. (1) An incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs). (2) The first release of a **new deliverable class**, verified to the standard that class requires — the first hardware-verified FPGA core ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)), which [ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) moved from v3.0.0 to a later v3.x. v3.0.0 itself is MAJOR under (1), for ADR 0042's API and save-state breaks. A new *host* for the same emulator (mobile, libretro) stays MINOR.
+- **Bump MINOR** (the middle digit — e.g. `vMAJOR.MINOR.0`) for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything that adds capability without breaking the public Rust API. It may carry a documented format break.
+- **Bump PATCH** (the last digit — e.g. `vMAJOR.MINOR.PATCH`) for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior. It may carry a documented format break when the fix needs one.
+- **Bump MAJOR** (`vMAJOR.0.0`) for either of two things. (1) An incompatible break of the **public Rust API** — the surface defined at the end of this section. (2) The first release of a **new deliverable class**, verified to the standard that class requires — the first hardware-verified FPGA core ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)), which [ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) moved from v3.0.0 to a later v3.x, numbered after the board session and no later than v4.0.0. v2.0.0 "Timebase" and v3.0.0 "Cornerstone" were MAJOR under the rule in force at the time, which counted save-state breaks too. A new *host* for the same emulator (mobile, libretro) stays MINOR. **v4.0.0** is planned as MAJOR under (1): the remaining public enums become `#[non_exhaustive]` ([`v4.0.0-plan.md`](to-dos/plans/v4.0.0-plan.md)).
 
 ### Breaking-change policy
 
-- Public-API and save-state-format breaks are MAJOR bumps and must be documented in `CHANGELOG.md` with a migration note. A MAJOR bump for a new deliverable class carries no break by itself; any break it also carries still needs its migration note.
-- Save-state cross-version compatibility is best-effort (tagged per-chip sections with a version byte); the on-disk `.rnm` movie format and the public `rustynes-core` API are the stable surfaces.
-- **What "public API" means here** (written down at v2.9.0's review, which found it unwritten). The SemVer surface is the public API of `rustynes-core`, including the chip-crate types it re-exports, together with the `.rns` and `.rnm` formats. Every other crate's public items are internal to this repository and may change in any release: `rustynes-frontend`, `rustynes-hdpack`, `rustynes-script`, `rustynes-ra`, `rustynes-mobile`, `rustynes-libretro` and the rest. That holds because no crate here is published to crates.io, so nothing outside this workspace resolves against them. Their consumers are this repository's own binaries and apps. What the libretro core exposes is the libretro C ABI, which is libretro's contract, not ours. Such changes are still recorded in `CHANGELOG.md` when a user could notice them. This states the existing practice: v2.3.3, a PATCH, changed a frontend `pub fn` signature and deleted a public frontend field, and v2.9.0 changed `HdAudioTrack::pcm` and `ScriptHost::submit`.
+- **Changed 2026-10-07 (maintainer decision D2, [`v3.1-to-v4.0-line-plan.md`](to-dos/plans/v3.1-to-v4.0-line-plan.md)).** Until then this said public-API **and save-state-format** breaks were MAJOR bumps. Practice had already left it: v2.9.5 raised `PPU_SNAPSHOT_VERSION` in a minor, v2.9.8 refused every older state and movie in a minor, v2.9.9 moved `.rnm` to format 4 in a minor, and v3.0.1 raised `EMULATION_EPOCH` in a patch. The rule now matches the practice, by the maintainer's standing preference for the enduring design over compatibility.
+- **Format breaks are allowed in any release** — save states (`.rns` sections), `.rnm` movies, the netplay protocol and `EMULATION_EPOCH` — provided the CHANGELOG entry and the release notes say what breaks and what the user sees (a clear refusal with a reason, never a silent misread; ADR 0028, ADR 0045). A MAJOR's release notes restate every break since the previous MAJOR.
+- **Public Rust API breaks are MAJOR bumps** and need a migration note in `CHANGELOG.md`. A MAJOR bump for a new deliverable class carries no break by itself; any break it also carries still needs its migration note.
+- Save-state cross-version compatibility is best-effort (tagged per-chip sections with a version byte); the public `rustynes-core` API is the stable surface.
+- **What "public API" means here** (written down at v2.9.0's review, which found it unwritten). The SemVer surface is the public API of `rustynes-core`, including the chip-crate types it re-exports. The `.rns` and `.rnm` formats are versioned surfaces whose breaks are documented rather than MAJOR triggers (since 2026-10-07; they were part of the SemVer surface before). Every other crate's public items are internal to this repository and may change in any release: `rustynes-frontend`, `rustynes-hdpack`, `rustynes-script`, `rustynes-ra`, `rustynes-mobile`, `rustynes-libretro` and the rest. That holds because no crate here is published to crates.io, so nothing outside this workspace resolves against them. Their consumers are this repository's own binaries and apps. What the libretro core exposes is the libretro C ABI, which is libretro's contract, not ours. Such changes are still recorded in `CHANGELOG.md` when a user could notice them. This states the existing practice: v2.3.3, a PATCH, changed a frontend `pub fn` signature and deleted a public frontend field, and v2.9.0 changed `HdAudioTrack::pcm` and `ScriptHost::submit`.
 
 ## Accuracy milestones (met)
 

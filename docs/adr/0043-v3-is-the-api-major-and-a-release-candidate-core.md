@@ -114,3 +114,30 @@ release notes restate every break since v2.x.
 Decision 1 (an API major plus a release-candidate core, both bitstreams
 labelled not hardware-verified) and Decision 4 (only the libretro sync goes
 upstream) are unchanged.
+
+## Amendment (2026-10-07, after v3.0.0): the hardware release's number, and v4.0.0
+
+The maintainer settled the question Decision 2 left open, and defined the next
+MAJOR, while the line after v3.0.0 was planned
+([`v3.1-to-v4.0-line-plan.md`](../../to-dos/plans/v3.1-to-v4.0-line-plan.md),
+decisions D1-D3).
+
+- **D1: the hardware-verification release is numbered after the board session,
+  and no later than v4.0.0.** It is planned as the slot "HW", after v3.1.0 and
+  before any feature RTL. The number is chosen with the session's evidence in
+  hand: the next free minor if the fixes are small, or as the maintainer then
+  decides if the session finds an L-sized re-target (the FPGA device question,
+  HW-A8). ADR 0041's "new deliverable class" trigger stays available to it.
+- **D2: a format break alone no longer makes a MAJOR.** Save-state, movie,
+  netplay-protocol and `EMULATION_EPOCH` breaks may land in any release with
+  notes; MAJOR is a public Rust API break or a new deliverable class.
+  `VERSION-PLAN.md` was rewritten to match. This states the practice of v2.9.5,
+  v2.9.8, v2.9.9 and v3.0.1.
+- **D3: v4.0.0 is the remaining public enums made `#[non_exhaustive]`, plus
+  MiSTer feature parity.** The enum change is the half of v3.0.0's
+  `T-API-EXTENSIBLE` that v3.0.0 did not take. Parity covers save states,
+  cheats, PAL/Dendy, FDS with expansion audio, the Zapper, Four Score, and
+  mapper families covering the incumbent core's licensed-library list.
+
+Decisions 1, 3 and 4 above stand as history. This amendment changes no shipped
+artefact.

@@ -135,3 +135,32 @@ GPL-2.0-**only**, the combined bitstream is undistributable and the RTL must be
 GPL-2.0-or-later instead. Tabulating every licence header in `sys/` is an hour of
 work and must happen **before any RTL is written** -- relicensing after 10k lines
 exist is precisely the failure `docs/originality-and-provenance.md` documents.
+
+## Amendment (2026-10-07): when the board and the oracle disagree, and the Provenance-headered families
+
+Two maintainer decisions taken while the v3.1 to v4.0 line was planned
+([`v3.1-to-v4.0-line-plan.md`](../../to-dos/plans/v3.1-to-v4.0-line-plan.md),
+D13 and D15). Both extend "Accepted risk: the oracle can be wrong" now that a
+board will run the core.
+
+**D13: the board against the oracle.**
+
+- When the SuperStation One contradicts the oracle (palette, video timing,
+  OAM corruption, APU power-on phase, or anything else), the board wins **only
+  where it agrees with documented hardware behaviour**. A board result with no
+  documentary support is recorded, not adopted.
+- When it wins, the RTL and the oracle are fixed **in the same release**, red
+  first, with an `EMULATION_EPOCH` rise (ADR 0045).
+- Each case gets its own dated amendment to this ADR, naming the measurement.
+
+**D15: families whose oracle source carries a `// Provenance:` header.**
+
+- These are N163, FME-7/5B, VRC7 with its OPLL, Bandai FCG, FDS, Vs. System,
+  and any other family the command finds: `grep -rln "^// Provenance:" crates`.
+- Their RTL is written from rungs 1-3 of the escalation ladder: documentation,
+  the Internet, and black-box comparison of outputs.
+- **Rung 4, reading the derived oracle region, needs a dated amendment to this
+  ADR naming the maintainer as the authoriser, one per family, before anything
+  is read.** The derivation is then declared in the sibling: a site comment,
+  its provenance document, and `NOTICE`.
+- No rung-4 authorisation is given by this amendment.
