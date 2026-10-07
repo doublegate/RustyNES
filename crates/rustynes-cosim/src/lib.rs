@@ -468,6 +468,14 @@ impl Oracle {
     ///
     /// Pinned by `tests::taking_the_csv_first_leaves_no_trace_for_checkpoints`,
     /// so the hazard is a documented behaviour rather than a surprise.
+    ///
+    /// # Panics
+    ///
+    /// If `interval` is zero and the trace did not overflow, through
+    /// `checkpoint::Hasher::new`'s `interval > 0` assert. The trace has
+    /// already been taken by then, so it is lost with the panic. Callers that
+    /// take the interval from outside validate it first: the C ABI returns
+    /// `-6` and `nes_golden_export` rejects `0` on the command line.
     pub fn take_irq_artifacts(&mut self, interval: u64) -> Option<IrqArtifacts> {
         let trace = self.nes.bus_mut().take_irq_trace()?;
         let dropped = trace.overflow();
@@ -514,6 +522,13 @@ impl Oracle {
     /// # Errors
     ///
     /// [`CheckpointError::TraceOverflowed`] if the trace dropped any record.
+    ///
+    /// # Panics
+    ///
+    /// If `interval` is zero and the trace did not overflow, through
+    /// `checkpoint::Hasher::new`'s `interval > 0` assert. As with
+    /// [`Self::take_irq_artifacts`], the trace is consumed before the assert
+    /// fires.
     pub fn take_checkpoints(
         &mut self,
         interval: u64,
@@ -863,6 +878,12 @@ pub unsafe extern "C" fn rn_write_cpu_boot_trace(
 /// records themselves are simply the records, and are worth having for a
 /// full-capture re-run.
 ///
+/// **Consumes the trace**, as do [`rn_write_checkpoints`] and
+/// [`rn_write_irq_trace_csv`]: whichever of the three is called first gets the
+/// trace, and the other two return `-4` ("never armed") afterwards. A C
+/// testbench can therefore obtain only one of the three artifacts per run;
+/// the Rust-side [`Oracle::take_irq_artifacts`] yields all three from one take.
+///
 /// # Safety
 ///
 /// `handle` must come from [`rn_open`] and not have been closed. `path` must be
@@ -870,7 +891,9 @@ pub unsafe extern "C" fn rn_write_cpu_boot_trace(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rn_write_observables(handle: *mut c_void, path: *const c_char) -> c_int {
     let oracle = oracle!(handle, -1);
-    // SAFETY: as above.
+    // SAFETY: `cstr_to_path` returns `None` for a null `path`; a non-null
+    // `path` is NUL-terminated and valid for the duration of this call, per
+    // this function's `# Safety` contract. The borrow ends before it returns.
     let Some(p) = (unsafe { cstr_to_path(path) }) else {
         return -2;
     };
@@ -892,6 +915,10 @@ pub unsafe extern "C" fn rn_write_observables(handle: *mut c_void, path: *const 
 /// divergence -- raise the capacity and re-run), `-6` interval was zero.
 /// Anything at or below `-100` is `-(100 + errno)` from the write itself.
 ///
+/// **Consumes the trace** (unless `interval` is zero, which returns `-6`
+/// before touching it), so a later [`rn_write_observables`] or
+/// [`rn_write_irq_trace_csv`] returns `-4` ("never armed").
+///
 /// # Safety
 ///
 /// `handle` must come from [`rn_open`] and not have been closed. `path` must be
@@ -909,7 +936,9 @@ pub unsafe extern "C" fn rn_write_checkpoints(
         return -6;
     }
     let oracle = oracle!(handle, -1);
-    // SAFETY: as above.
+    // SAFETY: `cstr_to_path` returns `None` for a null `path`; a non-null
+    // `path` is NUL-terminated and valid for the duration of this call, per
+    // this function's `# Safety` contract. The borrow ends before it returns.
     let Some(path) = (unsafe { cstr_to_path(path) }) else {
         return -2;
     };
@@ -925,9 +954,13 @@ pub unsafe extern "C" fn rn_write_checkpoints(
 
 /// Write the IRQ/bus trace CSV to `path`. Returns 0 on success, negative on error.
 ///
-/// **Consumes the trace**, so a subsequent [`rn_write_checkpoints`] returns
-/// `-4` ("never armed"). A testbench wanting both must write the checkpoints
-/// first, or use the Rust-side [`Oracle::take_irq_artifacts`].
+/// **Consumes the trace**, so a subsequent [`rn_write_checkpoints`] or
+/// [`rn_write_observables`] returns `-4` ("never armed"). The checkpoint and
+/// observable writers consume it too, so calling them first does not help: a
+/// testbench gets one of the three per run, and only the Rust-side
+/// [`Oracle::take_irq_artifacts`] yields all three from one take. (Until
+/// v3.0.1 this said to write the checkpoints first, which leaves no trace for
+/// the CSV.)
 ///
 /// # Safety
 ///
@@ -935,7 +968,9 @@ pub unsafe extern "C" fn rn_write_checkpoints(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rn_write_irq_trace_csv(handle: *mut c_void, path: *const c_char) -> c_int {
     let o = oracle!(handle, -1);
-    // SAFETY: as above.
+    // SAFETY: `cstr_to_path` returns `None` for a null `path`; a non-null
+    // `path` is NUL-terminated and valid for the duration of this call, per
+    // this function's `# Safety` contract. The borrow ends before it returns.
     let Some(p) = (unsafe { cstr_to_path(path) }) else {
         return -2;
     };

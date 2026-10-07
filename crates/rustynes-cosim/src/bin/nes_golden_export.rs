@@ -410,7 +410,6 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
         eprintln!("  WARNING: irq trace was armed but returned nothing");
         return (0, 0);
     };
-    write(&suffixed(base, "irq.csv"), a.csv.as_bytes());
 
     // Written BEFORE the checkpoints, and outside the `Err` arm below, on
     // purpose. This is the full-capture stream: it is the only artifact the
@@ -427,6 +426,10 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
 
     match a.checkpoints {
         Ok(ck) => {
+            // The CSV is written only here, unlike `obs.bin` above: it carries
+            // no overflow marker, so a CSV from an overflowed trace would be a
+            // truncated file indistinguishable from a complete one.
+            write(&suffixed(base, "irq.csv"), a.csv.as_bytes());
             write(
                 &suffixed(base, "ckpt.bin"),
                 &rustynes_cosim::checkpoint::to_bytes(&ck),
@@ -1109,6 +1112,46 @@ mod tests {
         assert_eq!(
             suffixed(Path::new("/out/nestest"), "boot.bin"),
             Path::new("/out/nestest.boot.bin")
+        );
+    }
+
+    /// An overflowed trace must not leave a truncated `irq.csv` behind.
+    ///
+    /// The CSV carries no overflow marker (`IrqTrace::to_csv` has no such
+    /// field), so a CSV written before the refusal below is indistinguishable
+    /// from a complete one. `obs.bin` is kept on overflow deliberately and says
+    /// why; the CSV has no such rationale, so it is written only once the
+    /// checkpoints are known to be good.
+    #[test]
+    fn an_overflowed_trace_writes_no_irq_csv() {
+        // A 16 KiB NROM whose reset vector points at `JMP $8000`.
+        let mut rom = vec![0u8; 16 + 16384 + 8192];
+        rom[..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 1;
+        rom[5] = 1;
+        rom[16..19].copy_from_slice(&[0x4C, 0x00, 0x80]);
+        let vec_base = 16 + 16384 - 6;
+        rom[vec_base..vec_base + 6].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+
+        let mut o = rustynes_cosim::Oracle::new(&rom, 0).expect("rom");
+        o.enable_irq_trace(64); // far below one frame of CPU cycles
+        o.advance_frames(1);
+
+        let dir = std::env::temp_dir().join(format!(
+            "rustynes-cosim-overflow-csv-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let base = dir.join("overflow");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::write_irq_artifacts(&mut o, &base, 4096)
+        }));
+        let csv_exists = suffixed(&base, "irq.csv").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "an overflowed trace must still refuse");
+        assert!(
+            !csv_exists,
+            "a truncated irq.csv with no overflow marker was left on disk"
         );
     }
 

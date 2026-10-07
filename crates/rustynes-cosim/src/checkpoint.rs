@@ -174,13 +174,12 @@ impl Observable {
             pc: r.pc,
             bus_addr: r.bus_addr,
             bus_data: r.bus_data,
-            bus_access: match r.bus_access {
-                BusAccess::Idle => 0,
-                BusAccess::Read => 1,
-                BusAccess::Write => 2,
-                BusAccess::DmaRead => 3,
-                BusAccess::DmaWrite => 4,
-            },
+            // Through `access_code`, so the numbering lives in one place.
+            bus_access: Self::access_code(
+                matches!(r.bus_access, BusAccess::Idle),
+                matches!(r.bus_access, BusAccess::Write | BusAccess::DmaWrite),
+                matches!(r.bus_access, BusAccess::DmaRead | BusAccess::DmaWrite),
+            ),
             put_cycle: r.put_cycle_post,
             nmi_line: r.nmi_line,
             irq_line_at_low: r.irq_pending_mapper_at_low || r.irq_pending_apu_at_low,
@@ -480,11 +479,16 @@ impl Divergence {
     /// `None` rather than an assumed `through_cycle + 1`: that answer is only
     /// right if the run started at cycle 0, and a checkpoint stream carries no
     /// evidence that it did.
+    ///
+    /// Also `None` for an inverted window (`after_cycle > through_cycle`),
+    /// which no [`Hasher`] stream can produce; [`from_bytes`] refuses the
+    /// corrupt stream that would, and this guard keeps a hand-built
+    /// `Divergence` from underflowing.
     #[must_use]
     pub const fn window_len(&self) -> Option<u64> {
         match self.after_cycle {
             None => None,
-            Some(after) => Some(self.through_cycle - after),
+            Some(after) => self.through_cycle.checked_sub(after),
         }
     }
 }
@@ -606,9 +610,9 @@ pub const fn localisation_is_consistent(
 ) -> bool {
     match (comparison, first_difference) {
         (Comparison::Identical { .. }, None) => true,
-        // A false positive: the streams agree and the gate says otherwise.
-        (Comparison::Identical { .. }, Some(_)) => false,
         // The failure that matters: a real difference reported as agreement.
+        (Comparison::Identical { .. }, Some(_)) => false,
+        // A false positive: the streams agree and the gate says otherwise.
         (Comparison::Diverged(_) | Comparison::Inconclusive { .. }, None) => false,
         (Comparison::Diverged(d), Some(k)) => d.contains(k),
         // Honest refusal on a real difference.
@@ -640,6 +644,10 @@ pub fn to_bytes(checkpoints: &[Checkpoint]) -> Vec<u8> {
 /// producer was interrupted, and a truncated stream that parses is a truncated
 /// comparison that passes.
 ///
+/// Also if `through_cycle` does not strictly increase from one record to the
+/// next. [`Hasher`] cannot produce such a stream, and [`compare`] given one
+/// reports a [`Divergence`] whose window ends before it starts.
+///
 /// # Panics
 ///
 /// Never in practice: the `expect`s convert 8-byte subslices of a
@@ -650,7 +658,7 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Vec<Checkpoint>, &'static str> {
     if !bytes.len().is_multiple_of(16) {
         return Err("checkpoint stream length is not a multiple of 16 bytes");
     }
-    Ok(bytes
+    let stream: Vec<Checkpoint> = bytes
         .as_chunks::<16>()
         .0
         .iter()
@@ -658,7 +666,14 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Vec<Checkpoint>, &'static str> {
             through_cycle: u64::from_le_bytes(c[0..8].try_into().expect("8 bytes")),
             hash: u64::from_le_bytes(c[8..16].try_into().expect("8 bytes")),
         })
-        .collect())
+        .collect();
+    if stream
+        .windows(2)
+        .any(|w| w[1].through_cycle <= w[0].through_cycle)
+    {
+        return Err("checkpoint stream through_cycle does not strictly increase");
+    }
+    Ok(stream)
 }
 
 #[cfg(test)]
@@ -1009,6 +1024,49 @@ mod tests {
         assert!(from_bytes(&bytes).is_err());
     }
 
+    /// A stream whose `through_cycle` does not strictly increase cannot have
+    /// come from [`Hasher`], and fed to [`compare`] it produces a
+    /// [`Divergence`] whose `after_cycle` exceeds its `through_cycle`.
+    #[test]
+    fn a_non_increasing_serialised_stream_is_rejected() {
+        let backwards = [
+            Checkpoint {
+                through_cycle: 8191,
+                hash: 1,
+            },
+            Checkpoint {
+                through_cycle: 4095,
+                hash: 2,
+            },
+        ];
+        assert!(from_bytes(&to_bytes(&backwards)).is_err());
+        let repeated = [
+            Checkpoint {
+                through_cycle: 4095,
+                hash: 1,
+            },
+            Checkpoint {
+                through_cycle: 4095,
+                hash: 2,
+            },
+        ];
+        assert!(from_bytes(&to_bytes(&repeated)).is_err());
+    }
+
+    /// `window_len` must not underflow on an inverted window, which only a
+    /// corrupt stream (or a hand-built `Divergence`) can produce.
+    #[test]
+    fn an_inverted_window_has_no_length() {
+        let d = Divergence {
+            index: 1,
+            after_cycle: Some(8191),
+            through_cycle: 4095,
+            reference_hash: 1,
+            candidate_hash: 2,
+        };
+        assert_eq!(d.window_len(), None);
+    }
+
     #[test]
     #[should_panic(expected = "checkpoint interval must be non-zero")]
     fn a_zero_interval_is_rejected() {
@@ -1331,5 +1389,29 @@ mod tests {
         assert_eq!(Observable::access_code(false, true, false), 2);
         assert_eq!(Observable::access_code(false, false, true), 3);
         assert_eq!(Observable::access_code(false, true, true), 4);
+    }
+
+    /// The projection and [`Observable::access_code`] must agree for every
+    /// [`BusAccess`] variant. Until v3.0.1 `from_cycle_record` carried its own
+    /// copy of the numbering, which only `access_codes_are_stable` pinned.
+    #[test]
+    fn every_bus_access_projects_to_its_access_code() {
+        for (access, idle, write, dma, code) in [
+            (BusAccess::Idle, true, false, false, 0),
+            (BusAccess::Read, false, false, false, 1),
+            (BusAccess::Write, false, true, false, 2),
+            (BusAccess::DmaRead, false, false, true, 3),
+            (BusAccess::DmaWrite, false, true, true, 4),
+        ] {
+            let mut r = record(7);
+            r.bus_access = access;
+            let projected = Observable::from_cycle_record(&r).bus_access;
+            assert_eq!(projected, code, "{access:?}");
+            assert_eq!(
+                projected,
+                Observable::access_code(idle, write, dma),
+                "{access:?}"
+            );
+        }
     }
 }
