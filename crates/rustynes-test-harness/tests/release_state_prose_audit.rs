@@ -136,8 +136,12 @@ fn versions_near(line: &str, at: usize, window: usize) -> Vec<String> {
                 num.push(bytes[j]);
                 j += 1;
             }
-            if triple(&num).is_some() {
-                out.push(num);
+            // A version ending a sentence (`v2.4.2.`) carries the full stop;
+            // without the trim `triple` rejects it and the version is
+            // silently skipped (fixed in v3.0.1).
+            let num = num.trim_end_matches('.');
+            if triple(num).is_some() {
+                out.push(num.to_owned());
             }
             i = j;
         } else {
@@ -560,4 +564,18 @@ fn a_multibyte_line_does_not_panic_the_scanner() {
     // implementation panics here while formatting its own diagnostic.
     let line = "Next up — v9.9.9 → the next thing — really";
     assert_eq!(versions_near(line, 0, 60), vec!["9.9.9".to_string()]);
+}
+
+#[test]
+fn a_version_ending_a_sentence_is_still_found() {
+    // The scanner collects digits and dots greedily, so `v2.4.2.` read as
+    // "2.4.2.", which `triple` rejects -- and the version was silently
+    // skipped, letting non-compliant prose pass the audit.
+    let line = "Next up — v2.4.2.";
+    assert_eq!(versions_near(line, 0, 60), vec!["2.4.2".to_string()]);
+    let line = "Shipped in v2.4.2. Then v2.4.3...";
+    assert_eq!(
+        versions_near(line, 0, 60),
+        vec!["2.4.2".to_string(), "2.4.3".to_string()]
+    );
 }
