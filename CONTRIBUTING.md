@@ -134,7 +134,7 @@ forbids, so a flaky test is a bug to fix, not to retry.
 
 - **Format:** `cargo fmt` (rustfmt defaults).
 - **Lint:** pass `cargo clippy --workspace --all-targets -- -D warnings` with no warnings.
-- **Edition:** Rust 2024. **Toolchain:** 1.99 (pinned in `rust-toolchain.toml`). **MSRV:** 1.99, except the seven crates the libretro core builds (`rustynes-{cpu,ppu,apu,mappers,core,gamedb,libretro}`), which keep 1.96 for the libretro buildbot; CI checks them on 1.96.
+- **Edition:** Rust 2024. **Toolchain:** 1.99 (pinned in `rust-toolchain.toml`). **MSRV:** 1.99 for every crate. The libretro buildbot uses the same toolchain (`RUSTUP_TOOLCHAIN` in `.gitlab-ci.yml`), and CI fails if the two ever differ, so move both in one change.
 - The chip stack (`rustynes-{cpu,ppu,apu,mappers,core}`) is `#![no_std]` + `extern crate alloc;`. `unsafe` is only permitted at FFI boundaries (`rustynes-cheevos`) and the one native priority hook in `rustynes-frontend`, and **must** carry a `// SAFETY:` comment explaining the invariant.
 - No emojis in code, comments, or commits (project policy).
 

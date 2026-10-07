@@ -1260,9 +1260,10 @@ impl SystemBus {
             // Byte 3 (bits 24-31) — extracted without a truncating cast.
             s.to_le_bytes()[3]
         };
-        // `&mut *self.ram`, not `&mut self.ram`: `&mut Box<[T; N]>` only
-        // became iterable after Rust 1.96, and this crate builds on 1.96 for
-        // the libretro buildbot. Reborrowing the array works on both.
+        // `&mut *self.ram` reborrows the array: iterating `&mut Box<[T; N]>`
+        // directly needs Rust 1.97+. The crate's floor is 1.99, so either form
+        // compiles today; the reborrow dates from v3.0.1's one-day split, when
+        // the libretro buildbot briefly built this crate on 1.96.
         for byte in &mut *self.ram {
             *byte = next();
         }

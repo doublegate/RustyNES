@@ -21,7 +21,7 @@
 
 ### Required
 
-- **Rust** 1.99.0 (pinned in `rust-toolchain.toml`; the channel auto-installs). The libretro core's crates must also build on 1.96.0, which the libretro buildbot uses: `RUSTUP_TOOLCHAIN=1.96.0 cargo check --release -p rustynes-libretro`.
+- **Rust** 1.99.0 (pinned in `rust-toolchain.toml`; the channel auto-installs). The libretro buildbot uses the same toolchain (`RUSTUP_TOOLCHAIN` in `.gitlab-ci.yml`; CI fails if it differs from the pin).
   Edition 2024. (The pin was 1.86 until v1.3.0 "Bedrock", which moved to 1.96
   for the edition-2024 + egui 0.34.3 / wgpu 29 / rfd 0.17.2 dependency tier,
   and 1.96 until v3.0.1.)

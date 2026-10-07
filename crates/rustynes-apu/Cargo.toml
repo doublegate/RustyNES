@@ -3,7 +3,6 @@ name = "rustynes-apu"
 description = "Cycle-accurate Ricoh 2A03 APU (Audio Processing Unit) for the NES"
 version.workspace = true
 edition.workspace = true
-# The libretro buildbot builds this crate on Rust 1.96.0 (`.gitlab-ci.yml`).
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
