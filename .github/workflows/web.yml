@@ -19,7 +19,9 @@ name: Deploy Pages (demo + docs)
 # does NOT) so the size budget gates PRs without publishing a preview.
 #
 # trunk auto-downloads the wasm-bindgen CLI + wasm-opt versions pinned in
-# crates/rustynes-frontend/web/Trunk.toml.
+# crates/rustynes-frontend/web/Trunk.toml. (Until v3.0.1 only wasm-bindgen was
+# pinned there, and this line overstated it: wasm-opt fell back to trunk's
+# built-in default.)
 
 on:
   push:
@@ -150,7 +152,7 @@ jobs:
       - name: Set up Python for MkDocs
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install the social-card image libraries (Cairo + Pango)
         # Required by the mkdocs-material `social` plugin's PNG renderer.

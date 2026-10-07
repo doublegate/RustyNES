@@ -153,11 +153,12 @@ struct GameView: View {
         .sheet(isPresented: $showingDebugger) {
             DebuggerView()
         }
-        // Pause the emulator while a menu/sheet is open so the player doesn't lose
-        // progress or hear audio behind it; resume once all are dismissed. The TAS /
-        // Movies + Cheats panels are exceptions: recording / playback / live cheats
-        // must keep the core running, so they do NOT pause emulation. The read-only
-        // debugger DOES pause (its "Step" button advances exactly one frame).
+        // Pause the emulator while one of three sheets is open -- Save States,
+        // Settings, or the read-only Debugger (its "Step" button advances exactly
+        // one frame) -- and resume once all three are dismissed. Every other sheet
+        // (Movies, TAStudio, Cheats, Netplay, Achievements, Lua) keeps the core
+        // running (recording / playback / live cheats need it, which is why those
+        // panels were made exceptions in the first place).
         .onChange(of: showingStates) { _ in updateMenuPaused() }
         .onChange(of: showingSettings) { _ in updateMenuPaused() }
         .onChange(of: showingDebugger) { _ in updateMenuPaused() }
@@ -172,8 +173,8 @@ struct GameView: View {
     }
 
     /// Recompute whether a modal that must pause emulation is open (Save States,
-    /// Settings, or the read-only Debugger). Cheats / TAStudio / Movies keep the
-    /// core running by design.
+    /// Settings, or the read-only Debugger). These three are the only sheets that
+    /// pause; every other sheet keeps the core running by design.
     private func updateMenuPaused() {
         model.setMenuPaused(showingStates || showingSettings || showingDebugger)
     }

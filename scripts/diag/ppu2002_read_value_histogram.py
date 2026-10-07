@@ -47,5 +47,8 @@ for i in range(len(rows)-3):
     if masks[0]==0xE0 and masks[3]==0x00 and masks[0]>=masks[1]>=masks[2]>=masks[3]:
         sls=[r[2] for r in w]; dots=[r[3] for r in w]
         out.append("  win@%d sls=%s dots=%s masks=%s"%(i,sls,dots,[hex(m) for m in masks]))
-open('/tmp/RustyNES/an_out.txt','w').write("\n".join(out)+"\n")
-print("done",len(out))
+# The report goes to stdout (redirect it where you want it). Until v3.0.1 it
+# was written to the fixed `/tmp/RustyNES/an_out.txt` -- the same shared-/tmp
+# hazard the input path above had: a pre-planted symlink there redirects the
+# write. stdout needs no directory, no open mode and no cleanup.
+sys.stdout.write("\n".join(out)+"\n")

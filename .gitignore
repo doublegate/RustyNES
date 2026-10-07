@@ -73,13 +73,9 @@ Cargo.lock
 !/golden/**
 !/crates/rustynes-test-harness/golden/**
 
-# ...but the vendored TriCNES harness is BUILT in place (`dotnet build -c
-# Release`, per its README), and the re-inclusion above would otherwise sweep
-# its output into the repo -- ~1.6 MB of bin/ + obj/ beside a tree whose own
-# README promises "no build artifacts". The negation is what makes this
-# necessary: without it the generic rules below would have covered these.
-/crates/rustynes-test-harness/golden/tricnes/tricnes-harness-src/bin/
-/crates/rustynes-test-harness/golden/tricnes/tricnes-harness-src/obj/
+# (The vendored TriCNES harness used to be BUILT in place under golden/, and two
+# negations here kept its bin/ + obj/ out. It left the repository in v3.0.1, so
+# they went with it.)
 
 # --- Native build & FFI artifacts ---
 *.so
@@ -265,8 +261,8 @@ flamegraph.svg
 # directory has been REMOVED from disk and stays ignored here as a firewall guard
 # so the copyleft source can never re-enter the working tree. Do NOT re-clone
 # reference-emulator source into the repo; implement hardware behavior from
-# docs/test ROMs. (The MIT TriCNES source is instead deliberately vendored, with
-# attribution, under crates/rustynes-test-harness/golden/tricnes/.) See
+# docs/test ROMs. (The MIT TriCNES source was vendored until v3.0.1 and now lives
+# outside the repository at ~/reference-oracles/; guardrails section 3a.) See
 # docs/ai-emulator-provenance-guardrails.md and the "MOST IMPORTANT RULE" of AGENTS.md.
 /ref-proj/
 

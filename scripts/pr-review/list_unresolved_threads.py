@@ -52,15 +52,35 @@ def main() -> None:
             "GraphQL response has no repository/pullRequest data "
             "(check the owner/repo/pr arguments and token scope)"
         )
-    threads = (pr.get("reviewThreads") or {}).get("nodes") or []
+    # FAIL CLOSED. This is a closeout gate: "0 unresolved thread(s)" is the line
+    # that lets a merge go ahead, so it must mean "the payload listed threads and
+    # none was open" -- never "the payload had no thread list". Until v3.0.1 a
+    # missing or null `reviewThreads.nodes` (a query without the field, a partial
+    # response) collapsed to `[]` and printed exactly that all-clear.
+    threads = (pr.get("reviewThreads") or {}).get("nodes")
+    if not isinstance(threads, list):
+        raise SystemExit(
+            "GraphQL response has no reviewThreads.nodes list "
+            "(check that the query selects reviewThreads { nodes { ... } })"
+        )
     shown = 0
-    for thread in threads:
+    for i, thread in enumerate(threads):
+        # A partial node used to die on a bare KeyError/TypeError traceback;
+        # name the node and the field instead.
+        if not isinstance(thread, dict) or not isinstance(thread.get("isResolved"), bool):
+            raise SystemExit(f"review thread #{i} has no boolean isResolved")
         if thread["isResolved"]:
             continue
-        comments = thread["comments"]["nodes"]
+        comments = (thread.get("comments") or {}).get("nodes")
+        if not isinstance(comments, list):
+            raise SystemExit(f"review thread #{i} ({safe(thread.get('id'))}) has no comments.nodes list")
         if not comments:
             continue
         c = comments[0]
+        if not isinstance(c, dict) or c.get("databaseId") is None:
+            raise SystemExit(
+                f"review thread #{i} ({safe(thread.get('id'))}): first comment has no databaseId"
+            )
         author = (c.get("author") or {}).get("login")
         print(
             f"TID={safe(thread['id'])} dbId={safe(c['databaseId'])} "

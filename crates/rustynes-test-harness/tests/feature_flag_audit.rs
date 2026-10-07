@@ -149,36 +149,129 @@ fn declared_features(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
 /// table. Fails closed if the table cannot be located: a heading rename must
 /// break this test rather than silently make it check nothing.
 fn tabled_flags(root: &Path) -> Vec<(String, bool)> {
-    const HEADER: &str = "| Flag | Crate(s) | Default | Purpose |";
     let path = root.join("docs/STATUS.md");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let start = text.find(HEADER).unwrap_or_else(|| {
-        panic!(
-            "{HEADER:?} not found in docs/STATUS.md -- if the feature table \
-             was renamed or moved, update this audit in the same change"
-        )
-    });
-    let table = &text[start..];
-    let end = table.find("\n\n").unwrap_or(table.len());
-    let mut rows = Vec::new();
-    for line in table[..end].lines().skip(2) {
-        let Some(rest) = line.strip_prefix("| `") else {
-            continue;
-        };
-        let Some((flag, tail)) = rest.split_once('`') else {
-            continue;
-        };
-        // A retired flag is kept as a row for the historical record and marked.
-        let removed = tail.contains("*(removed)*");
-        rows.push((flag.to_owned(), removed));
-    }
+    let rows = parse_feature_table(&text);
     assert!(
         rows.len() > 5,
         "parsed only {} rows from the feature table -- the parser is broken",
         rows.len()
     );
     rows
+}
+
+/// The feature table's rows in `text`, as `(flag, row_is_marked_removed)`.
+///
+/// The table ends at the first line that does not start with `|`. Until v3.0.1
+/// it ended at the next BLANK line, so prose placed directly under the table
+/// was read as table text (and with no blank line, everything to EOF was).
+///
+/// Every `|` line after the header and separator must parse as a flag row,
+/// or this panics naming it. Until v3.0.1 a malformed row was skipped with
+/// `continue`, so it disappeared while the row-count floor still passed.
+fn parse_feature_table(text: &str) -> Vec<(String, bool)> {
+    const HEADER: &str = "| Flag | Crate(s) | Default | Purpose |";
+    let start = text.find(HEADER).unwrap_or_else(|| {
+        panic!(
+            "{HEADER:?} not found in docs/STATUS.md -- if the feature table \
+             was renamed or moved, update this audit in the same change"
+        )
+    });
+    let mut rows = Vec::new();
+    for line in text[start..]
+        .lines()
+        .skip(2)
+        .take_while(|l| l.starts_with('|'))
+    {
+        let parsed = line
+            .strip_prefix("| `")
+            .and_then(|rest| rest.split_once('`'));
+        let Some((flag, tail)) = parsed else {
+            panic!(
+                "docs/STATUS.md's feature table has a row that does not parse as \
+                 \"| `flag` | ...\": {line:?}. A malformed row would otherwise \
+                 vanish from every check below."
+            );
+        };
+        // A retired flag is kept as a row for the historical record and marked.
+        let removed = tail.contains("*(removed)*");
+        rows.push((flag.to_owned(), removed));
+    }
+    rows
+}
+
+const SAMPLE_TABLE: &str = "\
+| Flag | Crate(s) | Default | Purpose |
+|------|----------|---------|---------|
+| `alpha` | `a` | off | first |
+| `beta` *(removed)* | — | removed | second |
+";
+
+#[test]
+fn the_table_ends_at_the_first_non_table_line() {
+    // Prose directly under the table, with no blank line, followed by a line
+    // that merely LOOKS like a row: it is not part of the table.
+    let text = format!("{SAMPLE_TABLE}Note under the table.\n| `gamma` | x | y | z |\n");
+    assert_eq!(
+        parse_feature_table(&text),
+        vec![("alpha".to_owned(), false), ("beta".to_owned(), true)]
+    );
+}
+
+#[test]
+#[should_panic(expected = "does not parse")]
+fn a_malformed_row_is_refused_not_skipped() {
+    let text = format!("{SAMPLE_TABLE}| delta | x | y | z |\n");
+    let _ = parse_feature_table(&text);
+}
+
+/// Flags whose row is marked removed but which a manifest still declares.
+fn removed_but_declared(
+    rows: &[(String, bool)],
+    declared: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<String> {
+    rows.iter()
+        .filter(|(flag, removed)| *removed && declared.contains_key(flag))
+        .map(|(flag, _)| flag.clone())
+        .collect()
+}
+
+#[test]
+fn removed_but_declared_finds_a_re_declared_flag() {
+    let rows = parse_feature_table(SAMPLE_TABLE);
+    let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    declared
+        .entry("alpha".into())
+        .or_default()
+        .insert("a".into());
+    assert_eq!(removed_but_declared(&rows, &declared), Vec::<String>::new());
+    declared
+        .entry("beta".into())
+        .or_default()
+        .insert("b".into());
+    assert_eq!(
+        removed_but_declared(&rows, &declared),
+        vec!["beta".to_owned()]
+    );
+}
+
+/// A row marked removed must name a flag no manifest declares.
+///
+/// The other two directions both pass over removed rows: the first skips them,
+/// the second counts them as documented. So a manifest that re-declared
+/// `cpu-implied-dummy-reads` passed every test while this table called it
+/// removed. Added in v3.0.1.
+#[test]
+fn no_removed_flag_is_still_declared() {
+    let root = repo_root();
+    let stale = removed_but_declared(&tabled_flags(&root), &declared_features(&root));
+    assert!(
+        stale.is_empty(),
+        "docs/STATUS.md marks these flags *(removed)* but a crates/*/Cargo.toml \
+         still declares them: {stale:?}. Either the flag is live again -- drop the \
+         marker and document it -- or the declaration should go."
+    );
 }
 
 /// A row may only claim a live flag if a manifest declares it.

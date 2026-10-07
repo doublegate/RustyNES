@@ -105,7 +105,9 @@ fn boot_with_coin(rel: &str, frames: u64) -> Vec<u8> {
 fn assert_rgb_routed(label: &str, fb: &[u8]) {
     assert_eq!(fb.len() % 4, 0, "{label}: framebuffer must be RGBA");
     let colours: HashSet<[u8; 4]> = fb
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2], c[3]])
         .collect();
 

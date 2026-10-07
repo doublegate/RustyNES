@@ -62,9 +62,15 @@ SECTION = re.compile(r'^## \[(?P<v>\d+\.\d+\.\d+)\] - (?P<d>\d{4}-\d{2}-\d{2}) -
 # version" and nothing enforced it. They were realigned by hand to the
 # workspace version (2.9.9) during v3.0.0's development, so the 3.0.0 cut is
 # the first bump that moves them.
+#
+# The two `Cargo.toml` patterns are anchored to a WHOLE LINE (`\nversion = ...\n`).
+# Unanchored, `version = "3.0.0"` also matched every internal path dependency's
+# `version = "3.0.0"` requirement, which v3.0.0 moved to the new major: the v3.0.1
+# cut found 14 matches and refused. The collision exists only while the outgoing
+# release is an X.0.0, so no cut before v3.0.1 could have seen it.
 MANIFESTS = [
-    ("Cargo.toml", 'version = "{v}"'),
-    ("crates/rustynes-cosim/Cargo.toml", 'version = "{v}"'),
+    ("Cargo.toml", '\nversion = "{v}"\n'),
+    ("crates/rustynes-cosim/Cargo.toml", '\nversion = "{v}"\n'),
     ("crates/rustynes-libretro/rustynes_libretro.info", 'display_version = "v{v}"'),
     ("android/app/build.gradle.kts", 'versionName = "{v}"'),
     ("android/app/build.gradle.kts", 'versionCode = {code}'),
@@ -122,23 +128,67 @@ class Release:
     date: str
 
 
+# Every file this script reads or writes is UTF-8 (the anchors are em-dash
+# heavy), so the encoding is stated rather than inherited from the locale.
+# Until v3.0.1 it was inherited: on a host whose locale is not UTF-8 the
+# documents would fail to decode, or be rewritten in another encoding.
+UTF8 = "utf-8"
+
+
 def run(cmd: list[str], cwd: Path) -> str:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding=UTF8,
+                          check=True).stdout
+
+
+def refresh_cosim_lock(root: Path) -> str:
+    """Refresh `crates/rustynes-cosim/Cargo.lock`; return "" or the failure.
+
+    The excluded cosim crate keeps its own lockfile, and `cargo metadata` is
+    what rewrites it to the moved version. Until v3.0.1 a failure here was
+    caught as `Exception`, printed as a WARNING and ignored, so `--apply`
+    could exit 0 having left that lockfile on the old version. The caller now
+    fails on it. Only the two failures this call can have are caught -- cargo
+    exiting non-zero, and cargo not being installed -- so a bug in this script
+    still surfaces as a traceback rather than as a lockfile message.
+    """
+    try:
+        run(["cargo", "metadata", "--manifest-path",
+             "crates/rustynes-cosim/Cargo.toml", "--format-version", "1"], root)
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or "").strip().splitlines()
+        return f"`cargo metadata` exited {e.returncode}: {detail[-1] if detail else 'no stderr'}"
+    except FileNotFoundError as e:
+        return f"cannot run cargo: {e}"
+    return ""
+
+
+def unescape_marker(m: str) -> str:
+    """Decode a Rust string literal's escapes (`\\"`, `\\\\`) in an ANCHORS marker.
+
+    The obvious `m.encode().decode("unicode_escape")` -- what this did until
+    v3.0.1 -- re-reads the UTF-8 BYTES as Latin-1, so a non-ASCII marker comes
+    back garbled (`—` becomes `â\\x80\\x94`) and then matches no line, which
+    skips the anchor silently. No marker is non-ASCII today; one written as
+    `"Current release — v"` would have been. Encoding as Latin-1 with
+    `backslashreplace` turns every non-Latin-1 character into an escape that
+    `unicode_escape` decodes back to itself.
+    """
+    return m.encode("latin-1", "backslashreplace").decode("unicode_escape")
 
 
 def anchors(root: Path) -> list[tuple[str, str]]:
-    src = (root / AUDIT).read_text()
+    src = (root / AUDIT).read_text(encoding=UTF8)
     i = src.index("const ANCHORS")
     blk = src[i: src.index("\n];", i)]
     out = re.findall(r'path:\s*"((?:[^"\\]|\\.)*)".*?marker:\s*"((?:[^"\\]|\\.)*)"', blk, re.S)
     if not out:
         raise SystemExit(f"no anchors parsed from {AUDIT}; the table moved")
-    return [(p, m.encode().decode("unicode_escape")) for p, m in out]
+    return [(p, unescape_marker(m)) for p, m in out]
 
 
 def changelog_releases(root: Path) -> list[Release]:
     rel = []
-    for line in (root / CHANGELOG).read_text().splitlines():
+    for line in (root / CHANGELOG).read_text(encoding=UTF8).splitlines():
         m = SECTION.match(line)
         if m:
             rel.append(Release(m["v"], m["c"], m["d"]))
@@ -148,7 +198,7 @@ def changelog_releases(root: Path) -> list[Release]:
 
 
 def workspace_version(root: Path) -> str:
-    t = (root / "Cargo.toml").read_text()
+    t = (root / "Cargo.toml").read_text(encoding=UTF8)
     seg = t[t.index("[workspace.package]"):]
     m = re.search(r'^version\s*=\s*"([^"]+)"', seg, re.M)
     if not m:
@@ -224,11 +274,16 @@ def terminate(lead: str) -> str:
     A lead already ending in `.`, `!`, `?`, or a closing quote/bracket after one
     is left exactly as written -- including the `,` and `;` cases, where the
     author is deliberately continuing rather than ending.
+
+    Until v3.0.1 the quote/bracket half of that promise was not kept: only the
+    last character was tested, so `... "quote."` and `(... .)` gained a
+    second stop. The closers are now looked through before the test.
     """
     s = lead.rstrip()
     if not s:
         return s
-    return s if s[-1] in '.!?,;:' else s + "."
+    core = s.rstrip("\"')]’”")
+    return s if core and core[-1] in '.!?,;:' else s + "."
 
 
 def extend_chain(line: str, marker: str, old: Release, new: Release,
@@ -321,7 +376,7 @@ def chains_needing_a_summary(texts: dict, root: Path, new: Release) -> list[str]
         p = root / rel
         if not p.is_file():
             continue
-        text = texts.get(p, p.read_text())
+        text = texts.get(p, p.read_text(encoding=UTF8))
         at = 0
         while True:
             idx = text.find(CHAIN_TAIL_PHRASE, at)
@@ -426,10 +481,30 @@ def selftest() -> int:
         ("trailing space   ", "trailing space."),
         ("a clause,", "a clause,"),
         ("", ""),
+        # v3.0.1: the docstring's closing quote/bracket promise, which the
+        # last-character test did not keep (two stops were appended).
+        ('the core says "enough."', 'the core says "enough."'),
+        ("the core rests (for now.)", "the core rests (for now.)"),
+        ("it reads “done.”", "it reads “done.”"),
+        # ...and a closer WITHOUT a stop inside still gets one, outside.
+        ("the core rests (for now)", "the core rests (for now)."),
     ]:
         got = terminate(raw)
         assert got == want, f"terminate({raw!r}) = {got!r}, want {want!r}"
-    print("  terminate(): 7 cases ok")
+    print("  terminate(): 11 cases ok")
+
+    # v3.0.1: ANCHORS markers are Rust string literals. Escapes decode; a
+    # non-ASCII character survives (`encode().decode("unicode_escape")`
+    # turned `—` into `â\x80\x94`, so the anchor matched nothing).
+    for raw, want in [
+        ("**Current release: v", "**Current release: v"),
+        ('say \\"v', 'say "v'),
+        ("Current release — v", "Current release — v"),
+        ("café — \\\\v", "café — \\v"),
+    ]:
+        got = unescape_marker(raw)
+        assert got == want, f"unescape_marker({raw!r}) = {got!r}, want {want!r}"
+    print("  unescape_marker(): 4 cases ok")
     old = Release("2.4.4", "Ignition", "2026-08-22")
     new = Release("2.4.5", "Compass", "2026-08-22")
     LEAD = "the core reaches memory."
@@ -589,15 +664,28 @@ def selftest() -> int:
         _root = Path(_td)
         (_root / "to-dos").mkdir()
         stale = _root / "to-dos" / "ROADMAP.md"
-        stale.write_text('chain ... **v2.4.4 "Ignition"**, the current release\n')
+        stale.write_text('chain ... **v2.4.4 "Ignition"**, the current release\n', encoding=UTF8)
         check("chain tail: a stale `the current release` is refused",
               len(chains_needing_a_summary({}, _root, new)), 1)
-        stale.write_text('chain ... **v2.4.5 "Compass"**, the current release\n')
+        stale.write_text('chain ... **v2.4.5 "Compass"**, the current release\n', encoding=UTF8)
         check("chain tail: a current one is accepted",
               chains_needing_a_summary({}, _root, new), [])
-        stale.write_text('nothing here at all\n')
+        stale.write_text('nothing here at all\n', encoding=UTF8)
         check("chain tail: absence is not a finding",
               chains_needing_a_summary({}, _root, new), [])
+        # v3.0.1: the real documents are em-dash heavy UTF-8. Written as bytes
+        # so the test does not depend on the locale it is checking; under a
+        # non-UTF-8 locale a locale-default read raised UnicodeDecodeError here.
+        stale.write_bytes('chain — **v2.4.4 "Ignition"** — café, the current release\n'
+                          .encode(UTF8))
+        check("chain tail: UTF-8 is read as UTF-8 whatever the locale",
+              len(chains_needing_a_summary({}, _root, new)), 1)
+
+        # v3.0.1: a failed cosim lockfile refresh is REPORTED, not swallowed.
+        # This temporary root has no `crates/rustynes-cosim/Cargo.toml`, so
+        # `cargo metadata` fails (or cargo is absent): either way a message.
+        check("cosim lock: a failed refresh returns an error",
+              bool(refresh_cosim_lock(_root)), True)
 
     # Android's versionCode (v3.0.0): the scheme, its ordering, and refusal of a
     # version it cannot encode without colliding.
@@ -620,6 +708,14 @@ def selftest() -> int:
     check("an external crate is never touched", 'serde = { version = "1.0.0" }' in got, True)
     got, n = bump_internal_requirements(manifest, "2.9.9")
     check("a minor bump leaves requirements alone", (n, got), (0, manifest))
+
+    # The workspace version anchor must not match an internal requirement that
+    # happens to carry the same string (v3.0.1: every requirement read "3.0.0").
+    ws = ('[workspace.package]\nversion = "3.0.0"\nedition = "2024"\n\n'
+          '[workspace.dependencies]\n'
+          'rustynes-core = { path = "crates/rustynes-core", version = "3.0.0" }\n')
+    want = dict(MANIFESTS)["Cargo.toml"].format(v="3.0.0")
+    check("the Cargo.toml anchor matches the package line only", ws.count(want), 1)
 
     # An unclassifiable line must raise, never be bumped mechanically.
     try:
@@ -679,7 +775,7 @@ def main() -> int:
     for path, marker in anchors(root):
         p = root / path
         marker_index.setdefault(p, []).append((path, marker))
-        text = edits.get(p, p.read_text())
+        text = edits.get(p, p.read_text(encoding=UTF8))
         out = []
         for line in text.split("\n"):
             if marker + old.version in line:
@@ -710,7 +806,7 @@ def main() -> int:
 
     for path, pat in MANIFESTS:
         p = root / path
-        text = edits.get(p, p.read_text())
+        text = edits.get(p, p.read_text(encoding=UTF8))
         want = pat.format(v=old.version, code=version_code(old.version))
         if text.count(want) != 1:
             unknown.append(f"{path}: expected exactly one {want!r}, found {text.count(want)}")
@@ -723,7 +819,7 @@ def main() -> int:
     # resolving. Every manifest that declares one is scanned, not a list, so a
     # crate added later cannot be missed.
     for p in [root / "Cargo.toml", *sorted((root / "crates").glob("*/Cargo.toml"))]:
-        text = edits.get(p, p.read_text())
+        text = edits.get(p, p.read_text(encoding=UTF8))
         text, moved = bump_internal_requirements(text, new.version)
         if moved:
             edits[p] = text
@@ -777,12 +873,12 @@ def main() -> int:
 
     print("classified: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items() if v) + "\n")
     for p, text in sorted(edits.items()):
-        before = p.read_text()
+        before = p.read_text(encoding=UTF8)
         if before == text:
             continue
         rel = p.relative_to(root)
         if args.apply:
-            p.write_text(text)
+            p.write_text(text, encoding=UTF8)
             print(f"  wrote {rel}")
         else:
             d = list(difflib.unified_diff(before.split("\n"), text.split("\n"),
@@ -805,12 +901,16 @@ def main() -> int:
             return 1
         return 0
 
-    try:
-        run(["cargo", "metadata", "--manifest-path",
-             "crates/rustynes-cosim/Cargo.toml", "--format-version", "1"], root)
-        print("  refreshed crates/rustynes-cosim/Cargo.lock")
-    except Exception as e:                                    # noqa: BLE001
-        print(f"  WARNING: could not refresh the cosim lockfile: {e}", file=sys.stderr)
+    lock_err = refresh_cosim_lock(root)
+    if lock_err:
+        # The anchors above are already written; a stale cosim lockfile beside
+        # them is an incomplete bump, so this is a failure, not a WARNING.
+        print(f"\nERROR: could not refresh crates/rustynes-cosim/Cargo.lock: {lock_err}\n"
+              "Fix that and re-run `cargo metadata --manifest-path "
+              "crates/rustynes-cosim/Cargo.toml --format-version 1` before committing.",
+              file=sys.stderr)
+        return 1
+    print("  refreshed crates/rustynes-cosim/Cargo.lock")
     # A chain whose tail says "the current release" cannot be extended by a
     # token swap: the new link needs a WRITTEN SUMMARY of the release, which
     # this script does not have and must not invent. Through v2.6.14 it said

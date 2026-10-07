@@ -32,7 +32,9 @@ fn main() {
     let mut sub_pcs: HashMap<u16, u64> = HashMap::new();
 
     let colours = |fb: &[u8]| {
-        fb.chunks_exact(4)
+        fb.as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| [c[0], c[1], c[2], c[3]])
             .collect::<std::collections::HashSet<_>>()
             .len()

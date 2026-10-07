@@ -630,15 +630,35 @@ fn the_changelog_has_a_section_for_the_workspace_version() {
     // correct in the eight anchor documents that DO render markdown. Only this
     // one string crosses into a plain-text surface, which is exactly why
     // nothing caught it: every other consumer of the same words was fine.
-    for marker in ["**", "__", "`"] {
-        assert!(
-            !theme.contains(marker),
+    if let Some(marker) = title_markdown_marker(theme) {
+        panic!(
             "CHANGELOG header for {version} carries the markdown marker {marker:?} \
              in its theme. That theme is parsed by release-auto.yml into the \
              GitHub release title, which is NOT markdown-rendered, so the marker \
              appears literally to every reader:\n  {header}"
         );
     }
+}
+
+/// The first markdown marker in a release-title theme that would appear
+/// literally in the plain-text GitHub release title, or `None`.
+///
+/// Single `*` and `_` stay allowed: they occur in ordinary prose. Strikethrough
+/// (`~~`) and a link (`](`) were added in v3.0.1; until then only `**`, `__`
+/// and a backtick were refused.
+fn title_markdown_marker(theme: &str) -> Option<&'static str> {
+    ["**", "__", "`", "~~", "]("]
+        .into_iter()
+        .find(|marker| theme.contains(marker))
+}
+
+#[test]
+fn title_markers_cover_strikethrough_and_links() {
+    assert_eq!(title_markdown_marker("(a **bold** claim)"), Some("**"));
+    assert_eq!(title_markdown_marker("(a ~~struck~~ claim)"), Some("~~"));
+    assert_eq!(title_markdown_marker("(see [the notes](url))"), Some("]("));
+    // Ordinary prose stays allowed.
+    assert_eq!(title_markdown_marker("(the API major_version, 3*4)"), None);
 }
 
 /// Anchors that quote a codename must quote the CHANGELOG's codename.

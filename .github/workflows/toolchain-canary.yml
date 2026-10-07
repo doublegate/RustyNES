@@ -2,11 +2,13 @@ name: Toolchain canary
 
 # Early warning for toolchain drift, NOT a gate.
 #
-# The project pins Rust 1.96 in rust-toolchain.toml and will stay there until
-# the libretro buildbot image stops passing `-C ar`, which breaks the Apple jobs
-# on 1.97 and later (maintainer decision, 2026-09-28). A pin that holds for
-# months hides every new lint and every deprecation until the day it moves, and
-# then they all arrive at once. This workflow builds, lints and tests the
+# The project pins a Rust release in rust-toolchain.toml (1.99.0 since v3.0.1;
+# 1.96.0 before it, held from 2026-09-28 because the libretro buildbot image
+# passed `-C ar`, a hard error from 1.97; the image dropped it on 2026-09-03 and
+# the buildbot follows the pin again).
+# A pin that holds for months hides every new lint and every deprecation until
+# the day it moves, and then they all arrive at once: the move to 1.99 brought
+# 70-odd new clippy findings in one go. This workflow builds, lints and tests the
 # workspace on the current stable and beta once a week, so the cost of moving
 # the pin is visible while it is still small.
 #

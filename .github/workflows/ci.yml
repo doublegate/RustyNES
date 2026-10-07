@@ -244,11 +244,11 @@ jobs:
   # spin-ups vs three separate jobs. fmt runs first (it compiles nothing), so
   # a formatting slip still fails in seconds.
   #
-  # Pinned to the project toolchain (rust-toolchain.toml = 1.96.0), NOT a
+  # Pinned to the project toolchain (rust-toolchain.toml = 1.99.0), NOT a
   # floating `stable`: clippy adds lints every release, so `stable` makes the
   # lint gate drift and break on a toolchain bump. Pinning ALSO makes the
   # rustdoc gate match local `cargo doc` exactly (rust-toolchain.toml pins the
-  # local compiler to 1.96 too) — the stable-vs-1.96 mismatch previously let a
+  # local compiler too) — a stable-vs-pin mismatch previously let a
   # broken-intra-doc-link slip past local and only fail in CI.
   #
   # Compute ONE "full-run" flag that gates both the OS matrix and the expensive
@@ -361,6 +361,13 @@ jobs:
           --all-targets -- -D warnings
       - name: "test (excluded crate: rustynes-cosim)"
         run: cargo test --manifest-path crates/rustynes-cosim/Cargo.toml
+      # v3.0.1: the workspace rustdoc step above does not reach the excluded
+      # crate either, and a public doc linking a private constant sat there
+      # unseen until a review fix ran it by hand.
+      - name: "rustdoc (excluded crate: rustynes-cosim)"
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --manifest-path crates/rustynes-cosim/Cargo.toml
       # ... and again WITH `ppu-state-trace`, because that crate's
       # `state_trace_records_carry_their_cpu_cycle` test is itself gated on the
       # feature and so ran NOWHERE in CI. It exists to catch a field that is
@@ -493,10 +500,11 @@ jobs:
           --features commercial-roms,debug-hooks -- -D warnings
 
   # Cross-platform behaviour: full `cargo test` on stable across the three
-  # shipped OSes. The previous ubuntu / 1.96 MSRV *test* entry is dropped — the
+  # shipped OSes. The previous ubuntu MSRV *test* entry is dropped — the
   # `lint` job above already compiles the whole workspace (`clippy
-  # --all-targets`) on 1.96, which IS the MSRV compile gate, and the core's
-  # determinism makes "tests pass on 1.96" equivalent to "tests pass on stable".
+  # --all-targets`) on the pin, which IS the MSRV compile gate (one floor for
+  # every crate since v3.0.1; `libretro-cross` builds the buildbot's), and the core's
+  # determinism makes "tests pass on the pin" equivalent to "tests pass on stable".
   test:
     name: test (${{ matrix.os }})
     # Gate the matrix on the fast fmt+clippy+rustdoc job (a lint slip fails in
@@ -587,7 +595,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        # macos-15, not macos-14: the 14 image is deprecated (runner-images
+        # #13518, brownouts from 2026-10-05, unsupported from 2026-11-02).
+        os: [macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -821,11 +831,52 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # No `toolchain:` input anywhere in this repo: `rust-setup` resolves it
-      # from `rust-toolchain.toml`, so this job rehearses the buildbot on the
-      # exact channel the buildbot uses.
+      # This job rehearses the libretro buildbot, so it runs the buildbot's
+      # toolchain, read from `.gitlab-ci.yml`'s `RUSTUP_TOOLCHAIN`, and it
+      # FAILS if that differs from `rust-toolchain.toml`'s `channel`. The two
+      # must move together: v3.0.1 briefly held the buildbot on 1.96.0 (the
+      # build image's `-C ar`, a hard error from 1.97) and lifted the hold the
+      # same release once the image dropped the flag (pipeline 119614, 15/15
+      # on 1.99.0). The check keeps a drift from being found on the buildbot
+      # after merge. `.github/` still carries no version literal
+      # (`docs/agents/ci-and-release.md`). Both parsers are table-scoped and
+      # fail-closed, like `rust-setup`'s own resolver.
+      - name: Resolve the buildbot toolchain
+        id: buildbot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tc="$(awk '
+            /^\.core-defs:/ { in_defs = 1; next }
+            in_defs && /^[^[:space:]#]/ { in_defs = 0 }
+            in_defs && $1 == "RUSTUP_TOOLCHAIN:" {
+              v = $2; gsub(/"/, "", v); print v; exit
+            }
+          ' .gitlab-ci.yml)"
+          if [ -z "$tc" ]; then
+            echo "::error::No RUSTUP_TOOLCHAIN under .core-defs in .gitlab-ci.yml"
+            exit 1
+          fi
+          pin="$(awk '
+            /^\[/ { in_tc = ($0 == "[toolchain]"); next }
+            in_tc && $1 == "channel" {
+              v = $3; gsub(/"/, "", v); print v; exit
+            }
+          ' rust-toolchain.toml)"
+          if [ -z "$pin" ]; then
+            echo "::error::No channel under [toolchain] in rust-toolchain.toml"
+            exit 1
+          fi
+          if [ "$tc" != "$pin" ]; then
+            echo "::error::.gitlab-ci.yml RUSTUP_TOOLCHAIN ($tc) differs from rust-toolchain.toml channel ($pin); move them together"
+            exit 1
+          fi
+          echo "Buildbot toolchain: $tc (matches rust-toolchain.toml)"
+          echo "toolchain=$tc" >> "$GITHUB_OUTPUT"
+          echo "RUSTUP_TOOLCHAIN=$tc" >> "$GITHUB_ENV"
       - uses: ./.github/actions/rust-setup
         with:
+          toolchain: ${{ steps.buildbot.outputs.toolchain }}
           apt: "false"
           cache-key: libretro-${{ matrix.target }}
       # Point bindgen at the NDK sysroot, which is what `cargo ndk` does for us
@@ -900,17 +951,19 @@ jobs:
       # Deliberately NOT the composite action's `targets:` input. That routes
       # through `dtolnay/rust-toolchain`, which installs the target for the
       # channel IT pins (stable) — while `rust-toolchain.toml` then switches
-      # cargo to 1.96.0, leaving the target missing on the toolchain that
+      # cargo to the pinned toolchain, leaving the target missing on the toolchain that
       # actually builds. `no_std` / `wasm` escape this only because their two
       # targets are listed in `rust-toolchain.toml`. Running `rustup target
       # add` from inside the checkout resolves that file first, so the target
-      # lands on 1.96.0 — the identical one-liner `.gitlab-ci.yml` runs, which
+      # lands on that toolchain — the identical one-liner `.gitlab-ci.yml` runs, which
       # keeps this job an honest rehearsal of the buildbot rather than a
       # differently-configured lookalike.
-      - run: rustup target add ${{ matrix.target }}
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target ${{ matrix.target }}
       # Until this job existed there was ZERO libretro coverage in GitHub
-      # Actions, so breakage only surfaced on libretro's own GitLab buildbot —
-      # where we can't push, can't re-run, and turnaround is days. Pipeline
+      # Actions, so breakage only surfaced on libretro's own GitLab buildbot,
+      # whose job logs need a login and whose turnaround was days (it does build
+      # every pushed branch, so a release branch is tested there too; see
+      # docs/agents/libretro.md). Pipeline
       # #91899 failed 9 of 10 jobs on problems this job reproduces in seconds:
       # a missing cross target (see `rust-toolchain.toml`) and an upstream
       # `rust-libretro` MinGW-ABI bug (see `.cargo/config.toml`).
@@ -1004,7 +1057,7 @@ jobs:
           toolchain: nightly
           apt: "false"
           cache-key: fuzz
-      - uses: taiki-e/install-action@v2.87.21
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: cargo-fuzz
       - name: Build and run every fuzz target
@@ -1068,7 +1121,7 @@ jobs:
         with:
           components: llvm-tools-preview
           cache-key: coverage
-      - uses: taiki-e/install-action@v2.87.21
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: cargo-llvm-cov
       - run: cargo llvm-cov --workspace --lib --summary-only --fail-under-lines 70

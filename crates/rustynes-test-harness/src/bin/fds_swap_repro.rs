@@ -52,7 +52,9 @@ fn fb_hash(fb: &[u8]) -> u64 {
 }
 
 fn colour_count(fb: &[u8]) -> usize {
-    fb.chunks_exact(4)
+    fb.as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2], c[3]])
         .collect::<HashSet<[u8; 4]>>()
         .len()

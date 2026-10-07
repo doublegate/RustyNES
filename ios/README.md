@@ -73,7 +73,7 @@ the gamepad mapper both build this mask and feed it to
 Prerequisites (macOS with Xcode):
 
 - Xcode 15 or newer.
-- The Rust toolchain pinned by `rust-toolchain.toml` (1.96).
+- The Rust toolchain pinned by `rust-toolchain.toml` (1.99).
 - The iOS Rust targets (the build script adds them):
   `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`.
 - XcodeGen: `brew install xcodegen`.
