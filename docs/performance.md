@@ -16,8 +16,9 @@ Set quantitative performance targets, identify expected hot paths, and lay out t
 > **These are DESIGN-PHASE targets, written before the cycle-accurate core
 > existed — they are aspirations, not gates.** The frame-cost row in particular
 > was never met and is knowingly accepted: the implemented core measures
-> **~3.95 ms** (`nes_run_frame_nestest_fast`) / **~2.65 ms**
-> (`nes_run_frame_flowing_palette_fast`) on the shipped fast dot path, and
+> **~3.95 ms** (`nes_run_frame_nestest_fast`) on the shipped fast dot path and
+> **~2.65 ms** (`nes_run_frame_flowing_palette_fast`, a rendering-disabled
+> control: the fast path's guard bails, so it never enters that path), and
 > ~4.46 / ~2.67 ms on the exact path, on a 2020 desktop (i9-10850K; see
 > "Current figures" below, measured 2026-09-23). The gate that
 > actually runs in CI is the **relative, same-runner regression check** (§CI

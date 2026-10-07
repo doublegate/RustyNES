@@ -80,8 +80,9 @@ v4.0.0's final development, test and release activities.**
 
 That covers:
 
-- Android developer verification, which also applies to sideloaded apps and is
-  global from 2027;
+- Android developer verification, which covers the ordinary installation path
+  (from 2026-09-30 in four countries, worldwide on certified devices in 2027);
+  ADB and Android's "advanced flow" can still install an unregistered app;
 - iOS signing, so that TestFlight uploads run;
 - the Google Play, F-Droid or IzzyOnDroid, and App Store listings.
 
