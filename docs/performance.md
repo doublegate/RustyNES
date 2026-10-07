@@ -3440,6 +3440,13 @@ screen and confirmed valid by F16's gate, 18 post-warmup rows):
 | `tick_iv` — between tick *sends* | 16.289 ms | **24.578 ms** | 28.637 ms |
 | `produced` — resulting interval | 16.269 ms | **24.635 ms** | — |
 
+> Correction (v3.0.1): `tick_iv` is differenced on the receiver, between the
+> send stamps of successive *delivered* ticks. A tick dropped on the full depth-1
+> channel is never seen, so the next interval spans two sends. It equals the
+> interval between sends only while `tick_dropped` is 0. Drops were measured at
+> 0 (`run_ahead` 2) and 0-1 (`run_ahead` 0) per 45 s capture under "Suspect A",
+> so the conclusion below is not affected in practice; the row label is.
+
 #### The result
 
 **The cross-thread hop is 33-50 microseconds.** It is not a contributor, and the
