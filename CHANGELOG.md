@@ -41,6 +41,31 @@ cycle-accurate core later replaced.
   header and in `docs/originality-and-provenance.md`, but the site said
   otherwise; it says "derived from" again (maintainer, 2026-10-06). The ten
   other site comments that release reworded had already been restored.
+- **MiSTer core: the dot-0 A12 rule now asks whether cycle 0 was rendering.**
+  T-MMC3-BG-A12's rule (a visible line's cycle 0 drives the background CHR
+  address) was gated on the live rendering state at the two dots where this
+  core shows it, so a `$2001` write taking effect one dot late still applied
+  it, and the MMC3 IRQ came one CPU cycle early. A new generated test ROM
+  (`mapper4mmc3oddskip080`, written to reach the rule's odd-frame exception,
+  which nothing could) found it; the core and the emulator now agree on all
+  2,978,055 cycles of it. The exception itself is now gated: a new comparison
+  of the cycle each /IRQ rises on catches its mutant, which the bus gate alone
+  could not. The bitstreams are rebuilt for v3.0.1 because this is RTL.
+- **Every unanswered bot review, back to PR #1, answered.** 290 unanswered
+  review threads, review-body findings and Antigravity reviews across both
+  repositories became 473 verdicts; the 80 still valid were fixed, among them:
+  the Bisqwit NTSC filter kept showing the last game frame after a ROM was
+  closed; a mapper-0 override saved from the ROM Database panel vanished on
+  restart; `bump_release.py` could exit 0 with a stale co-simulation lockfile,
+  garble a non-ASCII anchor marker, and append a stray stop after a quote;
+  three release audits could pass on prose they should fail; a review-thread
+  lister reported "0 unresolved" for a malformed response; a perf-log check
+  called a capture with no presentation clock VALID; and Dependabot's titles
+  read `chore(deps)(deps)`, with stale egui holds that blocked every future
+  egui and wgpu update (now a group that moves the five together). The
+  co-simulation crate's checkpoint parser rejects a corrupt stream instead of
+  underflowing, and CI now builds its rustdoc. Every reply is posted and every
+  open thread resolved.
 
 ### Changed
 
