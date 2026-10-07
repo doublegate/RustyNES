@@ -41,6 +41,21 @@ cycle-accurate core later replaced.
   header and in `docs/originality-and-provenance.md`, but the site said
   otherwise; it says "derived from" again (maintainer, 2026-10-06). The ten
   other site comments that release reworded had already been restored.
+- **Provenance: the shared Bisqwit NTSC pass recorded as derived
+  (T-NTSC-PROVENANCE).** `rustynes-gfx-shaders` called `BISQWIT_WGSL` "an
+  independent implementation ... no third-party emulator code is incorporated",
+  but it is a generated verbatim copy of `ntsc_bisqwit.rs`, whose tables have
+  long been recorded as ported from Bisqwit's C via Mesen2. It now carries a
+  `Provenance` header and its own row in `docs/originality-and-provenance.md`,
+  `NOTICE` names it, and the provenance audit lost the exception that had hidden
+  it (maintainer, 2026-10-07).
+- **Provenance: the TriCNES source moved out of the repository.** The vendored
+  MIT TriCNES trees under `crates/rustynes-test-harness/golden/tricnes/` were
+  removed so no repository search reaches reference-emulator source; the
+  committed cross-diff outputs stay. TriCNES remains the one reference whose
+  source may be consulted, for AccuracyCoin work and always attributed
+  (`docs/ai-emulator-provenance-guardrails.md` section 3a; maintainer,
+  2026-10-07). `NOTICE` also corrects the last vendored commit to `94f1b117`.
 - **MiSTer core: the dot-0 A12 rule now asks whether cycle 0 was rendering.**
   T-MMC3-BG-A12's rule (a visible line's cycle 0 drives the background CHR
   address) was gated on the live rendering state at the two dots where this
