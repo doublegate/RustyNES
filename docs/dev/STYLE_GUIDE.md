@@ -16,7 +16,7 @@ Coding conventions and best practices for contributing to RustyNES.
 ```toml
 [package]
 edition = "2024"
-rust-version.workspace = true  # 1.99; the seven libretro-path crates declare "1.96"
+rust-version.workspace = true  # 1.99, inherited by every crate
 ```
 
 ### Formatting

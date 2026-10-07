@@ -52,7 +52,7 @@ changing. (See the Phase-7/F "Option X" note in `rustynes-core/Cargo.toml`.)
 
 - **Host:** Intel Core i9-10850K @ 3.60 GHz (10C/20T, Comet Lake), CachyOS
   Linux, `powersave` cpufreq governor.
-- **Toolchain:** rustc 1.86.0 (the toolchain pinned when these were measured; the pin is 1.96 at v3.0.0), release
+- **Toolchain:** rustc 1.86.0 (the toolchain pinned when these were measured; the pin is 1.99 since v3.0.1), release
   profile `opt-level = 3`, `lto = "thin"`, `codegen-units = 1`,
   `panic = "abort"`, `overflow-checks = false` (the `bench` profile inherits
   `release`).

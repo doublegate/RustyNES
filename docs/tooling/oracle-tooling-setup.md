@@ -72,7 +72,7 @@ stood here. A grep target survives a re-vendor; a line number does not.
   checklist, answer keys (`$0477` DMC+OAM `04 03 04 03 04 03 02 01…`).
 - `ref-docs/tricnes-vs-rustynes-accuracy-roadmap-2026-06-02.md` — the roadmap.
 
-### 2a. In-repo buildable instrumented harness (the per-cycle cross-diff oracle)
+### 2a. The buildable instrumented harness, outside the repository (the per-cycle cross-diff oracle)
 
 The cross-diff oracle used for the DMA-tail / Program-M work is a **trimmed, instrumented TriCNES
 built from source** (TriCNES is MIT — Chris Siebert 2025). It was vendored in this repo until
@@ -82,7 +82,10 @@ v3.0.1 and now lives outside it:
   (instrumented with the per-cycle window logger; 88 lines against upstream), `Program.cs`,
   `6502Documentation.cs`, `mappers/` (all 11 `Mapper_*.cs`, **required to build**),
   `tricnes-harness.csproj`, `LICENSE`. Build with `dotnet build -c Release` (.NET 10 SDK). On a
-  machine without it, restore the tree from this repository's history before the v3.0.1 removal.
+  machine without it, extract it from this repository's history straight to that OUTSIDE path,
+  never into the working tree (guardrails section 3a): `mkdir -p ~/reference-oracles/TriCNES-rustynes-harness
+  && git archive 416fe7d7^:crates/rustynes-test-harness/golden/tricnes/tricnes-harness-src | tar -x
+  -C ~/reference-oracles/TriCNES-rustynes-harness`.
 - `~/reference-oracles/TriCNES/` — a clone of `github.com/100thCoin/TriCNES` at `94f1b117`, for
   reference and re-trimming.
 - Cross-diff driver: `scripts/tricnes_xdiff.py` (+ the ad-hoc helpers under `scripts/diag/`, salvaged
