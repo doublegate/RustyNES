@@ -78,6 +78,16 @@ def main() -> None:
             "more review threads than one page: refusing a partial count "
             "(raise first:, or page with after: endCursor and check each page)"
         )
+    # The other end too (CodeRabbit on #592): a page fetched with `after:` can
+    # be the LAST page, with `hasNextPage: false`, while earlier pages hold
+    # open threads. Only a payload that starts at the first page is complete.
+    if not isinstance(page.get("hasPreviousPage"), bool):
+        raise SystemExit(
+            "GraphQL response has no reviewThreads.pageInfo.hasPreviousPage "
+            "(select it, so a later page cannot read as the whole list)"
+        )
+    if page["hasPreviousPage"]:
+        raise SystemExit("this thread list is not the first page: refusing a partial count")
     shown = 0
     for i, thread in enumerate(threads):
         # A partial node used to die on a bare KeyError/TypeError traceback;

@@ -220,9 +220,17 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/actions/**'
               - '.github/scripts/**'
-            # rustynes-libretro -> core, cpu, ppu, apu, mappers
+            # rustynes-libretro -> core, cpu, ppu, apu, mappers, gamedb, plus the
+            # vendored rust-libretro-sys. `.gitlab-ci.yml` too (v3.0.1): it holds
+            # the buildbot's RUSTUP_TOOLCHAIN, which this job's first step checks
+            # against rust-toolchain.toml -- a PR changing only that file must
+            # still run the check (CodeRabbit on #592). gamedb and vendor/ were
+            # missing: both are compiled into the core.
             libretro:
               - *shared
+              - '.gitlab-ci.yml'
+              - 'vendor/**'
+              - 'crates/rustynes-gamedb/**'
               - 'crates/rustynes-libretro/**'
               - 'crates/rustynes-core/**'
               - 'crates/rustynes-cpu/**'
