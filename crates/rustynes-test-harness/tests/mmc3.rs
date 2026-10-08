@@ -129,8 +129,70 @@ fn mmc3_test_2_5_mmc3() {
     assert_eq!(s, 0, "mmc3_test_2 5-MMC3 failed: {m}");
 }
 
+/// v3.1.0 (`T-MMC3-NEC-OVERRIDE`, ACC-13): sub-ROM 6 tests the alternate
+/// IRQ behaviour (MMC3A / non-Sharp MMC3B), which the default (Sharp) fails by
+/// design. Under the override it passes; and sub-ROM 5 (Sharp-only) then
+/// fails, which proves the override changed the behaviour rather than
+/// leaving both on the default.
 #[test]
-#[ignore = "by-design fail: sub-ROM 6 is NEC rev B; project defaults to Sharp rev A (sub-ROM 5)"]
+fn mmc3_test_2_6_passes_under_the_alternate_revision_override() {
+    use rustynes_core::rustynes_mappers::Mmc3Revision;
+    let run_with = |rom: &str| {
+        let path = rom_path(rom);
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        rustynes_test_harness::run_nes_blargg_with(&bytes, 600, &|nes| {
+            assert!(
+                nes.set_mmc3_revision_override(Some(Mmc3Revision::Nec)),
+                "a mapper-4 board applies the override"
+            );
+        })
+        .expect("runs")
+    };
+    let alt = run_with("blargg/mmc3_test_2/6-MMC3_alt.nes");
+    assert_eq!(
+        alt.status, 0,
+        "6-MMC3_alt under the override: {}",
+        alt.message
+    );
+    let sharp = run_with("blargg/mmc3_test_2/5-MMC3.nes");
+    assert_ne!(
+        sharp.status, 0,
+        "5-MMC3 (Sharp only) passed under the alternate override, so the override did nothing"
+    );
+}
+
+/// The override is configuration: a power cycle rebuilds the board from its
+/// header and the override is re-applied; clearing it returns the header's.
+#[test]
+fn the_mmc3_override_survives_a_power_cycle_and_clears() {
+    use rustynes_core::rustynes_mappers::Mmc3Revision;
+    let path = rom_path("blargg/mmc3_test_2/5-MMC3.nes");
+    let bytes = std::fs::read(&path).expect("read");
+    let mut nes = rustynes_core::Nes::from_rom(&bytes).expect("parse");
+    assert!(
+        nes.mapper_info().name.contains("Sharp"),
+        "{}",
+        nes.mapper_info().name
+    );
+    nes.set_mmc3_revision_override(Some(Mmc3Revision::Nec));
+    assert!(nes.mapper_info().name.contains("Nec"));
+    nes.power_cycle();
+    assert!(
+        nes.mapper_info().name.contains("Nec"),
+        "the rebuilt board kept the override: {}",
+        nes.mapper_info().name
+    );
+    nes.set_mmc3_revision_override(None);
+    assert!(
+        nes.mapper_info().name.contains("Sharp"),
+        "back to the header's"
+    );
+}
+
+#[test]
+#[ignore = "by-design fail at the default: sub-ROM 6 is the alternate MMC3 IRQ revision; \
+            the default is Sharp (sub-ROM 5). Runs under the override in \
+            mmc3_test_2_6_passes_under_the_alternate_revision_override"]
 fn mmc3_test_2_6_mmc3_alt_strict() {
     let (s, m, _) = run("blargg/mmc3_test_2/6-MMC3_alt.nes", 600);
     assert_eq!(s, 0, "mmc3_test_2 6-MMC3_alt: {m}");

@@ -42,17 +42,21 @@
 //! sprites @ `$0000`) places the edge at the END of the previous
 //! scanline's sprite fetches (Wario's Woods relies on this).
 //!
-//! On each filtered rising edge:
-//! - if `counter == 0` OR `irq_reload_pending`: counter = `irq_reload_value`;
-//!   pending cleared; **Sharp** revision additionally asserts IRQ if the
-//!   reload value was 0 (from a non-zero counter); **NEC** does not.
-//! - else: counter -= 1; if post-decrement counter == 0 AND IRQ enabled,
-//!   assert IRQ line.
+//! On each filtered rising edge (`clock_irq`):
+//! - a `$C001` reload (`irq_reload_pending`): counter = `irq_reload_value`,
+//!   flag cleared; BOTH revisions assert if the new value is 0 and IRQs are
+//!   enabled (v3.1.0; the alternate one used not to, see `clock_irq`);
+//! - else if `counter == 0`: counter = `irq_reload_value`; only **Sharp**
+//!   asserts if the new value is 0, so a latch of 0 fires every scanline on
+//!   Sharp and stops on the alternate chip;
+//! - else: counter -= 1; if it reached 0 and IRQs are enabled, assert.
 //!
 //! Default revision is **Sharp** per project policy (Star Trek: 25th
-//! Anniversary requires it); NES 2.0 submapper 1 selects MMC3B (NEC),
-//! submapper 2 selects MMC3C (Sharp behavior + minor differences not
-//! distinguished here).
+//! Anniversary requires it). NES 2.0 submapper 4 selects the alternate
+//! behaviour of the MMC3A and non-Sharp MMC3B ([`Mmc3Revision::Nec`]), 1 the
+//! MMC6 (v2.9.6 corrected both; this paragraph said "submapper 1 selects
+//! MMC3B (NEC)" until v3.1.0). For an iNES 1.0 dump, which cannot say,
+//! `Mapper::set_mmc3_revision_override` selects it (v3.1.0).
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -97,7 +101,7 @@ const MMC6_RAM: usize = 0x0400;
 /// and the NES 2.0 submapper for it is 4, not 1 (`NES_2_0_submappers.md`).
 /// The behaviour of each variant was always right; only the labels were
 /// wrong, together with the submapper mapping that followed them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Mmc3Revision {
     /// Sharp MMC3B and MMC3C: reloading the IRQ counter to 0 asserts IRQ if
     /// IRQs are enabled, so a latch of 0 fires every scanline. Default.
@@ -203,6 +207,11 @@ pub struct Mmc3 {
     cpu_cycle: u64,
 
     revision: Mmc3Revision,
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`): the revision the cartridge header
+    /// selected, which `revision` returns to when an override is cleared.
+    /// Board identity, fixed at construction; not save-state (a state carries
+    /// the live `revision`).
+    header_revision: Mmc3Revision,
     variant: Mmc3Variant,
     /// MMC6: `$8000` bit 5, the PRG-RAM enable.
     mmc6_ram_enabled: bool,
@@ -321,6 +330,7 @@ impl Mmc3 {
             a12_low_cycle: 0,
             cpu_cycle: 0,
             revision,
+            header_revision: revision,
             variant: Mmc3Variant::Standard,
             mmc6_ram_enabled: false,
             mmc6_protect: 0,
@@ -533,7 +543,18 @@ impl Mmc3 {
     /// 3. Otherwise: decrement.
     ///
     /// After any of the three, Sharp asserts when the counter is zero and
-    /// IRQs are enabled; NEC only after path 3.
+    /// IRQs are enabled. The alternate revision (`Nec`) asserts after path 3,
+    /// and after path 1 when the reloaded value is 0, but never after path 2.
+    ///
+    /// **Changed in v3.1.0 (`T-MMC3-NEC-OVERRIDE`).** The alternate revision
+    /// asserted only after path 3. `MMC3.md`: "The 'alternate revision' checks
+    /// the IRQ counter transition 1→0, whether from decrementing or
+    /// reloading", and "writing to $C001 with $C000 still at $00 will result in
+    /// another single IRQ being generated". blargg's `mmc3_test_2/6-MMC3_alt`
+    /// says the same ("IRQ should be set when reloading due to clear, even if
+    /// counter was already 0") and could not run until v3.1.0 added a way to
+    /// select this revision for an iNES 1.0 ROM; it failed there on exactly
+    /// this, and passes now. The Sharp path is unchanged.
     ///
     /// **Changed in v2.9.9 (T-ORACLE-001).** Path 1 used to assert only when
     /// the `$C001` write had cleared a non-zero counter (a latch named
@@ -546,13 +567,12 @@ impl Mmc3 {
     fn clock_irq(&mut self) -> bool {
         let mut would_assert = false;
         if self.irq_reload_pending {
-            // Path 1: explicit $C001 reload.
+            // Path 1: explicit $C001 reload. Both revisions assert when the
+            // reloaded value is 0 (for the alternate one, the single IRQ a
+            // $C001 write with $C000 = $00 produces).
             self.irq_counter = self.irq_reload_value;
             self.irq_reload_pending = false;
-            if self.irq_enabled
-                && self.irq_counter == 0
-                && matches!(self.revision, Mmc3Revision::Sharp)
-            {
+            if self.irq_enabled && self.irq_counter == 0 {
                 would_assert = true;
             }
         } else if self.irq_counter == 0 {
@@ -577,6 +597,14 @@ impl Mmc3 {
 }
 
 impl Mapper for Mmc3 {
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`): `Some` forces the IRQ revision, `None`
+    /// returns to the header's. Applies to mapper 4 itself; the MMC3-derived
+    /// boards that embed this core keep their own revision.
+    fn set_mmc3_revision_override(&mut self, revision: Option<Mmc3Revision>) -> bool {
+        self.revision = revision.unwrap_or(self.header_revision);
+        true
+    }
+
     fn sram(&self) -> &[u8] {
         &self.prg_ram
     }
@@ -1349,11 +1377,15 @@ mod tests {
         );
     }
 
-    /// NEC (Rev B) does NOT assert on reload-to-0 even on the natural
-    /// was_zero path.  Mutually exclusive with the Sharp behavior tested
-    /// above.
+    /// NEC (the "alternate" revision) asserts once on a `$C001` reload to 0,
+    /// and never on the natural `was_zero` reload. `MMC3.md`: it "generates
+    /// only a single IRQ when `$C000` is `$00`", and "writing to `$C001` with
+    /// `$C000` still at `$00` will result in another single IRQ"; blargg's
+    /// `6-MMC3_alt` fails with "IRQ should be set when reloading due to
+    /// clear" otherwise. v3.1.0 corrected this: until then the test pinned
+    /// NEC as silent on both paths.
     #[test]
-    fn nec_does_not_assert_on_reload_to_zero() {
+    fn nec_asserts_once_on_a_c001_reload_to_zero_and_not_after() {
         let mut m = Mmc3::new(
             synth_prg(8),
             synth_chr(8),
@@ -1362,8 +1394,6 @@ mod tests {
             Mmc3Revision::Nec,
         )
         .unwrap();
-        // Same "non-zero clear" setup as the Sharp test, but on NEC the
-        // reload-to-0 should NOT assert.
         m.cpu_write(0xC000, 1);
         m.cpu_write(0xC001, 0);
         m.cpu_write(0xE001, 0);
@@ -1372,13 +1402,18 @@ mod tests {
         m.cpu_write(0xC001, 0);
         a12_rise(&mut m);
         assert_eq!(m.irq_counter, 0);
-        assert!(
-            !m.irq_pending(),
-            "NEC suppresses Sharp's reload-to-0 assertion"
-        );
-        // Even the natural was_zero path doesn't assert on NEC.
+        assert!(m.irq_pending(), "the $C001 reload to 0 asserts on NEC too");
+        // Acknowledge, then the natural was_zero reload stays silent.
+        m.cpu_write(0xE000, 0);
+        m.cpu_write(0xE001, 0);
+        assert!(!m.irq_pending());
         a12_rise(&mut m);
-        assert!(!m.irq_pending(), "NEC: was_zero reload-to-0 also silent");
+        a12_rise(&mut m);
+        assert!(!m.irq_pending(), "NEC: the was_zero reload to 0 is silent");
+        // A second $C001 write with $C000 still 0: another single IRQ.
+        m.cpu_write(0xC001, 0);
+        a12_rise(&mut m);
+        assert!(m.irq_pending(), "each $C001 write gives one more IRQ");
     }
 
     /// T-41-005 — reversed pattern-table layout (`PPUCTRL` bit 4 set,

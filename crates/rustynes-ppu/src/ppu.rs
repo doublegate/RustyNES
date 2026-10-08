@@ -35,6 +35,11 @@ pub const FRAMEBUFFER_LEN: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 4;
 /// [`Ppu::index_framebuffer`] (one `u16` per pixel).
 pub const FRAMEBUFFER_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 
+/// v3.1.0 (`T-SPRITE-LIMIT`) — the most sprites the "disable sprite limit"
+/// option can add to one scanline: all 64 OAM entries minus the eight the
+/// hardware draws.
+pub const MAX_EXTRA_SPRITES: usize = 64 - 8;
+
 /// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source record.
 ///
 /// One entry per visible pixel (parallel to [`Ppu::index_framebuffer`]),
@@ -1105,10 +1110,30 @@ pub struct Ppu {
     /// without altering the visible image. **Off by default (`0`)**; the
     /// `advance_dot` insertion path is entirely guarded by `extra_scanlines != 0`,
     /// so at the default this field changes nothing and the frame is
-    /// byte-identical to stock. Distinct from the CPU-multiplier overclock (a
-    /// v2.0 timebase item). A frontend config knob, NOT part of the save-state
-    /// (re-applied by the frontend on restore, like `region` / `active_palette`).
+    /// byte-identical to stock. Distinct from the CPU-multiplier overclock
+    /// (`Nes::set_cpu_overclock`, v3.1.0, in the bus). A frontend config knob,
+    /// NOT part of the save-state (re-applied by the frontend on restore, like
+    /// `region` / `active_palette`).
     pub(crate) extra_scanlines: u16,
+    /// v3.1.0 (`T-SPRITE-LIMIT`, FE-02): draw the sprites beyond the eighth on
+    /// a scanline. **Render-only**: sprite evaluation, secondary OAM, the
+    /// overflow flag, sprite-0 hit and every real sprite fetch (with its A12
+    /// edges) are untouched. The extra sprites' patterns are read after the
+    /// eight real fetches, through [`PpuBus::chr_reads_are_pure`] boards only,
+    /// with no A12 notification, and they draw behind all eight hardware
+    /// sprites (a higher OAM index is a lower priority). Off by default;
+    /// configuration, carried across a power cycle by
+    /// [`Self::adopt_settings_from`] and in movies / netplay by the core's
+    /// `HardwareOptions`.
+    pub(crate) sprite_limit_disabled: bool,
+    /// v3.1.0 — the extra sprites fetched for the next scanline (snapshot v13):
+    /// how many, and for each the h-flip-applied pattern bytes, attributes and
+    /// X. Always 0 while `sprite_limit_disabled` is off.
+    pub(crate) spr_extra_count: u8,
+    pub(crate) spr_extra_lo: [u8; MAX_EXTRA_SPRITES],
+    pub(crate) spr_extra_hi: [u8; MAX_EXTRA_SPRITES],
+    pub(crate) spr_extra_attr: [u8; MAX_EXTRA_SPRITES],
+    pub(crate) spr_extra_x: [u8; MAX_EXTRA_SPRITES],
     /// v1.7.0 F3 — countdown of extra blank scanlines remaining for the CURRENT
     /// frame's vblank insertion. Loaded from [`Self::extra_scanlines`] when the
     /// PPU reaches the insertion point and decremented one extra line at a time.
@@ -1635,6 +1660,12 @@ impl Ppu {
             dot_counter: 0,
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
+            sprite_limit_disabled: false,
+            spr_extra_count: 0,
+            spr_extra_lo: [0; MAX_EXTRA_SPRITES],
+            spr_extra_hi: [0; MAX_EXTRA_SPRITES],
+            spr_extra_attr: [0; MAX_EXTRA_SPRITES],
+            spr_extra_x: [0; MAX_EXTRA_SPRITES],
             extra_lines_remaining: 0,
             // v2.2.3 performance pass: promoted to the default (was `false`
             // through v2.2.2). Byte-identical to the exact path by
@@ -1742,6 +1773,30 @@ impl Ppu {
         self.rebuild_rgba_lut();
     }
 
+    /// v3.1.0 (`T-SPRITE-LIMIT`) — draw the sprites beyond the eighth on a
+    /// scanline (`true`), or not (`false`, the default and the hardware). See
+    /// the field for what stays exact. Turning it off drops any extras already
+    /// fetched, so the next scanline draws exactly eight.
+    pub const fn set_sprite_limit_disabled(&mut self, disabled: bool) {
+        self.sprite_limit_disabled = disabled;
+        if !disabled {
+            self.spr_extra_count = 0;
+        }
+    }
+
+    /// v3.1.0 — whether the sprites beyond the eighth are drawn.
+    #[must_use]
+    pub const fn sprite_limit_disabled(&self) -> bool {
+        self.sprite_limit_disabled
+    }
+
+    /// v3.1.0 — how many sprites beyond the eighth are fetched for the next
+    /// scanline (`0` unless [`Self::sprite_limit_disabled`]).
+    #[must_use]
+    pub const fn extra_sprite_count(&self) -> u8 {
+        self.spr_extra_count
+    }
+
     /// v1.7.0 "Forge" Workstream F3 — set the number of EXTRA blank vblank
     /// scanlines to insert per frame (the PPU extra-scanlines overclock).
     ///
@@ -1749,7 +1804,7 @@ impl Ppu {
     /// that never calls this. A non-zero value lengthens vblank by that many
     /// idle scanlines each frame (more CPU run-time, no visible change), at the
     /// existing dot resolution. Off by default; a frontend config knob, not part
-    /// of the save-state. Distinct from the CPU-multiplier overclock (v2.0).
+    /// of the save-state. Distinct from the CPU-multiplier overclock (v3.1.0).
     ///
     /// Changing the count cancels any in-flight insertion for the current
     /// frame: the per-frame countdown (`extra_lines_remaining`) is
@@ -1809,7 +1864,8 @@ impl Ppu {
     /// # What is carried, and what is not
     ///
     /// Carried: [`Self::custom_palette`] (the lookup table is rebuilt to
-    /// honour it), [`Self::extra_scanlines`], [`Self::fast_dotloop`] and
+    /// honour it), [`Self::extra_scanlines`], [`Self::sprite_limit_disabled`],
+    /// [`Self::fast_dotloop`] and
     /// [`Self::oam_decay_enabled`]. The decay switch goes through
     /// [`Self::set_oam_decay`], exactly as a host enabling it on a fresh
     /// console would, so the result is what a fresh boot with the setting
@@ -1831,6 +1887,7 @@ impl Ppu {
         self.custom_palette = prev.custom_palette;
         self.rebuild_rgba_lut();
         self.set_extra_scanlines(prev.extra_scanlines);
+        self.sprite_limit_disabled = prev.sprite_limit_disabled;
         self.fast_dotloop = prev.fast_dotloop;
         self.set_oam_decay(prev.oam_decay_enabled);
     }
@@ -5101,6 +5158,32 @@ impl Ppu {
                 break;
             }
         }
+        // v3.1.0 (`T-SPRITE-LIMIT`): the sprites beyond the eighth, only where
+        // none of the eight hardware sprites is opaque (they have the higher
+        // OAM indexes, so the lower priority). Never sprite 0, so never a hit.
+        // `spr_extra_count` is 0 unless the option is on.
+        if spr_idx == 0
+            && self.spr_extra_count != 0
+            && self.mask.contains(PpuMask::SHOW_SPRITE)
+            && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
+        {
+            for e in 0..usize::from(self.spr_extra_count) {
+                let off = pixel_x.wrapping_sub(u16::from(self.spr_extra_x[e]));
+                if off >= 8 {
+                    continue;
+                }
+                let bit = 7 - off;
+                let lo = (self.spr_extra_lo[e] >> bit) & 1;
+                let hi = (self.spr_extra_hi[e] >> bit) & 1;
+                let val = (hi << 1) | lo;
+                if val != 0 {
+                    spr_idx = val;
+                    spr_pal = self.spr_extra_attr[e] & 0x03;
+                    spr_priority_front = (self.spr_extra_attr[e] & 0x20) == 0;
+                    break;
+                }
+            }
+        }
 
         // Combine BG + sprite per priority.
         //
@@ -5162,7 +5245,17 @@ impl Ppu {
         // call for both the 2C02 composite default and the Vs./PC10 RGB
         // palettes) and store all four bytes with one bounds-checked slice
         // copy instead of four indexed stores.
-        let emph = usize::from((self.mask.bits() >> 5) & 0x07);
+        // v3.1.0 (`T-PAL-EMPHASIS`): the index is the PHYSICAL tint (bit 0
+        // red, bit 1 green, bit 2 blue). PPUMASK bit 5 is red on the NTSC 2C02
+        // and GREEN on the PAL 2C07 and the Dendy, bit 6 the reverse (NESdev
+        // "Colour emphasis"), so those two exchange off NTSC. The region is
+        // fixed per console, so the branch is constant.
+        let raw = (self.mask.bits() >> 5) & 0x07;
+        let emph = usize::from(if matches!(self.region, PpuRegion::Ntsc) {
+            raw
+        } else {
+            (raw & 0b100) | ((raw & 0b001) << 1) | ((raw & 0b010) >> 1)
+        });
         let lut_idx = (emph << 6) | usize::from(final_idx);
         let rgba = self.rgba_lut[lut_idx];
         self.framebuffer[off..off + 4].copy_from_slice(&rgba);
@@ -5762,6 +5855,23 @@ impl Ppu {
                 }
             }
             65..=256 => {
+                if self.dot == 65 {
+                    // v3.1.0: OAMADDR AT TICK 65 sets where evaluation
+                    // starts (nesdev "PPU registers" -> OAMADDR, "Values
+                    // during rendering"), so re-seed `(n, m)` here. The dot-0
+                    // capture above stays as the reset value, but a `$2003`
+                    // write (or a rendering-time `$2004` bump) during the
+                    // dots 1-64 clear must still move the start. Until
+                    // v3.1.0 only the dot-0 value counted, which was
+                    // invisible while every test wrote `$2003` before dot 0:
+                    // AccuracyCoin f5f41dc2 moved its "Misaligned OAM
+                    // behavior" write to dots 28-29 of scanline 0 (one
+                    // `JSR`/`RTS` pair later) and test 3 failed, evaluating
+                    // from the stale address. The OAM-bus model above has
+                    // always seeded at cycle 65.
+                    self.sprite_eval_n = (self.oam_addr >> 2) & 0x3F;
+                    self.sprite_eval_m = self.oam_addr & 0x03;
+                }
                 if !self.sprite_eval_done {
                     let next_line: i16 = if self.scanline == self.region.prerender_line() {
                         -1
@@ -5881,7 +5991,23 @@ impl Ppu {
                     // Finished this sprite. found was already
                     // incremented when the y-byte landed.
                     self.sprite_eval_copying = false;
-                    self.sprite_eval_m = 0;
+                    // v3.1.0: the fourth byte copied is the X position, and
+                    // the PPU range-tests it exactly as it tests Y. Out of
+                    // range: OAMADDR += 1 then &= $FC, re-aligning. IN range:
+                    // only += 1, so a misaligned start STAYS misaligned
+                    // (AccuracyCoin "Misaligned OAM behavior" tests 4-7, the
+                    // "+4* behavior ... Only +1 with the X Position" rule,
+                    // stated in the ROM's comments). `m` already holds the
+                    // += 1 (the `m == 4` wrap above covers the aligned
+                    // case, where both rules agree), so only the
+                    // out-of-range case clears it. Until v3.1.0 this cleared
+                    // `m` unconditionally; the ROM's pre-f5f41dc2 fail path
+                    // returned into the test body without popping its return
+                    // address, which recorded that failure as a pass.
+                    let x_row = next_line - (latch as i16);
+                    if !(x_row >= 0 && x_row < sprite_height) {
+                        self.sprite_eval_m = 0;
+                    }
                     // Under feature: the m==4 wrap above already
                     // advanced n once.  Don't double-increment.
                     // Under legacy: m never wrapped, so n advances
@@ -5937,10 +6063,15 @@ impl Ppu {
                     {
                         self.sprite_eval_m += 1;
                         if self.sprite_eval_m == 4 {
-                            // Wrapped past end of sprite — already
-                            // "copied" the whole sprite from its
-                            // misaligned start.  Advance n, reset m.
-                            self.sprite_eval_copying = false;
+                            // The Y byte was the LAST byte of slot `n`
+                            // (evaluation started at m = 3). OAMADDR steps
+                            // on into slot n + 1 and the copy continues:
+                            // the PPU copies four bytes whatever the
+                            // alignment. Until v3.1.0 this ended the copy
+                            // here, putting one byte in secondary OAM
+                            // instead of four (AccuracyCoin "Misaligned OAM
+                            // behavior" test 7, offset 3; masked like test
+                            // 6 by the ROM's pre-f5f41dc2 fail path).
                             self.sprite_eval_m = 0;
                             if self.sprite_eval_n == 63 {
                                 self.sprite_eval_done = true;
@@ -6304,6 +6435,92 @@ impl Ppu {
             }
         }
         // Else: shift regs already cleared in tick_sprite_eval_per_dot.
+
+        // v3.1.0 (`T-SPRITE-LIMIT`): after the eighth REAL fetch, the extra
+        // sprites for the same line. A no-op unless the option is on.
+        if slot == 7 {
+            self.fetch_extra_sprites(bus, next_line, sprite_height);
+        }
+    }
+
+    /// v3.1.0 (`T-SPRITE-LIMIT`, FE-02): collect and fetch the sprites beyond
+    /// the eighth for the next scanline, for display only.
+    ///
+    /// Runs once per line, after the eighth real sprite fetch, and only when
+    /// the option is on, evaluation found eight (so the hardware dropped
+    /// some), the line is visible, and the board's CHR reads are pure
+    /// ([`PpuBus::chr_reads_are_pure`]: MMC2 / MMC4 latch on CHR reads, the
+    /// J.Y. ASIC clocks an IRQ on them, and two boards latch address bits, so
+    /// on those the option draws eight as stock). The fetch calls neither
+    /// `observe_a12_addr` nor anything else a mapper can see beyond the read,
+    /// so A12, mapper IRQs and every emulated byte stay exactly stock.
+    ///
+    /// Which sprites: an aligned walk of primary OAM from entry 0, skipping
+    /// the first eight in range (the ones the hardware draws when evaluation
+    /// starts at OAMADDR 0, as it does on every normally rendered line). A line
+    /// whose evaluation starts misaligned (a mid-frame `$2003` write, a test
+    /// construction) can draw a slightly different set; it is a display
+    /// enhancement, not hardware behaviour.
+    fn fetch_extra_sprites<B: PpuBus>(&mut self, bus: &mut B, next_line: i16, height: i16) {
+        self.spr_extra_count = 0;
+        if !self.sprite_limit_disabled
+            || self.spr_count < 8
+            || !(0..240).contains(&self.scanline)
+            || !bus.chr_reads_are_pure()
+        {
+            return;
+        }
+        let mut in_range = 0usize;
+        for n in 0..64usize {
+            let y = i16::from(self.oam[n * 4]);
+            let row = next_line.wrapping_sub(y);
+            if row < 0 || row >= height {
+                continue;
+            }
+            in_range += 1;
+            if in_range <= 8 {
+                continue;
+            }
+            let count = usize::from(self.spr_extra_count);
+            if count == MAX_EXTRA_SPRITES {
+                break;
+            }
+            let tile = self.oam[n * 4 + 1];
+            let attr = self.oam[n * 4 + 2] & 0xE3;
+            let x = self.oam[n * 4 + 3];
+            let flip_v = attr & 0x80 != 0;
+            #[allow(clippy::cast_sign_loss)] // `row` is in 0..height, checked above
+            let mut r = row as u16;
+            let (table, tile_idx) = if height == 16 {
+                if flip_v {
+                    r = 15 - r;
+                }
+                let base = tile & 0xFE;
+                let idx = if r >= 8 { base.wrapping_add(1) } else { base };
+                r &= 7;
+                (u16::from(tile & 0x01) << 12, idx)
+            } else {
+                if flip_v {
+                    r = 7 - r;
+                }
+                (
+                    u16::from(self.ctrl.contains(PpuCtrl::SPRITE_PATTERN_HIGH)) << 12,
+                    tile,
+                )
+            };
+            let addr = table | (u16::from(tile_idx) << 4) | r;
+            let mut lo = bus.ppu_read_sprite(addr);
+            let mut hi = bus.ppu_read_sprite(addr | 0x08);
+            if attr & 0x40 != 0 {
+                lo = reverse_bits(lo);
+                hi = reverse_bits(hi);
+            }
+            self.spr_extra_lo[count] = lo;
+            self.spr_extra_hi[count] = hi;
+            self.spr_extra_attr[count] = attr;
+            self.spr_extra_x[count] = x;
+            self.spr_extra_count += 1;
+        }
     }
 
     fn advance_dot(&mut self) {
@@ -6595,6 +6812,81 @@ mod tests {
         );
     }
 
+    /// v3.1.0 — the three misaligned-evaluation rules the `AccuracyCoin`
+    /// `f5f41dc2` re-sync exposed, each pinned on its own so a regression
+    /// names the rule it broke:
+    ///
+    /// 1. evaluation starts at OAMADDR **as of dot 65**, not dot 0 (nesdev
+    ///    "PPU registers" -> OAMADDR), so a write during the clear counts;
+    /// 2. an in-range Y copies **four** bytes whatever the alignment, also from
+    ///    `m = 3`, where the copy crosses into slot `n + 1`;
+    /// 3. the fourth byte (X) is range-tested: in range, OAMADDR only steps by
+    ///    one and stays misaligned; out of range, it steps and ANDs with `$FC`.
+    ///
+    /// Each assertion failed against the pre-v3.1.0 FSM (dot-0 seed, a
+    /// one-byte copy from `m = 3`, an unconditional realign).
+    #[test]
+    fn misaligned_oam_eval_starts_at_dot_65_copies_four_bytes_and_tests_x() {
+        /// A PPU on scanline 10 whose dot-0 reset has already run with
+        /// OAMADDR 0, so only a later seed can pick up `oam_addr`.
+        fn ppu_after_dot0(oam_addr: u8, oam: &[(usize, u8)]) -> Ppu {
+            let mut ppu = Ppu::new(PpuRegion::Ntsc);
+            ppu.mask = PpuMask::SHOW_SPRITE;
+            ppu.scanline = 10;
+            ppu.oam.fill(0xFF);
+            for &(i, v) in oam {
+                ppu.oam[i] = v;
+            }
+            ppu.oam_addr = 0;
+            ppu.dot = 0;
+            ppu.tick_sprite_eval_per_dot();
+            // The write lands during the clear, after the dot-0 reset.
+            ppu.oam_addr = oam_addr;
+            ppu
+        }
+        fn run_dots(ppu: &mut Ppu, from: u16, to: u16) {
+            for d in from..=to {
+                ppu.dot = d;
+                ppu.tick_sprite_eval_per_dot();
+            }
+        }
+
+        // (1) Seed at dot 65: OAMADDR 2 written after dot 0. Y at OAM[2] is in
+        // range for scanline 10 (Y = 8), and the walk must start there.
+        let mut ppu = ppu_after_dot0(0x02, &[(2, 8), (3, 0x11), (4, 0x22), (5, 0x33)]);
+        run_dots(&mut ppu, 65, 66);
+        assert_eq!(
+            ppu.secondary_oam[0], 8,
+            "evaluation must read its first Y from OAMADDR as of dot 65 (OAM[2])"
+        );
+
+        // (2) Four bytes from m = 3: OAM[3] is Y, OAM[4..=6] belong to slot 1.
+        let mut ppu = ppu_after_dot0(0x03, &[(3, 8), (4, 0xA1), (5, 0xA2), (6, 0xA3)]);
+        run_dots(&mut ppu, 65, 72);
+        assert_eq!(
+            ppu.secondary_oam[..4],
+            [8, 0xA1, 0xA2, 0xA3],
+            "a misaligned in-range sprite copies four bytes, across the slot edge"
+        );
+
+        // (3) X range test, from OAMADDR 1: Y = OAM[1], X = OAM[4].
+        let x_case = |x: u8| {
+            let mut ppu = ppu_after_dot0(0x01, &[(1, 8), (2, 0x11), (3, 0x22), (4, x)]);
+            run_dots(&mut ppu, 65, 72);
+            u16::from(ppu.sprite_eval_n) * 4 + u16::from(ppu.sprite_eval_m)
+        };
+        assert_eq!(
+            x_case(8),
+            0x05,
+            "X in range: OAMADDR += 1 only, so the walk stays misaligned at $05"
+        );
+        assert_eq!(
+            x_case(0xF0),
+            0x04,
+            "X out of range: OAMADDR += 1 then & $FC, realigning to $04"
+        );
+    }
+
     /// v2.6.18 — the depth-2 rendering-gate pipeline must SHIFT, not freeze.
     ///
     /// Drives the named pair directly rather than `tick`, so it needs no bus
@@ -6754,6 +7046,57 @@ mod tests {
         // Drive past the post-reset masking window.
         ppu.post_reset_mask_remaining = 0;
         (ppu, TestBus::new())
+    }
+
+    /// v3.1.0 (`T-PAL-EMPHASIS`, ACC-01): on the PAL (2C07) and Dendy PPUs
+    /// PPUMASK bits 5 and 6 swap meaning. `NESdev` "Colour emphasis": "Bit 5
+    /// emphasizes red on the NTSC PPU, and green on the PAL & Dendy PPUs. Bit 6
+    /// emphasizes green on the NTSC PPU, and red on the PAL & Dendy PPUs. Bit 7
+    /// emphasizes blue on the NTSC, PAL, & Dendy PPUs." The emphasis index the
+    /// renderer and the composite filters receive is the PHYSICAL tint (bit 0
+    /// red, bit 1 green, bit 2 blue), so on PAL / Dendy it is the mask's bits
+    /// with 5 and 6 exchanged.
+    #[test]
+    fn pal_and_dendy_swap_the_red_and_green_emphasis_bits() {
+        let cases = [
+            (PpuMask::EMPHASIZE_RED, 0b001u16, 0b010u16),
+            (PpuMask::EMPHASIZE_GREEN, 0b010, 0b001),
+            (PpuMask::EMPHASIZE_BLUE, 0b100, 0b100),
+            (
+                PpuMask::EMPHASIZE_RED | PpuMask::EMPHASIZE_BLUE,
+                0b101,
+                0b110,
+            ),
+        ];
+        for region in [PpuRegion::Ntsc, PpuRegion::Pal, PpuRegion::Dendy] {
+            for (mask, ntsc, swapped) in cases {
+                let mut p = Ppu::new(region);
+                p.post_reset_mask_remaining = 0;
+                p.mask = mask; // rendering off: the pixel is the backdrop
+                p.palette_ram[palette_index(0x3F00)] = 0x21;
+                p.scanline = 10;
+                p.dot = 20;
+                p.emit_pixel();
+                let got = p.index_framebuffer[10 * 256 + 19];
+                let want_emph = if region == PpuRegion::Ntsc {
+                    ntsc
+                } else {
+                    swapped
+                };
+                assert_eq!(
+                    got,
+                    (want_emph << 6) | 0x21,
+                    "{region:?}, mask {:#04x}: emphasis index",
+                    mask.bits()
+                );
+                let off = (10usize * 256 + 19) * 4;
+                assert_eq!(
+                    &p.framebuffer[off..off + 4],
+                    &p.rgba_lut[usize::from(got)],
+                    "{region:?}: the RGBA pixel follows the same index"
+                );
+            }
+        }
     }
 
     // F1.1 (Fathom accuracy remediation) — palette backdrop-override.

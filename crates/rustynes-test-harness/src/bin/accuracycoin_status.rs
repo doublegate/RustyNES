@@ -44,8 +44,8 @@ use rustynes_test_harness::accuracy_coin_catalog::{
 /// `$6000-$61FF`, and the `MiSTer` core persists the whole `$6000-$7FFF` PRG-RAM
 /// window, so a hardware `.sav` is 8 KiB whose first 512 bytes are the vector.
 ///
-/// Every one of the catalog's 149 result addresses falls inside `$0300-$04FF`
-/// (`$03FF`-`$0495`, checked against `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv`),
+/// Every one of the catalog's 151 result addresses falls inside `$0300-$04FF`
+/// (`$03FF`-`$0497`, checked against `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv`),
 /// which is what makes the lift below lossless rather than a subset.
 const MIRROR_LEN: usize = 0x0200;
 const MIRROR_VECTOR_BASE: usize = 0x0300;

@@ -59,8 +59,11 @@
 //! two cannot drift. The `MiSTer` core ships the same resulting colours, checked
 //! entry by entry by its `palette-gate`.
 //!
-//! Not modelled, by choice: the page's differential phase distortion, colour
-//! artifacts between pixels, and the PAL/Dendy swap of the red and green bits.
+//! Not modelled, by choice: the page's differential phase distortion and
+//! colour artifacts between pixels. The PAL/Dendy swap of the red and green
+//! bits is modelled since v3.1.0 (`T-PAL-EMPHASIS`), where it belongs: in the
+//! PPU's emphasis index (`Ppu::emit_pixel`), not in this table, which is
+//! indexed by the physical tint.
 
 /// The page's terminated levels in volts: `[plain, attenuated][low, high][row]`.
 const LEVELS: [[[f64; 4]; 2]; 2] = [

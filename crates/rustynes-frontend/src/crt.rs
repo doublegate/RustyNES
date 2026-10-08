@@ -109,6 +109,10 @@ pub const SIGNAL_DECODE_STACK_PARAMS: &str = concat!(
     "// #pragma parameter brightness \"Brightness\" 1.0 0.5 1.5 0.02\n",
     "// #pragma parameter contrast \"Contrast\" 1.0 0.5 1.5 0.02\n",
     "// #pragma parameter hue \"Hue (radians)\" 0.0 -1.0 1.0 0.02\n",
+    // v3.1.0 (`T-COMPOSITE-ARTIFACTS`): the documented differential phase
+    // distortion, degrees of hue rotation per palette row. 0 = off; NESdev
+    // estimates 2.5 for a 2C02E and 5 for a 2C02G.
+    "// #pragma parameter diff_phase \"Differential phase (deg/row; 2.5 = 2C02E, 5 = 2C02G)\" 0.0 0.0 10.0 0.5\n",
 );
 
 /// CRT / scanline post-process filter.

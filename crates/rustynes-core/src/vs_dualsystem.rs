@@ -64,6 +64,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::nes::Nes;
+use crate::rewind::{REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES, RewindRing};
 use crate::save_state::SnapshotError;
 use rustynes_mappers::RomError;
 
@@ -97,6 +98,25 @@ pub struct VsDualSystem {
     /// two blocks cannot be encoded straight into the container; they pass
     /// through this instead. Not state: never serialized, never compared.
     block_scratch: Vec<u8>,
+    /// v3.1.0 (`T-PS-dual-runahead`, ADR 0032 amendment of 2026-10-07) — the
+    /// cabinet's rewind ring, holding whole-cabinet `RVSD` containers.
+    /// `None` (the default) until a frontend opts in with
+    /// [`Self::enable_rewind`].
+    ///
+    /// The ring lives on the cabinet, not on either console, because the unit
+    /// of rewind is the cabinet: the two consoles share a 2 KiB WRAM and drive
+    /// each other's `/IRQ`, so stepping one back without the other produces a
+    /// cabinet from two timelines. Each console's own [`Nes`] ring stays
+    /// disabled. Not state: never serialized, never compared.
+    rewind: Option<RewindRing>,
+    /// When `false`, [`Self::run_frame`] skips the rewind capture. Run-ahead
+    /// clears it across its hidden and visible frames, so the ring holds the
+    /// persistent timeline only (the same contract as
+    /// [`Nes::set_rewind_capture`]).
+    rewind_capture_enabled: bool,
+    /// Reused buffer for the per-frame rewind capture (a cabinet container is
+    /// about 520 KB before the ring compresses it).
+    rewind_snap_buf: Vec<u8>,
 }
 
 impl VsDualSystem {
@@ -151,6 +171,9 @@ impl VsDualSystem {
             sub_bit1: false,
             comms_scratch: Vec::new(),
             block_scratch: Vec::new(),
+            rewind: None,
+            rewind_capture_enabled: true,
+            rewind_snap_buf: Vec::new(),
         };
         dual.wire();
         dual
@@ -264,6 +287,10 @@ impl VsDualSystem {
         // underlying `Nes` (none today) never observe a stale latch.
         let _ = self.main.bus_mut().take_frame_complete();
         let _ = self.sub.bus_mut().take_frame_complete();
+        // v3.1.0 — push the completed frame into the cabinet's rewind ring.
+        if self.rewind.is_some() && self.rewind_capture_enabled {
+            self.rewind_capture();
+        }
     }
 
     /// The main console's 256x240 RGBA8 framebuffer (the left screen).
@@ -368,6 +395,8 @@ impl VsDualSystem {
         self.comms_scratch.clear();
         self.block_scratch.clear();
         self.wire();
+        // The ring describes the timeline the power cycle just ended.
+        self.rewind_clear();
     }
 
     /// Serialize the dual system: a versioned container nesting the two
@@ -434,7 +463,31 @@ impl VsDualSystem {
     /// Returns [`SnapshotError`] on a bad container or when either nested
     /// console snapshot fails to restore. Both consoles are then unchanged
     /// (since v2.9.0; before it a rejected sub block left main restored).
+    ///
+    /// A successful restore empties the cabinet's rewind ring (v3.1.0): the
+    /// entries describe the timeline the restore replaced, as
+    /// [`Nes::restore`] treats its own ring.
     pub fn restore(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
+        self.restore_inner(data, false)?;
+        self.rewind_clear();
+        Ok(())
+    }
+
+    /// v3.1.0 (`T-PS-dual-runahead`) — [`Self::restore`] without its
+    /// side effects: the cabinet's rewind ring is kept, and each console is
+    /// restored with [`Nes::restore_quiet`] (no timeline-generation bump, no
+    /// rewind clear). For restores that return to the cabinet's own
+    /// timeline rather than replace it: run-ahead's rollback and a rewind
+    /// step. Same container, same all-or-nothing contract.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::restore`].
+    pub fn restore_quiet(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
+        self.restore_inner(data, true)
+    }
+
+    fn restore_inner(&mut self, data: &[u8], quiet: bool) -> Result<(), SnapshotError> {
         // A malformed dual container reports as an unsupported format with
         // the container version we could read (0 when even the header is
         // short) — the closest fit among the existing error variants until
@@ -488,8 +541,15 @@ impl VsDualSystem {
         // restores are.
         let mut main_backup = Vec::new();
         self.main.snapshot_core_into(&mut main_backup);
-        self.main.restore(main_block)?;
-        if let Err(e) = self.sub.restore(sub_block) {
+        let restore = |nes: &mut Nes, block: &[u8]| {
+            if quiet {
+                nes.restore_quiet(block)
+            } else {
+                nes.restore(block)
+            }
+        };
+        restore(&mut self.main, main_block)?;
+        if let Err(e) = restore(&mut self.sub, sub_block) {
             let rolled_back = self.main.restore_quiet(&main_backup);
             debug_assert!(
                 rolled_back.is_ok(),
@@ -519,6 +579,101 @@ impl VsDualSystem {
         self.sub.bus_mut().set_vs_dual_wram(wram.clone());
         self.main.bus_mut().set_vs_dual_wram(wram);
         Ok(())
+    }
+
+    /// v3.1.0 (`T-PS-dual-runahead`) — enable the cabinet's rewind ring with
+    /// the default byte budget and keyframe period.
+    pub fn enable_rewind(&mut self) {
+        self.enable_rewind_with(REWIND_DEFAULT_MAX_BYTES, REWIND_DEFAULT_KEYFRAME_PERIOD);
+    }
+
+    /// Enable the cabinet's rewind ring with an explicit byte budget and
+    /// keyframe period. Replaces (and so empties) any ring already enabled.
+    pub fn enable_rewind_with(&mut self, max_bytes: usize, keyframe_period: u32) {
+        self.rewind = Some(RewindRing::new(max_bytes, keyframe_period));
+    }
+
+    /// Disable the cabinet's rewind ring and free its memory.
+    pub fn disable_rewind(&mut self) {
+        self.rewind = None;
+        self.rewind_snap_buf = Vec::new();
+    }
+
+    /// `true` if the cabinet's rewind ring is enabled.
+    #[must_use]
+    pub const fn rewind_enabled(&self) -> bool {
+        self.rewind.is_some()
+    }
+
+    /// Number of buffered rewind entries (0 when rewind is disabled).
+    #[must_use]
+    pub fn rewind_len(&self) -> usize {
+        self.rewind.as_ref().map_or(0, RewindRing::len)
+    }
+
+    /// Turn the per-frame rewind capture in [`Self::run_frame`] on or off.
+    /// Run-ahead turns it off across its hidden and visible frames, which
+    /// are not the cabinet's timeline.
+    pub const fn set_rewind_capture(&mut self, enabled: bool) {
+        self.rewind_capture_enabled = enabled;
+    }
+
+    /// `true` while [`Self::run_frame`] captures into the rewind ring.
+    #[must_use]
+    pub const fn rewind_capture_enabled(&self) -> bool {
+        self.rewind_capture_enabled
+    }
+
+    /// Push the cabinet's current state into the rewind ring, keyed by the
+    /// main console's frame. [`Self::run_frame`] calls this after every
+    /// frame while capture is on; a no-op while rewind is disabled.
+    ///
+    /// Each entry is a whole `RVSD` container ([`Self::snapshot_into`]):
+    /// both consoles, framebuffers included, and the bit-1 latch. Unlike the
+    /// single console's ring, which stores SLIM entries and re-renders the
+    /// picture after a step back, the cabinet keeps the framebuffers in the
+    /// entry. That is what makes a step back exact for BOTH screens without
+    /// running the cabinet forward and back: a re-render would run the
+    /// five-cycle soft lockstep for a frame and restore again, twice the
+    /// work of a single console. The cost is two 245,760-byte framebuffers
+    /// per entry, which the ring's XOR delta and LZ4 reduce to the pixels
+    /// that changed since the last keyframe.
+    pub fn rewind_capture(&mut self) {
+        if self.rewind.is_none() {
+            return;
+        }
+        let frame = self.main.frame();
+        let mut buf = core::mem::take(&mut self.rewind_snap_buf);
+        self.snapshot_into(&mut buf);
+        if let Some(ring) = &mut self.rewind {
+            ring.push(frame, &buf);
+        }
+        self.rewind_snap_buf = buf;
+    }
+
+    /// Pop the most recent rewind entry and restore the cabinet to it, both
+    /// framebuffers included. Returns `true` on success and `false` when
+    /// the ring is empty, rewind is disabled, or the entry fails to decode
+    /// or restore (the cabinet is then unchanged, per [`Self::restore`]'s
+    /// all-or-nothing contract).
+    ///
+    /// The restore is quiet ([`Self::restore_quiet`]): the ring survives,
+    /// since the user is mid-rewind.
+    pub fn rewind_step_back(&mut self) -> bool {
+        let Some(ring) = self.rewind.as_mut() else {
+            return false;
+        };
+        let Some(Ok(bytes)) = ring.pop_back() else {
+            return false;
+        };
+        self.restore_quiet(&bytes).is_ok()
+    }
+
+    /// Drop every buffered rewind entry (the ring stays enabled).
+    pub fn rewind_clear(&mut self) {
+        if let Some(ring) = &mut self.rewind {
+            ring.clear();
+        }
     }
 }
 

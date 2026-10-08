@@ -14,8 +14,10 @@
 //! frontend (the `rustynes-gfx-shaders` crate), so the on-screen filter look matches
 //! across platforms: the `params` uniform selects None / Scanlines / CRT on one
 //! pipeline (None = a plain letterboxed blit), and a second pipeline runs the
-//! LMP88959 NTSC pass when `filter == 3`. Only the Bisqwit NTSC pass (which needs the
-//! `R16Uint` palette-index texture from the bridge) remains a follow-up.
+//! LMP88959 NTSC pass when `filter == 3`. A third pipeline runs the Bisqwit composite
+//! NTSC pass when `filter == 4`, reading the `R16Uint` palette-index texture the
+//! bridge supplies (`index_texture`, `bisqwit_pipeline`). This line called that pass
+//! a follow-up until v3.1.0, long after it landed.
 
 use ndk::native_window::NativeWindow;
 use raw_window_handle::{AndroidDisplayHandle, HasWindowHandle, RawDisplayHandle};

@@ -42,6 +42,16 @@ pub trait PpuBus {
         None
     }
 
+    /// v3.1.0 (`T-SPRITE-LIMIT`) — whether a CHR read through
+    /// [`Self::ppu_read`] / [`Self::ppu_read_sprite`] has no effect beyond
+    /// returning the byte. The "disable sprite limit" option makes extra,
+    /// display-only pattern reads, and only where this is `true`, so the
+    /// option can never change emulation. Default `true`; the core forwards the
+    /// mapper's answer (`Mapper::chr_reads_are_pure`).
+    fn chr_reads_are_pure(&self) -> bool {
+        true
+    }
+
     /// Write a byte at `addr`.
     fn ppu_write(&mut self, addr: u16, value: u8);
 

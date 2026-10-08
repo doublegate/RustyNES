@@ -25,9 +25,26 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from pathlib import Path
+
+
+def _extract_catalog():
+    """Load the sibling `extract_catalog.py`, which owns the row grammar.
+
+    Since upstream `f5f41dc2` a suite's rows come in three macros (`table`,
+    `tblf1`, `tblf2`), and the last two name a test by a one-byte token the
+    ROM expands from `PrintTextSpecialStrings`. Two copies of that grammar
+    would drift apart exactly as the hand-kept suite map did, so this script
+    reuses the extractor's patterns and token table rather than its own.
+    """
+    path = Path(__file__).resolve().with_name("extract_catalog.py")
+    spec = importlib.util.spec_from_file_location("extract_catalog", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # Upstream's "this test is not in the all-test-result-table" marker. Five
@@ -60,7 +77,15 @@ def parse(asm: str):
     if not order:
         sys.exit("derive_indices: TableTable parsed to nothing -- refusing to guess")
 
-    # --- each suite's own `table` lines give the test order -----------------
+    # --- each suite's own row lines give the test order --------------------
+    ec = _extract_catalog()
+    words = ec.special_words(asm)
+
+    def word(token: str) -> str:
+        if token not in words:
+            sys.exit(f"derive_indices: row uses {token}, which has no definition")
+        return words[token]
+
     bodies: dict[str, list[tuple[str, str]]] = {}
     cur: str | None = None
     for ln in lines:
@@ -78,6 +103,22 @@ def parse(asm: str):
         m = re.match(r'\s*table\s+"([^"]+)"\s*,\s*\$FF\s*,\s*(result_[A-Za-z0-9_]+)', ln)
         if m and cur:
             bodies[cur].append((m.group(1), m.group(2)))
+            continue
+        m = ec.RE_TBLF1_ROW.match(ln)
+        if m and cur:
+            bodies[cur].append((f"{m.group(1)} {word(m.group(2))}", m.group(3)))
+            continue
+        m = ec.RE_TBLF2_ROW.match(ln)
+        if m and cur:
+            bodies[cur].append(
+                (f"{m.group(1)} {word(m.group(2))}{m.group(3)}", m.group(4))
+            )
+            continue
+        # FAIL CLOSED: a row-shaped macro no pattern read would shift every
+        # later test index in its suite, and a sub-test ROM built from a
+        # shifted index runs the wrong test and writes a plausible byte.
+        if cur and ec.RE_ANY_ROW.match(ln):
+            sys.exit(f"derive_indices: {cur} has a row this script cannot read: {ln.strip()}")
 
     # --- result label -> address -------------------------------------------
     results: dict[str, int] = {}
@@ -106,14 +147,43 @@ def _recorded_validations() -> list[str]:
     """Recorded (suite, test, name) rows as `--validate` specs, or []."""
     if not PROVENANCE_TSV.is_file():
         return []
+    # Columns are found by NAME from the generator's schema line
+    # (`# rom<TAB>enc_suite<TAB>enc_test<TAB>result_addr<TAB>entry...`). Until
+    # v3.1.0 they were taken by position as (rom, suite, test, name), which
+    # went stale when `subtest_identify` added `result_addr` as column 3: every
+    # validation then compared a test name against an address and failed, so
+    # this script refused to run at all.
+    text = PROVENANCE_TSV.read_text(encoding="utf-8").splitlines()
+    names = ["rom", "enc_suite", "enc_test", "entry"]
+    for line in text:
+        head = line.lstrip("#").strip().split("\t")
+        if line.startswith("#") and head and head[0] == "rom" and "entry" in head:
+            names = head
+    try:
+        i_suite, i_test, i_name = (
+            names.index("enc_suite"), names.index("enc_test"), names.index("entry")
+        )
+    except ValueError:
+        sys.exit(f"derive_indices: {PROVENANCE_TSV.name} schema lacks enc_suite/enc_test/entry")
+    # A `legacy-unrecorded` row's indices were encoded against an upstream
+    # source nobody wrote down -- `implied-dummy-reads` is suite 19 test 1 in
+    # a build whose suite order predates the reorder -- so it is evidence
+    # about THAT source, not this one, and validating against it fails for a
+    # reason unrelated to the parser. Only rows with a recorded build commit
+    # are hand-checked answers.
+    i_commit = names.index("upstream_commit") if "upstream_commit" in names else None
     out = []
-    for line in PROVENANCE_TSV.read_text(encoding="utf-8").splitlines():
+    for line in text:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         cols = line.split("\t")
-        if len(cols) < 4:
+        if len(cols) <= max(i_suite, i_test, i_name):
             continue
-        _rom, suite, test, name = cols[0], cols[1], cols[2], cols[3]
+        if i_commit is not None and (
+            len(cols) <= i_commit or cols[i_commit].strip().startswith("legacy")
+        ):
+            continue
+        suite, test, name = cols[i_suite], cols[i_test], cols[i_name]
         if suite.strip().isdigit() and test.strip().isdigit():
             out.append(f"{suite.strip()}:{test.strip()}:{name.strip()}")
     return out

@@ -115,6 +115,12 @@ impl Bandai96 {
 }
 
 impl Mapper for Bandai96 {
+    /// v3.1.0: not pure -- its inner CHR bank follows the last PPU address read, so the PPU's display-only
+    /// "disable sprite limit" reads are not made on this board.
+    fn chr_reads_are_pure(&self) -> bool {
+        false
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

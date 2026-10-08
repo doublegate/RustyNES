@@ -1856,6 +1856,34 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         save_config(config);
     }
 
+    // v3.1.0 — the MMC3 IRQ revision for mapper-4 games (`auto` = the header).
+    // Like the console model it takes effect at the next ROM load or power
+    // cycle, through the same push.
+    {
+        use crate::config::Mmc3IrqRevision as R;
+        let label = |r: R| match r {
+            R::Auto => crate::t!(SetMmc3RevAuto).to_string(),
+            R::Sharp => crate::t!(SetMmc3RevSharp).to_string(),
+            R::Alternate => crate::t!(SetMmc3RevAlternate).to_string(),
+        };
+        let before = config.emulation.mmc3_irq_revision;
+        ui.horizontal(|ui| {
+            ui.label(crate::t!(SetMmc3Revision))
+                .on_hover_text(crate::t!(SetMmc3RevisionHover));
+            egui::ComboBox::from_id_salt("emu-mmc3-revision")
+                .selected_text(label(before))
+                .show_ui(ui, |ui| {
+                    for r in [R::Auto, R::Sharp, R::Alternate] {
+                        ui.selectable_value(&mut config.emulation.mmc3_irq_revision, r, label(r));
+                    }
+                });
+        });
+        if config.emulation.mmc3_irq_revision != before {
+            state.apply.console_model = true;
+            save_config(config);
+        }
+    }
+
     // v2.2.3 — the specialized PPU fast dot path. NOT an accuracy toggle: both
     // paths emit the identical framebuffer/audio/cycle count (pinned every frame
     // by `fast_dotloop_diff`), so this is a performance selector with an escape
@@ -1931,13 +1959,17 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         .show(ui, |ui| {
             ui.weak(crate::t!(SetEnhancementsNote));
 
-            let mut changed = false;
-            changed |= ui
+            // v3.1.0: live. The checkbox pushes through the same apply flag as
+            // the overclocks (`App::apply_overclock`).
+            let mut changed = ui
                 .checkbox(
                     &mut config.enhancements.disable_sprite_limit,
                     crate::t!(SetDisableSpriteLimit),
                 )
                 .changed();
+            if changed {
+                state.apply.overclock = true;
+            }
             ui.indent("enh-sprite-note", |ui| {
                 ui.weak(crate::t!(SetEnhSpriteInert));
             });
@@ -1958,6 +1990,42 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
             });
             ui.indent("enh-overclock-note", |ui| {
                 ui.weak(crate::t!(SetEnhOverclockNote));
+            });
+
+            // v3.1.0 (`T-CPU-OVERCLOCK`): the CPU-multiplier overclock. 0 and 1
+            // both mean stock; the combo writes 0 for stock so an untouched
+            // config stays at its default.
+            ui.horizontal(|ui| {
+                ui.label(crate::t!(SetCpuOverclock));
+                // Clamped as the core clamps it, so a hand-edited config
+                // shows the multiplier that actually runs.
+                let current = config
+                    .enhancements
+                    .cpu_overclock
+                    .clamp(1, rustynes_core::MAX_CPU_OVERCLOCK);
+                let label = |k: u8| {
+                    if k == 1 {
+                        crate::t!(SetCpuOverclockOff).to_string()
+                    } else {
+                        format!("x{k}")
+                    }
+                };
+                let mut chosen = current;
+                egui::ComboBox::from_id_salt("enh-cpu-overclock")
+                    .selected_text(label(current))
+                    .show_ui(ui, |ui| {
+                        for k in 1..=rustynes_core::MAX_CPU_OVERCLOCK {
+                            ui.selectable_value(&mut chosen, k, label(k));
+                        }
+                    });
+                if chosen != current {
+                    config.enhancements.cpu_overclock = if chosen == 1 { 0 } else { chosen };
+                    state.apply.overclock = true;
+                    changed = true;
+                }
+            });
+            ui.indent("enh-cpu-overclock-note", |ui| {
+                ui.weak(crate::t!(SetEnhCpuOverclockNote));
             });
 
             // The max-rewind window cross-links the Rewind group above (the
@@ -2019,9 +2087,11 @@ mod tests {
         let mut state = SettingsPanelState::default();
         let mut config = Config::default();
         config.enhancements.overclock_scanlines = 40;
+        config.enhancements.cpu_overclock = 3;
         config.emulation.famicom_console = true;
         reset_advanced(&mut state, &mut config);
         assert_eq!(config.enhancements.overclock_scanlines, 0);
+        assert_eq!(config.enhancements.cpu_overclock, 0, "back to stock");
         assert!(!config.emulation.famicom_console, "back to the NES model");
         let apply = state.take_apply();
         assert!(apply.overclock, "the reset overclock reaches the core");

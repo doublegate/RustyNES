@@ -27,7 +27,7 @@
 //! and four things are checked:
 //!
 //! 1. the raw `$0300-$04FF` window is byte-identical between the two ROMs;
-//! 2. the decoded 149-entry status vector is identical entry for entry;
+//! 2. the decoded 151-entry status vector is identical entry for entry;
 //! 3. the mirror at `$6000-$61FF` reproduces the patched run's own live window;
 //! 4. the mirror is not vacuous.
 //!
@@ -197,12 +197,12 @@ fn end_to_end_through_the_comparator(oracle_ram: &[u8], hardware_shaped_sav: &[u
          and the mirrored save.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     // And the coverage is full, read off the comparator's own sentence rather
-    // than inferred from its exit code. 144 scored rows, all executed on both
+    // than inferred from its exit code. 146 scored rows, all executed on both
     // sides -- the catalog's other five share upstream's omit-sentinel
     // `result_DrawTest` and are excluded by the catalog, not waived here.
     assert!(
-        stdout.contains("144 of 144 scored entries executed on both sides"),
-        "the comparator's coverage sentence is not the expected 144 of 144.\nstdout:\n{stdout}"
+        stdout.contains("146 of 146 scored entries executed on both sides"),
+        "the comparator's coverage sentence is not the expected 146 of 146.\nstdout:\n{stdout}"
     );
     assert!(
         stdout.contains("(0 on neither"),
