@@ -341,6 +341,15 @@ pub trait Mapper: Send {
         true
     }
 
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`, ACC-13) — force an MMC3's IRQ revision
+    /// (`Some`), or return to the one its header selected (`None`). Returns
+    /// whether this board is an MMC3 that applied it; every other board
+    /// ignores it (the default). Lets an iNES 1.0 dump, which cannot name its
+    /// MMC3 revision, run under the alternate (`Nec`) behaviour.
+    fn set_mmc3_revision_override(&mut self, _revision: Option<crate::Mmc3Revision>) -> bool {
+        false
+    }
+
     /// Write a byte to the PPU address space `$0000-$3FFF`.
     fn ppu_write(&mut self, addr: u16, value: u8);
 

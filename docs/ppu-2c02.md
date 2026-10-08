@@ -656,6 +656,15 @@ change core rendering tests.
 
 PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis) are applied through the 512-entry `rgba_lut`, per pixel during emission.
 
+**PAL and Dendy swap bits 5 and 6 (v3.1.0, `T-PAL-EMPHASIS`).** NESdev "Colour emphasis":
+bit 5 emphasises red on the NTSC 2C02 and **green** on the PAL 2C07 and the Dendy, bit 6 the
+reverse, and bit 7 is blue on all three. `emit_pixel` therefore forms the emphasis index as the
+PHYSICAL tint (bit 0 red, bit 1 green, bit 2 blue), exchanging bits 5 and 6 off NTSC, and
+both framebuffers carry it, so the composite filters see the right tint as well. Until
+v3.1.0 every PAL or Dendy game that set emphasis showed the wrong colour. Pinned by
+`pal_and_dendy_swap_the_red_and_green_emphasis_bits`. The MiSTer core has no PAL mode, so
+there is no RTL counterpart.
+
 **Emphasis model (v2.9.8, `T-EMPHASIS-MODEL`).** The hardware has one attenuator shared by
 the three bits, armed during the phases of colours `$C`, `$4` and `$8` for bits 5, 6 and 7,
 so it runs 6, 10 or 12 of the 12 colour phases for one, two or three bits, and it never

@@ -3101,6 +3101,31 @@ impl Nes {
         self.bus.sprite_limit_disabled()
     }
 
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`, ACC-13) — run an MMC3 (mapper 4) under
+    /// a chosen IRQ revision, or `None` for the one its header selects.
+    ///
+    /// The MMC3's two IRQ behaviours are mutually exclusive: the Sharp MMC3B
+    /// / MMC3C (the default) asserts IRQ when the counter is reloaded to 0, the
+    /// MMC3A and non-Sharp MMC3B (`Mmc3Revision::Nec`) only on a 1 -> 0
+    /// decrement. A NES 2.0 header can say which (submapper 4); an iNES 1.0
+    /// dump cannot, so this override is how a player runs a game, or blargg's
+    /// `mmc3_test_2/6-MMC3_alt`, on the other chip. The default (`None`) is
+    /// unchanged. Configuration, re-applied when a power cycle rebuilds the
+    /// board, and carried in [`crate::HardwareOptions`]. Returns whether the
+    /// board is one that applies it.
+    pub fn set_mmc3_revision_override(
+        &mut self,
+        revision: Option<rustynes_mappers::Mmc3Revision>,
+    ) -> bool {
+        self.bus.set_mmc3_revision_override(revision)
+    }
+
+    /// v3.1.0 — the forced MMC3 IRQ revision (`None` = the header's).
+    #[must_use]
+    pub const fn mmc3_revision_override(&self) -> Option<rustynes_mappers::Mmc3Revision> {
+        self.bus.mmc3_revision_override()
+    }
+
     /// v1.7.0 F3 — the configured extra-scanline overclock count (`0` = stock).
     #[must_use]
     pub const fn extra_scanlines(&self) -> u16 {

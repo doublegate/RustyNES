@@ -141,6 +141,9 @@ pub struct HardwareOptions {
     /// Draw the sprites beyond the eighth on a scanline
     /// ([`Nes::set_sprite_limit_disabled`]); render-only. v3.1.0.
     pub sprite_limit_disabled: bool,
+    /// A forced MMC3 IRQ revision ([`Nes::set_mmc3_revision_override`]);
+    /// `None` = the header's. v3.1.0.
+    pub mmc3_revision: Option<rustynes_mappers::Mmc3Revision>,
     /// Whether the Four Score adapter is plugged in ([`Nes::set_four_score`]).
     /// It changes `$4016` / `$4017` reads 9-24 even with players 3/4 idle.
     pub four_score: bool,
@@ -173,6 +176,7 @@ impl Default for HardwareOptions {
             extra_scanlines: 0,
             cpu_overclock: 1,
             sprite_limit_disabled: false,
+            mmc3_revision: None,
             four_score: false,
             // The core's own default since v2.2.x (`zapper_temporal_light`
             // is on in a freshly-built `Nes`); the stock machine, not `false`.
@@ -199,6 +203,7 @@ impl HardwareOptions {
             extra_scanlines: nes.extra_scanlines(),
             cpu_overclock: nes.cpu_overclock(),
             sprite_limit_disabled: nes.sprite_limit_disabled(),
+            mmc3_revision: nes.mmc3_revision_override(),
             four_score: nes.four_score(),
             zapper_temporal_light: nes.zapper_temporal_light(),
             vs_dip: nes.vs_dip(),
@@ -259,6 +264,9 @@ impl HardwareOptions {
         }
         if nes.sprite_limit_disabled() != self.sprite_limit_disabled {
             nes.set_sprite_limit_disabled(self.sprite_limit_disabled);
+        }
+        if nes.mmc3_revision_override() != self.mmc3_revision {
+            nes.set_mmc3_revision_override(self.mmc3_revision);
         }
         if nes.four_score() != self.four_score {
             nes.set_four_score(self.four_score);
@@ -327,9 +335,10 @@ impl HardwareOptions {
     ///
     /// Layout (all little-endian): console model, PPU revision, 2A03
     /// revision, OAM decay, power-on RAM kind + `u64` payload, power-up
-    /// palette, extra scanlines (`u16`), CPU overclock and the sprite-limit
-    /// flag (both since `.rnm` format 6 and netplay protocol 7, v3.1.0), Four
-    /// Score, Zapper light model, Vs.
+    /// palette, extra scanlines (`u16`), CPU overclock, the sprite-limit flag
+    /// and the MMC3 revision override (`0` = header, `1` = Sharp, `2` = the
+    /// alternate; all three since `.rnm` format 6 and netplay protocol 7,
+    /// v3.1.0), Four Score, Zapper light model, Vs.
     /// DIP, Vs. PPU type (`0xFF` = the header's), mirroring override (`0` =
     /// none, else variant + 1), then a code count and each Game Genie code as
     /// a length byte plus ASCII. Every enum is an explicit byte, never a
@@ -363,6 +372,11 @@ impl HardwareOptions {
         w.u16(self.extra_scanlines);
         w.u8(self.cpu_overclock);
         w.u8(u8::from(self.sprite_limit_disabled));
+        w.u8(match self.mmc3_revision {
+            None => 0,
+            Some(rustynes_mappers::Mmc3Revision::Sharp) => 1,
+            Some(rustynes_mappers::Mmc3Revision::Nec) => 2,
+        });
         w.u8(u8::from(self.four_score));
         w.u8(u8::from(self.zapper_temporal_light));
         w.u8(self.vs_dip);
@@ -433,6 +447,12 @@ impl HardwareOptions {
             return Err("CPU overclock is outside 1..=MAX_CPU_OVERCLOCK");
         }
         let sprite_limit_disabled = flag(r, "sprite-limit flag is not 0 or 1")?;
+        let mmc3_revision = match byte(r)? {
+            0 => None,
+            1 => Some(rustynes_mappers::Mmc3Revision::Sharp),
+            2 => Some(rustynes_mappers::Mmc3Revision::Nec),
+            _ => return Err("unknown MMC3 revision byte"),
+        };
         let four_score = flag(r, "Four Score flag is not 0 or 1")?;
         let zapper_temporal_light = flag(r, "Zapper light flag is not 0 or 1")?;
         let vs_dip = byte(r)?;
@@ -469,6 +489,7 @@ impl HardwareOptions {
             extra_scanlines,
             cpu_overclock,
             sprite_limit_disabled,
+            mmc3_revision,
             four_score,
             zapper_temporal_light,
             vs_dip,
@@ -518,6 +539,7 @@ impl HardwareOptions {
             self.sprite_limit_disabled != other.sprite_limit_disabled,
             "sprite limit",
         );
+        check(self.mmc3_revision != other.mmc3_revision, "MMC3 revision");
         check(self.four_score != other.four_score, "Four Score");
         check(
             self.zapper_temporal_light != other.zapper_temporal_light,
@@ -814,6 +836,7 @@ mod tests {
             extra_scanlines: 40,
             cpu_overclock: 3,
             sprite_limit_disabled: true,
+            mmc3_revision: Some(rustynes_mappers::Mmc3Revision::Nec),
             four_score: true,
             zapper_temporal_light: false,
             vs_dip: 0xA5,

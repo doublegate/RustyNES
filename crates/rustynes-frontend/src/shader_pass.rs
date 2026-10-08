@@ -727,6 +727,8 @@ impl ShaderStack {
                     u[12] = pv(2, 1.0); // knobs.x  = brightness
                     u[13] = pv(3, 1.0); // knobs.y  = contrast
                     u[14] = pv(4, 0.0); // knobs.z  = hue
+                    // v3.1.0: knobs.w = differential phase, degrees -> radians.
+                    u[15] = pv(5, 0.0).to_radians();
                 }
                 BuiltinPass::Ntsc => {}
             }
@@ -1021,12 +1023,22 @@ mod tests {
             ("crt-royale", 7usize),
             ("crt-guest", 7),
             ("megatron", 7),
-            ("signal-decode", 5),
+            ("signal-decode", 6),
         ] {
             let p = BuiltinPass::from_id(id).unwrap_or_else(|| panic!("{id} must resolve"));
             assert_eq!(p.id(), id);
             assert_eq!(p.params().len(), min_params, "{id} param count");
         }
+        // v3.1.0 (`T-COMPOSITE-ARTIFACTS`): the sixth signal-decode knob is the
+        // differential phase, and it defaults to OFF, so a saved stack decodes
+        // exactly as it did.
+        let params = BuiltinPass::SignalDecode.params();
+        let dp = params.last().expect("six params");
+        assert_eq!(dp.name, "diff_phase");
+        assert!(
+            dp.default.abs() < f32::EPSILON,
+            "differential phase is off by default"
+        );
     }
 
     #[test]

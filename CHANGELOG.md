@@ -50,6 +50,12 @@ cycle-accurate core later replaced.
     in-range X (it always realigned). The old ROM recorded these failures as
     a pass: its fail path returned into the test without popping the return
     address, fixed upstream in `adacbc23`.
+- **PAL and Dendy games that use colour emphasis show the right tint.** On the
+  PAL 2C07 and the Dendy, PPUMASK bits 5 and 6 swap meaning (green and red);
+  every PAL or Dendy game that set emphasis was tinted the wrong way.
+- **The alternate MMC3 IRQ revision fires on a `$C001` reload to 0**, as the
+  MMC3A and non-Sharp MMC3B do (NES 2.0 submapper 4, and mapper 12). Sharp,
+  the default, is unchanged.
 - **The AccuracyCoin tooling reads upstream's new row macros.**
   `extract_catalog.py` returned 85 of 151 rows and exited 0 when upstream
   compressed the unofficial-opcode rows into `tblf1` / `tblf2`; it now
@@ -78,6 +84,14 @@ cycle-accurate core later replaced.
   sprite fetches and every CPU cycle stay exact. It is skipped on the five
   boards whose pattern reads change the cartridge (MMC2, MMC4, the J.Y. ASIC,
   Bandai 96, Nanjing 163).
+- **Differential phase distortion in the raw NTSC signal decode**
+  (`T-COMPOSITE-ARTIFACTS`): a new "Differential phase" slider rotates brighter
+  colours' hue as the NES PPU does (about 2.5° per palette row on a 2C02E, 5° on
+  a 2C02G). Off by default; display only.
+- **MMC3 IRQ revision setting** (`T-MMC3-NEC-OVERRIDE`, Settings > Emulation):
+  run any mapper-4 game on the Sharp or the alternate (MMC3A / NEC) chip, for
+  dumps whose header cannot say which. blargg's `mmc3_test_2/6-MMC3_alt` passes
+  under the alternate setting. Carried in movies and netplay.
 - **A test now enforces the emulation-epoch rule** (`T-EPOCH-FINGERPRINT`).
   It fingerprints seven test ROMs (frames, audio, RAM, CPU cycles) and fails
   when that output moves while `EMULATION_EPOCH` still equals the last

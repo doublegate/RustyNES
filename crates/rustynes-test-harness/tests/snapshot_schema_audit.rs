@@ -502,6 +502,13 @@ const CHIPS: &[Chip] = &[
                 "config: the v3.1.0 CPU-multiplier overclock, re-applied by the host and \
                  carried in `HardwareOptions`, like the extra-scanline overclock",
             ),
+            (
+                "mmc3_revision_override",
+                "config: the v3.1.0 MMC3 IRQ-revision setting, re-applied by the host and \
+                 carried in `HardwareOptions`; the bus keeps it only to re-apply it to the \
+                 mapper a power cycle rebuilds. A restore loads into the live mapper, whose \
+                 revision the override already set",
+            ),
             // --- Opt-in hardware knobs, re-applied by the host on load.
             (
                 "power_on_ram",

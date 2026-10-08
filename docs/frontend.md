@@ -740,6 +740,20 @@ waterfall/dither transparency tricks. Off by default (a deliberate visual
 choice, re-blessed like the generated palette); the default framebuffer +
 `visual_regression` corpus stay byte-identical.
 
+**Differential phase distortion (v3.1.0, `T-COMPOSITE-ARTIFACTS`, ACC-02).** The
+signal-decode pass's sixth knob, `diff_phase` (degrees per palette row, default
+**0 = off**), rotates the demodulated hue by that angle times the centre pixel's
+palette row (0-3), in the direction of a delay. NESdev "NTSC video": the PPU's
+level-dependent output impedance delays the chroma phase more at brighter
+levels, "about 2.5° (2C02E) or 5° (2C02G) of additional rotation for each row of
+the palette". Greys carry no chroma and are unaffected. The other composite
+artifact the page describes, colour error between neighbouring pixels (8
+clocks per pixel against a 12-clock colour cycle), is what this pass already
+reproduces by decoding the true signal, so v3.1.0 adds only the distortion.
+Presentation only: no emulated byte changes, so no epoch rise. The mobile and
+web hosts write the knob as 0 and do not expose it; the CPU Bisqwit filter
+does not model it.
+
 **Vs. `DualSystem` two-screen presentation (v2.1.2 F2.1).** A loaded Vs.
 `DualSystem` cabinet (Balloon Fight / Wrecking Crew / Tennis / Baseball) runs both
 cross-wired consoles and presents them together. The core dual engine
@@ -1025,8 +1039,9 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   netplay drive sites call `force_stock_timing` before a tick, because every
   peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
-  own `Nes` and never sets it. **Disable sprite limit** is still inert: the core
-  has no hook for it. The **Accuracy** group above it carries OAM decay and,
+  own `Nes` and never sets it. **Disable sprite limit** reaches the core since
+  v3.1.0 (`Nes::set_sprite_limit_disabled`, applied beside the v3.1.0 CPU
+  overclock outside a movie session; until then the setting was inert). The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
   `console_model_for` maps it to `rustynes_core::ConsoleModel`;

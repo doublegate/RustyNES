@@ -583,6 +583,10 @@ pub struct SystemBus {
     /// extra-scanline overclock: not part of the save-state, re-applied by
     /// the host (and by a movie's or netplay session's options record).
     cpu_overclock: u8,
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`): a forced MMC3 IRQ revision, or `None`
+    /// for the header's. Configuration, re-applied to every mapper the bus
+    /// builds (a power cycle rebuilds it); only mapper 4 acts on it.
+    mmc3_revision_override: Option<rustynes_mappers::Mmc3Revision>,
     /// The master clocks one CPU cycle takes under the overclock:
     /// `cpu_div_cached / cpu_overclock`, rounded down, so `x3` on PAL (16)
     /// is 5 (x3.2) and `x2` on Dendy (15) is 7 (x2.14). Equals
@@ -1002,6 +1006,7 @@ impl SystemBus {
             cpu_div_cached,
             ppu_div_cached,
             cpu_overclock: 1,
+            mmc3_revision_override: None,
             cpu_div_effective: cpu_div_cached,
             overclock_debt: 0,
             apu_cycle: 0,
@@ -1280,6 +1285,12 @@ impl SystemBus {
                 // fresh mapper instance (same type, same flags, but keep
                 // the invariant mechanical).
                 self.mapper_caps = self.mapper.caps();
+                // v3.1.0: a fresh board starts on its header's MMC3 revision;
+                // the override is configuration and carries over.
+                if self.mmc3_revision_override.is_some() {
+                    self.mapper
+                        .set_mmc3_revision_override(self.mmc3_revision_override);
+                }
             }
             self.rom_bytes = Some(bytes);
         }
@@ -1419,6 +1430,23 @@ impl SystemBus {
     #[must_use]
     pub const fn cpu_overclock(&self) -> u8 {
         self.cpu_overclock
+    }
+
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`) — force the MMC3 IRQ revision, or
+    /// `None` for the header's. Returns whether the board applied it (only an
+    /// MMC3, mapper 4, does); the setting is kept either way.
+    pub fn set_mmc3_revision_override(
+        &mut self,
+        revision: Option<rustynes_mappers::Mmc3Revision>,
+    ) -> bool {
+        self.mmc3_revision_override = revision;
+        self.mapper.set_mmc3_revision_override(revision)
+    }
+
+    /// v3.1.0 — the forced MMC3 IRQ revision (`None` = the header's).
+    #[must_use]
+    pub const fn mmc3_revision_override(&self) -> Option<rustynes_mappers::Mmc3Revision> {
+        self.mmc3_revision_override
     }
 
     /// v3.1.0 (`T-SPRITE-LIMIT`) — draw the sprites beyond the eighth on a

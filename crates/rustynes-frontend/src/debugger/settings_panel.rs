@@ -1856,6 +1856,34 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         save_config(config);
     }
 
+    // v3.1.0 — the MMC3 IRQ revision for mapper-4 games (`auto` = the header).
+    // Like the console model it takes effect at the next ROM load or power
+    // cycle, through the same push.
+    {
+        use crate::config::Mmc3IrqRevision as R;
+        let label = |r: R| match r {
+            R::Auto => crate::t!(SetMmc3RevAuto).to_string(),
+            R::Sharp => crate::t!(SetMmc3RevSharp).to_string(),
+            R::Alternate => crate::t!(SetMmc3RevAlternate).to_string(),
+        };
+        let before = config.emulation.mmc3_irq_revision;
+        ui.horizontal(|ui| {
+            ui.label(crate::t!(SetMmc3Revision))
+                .on_hover_text(crate::t!(SetMmc3RevisionHover));
+            egui::ComboBox::from_id_salt("emu-mmc3-revision")
+                .selected_text(label(before))
+                .show_ui(ui, |ui| {
+                    for r in [R::Auto, R::Sharp, R::Alternate] {
+                        ui.selectable_value(&mut config.emulation.mmc3_irq_revision, r, label(r));
+                    }
+                });
+        });
+        if config.emulation.mmc3_irq_revision != before {
+            state.apply.console_model = true;
+            save_config(config);
+        }
+    }
+
     // v2.2.3 — the specialized PPU fast dot path. NOT an accuracy toggle: both
     // paths emit the identical framebuffer/audio/cycle count (pinned every frame
     // by `fast_dotloop_diff`), so this is a performance selector with an escape

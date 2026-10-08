@@ -5245,7 +5245,17 @@ impl Ppu {
         // call for both the 2C02 composite default and the Vs./PC10 RGB
         // palettes) and store all four bytes with one bounds-checked slice
         // copy instead of four indexed stores.
-        let emph = usize::from((self.mask.bits() >> 5) & 0x07);
+        // v3.1.0 (`T-PAL-EMPHASIS`): the index is the PHYSICAL tint (bit 0
+        // red, bit 1 green, bit 2 blue). PPUMASK bit 5 is red on the NTSC 2C02
+        // and GREEN on the PAL 2C07 and the Dendy, bit 6 the reverse (NESdev
+        // "Colour emphasis"), so those two exchange off NTSC. The region is
+        // fixed per console, so the branch is constant.
+        let raw = (self.mask.bits() >> 5) & 0x07;
+        let emph = usize::from(if matches!(self.region, PpuRegion::Ntsc) {
+            raw
+        } else {
+            (raw & 0b100) | ((raw & 0b001) << 1) | ((raw & 0b010) >> 1)
+        });
         let lut_idx = (emph << 6) | usize::from(final_idx);
         let rgba = self.rgba_lut[lut_idx];
         self.framebuffer[off..off + 4].copy_from_slice(&rgba);
@@ -7036,6 +7046,57 @@ mod tests {
         // Drive past the post-reset masking window.
         ppu.post_reset_mask_remaining = 0;
         (ppu, TestBus::new())
+    }
+
+    /// v3.1.0 (`T-PAL-EMPHASIS`, ACC-01): on the PAL (2C07) and Dendy PPUs
+    /// PPUMASK bits 5 and 6 swap meaning. `NESdev` "Colour emphasis": "Bit 5
+    /// emphasizes red on the NTSC PPU, and green on the PAL & Dendy PPUs. Bit 6
+    /// emphasizes green on the NTSC PPU, and red on the PAL & Dendy PPUs. Bit 7
+    /// emphasizes blue on the NTSC, PAL, & Dendy PPUs." The emphasis index the
+    /// renderer and the composite filters receive is the PHYSICAL tint (bit 0
+    /// red, bit 1 green, bit 2 blue), so on PAL / Dendy it is the mask's bits
+    /// with 5 and 6 exchanged.
+    #[test]
+    fn pal_and_dendy_swap_the_red_and_green_emphasis_bits() {
+        let cases = [
+            (PpuMask::EMPHASIZE_RED, 0b001u16, 0b010u16),
+            (PpuMask::EMPHASIZE_GREEN, 0b010, 0b001),
+            (PpuMask::EMPHASIZE_BLUE, 0b100, 0b100),
+            (
+                PpuMask::EMPHASIZE_RED | PpuMask::EMPHASIZE_BLUE,
+                0b101,
+                0b110,
+            ),
+        ];
+        for region in [PpuRegion::Ntsc, PpuRegion::Pal, PpuRegion::Dendy] {
+            for (mask, ntsc, swapped) in cases {
+                let mut p = Ppu::new(region);
+                p.post_reset_mask_remaining = 0;
+                p.mask = mask; // rendering off: the pixel is the backdrop
+                p.palette_ram[palette_index(0x3F00)] = 0x21;
+                p.scanline = 10;
+                p.dot = 20;
+                p.emit_pixel();
+                let got = p.index_framebuffer[10 * 256 + 19];
+                let want_emph = if region == PpuRegion::Ntsc {
+                    ntsc
+                } else {
+                    swapped
+                };
+                assert_eq!(
+                    got,
+                    (want_emph << 6) | 0x21,
+                    "{region:?}, mask {:#04x}: emphasis index",
+                    mask.bits()
+                );
+                let off = (10usize * 256 + 19) * 4;
+                assert_eq!(
+                    &p.framebuffer[off..off + 4],
+                    &p.rgba_lut[usize::from(got)],
+                    "{region:?}: the RGBA pixel follows the same index"
+                );
+            }
+        }
     }
 
     // F1.1 (Fathom accuracy remediation) — palette backdrop-override.

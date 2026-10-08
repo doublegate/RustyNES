@@ -610,6 +610,13 @@ fn gtrom_flash_is_a_battery_save() {
 /// disables IRQ", `NES_2_0_submappers.md`); submapper 0 is the Sharp one, which
 /// fires every scanline at a latch of 0. Until v2.9.6 the two were swapped with
 /// submapper 1.
+///
+/// v3.1.0: "disables" is the submapper table's shorthand. `MMC3.md` is exact:
+/// the NEC part "generates only a single IRQ when `$C000` is `$00`", and
+/// "writing to `$C001` with `$C000` still at `$00` will result in another
+/// single IRQ" (blargg's `6-MMC3_alt`: "IRQ should be set when reloading due
+/// to clear"). The arm sequence writes `$C001` once, so NEC gives exactly one
+/// IRQ and then none; before v3.1.0 this test asserted zero.
 #[test]
 fn mmc3_submapper_4_is_nec_and_0_is_sharp() {
     let arm = [
@@ -632,7 +639,11 @@ fn mmc3_submapper_4_is_nec_and_0_is_sharp() {
         .run(0)
         .1
     };
-    assert_eq!(run(4), 0, "NEC: a latch of 0 stops IRQs");
+    assert_eq!(
+        run(4),
+        1,
+        "NEC: a latch of 0 gives the one IRQ the $C001 write produces, then stops"
+    );
     assert!(run(0) > 0, "Sharp: a latch of 0 fires every clock");
 }
 

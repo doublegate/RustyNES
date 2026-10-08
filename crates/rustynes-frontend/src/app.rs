@@ -538,6 +538,9 @@ fn push_ppu_hardware_config(config: &crate::config::Config, nes: &mut Nes) {
     // pushing it here is purely about honouring the user's escape hatch.
     // Default on.
     nes.set_fast_dotloop(config.emulation.fast_dotloop);
+    // v3.1.0 — the MMC3 IRQ revision override (`auto` leaves the header's).
+    // A board, not a timing knob: only mapper 4 acts on it.
+    nes.set_mmc3_revision_override(config.emulation.mmc3_irq_revision.to_core());
 }
 
 /// v2.9.8 — the `[emulation] famicom_console` choice as a

@@ -1887,6 +1887,15 @@ pub struct EmulationConfig {
     #[serde(default)]
     pub famicom_console: bool,
 
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`) — which MMC3 IRQ revision mapper-4
+    /// games run on: `auto` (the default; the header decides, Sharp unless a
+    /// NES 2.0 header says submapper 4), `sharp`, or `alternate` (the MMC3A
+    /// and non-Sharp MMC3B). An iNES 1.0 dump cannot name its chip, so this is
+    /// how to run one on the other. Pushed into the core via
+    /// `Nes::set_mmc3_revision_override` on ROM load and power cycle.
+    #[serde(default)]
+    pub mmc3_irq_revision: Mmc3IrqRevision,
+
     /// v2.1.8 A1 / v2.2.3 — use the specialized visible-scanline fast dot path
     /// (`Nes::set_fast_dotloop`). **On by default**, and unlike every other
     /// field here it is **not an accuracy knob**: the fast path runs the same
@@ -1905,6 +1914,31 @@ pub struct EmulationConfig {
     /// (the shipped default) instead of silently opting the user out.
     #[serde(default = "default_fast_dotloop")]
     pub fast_dotloop: bool,
+}
+
+/// v3.1.0 — the `[emulation] mmc3_irq_revision` choice.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Mmc3IrqRevision {
+    /// The cartridge header decides (Sharp unless NES 2.0 submapper 4).
+    #[default]
+    Auto,
+    /// The Sharp MMC3B / MMC3C: a latch of 0 fires every scanline.
+    Sharp,
+    /// The MMC3A and non-Sharp MMC3B: a latch of 0 stops IRQs.
+    Alternate,
+}
+
+impl Mmc3IrqRevision {
+    /// The core override this choice selects.
+    #[must_use]
+    pub const fn to_core(self) -> Option<rustynes_core::rustynes_mappers::Mmc3Revision> {
+        match self {
+            Self::Auto => None,
+            Self::Sharp => Some(rustynes_core::rustynes_mappers::Mmc3Revision::Sharp),
+            Self::Alternate => Some(rustynes_core::rustynes_mappers::Mmc3Revision::Nec),
+        }
+    }
 }
 
 /// Serde + [`Default`] value for [`EmulationConfig::fast_dotloop`] — `true`.
@@ -1928,6 +1962,7 @@ impl Default for EmulationConfig {
             randomize_power_on_ram: false,
             power_on_ram_seed: 0,
             famicom_console: false,
+            mmc3_irq_revision: Mmc3IrqRevision::Auto,
             fast_dotloop: default_fast_dotloop(),
         }
     }

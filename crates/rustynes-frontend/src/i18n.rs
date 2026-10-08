@@ -720,6 +720,11 @@ catalog! {
     SetAccuracy => "Accuracy", Some("Precisión");
     SetOamDecay => "OAM decay (accuracy)", Some("Degradación de OAM (precisión)");
     SetFamicomConsole => "Famicom console (PPU leaves reset early)", Some("Consola Famicom (la PPU sale antes del reinicio)");
+    SetMmc3Revision => "MMC3 IRQ revision", Some("Revisión de IRQ del MMC3");
+    SetMmc3RevAuto => "Auto (from the ROM)", Some("Automática (según la ROM)");
+    SetMmc3RevSharp => "Sharp (MMC3B/C)", Some("Sharp (MMC3B/C)");
+    SetMmc3RevAlternate => "Alternate (MMC3A, NEC MMC3B)", Some("Alternativa (MMC3A, MMC3B de NEC)");
+    SetMmc3RevisionHover => "Which MMC3 chip mapper-4 games run on. The two differ only when a game sets the IRQ latch to 0. Auto uses the ROM header, which says Sharp unless it is a NES 2.0 header naming the alternate chip. Takes effect from the next power cycle or ROM load.", Some("En qué chip MMC3 se ejecutan los juegos del mapper 4. Los dos solo difieren cuando un juego pone el latch de IRQ a 0. Automática usa la cabecera de la ROM, que indica Sharp salvo que sea una cabecera NES 2.0 que nombre el chip alternativo. Surte efecto desde el siguiente apagado y encendido o carga de ROM.");
     SetFastDotPath => "Fast PPU dot path (performance, not accuracy)", Some("Ruta rápida de puntos de la PPU (rendimiento, no precisión)");
     SetEnhancements => "Enhancements (non-accuracy)", Some("Mejoras (ajenas a la precisión)");
     SetDisableSpriteLimit => "Disable 8-sprite-per-scanline limit (reduces flicker)", Some("Desactivar el límite de 8 sprites por línea (reduce el parpadeo)");

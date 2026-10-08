@@ -1448,9 +1448,9 @@ re-minted: `T-PS-dual-runahead` (ADR 0032), `T-MISTER-SAVESTATE`,
 | `T-EPOCH-FINGERPRINT` | A committed panel of output hashes that fails CI when it moves without an `EMULATION_EPOCH` rise. **DONE v3.1.0** (`tests/epoch_fingerprint.rs`, ADR 0045 amendment) | CI-02 | v3.1.0 |
 | `T-CPU-OVERCLOCK` | The CPU-multiplier overclock, in `HardwareOptions`, movies and netplay (D22) **DONE v3.1.0** | FE-01 | v3.1.0 |
 | `T-SPRITE-LIMIT` | "Disable sprite limit", render-only, carried like the overclock (D22) **DONE v3.1.0** | FE-02 | v3.1.0 |
-| `T-PAL-EMPHASIS` | The PAL/Dendy emphasis red/green swap | ACC-01 | v3.1.0 |
-| `T-COMPOSITE-ARTIFACTS` | Differential phase distortion and inter-pixel artifacts, an opt-in video option (D20) | ACC-02 | v3.1.0 |
-| `T-MMC3-NEC-OVERRIDE` | The NEC rev B MMC3 as a per-game or config override (D20) | ACC-13 | v3.1.0 |
+| `T-PAL-EMPHASIS` | The PAL/Dendy emphasis red/green swap **DONE v3.1.0** | ACC-01 | v3.1.0 |
+| `T-COMPOSITE-ARTIFACTS` | Differential phase distortion and inter-pixel artifacts, an opt-in video option (D20) **DONE v3.1.0** (differential phase; the inter-pixel artifacts already existed in the signal-decode pass) | ACC-02 | v3.1.0 |
+| `T-MMC3-NEC-OVERRIDE` | The NEC rev B MMC3 as a per-game or config override (D20) **DONE v3.1.0** | ACC-13 | v3.1.0 |
 | `T-MAPPER-BREADTH-V3` | The missing families with real titles, both cores (D26) | MAP-03, MAP-05, FB-1 | v3.2.0, v3.8.0 |
 | `T-KNOWN-BLANK` | Triage the 52 KNOWN_BLANK dumps | ACC-08, ACC-09 | v3.2.0 |
 | `T-CURATED-EVIDENCE` | BestEffort → Curated on local-dump evidence under D23's record | MAP-01 | v3.2.0 |
