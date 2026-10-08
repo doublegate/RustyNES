@@ -182,6 +182,16 @@ local `.info` again (its `display_version` will have moved), and re-check the
 hand-audited fields of the table above (`savestate`, `cheats`, firmware, the
 mapper count) against the crate.
 
+## Sync for v3.1.0 (submitted 2026-10-08)
+
+The only difference between the core's `.info` and
+upstream's was `display_version` (`v3.0.0`), measured by `diff` against
+`dist/info/rustynes_libretro.info` on upstream `master`. The fork was synced and
+[libretro/libretro-super#2134](https://github.com/libretro/libretro-super/pull/2134)
+opened with that one line, copied from the `v3.1.0` tag. The docs page names no
+version and no libretro-visible feature changed (the CPU overclock and the
+sprite-limit option are not core options yet), so `libretro/docs` needs no PR.
+
 ## Sync of 2026-08-20 (done) — measured against upstream `master`
 
 > **Done.** This sync merged upstream as libretro-super #2074 (2026-08-28, `display_version` v2.3.9) and docs #1180 (2026-08-22, the license); #2069 (2026-08-16) was the license correction before it. It is kept as the worked example of the procedure. The next sync is prepared at v2.9.9 and submitted at v3.0.0 (ADR 0043); its diff is measured fresh then, not read from here.
