@@ -178,7 +178,10 @@ run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
   *Millionaire* (Sachen, mapper 146), which the game database marks PAL, at one
   checkpoint, from the PAL emphasis fix. It was attributed by running that ROM
   alone on each v3.1.0 commit, and re-blessed.
-- The MiSTer core: LADDER-FILL.
+- The MiSTer core: one frozen-tree run of each co-simulation ladder at an
+  oracle pin on this branch, nothing skipped: on-die 212 passed, 0 failed,
+  1 expected failure; off-die 213 / 0 / 1. The core matches the emulator on
+  all 146 AccuracyCoin entries.
 
 ## [3.0.1] - 2026-10-07 - "Mortar" (the open items closed, one game's graphics fixed, the last MMC3 rule exception tested in the MiSTer core, Rust 1.99 everywhere, every unanswered bot review answered, and a roadmap to v4.0.0)
 
