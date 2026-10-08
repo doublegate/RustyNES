@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].zip
+rom_sha256=3927e51e75aa1ed430f9ce378ea25de9cb181dc2f238962195c84d239ba0ec3d
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=f3e8f84b44ea5cee
+checkpoint f600 fb_fnv1a64=03c22bdd970c7e34

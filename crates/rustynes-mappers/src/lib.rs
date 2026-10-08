@@ -118,6 +118,7 @@ mod m151_konami_vs;
 mod m152_bandai152;
 mod m156_daou156;
 mod m163_nanjing;
+mod m172_m173_txc;
 mod m176_bmc_fk23c;
 mod m177_hengedianzi;
 mod m179_hengedianzi;
@@ -228,6 +229,7 @@ pub use m151_konami_vs::KonamiVs;
 pub use m152_bandai152::Bandai152;
 pub use m156_daou156::Daou156;
 pub use m163_nanjing::Nanjing163;
+pub use m172_m173_txc::{Txc172, Txc173};
 pub use m176_bmc_fk23c::new_m176;
 pub use m177_hengedianzi::Hengedianzi177;
 pub use m179_hengedianzi::Hengedianzi179;
@@ -1565,6 +1567,21 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         299 => Box::new(
             new_m299(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v3.2.0: boards written from their NESdev pages (no
+        // reference-emulator source read). Tiers and evidence in `tier.rs`
+        // and `docs/mappers.md`.
+        //
+        // 172 / 173: TXC / Idea-Tek protection-chip boards
+        // (`m172_m173_txc.rs`). 172 controls its own mirroring; 173's is
+        // hard-wired, so the header's is passed for both as the power-on value.
+        172 => Box::new(
+            Txc172::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        173 => Box::new(
+            Txc173::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),

@@ -838,6 +838,20 @@ path), were all CAUGHT by the unit tests or `roster_boards.rs`. Two needed a new
 test first: the bus's floating-read call, which no mapper-level test can reach,
 and the PPU's unfolded `$3xxx` path. The record is in the v2.9.6 plan.
 
+### v3.2.0 batch: TXC, Tengen, Taito, Waixing, reset multicarts, FFE
+
+Written from the vendored NESdev page named in each row; no reference-emulator
+source was read. A family is **Curated** when its page gives exact register
+masks AND a local dump boots to a correct title or gameplay screen, recorded
+under D23 in `docs/compatibility.md` (title, header-excluded SHA-256, frames,
+committed screenshot) and pinned by a byte-identity boot snapshot in
+`external_extended.rs`. Otherwise it is **BestEffort**, with the reason here.
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 172 | — | Super Mega P-4070, JV001 (`INES_Mapper_172`, `INES_Mapper_136`) | Curated | — | `m172_m173_txc.rs`. The JV001's Input / Register / Output with CPU D0-D5 wired in reverse; Mode and Invert from CPU D5. `$8000-$FFFF` latches Output (CHR bank = Output & 3 in chip order) and sets mirroring from Invert (H when clear, V when set); the header's mirroring holds until then. PRG fixed 32 KiB. `$4100` reads drive D0-D5 only. *1991 Du Ma Racing* passes its protection check and plays. |
+| 173 | — | Idea-Tek ET-xx, 05-00002-010 (`INES_Mapper_173`) | Curated | — | Same module. P/R/Output 3 bits, S/C/V 1 bit; `$4100` reads `[xxxx SRRR]` with S XOR V, D4-D7 open bus. CHR bank = (Output & 1) \| (~V << 1), V read live. Hard-wired mirroring. *Xiao Ma Li*'s 8 KiB EPROM with `/PGM` on pin 27 is not modelled beyond wrapping (the page does not say what a disabled CHR read returns). The TXC *Mahjong Block* (CRC32 `0ACFC3CD`), commonly headered 173, is a mapper 132 board per both pages: as 173 it draws garbage, as the page predicts. |
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by

@@ -1418,3 +1418,26 @@ fn extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu() {
         "extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu",
     );
 }
+
+// ============================================================
+// v3.2.0 — boards written from their NESdev pages, each verified on a local
+// dump (D23 records in docs/compatibility.md).
+// ============================================================
+
+#[test]
+fn extended_m172_1991_du_ma_racing() {
+    check(
+        "mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m172_1991_du_ma_racing",
+    );
+}
+
+#[test]
+fn extended_m173_xiao_ma_li() {
+    check(
+        "mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m173_xiao_ma_li",
+    );
+}

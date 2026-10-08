@@ -362,3 +362,16 @@ FE-11, which the v3.1 → v4.0 line plan does not schedule:
 
 - **CRC32 vs. SHA-256 for ROM identification.** We use SHA-256 for save state directory naming (lower collision risk). For ROM compatibility databases, CRC32 is the community standard; we may add it as a secondary key.
 - **Region override.** Some users want to play PAL versions of NTSC games at NTSC speed. Plan: expose a region override in the settings UI; warn that this may break timing-sensitive ROMs.
+
+## Curated evidence from local dumps (D23)
+
+A local dump counts as Curated evidence when the record names the title, the
+SHA-256 of the bytes after the 16-byte header (`Nes::rom_sha256`), the frames
+run, and a committed screenshot of the frame the boot snapshot pins. The dumps
+are gitignored (`tests/roms/external/`); the byte-identity boot snapshots are
+in `crates/rustynes-test-harness/tests/external_extended.rs`.
+
+| mapper | title | SHA-256 of the bytes after the header (`Nes::rom_sha256`) | frames | screenshot |
+|--------|-------|-----------------------------------------------------------|--------|------------|
+| 172 | 1991 Du Ma Racing (Ch) [!] | `4a2ec0f51526ad9659b0ede758216ea8f7acae7d49faaed5db46b6acc7be6915` | 600 | `screenshots/external/mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].png` |
+| 173 | Xiao Ma Li (Ch) [!] | `103e27a9b2e2c029fee9a221e2ffe35b5b0b4a3e529a4df88fd6d71f21cf56a4` | 600 | `screenshots/external/mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].png` |
