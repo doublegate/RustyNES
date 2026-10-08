@@ -3202,6 +3202,14 @@ impl SystemBus {
         if !saw_map {
             return Err(SnapshotError::MissingSection("MAP ".into()));
         }
+        // v3.1.0 (PR #594 review): the MMC3's MAP section carries its LIVE
+        // IRQ revision, which is configuration rather than console state, so
+        // re-apply the configured override (`None` = the header's). Without
+        // this a state saved under the override and loaded without it kept
+        // running the alternate revision while `mmc3_revision_override()`
+        // reported `None`, and the reverse. A no-op on every other board.
+        self.mapper
+            .set_mmc3_revision_override(self.mmc3_revision_override);
         // RW-0 fix: under R1, `dmc_driven_externally` is NOT serialized (it is
         // build configuration, not emulated state), so after `apu.restore` it
         // reverts to the `Apu::new` default (`false`), which STOPS `put_cycle`

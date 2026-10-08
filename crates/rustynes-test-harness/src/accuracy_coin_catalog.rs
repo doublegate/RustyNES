@@ -300,8 +300,9 @@ pub fn decode_results(ram: &[u8]) -> Option<Vec<TestStatus>> {
 /// counts here and the named list there cannot disagree.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamResultSummary {
-    /// Total number of catalog entries (always 151 if the catalog is
-    /// fully loaded).
+    /// Number of SCORED catalog entries, [`scored_len`]: 146 at upstream
+    /// `f5f41dc2`. The catalog holds 151 rows; the five sentinel rows that
+    /// share [`RESULT_DRAW_TEST`] are not scored and not counted here.
     pub total: u32,
     /// Tests that wrote `$01` (clean pass).
     pub pass: u32,
