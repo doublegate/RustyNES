@@ -169,7 +169,7 @@ run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
 
 ### Verification
 
-- `cargo test --workspace --features test-roms --release`: **3,263 passed, 0
+- `cargo test --workspace --features test-roms --release`: **3,269 passed, 0
   failed, 11 ignored**. The epoch fingerprint gate passes at epoch 3, now
   recorded as the released epoch.
 - AccuracyCoin **146/146** at upstream `f5f41dc2`; `nestest` 0-diff.
