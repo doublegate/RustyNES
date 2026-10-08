@@ -120,11 +120,13 @@
 # offset, 0x10B5, 0x02 -> 0x03 (the `LDX #test` immediate; `LDY #suite` sits at
 # 0x10AB).
 #
-# v3.1.0: `sprite-eval-misaligned-oam` settles on frame 211 (212 before). The
-# misaligned-evaluation fixes make its tests 3, 6 and 7 pass on their own
-# path; before, each failed and fell through the ROM's unpopped fail path,
-# which ran a different number of cycles. Verdict unchanged (Pass); the
-# generator's output differs from the old data in that one field only.
+# v3.1.0: `sprite-eval-misaligned-oam` is REBUILT from upstream `f5f41dc2`,
+# whose fail path exits instead of falling through to a pass. The rebuilt ROM
+# settles on frame 175 with 18/6 (see its row). The legacy build it replaces
+# settled on frame 211 after the misaligned-evaluation fixes (212 before):
+# its tests 3, 6 and 7 then passed on their own path instead of failing into
+# the unpopped fail path, which ran a different number of cycles. That legacy
+# figure describes a ROM no longer in this directory.
 #
 # REGENERATE WITH THE GENERATOR, AND THE SCHEMA LINE BELOW COMES FROM IT:
 #

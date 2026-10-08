@@ -196,6 +196,7 @@ diverges from the host's frames has a shell bug, not a core one.
 | G15 | Android | On a tablet or unfolded foldable, then a phone | Two-pane and compact layouts both correct; the image letterboxes at any aspect | NOT RUN |
 | G16 | Android | Fold and unfold mid-game; on Android TV, navigate with the D-pad | No restart on fold; every TV control reachable, and the app boots to its TV banner | NOT RUN |
 | G17 | Android | `foss` flavor: inspect the merged manifest and Settings | No `AD_ID` permission, no Play Services metadata, no Billing, Play Games or Cast surface (ADR 0025) | NOT RUN |
+| G18 | Android | `play` flavor (`./gradlew :app:installPlayDebug`): boot a ROM, then open Settings | Installs and plays like `foss`; its Play-Services surface (Play Games, cloud save, Cast, in-app updates) appears, and a device without Play Services still boots and plays | NOT RUN |
 
 ## Android
 
