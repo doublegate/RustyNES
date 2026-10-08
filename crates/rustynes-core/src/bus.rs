@@ -4976,7 +4976,7 @@ mod four_score_tests {
         // The two device tags sit before a fixed tail with both ports empty:
         // mirroring override (1) + controller-run tail (22) + internal bus
         // (1) + the version-3 fields (DMC write-refusal latch 1, overclock
-        // debt 1, `apu_cycle` 8) follow them, and port 1's tag is the second.
+        // phase 1, `apu_cycle` 8) follow them, and port 1's tag is the second.
         //
         // v3.1.0: the version-3 bytes were missing from this sum for one
         // commit. With only the 1-byte latch appended the window still read
