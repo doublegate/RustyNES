@@ -205,3 +205,71 @@ fn the_paragraph_scanner_recognises_the_shapes_release_notes_use() {
         [] as [(usize, std::vec::Vec<std::string::String>); 0]
     );
 }
+
+/// The drafting placeholders this project writes while a release is being
+/// assembled (`LADDER-FILL`, `BITSTREAM-FILL`: an upper-case word ending in
+/// `-FILL`). Returns each one with its 1-based line number.
+fn fill_placeholders(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        for token in line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
+            if let Some(stem) = token.strip_suffix("-FILL")
+                && !stem.is_empty()
+                && stem
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-')
+            {
+                out.push((i + 1, token.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// No drafting placeholder reaches a release body or the CHANGELOG.
+///
+/// v3.1.0's release PR (#594) shipped `- The MiSTer core: LADDER-FILL.` in
+/// its CHANGELOG section; a reviewer found it, no gate did. The release body
+/// is built from `.github/release-notes/vX.Y.Z.md`, or from the CHANGELOG
+/// section when there is none, so both are checked, every version.
+#[test]
+fn no_fill_placeholder_reaches_a_release_body() {
+    let root = repo_root();
+    let mut files = vec![root.join("CHANGELOG.md")];
+    let dir = root.join(".github/release-notes");
+    for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display())) {
+        let p = e
+            .unwrap_or_else(|e| panic!("read an entry of {}: {e}", dir.display()))
+            .path();
+        if p.extension().is_some_and(|x| x == "md") {
+            files.push(p);
+        }
+    }
+    assert!(files.len() > 20, "only {} files found", files.len());
+    let mut findings = Vec::new();
+    for f in &files {
+        let text =
+            std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));
+        for (line, token) in fill_placeholders(&text) {
+            findings.push(format!("  {}:{line}  {token}", f.display()));
+        }
+    }
+    assert!(
+        findings.is_empty(),
+        "drafting placeholders left in release text:\n{}",
+        findings.join("\n")
+    );
+}
+
+#[test]
+fn the_placeholder_scanner_finds_the_shapes_this_project_writes() {
+    let text = "- The MiSTer core: LADDER-FILL.\nbitstreams: BITSTREAM-FILL, then\n\
+                a pre-fill note, a Fill-in, X-FILLER and -FILL are not placeholders";
+    assert_eq!(
+        fill_placeholders(text),
+        vec![
+            (1, "LADDER-FILL".to_string()),
+            (2, "BITSTREAM-FILL".to_string())
+        ]
+    );
+}
