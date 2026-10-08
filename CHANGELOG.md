@@ -26,6 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-08 - "Bellwether" (the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it)
+
+The first release of the v3.1 to v4.0 line. AccuracyCoin is re-synced to its
+newest upstream, which showed that every earlier 100% score included a failure
+the old ROM hid; the emulator now passes all 146 for real, and so does the
+MiSTer core. Two long-shown options work and travel with movies and netplay
+(a CPU overclock, and the sprite-limit switch), PAL emphasis is right, the
+alternate MMC3 is selectable and correct, and the Vs. cabinet gets rewind and
+run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
+
 ### Breaking
 
 - **Movies and netplay from v3.0.1 are refused, and so are its save states.**
@@ -108,6 +118,60 @@ cycle-accurate core later replaced.
   when that output moves while `EMULATION_EPOCH` still equals the last
   release's, refusing a re-bless in that state. Until now the rule was kept
   by hand.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **It matches the re-synced AccuracyCoin, all 146 entries.** The new ROM found
+  the core's version of both emulator defects. A misaligned sprite evaluation
+  now masks the address after an out-of-range X byte, as the ROM's comments
+  state; and a `$4010` write on the DMC timer's reload edge now sets that
+  reload's period. Before them the core differed on two entries; after them the
+  status vector is identical.
+- **A `$2006` write that meets the PPU's address pipeline matches the
+  emulator** (RTL-1). A new generated ROM lands the copy on every dot of a
+  rendering line; the core diverged on 28,129 of 331,838 background fetches,
+  for three reasons measured from the emulator's per-dot trace, and now matches
+  on all of them. One of the three, a copy delay that depends on where the
+  write lands, is the emulator's rule and not a documented one (NESdev says a
+  constant "1 to 1.5 dots"). It is recorded as provisional until a board can
+  settle it.
+- **Ten more AccuracyCoin sub-test ROMs gate the core** (RTL-10), plus the new
+  `dmc-reload-timing`: 30 of 34 now, the other four out for stated reasons. The
+  `sprite-eval-misaligned-oam` sub-test ROM is rebuilt from the new source: the
+  old build's fail path fell through to a pass, so that gate read green every
+  release while the core failed it.
+- **The oracle pin moves to v3.1.0**; every golden that changed is attributed
+  (AccuracyCoin, the rebuilt sub-test, two new stems) and the other 646
+  artifacts are byte-identical.
+- **A self-hosted ladder workflow** (`ladder.yml`, manual dispatch only) runs
+  the whole ladder on the maintainer's runner. CI's Verilator is recorded
+  (5.032).
+- **No hardware has run any bitstream.**
+
+### Records
+
+- **The MiSTer contribution page was rewritten in September**, dropping the
+  "evidence of quality and accuracy testing" sentence the submission case
+  answered and adding reviewer questions about the developer. The new page and
+  its consequences are recorded in `ref-docs/`, the checklist is re-scoped, and
+  `submission-case.md` is refreshed. Two decisions are the maintainer's: how to
+  show reviewers the code is understood and maintained, and whether the
+  sibling repository becomes public.
+- **Nine stale documents corrected against the code** (DOC-01..09), and the
+  v1.8.x Android checklist folded into the mobile run sheet.
+
+### Verification
+
+- `cargo test --workspace --features test-roms --release`: **3,262 passed, 0
+  failed, 11 ignored**. The epoch fingerprint gate passes at epoch 3, now
+  recorded as the released epoch.
+- AccuracyCoin **146/146** at upstream `f5f41dc2`; `nestest` 0-diff.
+- The local commercial suites: `external_real_games` 60/0, `external_extended`
+  137/0, `external_coverage` 6/0 over 744 staged ROMs. One baseline moved:
+  *Millionaire* (Sachen, mapper 146), which the game database marks PAL, at one
+  checkpoint, from the PAL emphasis fix. It was attributed by running that ROM
+  alone on each v3.1.0 commit, and re-blessed.
+- The MiSTer core: LADDER-FILL.
 
 ## [3.0.1] - 2026-10-07 - "Mortar" (the open items closed, one game's graphics fixed, the last MMC3 rule exception tested in the MiSTer core, Rust 1.99 everywhere, every unanswered bot review answered, and a roadmap to v4.0.0)
 

@@ -77,7 +77,7 @@ default-members = ["crates/rustynes-libretro"]
 # `release-auto.yml` reads the `## [X.Y.Z]` line for BOTH the release body
 # fallback and the title codename — so the date and quoted codename are load-
 # bearing, not decoration.
-version = "3.0.1"
+version = "3.1.0"
 edition = "2024"
 # The toolchain is 1.99 (rust-toolchain.toml), and every crate inherits this
 # floor, the libretro path included: the libretro buildbot follows the same pin

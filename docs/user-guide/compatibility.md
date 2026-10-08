@@ -93,8 +93,9 @@ for how the region is determined.
 ## Accuracy
 
 RustyNES clears the headline accuracy bar: 100thCoin's **AccuracyCoin** suite
-at **100.00% (144/144)** (the "ALE + Read" and "Hybrid Addresses" gaps closed in
-v2.0.3, the last failing entry in v2.6.18), **nestest** with zero
+at **100.00% (146/146)** on upstream `f5f41dc2` since v3.1.0 (the 144/144
+reported before it hid a masked `Misaligned OAM behavior` failure; the "ALE +
+Read" and "Hybrid Addresses" gaps closed in v2.0.3), **nestest** with zero
 golden-log diff over 8,991 instructions, and the entire blargg
 `instr_test_v5`, `instr_misc`, `instr_timing`, `cpu_timing_test6`,
 `cpu_interrupts_v2`, `ppu_open_bus`, `ppu_vbl_nmi`, `apu_test`,

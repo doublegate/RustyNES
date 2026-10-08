@@ -9,7 +9,7 @@ this ledger is the approximation map. The remediation line is **v2.1.0
 "Fathom"** (accuracy work, shipping ahead of the v2.2.0 mobile store launch).
 
 **Headline:** every suite on the oracle path is green, with **no named
-exception** — AccuracyCoin **144/144 (100.00%, RAM decoder)** as of v2.6.18,
+exception** — AccuracyCoin **146/146 (100.00%, RAM decoder)** at upstream `f5f41dc2` since v3.1.0, whose re-sync showed that the 144/144 reported from v2.6.18 to v3.0.1 was overstated, because the older ROM's `Misaligned OAM behavior` fail path fell through to a pass and hid a real failure. Before that: **144/144** as of v2.6.18,
 which closed `Advanced Sprite Evaluation :: Frozen OAM2 Increment`, the last
 entry the 2026-09 upstream re-sync left open. `KNOWN_FAILING` is now empty; it
 is retained, because it fails BOTH ways and is what caught this closure.

@@ -4,7 +4,7 @@
 # the last release shipped, set by hand at each release cut: output may
 # move only while EMULATION_EPOCH is above it.
 # epoch	3
-# last_release_epoch	2
+# last_release_epoch	3
 # rom	frames	framebuffer_fnv	audio_fnv	ram_fnv	cpu_cycles
 accuracycoin/AccuracyCoin.nes	3200	e5edb57f59c38538	47e9857638ba5d28	b93b7feacb471f53	95268158
 nes-test-roms/ny2011/ny2011.nes	600	118f6b763cc1c58a	dda9e74ae2696052	538041de1d7bd79f	17838523

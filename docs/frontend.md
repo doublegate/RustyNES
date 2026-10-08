@@ -1235,8 +1235,9 @@ builds stay byte-identical and AccuracyCoin holds 139/141 (the two newest upstre
 
 Frontend-only, additive, English-by-default — with the default locale every
 label is byte-identical to v1.6.0. (At v1.7.0 AccuracyCoin held 139/141; the two
-PPU gaps closed at v2.0.3, and the re-synced catalog has held 144/144 since
-v2.6.18.) See
+PPU gaps closed at v2.0.3, the re-synced catalog read 144/144 from v2.6.18,
+and 146/146 from v3.1.0, whose re-sync showed the 144/144 had hidden a
+masked failure.) See
 ADR 0023 for the rationale (why a hand-rolled catalog over Fluent/ICU/`rust-i18n`
 and the wasm size budget).
 
