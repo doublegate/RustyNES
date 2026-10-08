@@ -64,6 +64,22 @@
 # does not stand alone or the entry needs the battery's preceding state, and
 # both are open questions rather than DUT defects.
 #
+# v3.1.0 (the f5f41dc2 re-sync): TWO ROMS FROM THE NEW SOURCE.
+#   * `sprite-eval-misaligned-oam.nes` is REBUILT from f5f41dc2 (suite 18,
+#     test 6; it was 17/5 in the legacy build). The legacy build carries the
+#     upstream bug fixed in `adacbc23`: `FAIL_MisalignedOAM_Behavior` jumped
+#     out of a JSR'd routine without popping the return address, so a failure
+#     in tests 2-7 fell through to a pass. Its `Pass` proved nothing, and it
+#     was the ROM `RustyNES_MiSTer`'s ladder gated that entry by. Settles at
+#     frame 175 (the legacy build: 211).
+#   * `dmc-reload-timing.nes` is NEW (suite 14, test 6, `$0497`), for the test
+#     upstream added in f5f41dc2. It reaches its verdict in 15 frames against
+#     the battery's 4500, and it is what located the MiSTer core's DMC reload
+#     defect to one bus cycle (sibling ledger 3.52).
+#   Both built with `build_sub_test_rom.py` from a clone at f5f41dc2, under
+#   upstream's own `nesasm.exe` through wine; rows measured by
+#   `subtest_identify`.
+#
 # RE-BLESSED IN v2.9.5: `ppu-misc-sprites-on-scanline-0` records
 # `PassWithCode(1)`, the composite-2C02 outcome, where it recorded
 # `PassWithCode(2)`, "RGB PPU", until then. The core now draws the odd-frame
@@ -130,6 +146,7 @@ controller-strobing	13	7	0x045F	Controller Strobing	Pass	29	legacy-unrecorded
 cpu-open-bus	0	6	0x0407	Dummy write cycles	Pass	31	legacy-unrecorded
 dma-open-bus	12	0	0x046C	DMA + Open Bus	Pass	26	legacy-unrecorded
 dmc-bus-conflicts	12	6	0x046B	DMC DMA Bus Conflicts	Pass	29	legacy-unrecorded
+dmc-reload-timing	14	6	0x0497	DMC Reload Timing	Pass	15	f5f41dc2
 fc-4step	13	3	0x0468	Frame Counter 4-step	Pass	33	legacy-unrecorded
 frame-counter-irq	13	2	0x0467	Frame Counter IRQ	Pass	66	legacy-unrecorded
 iflag-latency	11	0	0x0461	Interrupt flag latency	Pass	29	legacy-unrecorded
@@ -153,6 +170,6 @@ sh-shx-9E	9	4	0x044A	$9E   SHX absolute,Y	Pass	27	legacy-unrecorded
 sh-shy-9C	9	3	0x0449	$9C   SHY absolute,X	Pass	27	legacy-unrecorded
 sprite-eval-2002-flag-timing	17	2	0x048D	$2002 flag timing	Pass	73	legacy-unrecorded
 sprite-eval-arbitrary-sprite-zero	17	4	0x0458	Arbitrary Sprite zero	Fail(1)	29	legacy-unrecorded
-sprite-eval-misaligned-oam	17	5	0x045A	Misaligned OAM behavior	Pass	211	legacy-unrecorded
+sprite-eval-misaligned-oam	18	6	0x045A	Misaligned OAM behavior	Pass	175	f5f41dc2
 sprite-eval-oam-corruption	17	7	0x047B	OAM Corruption	Pass	111	legacy-unrecorded
 sprite-zero-hit-behavior	17	1	0x0457	Sprite 0 Hit behavior	Fail(1)	29	legacy-unrecorded
