@@ -161,7 +161,7 @@ same real time.
 
 At `k = 1` the branch is never taken: every cycle is a stock step and the APU
 gets the CPU counter, so the output is byte-identical (the epoch fingerprint
-gate's whole panel runs at `k = 1`). The debt and `apu_cycle` are in the BUS
+gate's whole panel runs at `k = 1`). The phase and `apu_cycle` are in the BUS
 save-state section (version 3), because run-ahead restores mid-run; the
 multiplier is configuration, carried by `HardwareOptions` in movies and the
 netplay `config_digest`. `run_frame`'s cycle budget scales by `k`. Not hardware

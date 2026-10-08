@@ -471,9 +471,11 @@ pub fn decode_bus(bus: &mut SystemBus, data: &[u8]) -> Result<(), SnapshotError>
     let internal_data_bus = r.u8()?;
     let dmc_load_write_delayed = r.bool()?;
     let overclock_phase = r.u8()?;
-    // A debt is below one stock CPU cycle (16 master clocks on PAL, the
-    // longest); anything larger is a corrupt file, refused here rather than
-    // clamped later.
+    // The phase indexes the overclocked cycles of one stock cycle, so it is
+    // below the largest multiplier; anything larger is a corrupt file,
+    // refused here rather than clamped later. (A phase valid for `x4` but not
+    // for the multiplier the restoring host runs is clamped to its last cycle
+    // by `restore`.)
     if overclock_phase >= crate::MAX_CPU_OVERCLOCK {
         return Err(SnapshotError::SectionInvalid {
             tag: "BUS ".into(),
