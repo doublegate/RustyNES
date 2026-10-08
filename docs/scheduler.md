@@ -82,7 +82,9 @@ A small inner struct that tracks:
 
 Scheduling rules per `ref-docs/research-report.md` §DMA:
 
-- DMA can only halt on a CPU read cycle.
+- DMA can only halt on a CPU read cycle. A load DMA a write refuses enters
+  on the next read whichever half it is (four cycles after one refusing
+  write; `docs/apu-2a03.md`, v3.1.0).
 - DMC DMA gets precedence over OAM DMA.
 - OAM DMA: 1 halt + (0 or 1 alignment) + 256 read/write pairs = 513 or 514 cycles.
 - DMC DMA: 1 halt + 1 dummy + (0 or 1 alignment) + 1 read = 3 or 4 cycles.
@@ -132,6 +134,39 @@ NTSC and Dendy can use a simple 3 PPU dots per CPU cycle cadence. PAL needs a
 fractional or master-clock representation because its PPU:CPU ratio is 3.2.
 APU frame-counter tables also differ by region; do not scale NTSC cycle counts
 for PAL.
+
+### CPU-multiplier overclock (v3.1.0, `T-CPU-OVERCLOCK`)
+
+`Nes::set_cpu_overclock(k)`, `k` in `1..=4` (`MAX_CPU_OVERCLOCK`), divides the
+region's master-clock CPU divider exactly: NTSC 12 becomes 6, 4 or 3 per
+cycle; PAL 16 and Dendy 15 alternate cycle lengths so that every `k` cycles
+take exactly one stock cycle (PAL `x3`: 5, 5, 6; Dendy `x4`: 3, 4, 4, 4; see
+below). The PPU's divider is untouched, so the CPU gets exactly `k` times the
+cycles per frame on every region. The shortest cycle, 3, still leaves both the
+read split `(0, 3)` and the write split `(2, 1)` valid.
+
+Everything that measures console time stays at the stock rate: the APU (and
+with it the DMC), the mappers' `notify_cpu_cycle` IRQ counters, and the PPU's
+open-bus decay and post-reset timers. Every `k` CPU cycles make exactly one
+stock cycle: the bus counts `overclock_phase` through `0..k`, CPU cycle `i` of
+the group lasts `((i+1)*div)/k - (i*div)/k` master clocks (the lengths sum to
+the stock divider `div`), and a **stock step** (those devices advance once)
+runs on the last cycle of each group. The cycle length changes only at a
+cycle's end, because the CPU reads the divider once for each half of a cycle.
+Until the v3.1.0 review the length was `div / k` rounded down, exact on NTSC
+and not elsewhere (PAL `x3` ran 3.2x, Dendy `x4` 5x). The APU is handed its own counter (`apu_cycle`)
+instead of the CPU's, so its put/get phase advances once per stock step. DMA
+follows that phase, so a DMA takes about `k` times as many CPU cycles and the
+same real time.
+
+At `k = 1` the branch is never taken: every cycle is a stock step and the APU
+gets the CPU counter, so the output is byte-identical (the epoch fingerprint
+gate's whole panel runs at `k = 1`). The debt and `apu_cycle` are in the BUS
+save-state section (version 3), because run-ahead restores mid-run; the
+multiplier is configuration, carried by `HardwareOptions` in movies and the
+netplay `config_digest`. `run_frame`'s cycle budget scales by `k`. Not hardware
+behaviour: no console runs its CPU faster than its APU.
+Tests: `crates/rustynes-test-harness/tests/cpu_overclock.rs`.
 
 ### Frame complete
 

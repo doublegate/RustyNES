@@ -2,7 +2,18 @@
 
 Every line traces to
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`, which quotes the
-MiSTer-devel wiki fetched 2026-08-23. **Nothing here is from memory.**
+MiSTer-devel wiki fetched 2026-08-23, **and, from v3.1.0, to
+`ref-docs/2026-10-07-mister-core-contribution-requirements-update.md`**, which
+records the page as rewritten on 2026-09-19 and 2026-09-20 (revision `317b50e`,
+2026-09-26, is the live one). **Nothing here is from memory.**
+
+**Re-scoped at v3.1.0 (SUB-2).** The rewrite dropped "preservation value", the
+AI-code sentence ("evidence of quality and accuracy testing"), the repository
+transfer, and the Cores-list step, and added four reviewer criteria: the
+guidelines followed, the developer understands the code, will maintain it, and
+collaborates. Boxes that traced to a removed requirement are kept with their
+history and re-scoped in place rather than deleted, so the record of why each
+one was there survives.
 
 The whole list must be complete **by the hardware-verification release (v3.x)**, which is the submission ([ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) moved it from v2.7.0 to v3.0.0 on 2026-09-22; [ADR 0043](../../docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md) moved it after v3.0.0 on 2026-09-29, when v3.0.0 became the API major with an unverified release-candidate core); it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
 items are marked with the release that settled them -- **(now)** for ones true
@@ -201,7 +212,10 @@ Settled at **v2.6.6**, except the one item that needs a board.
 ## Quality bar
 
 - [x] Core is accurate enough to demonstrate **preservation value** **(v2.6.14)**
-      — measured rather than asserted, and by two independent surfaces. The
+      — **no longer a stated requirement (v3.1.0):** the 2026-09-20 rewrite
+      removed the criterion. The evidence below is kept because the page still
+      asks for code that is "properly tested", and this is the testing. Measured
+      rather than asserted, and by two independent surfaces. The
       AccuracyCoin status vector is identical to the oracle's **entry for entry
       across all 146 entries**, with 146 of 146 executed on both sides and none
       `NotRun` (v2.6.5). Six commercial titles render **byte-identically over
@@ -220,9 +234,16 @@ Settled at **v2.6.6**, except the one item that needs a board.
       attached to this machine, confirmed by checking the USB bus, serial
       devices, removable block devices and mounts rather than assumed. Nothing
       in this repository can close it. **Unblocks on hardware.**
-- [ ] **AI-generated-code bar:** readability, plus *"evidence of quality and
-      accuracy testing"* — the co-simulation record is that evidence, and the
-      submission should link it explicitly rather than assume a reviewer finds it
+- [ ] **The reviewer's criteria: properly tested, and a developer who
+      understands the code, will maintain it and collaborates.** Re-scoped at
+      v3.1.0 from the **AI-generated-code bar** (*"evidence of quality and
+      accuracy testing"*), which the 2026-09-20 rewrite replaced with "Does the
+      developer understand their code?" and its two companions. The testing
+      half is what the co-simulation record answers, as before. The other three
+      are asked of the maintainer, and no document in this repository can
+      answer them; the long RTL comments (D14), the per-rung documents and the
+      oracle-vs-documentation ledger are what a reviewer can use to check the
+      answer.
       **BLOCKED — on the submission itself.** **The evidence is now also
       ARGUED rather than merely linkable (v2.6.15):**
       `RustyNES_MiSTer/docs/submission-case.md` is the document the email will
@@ -279,6 +300,13 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Submission
 
+- [ ] The repository is reachable by the reviewer: the page asks for "a link
+      to your repo", and `RustyNES_MiSTer` is private
+      **BLOCKED — on a maintainer decision** (v3.1.0). The 2026-09-20 rewrite
+      dropped the word "public" from the guidelines, but a reviewer still has to
+      open the link. Making the repository public, or granting the reviewer
+      access, is the maintainer's call and the last step before the email.
+
 Every item here is **BLOCKED — the submission IS the hardware-verification release
 (v3.x)** (ADR 0043; it was v3.0.0 under ADR 0041), by the programme's own
 definition, and three of the four are somebody else's action rather than this
@@ -288,15 +316,21 @@ outstanding work.
 - [ ] Email `newcores@misterfpga.org` with the repository link
       **BLOCKED — the hardware-verification release (v3.x).** Sending it before the quality bar closes is the
       whole thing the checklist exists to prevent.
-- [ ] Await review (the page says days)
+- [ ] Await review (the page said days; since 2026-09-20 it says "upwards of a
+      month in some situations")
       **BLOCKED — not ours to do**, and it follows the email.
-- [ ] **Decide deliberately** on the MiSTer-devel invitation and repository
-      transfer — acceptance moves the repo, it is one-way, and this project owns it
+- [ ] **Decide deliberately** on what a positive review asks for — until
+      2026-09-19 the page said an invitation to MiSTer-devel and a repository
+      transfer, a one-way move of a repository this project owns
       **BLOCKED — on being accepted**, and then it is a maintainer decision
-      rather than a task. Named here so acceptance does not arrive as a
-      surprise with a one-way consequence attached.
+      rather than a task. The rewrite no longer describes the transfer; a
+      review ends in "an email back with the decision and next steps". Kept so
+      whatever those steps are does not arrive as a surprise with a one-way
+      consequence attached.
 - [ ] Add to the Cores list with the Home folder
-      **BLOCKED — on acceptance.** The Home folder itself is already settled:
+      **CONTINGENT — on the next steps a positive review names.** The step is
+      gone from the page since 2026-09-19 (v3.1.0), so it may no longer be the
+      submitter's to do. The Home folder itself is already settled:
       `CONF_STR`'s first field gives `/media/fat/games/RustyNES`, and it is
       unique — the incumbent core's internal name is `NES` (v2.6.7).
 
@@ -314,6 +348,12 @@ Not a failure path — a planned one. See
       **CONTINGENT — on being declined.** The design decision that keeps it
       cheap is already taken and holds today: `nes_top.sv` carries no MiSTer
       framework dependency, and `emu.sv` is the only file that does.
+- [ ] A drop-in downloader database (`downloader_<repo>.ini`, from the
+      `DB-Template_MiSTer` template), the route the page itself offers outside
+      MiSTer-devel, alongside asking Jotego, Coin-Op Collection or theypsilon
+      **CONTINGENT — on being declined, or on choosing it instead** (v3.1.0).
+      It reaches `update` and `update_all` users with no review at all, so it
+      is also open to the maintainer before or without a submission.
 - [ ] The co-simulation evidence is publishable on its own terms regardless
       **DECIDED — this is a statement, not a task**, and it is unconditional:
       the ladder, its goldens and its mutation records stand whatever any

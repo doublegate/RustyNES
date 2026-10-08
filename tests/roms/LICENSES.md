@@ -188,7 +188,7 @@ AccuracyCoin is a single-NROM-cartridge battery of NES accuracy tests. The ROM i
 plus hex error codes) with no `$6000` status protocol. The integration test in
 `crates/rustynes-test-harness/tests/accuracycoin.rs` decodes the per-test result
 state from RAM and asserts the measured pass rate, which RustyNES holds at
-**144/144 (100.00%)** (see `docs/STATUS.md`).
+**146/146 (100.00%)** at upstream `f5f41dc2` (see `docs/STATUS.md`).
 
 ## "full palette" ROMs
 

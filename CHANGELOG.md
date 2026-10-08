@@ -26,6 +26,157 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-08 - "Bellwether" (the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it)
+
+The first release of the v3.1 to v4.0 line. AccuracyCoin is re-synced to its
+newest upstream, which showed that every earlier 100% score included a failure
+the old ROM hid; the emulator now passes all 146 for real, and so does the
+MiSTer core. Two long-shown options work and travel with movies and netplay
+(a CPU overclock, and the sprite-limit switch), PAL emphasis is right, the
+alternate MMC3 is selectable and correct, and the Vs. cabinet gets rewind and
+run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
+
+### Breaking
+
+- **Movies and netplay from v3.0.1 are refused, and so are its save states.**
+  `EMULATION_EPOCH` rises from 2 to 3 (the two accuracy fixes below change bus
+  cycles and sprite evaluation). Save states: BUS section version 3 (the DMC
+  latch and the overclock's position) and `PPU_SNAPSHOT_VERSION` 13 (the
+  sprite-limit option's pending sprites). Movies: `.rnm` format 6 (the options
+  record gains the two options below). Netplay: protocol 7, magic `"RNE7"`; a
+  v3.0.x peer is refused as another emulator version, naming its epoch.
+
+### Fixed
+
+- **AccuracyCoin re-synced to upstream `f5f41dc2`: 146 of 146.** The catalog
+  grows to 151 rows / 146 scored with `DMA Landing on Write` and `DMC Reload
+  Timing`. The new ROM found two defects:
+  - **A DMC load DMA refused by a write took three cycles, not four.** It now
+    enters on the next read whichever half that is (`DMA Landing on Write`
+    test 9), found by a per-cycle comparison with TriCNES's output.
+  - **Misaligned sprite evaluation.** Evaluation now takes its start from
+    OAMADDR at dot 65 (it used dot 0), copies four bytes from a start at the
+    last byte of a slot (it copied one), and stays misaligned after an
+    in-range X (it always realigned). The old ROM recorded these failures as
+    a pass: its fail path returned into the test without popping the return
+    address, fixed upstream in `adacbc23`.
+  - **So the earlier 100% scores were overstated.** Every release that
+    reported AccuracyCoin 144/144 (and 141/141 before it) failed parts of
+    `Misaligned OAM behavior` as the fixed ROM scores it; the old ROM's bug
+    recorded those failures as a pass. v3.1.0 is the first release whose 100% does not
+    include that masked failure.
+- **PAL and Dendy games that use colour emphasis show the right tint.** On the
+  PAL 2C07 and the Dendy, PPUMASK bits 5 and 6 swap meaning (green and red);
+  every PAL or Dendy game that set emphasis was tinted the wrong way.
+- **The alternate MMC3 IRQ revision fires on a `$C001` reload to 0**, as the
+  MMC3A and non-Sharp MMC3B do (NES 2.0 submapper 4, and mapper 12). Sharp,
+  the default, is unchanged.
+- **The AccuracyCoin tooling reads upstream's new row macros.**
+  `extract_catalog.py` returned 85 of 151 rows and exited 0 when upstream
+  compressed the unofficial-opcode rows into `tblf1` / `tblf2`; it now
+  rebuilds their names from the ROM's own string table and aborts on any row
+  it cannot read. `derive_indices.py` shares that grammar, and no longer
+  refuses to run: it read the provenance TSV's columns by position, which went
+  stale when an address column was added. The eight `Unofficial Immediates`
+  rows are now spelled `immediate`, as the ROM prints them.
+- **The AccuracyCoin mirror ROM is rebuilt from `f5f41dc2`.**
+- **Opening the pattern viewer, or using an HD pack, could change the game on
+  MMC2 / MMC4 boards** (Punch-Out!!, Fire Emblem). Their "side-effect-free" CHR
+  read went through the cartridge's normal read, which flips a CHR latch on
+  tiles `$FD`/`$FE`; the same held on three other boards. Those reads now
+  leave the cartridge exactly as it was.
+
+### Added
+
+- **CPU overclock** (`T-CPU-OVERCLOCK`, Settings > Enhancements): the CPU runs
+  2 to 4 times faster against the same picture and sound, removing slowdown.
+  The APU, mapper IRQ counters and PPU timers stay at the stock rate, so pitch,
+  tempo and raster effects are unchanged. Unlike the extra-scanline overclock,
+  movies record it and replay with it, and netplay players must match. The
+  multiplier is exact on every region: a CPU cycle is 12 master clocks on NTSC
+  but 16 on PAL and 15 on Dendy, which do not divide by 3 or 4, so the
+  overclocked cycle lengths alternate to keep the average exact (a review of
+  the release PR found PAL x3 running at x3.2 and Dendy x4 at x5).
+- **"Disable 8-sprite-per-scanline limit" now works** (`T-SPRITE-LIMIT`; it was
+  shown and saved but inert). It draws the dropped sprites behind the eight the
+  console shows, and changes nothing the game can see: the overflow flag, the
+  sprite fetches and every CPU cycle stay exact. It is skipped on the five
+  boards whose pattern reads change the cartridge (MMC2, MMC4, the J.Y. ASIC,
+  Bandai 96, Nanjing 163).
+- **Differential phase distortion in the raw NTSC signal decode**
+  (`T-COMPOSITE-ARTIFACTS`): a new "Differential phase" slider rotates brighter
+  colours' hue as the NES PPU does (about 2.5° per palette row on a 2C02E, 5° on
+  a 2C02G). Off by default; display only.
+- **MMC3 IRQ revision setting** (`T-MMC3-NEC-OVERRIDE`, Settings > Emulation):
+  run any mapper-4 game on the Sharp or the alternate (MMC3A / NEC) chip, for
+  dumps whose header cannot say which. blargg's `mmc3_test_2/6-MMC3_alt` passes
+  under the alternate setting. Carried in movies and netplay.
+- **Rewind and run-ahead on the Vs. DualSystem cabinet** (`T-PS-dual-runahead`,
+  ADR 0032 amended): both work in two-screen mode, on the whole cabinet, so
+  the two consoles never fall out of step. A step back restores both screens
+  exactly, and run-ahead shows the same frames a run without it would, a
+  frame or more sooner. Netplay, movies, the debugger and HD packs stay
+  single-console.
+- **A test now enforces the emulation-epoch rule** (`T-EPOCH-FINGERPRINT`).
+  It fingerprints seven test ROMs (frames, audio, RAM, CPU cycles) and fails
+  when that output moves while `EMULATION_EPOCH` still equals the last
+  release's, refusing a re-bless in that state. Until now the rule was kept
+  by hand.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **It matches the re-synced AccuracyCoin, all 146 entries.** The new ROM found
+  the core's version of both emulator defects. A misaligned sprite evaluation
+  now masks the address after an out-of-range X byte, as the ROM's comments
+  state; and a `$4010` write on the DMC timer's reload edge now sets that
+  reload's period. Before them the core differed on two entries; after them the
+  status vector is identical.
+- **A `$2006` write that meets the PPU's address pipeline matches the
+  emulator** (RTL-1). A new generated ROM lands the copy on every dot of a
+  rendering line; the core diverged on 28,129 of 331,838 background fetches,
+  for three reasons measured from the emulator's per-dot trace, and now matches
+  on all of them. One of the three, a copy delay that depends on where the
+  write lands, is the emulator's rule and not a documented one (NESdev says a
+  constant "1 to 1.5 dots"). It is recorded as provisional until a board can
+  settle it.
+- **Ten more AccuracyCoin sub-test ROMs gate the core** (RTL-10), plus the new
+  `dmc-reload-timing`: 30 of 34 now, the other four out for stated reasons. The
+  `sprite-eval-misaligned-oam` sub-test ROM is rebuilt from the new source: the
+  old build's fail path fell through to a pass, so that gate read green every
+  release while the core failed it.
+- **The oracle pin moves to v3.1.0**; every golden that changed is attributed
+  (AccuracyCoin, the rebuilt sub-test, two new stems) and the other 646
+  artifacts are byte-identical.
+- **A self-hosted ladder workflow** (`ladder.yml`, manual dispatch only) runs
+  the whole ladder on the maintainer's runner. CI's Verilator is recorded
+  (5.032).
+- **No hardware has run any bitstream.**
+
+### Records
+
+- **The MiSTer contribution page was rewritten in September**, dropping the
+  "evidence of quality and accuracy testing" sentence the submission case
+  answered and adding reviewer questions about the developer. The new page and
+  its consequences are recorded in `ref-docs/`, the checklist is re-scoped, and
+  `submission-case.md` is refreshed. Two decisions are the maintainer's: how to
+  show reviewers the code is understood and maintained, and whether the
+  sibling repository becomes public.
+- **Nine stale documents corrected against the code** (DOC-01..09), and the
+  v1.8.x Android checklist folded into the mobile run sheet.
+
+### Verification
+
+- `cargo test --workspace --features test-roms --release`: **3,262 passed, 0
+  failed, 11 ignored**. The epoch fingerprint gate passes at epoch 3, now
+  recorded as the released epoch.
+- AccuracyCoin **146/146** at upstream `f5f41dc2`; `nestest` 0-diff.
+- The local commercial suites: `external_real_games` 60/0, `external_extended`
+  137/0, `external_coverage` 6/0 over 744 staged ROMs. One baseline moved:
+  *Millionaire* (Sachen, mapper 146), which the game database marks PAL, at one
+  checkpoint, from the PAL emphasis fix. It was attributed by running that ROM
+  alone on each v3.1.0 commit, and re-blessed.
+- The MiSTer core: LADDER-FILL.
+
 ## [3.0.1] - 2026-10-07 - "Mortar" (the open items closed, one game's graphics fixed, the last MMC3 rule exception tested in the MiSTer core, Rust 1.99 everywhere, every unanswered bot review answered, and a roadmap to v4.0.0)
 
 A maintenance release on v3.0.0. It closes the items v3.0.0 left open:

@@ -181,10 +181,15 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         incompatible by ~17x**, with no independent oracle to adjudicate: risk 6
         arriving as a measurement. The constant stays the oracle's, labelled
         fitted, in a `localparam`
-  - [ ] A purpose-built decay stimulus, to close the three mutations that are
+  - [x] A purpose-built decay stimulus, to close the three mutations that are
         inert **on this ROM** (which timer gates which bits, and where the
         deadline sits inside a 1.27 s gap). Named as a step, not a silence — and
-        note it would confirm this core matches 600 ms, not what hardware does
+        note it would confirm this core matches 600 ms, not what hardware does.
+        **Done at v2.9.5, ticked at v3.1.0 (RTL-5):** `ppudecay075` (mkrom
+        program 75) catches all three mutations, 22,829 / 22,829 / 71,428
+        cycles (sibling `docs/rung3-ppu.md`, "v2.9.5: the purpose-built ROM
+        exists"). The box stayed open for four releases after its work landed,
+        which is why v3.1.0 planned it again
   - [x] **`rtl/nes_top.sv` assembles the console** and carries **not one
         observation port** — everything the gates read is reached
         hierarchically from the co-simulation wrapper, which is legal in
@@ -287,6 +292,15 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       **The version number is struck**: this said "v2.6.7", and v2.6.7 shipped
       "Detent" instead. Seven releases have now passed the slot, so naming one
       is a prediction rather than a plan. **Unblocks on hardware.**
+- [ ] **The `$2006` copy delay, measured on a board** (v3.1.0, sibling ledger
+      3.50). Since v3.1.0 the core delays the `v <- t` copy 3 dots when the
+      second write lands in a rendering line's background-fetch window and 1
+      dot elsewhere, because the oracle does; NESdev documents a constant "1 to
+      1.5 dots". On the board: run the sibling's `ppu2006pipe080` stimulus (mkrom
+      program 80) and compare the picture, or a logic-analyser capture of the
+      PPU address pins, against the core's fetch trace. If they differ, fix the
+      oracle first and move the pin. **BLOCKED — no board**, with the bring-up
+      above.
 
 ## Rung 7 — memory and mappers
 

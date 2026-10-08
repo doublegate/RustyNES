@@ -78,3 +78,16 @@ The gate:
 
 Netplay and TAS (`T-PS-dual-netplay`), the debugger and HD packs stay out of
 dual mode.
+
+**Outcome (v3.1.0).** Implemented as decided. The cabinet owns a rewind ring
+of whole RVSD containers, framebuffers included, so a step back restores both
+screens without the re-render a single console's slim ring needs.
+`VsDualSystem::restore_quiet` is the restore that keeps the ring, for
+run-ahead's rollback and a rewind step; `restore` (a loaded state) and
+`power_cycle` empty it. Both gate clauses are tests that mutation shows can
+fail: `vs_dualsystem_rewind.rs` (a slim sub block in the capture, and a loud
+restore in the step back, each caught) and `runahead.rs`
+`cabinet_runahead_matches_a_plain_run_on_both_screens` at depths 1 and 2 (no
+rollback, and capture left on across hidden frames, each caught). The stimulus
+is a cart built for it: the protocol cart renders nothing, so a framebuffer
+comparison against it is blind.

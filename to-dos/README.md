@@ -11,8 +11,8 @@ lines named v1.8.8 until v2.7.6).
 This directory holds the phase-and-sprint development history that produced
 RustyNES v1.0.0 (the cycle-accurate production core) and the long line of
 feature/platform releases built on top of it. The phases below are
-**delivered** — RustyNES ships at v3.0.0 with a cycle-accurate core
-(AccuracyCoin 144/144), **191 mapper families**, FDS, Vs./PC10, rollback netplay,
+**delivered** — RustyNES ships at v3.1.0 with a cycle-accurate core
+(AccuracyCoin 146/146), **191 mapper families**, FDS, Vs./PC10, rollback netplay,
 RetroAchievements, TAS movie tooling, the performance + desktop-UX shell, the
 full v1.1.0 → v1.7.x feature set (Lua scripting, visual filters, the studio /
 TAS-tooling / debugger-depth suite, the writable/programmable "Forge" tools,

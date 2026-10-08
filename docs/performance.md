@@ -1212,6 +1212,25 @@ is named as the suspect, not established: one more step, `8f449691` →
 `33ea0572` alone, would settle it. **Found and localized; not fixed in
 v2.9.9.** Nothing here is claimed as a speed-up beyond NL-15.
 
+**That step, measured (v3.0.1 cycle, recorded v3.1.0).** `8f449691` →
+`33ea0572` alone, `scripts/perf/ab_check.sh`, two independent runs on a quiet
+host, A/B/A order-bias drift at most 0.95%:
+
+| workload | run 1 | run 2 |
+| --- | --- | --- |
+| `nestest` | +1.5% | +1.8% |
+| `palette` | +0.4% | +1.9% |
+| `nestest_fast` | +0.5% | +1.1% |
+| `palette_fast` | +1.4% | +0.5% |
+
+Slower on all four workloads in both runs, so the direction is established
+and `33ea0572` is confirmed as a contributor. It is **not** the 4-5% the
+bisection step showed: its size is 0.4-1.9%, and the runs disagree about which
+workload pays most. The commit adds a module and accessors but nothing to the
+frame loop, which leaves code layout or inlining as the working explanation,
+untested. No change is adopted; the lead is closed as measured. Logs:
+`salvaged/perf-v3.0.1-palette-ab/` (gitignored).
+
 ### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
 
 **Finding: presents are even in every configuration measured; run-ahead

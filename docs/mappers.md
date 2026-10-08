@@ -30,6 +30,9 @@ pub trait Mapper: Send {
 
     fn save_state(&self) -> Vec<u8>;
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError>;
+
+    // v3.1.0 (`T-SPRITE-LIMIT`): `false` when a CHR read changes the board.
+    fn chr_reads_are_pure(&self) -> bool { true }
 }
 
 // `#[non_exhaustive]` since v3.0.0: outside `rustynes-mappers`, build one with
@@ -55,6 +58,19 @@ pub struct Cartridge {
 
 pub enum Mirroring { Horizontal, Vertical, SingleScreenA, SingleScreenB, FourScreen, MapperControlled }
 ```
+
+**`chr_reads_are_pure` (v3.1.0).** The PPU's "disable sprite limit" option
+makes extra, display-only pattern reads, and only on boards that report
+`true`. Five report `false` because a CHR read changes them: MMC2 (9) and
+MMC4 (10) switch a CHR latch on tiles `$FD` / `$FE`, the J.Y. ASIC (35, 90,
+209, 211) clocks an IRQ counter on PPU reads and mapper 209 latches CHR,
+Bandai 96 follows the last PPU address for its inner CHR bank, and Nanjing 163
+latches PPU A13. **A new board whose `ppu_read` writes `self` must override
+it.** `every_board_that_claims_pure_chr_reads_has_them` (in `mapper.rs`) reads
+all of CHR on every constructible mapper id that claims purity and fails if
+`save_state` moved; it also pins the impure set, so the list here and the code
+cannot drift apart. The set came from a scan of every `ppu_read` body for
+writes to `self`.
 
 `rustynes_mappers::parse(&[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError>`
 parses an iNES or NES 2.0 file (see `cartridge-format.md`), constructs the
@@ -279,7 +295,7 @@ Sorted by number of commercial titles using each mapper.
 | 1 | 1-5 | MMC1 (SUROM, SXROM, etc.) | 2 | — | — | landed (Phase 2) | Serial 5-write protocol; consecutive-write bug. On boards with at most 8 KiB of CHR (v2.7.2, from `nesdev_wiki/MMC1.xhtml`), the CHR bank register's bit 4 selects the 256 KiB PRG half for the whole window, fixed bank included (SUROM / SXROM), and bits 3-2 select the 8 KiB PRG-RAM bank (SOROM: bit 3; SXROM: bit 3 = A14, bit 2 = A13). In 4 KiB CHR mode the driving register is the one the last CHR fetch selected. SNROM's bit-4 RAM enable applies only to <= 256 KiB PRG with <= 8 KiB RAM. holy_mapperel `M1_P512K_CR8K_S8K` / `_S32K` pass `0000`. SZROM is not modelled. |
 | 2 | 0-2 | UxROM | 2 | — | — | landed (Phase 2) | UNROM, UOROM, etc. CHR-RAM only. |
 | 3 | 0-2 | CNROM | 2 | — | — | landed (Phase 2) | Bus conflict required. |
-| 4 | 0-3 | MMC3 (and MMC6, sub 1) | 4 | — | A12 | landed (Phase 4 / S1) | Sharp vs NEC IRQ revision; default Sharp. The IRQ line is raised at the first per-cycle hook after the A12 rise (v2.9.9, pitfall 2). `mmc3_test/5-MMC3` and `mmc3_test_2/5-MMC3` pass; both `4-scanline_timing` ROMs pass all 13 sub-tests since T-MMC3-BG-A12, a PPU change (`docs/ppu-2c02.md` pitfall 4); they failed at sub-test 9 from v2.9.9. |
+| 4 | 0-3 | MMC3 (and MMC6, sub 1) | 4 | — | A12 | landed (Phase 4 / S1) | Sharp vs NEC IRQ revision; default Sharp. v3.1.0: `Nes::set_mmc3_revision_override` selects the alternate (NEC) revision for any mapper-4 ROM, and its `$C001` reload to 0 now asserts as documented, so `mmc3_test_2/6-MMC3_alt` passes under it. The IRQ line is raised at the first per-cycle hook after the A12 rise (v2.9.9, pitfall 2). `mmc3_test/5-MMC3` and `mmc3_test_2/5-MMC3` pass; both `4-scanline_timing` ROMs pass all 13 sub-tests since T-MMC3-BG-A12, a PPU change (`docs/ppu-2c02.md` pitfall 4); they failed at sub-test 9 from v2.9.9. |
 | 5 | — | MMC5 | 4 | yes (landed) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Vertical split-screen (`$5200-$5202`) via `bg_split_state` (Castlevania III J status bar) and the MMC5 audio extension (two pulse + 7-bit PCM, `$5000-$5015`, behind the default-on `mapper-audio` feature) landed. PRG-RAM banking (v2.7.2, `nesdev_wiki/MMC5.xhtml` §"PRG-RAM configurations"): `$5113` and RAM-mode `$5114-$5116` page the RAM by the bank value's low three bits over the wiki's 64 KiB "compatible superset for all games", because PRG-RAM sizes in headers are unreliable (*L'Empereur*'s NES 2.0 dump under-declares its ETROM board); a 16 KiB window takes A13 from the CPU. `sram()` is the battery-backed part of the header's declared RAM: all of it, except ETROM's 16 KiB, where only the first chip is saved. |
 | 7 | 0-2 | AxROM | 2 | — | — | landed (Phase 2) | Single-screen mirroring control. |
 | 9 | — | MMC2 | 4 | — | — | landed (Phase 4 / S2) | Punch-Out; latched CHR per fetch ($FD/$FE). |
@@ -1008,7 +1024,21 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
 
 ## Open questions
 
-- **MMC3 default revision** when iNES (no submapper) is detected. Plan: default Sharp (MMC3A) since Star Trek requires it; expose a config override.
-- **Mapper #5 (MMC5) audio scope.** Implementing the 2 extra pulse + raw PCM channels is non-trivial; defer behind a `mmc5-audio` cargo feature.
+Re-checked against the code at v3.1.0 (records item DOC-03): the first two
+and the fourth are answered, and are kept with their answers rather than
+deleted.
+
+- **MMC3 default revision** when iNES (no submapper) is detected. *Answered:*
+  the default is Sharp (the "normal" IRQ behaviour); NES 2.0 submapper 4 selects
+  the alternate one (MMC3A and the non-Sharp MMC3B), and since v3.1.0 any
+  mapper-4 game can be forced either way (`Mapper::set_mmc3_revision_override`,
+  desktop `[emulation] mmc3_irq_revision`, `T-MMC3-NEC-OVERRIDE`). This line
+  used to call the Sharp default "MMC3A", which is the other revision.
+- **Mapper #5 (MMC5) audio scope.** *Answered:* the two extra pulses and the
+  raw PCM channel landed behind `mapper-audio` (Track C2 / Phase 2.3; the audio
+  table in `docs/compatibility.md`).
 - **VRC7 FM audio.** YM2413-derived; only Lagrange Point uses it commercially. Banking + IRQ landed in Track C2 / Phase 2.4 (mapper 85; same `mapper-audio` feature flag as VRC6 / Sunsoft 5B / Namco 163 / MMC5). **The FM synthesizer landed** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; ADR 0006 (`docs/adr/0006-vrc7-audio-landed.md`) supersedes the ADR 0004 deferral. *Lagrange Point* plays with in-game audio (mixed via the `mapper-audio` slot).
-- **Pirate / multicart mappers.** 60+ exist; none in initial scope. Architecture supports adding them but no commitment.
+- **Pirate / multicart mappers.** *Answered by policy:* none were in the initial
+  scope; many are in now (191 families, `docs/STATUS.md`), each admitted under
+  the long-tail policy in `docs/compatibility.md` (demand, a fixture or a
+  specific NESdev page, and NES 2.0 detection).
