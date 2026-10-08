@@ -31,7 +31,7 @@ complete core; the phase table below is in the new order. The narrative for the 
 
 | Phase | Release slot | Content | Decisions |
 |---|---|---|---|
-| **S** (submission prep, docs only) | v3.1.0, then kept current through to H | SUB-1 (a dated `ref-docs/` record of the live contribution page; it changed on 2026-09-26), SUB-2 (re-scope the checklist), SUB-5 (refresh `submission-case.md`); TL-5 (this file, done) | D10, D14 (the RTL keeps its long comments) |
+| **S** (submission prep, docs only) | v3.1.0, then kept current through to H | SUB-1 (a dated `ref-docs/` record of the live contribution page; rewritten 2026-09-19/20, last edited 2026-09-26; **done v3.1.0**, `ref-docs/2026-10-07-mister-core-contribution-requirements-update.md`), SUB-2 (re-scope the checklist), SUB-5 (refresh `submission-case.md`); TL-5 (this file, done) | D10, D14 (the RTL keeps its long comments) |
 | **F1** (cheap breadth) | v3.2.0 | FB-16 options first (custom palette, +8 sprites), FB-2 SUROM/SXROM, the 206 family, 66, 11, 79, 9/10, 118/119, 71/232, 34, the trivial discretes, FB-10 paddle, FB-8 Four Score, FB-6 cheats | D12, D26 |
 | **F2** (the memory platform) | v3.3.0 | FB-20 arbiter (RTL-9 closes), DDR3, FB-4 save states, FB-5 rewind, the real `hps_io` under Verilator; **the off-die build becomes the headline** and on-die a "lite" build | D4, D12, D16 |
 | **F3** (big boards, audio) | v3.4.0-v3.5.0 | MMC2/4, FME-7/5B, VRC2/4, the Zapper (v3.4.0); MMC5, N163, VRC6, VRC7, Bandai FCG with expansion audio, Famicom peripherals (v3.5.0) | D15 |
