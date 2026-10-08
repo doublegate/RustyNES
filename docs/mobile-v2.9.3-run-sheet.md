@@ -174,8 +174,11 @@ multi-touch (A13). One row was dropped because it is now **wrong**: "the
 picker offers iNES / NES 2.0 only". FDS and NSF shipped in v2.9.7 (T1-T7). Its
 accuracy paragraph ("AccuracyCoin 139/141") is replaced by the rule it stated:
 the device runs the host's byte-identical core, so AccuracyCoin (146/146 at
-v3.1.0) is measured on the host and never on a phone, and a device that
-diverges from the host's frames has a shell bug, not a core one.
+v3.1.0) is measured on the host and never on a phone. A device that diverges
+from the host's frames on the same ROM, from the same initial state, with the
+same input stream points at the mobile integration (the shell, the bridge or
+the build), not the shared core; if any of the three differ, compare those
+first.
 
 | # | Platform | Step | Expect | Result |
 | --- | --- | --- | --- | --- |

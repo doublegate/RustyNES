@@ -322,7 +322,9 @@ Per `ref-docs/research-report.md` §Sprite evaluation:
     position, `OAMADDR` stepping by one each, whatever the alignment: a start
     at `m = 3` copies the last byte of slot `n` and the first three of slot
     `n + 1` (until v3.1.0 the FSM stopped after one byte there).
-  - The fourth byte copied is the X position, and it is range-tested like Y.
+  - The fourth byte copied is evaluated AS the X position, and range-tested
+    like Y. In an aligned walk it is the sprite's X; from `m = 3` it is slot
+    `n + 1`'s attribute byte, read in the X position.
     **X in range: `OAMADDR += 1` only**, so a misaligned walk stays misaligned.
     **X out of range: `OAMADDR += 1`, then AND with `$FC`**, realigning.
     Aligned, both give the next multiple of four, so only misaligned OAM sees

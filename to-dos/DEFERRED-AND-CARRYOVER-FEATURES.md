@@ -441,9 +441,10 @@ variant is what would put the first two in front of a user at all.)*
 
 All remaining hard-tier accuracy residuals share **one root cause** and converge
 on the v2.0.0 one-clock + every-cycle-bus-access refactor. They are **outside the
-AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin is an exact
-**141/141** on the shipping default core, up from 139/139 when this paragraph was
-written — the denominator grew in the v2.0.1 re-sync and v2.0.3 closed the two new
+AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin was an exact
+**141/141** on the shipping default core at the time, up from 139/139 when this
+paragraph was written, and is 146/146 since v3.1.0, the earlier figures each
+including the masked `Misaligned OAM behavior` failure — the denominator grew in the v2.0.1 re-sync and v2.0.3 closed the two new
 tests). The maintainer's standing decision through v1.7.0
 is "keep deferring" point-fixes (ADR 0002 stop-condition; 15+ documented
 rollbacks); v2.0.0 is the one release licensed to break save-state/determinism and
@@ -572,7 +573,7 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 
 ### 6c. Other v2.0-axis items
 
-- `[ ]` **CPU-multiplier overclock** — distinct from the F3 dot-resolution
+- `[x]` **CPU-multiplier overclock** — distinct from the F3 dot-resolution
   scanline-insert overclock (which shipped off-by-default in v1.7.0 beta.1);
   needs the timebase rewrite. The v1.5.0 "Enhancements" group's
   **sprite-limit-disable + overclock** controls are **staged-but-inert** pending
@@ -596,6 +597,12 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   movies and netplay carry them, with one `.rnm` format and protocol bump. The
   sprite limit is render-only, so the overflow flag and evaluation timing stay
   exact.)*
+  *(2026-10-08: **shipped in v3.1.0**, both. `Nes::set_cpu_overclock(1..=4)`
+  (`T-CPU-OVERCLOCK`) runs the CPU k times faster with the APU, the mapper
+  counters and the PPU timers at the stock rate, exact on every region; the
+  sprite-limit option (`T-SPRITE-LIMIT`) draws the dropped sprites behind the
+  eight the console shows. Both ride in `HardwareOptions` (`.rnm` format 6,
+  protocol 7) and apply to both consoles of a Vs. DualSystem cabinet.)*
 - `[x]` **Full Vs. DualSystem dual-core (C)** — *(shipped v2.0.0 "Timebase"
   beta.5, commit `9fe44a19`: `crates/rustynes-core/src/vs_dualsystem.rs`,
   `pub enum Emu` (Single / Dual); desktop presentation v2.1.2 (`render_dual` in
