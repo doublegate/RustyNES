@@ -29,11 +29,16 @@ use common::{fnv1a64, rom_path};
 use rustynes_core::save_state::{BinReader, BinWriter};
 use rustynes_core::{HardwareOptions, Nes};
 
-const ROM: &str = "nes-test-roms/ny2011/ny2011.nes";
-/// Audible from about frame 120 (ny2011 is silent for its first 300 frames,
-/// which made the snapshot test below blind to the APU's phase: a restore
-/// that dropped the stock-rate position passed it).
-const AUDIBLE_ROM: &str = "nes-test-roms/apu_mixer/square.nes";
+/// Committed ROMs only. This file first named `nes-test-roms/ny2011` and
+/// `nes-test-roms/apu_mixer/square.nes`, which live in the gitignored local
+/// aggregate: every test here passed on the development host and failed in
+/// CI's clean checkout (v3.1.0's release PR, #594). `blargg/apu_mixer/` is the
+/// tracked copy (`square.nes` byte-identical).
+const ROM: &str = "blargg/apu_mixer/triangle.nes";
+/// Audible from about frame 120. A silent window (`ny2011` is silent for its
+/// first 300 frames) made the snapshot test below blind to the APU's phase: a
+/// restore that dropped the stock-rate position passed it.
+const AUDIBLE_ROM: &str = "blargg/apu_mixer/square.nes";
 
 fn boot_rom(rom: &str) -> Nes {
     let path = rom_path(rom);

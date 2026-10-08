@@ -67,16 +67,16 @@ const PANEL: &[Probe] = &[
         reach: "the whole AccuracyCoin battery: CPU, PPU, APU, DMA, bus",
     },
     Probe {
-        rom: "nes-test-roms/ny2011/ny2011.nes",
+        rom: "blargg/apu_mixer/triangle.nes",
         frames: 600,
         press_start: false,
-        reach: "music and sprites",
+        reach: "a continuous tone through the mixer (audio)",
     },
     Probe {
-        rom: "nes-test-roms/spritecans-2011/spritecans.nes",
+        rom: "blargg/sprite_overflow_tests/3.Timing.nes",
         frames: 300,
         press_start: false,
-        reach: "sprite evaluation and overflow",
+        reach: "sprite evaluation and overflow timing",
     },
     Probe {
         rom: "nes-test-roms/dmc_tests/latency.nes",
@@ -85,7 +85,7 @@ const PANEL: &[Probe] = &[
         reach: "DMC fetch latency (audio)",
     },
     Probe {
-        rom: "nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes",
+        rom: "blargg/mmc3_test_2/4-scanline_timing.nes",
         frames: 120,
         press_start: false,
         reach: "MMC3 IRQ timing",
@@ -97,12 +97,20 @@ const PANEL: &[Probe] = &[
         reach: "OAM and DMC DMA overlap",
     },
     Probe {
-        rom: "nes-test-roms/full_palette/flowing_palette.nes",
+        rom: "assorted/flowing_palette.nes",
         frames: 120,
         press_start: false,
         reach: "palette and emphasis output",
     },
 ];
+
+// Every ROM above is COMMITTED. The panel first named four from the
+// gitignored local aggregate `tests/roms/nes-test-roms/` (ny2011, spritecans,
+// and the aggregate's copies of `4-scanline_timing` and `flowing_palette`),
+// so it passed on the development host and could not run in CI's clean
+// checkout (v3.1.0's release PR, #594). The two copies are byte-identical to
+// the tracked files they now name; `ny2011` and `spritecans` have no tracked
+// copy and were replaced by the nearest committed stimulus.
 
 /// Frames to let a ROM boot before `AccuracyCoin`'s START press.
 const BOOT_FRAMES: u32 = 300;
