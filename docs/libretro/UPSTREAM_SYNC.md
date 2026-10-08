@@ -168,14 +168,6 @@ merged on 2026-10-06 (`9c08e5e6f3`). The docs page PR,
 2026-10-08 (`4a0c09f236`), after its one review finding was fixed and answered.
 Until v3.1.0 this section said no pull request was open.
 
-**v3.1.0 (2026-10-08).** The only difference between the core's `.info` and
-upstream's was `display_version` (`v3.0.0`), measured by `diff` against
-`dist/info/rustynes_libretro.info` on upstream `master`. The fork was synced and
-[libretro/libretro-super#2134](https://github.com/libretro/libretro-super/pull/2134)
-opened with that one line, copied from the `v3.1.0` tag. The docs page names no
-version and no libretro-visible feature changed (the CPU overclock and the
-sprite-limit option are not core options yet), so `libretro/docs` needs no PR.
-
 | repo | branch commit | change |
 | --- | --- | --- |
 | `doublegate/libretro-super` | `990e96f` | `dist/info/rustynes_libretro.info` copied byte-for-byte from this repository: `supported_extensions` gains `unf\|unif`, `core_options = "true"`, the description (191 families, the one-clock scheduler), `display_version` |
@@ -189,6 +181,16 @@ already says GPL-3.0-or-later.
 local `.info` again (its `display_version` will have moved), and re-check the
 hand-audited fields of the table above (`savestate`, `cheats`, firmware, the
 mapper count) against the crate.
+
+## Sync for v3.1.0 (submitted 2026-10-08)
+
+The only difference between the core's `.info` and
+upstream's was `display_version` (`v3.0.0`), measured by `diff` against
+`dist/info/rustynes_libretro.info` on upstream `master`. The fork was synced and
+[libretro/libretro-super#2134](https://github.com/libretro/libretro-super/pull/2134)
+opened with that one line, copied from the `v3.1.0` tag. The docs page names no
+version and no libretro-visible feature changed (the CPU overclock and the
+sprite-limit option are not core options yet), so `libretro/docs` needs no PR.
 
 ## Sync of 2026-08-20 (done) — measured against upstream `master`
 
