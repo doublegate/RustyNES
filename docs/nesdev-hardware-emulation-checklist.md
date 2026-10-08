@@ -65,7 +65,7 @@ Primary source clusters:
 | Reset sequence | Suppress reset stack writes but decrement S by 3 and fetch $FFFC/$FFFD | Implemented; cold-boot SP regression tests exist |
 | Power-up register state | A/X/Y normally 0 on tested hardware; RAM is unreliable; reset preserves most state | Deterministic test mode (default) + seeded randomized developer mode (`Nes::from_rom_with_power_on_seed`) both landed v1.5.0 (T-72-002) |
 | Unofficial opcodes | Implement all NMOS 6502 unofficial opcodes including unstable store family | Implemented; **SH\* pass 6/6 in AccuracyCoin under R1** — the deeper internal/external data-bus split is coarse but no test demands more |
-| Interrupt polling | NMI edge-sensitive, IRQ level-sensitive, BRK/IRQ/NMI vector hijacking | **Closed under the R1 master clock:** `cpu_interrupts_v2` 5/5 strict; the only residual is `mmc3_test_2/4` #3 (ADR-0002 axis, deferred) |
+| Interrupt polling | NMI edge-sensitive, IRQ level-sensitive, BRK/IRQ/NMI vector hijacking | **Closed under the R1 master clock:** `cpu_interrupts_v2` 5/5 strict. The last residual, `mmc3_test_2/4` #3, closed in v3.0.0 (`T-MMC3-BG-A12`; `mmc3_test_2_4_scanline_timing_strict`) |
 | Dummy reads/writes | Preserve all documented dummy bus accesses and RMW double writes | Implemented for major suites; internal-vs-external bus modeling remains a v1.x TODO |
 | DMA halt eligibility | DMA can halt only on CPU read cycles | Implemented; continue to guard with DMC/OAM DMA tests |
 
@@ -79,7 +79,7 @@ Primary source clusters:
 | Loopy v/t/x/w | Keep scroll latch behavior and render-time horizontal/vertical reload timing | Implemented; guarded by PPU tests and visual baselines |
 | Background fetch pipeline | Preserve all visible, prefetch, and extra nametable fetches | Implemented; Mesen2 trace tooling documents exact pipeline |
 | Sprite evaluation | Per-dot secondary-OAM clear, copy, overflow bug, and OAMADDR walk | Implemented; the sub-cycle flag-timing residuals **closed under R1** (AccuracyCoin sprite-eval 9/9) |
-| Sprite 0 hit | Set during rendering with left-edge, dot, and pre-render restrictions | Implemented; residual stale-shifter cases tracked |
+| Sprite 0 hit | Set during rendering with left-edge, dot, and pre-render restrictions | Implemented; the stale-shifter case is still open, as ACC-04 (v3.3.0 in the v3.1 → v4.0 line plan) |
 | NTSC odd-frame skip | Skip dot on odd frames only when rendering is enabled | Implemented and tested by `ppu_vbl_nmi` |
 | Region variants | PAL and Dendy timing must not be inferred from NTSC constants | **Region-exact under the R1 master clock:** 3:1 NTSC/Dendy, hardware-true **3.2:1 PAL**; `region_timing` 4/4 |
 | PPU variants | 2C03/2C04/2C05/Vs. palettes and behavior are separate from stock 2C02 | Out of scope — a separate platform initiative (Vs. System / PlayChoice-10); load-time diagnostics only |
@@ -89,11 +89,11 @@ Primary source clusters:
 | Behavior | Required emulator treatment | Project status |
 |---|---|---|
 | Frame counter write delay | $4017 effects occur after 3 or 4 CPU clocks depending on APU-cycle phase | Implemented for test ROMs; keep in APU docs |
-| 4-step IRQ | Frame IRQ is set only in 4-step mode when IRQ inhibit is clear; $4015 read clears old flag | Implemented with residual AccuracyCoin frame-IRQ cases |
+| 4-step IRQ | Frame IRQ is set only in 4-step mode when IRQ inhibit is clear; $4015 read clears old flag | Implemented; no AccuracyCoin residual (146/146 at upstream `f5f41dc2`, v3.1.0) |
 | 5-step mode | No frame IRQ; mode write can clock quarter/half frame units | Implemented |
 | Nonlinear mixer | Use nonlinear pulse and TND paths before console filtering | Implemented |
-| DMC load vs reload DMA | Model different scheduling phase, dummy cycle, and alignment cycle | Implemented; residual $4015/$4016 bracket cases remain |
-| DMA register-read bugs | Repeated halted reads must affect $2007/$4015/$4016/$4017 side-effect registers | Implemented enough for blargg; AccuracyCoin residuals remain |
+| DMC load vs reload DMA | Model different scheduling phase, dummy cycle, and alignment cycle | Implemented; no AccuracyCoin residual (146/146, v3.1.0) |
+| DMA register-read bugs | Repeated halted reads must affect $2007/$4015/$4016/$4017 side-effect registers | Implemented; blargg's DMA suites pass and AccuracyCoin has no residual (146/146, v3.1.0) |
 | Controller strobe/read | $4016 low 3 bits latch OUT lines; $4016/$4017 reads clock device and return D0-D4 plus open bus | Standard pads + **Four Score** + **Arkanoid Vaus paddle + Zapper** via the opt-in per-port `InputDevice` overlay; microphone / other expansion devices remain deferred |
 | DMC controller conflict | Reads can lose or duplicate joypad bits during DMC DMA | **Resolved (v1.4.0).** Modelled in `Bus::dmc_dma_read` (the `$4016`/`$4017` DMC-fetch conflict clocks the controller shift register, ORing open-bus high bits with the controller read; PAL / non-`$4000`-page guarded). Verified by the strict blargg `dmc_dma_during_read4/dma_4016_read`, `sprdma_and_dmc_dma` (+`_512`), and the `read_joy3/count_errors`/`count_errors_fast` conflict-stress smokes (`count_errors` renders "Conflicts: 149/1000", all compensated) — all green |
 
@@ -106,7 +106,7 @@ Primary source clusters:
 | Nametable layout naming | Prefer explicit CIRAM A10 behavior over ambiguous "horizontal/vertical mirroring" prose | Documented in `docs/mappers.md` and `docs/cartridge-format.md` |
 | Bus conflicts | For discrete boards, mapper sees CPU value AND PRG ROM byte at the written address | Implemented for supported conflict mappers |
 | MMC1 | Serial 5-write protocol, reset write, and consecutive-cycle write ignore behavior | Implemented |
-| MMC3 | Filtered PPU A12 rising edge after sufficient low time; revision-sensitive IRQ behavior | Implemented with one scanline-timing residual |
+| MMC3 | Filtered PPU A12 rising edge after sufficient low time; revision-sensitive IRQ behavior | Implemented; the scanline-timing residual closed in v3.0.0, and both revisions are selectable since v3.1.0 (`T-MMC3-NEC-OVERRIDE`) |
 | MMC5 | PRG/CHR modes, ExRAM, fill, split, multiplier, scanline IRQ, audio | Feature-complete incl. audio (v1.x); only the >8 KiB multi-chip PRG-RAM configs remain (long-tail policy, no fixture) |
 | Expansion audio | VRC6, Sunsoft 5B, Namco 163, MMC5, VRC7, FDS require mapper/APU integration | **All landed** via `mix_audio`→`tick_with_external`: VRC6 / 5B / N163 / MMC5 / VRC7 OPLL FM / **FDS 2C33 wavetable** |
 | FDS | BIOS, disk timing, IRQs, writable media, and FDS audio are a separate platform surface | **Supported:** parser + RAM adaptor (mapper 20) + user-supplied `disksys.rom` BIOS + read/write drive + timer/transfer IRQs + writable `.fds.sav` + 2C33 wavetable audio. Real-BIOS boot unverified in CI (BIOS non-distributable); device + audio unit-tested |
@@ -117,11 +117,11 @@ Primary source clusters:
 |---|---|---|
 | CPU reset/power | `cpu_reset`, power-on unit tests, randomized RAM developer mode | Add missing external ROM fixture if license permits |
 | CPU instruction edges | `instr_test_v5`, `instr_misc`, `cpu_timing_test6`, dummy reads/writes | `instr_misc` (5) + `instr_timing` (2) + `cpu_reset` vendored + wired v1.5.0 (T-71-002/003) |
-| CPU interrupts | `cpu_interrupts_v2`, IRQ trace fixture, mapper IRQ tests | C1 residual carried forward |
+| CPU interrupts | `cpu_interrupts_v2`, IRQ trace fixture, mapper IRQ tests | Passing; the C1 residual (`mmc3_test_2/4` #3) closed in v3.0.0 |
 | PPU vblank/open bus | `ppu_vbl_nmi`, `ppu_open_bus`, PPU state traces | Passing; keep traces for future changes |
-| Sprites/OAM | sprite hit/overflow, `oam_read`, `oam_stress`, AccuracyCoin | Residuals tracked under Cascade A |
-| APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4`, `sprdma_and_dmc_dma`, `read_joy3`, `pal_apu_tests`, `240pee` (240p suite) | Passing; AccuracyCoin residuals remain. v1.4.0 added the `240pee` UxROM+BNROM render gates and confirmed the DMC-controller-conflict coverage |
-| Mapper timing | `mmc3_test_2`, `mmc3_irq_tests`, Holy Mapperel, mapper-specific ROMs | MMC3 sub-test #3 residual; VRC24 test source unresolved |
+| Sprites/OAM | sprite hit/overflow, `oam_read`, `oam_stress`, AccuracyCoin | Passing except the sprite-0 stale-shifter case (ACC-04, v3.3.0) |
+| APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4`, `sprdma_and_dmc_dma`, `read_joy3`, `pal_apu_tests`, `240pee` (240p suite) | Passing; no AccuracyCoin residual (146/146, v3.1.0). v1.4.0 added the `240pee` UxROM+BNROM render gates and confirmed the DMC-controller-conflict coverage |
+| Mapper timing | `mmc3_test_2`, `mmc3_irq_tests`, Holy Mapperel, mapper-specific ROMs | MMC3: all of `mmc3_test_2` strict (v3.0.0). VRC2/4: AWJ's `vrc24test` is still not in the corpus; coverage is `m22`'s CHR-bank walk (`tests/m22.rs`) and the local dumps in `tests/roms/external/` |
 | Input | Standard pads, DMC conflict, Four Score/Zapper/expansion devices | Standard pads only; expanded devices are v1.x |
 | Commercial canaries | User-supplied external snapshots, never committed ROM bytes | 60-ROM oracle exists |
 

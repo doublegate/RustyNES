@@ -238,11 +238,14 @@ impl NetplayUi {
     ///
     /// `num_players` (2..=4) selects how many players the session runs; 3-4
     /// players enable the Four Score adapter. It is clamped into `2..=4`. The
-    /// multi-joiner UDP handshake (a host adopting several joiners + assigning
-    /// each a player index) is a follow-up — the N-player rollback core +
-    /// determinism proof live in `rustynes-netplay`; the native UDP layer currently
-    /// completes the first joiner's handshake. The selected `num_players` is
-    /// still recorded so the session + Four Score wiring is in place.
+    /// multi-joiner UDP handshake (a host adopting several joiners and
+    /// assigning each a player index) exists in `rustynes_netplay::mesh_net`
+    /// since v2.6.0 (`MeshHost`, `UdpMeshTransport`), with the N-player
+    /// rollback core and its determinism proof; this desktop path does not use
+    /// it yet and completes the first joiner's handshake only. Wiring it is the
+    /// v3.1 → v4.0 line plan's "native 3-4 players" (v3.4.0). The selected
+    /// `num_players` is still recorded so the session + Four Score wiring is in
+    /// place.
     ///
     /// The host no longer needs to pre-enter the joiner's address — it just
     /// shares its own listening `IP:port` and the joiner dials in (see

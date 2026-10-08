@@ -1097,7 +1097,7 @@
 > `installDebug`→`installFossDebug` alias. Ad / RevenueCat glue stayed dormant and was
 > later removed entirely (ADR 0035 — RustyNES is permanently open-source and
 > income-free); on-device dual-flavor verification and F-Droid submission remain a
-> forward step. See `docs/android.md` + `to-dos/v1.8.x-on-device-verification.md`. android.yml CI (the
+> forward step. See `docs/android.md` + `docs/mobile-v2.9.3-run-sheet.md` (the v1.8.x checklist folded into it at v3.1.0). android.yml CI (the
 > NDK cross-build + both-flavor Gradle package) is the compile gate for this change.
 >
 > **The preceding release: v2.0.0 "Timebase"** (2026-07-03) — the **one-clock,

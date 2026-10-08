@@ -15,9 +15,12 @@
 //! path: the PPU framebuffer is already RGBA8 256x240, which is
 //! byte-identical to the canvas `ImageData` format, so a direct
 //! `put_image_data` blit gets a WORKING browser emulator NOW. The
-//! winit/wgpu unification (so the egui debugger overlay + NTSC
-//! filter work on web too) is a follow-up sprint (1.4). Audio +
-//! `IndexedDB` save state are also follow-ups.
+//! winit/wgpu unification, so the egui shell and the NTSC filter work
+//! on the web too, is now the default `wasm-winit` build; this module
+//! is the lightweight `wasm-canvas` embed beside it. Audio
+//! (`crate::wasm_audio`, Sprint 1.4c) and `IndexedDB` save states
+//! (v1.4.0 E2) reach this path too. (Until v3.1.0 this paragraph still
+//! called all three follow-ups.)
 //!
 //! See `docs/audit/v1.3-sprint-1.3-wasm-canvas-mvp-2026-05-24.md`.
 

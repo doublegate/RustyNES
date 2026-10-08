@@ -1024,7 +1024,21 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
 
 ## Open questions
 
-- **MMC3 default revision** when iNES (no submapper) is detected. Plan: default Sharp (MMC3A) since Star Trek requires it; expose a config override.
-- **Mapper #5 (MMC5) audio scope.** Implementing the 2 extra pulse + raw PCM channels is non-trivial; defer behind a `mmc5-audio` cargo feature.
+Re-checked against the code at v3.1.0 (records item DOC-03): the first two
+and the fourth are answered, and are kept with their answers rather than
+deleted.
+
+- **MMC3 default revision** when iNES (no submapper) is detected. *Answered:*
+  the default is Sharp (the "normal" IRQ behaviour); NES 2.0 submapper 4 selects
+  the alternate one (MMC3A and the non-Sharp MMC3B), and since v3.1.0 any
+  mapper-4 game can be forced either way (`Mapper::set_mmc3_revision_override`,
+  desktop `[emulation] mmc3_irq_revision`, `T-MMC3-NEC-OVERRIDE`). This line
+  used to call the Sharp default "MMC3A", which is the other revision.
+- **Mapper #5 (MMC5) audio scope.** *Answered:* the two extra pulses and the
+  raw PCM channel landed behind `mapper-audio` (Track C2 / Phase 2.3; the audio
+  table in `docs/compatibility.md`).
 - **VRC7 FM audio.** YM2413-derived; only Lagrange Point uses it commercially. Banking + IRQ landed in Track C2 / Phase 2.4 (mapper 85; same `mapper-audio` feature flag as VRC6 / Sunsoft 5B / Namco 163 / MMC5). **The FM synthesizer landed** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; ADR 0006 (`docs/adr/0006-vrc7-audio-landed.md`) supersedes the ADR 0004 deferral. *Lagrange Point* plays with in-game audio (mixed via the `mapper-audio` slot).
-- **Pirate / multicart mappers.** 60+ exist; none in initial scope. Architecture supports adding them but no commitment.
+- **Pirate / multicart mappers.** *Answered by policy:* none were in the initial
+  scope; many are in now (191 families, `docs/STATUS.md`), each admitted under
+  the long-tail policy in `docs/compatibility.md` (demand, a fixture or a
+  specific NESdev page, and NES 2.0 detection).

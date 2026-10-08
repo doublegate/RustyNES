@@ -50,6 +50,11 @@ cycle-accurate core later replaced.
     in-range X (it always realigned). The old ROM recorded these failures as
     a pass: its fail path returned into the test without popping the return
     address, fixed upstream in `adacbc23`.
+  - **So the earlier 100% scores were overstated.** Every release that
+    reported AccuracyCoin 144/144 (and 141/141 before it) failed parts of
+    `Misaligned OAM behavior` as the fixed ROM scores it; the old ROM's bug
+    recorded those failures as a pass. v3.1.0 is the first release whose 100% does not
+    include that masked failure.
 - **PAL and Dendy games that use colour emphasis show the right tint.** On the
   PAL 2C07 and the Dendy, PPUMASK bits 5 and 6 swap meaning (green and red);
   every PAL or Dendy game that set emphasis was tinted the wrong way.

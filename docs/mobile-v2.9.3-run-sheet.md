@@ -162,6 +162,41 @@ identity, returns a pre-v2.9.9 entry for the same file instead of adding one) an
 platform: cloud save-state records (Play Games snapshots, CloudKit), which the
 next upload writes under the new key.
 
+## Rows folded in from the v1.8.x Android checklist (v3.1.0, decision D25)
+
+`to-dos/v1.8.x-on-device-verification.md` was the standing Android checklist
+from v1.8.x to the v2.1.0 launch plan. v3.1.0 folds it in here and deletes it,
+so one document carries the device runs. Only its rows that no row above
+already covers are kept, rewritten for the current tree; its history is in git.
+Dropped as covered: battery SRAM across a restart (A1), audio focus, PiP and
+background (A3-A6), rotate and PiP return (A7), save-state slots (A10) and
+multi-touch (A13). One row was dropped because it is now **wrong**: "the
+picker offers iNES / NES 2.0 only". FDS and NSF shipped in v2.9.7 (T1-T7). Its
+accuracy paragraph ("AccuracyCoin 139/141") is replaced by the rule it stated:
+the device runs the host's byte-identical core, so AccuracyCoin (146/146 at
+v3.1.0) is measured on the host and never on a phone, and a device that
+diverges from the host's frames has a shell bug, not a core one.
+
+| # | Platform | Step | Expect | Result |
+| --- | --- | --- | --- | --- |
+| G1 | Android | Import a `.nes` through the Storage Access Framework picker | It appears in the library and boots | NOT RUN |
+| G2 | Android | Import a NES 2.0 ROM; open its ROM info | Mapper and region read correctly | NOT RUN |
+| G3 | Android | Online, open the library | Box art auto-matches a grid entry (skip on `foss` offline) | NOT RUN |
+| G4 | Android | Re-open a previously imported ROM from the library | It resumes cleanly | NOT RUN |
+| G5 | Android | Hold rewind, then release | The picture runs backward smoothly, then forward | NOT RUN |
+| G6 | Android | Load a `.rns` written by the desktop build of the SAME release, and write one back | Each loads on the other side | NOT RUN |
+| G7 | Android | Load a `.rns` or `.rnm` from v3.0.1 or earlier | Refused with a clean message naming the reason (state layout, or emulation epoch for a movie), never a crash | NOT RUN |
+| G8 | Android | Pair a hardware controller (Xbox, DualSense or MFi, Bluetooth or USB-OTG) | Binds to P1: South=A, West=B, Start, Select, D-pad | NOT RUN |
+| G9 | Android | Pair two to four controllers | Each binds to its own port (the Four Score path) | NOT RUN |
+| G10 | Android | Disconnect and reconnect a controller mid-game | No crash and no stuck input | NOT RUN |
+| G11 | Android | Plug and unplug headphones while playing | Audio keeps playing; the audio thread does not wedge | NOT RUN |
+| G12 | Android | *Super Mario Bros.*: World 1-1 through the first screen | Status bar, sprites and scroll correct, no flicker | NOT RUN |
+| G13 | Android | *The Legend of Zelda*: title, overworld, then an in-game save and reload | Renders correctly; the save round-trips | NOT RUN |
+| G14 | Android | From one save state, play the same inputs twice | Identical results (the determinism contract on the device) | NOT RUN |
+| G15 | Android | On a tablet or unfolded foldable, then a phone | Two-pane and compact layouts both correct; the image letterboxes at any aspect | NOT RUN |
+| G16 | Android | Fold and unfold mid-game; on Android TV, navigate with the D-pad | No restart on fold; every TV control reachable, and the app boots to its TV banner | NOT RUN |
+| G17 | Android | `foss` flavor: inspect the merged manifest and Settings | No `AD_ID` permission, no Play Services metadata, no Billing, Play Games or Cast surface (ADR 0025) | NOT RUN |
+
 ## Android
 
 EMULATOR is what the `Pixel_8_API_34` emulator showed on this build, before

@@ -431,6 +431,13 @@ variant is what would put the first two in front of a user at all.)*
 > sprite-0 stale-shifter item are still open in §6b; R2, R4, R5, the `$2002`
 > race, the `$2007` read and PAL alignment are closed below with evidence. In
 > §6c the CPU-multiplier overclock is the one open build item.)*
+>
+> *(2026-10-07, v3.1.0 records item DOC-01: **R1 shipped** in v3.0.0 as
+> `T-MMC3-BG-A12` (§6b's `[x]` below), and **the CPU-multiplier overclock
+> shipped** in v3.1.0 as `T-CPU-OVERCLOCK` (`Nes::set_cpu_overclock`). The
+> sprite-0 stale shifter is the one item left in §6b; the line plan schedules
+> it as ACC-04 in **v3.3.0**, with ACC-03. AccuracyCoin is 146/146 at upstream
+> `f5f41dc2` (v3.1.0; `docs/STATUS.md`).)*
 
 All remaining hard-tier accuracy residuals share **one root cause** and converge
 on the v2.0.0 one-clock + every-cycle-bus-access refactor. They are **outside the
@@ -1064,6 +1071,14 @@ plan); the A/V, HD-audio, shader/NTSC, GPU-timing and egui-render verifies →
 **unscheduled**. The snapshot re-bless is a standing chore, not a single item:
 the original re-bless is done (§7, commit `c286e632`) and each future
 broken-boot fix re-blesses its own snapshots, which next applies in **v2.9.6**.)*
+
+*(2026-10-07, DOC-01: F1 and the other device runs belong to the hardware
+release, which D29 placed at the end of v3.9.x; F3 and the browser-RA deploy
+are **v3.4.0** (hosting, D19); the A/V, HD-audio, shader/NTSC, GPU-timing and
+egui-render verifies stay **unscheduled**. The "next applies in v2.9.6" above
+is history: v2.9.6 shipped, and the re-bless rule is now enforced by the epoch
+fingerprint gate (`T-EPOCH-FINGERPRINT`, v3.1.0), which fails a moved output
+until the epoch rises.)*
 
 ---
 

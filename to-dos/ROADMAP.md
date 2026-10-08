@@ -504,7 +504,11 @@ deferred to a v1.4.x follow-up (UI compiles + no-ops on wasm). See
 
 ### Release engineering (v1.x)
 
-- [→] **CI: `macos-15-intel` runner sunset — August 2027.** GitHub will
+- [x] **CI: `macos-15-intel` runner sunset — August 2027.** *(OBSOLETE, closed
+  at v3.1.0, records item DOC-05 / CI-05: nothing uses the label. The
+  `x86_64-apple-darwin` release target was dropped in v1.6.0 (ADR 0009; the
+  note at `.github/workflows/release.yml:72`), and v3.0.1 moved the remaining
+  macOS jobs to `macos-15`. The entry is kept as written below.)* GitHub will
   decommission the `macos-15-intel` label after that date (per
   `actions/runner-images#13045`). Plan: migrate to `cargo-zigbuild`
   cross-compile from Linux, or drop `x86_64-apple-darwin` from the
