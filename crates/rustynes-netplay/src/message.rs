@@ -178,7 +178,7 @@ impl SessionIdentity {
         } else if NetMessage::OLDER_SYNC_MAGICS.contains(&magic) {
             // Protocol 6 carries its epoch (same layout as ours), so the reason
             // can name it; protocols 4 and 5 have none.
-            let theirs = (magic == NetMessage::OLDER_SYNC_MAGICS[2]).then_some(peer.epoch);
+            let theirs = (magic == NetMessage::PROTOCOL_6_SYNC_MAGIC).then_some(peer.epoch);
             SyncVerdict::Refuse(IdentityMismatch::Emulator {
                 ours: self.epoch,
                 theirs,
@@ -341,8 +341,23 @@ impl NetMessage {
     /// `RustyNES`'s own earlier `Sync` magics: protocol 4 (`"RNES"`, v2.5.x to
     /// v2.9.7), protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9) and protocol 6
     /// (`"RNE6"`, v3.0.0 and v3.0.1). Recognised so a peer on an older version
-    /// is refused with a reason ([`SessionIdentity::check_sync`]).
-    pub const OLDER_SYNC_MAGICS: [u32; 3] = [0x524E_4553, 0x524E_4535, 0x524E_4536];
+    /// is refused with a reason ([`SessionIdentity::check_sync`]). Code that
+    /// needs one protocol names its constant below rather than an index, so
+    /// adding a protocol to this list cannot silently re-point a check.
+    pub const OLDER_SYNC_MAGICS: [u32; 3] = [
+        Self::PROTOCOL_4_SYNC_MAGIC,
+        Self::PROTOCOL_5_SYNC_MAGIC,
+        Self::PROTOCOL_6_SYNC_MAGIC,
+    ];
+    /// Protocol 4's `Sync` magic, `"RNES"` (v2.5.x to v2.9.7): a 36-byte
+    /// payload with no config hash and no epoch.
+    pub const PROTOCOL_4_SYNC_MAGIC: u32 = 0x524E_4553;
+    /// Protocol 5's `Sync` magic, `"RNE5"` (v2.9.8 and v2.9.9): a 68-byte
+    /// payload with both hashes and no epoch.
+    pub const PROTOCOL_5_SYNC_MAGIC: u32 = 0x524E_4535;
+    /// Protocol 6's `Sync` magic, `"RNE6"` (v3.0.0 and v3.0.1): today's layout,
+    /// epoch included, so a refusal can name the peer's epoch.
+    pub const PROTOCOL_6_SYNC_MAGIC: u32 = 0x524E_4536;
 
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
@@ -507,7 +522,7 @@ impl NetMessage {
                     // own length AND under its own magic, so the handshake can
                     // refuse it with a reason (`check_sync`). Its hashes are
                     // never compared; the epoch field is meaningless (0).
-                    68 if magic == Self::OLDER_SYNC_MAGICS[1] => Some(Self::Sync {
+                    68 if magic == Self::PROTOCOL_5_SYNC_MAGIC => Some(Self::Sync {
                         magic,
                         identity: SessionIdentity {
                             epoch: 0,
@@ -515,7 +530,7 @@ impl NetMessage {
                             config_hash: rest.get(36..68)?.try_into().ok()?,
                         },
                     }),
-                    36 if magic == Self::OLDER_SYNC_MAGICS[0] => Some(Self::Sync {
+                    36 if magic == Self::PROTOCOL_4_SYNC_MAGIC => Some(Self::Sync {
                         magic,
                         identity: SessionIdentity {
                             epoch: 0,
@@ -685,8 +700,8 @@ mod tests {
     fn an_older_rustynes_sync_is_refused_with_a_reason() {
         let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
         for (magic, payload) in [
-            (NetMessage::OLDER_SYNC_MAGICS[1], 68usize), // protocol 5
-            (NetMessage::OLDER_SYNC_MAGICS[0], 36usize), // protocol 4
+            (NetMessage::PROTOCOL_5_SYNC_MAGIC, 68usize),
+            (NetMessage::PROTOCOL_4_SYNC_MAGIC, 36usize),
         ] {
             let mut bytes = vec![NetMessage::TAG_SYNC];
             bytes.extend_from_slice(&magic.to_le_bytes());
@@ -727,7 +742,7 @@ mod tests {
             config_hash: [1u8; 32],
         };
         let bytes = NetMessage::Sync {
-            magic: NetMessage::OLDER_SYNC_MAGICS[2],
+            magic: NetMessage::PROTOCOL_6_SYNC_MAGIC,
             identity: theirs,
         }
         .to_bytes();
@@ -741,7 +756,7 @@ mod tests {
                 theirs: Some(2),
             })
         );
-        assert_ne!(NetMessage::SYNC_MAGIC, NetMessage::OLDER_SYNC_MAGICS[2]);
+        assert_ne!(NetMessage::SYNC_MAGIC, NetMessage::PROTOCOL_6_SYNC_MAGIC);
     }
 
     #[test]

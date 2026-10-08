@@ -1997,7 +1997,12 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
             // config stays at its default.
             ui.horizontal(|ui| {
                 ui.label(crate::t!(SetCpuOverclock));
-                let current = config.enhancements.cpu_overclock.max(1);
+                // Clamped as the core clamps it, so a hand-edited config
+                // shows the multiplier that actually runs.
+                let current = config
+                    .enhancements
+                    .cpu_overclock
+                    .clamp(1, rustynes_core::MAX_CPU_OVERCLOCK);
                 let label = |k: u8| {
                     if k == 1 {
                         crate::t!(SetCpuOverclockOff).to_string()
