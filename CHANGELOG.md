@@ -92,7 +92,11 @@ run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
   2 to 4 times faster against the same picture and sound, removing slowdown.
   The APU, mapper IRQ counters and PPU timers stay at the stock rate, so pitch,
   tempo and raster effects are unchanged. Unlike the extra-scanline overclock,
-  movies record it and replay with it, and netplay players must match.
+  movies record it and replay with it, and netplay players must match. The
+  multiplier is exact on every region: a CPU cycle is 12 master clocks on NTSC
+  but 16 on PAL and 15 on Dendy, which do not divide by 3 or 4, so the
+  overclocked cycle lengths alternate to keep the average exact (a review of
+  the release PR found PAL x3 running at x3.2 and Dendy x4 at x5).
 - **"Disable 8-sprite-per-scanline limit" now works** (`T-SPRITE-LIMIT`; it was
   shown and saved but inert). It draws the dropped sprites behind the eight the
   console shows, and changes nothing the game can see: the overflow flag, the

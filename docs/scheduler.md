@@ -138,17 +138,23 @@ for PAL.
 ### CPU-multiplier overclock (v3.1.0, `T-CPU-OVERCLOCK`)
 
 `Nes::set_cpu_overclock(k)`, `k` in `1..=4` (`MAX_CPU_OVERCLOCK`), divides the
-region's master-clock CPU divider: NTSC 12 becomes 6, 4 or 3; PAL 16 and Dendy
-15 round down (PAL x3 is a divider of 5, x3.2). The PPU's divider is untouched,
-so the CPU gets `k` times the cycles per frame. The smallest divider, 3, still
-leaves both the read split `(0, 3)` and the write split `(2, 1)` valid.
+region's master-clock CPU divider exactly: NTSC 12 becomes 6, 4 or 3 per
+cycle; PAL 16 and Dendy 15 alternate cycle lengths so that every `k` cycles
+take exactly one stock cycle (PAL `x3`: 5, 5, 6; Dendy `x4`: 3, 4, 4, 4; see
+below). The PPU's divider is untouched, so the CPU gets exactly `k` times the
+cycles per frame on every region. The shortest cycle, 3, still leaves both the
+read split `(0, 3)` and the write split `(2, 1)` valid.
 
 Everything that measures console time stays at the stock rate: the APU (and
 with it the DMC), the mappers' `notify_cpu_cycle` IRQ counters, and the PPU's
-open-bus decay and post-reset timers. The bus accumulates `overclock_debt`, the
-master clocks the stock-rate domain is owed: each CPU cycle adds the effective
-divider, and a **stock step** (those devices advance once) runs whenever the
-debt reaches the stock divider. The APU is handed its own counter (`apu_cycle`)
+open-bus decay and post-reset timers. Every `k` CPU cycles make exactly one
+stock cycle: the bus counts `overclock_phase` through `0..k`, CPU cycle `i` of
+the group lasts `((i+1)*div)/k - (i*div)/k` master clocks (the lengths sum to
+the stock divider `div`), and a **stock step** (those devices advance once)
+runs on the last cycle of each group. The cycle length changes only at a
+cycle's end, because the CPU reads the divider once for each half of a cycle.
+Until the v3.1.0 review the length was `div / k` rounded down, exact on NTSC
+and not elsewhere (PAL `x3` ran 3.2x, Dendy `x4` 5x). The APU is handed its own counter (`apu_cycle`)
 instead of the CPU's, so its put/get phase advances once per stock step. DMA
 follows that phase, so a DMA takes about `k` times as many CPU cycles and the
 same real time.

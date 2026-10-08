@@ -494,7 +494,7 @@ const CHIPS: &[Chip] = &[
                 "stock_step",
                 "transient: set in `cpu_clock` and read by `cpu_clock_apu_dmc` within ONE CPU \
                  cycle; a snapshot falls between cycles, and restore sets it `true`. The \
-                 overclock's persistent position (`overclock_debt`, `apu_cycle`) IS \
+                 overclock's persistent position (`overclock_phase`, `apu_cycle`) IS \
                  serialized (BUS version 3)",
             ),
             (

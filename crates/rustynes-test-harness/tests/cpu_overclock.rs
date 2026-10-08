@@ -204,3 +204,55 @@ fn a_snapshot_under_the_overclock_restores_to_the_same_continuation() {
         "a restore under the overclock must replay the same frames, samples and cycles"
     );
 }
+
+/// A minimal NES 2.0 NROM cart whose CPU spins in a `JMP` loop, with the
+/// CPU/PPU timing byte (header byte 12) set: 0 NTSC, 1 PAL, 3 Dendy.
+fn spin_rom(timing: u8) -> Vec<u8> {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1; // 16 KiB PRG
+    rom[5] = 1; // 8 KiB CHR
+    rom[7] = 0x08; // NES 2.0
+    rom[12] = timing;
+    rom[16..19].copy_from_slice(&[0x4C, 0x00, 0xC0]); // $C000: JMP $C000
+    let reset = 16 + (0xFFFC - 0xC000);
+    rom[reset..reset + 2].copy_from_slice(&[0x00, 0xC0]);
+    rom
+}
+
+/// CPU cycles over `frames` frames of `spin_rom(timing)` at overclock `k`.
+fn spin_cycles(timing: u8, k: u8, frames: u32) -> u64 {
+    let mut nes = Nes::from_rom(&spin_rom(timing)).expect("synthetic cart parses");
+    nes.set_cpu_overclock(k);
+    for _ in 0..10 {
+        nes.run_frame();
+    }
+    let start = nes.cycle();
+    for _ in 0..frames {
+        nes.run_frame();
+    }
+    nes.cycle() - start
+}
+
+/// v3.1.0 review (#594): the multiplier is EXACT on every region. The CPU
+/// divider was `div / k` rounded down, which only NTSC's 12 survives: PAL's
+/// 16 at `x3` gave 5 (3.2x) and Dendy's 15 at `x4` gave 3 (5x), so a movie
+/// recording "x4" did not get four times the CPU. Every `k` CPU cycles now
+/// take exactly one stock cycle (alternating lengths), which this pins on all
+/// three regions to within the frame-boundary jitter of a few cycles.
+#[test]
+fn the_multiplier_is_exact_on_pal_and_dendy_too() {
+    let frames = 60;
+    for (timing, region) in [(0u8, "NTSC"), (1, "PAL"), (3, "Dendy")] {
+        let stock = spin_cycles(timing, 1, frames);
+        for k in 2..=rustynes_core::MAX_CPU_OVERCLOCK {
+            let cycles = spin_cycles(timing, k, frames);
+            #[allow(clippy::cast_precision_loss)]
+            let ratio = cycles as f64 / stock as f64;
+            assert!(
+                (ratio - f64::from(k)).abs() < 0.001,
+                "{region} x{k}: {cycles} CPU cycles against {stock} stock is x{ratio:.4}, not x{k}"
+            );
+        }
+    }
+}

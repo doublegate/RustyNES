@@ -587,21 +587,30 @@ pub struct SystemBus {
     /// for the header's. Configuration, re-applied to every mapper the bus
     /// builds (a power cycle rebuilds it); only mapper 4 acts on it.
     mmc3_revision_override: Option<rustynes_mappers::Mmc3Revision>,
-    /// The master clocks one CPU cycle takes under the overclock:
-    /// `cpu_div_cached / cpu_overclock`, rounded down, so `x3` on PAL (16)
-    /// is 5 (x3.2) and `x2` on Dendy (15) is 7 (x2.14). Equals
-    /// `cpu_div_cached` at `x1`. This is what [`Bus::cpu_divider`] returns.
+    /// The master clocks the CPU cycle in progress takes under the overclock,
+    /// [`overclock_cycle_len`] of `overclock_phase`; `cpu_div_cached` at
+    /// `x1`. This is what [`Bus::cpu_divider`] returns. It changes only at a
+    /// cycle's END (`cpu_clock_apu_dmc`), because the CPU reads the divider
+    /// twice per cycle, once for each half, and both reads must agree.
+    ///
+    /// Until the v3.1.0 review (#594) this was `cpu_div_cached / k`, rounded
+    /// down: exact on NTSC (12 divides by 2, 3 and 4) and wrong elsewhere,
+    /// `x3` on PAL (16) running 3.2x and `x4` on Dendy (15) 5x, so a movie
+    /// that recorded "x4" did not get four times the CPU.
     cpu_div_effective: u8,
-    /// Master clocks the stock-rate domain is owed, `0..cpu_div_cached`.
+    /// Which of the `k` CPU cycles of the current stock cycle is in progress,
+    /// `0..cpu_overclock`.
     ///
     /// Under the overclock the APU, the DMC, the mappers' CPU-cycle hooks and
     /// the PPU's open-bus / post-reset timers stay at the STOCK rate, so a
     /// game gets more CPU time per frame without a pitch change, a faster
-    /// tempo or cycle-timed mapper IRQs firing early. Each CPU cycle adds
-    /// `cpu_div_effective`; a stock step runs whenever this reaches
-    /// `cpu_div_cached`. Unused (always 0) at `x1`, where every CPU cycle is a
-    /// stock step. In the BUS save-state section: run-ahead restores mid-run.
-    overclock_debt: u8,
+    /// tempo or cycle-timed mapper IRQs firing early. Every `k` CPU cycles
+    /// make one stock cycle exactly: cycle `i` of the group lasts
+    /// [`overclock_cycle_len`] master clocks, which sum to `cpu_div_cached`
+    /// over the group (PAL x3: 5, 5, 6), and the stock step runs on the last.
+    /// Always 0 at `x1`, where every CPU cycle is a stock step. In the BUS
+    /// save-state section: run-ahead restores mid-run.
+    overclock_phase: u8,
     /// The stock-rate domain's own cycle counter under the overclock, handed
     /// to the APU in place of the CPU cycle counter (the APU derives its
     /// put/get phase from it). Re-based to [`Self::cycle`] when the overclock
@@ -1008,7 +1017,7 @@ impl SystemBus {
             cpu_overclock: 1,
             mmc3_revision_override: None,
             cpu_div_effective: cpu_div_cached,
-            overclock_debt: 0,
+            overclock_phase: 0,
             apu_cycle: 0,
             stock_step: true,
             open_bus: 0,
@@ -1233,7 +1242,8 @@ impl SystemBus {
         self.ppu_clock = 0;
         // The stock-rate domain restarts with the clock; the multiplier itself
         // is configuration and survives the power cycle.
-        self.overclock_debt = 0;
+        self.overclock_phase = 0;
+        self.cpu_div_effective = overclock_cycle_len(self.cpu_div_cached, self.cpu_overclock, 0);
         self.apu_cycle = 0;
         self.stock_step = true;
         self.dma_byte = 0;
@@ -1421,8 +1431,8 @@ impl SystemBus {
             self.apu_cycle = self.cycle;
         }
         self.cpu_overclock = k;
-        self.cpu_div_effective = self.cpu_div_cached / k;
-        self.overclock_debt = 0;
+        self.overclock_phase = 0;
+        self.cpu_div_effective = overclock_cycle_len(self.cpu_div_cached, k, 0);
         self.stock_step = true;
     }
 
@@ -2907,7 +2917,7 @@ impl SystemBus {
             // identical across feature builds.
             dmc_halt: self.dmc_halt,
             dmc_load_write_delayed: self.dmc_load_write_delayed,
-            overclock_debt: self.overclock_debt,
+            overclock_phase: self.overclock_phase,
             apu_cycle: self.apu_cycle,
             uni_oam_active: self.uni_oam_active,
             uni_oam_halt: self.uni_oam_halt,
@@ -2942,15 +2952,20 @@ impl SystemBus {
         self.dmc_halt = s.dmc_halt;
         self.dmc_load_write_delayed = s.dmc_load_write_delayed;
         // The overclock's stock-rate position. The multiplier itself is
-        // configuration (re-applied by the host); a debt the current divider
-        // could not have produced is clamped below one stock cycle so a stock
-        // step still comes due.
-        let max_debt = self.cpu_div_cached.saturating_sub(1);
-        self.overclock_debt = if s.overclock_debt > max_debt {
-            max_debt
+        // configuration (re-applied by the host); a phase the current
+        // multiplier could not have produced is clamped to its last cycle, so
+        // a stock step still comes due. The cycle length follows the phase.
+        let last = self.cpu_overclock.saturating_sub(1);
+        self.overclock_phase = if s.overclock_phase > last {
+            last
         } else {
-            s.overclock_debt
+            s.overclock_phase
         };
+        self.cpu_div_effective = overclock_cycle_len(
+            self.cpu_div_cached,
+            self.cpu_overclock,
+            self.overclock_phase,
+        );
         self.apu_cycle = s.apu_cycle;
         self.stock_step = true;
         self.uni_oam_active = s.uni_oam_active;
@@ -4486,12 +4501,12 @@ impl Bus for SystemBus {
         let apu_cycle = if self.cpu_overclock == 1 {
             self.cycle
         } else {
-            self.overclock_debt += self.cpu_div_effective;
-            self.stock_step = self.overclock_debt >= self.cpu_div_cached;
+            // The stock step is the LAST cycle of each group of `k`; the phase
+            // itself advances at this cycle's end (`cpu_clock_apu_dmc`).
+            self.stock_step = self.overclock_phase + 1 >= self.cpu_overclock;
             if !self.stock_step {
                 return;
             }
-            self.overclock_debt -= self.cpu_div_cached;
             self.apu_cycle = self.apu_cycle.wrapping_add(1);
             self.apu_cycle
         };
@@ -4518,6 +4533,18 @@ impl Bus for SystemBus {
     // matching Mesen's `ProcessCpuClock` at `StartCpuCycle`. So the END-of-cycle
     // DMC tick is a no-op here.
     fn cpu_clock_apu_dmc(&mut self) {
+        // v3.1.0: the overclock's phase moves to the next cycle HERE, after
+        // both of this cycle's `cpu_divider` reads (the CPU calls this once
+        // per cycle, DMA cycles included), so the next cycle's length is in
+        // place before its first half.
+        if self.cpu_overclock > 1 {
+            self.overclock_phase = (self.overclock_phase + 1) % self.cpu_overclock;
+            self.cpu_div_effective = overclock_cycle_len(
+                self.cpu_div_cached,
+                self.cpu_overclock,
+                self.overclock_phase,
+            );
+        }
         // v3.1.0: the DMC end-of-cycle half belongs to the stock step its
         // start half ran in (always `true` at `x1`).
         if !self.stock_step {
@@ -4739,6 +4766,21 @@ impl Bus for SystemBus {
             t.push(rec);
         }
     }
+}
+
+/// v3.1.0 (`T-CPU-OVERCLOCK`): the master clocks CPU cycle `phase` of a
+/// stock cycle takes at overclock `k`, for a region whose stock CPU cycle is
+/// `div` master clocks. The lengths of phases `0..k` sum to exactly `div`
+/// (they are the differences of `phase * div / k`), so `k` CPU cycles always
+/// fill one stock cycle and the multiplier is exact on every region: NTSC
+/// (12) gives 6/6, 4/4/4 and 3/3/3/3; PAL (16) 8/8, 5/5/6 and 4/4/4/4;
+/// Dendy (15) 7/8, 5/5/5 and 3/4/4/4. At `k = 1` it is `div`.
+const fn overclock_cycle_len(div: u8, k: u8, phase: u8) -> u8 {
+    let (div, k, phase) = (div as u16, k as u16, phase as u16);
+    // `k >= 1` by construction (`set_cpu_overclock` clamps); at most 16 * 4.
+    #[allow(clippy::cast_possible_truncation)] // a part of `div`, at most 16
+    let len = (((phase + 1) * div) / k - (phase * div) / k) as u8;
+    len
 }
 
 #[cfg(test)]
