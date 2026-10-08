@@ -1949,9 +1949,27 @@ impl EmuCore {
             self.vs_coin_frames -= 1;
             self.vs_coin_frames == 0
         };
+        // v3.1.0 — the CPU overclock and the sprite-limit option reach BOTH
+        // consoles, as `produce_frame` applies them to the one. The cabinet
+        // locksteps its consoles by CPU cycle count (`VsDualSystem::run_frame`),
+        // so the same multiplier on both keeps that gap meaningful. No movie
+        // or netplay session runs on a cabinet (ADR 0032), so the single
+        // path's movie-idle condition has no counterpart here.
+        let want_cpu = self.cpu_overclock.max(1);
+        let want_sprites = self.disable_sprite_limit;
         let Some(dual) = self.dual.as_mut() else {
             return;
         };
+        let apply = |nes: &mut rustynes_core::Nes| {
+            if nes.cpu_overclock() != want_cpu {
+                nes.set_cpu_overclock(want_cpu);
+            }
+            if nes.sprite_limit_disabled() != want_sprites {
+                nes.set_sprite_limit_disabled(want_sprites);
+            }
+        };
+        apply(dual.main_mut());
+        apply(dual.sub_mut());
         if clear_coin {
             dual.clear_coin();
         }
@@ -2857,6 +2875,41 @@ mod tests {
             ),
             "the presented screens are the frame after"
         );
+    }
+
+    /// v3.1.0 (PR #594 review) — the CPU overclock and the sprite-limit option
+    /// reach BOTH cabinet consoles. `produce_dual_frame` applied neither, so on
+    /// a Vs. `DualSystem` cabinet both settings silently did nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_cabinet_runs_both_consoles_with_the_enhancement_options() {
+        let rom = crate::runahead::tests::flashing_cabinet();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut core = EmuCore::new();
+        core.set_dual(Box::new(
+            rustynes_core::VsDualSystem::from_rom(&rom).unwrap(),
+        ));
+        core.cpu_overclock = 3;
+        core.disable_sprite_limit = true;
+        core.produce_one_frame(&quiet_inputs(), &mut sinks);
+        let dual = core.dual.as_ref().unwrap();
+        for (name, nes) in [("main", dual.main()), ("sub", dual.sub())] {
+            assert_eq!(nes.cpu_overclock(), 3, "{name} console overclock");
+            assert!(nes.sprite_limit_disabled(), "{name} console sprite limit");
+        }
+        // Back to stock: `0` and `1` both mean x1.
+        core.cpu_overclock = 0;
+        core.disable_sprite_limit = false;
+        core.produce_one_frame(&quiet_inputs(), &mut sinks);
+        let dual = core.dual.as_ref().unwrap();
+        for nes in [dual.main(), dual.sub()] {
+            assert_eq!(nes.cpu_overclock(), 1);
+            assert!(!nes.sprite_limit_disabled());
+        }
     }
 
     /// v2.9.7 (`T-PS-dual-savestate`) — a Vs. `DualSystem` cabinet saves and
