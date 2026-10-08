@@ -1434,6 +1434,21 @@ fn extended_m114_aladdin_supergame() {
     );
 }
 
+/// Submapper 1's scramble. GoodNES labels this dump mapper 215, the
+/// assignment `INES_Mapper_215.md` says was later withdrawn ("Boogerman
+/// (Mapper 114 Submapper 1) was originally assigned by CaH4e3 to Mapper
+/// 215"); it never writes `$5007`, so it does not boot as 215. The staged
+/// copy carries a NES 2.0 header naming 114.1; the bytes after the header,
+/// and so `Nes::rom_sha256`, are the GoodNES dump's.
+#[test]
+fn extended_m114_1_boogerman() {
+    check(
+        "mapper-114-SuperGame/Boogerman (Sugar Softec) (Unl) [!] (NES 2.0 114.1).nes",
+        DEFAULT_IDLE,
+        "extended_m114_1_boogerman",
+    );
+}
+
 #[test]
 fn extended_m182_super_donkey_kong() {
     check(

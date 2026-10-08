@@ -374,4 +374,5 @@ screenshot of that frame. The dumps themselves stay in the gitignored
 | Mapper | Title | SHA-256 after the header (`Nes::rom_sha256`) | Frames | Screenshot |
 |--------|-------|----------------------------------------------|--------|------------|
 | 114 | Aladdin (SuperGame) (Mapper 114) [!] | `5489244538c94653f766bd80f07b2aa684ad139bddea68f40b60a0473c9286e2` | 600 | `screenshots/external/mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].png` |
+| 114.1 | Boogerman (Sugar Softec) (Unl) [!] (GoodNES labels it 215; staged with a NES 2.0 114.1 header) | `ba2d65f240d8f97c7b77973042d8141cf15116ffc3d73caed450c21e08fd54a2` | 600 | `screenshots/external/mapper-114-SuperGame/Boogerman (Sugar Softec) (Unl) [!] (NES 2.0 114.1).png` |
 | 182 (as 114.0) | Super Donkey Kong (Unl) [!] | `67d06173c4b8239d46c84335591216b1adfa38344107405ec88c58327217a361` | 600 | `screenshots/external/mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].png` |
