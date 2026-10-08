@@ -144,8 +144,9 @@ screens via `main_framebuffer()` and `sub_framebuffer()`. As of v2.1.2 "Fathom"
 (F2.1) the **desktop frontend presents both screens** — side-by-side (512×240,
 default) or stacked (256×480) via `[graphics] dual_screen_layout` — with P1/P2 →
 main, P3/P4 → sub, coin (F10) → main acceptor, and the main console's audio (ADR
-0032). The advanced single-`Nes` features (run-ahead / rewind / netplay / TAS /
-dual save-state), the debugger, and HD-pack are **scoped out in dual mode**;
+0032). Netplay, TAS, the debugger, and HD-pack are **scoped out in dual mode**;
+save states work there since v2.9.7, and rewind and run-ahead since v3.1.0, on
+the whole cabinet;
 libretro + wasm + mobile presentation remain deferred; real-cabinet boot stays
 fixture-limited (maincpu-half dumps). The non-DualSystem games (Excitebike, Clu
 Clu Land, Castlevania, Pinball, Gradius, Goonies, Ice Climber, Golf, Super Mario

@@ -432,6 +432,26 @@ fn configure_game_db_and_patch_startup_rom(
     apply_load_time_header_overrides(rom_bytes, Some(rom_path));
 }
 
+/// The rewind ring's byte budget and keyframe period from `[rewind]`, or
+/// `None` when rewind is off. One definition for every console and cabinet
+/// the frontend enables rewind on (v3.1.0; it was written out at three sites
+/// before the cabinet made it four).
+///
+/// The budget is `max_seconds` of 60 fps frames at about 200 KiB each, at
+/// least one second's worth, and never above
+/// [`rustynes_core::REWIND_DEFAULT_MAX_BYTES`]; the ring's delta encoding
+/// stores far less per frame than that, so the cap is what binds in practice.
+fn rewind_budget(config: &Config) -> Option<(usize, u32)> {
+    if !config.rewind.enabled {
+        return None;
+    }
+    let max_bytes = ((config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
+    Some((
+        max_bytes.min(rustynes_core::REWIND_DEFAULT_MAX_BYTES),
+        config.rewind.keyframe_period.max(1),
+    ))
+}
+
 /// v2.9.8 — every config-derived setting the frontend pushes into a console,
 /// applied in one call to a console that has not run since it was built or
 /// power-cycled.
@@ -1678,6 +1698,9 @@ impl App {
     /// configuration ([`configure_console`]), before the cabinet is installed.
     /// Until v2.9.8 a cabinet got neither: the load paths applied both to the
     /// probe console, which a cabinet discards.
+    ///
+    /// v3.1.0 (`T-PS-dual-runahead`) — and the cabinet's rewind ring, from the
+    /// same `[rewind]` settings a single console gets ([`rewind_budget`]).
     fn build_dual_cabinet(
         &self,
         nes: &Nes,
@@ -1695,6 +1718,9 @@ impl App {
                 for console in pair {
                     Self::apply_game_db(console, bytes);
                     configure_console(&self.config, console);
+                }
+                if let Some((max_bytes, keyframe_period)) = rewind_budget(&self.config) {
+                    vs.enable_rewind_with(max_bytes, keyframe_period);
                 }
                 Some(Box::new(vs))
             }
@@ -2009,13 +2035,8 @@ impl App {
         // in `install_nes_wasm` (v2.9.7) with the same `build_dual_cabinet`.
         #[cfg(not(target_arch = "wasm32"))]
         let dual_cabinet = self.cabinet_for_image(&nes, &bytes, sample_rate);
-        if self.config.rewind.enabled {
-            let max_bytes: usize =
-                ((self.config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
-            nes.enable_rewind_with(
-                max_bytes.min(rustynes_core::REWIND_DEFAULT_MAX_BYTES),
-                self.config.rewind.keyframe_period.max(1),
-            );
+        if let Some((max_bytes, keyframe_period)) = rewind_budget(&self.config) {
+            nes.enable_rewind_with(max_bytes, keyframe_period);
         }
         // v1.7.0 — arm the Four Score 4-player adapter per config. Off by
         // default, so `$4016`/`$4017` reads stay byte-identical to two
@@ -9699,15 +9720,8 @@ impl App {
         let dual_cabinet = self.cabinet_for_image(&nes, &self.rom_bytes, sample_rate);
         #[cfg(target_arch = "wasm32")]
         let _ = sample_rate;
-        if self.config.rewind.enabled {
-            // 60 fps × max_seconds × ~120 KiB/snapshot keyframe ≈ ~7 MiB
-            // before delta compression; we cap at 32 MiB by default.
-            let max_bytes: usize =
-                ((self.config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
-            nes.enable_rewind_with(
-                max_bytes.min(rustynes_core::REWIND_DEFAULT_MAX_BYTES),
-                self.config.rewind.keyframe_period.max(1),
-            );
+        if let Some((max_bytes, keyframe_period)) = rewind_budget(&self.config) {
+            nes.enable_rewind_with(max_bytes, keyframe_period);
         }
         // v1.7.0 — arm the Four Score 4-player adapter per config (off by
         // default; two-controller path stays byte-identical when off).
@@ -11946,18 +11960,20 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 if settings.rewind_enabled {
                     let mut guard = self.emu.lock();
+                    let budget = rewind_budget(&self.config);
                     if let Some(nes) = guard.nes.as_mut() {
-                        if self.config.rewind.enabled {
-                            let max_bytes: usize = ((self.config.rewind.max_seconds as usize) * 60)
-                                .max(60)
-                                * 200
-                                * 1024;
-                            nes.enable_rewind_with(
-                                max_bytes.min(rustynes_core::REWIND_DEFAULT_MAX_BYTES),
-                                self.config.rewind.keyframe_period.max(1),
-                            );
+                        if let Some((max_bytes, keyframe_period)) = budget {
+                            nes.enable_rewind_with(max_bytes, keyframe_period);
                         } else {
                             nes.disable_rewind();
+                        }
+                    }
+                    // v3.1.0 — a loaded cabinet follows the same setting.
+                    if let Some(dual) = guard.dual.as_mut() {
+                        if let Some((max_bytes, keyframe_period)) = budget {
+                            dual.enable_rewind_with(max_bytes, keyframe_period);
+                        } else {
+                            dual.disable_rewind();
                         }
                     }
                 }

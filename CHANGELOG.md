@@ -92,6 +92,12 @@ cycle-accurate core later replaced.
   run any mapper-4 game on the Sharp or the alternate (MMC3A / NEC) chip, for
   dumps whose header cannot say which. blargg's `mmc3_test_2/6-MMC3_alt` passes
   under the alternate setting. Carried in movies and netplay.
+- **Rewind and run-ahead on the Vs. DualSystem cabinet** (`T-PS-dual-runahead`,
+  ADR 0032 amended): both work in two-screen mode, on the whole cabinet, so
+  the two consoles never fall out of step. A step back restores both screens
+  exactly, and run-ahead shows the same frames a run without it would, a
+  frame or more sooner. Netplay, movies, the debugger and HD packs stay
+  single-console.
 - **A test now enforces the emulation-epoch rule** (`T-EPOCH-FINGERPRINT`).
   It fingerprints seven test ROMs (frames, audio, RAM, CPU cycles) and fails
   when that output moves while `EMULATION_EPOCH` still equals the last

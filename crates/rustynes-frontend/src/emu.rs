@@ -1610,13 +1610,14 @@ impl EmuCore {
         // v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet takes a parallel, much
         // simpler produce path: step both consoles, harvest both framebuffers,
         // push the MAIN console's audio. The advanced single-`Nes` features
-        // (run-ahead, rewind, TAS, breakpoints, HD-pack, A/V record) are scoped
-        // out in dual mode (ADR 0032) — `dual` and `nes` are mutually exclusive,
-        // so the whole single path below is dead when a cabinet is loaded.
+        // (TAS, breakpoints, HD-pack, A/V record) are scoped out in dual mode
+        // (ADR 0032) — `dual` and `nes` are mutually exclusive, so the whole
+        // single path below is dead when a cabinet is loaded. Rewind and
+        // run-ahead are not, since v3.1.0 (the ADR's 2026-10-07 amendment).
         // v2.9.7 "Tandem" — the wasm-winit frontend takes this path too (it
         // builds the cabinet on its load path and presents both screens).
         if self.dual.is_some() {
-            self.produce_dual_frame(sinks);
+            self.produce_dual_frame(inputs, sinks);
             return fx;
         }
         let hardcore_blocked = inputs.hardcore_blocked;
@@ -1899,8 +1900,18 @@ impl EmuCore {
     /// layout without holding the emu lock), and pushes the MAIN console's audio
     /// to the sink. The SUB console's audio is drained and discarded so its APU
     /// sample buffer cannot grow without bound. This path deliberately omits the
-    /// single-`Nes` machinery (run-ahead / rewind / TAS / breakpoints / HD-pack /
-    /// A/V record), which is scoped out in dual mode (ADR 0032).
+    /// single-`Nes` machinery (TAS / breakpoints / HD-pack / A/V record), which is
+    /// scoped out in dual mode (ADR 0032).
+    ///
+    /// v3.1.0 (`T-PS-dual-runahead`, the ADR's 2026-10-07 amendment) — rewind
+    /// and run-ahead work here too, on the whole cabinet. With the rewind key
+    /// held, the cabinet steps back one frame through its own ring
+    /// ([`rustynes_core::VsDualSystem::rewind_step_back`]) and presents both
+    /// restored screens; no audio is pushed, as on the single path. With
+    /// run-ahead on (native only, as on the single path), the cabinet runs
+    /// the persistent frame plus `n` frames ahead
+    /// ([`crate::runahead::RunAhead::run_cabinet_ahead`]), presents the
+    /// visible frame's two screens and main audio, and rolls back.
     ///
     /// v2.9.7 "Tandem" — no longer native-only: the wasm-winit frontend runs a
     /// cabinet too. The only platform difference is the audio sink: native
@@ -1912,7 +1923,26 @@ impl EmuCore {
         target_arch = "wasm32",
         allow(unused_variables, clippy::needless_pass_by_ref_mut)
     )]
-    fn produce_dual_frame(&mut self, sinks: &mut FrameSinks<'_>) {
+    fn produce_dual_frame(&mut self, inputs: &FrameInputs, sinks: &mut FrameSinks<'_>) {
+        // Resolved before `dual` is borrowed; 0 = a plain frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        let run_ahead_n = self.effective_run_ahead(inputs.run_ahead);
+        // RetroAchievements hardcore never reaches a cabinet (RA is scoped out
+        // of dual mode), and `App` folds it into `rewind_held` regardless.
+        if inputs.rewind_held {
+            let Some(dual) = self.dual.as_mut() else {
+                return;
+            };
+            // A failed step (empty ring, rewind off) leaves the cabinet where
+            // it is; the screens are re-presented either way.
+            let _ = dual.rewind_step_back();
+            self.present_fb.clear();
+            self.present_fb.extend_from_slice(dual.main_framebuffer());
+            self.present_fb_sub.clear();
+            self.present_fb_sub
+                .extend_from_slice(dual.sub_framebuffer());
+            return;
+        }
         // v2.5.0 / F2.1 — Vs. System coin latch: a coin-insert holds the acceptor
         // for a few frames, then auto-clears (uniform with the single path).
         let clear_coin = self.vs_coin_frames > 0 && {
@@ -1925,13 +1955,24 @@ impl EmuCore {
         if clear_coin {
             dual.clear_coin();
         }
-        dual.run_frame();
+        #[cfg(not(target_arch = "wasm32"))]
+        let ran_ahead = run_ahead_n > 0 && {
+            self.runahead.run_cabinet_ahead(dual, run_ahead_n);
+            true
+        };
+        #[cfg(target_arch = "wasm32")]
+        let ran_ahead = false;
+        if !ran_ahead {
+            dual.run_frame();
+        }
         self.present_fb.clear();
         self.present_fb.extend_from_slice(dual.main_framebuffer());
         self.present_fb_sub.clear();
         self.present_fb_sub
             .extend_from_slice(dual.sub_framebuffer());
         // Push the MAIN console's audio; the frontend presents one audio stream.
+        // Under run-ahead this is the visible frame's audio, harvested before
+        // the rollback below, exactly as the single path does.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(audio) = sinks.audio.as_mut() {
             let target = ((u64::from(audio.sample_rate()) / 50) as usize).max(1024);
@@ -1952,6 +1993,10 @@ impl EmuCore {
             self.audio_buf.resize(1024, 0.0);
         }
         while dual.sub_mut().drain_audio_into(&mut self.audio_buf) == self.audio_buf.len() {}
+        #[cfg(not(target_arch = "wasm32"))]
+        if ran_ahead {
+            self.runahead.finish_cabinet(dual);
+        }
     }
 
     /// v1.6.0 "Studio" Workstream G — feed this frame's produced framebuffer
@@ -2746,6 +2791,71 @@ mod tests {
             lines(&core),
             MAX_OVERCLOCK_SCANLINES,
             "restored after the movie"
+        );
+    }
+
+    /// v3.1.0 (`T-PS-dual-runahead`) — rewind and run-ahead reach a cabinet
+    /// through the real produce path, not only through `VsDualSystem` and
+    /// `RunAhead` directly. Holding rewind steps the cabinet back and presents
+    /// BOTH restored screens; a frame with run-ahead 1 leaves the cabinet one
+    /// frame on and presents the screens of the frame after that. Until
+    /// v3.1.0 `produce_dual_frame` ignored both inputs.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_cabinet_rewinds_and_runs_ahead_through_the_produce_path() {
+        let rom = crate::runahead::tests::flashing_cabinet();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let plain = quiet_inputs();
+        let mut core = EmuCore::new();
+        let mut cabinet = rustynes_core::VsDualSystem::from_rom(&rom).unwrap();
+        cabinet.enable_rewind();
+        core.set_dual(Box::new(cabinet));
+        let presented = |core: &EmuCore| (core.present_fb.clone(), core.present_fb_sub.clone());
+        let mut shown = Vec::new();
+        for _ in 0..12 {
+            core.produce_one_frame(&plain, &mut sinks);
+            shown.push(presented(&core));
+        }
+        assert_ne!(shown[10], shown[11], "the stimulus changes every frame");
+
+        let mut rewind = quiet_inputs();
+        rewind.rewind_held = true;
+        // The newest entry is the frame on screen; each further step goes back one.
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(presented(&core), shown[11]);
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(
+            presented(&core),
+            shown[10],
+            "both screens of the frame before"
+        );
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(presented(&core), shown[9]);
+
+        let mut ahead = quiet_inputs();
+        ahead.run_ahead = 1;
+        let before = core.dual.as_ref().unwrap().snapshot();
+        core.produce_one_frame(&ahead, &mut sinks);
+        let mut probe = rustynes_core::VsDualSystem::from_rom(&rom).unwrap();
+        probe.restore(&before).unwrap();
+        probe.run_frame();
+        assert_eq!(
+            core.dual.as_ref().unwrap().snapshot(),
+            probe.snapshot(),
+            "the cabinet itself advanced exactly one frame"
+        );
+        probe.run_frame();
+        assert_eq!(
+            presented(&core),
+            (
+                probe.main_framebuffer().to_vec(),
+                probe.sub_framebuffer().to_vec()
+            ),
+            "the presented screens are the frame after"
         );
     }
 

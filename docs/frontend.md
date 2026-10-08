@@ -774,10 +774,20 @@ both consoles. Every load path makes the same decision through
 command-line path installed a cabinet image as a single console, which runs the
 main CPU alone and never completes the boot handshake. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
-run-ahead, rewind, netplay, TAS, the debugger, and HD-pack — they snapshot a
-single `Nes`. **Save states work in dual mode since v2.9.7**, through the
-cabinet's own "RVSD" snapshot: `EmuCore::save_state_blob` /
-`restore_state_blob` (ADR 0032's amendment). Real-cabinet boot stays fixture-limited (the circulating
+netplay, TAS, the debugger, and HD-pack. **Save states work in dual mode since
+v2.9.7**, through the cabinet's own "RVSD" snapshot: `EmuCore::save_state_blob`
+/ `restore_state_blob` (ADR 0032's first amendment). **Rewind and run-ahead
+work in dual mode since v3.1.0** (`T-PS-dual-runahead`, the second amendment),
+on the whole cabinet and never on one console, because the two share a WRAM
+and drive each other's `/IRQ`. The cabinet has its own rewind ring
+(`VsDualSystem::enable_rewind_with`, sized from `[rewind]` by `rewind_budget`
+like a single console's), whose entries are whole RVSD containers with both
+framebuffers, so a step back (`VsDualSystem::rewind_step_back`) restores both
+screens exactly without re-rendering. Run-ahead is
+`RunAhead::run_cabinet_ahead` / `finish_cabinet`: the single-console cycle on
+the cabinet, rolled back with `VsDualSystem::restore_quiet`, which keeps the
+ring. `produce_dual_frame` routes `rewind_held` and the run-ahead depth to
+them; the cabinet still keeps stock timing (no overclock). Real-cabinet boot stays fixture-limited (the circulating
 dumps are the MAME maincpu half only).
 
 **Present-path parity (v2.1.10 "Web Parity").** The **libretro** core

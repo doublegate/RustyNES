@@ -29,7 +29,7 @@
 //! so consecutive cycles produce the contiguous stream `N+1, N+2, …` — no
 //! gaps, no overlaps, just shifted by the same `N` frames as the video.
 
-use rustynes_core::Nes;
+use rustynes_core::{Nes, VsDualSystem};
 
 /// Scratch state for the run-ahead cycle (reused buffers — no per-frame
 /// allocation in steady state).
@@ -118,6 +118,57 @@ impl RunAhead {
         nes.set_rewind_capture(true);
     }
 
+    /// v3.1.0 (`T-PS-dual-runahead`, ADR 0032 amendment of 2026-10-07) —
+    /// [`Self::run_frame_ahead`] for a Vs. `DualSystem` cabinet. The same
+    /// cycle on the whole cabinet: the persistent frame, a snapshot of BOTH
+    /// consoles and the latch wiring them (the `RVSD` container), `n - 1`
+    /// hidden frames, and the visible one. On return the cabinet holds the
+    /// visible frame's two framebuffers and the main console's un-drained
+    /// audio; the caller harvests them, then MUST call
+    /// [`Self::finish_cabinet`].
+    ///
+    /// The unit is the cabinet and never one console: the two share a WRAM
+    /// and drive each other's `/IRQ`, so running one ahead alone would
+    /// present a future the partner never reached.
+    pub fn run_cabinet_ahead(&mut self, dual: &mut VsDualSystem, n: u32) {
+        debug_assert!(n >= 1);
+        // The persistent frame: the cabinet's timeline, captured by its
+        // rewind ring as a plain frame would be.
+        dual.run_frame();
+        self.discard_cabinet_audio(dual);
+        dual.snapshot_into(&mut self.snap_buf);
+        // Hidden + visible frames are off-timeline: no rewind capture.
+        dual.set_rewind_capture(false);
+        for _ in 1..n {
+            dual.run_frame();
+            self.discard_cabinet_audio(dual);
+        }
+        dual.run_frame();
+    }
+
+    /// Phase B of [`Self::run_cabinet_ahead`]: roll the cabinet back to the
+    /// persistent frame and re-enable its rewind capture. The rollback is
+    /// [`VsDualSystem::restore_quiet`], which keeps the cabinet's rewind
+    /// ring. The cabinet has no pixel- or audio-provenance stores to carry
+    /// around it: the debugger is scoped out of dual mode (ADR 0032).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the snapshot fails to restore, which a container produced
+    /// by `snapshot_into` on the same cabinet cannot do.
+    pub fn finish_cabinet(&mut self, dual: &mut VsDualSystem) {
+        dual.restore_quiet(&self.snap_buf)
+            .expect("run-ahead cabinet snapshot round-trips on the same cabinet");
+        dual.set_rewind_capture(true);
+    }
+
+    /// Drain and discard both consoles' audio from a hidden cabinet frame.
+    fn discard_cabinet_audio(&mut self, dual: &mut VsDualSystem) {
+        let (main, sub) = dual.split_mut();
+        self.discard_audio(main);
+        self.discard_audio(sub);
+    }
+
     /// Drain and discard whatever audio the last frame synthesized.
     fn discard_audio(&mut self, nes: &mut Nes) {
         // Generously sized: one NTSC frame at 192 kHz is ~3200 samples.
@@ -129,7 +180,7 @@ impl RunAhead {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use rustynes_core::Buttons;
     use std::path::PathBuf;
@@ -214,6 +265,136 @@ mod tests {
                 probe.framebuffer(),
                 "visible frame != plain future frame at {f}"
             );
+        }
+    }
+
+    /// v3.1.0 (`T-PS-dual-runahead`) — a synthetic Vs. `DualSystem` cart whose
+    /// two screens change colour every frame and differ from each other: each
+    /// console's NMI writes a frame counter into the backdrop entry `$3F00`
+    /// (eight colours, `$10-$17` on the main and `$20-$27` on the sub, none of
+    /// them black), with background rendering on over blank CHR-RAM. The same cart as `rustynes-test-harness`'s
+    /// `vs_dualsystem_rewind.rs`, which explains why the protocol cart there
+    /// (rendering off, one unchanging colour) is blind to a framebuffer
+    /// comparison.
+    pub fn flashing_cabinet() -> Vec<u8> {
+        #[rustfmt::skip]
+        let program = |base: u8| -> Vec<u8> {
+            vec![
+                0x78, 0xD8, 0xA2, 0xFF, 0x9A,       // SEI CLD LDX #$FF TXS
+                0x2C, 0x02, 0x20, 0x10, 0xFB,       // vblank 1
+                0x2C, 0x02, 0x20, 0x10, 0xFB,       // vblank 2
+                0xA9, 0x0A, 0x8D, 0x01, 0x20,       // $2001 = $0A (background on)
+                0xA9, 0x80, 0x8D, 0x00, 0x20,       // $2000 = $80 (NMI on)
+                0x4C, 0x19, 0x80,                   // JMP $8019
+                // NMI at $801C
+                0xE6, 0x00, 0xA5, 0x00,             // INC $00, LDA $00
+                0x29, 0x07, 0x09, base, 0xEA,       // AND #$07 ORA #base NOP
+                0xA2, 0x3F, 0x8E, 0x06, 0x20,       // $2006 = $3F
+                0xA2, 0x00, 0x8E, 0x06, 0x20,       // $2006 = $00
+                0x8D, 0x07, 0x20,                   // $3F00 = A
+                0x8E, 0x06, 0x20, 0x8E, 0x06, 0x20, // v = $0000
+                0x40,                               // RTI (also the IRQ vector)
+            ]
+        };
+        let mut rom = vec![0u8; 16 + 0x10000];
+        rom[0..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 0x04; // 64 KiB PRG
+        rom[6] = 0x30; // mapper 99
+        rom[7] = 0x69; // NES 2.0, Vs. System
+        rom[11] = 0x07; // 8 KiB CHR-RAM
+        rom[13] = 0x50; // Vs. hardware type 5: DualSystem
+        for (half, base) in [(0usize, 0x10u8), (0x8000, 0x20)] {
+            let code = program(base);
+            rom[16 + half..16 + half + code.len()].copy_from_slice(&code);
+            rom[16 + half + 0x7FFA..16 + half + 0x8000]
+                .copy_from_slice(&[0x1C, 0x80, 0x00, 0x80, 0x38, 0x80]);
+        }
+        rom
+    }
+
+    fn cabinet() -> VsDualSystem {
+        match rustynes_core::Emu::from_rom(&flashing_cabinet()).expect("cart parses") {
+            rustynes_core::Emu::Dual(d) => *d,
+            rustynes_core::Emu::Single(_) => panic!("a DualSystem cart builds a cabinet"),
+        }
+    }
+
+    /// v3.1.0 (`T-PS-dual-runahead`, ADR 0032's 2026-10-07 gate: "run-ahead
+    /// gives the same output as a run without it") — the cabinet form of
+    /// [`runahead_persistent_timeline_matches_plain_run`], at depths 1 and 2.
+    /// The persistent cabinet is byte-identical to a plain one after every
+    /// cycle, both screens of the visible frame are the plain run's frame `n`
+    /// later, and the rewind ring holds persistent frames only.
+    #[test]
+    fn cabinet_runahead_matches_a_plain_run_on_both_screens() {
+        for n in [1u32, 2] {
+            let mut ahead = cabinet();
+            let mut plain = cabinet();
+            ahead.enable_rewind();
+            plain.enable_rewind();
+            let mut ra = RunAhead::default();
+            let mut discard = vec![0.0f32; 8192];
+            let mut drain = |d: &mut VsDualSystem| {
+                let (main, sub) = d.split_mut();
+                let _ = main.drain_audio_into(&mut discard);
+                let _ = sub.drain_audio_into(&mut discard);
+            };
+            for f in 0..20u32 {
+                for d in [&mut ahead, &mut plain] {
+                    d.set_buttons(0, buttons_for(f));
+                    d.run_frame();
+                    drain(d);
+                }
+            }
+            for f in 20..50u32 {
+                let input = buttons_for(f);
+                ahead.set_buttons(0, input);
+                ra.run_cabinet_ahead(&mut ahead, n);
+                let visible = (
+                    ahead.main_framebuffer().to_vec(),
+                    ahead.sub_framebuffer().to_vec(),
+                );
+                drain(&mut ahead);
+                ra.finish_cabinet(&mut ahead);
+
+                plain.set_buttons(0, input);
+                plain.run_frame();
+                drain(&mut plain);
+                assert_eq!(
+                    ahead.snapshot(),
+                    plain.snapshot(),
+                    "n={n}: the persistent cabinet diverged from the plain one at {f}"
+                );
+
+                // The plain timeline `n` frames on, with the input held.
+                let mut probe = cabinet();
+                probe.restore(&plain.snapshot()).expect("own snapshot");
+                for _ in 0..n {
+                    probe.set_buttons(0, input);
+                    probe.run_frame();
+                }
+                assert_eq!(
+                    visible.0.as_slice(),
+                    probe.main_framebuffer(),
+                    "n={n}: the visible main screen at {f} is not the plain run {n} ahead"
+                );
+                assert_eq!(
+                    visible.1.as_slice(),
+                    probe.sub_framebuffer(),
+                    "n={n}: the visible sub screen at {f} is not the plain run {n} ahead"
+                );
+                assert_ne!(
+                    visible.0.as_slice(),
+                    ahead.main_framebuffer(),
+                    "the stimulus must tell the visible frame from the persistent one"
+                );
+            }
+            assert_eq!(
+                ahead.rewind_len(),
+                plain.rewind_len(),
+                "n={n}: the ring holds the persistent frames and nothing else"
+            );
+            assert!(ahead.rewind_capture_enabled(), "capture is back on");
         }
     }
 

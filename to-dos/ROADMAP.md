@@ -1435,7 +1435,7 @@ Minted from the line plan,
 [`plans/v3.1-to-v4.0-line-plan.md`](plans/v3.1-to-v4.0-line-plan.md). Each row
 names the release slot that owns it and the backlog ID from the 2026-10-06
 surveys. The release plans hold the gates. An existing ticket is reused, not
-re-minted: `T-PS-dual-runahead` (ADR 0032), `T-MISTER-SAVESTATE`,
+re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE`,
 `T-MISTER-CHEATS`, `T-MISTER-ZAPPER`, `T-MISTER-4PLAYER`, `T-MISTER-PADDLE`,
 `T-MISTER-KEYBOARD`, `T-MISTER-VMODE`, `T-MISTER-OSD` and
 `T-MISTER-DIRECTVIDEO` keep their sections above.
