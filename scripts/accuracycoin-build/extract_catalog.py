@@ -62,9 +62,14 @@ RE_TBLF2_ROW = re.compile(
     r"\s*\$FF\s*,\s*(result_[A-Za-z0-9_]+)\s*,",
     re.M,
 )
-# Any line opening with a row-like macro (`table`, `tblf1`, `tblfN`, ...).
-# Used only to prove every such line was read by one of the patterns above.
-RE_ANY_ROW = re.compile(r'^\s*(t[a-z]*[0-9]*)\s+"', re.M)
+# Any line opening with a row macro (`table`, `tblf1`, `tblfN`, ...), whatever
+# its first argument is. Used only to prove every such line was read by one of
+# the patterns above. Keyed on the macro FAMILY rather than on a quoted first
+# argument (PR #594 review): a future `tblf3 str_Name, $FF, result_X, ...` row
+# would have slipped past a quote-anchored check and silently shifted every
+# later index. `table`/`tbl` because the 6502 mnemonics that start with `t`
+# (`tax`, `tay`, `tsx`, `txa`, `txs`, `tya`) must not match.
+RE_ANY_ROW = re.compile(r"^\s*(table|tbl[a-z0-9]*)\s+\S", re.M)
 RE_TOKEN_DEF = re.compile(r"^(str_[A-Za-z0-9_]+)\s*=\s*\$([0-9A-Fa-f]+)", re.M)
 RE_SPECIAL_STRINGS = re.compile(
     r'^PrintTextSpecialStrings:\s*\n((?:\s*\.byte\s+"[^"]*"\s*\n?)+)', re.M
@@ -256,6 +261,20 @@ def self_test() -> int:
     else:
         raise AssertionError("an unknown row macro was dropped silently")
 
+    # ...including one whose FIRST argument is a token rather than a string,
+    # which the detector used to require (PR #594 review).
+    tokenfirst = SELF_TEST_ASM.replace(
+        '\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma',
+        '\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma\n'
+        "\ttblf3 str_ZeroPage, $FF, result_Alpha, TEST_Alpha",
+    )
+    try:
+        parse(tokenfirst)
+    except SystemExit as exc:
+        assert "tblf3" in str(exc), exc
+    else:
+        raise AssertionError("a token-first row macro was dropped silently")
+
     # ...and a suite that yields no rows at all must abort.
     empty = SELF_TEST_ASM.replace('\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma\n', "")
     try:
@@ -274,7 +293,7 @@ def self_test() -> int:
     else:
         raise AssertionError("an unknown word token was accepted")
 
-    print("extract_catalog self-test: ok (8 cases)")
+    print("extract_catalog self-test: ok (9 cases)")
     return 0
 
 

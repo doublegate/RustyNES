@@ -246,6 +246,50 @@ fn render_table(last_release_epoch: u32, rows: &[Fingerprint]) -> String {
     out
 }
 
+/// How one panel probe compares with the committed table.
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    /// The table holds this exact row.
+    Unchanged,
+    /// The table holds this ROM at this frame count with different output:
+    /// emulation moved, which needs a raised epoch.
+    Changed,
+    /// The table has no row for this ROM at this frame count: a probe added
+    /// to the panel, blessable at any epoch.
+    New,
+}
+
+fn classify(now: &Fingerprint, rows: &[Fingerprint]) -> Verdict {
+    if rows.contains(now) {
+        Verdict::Unchanged
+    } else if rows
+        .iter()
+        .any(|r| r.rom == now.rom && r.frames == now.frames)
+    {
+        Verdict::Changed
+    } else {
+        Verdict::New
+    }
+}
+
+#[test]
+fn a_new_probe_is_not_a_moved_output() {
+    let row = |rom: &str, frames: u32, fb: u64| Fingerprint {
+        rom: rom.into(),
+        frames,
+        framebuffer: fb,
+        audio: 1,
+        ram: 2,
+        cycles: 3,
+    };
+    let table = [row("a.nes", 60, 7)];
+    assert_eq!(classify(&row("a.nes", 60, 7), &table), Verdict::Unchanged);
+    assert_eq!(classify(&row("a.nes", 60, 8), &table), Verdict::Changed);
+    assert_eq!(classify(&row("b.nes", 60, 7), &table), Verdict::New);
+    // A new frame count for a known ROM is a new probe, not a moved one.
+    assert_eq!(classify(&row("a.nes", 90, 8), &table), Verdict::New);
+}
+
 #[test]
 fn output_moves_only_with_the_emulation_epoch() {
     let now: Vec<Fingerprint> = PANEL.iter().map(measure).collect();
@@ -260,15 +304,23 @@ fn output_moves_only_with_the_emulation_epoch() {
         table.last_release_epoch
     );
 
-    let moved: Vec<String> = now
-        .iter()
-        .zip(PANEL)
-        .filter(|(f, _)| !table.rows.contains(f))
-        .map(|(f, p)| format!("  {} ({}): now {}", f.rom, p.reach, f.row()))
-        .collect();
+    let mut moved: Vec<String> = Vec::new();
+    let mut added: Vec<String> = Vec::new();
+    for (f, p) in now.iter().zip(PANEL) {
+        let line = format!("  {} ({}): now {}", f.rom, p.reach, f.row());
+        match classify(f, &table.rows) {
+            Verdict::Unchanged => {}
+            Verdict::Changed => moved.push(line),
+            Verdict::New => added.push(line),
+        }
+    }
     // The rule (ADR 0045): output may differ from the LAST RELEASE only under
     // a raised epoch. Within one release, a second change after the rise
-    // needs a re-bless, not a second rise.
+    // needs a re-bless, not a second rise. A probe the table has never seen
+    // (a ROM, or a frame count, added to the panel) is not a moved output, so
+    // it can be blessed at the released epoch (PR #594 review: until then
+    // adding a probe after a release demanded an epoch rise, and v3.1.0's
+    // panel change had to lower `last_release_epoch` by hand to bless one).
     let raised = EMULATION_EPOCH > table.last_release_epoch;
 
     assert!(
@@ -285,12 +337,19 @@ fn output_moves_only_with_the_emulation_epoch() {
         fs::write(table_path(), render_table(table.last_release_epoch, &now))
             .expect("write epoch_fingerprint.tsv");
         eprintln!(
-            "blessed epoch_fingerprint.tsv at epoch {EMULATION_EPOCH} ({} rows moved)",
-            moved.len()
+            "blessed epoch_fingerprint.tsv at epoch {EMULATION_EPOCH} ({} rows moved, {} new)",
+            moved.len(),
+            added.len()
         );
         return;
     }
 
+    assert!(
+        added.is_empty(),
+        "the panel has probes the table does not record; bless them with \
+         RUSTYNES_BLESS_EPOCH_FINGERPRINT=1 (no epoch rise needed). New:\n{}",
+        added.join("\n")
+    );
     assert!(
         moved.is_empty(),
         "emulated output changed under epoch {EMULATION_EPOCH}, which is already \

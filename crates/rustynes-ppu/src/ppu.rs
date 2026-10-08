@@ -6460,7 +6460,10 @@ impl Ppu {
     /// starts at OAMADDR 0, as it does on every normally rendered line). A line
     /// whose evaluation starts misaligned (a mid-frame `$2003` write, a test
     /// construction) can draw a slightly different set; it is a display
-    /// enhancement, not hardware behaviour.
+    /// enhancement, not hardware behaviour. The walk reads `oam` directly and
+    /// deliberately bypasses the optional OAM-decay read hook, so drawing the
+    /// extra sprites can never refresh a decaying DRAM row the game could
+    /// later observe.
     fn fetch_extra_sprites<B: PpuBus>(&mut self, bus: &mut B, next_line: i16, height: i16) {
         self.spr_extra_count = 0;
         if !self.sprite_limit_disabled

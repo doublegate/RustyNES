@@ -3044,8 +3044,11 @@ impl Nes {
     /// the CPU runs `k` times faster against an unchanged PPU, so a game gets
     /// `k` times the CPU time per frame.
     ///
-    /// It divides the region's master-clock CPU divider (NTSC 12 -> 6 / 4 / 3;
-    /// PAL 16 and Dendy 15 round down, so `x3` on PAL is x3.2). The APU, the
+    /// It splits the region's master-clock CPU divider into `k` cycles whose
+    /// lengths sum to exactly one stock cycle (NTSC 12 -> 6 / 4 / 3; PAL 16 at
+    /// `x3` is 5, 5, 6 and Dendy 15 at `x4` is 3, 4, 4, 4), so the multiplier is
+    /// exact on every region. Until the v3.1.0 review it divided with integer
+    /// division, which made PAL `x3` run x3.2 and Dendy `x4` x5. The APU, the
     /// DMC, every mapper's CPU-cycle hook (the VRC / FME-7 / N163 IRQ
     /// counters) and the PPU's open-bus and post-reset timers stay at the
     /// STOCK rate, so the pitch, the music tempo and the cycle-timed raster
@@ -3105,9 +3108,12 @@ impl Nes {
     /// a chosen IRQ revision, or `None` for the one its header selects.
     ///
     /// The MMC3's two IRQ behaviours are mutually exclusive: the Sharp MMC3B
-    /// / MMC3C (the default) asserts IRQ when the counter is reloaded to 0, the
-    /// MMC3A and non-Sharp MMC3B (`Mmc3Revision::Nec`) only on a 1 -> 0
-    /// decrement. A NES 2.0 header can say which (submapper 4); an iNES 1.0
+    /// / MMC3C (the default) asserts IRQ whenever a clock leaves the counter at
+    /// 0 with IRQs enabled, so a latch of 0 fires every scanline. The MMC3A
+    /// and non-Sharp MMC3B (`Mmc3Revision::Nec`) assert on a 1 -> 0 decrement
+    /// and on a `$C001` reload to 0 (one IRQ per `$C001` write while `$C000`
+    /// is 0, even if the counter was already 0), but not when the counter,
+    /// already 0, reloads 0 by itself. A NES 2.0 header can say which (submapper 4); an iNES 1.0
     /// dump cannot, so this override is how a player runs a game, or blargg's
     /// `mmc3_test_2/6-MMC3_alt`, on the other chip. The default (`None`) is
     /// unchanged. Configuration, re-applied when a power cycle rebuilds the

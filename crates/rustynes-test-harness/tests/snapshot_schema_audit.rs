@@ -488,7 +488,9 @@ const CHIPS: &[Chip] = &[
             ),
             (
                 "cpu_div_effective",
-                "derived: `cpu_div_cached / cpu_overclock`, recomputed when the overclock is set",
+                "derived: `overclock_cycle_len(cpu_div_cached, cpu_overclock, overclock_phase)`, \
+                 the phase's share of one stock cycle (the `k` shares sum to the divider), \
+                 recomputed whenever the overclock or the phase changes",
             ),
             (
                 "stock_step",
