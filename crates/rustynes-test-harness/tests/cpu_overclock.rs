@@ -256,3 +256,43 @@ fn the_multiplier_is_exact_on_pal_and_dendy_too() {
         }
     }
 }
+
+/// Switching the overclock back OFF after a long run is an ordinary frame.
+///
+/// Under the overclock the APU runs on its own stock-rate counter
+/// (`apu_cycle`) while the CPU's counter (`cycle`) runs `k` times faster, so
+/// by the time the player switches back to `x1` the two are tens of millions
+/// of cycles apart, and `x1` hands the APU the CPU's counter again. A review
+/// of the release PR (#594) read that as a catch-up loop that would stall the
+/// emulator and flood the audio buffer. It is not one: the APU takes the
+/// counter by assignment (`Apu::set_canonical_cycle`) and uses it for its
+/// put/get parity and a pending IRQ-flag clear, never as a distance to
+/// cover. This pins that: after 600 frames at `x4`, each of the next frames
+/// at `x1` produces the stock number of CPU cycles and audio samples.
+#[test]
+fn switching_back_to_stock_after_a_long_overclock_is_an_ordinary_frame() {
+    let (stock_cycles, stock_samples) = measure(1, 10);
+    let mut nes = boot_rom(AUDIBLE_ROM);
+    nes.set_cpu_overclock(4);
+    for _ in 0..600 {
+        nes.run_frame();
+        let _ = nes.drain_audio();
+    }
+    nes.set_cpu_overclock(1);
+    for frame in 0..10 {
+        let start = nes.cycle();
+        nes.run_frame();
+        let cycles = nes.cycle() - start;
+        let samples = nes.drain_audio().len();
+        assert!(
+            cycles.abs_diff(stock_cycles / 10) <= 2,
+            "frame {frame} after switching back: {cycles} CPU cycles, stock is {}",
+            stock_cycles / 10
+        );
+        assert!(
+            samples.abs_diff(stock_samples / 10) <= 2,
+            "frame {frame} after switching back: {samples} audio samples, stock is {}",
+            stock_samples / 10
+        );
+    }
+}

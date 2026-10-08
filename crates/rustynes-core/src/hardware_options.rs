@@ -136,7 +136,10 @@ pub struct HardwareOptions {
     /// The extra-vblank-scanline overclock ([`Nes::set_extra_scanlines`]).
     pub extra_scanlines: u16,
     /// The CPU-multiplier overclock, `1..=MAX_CPU_OVERCLOCK`
-    /// ([`Nes::set_cpu_overclock`]); `1` is stock. v3.1.0.
+    /// ([`Nes::set_cpu_overclock`]); `1` is stock. v3.1.0. A value outside
+    /// that range never reaches the core as written: decoding a record
+    /// refuses it, and applying one clamps it (`0` to `1`, anything above to
+    /// the maximum), as `Nes::set_cpu_overclock` does.
     pub cpu_overclock: u8,
     /// Draw the sprites beyond the eighth on a scanline
     /// ([`Nes::set_sprite_limit_disabled`]); render-only. v3.1.0.
