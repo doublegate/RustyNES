@@ -1790,9 +1790,12 @@ pub struct Config {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EnhancementsConfig {
     /// Disable the hardware 8-sprite-per-scanline limit (removes sprite
-    /// flicker). Off by default = accurate hardware behaviour. **Staged**: the
-    /// current cycle-accurate core has no no-sprite-limit hook, so this is
-    /// persisted + surfaced but inert until the v2.0 core pass (ADR 0002).
+    /// flicker). Off by default = accurate hardware behaviour. v3.1.0
+    /// (`T-SPRITE-LIMIT`): applied to the core (`Nes::set_sprite_limit_disabled`)
+    /// from the next frame. Render-only: evaluation, the overflow flag and the
+    /// sprite fetches stay exact, so the game sees no difference. Like
+    /// `cpu_overclock` a movie records it and netplay peers must match. Until
+    /// v3.1.0 it was persisted and shown but nothing read it.
     #[serde(default)]
     pub disable_sprite_limit: bool,
     /// Optional overclock: extra emulated PPU scanlines inserted in the
@@ -1804,6 +1807,15 @@ pub struct EnhancementsConfig {
     /// persisted and shown but nothing read it.
     #[serde(default)]
     pub overclock_scanlines: u16,
+    /// v3.1.0 (`T-CPU-OVERCLOCK`): the CPU-multiplier overclock, `2..=4` for
+    /// x2 to x4; `0` (the default) and `1` are stock. The CPU runs that many
+    /// times faster against the same picture and sound
+    /// (`Nes::set_cpu_overclock`). Unlike `overclock_scanlines` it is not
+    /// held at stock under a movie or netplay: a movie records it and replays
+    /// with it, and netplay peers must match (both through the core's
+    /// `HardwareOptions`).
+    #[serde(default)]
+    pub cpu_overclock: u8,
 }
 
 /// v2.1.4 F2.3 — the `[emulation]` section: optional **accuracy** toggles.
@@ -1875,6 +1887,15 @@ pub struct EmulationConfig {
     #[serde(default)]
     pub famicom_console: bool,
 
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`) — which MMC3 IRQ revision mapper-4
+    /// games run on: `auto` (the default; the header decides, Sharp unless a
+    /// NES 2.0 header says submapper 4), `sharp`, or `alternate` (the MMC3A
+    /// and non-Sharp MMC3B). An iNES 1.0 dump cannot name its chip, so this is
+    /// how to run one on the other. Pushed into the core via
+    /// `Nes::set_mmc3_revision_override` on ROM load and power cycle.
+    #[serde(default)]
+    pub mmc3_irq_revision: Mmc3IrqRevision,
+
     /// v2.1.8 A1 / v2.2.3 — use the specialized visible-scanline fast dot path
     /// (`Nes::set_fast_dotloop`). **On by default**, and unlike every other
     /// field here it is **not an accuracy knob**: the fast path runs the same
@@ -1893,6 +1914,31 @@ pub struct EmulationConfig {
     /// (the shipped default) instead of silently opting the user out.
     #[serde(default = "default_fast_dotloop")]
     pub fast_dotloop: bool,
+}
+
+/// v3.1.0 — the `[emulation] mmc3_irq_revision` choice.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Mmc3IrqRevision {
+    /// The cartridge header decides (Sharp unless NES 2.0 submapper 4).
+    #[default]
+    Auto,
+    /// The Sharp MMC3B / MMC3C: a latch of 0 fires every scanline.
+    Sharp,
+    /// The MMC3A and non-Sharp MMC3B: a latch of 0 stops IRQs.
+    Alternate,
+}
+
+impl Mmc3IrqRevision {
+    /// The core override this choice selects.
+    #[must_use]
+    pub const fn to_core(self) -> Option<rustynes_core::rustynes_mappers::Mmc3Revision> {
+        match self {
+            Self::Auto => None,
+            Self::Sharp => Some(rustynes_core::rustynes_mappers::Mmc3Revision::Sharp),
+            Self::Alternate => Some(rustynes_core::rustynes_mappers::Mmc3Revision::Nec),
+        }
+    }
 }
 
 /// Serde + [`Default`] value for [`EmulationConfig::fast_dotloop`] — `true`.
@@ -1916,6 +1962,7 @@ impl Default for EmulationConfig {
             randomize_power_on_ram: false,
             power_on_ram_seed: 0,
             famicom_console: false,
+            mmc3_irq_revision: Mmc3IrqRevision::Auto,
             fast_dotloop: default_fast_dotloop(),
         }
     }

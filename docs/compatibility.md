@@ -144,16 +144,19 @@ screens via `main_framebuffer()` and `sub_framebuffer()`. As of v2.1.2 "Fathom"
 (F2.1) the **desktop frontend presents both screens** — side-by-side (512×240,
 default) or stacked (256×480) via `[graphics] dual_screen_layout` — with P1/P2 →
 main, P3/P4 → sub, coin (F10) → main acceptor, and the main console's audio (ADR
-0032). The advanced single-`Nes` features (run-ahead / rewind / netplay / TAS /
-dual save-state), the debugger, and HD-pack are **scoped out in dual mode**;
-libretro + wasm + mobile presentation remain deferred; real-cabinet boot stays
-fixture-limited (maincpu-half dumps). The non-DualSystem games (Excitebike, Clu
+0032). Netplay, TAS, the debugger, and HD-pack are **scoped out in dual mode**;
+save states work there since v2.9.7, and rewind and run-ahead since v3.1.0, on
+the whole cabinet. Libretro presents both screens since v2.1.10 (512×240,
+`docs/libretro/advanced_features.md`), the browser since v2.9.7, and the mobile
+bridge carries the cabinet since v2.9.7 (its device rows are T1-T12 of
+`docs/mobile-v2.9.3-run-sheet.md`; the Swift half has not been compiled).
+Real-cabinet boot stays fixture-limited (maincpu-half dumps). The non-DualSystem games (Excitebike, Clu
 Clu Land, Castlevania, Pinball, Gradius, Goonies, Ice Climber, Golf, Super Mario
 Bros.) boot and render with their correct 2C04 palette.
 **PlayChoice-10's second-screen instruction menu and its Z80 coprocessor are out
 of scope** — only the NES-game half runs (with the 2C03 palette). All of the above
 is gated on `ConsoleType::VsSystem`/`Playchoice10`; a stock `Nes` cart is byte-for-
-byte unchanged (AccuracyCoin 100.00% -- 141/141 at the time, 144/144 from v2.6.18 -- plus both ROM oracles byte-identical).
+byte unchanged (AccuracyCoin 100.00% -- 141/141 at the time, 144/144 from v2.6.18, both overstated by the older ROM's masked `Misaligned OAM behavior` failure, and 146/146 since v3.1.0 -- plus both ROM oracles byte-identical).
 Region timing (PAL/Dendy)
 is validated by automated gates (`ppu_region_constants_match_hardware` in
 `rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). The R1
@@ -211,7 +214,7 @@ unfinished); the fix is a faithful port of TriCNES's eval-pointer model — the
 corrupted index is the live secondary-OAM evaluation pointer (`OAM2Address`),
 captured at the disable edge during dots 1-64 and committed on re-enable. Default
 builds stay byte-identical for games without such a split; AccuracyCoin
-OAM-Corruption (0x047B) + 139/141 (the two newest upstream PPU tests are known gaps), nestest 0-diff, and blargg/kevtris remain
+OAM-Corruption (0x047B) + 139/141 at the time (the two newest upstream PPU tests were then known gaps; 146/146 at upstream `f5f41dc2` since v3.1.0, `docs/STATUS.md`), nestest 0-diff, and blargg/kevtris remain
 green; `repro_smb3 --movie` idle drop count went 63-80/240 → 0. See `ppu-2c02.md`
 edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace}.rs`.
 
@@ -220,10 +223,10 @@ edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace
 | Mapper audio | Status | Notes |
 |--------------|--------|-------|
 | MMC5 (2 pulse + raw PCM) | **Landed** (`mapper-audio`, Track C2 / Phase 2.3) | Castlevania III JP, Just Breed, Laser Invasion |
-| VRC6 (3 channels) | Phase 4 | Akumajou Densetsu, Madara, Esper Dream 2 |
+| VRC6 (3 channels) | **Landed** (`m024_vrc6.rs`, `Mapper::mix_audio`) | Akumajou Densetsu, Madara, Esper Dream 2 |
 | VRC7 (FM, 6 channels) | **Landed** — clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT); ADR 0006 supersedes ADR 0004 | Lagrange Point (JP) plays with in-game audio. |
-| Sunsoft 5B (3 channels) | Phase 4 | Gimmick! |
-| Namco 163 (1-8 channels) | Phase 4 | Several Japanese RPGs |
+| Sunsoft 5B (3 channels) | **Landed** (`m069_sunsoft_fme7.rs`, `Mapper::mix_audio`) | Gimmick! |
+| Namco 163 (1-8 channels) | **Landed** (`m019_namco163.rs`, `Mapper::mix_audio`) | Several Japanese RPGs |
 | FDS (wavetable + envelope) | **Landed** | 2C33 — 64-entry wavetable + 32-step modulation + envelopes + master volume; behind `mapper-audio` |
 
 ## Game compatibility goals (v1.0)
@@ -320,8 +323,9 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   punching bag (`Nes::set_bandai_hyper_shot`, the 8-sensor `$4016`-bit-1-
   multiplexed read, unit-verified against the `NESdev` "Exciting Boxing Punching
   Bag" page). All are additive, default-off `InputDevice` overlays, so
-  `ExpansionDevice::None` keeps every read byte-identical.) The microphone
-  remains deferred. (DMC-DMA controller-bit corruption is **modelled** as of
+  `ExpansionDevice::None` keeps every read byte-identical.) The Famicom
+  microphone shipped in v2.2.0 (`Nes::set_microphone`, `$4016` D2;
+  `docs/accuracy-ledger.md`). (DMC-DMA controller-bit corruption is **modelled** as of
   v1.4.0 — see `Bus::dmc_dma_read`, gated by `dmc_dma_during_read4/dma_4016_read`,
   `sprdma_and_dmc_dma`, and `read_joy3/count_errors`.)
 - **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
@@ -339,11 +343,22 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   accepted only when: (a) there is concrete user demand or a notable title that
   needs it, **and** (b) a redistributable test fixture or a well-specified
   nesdev page exists, **and** (c) it carries NES 2.0 metadata for unambiguous
-  detection — weighed against maintenance cost. MMC5's >8 KiB multi-chip PRG-RAM
-  configs fall under this policy (no corpus fixture; out of scope until one
-  appears).
+  detection — weighed against maintenance cost. (MMC5's >8 KiB multi-chip
+  PRG-RAM configs were named here as falling under this policy; v2.7.2
+  implemented them from `MMC5.xhtml` as the wiki's 64 KiB superset,
+  `docs/audits/core-disposition.md` §5.3.)
 
 ## Open questions
+
+Checked at v3.1.0 against the code, and recorded together as backlog item
+FE-11, which the v3.1 → v4.0 line plan does not schedule:
+
+- the **CRC32 question is half-answered**: the per-game correction database
+  (`crates/rustynes-gamedb`, vendored from TetaNES) is CRC32-keyed, while the
+  Vs. System database (`crates/rustynes-core/src/vs_db.rs`) and save-state
+  naming key on SHA-256;
+- the **region override is still open**: no desktop, mobile or libretro
+  frontend overrides the region the header declares.
 
 - **CRC32 vs. SHA-256 for ROM identification.** We use SHA-256 for save state directory naming (lower collision risk). For ROM compatibility databases, CRC32 is the community standard; we may add it as a secondary key.
 - **Region override.** Some users want to play PAL versions of NTSC games at NTSC speed. Plan: expose a region override in the settings UI; warn that this may break timing-sensitive ROMs.

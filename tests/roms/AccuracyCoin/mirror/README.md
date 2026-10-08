@@ -17,10 +17,10 @@ diffed entry-for-entry instead of transcribed from a photograph.
 
 | | |
 |---|---|
-| Upstream | <https://github.com/100thCoin/AccuracyCoin>, commit `46199ae4` |
+| Upstream | <https://github.com/100thCoin/AccuracyCoin>, commit `f5f41dc2` (rebuilt at v3.1.0; `46199ae4` before) |
 | Upstream licence | MIT (Copyright (c) 2025 Chris Siebert) — the text is at `../../accuracycoin/LICENSE`, and the corpus-wide index is `../../LICENSES.md` |
-| Base ROM md5 | `2f9d83104969a5984caf21a77d6746bd` (identical to `tests/roms/accuracycoin/AccuracyCoin.nes`) |
-| This ROM md5 | `8162ca0ae099220401e76719e88762fc` |
+| Base ROM md5 | `a3635c87ffb1754f58923d070548898b` (identical to `tests/roms/accuracycoin/AccuracyCoin.nes`) |
+| This ROM md5 | `bbd842dfa221cdc5a3ea44f8dfcc37b0` |
 | Built by | `scripts/accuracycoin-build/build_mirror_rom.py` |
 | Assembler | upstream's own `nesasm.exe` under `wine`, so the output is the author's toolchain rather than an equivalent one |
 
@@ -32,11 +32,11 @@ RustyNES.
 
 ```bash
 git clone https://github.com/100thCoin/AccuracyCoin /tmp/ac-src
-git -C /tmp/ac-src checkout 46199ae4
+git -C /tmp/ac-src checkout f5f41dc2
 
 python3 scripts/accuracycoin-build/build_mirror_rom.py /tmp/ac-src \
     --out tests/roms/AccuracyCoin/mirror/AccuracyCoin-mirror.nes \
-    --expect-upstream-md5 2f9d83104969a5984caf21a77d6746bd \
+    --expect-upstream-md5 a3635c87ffb1754f58923d070548898b \
     --wine /usr/bin/wine
 ```
 

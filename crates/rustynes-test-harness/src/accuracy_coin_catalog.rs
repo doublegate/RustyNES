@@ -3,17 +3,18 @@
 //! Vendored from upstream `100thCoin/AccuracyCoin` (MIT licensed). The
 //! list mirrors `AccuracyCoin.asm`'s 22 `Suite_*` pages: each page
 //! contributes a header string + a sequence of `table "name", $FF,
-//! result_addr, run_addr` macro entries. Total: 149 entries across 22
-//! suites.
+//! result_addr, run_addr` macro entries (and, since upstream `f5f41dc2`, the
+//! byte-saving `tblf1` / `tblf2` variants of it). Total: 151 entries across
+//! 22 suites.
 //!
 //! ## Source of truth
 //!
 //! The authoritative list lives next to the ROM at
-//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 149-line
+//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 151-line
 //! `(suite<TAB>name<TAB>result_addr)` file extracted from upstream
-//! `AccuracyCoin.asm` by the recipe documented inline in
-//! `tests/roms/AccuracyCoin/README.md` (walk each `Suite_*`/`table` block,
-//! resolving `result_symbol` to its `result_X = $ADDR` definition).
+//! `AccuracyCoin.asm` by `scripts/accuracycoin-build/extract_catalog.py`
+//! (walk each `Suite_*` block's row macros, resolving `result_symbol` to its
+//! `result_X = $ADDR` definition).
 //! This module embeds that file via `include_str!` and parses it
 //! lazily so the in-code catalog cannot drift from the on-disk source.
 //!
@@ -75,7 +76,8 @@ pub struct CatalogEntry {
 /// pointer's high byte against `3` and branching past the test when it matches.
 /// Five catalog rows (the whole `Power On State` suite: `PPU Reset Flag`,
 /// `CPU RAM`, `CPU Registers`, `PPU RAM`, `Palette RAM`) point here, so the
-/// catalog's 149 rows carry **144 scored results and one shared scratch byte**.
+/// catalog's 151 rows carry **146 scored results and one shared scratch byte**
+/// (149 and 144 before the v3.1.0 re-sync to upstream `f5f41dc2`).
 ///
 /// ## Why this constant had to exist
 ///
@@ -88,7 +90,8 @@ pub struct CatalogEntry {
 /// read as 149 of 149 and the other as 144 of 144 — from one ROM, with nothing
 /// wrong in between.
 ///
-/// Excluding the sentinel makes the count **144 in both windows**. It changes no
+/// Excluding the sentinel made the count **144 in both windows** (146 since
+/// v3.1.0). It changes no
 /// verdict about any real test, and it removes five rows from every "entry for
 /// entry" claim that were never entries.
 pub const RESULT_DRAW_TEST: u16 = 0x03FF;
@@ -105,7 +108,7 @@ impl CatalogEntry {
     }
 }
 
-/// Number of catalog rows that carry a real result: 149 rows, 144 scored.
+/// Number of catalog rows that carry a real result: 151 rows, 146 scored.
 ///
 /// # Panics
 ///
@@ -203,7 +206,7 @@ impl TestStatus {
     }
 }
 
-/// Return the catalog of all 149 AccuracyCoin tests, in `TableTable`
+/// Return the catalog of all 151 AccuracyCoin tests, in `TableTable`
 /// order.
 ///
 /// The result is built once (on first call) and cached for the
@@ -247,7 +250,7 @@ pub fn catalog() -> &'static [CatalogEntry] {
 
 /// Look up a catalog entry by zero-based `TableTable` index.
 ///
-/// Returns `None` if `index >= 149`.
+/// Returns `None` if `index >= 151`.
 #[must_use]
 pub fn entry(index: usize) -> Option<&'static CatalogEntry> {
     catalog().get(index)
@@ -269,7 +272,7 @@ pub fn suite_size(suite: &str) -> usize {
     catalog().iter().filter(|e| e.suite == suite).count()
 }
 
-/// Decode the 149-entry result vector by reading each catalog entry's
+/// Decode the 151-entry result vector by reading each catalog entry's
 /// [`CatalogEntry::result_addr`] from `ram` (which must be the NES's
 /// 2 KiB CPU RAM borrowed via `Nes::bus().ram_bytes()`).
 ///
@@ -291,14 +294,15 @@ pub fn decode_results(ram: &[u8]) -> Option<Vec<TestStatus>> {
 
 /// Aggregated counts derived from a decoded results vector.
 ///
-/// **Every field counts SCORED rows only**, so `total` is 144 rather than the
-/// catalog's 149 and `not_run` excludes the five `Power On State` rows that
+/// **Every field counts SCORED rows only**, so `total` is 146 rather than the
+/// catalog's 151 and `not_run` excludes the five `Power On State` rows that
 /// share [`RESULT_DRAW_TEST`]. [`failing_tests`] uses the same set, so the
 /// counts here and the named list there cannot disagree.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamResultSummary {
-    /// Total number of catalog entries (always 149 if the catalog is
-    /// fully loaded).
+    /// Number of SCORED catalog entries, [`scored_len`]: 146 at upstream
+    /// `f5f41dc2`. The catalog holds 151 rows; the five sentinel rows that
+    /// share [`RESULT_DRAW_TEST`] are not scored and not counted here.
     pub total: u32,
     /// Tests that wrote `$01` (clean pass).
     pub pass: u32,
@@ -345,8 +349,8 @@ impl RamResultSummary {
 #[must_use]
 /// Summarise a decoded vector, counting **scored rows only**.
 ///
-/// The five rows sharing [`RESULT_DRAW_TEST`] are excluded, so `total` is 144
-/// rather than the catalog's 149. Including them made every count a function of
+/// The five rows sharing [`RESULT_DRAW_TEST`] are excluded, so `total` is 146
+/// rather than the catalog's 151. Including them made every count a function of
 /// when the run was sampled — see the constant's rustdoc for the measurement.
 pub fn summarise(statuses: &[TestStatus]) -> RamResultSummary {
     let mut s = RamResultSummary {
@@ -439,8 +443,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_exactly_149_entries() {
-        assert_eq!(catalog().len(), 149, "AccuracyCoin catalog size drifted");
+    fn catalog_has_exactly_151_entries() {
+        assert_eq!(catalog().len(), 151, "AccuracyCoin catalog size drifted");
     }
 
     #[test]
@@ -465,6 +469,11 @@ mod tests {
         assert!(names.contains(&"$03   SLO indirect,X"));
         assert!(names.contains(&"Internal Data Bus"));
         assert!(names.contains(&"$2007 Stress Test"));
+        // v3.1.0 (upstream f5f41dc2): the two new `CPU Behavior 2` tests, and a
+        // row rebuilt from a `tblf1` token, spelled as the ROM prints it.
+        assert!(names.contains(&"DMA Landing on Write"));
+        assert!(names.contains(&"DMC Reload Timing"));
+        assert!(names.contains(&"$0B   ANC immediate"));
     }
 
     #[test]
@@ -562,7 +571,7 @@ mod tests {
         ram[e0.result_addr as usize] = 0x01;
         ram[e1.result_addr as usize] = (3 << 2) | 0x02; // fail code 3
         let statuses = decode_results(&ram).expect("decode");
-        assert_eq!(statuses.len(), 149);
+        assert_eq!(statuses.len(), 151);
         assert_eq!(statuses[0], TestStatus::Pass);
         assert_eq!(statuses[1], TestStatus::Fail(3));
         // The five Power On State tests share $03FF (left at 0x00).

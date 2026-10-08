@@ -431,12 +431,20 @@ variant is what would put the first two in front of a user at all.)*
 > sprite-0 stale-shifter item are still open in §6b; R2, R4, R5, the `$2002`
 > race, the `$2007` read and PAL alignment are closed below with evidence. In
 > §6c the CPU-multiplier overclock is the one open build item.)*
+>
+> *(2026-10-07, v3.1.0 records item DOC-01: **R1 shipped** in v3.0.0 as
+> `T-MMC3-BG-A12` (§6b's `[x]` below), and **the CPU-multiplier overclock
+> shipped** in v3.1.0 as `T-CPU-OVERCLOCK` (`Nes::set_cpu_overclock`). The
+> sprite-0 stale shifter is the one item left in §6b; the line plan schedules
+> it as ACC-04 in **v3.3.0**, with ACC-03. AccuracyCoin is 146/146 at upstream
+> `f5f41dc2` (v3.1.0; `docs/STATUS.md`).)*
 
 All remaining hard-tier accuracy residuals share **one root cause** and converge
 on the v2.0.0 one-clock + every-cycle-bus-access refactor. They are **outside the
-AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin is an exact
-**141/141** on the shipping default core, up from 139/139 when this paragraph was
-written — the denominator grew in the v2.0.1 re-sync and v2.0.3 closed the two new
+AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin was an exact
+**141/141** on the shipping default core at the time, up from 139/139 when this
+paragraph was written, and is 146/146 since v3.1.0, the earlier figures each
+including the masked `Misaligned OAM behavior` failure — the denominator grew in the v2.0.1 re-sync and v2.0.3 closed the two new
 tests). The maintainer's standing decision through v1.7.0
 is "keep deferring" point-fixes (ADR 0002 stop-condition; 15+ documented
 rollbacks); v2.0.0 is the one release licensed to break save-state/determinism and
@@ -565,7 +573,7 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 
 ### 6c. Other v2.0-axis items
 
-- `[ ]` **CPU-multiplier overclock** — distinct from the F3 dot-resolution
+- `[x]` **CPU-multiplier overclock** — distinct from the F3 dot-resolution
   scanline-insert overclock (which shipped off-by-default in v1.7.0 beta.1);
   needs the timebase rewrite. The v1.5.0 "Enhancements" group's
   **sprite-limit-disable + overclock** controls are **staged-but-inert** pending
@@ -589,6 +597,12 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   movies and netplay carry them, with one `.rnm` format and protocol bump. The
   sprite limit is render-only, so the overflow flag and evaluation timing stay
   exact.)*
+  *(2026-10-08: **shipped in v3.1.0**, both. `Nes::set_cpu_overclock(1..=4)`
+  (`T-CPU-OVERCLOCK`) runs the CPU k times faster with the APU, the mapper
+  counters and the PPU timers at the stock rate, exact on every region; the
+  sprite-limit option (`T-SPRITE-LIMIT`) draws the dropped sprites behind the
+  eight the console shows. Both ride in `HardwareOptions` (`.rnm` format 6,
+  protocol 7) and apply to both consoles of a Vs. DualSystem cabinet.)*
 - `[x]` **Full Vs. DualSystem dual-core (C)** — *(shipped v2.0.0 "Timebase"
   beta.5, commit `9fe44a19`: `crates/rustynes-core/src/vs_dualsystem.rs`,
   `pub enum Emu` (Single / Dual); desktop presentation v2.1.2 (`render_dual` in
@@ -1064,6 +1078,14 @@ plan); the A/V, HD-audio, shader/NTSC, GPU-timing and egui-render verifies →
 **unscheduled**. The snapshot re-bless is a standing chore, not a single item:
 the original re-bless is done (§7, commit `c286e632`) and each future
 broken-boot fix re-blesses its own snapshots, which next applies in **v2.9.6**.)*
+
+*(2026-10-07, DOC-01: F1 and the other device runs belong to the hardware
+release, which D29 placed at the end of v3.9.x; F3 and the browser-RA deploy
+are **v3.4.0** (hosting, D19); the A/V, HD-audio, shader/NTSC, GPU-timing and
+egui-render verifies stay **unscheduled**. The "next applies in v2.9.6" above
+is history: v2.9.6 shipped, and the re-bless rule is now enforced by the epoch
+fingerprint gate (`T-EPOCH-FINGERPRINT`, v3.1.0), which fails a moved output
+until the epoch rises.)*
 
 ---
 

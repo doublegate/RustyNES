@@ -90,6 +90,22 @@ entirely, because the bytes do not change.
   would enforce the rule. If such a check proves practical, it is added as
   part of this decision's implementation; its coverage limit (the panel is
   not every game) is stated where it lives.
+
+  **Amendment, 2026-10-07 (v3.1.0, `T-EPOCH-FINGERPRINT`): the check exists.**
+  `crates/rustynes-test-harness/tests/epoch_fingerprint.rs` fingerprints
+  seven committed test ROMs (every frame's framebuffer, all audio, end RAM
+  and the CPU cycle count) against `golden/epoch_fingerprint.tsv`, which
+  records the epoch and `last_release_epoch`, the epoch the last release
+  shipped. Output that moves while `EMULATION_EPOCH` equals
+  `last_release_epoch` fails, and a re-bless is refused in that state; once
+  the epoch is raised, a re-bless records the new output, and a second
+  change in the same release needs only another re-bless. It runs in CI's
+  `test-roms` job. Shown on two seeded mutants (this release's own two
+  accuracy fixes, reverted): each fails, its bless is refused, and raising
+  the epoch then re-blessing passes. **Coverage limit:** a change that moves
+  nothing on the panel passes; the commercial snapshot suites stay the wider
+  net. **The release cut must set `last_release_epoch`** to the shipped epoch
+  (`docs/agents/ci-and-release.md`), or the gate stops guarding.
 - **Libretro is unaffected.** RetroArch netplay compares serialized states,
   which already differ between core versions.
 

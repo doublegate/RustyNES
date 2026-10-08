@@ -740,6 +740,20 @@ waterfall/dither transparency tricks. Off by default (a deliberate visual
 choice, re-blessed like the generated palette); the default framebuffer +
 `visual_regression` corpus stay byte-identical.
 
+**Differential phase distortion (v3.1.0, `T-COMPOSITE-ARTIFACTS`, ACC-02).** The
+signal-decode pass's sixth knob, `diff_phase` (degrees per palette row, default
+**0 = off**), rotates the demodulated hue by that angle times the centre pixel's
+palette row (0-3), in the direction of a delay. NESdev "NTSC video": the PPU's
+level-dependent output impedance delays the chroma phase more at brighter
+levels, "about 2.5° (2C02E) or 5° (2C02G) of additional rotation for each row of
+the palette". Greys carry no chroma and are unaffected. The other composite
+artifact the page describes, colour error between neighbouring pixels (8
+clocks per pixel against a 12-clock colour cycle), is what this pass already
+reproduces by decoding the true signal, so v3.1.0 adds only the distortion.
+Presentation only: no emulated byte changes, so no epoch rise. The mobile and
+web hosts write the knob as 0 and do not expose it; the CPU Bisqwit filter
+does not model it.
+
 **Vs. `DualSystem` two-screen presentation (v2.1.2 F2.1).** A loaded Vs.
 `DualSystem` cabinet (Balloon Fight / Wrecking Crew / Tennis / Baseball) runs both
 cross-wired consoles and presents them together. The core dual engine
@@ -760,10 +774,20 @@ both consoles. Every load path makes the same decision through
 command-line path installed a cabinet image as a single console, which runs the
 main CPU alone and never completes the boot handshake. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
-run-ahead, rewind, netplay, TAS, the debugger, and HD-pack — they snapshot a
-single `Nes`. **Save states work in dual mode since v2.9.7**, through the
-cabinet's own "RVSD" snapshot: `EmuCore::save_state_blob` /
-`restore_state_blob` (ADR 0032's amendment). Real-cabinet boot stays fixture-limited (the circulating
+netplay, TAS, the debugger, and HD-pack. **Save states work in dual mode since
+v2.9.7**, through the cabinet's own "RVSD" snapshot: `EmuCore::save_state_blob`
+/ `restore_state_blob` (ADR 0032's first amendment). **Rewind and run-ahead
+work in dual mode since v3.1.0** (`T-PS-dual-runahead`, the second amendment),
+on the whole cabinet and never on one console, because the two share a WRAM
+and drive each other's `/IRQ`. The cabinet has its own rewind ring
+(`VsDualSystem::enable_rewind_with`, sized from `[rewind]` by `rewind_budget`
+like a single console's), whose entries are whole RVSD containers with both
+framebuffers, so a step back (`VsDualSystem::rewind_step_back`) restores both
+screens exactly without re-rendering. Run-ahead is
+`RunAhead::run_cabinet_ahead` / `finish_cabinet`: the single-console cycle on
+the cabinet, rolled back with `VsDualSystem::restore_quiet`, which keeps the
+ring. `produce_dual_frame` routes `rewind_held` and the run-ahead depth to
+them; the cabinet still keeps stock timing (no overclock). Real-cabinet boot stays fixture-limited (the circulating
 dumps are the MAME maincpu half only).
 
 **Present-path parity (v2.1.10 "Web Parity").** The **libretro** core
@@ -1025,8 +1049,9 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   netplay drive sites call `force_stock_timing` before a tick, because every
   peer must run the same timeline. A Vs. DualSystem cabinet keeps stock timing
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
-  own `Nes` and never sets it. **Disable sprite limit** is still inert: the core
-  has no hook for it. The **Accuracy** group above it carries OAM decay and,
+  own `Nes` and never sets it. **Disable sprite limit** reaches the core since
+  v3.1.0 (`Nes::set_sprite_limit_disabled`, applied beside the v3.1.0 CPU
+  overclock outside a movie session; until then the setting was inert). The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
   `console_model_for` maps it to `rustynes_core::ConsoleModel`;
@@ -1210,8 +1235,9 @@ builds stay byte-identical and AccuracyCoin holds 139/141 (the two newest upstre
 
 Frontend-only, additive, English-by-default — with the default locale every
 label is byte-identical to v1.6.0. (At v1.7.0 AccuracyCoin held 139/141; the two
-PPU gaps closed at v2.0.3, and the re-synced catalog has held 144/144 since
-v2.6.18.) See
+PPU gaps closed at v2.0.3, the re-synced catalog read 144/144 from v2.6.18,
+and 146/146 from v3.1.0, whose re-sync showed the 144/144 had hidden a
+masked failure.) See
 ADR 0023 for the rationale (why a hand-rolled catalog over Fluent/ICU/`rust-i18n`
 and the wasm size budget).
 
@@ -2461,7 +2487,12 @@ says which emulator *behaviour* it was recorded on as well as which options
 and board. A format-4 movie is refused as too old, and a format-5 movie from
 another epoch fails with `MovieError::EpochMismatch`, naming both epochs. The
 epoch is raised whenever a change alters emulated output; the bump rule is in
-ADR 0045.
+ADR 0045. **v3.1.0 moved it to format 6** (`MOVIE_FORMAT_VERSION` 6, minimum
+6): the options record gains the CPU-multiplier overclock and the sprite-limit
+option, so a format-5 movie is refused as too old (every one of them was
+recorded under epoch 1 or 2, which v3.1.0 refuses anyway). Unlike the
+extra-scanline overclock, which a recording holds at stock, the CPU
+overclock is recorded as set and replayed with it.
 
 - **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
   the replay does not depend on the player's settings, and the desktop and mobile
@@ -2510,8 +2541,13 @@ ADR 0045.
 
 The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the
 emulation epoch, the ROM hash, and `rustynes_core::config_digest`, SHA-256 over
-the region, the board and the options (`PROTOCOL_VERSION` 6, magic `"RNE6"`,
-ADR 0045).
+the region, the board and the options (`PROTOCOL_VERSION` 7, magic `"RNE7"`,
+since v3.1.0; protocol 6 / `"RNE6"` from v3.0.0, ADR 0045). Protocol 7 keeps
+protocol 6's 72-byte `Sync` and changes the magic because the options encoding
+under the configuration hash gained two fields: a v3.0.x peer with the same
+settings would otherwise hash differently and be refused as a settings
+mismatch, the wrong reason. Its `"RNE6"` is now one of RustyNES's older magics,
+refused as another emulator version naming its epoch.
 
 - **Another epoch is refused first**, as another emulator version:
   `DisconnectReason::EmulatorMismatch` / `NetplayError::EmulatorMismatch` /

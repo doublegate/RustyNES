@@ -155,11 +155,18 @@ At this point, you can safely navigate to your repository settings on GitHub and
 
 ---
 
-## Sync for v3.0.0 (prepared 2026-10-04, not submitted)
+## Sync for v3.0.0 (prepared 2026-10-04, submitted 2026-10-06)
 
 Both forks were synced to upstream `master` (`libretro-super` `a7054054af`,
-`docs` `36e9222824`) and carry a branch `rustynes-v3.0.0-sync`. No pull request
-is open; v3.0.0 submits them (ADR 0043).
+`docs` `36e9222824`) and carry a branch `rustynes-v3.0.0-sync`.
+
+**Status (checked 2026-10-08, v3.1.0 records item DOC-06).** Both were
+submitted after the v3.0.0 tag, and both are **merged**. The `.info` PR,
+[libretro/libretro-super#2131](https://github.com/libretro/libretro-super/pull/2131),
+merged on 2026-10-06 (`9c08e5e6f3`). The docs page PR,
+[libretro/docs#1215](https://github.com/libretro/docs/pull/1215), merged on
+2026-10-08 (`4a0c09f236`), after its one review finding was fixed and answered.
+Until v3.1.0 this section said no pull request was open.
 
 | repo | branch commit | change |
 | --- | --- | --- |

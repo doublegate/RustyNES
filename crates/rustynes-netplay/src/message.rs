@@ -176,9 +176,12 @@ impl SessionIdentity {
                 Err(why) => SyncVerdict::Refuse(why),
             }
         } else if NetMessage::OLDER_SYNC_MAGICS.contains(&magic) {
+            // Protocol 6 carries its epoch (same layout as ours), so the reason
+            // can name it; protocols 4 and 5 have none.
+            let theirs = (magic == NetMessage::PROTOCOL_6_SYNC_MAGIC).then_some(peer.epoch);
             SyncVerdict::Refuse(IdentityMismatch::Emulator {
                 ours: self.epoch,
-                theirs: None,
+                theirs,
             })
         } else {
             SyncVerdict::Ignore
@@ -216,8 +219,18 @@ impl SessionIdentity {
 /// ([`SessionIdentity::check_sync`]). A v5 peer ignores our magic, as v4
 /// ignored v5's, so on its side the session still times out.
 ///
+/// `7` (v3.1.0): the `Sync` LAYOUT is protocol 6's (72 bytes), under the
+/// magic `"RNE7"`. What changed is the configuration hash's input: the
+/// [`rustynes_core::HardwareOptions`] encoding gained the CPU-multiplier
+/// overclock and the sprite-limit option (`T-CPU-OVERCLOCK`,
+/// `T-SPRITE-LIMIT`), so two peers with identical settings on v3.0.x and
+/// v3.1.0 hash them differently. Without a new magic a v3.0.x peer would be
+/// refused as "settings differ", a wrong reason; under `"RNE7"` its `"RNE6"`
+/// is one of [`NetMessage::OLDER_SYNC_MAGICS`] and it is refused as another
+/// emulator version, naming its epoch (protocol 6 carries it).
+///
 /// [`from_bytes`]: NetMessage::from_bytes
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Messages exchanged between two peers.
 ///
@@ -323,13 +336,28 @@ impl NetMessage {
     /// consider the session synced while the v5 side waited for a reply it
     /// refuses. Every version compares the magic, so a changed one is
     /// rejected on both sides.
-    pub const SYNC_MAGIC: u32 = 0x524E_4536; // "RNE6"
+    pub const SYNC_MAGIC: u32 = 0x524E_4537; // "RNE7"
 
     /// `RustyNES`'s own earlier `Sync` magics: protocol 4 (`"RNES"`, v2.5.x to
-    /// v2.9.7) and protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9). Recognised so a
-    /// peer on an older version is refused with a reason
-    /// ([`SessionIdentity::check_sync`]).
-    pub const OLDER_SYNC_MAGICS: [u32; 2] = [0x524E_4553, 0x524E_4535];
+    /// v2.9.7), protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9) and protocol 6
+    /// (`"RNE6"`, v3.0.0 and v3.0.1). Recognised so a peer on an older version
+    /// is refused with a reason ([`SessionIdentity::check_sync`]). Code that
+    /// needs one protocol names its constant below rather than an index, so
+    /// adding a protocol to this list cannot silently re-point a check.
+    pub const OLDER_SYNC_MAGICS: [u32; 3] = [
+        Self::PROTOCOL_4_SYNC_MAGIC,
+        Self::PROTOCOL_5_SYNC_MAGIC,
+        Self::PROTOCOL_6_SYNC_MAGIC,
+    ];
+    /// Protocol 4's `Sync` magic, `"RNES"` (v2.5.x to v2.9.7): a 36-byte
+    /// payload with no config hash and no epoch.
+    pub const PROTOCOL_4_SYNC_MAGIC: u32 = 0x524E_4553;
+    /// Protocol 5's `Sync` magic, `"RNE5"` (v2.9.8 and v2.9.9): a 68-byte
+    /// payload with both hashes and no epoch.
+    pub const PROTOCOL_5_SYNC_MAGIC: u32 = 0x524E_4535;
+    /// Protocol 6's `Sync` magic, `"RNE6"` (v3.0.0 and v3.0.1): today's layout,
+    /// epoch included, so a refusal can name the peer's epoch.
+    pub const PROTOCOL_6_SYNC_MAGIC: u32 = 0x524E_4536;
 
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
@@ -473,9 +501,10 @@ impl NetMessage {
             Self::TAG_SYNC => {
                 let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
                 match rest.len() {
-                    // Protocol 6: magic + epoch + two hashes. Exactly that
-                    // length: a longer payload is a later protocol's, not this
-                    // one's with junk on the end.
+                    // Protocols 6 and 7: magic + epoch + two hashes. Exactly
+                    // that length: a longer payload is a later protocol's, not
+                    // this one's with junk on the end. Which protocol it is
+                    // (`"RNE7"` ours, `"RNE6"` v3.0.x) is `check_sync`'s call.
                     72 => {
                         let epoch = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
                         let rom_hash: [u8; 32] = rest.get(8..40)?.try_into().ok()?;
@@ -493,7 +522,7 @@ impl NetMessage {
                     // own length AND under its own magic, so the handshake can
                     // refuse it with a reason (`check_sync`). Its hashes are
                     // never compared; the epoch field is meaningless (0).
-                    68 if magic == Self::OLDER_SYNC_MAGICS[1] => Some(Self::Sync {
+                    68 if magic == Self::PROTOCOL_5_SYNC_MAGIC => Some(Self::Sync {
                         magic,
                         identity: SessionIdentity {
                             epoch: 0,
@@ -501,7 +530,7 @@ impl NetMessage {
                             config_hash: rest.get(36..68)?.try_into().ok()?,
                         },
                     }),
-                    36 if magic == Self::OLDER_SYNC_MAGICS[0] => Some(Self::Sync {
+                    36 if magic == Self::PROTOCOL_4_SYNC_MAGIC => Some(Self::Sync {
                         magic,
                         identity: SessionIdentity {
                             epoch: 0,
@@ -671,8 +700,8 @@ mod tests {
     fn an_older_rustynes_sync_is_refused_with_a_reason() {
         let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
         for (magic, payload) in [
-            (NetMessage::OLDER_SYNC_MAGICS[1], 68usize), // protocol 5
-            (NetMessage::OLDER_SYNC_MAGICS[0], 36usize), // protocol 4
+            (NetMessage::PROTOCOL_5_SYNC_MAGIC, 68usize),
+            (NetMessage::PROTOCOL_4_SYNC_MAGIC, 36usize),
         ] {
             let mut bytes = vec![NetMessage::TAG_SYNC];
             bytes.extend_from_slice(&magic.to_le_bytes());
@@ -697,6 +726,37 @@ mod tests {
             assert_eq!(NetMessage::from_bytes(&bytes), None);
         }
         assert_eq!(ours.check_sync(0xDEAD_BEEF, &ours), SyncVerdict::Ignore);
+    }
+
+    /// v3.1.0 (protocol 7) — a v3.0.x peer's `"RNE6"` `Sync` has OUR length
+    /// (72 bytes) but hashes its options with the v3.0.x encoding, so even
+    /// with identical settings its configuration hash differs from ours. It
+    /// must be refused as another emulator version, naming its epoch (the
+    /// layout carries one), not as a settings mismatch and not ignored.
+    #[test]
+    fn a_protocol_6_peer_is_refused_as_another_version_naming_its_epoch() {
+        let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
+        let theirs = SessionIdentity {
+            epoch: 2,
+            rom_hash: [7u8; 32],
+            config_hash: [1u8; 32],
+        };
+        let bytes = NetMessage::Sync {
+            magic: NetMessage::PROTOCOL_6_SYNC_MAGIC,
+            identity: theirs,
+        }
+        .to_bytes();
+        let Some(NetMessage::Sync { magic, identity }) = NetMessage::from_bytes(&bytes) else {
+            panic!("a protocol-6 Sync decodes");
+        };
+        assert_eq!(
+            ours.check_sync(magic, &identity),
+            SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                ours: ours.epoch,
+                theirs: Some(2),
+            })
+        );
+        assert_ne!(NetMessage::SYNC_MAGIC, NetMessage::PROTOCOL_6_SYNC_MAGIC);
     }
 
     #[test]

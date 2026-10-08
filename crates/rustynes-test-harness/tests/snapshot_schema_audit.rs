@@ -146,6 +146,12 @@ const CHIPS: &[Chip] = &[
                  `extra_lines_remaining` IS serialized (v4 tail)",
             ),
             (
+                "sprite_limit_disabled",
+                "config: the v3.1.0 sprite-limit option, re-applied by the host, carried in \
+                 `HardwareOptions` and across a power cycle; the extra sprites it fetched \
+                 for the next line (`spr_extra_*`) ARE serialized (v13 tail)",
+            ),
+            (
                 "fast_dotloop",
                 "config: runtime performance knob (v2.1.8 A1); selects a code path, holds no state",
             ),
@@ -479,6 +485,31 @@ const CHIPS: &[Chip] = &[
             (
                 "ppu_div_cached",
                 "derived: the region's PPU master-clock divider, cached at construction",
+            ),
+            (
+                "cpu_div_effective",
+                "derived: `overclock_cycle_len(cpu_div_cached, cpu_overclock, overclock_phase)`, \
+                 the phase's share of one stock cycle (the `k` shares sum to the divider), \
+                 recomputed whenever the overclock or the phase changes",
+            ),
+            (
+                "stock_step",
+                "transient: set in `cpu_clock` and read by `cpu_clock_apu_dmc` within ONE CPU \
+                 cycle; a snapshot falls between cycles, and restore sets it `true`. The \
+                 overclock's persistent position (`overclock_phase`, `apu_cycle`) IS \
+                 serialized (BUS version 3)",
+            ),
+            (
+                "cpu_overclock",
+                "config: the v3.1.0 CPU-multiplier overclock, re-applied by the host and \
+                 carried in `HardwareOptions`, like the extra-scanline overclock",
+            ),
+            (
+                "mmc3_revision_override",
+                "config: the v3.1.0 MMC3 IRQ-revision setting, re-applied by the host and \
+                 carried in `HardwareOptions`; the bus keeps it only to re-apply it to the \
+                 mapper a power cycle rebuilds. A restore loads into the live mapper, whose \
+                 revision the override already set",
             ),
             // --- Opt-in hardware knobs, re-applied by the host on load.
             (

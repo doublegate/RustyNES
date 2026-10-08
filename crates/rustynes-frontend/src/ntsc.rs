@@ -14,7 +14,9 @@
 //!    coarse Blargg trick).
 //!
 //! Not a bit-exact port of `nes_ntsc`. Marked `ntsc-simple` in the config
-//! to set expectations. A full NES_NTSC port is a v1.1 follow-up.
+//! to set expectations. The signal-accurate filters are the other rungs of
+//! the ladder this one starts: the LMP88959 decode and the Bisqwit per-dot
+//! composite (`CompositeRt`), both in the shared shader stack since v2.1.2.
 //!
 //! Performance: 5 texture taps per surface pixel; on a 768x720 window
 //! that's ~2.8M taps/frame, well below GPU memory-bandwidth limits.

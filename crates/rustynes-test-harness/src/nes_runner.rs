@@ -54,7 +54,23 @@ fn read_message(nes: &mut Nes) -> String {
 ///
 /// Returns the underlying [`RomError`] if the bytes don't parse.
 pub fn run_nes_blargg(rom_bytes: &[u8], max_frames: u64) -> Result<NesTestResult, RomError> {
-    run_nes_blargg_inner(rom_bytes, max_frames, false)
+    run_nes_blargg_inner(rom_bytes, max_frames, false, &|_| {})
+}
+
+/// [`run_nes_blargg`] with `configure` applied before the first frame.
+///
+/// v3.1.0: for running a ROM under an option, such as the sprite-limit option
+/// against the sprite-overflow suite.
+///
+/// # Errors
+///
+/// Returns the underlying [`RomError`] if the bytes don't parse.
+pub fn run_nes_blargg_with(
+    rom_bytes: &[u8],
+    max_frames: u64,
+    configure: &dyn Fn(&mut Nes),
+) -> Result<NesTestResult, RomError> {
+    run_nes_blargg_inner(rom_bytes, max_frames, false, configure)
 }
 
 /// Run a blargg-style ROM but **force the PAL region** before booting.
@@ -75,7 +91,7 @@ pub fn run_nes_blargg(rom_bytes: &[u8], max_frames: u64) -> Result<NesTestResult
 /// Returns the underlying [`RomError`] if the bytes don't parse, or if the
 /// buffer is too short to hold a 16-byte header.
 pub fn run_nes_blargg_pal(rom_bytes: &[u8], max_frames: u64) -> Result<NesTestResult, RomError> {
-    run_nes_blargg_inner(rom_bytes, max_frames, true)
+    run_nes_blargg_inner(rom_bytes, max_frames, true, &|_| {})
 }
 
 /// Rewrite a throwaway copy of `rom_bytes` to force **PAL region** selection.
@@ -281,12 +297,14 @@ fn run_nes_blargg_inner(
     rom_bytes: &[u8],
     max_frames: u64,
     force_pal: bool,
+    configure: &dyn Fn(&mut Nes),
 ) -> Result<NesTestResult, RomError> {
     // `owned` holds the PAL-stamped copy (if any) for the borrow's lifetime;
     // when absent (NTSC, or a sub-16-byte buffer) we run the original bytes.
     let owned = force_pal.then(|| pal_forced_copy(rom_bytes)).flatten();
     let bytes: &[u8] = owned.as_deref().unwrap_or(rom_bytes);
     let mut nes = Nes::from_rom(bytes)?;
+    configure(&mut nes);
     let magic = [b'D', b'E', b'B', 0];
     let mut started = false;
     let mut frames = 0u64;

@@ -17,6 +17,16 @@ Authoritative source is `AccuracyCoin.asm`, never a doc:
   * Each `Suite_X:` block opens with `.byte "Display Name", $FF` and then
     carries `table "test name", $FF, result_symbol, TEST_entrypoint` rows
     until a bare `.byte $FF` terminator.
+  * Since upstream `f5f41dc2` (2026-10) the unofficial-opcode suites use two
+    byte-saving variants. `tblf1 "prefix", str_X, $FF, result, TEST` stores a
+    one-byte token for a common word, and `tblf2 "prefix", str_X, ",X", $FF,
+    result, TEST` appends a suffix after it. The ROM prints the token from
+    `PrintTextSpecialStrings` (`" indirect"`, `" zeropage"`, ...), indexed by
+    the token's low two bits, so the name is rebuilt from that table, not
+    from a word list kept here.
+  * Any other row-shaped line inside a suite aborts the run. A new macro
+    must fail loudly: this script once returned 85 of 151 rows without
+    complaint, because it only checked that the total was non-zero.
   * `result_symbol` resolves through a top-level `result_X = $ADDR`
     definition.
 
@@ -40,6 +50,53 @@ RE_TABLE_ROW = re.compile(
     r'^\s*table\s+"([^"]*)"\s*,\s*\$FF\s*,\s*(result_[A-Za-z0-9_]+)\s*,', re.M
 )
 RE_SUITE_HEADER = re.compile(r'^\s*\.byte\s+"([^"]*)"\s*,\s*\$FF', re.M)
+# `tblf1 "$07   SLO", str_ZeroPage, $FF, result_X, TEST_X`
+RE_TBLF1_ROW = re.compile(
+    r'^\s*tblf1\s+"([^"]*)"\s*,\s*(str_[A-Za-z0-9_]+)\s*,\s*\$FF\s*,'
+    r"\s*(result_[A-Za-z0-9_]+)\s*,",
+    re.M,
+)
+# `tblf2 "$03   SLO", str_Indirect, ",X", $FF, result_X, TEST_X`
+RE_TBLF2_ROW = re.compile(
+    r'^\s*tblf2\s+"([^"]*)"\s*,\s*(str_[A-Za-z0-9_]+)\s*,\s*"([^"]*)"\s*,'
+    r"\s*\$FF\s*,\s*(result_[A-Za-z0-9_]+)\s*,",
+    re.M,
+)
+# Any line opening with a row macro (`table`, `tblf1`, `tblfN`, ...), whatever
+# its first argument is. Used only to prove every such line was read by one of
+# the patterns above. Keyed on the macro FAMILY rather than on a quoted first
+# argument (PR #594 review): a future `tblf3 str_Name, $FF, result_X, ...` row
+# would have slipped past a quote-anchored check and silently shifted every
+# later index. `table`/`tbl` because the 6502 mnemonics that start with `t`
+# (`tax`, `tay`, `tsx`, `txa`, `txs`, `tya`) must not match.
+RE_ANY_ROW = re.compile(r"^\s*(table|tbl[a-z0-9]*)\s+\S", re.M)
+RE_TOKEN_DEF = re.compile(r"^(str_[A-Za-z0-9_]+)\s*=\s*\$([0-9A-Fa-f]+)", re.M)
+RE_SPECIAL_STRINGS = re.compile(
+    r'^PrintTextSpecialStrings:\s*\n((?:\s*\.byte\s+"[^"]*"\s*\n?)+)', re.M
+)
+
+
+def special_words(asm: str) -> dict[str, str]:
+    """Map each `str_X` token to the word the ROM prints for it.
+
+    The ROM's `PrintTextSpecialString` takes the token's low two bits as an
+    index into `PrintTextSpecialStrings`. Each entry carries a leading space
+    that separates it from the prefix; `parse` re-adds it as one space.
+    """
+    tokens = {m.group(1): int(m.group(2), 16) for m in RE_TOKEN_DEF.finditer(asm)}
+    if not tokens:
+        return {}
+    block = RE_SPECIAL_STRINGS.search(asm)
+    if not block:
+        raise SystemExit("`str_X` tokens are defined but no PrintTextSpecialStrings table exists")
+    words = re.findall(r'"([^"]*)"', block.group(1))
+    out = {}
+    for name, value in tokens.items():
+        idx = value & 0x3
+        if idx >= len(words):
+            raise SystemExit(f"{name} = ${value:02X} indexes past PrintTextSpecialStrings")
+        out[name] = words[idx].strip()
+    return out
 
 
 def parse(asm: str) -> list[tuple[str, str, int]]:
@@ -54,6 +111,13 @@ def parse(asm: str) -> list[tuple[str, str, int]]:
     order = RE_SUITE_WORD.findall(tt.group(1))
     if not order:
         raise SystemExit("TableTable block contained no `.word Suite_*` rows")
+
+    words = special_words(asm)
+
+    def word(token: str) -> str:
+        if token not in words:
+            raise SystemExit(f"row uses {token}, which has no `{token} = $NN` definition")
+        return words[token]
 
     rows: list[tuple[str, str, int]] = []
     for label in order:
@@ -70,7 +134,30 @@ def parse(asm: str) -> list[tuple[str, str, int]]:
             raise SystemExit(f"{label} has no `.byte \"name\", $FF` display header")
         suite = header.group(1)
 
-        for name, symbol in RE_TABLE_ROW.findall(block):
+        found: list[tuple[int, str, str]] = []
+        for m in RE_TABLE_ROW.finditer(block):
+            found.append((m.start(), m.group(1), m.group(2)))
+        for m in RE_TBLF1_ROW.finditer(block):
+            found.append((m.start(), f"{m.group(1)} {word(m.group(2))}", m.group(3)))
+        for m in RE_TBLF2_ROW.finditer(block):
+            found.append(
+                (m.start(), f"{m.group(1)} {word(m.group(2))}{m.group(3)}", m.group(4))
+            )
+        found.sort()
+        # Every row-shaped line must have been read by exactly one pattern.
+        candidates = [m for m in RE_ANY_ROW.finditer(block)]
+        if len(candidates) != len(found):
+            parsed = {pos for pos, _, _ in found}
+            missed = [
+                block[m.start() : block.find("\n", m.start())].strip()
+                for m in candidates
+                if m.start() not in parsed
+            ]
+            raise SystemExit(f"{label} has row lines this script cannot read: {missed}")
+        if not found:
+            raise SystemExit(f"{label} yielded zero rows")
+
+        for _, name, symbol in found:
             if symbol not in results:
                 raise SystemExit(
                     f'{label} / "{name}" references {symbol}, which has no '
@@ -107,6 +194,13 @@ Suite_Second:
 \t.byte "Second Page", $FF
 \ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma
 \t.byte $FF
+
+str_Indirect = $F0
+str_ZeroPage = $F1
+
+PrintTextSpecialStrings:
+\t.byte " indirect"
+\t.byte " zeropage"
 """
 
 
@@ -142,7 +236,64 @@ def self_test() -> int:
     assert "result_Alpha" in {m.group(1) for m in RE_RESULT_DEF.finditer(SELF_TEST_ASM)}
     assert len(RE_RESULT_DEF.findall(SELF_TEST_ASM)) == 3
 
-    print("extract_catalog self-test: ok (4 cases)")
+    # The compressed row macros (upstream 03757ce8 / f5f41dc2, 2026-10-07):
+    # `tblf1` and `tblf2` substitute a one-byte token for a common word, and
+    # `tblf2` appends a suffix. The name is rebuilt exactly as the ROM shows it.
+    compressed = SELF_TEST_ASM.replace(
+        '\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma',
+        '\ttblf2 "$03   SLO", str_Indirect, ",X", $FF, result_Gamma, TEST_Gamma\n'
+        '\ttblf1 "$07   SLO", str_ZeroPage,       $FF, result_Alpha, TEST_Alpha',
+    )
+    rows = parse(compressed)
+    assert rows[:2] == [
+        ("Second Page", "$03   SLO indirect,X", 0x0403),
+        ("Second Page", "$07   SLO zeropage", 0x0401),
+    ], rows
+
+    # FAIL CLOSED on a row shape the parser does not know: a macro it cannot
+    # read must abort, never vanish. Until v3.1.0 this script dropped all 66
+    # compressed rows silently, because only "zero rows in total" was checked.
+    unknown = SELF_TEST_ASM.replace("\ttable \"Gamma Test\"", "\ttblf9 \"Gamma Test\"")
+    try:
+        parse(unknown)
+    except SystemExit as exc:
+        assert "tblf9" in str(exc), exc
+    else:
+        raise AssertionError("an unknown row macro was dropped silently")
+
+    # ...including one whose FIRST argument is a token rather than a string,
+    # which the detector used to require (PR #594 review).
+    tokenfirst = SELF_TEST_ASM.replace(
+        '\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma',
+        '\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma\n'
+        "\ttblf3 str_ZeroPage, $FF, result_Alpha, TEST_Alpha",
+    )
+    try:
+        parse(tokenfirst)
+    except SystemExit as exc:
+        assert "tblf3" in str(exc), exc
+    else:
+        raise AssertionError("a token-first row macro was dropped silently")
+
+    # ...and a suite that yields no rows at all must abort.
+    empty = SELF_TEST_ASM.replace('\ttable "Gamma Test",  $FF, result_Gamma, TEST_Gamma\n', "")
+    try:
+        parse(empty)
+    except SystemExit as exc:
+        assert "Suite_Second" in str(exc), exc
+    else:
+        raise AssertionError("a suite with zero rows was accepted")
+
+    # An unknown word token must abort rather than guess a word.
+    badtok = compressed.replace(", str_ZeroPage,", ", str_Mystery,")
+    try:
+        parse(badtok)
+    except SystemExit as exc:
+        assert "str_Mystery" in str(exc), exc
+    else:
+        raise AssertionError("an unknown word token was accepted")
+
+    print("extract_catalog self-test: ok (9 cases)")
     return 0
 
 

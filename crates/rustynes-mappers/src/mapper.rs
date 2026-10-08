@@ -325,6 +325,31 @@ pub trait Mapper: Send {
         None
     }
 
+    /// v3.1.0 (`T-SPRITE-LIMIT`) — whether [`Self::ppu_read`] and
+    /// [`Self::ppu_read_sprite`] on `$0000-$1FFF` change nothing but return a
+    /// byte. `true` (the default) lets the PPU's "disable sprite limit" option
+    /// make extra, display-only pattern reads on this board.
+    ///
+    /// Override to `false` for any board whose CHR read has an effect: a latch
+    /// that switches banks on a tile (MMC2, MMC4), an IRQ counter clocked by
+    /// reads (the J.Y. ASIC), or address bits latched from the read (Bandai
+    /// 96, Nanjing 163). `every_board_that_claims_pure_chr_reads_has_them`
+    /// checks the claim against `save_state` for every mapper id, so a new
+    /// impure board that keeps the default fails a test rather than letting
+    /// the option change emulation.
+    fn chr_reads_are_pure(&self) -> bool {
+        true
+    }
+
+    /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`, ACC-13) — force an MMC3's IRQ revision
+    /// (`Some`), or return to the one its header selected (`None`). Returns
+    /// whether this board is an MMC3 that applied it; every other board
+    /// ignores it (the default). Lets an iNES 1.0 dump, which cannot name its
+    /// MMC3 revision, run under the alternate (`Nec`) behaviour.
+    fn set_mmc3_revision_override(&mut self, _revision: Option<crate::Mmc3Revision>) -> bool {
+        false
+    }
+
     /// Write a byte to the PPU address space `$0000-$3FFF`.
     fn ppu_write(&mut self, addr: u16, value: u8);
 
@@ -804,6 +829,58 @@ mod caps_tests {
         let (_cart, mapper): (_, Box<dyn Mapper>) =
             parse(&synth_rom(mapper_id)).expect("synth rom parses");
         mapper.caps()
+    }
+
+    /// v3.1.0 (`T-SPRITE-LIMIT`): every board that reports
+    /// `chr_reads_are_pure` really has pure CHR reads. The PPU's "disable
+    /// sprite limit" option makes extra pattern reads exactly where this is
+    /// `true`, so a wrong `true` would let a display option change emulation.
+    ///
+    /// For every mapper id the parser builds from a synthetic ROM (iNES ids
+    /// 0-255 and NES 2.0 ids 256-4095), read all of CHR through both entry
+    /// points and require `save_state` to be unchanged. The five boards that
+    /// report `false` were found by a scan of every `ppu_read` body for writes
+    /// to `self` (v3.1.0); this test is what keeps a sixth from keeping the
+    /// default. It cannot see state a board leaves out of `save_state`, which
+    /// would already be a save-state defect of its own.
+    #[test]
+    fn every_board_that_claims_pure_chr_reads_has_them() {
+        fn nes2_rom(id: u16) -> Vec<u8> {
+            let [lo, hi] = id.to_le_bytes();
+            let mut rom = synth_rom(lo);
+            rom[7] = (rom[7] & 0xF0) | 0x08; // NES 2.0 identifier
+            rom[8] = hi & 0x0F; // mapper bits 8-11
+            rom
+        }
+        let mut checked = 0usize;
+        let mut impure = Vec::new();
+        for id in 0u16..4096 {
+            let rom = u8::try_from(id).map_or_else(|_| nes2_rom(id), synth_rom);
+            let Ok((_cart, mut mapper)) = parse(&rom) else {
+                continue;
+            };
+            if !mapper.chr_reads_are_pure() {
+                impure.push(id);
+                continue;
+            }
+            let before = mapper.save_state();
+            for addr in 0..0x2000u16 {
+                let _ = mapper.ppu_read(addr);
+                let _ = mapper.ppu_read_sprite(addr);
+            }
+            assert_eq!(
+                before,
+                mapper.save_state(),
+                "mapper {id} reports pure CHR reads, but reading CHR changed its state"
+            );
+            checked += 1;
+        }
+        assert!(checked > 150, "only {checked} boards were checked");
+        assert_eq!(
+            impure,
+            vec![9, 10, 35, 90, 96, 163, 209, 211],
+            "the impure set moved"
+        );
     }
 
     /// v2.8.0 Phase 4 — the capability-flag contract for the key families.

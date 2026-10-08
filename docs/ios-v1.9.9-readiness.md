@@ -104,6 +104,12 @@ advertised `.fds` / `.nsf`, which would fail on selection. v1.9.9 trims the pick
 document types to NES (+ `.zip`) for honesty; FDS + NSF on mobile are a post-v2.0.0
 carryover.
 
+> **Later (pointer added v3.1.0, records item DOC-09; this record is historical
+> and is otherwise left as written).** The carryover shipped in **v2.9.7**: the
+> mobile bridge loads FDS (with a host-supplied BIOS), NSF and the Vs.
+> DualSystem cabinet. The Swift half has not been compiled, and the device rows
+> are T1-T12 of [`mobile-v2.9.3-run-sheet.md`](mobile-v2.9.3-run-sheet.md).
+
 ## 4. Completeness-critic findings
 
 No merge-blocking defects. Polish items found and dispositioned:

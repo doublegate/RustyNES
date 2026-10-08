@@ -505,6 +505,11 @@ impl core::fmt::Display for RestoreStateError {
 }
 
 /// The emulation core: the per-frame produce state extracted from `App`.
+// The produce loop's state bag: its flags (HD capture, the write lock, the
+// sprite-limit option, the run-ahead throttle) are unrelated switches read in
+// different places, not states of one thing. (v3.1.0's `disable_sprite_limit`
+// made the `hd-pack` build count four.)
+#[allow(clippy::struct_excessive_bools)]
 pub struct EmuCore {
     /// The running single-console emulator (None until a single-console ROM is
     /// loaded, or while a Vs. `DualSystem` cabinet is loaded — see [`Self::dual`]).
@@ -601,6 +606,15 @@ pub struct EmuCore {
     /// `0` (the default) is stock timing, byte-identical to a core that never
     /// heard of the setting.
     pub overclock_scanlines: u16,
+    /// v3.1.0 — the configured CPU-multiplier overclock (`[enhancements]
+    /// cpu_overclock`, pushed by `App` beside `overclock_scanlines`). Applied
+    /// at the top of every produced frame while no movie is recording or
+    /// playing; during a movie the movie's own options hold the console (its
+    /// recorded multiplier). `0` and `1` are stock.
+    pub cpu_overclock: u8,
+    /// v3.1.0 — the configured sprite-limit option (`[enhancements]
+    /// disable_sprite_limit`), applied like `cpu_overclock`.
+    pub disable_sprite_limit: bool,
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
@@ -1089,6 +1103,8 @@ impl EmuCore {
             debug_pokes: Vec::new(),
             writes_locked: false,
             overclock_scanlines: 0,
+            cpu_overclock: 0,
+            disable_sprite_limit: false,
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
@@ -1594,13 +1610,14 @@ impl EmuCore {
         // v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet takes a parallel, much
         // simpler produce path: step both consoles, harvest both framebuffers,
         // push the MAIN console's audio. The advanced single-`Nes` features
-        // (run-ahead, rewind, TAS, breakpoints, HD-pack, A/V record) are scoped
-        // out in dual mode (ADR 0032) — `dual` and `nes` are mutually exclusive,
-        // so the whole single path below is dead when a cabinet is loaded.
+        // (TAS, breakpoints, HD-pack, A/V record) are scoped out in dual mode
+        // (ADR 0032) — `dual` and `nes` are mutually exclusive, so the whole
+        // single path below is dead when a cabinet is loaded. Rewind and
+        // run-ahead are not, since v3.1.0 (the ADR's 2026-10-07 amendment).
         // v2.9.7 "Tandem" — the wasm-winit frontend takes this path too (it
         // builds the cabinet on its load path and presents both screens).
         if self.dual.is_some() {
-            self.produce_dual_frame(sinks);
+            self.produce_dual_frame(inputs, sinks);
             return fx;
         }
         let hardcore_blocked = inputs.hardcore_blocked;
@@ -1634,6 +1651,18 @@ impl EmuCore {
         };
         if nes.extra_scanlines() != extra_lines {
             nes.set_extra_scanlines(extra_lines);
+        }
+        // v3.1.0 — the CPU overclock applies only outside a movie session: a
+        // recording captures what the console runs with when it starts, and a
+        // playing movie holds the console to its own options every frame.
+        if self.movie.mode() == crate::movie_ui::MovieMode::Idle {
+            let want = self.cpu_overclock.max(1);
+            if nes.cpu_overclock() != want {
+                nes.set_cpu_overclock(want);
+            }
+            if nes.sprite_limit_disabled() != self.disable_sprite_limit {
+                nes.set_sprite_limit_disabled(self.disable_sprite_limit);
+            }
         }
         // v2.7.0 — RetroAchievements hardcore mode disables rewind (already
         // folded into `inputs.rewind_held` by `App`).
@@ -1871,8 +1900,18 @@ impl EmuCore {
     /// layout without holding the emu lock), and pushes the MAIN console's audio
     /// to the sink. The SUB console's audio is drained and discarded so its APU
     /// sample buffer cannot grow without bound. This path deliberately omits the
-    /// single-`Nes` machinery (run-ahead / rewind / TAS / breakpoints / HD-pack /
-    /// A/V record), which is scoped out in dual mode (ADR 0032).
+    /// single-`Nes` machinery (TAS / breakpoints / HD-pack / A/V record), which is
+    /// scoped out in dual mode (ADR 0032).
+    ///
+    /// v3.1.0 (`T-PS-dual-runahead`, the ADR's 2026-10-07 amendment) — rewind
+    /// and run-ahead work here too, on the whole cabinet. With the rewind key
+    /// held, the cabinet steps back one frame through its own ring
+    /// ([`rustynes_core::VsDualSystem::rewind_step_back`]) and presents both
+    /// restored screens; no audio is pushed, as on the single path. With
+    /// run-ahead on (native only, as on the single path), the cabinet runs
+    /// the persistent frame plus `n` frames ahead
+    /// ([`crate::runahead::RunAhead::run_cabinet_ahead`]), presents the
+    /// visible frame's two screens and main audio, and rolls back.
     ///
     /// v2.9.7 "Tandem" — no longer native-only: the wasm-winit frontend runs a
     /// cabinet too. The only platform difference is the audio sink: native
@@ -1884,26 +1923,74 @@ impl EmuCore {
         target_arch = "wasm32",
         allow(unused_variables, clippy::needless_pass_by_ref_mut)
     )]
-    fn produce_dual_frame(&mut self, sinks: &mut FrameSinks<'_>) {
+    fn produce_dual_frame(&mut self, inputs: &FrameInputs, sinks: &mut FrameSinks<'_>) {
+        // Resolved before `dual` is borrowed; 0 = a plain frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        let run_ahead_n = self.effective_run_ahead(inputs.run_ahead);
+        // RetroAchievements hardcore never reaches a cabinet (RA is scoped out
+        // of dual mode), and `App` folds it into `rewind_held` regardless.
+        if inputs.rewind_held {
+            let Some(dual) = self.dual.as_mut() else {
+                return;
+            };
+            // A failed step (empty ring, rewind off) leaves the cabinet where
+            // it is; the screens are re-presented either way.
+            let _ = dual.rewind_step_back();
+            self.present_fb.clear();
+            self.present_fb.extend_from_slice(dual.main_framebuffer());
+            self.present_fb_sub.clear();
+            self.present_fb_sub
+                .extend_from_slice(dual.sub_framebuffer());
+            return;
+        }
         // v2.5.0 / F2.1 — Vs. System coin latch: a coin-insert holds the acceptor
         // for a few frames, then auto-clears (uniform with the single path).
         let clear_coin = self.vs_coin_frames > 0 && {
             self.vs_coin_frames -= 1;
             self.vs_coin_frames == 0
         };
+        // v3.1.0 — the CPU overclock and the sprite-limit option reach BOTH
+        // consoles, as `produce_frame` applies them to the one. The cabinet
+        // locksteps its consoles by CPU cycle count (`VsDualSystem::run_frame`),
+        // so the same multiplier on both keeps that gap meaningful. No movie
+        // or netplay session runs on a cabinet (ADR 0032), so the single
+        // path's movie-idle condition has no counterpart here.
+        let want_cpu = self.cpu_overclock.max(1);
+        let want_sprites = self.disable_sprite_limit;
         let Some(dual) = self.dual.as_mut() else {
             return;
         };
+        let apply = |nes: &mut rustynes_core::Nes| {
+            if nes.cpu_overclock() != want_cpu {
+                nes.set_cpu_overclock(want_cpu);
+            }
+            if nes.sprite_limit_disabled() != want_sprites {
+                nes.set_sprite_limit_disabled(want_sprites);
+            }
+        };
+        apply(dual.main_mut());
+        apply(dual.sub_mut());
         if clear_coin {
             dual.clear_coin();
         }
-        dual.run_frame();
+        #[cfg(not(target_arch = "wasm32"))]
+        let ran_ahead = run_ahead_n > 0 && {
+            self.runahead.run_cabinet_ahead(dual, run_ahead_n);
+            true
+        };
+        #[cfg(target_arch = "wasm32")]
+        let ran_ahead = false;
+        if !ran_ahead {
+            dual.run_frame();
+        }
         self.present_fb.clear();
         self.present_fb.extend_from_slice(dual.main_framebuffer());
         self.present_fb_sub.clear();
         self.present_fb_sub
             .extend_from_slice(dual.sub_framebuffer());
         // Push the MAIN console's audio; the frontend presents one audio stream.
+        // Under run-ahead this is the visible frame's audio, harvested before
+        // the rollback below, exactly as the single path does.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(audio) = sinks.audio.as_mut() {
             let target = ((u64::from(audio.sample_rate()) / 50) as usize).max(1024);
@@ -1924,6 +2011,10 @@ impl EmuCore {
             self.audio_buf.resize(1024, 0.0);
         }
         while dual.sub_mut().drain_audio_into(&mut self.audio_buf) == self.audio_buf.len() {}
+        #[cfg(not(target_arch = "wasm32"))]
+        if ran_ahead {
+            self.runahead.finish_cabinet(dual);
+        }
     }
 
     /// v1.6.0 "Studio" Workstream G — feed this frame's produced framebuffer
@@ -2719,6 +2810,106 @@ mod tests {
             MAX_OVERCLOCK_SCANLINES,
             "restored after the movie"
         );
+    }
+
+    /// v3.1.0 (`T-PS-dual-runahead`) — rewind and run-ahead reach a cabinet
+    /// through the real produce path, not only through `VsDualSystem` and
+    /// `RunAhead` directly. Holding rewind steps the cabinet back and presents
+    /// BOTH restored screens; a frame with run-ahead 1 leaves the cabinet one
+    /// frame on and presents the screens of the frame after that. Until
+    /// v3.1.0 `produce_dual_frame` ignored both inputs.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_cabinet_rewinds_and_runs_ahead_through_the_produce_path() {
+        let rom = crate::runahead::tests::flashing_cabinet();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let plain = quiet_inputs();
+        let mut core = EmuCore::new();
+        let mut cabinet = rustynes_core::VsDualSystem::from_rom(&rom).unwrap();
+        cabinet.enable_rewind();
+        core.set_dual(Box::new(cabinet));
+        let presented = |core: &EmuCore| (core.present_fb.clone(), core.present_fb_sub.clone());
+        let mut shown = Vec::new();
+        for _ in 0..12 {
+            core.produce_one_frame(&plain, &mut sinks);
+            shown.push(presented(&core));
+        }
+        assert_ne!(shown[10], shown[11], "the stimulus changes every frame");
+
+        let mut rewind = quiet_inputs();
+        rewind.rewind_held = true;
+        // The newest entry is the frame on screen; each further step goes back one.
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(presented(&core), shown[11]);
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(
+            presented(&core),
+            shown[10],
+            "both screens of the frame before"
+        );
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(presented(&core), shown[9]);
+
+        let mut ahead = quiet_inputs();
+        ahead.run_ahead = 1;
+        let before = core.dual.as_ref().unwrap().snapshot();
+        core.produce_one_frame(&ahead, &mut sinks);
+        let mut probe = rustynes_core::VsDualSystem::from_rom(&rom).unwrap();
+        probe.restore(&before).unwrap();
+        probe.run_frame();
+        assert_eq!(
+            core.dual.as_ref().unwrap().snapshot(),
+            probe.snapshot(),
+            "the cabinet itself advanced exactly one frame"
+        );
+        probe.run_frame();
+        assert_eq!(
+            presented(&core),
+            (
+                probe.main_framebuffer().to_vec(),
+                probe.sub_framebuffer().to_vec()
+            ),
+            "the presented screens are the frame after"
+        );
+    }
+
+    /// v3.1.0 (PR #594 review) — the CPU overclock and the sprite-limit option
+    /// reach BOTH cabinet consoles. `produce_dual_frame` applied neither, so on
+    /// a Vs. `DualSystem` cabinet both settings silently did nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_cabinet_runs_both_consoles_with_the_enhancement_options() {
+        let rom = crate::runahead::tests::flashing_cabinet();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut core = EmuCore::new();
+        core.set_dual(Box::new(
+            rustynes_core::VsDualSystem::from_rom(&rom).unwrap(),
+        ));
+        core.cpu_overclock = 3;
+        core.disable_sprite_limit = true;
+        core.produce_one_frame(&quiet_inputs(), &mut sinks);
+        let dual = core.dual.as_ref().unwrap();
+        for (name, nes) in [("main", dual.main()), ("sub", dual.sub())] {
+            assert_eq!(nes.cpu_overclock(), 3, "{name} console overclock");
+            assert!(nes.sprite_limit_disabled(), "{name} console sprite limit");
+        }
+        // Back to stock: `0` and `1` both mean x1.
+        core.cpu_overclock = 0;
+        core.disable_sprite_limit = false;
+        core.produce_one_frame(&quiet_inputs(), &mut sinks);
+        let dual = core.dual.as_ref().unwrap();
+        for nes in [dual.main(), dual.sub()] {
+            assert_eq!(nes.cpu_overclock(), 1);
+            assert!(!nes.sprite_limit_disabled());
+        }
     }
 
     /// v2.9.7 (`T-PS-dual-savestate`) — a Vs. `DualSystem` cabinet saves and

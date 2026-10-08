@@ -580,6 +580,12 @@ impl JyAsic {
 }
 
 impl Mapper for JyAsic {
+    /// v3.1.0: not pure -- PPU reads clock its IRQ counter, and mapper 209 latches CHR on reads, so the PPU's display-only
+    /// "disable sprite limit" reads are not made on this board.
+    fn chr_reads_are_pure(&self) -> bool {
+        false
+    }
+
     // CPU-cycle hook (for the CPU-clock IRQ source) + IRQ source. No audio.
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ

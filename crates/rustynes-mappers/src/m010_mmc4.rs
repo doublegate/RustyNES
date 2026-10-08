@@ -166,6 +166,12 @@ impl Mmc4 {
 }
 
 impl Mapper for Mmc4 {
+    /// v3.1.0: not pure -- a read of tile $FD/$FE switches its CHR latch, so the PPU's display-only
+    /// "disable sprite limit" reads are not made on this board.
+    fn chr_reads_are_pure(&self) -> bool {
+        false
+    }
+
     fn sram(&self) -> &[u8] {
         &self.prg_ram
     }

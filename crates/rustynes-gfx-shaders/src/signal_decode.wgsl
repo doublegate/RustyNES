@@ -27,7 +27,8 @@
 //   rect, crop as in CRT_WGSL.
 //   params: (x = video phase / line offset, y = saturation, z = sharpness 0..1,
 //            w = source rows, default 240)
-//   knobs : (x = brightness, y = contrast, z = hue radians, w unused)
+//   knobs : (x = brightness, y = contrast, z = hue radians,
+//            w = differential phase, radians per palette row; v3.1.0, 0 = off)
 //
 // Presentation only — reads the index framebuffer, never the core state.
 
@@ -204,6 +205,28 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var y = y_acc * inv;
     var i = i_acc * inv * sat;
     var q = q_acc * inv * sat;
+
+    // v3.1.0 (`T-COMPOSITE-ARTIFACTS`, ACC-02): differential phase distortion,
+    // opt-in. NESdev "NTSC video": the PPU's output impedance depends on the
+    // signal level, which delays the chroma phase more at higher levels, so the
+    // hue rotates "about 2.5 degrees (2C02E) or 5 degrees (2C02G) ... for each
+    // row of the palette". Modelled as that rotation for the centre pixel's
+    // palette row (0-3). A DELAY subtracts from the recovered phase, hence the
+    // minus sign. Greys carry no chroma, so they are unaffected; `knobs.w` = 0
+    // (every host's default) is the previous output exactly.
+    if (u.knobs.w != 0.0) {
+        let ccx = clamp(i32(floor(fcol)), 0, i32(dim.x) - 1);
+        let ccy = clamp(row, 0, i32(dim.y) - 1);
+        let cpk = i32(textureLoad(idx_tex, vec2<i32>(ccx, ccy), 0).r);
+        let prow = f32(((cpk & 0x3F) >> 4) & 0x3);
+        let dpa = -u.knobs.w * prow;
+        let ca = cos(dpa);
+        let sa = sin(dpa);
+        let ir = i * ca - q * sa;
+        let qr = i * sa + q * ca;
+        i = ir;
+        q = qr;
+    }
 
     // Hue rotate.
     let ct = cos(hue);

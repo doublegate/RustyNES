@@ -127,9 +127,41 @@ proved by `crates/rustynes-test-harness/tests/extra_scanlines.rs`
 (`extra_scanlines_zero_is_byte_identical_to_stock`, plus an image-invariance
 proof on the first frame and a CPU-cycle-growth check).
 
-This is **distinct from the CPU-multiplier overclock**, which needs the
-fractional-master-clock timebase rewrite and is a v2.0 item (ADR 0002); only the
-dot-resolution scanline *insertion* is in scope here.
+This is **distinct from the CPU-multiplier overclock** (`Nes::set_cpu_overclock`,
+v3.1.0), which shortens the CPU cycle on the master clock rather than adding
+lines, and lives in the bus (`docs/scheduler.md`, "CPU-multiplier overclock").
+Until v3.1.0 this paragraph called it a v2.0 timebase item; the one-clock
+timebase that made it possible shipped in v2.0.0.
+
+### Disable sprite limit (v3.1.0, `T-SPRITE-LIMIT`, optional, default-OFF)
+
+`Nes::set_sprite_limit_disabled(true)` draws the sprites a scanline drops past
+the eighth. It is **render-only**: evaluation, secondary OAM, the overflow
+flag, sprite-0 hit and all eight real sprite fetches, with their A12 edges,
+are exactly stock, so the game cannot tell. Pinned by
+`crates/rustynes-test-harness/tests/sprite_limit.rs`: with the option on, every
+CPU cycle, work-RAM byte and audio sample matches stock frame by frame, and
+blargg's five sprite-overflow ROMs pass.
+
+- **Which sprites.** After the eighth real fetch (slot 7, dot 316) of a visible
+  line, `fetch_extra_sprites` walks primary OAM from entry 0, aligned, skips the
+  first eight in range for the next line (the ones the hardware draws when
+  evaluation starts at OAMADDR 0) and fetches up to 56 more
+  (`MAX_EXTRA_SPRITES`). Only when evaluation found eight; never on the
+  pre-render line. A line whose evaluation starts misaligned can draw a
+  slightly different set: it is a display enhancement, not hardware.
+- **How they are read.** Through `PpuBus::ppu_read_sprite`, with no
+  `observe_a12_addr`, and only when `PpuBus::chr_reads_are_pure` (the mapper's
+  answer, `docs/mappers.md`): on MMC2, MMC4, the J.Y. ASIC, Bandai 96 and
+  Nanjing 163 a CHR read changes the board, so the option draws eight there.
+- **How they draw.** In `emit_pixel`, only where none of the eight hardware
+  sprites is opaque (a higher OAM index is a lower priority), with their own
+  palette and priority bit, never as sprite 0.
+- **State.** The pending extras for the next line are PPU snapshot v13
+  (`spr_extra_*`), because a snapshot can fall between the fetch and the line.
+  The switch is configuration: carried across a power cycle, and in movies and
+  the netplay `config_digest` through `HardwareOptions` (the picture differs,
+  so frame hashes do).
 
 ### Power-up and reset state
 
@@ -279,10 +311,27 @@ Per `ref-docs/research-report.md` §Sprite evaluation:
 - **Cycles 1..=64** — clear secondary OAM to `$FF` (forced reads).
 - **Cycles 65..=256** — alternate odd (read primary OAM) / even (write secondary OAM).
   - Read Y from `OAM[n][m]` — `m` is normally 0, but `OAMADDR` seeds `n` and
-    `m` at dot 0 (`n = (OAMADDR >> 2) & $3F`, `m = OAMADDR & 3`), so a
-    misaligned `OAMADDR` starts the walk on a tile / attribute / X byte and
-    the y-test reads *that* byte. If in range for the next scanline, copy
-    bytes 1..=3.
+    `m` **at dot 65** (`n = (OAMADDR >> 2) & $3F`, `m = OAMADDR & 3`; nesdev
+    "PPU registers" -> OAMADDR: "the value of OAMADDR at this tick determines
+    the starting address"), so a misaligned `OAMADDR` starts the walk on a
+    tile / attribute / X byte and the y-test reads *that* byte. A `$2003`
+    write during the dots 1-64 clear therefore still moves the start. (Until
+    v3.1.0 the FSM seeded at dot 0 only; AccuracyCoin `f5f41dc2` writes
+    `$2003` at dots 28-29 of scanline 0 and exposed it.)
+  - If in range for the next scanline, copy **four bytes** from the walk
+    position, `OAMADDR` stepping by one each, whatever the alignment: a start
+    at `m = 3` copies the last byte of slot `n` and the first three of slot
+    `n + 1` (until v3.1.0 the FSM stopped after one byte there).
+  - The fourth byte copied is evaluated AS the X position, and range-tested
+    like Y. In an aligned walk it is the sprite's X; from `m = 3` it is slot
+    `n + 1`'s attribute byte, read in the X position.
+    **X in range: `OAMADDR += 1` only**, so a misaligned walk stays misaligned.
+    **X out of range: `OAMADDR += 1`, then AND with `$FC`**, realigning.
+    Aligned, both give the next multiple of four, so only misaligned OAM sees
+    the difference (AccuracyCoin `Misaligned OAM behavior` tests 4-7; until
+    v3.1.0 the FSM always realigned, and the pre-`f5f41dc2` ROM recorded the
+    resulting failures as a pass because its fail path did not pop its return
+    address).
   - Not in range, secondary OAM **not** full: `OAMADDR += 4`, **then AND with
     `$FC`** — so `n` advances and `m` is *cleared*, realigning the walk after
     the first out-of-range sprite. When `n` overflows to 0, evaluation
@@ -608,6 +657,15 @@ change core rendering tests.
 ### Greyscale + emphasis
 
 PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis) are applied through the 512-entry `rgba_lut`, per pixel during emission.
+
+**PAL and Dendy swap bits 5 and 6 (v3.1.0, `T-PAL-EMPHASIS`).** NESdev "Colour emphasis":
+bit 5 emphasises red on the NTSC 2C02 and **green** on the PAL 2C07 and the Dendy, bit 6 the
+reverse, and bit 7 is blue on all three. `emit_pixel` therefore forms the emphasis index as the
+PHYSICAL tint (bit 0 red, bit 1 green, bit 2 blue), exchanging bits 5 and 6 off NTSC, and
+both framebuffers carry it, so the composite filters see the right tint as well. Until
+v3.1.0 every PAL or Dendy game that set emphasis showed the wrong colour. Pinned by
+`pal_and_dendy_swap_the_red_and_green_emphasis_bits`. The MiSTer core has no PAL mode, so
+there is no RTL counterpart.
 
 **Emphasis model (v2.9.8, `T-EMPHASIS-MODEL`).** The hardware has one attenuator shared by
 the three bits, armed during the phases of colours `$C`, `$4` and `$8` for bits 5, 6 and 7,

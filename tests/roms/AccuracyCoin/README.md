@@ -8,7 +8,7 @@ diagnostic decoder needs at compile time.
 
 | File | Purpose |
 |------|---------|
-| `SOURCE_CATALOG.tsv` | 149-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks by `scripts/accuracycoin-build/extract_catalog.py`. `include_str!`'d by `rustynes_test_harness::accuracy_coin_catalog`. |
+| `SOURCE_CATALOG.tsv` | 151-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks by `scripts/accuracycoin-build/extract_catalog.py`. `include_str!`'d by `rustynes_test_harness::accuracy_coin_catalog`. |
 | `sub-tests/*.nes` | Custom-built sub-test ROMs that boot directly into one target test (bypass menu + full-battery loop). Built by `scripts/accuracycoin-build/build_sub_test_rom.py`. Used to unblock the Session-22 Mesen2 wall-time oracle blocker. Inherits upstream MIT license. See `docs/audit/session-23-custom-accuracycoin-sub-test-roms-2026-05-22.md`. |
 
 The runtime `.nes` ROM lives at [`../accuracycoin/AccuracyCoin.nes`](../accuracycoin/AccuracyCoin.nes)
@@ -152,8 +152,9 @@ pass / fail breakdowns.
 ## Source
 
 `https://github.com/100thCoin/AccuracyCoin` (main branch; re-synced to
-upstream commit `46199ae4` on 2026-09-19; previously `69c8860`, 2026-09-11,
-and `71f57fb` in v2.0.1). The `46199ae4` re-sync left this catalog
+upstream commit `f5f41dc2` on 2026-10-07 for v3.1.0; previously `46199ae4`,
+2026-09-19, `69c8860`, 2026-09-11, and `71f57fb` in v2.0.1). The `46199ae4`
+re-sync left this catalog
 **byte-identical** — re-running `extract_catalog.py` against the new
 `AccuracyCoin.asm` reproduces the committed TSV exactly, because the two
 upstream commits insert `INC <ErrorCode` instructions, which move code
@@ -188,6 +189,20 @@ Evaluation` and `Advanced Sprite Evaluation`, which re-home eleven existing
 PPU tests out of `PPU Misc.`, `PPU Behavior` and `Sprite Evaluation`. A
 re-sync is therefore not an append: a suite-keyed baseline must be
 regenerated, not extended.
+
+The **v3.1.0 re-sync** to `f5f41dc2` grew it 149 -> 151 rows / 144 -> 146
+scored: two new `CPU Behavior 2` tests, `DMA Landing on Write` (`$0496`) and
+`DMC Reload Timing` (`$0497`). It also changed the row grammar. To save ROM
+space upstream replaced the unofficial-opcode suites' `table` rows with
+`tblf1` / `tblf2`, which store a one-byte token for the words "indirect",
+"zeropage", "absolute" and "immediate". `extract_catalog.py` (and
+`derive_indices.py`, which shares its patterns) rebuild those names from
+the ROM's own `PrintTextSpecialStrings`, so the eight `Unofficial
+Immediates` rows now read `immediate` in lower case, as the ROM prints them
+(`Immediate` before; the result addresses are unchanged). Before that fix
+the extractor returned 85 of the 151 rows and exited 0, because it only
+checked that the total was non-zero; it now aborts on any row-shaped line
+it cannot read, and on any suite that yields none.
 
 ## License
 
