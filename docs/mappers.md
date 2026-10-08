@@ -838,6 +838,23 @@ path), were all CAUGHT by the unit tests or `roster_boards.rs`. Two needed a new
 test first: the bus's floating-read call, which no mapper-level test can reach,
 and the PPU's unfolded `$3xxx` path. The record is in the v2.9.6 plan.
 
+### v3.2.0 — MMC3-derived and multi-mode boards (`mmc3_boards_ext.rs`)
+
+Written from the vendored NESdev pages named in the table; no
+reference-emulator source was read. The boards live in a new module,
+`mmc3_boards_ext.rs`, because their board logic sits in FRONT of the MMC3 (a
+register address and index scramble) or rewires the PPU address lines the MMC3
+sees, where the `mmc3_boards.rs` boards only post-process its bank outputs. The
+MMC3 is still the project's own `Mmc3` used as a register file and IRQ counter.
+A family is **Curated** on a D23 record (`docs/compatibility.md`, "Curated
+evidence from local dumps"): a local dump that boots to its title, pinned by a
+boot snapshot in `external_extended.rs` and a committed screenshot.
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 114 | 0/1 | SuperGame / Hosenkan MMC3 scramble (`INES_Mapper_114`) | Curated | MMC3A (alternate) | Register addresses and `$8000` indices permuted per the page's two tables (submapper 1 is Boogerman's pattern). `$6000` (`M.S. BBBb`) is an NROM override of both PRG halves, NROM-256 when S is set; `$6001` bit 0 is CHR A18. Both answer whatever `$A001` says ("not connected to the MMC3 clone's WRAM interface"). The page gives their mask as "probably `$E001`"; that mask is used. |
+| 182 | — | (`INES_Mapper_182` → `INES_Mapper_114`) | Curated | as 114 | A duplicate of 114: the 182 page is a redirect, and the 114 page says Hosenkan's 182 games write 0 to `$6000`/`$6001` once and never again. Dispatched as 114 submapper 0; the full 114 model is kept rather than the "no `$600x`" simplification, since the zero writes leave it in the MMC3's own banking. |
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by

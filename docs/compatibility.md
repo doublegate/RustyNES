@@ -362,3 +362,16 @@ FE-11, which the v3.1 → v4.0 line plan does not schedule:
 
 - **CRC32 vs. SHA-256 for ROM identification.** We use SHA-256 for save state directory naming (lower collision risk). For ROM compatibility databases, CRC32 is the community standard; we may add it as a secondary key.
 - **Region override.** Some users want to play PAL versions of NTSC games at NTSC speed. Plan: expose a region override in the settings UI; warn that this may break timing-sensitive ROMs.
+
+## Curated evidence from local dumps (D23)
+
+A local dump counts as Curated evidence when its record names the title, the
+SHA-256 of the bytes after the 16-byte header (`Nes::rom_sha256`), the frame
+count of the boot snapshot in `external_extended.rs`, and a committed
+screenshot of that frame. The dumps themselves stay in the gitignored
+`tests/roms/external/` tree.
+
+| Mapper | Title | SHA-256 after the header (`Nes::rom_sha256`) | Frames | Screenshot |
+|--------|-------|----------------------------------------------|--------|------------|
+| 114 | Aladdin (SuperGame) (Mapper 114) [!] | `5489244538c94653f766bd80f07b2aa684ad139bddea68f40b60a0473c9286e2` | 600 | `screenshots/external/mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].png` |
+| 182 (as 114.0) | Super Donkey Kong (Unl) [!] | `67d06173c4b8239d46c84335591216b1adfa38344107405ec88c58327217a361` | 600 | `screenshots/external/mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].png` |

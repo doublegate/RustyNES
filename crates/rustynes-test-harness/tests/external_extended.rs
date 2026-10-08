@@ -1418,3 +1418,27 @@ fn extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu() {
         "extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu",
     );
 }
+
+// ============================================================
+// v3.2.0 — MMC3-derived families written from their NESdev pages
+// (`mmc3_boards_ext.rs`). One GoodNES dump per family, byte-identity boot
+// snapshot; the D23 records are in `docs/compatibility.md`.
+// ============================================================
+
+#[test]
+fn extended_m114_aladdin_supergame() {
+    check(
+        "mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m114_aladdin_supergame",
+    );
+}
+
+#[test]
+fn extended_m182_super_donkey_kong() {
+    check(
+        "mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m182_super_donkey_kong",
+    );
+}

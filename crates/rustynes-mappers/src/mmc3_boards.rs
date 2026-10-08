@@ -219,7 +219,7 @@ fn t9552_scramble<const N: usize>(
 /// power-of-two `count` it is exactly `bank % count`. No allocation, a few
 /// iterations at most (one per set bit of `count`): this runs on every PRG and
 /// CHR-ROM access.
-fn mirror_bank(bank: usize, count: usize) -> usize {
+pub(crate) fn mirror_bank(bank: usize, count: usize) -> usize {
     if count == 0 {
         return 0;
     }
