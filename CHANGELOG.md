@@ -96,7 +96,9 @@ run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
   multiplier is exact on every region: a CPU cycle is 12 master clocks on NTSC
   but 16 on PAL and 15 on Dendy, which do not divide by 3 or 4, so the
   overclocked cycle lengths alternate to keep the average exact (a review of
-  the release PR found PAL x3 running at x3.2 and Dendy x4 at x5).
+  the release PR found PAL x3 running at x3.2 and Dendy x4 at x5). It and the
+  sprite-limit option below apply to both consoles of a Vs. DualSystem cabinet
+  (the same review found the cabinet ignored both).
 - **"Disable 8-sprite-per-scanline limit" now works** (`T-SPRITE-LIMIT`; it was
   shown and saved but inert). It draws the dropped sprites behind the eight the
   console shows, and changes nothing the game can see: the overflow flag, the
@@ -110,7 +112,8 @@ run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
 - **MMC3 IRQ revision setting** (`T-MMC3-NEC-OVERRIDE`, Settings > Emulation):
   run any mapper-4 game on the Sharp or the alternate (MMC3A / NEC) chip, for
   dumps whose header cannot say which. blargg's `mmc3_test_2/6-MMC3_alt` passes
-  under the alternate setting. Carried in movies and netplay.
+  under the alternate setting. Carried in movies and netplay. A save state
+  never changes which revision runs: loading one keeps the current setting.
 - **Rewind and run-ahead on the Vs. DualSystem cabinet** (`T-PS-dual-runahead`,
   ADR 0032 amended): both work in two-screen mode, on the whole cabinet, so
   the two consoles never fall out of step. A step back restores both screens
@@ -166,7 +169,7 @@ run-ahead. **Save states, movies and netplay from v3.0.1 are refused.**
 
 ### Verification
 
-- `cargo test --workspace --features test-roms --release`: **3,262 passed, 0
+- `cargo test --workspace --features test-roms --release`: **3,263 passed, 0
   failed, 11 ignored**. The epoch fingerprint gate passes at epoch 3, now
   recorded as the released epoch.
 - AccuracyCoin **146/146** at upstream `f5f41dc2`; `nestest` 0-diff.
