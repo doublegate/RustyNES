@@ -505,6 +505,11 @@ impl core::fmt::Display for RestoreStateError {
 }
 
 /// The emulation core: the per-frame produce state extracted from `App`.
+// The produce loop's state bag: its flags (HD capture, the write lock, the
+// sprite-limit option, the run-ahead throttle) are unrelated switches read in
+// different places, not states of one thing. (v3.1.0's `disable_sprite_limit`
+// made the `hd-pack` build count four.)
+#[allow(clippy::struct_excessive_bools)]
 pub struct EmuCore {
     /// The running single-console emulator (None until a single-console ROM is
     /// loaded, or while a Vs. `DualSystem` cabinet is loaded — see [`Self::dual`]).
@@ -601,6 +606,15 @@ pub struct EmuCore {
     /// `0` (the default) is stock timing, byte-identical to a core that never
     /// heard of the setting.
     pub overclock_scanlines: u16,
+    /// v3.1.0 — the configured CPU-multiplier overclock (`[enhancements]
+    /// cpu_overclock`, pushed by `App` beside `overclock_scanlines`). Applied
+    /// at the top of every produced frame while no movie is recording or
+    /// playing; during a movie the movie's own options hold the console (its
+    /// recorded multiplier). `0` and `1` are stock.
+    pub cpu_overclock: u8,
+    /// v3.1.0 — the configured sprite-limit option (`[enhancements]
+    /// disable_sprite_limit`), applied like `cpu_overclock`.
+    pub disable_sprite_limit: bool,
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
@@ -1089,6 +1103,8 @@ impl EmuCore {
             debug_pokes: Vec::new(),
             writes_locked: false,
             overclock_scanlines: 0,
+            cpu_overclock: 0,
+            disable_sprite_limit: false,
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
@@ -1634,6 +1650,18 @@ impl EmuCore {
         };
         if nes.extra_scanlines() != extra_lines {
             nes.set_extra_scanlines(extra_lines);
+        }
+        // v3.1.0 — the CPU overclock applies only outside a movie session: a
+        // recording captures what the console runs with when it starts, and a
+        // playing movie holds the console to its own options every frame.
+        if self.movie.mode() == crate::movie_ui::MovieMode::Idle {
+            let want = self.cpu_overclock.max(1);
+            if nes.cpu_overclock() != want {
+                nes.set_cpu_overclock(want);
+            }
+            if nes.sprite_limit_disabled() != self.disable_sprite_limit {
+                nes.set_sprite_limit_disabled(self.disable_sprite_limit);
+            }
         }
         // v2.7.0 — RetroAchievements hardcore mode disables rewind (already
         // folded into `inputs.rewind_held` by `App`).

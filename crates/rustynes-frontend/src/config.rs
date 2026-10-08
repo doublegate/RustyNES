@@ -1790,9 +1790,12 @@ pub struct Config {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EnhancementsConfig {
     /// Disable the hardware 8-sprite-per-scanline limit (removes sprite
-    /// flicker). Off by default = accurate hardware behaviour. **Staged**: the
-    /// current cycle-accurate core has no no-sprite-limit hook, so this is
-    /// persisted + surfaced but inert until the v2.0 core pass (ADR 0002).
+    /// flicker). Off by default = accurate hardware behaviour. v3.1.0
+    /// (`T-SPRITE-LIMIT`): applied to the core (`Nes::set_sprite_limit_disabled`)
+    /// from the next frame. Render-only: evaluation, the overflow flag and the
+    /// sprite fetches stay exact, so the game sees no difference. Like
+    /// `cpu_overclock` a movie records it and netplay peers must match. Until
+    /// v3.1.0 it was persisted and shown but nothing read it.
     #[serde(default)]
     pub disable_sprite_limit: bool,
     /// Optional overclock: extra emulated PPU scanlines inserted in the
@@ -1804,6 +1807,15 @@ pub struct EnhancementsConfig {
     /// persisted and shown but nothing read it.
     #[serde(default)]
     pub overclock_scanlines: u16,
+    /// v3.1.0 (`T-CPU-OVERCLOCK`): the CPU-multiplier overclock, `2..=4` for
+    /// x2 to x4; `0` (the default) and `1` are stock. The CPU runs that many
+    /// times faster against the same picture and sound
+    /// (`Nes::set_cpu_overclock`). Unlike `overclock_scanlines` it is not
+    /// held at stock under a movie or netplay: a movie records it and replays
+    /// with it, and netplay peers must match (both through the core's
+    /// `HardwareOptions`).
+    #[serde(default)]
+    pub cpu_overclock: u8,
 }
 
 /// v2.1.4 F2.3 — the `[emulation]` section: optional **accuracy** toggles.

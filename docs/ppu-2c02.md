@@ -127,9 +127,41 @@ proved by `crates/rustynes-test-harness/tests/extra_scanlines.rs`
 (`extra_scanlines_zero_is_byte_identical_to_stock`, plus an image-invariance
 proof on the first frame and a CPU-cycle-growth check).
 
-This is **distinct from the CPU-multiplier overclock**, which needs the
-fractional-master-clock timebase rewrite and is a v2.0 item (ADR 0002); only the
-dot-resolution scanline *insertion* is in scope here.
+This is **distinct from the CPU-multiplier overclock** (`Nes::set_cpu_overclock`,
+v3.1.0), which shortens the CPU cycle on the master clock rather than adding
+lines, and lives in the bus (`docs/scheduler.md`, "CPU-multiplier overclock").
+Until v3.1.0 this paragraph called it a v2.0 timebase item; the one-clock
+timebase that made it possible shipped in v2.0.0.
+
+### Disable sprite limit (v3.1.0, `T-SPRITE-LIMIT`, optional, default-OFF)
+
+`Nes::set_sprite_limit_disabled(true)` draws the sprites a scanline drops past
+the eighth. It is **render-only**: evaluation, secondary OAM, the overflow
+flag, sprite-0 hit and all eight real sprite fetches, with their A12 edges,
+are exactly stock, so the game cannot tell. Pinned by
+`crates/rustynes-test-harness/tests/sprite_limit.rs`: with the option on, every
+CPU cycle, work-RAM byte and audio sample matches stock frame by frame, and
+blargg's five sprite-overflow ROMs pass.
+
+- **Which sprites.** After the eighth real fetch (slot 7, dot 316) of a visible
+  line, `fetch_extra_sprites` walks primary OAM from entry 0, aligned, skips the
+  first eight in range for the next line (the ones the hardware draws when
+  evaluation starts at OAMADDR 0) and fetches up to 56 more
+  (`MAX_EXTRA_SPRITES`). Only when evaluation found eight; never on the
+  pre-render line. A line whose evaluation starts misaligned can draw a
+  slightly different set: it is a display enhancement, not hardware.
+- **How they are read.** Through `PpuBus::ppu_read_sprite`, with no
+  `observe_a12_addr`, and only when `PpuBus::chr_reads_are_pure` (the mapper's
+  answer, `docs/mappers.md`): on MMC2, MMC4, the J.Y. ASIC, Bandai 96 and
+  Nanjing 163 a CHR read changes the board, so the option draws eight there.
+- **How they draw.** In `emit_pixel`, only where none of the eight hardware
+  sprites is opaque (a higher OAM index is a lower priority), with their own
+  palette and priority bit, never as sprite 0.
+- **State.** The pending extras for the next line are PPU snapshot v13
+  (`spr_extra_*`), because a snapshot can fall between the fetch and the line.
+  The switch is configuration: carried across a power cycle, and in movies and
+  the netplay `config_digest` through `HardwareOptions` (the picture differs,
+  so frame hashes do).
 
 ### Power-up and reset state
 

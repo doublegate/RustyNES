@@ -30,6 +30,9 @@ pub trait Mapper: Send {
 
     fn save_state(&self) -> Vec<u8>;
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError>;
+
+    // v3.1.0 (`T-SPRITE-LIMIT`): `false` when a CHR read changes the board.
+    fn chr_reads_are_pure(&self) -> bool { true }
 }
 
 // `#[non_exhaustive]` since v3.0.0: outside `rustynes-mappers`, build one with
@@ -55,6 +58,19 @@ pub struct Cartridge {
 
 pub enum Mirroring { Horizontal, Vertical, SingleScreenA, SingleScreenB, FourScreen, MapperControlled }
 ```
+
+**`chr_reads_are_pure` (v3.1.0).** The PPU's "disable sprite limit" option
+makes extra, display-only pattern reads, and only on boards that report
+`true`. Five report `false` because a CHR read changes them: MMC2 (9) and
+MMC4 (10) switch a CHR latch on tiles `$FD` / `$FE`, the J.Y. ASIC (35, 90,
+209, 211) clocks an IRQ counter on PPU reads and mapper 209 latches CHR,
+Bandai 96 follows the last PPU address for its inner CHR bank, and Nanjing 163
+latches PPU A13. **A new board whose `ppu_read` writes `self` must override
+it.** `every_board_that_claims_pure_chr_reads_has_them` (in `mapper.rs`) reads
+all of CHR on every constructible mapper id that claims purity and fails if
+`save_state` moved; it also pins the impure set, so the list here and the code
+cannot drift apart. The set came from a scan of every `ppu_read` body for
+writes to `self`.
 
 `rustynes_mappers::parse(&[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError>`
 parses an iNES or NES 2.0 file (see `cartridge-format.md`), constructs the

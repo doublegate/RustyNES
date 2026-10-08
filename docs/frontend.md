@@ -2461,7 +2461,12 @@ says which emulator *behaviour* it was recorded on as well as which options
 and board. A format-4 movie is refused as too old, and a format-5 movie from
 another epoch fails with `MovieError::EpochMismatch`, naming both epochs. The
 epoch is raised whenever a change alters emulated output; the bump rule is in
-ADR 0045.
+ADR 0045. **v3.1.0 moved it to format 6** (`MOVIE_FORMAT_VERSION` 6, minimum
+6): the options record gains the CPU-multiplier overclock and the sprite-limit
+option, so a format-5 movie is refused as too old (every one of them was
+recorded under epoch 1 or 2, which v3.1.0 refuses anyway). Unlike the
+extra-scanline overclock, which a recording holds at stock, the CPU
+overclock is recorded as set and replayed with it.
 
 - **Playback applies the options before frame 0** (`Movie::seek_to_start`), so
   the replay does not depend on the player's settings, and the desktop and mobile
@@ -2510,8 +2515,13 @@ ADR 0045.
 
 The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the
 emulation epoch, the ROM hash, and `rustynes_core::config_digest`, SHA-256 over
-the region, the board and the options (`PROTOCOL_VERSION` 6, magic `"RNE6"`,
-ADR 0045).
+the region, the board and the options (`PROTOCOL_VERSION` 7, magic `"RNE7"`,
+since v3.1.0; protocol 6 / `"RNE6"` from v3.0.0, ADR 0045). Protocol 7 keeps
+protocol 6's 72-byte `Sync` and changes the magic because the options encoding
+under the configuration hash gained two fields: a v3.0.x peer with the same
+settings would otherwise hash differently and be refused as a settings
+mismatch, the wrong reason. Its `"RNE6"` is now one of RustyNES's older magics,
+refused as another emulator version naming its epoch.
 
 - **Another epoch is refused first**, as another emulator version:
   `DisconnectReason::EmulatorMismatch` / `NetplayError::EmulatorMismatch` /

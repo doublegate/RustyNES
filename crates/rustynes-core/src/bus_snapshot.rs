@@ -21,13 +21,20 @@
 //!
 //! # Version 3 (v3.1.0)
 //!
-//! Appends one byte after the internal data bus: the DMC load-DMA
-//! write-refusal latch (`dmc_load_write_delayed`). It outlives an
-//! instruction, because the refusing write is the last cycle of a store and
-//! the latch is consumed by the next opcode fetch, so a snapshot at that
-//! boundary without it would restore a three-cycle load where the machine
-//! was owed a four-cycle one. Version 2 is refused rather than read with a
-//! default, as the version-2 rules above require.
+//! Appends, after the internal data bus:
+//!
+//! - the DMC load-DMA write-refusal latch (`dmc_load_write_delayed`, one
+//!   byte). It outlives an instruction, because the refusing write is the
+//!   last cycle of a store and the latch is consumed by the next opcode
+//!   fetch, so a snapshot at that boundary without it would restore a
+//!   three-cycle load where the machine was owed a four-cycle one;
+//! - the CPU overclock's stock-rate position (`overclock_debt`, one byte,
+//!   and `apu_cycle`, `u64`): under the overclock the APU and the mappers'
+//!   cycle hooks advance on only some CPU cycles, and run-ahead restores in
+//!   the middle of that pattern.
+//!
+//! Version 2 is refused rather than read with a default, as the version-2
+//! rules above require.
 
 use crate::bus::SystemBus;
 use crate::controller::Controller;
@@ -146,6 +153,9 @@ pub fn encode_bus(bus: &SystemBus) -> Vec<u8> {
     w.u8(s.internal_data_bus);
     // v3.1.0 (version 3): the DMC load-DMA write-refusal latch.
     w.u8(u8::from(s.dmc_load_write_delayed));
+    // v3.1.0 (version 3): the CPU overclock's stock-rate position.
+    w.u8(s.overclock_debt);
+    w.u64(s.apu_cycle);
     w.into_vec()
 }
 
@@ -460,6 +470,17 @@ pub fn decode_bus(bus: &mut SystemBus, data: &[u8]) -> Result<(), SnapshotError>
     bus.set_four_score_pending(fs);
     let internal_data_bus = r.u8()?;
     let dmc_load_write_delayed = r.bool()?;
+    let overclock_debt = r.u8()?;
+    // A debt is below one stock CPU cycle (16 master clocks on PAL, the
+    // longest); anything larger is a corrupt file, refused here rather than
+    // clamped later.
+    if overclock_debt >= 16 {
+        return Err(SnapshotError::SectionInvalid {
+            tag: "BUS ".into(),
+            reason: format!("CPU-overclock debt {overclock_debt} out of range"),
+        });
+    }
+    let apu_cycle = r.u64()?;
     if r.remaining() != 0 {
         return Err(SnapshotError::SectionInvalid {
             tag: "BUS ".into(),
@@ -483,6 +504,8 @@ pub fn decode_bus(bus: &mut SystemBus, data: &[u8]) -> Result<(), SnapshotError>
         four_score_sig,
         dmc_halt,
         dmc_load_write_delayed,
+        overclock_debt,
+        apu_cycle,
         uni_oam_active,
         uni_oam_halt,
         uni_oam_aligned,
@@ -550,6 +573,12 @@ pub struct BusMiscState {
     /// v3.1.0 (BUS version 3): a pending load DMC DMA was refused by a CPU
     /// write and enters on the next read whichever half it is.
     pub dmc_load_write_delayed: bool,
+    /// v3.1.0 (BUS version 3): master clocks the CPU overclock's stock-rate
+    /// domain is owed (always 0 at `x1`).
+    pub overclock_debt: u8,
+    /// v3.1.0 (BUS version 3): the stock-rate domain's cycle counter under
+    /// the CPU overclock (unused at `x1`).
+    pub apu_cycle: u64,
     /// W3-Stage-4: unified DMA engine (`mc-r1-dma-unified`) — OAM DMA active
     /// (`TriCNES` `DoOAMDMA`).
     pub uni_oam_active: bool,

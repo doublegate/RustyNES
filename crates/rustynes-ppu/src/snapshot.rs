@@ -163,7 +163,15 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   `spr_rearm_deferred` it is live only across the frame boundary, where
 ///   run-ahead and save states snapshot; dropping it would let a restored
 ///   frame raise A12 at a dot 0 the skip removed, which an MMC3 counts.
-pub const PPU_SNAPSHOT_VERSION: u8 = 12;
+/// - v13 (v3.1.0, `T-SPRITE-LIMIT`): appends the extra sprites the "disable
+///   sprite limit" option fetched for the next scanline: a count (1 byte,
+///   `0..=MAX_EXTRA_SPRITES`) and four 56-byte arrays (pattern low, pattern
+///   high, attributes, X). Render-only state, but it decides the next
+///   scanline's picture, and a snapshot can fall between the fetch (dots
+///   257-320) and that line, so it is carried rather than dropped, the rule
+///   `snapshot_schema_audit.rs` exists for. All zero while the option is off.
+///   No upconvert: v3.1.0 states are refused by BUS section 3 regardless.
+pub const PPU_SNAPSHOT_VERSION: u8 = 13;
 
 /// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
 /// field except the 245,760-byte framebuffer.
@@ -628,6 +636,13 @@ impl Ppu {
         // the skip, consumed at that dot), live across the frame boundary.
         w.u8(u8::from(self.dot0_replaced));
 
+        // v13 tail — the sprite-limit option's extra sprites for the next line.
+        w.u8(self.spr_extra_count);
+        w.bytes(&self.spr_extra_lo);
+        w.bytes(&self.spr_extra_hi);
+        w.bytes(&self.spr_extra_attr);
+        w.bytes(&self.spr_extra_x);
+
         w.buf
     }
 
@@ -869,6 +884,17 @@ impl Ppu {
 
         // v12: the odd-frame skip replaced scanline 0's dot 0.
         self.dot0_replaced = r.u8()? != 0;
+
+        // v13: the sprite-limit option's extra sprites for the next line.
+        self.spr_extra_count = bounded(
+            "spr_extra_count",
+            r.u8()?,
+            u8::try_from(crate::ppu::MAX_EXTRA_SPRITES).unwrap_or(u8::MAX),
+        )?;
+        r.bytes_into(&mut self.spr_extra_lo)?;
+        r.bytes_into(&mut self.spr_extra_hi)?;
+        r.bytes_into(&mut self.spr_extra_attr)?;
+        r.bytes_into(&mut self.spr_extra_x)?;
 
         // Derived-cache fixup: the scanline-classification cache
         // is a pure function of `scanline` + `region`, so it is recomputed rather

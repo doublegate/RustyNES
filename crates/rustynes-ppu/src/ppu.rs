@@ -35,6 +35,11 @@ pub const FRAMEBUFFER_LEN: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 4;
 /// [`Ppu::index_framebuffer`] (one `u16` per pixel).
 pub const FRAMEBUFFER_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 
+/// v3.1.0 (`T-SPRITE-LIMIT`) — the most sprites the "disable sprite limit"
+/// option can add to one scanline: all 64 OAM entries minus the eight the
+/// hardware draws.
+pub const MAX_EXTRA_SPRITES: usize = 64 - 8;
+
 /// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source record.
 ///
 /// One entry per visible pixel (parallel to [`Ppu::index_framebuffer`]),
@@ -1105,10 +1110,30 @@ pub struct Ppu {
     /// without altering the visible image. **Off by default (`0`)**; the
     /// `advance_dot` insertion path is entirely guarded by `extra_scanlines != 0`,
     /// so at the default this field changes nothing and the frame is
-    /// byte-identical to stock. Distinct from the CPU-multiplier overclock (a
-    /// v2.0 timebase item). A frontend config knob, NOT part of the save-state
-    /// (re-applied by the frontend on restore, like `region` / `active_palette`).
+    /// byte-identical to stock. Distinct from the CPU-multiplier overclock
+    /// (`Nes::set_cpu_overclock`, v3.1.0, in the bus). A frontend config knob,
+    /// NOT part of the save-state (re-applied by the frontend on restore, like
+    /// `region` / `active_palette`).
     pub(crate) extra_scanlines: u16,
+    /// v3.1.0 (`T-SPRITE-LIMIT`, FE-02): draw the sprites beyond the eighth on
+    /// a scanline. **Render-only**: sprite evaluation, secondary OAM, the
+    /// overflow flag, sprite-0 hit and every real sprite fetch (with its A12
+    /// edges) are untouched. The extra sprites' patterns are read after the
+    /// eight real fetches, through [`PpuBus::chr_reads_are_pure`] boards only,
+    /// with no A12 notification, and they draw behind all eight hardware
+    /// sprites (a higher OAM index is a lower priority). Off by default;
+    /// configuration, carried across a power cycle by
+    /// [`Self::adopt_settings_from`] and in movies / netplay by the core's
+    /// `HardwareOptions`.
+    pub(crate) sprite_limit_disabled: bool,
+    /// v3.1.0 — the extra sprites fetched for the next scanline (snapshot v13):
+    /// how many, and for each the h-flip-applied pattern bytes, attributes and
+    /// X. Always 0 while `sprite_limit_disabled` is off.
+    pub(crate) spr_extra_count: u8,
+    pub(crate) spr_extra_lo: [u8; MAX_EXTRA_SPRITES],
+    pub(crate) spr_extra_hi: [u8; MAX_EXTRA_SPRITES],
+    pub(crate) spr_extra_attr: [u8; MAX_EXTRA_SPRITES],
+    pub(crate) spr_extra_x: [u8; MAX_EXTRA_SPRITES],
     /// v1.7.0 F3 — countdown of extra blank scanlines remaining for the CURRENT
     /// frame's vblank insertion. Loaded from [`Self::extra_scanlines`] when the
     /// PPU reaches the insertion point and decremented one extra line at a time.
@@ -1635,6 +1660,12 @@ impl Ppu {
             dot_counter: 0,
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
+            sprite_limit_disabled: false,
+            spr_extra_count: 0,
+            spr_extra_lo: [0; MAX_EXTRA_SPRITES],
+            spr_extra_hi: [0; MAX_EXTRA_SPRITES],
+            spr_extra_attr: [0; MAX_EXTRA_SPRITES],
+            spr_extra_x: [0; MAX_EXTRA_SPRITES],
             extra_lines_remaining: 0,
             // v2.2.3 performance pass: promoted to the default (was `false`
             // through v2.2.2). Byte-identical to the exact path by
@@ -1742,6 +1773,30 @@ impl Ppu {
         self.rebuild_rgba_lut();
     }
 
+    /// v3.1.0 (`T-SPRITE-LIMIT`) — draw the sprites beyond the eighth on a
+    /// scanline (`true`), or not (`false`, the default and the hardware). See
+    /// the field for what stays exact. Turning it off drops any extras already
+    /// fetched, so the next scanline draws exactly eight.
+    pub const fn set_sprite_limit_disabled(&mut self, disabled: bool) {
+        self.sprite_limit_disabled = disabled;
+        if !disabled {
+            self.spr_extra_count = 0;
+        }
+    }
+
+    /// v3.1.0 — whether the sprites beyond the eighth are drawn.
+    #[must_use]
+    pub const fn sprite_limit_disabled(&self) -> bool {
+        self.sprite_limit_disabled
+    }
+
+    /// v3.1.0 — how many sprites beyond the eighth are fetched for the next
+    /// scanline (`0` unless [`Self::sprite_limit_disabled`]).
+    #[must_use]
+    pub const fn extra_sprite_count(&self) -> u8 {
+        self.spr_extra_count
+    }
+
     /// v1.7.0 "Forge" Workstream F3 — set the number of EXTRA blank vblank
     /// scanlines to insert per frame (the PPU extra-scanlines overclock).
     ///
@@ -1749,7 +1804,7 @@ impl Ppu {
     /// that never calls this. A non-zero value lengthens vblank by that many
     /// idle scanlines each frame (more CPU run-time, no visible change), at the
     /// existing dot resolution. Off by default; a frontend config knob, not part
-    /// of the save-state. Distinct from the CPU-multiplier overclock (v2.0).
+    /// of the save-state. Distinct from the CPU-multiplier overclock (v3.1.0).
     ///
     /// Changing the count cancels any in-flight insertion for the current
     /// frame: the per-frame countdown (`extra_lines_remaining`) is
@@ -1809,7 +1864,8 @@ impl Ppu {
     /// # What is carried, and what is not
     ///
     /// Carried: [`Self::custom_palette`] (the lookup table is rebuilt to
-    /// honour it), [`Self::extra_scanlines`], [`Self::fast_dotloop`] and
+    /// honour it), [`Self::extra_scanlines`], [`Self::sprite_limit_disabled`],
+    /// [`Self::fast_dotloop`] and
     /// [`Self::oam_decay_enabled`]. The decay switch goes through
     /// [`Self::set_oam_decay`], exactly as a host enabling it on a fresh
     /// console would, so the result is what a fresh boot with the setting
@@ -1831,6 +1887,7 @@ impl Ppu {
         self.custom_palette = prev.custom_palette;
         self.rebuild_rgba_lut();
         self.set_extra_scanlines(prev.extra_scanlines);
+        self.sprite_limit_disabled = prev.sprite_limit_disabled;
         self.fast_dotloop = prev.fast_dotloop;
         self.set_oam_decay(prev.oam_decay_enabled);
     }
@@ -5101,6 +5158,32 @@ impl Ppu {
                 break;
             }
         }
+        // v3.1.0 (`T-SPRITE-LIMIT`): the sprites beyond the eighth, only where
+        // none of the eight hardware sprites is opaque (they have the higher
+        // OAM indexes, so the lower priority). Never sprite 0, so never a hit.
+        // `spr_extra_count` is 0 unless the option is on.
+        if spr_idx == 0
+            && self.spr_extra_count != 0
+            && self.mask.contains(PpuMask::SHOW_SPRITE)
+            && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
+        {
+            for e in 0..usize::from(self.spr_extra_count) {
+                let off = pixel_x.wrapping_sub(u16::from(self.spr_extra_x[e]));
+                if off >= 8 {
+                    continue;
+                }
+                let bit = 7 - off;
+                let lo = (self.spr_extra_lo[e] >> bit) & 1;
+                let hi = (self.spr_extra_hi[e] >> bit) & 1;
+                let val = (hi << 1) | lo;
+                if val != 0 {
+                    spr_idx = val;
+                    spr_pal = self.spr_extra_attr[e] & 0x03;
+                    spr_priority_front = (self.spr_extra_attr[e] & 0x20) == 0;
+                    break;
+                }
+            }
+        }
 
         // Combine BG + sprite per priority.
         //
@@ -6342,6 +6425,92 @@ impl Ppu {
             }
         }
         // Else: shift regs already cleared in tick_sprite_eval_per_dot.
+
+        // v3.1.0 (`T-SPRITE-LIMIT`): after the eighth REAL fetch, the extra
+        // sprites for the same line. A no-op unless the option is on.
+        if slot == 7 {
+            self.fetch_extra_sprites(bus, next_line, sprite_height);
+        }
+    }
+
+    /// v3.1.0 (`T-SPRITE-LIMIT`, FE-02): collect and fetch the sprites beyond
+    /// the eighth for the next scanline, for display only.
+    ///
+    /// Runs once per line, after the eighth real sprite fetch, and only when
+    /// the option is on, evaluation found eight (so the hardware dropped
+    /// some), the line is visible, and the board's CHR reads are pure
+    /// ([`PpuBus::chr_reads_are_pure`]: MMC2 / MMC4 latch on CHR reads, the
+    /// J.Y. ASIC clocks an IRQ on them, and two boards latch address bits, so
+    /// on those the option draws eight as stock). The fetch calls neither
+    /// `observe_a12_addr` nor anything else a mapper can see beyond the read,
+    /// so A12, mapper IRQs and every emulated byte stay exactly stock.
+    ///
+    /// Which sprites: an aligned walk of primary OAM from entry 0, skipping
+    /// the first eight in range (the ones the hardware draws when evaluation
+    /// starts at OAMADDR 0, as it does on every normally rendered line). A line
+    /// whose evaluation starts misaligned (a mid-frame `$2003` write, a test
+    /// construction) can draw a slightly different set; it is a display
+    /// enhancement, not hardware behaviour.
+    fn fetch_extra_sprites<B: PpuBus>(&mut self, bus: &mut B, next_line: i16, height: i16) {
+        self.spr_extra_count = 0;
+        if !self.sprite_limit_disabled
+            || self.spr_count < 8
+            || !(0..240).contains(&self.scanline)
+            || !bus.chr_reads_are_pure()
+        {
+            return;
+        }
+        let mut in_range = 0usize;
+        for n in 0..64usize {
+            let y = i16::from(self.oam[n * 4]);
+            let row = next_line.wrapping_sub(y);
+            if row < 0 || row >= height {
+                continue;
+            }
+            in_range += 1;
+            if in_range <= 8 {
+                continue;
+            }
+            let count = usize::from(self.spr_extra_count);
+            if count == MAX_EXTRA_SPRITES {
+                break;
+            }
+            let tile = self.oam[n * 4 + 1];
+            let attr = self.oam[n * 4 + 2] & 0xE3;
+            let x = self.oam[n * 4 + 3];
+            let flip_v = attr & 0x80 != 0;
+            #[allow(clippy::cast_sign_loss)] // `row` is in 0..height, checked above
+            let mut r = row as u16;
+            let (table, tile_idx) = if height == 16 {
+                if flip_v {
+                    r = 15 - r;
+                }
+                let base = tile & 0xFE;
+                let idx = if r >= 8 { base.wrapping_add(1) } else { base };
+                r &= 7;
+                (u16::from(tile & 0x01) << 12, idx)
+            } else {
+                if flip_v {
+                    r = 7 - r;
+                }
+                (
+                    u16::from(self.ctrl.contains(PpuCtrl::SPRITE_PATTERN_HIGH)) << 12,
+                    tile,
+                )
+            };
+            let addr = table | (u16::from(tile_idx) << 4) | r;
+            let mut lo = bus.ppu_read_sprite(addr);
+            let mut hi = bus.ppu_read_sprite(addr | 0x08);
+            if attr & 0x40 != 0 {
+                lo = reverse_bits(lo);
+                hi = reverse_bits(hi);
+            }
+            self.spr_extra_lo[count] = lo;
+            self.spr_extra_hi[count] = hi;
+            self.spr_extra_attr[count] = attr;
+            self.spr_extra_x[count] = x;
+            self.spr_extra_count += 1;
+        }
     }
 
     fn advance_dot(&mut self) {

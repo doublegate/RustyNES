@@ -93,12 +93,20 @@ pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 ///   `$1000` differently (T-MMC3-BG-A12), and a format-4 movie does not say
 ///   which behaviour it assumes, so v4 is refused. A v5 movie from another
 ///   epoch is refused with [`MovieError::EpochMismatch`].
-pub const MOVIE_FORMAT_VERSION: u16 = 5;
+/// - **v6 (v3.1.0)**: the [`crate::HardwareOptions`] record gains the
+///   CPU-multiplier overclock and the sprite-limit option (`T-CPU-OVERCLOCK`,
+///   `T-SPRITE-LIMIT`). A v5 options record is one field shorter and would
+///   decode as garbage, so v5 is refused. No replayable movie is lost: every
+///   v5 movie was recorded under epoch 1 or 2, which v3.1.0 (epoch 3) refuses
+///   anyway.
+pub const MOVIE_FORMAT_VERSION: u16 = 6;
 
-/// The oldest container version this build replays: v5, the first to record
-/// the emulation epoch (v4 identified the board, v3 the options). Older
-/// movies fail with [`MovieError::FormatTooOld`].
-pub const MIN_MOVIE_FORMAT_VERSION: u16 = 5;
+/// The oldest container version this build replays: v6.
+///
+/// v6 is the first whose options record carries the CPU overclock and the
+/// sprite-limit option (v5 first recorded the emulation epoch, v4 the board,
+/// v3 the options). Older movies fail with [`MovieError::FormatTooOld`].
+pub const MIN_MOVIE_FORMAT_VERSION: u16 = 6;
 
 /// Peek a `.rnm` blob's header to learn its recording epoch.
 ///
@@ -2391,7 +2399,32 @@ mod tests {
         bytes[8..10].copy_from_slice(&4u16.to_le_bytes());
         assert!(matches!(
             Movie::deserialize(&bytes),
-            Err(MovieError::FormatTooOld { got: 4, min: 5 })
+            Err(MovieError::FormatTooOld {
+                got: 4,
+                min: MIN_MOVIE_FORMAT_VERSION
+            })
+        ));
+    }
+
+    /// v3.1.0: a format-5 movie (v3.0.x) carries the options record without
+    /// the CPU overclock and the sprite-limit option, so it is refused as too
+    /// old rather than decoded one field short.
+    #[test]
+    fn a_format_5_movie_is_refused_as_too_old() {
+        assert_eq!(MIN_MOVIE_FORMAT_VERSION, 6);
+        let mut bytes = Movie::new(
+            Region::Ntsc,
+            [0; 32],
+            crate::HardwareOptions::default(),
+            None,
+            StartPoint::PowerOn,
+            vec![],
+        )
+        .serialize();
+        bytes[8..10].copy_from_slice(&5u16.to_le_bytes());
+        assert!(matches!(
+            Movie::deserialize(&bytes),
+            Err(MovieError::FormatTooOld { got: 5, min: 6 })
         ));
     }
 

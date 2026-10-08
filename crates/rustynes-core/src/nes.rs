@@ -159,6 +159,16 @@ pub struct TraceRec {
 /// host and every file format meets the same bound.
 pub const MAX_EXTRA_SCANLINES: u16 = 80;
 
+/// The largest CPU-multiplier overclock the core accepts (v3.1.0,
+/// `T-CPU-OVERCLOCK`).
+///
+/// [`Nes::set_cpu_overclock`] clamps to `1..=MAX_CPU_OVERCLOCK`, and a movie's
+/// options record outside that range is refused. The bound is the master
+/// clock: the CPU divider must stay at least 3 for the read / write split of
+/// a cycle (NTSC 12 / 4 = 3), and `x4` is already four times the CPU time a
+/// frame has.
+pub const MAX_CPU_OVERCLOCK: u8 = 4;
+
 /// Top-level NES emulator handle.
 ///
 /// Owns the CPU, PPU, mapper, RAM, and controller stub. Construct via
@@ -719,7 +729,11 @@ impl Nes {
         // Hard cap: at NTSC the frame budget is 29,780.5 CPU cycles. Run
         // up to 5x that before bailing — gives breathing room for late
         // VBL detection or DMA-stall heavy frames before declaring "stuck".
+        //
+        // v3.1.0: scaled by the CPU overclock, which puts up to
+        // MAX_CPU_OVERCLOCK times as many CPU cycles into one frame.
         const MAX_CYCLES_PER_FRAME: u64 = 150_000;
+        let max_cycles = MAX_CYCLES_PER_FRAME * u64::from(self.bus.cpu_overclock());
         let start = self.bus.cycle();
         // v2.3.7 "Overtone" — anchor this frame's mix trace. The trace is
         // per-frame (the index IS the cycle offset from here); the REGISTER
@@ -765,7 +779,7 @@ impl Nes {
             if self.cpu.is_jammed() {
                 break;
             }
-            if self.bus.cycle().wrapping_sub(start) > MAX_CYCLES_PER_FRAME {
+            if self.bus.cycle().wrapping_sub(start) > max_cycles {
                 break;
             }
             #[cfg(feature = "debug-hooks")]
@@ -3010,7 +3024,8 @@ impl Nes {
     /// default) is **byte-identical** to stock NES timing — `AccuracyCoin`, the
     /// commercial oracle, and nestest (which never set it) are unaffected.
     /// **Off by default**; a frontend config knob, not part of the save-state.
-    /// Distinct from the CPU-multiplier overclock (a v2.0 timebase item).
+    /// Distinct from the CPU-multiplier overclock ([`Self::set_cpu_overclock`],
+    /// v3.1.0), which shortens the CPU cycle instead of lengthening the frame.
     ///
     /// Clamped to [`MAX_EXTRA_SCANLINES`] (v2.9.9, NC-11): the cap used to
     /// live only in the desktop frontend, so a movie's options record could
@@ -3023,6 +3038,67 @@ impl Nes {
             lines
         };
         self.bus.set_extra_scanlines(lines);
+    }
+
+    /// v3.1.0 (`T-CPU-OVERCLOCK`, FE-01) — set the CPU-multiplier overclock:
+    /// the CPU runs `k` times faster against an unchanged PPU, so a game gets
+    /// `k` times the CPU time per frame.
+    ///
+    /// It divides the region's master-clock CPU divider (NTSC 12 -> 6 / 4 / 3;
+    /// PAL 16 and Dendy 15 round down, so `x3` on PAL is x3.2). The APU, the
+    /// DMC, every mapper's CPU-cycle hook (the VRC / FME-7 / N163 IRQ
+    /// counters) and the PPU's open-bus and post-reset timers stay at the
+    /// STOCK rate, so the pitch, the music tempo and the cycle-timed raster
+    /// IRQs are unchanged: what speeds up is the game's own code. DMA follows
+    /// the APU's get/put phase, so a DMA takes about `k` times as many CPU
+    /// cycles and the same real time.
+    ///
+    /// `1` (the default) is stock and byte-identical to a build without the
+    /// option. `0` is treated as `1`, and values above [`MAX_CPU_OVERCLOCK`]
+    /// clamp to it. Configuration, not save-state: the host re-applies it,
+    /// and movies and netplay carry it in [`crate::HardwareOptions`]. Not
+    /// hardware behaviour: no real console runs its CPU faster than its APU.
+    pub const fn set_cpu_overclock(&mut self, k: u8) {
+        let k = if k == 0 {
+            1
+        } else if k > MAX_CPU_OVERCLOCK {
+            MAX_CPU_OVERCLOCK
+        } else {
+            k
+        };
+        self.bus.set_cpu_overclock(k);
+    }
+
+    /// v3.1.0 — the CPU-multiplier overclock (`1` = stock).
+    #[must_use]
+    pub const fn cpu_overclock(&self) -> u8 {
+        self.bus.cpu_overclock()
+    }
+
+    /// v3.1.0 (`T-SPRITE-LIMIT`, FE-02) — draw the sprites beyond the eighth
+    /// on a scanline, removing sprite flicker.
+    ///
+    /// **Render-only.** Sprite evaluation, secondary OAM, the overflow flag,
+    /// sprite-0 hit and every real sprite fetch (with its A12 edges, which an
+    /// MMC3 counts) are exactly stock, so the game sees no difference; only
+    /// the picture does. The extra sprites draw behind all eight hardware ones.
+    /// On the boards whose CHR reads have an effect (MMC2, MMC4, the J.Y.
+    /// ASIC, Bandai 96, Nanjing 163; `Mapper::chr_reads_are_pure`) the option
+    /// draws eight, as stock, because the extra pattern reads would change
+    /// emulation there.
+    ///
+    /// Off by default. Configuration, not save-state; carried across a power
+    /// cycle, and in movies and netplay by [`crate::HardwareOptions`] (the
+    /// picture differs, so a movie's frame hashes and a netplay peer's desync
+    /// checks depend on it).
+    pub const fn set_sprite_limit_disabled(&mut self, disabled: bool) {
+        self.bus.set_sprite_limit_disabled(disabled);
+    }
+
+    /// v3.1.0 — whether the sprites beyond the eighth are drawn.
+    #[must_use]
+    pub const fn sprite_limit_disabled(&self) -> bool {
+        self.bus.sprite_limit_disabled()
     }
 
     /// v1.7.0 F3 — the configured extra-scanline overclock count (`0` = stock).
@@ -4276,6 +4352,35 @@ mod tests {
         }
         let got: Vec<u8> = window.map(|a| nes.bus.mapper.cpu_read(a)).collect();
         (Some(RamSite::PrgWindow), sweep_diff(&want, &got))
+    }
+
+    /// v3.1.0 — `debug_peek_ppu` is the debugger's and the HD-pack
+    /// compositor's "side-effect-free" CHR read. On the five boards whose CHR
+    /// reads change them (`Mapper::chr_reads_are_pure`), it used to flip the
+    /// board: reading all of CHR on MMC2 or MMC4 (the pattern viewer does)
+    /// passes tiles `$FD`/`$FE` and switches a CHR latch, so opening a debugger
+    /// panel, or hashing a tile for an HD pack, changed the game. Every board's
+    /// whole-machine state must be unchanged by a full sweep of peeks.
+    #[test]
+    fn debug_peek_ppu_changes_no_board() {
+        // The five impure families' ids, and MMC3 (4) as a pure control.
+        for id in [9u16, 10, 35, 90, 96, 163, 209, 211, 4] {
+            let rom = synth_board_rom(id, SweepHeader::Ines1, 128, 128);
+            let Ok(mut nes) = Nes::from_rom(&rom) else {
+                panic!("mapper {id} builds");
+            };
+            nes.run_frame();
+            let before = nes.snapshot();
+            for a in 0u16..0x2000 {
+                let _ = nes.bus.debug_peek_ppu(a);
+            }
+            let after = nes.snapshot();
+            assert!(
+                before == after,
+                "mapper {id}: peeking CHR changed the machine ({} differing snapshot bytes)",
+                before.iter().zip(&after).filter(|(a, b)| a != b).count()
+            );
+        }
     }
 
     /// CHR-RAM round trip through the whole-machine snapshot, through PPU

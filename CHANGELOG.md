@@ -30,8 +30,11 @@ cycle-accurate core later replaced.
 
 - **Movies and netplay from v3.0.1 are refused, and so are its save states.**
   `EMULATION_EPOCH` rises from 2 to 3 (the two accuracy fixes below change bus
-  cycles and sprite evaluation), and the BUS save-state section moves to
-  version 3 for the DMC latch it now carries.
+  cycles and sprite evaluation). Save states: BUS section version 3 (the DMC
+  latch and the overclock's position) and `PPU_SNAPSHOT_VERSION` 13 (the
+  sprite-limit option's pending sprites). Movies: `.rnm` format 6 (the options
+  record gains the two options below). Netplay: protocol 7, magic `"RNE7"`; a
+  v3.0.x peer is refused as another emulator version, naming its epoch.
 
 ### Fixed
 
@@ -56,9 +59,25 @@ cycle-accurate core later replaced.
   stale when an address column was added. The eight `Unofficial Immediates`
   rows are now spelled `immediate`, as the ROM prints them.
 - **The AccuracyCoin mirror ROM is rebuilt from `f5f41dc2`.**
+- **Opening the pattern viewer, or using an HD pack, could change the game on
+  MMC2 / MMC4 boards** (Punch-Out!!, Fire Emblem). Their "side-effect-free" CHR
+  read went through the cartridge's normal read, which flips a CHR latch on
+  tiles `$FD`/`$FE`; the same held on three other boards. Those reads now
+  leave the cartridge exactly as it was.
 
 ### Added
 
+- **CPU overclock** (`T-CPU-OVERCLOCK`, Settings > Enhancements): the CPU runs
+  2 to 4 times faster against the same picture and sound, removing slowdown.
+  The APU, mapper IRQ counters and PPU timers stay at the stock rate, so pitch,
+  tempo and raster effects are unchanged. Unlike the extra-scanline overclock,
+  movies record it and replay with it, and netplay players must match.
+- **"Disable 8-sprite-per-scanline limit" now works** (`T-SPRITE-LIMIT`; it was
+  shown and saved but inert). It draws the dropped sprites behind the eight the
+  console shows, and changes nothing the game can see: the overflow flag, the
+  sprite fetches and every CPU cycle stay exact. It is skipped on the five
+  boards whose pattern reads change the cartridge (MMC2, MMC4, the J.Y. ASIC,
+  Bandai 96, Nanjing 163).
 - **A test now enforces the emulation-epoch rule** (`T-EPOCH-FINGERPRINT`).
   It fingerprints seven test ROMs (frames, audio, RAM, CPU cycles) and fails
   when that output moves while `EMULATION_EPOCH` still equals the last

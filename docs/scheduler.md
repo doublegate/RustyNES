@@ -135,6 +135,33 @@ fractional or master-clock representation because its PPU:CPU ratio is 3.2.
 APU frame-counter tables also differ by region; do not scale NTSC cycle counts
 for PAL.
 
+### CPU-multiplier overclock (v3.1.0, `T-CPU-OVERCLOCK`)
+
+`Nes::set_cpu_overclock(k)`, `k` in `1..=4` (`MAX_CPU_OVERCLOCK`), divides the
+region's master-clock CPU divider: NTSC 12 becomes 6, 4 or 3; PAL 16 and Dendy
+15 round down (PAL x3 is a divider of 5, x3.2). The PPU's divider is untouched,
+so the CPU gets `k` times the cycles per frame. The smallest divider, 3, still
+leaves both the read split `(0, 3)` and the write split `(2, 1)` valid.
+
+Everything that measures console time stays at the stock rate: the APU (and
+with it the DMC), the mappers' `notify_cpu_cycle` IRQ counters, and the PPU's
+open-bus decay and post-reset timers. The bus accumulates `overclock_debt`, the
+master clocks the stock-rate domain is owed: each CPU cycle adds the effective
+divider, and a **stock step** (those devices advance once) runs whenever the
+debt reaches the stock divider. The APU is handed its own counter (`apu_cycle`)
+instead of the CPU's, so its put/get phase advances once per stock step. DMA
+follows that phase, so a DMA takes about `k` times as many CPU cycles and the
+same real time.
+
+At `k = 1` the branch is never taken: every cycle is a stock step and the APU
+gets the CPU counter, so the output is byte-identical (the epoch fingerprint
+gate's whole panel runs at `k = 1`). The debt and `apu_cycle` are in the BUS
+save-state section (version 3), because run-ahead restores mid-run; the
+multiplier is configuration, carried by `HardwareOptions` in movies and the
+netplay `config_digest`. `run_frame`'s cycle budget scales by `k`. Not hardware
+behaviour: no console runs its CPU faster than its APU.
+Tests: `crates/rustynes-test-harness/tests/cpu_overclock.rs`.
+
 ### Frame complete
 
 The PPU reports `frame_complete()` when it transitions from scanline 240 to 241 (i.e., the start of vertical blank). The frontend consumes the framebuffer at this point.

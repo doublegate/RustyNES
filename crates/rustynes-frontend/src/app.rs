@@ -2112,6 +2112,8 @@ impl App {
             // take the lock until they are in place. The overclock applies at
             // the top of each produced frame (v2.9.7).
             emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
+            emu.cpu_overclock = self.config.enhancements.cpu_overclock;
+            emu.disable_sprite_limit = self.config.enhancements.disable_sprite_limit;
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(raw) = raw_cheats {
                 emu.raw_cheats = raw;
@@ -6835,7 +6837,14 @@ impl App {
     /// (v2.9.8), and a Power Cycle leaves it alone (it is not console state).
     fn apply_overclock(&self) {
         let lines = self.config.enhancements.overclock_scanlines;
-        self.emu.lock().overclock_scanlines = lines;
+        let cpu = self.config.enhancements.cpu_overclock;
+        let sprites = self.config.enhancements.disable_sprite_limit;
+        let mut emu = self.emu.lock();
+        emu.overclock_scanlines = lines;
+        // v3.1.0 — the CPU-multiplier overclock and the sprite-limit option
+        // ride the same push.
+        emu.cpu_overclock = cpu;
+        emu.disable_sprite_limit = sprites;
     }
 
     /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
@@ -9741,6 +9750,8 @@ impl App {
             // v2.9.8 — the overclock lives on `EmuCore` (applied at the top of
             // each produced frame); set before the console is installed.
             emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
+            emu.cpu_overclock = self.config.enhancements.cpu_overclock;
+            emu.disable_sprite_limit = self.config.enhancements.disable_sprite_limit;
             // Capture the cartridge's nominal frame duration — consults the
             // cartridge region (NTSC: ~16.64 ms, PAL/Dendy: ~20 ms).
             emu.frame_duration = nes.frame_duration();

@@ -111,3 +111,21 @@ What is recorded and what is not, knob by knob, is the survey table in
 - **v3.0.0 raises it to format 5 for the core timing epoch.** That adds no
   option; it records which emulator behaviour a movie was recorded under. See
   [ADR 0045](0045-a-core-timing-epoch-guards-movies-and-netplay.md).
+
+## Amendment (2026-10-07, v3.1.0): two more options, format 6, protocol 7
+
+- **`HardwareOptions` gains `cpu_overclock`** (`T-CPU-OVERCLOCK`, encoded after
+  the extra-scanline count) and, in the same release, the sprite-limit option
+  (`T-SPRITE-LIMIT`), decided together as D22 with one format and one
+  protocol bump for both.
+- **`.rnm` format 6, minimum 6.** A format-5 options record is shorter and
+  would decode as garbage, so it is refused as too old, by this ADR's own rule.
+- **Netplay protocol 7, magic `"RNE7"`.** The `Sync` layout is protocol 6's;
+  the configuration hash's input changed, so the magic changes, and a
+  protocol-6 peer is refused as another emulator version (with its epoch)
+  rather than as a settings mismatch.
+- **The CPU overclock is carried, not held at stock.** The extra-scanline
+  overclock (v2.9.7) is forced to stock while a movie records and under
+  netplay, because it predates this ADR's carriage. The CPU overclock is
+  recorded as set and replayed with it, and peers must match: the carriage
+  this ADR exists for, applied as intended.

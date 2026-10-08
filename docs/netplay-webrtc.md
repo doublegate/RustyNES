@@ -173,7 +173,8 @@ cartridge board and every `HardwareOptions` field), and a difference fails with
 options (ADR 0044). From v3.0.0 (`PROTOCOL_VERSION` 6, magic `"RNE6"`, ADR
 0045) the identity also carries the emulation epoch. Another epoch, or an
 older RustyNES's `Sync` (`"RNES"`, `"RNE5"`, decoded at exactly its own length
-and magic), fails with `MeshError::EmulatorMismatch` and its counterparts, so
+and magic, and since v3.1.0's protocol 7 / `"RNE7"` also v3.0.x's `"RNE6"`,
+which names its epoch), fails with `MeshError::EmulatorMismatch` and its counterparts, so
 a mixed-version session is refused with a reason instead of timing out.
 **Only a v3.0.0-or-later peer can give that reason.** A v2.9.9 or older peer
 ignores the `"RNE6"` magic as a foreign datagram and still times out on its

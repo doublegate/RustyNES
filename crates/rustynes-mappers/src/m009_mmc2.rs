@@ -173,6 +173,12 @@ impl Mmc2 {
 }
 
 impl Mapper for Mmc2 {
+    /// v3.1.0: not pure -- a read of tile $FD/$FE switches its CHR latch, so the PPU's display-only
+    /// "disable sprite limit" reads are not made on this board.
+    fn chr_reads_are_pure(&self) -> bool {
+        false
+    }
+
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {

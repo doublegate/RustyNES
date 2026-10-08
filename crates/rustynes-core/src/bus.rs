@@ -578,6 +578,37 @@ pub struct SystemBus {
     cpu_div_cached: u8,
     ppu_div_cached: u8,
 
+    /// v3.1.0 (`T-CPU-OVERCLOCK`): the CPU-multiplier overclock, `1..=4`
+    /// ([`crate::MAX_CPU_OVERCLOCK`]); `1` is stock. Configuration, like the
+    /// extra-scanline overclock: not part of the save-state, re-applied by
+    /// the host (and by a movie's or netplay session's options record).
+    cpu_overclock: u8,
+    /// The master clocks one CPU cycle takes under the overclock:
+    /// `cpu_div_cached / cpu_overclock`, rounded down, so `x3` on PAL (16)
+    /// is 5 (x3.2) and `x2` on Dendy (15) is 7 (x2.14). Equals
+    /// `cpu_div_cached` at `x1`. This is what [`Bus::cpu_divider`] returns.
+    cpu_div_effective: u8,
+    /// Master clocks the stock-rate domain is owed, `0..cpu_div_cached`.
+    ///
+    /// Under the overclock the APU, the DMC, the mappers' CPU-cycle hooks and
+    /// the PPU's open-bus / post-reset timers stay at the STOCK rate, so a
+    /// game gets more CPU time per frame without a pitch change, a faster
+    /// tempo or cycle-timed mapper IRQs firing early. Each CPU cycle adds
+    /// `cpu_div_effective`; a stock step runs whenever this reaches
+    /// `cpu_div_cached`. Unused (always 0) at `x1`, where every CPU cycle is a
+    /// stock step. In the BUS save-state section: run-ahead restores mid-run.
+    overclock_debt: u8,
+    /// The stock-rate domain's own cycle counter under the overclock, handed
+    /// to the APU in place of the CPU cycle counter (the APU derives its
+    /// put/get phase from it). Re-based to [`Self::cycle`] when the overclock
+    /// is switched on, so the phase continues; unused at `x1`. In the BUS
+    /// save-state section.
+    apu_cycle: u64,
+    /// Whether the cycle in progress is a stock step (set in `cpu_clock`,
+    /// read by `cpu_clock_apu_dmc` at the same cycle's end). Always `true` at
+    /// `x1`. Transient: a snapshot is taken between cycles.
+    stock_step: bool,
+
     /// External CPU data bus latch: last value driven onto the bus
     /// by ANY device (CPU, DMC DMA, OAM DMA conflict reads).
     ///
@@ -970,6 +1001,11 @@ impl SystemBus {
             ppu_clock: 0,
             cpu_div_cached,
             ppu_div_cached,
+            cpu_overclock: 1,
+            cpu_div_effective: cpu_div_cached,
+            overclock_debt: 0,
+            apu_cycle: 0,
+            stock_step: true,
             open_bus: 0,
             internal_data_bus: 0,
             last_read_addr: 0,
@@ -1190,6 +1226,11 @@ impl SystemBus {
         // CPU/PPU phase into the "new" boot, diverging timing-sensitive games
         // from frame 0. Mirrors the `with_sample_rate` initial values.
         self.ppu_clock = 0;
+        // The stock-rate domain restarts with the clock; the multiplier itself
+        // is configuration and survives the power cycle.
+        self.overclock_debt = 0;
+        self.apu_cycle = 0;
+        self.stock_step = true;
         self.dma_byte = 0;
         self.dma_page = 0;
         self.last_read_addr = 0;
@@ -1353,6 +1394,43 @@ impl SystemBus {
     #[must_use]
     pub const fn extra_scanlines(&self) -> u16 {
         self.ppu.extra_scanlines()
+    }
+
+    /// v3.1.0 (`T-CPU-OVERCLOCK`) — set the CPU-multiplier overclock. The
+    /// caller ([`crate::Nes::set_cpu_overclock`]) has already clamped `k` to
+    /// `1..=MAX_CPU_OVERCLOCK`. Switching it ON re-bases the stock-rate
+    /// domain's cycle counter on the CPU's, so the APU's put/get phase
+    /// continues across the switch; switching it OFF hands the APU the CPU
+    /// counter again, as stock does.
+    pub const fn set_cpu_overclock(&mut self, k: u8) {
+        if k == self.cpu_overclock {
+            return;
+        }
+        if self.cpu_overclock == 1 {
+            self.apu_cycle = self.cycle;
+        }
+        self.cpu_overclock = k;
+        self.cpu_div_effective = self.cpu_div_cached / k;
+        self.overclock_debt = 0;
+        self.stock_step = true;
+    }
+
+    /// v3.1.0 — the CPU-multiplier overclock (`1` = stock).
+    #[must_use]
+    pub const fn cpu_overclock(&self) -> u8 {
+        self.cpu_overclock
+    }
+
+    /// v3.1.0 (`T-SPRITE-LIMIT`) — draw the sprites beyond the eighth on a
+    /// scanline (forwarded to the PPU).
+    pub const fn set_sprite_limit_disabled(&mut self, disabled: bool) {
+        self.ppu.set_sprite_limit_disabled(disabled);
+    }
+
+    /// v3.1.0 — whether the sprites beyond the eighth are drawn.
+    #[must_use]
+    pub const fn sprite_limit_disabled(&self) -> bool {
+        self.ppu.sprite_limit_disabled()
     }
 
     /// v2.1.8 A1 — enable/disable the specialized visible-scanline fast dot
@@ -1656,7 +1734,21 @@ impl SystemBus {
     pub fn debug_peek_ppu(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => self.mapper.ppu_read(addr),
+            // v3.1.0: on the five boards whose CHR read changes them (MMC2 and
+            // MMC4 latches, the J.Y. ASIC's read-clocked IRQ, Bandai 96 and
+            // Nanjing 163; `Mapper::chr_reads_are_pure`) the read is bracketed
+            // by the board's own save / load, so a debugger panel or an HD-pack
+            // tile hash no longer changes the game. Until v3.1.0 opening the
+            // pattern viewer on Punch-Out!! flipped its CHR latch. Free on every
+            // other board.
+            0x0000..=0x1FFF if self.mapper.chr_reads_are_pure() => self.mapper.ppu_read(addr),
+            0x0000..=0x1FFF => {
+                let saved = self.mapper.save_state();
+                let v = self.mapper.ppu_read(addr);
+                let restored = self.mapper.load_state(&saved);
+                debug_assert!(restored.is_ok(), "a board must reload its own state");
+                v
+            }
             0x2000..=0x3EFF => {
                 let addr = if addr >= 0x3000 && !self.mapper.nametable_unfolded() {
                     addr - 0x1000
@@ -2787,6 +2879,8 @@ impl SystemBus {
             // identical across feature builds.
             dmc_halt: self.dmc_halt,
             dmc_load_write_delayed: self.dmc_load_write_delayed,
+            overclock_debt: self.overclock_debt,
+            apu_cycle: self.apu_cycle,
             uni_oam_active: self.uni_oam_active,
             uni_oam_halt: self.uni_oam_halt,
             uni_oam_aligned: self.uni_oam_aligned,
@@ -2819,6 +2913,18 @@ impl SystemBus {
         // reproduces them EXACTLY instead of by assumption.
         self.dmc_halt = s.dmc_halt;
         self.dmc_load_write_delayed = s.dmc_load_write_delayed;
+        // The overclock's stock-rate position. The multiplier itself is
+        // configuration (re-applied by the host); a debt the current divider
+        // could not have produced is clamped below one stock cycle so a stock
+        // step still comes due.
+        let max_debt = self.cpu_div_cached.saturating_sub(1);
+        self.overclock_debt = if s.overclock_debt > max_debt {
+            max_debt
+        } else {
+            s.overclock_debt
+        };
+        self.apu_cycle = s.apu_cycle;
+        self.stock_step = true;
         self.uni_oam_active = s.uni_oam_active;
         self.uni_oam_halt = s.uni_oam_halt;
         self.uni_oam_aligned = s.uni_oam_aligned;
@@ -3758,6 +3864,10 @@ impl PpuBus for PpuBusAdapter<'_> {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         self.mapper.ppu_read(addr & 0x1FFF)
     }
+
+    fn chr_reads_are_pure(&self) -> bool {
+        self.mapper.chr_reads_are_pure()
+    }
     fn ppu_read_sprite(&mut self, addr: u16) -> u8 {
         self.mapper.ppu_read_sprite(addr & 0x1FFF)
     }
@@ -3852,7 +3962,7 @@ impl SystemBus {
     /// the default `mix_audio` (0.0 after the f32 conversion — identical),
     /// and boards without the frame hook have the default no-op. Skipping
     /// both saves two virtual calls + an f32 divide per CPU cycle.
-    fn apu_advance_one(&mut self) {
+    fn apu_advance_one(&mut self, apu_cycle: u64) {
         // `Mapper::mix_audio` returns i32 (widened from i16 in v2.2.3 so the
         // Sunsoft 5B's ~3.6x full-volume level is representable); scale it to
         // about the APU mixer's own [-0.5, 0.5] range. `as f32` rather than
@@ -3869,7 +3979,9 @@ impl SystemBus {
         // bus cycle counter (incremented earlier in this same `cpu_clock`)
         // instead of letting it keep an independent `+= 1` mirror (the
         // one-clock collapse, promoted to the only path in v2.0.0 beta.4).
-        self.apu.set_canonical_cycle(self.cycle);
+        // v3.1.0: `apu_cycle` is that same counter at `x1`, and the stock-rate
+        // domain's own counter under the CPU overclock.
+        self.apu.set_canonical_cycle(apu_cycle);
         self.apu.tick_with_external(mapper_sample);
         if self.mapper_caps.frame_event_hook {
             let ev = self.apu.last_frame_events();
@@ -4238,7 +4350,8 @@ impl Bus for SystemBus {
     /// Drives the CPU loop's `master_clock` advance + read/write split so the
     /// CPU<->PPU phase is 3:1 NTSC, 3.2:1 PAL, 3:1 Dendy.
     fn cpu_divider(&self) -> u64 {
-        u64::from(self.cpu_div_cached)
+        // The overclocked CPU cycle length; `cpu_div_cached` at `x1`.
+        u64::from(self.cpu_div_effective)
     }
 
     /// R1 double catch-up: tick whole PPU dots while
@@ -4336,6 +4449,24 @@ impl Bus for SystemBus {
             }
         }
         self.cycle = self.cycle.wrapping_add(1);
+        // v3.1.0 (`T-CPU-OVERCLOCK`): under the overclock only some CPU cycles
+        // are stock steps, and everything below this point that measures
+        // console time (the PPU's decay / post-reset timers, the mappers'
+        // M2-cycle IRQ counters, the APU) runs on those only. At `x1` the
+        // branch is never taken: every cycle is a stock step and the APU gets
+        // the CPU counter, exactly as before.
+        let apu_cycle = if self.cpu_overclock == 1 {
+            self.cycle
+        } else {
+            self.overclock_debt += self.cpu_div_effective;
+            self.stock_step = self.overclock_debt >= self.cpu_div_cached;
+            if !self.stock_step {
+                return;
+            }
+            self.overclock_debt -= self.cpu_div_cached;
+            self.apu_cycle = self.apu_cycle.wrapping_add(1);
+            self.apu_cycle
+        };
         self.ppu.on_cpu_cycle();
         // v2.8.0 Phase 4 — skip the virtual dispatch on boards whose
         // `notify_cpu_cycle` is the default no-op (capability-flag cache).
@@ -4345,7 +4476,7 @@ impl Bus for SystemBus {
         // F-2: `apu_advance_one` (start) ticks the whole APU EXCEPT the DMC
         // byte-timer (gated out by `dmc_driven_externally`); the DMC is ticked
         // at end-of-cycle by `cpu_clock_apu_dmc`.
-        self.apu_advance_one();
+        self.apu_advance_one(apu_cycle);
         // (W2 $2007 Stress) The deferred $2007 render-buffer reload is now
         // PPU-dot-scheduled and consumed inside `Ppu::tick` — the prior
         // per-CPU-cycle `apply_pending_render_buffer` hook here was quantized
@@ -4359,6 +4490,11 @@ impl Bus for SystemBus {
     // matching Mesen's `ProcessCpuClock` at `StartCpuCycle`. So the END-of-cycle
     // DMC tick is a no-op here.
     fn cpu_clock_apu_dmc(&mut self) {
+        // v3.1.0: the DMC end-of-cycle half belongs to the stock step its
+        // start half ran in (always `true` at `x1`).
+        if !self.stock_step {
+            return;
+        }
         // v2.0 Program M (M-1): clock the DMC byte-timer + arm the reload HERE at
         // end-of-cycle (after the CPU's bus access), the references' within-cycle
         // order. When the flag is OFF the byte-timer stays at cycle-start (above,
@@ -4759,10 +4895,20 @@ mod four_score_tests {
         // first unassigned tag is 10.
         let bus = test_bus();
         let mut bad = crate::bus_snapshot::encode_bus(&bus);
-        // The two device tags sit 25 bytes before the end with both ports
-        // empty: mirroring override (1) + controller-run tail (22) +
-        // internal bus (1) follow them, and port 1's tag is the second.
-        let port0_tag = bad.len() - 1 - 22 - 1 - 2;
+        // The two device tags sit before a fixed tail with both ports empty:
+        // mirroring override (1) + controller-run tail (22) + internal bus
+        // (1) + the version-3 fields (DMC write-refusal latch 1, overclock
+        // debt 1, `apu_cycle` 8) follow them, and port 1's tag is the second.
+        //
+        // v3.1.0: the version-3 bytes were missing from this sum for one
+        // commit. With only the 1-byte latch appended the window still read
+        // `[0, 0]` (the mirroring byte and port 1's tag), and the 10 written
+        // into the mirroring byte was refused for ITS own reason, so the
+        // test passed while testing something else. The assertion below
+        // that the window holds the two empty tags is what caught it once
+        // the overclock added 9 more bytes.
+        let tail = 1 + 22 + 1 + (1 + 1 + 8);
+        let port0_tag = bad.len() - tail - 2;
         assert_eq!(&bad[port0_tag..port0_tag + 2], &[0, 0]);
         bad[port0_tag] = 10;
         assert!(matches!(

@@ -98,7 +98,7 @@ pub use movie::{
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;
 pub use nes::{
-    ConsoleModel, FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL,
+    ConsoleModel, FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL, MAX_CPU_OVERCLOCK,
     MAX_EXTRA_SCANLINES, Nes, PowerOnConfig, PowerOnRam,
 };
 // v2.1.7 P5 — re-export the PPU-side hardware-revision knobs at the core surface

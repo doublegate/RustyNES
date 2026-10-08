@@ -125,6 +125,12 @@ impl Nanjing163 {
 }
 
 impl Mapper for Nanjing163 {
+    /// v3.1.0: not pure -- it latches PPU A13 from reads, so the PPU's display-only
+    /// "disable sprite limit" reads are not made on this board.
+    fn chr_reads_are_pure(&self) -> bool {
+        false
+    }
+
     fn sram(&self) -> &[u8] {
         &self.wram
     }
