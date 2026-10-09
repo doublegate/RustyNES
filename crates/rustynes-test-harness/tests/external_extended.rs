@@ -1517,3 +1517,31 @@ fn extended_m165_fire_emblem_gaiden_ch() {
         "extended_m165_fire_emblem_gaiden_ch",
     );
 }
+
+/// One START at frame 400 starts Green Hill Zone act 1; the f1000 checkpoint
+/// is gameplay (Somari, the HUD and the scrolling zone). The game cycles the
+/// supervisor through all three chips while it initialises.
+const M116_SOMARI_PLAY: InputScript = InputScript::StartTap {
+    idle_pre: 400,
+    idle_post: 0,
+    free_run: 799,
+    checkpoints: &[1000],
+};
+
+#[test]
+fn extended_m116_somari() {
+    check(
+        "mapper-116-SomariW/Somari (SOMARI-W) (Unl) [!].zip",
+        M116_SOMARI_PLAY,
+        "extended_m116_somari",
+    );
+}
+
+#[test]
+fn extended_m116_kart_fighter() {
+    check(
+        "mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m116_kart_fighter",
+    );
+}

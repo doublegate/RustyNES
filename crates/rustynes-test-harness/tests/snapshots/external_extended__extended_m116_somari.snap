@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-116-SomariW/Somari (SOMARI-W) (Unl) [!].zip
+rom_sha256=1938c4c9fc2e1de27eeee9ec4b22ad1144f13e38a22503c3c464ea9130552caf
+frames=1200
+fb_bytes=245760
+cycles=35706823
+audio_samples=879798
+audio_fnv1a64=aa3fb3cf0787772f
+checkpoint f1000 fb_fnv1a64=bd784cd0915b21dd

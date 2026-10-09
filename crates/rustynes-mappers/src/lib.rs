@@ -110,6 +110,7 @@ mod m099_vs_system;
 mod m105_nes_event;
 mod m107_magic_dragon107;
 mod m113_ave_nina006;
+mod m116_somari;
 mod m118_txsrom;
 mod m119_tqrom;
 mod m132_txc_22211;
@@ -221,6 +222,7 @@ pub use m099_vs_system::VsSystem;
 pub use m105_nes_event::{NWC_TOURNAMENT_DIP, NesEvent105};
 pub use m107_magic_dragon107::MagicDragon107;
 pub use m113_ave_nina006::Nina006M113;
+pub use m116_somari::Somari116;
 pub use m118_txsrom::TxSrom;
 pub use m119_tqrom::Tqrom;
 pub use m132_txc_22211::Txc132;
@@ -1418,6 +1420,11 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             chr_rom,
             &h,
         )?,
+        // SOMARI-P (Huang-1 / Huang-2): VRC2 / MMC3 / MMC1 by a supervisor.
+        116 => Box::new(
+            Somari116::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
         // MMC3 + MMC2-style CHR latches and a 4 KiB CHR-RAM page.
         165 => mmc3_ext(Mmc3ExtBoardKind::M165, prg_rom, chr_rom, &h)?,
         // Sugar Softec UNL-8237 (215.0) / UNL-8237A (215.1).
