@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-006-FFE-MagicCard/Cosmo Police Galivan (J) [hFFE][p1].zip
+rom_sha256=089e5314970fb3e00e4d572b52686804358958a20d6458f6d8555e48e08a8c24
+frames=2600
+fb_bytes=245760
+cycles=77399530
+audio_samples=1907107
+audio_fnv1a64=a11384b863298ca7
+checkpoint f2600 fb_fnv1a64=865fcaa1d9e8c5cb

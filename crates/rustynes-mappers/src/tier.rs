@@ -153,6 +153,14 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         //   243: Honey Peach, the one game NESdev lists for the SA-020A (the
         //       Sachen titles GoodNES headers as 243 are SA-015 games, mapper
         //       150, and are not evidence for this board).
+        // The v2.9.6 rule capped a page of only Disch's notes, or of masks
+        // marked "probably", at BestEffort. The maintainer's ruling for
+        // v3.2.0 (2026-10-09): such a family is Curated on a D23 record when
+        // its model needed NO behaviour the page leaves unstated, the correct
+        // boot then confirming what the notes give (47, 121, 191, and 165
+        // below). Where the model had to choose an unstated behaviour, the
+        // boot cannot tell a right choice from a lucky one, and the family
+        // stays BestEffort (230, below).
         | 47 | 121 | 154 | 191 | 243 => {
             Some(MapperTier::Curated)
         }
@@ -167,6 +175,14 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // so each release's batch keeps its own rationale beside its ids.
         #[allow(clippy::match_same_arms)]
         114 | 116 | 165 | 182 | 197 | 215 => Some(MapperTier::Curated),
+
+        // --- v3.2.0: families written from a NESdev page with exact register
+        // masks, each also booted on a local dump recorded with its title,
+        // header-excluded hash, frames and a committed screenshot (D23,
+        // `docs/compatibility.md`). A separate arm so each release's batch
+        // reads as one list; the bodies match on purpose.
+        #[allow(clippy::match_same_arms)]
+        6 | 8 | 17 | 158 | 172 | 173 | 207 | 235 | 252 => Some(MapperTier::Curated),
 
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
@@ -194,7 +210,13 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // --- v2.9.6 "Roster" BestEffort: pages that give only Disch's notes
         // (194; 47 and 191 until v3.2.0) or register masks marked "probably"
         // (121 until v3.2.0).
-        | 194 => {
+        | 194
+        // --- v3.2.0 BestEffort: 230 (reset-switched 22-in-1). Its page is
+        // Disch's notes and does not say which mode the board powers on in
+        // or what a console reset does to its register; the model chooses
+        // both, so its correct boot is not Curated evidence (maintainer's
+        // ruling, 2026-10-09; see the D23 arm above).
+        | 230 => {
             Some(MapperTier::BestEffort)
         }
 
@@ -275,6 +297,8 @@ mod tests {
         // v3.2.0: the Datach (new), the D23 promotions, and the new boards in
         // `mmc3_boards_ext.rs` / `m116_somari.rs`.
         157, 47, 121, 154, 191, 243, 114, 116, 165, 182, 197, 215,
+        // v3.2.0: FFE, TXC, Tengen, Taito, Waixing and two multicarts.
+        6, 8, 17, 158, 172, 173, 207, 235, 252,
     ];
 
     #[test]
@@ -301,7 +325,8 @@ mod tests {
     const BEST_EFFORT_IDS: &[u16] = &[
         29, 39, 50, 81, 104, 174, 179, 238, 261, 268, 286, 289, 290, 299, 301, 303, 305, 306, 312,
         320, 336, 348, 349, 366, 513, // v2.9.6 "Roster" (47, 121, 191 Curated since v3.2.0):
-        194,
+        194, // v3.2.0: notes-only with chosen behaviour.
+        230,
     ];
 
     #[test]

@@ -373,7 +373,8 @@ the title, the SHA-256 of the image after its 16-byte header (the key
 The capture is the byte-identity `external_coverage` boot (1,141 frames:
 START tapped five times from frame 240, every 150 frames, then 300 free) unless
 the row names an `external_extended` test; the rows for the families new in
-v3.2.0 (114, 116, 165, 182, 197, 215) give the frame count of their
+v3.2.0 (6, 8, 17, 114, 116, 158, 165, 172, 173, 182, 197, 207, 215, 235,
+252) give the frame count of their
 `external_extended` boot test, whose script the title cell notes where it is
 not plain idle. The dumps live in the gitignored
 `tests/roms/external/`; only the hash, the snapshot and the screenshot are
@@ -403,6 +404,19 @@ committed.
 | 197 | Super Fighter III (Unl) [!] (submapper 0, PRG CRC32 `C333F621`) | `dfb4771a36dbcb05a2753a95810a11164665282ccac4cf7ee52d26d2ed6e5e4f` | 600 | `screenshots/external/mapper-197-SuperFighter3/Super Fighter III (Unl) [!].png` |
 | 215 | Mortal Kombat 3 Extra 60 (Unl) [!] (scramble pattern 4) | `19ccf8d3a3fc37b82d403d0668b00f05125bfcf01ad510dfff73e3ac30dad827` | 600 | `screenshots/external/mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].png` |
 | 215 | `2-in-1 Super 808 (Unl) [p1][!]` (scramble pattern 1, menu) | `4211468e61181f0956f10259ba6091ea3fead297e61ba7f22d7daa227463414a` | 600 | `screenshots/external/mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].png` |
+| 172 | 1991 Du Ma Racing (Ch) [!] | `4a2ec0f51526ad9659b0ede758216ea8f7acae7d49faaed5db46b6acc7be6915` | 600 | `screenshots/external/mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].png` |
+| 173 | Xiao Ma Li (Ch) [!] | `103e27a9b2e2c029fee9a221e2ffe35b5b0b4a3e529a4df88fd6d71f21cf56a4` | 600 | `screenshots/external/mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].png` |
+| 158 | Alien Syndrome (USA) (Unl) | `d676ef6f7aa3b042ae5a0c95a7f07fabb4c3a5fccb3767ae1950713e51189a47` | 2400 (attract demo, in play) | `screenshots/external/mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).png` |
+| 207 | Fudou Myouou Den (Japan) (En) (1.0) (translation, 207 header) | `e33482a375923d692bb5ddd3be71dab63de6a786ec311e8dfc32417a19e48fb3` | 3000 (START held at 1900 and 2100; stage 1 in play) | `screenshots/external/mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).png` |
+| 252 | San Guo Zhi (Ch) | `659837c9b4ffbc6089aa191e6fdc238f50c1c2116a04b993381a5022444cb652` | 3800 (START held at 1500-3300, A at 3600; first personality question on the map) | `screenshots/external/mapper-252-WaixingVRC4/San Guo Zhi (Ch).png` |
+| 235 | `260-in-1 [p1][!]` (staged with a NES 2.0 header; body unchanged) | `0c62f12da81c712a8a9d56e808ff8825d824169cfff05eee2a15c7456f3ceb91` | 1600 (RIGHT, A, START; Mr. Mario I phase 1) | `screenshots/external/mapper-235-GoldenGame/260-in-1 [p1][!] - Mr. Mario I.png` |
+| 6 | Ganbare Goemon! - Karakuri Douchuu (J) [hFFE] (trainer) | `d390d04843f7ea5b72203ac001956df1fd57ec62febccdba1bba43f88377c064` | 2600 (START/START/A/START; in play) | `screenshots/external/mapper-006-FFE-MagicCard/Ganbare Goemon! - Karakuri Douchuu (J) [hFFE].png` |
+| 6 | Cosmo Police Galivan (J) `[hFFE][p1]` | `4d90a01e16203511877166c804282316cac65105d687724fe6d3714f1e4dda9c` | 2600 (same script; status screen of area 1) | `screenshots/external/mapper-006-FFE-MagicCard/Cosmo Police Galivan (J) [hFFE][p1].png` |
+| 6 | Wai Wai World (J) [hFFE] (trainer) | `eccd72962bb3da25541dc818757d71afcd9b9b5530326597187d30a9fca61f25` | 3800 (menu answered, RIGHT held; first stage in play) | `screenshots/external/mapper-006-FFE-MagicCard/Wai Wai World (J) [hFFE].png` |
+| 8 | Mermaids of Atlantis (AVE) `[T+Rus_Guyver]` | `909158c6d116ffcff01ac7fb616bc2f46d48a4230af970ffff95631ca0ee5bbb` | 2600 (START/START/A/START; in play, paused) | `screenshots/external/mapper-008-FFE-GNROM/Mermaids of Atlantis - The Riddle of the Magic Bubble (AVE) [T+Rus_Guyver].png` |
+| 17 | Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE] | `1ea190b0e2ac856d6caeca343812d3553621c5120689224e1650463eb8cf764b` | 2600 (START/START/A/START; in play) | `screenshots/external/mapper-017-FFE-SuperMagicCard/Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE].png` |
+| 17 | Juvei Quest (J) [hFFE] (trainer) | `1915b1b02ae9fbd27962065b7482c744ccc5f938198b4fefbed71588b1207e9c` | 2600 (same script; name entry) | `screenshots/external/mapper-017-FFE-SuperMagicCard/Juvei Quest (J) [hFFE].png` |
+| 17 | Dragon Ball Z III - Ressen Jinzou Ningen (J) `[hFFE][p1]` | `1d5e6d3a998d3828659da2cfe4bbba1c664dad6a337314cf65c4125afdf473e6` | 2600 (same script; story text box) | `screenshots/external/mapper-017-FFE-SuperMagicCard/Dragon Ball Z III - Ressen Jinzou Ningen (J) [hFFE][p1].png` |
 
 Mapper 157 notes: the six Hearto 1G1R NES 2.0 dumps (the GoodNES copies carry
 a mapper-16 header). The screenshots are `external_coverage`'s final frame
@@ -416,6 +430,17 @@ became is in `docs/mappers.md`, mapper 157).
 
 **Not evidence, and why:**
 
+- **230** (*22-in-1 (Reset Based)*) boots correctly, *Contra* at power-on and
+  the menu after a console RESET, but stays **BestEffort**. Its page is
+  Disch's notes and does not say which mode the board powers on in or what a
+  reset does to its register, so the model chooses both; a correct boot cannot
+  tell a right choice from a lucky one (the maintainer's ruling for v3.2.0,
+  2026-10-09). The boot stays pinned by its `external_coverage` snapshot (the
+  reset-to-*Sky Destroyer* run; ADR 0011 keeps BestEffort out of the
+  byte-identity oracle files), with screenshots under
+  `screenshots/besteffort/`, and a page or a hardware report that states the two
+  behaviours would make it Curated. The notes-only families whose models needed
+  no unstated behaviour (47, 121, 191, 165) are Curated on the rows above.
 - **The Sachen titles GoodNES headers as mapper 243** (*Strategist*, *Poker
   III*, *Chinese Checkers*, *Magic Cubes* and others) are SA-015 games, mapper
   150 (`nesdev_wiki/INES_Mapper_150.xhtml` lists them; 243's page names *Honey

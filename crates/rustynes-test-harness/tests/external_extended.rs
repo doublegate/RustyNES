@@ -39,6 +39,7 @@
 mod common;
 
 use common::external::{InputScript, run_capture, snapshot_text};
+use rustynes_core::Buttons;
 
 /// Default script: 600 frames idle (no input), 10 s @ NTSC 60 Hz —
 /// past the title-screen ramp-up for the bulk of these games.
@@ -1795,5 +1796,232 @@ fn extended_m116_kart_fighter() {
         "mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].zip",
         DEFAULT_IDLE,
         "extended_m116_kart_fighter",
+    );
+}
+
+// ============================================================
+// v3.2.0 — boards written from their NESdev pages, each verified on a local
+// dump (D23 records in docs/compatibility.md).
+// ============================================================
+
+#[test]
+fn extended_m172_1991_du_ma_racing() {
+    check(
+        "mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m172_1991_du_ma_racing",
+    );
+}
+
+#[test]
+fn extended_m173_xiao_ma_li() {
+    check(
+        "mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m173_xiao_ma_li",
+    );
+}
+
+/// 2400-frame idle: *Alien Syndrome*'s attract demo is in gameplay by then,
+/// scrolling under its status bar, which is where mapper 158's per-nametable
+/// CIRAM select shows. The 600-frame intro text uses one page only.
+const ALIEN_SYNDROME_DEMO: InputScript = InputScript::IdleOnly { frames: 2400 };
+
+#[test]
+fn extended_m158_alien_syndrome() {
+    check(
+        "mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).zip",
+        ALIEN_SYNDROME_DEMO,
+        "extended_m158_alien_syndrome",
+    );
+}
+
+/// *Fudou Myouou Den*: START held three frames at f1900 (skips the intro to
+/// the START / CONTINUE menu) and again at f2100 (starts the game), then play
+/// to f3000, in the first stage with the status bar under the playfield. The
+/// menu ignores one-frame taps, so `Held`. Gameplay is where mapper
+/// 207's CHR A17 nametable select shows: the title screen and the intro draw
+/// identically with it forced to page 0, and this frame does not.
+const FUDOU_IN_PLAY: InputScript = InputScript::Held {
+    presses: &[(1900, Buttons::START), (2100, Buttons::START)],
+    hold: 3,
+    resets: &[],
+    frames: 3000,
+};
+
+#[test]
+fn extended_m207_fudou_myouou_den() {
+    check(
+        "mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).zip",
+        FUDOU_IN_PLAY,
+        "extended_m207_fudou_myouou_den",
+    );
+}
+
+/// *San Guo Zhi* (mapper 252): START held at f1500-f3300 passes the intro,
+/// the difficulty menu and the first prompt to the scenario map, and A at
+/// f3600 answers it, so at f3800 the text box under the map asks the first
+/// personality question. That box sits behind a VRC4 scanline-IRQ bank split
+/// and is drawn from the two CHR-RAM pages; the portraits above it come from
+/// CHR-ROM. The first prompt is not enough: its glyphs are pre-rendered in
+/// CHR-ROM pages 6 and 7, so it draws the same with no CHR-RAM at all, and
+/// only the questions after it are composed in RAM.
+const SAN_GUO_ZHI_QUESTION: InputScript = InputScript::Held {
+    presses: &[
+        (1500, Buttons::START),
+        (1800, Buttons::START),
+        (2100, Buttons::START),
+        (2400, Buttons::START),
+        (3000, Buttons::START),
+        (3300, Buttons::START),
+        (3600, Buttons::A),
+    ],
+    hold: 3,
+    resets: &[],
+    frames: 3800,
+};
+
+#[test]
+fn extended_m252_san_guo_zhi() {
+    check(
+        "mapper-252-WaixingVRC4/San Guo Zhi (Ch).zip",
+        SAN_GUO_ZHI_QUESTION,
+        "extended_m252_san_guo_zhi",
+    );
+}
+
+// Mapper 230 (*22-in-1 (Reset Based)*) is BestEffort (the maintainer's
+// ruling, 2026-10-09: its notes leave the power-on mode and the reset
+// behaviour to the model), so it has no byte-identity oracle test here; ADR
+// 0011 keeps BestEffort out of this file. Its reset-to-*Sky Destroyer* run is
+// `external_coverage`'s capture for that dump (`capture_override`).
+
+/// *260-in-1* (mapper 235): RIGHT moves the menu cursor to entry 21, "MR.
+/// MARIO I", A launches it and START begins a game; phase 1 is in play by
+/// f1600. The staged image is the GoodNES `[!]` dump with its header
+/// rewritten to NES 2.0: its iNES byte 4 is 0, which iNES cannot use for the
+/// 4 MiB it holds (the D23 hash is of the bytes after the header, which are
+/// unchanged).
+const GOLDEN_GAME_MARIO: InputScript = InputScript::Held {
+    presses: &[
+        (600, Buttons::RIGHT),
+        (800, Buttons::A),
+        (1100, Buttons::START),
+    ],
+    hold: 6,
+    resets: &[],
+    frames: 1600,
+};
+
+#[test]
+fn extended_m235_260_in_1_mario_bros() {
+    check(
+        "mapper-235-GoldenGame/260-in-1 [p1][!] (NES 2.0 header, 4 MiB).nes",
+        GOLDEN_GAME_MARIO,
+        "extended_m235_260_in_1_mario_bros",
+    );
+}
+
+/// FFE Magic Card / Super Magic Card extractions (mappers 6, 8, 17): START
+/// at f1000 and f1400, A at f1800, START at f2200, each held six frames, then
+/// run to f2600. That reaches play or the first in-game screen on these
+/// titles, past the menus the trainers and the card's IRQs drive.
+const FFE_INTO_PLAY: InputScript = InputScript::Held {
+    presses: &[
+        (1000, Buttons::START),
+        (1400, Buttons::START),
+        (1800, Buttons::A),
+        (2200, Buttons::START),
+    ],
+    hold: 6,
+    resets: &[],
+    frames: 2600,
+};
+
+/// *Wai Wai World* (mapper 6) has a longer intro and character menu: the
+/// script answers it with A and START, then holds RIGHT from f3500 to walk
+/// into the first stage, in play at f3800.
+const FFE_WAI_WAI_WORLD: InputScript = InputScript::Held {
+    presses: &[
+        (1000, Buttons::START),
+        (1300, Buttons::START),
+        (1600, Buttons::A),
+        (1900, Buttons::A),
+        (2200, Buttons::START),
+        (2500, Buttons::A),
+        (2800, Buttons::START),
+        (3100, Buttons::A),
+        (3400, Buttons::RIGHT),
+        (3410, Buttons::RIGHT),
+        (3420, Buttons::RIGHT),
+        (3430, Buttons::RIGHT),
+        (3440, Buttons::RIGHT),
+        (3450, Buttons::RIGHT),
+    ],
+    hold: 10,
+    resets: &[],
+    frames: 3800,
+};
+
+#[test]
+fn extended_m006_ganbare_goemon() {
+    check(
+        "mapper-006-FFE-MagicCard/Ganbare Goemon! - Karakuri Douchuu (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m006_ganbare_goemon",
+    );
+}
+
+#[test]
+fn extended_m006_cosmo_police_galivan() {
+    check(
+        "mapper-006-FFE-MagicCard/Cosmo Police Galivan (J) [hFFE][p1].zip",
+        FFE_INTO_PLAY,
+        "extended_m006_cosmo_police_galivan",
+    );
+}
+
+#[test]
+fn extended_m006_wai_wai_world() {
+    check(
+        "mapper-006-FFE-MagicCard/Wai Wai World (J) [hFFE].zip",
+        FFE_WAI_WAI_WORLD,
+        "extended_m006_wai_wai_world",
+    );
+}
+
+#[test]
+fn extended_m008_mermaids_of_atlantis() {
+    check(
+        "mapper-008-FFE-GNROM/Mermaids of Atlantis - The Riddle of the Magic Bubble (AVE) [T+Rus_Guyver].zip",
+        FFE_INTO_PLAY,
+        "extended_m008_mermaids_of_atlantis",
+    );
+}
+
+#[test]
+fn extended_m017_kaiketsu_yanchamaru_2() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_kaiketsu_yanchamaru_2",
+    );
+}
+
+#[test]
+fn extended_m017_juvei_quest() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Juvei Quest (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_juvei_quest",
+    );
+}
+
+#[test]
+fn extended_m017_dragon_ball_z_iii() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Dragon Ball Z III - Ressen Jinzou Ningen (J) [hFFE][p1].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_dragon_ball_z_iii",
     );
 }

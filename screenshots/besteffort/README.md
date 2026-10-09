@@ -1,6 +1,11 @@
 # BestEffort mapper boot-smoke screenshots (v1.3.0 D1)
 
-> **v3.2.0: two directories, 268 and 290.** 47, 121 and 191 moved to
+> **v3.2.0: three directories, 230, 268 and 290.** 230 (*22-in-1 (Reset
+> Based)*: *Contra* at power-on, *Sky Destroyer* from the menu a console reset
+> brings up) is BestEffort because its notes leave the power-on mode and the
+> reset behaviour to the model (the maintainer's ruling, 2026-10-09).
+>
+> **Before 230 arrived: two directories, 268 and 290.** 47, 121 and 191 moved to
 > `external/` when D23 promoted them to Curated, with 154 and 243. 268 (*Gardman*,
 > a Chinese story screen) and 290 (*Asder 20-in-1*, which booted to a uniform grey
 > frame until v3.2.0 fixed its 32 KiB PRG mode) arrived here in v3.2.0 and stay

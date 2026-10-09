@@ -350,6 +350,21 @@ pub mod external {
             frames: u32,
             checkpoints: &'static [u32],
         },
+        /// v3.2.0 — each `(frame, buttons)` in `presses` holds those buttons
+        /// for `hold` frames from that frame index (0-based), idle otherwise,
+        /// for `frames` frames; one checkpoint at the end. For games whose
+        /// menus ignore a one-frame tap (*Fudou Myouou Den*'s START /
+        /// CONTINUE menu reads the button across several frames) or need a
+        /// button other than START (*San Guo Zhi*'s questions take A), which
+        /// no other script can reach. The console RESET button is pressed at
+        /// the start of each frame index in `resets` (mapper 230's reset-
+        /// switched multicart).
+        Held {
+            presses: &'static [(u32, Buttons)],
+            hold: u32,
+            resets: &'static [u32],
+            frames: u32,
+        },
     }
 
     impl InputScript {
@@ -359,7 +374,9 @@ pub mod external {
         #[must_use]
         pub const fn total_frames(&self) -> u32 {
             match *self {
-                Self::IdleOnly { frames } | Self::Presses { frames, .. } => frames,
+                Self::IdleOnly { frames }
+                | Self::Presses { frames, .. }
+                | Self::Held { frames, .. } => frames,
                 Self::StartTap {
                     idle_pre,
                     idle_post,
@@ -1021,6 +1038,34 @@ pub mod external {
                     frame_counter += 1;
                     maybe_emit(frame_counter, &nes);
                 }
+            }
+            InputScript::Held {
+                presses,
+                hold,
+                resets,
+                frames,
+            } => {
+                for f in 0..frames {
+                    if resets.contains(&f) {
+                        nes.reset();
+                    }
+                    let held = presses
+                        .iter()
+                        .filter(|&&(p, _)| f >= p && f < p + hold)
+                        .fold(Buttons::empty(), |acc, &(_, b)| acc | b);
+                    nes.set_buttons(0, held);
+                    pulse_vs_coin!();
+                    nes.run_frame();
+                    samples.extend(nes.drain_audio());
+                    frame_counter += 1;
+                }
+                let fb_hash = fnv1a64(nes.framebuffer());
+                best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
+                checkpoints.push(Checkpoint {
+                    frame: frames,
+                    fb_hash,
+                });
+                dump_frame(&label_safe, &format!("f{frames}"), nes.framebuffer());
             }
         }
 

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-252-WaixingVRC4/San Guo Zhi (Ch).zip
+rom_sha256=c3fbdb2cd86354f8471ffa114e9cf0e48a916f88833cd48a142f7fc10b52e827
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=da7b8a5e7d5c88c5
+checkpoint f900 fb_fnv1a64=c1ff7e3d384ce207
+checkpoint f1100 fb_fnv1a64=f8964d09c55bd767

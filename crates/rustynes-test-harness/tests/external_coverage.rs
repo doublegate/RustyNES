@@ -119,7 +119,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use common::external::{InputScript, run_capture_model, snapshot_text};
-use rustynes_core::ConsoleModel;
+use rustynes_core::{Buttons, ConsoleModel};
 
 /// Default boot capture for breadth coverage. A discovered ROM's intro
 /// structure is unknown, so a passive idle frequently lands on a black
@@ -171,14 +171,6 @@ const UNSUPPORTED: &[(&str, &str)] = &[
         "malformed: mapper 146 PRG is a multiple of 32 KiB and this image has 16 KiB",
     ),
     (
-        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
-        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
-    ),
-    (
-        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
-        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
-    ),
-    (
         "vs-system/VS Castlevania Hack.nes",
         "not an iNES image (no NES<1A> magic)",
     ),
@@ -198,6 +190,9 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// blank, Famicom Jump II, was added. v3.2.0 cut it to 41: ten of the 52 were booted on
 /// the wrong console ([`FAMICOM_WIRED`]), and the Subor cart blanks its own
 /// menu at about f375, which the START taps ran past (see `capture_override`).
+/// v3.2.0 also implements mapper 8, the FFE Magic Card's GNROM mode, so
+/// the two Doraemon World 3 images left `UNSUPPORTED`: they boot to their
+/// title and stage-select screens and carry ordinary snapshots.
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
     // Cause measured at v3.2.0: a mis-headered dump. The payload is the VRC4
@@ -324,6 +319,23 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
         frames: 350,
         checkpoints: &[100, 350],
     };
+    // v3.2.0: mapper 230 (BestEffort). It powers on in *Contra*; RESET at f700
+    // switches to the multicart chip and its menu, two held DOWNs reach entry
+    // 5, *Sky Destroyer*, A launches it and START begins a game, in flight by
+    // f3500. One run covers both chips, the reset toggle and the multicart
+    // register. Moved here from `external_extended`, which may not hold a
+    // BestEffort oracle (ADR 0011).
+    const RESET_22_IN_1: InputScript = InputScript::Held {
+        presses: &[
+            (2300, Buttons::DOWN),
+            (2400, Buttons::DOWN),
+            (2600, Buttons::A),
+            (2900, Buttons::START),
+        ],
+        hold: 10,
+        resets: &[700],
+        frames: 3500,
+    };
     let idle = [
         "mapper-000-NROM/Gyromite.nes",
         "mapper-001-MMC1/Dr. Mario.nes",
@@ -340,6 +352,9 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
         "mapper-119-TQROM/Pin Bot (E) [!].nes",
     ];
     let idle_long = ["mapper-001-MMC1/Tecmo Bowl.nes"];
+    if rom_rel == "mapper-230-22in1-Reset/22-in-1 (Reset Based) [p1].zip" {
+        return Some(RESET_22_IN_1);
+    }
     if rom_rel == "mapper-015-Multicart15/Subor V1.0 (R).nes" {
         Some(SUBOR_MENU)
     } else if idle.contains(&rom_rel) {

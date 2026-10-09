@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].zip
+rom_sha256=2844a2b8807507947b08d5fb3de79c9f41f1e9df741c6c57bf64bf94ecb3bd48
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=636e3ca32ed79786

@@ -48,6 +48,7 @@ mod bmc_simple;
 mod cartridge;
 mod datach_barcode;
 mod fds;
+mod ffe_super_magic_card;
 mod header;
 mod homebrew_boards;
 mod jaleco_discrete;
@@ -120,6 +121,7 @@ mod m151_konami_vs;
 mod m152_bandai152;
 mod m156_daou156;
 mod m163_nanjing;
+mod m172_m173_txc;
 mod m176_bmc_fk23c;
 mod m177_hengedianzi;
 mod m179_hengedianzi;
@@ -128,12 +130,15 @@ mod m184_sunsoft1;
 mod m185_cnrom185;
 mod m210_namco175;
 mod m228_action52;
+mod m230_reset_multicart;
 mod m232_camerica_bf9096;
+mod m235_golden_game;
 mod m240_cne_multicart;
 mod m241_bxrom241;
 mod m244_cne_decathlon;
 mod m246_fong_shen_bang246;
 mod m250_nitra250;
+mod m252_waixing_vrc4;
 mod m268_bmc_coolboy;
 mod m513_sachen_9602;
 mod mapper;
@@ -161,6 +166,7 @@ pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
+pub use ffe_super_magic_card::{FfeBoard, SuperMagicCard};
 pub use header::{
     ExpansionDevice, ExtendedConsoleType, Header, VsHardwareType, parse_header,
     serialize_header_preserving,
@@ -236,6 +242,7 @@ pub use m151_konami_vs::KonamiVs;
 pub use m152_bandai152::Bandai152;
 pub use m156_daou156::Daou156;
 pub use m163_nanjing::Nanjing163;
+pub use m172_m173_txc::{Txc172, Txc173};
 pub use m176_bmc_fk23c::new_m176;
 pub use m177_hengedianzi::Hengedianzi177;
 pub use m179_hengedianzi::Hengedianzi179;
@@ -244,12 +251,15 @@ pub use m184_sunsoft1::Sunsoft1;
 pub use m185_cnrom185::CnRom185;
 pub use m210_namco175::{Namco175, Namco175Board};
 pub use m228_action52::Action52M228;
+pub use m230_reset_multicart::ResetMulticart230;
 pub use m232_camerica_bf9096::Camerica232;
+pub use m235_golden_game::GoldenGame235;
 pub use m240_cne_multicart::Cne240;
 pub use m241_bxrom241::Bxrom241;
 pub use m244_cne_decathlon::Decathlon244;
 pub use m246_fong_shen_bang246::FongShenBang246;
 pub use m250_nitra250::Nitra250;
+pub use m252_waixing_vrc4::Waixing252;
 pub use m268_bmc_coolboy::new_m268;
 pub use m513_sachen_9602::new_m513;
 pub use mapper::{
@@ -1640,6 +1650,76 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             new_m299(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // --- v3.2.0: boards written from their NESdev pages (no
+        // reference-emulator source read). Tiers and evidence in `tier.rs`
+        // and `docs/mappers.md`.
+        //
+        // 172 / 173: TXC / Idea-Tek protection-chip boards
+        // (`m172_m173_txc.rs`). 172 controls its own mirroring; 173's is
+        // hard-wired, so the header's is passed for both as the power-on value.
+        172 => Box::new(
+            Txc172::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        173 => Box::new(
+            Txc173::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 158: Tengen 800037 (*Alien Syndrome*), a RAMBO-1 whose CHR A17
+        // drives CIRAM A10 per nametable (`m064_rambo1.rs`, `Rambo1::new_m158`).
+        158 => Box::new(
+            Rambo1::new_m158(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 207: Taito X1-005 with CHR A17 on CIRAM A10 (*Fudou Myouou Den*;
+        // `m080_taito_x1_005.rs`, `TaitoX1005::new_m207`).
+        207 => Box::new(
+            TaitoX1005::new_m207(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 252: Waixing VRC4e clone with CHR-RAM pages 6 and 7 (*San Guo Zhi*;
+        // `m252_waixing_vrc4.rs`).
+        252 => Box::new(
+            Waixing252::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 230: the reset-switched 22-in-1 (Contra + multicart); the console
+        // RESET toggles the chip (`m230_reset_multicart.rs`).
+        230 => Box::new(
+            ResetMulticart230::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 235: the "Golden Game" address-latch multicart with four 1 MiB
+        // sockets (`m235_golden_game.rs`).
+        235 => Box::new(
+            GoldenGame235::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 6 / 8 / 17: games extracted from FFE Magic Card / Super Magic Card
+        // disks, run on a model of the card (`ffe_super_magic_card.rs`). The
+        // iNES number and submapper pick only the card's initial registers;
+        // the Doctor-format trainer, which `parse` otherwise skips, is handed
+        // to the card to load and call.
+        6 | 8 | 17 => {
+            let trainer = h
+                .has_trainer
+                .then(|| &bytes[header::HEADER_LEN..header::HEADER_LEN + header::TRAINER_LEN]);
+            let board = match h.mapper_id {
+                8 => FfeBoard::MagicCard(4),
+                6 => FfeBoard::MagicCard(if h.is_nes2 { h.submapper & 0x07 } else { 1 }),
+                _ => FfeBoard::SuperMagicCard(if h.is_nes2 { h.submapper & 0x03 } else { 0 }),
+            };
+            Box::new(
+                SuperMagicCard::new(
+                    board,
+                    &prg_rom,
+                    &chr_rom,
+                    trainer,
+                    h.mirroring == Mirroring::Vertical,
+                )
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+            )
+        }
         other => return Err(RomError::UnsupportedMapper(other)),
     };
 

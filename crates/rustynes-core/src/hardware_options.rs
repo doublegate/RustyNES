@@ -96,7 +96,7 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// | 1 | v3.0.0 | the MMC3 background-at-`$1000` A12 rule (T-MMC3-BG-A12) |
 /// | 2 | v3.0.1 | mapper 45 CHR-RAM unbanked (T-GA23C-CHRRAM; *Famicom Yarou Vol.1*) |
 /// | 3 | v3.1.0 | a DMC load DMA refused by a write takes four cycles; sprite evaluation starts at OAMADDR as of dot 65 and keeps a misaligned OAMADDR when X is in range (AccuracyCoin re-sync to `f5f41dc2`) |
-/// | 4 | v3.2.0 | mapper 290's 32 KiB PRG mode maps both halves in order (*Asder 20-in-1* boots); a 24C02 keeps its word address across a START (mapper 16, 157) |
+/// | 4 | v3.2.0 | mapper 290's 32 KiB PRG mode maps both halves in order (*Asder 20-in-1* boots); a 24C02 keeps its word address across a START (mapper 16, 157); VRC4's IRQ mode bit reads 1 = cycle, 0 = scanline (mappers 21, 23, 25) |
 pub const EMULATION_EPOCH: u32 = 4;
 
 /// Every host-settable option that changes what the emulated console does.

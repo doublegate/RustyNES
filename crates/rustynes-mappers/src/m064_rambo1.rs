@@ -15,6 +15,21 @@
 //! See `nesdev_wiki/RAMBO_1.xhtml`, `nesdev_wiki/INES_Mapper_064.xhtml`, and
 //! `docs/mappers.md`.
 //!
+//! # Mapper 158 (Tengen 800037, *Alien Syndrome*)
+//!
+//! Built with [`Rambo1::new_m158`]. Per `nesdev_wiki/INES_Mapper_158.xhtml` it
+//! "modifies RAMBO-1 (mapper 64) in the exact same way that TLSROM (118)
+//! differs from MMC3 (4)": the chip's CHR A17 output drives CIRAM A10, so "bit
+//! 7 of each CHR bank mapped into PPU `$0000-$0FFF` controls which page of
+//! CIRAM is used for the corresponding nametable in `$2000-$2FFF`"
+//! (`RAMBO_1.xhtml`, Variants). Nametable *n* takes bit 7 of the 1 KiB bank in
+//! slot *n* of the `$0000-$0FFF` half, after the C (A12 inversion) and K
+//! (full 1 KiB) bits; in 2 KiB mode both slots of a 2 KiB bank carry the same
+//! register's bit 7. The `$A000` mirroring register "applies to mapper 64
+//! only", so the board ignores it. Banking, IRQ and save-state layout are
+//! mapper 64's unchanged; the variant is a construction-time property, not
+//! state.
+//!
 //! # Banking registers
 //!
 //! `$8000` (even) bank-select: bits 0-3 pick the register, bit 5 = full-1KiB
@@ -91,6 +106,9 @@ pub struct Rambo1 {
     chr_1k_mode: bool, // $8000 bit 5 (K)
 
     mirroring: Mirroring,
+    /// Mapper 158: CIRAM A10 is CHR A17 (bit 7 of the nametable's slot bank),
+    /// and `$A000` is not connected.
+    ciram_from_chr_a17: bool,
 
     // IRQ.
     irq_latch: u8,
@@ -150,6 +168,7 @@ impl Rambo1 {
             chr_mode: false,
             chr_1k_mode: false,
             mirroring,
+            ciram_from_chr_a17: false,
             irq_latch: 0,
             irq_counter: 0,
             irq_reload_pending: false,
@@ -161,6 +180,19 @@ impl Rambo1 {
             a12_low_cycle: 0,
             cpu_cycle: 0,
         })
+    }
+
+    /// Construct the mapper 158 board (Tengen 800037): a RAMBO-1 whose CHR A17
+    /// output selects the CIRAM page per nametable (see the module docs). The
+    /// header's mirroring is meaningless on it and is not taken.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn new_m158(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
+        let mut m = Self::new(prg_rom, chr_rom, Mirroring::MapperControlled)?;
+        m.ciram_from_chr_a17 = true;
+        Ok(m)
     }
 
     /// RF lives at register index 15.
@@ -243,7 +275,12 @@ impl Rambo1 {
     fn nametable_offset(&self, addr: u16) -> usize {
         let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
-        let physical = self.mirroring.physical_bank(table);
+        let physical = if self.ciram_from_chr_a17 {
+            // Mapper 158: nametable n reads CIRAM page = CHR A17 of slot n.
+            (self.chr_bank_1k(table as usize) >> 7) & 1
+        } else {
+            self.mirroring.physical_bank(table)
+        };
         physical * NAMETABLE_SIZE + local
     }
 
@@ -302,7 +339,8 @@ impl Mapper for Rambo1 {
                 }
             }
             0xA000..=0xBFFF => {
-                if addr & 1 == 0 {
+                // Mapper 158 does not connect the mirroring register.
+                if addr & 1 == 0 && !self.ciram_from_chr_a17 {
                     self.mirroring = if value & 1 == 0 {
                         Mirroring::Vertical
                     } else {
@@ -371,7 +409,12 @@ impl Mapper for Rambo1 {
     }
 
     fn current_mirroring(&self) -> Mirroring {
-        self.mirroring
+        if self.ciram_from_chr_a17 {
+            // Per-nametable and dynamic; `nametable_address` resolves it.
+            Mirroring::MapperControlled
+        } else {
+            self.mirroring
+        }
     }
 
     fn notify_a12(&mut self, level: bool) {
@@ -416,9 +459,13 @@ impl Mapper for Rambo1 {
 
     fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
         let mut info = crate::mapper::MapperDebugInfo {
-            mapper_id: 64,
-            name: "Tengen RAMBO-1 (64)".into(),
-            mirroring: crate::mapper::mirroring_name(self.mirroring),
+            mapper_id: if self.ciram_from_chr_a17 { 158 } else { 64 },
+            name: if self.ciram_from_chr_a17 {
+                "Tengen 800037 / RAMBO-1 (158)".into()
+            } else {
+                "Tengen RAMBO-1 (64)".into()
+            },
+            mirroring: crate::mapper::mirroring_name(self.current_mirroring()),
             ..Default::default()
         };
         info.prg_banks
@@ -741,5 +788,95 @@ mod tests {
         assert_eq!(m.cpu_read(0xC000), m2.cpu_read(0xC000));
         assert_eq!(m.irq_cpu_mode, m2.irq_cpu_mode);
         assert_eq!(m.ppu_read(0x2000), m2.ppu_read(0x2000));
+    }
+
+    // --- Mapper 158 (Tengen 800037) ------------------------------------
+
+    /// A mapper 158 image through `crate::parse`, so the dispatch arm is
+    /// under test: 128 KiB PRG, 128 KiB CHR, header says horizontal.
+    fn m158() -> Box<dyn Mapper> {
+        let mut v = vec![0u8; 16];
+        v[0..4].copy_from_slice(b"NES\x1A");
+        v[4] = 8;
+        v[5] = 16;
+        v[6] = 0xE0; // mapper low nibble 0xE, horizontal
+        v[7] = 0x90; // mapper high nibble 0x9 -> 0x9E = 158
+        v.extend_from_slice(&synth_prg(16));
+        v.extend_from_slice(&synth_chr(128));
+        crate::parse(&v)
+            .unwrap_or_else(|e| panic!("mapper 158 must parse: {e:?}"))
+            .1
+    }
+
+    /// The CIRAM page (0 or 1) nametable `n` resolves to.
+    fn page(m: &dyn Mapper, n: u16) -> u16 {
+        m.nametable_address(0x2000 + n * 0x400 + 0x15) >> 10
+    }
+
+    fn sel(m: &mut dyn Mapper, reg: u8, value: u8) {
+        m.cpu_write(0x8000, reg);
+        m.cpu_write(0x8001, value);
+    }
+
+    #[test]
+    fn m158_nametables_follow_bit7_of_the_0000_half_banks_in_2k_mode() {
+        let mut m = m158();
+        assert_eq!(m.current_mirroring(), Mirroring::MapperControlled);
+        sel(m.as_mut(), 0, 0x80); // R0: CHR A17 = 1 for slots 0-1
+        sel(m.as_mut(), 1, 0x02); // R1: CHR A17 = 0 for slots 2-3
+        let pages: Vec<u16> = (0..4).map(|n| page(m.as_ref(), n)).collect();
+        assert_eq!(pages, [1, 1, 0, 0], "2 KiB R0/R1 drive two tables each");
+        // The local offset survives.
+        assert_eq!(m.nametable_address(0x2015) & 0x3FF, 0x15);
+        // $A000 is not connected on this board.
+        m.cpu_write(0xA000, 0x01);
+        m.cpu_write(0xA000, 0x00);
+        let again: Vec<u16> = (0..4).map(|n| page(m.as_ref(), n)).collect();
+        assert_eq!(again, [1, 1, 0, 0], "$A000 ignored");
+    }
+
+    #[test]
+    fn m158_full_1k_mode_uses_r0_r8_r1_r9() {
+        let mut m = m158();
+        // K=1 (bit 5): slots 0-3 = R0, R8, R1, R9.
+        m.cpu_write(0x8000, 0x20 | 8);
+        m.cpu_write(0x8001, 0x80); // R8
+        m.cpu_write(0x8000, 0x20 | 9);
+        m.cpu_write(0x8001, 0x00); // R9
+        m.cpu_write(0x8000, 0x20);
+        m.cpu_write(0x8001, 0x00); // R0
+        m.cpu_write(0x8000, 0x20 | 1);
+        m.cpu_write(0x8001, 0x81); // R1
+        let pages: Vec<u16> = (0..4).map(|n| page(m.as_ref(), n)).collect();
+        assert_eq!(pages, [0, 1, 1, 0]);
+    }
+
+    #[test]
+    fn m158_a12_inversion_moves_the_source_to_r2_r5() {
+        let mut m = m158();
+        // C=1 (bit 7): $0000-$0FFF is R2..R5.
+        for (r, v) in [(2u8, 0x80u8), (3, 0x00), (4, 0x80), (5, 0x00)] {
+            m.cpu_write(0x8000, 0x80 | r);
+            m.cpu_write(0x8001, v);
+        }
+        let pages: Vec<u16> = (0..4).map(|n| page(m.as_ref(), n)).collect();
+        assert_eq!(pages, [1, 0, 1, 0]);
+    }
+
+    #[test]
+    fn m158_state_round_trips_and_mapper_64_keeps_its_register() {
+        let mut a = m158();
+        sel(a.as_mut(), 0, 0x80);
+        a.ppu_write(0x2000, 0x5A);
+        let blob = a.save_state();
+        let mut b = m158();
+        b.load_state(&blob).unwrap();
+        assert_eq!(b.save_state(), blob);
+        assert_eq!(b.ppu_read(0x2000), 0x5A);
+        assert_eq!(page(b.as_ref(), 0), 1);
+        // Mapper 64 is untouched: $A000 still sets H/V.
+        let mut m = fresh();
+        m.cpu_write(0xA000, 0x01);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
     }
 }

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-008-FFE-GNROM/Dragon Ball - Shen Long no Nazo (J) [hFFE][b1].zip
+rom_sha256=37234d9d9369c617aa3f2b4be3a5df5145af49e6d5015c9975db7fd0b9fcc622
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=6597b5783f7b81a8
+checkpoint f900 fb_fnv1a64=856da090bd91b674
+checkpoint f1100 fb_fnv1a64=afebcf54223cb40a

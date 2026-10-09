@@ -306,10 +306,13 @@ impl Mapper for Vrc4 {
                 }
                 (false, true) => {
                     // Control: bit 0 = enable_after_ack, bit 1 = enable now,
-                    // bit 2 = mode (1 = scanline mode).
+                    // bit 2 = mode M. `nesdev_wiki/VRC_IRQ.xhtml`: "IRQ Mode
+                    // (1 = cycle mode, 0 = scanline mode)". Until v3.2.0 this
+                    // read the bit the other way round (VRC6 / VRC7 had it
+                    // right), so a scanline-mode split ran every CPU cycle.
                     self.irq_enable_after_ack = (value & 0x01) != 0;
                     self.irq_enabled = (value & 0x02) != 0;
-                    self.irq_mode_scanline = (value & 0x04) != 0;
+                    self.irq_mode_scanline = (value & 0x04) == 0;
                     self.irq_pending = false;
                     if self.irq_enabled {
                         self.irq_counter = self.irq_latch;
@@ -490,6 +493,13 @@ impl Mapper for Vrc4 {
 }
 
 impl Vrc4 {
+    /// The 1 KiB CHR bank register for PPU slot `slot` (`0..8`, one per
+    /// 1 KiB of `$0000-$1FFF`). For boards that wrap the VRC4 and intercept
+    /// particular bank numbers (mapper 252's CHR-RAM pages, v3.2.0).
+    pub(crate) fn chr_reg(&self, slot: usize) -> u8 {
+        self.chr[slot & 7]
+    }
+
     /// Bytes the v2 tail adds: the 8 KiB PRG-RAM, plus the 8 KiB CHR-RAM
     /// when the cartridge has no CHR-ROM. Derived from the loaded ROM, so a
     /// save and its load (same ROM, checked by the `.rns` hash tag) agree.
@@ -529,14 +539,44 @@ mod tests {
         // VRC4a: a0_bit=1, a1_bit=2.  Control is at $F004 (a0=0, a1=1).
         // Set latch low byte = 0xE.
         m.cpu_write(0xF000, 0xE);
-        // Enable: bit 1 (enable now), mode=cycle (bit 2 = 0).
-        m.cpu_write(0xF004, 0x02);
+        // Enable: bit 1 (enable now), mode=cycle (bit 2 = 1, VRC_IRQ).
+        m.cpu_write(0xF004, 0x06);
         // From counter=latch=0xE, ticks until 0xFF: 0xFF-0xE = 0xF1 ticks
         // for the wrap, plus one to set pending.
         for _ in 0..0xF1 + 1 {
             m.notify_cpu_cycle();
         }
         assert!(m.irq_pending());
+    }
+
+    /// `nesdev_wiki/VRC_IRQ.xhtml`: control bit 2 is M, "IRQ Mode (1 = cycle
+    /// mode, 0 = scanline mode)", and in scanline mode a prescaler divides the
+    /// CPU clock by 113 2/3 before the counter sees it. Until v3.2.0 the bit
+    /// was read inverted, so a game's scanline split fired every CPU cycle
+    /// (Bio Miracle Bokutte Upa lost its status bar; mapper 252's San Guo Zhi
+    /// drew its text box from the wrong CHR banks).
+    #[test]
+    fn vrc4_irq_mode_bit_2_clear_is_scanline_mode() {
+        let mut m = Vrc4::new(synth(8), synth_chr(8), 21, 1, Mirroring::Vertical).unwrap();
+        m.cpu_write(0xF000, 0x0E); // latch $FE: two counter clocks to the IRQ
+        m.cpu_write(0xF002, 0x0F);
+        m.cpu_write(0xF004, 0x02); // enable, M = 0: scanline mode
+        for _ in 0..10 {
+            m.notify_cpu_cycle();
+        }
+        assert!(
+            !m.irq_pending(),
+            "M = 0 is scanline mode: 10 CPU cycles is not two scanlines"
+        );
+        for _ in 0..(2 * 114) {
+            m.notify_cpu_cycle();
+        }
+        assert!(m.irq_pending(), "two prescaled clocks (~227 CPU cycles)");
+        // M = 1 is cycle mode: the counter sees every CPU cycle.
+        m.cpu_write(0xF004, 0x06);
+        m.notify_cpu_cycle();
+        m.notify_cpu_cycle();
+        assert!(m.irq_pending(), "M = 1: two CPU cycles");
     }
 
     /// Core audit v2.9.2 AUD-02: the section carries the 8 KiB PRG-RAM and,

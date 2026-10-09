@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).zip
+rom_sha256=177c305b849cb5ee725cfacc0020c5e8b42f6ab88b75b53645a7be37c7b76d83
+frames=2400
+fb_bytes=245760
+cycles=71443424
+audio_samples=1760348
+audio_fnv1a64=43d5d07f0d444300
+checkpoint f2400 fb_fnv1a64=cb176498c8074e62
