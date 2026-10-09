@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-235-GoldenGame/260-in-1 [p1][!] (NES 2.0 header, 4 MiB).nes
+rom_sha256=607dce48822afd9c2a86847b805db599d154a52a995f2d48d8fa02d88da2b5f7
+frames=1600
+fb_bytes=245760
+cycles=47619040
+audio_samples=1173315
+audio_fnv1a64=a4e11fc0e0b9ca37
+checkpoint f1600 fb_fnv1a64=5fd1cd83d3b0b0dd

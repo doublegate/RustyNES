@@ -142,7 +142,7 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // `docs/compatibility.md`). A separate arm so each release's batch
         // reads as one list; the bodies match on purpose.
         #[allow(clippy::match_same_arms)]
-        158 | 172 | 173 | 207 | 230 | 252 => Some(MapperTier::Curated),
+        158 | 172 | 173 | 207 | 230 | 235 | 252 => Some(MapperTier::Curated),
 
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
@@ -251,7 +251,7 @@ mod tests {
         225, 226, 227, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 250, 253,
         // v2.9.6 "Roster".
         12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249, 172, 173, 158, 207, 252,
-        230, // v3.2.0
+        230, 235, // v3.2.0
     ];
 
     #[test]

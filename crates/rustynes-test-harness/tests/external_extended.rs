@@ -1548,3 +1548,29 @@ fn extended_m230_22_in_1_sky_destroyer_after_reset() {
         "extended_m230_22_in_1_sky_destroyer_after_reset",
     );
 }
+
+/// *260-in-1* (mapper 235): RIGHT moves the menu cursor to entry 21, "MR.
+/// MARIO I", A launches it and START begins a game; phase 1 is in play by
+/// f1600. The staged image is the GoodNES `[!]` dump with its header
+/// rewritten to NES 2.0: its iNES byte 4 is 0, which iNES cannot use for the
+/// 4 MiB it holds (the D23 hash is of the bytes after the header, which are
+/// unchanged).
+const GOLDEN_GAME_MARIO: InputScript = InputScript::Held {
+    presses: &[
+        (600, Buttons::RIGHT),
+        (800, Buttons::A),
+        (1100, Buttons::START),
+    ],
+    hold: 6,
+    resets: &[],
+    frames: 1600,
+};
+
+#[test]
+fn extended_m235_260_in_1_mario_bros() {
+    check(
+        "mapper-235-GoldenGame/260-in-1 [p1][!] (NES 2.0 header, 4 MiB).nes",
+        GOLDEN_GAME_MARIO,
+        "extended_m235_260_in_1_mario_bros",
+    );
+}

@@ -460,8 +460,9 @@ pub trait Mapper: Send {
     /// mapper 37's outer latch (`INES_Mapper_037.md`), mapper 45's outer
     /// registers, NES-EVENT's PRG lock (mapper 105), the 76-in-1 BMC's two
     /// registers (mapper 226, since v2.9.8), Action 52's register
-    /// (mapper 228), and the 22-in-1's chip toggle (mapper 230, v3.2.0, where
-    /// RESET is the mode switch). Added in v2.9.6; a power cycle rebuilds the mapper
+    /// (mapper 228), the 22-in-1's chip toggle (mapper 230, v3.2.0, where
+    /// RESET is the mode switch), and the Golden Game multicart's register
+    /// (mapper 235, v3.2.0). Added in v2.9.6; a power cycle rebuilds the mapper
     /// instead and never calls this.
     fn reset(&mut self) {}
 
