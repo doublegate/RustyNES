@@ -39,6 +39,7 @@
 mod common;
 
 use common::external::{InputScript, run_capture, snapshot_text};
+use rustynes_core::Buttons;
 
 /// Default script: 600 frames idle (no input), 10 s @ NTSC 60 Hz —
 /// past the title-screen ramp-up for the bulk of these games.
@@ -1459,11 +1460,11 @@ fn extended_m158_alien_syndrome() {
 /// *Fudou Myouou Den*: START held three frames at f1900 (skips the intro to
 /// the START / CONTINUE menu) and again at f2100 (starts the game), then play
 /// to f3000, in the first stage with the status bar under the playfield. The
-/// menu ignores one-frame taps, so `HeldStart`. Gameplay is where mapper
+/// menu ignores one-frame taps, so `Held`. Gameplay is where mapper
 /// 207's CHR A17 nametable select shows: the title screen and the intro draw
 /// identically with it forced to page 0, and this frame does not.
-const FUDOU_IN_PLAY: InputScript = InputScript::HeldStart {
-    presses: &[1900, 2100],
+const FUDOU_IN_PLAY: InputScript = InputScript::Held {
+    presses: &[(1900, Buttons::START), (2100, Buttons::START)],
     hold: 3,
     frames: 3000,
 };
@@ -1474,5 +1475,36 @@ fn extended_m207_fudou_myouou_den() {
         "mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).zip",
         FUDOU_IN_PLAY,
         "extended_m207_fudou_myouou_den",
+    );
+}
+
+/// *San Guo Zhi* (mapper 252): START held at f1500-f3300 passes the intro,
+/// the difficulty menu and the first prompt to the scenario map, and A at
+/// f3600 answers it, so at f3800 the text box under the map asks the first
+/// personality question. That box sits behind a VRC4 scanline-IRQ bank split
+/// and is drawn from the two CHR-RAM pages; the portraits above it come from
+/// CHR-ROM. The first prompt is not enough: its glyphs are pre-rendered in
+/// CHR-ROM pages 6 and 7, so it draws the same with no CHR-RAM at all, and
+/// only the questions after it are composed in RAM.
+const SAN_GUO_ZHI_QUESTION: InputScript = InputScript::Held {
+    presses: &[
+        (1500, Buttons::START),
+        (1800, Buttons::START),
+        (2100, Buttons::START),
+        (2400, Buttons::START),
+        (3000, Buttons::START),
+        (3300, Buttons::START),
+        (3600, Buttons::A),
+    ],
+    hold: 3,
+    frames: 3800,
+};
+
+#[test]
+fn extended_m252_san_guo_zhi() {
+    check(
+        "mapper-252-WaixingVRC4/San Guo Zhi (Ch).zip",
+        SAN_GUO_ZHI_QUESTION,
+        "extended_m252_san_guo_zhi",
     );
 }

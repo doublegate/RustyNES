@@ -133,6 +133,7 @@ mod m241_bxrom241;
 mod m244_cne_decathlon;
 mod m246_fong_shen_bang246;
 mod m250_nitra250;
+mod m252_waixing_vrc4;
 mod m268_bmc_coolboy;
 mod m513_sachen_9602;
 mod mapper;
@@ -244,6 +245,7 @@ pub use m241_bxrom241::Bxrom241;
 pub use m244_cne_decathlon::Decathlon244;
 pub use m246_fong_shen_bang246::FongShenBang246;
 pub use m250_nitra250::Nitra250;
+pub use m252_waixing_vrc4::Waixing252;
 pub use m268_bmc_coolboy::new_m268;
 pub use m513_sachen_9602::new_m513;
 pub use mapper::{
@@ -1594,6 +1596,12 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // `m080_taito_x1_005.rs`, `TaitoX1005::new_m207`).
         207 => Box::new(
             TaitoX1005::new_m207(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 252: Waixing VRC4e clone with CHR-RAM pages 6 and 7 (*San Guo Zhi*;
+        // `m252_waixing_vrc4.rs`).
+        252 => Box::new(
+            Waixing252::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),

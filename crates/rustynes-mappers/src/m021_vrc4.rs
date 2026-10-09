@@ -493,6 +493,13 @@ impl Mapper for Vrc4 {
 }
 
 impl Vrc4 {
+    /// The 1 KiB CHR bank register for PPU slot `slot` (`0..8`, one per
+    /// 1 KiB of `$0000-$1FFF`). For boards that wrap the VRC4 and intercept
+    /// particular bank numbers (mapper 252's CHR-RAM pages, v3.2.0).
+    pub(crate) fn chr_reg(&self, slot: usize) -> u8 {
+        self.chr[slot & 7]
+    }
+
     /// Bytes the v2 tail adds: the 8 KiB PRG-RAM, plus the 8 KiB CHR-RAM
     /// when the cartridge has no CHR-ROM. Derived from the loaded ROM, so a
     /// save and its load (same ROM, checked by the `.rns` hash tag) agree.

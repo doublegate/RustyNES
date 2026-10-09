@@ -338,13 +338,15 @@ pub mod external {
             free_run: u32,
             checkpoints: &'static [u32],
         },
-        /// v3.2.0 — START HELD for `hold` frames from each frame index in
-        /// `presses` (0-based, ascending), idle otherwise, for `frames` frames;
-        /// one checkpoint at the end. For games whose menus ignore a one-frame
-        /// tap (*Fudou Myouou Den*'s START / CONTINUE menu reads the button
-        /// across several frames), so no single-tap script reaches gameplay.
-        HeldStart {
-            presses: &'static [u32],
+        /// v3.2.0 — each `(frame, buttons)` in `presses` holds those buttons
+        /// for `hold` frames from that frame index (0-based), idle otherwise,
+        /// for `frames` frames; one checkpoint at the end. For games whose
+        /// menus ignore a one-frame tap (*Fudou Myouou Den*'s START /
+        /// CONTINUE menu reads the button across several frames) or need a
+        /// button other than START (*San Guo Zhi*'s questions take A), which
+        /// no other script can reach.
+        Held {
+            presses: &'static [(u32, Buttons)],
             hold: u32,
             frames: u32,
         },
@@ -357,7 +359,7 @@ pub mod external {
         #[must_use]
         pub const fn total_frames(&self) -> u32 {
             match *self {
-                Self::IdleOnly { frames } | Self::HeldStart { frames, .. } => frames,
+                Self::IdleOnly { frames } | Self::Held { frames, .. } => frames,
                 Self::StartTap {
                     idle_pre,
                     idle_post,
@@ -969,21 +971,17 @@ pub mod external {
                     maybe_emit(frame_counter, &nes);
                 }
             }
-            InputScript::HeldStart {
+            InputScript::Held {
                 presses,
                 hold,
                 frames,
             } => {
                 for f in 0..frames {
-                    let held = presses.iter().any(|&p| f >= p && f < p + hold);
-                    nes.set_buttons(
-                        0,
-                        if held {
-                            Buttons::START
-                        } else {
-                            Buttons::empty()
-                        },
-                    );
+                    let held = presses
+                        .iter()
+                        .filter(|&&(p, _)| f >= p && f < p + hold)
+                        .fold(Buttons::empty(), |acc, &(_, b)| acc | b);
+                    nes.set_buttons(0, held);
                     pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
