@@ -156,11 +156,13 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // The v2.9.6 rule capped a page of only Disch's notes, or of masks
         // marked "probably", at BestEffort. The maintainer's ruling for
         // v3.2.0 (2026-10-09): such a family is Curated on a D23 record when
-        // its model needed NO behaviour the page leaves unstated, the correct
-        // boot then confirming what the notes give (47, 121, 191, and 165
-        // below). Where the model had to choose an unstated behaviour, the
-        // boot cannot tell a right choice from a lucky one, and the family
-        // stays BestEffort (230, below).
+        // every behaviour its page leaves unstated was either not needed or
+        // settled by the dump's boot visibly rejecting the alternative (47,
+        // 121, 191; 165 below, whose three choices the screens settled).
+        // Where the model chose an unstated behaviour no boot tested against
+        // an alternative, a correct boot cannot tell a right choice from a
+        // lucky one, and the family stays BestEffort (230, below). ADR 0011's
+        // v3.2.0 amendment.
         | 47 | 121 | 154 | 191 | 243 => {
             Some(MapperTier::Curated)
         }

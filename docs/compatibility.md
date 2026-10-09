@@ -440,7 +440,8 @@ became is in `docs/mappers.md`, mapper 157).
   byte-identity oracle files), with screenshots under
   `screenshots/besteffort/`, and a page or a hardware report that states the two
   behaviours would make it Curated. The notes-only families whose models needed
-  no unstated behaviour (47, 121, 191, 165) are Curated on the rows above.
+  no unstated behaviour, or whose choices a boot visibly settled (47, 121, 191,
+  165), are Curated on the rows above (ADR 0011, v3.2.0 amendment).
 - **The Sachen titles GoodNES headers as mapper 243** (*Strategist*, *Poker
   III*, *Chinese Checkers*, *Magic Cubes* and others) are SA-015 games, mapper
   150 (`nesdev_wiki/INES_Mapper_150.xhtml` lists them; 243's page names *Honey
