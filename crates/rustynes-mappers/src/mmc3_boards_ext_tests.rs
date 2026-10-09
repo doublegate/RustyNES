@@ -610,3 +610,145 @@ fn m197_state_round_trip_and_variant_refusal() {
     let m = board(ExtBoard::M197 { sub: 9 }, 32, 512);
     assert_eq!(m.board, ExtBoard::M197 { sub: 0 });
 }
+
+// ---------------------------------------------------------------------------
+// Mapper 165 (`INES_Mapper_165.md`, Disch's notes).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn m165_parses() {
+    assert!(
+        crate::parse(&nes2_image(165, 0, 32, 16)).is_ok(),
+        "mapper 165 must construct"
+    );
+}
+
+/// Load R0 = `$08`, R1 = `$0C`, R2 = `$10`, R4 = `$14` (4 KiB pages 2, 3, 4,
+/// 5 at a page = R >> 2) and R6 = 3.
+fn m165_load_regs(m: &mut Mmc3BoardExt) {
+    for (r, v) in [(0u8, 0x08u8), (1, 0x0C), (2, 0x10), (4, 0x14), (6, 3)] {
+        m.cpu_write(0x8000, r);
+        m.cpu_write(0x8001, v);
+    }
+}
+
+/// "`$0000`: R0 or R1, `$1000`: R2 or R4", picked by the MMC2 latches; a
+/// page is the register over 4, so 1 KiB bank = page * 4 + slot. The latch
+/// switches after the read that hits the trigger (`MMC2.md`), so that read
+/// still comes from the old page.
+#[test]
+fn m165_latches_select_the_mmc2_style_pages() {
+    let mut m = board(ExtBoard::M165, 32, 128);
+    m165_load_regs(&mut m);
+    // Power-on latches are $FD: R0 and R2.
+    assert_eq!(chr_at(&mut m, 0x0000), 8);
+    assert_eq!(chr_at(&mut m, 0x0C00), 11);
+    assert_eq!(chr_at(&mut m, 0x1000), 16);
+    // $0FE8 sets latch 0 to $FE: the read itself is from R0's page.
+    assert_eq!(m.ppu_read(0x0FE8), m.chr[11 * CHR_BANK_1K + 0x3E8]);
+    assert_eq!(chr_at(&mut m, 0x0000), 12, "R1 after $0FE8");
+    // $0FD8 sets it back.
+    m.ppu_read(0x0FD8);
+    assert_eq!(chr_at(&mut m, 0x0000), 8, "R0 after $0FD8");
+    // Latch 1 responds to the whole $1FE8-$1FEF / $1FD8-$1FDF ranges.
+    m.ppu_read(0x1FEC);
+    assert_eq!(chr_at(&mut m, 0x1000), 20, "R4 after $1FEC");
+    assert_eq!(chr_at(&mut m, 0x0000), 8, "latch 0 untouched");
+    m.ppu_read(0x1FDF);
+    assert_eq!(chr_at(&mut m, 0x1000), 16, "R2 after $1FDF");
+}
+
+/// Latch 0 "only responds to one address" (`MMC2.md`): `$0FE9` and `$0FE0`
+/// do not switch it.
+#[test]
+fn m165_latch_0_triggers_on_exact_addresses_only() {
+    let mut m = board(ExtBoard::M165, 32, 128);
+    m165_load_regs(&mut m);
+    m.ppu_read(0x0FE9);
+    m.ppu_read(0x0FE0);
+    assert_eq!(chr_at(&mut m, 0x0000), 8);
+    m.ppu_read(0x0FE8);
+    assert_eq!(chr_at(&mut m, 0x0000), 12);
+}
+
+/// "CHR page 0 is CHR-RAM": one 4 KiB page, the same RAM in either window;
+/// a ROM page ignores writes.
+#[test]
+fn m165_page_0_is_chr_ram() {
+    let mut m = board(ExtBoard::M165, 32, 128);
+    m165_load_regs(&mut m);
+    m.ppu_write(0x0123, 0x5A);
+    assert_ne!(m.ppu_read(0x0123), 0x5A, "page 2 is ROM");
+    m.cpu_write(0x8000, 0);
+    m.cpu_write(0x8001, 0x03); // R0 = 3: page 0
+    m.ppu_write(0x0123, 0x5A);
+    assert_eq!(m.ppu_read(0x0123), 0x5A);
+    m.cpu_write(0x8000, 2);
+    m.cpu_write(0x8001, 0x00); // R2 = 0: page 0 at $1000 too
+    assert_eq!(m.ppu_read(0x1123), 0x5A, "the same 4 KiB page");
+    assert_eq!(m.chr_phys(0x1123), None, "RAM has no ROM offset");
+}
+
+/// The page ignores `$8000` bit 7 (CHR inversion): the notes' diagram has
+/// R0/R1 at `$0000` and R2/R4 at `$1000` unconditionally.
+#[test]
+fn m165_chr_inversion_has_no_effect() {
+    let mut m = board(ExtBoard::M165, 32, 128);
+    m165_load_regs(&mut m);
+    m.cpu_write(0x8000, 0x80);
+    assert_eq!(chr_at(&mut m, 0x0000), 8);
+    assert_eq!(chr_at(&mut m, 0x1000), 16);
+}
+
+/// PRG, mirroring, SRAM enable and IRQ are the MMC3's; the board has 8 KiB
+/// of work RAM without being told.
+#[test]
+fn m165_prg_wram_mirroring_and_irq_are_mmc3() {
+    let mut m = board(ExtBoard::M165, 32, 128);
+    m165_load_regs(&mut m);
+    assert_eq!(prg_at(&mut m, 0x8000), 3);
+    assert_eq!(prg_at(&mut m, 0xE000), 31);
+    m.cpu_write(0xA000, 1);
+    assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+    assert_eq!(m.sram().len(), 0x2000);
+    m.cpu_write(0xA001, 0x80);
+    m.cpu_write(0x7FFF, 0x77);
+    assert_eq!(m.cpu_read(0x7FFF), 0x77);
+    m.cpu_write(0xA001, 0x00);
+    assert!(m.cpu_read_unmapped(0x7FFF), "SRAM disabled by $A001");
+    m.cpu_write(0xC000, 1);
+    m.cpu_write(0xC001, 0);
+    m.cpu_write(0xE001, 0);
+    clock_a12(&mut m);
+    clock_a12(&mut m);
+    assert!(m.irq_pending());
+}
+
+/// A CHR read can switch banks, so the board says so, and the latches and
+/// the CHR-RAM page are in the save state.
+#[test]
+fn m165_impure_reads_and_state_round_trip() {
+    let mut m = board(ExtBoard::M165, 32, 128);
+    assert!(!m.chr_reads_are_pure());
+    assert!(board(M114_0, 32, 128).chr_reads_are_pure());
+    m165_load_regs(&mut m);
+    m.ppu_read(0x0FE8);
+    m.ppu_read(0x1FE8);
+    m.cpu_write(0x8000, 1);
+    m.cpu_write(0x8001, 0x00); // R1 = page 0 (RAM), selected by latch 0
+    m.ppu_write(0x0042, 0x99);
+    let blob = m.save_state();
+    let mut n = board(ExtBoard::M165, 32, 128);
+    n.load_state(&blob).expect("same board");
+    assert_eq!(n.save_state(), blob);
+    assert_eq!(
+        n.ppu_read(0x0042),
+        0x99,
+        "latch 0 = $FE and the RAM restored"
+    );
+    assert!(
+        board(ExtBoard::M197 { sub: 0 }, 32, 128)
+            .load_state(&blob)
+            .is_err()
+    );
+}

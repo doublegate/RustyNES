@@ -428,6 +428,14 @@ impl Mmc3 {
         self.prg_ram_enabled && !self.prg_ram_protect
     }
 
+    /// Bank register R`r` (`r` = 0-7) exactly as written through `$8001`,
+    /// with no CHR-inversion or 2 KiB pairing applied. For boards that use
+    /// the MMC3's registers in a different banking scheme (mapper 165 reads
+    /// R0 / R1 / R2 / R4 as 4 KiB pages, MMC2 style); v3.2.0.
+    pub(crate) const fn bank_register(&self, r: usize) -> u8 {
+        self.regs[r & 7]
+    }
+
     /// Resolve a CPU PRG address (`$8000-$FFFF`) to a byte offset in
     /// `prg_rom`.  Implements PRG modes 0 and 1.
     fn prg_offset(&self, addr: u16) -> usize {

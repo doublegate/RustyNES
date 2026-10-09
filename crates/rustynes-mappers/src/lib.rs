@@ -1418,6 +1418,8 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             chr_rom,
             &h,
         )?,
+        // MMC3 + MMC2-style CHR latches and a 4 KiB CHR-RAM page.
+        165 => mmc3_ext(Mmc3ExtBoardKind::M165, prg_rom, chr_rom, &h)?,
         // Sugar Softec UNL-8237 (215.0) / UNL-8237A (215.1).
         215 => mmc3_ext(
             Mmc3ExtBoardKind::M215 {

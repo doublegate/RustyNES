@@ -144,7 +144,7 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // duplicate of 114 (the 114 page) and shares its model. A separate arm
         // so each release's batch keeps its own rationale beside its ids.
         #[allow(clippy::match_same_arms)]
-        114 | 182 | 197 | 215 => Some(MapperTier::Curated),
+        114 | 165 | 182 | 197 | 215 => Some(MapperTier::Curated),
 
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
@@ -254,7 +254,7 @@ mod tests {
         // v2.9.6 "Roster".
         12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249,
         // v3.2.0 (`mmc3_boards_ext.rs`).
-        114, 182, 197, 215,
+        114, 165, 182, 197, 215,
     ];
 
     #[test]

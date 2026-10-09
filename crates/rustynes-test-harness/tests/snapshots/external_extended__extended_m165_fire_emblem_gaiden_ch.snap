@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-165-FireEmblemCh/Fire Emblem Gaiden (Ch).zip
+rom_sha256=1d7310754adc826d0fe6d35836c0b5550c5bc0a8d3ee6ab46f35c01d949f2e15
+frames=2202
+fb_bytes=245760
+cycles=65546882
+audio_samples=1615057
+audio_fnv1a64=4c73134de929f917
+checkpoint f900 fb_fnv1a64=50e790162f1399ec
+checkpoint f1700 fb_fnv1a64=50e790162f1399ec
+checkpoint f2100 fb_fnv1a64=50e790162f1399ec

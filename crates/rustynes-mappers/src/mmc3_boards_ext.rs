@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! MMC3-clone boards added in v3.2.0, written from their NESdev pages:
 //! mappers 114 and 182 (the SuperGame / Hosenkan register scramblers) and
-//! 215 (Sugar Softec's selectable scrambler, UNL-8237 / UNL-8237A), and 197
-//! (an MMC3 rewired for 2 / 4 KiB CHR banks).
+//! 215 (Sugar Softec's selectable scrambler, UNL-8237 / UNL-8237A), 197
+//! (an MMC3 rewired for 2 / 4 KiB CHR banks) and 165 (an MMC3 with MMC2-style
+//! CHR latches).
 //!
 //! These are, like the boards in `mmc3_boards.rs`, a stock MMC3 with a
 //! board-specific layer in front of it or behind it. The difference that
@@ -106,6 +107,43 @@
 //! MMC3's A17. iNES 1.0 images take submapper 0. The page names a PRG CRC32
 //! for its one submapper 1 and one submapper 2 game; detecting them is the
 //! per-game database's job, not the board's.
+//!
+//! ## Mapper 165 (`INES_Mapper_165.md`)
+//!
+//! The page is Disch's notes only: "a strange MMC2+MMC3 hybrid". PRG, PRG-RAM
+//! enable, mirroring "and even IRQs" are the MMC3's; the CHR registers are
+//! used MMC2-style, two 4 KiB windows each chosen by a tile latch:
+//!
+//! - `$0000-$0FFF`: R0 while latch 0 is `$FD`, R1 while it is `$FE`;
+//! - `$1000-$1FFF`: R2 while latch 1 is `$FD`, R4 while it is `$FE`.
+//!
+//! "CHR page 0 is CHR-RAM, other pages are CHR-ROM", with 4 KiB of CHR-RAM
+//! beside the ROM, and "SRAM enabling" as on the MMC3, so the board has 8 KiB
+//! of work RAM even under an iNES 1.0 header. Three readings are this
+//! model's, stated where the notes are silent or loose:
+//!
+//! - **A page is the register value over 4.** The MMC3's registers count
+//!   1 KiB units and a window is 4 KiB, so page = R >> 2 (MMC3 CHR A12 and
+//!   up), and page `n` reads CHR-ROM at `n * 4 KiB` (page 0's ROM is
+//!   shadowed by the RAM).
+//! - **The latches are the MMC2's.** "The same latches that exist on MMC2
+//!   exist on this mapper as well": latch 0 switches on `$0FD8` / `$0FE8`
+//!   exactly, latch 1 on `$1FD8-$1FDF` / `$1FE8-$1FEF`, after the read that
+//!   hit them (`MMC2.md`). The notes also say the game reads "`$xFD0` or
+//!   `$xFE0` via `$2007`" to toggle a latch by hand; that is not taken as a
+//!   trigger address. Measured on the Fire Emblem translation: triggering on
+//!   all of `$xFD0-$xFDF` draws a stray vertical bar before every line of
+//!   intro text (the high plane of the switching tile comes from the new
+//!   bank), while the MMC2's triggers draw the same screens (title, intro
+//!   text, unit cards) clean. Which of them the game draws through a manual
+//!   `$2007` toggle was not determined.
+//! - **Work RAM is required, not optional.** Without it the *Fire Emblem
+//!   Gaiden* translation's title screen is garbage tiles: it builds the title
+//!   in RAM it reads back.
+//!
+//! `$8000` bit 7 (CHR inversion) is not part of the notes' diagram and has
+//! no effect here. Because a pattern read can switch banks, the board reports
+//! impure CHR reads ([`Mapper::chr_reads_are_pure`]).
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -128,7 +166,8 @@ const CHR_BANK_1K: usize = 0x0400;
 const SAVE_STATE_VERSION: u8 = 1;
 
 /// Fixed head of the save state: version, id, variant tag, four registers,
-/// one latch byte, and the embedded MMC3 state's length.
+/// the latch byte (165: bit 0 / bit 1 = latch 0 / 1 at `$FE`), and the
+/// embedded MMC3 state's length.
 const HEAD: usize = 3 + 4 + 1 + 4;
 
 /// Which board an [`Mmc3BoardExt`] models.
@@ -152,6 +191,9 @@ pub enum ExtBoard {
         /// NES 2.0 submapper.
         sub: u8,
     },
+    /// Mapper 165, `INES_Mapper_165.md`: MMC3 with MMC2-style CHR latches
+    /// and a 4 KiB CHR-RAM page.
+    M165,
 }
 
 impl ExtBoard {
@@ -160,6 +202,7 @@ impl ExtBoard {
             Self::M114 { .. } => 114,
             Self::M215 { .. } => 215,
             Self::M197 { .. } => 197,
+            Self::M165 => 165,
         }
     }
 
@@ -173,6 +216,7 @@ impl ExtBoard {
             Self::M197 { sub: 2 } => "MMC3 2/4 KiB CHR (197.2)",
             Self::M197 { sub: 3 } => "MMC3 2/4 KiB CHR + outer PRG (197.3)",
             Self::M197 { .. } => "MMC3 2/4 KiB CHR (197.0)",
+            Self::M165 => "MMC3 + MMC2 latch (165)",
         }
     }
 
@@ -185,6 +229,7 @@ impl ExtBoard {
             Self::M215 { sub1: false } => 2,
             Self::M215 { sub1: true } => 3,
             Self::M197 { sub } => 4 + sub,
+            Self::M165 => 8,
         }
     }
 }
@@ -259,6 +304,17 @@ const M215_SCRAMBLE: [Scramble; 8] = [
 /// leaves the high nibble undefined; it is taken as 0.
 const M215_OUTER_POWER_UP: u8 = 0x0F;
 
+/// Mapper 165's CHR-RAM: one 4 KiB page.
+const M165_CHR_RAM: usize = 0x1000;
+
+/// Where a pattern-table access lands.
+enum Chr {
+    /// A byte offset into CHR-ROM (or the whole-image CHR-RAM).
+    Rom(usize),
+    /// A byte offset into the board's separate CHR-RAM (165).
+    Ram(usize),
+}
+
 /// The position of an `$E001`-masked MMC3 address in a [`Scramble`] row.
 const fn scramble_slot(addr: u16) -> usize {
     ((((addr >> 13) & 3) << 1) | (addr & 1)) as usize
@@ -307,6 +363,10 @@ pub struct Mmc3BoardExt {
     /// 215: `regs[0]` = `$5000`, `regs[1]` = `$5001`, `regs[2]` = `$5007`.
     /// 197.3: `regs[0]` = the `$6000` outer register.
     regs: [u8; 4],
+    /// 165: the two CHR latches, `true` = `$FE` (index 0: `$0000-$0FFF`).
+    latch: [bool; 2],
+    /// 165: the 4 KiB CHR-RAM page; empty on every other board.
+    chr_ram: Box<[u8]>,
 }
 
 impl Mmc3BoardExt {
@@ -348,12 +408,21 @@ impl Mmc3BoardExt {
             ExtBoard::M114 { .. } => Mmc3Revision::Nec,
             // 197: "PRG-ROM, nametable mirroring and IRQs function as in
             // mapper 4."
-            ExtBoard::M215 { .. } | ExtBoard::M197 { .. } => Mmc3Revision::Sharp,
+            // 165: "Register style, PRG, mirroring, ?and even IRQs? of MMC3".
+            ExtBoard::M215 { .. } | ExtBoard::M197 { .. } | ExtBoard::M165 => Mmc3Revision::Sharp,
         };
         // Unknown 197 submappers are wired as submapper 0.
         let board = match board {
             ExtBoard::M197 { sub } if sub > 3 => ExtBoard::M197 { sub: 0 },
             b => b,
+        };
+        // 165: "SRAM enabling ... function as they do on your vanilla MMC3",
+        // so the board has the MMC3's 8 KiB of work RAM (the Fire Emblem
+        // translations save to it) even when an iNES 1.0 header says nothing.
+        let wram_bytes = if board == ExtBoard::M165 && wram_bytes == 0 {
+            0x2000
+        } else {
+            wram_bytes
         };
         let mut regs = [0u8; 4];
         if matches!(board, ExtBoard::M215 { .. }) {
@@ -367,6 +436,16 @@ impl Mmc3BoardExt {
             chr_is_ram,
             wram: vec![0u8; wram_bytes].into_boxed_slice(),
             regs,
+            latch: [false; 2],
+            chr_ram: vec![
+                0u8;
+                if board == ExtBoard::M165 {
+                    M165_CHR_RAM
+                } else {
+                    0
+                }
+            ]
+            .into_boxed_slice(),
         })
     }
 
@@ -396,7 +475,7 @@ impl Mmc3BoardExt {
             ExtBoard::M197 { sub: 3 } if self.regs[0] & 0x10 != 0 => {
                 (raw & 0x0F) | (usize::from(self.regs[0] & 1) << 4)
             }
-            ExtBoard::M197 { .. } => raw,
+            ExtBoard::M197 { .. } | ExtBoard::M165 => raw,
         }
     }
 
@@ -435,13 +514,46 @@ impl Mmc3BoardExt {
                 // MMC3 CHR A10-A17 drive ROM A11-A18; PPU A10 drives ROM A10.
                 ((self.core.chr_bank_1k(seen) & 0xFF) << 1) | usize::from((addr >> 10) & 1)
             }
+            // 165 resolves through `m165_page`; this arm serves `chr_phys`'s
+            // ROM path only and is never reached for a RAM page.
+            ExtBoard::M165 => (self.m165_page(addr) << 2) | usize::from((addr >> 10) & 3),
         }
     }
 
-    fn chr_offset(&self, addr: u16) -> usize {
+    /// Mapper 165: the 4 KiB page a pattern-table address selects, from the
+    /// latch of its half (R0 / R1 below `$1000`, R2 / R4 above).
+    fn m165_page(&self, addr: u16) -> usize {
+        let high = addr & 0x1000 != 0;
+        let reg = match (high, self.latch[usize::from(high)]) {
+            (false, false) => 0,
+            (false, true) => 1,
+            (true, false) => 2,
+            (true, true) => 4,
+        };
+        usize::from(self.core.bank_register(reg) >> 2)
+    }
+
+    /// Resolve a pattern-table address to CHR-ROM or the 165 CHR-RAM page.
+    fn chr_target(&self, addr: u16) -> Chr {
         let addr = addr & 0x1FFF;
+        if self.board == ExtBoard::M165 && self.m165_page(addr) == 0 {
+            return Chr::Ram(usize::from(addr) & (M165_CHR_RAM - 1));
+        }
         let bank = mirror_bank(self.chr_bank(addr), self.chr.len() / CHR_BANK_1K);
-        bank * CHR_BANK_1K + (usize::from(addr) & (CHR_BANK_1K - 1))
+        Chr::Rom(bank * CHR_BANK_1K + (usize::from(addr) & (CHR_BANK_1K - 1)))
+    }
+
+    /// Mapper 165's latch update, after the read that hit a trigger: the
+    /// MMC2's triggers (`MMC2.md`), latch 0 on `$0FD8` / `$0FE8` exactly and
+    /// latch 1 on `$1FD8-$1FDF` / `$1FE8-$1FEF`.
+    fn m165_update_latch(&mut self, addr: u16) {
+        match addr & 0x1FFF {
+            0x0FD8 => self.latch[0] = false,
+            0x0FE8 => self.latch[0] = true,
+            0x1FD8..=0x1FDF => self.latch[1] = false,
+            0x1FE8..=0x1FEF => self.latch[1] = true,
+            _ => {}
+        }
     }
 
     fn write_high(&mut self, addr: u16, value: u8) {
@@ -451,7 +563,7 @@ impl Mmc3BoardExt {
             ExtBoard::M215 { .. } => {
                 unscramble(&M215_SCRAMBLE[usize::from(self.regs[2] & 7)], addr, value)
             }
-            ExtBoard::M197 { .. } => (addr, value),
+            ExtBoard::M197 { .. } | ExtBoard::M165 => (addr, value),
         };
         self.core.cpu_write(addr, value);
     }
@@ -536,30 +648,43 @@ impl Mapper for Mmc3BoardExt {
         }
     }
 
+    fn chr_reads_are_pure(&self) -> bool {
+        // 165: a read of tile $FD / $FE switches a CHR latch.
+        self.board != ExtBoard::M165
+    }
+
     fn chr_phys(&self, addr: u16) -> Option<u32> {
-        if self.chr_is_ram {
-            None
-        } else {
-            u32::try_from(self.chr_offset(addr)).ok()
+        match self.chr_target(addr) {
+            Chr::Rom(off) if !self.chr_is_ram => u32::try_from(off).ok(),
+            _ => None,
         }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
-        if addr < 0x2000 {
-            self.chr[self.chr_offset(addr)]
-        } else {
-            self.core.ppu_read(addr)
+        if addr >= 0x2000 {
+            return self.core.ppu_read(addr);
         }
+        let value = match self.chr_target(addr) {
+            Chr::Rom(off) => self.chr[off],
+            Chr::Ram(off) => self.chr_ram[off],
+        };
+        if self.board == ExtBoard::M165 {
+            self.m165_update_latch(addr);
+        }
+        value
     }
 
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if addr >= 0x2000 {
             self.core.ppu_write(addr, value);
-        } else if self.chr_is_ram {
-            let off = self.chr_offset(addr);
-            self.chr[off] = value;
+            return;
+        }
+        match self.chr_target(addr) {
+            Chr::Ram(off) => self.chr_ram[off] = value,
+            Chr::Rom(off) if self.chr_is_ram => self.chr[off] = value,
+            Chr::Rom(_) => {}
         }
     }
 
@@ -598,23 +723,31 @@ impl Mapper for Mmc3BoardExt {
         for (i, r) in self.regs.iter().enumerate() {
             info.extra.push((format!("board{i}"), format!("{r:#04x}")));
         }
+        if self.board == ExtBoard::M165 {
+            for (i, fe) in self.latch.iter().enumerate() {
+                let v = if *fe { "FE" } else { "FD" };
+                info.extra.push((format!("latch{i}"), v.to_string()));
+            }
+        }
         info
     }
 
     fn save_state(&self) -> Vec<u8> {
         let core = self.core.save_state();
         let chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let mut out = Vec::with_capacity(HEAD + core.len() + chr + self.wram.len());
+        let mut out =
+            Vec::with_capacity(HEAD + core.len() + chr + self.chr_ram.len() + self.wram.len());
         out.push(SAVE_STATE_VERSION);
         out.push(self.board.id() as u8);
         out.push(self.board.state_tag());
         out.extend_from_slice(&self.regs);
-        out.push(0); // Reserved for a board latch byte.
+        out.push(u8::from(self.latch[0]) | (u8::from(self.latch[1]) << 1));
         out.extend_from_slice(&(core.len() as u32).to_le_bytes());
         out.extend_from_slice(&core);
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
+        out.extend_from_slice(&self.chr_ram);
         out.extend_from_slice(&self.wram);
         out
     }
@@ -643,7 +776,7 @@ impl Mapper for Mmc3BoardExt {
         // a 32-bit target, pass the check, and panic at the slice.
         let expected = HEAD
             .checked_add(core_len)
-            .and_then(|n| n.checked_add(chr + self.wram.len()));
+            .and_then(|n| n.checked_add(chr + self.chr_ram.len() + self.wram.len()));
         if expected != Some(data.len()) {
             return Err(MapperError::WrongLength {
                 expected: expected.unwrap_or(usize::MAX),
@@ -654,10 +787,14 @@ impl Mapper for Mmc3BoardExt {
         self.core.load_state(&data[cur..cur + core_len])?;
         cur += core_len;
         self.regs.copy_from_slice(&data[3..7]);
+        self.latch = [data[7] & 1 != 0, data[7] & 2 != 0];
         if self.chr_is_ram {
             self.chr.copy_from_slice(&data[cur..cur + chr]);
             cur += chr;
         }
+        let n = self.chr_ram.len();
+        self.chr_ram.copy_from_slice(&data[cur..cur + n]);
+        cur += n;
         self.wram.copy_from_slice(&data[cur..]);
         Ok(())
     }

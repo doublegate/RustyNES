@@ -1487,3 +1487,33 @@ fn extended_m197_super_fighter_iii() {
         "extended_m197_super_fighter_iii",
     );
 }
+
+/// Fire Emblem translations hold the Waixing logo (drawn from the CHR-RAM
+/// page) until START; a tap at frame 700 reaches the title and a second
+/// tap starts the intro. Checkpoints: the title, then the intro.
+const M165_TITLE_INTRO: InputScript = InputScript::DoubleStartTap {
+    idle_pre: 700,
+    gap: 400,
+    idle_post: 0,
+    free_run: 1100,
+    checkpoints: &[900, 1700, 2100],
+};
+
+#[test]
+fn extended_m165_fire_emblem_ch() {
+    check(
+        "mapper-165-FireEmblemCh/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch).zip",
+        M165_TITLE_INTRO,
+        "extended_m165_fire_emblem_ch",
+    );
+}
+
+/// Needs the board's work RAM: without it the title is garbage tiles.
+#[test]
+fn extended_m165_fire_emblem_gaiden_ch() {
+    check(
+        "mapper-165-FireEmblemCh/Fire Emblem Gaiden (Ch).zip",
+        M165_TITLE_INTRO,
+        "extended_m165_fire_emblem_gaiden_ch",
+    );
+}
