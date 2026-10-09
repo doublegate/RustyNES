@@ -26,6 +26,48 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Movies and netplay from v3.1.0 are refused.** `EMULATION_EPOCH` rises
+  from 3 to 4: the mapper 290 and 24C02 fixes below change what the bus sees.
+  A v3.1.x peer or movie is refused as another emulator version, naming its
+  epoch. Save states are not affected by the epoch.
+
+### Added
+
+- **Mapper 157, the Bandai Datach Joint ROM System, with its barcode
+  reader.** Six games boot. *Dragon Ball Z* and *SD Gundam Wars* read a
+  scanned card, entered as a 13- or 8-digit JAN/EAN code from Emulation >
+  Scan Barcode... (refused during movie recording or playback and netplay).
+  The reader's polarity, idle level and speed are not documented anywhere;
+  they were measured against the games.
+- **Six MMC3-derived families**: 114 and 182 (SuperGame / Hosenkan), 215
+  (Sugar Softec), 197, 165 (the Chinese *Fire Emblem* ports) and 116
+  (SOMARI-P, which switches between VRC2, MMC3 and MMC1). All Curated, each
+  booted from real dumps.
+- **The coverage sweep boots Famicom-only carts as a Famicom.** Ten dumps
+  listed as blank since v2.9.6 write the PPU during the front-loading NES's
+  power-on warm-up, which ignores those writes; on the Famicom model they
+  draw. The frontend still does not pick the model from the ROM: choose
+  Famicom in Settings for *Sansuu 1-3*, *Final Combat*, *Digital Dragon* and
+  the like.
+
+### Changed
+
+- **Mappers 47, 121, 154, 191 and 243 are Curated**, on local-dump evidence
+  recorded in `docs/compatibility.md` (maintainer decision D23). The tiers
+  are now 51 Core, 121 Curated and 26 BestEffort.
+
+### Fixed
+
+- **Mapper 290 (*Asder 20-in-1*) boots.** Its 32 KiB PRG mode read the
+  upper half through the 16 KiB window, so the reset vector came from the
+  wrong bank.
+- **A 24C02 serial EEPROM keeps its word address across a START** (mappers
+  16 and 157), so a random read returns the byte asked for instead of byte
+  `$00`. On the Datach this was the difference between booting and
+  reformatting the save at every power-on.
+
 ## [3.1.0] - 2026-10-08 - "Bellwether" (the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it)
 
 The first release of the v3.1 to v4.0 line. AccuracyCoin is re-synced to its
