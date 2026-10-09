@@ -918,7 +918,9 @@ before this change is different.
 **Movies and netplay.** A scan is an input that changes emulation and is not
 recorded in `.rnm` movies or carried by netplay. A host must refuse a scan
 while a movie records or plays or a netplay session runs, rather than let it
-desynchronise. Recording scans is future work.
+desynchronise; the desktop does (`session_policy`'s `BarcodeScan`, the reason
+shown in the menu, the window and the status line). The libretro core, the
+mobile apps and Lua expose no scan yet. Recording scans is future work.
 
 **Open bus.** The six undriven bits of a `$6000-$7FFF` read are open bus on
 the board and read 0 here, as on mapper 16: the bus consults a partial

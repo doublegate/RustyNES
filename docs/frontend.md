@@ -1084,8 +1084,15 @@ reorganized the order and regrouped several items — see the per-menu notes):
 - **Emulation** — Pause/Resume (disabled during netplay), Reset, Power Cycle,
   Frame Advance (`\`, single-steps one frame while paused), a hold-`Tab` Fast
   Forward hint, Run-Ahead selector (0-3), Speed presets, Region (read-only
-  display), Vs. Insert Coin (`F10`, Vs. games only), and FDS Swap Disk Side
-  (`F9`, FDS games only; moved here from File in v1.3.0).
+  display), Vs. Insert Coin (`F10`, Vs. games only), FDS Swap Disk Side
+  (`F9`, FDS games only; moved here from File in v1.3.0), and **Scan
+  Barcode...** (v3.2.0, Datach / mapper 157 carts only), which opens the
+  Datach Barcode Reader window: a digits field, a live line naming what is
+  wrong with what was typed (empty, a non-digit, not 13 or 8 digits, a wrong
+  check digit and the one expected; the same checks `Nes::scan_barcode`
+  applies), and a Scan button (or Enter) that dispatches
+  `MenuAction::ScanBarcode`. The outcome ("Scanned barcode ...", or the
+  core's refusal) goes to the status line.
 - **View** — Settings, Theme (Light/Dark/System + the v1.5.0 accessibility
   themes High Contrast / Colorblind-Safe), 8:7 Pixel Aspect, Hide Overscan,
   Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
@@ -1125,9 +1132,14 @@ reorganized the order and regrouped several items — see the per-menu notes):
 
 **Session lockout (v2.9.9, NF-11).** A movie and a netplay session both carry
 controller input only, so anything that changes the machine outside that
-stream breaks them: a Reset, a Power Cycle, an FDS disk change and a state load
-are refused while a movie records or plays, or a netplay session runs, and a
-state load is also refused in RA hardcore. The rule is one pure function,
+stream breaks them: a Reset, a Power Cycle, an FDS disk change, a Datach
+barcode scan (v3.2.0) and a state load are refused while a movie records or
+plays, or a netplay session runs, and a state load is also refused in RA
+hardcore. For the scan the menu item is greyed with the reason on hover, the
+window keeps the field editable but disables Scan and says why, and the
+dispatch refuses with "Barcode scan disabled during movie / netplay"; a scan is
+not recorded in `.rnm` movies or carried by netplay, so allowing it would
+desynchronise them silently. The rule is one pure function,
 `session_policy::refusal`, and every route asks it — the menu (which greys the
 items), the hotkeys, the Save-States manager, the browser grid; a script's load
 honours the `writes_locked` gate its `SetInput` already did. The F8 movie

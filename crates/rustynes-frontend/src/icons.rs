@@ -56,6 +56,8 @@ pub mod glyph {
     pub const CLOCK_ROTATE_LEFT: char = '\u{f1da}';
     /// `floppy-disk` — save state / save-slot actions.
     pub const FLOPPY_DISK: char = '\u{f0c7}';
+    /// `barcode` — v3.2.0, the Datach barcode reader's "Scan Barcode..." item.
+    pub const BARCODE: char = '\u{f02a}';
     /// `download` — load state / import.
     pub const DOWNLOAD: char = '\u{f019}';
     /// `camera`-like image; FA Solid `image` glyph for screenshots.
