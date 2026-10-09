@@ -1411,6 +1411,13 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             &h,
         )?,
         182 => mmc3_ext(Mmc3ExtBoardKind::M114 { sub1: false }, prg_rom, chr_rom, &h)?,
+        // MMC3 with 2 / 4 KiB CHR granularity; the submapper is the wiring.
+        197 => mmc3_ext(
+            Mmc3ExtBoardKind::M197 { sub: h.submapper },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
         // Sugar Softec UNL-8237 (215.0) / UNL-8237A (215.1).
         215 => mmc3_ext(
             Mmc3ExtBoardKind::M215 {

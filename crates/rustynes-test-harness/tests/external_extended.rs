@@ -1477,3 +1477,13 @@ fn extended_m215_super_808() {
         "extended_m215_super_808",
     );
 }
+
+/// Submapper 0 wiring (the page's PRG CRC32 `0xC333F621` copy).
+#[test]
+fn extended_m197_super_fighter_iii() {
+    check(
+        "mapper-197-SuperFighter3/Super Fighter III (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m197_super_fighter_iii",
+    );
+}

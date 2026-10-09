@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! MMC3-clone boards added in v3.2.0, written from their NESdev pages:
 //! mappers 114 and 182 (the SuperGame / Hosenkan register scramblers) and
-//! 215 (Sugar Softec's selectable scrambler, UNL-8237 / UNL-8237A).
+//! 215 (Sugar Softec's selectable scrambler, UNL-8237 / UNL-8237A), and 197
+//! (an MMC3 rewired for 2 / 4 KiB CHR banks).
 //!
 //! These are, like the boards in `mmc3_boards.rs`, a stock MMC3 with a
 //! board-specific layer in front of it or behind it. The difference that
@@ -73,6 +74,38 @@
 //! substitution unordered, `C` is applied last, to whichever bank (MMC3 or
 //! NROM) is in force: it is described as a substitution of the PRG A17 line,
 //! which both sources drive.
+//!
+//! ## Mapper 197 (`INES_Mapper_197.md`)
+//!
+//! An MMC3 clone wired for 512 KiB of CHR-ROM by doubling the CHR bank
+//! granularity: PPU A10 goes straight to CHR-ROM A10, the MMC3's CHR outputs
+//! A10-A17 drive CHR-ROM A11-A18, and the MMC3's own PPU-address inputs are
+//! rewired so that it sees PPU A11 on its PA10. The page gives the wiring per
+//! submapper and the resulting bank table; this model implements the
+//! *wiring*, not the table:
+//!
+//! | Sub | MMC3 PA10 | MMC3 PA11 | MMC3 PA12 |
+//! |-----|-----------|-----------|-----------|
+//! | 0, 3 | PPU A11 | GND | PPU A12 |
+//! | 1 | PPU A11 | Vcc | PPU A12 |
+//! | 2 | PPU A11 | PPU A11 | PPU A12 |
+//!
+//! For a pattern-table address the board forms the address the MMC3 sees,
+//! asks the MMC3 which 1 KiB bank it would select there
+//! ([`Mmc3::chr_bank_1k`]), and builds the ROM address as that bank on
+//! A11-A18 with PPU A10 below it. The page's tables (submapper 0: R0 as
+//! 4 KiB at `$0000`, R2 / R3 as 2 KiB at `$1000` / `$1800`, R1, R4 and R5
+//! unused) fall out of this, and so does `$8000` bit 7 (the CHR A12
+//! inversion), which the page does not mention: the MMC3 still has it, and
+//! with PA12 wired to PPU A12 it still swaps which registers each pattern
+//! table sees. PA12 is unchanged, so the A12 IRQ counter is the MMC3's.
+//!
+//! Submapper 3 adds an outer register at `$6000-$7FFF` (mask `$E000`) on the
+//! MMC3's WRAM interface (taken only while `$A001` allows a WRAM write):
+//! `.... S..P`, with `S` set making PRG A17 = `P` (128 KiB) instead of the
+//! MMC3's A17. iNES 1.0 images take submapper 0. The page names a PRG CRC32
+//! for its one submapper 1 and one submapper 2 game; detecting them is the
+//! per-game database's job, not the board's.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -113,6 +146,12 @@ pub enum ExtBoard {
         /// NES 2.0 submapper 1 (UNL-8237A).
         sub1: bool,
     },
+    /// Mapper 197, `INES_Mapper_197.md`: the PPU-address wiring of
+    /// submappers 0-3 (any other value is taken as 0).
+    M197 {
+        /// NES 2.0 submapper.
+        sub: u8,
+    },
 }
 
 impl ExtBoard {
@@ -120,6 +159,7 @@ impl ExtBoard {
         match self {
             Self::M114 { .. } => 114,
             Self::M215 { .. } => 215,
+            Self::M197 { .. } => 197,
         }
     }
 
@@ -129,6 +169,10 @@ impl ExtBoard {
             Self::M114 { sub1: true } => "SuperGame MMC3 scramble (114.1)",
             Self::M215 { sub1: false } => "Sugar Softec UNL-8237 (215.0)",
             Self::M215 { sub1: true } => "Sugar Softec UNL-8237A (215.1)",
+            Self::M197 { sub: 1 } => "MMC3 2/4 KiB CHR (197.1)",
+            Self::M197 { sub: 2 } => "MMC3 2/4 KiB CHR (197.2)",
+            Self::M197 { sub: 3 } => "MMC3 2/4 KiB CHR + outer PRG (197.3)",
+            Self::M197 { .. } => "MMC3 2/4 KiB CHR (197.0)",
         }
     }
 
@@ -140,6 +184,7 @@ impl ExtBoard {
             Self::M114 { sub1: true } => 1,
             Self::M215 { sub1: false } => 2,
             Self::M215 { sub1: true } => 3,
+            Self::M197 { sub } => 4 + sub,
         }
     }
 }
@@ -260,6 +305,7 @@ pub struct Mmc3BoardExt {
     wram: Box<[u8]>,
     /// Board registers. 114: `regs[0]` = `$6000`, `regs[1]` = `$6001`.
     /// 215: `regs[0]` = `$5000`, `regs[1]` = `$5001`, `regs[2]` = `$5007`.
+    /// 197.3: `regs[0]` = the `$6000` outer register.
     regs: [u8; 4],
 }
 
@@ -300,7 +346,14 @@ impl Mmc3BoardExt {
         // of zero disables the IRQ, on which Aladdin depends."
         let revision = match board {
             ExtBoard::M114 { .. } => Mmc3Revision::Nec,
-            ExtBoard::M215 { .. } => Mmc3Revision::Sharp,
+            // 197: "PRG-ROM, nametable mirroring and IRQs function as in
+            // mapper 4."
+            ExtBoard::M215 { .. } | ExtBoard::M197 { .. } => Mmc3Revision::Sharp,
+        };
+        // Unknown 197 submappers are wired as submapper 0.
+        let board = match board {
+            ExtBoard::M197 { sub } if sub > 3 => ExtBoard::M197 { sub: 0 },
+            b => b,
         };
         let mut regs = [0u8; 4];
         if matches!(board, ExtBoard::M215 { .. }) {
@@ -339,6 +392,11 @@ impl Mmc3BoardExt {
                 };
                 inner | (hi << 5)
             }
+            // 197.3: `S` (bit 4) set makes PRG A17 = `P` (bit 0).
+            ExtBoard::M197 { sub: 3 } if self.regs[0] & 0x10 != 0 => {
+                (raw & 0x0F) | (usize::from(self.regs[0] & 1) << 4)
+            }
+            ExtBoard::M197 { .. } => raw,
         }
     }
 
@@ -364,6 +422,19 @@ impl Mmc3BoardExt {
                 };
                 inner | (hi << 8)
             }
+            ExtBoard::M197 { sub } => {
+                // The address the MMC3 sees: PA10 = PPU A11, PA11 per the
+                // submapper's wiring, PA12 = PPU A12.
+                let a11 = (addr >> 11) & 1;
+                let pa11 = match sub {
+                    1 => 1,
+                    2 => a11,
+                    _ => 0,
+                };
+                let seen = (addr & 0x1000) | (pa11 << 11) | (a11 << 10);
+                // MMC3 CHR A10-A17 drive ROM A11-A18; PPU A10 drives ROM A10.
+                ((self.core.chr_bank_1k(seen) & 0xFF) << 1) | usize::from((addr >> 10) & 1)
+            }
         }
     }
 
@@ -380,6 +451,7 @@ impl Mmc3BoardExt {
             ExtBoard::M215 { .. } => {
                 unscramble(&M215_SCRAMBLE[usize::from(self.regs[2] & 7)], addr, value)
             }
+            ExtBoard::M197 { .. } => (addr, value),
         };
         self.core.cpu_write(addr, value);
     }
@@ -448,6 +520,14 @@ impl Mapper for Mmc3BoardExt {
                 0x5007 => self.regs[2] = value & 7,
                 _ => {}
             },
+            (ExtBoard::M197 { sub: 3 }, 0x6000..=0x7FFF) if self.core.prg_ram_writable() => {
+                // On the WRAM interface: only while `$A001` allows a write.
+                self.regs[0] = value;
+                if !self.wram.is_empty() {
+                    let len = self.wram.len();
+                    self.wram[usize::from(addr - 0x6000) % len] = value;
+                }
+            }
             (_, 0x6000..=0x7FFF) if !self.wram.is_empty() && self.core.prg_ram_writable() => {
                 let len = self.wram.len();
                 self.wram[usize::from(addr - 0x6000) % len] = value;

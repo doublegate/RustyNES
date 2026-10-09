@@ -464,3 +464,149 @@ fn m215_state_round_trip_and_variant_refusal() {
     assert!(board(M215_1, 64, 512).load_state(&blob).is_err());
     assert!(board(M114_0, 64, 512).load_state(&blob).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Mapper 197 (`INES_Mapper_197.md`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn m197_parses() {
+    for sub in [0u8, 1, 2, 3] {
+        assert!(
+            crate::parse(&nes2_image(197, sub, 16, 64)).is_ok(),
+            "mapper 197.{sub} must construct"
+        );
+    }
+}
+
+/// Load R0-R5 with `0x11, 0x21, 0x30, 0x40, 0x50, 0x60` (R0/R1 odd, so the
+/// page's `AND $FE` / `OR $01` are visible) and R6 with 3.
+fn m197_load_regs(m: &mut Mmc3BoardExt, mode: u8) {
+    for (r, v) in [
+        (0u8, 0x11u8),
+        (1, 0x21),
+        (2, 0x30),
+        (3, 0x40),
+        (4, 0x50),
+        (5, 0x60),
+        (6, 3),
+    ] {
+        m.cpu_write(0x8000, mode | r);
+        m.cpu_write(0x8001, v);
+    }
+}
+
+/// The page's "Real PPU Addr -> MMC3 reg" table for each submapper, row by
+/// row. A row's MMC3 register value lands on CHR-ROM A11-A18 and PPU A10 on
+/// A10, so the 1 KiB ROM bank is `value * 2 + A10`.
+#[test]
+fn m197_chr_wiring_follows_the_page_tables() {
+    let (r0, r1, r2, r3, r4, r5) = (0x11usize, 0x21, 0x30, 0x40, 0x50, 0x60);
+    let tables: [(u8, [usize; 4]); 3] = [
+        // sub 0: $0000/$0400 R0&$FE, $0800/$0C00 R0|1, $1000/$1400 R2, $1800/$1C00 R3.
+        (0, [r0 & 0xFE, r0 | 1, r2, r3]),
+        // sub 1: R1&$FE, R1|1, R4, R5.
+        (1, [r1 & 0xFE, r1 | 1, r4, r5]),
+        // sub 2: R0&$FE, R1|1, R2, R5.
+        (2, [r0 & 0xFE, r1 | 1, r2, r5]),
+    ];
+    for (sub, regs) in tables {
+        let mut m = board(ExtBoard::M197 { sub }, 16, 512);
+        m197_load_regs(&mut m, 0);
+        for (i, &v) in regs.iter().enumerate() {
+            let base = (i as u16) * 0x800;
+            assert_eq!(chr_at(&mut m, base), v * 2, "sub {sub} at {base:#06x}");
+            assert_eq!(
+                chr_at(&mut m, base + 0x400),
+                v * 2 + 1,
+                "sub {sub} at {:#06x}",
+                base + 0x400
+            );
+        }
+    }
+}
+
+/// `$8000` bit 7 is not on the page, but the MMC3 still has it and PA12 is
+/// PPU A12, so it swaps which registers each pattern table sees: inverted,
+/// submapper 0's `$0000` reads R2 and `$1000` reads R0.
+#[test]
+fn m197_chr_inversion_still_swaps_pattern_tables() {
+    let mut m = board(ExtBoard::M197 { sub: 0 }, 16, 512);
+    m197_load_regs(&mut m, 0x80);
+    assert_eq!(chr_at(&mut m, 0x0000), 0x30 * 2);
+    assert_eq!(chr_at(&mut m, 0x0800), 0x40 * 2);
+    assert_eq!(chr_at(&mut m, 0x1000), 0x10 * 2);
+    assert_eq!(chr_at(&mut m, 0x1800), 0x11 * 2);
+}
+
+/// "PRG-ROM, nametable mirroring and IRQs function as in mapper 4": R6 at
+/// `$8000`, `$A000` mirroring, and the Sharp IRQ (a latch of 0 fires every
+/// clock).
+#[test]
+fn m197_prg_mirroring_and_irq_are_mapper_4() {
+    let mut m = board(ExtBoard::M197 { sub: 0 }, 16, 512);
+    m197_load_regs(&mut m, 0);
+    assert_eq!(prg_at(&mut m, 0x8000), 3);
+    assert_eq!(prg_at(&mut m, 0xE000), 15);
+    m.cpu_write(0xA000, 1);
+    assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+    m.cpu_write(0xC000, 0);
+    m.cpu_write(0xC001, 0);
+    m.cpu_write(0xE001, 0);
+    clock_a12(&mut m);
+    m.cpu_write(0xE000, 0);
+    m.cpu_write(0xE001, 0);
+    clock_a12(&mut m);
+    assert!(m.irq_pending());
+}
+
+/// Submapper 3: `$6000-$7FFF` `.... S..P` on the WRAM interface. With S set
+/// PRG A17 = P; with S clear it is the MMC3's. A write while `$A001` forbids
+/// it is dropped. Submapper 0 has no such register.
+#[test]
+fn m197_sub3_outer_prg_register() {
+    let mut m = board(ExtBoard::M197 { sub: 3 }, 32, 512);
+    m.cpu_write(0x8000, 6);
+    m.cpu_write(0x8001, 0x13);
+    m.cpu_write(0xA001, 0x00); // WRAM disabled
+    m.cpu_write(0x6000, 0x10);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x13, "dropped while disabled");
+    m.cpu_write(0xA001, 0xC0); // enabled, write-protected
+    m.cpu_write(0x7FFF, 0x10);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x13, "dropped while protected");
+    m.cpu_write(0xA001, 0x80);
+    m.cpu_write(0x7FFF, 0x10);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x03, "S=1, P=0");
+    m.cpu_write(0x6000, 0x11);
+    m.cpu_write(0x8001, 0x03);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x13, "S=1, P=1");
+    m.cpu_write(0x6000, 0x01);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x03, "S=0: the MMC3's A17");
+
+    let mut m = board(ExtBoard::M197 { sub: 0 }, 32, 512);
+    m.cpu_write(0x8000, 6);
+    m.cpu_write(0x8001, 0x03);
+    m.cpu_write(0xA001, 0x80);
+    m.cpu_write(0x6000, 0x11);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x03, "sub 0 has no outer register");
+}
+
+#[test]
+fn m197_state_round_trip_and_variant_refusal() {
+    let mut m = board(ExtBoard::M197 { sub: 3 }, 32, 512);
+    m.cpu_write(0xA001, 0x80);
+    m.cpu_write(0x6000, 0x11);
+    m197_load_regs(&mut m, 0);
+    let blob = m.save_state();
+    let mut n = board(ExtBoard::M197 { sub: 3 }, 32, 512);
+    n.load_state(&blob).expect("same variant");
+    assert_eq!(n.save_state(), blob);
+    assert!(
+        board(ExtBoard::M197 { sub: 0 }, 32, 512)
+            .load_state(&blob)
+            .is_err()
+    );
+    // An unknown submapper is wired as submapper 0.
+    let m = board(ExtBoard::M197 { sub: 9 }, 32, 512);
+    assert_eq!(m.board, ExtBoard::M197 { sub: 0 });
+}
