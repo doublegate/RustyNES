@@ -375,3 +375,4 @@ in `crates/rustynes-test-harness/tests/external_extended.rs`.
 |--------|-------|-----------------------------------------------------------|--------|------------|
 | 172 | 1991 Du Ma Racing (Ch) [!] | `4a2ec0f51526ad9659b0ede758216ea8f7acae7d49faaed5db46b6acc7be6915` | 600 | `screenshots/external/mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].png` |
 | 173 | Xiao Ma Li (Ch) [!] | `103e27a9b2e2c029fee9a221e2ffe35b5b0b4a3e529a4df88fd6d71f21cf56a4` | 600 | `screenshots/external/mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].png` |
+| 158 | Alien Syndrome (USA) (Unl) | `d676ef6f7aa3b042ae5a0c95a7f07fabb4c3a5fccb3767ae1950713e51189a47` | 2400 (attract demo, in play) | `screenshots/external/mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).png` |

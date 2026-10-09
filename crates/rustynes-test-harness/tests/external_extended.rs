@@ -1441,3 +1441,17 @@ fn extended_m173_xiao_ma_li() {
         "extended_m173_xiao_ma_li",
     );
 }
+
+/// 2400-frame idle: *Alien Syndrome*'s attract demo is in gameplay by then,
+/// scrolling under its status bar, which is where mapper 158's per-nametable
+/// CIRAM select shows. The 600-frame intro text uses one page only.
+const ALIEN_SYNDROME_DEMO: InputScript = InputScript::IdleOnly { frames: 2400 };
+
+#[test]
+fn extended_m158_alien_syndrome() {
+    check(
+        "mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).zip",
+        ALIEN_SYNDROME_DEMO,
+        "extended_m158_alien_syndrome",
+    );
+}

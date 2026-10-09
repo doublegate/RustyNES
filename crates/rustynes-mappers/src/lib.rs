@@ -1584,6 +1584,12 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Txc173::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // 158: Tengen 800037 (*Alien Syndrome*), a RAMBO-1 whose CHR A17
+        // drives CIRAM A10 per nametable (`m064_rambo1.rs`, `Rambo1::new_m158`).
+        158 => Box::new(
+            Rambo1::new_m158(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
         other => return Err(RomError::UnsupportedMapper(other)),
     };
 
