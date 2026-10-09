@@ -1448,3 +1448,225 @@ fn extended_m47_nintendo_world_cup_block_1() {
         "extended_m47_nintendo_world_cup_block_1",
     );
 }
+
+// ============================================================
+// Mapper 157 — Bandai Datach Joint ROM System (6 ROMs, v3.2.0)
+// ============================================================
+//
+// Boot baselines: 1200 idle frames (the Datach logo, then each game's own
+// title or attract loop; `docs/compatibility.md`, D23). The barcode tests
+// below drive a game to a screen waiting for a card, swipe a code past the
+// reader through `Nes::scan_barcode`, and pin what the game did with it.
+
+const DATACH_DIR: &str = "mapper-157-Datach";
+
+#[test]
+fn extended_m157_battle_rush() {
+    check(
+        "mapper-157-Datach/Datach - Battle Rush - Build Up Robot Tournament (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_battle_rush",
+    );
+}
+
+#[test]
+fn extended_m157_dragon_ball_z_gekitou_tenkaichi_budoukai() {
+    check(
+        "mapper-157-Datach/Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_dragon_ball_z_gekitou_tenkaichi_budoukai",
+    );
+}
+
+#[test]
+fn extended_m157_j_league_super_top_players() {
+    check(
+        "mapper-157-Datach/Datach - J.League Super Top Players (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_j_league_super_top_players",
+    );
+}
+
+#[test]
+fn extended_m157_sd_gundam_gundam_wars() {
+    check(
+        "mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_sd_gundam_gundam_wars",
+    );
+}
+
+#[test]
+fn extended_m157_ultraman_club_supokon_fight() {
+    check(
+        "mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_ultraman_club_supokon_fight",
+    );
+}
+
+#[test]
+fn extended_m157_yu_yu_hakusho_bakutou_ankoku_bujutsukai() {
+    check(
+        "mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_yu_yu_hakusho_bakutou_ankoku_bujutsukai",
+    );
+}
+
+/// One step of a Datach navigation script: run idle frames, or hold a button
+/// for some frames and release it.
+#[derive(Clone, Copy)]
+enum DatachStep {
+    Idle(u32),
+    Hold(rustynes_core::Buttons, u32),
+}
+
+/// Drive `rom` (under `mapper-157-Datach/`) through `steps`, then run
+/// `after` frames three ways from the same state: with no scan, after
+/// scanning `codes[0]`, and after scanning `codes[1]`. Returns the three
+/// final-frame hashes, or `None` (a clean skip) when the dump is not staged.
+fn datach_scan_outcomes(
+    rom: &str,
+    steps: &[DatachStep],
+    codes: [&str; 2],
+    after: u32,
+) -> Option<[u64; 3]> {
+    use common::external::{Load, external_rom_path, load_nes};
+    use rustynes_core::Buttons;
+    let rel = format!("{DATACH_DIR}/{rom}");
+    if !external_rom_path(&rel).exists() {
+        eprintln!("[external_extended] SKIP {rel}: dump not staged");
+        return None;
+    }
+    let Load::Ok(mut nes) = load_nes(&rel) else {
+        panic!("{rel} is a cartridge, not a disk");
+    };
+    assert!(nes.has_barcode_reader(), "mapper 157 has a reader");
+    for step in steps {
+        match *step {
+            DatachStep::Idle(n) => (0..n).for_each(|_| {
+                nes.run_frame();
+            }),
+            DatachStep::Hold(b, n) => {
+                nes.set_buttons(0, b);
+                (0..n).for_each(|_| {
+                    nes.run_frame();
+                });
+                nes.set_buttons(0, Buttons::empty());
+            }
+        }
+    }
+    let at_prompt = nes.snapshot();
+    let mut out = [0u64; 3];
+    for (i, code) in [None, Some(codes[0]), Some(codes[1])]
+        .into_iter()
+        .enumerate()
+    {
+        nes.restore(&at_prompt).expect("restore the prompt state");
+        if let Some(code) = code {
+            nes.scan_barcode(code).expect("a valid code on a Datach");
+            assert!(nes.barcode_scan_in_progress());
+        }
+        for _ in 0..after {
+            nes.run_frame();
+        }
+        assert!(!nes.barcode_scan_in_progress(), "the swipe has ended");
+        let label = code.map_or_else(|| "noscan".to_string(), |c| format!("scan{c}"));
+        common::dump_frame_if_requested("datach", rom, &label, nes.framebuffer());
+        out[i] = common::fnv1a64(nes.framebuffer());
+    }
+    Some(out)
+}
+
+/// *Dragon Ball Z: Gekitou Tenkaichi Budoukai*, Karin's room ("さあ おまえの
+/// バーコードを みせてみろ!", "now show me your barcode!"). Seen when the
+/// expectations were pinned: 4006381333931 brings out Dende ("HPを
+/// かんぜんかいふく", full HP recovery), the EAN-8 96385074 Android 18
+/// (HP 96000 / BP 86750 / DP 12750), and with no scan the room keeps waiting.
+#[test]
+fn extended_m157_dbz_karin_room_reads_a_scanned_card() {
+    use DatachStep::{Hold, Idle};
+    use rustynes_core::Buttons;
+    let steps = [
+        Idle(300),
+        Hold(Buttons::START, 2),
+        Idle(300),
+        Hold(Buttons::START, 2),
+        Idle(60),
+        Hold(Buttons::START, 2),
+        Idle(120),
+        Hold(Buttons::DOWN, 2),
+        Idle(30),
+        Hold(Buttons::START, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(120),
+    ];
+    let Some([none, ean13, ean8]) = datach_scan_outcomes(
+        "Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).nes",
+        &steps,
+        ["4006381333931", "96385074"],
+        600,
+    ) else {
+        return;
+    };
+    assert_ne!(none, ean13, "the EAN-13 scan changed nothing");
+    assert_ne!(none, ean8, "the EAN-8 scan changed nothing");
+    assert_ne!(ean13, ean8, "two different cards read the same");
+    insta::assert_snapshot!(
+        "extended_m157_dbz_karin_room_reads_a_scanned_card",
+        format!(
+            "noscan fb={none:016x}\nscan 4006381333931 fb={ean13:016x}\nscan 96385074 fb={ean8:016x}"
+        )
+    );
+}
+
+/// *SD Gundam Wars*, Barcode Lab ("バーコード インプット!"). Seen when the
+/// expectations were pinned: 4006381333931 is analysed ("バーコード
+/// カイセキチュウ") and becomes the unit "ラフレシア" (Rafflesia: mega
+/// particle cannon, CP 10, 1 turn); 96385074 becomes the RX-78 Gundam (HP
+/// 4030, AP 2720, DP 4420, CP 10).
+#[test]
+fn extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card() {
+    use DatachStep::{Hold, Idle};
+    use rustynes_core::Buttons;
+    let steps = [
+        Idle(900),
+        Hold(Buttons::START, 2),
+        Idle(120),
+        Hold(Buttons::DOWN, 2),
+        Idle(20),
+        Hold(Buttons::DOWN, 2),
+        Idle(20),
+        Hold(Buttons::A, 2),
+        Idle(150),
+        Hold(Buttons::A, 2),
+        Idle(300),
+        Hold(Buttons::A, 2),
+        Idle(100),
+    ];
+    let Some([none, ean13, ean8]) = datach_scan_outcomes(
+        "Datach - SD Gundam - Gundam Wars (Japan).nes",
+        &steps,
+        ["4006381333931", "96385074"],
+        720,
+    ) else {
+        return;
+    };
+    assert_ne!(none, ean13, "the EAN-13 scan changed nothing");
+    assert_ne!(none, ean8, "the EAN-8 scan changed nothing");
+    assert_ne!(ean13, ean8, "two different cards read the same");
+    insta::assert_snapshot!(
+        "extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card",
+        format!(
+            "noscan fb={none:016x}\nscan 4006381333931 fb={ean13:016x}\nscan 96385074 fb={ean8:016x}"
+        )
+    );
+}

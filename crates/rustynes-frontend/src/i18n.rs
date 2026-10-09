@@ -598,6 +598,16 @@ catalog! {
     ShellSpeedPct => "Speed: {0}%", Some("Velocidad: {0}%");
     ShellRegion => "Region: {0}", Some("Región: {0}");
     ShellSideN => "Side {0}", Some("Lado {0}");
+    ShellScanBarcode => "Scan Barcode...", Some("Escanear código de barras...");
+    ShellBarcodeTitle => "Datach Barcode Reader", Some("Lector de códigos de barras Datach");
+    ShellBarcodePrompt => "Type the 13- or 8-digit number printed under the card's barcode, then press Scan.", Some("Escribe el número de 13 u 8 dígitos impreso bajo el código de barras de la tarjeta y pulsa Escanear.");
+    ShellBarcodeScan => "Scan", Some("Escanear");
+    ShellBarcodeLocked => "Scanning is disabled while a movie records or plays, or during netplay: neither records a scan.", Some("El escaneo está desactivado mientras se graba o reproduce una película, o durante el juego en red: ninguno registra el escaneo.");
+    ShellBarcodeNeedDigits => "Enter 13 or 8 digits.", Some("Introduce 13 u 8 dígitos.");
+    ShellBarcodeNotDigit => "Character {0} ('{1}') is not a digit.", Some("El carácter {0} ('{1}') no es un dígito.");
+    ShellBarcodeWrongLength => "{0} digits: a JAN/EAN barcode has 13 or 8.", Some("{0} dígitos: un código JAN/EAN tiene 13 u 8.");
+    ShellBarcodeBadCheck => "The check digit is {0}; these digits need {1}.", Some("El dígito de control es {0}; estos dígitos necesitan {1}.");
+    ShellBarcodeScanned => "Scanned barcode {0}", Some("Código de barras escaneado: {0}");
     ShellShowLagFramesHover => "Show a counter of frames where the game polled no controller (a TAS / debug diagnostic).", Some("Muestra un contador de fotogramas en los que el juego no leyó ningún control (un diagnóstico de TAS / depuración).");
     ShellLagCount => "Lag: {0}", Some("Retraso: {0}");
     ShellLagHover => "Lag frames since ROM load (no controller polled). Toggle in View -> Show Lag Frames.", Some("Fotogramas de retraso desde que se cargó la ROM (sin leer ningún control). Actívalo en Ver -> Mostrar fotogramas de retraso.");

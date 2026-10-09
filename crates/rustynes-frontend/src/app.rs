@@ -2687,6 +2687,28 @@ impl App {
     /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`) — the
     /// Multi-Disk submenu's direct counterpart to [`Self::cycle_disk_side`] (a
     /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
+    /// v3.2.0 — swipe `code` through the Datach barcode reader and report the
+    /// outcome on the status line. The core validates the digits again at its
+    /// boundary; a refusal there (malformed code, no reader) is shown, never
+    /// silently dropped. Callers have already asked `session_policy`.
+    fn scan_barcode(&mut self, code: &str) {
+        let result = {
+            let mut guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_mut() else {
+                return;
+            };
+            nes.scan_barcode(code)
+        };
+        let message = match result {
+            Ok(()) => StatusMessage::info(crate::tf!(ShellBarcodeScanned, code)),
+            Err(rustynes_core::BarcodeScanError::Malformed(e)) => {
+                StatusMessage::error(crate::ui_shell::barcode_error_text(e))
+            }
+            Err(e) => StatusMessage::error(e.to_string()),
+        };
+        self.ui.set_status(message);
+    }
+
     fn set_disk_side(&self, side: Option<usize>) {
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_fds_save(true);
@@ -5463,6 +5485,14 @@ impl App {
             MenuAction::SetDiskSide(side) => {
                 if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
                     self.set_disk_side(side);
+                }
+            }
+            MenuAction::ScanBarcode(code) => {
+                // v3.2.0 — a Datach scan is not in a movie's or netplay's
+                // input stream, so it is refused (with the reason) while
+                // either owns the timeline, like a disk swap.
+                if !self.refuse_timeline_action(TimelineAction::BarcodeScan) {
+                    self.scan_barcode(&code);
                 }
             }
             MenuAction::Screenshot => {
@@ -10678,6 +10708,8 @@ impl ApplicationHandler<AppEvent> for App {
                     disk_sides,
                     inserted_disk_side,
                     vs_system,
+                    // v3.2.0 — a Datach cart (shows "Scan Barcode...").
+                    barcode_reader,
                     mapper_label,
                     region_label,
                     movie_recording,
@@ -10701,6 +10733,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 0usize,
                                 None,
                                 false,
+                                false,
                                 String::new(),
                                 String::new(),
                                 rec,
@@ -10720,6 +10753,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 nes.disk_side_count(),
                                 nes.inserted_disk_side(),
                                 nes.is_vs_system(),
+                                nes.has_barcode_reader(),
                                 mapper_name,
                                 region.to_string(),
                                 rec,
@@ -10741,6 +10775,7 @@ impl ApplicationHandler<AppEvent> for App {
                     disk_sides,
                     inserted_disk_side,
                     vs_system,
+                    barcode_reader,
                     mapper_label: &mapper_label,
                     region_label: &region_label,
                     run_ahead,
@@ -13106,6 +13141,10 @@ mod tests {
             (
                 "MenuAction::SetDiskSide(side) =>",
                 "TimelineAction::DiskSwap",
+            ),
+            (
+                "MenuAction::ScanBarcode(code) =>",
+                "TimelineAction::BarcodeScan",
             ),
             ("MenuAction::LoadState =>", "TimelineAction::LoadState"),
             (

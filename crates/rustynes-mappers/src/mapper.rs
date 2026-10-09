@@ -756,6 +756,27 @@ pub trait Mapper: Send {
         false
     }
 
+    /// Whether this cartridge has a barcode reader the player can scan
+    /// with. Only the Datach Joint ROM System (mapper 157) does. Default
+    /// `false`. Added in v3.2.0.
+    fn has_barcode_reader(&self) -> bool {
+        false
+    }
+
+    /// Present `code` to the barcode reader, as if a card were swiped past
+    /// it, starting on the next CPU cycle and replacing any scan in flight.
+    /// Returns `false` (and does nothing) on a board without a reader. The
+    /// stream is timed in CPU cycles and saved with the mapper state; see
+    /// `datach_barcode.rs`. Added in v3.2.0.
+    fn scan_barcode(&mut self, _code: &crate::Barcode) -> bool {
+        false
+    }
+
+    /// Whether a barcode scan is still being presented. Default `false`.
+    fn barcode_scan_in_progress(&self) -> bool {
+        false
+    }
+
     /// Encode the mapper's mutable state into a tagged save-state blob.
     fn save_state(&self) -> Vec<u8>;
 

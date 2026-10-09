@@ -2,7 +2,7 @@
 //
 // Provenance: the Bandai FCG serial-EEPROM handling (`Eeprom24C01` / `Eeprom24C02`) is derived from Mesen2 (GPL-3.0-or-later), `Core/NES/Mappers/Bandai/`. See docs/originality-and-provenance.md (Section 1)
 // and NOTICE for the complete, audited derivation record.
-//! Bandai FCG (iNES mappers 16 and 159) implementation.
+//! Bandai FCG (iNES mappers 16, 153, 157 and 159) implementation.
 //!
 //! Covers the Bandai FCG-1/FCG-2 and LZ93D50 ASICs. Banking: a 16 KiB
 //! switchable PRG bank at `$8000-$BFFF` (last bank fixed at `$C000`), eight
@@ -32,6 +32,19 @@
 //! `$800D` bit 5 enables the WRAM chip. The page notes that *Famicom Jump II*
 //! freezes when it boots with zero-filled WRAM and runs after a soft reset;
 //! that is the game, not the board.
+//!
+//! Mapper 157 (v3.2.0, written from `nesdev_wiki/INES_Mapper_157.xhtml`) is
+//! the Datach Joint ROM System: an LZ93D50 game cartridge plugged into the
+//! Datach main unit. Banking, mirroring and the IRQ are mapper 16 submapper
+//! 5's; CHR is 8 KiB of unbanked CHR-RAM. The main unit holds a 256-byte
+//! 24C02 (clocked by `$800D` bit 5) and the barcode reader; *Battle Rush*'s
+//! cartridge adds a 128-byte X24C01 clocked by `$8000-$8003` bit 3 (CHR A13
+//! OUT; `$8004-$8007` do nothing). Both chips share SDA (`$800D` bit 6) and
+//! their outputs are ANDed onto bit 4 of a `$6000-$7FFF` read; bit 3 of the
+//! same read is the scanner ([`BarcodeReader`], `datach_barcode.rs`). The variant's code
+//! lives outside the derived EEPROM region below, except for the
+//! `keeps_word_address` flag on [`Eeprom`], written from the 24C02's
+//! random-read protocol (see the field) and switched on only here.
 //!
 //! ## Offsets (relative to the window base, masked to `$x..F`)
 //!
@@ -74,6 +87,7 @@
 )]
 
 use crate::cartridge::Mirroring;
+use crate::datach_barcode::{Barcode, BarcodeReader};
 use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, vec::Vec};
 use alloc::{format, vec};
@@ -108,6 +122,11 @@ pub enum FcgVariant {
     /// Mapper 153: LZ93D50 with 8 KiB of battery-backed WRAM and an outer
     /// 256 KiB PRG bank in place of the CHR registers.
     Lz93d50Wram,
+    /// Mapper 157: the Datach Joint ROM System. LZ93D50, unbanked CHR-RAM,
+    /// the main unit's 256-byte 24C02, an optional 128-byte X24C01 on the
+    /// game cartridge, and the barcode reader. Built by
+    /// [`BandaiFcg::new_datach`].
+    Datach,
 }
 
 impl FcgVariant {
@@ -117,7 +136,11 @@ impl FcgVariant {
     const fn responds_high(self) -> bool {
         matches!(
             self,
-            Self::Both | Self::Lz93d50_24c02 | Self::Lz93d50_24c01 | Self::Lz93d50Wram
+            Self::Both
+                | Self::Lz93d50_24c02
+                | Self::Lz93d50_24c01
+                | Self::Lz93d50Wram
+                | Self::Datach
         )
     }
     /// LZ93D50 latches the IRQ counter (`$x0B/$x0C` write a latch); FCG-1/2
@@ -128,7 +151,7 @@ impl FcgVariant {
     const fn eeprom_bytes(self) -> usize {
         match self {
             Self::Lz93d50_24c01 => 128,
-            Self::Both | Self::Lz93d50_24c02 => 256,
+            Self::Both | Self::Lz93d50_24c02 | Self::Datach => 256,
             Self::Fcg | Self::Lz93d50Wram => 0,
         }
     }
@@ -180,6 +203,19 @@ struct Eeprom {
     counter: u8,
     /// The bit currently driven back onto SDA toward the CPU (high = 1).
     output: u8,
+    /// v3.2.0, mapper 157 only: a START keeps the word address instead of
+    /// clearing it. A 24C02 "random read" is a dummy write of the word address
+    /// followed by a repeated START and a read-mode device select, and the
+    /// read then begins at that address: the chip's address counter is not
+    /// reset by a START. Clearing it made every random read start at `$00`.
+    /// *Ultraman Club - Supokon Fight!* reads its file table that way, and
+    /// with the address cleared it reformatted the main unit's EEPROM and
+    /// stopped on "no free block" at every boot; keeping it, the game reaches
+    /// its title (measured 2026-10-08). Written from that protocol
+    /// description, not from any emulator. Off for mappers 16 / 159, whose
+    /// shipped behaviour this change does not touch (see `docs/mappers.md`,
+    /// mapper 157, for the open question it raises about mapper 16).
+    keeps_word_address: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +243,7 @@ impl Eeprom {
             data: 0,
             counter: 0,
             output: 1,
+            keeps_word_address: false,
         }
     }
 
@@ -257,7 +294,9 @@ impl Eeprom {
             } else {
                 I2cMode::ChipAddress
             };
-            self.addr = 0;
+            if !self.keeps_word_address {
+                self.addr = 0;
+            }
             self.counter = 0;
             self.output = 1;
         } else if self.last_scl != 0 && scl != 0 && sda > self.last_sda {
@@ -413,7 +452,7 @@ impl Eeprom {
     }
 }
 
-/// Bandai FCG mapper (iNES mappers 16 + 159).
+/// Bandai FCG mapper (iNES mappers 16, 153, 157 and 159).
 pub struct BandaiFcg {
     prg_rom: Box<[u8]>,
     chr: Box<[u8]>,
@@ -442,6 +481,17 @@ pub struct BandaiFcg {
     wram_enabled: bool,
     /// Mapper 153: 8 KiB of battery-backed WRAM; empty on the other variants.
     wram: Box<[u8]>,
+
+    /// Mapper 157: the game cartridge's own 128-byte X24C01, present when the
+    /// NES 2.0 header declares PRG-NVRAM (*Battle Rush*). It shares SDA with
+    /// the main unit's 24C02 but has its own clock, `$8000-$8003` bit 3.
+    ext_eeprom: Option<Eeprom>,
+    /// Mapper 157: the last level written to the external EEPROM's SCL
+    /// (`$8000-$8003` bit 3).
+    ext_scl: bool,
+    /// Mapper 157: the barcode scanner's serial output (bit 3 of a
+    /// `$6000-$7FFF` read). Idle on every other variant.
+    barcode: BarcodeReader,
 }
 
 impl BandaiFcg {
@@ -503,7 +553,81 @@ impl BandaiFcg {
             } else {
                 Box::new([])
             },
+            ext_eeprom: None,
+            ext_scl: false,
+            barcode: BarcodeReader::default(),
         })
+    }
+
+    /// Construct mapper 157, the Datach Joint ROM System
+    /// (`nesdev_wiki/INES_Mapper_157.xhtml`).
+    ///
+    /// `external_x24c01` adds the game cartridge's 128-byte X24C01, which the
+    /// page says the NES 2.0 header signals with PRG-NVRAM (byte 10 = `$10`)
+    /// and which only *Battle Rush: Build up Robot Tournament* carries.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn new_datach(
+        prg_rom: Box<[u8]>,
+        chr_rom: Box<[u8]>,
+        mirroring: Mirroring,
+        external_x24c01: bool,
+    ) -> Result<Self, MapperError> {
+        let mut m = Self::new(prg_rom, chr_rom, mirroring, FcgVariant::Datach)?;
+        if let Some(ee) = m.eeprom.as_mut() {
+            ee.keeps_word_address = true;
+        }
+        if external_x24c01 {
+            m.ext_eeprom = Some(Eeprom::new(128, true));
+        }
+        Ok(m)
+    }
+
+    /// Mapper 157's save-state tail, after the fields every variant writes:
+    /// the external SCL level, the external X24C01's 128 bytes when the
+    /// cartridge has one (fixed by the header, so not flagged), then the
+    /// barcode reader ([`BarcodeReader::save`]). Added with the variant in
+    /// v3.2.0; no earlier blob of this variant exists, so
+    /// [`SAVE_STATE_VERSION`] stays 2 and the other variants' layouts are
+    /// unchanged.
+    fn save_datach_tail(&self, out: &mut Vec<u8>) {
+        out.push(u8::from(self.ext_scl));
+        if let Some(ext) = self.ext_eeprom.as_ref() {
+            out.extend_from_slice(&ext.mem);
+        }
+        self.barcode.save(out);
+    }
+
+    /// Restore [`Self::save_datach_tail`]. Validates the whole tail before
+    /// changing anything.
+    fn load_datach_tail(&mut self, tail: &[u8]) -> Result<(), MapperError> {
+        let ext_len = self.ext_eeprom.as_ref().map_or(0, |e| e.mem.len());
+        let fixed = 1 + ext_len;
+        let short = || MapperError::Invalid(format!("Datach state tail of {} bytes", tail.len()));
+        if tail.len() < fixed {
+            return Err(short());
+        }
+        let mut reader = BarcodeReader::default();
+        let used = reader.load(&tail[fixed..]).ok_or_else(short)?;
+        if fixed + used != tail.len() {
+            return Err(short());
+        }
+        self.ext_scl = tail[0] != 0;
+        if let Some(ext) = self.ext_eeprom.as_mut() {
+            ext.mem.copy_from_slice(&tail[1..fixed]);
+        }
+        self.barcode = reader;
+        Ok(())
+    }
+
+    /// The data line both EEPROMs drive back toward the CPU. "If there is
+    /// both an internal and an external EEPROM, the Data out from both
+    /// EEPROMs is ANDed (open drain circuit)" (`INES_Mapper_157`).
+    fn eeprom_data_out(&self) -> bool {
+        self.eeprom.as_ref().is_none_or(Eeprom::read_sda)
+            && self.ext_eeprom.as_ref().is_none_or(Eeprom::read_sda)
     }
 
     /// Mapper 153's outer bank as a 16 KiB bank offset (256 KiB = 16 banks).
@@ -524,7 +648,9 @@ impl BandaiFcg {
         // the outer PRG bank instead, so `chr_banks` is never written there
         // and must not be consulted: routing through it mapped all eight
         // 1 KiB windows onto the first 1 KiB.
-        if self.variant == FcgVariant::Lz93d50Wram {
+        // Mapper 157 likewise: "8 KiB of unbanked CHR-RAM instead of
+        // bankswitched CHR-ROM", "No CHR banking is available".
+        if matches!(self.variant, FcgVariant::Lz93d50Wram | FcgVariant::Datach) {
             return addr as usize & 0x1FFF;
         }
         let slot = (addr as usize / CHR_BANK_1K) & 0x07;
@@ -540,6 +666,19 @@ impl BandaiFcg {
             // PRG bank and `$4-$7` do nothing.
             0x0..=0x3 if self.variant == FcgVariant::Lz93d50Wram => self.outer = value & 0x01,
             0x4..=0x7 if self.variant == FcgVariant::Lz93d50Wram => {}
+            // Mapper 157: bit 3 of `$8000-$8003` is CHR A13 OUT, wired to
+            // the external X24C01's SCL ("External EEPROM Clock"). The ASIC's
+            // PA12/PA13 inputs are grounded, so only `$0-$3` respond and
+            // `$4-$7` do nothing; no CHR bank is selected by any of them. The
+            // SDA the external chip sees is the shared line, `$800D` bit 6.
+            0x0..=0x3 if self.variant == FcgVariant::Datach => {
+                self.ext_scl = value & 0x08 != 0;
+                let sda = self.eeprom_ctrl & 0x40 != 0;
+                if let Some(ext) = self.ext_eeprom.as_mut() {
+                    ext.write_lines(self.ext_scl, sda);
+                }
+            }
+            0x4..=0x7 if self.variant == FcgVariant::Datach => {}
             0x0..=0x7 => self.chr_banks[(off & 0x07) as usize] = value,
             0x8 => self.prg_bank = value & 0x0F,
             0x9 => {
@@ -585,6 +724,11 @@ impl BandaiFcg {
                     let sda = (value & 0x40) != 0;
                     ee.write_lines(scl, sda);
                 }
+                // Mapper 157: bit 6 is "Both EEPROM's I2C SDA"; the external
+                // chip keeps the clock last written to `$8000-$8003`.
+                if let Some(ext) = self.ext_eeprom.as_mut() {
+                    ext.write_lines(self.ext_scl, value & 0x40 != 0);
+                }
             }
             _ => {}
         }
@@ -625,6 +769,14 @@ impl Mapper for BandaiFcg {
                 } else {
                     0
                 }
+            }
+            // Mapper 157 (mask `$E000`): bit 4 "Data out from I2C EEPROMs"
+            // (the two chips ANDed), bit 3 "Serial data out from Barcode
+            // scanner". The other bits are open bus on the board; like the
+            // mapper-16 read below they read 0 here, because the bus consults
+            // a partial driven-bit mask only for `$4020-$5FFF`.
+            0x6000..=0x7FFF if self.variant == FcgVariant::Datach => {
+                (u8::from(self.eeprom_data_out()) << 4) | (u8::from(self.barcode.level()) << 3)
             }
             0x6000..=0x7FFF => {
                 // EEPROM read appears in bit 4 (LZ93D50). Otherwise open bus
@@ -710,6 +862,9 @@ impl Mapper for BandaiFcg {
     }
 
     fn notify_cpu_cycle(&mut self) {
+        // Mapper 157: the scanner's stream is timed in CPU cycles (no wall
+        // clock), so it advances here, before the IRQ's early return.
+        self.barcode.tick();
         if !self.irq_enabled {
             return;
         }
@@ -726,12 +881,29 @@ impl Mapper for BandaiFcg {
         self.irq_pending
     }
 
+    fn has_barcode_reader(&self) -> bool {
+        self.variant == FcgVariant::Datach
+    }
+
+    fn scan_barcode(&mut self, code: &Barcode) -> bool {
+        if self.variant != FcgVariant::Datach {
+            return false;
+        }
+        self.barcode.scan(code);
+        true
+    }
+
+    fn barcode_scan_in_progress(&self) -> bool {
+        self.barcode.is_scanning()
+    }
+
     fn current_mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
     fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
         let id = match self.variant {
+            FcgVariant::Datach => 157,
             FcgVariant::Lz93d50_24c01 => 159,
             FcgVariant::Lz93d50Wram => 153,
             _ => 16,
@@ -791,6 +963,9 @@ impl Mapper for BandaiFcg {
         out.push(self.outer);
         out.push(u8::from(self.wram_enabled));
         out.extend_from_slice(&self.wram);
+        if self.variant == FcgVariant::Datach {
+            self.save_datach_tail(&mut out);
+        }
         out
     }
 
@@ -805,11 +980,28 @@ impl Mapper for BandaiFcg {
             Some(&v) => return Err(MapperError::UnsupportedVersion(v)),
             None => core_len,
         };
+        // Mapper 157 appends a tail whose length depends on the scan in
+        // flight, so it is checked (and restored) separately, after the
+        // fixed part.
+        let (data, datach_tail) = if self.variant == FcgVariant::Datach {
+            if data.len() < expected {
+                return Err(MapperError::WrongLength {
+                    expected,
+                    got: data.len(),
+                });
+            }
+            data.split_at(expected)
+        } else {
+            (data, &[][..])
+        };
         if data.len() != expected {
             return Err(MapperError::WrongLength {
                 expected,
                 got: data.len(),
             });
+        }
+        if self.variant == FcgVariant::Datach {
+            self.load_datach_tail(datach_tail)?;
         }
         self.prg_bank = data[1];
         self.chr_banks.copy_from_slice(&data[2..10]);
@@ -1305,5 +1497,352 @@ mod tests {
             fcg.load_state(&v1),
             Err(MapperError::UnsupportedVersion(1))
         ));
+    }
+
+    // ---- Mapper 157, the Datach Joint ROM System (`INES_Mapper_157`) ------
+
+    /// A NES 2.0 image for mapper 157: `banks_16k` PRG banks numbered in
+    /// their first byte, no CHR-ROM (8 KiB CHR-RAM), and NES 2.0 byte 10 set
+    /// to `0x10` when the game cartridge carries the external X24C01 (the
+    /// page's *Battle Rush* row) or `0x00` when it does not.
+    fn m157_rom(banks_16k: usize, external_eeprom: bool) -> Vec<u8> {
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = banks_16k as u8;
+        rom[5] = 0;
+        rom[6] = 0xD0; // mapper low nibble $D (157 = $9D)
+        rom[7] = 0x98; // mapper high nibble $9, NES 2.0 identifier
+        rom[10] = if external_eeprom { 0x10 } else { 0x00 };
+        rom[11] = 0x07; // 8 KiB CHR-RAM
+        rom.extend_from_slice(&synth_prg(banks_16k));
+        rom
+    }
+
+    fn m157(external_eeprom: bool) -> Box<dyn Mapper> {
+        crate::parse(&m157_rom(16, external_eeprom))
+            .expect("mapper 157 must construct")
+            .1
+    }
+
+    /// Banks: "CPU $8000-$BFFF: 16 KiB switchable PRG ROM bank", "CPU
+    /// $C000-$FFFF: 16 KiB PRG ROM bank, fixed to the last bank", and the
+    /// `$8008` register that "function[s] the same way as on INES Mapper 016,
+    /// submapper 5" (mask `$800F`, so `$FFF8` decodes as `$8008`).
+    #[test]
+    fn m157_prg_bank_at_8008_and_the_last_bank_fixed() {
+        let mut m = m157(false);
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(m.cpu_read(0xC000), 15);
+        m.cpu_write(0x8008, 5);
+        assert_eq!(m.cpu_read(0x8000), 5);
+        assert_eq!(m.cpu_read(0xBFFF & 0xC000), 5);
+        assert_eq!(m.cpu_read(0xC000), 15);
+        m.cpu_write(0xFFF8, 9);
+        assert_eq!(m.cpu_read(0x8000), 9, "mask $800F: $FFF8 is $8008");
+        // The LZ93D50's register window is $8000-$FFFF only.
+        m.cpu_write(0x6008, 2);
+        assert_eq!(m.cpu_read(0x8000), 9, "$6008 is not a register here");
+    }
+
+    /// "PPU $0000-$1FFF: 8 KiB unbanked CHR-RAM" and "No CHR banking is
+    /// available": writes to `$8000-$8007` must not move any CHR window, and
+    /// the eight 1 KiB windows must not alias.
+    #[test]
+    fn m157_chr_is_8k_of_unbanked_ram() {
+        let mut m = m157(false);
+        for a in 0x8000..=0x8007u16 {
+            m.cpu_write(a, 0x03);
+        }
+        for slot in 0..8u16 {
+            m.ppu_write(slot * 0x400 + 0x055, 0xB0 | slot as u8);
+        }
+        for slot in 0..8u16 {
+            assert_eq!(m.ppu_read(slot * 0x400 + 0x055), 0xB0 | slot as u8);
+        }
+    }
+
+    /// `$8009`: "the same way as on INES Mapper 016" (0 V, 1 H, 2 1scA, 3 1scB).
+    #[test]
+    fn m157_mirroring_at_8009() {
+        let mut m = m157(false);
+        for (v, want) in [
+            (0u8, Mirroring::Vertical),
+            (1, Mirroring::Horizontal),
+            (2, Mirroring::SingleScreenA),
+            (3, Mirroring::SingleScreenB),
+        ] {
+            m.cpu_write(0x8009, v);
+            assert_eq!(m.current_mirroring(), want, "$8009 = {v}");
+        }
+    }
+
+    /// `$800A-$800C`: the LZ93D50's latched 16-bit M2 down-counter.
+    #[test]
+    fn m157_irq_is_the_latched_lz93d50_counter() {
+        let mut m = m157(false);
+        m.cpu_write(0x800B, 0x02);
+        m.cpu_write(0x800C, 0x00);
+        m.cpu_write(0x800A, 0x01);
+        m.notify_cpu_cycle();
+        m.notify_cpu_cycle();
+        assert!(!m.irq_pending());
+        m.notify_cpu_cycle();
+        assert!(m.irq_pending(), "latch 2 reaches zero on the third M2");
+        m.cpu_write(0x800A, 0x00);
+        assert!(!m.irq_pending(), "a $800A write acknowledges");
+    }
+
+    /// The main unit's 24C02 is the battery save, 256 bytes, with or without
+    /// the cartridge's X24C01.
+    #[test]
+    fn m157_battery_save_is_the_main_units_24c02() {
+        assert_eq!(m157(false).sram().len(), 256);
+        assert_eq!(m157(true).sram().len(), 256);
+    }
+
+    /// `$6000-$7FFF` read: bit 4 is the EEPROMs' data out (released = high
+    /// when idle), bit 3 the barcode scanner, the rest open bus.
+    #[test]
+    fn m157_6000_drives_bits_4_and_3() {
+        let mut m = m157(true);
+        assert!(!m.cpu_read_unmapped(0x6000));
+        let v = m.cpu_read(0x7FFF);
+        assert_eq!(v & 0x10, 0x10, "idle EEPROMs release SDA");
+        assert_eq!(v & 0x08, 0, "an empty barcode slot reads dark (0)");
+        assert_eq!(v & !0x18, 0, "undriven bits read 0 here");
+    }
+
+    fn datach(external: bool) -> BandaiFcg {
+        BandaiFcg::new_datach(synth_prg(16), Box::new([]), Mirroring::Vertical, external).unwrap()
+    }
+
+    /// Drive the Datach's two I2C buses. The internal 24C02 is clocked by
+    /// `$800D` bit 5, the external X24C01 by `$8000-$8003` bit 3; both share
+    /// SDA, `$800D` bit 6 (`INES_Mapper_157`, "EEPROM Control" and "External
+    /// EEPROM Clock").
+    struct DatachI2c<'a> {
+        m: &'a mut BandaiFcg,
+        external: bool,
+    }
+
+    impl DatachI2c<'_> {
+        fn lines(&mut self, scl: bool, sda: bool) {
+            if self.external {
+                // Set SDA with the internal clock held low, then the external
+                // clock through CHR A13 OUT.
+                self.m.cpu_write(0x800D, u8::from(sda) << 6);
+                self.m.cpu_write(0x8000, u8::from(scl) << 3);
+            } else {
+                self.m
+                    .cpu_write(0x800D, (u8::from(sda) << 6) | (u8::from(scl) << 5));
+            }
+        }
+        fn start(&mut self) {
+            self.lines(false, true);
+            self.lines(true, true);
+            self.lines(true, false);
+            self.lines(false, false);
+        }
+        fn stop(&mut self) {
+            self.lines(false, false);
+            self.lines(true, false);
+            self.lines(true, true);
+        }
+        fn send_bit(&mut self, bit: bool) {
+            self.lines(false, bit);
+            self.lines(true, bit);
+            self.lines(false, bit);
+        }
+        /// Release SDA, clock once, and sample `$6000` bit 4 while SCL is high.
+        fn recv_bit(&mut self) -> bool {
+            self.lines(false, true);
+            self.lines(true, true);
+            let bit = self.m.cpu_read(0x6000) & 0x10 != 0;
+            self.lines(false, true);
+            bit
+        }
+        fn send_msb_first(&mut self, byte: u8) -> bool {
+            for i in (0..8).rev() {
+                self.send_bit(byte >> i & 1 != 0);
+            }
+            !self.recv_bit()
+        }
+        fn recv_msb_first(&mut self) -> u8 {
+            (0..8).fold(0u8, |acc, _| acc << 1 | u8::from(self.recv_bit()))
+        }
+    }
+
+    /// The main unit's 24C02 at device address 000b ("the highest device
+    /// type bits being 1010b"): a byte write, then a **random read** (dummy
+    /// write of the word address, repeated START, read select), which must
+    /// begin at the address just written. Before the v3.2.0
+    /// `keeps_word_address` change a repeated START cleared the address and
+    /// this read returned byte `$00`'s contents.
+    #[test]
+    fn m157_internal_24c02_random_read_starts_at_the_written_address() {
+        let mut m = datach(false);
+        {
+            let mut d = DatachI2c {
+                m: &mut m,
+                external: false,
+            };
+            d.start();
+            assert!(d.send_msb_first(0xA0), "device select acked");
+            assert!(d.send_msb_first(0x37), "word address acked");
+            assert!(d.send_msb_first(0xC4), "data acked");
+            d.stop();
+            d.start();
+            assert!(d.send_msb_first(0xA0));
+            assert!(d.send_msb_first(0x37));
+            d.start(); // repeated START
+            assert!(d.send_msb_first(0xA1), "read select acked");
+            assert_eq!(d.recv_msb_first(), 0xC4, "random read of $37");
+            d.stop();
+        }
+        assert_eq!(m.sram()[0x37], 0xC4);
+        assert_eq!(m.sram()[0x00], 0xFF, "byte $00 untouched");
+    }
+
+    /// The cartridge's X24C01 answers only on its own clock, `$8000-$8003`
+    /// bit 3, and (Bandai's convention, modelled by the existing X24C01
+    /// state machine) shifts LSB-first. The 24C02 never sees that clock, so
+    /// its contents are untouched, and `$8004-$8007` clock nothing.
+    #[test]
+    fn m157_external_x24c01_is_clocked_by_8000_bit_3_only() {
+        let mut m = datach(true);
+        {
+            let mut d = DatachI2c {
+                m: &mut m,
+                external: true,
+            };
+            d.start();
+            // X24C01: 7 address bits LSB-first, then R/W = 0.
+            for i in 0..7 {
+                d.send_bit(0x15 >> i & 1 != 0);
+            }
+            d.send_bit(false);
+            assert!(!d.recv_bit(), "address acked");
+            for i in 0..8 {
+                d.send_bit(0x6B >> i & 1 != 0);
+            }
+            assert!(!d.recv_bit(), "data acked");
+            d.stop();
+        }
+        assert_eq!(m.ext_eeprom.as_ref().unwrap().mem[0x15], 0x6B);
+        assert!(m.sram().iter().all(|&b| b == 0xFF), "24C02 untouched");
+        // `$8004` is not the external clock: toggling it with SDA moving
+        // does not form a START on the X24C01.
+        m.cpu_write(0x8000, 0x00); // external SCL low
+        m.cpu_write(0x800D, 0x40); // SDA high
+        let before = m.ext_eeprom.as_ref().unwrap().mode;
+        m.cpu_write(0x8004, 0x08); // would raise SCL if it were decoded
+        m.cpu_write(0x800D, 0x00); // SDA falls: a START only if SCL were high
+        assert_eq!(m.ext_eeprom.as_ref().unwrap().mode, before);
+        assert!(!m.ext_scl);
+        // The same sequence through `$8003` is a START.
+        m.cpu_write(0x800D, 0x40);
+        m.cpu_write(0x8003, 0x08);
+        m.cpu_write(0x800D, 0x00);
+        assert_eq!(m.ext_eeprom.as_ref().unwrap().mode, I2cMode::Address);
+    }
+
+    /// "the Data out from both EEPROMs is ANDed": either chip pulling SDA
+    /// low pulls bit 4 low.
+    #[test]
+    fn m157_eeprom_outputs_are_wired_and() {
+        let mut m = datach(true);
+        assert_eq!(m.cpu_read(0x6000) & 0x10, 0x10);
+        m.ext_eeprom.as_mut().unwrap().output = 0;
+        assert_eq!(m.cpu_read(0x6000) & 0x10, 0, "external low");
+        m.ext_eeprom.as_mut().unwrap().output = 1;
+        m.eeprom.as_mut().unwrap().output = 0;
+        assert_eq!(m.cpu_read(0x6000) & 0x10, 0, "internal low");
+    }
+
+    /// The scanner's stream on bit 3: dark (0) idle, then the card's light
+    /// margin, the EAN-8 symbol 96385074 module by module (bar = 0, space =
+    /// 1), the light margin, and dark again.
+    #[test]
+    fn m157_scan_presents_the_symbol_on_bit_3() {
+        use crate::datach_barcode::{MODULE_CYCLES, QUIET_MODULES};
+        let mut m = datach(false);
+        assert!(m.has_barcode_reader());
+        let code = Barcode::parse("96385074").unwrap();
+        assert!(m.scan_barcode(&code));
+        let mut seen = alloc::string::String::new();
+        let total = (67 + 2 * QUIET_MODULES) * MODULE_CYCLES;
+        for cycle in 0..total {
+            if cycle % MODULE_CYCLES == MODULE_CYCLES / 2 {
+                seen.push(if m.cpu_read(0x6000) & 0x08 != 0 {
+                    '1'
+                } else {
+                    '0'
+                });
+            }
+            m.notify_cpu_cycle();
+        }
+        let margin = "1".repeat(QUIET_MODULES as usize);
+        // The published EAN-8 modules for 96385074, inverted (bar = 0).
+        let symbol: alloc::string::String = concat!(
+            "101", "0001011", "0101111", "0111101", "0110111", "01010", "1001110", "1110010",
+            "1000100", "1011100", "101",
+        )
+        .chars()
+        .map(|c| if c == '1' { '0' } else { '1' })
+        .collect();
+        assert_eq!(seen, alloc::format!("{margin}{symbol}{margin}"));
+        assert!(!m.barcode_scan_in_progress());
+        assert_eq!(m.cpu_read(0x6000) & 0x08, 0, "dark again when done");
+    }
+
+    #[test]
+    fn only_the_datach_has_a_barcode_reader() {
+        let code = Barcode::parse("96385074").unwrap();
+        for v in [
+            FcgVariant::Both,
+            FcgVariant::Fcg,
+            FcgVariant::Lz93d50_24c02,
+            FcgVariant::Lz93d50_24c01,
+        ] {
+            let mut m =
+                BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, v).unwrap();
+            assert!(!m.has_barcode_reader(), "{v:?}");
+            assert!(!m.scan_barcode(&code), "{v:?}");
+        }
+    }
+
+    /// A save state taken mid-scan restores mid-scan: the remaining stream,
+    /// the external EEPROM and its clock all come back, and a truncated or
+    /// padded tail is refused.
+    #[test]
+    fn m157_state_round_trips_mid_scan() {
+        let mut a = datach(true);
+        a.cpu_write(0x8008, 3);
+        a.cpu_write(0x8001, 0x08);
+        a.ext_eeprom.as_mut().unwrap().mem[5] = 0x99;
+        a.eeprom.as_mut().unwrap().mem[6] = 0x77;
+        a.scan_barcode(&Barcode::parse("4006381333931").unwrap());
+        for _ in 0..200_000 {
+            a.notify_cpu_cycle();
+        }
+        let blob = a.save_state();
+        let mut b = datach(true);
+        b.load_state(&blob).unwrap();
+        assert_eq!(b.save_state(), blob);
+        assert!(b.barcode_scan_in_progress());
+        assert!(b.ext_scl);
+        assert_eq!(b.ext_eeprom.as_ref().unwrap().mem[5], 0x99);
+        assert_eq!(b.sram()[6], 0x77);
+        for _ in 0..200_000 {
+            assert_eq!(a.cpu_read(0x6000), b.cpu_read(0x6000));
+            a.notify_cpu_cycle();
+            b.notify_cpu_cycle();
+        }
+        assert!(b.load_state(&blob[..blob.len() - 1]).is_err());
+        let mut long = blob.clone();
+        long.push(0);
+        assert!(b.load_state(&long).is_err());
+        // A board without the external chip has a shorter tail.
+        assert!(datach(false).load_state(&blob).is_err());
     }
 }

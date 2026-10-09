@@ -384,6 +384,22 @@ committed.
 | 154 | Devil Man (Japan) | `d2140fc2e6354a9f4d0154dabac757e5559890edba4885799c1c979d8b7a8b20` | 1,141 | `screenshots/external/mapper-154-Namco3453/Devil Man (Japan).png` (the opening cutscene) |
 | 191 | Mighty Final Fight (J) [T+Chi] | `671f372fa92819d02147cae9072139f1193ebcc22030db3d09c61a768fdaec17` | 1,141 | `screenshots/external/mapper-191-Waixing191/Mighty Final Fight (J) [T+Chi_madcell].png` (a cutscene in its CHR-RAM font) |
 | 243 | Honey Peach (Asia) (Ja) (Unl) | `4342d7b1bbd3b263dfc47e3e3cd51abdf0d98f826a89ec9bc67db35a1c2ad871` | 1,141 | `screenshots/external/mapper-243-SachenSA020A/Honey Peach (Asia) (Ja) (Unl).png` (its play screen: both players, the hand symbols) |
+| 157 | Datach - Battle Rush - Build Up Robot Tournament (Japan) | `cbc404d57879beca0b65b855b19fda9e017e7d8cc716941b52bbea8f8a6ee859` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Battle Rush - Build Up Robot Tournament (Japan).png` |
+| 157 | Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan) | `a1370e7410a98a4a2de19f4872281a065b1d7d7cd7b5f2ba0da70504b4a1d52d` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).png` |
+| 157 | Datach - J.League Super Top Players (Japan) | `a7b1e4693093c8a155747f9023399ebb2537064e788970ecdcccee467108b62e` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - J.League Super Top Players (Japan).png` |
+| 157 | Datach - SD Gundam - Gundam Wars (Japan) | `a6a909d829e3d9ef1a14d002f8ac3c59173420530d467c09fe338b28143f4308` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).png` |
+| 157 | Datach - Ultraman Club - Supokon Fight! (Japan) | `85f0ab77ae56df26e18bf55caafb795ec24712c168912f0963756fe4daa2ef65` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).png` |
+| 157 | Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan) | `acc54496853ce6306589790857b0d56145d8382bd00f5d0f40ecdfa2906ad349` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).png` |
+
+Mapper 157 notes: the six Hearto 1G1R NES 2.0 dumps (the GoodNES copies carry
+a mapper-16 header). The screenshots are `external_coverage`'s final frame
+(1141 frames of START taps): *Battle Rush*'s factory, *Dragon Ball Z*'s
+tournament desk, *J.League*'s title menu, *SD Gundam Wars*' file menu (four
+empty files), *Ultraman Club*'s first event and *Yu Yu Hakusho*'s tournament
+opening. *Dragon Ball Z* and *SD Gundam Wars* also read scanned barcodes
+(`extended_m157_dbz_karin_room_reads_a_scanned_card`,
+`extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card`; what each code
+became is in `docs/mappers.md`, mapper 157).
 
 **Not evidence, and why:**
 

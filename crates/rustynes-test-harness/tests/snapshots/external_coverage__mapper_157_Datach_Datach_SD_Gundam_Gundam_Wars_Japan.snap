@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).nes
+rom_sha256=db7b5863a551363245c0df770169e48180dcbd7cd908f8208c43b96b7c71e3ce
+frames=1141
+fb_bytes=245760
+cycles=33949797
+audio_samples=836505
+audio_fnv1a64=0dc011cda1df5e06
+checkpoint f900 fb_fnv1a64=a38c3215be1d1a8d
+checkpoint f1100 fb_fnv1a64=a38c3215be1d1a8d
