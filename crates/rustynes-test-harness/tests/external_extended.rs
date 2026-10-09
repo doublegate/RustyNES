@@ -1466,6 +1466,7 @@ fn extended_m158_alien_syndrome() {
 const FUDOU_IN_PLAY: InputScript = InputScript::Held {
     presses: &[(1900, Buttons::START), (2100, Buttons::START)],
     hold: 3,
+    resets: &[],
     frames: 3000,
 };
 
@@ -1497,6 +1498,7 @@ const SAN_GUO_ZHI_QUESTION: InputScript = InputScript::Held {
         (3600, Buttons::A),
     ],
     hold: 3,
+    resets: &[],
     frames: 3800,
 };
 
@@ -1506,5 +1508,43 @@ fn extended_m252_san_guo_zhi() {
         "mapper-252-WaixingVRC4/San Guo Zhi (Ch).zip",
         SAN_GUO_ZHI_QUESTION,
         "extended_m252_san_guo_zhi",
+    );
+}
+
+/// *22-in-1 (Reset Based)* (mapper 230): it powers on in *Contra*; RESET at
+/// f700 switches to the multicart chip and its menu, two held DOWNs move the
+/// cursor to entry 5, *Sky Destroyer*, A launches it and START begins a game,
+/// in flight by f3500. One run covers both chips, the reset toggle and the
+/// multicart register.
+const RESET_22_IN_1_SKY_DESTROYER: InputScript = InputScript::Held {
+    presses: &[
+        (2300, Buttons::DOWN),
+        (2400, Buttons::DOWN),
+        (2600, Buttons::A),
+        (2900, Buttons::START),
+    ],
+    hold: 10,
+    resets: &[700],
+    frames: 3500,
+};
+
+/// The same board's power-on state, *Contra*'s title, before any reset.
+const RESET_22_IN_1_CONTRA: InputScript = InputScript::IdleOnly { frames: 600 };
+
+#[test]
+fn extended_m230_22_in_1_contra_at_power_on() {
+    check(
+        "mapper-230-22in1-Reset/22-in-1 (Reset Based) [p1].zip",
+        RESET_22_IN_1_CONTRA,
+        "extended_m230_22_in_1_contra_at_power_on",
+    );
+}
+
+#[test]
+fn extended_m230_22_in_1_sky_destroyer_after_reset() {
+    check(
+        "mapper-230-22in1-Reset/22-in-1 (Reset Based) [p1].zip",
+        RESET_22_IN_1_SKY_DESTROYER,
+        "extended_m230_22_in_1_sky_destroyer_after_reset",
     );
 }

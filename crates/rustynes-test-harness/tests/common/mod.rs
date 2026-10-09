@@ -344,10 +344,13 @@ pub mod external {
         /// menus ignore a one-frame tap (*Fudou Myouou Den*'s START /
         /// CONTINUE menu reads the button across several frames) or need a
         /// button other than START (*San Guo Zhi*'s questions take A), which
-        /// no other script can reach.
+        /// no other script can reach. The console RESET button is pressed at
+        /// the start of each frame index in `resets` (mapper 230's reset-
+        /// switched multicart).
         Held {
             presses: &'static [(u32, Buttons)],
             hold: u32,
+            resets: &'static [u32],
             frames: u32,
         },
     }
@@ -974,9 +977,13 @@ pub mod external {
             InputScript::Held {
                 presses,
                 hold,
+                resets,
                 frames,
             } => {
                 for f in 0..frames {
+                    if resets.contains(&f) {
+                        nes.reset();
+                    }
                     let held = presses
                         .iter()
                         .filter(|&&(p, _)| f >= p && f < p + hold)

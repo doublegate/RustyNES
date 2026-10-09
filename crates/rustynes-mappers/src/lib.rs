@@ -127,6 +127,7 @@ mod m184_sunsoft1;
 mod m185_cnrom185;
 mod m210_namco175;
 mod m228_action52;
+mod m230_reset_multicart;
 mod m232_camerica_bf9096;
 mod m240_cne_multicart;
 mod m241_bxrom241;
@@ -239,6 +240,7 @@ pub use m184_sunsoft1::Sunsoft1;
 pub use m185_cnrom185::CnRom185;
 pub use m210_namco175::{Namco175, Namco175Board};
 pub use m228_action52::Action52M228;
+pub use m230_reset_multicart::ResetMulticart230;
 pub use m232_camerica_bf9096::Camerica232;
 pub use m240_cne_multicart::Cne240;
 pub use m241_bxrom241::Bxrom241;
@@ -1602,6 +1604,12 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // `m252_waixing_vrc4.rs`).
         252 => Box::new(
             Waixing252::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 230: the reset-switched 22-in-1 (Contra + multicart); the console
+        // RESET toggles the chip (`m230_reset_multicart.rs`).
+        230 => Box::new(
+            ResetMulticart230::new(prg_rom, &chr_rom)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),
