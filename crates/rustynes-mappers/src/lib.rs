@@ -46,6 +46,7 @@ use alloc::{boxed::Box, string::ToString};
 mod a12_filter;
 mod bmc_simple;
 mod cartridge;
+mod datach_barcode;
 mod fds;
 mod header;
 mod homebrew_boards;
@@ -150,6 +151,10 @@ mod waixing;
 
 pub use bmc_simple::{new_m164, new_m261, new_m286, new_m289, new_m320, new_m336, new_m349};
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
+pub use datach_barcode::{
+    Barcode, BarcodeError, BarcodeReader, DARK_LEVEL as BARCODE_DARK_LEVEL,
+    MODULE_CYCLES as BARCODE_MODULE_CYCLES, QUIET_MODULES as BARCODE_QUIET_MODULES,
+};
 pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
@@ -670,6 +675,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // v2.9.6: Bandai LZ93D50 with 8 KiB WRAM and an outer PRG bank
             // (`INES_Mapper_153.md`).
             let fcg = BandaiFcg::new(prg_rom, chr_rom, h.mirroring, FcgVariant::Lz93d50Wram)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+            Box::new(fcg)
+        }
+        157 => {
+            // v3.2.0: the Datach Joint ROM System (`INES_Mapper_157`). The
+            // NES 2.0 PRG-NVRAM field declares only the game cartridge's own
+            // X24C01 (byte 10 `$10`, *Battle Rush*); the main unit's 24C02 is
+            // always present and not counted there.
+            let fcg = BandaiFcg::new_datach(prg_rom, chr_rom, h.mirroring, h.prg_nvram_size > 0)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
             Box::new(fcg)
         }

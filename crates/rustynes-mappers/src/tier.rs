@@ -132,7 +132,13 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // GTROM (111), promoted from BestEffort once the board matched its
         // page (register window, bonus RAM, self-flashing) and a CC0 fixture
         // pinned it. None has a redistributable commercial ROM.
-        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 163 | 192 | 195 | 228 | 249 => {
+        //
+        // v3.2.0 adds 157, the Datach Joint ROM System, written from
+        // `INES_Mapper_157` (an LZ93D50 variant in m016) with the barcode
+        // reader in `datach_barcode.rs`. Curated on the D23 record: six
+        // staged dumps boot to their title screens and three accept a
+        // scanned code (`docs/compatibility.md`).
+        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 157 | 163 | 192 | 195 | 228 | 249 => {
             Some(MapperTier::Curated)
         }
 
@@ -242,7 +248,8 @@ mod tests {
         178, 180, 185, 189, 193, 200, 201, 202, 203, 204, 205, 209, 211, 212, 213, 214, 218, 221,
         225, 226, 227, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 250, 253,
         // v2.9.6 "Roster".
-        12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249,
+        12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249, // v3.2.0.
+        157,
     ];
 
     #[test]
