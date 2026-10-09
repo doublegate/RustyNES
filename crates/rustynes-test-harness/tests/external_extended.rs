@@ -1418,3 +1418,33 @@ fn extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu() {
         "extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu",
     );
 }
+
+// ============================================================
+// v3.2.0 — tier promotions under D23 (`T-CURATED-EVIDENCE`)
+// ============================================================
+
+/// Mapper 47 (NES-QJ, *Super Spike V'Ball + Nintendo World Cup*): DOWN then
+/// START on the cartridge's game-select screen picks the SECOND game, which
+/// lives in the second 128 KiB block. Reaching it is what exercises the
+/// block-select register at `$6000-$7FFF` (writable only while the MMC3's
+/// PRG-RAM is enabled and writable, NESdev `INES_Mapper_047`); the default
+/// coverage capture only ever starts the first game, block 0.
+const M47_SECOND_GAME: InputScript = InputScript::Presses {
+    presses: &[
+        (240, rustynes_core::Buttons::DOWN),
+        (260, rustynes_core::Buttons::START),
+        (480, rustynes_core::Buttons::START),
+        (700, rustynes_core::Buttons::START),
+    ],
+    frames: 1000,
+    checkpoints: &[239, 300, 600, 1000],
+};
+
+#[test]
+fn extended_m47_nintendo_world_cup_block_1() {
+    check(
+        "mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U) [!].nes",
+        M47_SECOND_GAME,
+        "extended_m47_nintendo_world_cup_block_1",
+    );
+}

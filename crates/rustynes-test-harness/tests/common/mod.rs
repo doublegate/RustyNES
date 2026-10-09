@@ -338,6 +338,18 @@ pub mod external {
             free_run: u32,
             checkpoints: &'static [u32],
         },
+        /// v3.2.0: arbitrary single-frame presses. `presses` lists
+        /// `(frame, buttons)`, 0-indexed frames in ascending order, each
+        /// held for exactly that one frame; every other frame is idle, and
+        /// the run lasts `frames` frames in all. For a menu that needs more
+        /// than START (a multicart's game list needs DOWN first: mapper 47's
+        /// second game is reached that way, which is what exercises its
+        /// block-select register).
+        Presses {
+            presses: &'static [(u32, Buttons)],
+            frames: u32,
+            checkpoints: &'static [u32],
+        },
     }
 
     impl InputScript {
@@ -368,6 +380,7 @@ pub mod external {
                     free_run,
                     ..
                 } => warmup + taps.saturating_sub(1) * period + 1 + free_run,
+                Self::Presses { frames, .. } => frames,
             }
         }
     }
@@ -952,6 +965,36 @@ pub mod external {
                             Buttons::empty()
                         },
                     );
+                    pulse_vs_coin!();
+                    nes.run_frame();
+                    samples.extend(nes.drain_audio());
+                    frame_counter += 1;
+                    maybe_emit(frame_counter, &nes);
+                }
+            }
+            InputScript::Presses {
+                presses,
+                frames,
+                checkpoints: checkpoint_frames,
+            } => {
+                let mut maybe_emit = |frame: u32, nes: &Nes| {
+                    if checkpoint_frames.contains(&frame) {
+                        let fb_hash = fnv1a64(nes.framebuffer());
+                        best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
+                        checkpoints.push(Checkpoint { frame, fb_hash });
+                        dump_frame(&label_safe, &format!("f{frame}"), nes.framebuffer());
+                    }
+                };
+                assert!(
+                    presses.windows(2).all(|w| w[0].0 < w[1].0),
+                    "Presses frames must be strictly ascending"
+                );
+                for f in 0..frames {
+                    let held = presses
+                        .iter()
+                        .find(|&&(at, _)| at == f)
+                        .map_or(Buttons::empty(), |&(_, b)| b);
+                    nes.set_buttons(0, held);
                     pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
