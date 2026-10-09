@@ -118,7 +118,8 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::external::{InputScript, run_capture_opt, snapshot_text};
+use common::external::{InputScript, run_capture_model, snapshot_text};
+use rustynes_core::ConsoleModel;
 
 /// Default boot capture for breadth coverage. A discovered ROM's intro
 /// structure is unknown, so a passive idle frequently lands on a black
@@ -194,16 +195,15 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// unread. v2.9.8 cut the list to 52: the dirty-tail header rule and the game
 /// database's NES 2.0 guard made seven of them render, two Doraemon hacks moved
 /// to `UNSUPPORTED` as the mapper 8 images they are, and one documented
-/// blank, Famicom Jump II, was added.
+/// blank, Famicom Jump II, was added. v3.2.0 cut it to 41: ten of the 52 were booted on
+/// the wrong console ([`FAMICOM_WIRED`]), and the Subor cart blanks its own
+/// menu at about f375, which the START taps ran past (see `capture_override`).
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
     "mapper-009-MMC2/Gradius II (J) (VC).zip",
-    "mapper-015-Multicart15/Bio Hazard (Unl) [!].nes",
     "mapper-015-Multicart15/Doraemon (J) (PRG0) [hM15].zip",
     "mapper-015-Multicart15/Dragon Ball - Shen Long no Nazo (J) [hM15].zip",
     "mapper-015-Multicart15/Mobile Suit Z Gundam - Hot Scramble (J) [hM15].zip",
-    "mapper-015-Multicart15/Subor V1.0 (R).nes",
-    "mapper-015-Multicart15/Xiao Au Jiang Wu (Ch) [!].nes",
     "mapper-021-VRC2-VRC4/TwinBee Yahoo!! - Over the Sea Music Demo (PD).zip",
     "mapper-030-UNROM512/Chu Liu Xiang (Ch) (Wxn).nes",
     "mapper-034-BNROM-NINA001/Bio Senshi Dan - Increaser Tono Tatakai (J) [hM34].zip",
@@ -227,7 +227,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-099-VsSystem/Tennis (VS) [!].nes",
     "mapper-099-VsSystem/Wrecking Crew (VS) [!].nes",
     "mapper-112-NTDEC-Asder/Fighting Hero III (Unl) [!].nes",
-    "mapper-139-Sachen8259C/Final Combat (Sachen-JAP) [!].zip",
     "mapper-142-KaiserKS7032/Pipe 5 (Sachen) [!].zip",
     // Added at v2.9.8 (maintainer decision, 2026-10-01). Unlike the rest, this
     // is the game behaving as documented, not a defect: with its battery WRAM
@@ -237,22 +236,45 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-153-BandaiLZ93D50/Famicom Jump II - Saikyou no 7 Nin (Japan).nes",
     "mapper-162-WaixingFS304/Chong Wu Jin Hua Shi (Pet Evolve) (ES-1085) (Ch).nes",
     "mapper-162-WaixingFS304/Shu Ma Bao Bei (Digimon Crystal) (Ch) (Wxn).nes",
-    "mapper-162-WaixingFS304/Xi You Ji Hou Zhuan (Ch).nes",
-    "mapper-164-WaixingFinalFantasy/Digital Dragon (Ch) [!].zip",
     "mapper-177-Hengedianzi/Xing He Zhan Shi (Ch).nes",
     "mapper-178-WaixingEdu/Xing Ji Zheng Ba (Ch).nes",
-    "mapper-185-CNROM-Lock/Sansuu 1 Nen - Keisan Game (Japan).zip",
-    "mapper-185-CNROM-Lock/Sansuu 2 Nen - Keisan Game (Japan).zip",
-    "mapper-185-CNROM-Lock/Sansuu 3 Nen - Keisan Game (Japan).zip",
     "mapper-205-BMC-JC016/4-in-1 (K-3131GS, GN-45) [p1][!].zip",
-    "mapper-227-BMC-1200in1/Biohazard (China) (Unl) (En) (1.0).nes",
-    "mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes",
     "vs-system/GVS Balloon Fight (Dual).nes",
     "vs-system/GVS Balloon Fight.nes",
     "vs-system/GVS Mahjong.nes",
     "vs-system/GVS Tennis.nes",
     "vs-system/GVS Wrecking Crew (Dual).nes",
     "vs-system/GVS Wrecking Crew.nes",
+];
+
+/// Staged dumps that boot only with Famicom reset wiring (v3.2.0).
+///
+/// Each writes `$2000`, `$2001`, `$2005` or `$2006` within the first ~29,658
+/// CPU cycles after power-on, the window in which a front-loading NES PPU
+/// ignores those registers (NESdev "PPU power up state"). The Famicom does
+/// not hold its PPU in reset, so on one the writes land and the game draws.
+/// These are Famicom-market and Chinese-market carts that were never meant
+/// for the NES, so the sweep boots them as a Famicom
+/// ([`rustynes_core::ConsoleModel::Famicom`]) instead of listing them blank.
+/// Until v3.2.0 all ten sat in [`KNOWN_BLANK`].
+///
+/// The list is a ratchet as well: each entry is ALSO booted on the default
+/// NES model, and that boot must still be blank. A dump that starts drawing on
+/// the NES model no longer needs Famicom wiring and fails the sweep until it
+/// leaves this list. The frontend does not pick the model from the ROM (the
+/// design in `ConsoleModel`'s docs: NES 2.0 cannot say which console a cart is
+/// for); the player chooses Famicom in the settings.
+const FAMICOM_WIRED: &[&str] = &[
+    "mapper-015-Multicart15/Bio Hazard (Unl) [!].nes",
+    "mapper-015-Multicart15/Xiao Au Jiang Wu (Ch) [!].nes",
+    "mapper-139-Sachen8259C/Final Combat (Sachen-JAP) [!].zip",
+    "mapper-162-WaixingFS304/Xi You Ji Hou Zhuan (Ch).nes",
+    "mapper-164-WaixingFinalFantasy/Digital Dragon (Ch) [!].zip",
+    "mapper-185-CNROM-Lock/Sansuu 1 Nen - Keisan Game (Japan).zip",
+    "mapper-185-CNROM-Lock/Sansuu 2 Nen - Keisan Game (Japan).zip",
+    "mapper-185-CNROM-Lock/Sansuu 3 Nen - Keisan Game (Japan).zip",
+    "mapper-227-BMC-1200in1/Biohazard (China) (Unl) (En) (1.0).nes",
+    "mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes",
 ];
 
 const DEFAULT_CAPTURE: InputScript = InputScript::RepeatStartTap {
@@ -283,6 +305,15 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
     const IDLE: InputScript = InputScript::IdleOnly { frames: 700 };
     // A few titles need a longer fade to settle on the title screen.
     const IDLE_LONG: InputScript = InputScript::IdleOnly { frames: 1200 };
+    // v3.2.0: the Subor keyboard cart draws its menu by f100 and blanks it at
+    // about f375 (with no keyboard attached), so neither the START taps nor a
+    // 700-frame idle ends on it. It was first put in FAMICOM_WIRED, whose
+    // ratchet refused it: on the NES model it draws the same menu.
+    const SUBOR_MENU: InputScript = InputScript::Presses {
+        presses: &[],
+        frames: 350,
+        checkpoints: &[100, 350],
+    };
     let idle = [
         "mapper-000-NROM/Gyromite.nes",
         "mapper-001-MMC1/Dr. Mario.nes",
@@ -299,7 +330,9 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
         "mapper-119-TQROM/Pin Bot (E) [!].nes",
     ];
     let idle_long = ["mapper-001-MMC1/Tecmo Bowl.nes"];
-    if idle.contains(&rom_rel) {
+    if rom_rel == "mapper-015-Multicart15/Subor V1.0 (R).nes" {
+        Some(SUBOR_MENU)
+    } else if idle.contains(&rom_rel) {
         Some(IDLE)
     } else if idle_long.contains(&rom_rel) {
         Some(IDLE_LONG)
@@ -646,8 +679,27 @@ fn external_coverage_boot_smoke() {
         let capture_script = capture_override(rom_rel).unwrap_or(DEFAULT_CAPTURE);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             move || -> Result<Option<()>, String> {
+                let famicom = FAMICOM_WIRED.contains(&rom.as_str());
+                let model = if famicom {
+                    ConsoleModel::Famicom
+                } else {
+                    ConsoleModel::Nes
+                };
+                // The FAMICOM_WIRED ratchet: on the NES model the same boot
+                // must still be blank, or the entry is no longer needed. It runs
+                // FIRST so the frames `RUSTYNES_DUMP_FRAMES` writes for review
+                // are the Famicom boot's, which overwrites them.
+                if famicom {
+                    let nes_boot = run_capture_model(&rom, capture_script, ConsoleModel::Nes)
+                        .expect("a FAMICOM_WIRED entry is a cartridge, not an FDS disk");
+                    if !nes_boot.best_frame_health.looks_blank() {
+                        return Err("in FAMICOM_WIRED but also draws on the NES model; \
+                             remove it from the list"
+                            .to_string());
+                    }
+                }
                 // FDS disk on a BIOS-less checkout -> clean skip (Ok(None)).
-                let Some(capture) = run_capture_opt(&rom, capture_script) else {
+                let Some(capture) = run_capture_model(&rom, capture_script, model) else {
                     return Ok(None);
                 };
 
@@ -677,7 +729,10 @@ fn external_coverage_boot_smoke() {
                 };
 
                 // (2) Baseline snapshot comparison.
-                let text = snapshot_text(&rom, capture_script, &capture);
+                let mut text = snapshot_text(&rom, capture_script, &capture);
+                if famicom {
+                    text.insert_str(0, "console: Famicom (FAMICOM_WIRED)\n");
+                }
                 insta::assert_snapshot!(snap.as_str(), text);
 
                 // Snapshot passed; report the health verdict (if blank).

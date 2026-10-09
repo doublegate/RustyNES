@@ -282,7 +282,7 @@ pub mod external {
     use std::fs;
     use std::path::PathBuf;
 
-    use rustynes_core::{Buttons, Nes};
+    use rustynes_core::{Buttons, ConsoleModel, Nes};
     use rustynes_test_harness::coverage::{FrameHealth, frame_health};
     use sha2::{Digest, Sha256};
 
@@ -359,7 +359,7 @@ pub mod external {
         #[must_use]
         pub const fn total_frames(&self) -> u32 {
             match *self {
-                Self::IdleOnly { frames } => frames,
+                Self::IdleOnly { frames } | Self::Presses { frames, .. } => frames,
                 Self::StartTap {
                     idle_pre,
                     idle_post,
@@ -380,7 +380,6 @@ pub mod external {
                     free_run,
                     ..
                 } => warmup + taps.saturating_sub(1) * period + 1 + free_run,
-                Self::Presses { frames, .. } => frames,
             }
         }
     }
@@ -756,8 +755,25 @@ pub mod external {
     ///
     /// Panics on a file-read / archive-extract / parse failure (hard-fail in a
     /// regression harness); a missing FDS BIOS is the one soft case.
-    #[allow(clippy::too_many_lines)]
     pub fn run_capture_opt(rom_rel: &str, script: InputScript) -> Option<CaptureResult> {
+        run_capture_model(rom_rel, script, ConsoleModel::Nes)
+    }
+
+    /// Like [`run_capture_opt`], on the given [`ConsoleModel`].
+    ///
+    /// v3.2.0: some dumps write `$2000`/`$2006` before the front-loading NES
+    /// PPU leaves its power-on warm-up, so on the default [`ConsoleModel::Nes`]
+    /// those writes are ignored and the game never draws. On a Famicom the PPU
+    /// is never held in reset and they land. The coverage sweep boots such
+    /// dumps the way a player must run them, as a Famicom, instead of listing
+    /// them as blank. The model is applied with a power-cycle, so the warm-up
+    /// counter starts from the model's own state rather than the NES one.
+    #[allow(clippy::too_many_lines)]
+    pub fn run_capture_model(
+        rom_rel: &str,
+        script: InputScript,
+        model: ConsoleModel,
+    ) -> Option<CaptureResult> {
         let path = external_rom_path(rom_rel);
         // The SHA-256 pins the *staged file* (archive bytes for a `.zip`/`.7z`,
         // disk bytes for a `.fds`, ROM bytes for a `.nes`) — a stable identity
@@ -780,6 +796,10 @@ pub mod external {
             Load::Ok(nes) => *nes,
             Load::SkipNoBios => return None,
         };
+        if model != ConsoleModel::Nes {
+            nes.set_console_model(model);
+            nes.power_cycle();
+        }
 
         // Vs. System setup. Vs. arcade carts (iNES mapper 99, mapper 151, or
         // the NES-2.0/header Vs. console flag) boot to an attract loop and
