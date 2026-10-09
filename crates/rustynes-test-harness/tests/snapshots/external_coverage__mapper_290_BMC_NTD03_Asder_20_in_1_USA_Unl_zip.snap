@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-290-BMC-NTD03/Asder - 20 in 1 (USA) (Unl).zip
+rom_sha256=c167813281520da38dc8f46040a82d7e3956e40dd417c16f7a48c6fb43bdce31
+frames=1141
+fb_bytes=245760
+cycles=33949787
+audio_samples=836505
+audio_fnv1a64=3531b2e5f8d130fe
+checkpoint f900 fb_fnv1a64=5da1e1571a9fffbb
+checkpoint f1100 fb_fnv1a64=5da1e1571a9fffbb

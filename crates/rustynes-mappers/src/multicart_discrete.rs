@@ -3506,7 +3506,18 @@ impl Mapper for DiscreteMapper {
             },
             DiscreteBoard::M290 => {
                 if (0x8000..=0xFFFF).contains(&addr) {
-                    self.prg_16k(self.reg0 as usize, addr)
+                    // The latch's `S` bit (A7) picks the window size. `reg0`
+                    // is the 16 KiB bank number (`PPPP` doubled, plus `p` in
+                    // 16 KiB mode), so the 32 KiB bank is `reg0 >> 1`. v3.2.0:
+                    // until then both modes read through the 16 KiB window,
+                    // which repeats `$8000`'s half at `$C000` and broke 32 KiB
+                    // mode -- the power-on mode, so the reset vector came from
+                    // the wrong half (`m290_prg_modes_follow_the_size_bit`).
+                    if self.last_addr & 0x80 != 0 {
+                        self.prg_16k(self.reg0 as usize, addr)
+                    } else {
+                        self.prg_32k(self.reg0 as usize >> 1, addr)
+                    }
                 } else {
                     0
                 }
@@ -3588,6 +3599,9 @@ impl Mapper for DiscreteMapper {
                     } else {
                         Mirroring::Vertical
                     };
+                    // The whole latch, for its `S` bit (read path); already
+                    // part of the board's save state.
+                    self.last_addr = addr;
                 }
             }
             DiscreteBoard::M301 => {
@@ -4730,6 +4744,43 @@ mod tests {
         m.cpu_write(0xC000, 0x05);
         assert_eq!(m.cpu_read(0x8000), 37 % 32); // inner ((0x20)|5) = 37.
         assert_eq!(m.cpu_read(0xC000), 47 % 32); // high|0x0F = 47.
+    }
+
+    /// v3.2.0: `nesdev_wiki/NES_2_0_Mapper_290.xhtml`, `A~[1PPP PMCC Sp.. .CCC]`:
+    /// `S` = 0 maps the 32 KiB bank `PPPP` across all of `$8000-$FFFF` (its two
+    /// 16 KiB halves IN ORDER), `S` = 1 maps 16 KiB bank `PPPPp` at both halves.
+    /// Until v3.2.0 the read path used the 16 KiB window in both modes, so in
+    /// 32 KiB mode `$C000-$FFFF` repeated `$8000`'s half; the latch powers up
+    /// at 0, which is 32 KiB mode, so the reset vector came from the wrong
+    /// half and *Asder 20-in-1* never started (a uniform grey frame).
+    #[test]
+    fn m290_prg_modes_follow_the_size_bit() {
+        let mut m = new_m290(synth_prg_16k(16), synth_chr_8k(16), Mirroring::Vertical).unwrap();
+        // Power-on: 32 KiB bank 0, halves 0 and 1.
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(
+            m.cpu_read(0xC000),
+            1,
+            "power-on is 32 KiB mode: $C000 is the upper half"
+        );
+        // S=0, PPPP=1: 32 KiB bank 1 = 16 KiB banks 2 and 3.
+        m.cpu_write(0x8800, 0);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 3);
+        // S=1, p=1, PPPP=1: 16 KiB bank 3 at both halves.
+        m.cpu_write(0x88C0, 0);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        assert_eq!(m.cpu_read(0xC000), 3);
+        // S=1, p=0: 16 KiB bank 2 at both halves.
+        m.cpu_write(0x8880, 0);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 2);
+        // The mode survives a save-state round trip.
+        m.cpu_write(0x8800, 0);
+        let blob = m.save_state();
+        let mut m2 = new_m290(synth_prg_16k(16), synth_chr_8k(16), Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.cpu_read(0xC000), 3);
     }
 
     #[test]
