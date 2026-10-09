@@ -44,7 +44,7 @@
 //! same read is the scanner ([`BarcodeReader`], `datach_barcode.rs`). The variant's code
 //! lives outside the derived EEPROM region below, except for the
 //! `keeps_word_address` flag on [`Eeprom`], written from the 24C02's
-//! random-read protocol (see the field) and switched on only here.
+//! random-read protocol (see the field) and on for every 24C02.
 //!
 //! ## Offsets (relative to the window base, masked to `$x..F`)
 //!
@@ -203,18 +203,19 @@ struct Eeprom {
     counter: u8,
     /// The bit currently driven back onto SDA toward the CPU (high = 1).
     output: u8,
-    /// v3.2.0, mapper 157 only: a START keeps the word address instead of
+    /// v3.2.0, every 24C02: a START keeps the word address instead of
     /// clearing it. A 24C02 "random read" is a dummy write of the word address
     /// followed by a repeated START and a read-mode device select, and the
     /// read then begins at that address: the chip's address counter is not
     /// reset by a START. Clearing it made every random read start at `$00`.
-    /// *Ultraman Club - Supokon Fight!* reads its file table that way, and
-    /// with the address cleared it reformatted the main unit's EEPROM and
-    /// stopped on "no free block" at every boot; keeping it, the game reaches
-    /// its title (measured 2026-10-08). Written from that protocol
-    /// description, not from any emulator. Off for mappers 16 / 159, whose
-    /// shipped behaviour this change does not touch (see `docs/mappers.md`,
-    /// mapper 157, for the open question it raises about mapper 16).
+    /// Found on mapper 157: *Ultraman Club - Supokon Fight!* reads its file
+    /// table that way, and with the address cleared it reformatted the main
+    /// unit's EEPROM and stopped on "no free block" at every boot; keeping it,
+    /// the game reaches its title (measured 2026-10-08). Then applied to
+    /// mapper 16's 24C02 as well, since it is the chip's behaviour, not the
+    /// board's. Written from that protocol description, not from any emulator.
+    /// Off for the X24C01, which takes its word address after every START, so
+    /// the clearing is unobservable there.
     keeps_word_address: bool,
 }
 
@@ -243,7 +244,7 @@ impl Eeprom {
             data: 0,
             counter: 0,
             output: 1,
-            keeps_word_address: false,
+            keeps_word_address: !is_x24c01,
         }
     }
 
@@ -576,9 +577,6 @@ impl BandaiFcg {
         external_x24c01: bool,
     ) -> Result<Self, MapperError> {
         let mut m = Self::new(prg_rom, chr_rom, mirroring, FcgVariant::Datach)?;
-        if let Some(ee) = m.eeprom.as_mut() {
-            ee.keeps_word_address = true;
-        }
         if external_x24c01 {
             m.ext_eeprom = Some(Eeprom::new(128, true));
         }
@@ -1701,6 +1699,39 @@ mod tests {
         }
         assert_eq!(m.sram()[0x37], 0xC4);
         assert_eq!(m.sram()[0x00], 0xFF, "byte $00 untouched");
+    }
+
+    /// v3.2.0: the same random read on mapper 16's LZ93D50 + 24C02 board.
+    /// Keeping the word address across a START is a property of the 24C02,
+    /// not of the Datach, so it holds on every board that carries one.
+    #[test]
+    fn m016_24c02_random_read_starts_at_the_written_address() {
+        let mut m = BandaiFcg::new(
+            synth_prg(8),
+            synth_chr(16),
+            Mirroring::Vertical,
+            FcgVariant::Lz93d50_24c02,
+        )
+        .unwrap();
+        {
+            let mut d = DatachI2c {
+                m: &mut m,
+                external: false,
+            };
+            d.start();
+            assert!(d.send_msb_first(0xA0), "device select acked");
+            assert!(d.send_msb_first(0x5A), "word address acked");
+            assert!(d.send_msb_first(0x3C), "data acked");
+            d.stop();
+            d.start();
+            assert!(d.send_msb_first(0xA0));
+            assert!(d.send_msb_first(0x5A));
+            d.start(); // repeated START
+            assert!(d.send_msb_first(0xA1), "read select acked");
+            assert_eq!(d.recv_msb_first(), 0x3C, "random read of $5A");
+            d.stop();
+        }
+        assert_eq!(m.sram()[0x5A], 0x3C);
     }
 
     /// The cartridge's X24C01 answers only on its own clock, `$8000-$8003`

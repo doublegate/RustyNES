@@ -868,11 +868,14 @@ reformatted the EEPROM at every boot and stopped on "no free block"; *Dragon
 Ball Z* and *SD Gundam Wars* listed garbage save files. Mapper 157's 24C02
 keeps the address across a START, written from that protocol description;
 with it all three reach their titles and *SD Gundam Wars* lists four empty
-files. The flag is off for mappers 16 and 159, whose behaviour this release
-does not change. **Open question:** the mapper-16 LZ93D50 games use the same
-24C02 and may do random reads too; changing it there alters shipped frames,
-so it needs its own change with an `EMULATION_EPOCH` bump and re-blessed
-baselines.
+files. Keeping the address is a property of the 24C02, so v3.2.0 applies it to
+every board that carries one: mapper 16's LZ93D50 + 24C02 too
+(`m016_24c02_random_read_starts_at_the_written_address`, which read `$FF`
+from the cleared address before). No `external_coverage` baseline of the six
+staged mapper-16 dumps, nor of 157 or 159, moved; it falls under v3.2.0's
+`EMULATION_EPOCH` 4 all the same. The X24C01 (mapper 159, and the Datach's
+external chip) is unchanged: it takes its word address after every START, so
+clearing it there is unobservable.
 
 **Power-on EEPROM contents.** `$FF` throughout. Every game detects that as
 unformatted and formats it on first boot (*Ultraman Club* writes `BA` then
