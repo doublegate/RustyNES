@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-243-SachenSA020A/Honey Peach (Asia) (Ja) (Unl).zip
+rom_sha256=d33d67973b57bc5d7dc2ae7d2cadc0d12113be1283da7902d5e6fb0c888953d1
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=2f388fdb12509ceb
+checkpoint f900 fb_fnv1a64=35b57521f08be6af
+checkpoint f1100 fb_fnv1a64=58ccc42434a4025f

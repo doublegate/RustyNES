@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-268-BMC-Coolboy/Gardman (Asia) (Unl).zip
+rom_sha256=411022972a0a698213952713a6c72cfb431e43ee81f83dd2938f04fcaf8dd6d9
+frames=1141
+fb_bytes=245760
+cycles=40428961
+audio_samples=996152
+audio_fnv1a64=88778486824cd0c2
+checkpoint f900 fb_fnv1a64=a6275cc1503a5b59
+checkpoint f1100 fb_fnv1a64=56e11f69781192da

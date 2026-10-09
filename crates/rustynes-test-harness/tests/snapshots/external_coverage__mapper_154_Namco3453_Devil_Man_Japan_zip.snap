@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-154-Namco3453/Devil Man (Japan).zip
+rom_sha256=1db92db5d8535e0ca2653eb703e0dbb5f99b9fc737b2833d6e637333293b5ea3
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=ef96783dc57335ea
+checkpoint f900 fb_fnv1a64=ab39e904f9009c69
+checkpoint f1100 fb_fnv1a64=ade23dd97248d2eb

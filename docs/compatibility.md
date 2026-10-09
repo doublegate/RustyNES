@@ -362,3 +362,41 @@ FE-11, which the v3.1 → v4.0 line plan does not schedule:
 
 - **CRC32 vs. SHA-256 for ROM identification.** We use SHA-256 for save state directory naming (lower collision risk). For ROM compatibility databases, CRC32 is the community standard; we may add it as a secondary key.
 - **Region override.** Some users want to play PAL versions of NTSC games at NTSC speed. Plan: expose a region override in the settings UI; warn that this may break timing-sensitive ROMs.
+
+## Curated evidence from local dumps (D23)
+
+A mapper family whose only evidence is a dump that cannot be redistributed may
+still be **Curated** (ADR 0011) when that dump boots to a correct picture and
+this table records it (maintainer decision D23, v3.2.0 `T-CURATED-EVIDENCE`):
+the title, the SHA-256 of the image after its 16-byte header (the key
+`Nes::rom_sha256` uses), the frames the capture ran, and a committed screenshot.
+The capture is the byte-identity `external_coverage` boot (1,141 frames:
+START tapped five times from frame 240, every 150 frames, then 300 free) unless
+the row names an `external_extended` test. The dumps live in the gitignored
+`tests/roms/external/`; only the hash, the snapshot and the screenshot are
+committed.
+
+| mapper | title | SHA-256 after the header | frames | screenshot |
+| --- | --- | --- | --- | --- |
+| 47 | Super Spike V'Ball + Nintendo World Cup (U) | `8951dccb6640b48c857f321ef01c06110c5b8870f5d901dcc538ab1b8db7e2a1` | 1,141 | `screenshots/external/mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U).png` (the first game's menu) |
+| 47 | the same dump, second game | same | 1,000 (`extended_m47_nintendo_world_cup_block_1`: DOWN at 240, START at 260, 480, 700) | `screenshots/external/mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U) - Nintendo World Cup.png` (its team select, from the second 128 KiB block) |
+| 121 | Ultimate Mortal Kombat 3 (Unl) | `040c7b6497754415172735a6dc9e3d6812cb9caef58a8f49ae48b72bfcc435e6` | 1,141 | `screenshots/external/mapper-121-KashengA9711/Ultimate Mortal Kombat 3 (Unl).png` (a fight) |
+| 154 | Devil Man (Japan) | `d2140fc2e6354a9f4d0154dabac757e5559890edba4885799c1c979d8b7a8b20` | 1,141 | `screenshots/external/mapper-154-Namco3453/Devil Man (Japan).png` (the opening cutscene) |
+| 191 | Mighty Final Fight (J) [T+Chi] | `671f372fa92819d02147cae9072139f1193ebcc22030db3d09c61a768fdaec17` | 1,141 | `screenshots/external/mapper-191-Waixing191/Mighty Final Fight (J) [T+Chi_madcell].png` (a cutscene in its CHR-RAM font) |
+| 243 | Honey Peach (Asia) (Ja) (Unl) | `4342d7b1bbd3b263dfc47e3e3cd51abdf0d98f826a89ec9bc67db35a1c2ad871` | 1,141 | `screenshots/external/mapper-243-SachenSA020A/Honey Peach (Asia) (Ja) (Unl).png` (its play screen: both players, the hand symbols) |
+
+**Not evidence, and why:**
+
+- **The Sachen titles GoodNES headers as mapper 243** (*Strategist*, *Poker
+  III*, *Chinese Checkers*, *Magic Cubes* and others) are SA-015 games, mapper
+  150 (`nesdev_wiki/INES_Mapper_150.xhtml` lists them; 243's page names *Honey
+  Peach* alone). The two board layouts read the same ASIC's CHR bits at
+  different significance, so a 150 game run as 243 renders correctly only when
+  its CHR fits the bits the two share, and *Poker III* and *Strategist* render
+  garbled. The vendored game database also routes most of these titles to 243.
+  *Poker III* renders garbled under both decodes, so it is an open finding
+  recorded in the v3.2.0 plan, not a routing fix.
+- **290** (*Asder 20-in-1*) booted to a uniform grey frame until v3.2.0 fixed its
+  32 KiB PRG mode; it now starts a game, but the capture shows a top band of
+  scrambled tiles that nobody has compared with hardware (NESdev notes one game
+  on the cart glitches in attract mode on a real console). It stays BestEffort.
