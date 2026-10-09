@@ -98,14 +98,15 @@ pub use movie::{
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;
 pub use nes::{
-    ConsoleModel, FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL, MAX_CPU_OVERCLOCK,
-    MAX_EXTRA_SCANLINES, Nes, PowerOnConfig, PowerOnRam,
+    BarcodeScanError, ConsoleModel, FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL,
+    MAX_CPU_OVERCLOCK, MAX_EXTRA_SCANLINES, Nes, PowerOnConfig, PowerOnRam,
 };
 // v2.1.7 P5 — re-export the PPU-side hardware-revision knobs at the core surface
 // so downstream consumers (frontend, test-harness) depend on `rustynes-core`.
 pub use rewind::{
     REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES, RewindError, RewindRing,
 };
+pub use rustynes_mappers::{Barcode, BarcodeError};
 pub use rustynes_ppu::{PaletteInit, PpuRevision};
 pub use save_state::{
     BinReader, BinWriter, FORMAT_VERSION, HEADER_LEN, Header, MAGIC, MIN_FORMAT_VERSION,

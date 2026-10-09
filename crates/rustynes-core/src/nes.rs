@@ -151,6 +151,18 @@ pub struct TraceRec {
     pub cycle: u64,
 }
 
+/// Why [`Nes::scan_barcode`] refused a scan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum BarcodeScanError {
+    /// The string is not a valid 13- or 8-digit JAN / EAN code.
+    #[error("not a valid JAN/EAN barcode: {0}")]
+    Malformed(rustynes_mappers::BarcodeError),
+    /// The cartridge has no barcode reader (only the Datach, mapper 157,
+    /// does).
+    #[error("this cartridge has no barcode reader")]
+    NoReader,
+}
+
 /// The largest extra-scanline overclock the core accepts.
 ///
 /// [`Nes::set_extra_scanlines`] clamps to it, and a movie's options record
@@ -1689,6 +1701,49 @@ impl Nes {
     /// game's "insert side N" prompt.
     pub fn set_disk_side(&mut self, side: Option<usize>) {
         self.bus.set_disk_side(side);
+    }
+
+    // --- Datach barcode reader (mapper 157, v3.2.0) ---
+
+    /// Whether the cartridge has a barcode reader. Only the Bandai Datach
+    /// Joint ROM System (mapper 157) does; a frontend shows its "scan a
+    /// barcode" control only when this is `true`.
+    #[must_use]
+    pub fn has_barcode_reader(&self) -> bool {
+        self.bus.has_barcode_reader()
+    }
+
+    /// Swipe a barcode past the Datach reader.
+    ///
+    /// `code` is a JAN / EAN code of 13 or 8 digits (spaces and hyphens are
+    /// skipped), validated here at the boundary, check digit included. The
+    /// reader then presents the symbol's bars to the CPU over the following
+    /// CPU cycles, deterministically: the same scan at the same cycle yields
+    /// the same frames, and a save state taken mid-scan restores mid-scan.
+    /// A scan replaces any scan still in flight.
+    ///
+    /// A scan is an input that changes emulation, and it is **not** recorded
+    /// by movies or carried by netplay: callers running either must refuse
+    /// it rather than desynchronise (the desktop frontend does).
+    ///
+    /// # Errors
+    ///
+    /// [`BarcodeScanError::Malformed`] for a string that is not a valid
+    /// 13- or 8-digit code, and [`BarcodeScanError::NoReader`] when the
+    /// cartridge has no barcode reader.
+    pub fn scan_barcode(&mut self, code: &str) -> Result<(), BarcodeScanError> {
+        let code = rustynes_mappers::Barcode::parse(code).map_err(BarcodeScanError::Malformed)?;
+        if self.bus.scan_barcode(&code) {
+            Ok(())
+        } else {
+            Err(BarcodeScanError::NoReader)
+        }
+    }
+
+    /// Whether a barcode scan is still being presented to the CPU.
+    #[must_use]
+    pub fn barcode_scan_in_progress(&self) -> bool {
+        self.bus.barcode_scan_in_progress()
     }
 
     /// Start recording the diagnostic FDS read-stream trace (the `$4031` disk-byte
@@ -3486,6 +3541,50 @@ mod tests {
         bytes.extend_from_slice(&prg);
         bytes.extend_from_slice(&vec![0u8; chr_kib * 1024]);
         bytes
+    }
+
+    /// `Nes::scan_barcode` validates at the boundary, refuses a cartridge
+    /// with no reader, and a scan is part of the save state: a snapshot taken
+    /// mid-swipe restores mid-swipe and the two runs stay identical.
+    #[test]
+    fn datach_barcode_scan_is_validated_and_survives_a_snapshot() {
+        let mut nrom = Nes::from_rom(&synth_nrom(32, 8)).unwrap();
+        assert!(!nrom.has_barcode_reader());
+        assert_eq!(
+            nrom.scan_barcode("4006381333931"),
+            Err(BarcodeScanError::NoReader)
+        );
+
+        let rom = synth_board_rom(157, SweepHeader::Nes2 { submapper: 0 }, 32, 0);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        assert!(nes.has_barcode_reader());
+        assert_eq!(
+            nes.scan_barcode("4006381333932"),
+            Err(BarcodeScanError::Malformed(
+                rustynes_mappers::BarcodeError::BadCheckDigit {
+                    expected: 1,
+                    found: 2
+                }
+            ))
+        );
+        assert!(
+            !nes.barcode_scan_in_progress(),
+            "a refused scan starts nothing"
+        );
+        assert_eq!(nes.scan_barcode("4006381333931"), Ok(()));
+        assert!(nes.barcode_scan_in_progress());
+        nes.run_frame();
+        assert!(nes.barcode_scan_in_progress(), "a swipe outlasts a frame");
+        let mid = nes.snapshot();
+        let mut other = Nes::from_rom(&rom).unwrap();
+        other.restore(&mid).unwrap();
+        assert!(other.barcode_scan_in_progress());
+        for _ in 0..20 {
+            nes.run_frame();
+            other.run_frame();
+        }
+        assert!(!nes.barcode_scan_in_progress(), "the swipe ends");
+        assert_eq!(nes.snapshot(), other.snapshot());
     }
 
     /// Synthetic NES 2.0 NROM with console type Vs. System and a byte-13 Vs.

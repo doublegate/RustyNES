@@ -323,7 +323,7 @@ boot-smoke (no redistributable behavioral fixtures exist for these boards).
 
 | iNES | Submapper | Name | Audio | IRQ | Notes |
 |------|-----------|------|-------|-----|-------|
-| 16 / 159 | 0,4,5 | Bandai FCG | — | CPU | DBZ, Famicom Jump II, Datach. +minimal I2C EEPROM (24C02/24C01). |
+| 16 / 159 | 0,4,5 | Bandai FCG | — | CPU | DBZ, Famicom Jump II. +minimal I2C EEPROM (24C02/24C01). The Datach is mapper 157 (v3.2.0, below). |
 | 18 | — | Jaleco SS88006 | — (ADPCM decoded-not-emulated) | CPU | Goemon Gaiden, Doropie. Nibble-paired banking; selectable-width IRQ. |
 | 64 | — | Tengen RAMBO-1 | — | A12 + CPU | Klax, Skull & Crossbones. Dual-mode IRQ (reuses MMC3 A12 filter). The zero test follows a reload as well as a decrement, so a latch of 0 asserts on every clock (v2.9.8; *Skull & Crossbones* depends on it). The reload "+1 kick" and the IRQ delay are not modelled. |
 | 65 | — | Irem H3001 | — | CPU | Daiku no Gen-san, Spartan X 2. 16-bit reload-latch down-counter. |
@@ -837,6 +837,97 @@ supported.
 path), were all CAUGHT by the unit tests or `roster_boards.rs`. Two needed a new
 test first: the bus's floating-read call, which no mapper-level test can reach,
 and the PPU's unfolded `$3xxx` path. The record is in the v2.9.6 plan.
+
+### Mapper 157 — Bandai Datach Joint ROM System (v3.2.0)
+
+Written from `nesdev_wiki/INES_Mapper_157.xhtml` and the pages it links
+(`Bandai_FCG_board`, `Bandai_Datach_pinout`, `INES_Mapper_016`). No other
+emulator's source was read; the page's link to FCEUX's barcode code was
+deliberately not followed. Curated (D23, `docs/compatibility.md`).
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 157 | — | Datach main unit + LZ93D50 game cartridge (`INES_Mapper_157`) | Curated | LZ93D50 (latched 16-bit M2) | A `FcgVariant::Datach` in `m016_bandai_fcg.rs`, built by `BandaiFcg::new_datach`, outside the file's derived EEPROM region except for one opt-in flag (below). Registers mask `$800F` in `$8000-$FFFF` only. `$8008` PRG bank at `$8000` (last bank fixed at `$C000`), `$8009` mirroring, `$800A-$800C` IRQ: as mapper 16 submapper 5. 8 KiB of unbanked CHR-RAM; no CHR banking. `$8000-$8003` bit 3 is the external X24C01's SCL (CHR A13 OUT); `$8004-$8007` do nothing (PA12/PA13 grounded). `$800D` bit 5 is the internal 24C02's SCL, bit 6 both chips' SDA. `$6000-$7FFF` reads: bit 4 the two EEPROMs' data out ANDed, bit 3 the barcode reader. |
+
+**The two EEPROMs.** The main unit's 256-byte 24C02 is always present and is
+the battery save (`sram()`, 256 bytes). The game cartridge's 128-byte X24C01
+exists only when the NES 2.0 header declares PRG-NVRAM (byte 10 `$10`, *Battle
+Rush*); it is reached through the existing X24C01 state machine, on its own
+clock. It is held in save states but **not** in the battery file: the page
+asks for each EEPROM in its own file, and `Mapper::sram` exposes one slice.
+*Battle Rush*'s cartridge-side save is therefore lost between sessions (a
+known gap). The main unit's EEPROM is likewise saved per game, not shared
+between Datach games as the hardware shares it.
+
+**The 24C02 random read (`keeps_word_address`).** A 24C02 random read is a
+dummy write of the word address, a repeated START, and a read-mode device
+select; the read starts at the address just written. The existing model
+cleared the address on every START, so every random read began at `$00`.
+*Ultraman Club* reads its file table that way: with the address cleared it
+reformatted the EEPROM at every boot and stopped on "no free block"; *Dragon
+Ball Z* and *SD Gundam Wars* listed garbage save files. Mapper 157's 24C02
+keeps the address across a START, written from that protocol description;
+with it all three reach their titles and *SD Gundam Wars* lists four empty
+files. The flag is off for mappers 16 and 159, whose behaviour this release
+does not change. **Open question:** the mapper-16 LZ93D50 games use the same
+24C02 and may do random reads too; changing it there alters shipped frames,
+so it needs its own change with an `EMULATION_EPOCH` bump and re-blessed
+baselines.
+
+**Power-on EEPROM contents.** `$FF` throughout. Every game detects that as
+unformatted and formats it on first boot (*Ultraman Club* writes `BA` then
+its tables, *Dragon Ball Z* `BA` and `BB`).
+
+**The barcode reader** (`crates/rustynes-mappers/src/datach_barcode.rs`). The
+page says only that bit 3 returns "a sequence of light and dark periods" as a
+card is swiped. The core takes a 13- or 8-digit JAN / EAN code
+(`Nes::scan_barcode`, validated at the boundary, wrong check digit included,
+as `BarcodeScanError::Malformed`), draws its symbol from the published
+EAN-13 / EAN-8 tables (95 / 67 modules), and presents it on bit 3 one module
+per 1,000 CPU cycles, between 128 light modules of card margin on each side.
+Bit 3 reads 1 over light and 0 over a bar and when no card is passing. The
+polarity, the idle level, the module time and the margin are not documented
+anywhere found; they were measured black-box against the games:
+
+| Choice | Measurement |
+|---|---|
+| light = 1, bar = 0 | With the opposite polarity no game reacted to any code at any speed. |
+| idle = 0 (dark) | Idle-light left *Battle Rush*'s title showing one of its three menu items and ignoring A. |
+| 1,000 cycles / module | Accepted windows (128-module margins): *Dragon Ball Z* Karin's room 200-3,000, *SD Gundam Wars* Barcode Lab 200-3,000, *J.League* team select 400-8,000. |
+| 128-module margins | With 32, *Dragon Ball Z* needed 700 or more cycles per module. |
+
+A swipe is therefore about 0.2 s of emulated time, advanced from the mapper's
+M2 hook (no wall clock), and its in-flight position is in the mapper's save
+state. What the games did with a scan (pinned in `external_extended.rs`):
+*Dragon Ball Z* Karin's room turns 4006381333931 into Dende and 96385074 into
+Android 18 (HP 96000 / BP 86750 / DP 12750); *SD Gundam Wars*' Barcode Lab
+turns 4006381333931 into Rafflesia and 96385074 into the RX-78 Gundam;
+*J.League* answers an arbitrary code with "not a team card", having decoded
+it. *Ultraman Club*, *Yu Yu Hakusho* and *Battle Rush* boot and play, but a
+screen that reads a card was not reached in testing, so the reader is not
+verified on them.
+
+**Save state.** The Bandai FCG blob keeps version 2. Mapper 157 appends a
+tail after the fields every variant writes: the external SCL level, the
+X24C01's 128 bytes when present, and the reader (module count, position,
+cycles left, the modules bit-packed). No earlier blob of mapper 157 exists, so
+nothing else's layout changed and no version moved; `PPU_SNAPSHOT_VERSION` and
+`EMULATION_EPOCH` are untouched, because no frame of any game that loaded
+before this change is different.
+
+**Movies and netplay.** A scan is an input that changes emulation and is not
+recorded in `.rnm` movies or carried by netplay. A host must refuse a scan
+while a movie records or plays or a netplay session runs, rather than let it
+desynchronise. Recording scans is future work.
+
+**Open bus.** The six undriven bits of a `$6000-$7FFF` read are open bus on
+the board and read 0 here, as on mapper 16: the bus consults a partial
+driven-bit mask only for `$4020-$5FFF`.
+
+**Mutation proof.** Six mutants, each caught by the unit tests: an L-code
+entry, a first-digit parity row, the bit-3 polarity, the external SCL bit,
+the 24C02 `keeps_word_address` flag, and the EEPROMs' AND. The polarity and
+the EEPROM flag were also caught by the game-level snapshots.
 
 ### Mapper accuracy tiering (v1.2.0)
 

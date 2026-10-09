@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-157-Datach/Datach - Battle Rush - Build Up Robot Tournament (Japan).nes
+rom_sha256=526faccfe5aefc87fc2d9e70c91c8f53573670ac8ed2b14700a4ea5f1354b829
+frames=1141
+fb_bytes=245760
+cycles=33949821
+audio_samples=836506
+audio_fnv1a64=bc99b7d845d5d50f
+checkpoint f900 fb_fnv1a64=50a7dabaf8f99b08
+checkpoint f1100 fb_fnv1a64=32d65ea0969b3ec0

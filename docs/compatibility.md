@@ -362,3 +362,30 @@ FE-11, which the v3.1 → v4.0 line plan does not schedule:
 
 - **CRC32 vs. SHA-256 for ROM identification.** We use SHA-256 for save state directory naming (lower collision risk). For ROM compatibility databases, CRC32 is the community standard; we may add it as a secondary key.
 - **Region override.** Some users want to play PAL versions of NTSC games at NTSC speed. Plan: expose a region override in the settings UI; warn that this may break timing-sensitive ROMs.
+
+## Curated evidence from local dumps (D23)
+
+A local dump counts as Curated evidence when the record names the title, the
+SHA-256 of the ROM bytes after the 16-byte header (`Nes::rom_sha256`), the
+frames run, and a committed screenshot. The dumps themselves are never
+committed; the boot baselines live in `external_extended.rs` and
+`external_coverage.rs`.
+
+| Mapper | Title | SHA-256 after the header (`Nes::rom_sha256`) | Frames | Screenshot |
+|---|---|---|---|---|
+| 157 | Datach - Battle Rush - Build Up Robot Tournament (Japan) | `cbc404d57879beca0b65b855b19fda9e017e7d8cc716941b52bbea8f8a6ee859` | 1141 | `screenshots/external/mapper-157-Datach/Datach - Battle Rush - Build Up Robot Tournament (Japan).png` |
+| 157 | Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan) | `a1370e7410a98a4a2de19f4872281a065b1d7d7cd7b5f2ba0da70504b4a1d52d` | 1141 | `screenshots/external/mapper-157-Datach/Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).png` |
+| 157 | Datach - J.League Super Top Players (Japan) | `a7b1e4693093c8a155747f9023399ebb2537064e788970ecdcccee467108b62e` | 1141 | `screenshots/external/mapper-157-Datach/Datach - J.League Super Top Players (Japan).png` |
+| 157 | Datach - SD Gundam - Gundam Wars (Japan) | `a6a909d829e3d9ef1a14d002f8ac3c59173420530d467c09fe338b28143f4308` | 1141 | `screenshots/external/mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).png` |
+| 157 | Datach - Ultraman Club - Supokon Fight! (Japan) | `85f0ab77ae56df26e18bf55caafb795ec24712c168912f0963756fe4daa2ef65` | 1141 | `screenshots/external/mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).png` |
+| 157 | Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan) | `acc54496853ce6306589790857b0d56145d8382bd00f5d0f40ecdfa2906ad349` | 1141 | `screenshots/external/mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).png` |
+
+Mapper 157 notes: the six Hearto 1G1R NES 2.0 dumps (the GoodNES copies carry
+a mapper-16 header). The screenshots are `external_coverage`'s final frame
+(1141 frames of START taps): *Battle Rush*'s factory, *Dragon Ball Z*'s
+tournament desk, *J.League*'s title menu, *SD Gundam Wars*' file menu (four
+empty files), *Ultraman Club*'s first event and *Yu Yu Hakusho*'s tournament
+opening. *Dragon Ball Z* and *SD Gundam Wars* also read scanned barcodes
+(`extended_m157_dbz_karin_room_reads_a_scanned_card`,
+`extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card`; what each code
+became is in `docs/mappers.md`, mapper 157).

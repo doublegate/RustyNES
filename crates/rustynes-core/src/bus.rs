@@ -2696,6 +2696,24 @@ impl SystemBus {
         self.mapper.set_disk_side(side);
     }
 
+    /// Whether the cartridge has a barcode reader (Datach, mapper 157).
+    #[must_use]
+    pub fn has_barcode_reader(&self) -> bool {
+        self.mapper.has_barcode_reader()
+    }
+
+    /// Present a validated barcode to the cartridge's reader; `false` when
+    /// the cartridge has none.
+    pub fn scan_barcode(&mut self, code: &rustynes_mappers::Barcode) -> bool {
+        self.mapper.scan_barcode(code)
+    }
+
+    /// Whether a barcode scan is still being presented.
+    #[must_use]
+    pub fn barcode_scan_in_progress(&self) -> bool {
+        self.mapper.barcode_scan_in_progress()
+    }
+
     /// Number of selectable NSF songs (0 for cartridge / disk builds).
     #[must_use]
     pub fn nsf_song_count(&self) -> u8 {
