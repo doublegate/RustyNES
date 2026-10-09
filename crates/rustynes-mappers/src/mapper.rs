@@ -899,7 +899,8 @@ mod caps_tests {
         assert!(checked > 150, "only {checked} boards were checked");
         assert_eq!(
             impure,
-            vec![9, 10, 35, 90, 96, 163, 209, 211],
+            // v3.2.0: 165 (MMC3 + MMC2-style CHR latches).
+            vec![9, 10, 35, 90, 96, 163, 165, 209, 211],
             "the impure set moved"
         );
     }

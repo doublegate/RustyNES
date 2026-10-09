@@ -179,6 +179,15 @@ impl Mmc1 {
         self.shift_count
     }
 
+    /// Empty the serial port's shift register without touching `control`
+    /// (unlike a bit-7 write, which also forces PRG mode 3). Mapper 116's
+    /// PAL does this when its supervisor register switches the board into
+    /// MMC1 mode (`INES_Mapper_116.md`); v3.2.0.
+    pub(crate) const fn reset_shift_register(&mut self) {
+        self.shift = 0x10;
+        self.shift_count = 0;
+    }
+
     /// Map a PPU address in `$2000-$3EFF` to a 2 KiB-VRAM offset using the
     /// current mirroring mode (control bits 1-0).
     fn nametable_offset(&self, addr: u16) -> usize {

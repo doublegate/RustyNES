@@ -157,6 +157,17 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
             Some(MapperTier::Curated)
         }
 
+        // --- v3.2.0: MMC3-derived boards written from their NESdev pages
+        // (`mmc3_boards_ext.rs`), each Curated on a D23 record in
+        // `docs/compatibility.md`: a local dump that boots to its title, named
+        // by title and `Nes::rom_sha256`, pinned by a boot snapshot in
+        // `external_extended.rs` and a committed screenshot. 182 is a
+        // duplicate of 114 (the 114 page) and shares its model; 116 (SOMARI-P,
+        // three simulated chips) is in `m116_somari.rs`. A separate arm
+        // so each release's batch keeps its own rationale beside its ids.
+        #[allow(clippy::match_same_arms)]
+        114 | 116 | 165 | 182 | 197 | 215 => Some(MapperTier::Curated),
+
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
         // be honestly oracle-gated and stay register-decode + save-state
@@ -261,8 +272,9 @@ mod tests {
         225, 226, 227, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 250, 253,
         // v2.9.6 "Roster".
         12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249,
-        // v3.2.0: the Datach (new) and the D23 promotions.
-        157, 47, 121, 154, 191, 243,
+        // v3.2.0: the Datach (new), the D23 promotions, and the new boards in
+        // `mmc3_boards_ext.rs` / `m116_somari.rs`.
+        157, 47, 121, 154, 191, 243, 114, 116, 165, 182, 197, 215,
     ];
 
     #[test]

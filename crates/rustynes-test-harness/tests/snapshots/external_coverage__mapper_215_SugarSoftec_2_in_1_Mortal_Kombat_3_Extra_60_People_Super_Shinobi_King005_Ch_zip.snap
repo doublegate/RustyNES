@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-215-SugarSoftec/2-in-1 - Mortal Kombat 3 Extra 60 People + Super Shinobi (King005) (Ch) [!].zip
+rom_sha256=9b93c0d425d512a89b71c5bdb688b13f845ca17c208cfed596bc24b3f8a60321
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=a3aa41c3967bc776
+checkpoint f900 fb_fnv1a64=4de0054e7438e274
+checkpoint f1100 fb_fnv1a64=4de0054e7438e274

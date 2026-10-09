@@ -111,6 +111,7 @@ mod m099_vs_system;
 mod m105_nes_event;
 mod m107_magic_dragon107;
 mod m113_ave_nina006;
+mod m116_somari;
 mod m118_txsrom;
 mod m119_tqrom;
 mod m132_txc_22211;
@@ -137,6 +138,7 @@ mod m268_bmc_coolboy;
 mod m513_sachen_9602;
 mod mapper;
 mod mmc3_boards;
+mod mmc3_boards_ext;
 mod mmc3_clones;
 mod multicart_discrete;
 mod nsf;
@@ -225,6 +227,7 @@ pub use m099_vs_system::VsSystem;
 pub use m105_nes_event::{NWC_TOURNAMENT_DIP, NesEvent105};
 pub use m107_magic_dragon107::MagicDragon107;
 pub use m113_ave_nina006::Nina006M113;
+pub use m116_somari::Somari116;
 pub use m118_txsrom::TxSrom;
 pub use m119_tqrom::Tqrom;
 pub use m132_txc_22211::Txc132;
@@ -254,6 +257,7 @@ pub use mapper::{
     mirroring_name,
 };
 pub use mmc3_boards::{Board as Mmc3BoardKind, Mmc3Board};
+pub use mmc3_boards_ext::{ExtBoard as Mmc3ExtBoardKind, Mmc3BoardExt};
 pub use mmc3_clones::{
     Mmc3CloneMapper, new_m44, new_m49, new_m52, new_m115, new_m134, new_m189, new_m205, new_m238,
     new_m245, new_m348, new_m366,
@@ -302,6 +306,26 @@ fn mmc3_board(
     };
     Ok(Box::new(
         Mmc3Board::new(kind, prg_rom, chr_rom, h.mirroring, wram, chr_ram)
+            .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+    ))
+}
+
+/// Build one of the v3.2.0 MMC3 boards (`mmc3_boards_ext.rs`). Work RAM is
+/// taken only from a NES 2.0 header, for the reason given on [`mmc3_board`]:
+/// iNES 1.0 reports a nominal 8 KiB for every image.
+fn mmc3_ext(
+    kind: Mmc3ExtBoardKind,
+    prg_rom: Box<[u8]>,
+    chr_rom: Box<[u8]>,
+    h: &Header,
+) -> Result<Box<dyn Mapper>, RomError> {
+    let wram = if h.is_nes2 {
+        h.prg_ram_window() as usize
+    } else {
+        0
+    };
+    Ok(Box::new(
+        Mmc3BoardExt::new(kind, prg_rom, chr_rom, h.mirroring, wram)
             .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
     ))
 }
@@ -1391,6 +1415,41 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         192 => mmc3_board(Mmc3BoardKind::M192, prg_rom, chr_rom, &h)?,
         194 => mmc3_board(Mmc3BoardKind::M194, prg_rom, chr_rom, &h)?,
         195 => mmc3_board(Mmc3BoardKind::M195, prg_rom, chr_rom, &h)?,
+        // v3.2.0: the SuperGame / Hosenkan scramblers (`mmc3_boards_ext.rs`).
+        // 182 is a duplicate of 114 (`INES_Mapper_114.md`, "Similar
+        // Mappers"; the 182 page is a redirect), so it takes submapper 0.
+        114 => mmc3_ext(
+            Mmc3ExtBoardKind::M114 {
+                sub1: h.submapper == 1,
+            },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
+        182 => mmc3_ext(Mmc3ExtBoardKind::M114 { sub1: false }, prg_rom, chr_rom, &h)?,
+        // MMC3 with 2 / 4 KiB CHR granularity; the submapper is the wiring.
+        197 => mmc3_ext(
+            Mmc3ExtBoardKind::M197 { sub: h.submapper },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
+        // SOMARI-P (Huang-1 / Huang-2): VRC2 / MMC3 / MMC1 by a supervisor.
+        116 => Box::new(
+            Somari116::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // MMC3 + MMC2-style CHR latches and a 4 KiB CHR-RAM page.
+        165 => mmc3_ext(Mmc3ExtBoardKind::M165, prg_rom, chr_rom, &h)?,
+        // Sugar Softec UNL-8237 (215.0) / UNL-8237A (215.1).
+        215 => mmc3_ext(
+            Mmc3ExtBoardKind::M215 {
+                sub1: h.submapper == 1,
+            },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
         44 => Box::new(
             new_m44(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,

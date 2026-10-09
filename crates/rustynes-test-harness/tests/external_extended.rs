@@ -1670,3 +1670,130 @@ fn extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card() {
         )
     );
 }
+
+// ============================================================
+// v3.2.0 — MMC3-derived families written from their NESdev pages
+// (`mmc3_boards_ext.rs`). One GoodNES dump per family, byte-identity boot
+// snapshot; the D23 records are in `docs/compatibility.md`.
+// ============================================================
+
+#[test]
+fn extended_m114_aladdin_supergame() {
+    check(
+        "mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m114_aladdin_supergame",
+    );
+}
+
+/// Submapper 1's scramble. GoodNES labels this dump mapper 215, the
+/// assignment `INES_Mapper_215.md` says was later withdrawn ("Boogerman
+/// (Mapper 114 Submapper 1) was originally assigned by CaH4e3 to Mapper
+/// 215"); it never writes `$5007`, so it does not boot as 215. The staged
+/// copy carries a NES 2.0 header naming 114.1; the bytes after the header,
+/// and so `Nes::rom_sha256`, are the GoodNES dump's.
+#[test]
+fn extended_m114_1_boogerman() {
+    check(
+        "mapper-114-SuperGame/Boogerman (Sugar Softec) (Unl) [!] (NES 2.0 114.1).nes",
+        DEFAULT_IDLE,
+        "extended_m114_1_boogerman",
+    );
+}
+
+#[test]
+fn extended_m182_super_donkey_kong() {
+    check(
+        "mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m182_super_donkey_kong",
+    );
+}
+
+/// Scramble pattern 4 (`$5007` = 4), 256 KiB PRG + 512 KiB CHR.
+#[test]
+fn extended_m215_mortal_kombat_3_extra_60() {
+    check(
+        "mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m215_mortal_kombat_3_extra_60",
+    );
+}
+
+/// Scramble pattern 1 (`$5007` = 1): the 2-in-1 menu.
+#[test]
+fn extended_m215_super_808() {
+    check(
+        "mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].zip",
+        DEFAULT_IDLE,
+        "extended_m215_super_808",
+    );
+}
+
+/// Submapper 0 wiring (the page's PRG CRC32 `0xC333F621` copy).
+#[test]
+fn extended_m197_super_fighter_iii() {
+    check(
+        "mapper-197-SuperFighter3/Super Fighter III (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m197_super_fighter_iii",
+    );
+}
+
+/// Fire Emblem translations hold the Waixing logo (drawn from the CHR-RAM
+/// page) until START; a tap at frame 700 reaches the title and a second
+/// tap starts the intro. Checkpoints: the title, then the intro.
+const M165_TITLE_INTRO: InputScript = InputScript::DoubleStartTap {
+    idle_pre: 700,
+    gap: 400,
+    idle_post: 0,
+    free_run: 1100,
+    checkpoints: &[900, 1700, 2100],
+};
+
+#[test]
+fn extended_m165_fire_emblem_ch() {
+    check(
+        "mapper-165-FireEmblemCh/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch).zip",
+        M165_TITLE_INTRO,
+        "extended_m165_fire_emblem_ch",
+    );
+}
+
+/// Needs the board's work RAM: without it the title is garbage tiles.
+#[test]
+fn extended_m165_fire_emblem_gaiden_ch() {
+    check(
+        "mapper-165-FireEmblemCh/Fire Emblem Gaiden (Ch).zip",
+        M165_TITLE_INTRO,
+        "extended_m165_fire_emblem_gaiden_ch",
+    );
+}
+
+/// One START at frame 400 starts Green Hill Zone act 1; the f1000 checkpoint
+/// is gameplay (Somari, the HUD and the scrolling zone). The game cycles the
+/// supervisor through all three chips while it initialises.
+const M116_SOMARI_PLAY: InputScript = InputScript::StartTap {
+    idle_pre: 400,
+    idle_post: 0,
+    free_run: 799,
+    checkpoints: &[1000],
+};
+
+#[test]
+fn extended_m116_somari() {
+    check(
+        "mapper-116-SomariW/Somari (SOMARI-W) (Unl) [!].zip",
+        M116_SOMARI_PLAY,
+        "extended_m116_somari",
+    );
+}
+
+#[test]
+fn extended_m116_kart_fighter() {
+    check(
+        "mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m116_kart_fighter",
+    );
+}

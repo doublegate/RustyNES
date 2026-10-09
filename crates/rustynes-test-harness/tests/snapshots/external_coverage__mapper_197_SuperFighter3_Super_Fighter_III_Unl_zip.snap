@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-197-SuperFighter3/Super Fighter III (Unl) [!].zip
+rom_sha256=1e52f7cbcbd9f54f35e59729f2a3ffa3c9c192b5263cb6272f30d552f36a3452
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=7778598ae963e8d3
+checkpoint f900 fb_fnv1a64=fa3db8faf0e0d3d1
+checkpoint f1100 fb_fnv1a64=fa3db8faf0e0d3d1

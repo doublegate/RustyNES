@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].zip
+rom_sha256=2c32f5a11213285d24acb39f8ffd85d56b6f6a1bba2673c8ad3e474f44c1d12d
+frames=600
+fb_bytes=245760
+cycles=17838532
+audio_samples=439524
+audio_fnv1a64=a1ff96fb65e243d0
+checkpoint f600 fb_fnv1a64=d008bdc2e1a64a88

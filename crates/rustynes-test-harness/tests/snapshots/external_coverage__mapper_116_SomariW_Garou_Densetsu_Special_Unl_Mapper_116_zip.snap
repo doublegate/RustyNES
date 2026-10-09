@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-116-SomariW/Garou Densetsu Special (Unl) (Mapper 116) [!].zip
+rom_sha256=edac53d3e1df9f8fb1c7d9ad4bb3f2b8abc68d0f921ad11cd16b86520542fcbb
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=a17d654bd5bcad91
+checkpoint f900 fb_fnv1a64=1a59205a72e7e26e
+checkpoint f1100 fb_fnv1a64=fc88f6eb90bb2984

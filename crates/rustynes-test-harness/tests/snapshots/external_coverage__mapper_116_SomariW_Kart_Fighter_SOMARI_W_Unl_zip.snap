@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].zip
+rom_sha256=82e8224ecb8707398d2d4db69ae5735a921b4389f1efae9f3eadf78f54f77c74
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=48d45044356c5a9f
+checkpoint f900 fb_fnv1a64=b2e5bfc6a9033a02
+checkpoint f1100 fb_fnv1a64=161ea3016ae60de3

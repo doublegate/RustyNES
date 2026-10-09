@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-165-FireEmblemCh/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch).zip
+rom_sha256=ecd0a059c21392e2c545e761151944157dcea3d93c72082803a54ec975001c17
+frames=2202
+fb_bytes=245760
+cycles=65546887
+audio_samples=1615058
+audio_fnv1a64=094c6eec1c70c8ec
+checkpoint f900 fb_fnv1a64=359ad9f5331ea1b3
+checkpoint f1700 fb_fnv1a64=28331e0f69dc3576
+checkpoint f2100 fb_fnv1a64=4e8ecfc2344f015a

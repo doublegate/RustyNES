@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].zip
+rom_sha256=f03f7933b78e084e16bfe11e3f58bb492412f044ff7cff5226b247cb9ba8da46
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=78bea01365527c18

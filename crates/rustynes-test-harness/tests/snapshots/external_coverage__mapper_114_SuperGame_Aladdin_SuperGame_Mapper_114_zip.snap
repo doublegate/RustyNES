@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].zip
+rom_sha256=e1c304e4be8ea9048609df75a6435cd4448dca941e07be7608c9dd5b8e6004e1
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=74d9677f876b5528
+checkpoint f900 fb_fnv1a64=777fb951af838784
+checkpoint f1100 fb_fnv1a64=777fb951af838784

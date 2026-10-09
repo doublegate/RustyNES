@@ -372,7 +372,10 @@ the title, the SHA-256 of the image after its 16-byte header (the key
 `Nes::rom_sha256` uses), the frames the capture ran, and a committed screenshot.
 The capture is the byte-identity `external_coverage` boot (1,141 frames:
 START tapped five times from frame 240, every 150 frames, then 300 free) unless
-the row names an `external_extended` test. The dumps live in the gitignored
+the row names an `external_extended` test; the rows for the families new in
+v3.2.0 (114, 116, 165, 182, 197, 215) give the frame count of their
+`external_extended` boot test, whose script the title cell notes where it is
+not plain idle. The dumps live in the gitignored
 `tests/roms/external/`; only the hash, the snapshot and the screenshot are
 committed.
 
@@ -390,6 +393,16 @@ committed.
 | 157 | Datach - SD Gundam - Gundam Wars (Japan) | `a6a909d829e3d9ef1a14d002f8ac3c59173420530d467c09fe338b28143f4308` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).png` |
 | 157 | Datach - Ultraman Club - Supokon Fight! (Japan) | `85f0ab77ae56df26e18bf55caafb795ec24712c168912f0963756fe4daa2ef65` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).png` |
 | 157 | Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan) | `acc54496853ce6306589790857b0d56145d8382bd00f5d0f40ecdfa2906ad349` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).png` |
+| 114 | Aladdin (SuperGame) (Mapper 114) [!] | `5489244538c94653f766bd80f07b2aa684ad139bddea68f40b60a0473c9286e2` | 600 | `screenshots/external/mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].png` |
+| 114.1 | Boogerman (Sugar Softec) (Unl) [!] (GoodNES labels it 215; staged with a NES 2.0 114.1 header) | `ba2d65f240d8f97c7b77973042d8141cf15116ffc3d73caed450c21e08fd54a2` | 600 | `screenshots/external/mapper-114-SuperGame/Boogerman (Sugar Softec) (Unl) [!] (NES 2.0 114.1).png` |
+| 182 (as 114.0) | Super Donkey Kong (Unl) [!] | `67d06173c4b8239d46c84335591216b1adfa38344107405ec88c58327217a361` | 600 | `screenshots/external/mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].png` |
+| 116 | Somari (SOMARI-W) (Unl) [!] (START at 400; screenshot = the f1000 checkpoint, Green Hill Zone act 1 in play) | `f5b2998c853ddb5c495e96ac31e4abfff8f1da8367b9ae074efbcb7fdfee452c` | 1200 | `screenshots/external/mapper-116-SomariW/Somari (SOMARI-W) (Unl) [!].png` |
+| 116 | Kart Fighter (SOMARI-W) (Unl) [!] | `8fd609f49be61a9a82233a175a0a32a3d43c722d31a7a4115380f4b7f1e1615f` | 600 | `screenshots/external/mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].png` |
+| 165 | Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch) (START at 700 and 1101; screenshot = the f2100 checkpoint, the intro text over the sword) | `0d396a7615b2499edd0997628b733236d88b002e364833edaf166e0a1c96ecf9` | 2202 | `screenshots/external/mapper-165-FireEmblemCh/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch).png` |
+| 165 | Fire Emblem Gaiden (Ch) (same script; it holds its title) | `621a4d4ee54524e9e62cce97adcba5b332c06bd1e4174a37455f474e747cd35e` | 2202 | `screenshots/external/mapper-165-FireEmblemCh/Fire Emblem Gaiden (Ch).png` |
+| 197 | Super Fighter III (Unl) [!] (submapper 0, PRG CRC32 `C333F621`) | `dfb4771a36dbcb05a2753a95810a11164665282ccac4cf7ee52d26d2ed6e5e4f` | 600 | `screenshots/external/mapper-197-SuperFighter3/Super Fighter III (Unl) [!].png` |
+| 215 | Mortal Kombat 3 Extra 60 (Unl) [!] (scramble pattern 4) | `19ccf8d3a3fc37b82d403d0668b00f05125bfcf01ad510dfff73e3ac30dad827` | 600 | `screenshots/external/mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].png` |
+| 215 | `2-in-1 Super 808 (Unl) [p1][!]` (scramble pattern 1, menu) | `4211468e61181f0956f10259ba6091ea3fead297e61ba7f22d7daa227463414a` | 600 | `screenshots/external/mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].png` |
 
 Mapper 157 notes: the six Hearto 1G1R NES 2.0 dumps (the GoodNES copies carry
 a mapper-16 header). The screenshots are `external_coverage`'s final frame

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-215-SugarSoftec/Super 308 3-in-1 (Unl) [!].zip
+rom_sha256=94cd84ef744062b9465ce4fa70a0822918bc04bba10012d9af7225a4d42ad657
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=8a8c98726f23f6d5
+checkpoint f900 fb_fnv1a64=1968444a98e01fce
+checkpoint f1100 fb_fnv1a64=c6560ae48ee39364

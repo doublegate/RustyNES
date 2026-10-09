@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-182-Hosenkan/Pocahontas (Unl).zip
+rom_sha256=a2226c7f9dadb66f96a9c64ccc15931e0350e1a084edfcb9d60f99dc19902a43
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=d1d91afd986a31f0
+checkpoint f900 fb_fnv1a64=efd3d2064c4fb285
+checkpoint f1100 fb_fnv1a64=e523ba4ed37a95b7
