@@ -200,11 +200,21 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// menu at about f375, which the START taps ran past (see `capture_override`).
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
+    // Cause measured at v3.2.0: a mis-headered dump. The payload is the VRC4
+    // cartridge's (mapper 25; four bytes of a data table differ, the Virtual
+    // Console port's edit), under a mapper-9 header with the Vs. bit set. It
+    // draws with the cartridge's header; the real cart is staged under 25.
     "mapper-009-MMC2/Gradius II (J) (VC).zip",
     "mapper-015-Multicart15/Doraemon (J) (PRG0) [hM15].zip",
     "mapper-015-Multicart15/Dragon Ball - Shen Long no Nazo (J) [hM15].zip",
     "mapper-015-Multicart15/Mobile Suit Z Gundam - Hot Scramble (J) [hM15].zip",
     "mapper-021-VRC2-VRC4/TwinBee Yahoo!! - Over the Sea Music Demo (PD).zip",
+    // Open at v3.2.0. A converted Waixing .WXN image, routed to 176/2 like its
+    // two siblings in that directory, which boot. It runs the FS005 copy-
+    // protection sequence and the decoded stub at $0100 correctly, then crashes
+    // into data at $FF40 in frame 4 and halts on a JAM. Re-headered as each 176
+    // submapper and ten other Waixing mappers it never draws. A bad or
+    // differently-converted dump is the leading explanation; no second dump.
     "mapper-030-UNROM512/Chu Liu Xiang (Ch) (Wxn).nes",
     "mapper-034-BNROM-NINA001/Bio Senshi Dan - Increaser Tono Tatakai (J) [hM34].zip",
     "mapper-034-BNROM-NINA001/Dragon Ball - Shen Long no Nazo (J) [hM34].zip",
