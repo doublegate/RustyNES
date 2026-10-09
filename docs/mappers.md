@@ -854,6 +854,20 @@ committed screenshot) and pinned by a byte-identity boot snapshot in
 | 158 | — | Tengen 800037 (`INES_Mapper_158`, `RAMBO_1` Variants) | Curated | RAMBO-1 (A12 / CPU) | `Rambo1::new_m158` in `m064_rambo1.rs`: the RAMBO-1 with CHR A17 on CIRAM A10, as TLSROM is to MMC3. Nametable *n* takes bit 7 of the 1 KiB bank in slot *n* of `$0000-$0FFF`, after the C and K bits (R0/R1 in 2 KiB mode, R0/R8/R1/R9 with K, R2-R5 under C). `$A000` is not connected. Mapper 64's path is unchanged. The NES 2.0 *Alien Syndrome (USA) (Unl)* is the dump; the GoodNES `(Tengen) [!]` image has the same body headered as 118, and the game database lists that CRC as 118 (its NES 2.0 guard leaves the 158 header alone). |
 | 207 | — | Taito X1-005, CHR A17 mirroring (`INES_Mapper_207`) | Curated | — | `TaitoX1005::new_m207` in `m080_taito_x1_005.rs`: the X1-005 with CHR A17 on CIRAM A10, so bit 7 of `$7EF0` pages nametables `$2000`/`$2400` and bit 7 of `$7EF1` pages `$2800`/`$2C00` (1scA / 1scB / H). `$7EF6-$7EF7` are ignored. Everything else is mapper 80's, whose path is unchanged. Evidence is the English translation, which carries a 207 header; the original Japanese GoodNES `[!]` is headered 80, and the game database lists its CRC as 80 too, so it does not reach this board. The boot snapshot plays into stage 1 (`HeldStart`: the menu ignores one-frame taps). |
 
+**VRC4 IRQ mode bit, corrected (v3.2.0).** `m021_vrc4.rs` (mappers 21, 23,
+25) read bit 2 of the IRQ control register the wrong way round: `VRC_IRQ`
+gives "IRQ Mode (1 = cycle mode, 0 = scanline mode)", and VRC6 and VRC7 had it
+right. A game that asked for a scanline split got an IRQ that counted CPU
+cycles, roughly 114 times too fast. Found through mapper 252, whose *San Guo
+Zhi* sets latch `$52` in scanline mode for its text box and drew the box from
+the wrong CHR banks. With the bit corrected, nine staged VRC4 dumps render
+differently: *Bio Miracle Bokutte Upa* gains its status bar, the *Wai Wai World
+2* map its logo, *Gradius II* reaches "PLAYER 1 START", and *Crisis Force*
+loses a black band at the top of the playfield. The `external_coverage` and
+`external_real_games` snapshots for them were re-blessed in the same change;
+this moves commercial-ROM output, so the release must raise
+`EMULATION_EPOCH` (ADR 0045).
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by
