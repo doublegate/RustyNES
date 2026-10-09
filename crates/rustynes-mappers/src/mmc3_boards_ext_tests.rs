@@ -285,3 +285,182 @@ fn m114_state_round_trip_and_variant_refusal() {
     bad[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(board(M114_0, 32, 256).load_state(&bad).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Mapper 215 (`INES_Mapper_215.md`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn m215_parses() {
+    for sub in [0u8, 1] {
+        assert!(
+            crate::parse(&nes2_image(215, sub, 32, 64)).is_ok(),
+            "mapper 215.{sub} must construct"
+        );
+    }
+}
+
+const M215_0: ExtBoard = ExtBoard::M215 { sub1: false };
+const M215_1: ExtBoard = ExtBoard::M215 { sub1: true };
+
+/// Each `$5007` pattern, pinned to literal cells of the page's two tables:
+/// where the bank select and bank data must be written, and which register
+/// a written index then reaches.
+#[test]
+fn m215_scramble_patterns_follow_the_page() {
+    // (pattern, select addr, data addr, written index, observe at, is PRG)
+    for (pat, sel, data, written, window, is_prg) in [
+        // 0, 5, 6, 7: the identity. Index 6 is R6.
+        (0u8, 0x8000u16, 0x8001u16, 6u8, 0x8000u16, true),
+        (5, 0x8000, 0x8001, 6, 0x8000, true),
+        (6, 0x8000, 0x8001, 6, 0x8000, true),
+        (7, 0x8000, 0x8001, 6, 0x8000, true),
+        // 1: `$A000` is `$8000`, `$C000` is `$8001`; written 4 means 7.
+        (1, 0xA000, 0xC000, 4, 0xA000, true),
+        // 1: written 2 means 6.
+        (1, 0xA000, 0xC000, 2, 0x8000, true),
+        // 2: addresses unscrambled; written 1 means 5 (R5 at `$1C00`).
+        (2, 0x8000, 0x8001, 1, 0x1C00, false),
+        // 3: `$8001` is `$8000`, `$A000` is `$8001`; written 1 means 6.
+        (3, 0x8001, 0xA000, 1, 0x8000, true),
+        // 3: written 4 means 5.
+        (3, 0x8001, 0xA000, 4, 0x1C00, false),
+        // 4: `$A000` is `$8000`, `$8001` stays `$8001`; written 4 means 6.
+        (4, 0xA000, 0x8001, 4, 0x8000, true),
+        // 4: written 1 means 2 (R2 at `$1000`).
+        (4, 0xA000, 0x8001, 1, 0x1000, false),
+    ] {
+        let mut m = board(M215_0, 32, 256);
+        m.cpu_write(0x5007, pat);
+        m.cpu_write(sel, written);
+        m.cpu_write(data, 0x0D);
+        let got = if is_prg {
+            prg_at(&mut m, window)
+        } else {
+            chr_at(&mut m, window)
+        };
+        assert_eq!(got, 0x0D, "pattern {pat}, written index {written}");
+    }
+}
+
+/// Pattern 3 moves the IRQ registers: `$8000` is `$C001` (reload), `$E001`
+/// is `$C000` (latch), `$C001` is `$E001` (enable). Pattern 1 moves the
+/// mirroring register to `$8001` (`$A000`).
+#[test]
+fn m215_scramble_moves_irq_and_mirroring_registers() {
+    let mut m = board(M215_0, 32, 256);
+    m.cpu_write(0x5007, 3);
+    m.cpu_write(0xE001, 1); // latch = 1
+    m.cpu_write(0x8000, 0); // reload
+    m.cpu_write(0xC001, 0); // enable
+    clock_a12(&mut m);
+    clock_a12(&mut m);
+    assert!(
+        m.irq_pending(),
+        "pattern 3: latch 1 fires on the second clock"
+    );
+
+    let mut m = board(M215_0, 32, 256);
+    m.cpu_write(0x5007, 1);
+    m.cpu_write(0x8001, 1);
+    assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+}
+
+/// The page gives no IRQ revision; the MMC3 default (Sharp) applies, so a
+/// latch of 0 fires on every clock.
+#[test]
+fn m215_irq_is_the_sharp_mmc3() {
+    let mut m = board(M215_0, 32, 256);
+    m.cpu_write(0xC000, 0);
+    m.cpu_write(0xC001, 0);
+    m.cpu_write(0xE001, 0);
+    clock_a12(&mut m);
+    m.cpu_write(0xE000, 0);
+    m.cpu_write(0xE001, 0);
+    clock_a12(&mut m);
+    assert!(m.irq_pending(), "Sharp: a latch of 0 fires every clock");
+}
+
+/// `$5001` powers up as `$xF` (the last outer bank: the reset vector is
+/// reachable), a console reset restores it, and `$5000` / `$5007` keep their
+/// values across the reset.
+#[test]
+fn m215_outer_bank_power_up_and_reset() {
+    let mut m = board(M215_0, 128, 1024);
+    assert_eq!(prg_at(&mut m, 0xE000), 127, "power-up: last 256 KiB");
+    m.cpu_write(0x5001, 0x00);
+    m.cpu_write(0x5000, 0x80);
+    m.cpu_write(0x5007, 0x04);
+    assert_eq!(prg_at(&mut m, 0xE000), 1, "outer 0, NROM bank 0");
+    m.reset();
+    assert_eq!(m.regs[1], 0x0F, "$5001 back to its power-up value");
+    assert_eq!(m.regs[0], 0x80, "$5000 kept");
+    assert_eq!(m.regs[2], 0x04, "$5007 kept");
+}
+
+/// `$5000` is 114's NROM override (mask `$F007`, so `$5FF8` reaches it), and
+/// bit 6 makes PRG A17 / CHR A17 come from `$5001` bits 4 / 5.
+#[test]
+fn m215_nrom_override_and_128k_mode() {
+    let mut m = board(M215_0, 128, 1024);
+    m.cpu_write(0x5001, 0x00);
+    m.cpu_write(0x5FF8, 0xA0 | 0x05); // NROM-256, bank 5 -> 4/5
+    assert_eq!(prg_at(&mut m, 0x8000), 8);
+    assert_eq!(prg_at(&mut m, 0xC000), 10);
+    m.cpu_write(0x5000, 0x00);
+    m.cpu_write(0x8000, 6);
+    m.cpu_write(0x8001, 0x13); // MMC3 PRG A17 set
+    m.cpu_write(0x8000, 2);
+    m.cpu_write(0x8001, 0x85); // MMC3 CHR A17 set
+    assert_eq!(prg_at(&mut m, 0x8000), 0x13, "256 KiB mode: MMC3 A17");
+    assert_eq!(chr_at(&mut m, 0x1000), 0x85);
+    m.cpu_write(0x5000, 0x40); // 128 KiB mode, $5001 bits 4/5 clear
+    assert_eq!(prg_at(&mut m, 0x8000), 0x03, "A17 from $5001 bit 4 (0)");
+    assert_eq!(chr_at(&mut m, 0x1000), 0x05, "A17 from $5001 bit 5 (0)");
+    m.cpu_write(0x5001, 0x30);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x13, "A17 from $5001 bit 4 (1)");
+    assert_eq!(chr_at(&mut m, 0x1000), 0x85, "A17 from $5001 bit 5 (1)");
+}
+
+/// The outer bank layouts: submapper 0 `..cp CCPP`, submapper 1 `..cp P.PP`
+/// over `CCC.` (PRG A20 = bit 3, CHR A18-A20 = bits 1-3).
+#[test]
+fn m215_outer_bank_layouts() {
+    // 2 MiB PRG (256 x 8 KiB), 2 MiB CHR (2048 x 1 KiB).
+    let mut m = board(M215_0, 256, 2048);
+    m.cpu_write(0x8000, 6);
+    m.cpu_write(0x8001, 0x01);
+    m.cpu_write(0x8000, 2);
+    m.cpu_write(0x8001, 0x01);
+    m.cpu_write(0x5001, 0x0E); // PRG A19 (bit 1), CHR A18-A19 = 3
+    assert_eq!(prg_at(&mut m, 0x8000), 0x01 | (2 << 5));
+    assert_eq!(chr_at(&mut m, 0x1000), 0x01 | (3 << 8));
+    m.cpu_write(0x5001, 0x08);
+    assert_eq!(prg_at(&mut m, 0x8000), 0x01, "sub 0: bit 3 is CHR only");
+
+    let mut m = board(M215_1, 256, 2048);
+    m.cpu_write(0x8000, 6);
+    m.cpu_write(0x8001, 0x01);
+    m.cpu_write(0x8000, 2);
+    m.cpu_write(0x8001, 0x01);
+    m.cpu_write(0x5001, 0x08); // PRG A20, CHR A20
+    assert_eq!(prg_at(&mut m, 0x8000), 0x01 | (4 << 5));
+    assert_eq!(chr_at(&mut m, 0x1000), 0x01 | (4 << 8));
+    m.cpu_write(0x5001, 0x03); // PRG A18-A19, CHR A18
+    assert_eq!(prg_at(&mut m, 0x8000), 0x01 | (3 << 5));
+    assert_eq!(chr_at(&mut m, 0x1000), 0x01 | (1 << 8));
+}
+
+#[test]
+fn m215_state_round_trip_and_variant_refusal() {
+    let mut m = board(M215_0, 64, 512);
+    m.cpu_write(0x5000, 0x45);
+    m.cpu_write(0x5001, 0x21);
+    m.cpu_write(0x5007, 0x03);
+    let blob = m.save_state();
+    let mut n = board(M215_0, 64, 512);
+    n.load_state(&blob).expect("same variant");
+    assert_eq!(n.save_state(), blob);
+    assert!(board(M215_1, 64, 512).load_state(&blob).is_err());
+    assert!(board(M114_0, 64, 512).load_state(&blob).is_err());
+}

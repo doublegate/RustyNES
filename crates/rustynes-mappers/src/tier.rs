@@ -132,16 +132,19 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // GTROM (111), promoted from BestEffort once the board matched its
         // page (register window, bonus RAM, self-flashing) and a CC0 fixture
         // pinned it. None has a redistributable commercial ROM.
-        //
-        // v3.2.0 adds MMC3-derived boards written from their NESdev pages
+        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 163 | 192 | 195 | 228 | 249 => {
+            Some(MapperTier::Curated)
+        }
+
+        // --- v3.2.0: MMC3-derived boards written from their NESdev pages
         // (`mmc3_boards_ext.rs`), each Curated on a D23 record in
         // `docs/compatibility.md`: a local dump that boots to its title, named
         // by title and `Nes::rom_sha256`, pinned by a boot snapshot in
         // `external_extended.rs` and a committed screenshot. 182 is a
-        // duplicate of 114 (the 114 page) and shares its model.
-        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 163 | 192 | 195 | 228 | 249 | 114 | 182 => {
-            Some(MapperTier::Curated)
-        }
+        // duplicate of 114 (the 114 page) and shares its model. A separate arm
+        // so each release's batch keeps its own rationale beside its ids.
+        #[allow(clippy::match_same_arms)]
+        114 | 182 | 215 => Some(MapperTier::Curated),
 
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
@@ -251,7 +254,7 @@ mod tests {
         // v2.9.6 "Roster".
         12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249,
         // v3.2.0 (`mmc3_boards_ext.rs`).
-        114, 182,
+        114, 182, 215,
     ];
 
     #[test]

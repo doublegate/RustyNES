@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! MMC3-clone boards added in v3.2.0, written from their NESdev pages:
-//! mappers 114 and 182 (the SuperGame / Hosenkan register scramblers).
+//! mappers 114 and 182 (the SuperGame / Hosenkan register scramblers) and
+//! 215 (Sugar Softec's selectable scrambler, UNL-8237 / UNL-8237A).
 //!
 //! These are, like the boards in `mmc3_boards.rs`, a stock MMC3 with a
 //! board-specific layer in front of it or behind it. The difference that
@@ -49,6 +50,29 @@
 //! zero writes are harmless under the full 114 model (NROM override off, CHR
 //! A18 = 0), so there is no reason to model the "no `$600x` registers"
 //! simplification some implementations use.
+//!
+//! ## Mapper 215 (`INES_Mapper_215.md`)
+//!
+//! Sugar Softec's later boards: the 114 idea with the scramble made
+//! selectable and the board registers moved to `$5000-$5FFF` (mask `$F007`):
+//!
+//! - `$5000` `MCS. BBBb` (power-up `$00`): `M` and `S`/`BBBb` are 114's NROM
+//!   override; `C` selects 128 KiB outer banks, replacing PRG A17 and CHR A17
+//!   with `$5001` bits 4 and 5.
+//! - `$5001` (power-up `$xF`, and reset to it on a console reset): the outer
+//!   bank. Submapper 0 (UNL-8237): PRG A18-A19 = bits 0-1, CHR A18-A19 =
+//!   bits 2-3. Submapper 1 (UNL-8237A): PRG A18/A19/A20 = bits 0/1/3, CHR
+//!   A18/A19/A20 = bits 1/2/3.
+//! - `$5007` (power-up `$00`): the scramble pattern, 0-7. Patterns 0, 2, 5, 6
+//!   and 7 are the identity; 1, 3 and 4 permute the MMC3 register addresses
+//!   and the `$8000` index per the page's two tables ([`M215_SCRAMBLE`]).
+//!
+//! The page gives no IRQ revision, saying only that the unscrambled registers
+//! "function the same as the MMC3's", so the default (Sharp) behaviour is used.
+//! Where the page leaves the NROM override and the 128 KiB mode's A17
+//! substitution unordered, `C` is applied last, to whichever bank (MMC3 or
+//! NROM) is in force: it is described as a substitution of the PRG A17 line,
+//! which both sources drive.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -83,12 +107,19 @@ pub enum ExtBoard {
         /// NES 2.0 submapper 1.
         sub1: bool,
     },
+    /// Mapper 215, `INES_Mapper_215.md`. `sub1` selects the UNL-8237A outer
+    /// bank layout (PRG and CHR A20).
+    M215 {
+        /// NES 2.0 submapper 1 (UNL-8237A).
+        sub1: bool,
+    },
 }
 
 impl ExtBoard {
     const fn id(self) -> u16 {
         match self {
             Self::M114 { .. } => 114,
+            Self::M215 { .. } => 215,
         }
     }
 
@@ -96,6 +127,8 @@ impl ExtBoard {
         match self {
             Self::M114 { sub1: false } => "SuperGame MMC3 scramble (114.0)",
             Self::M114 { sub1: true } => "SuperGame MMC3 scramble (114.1)",
+            Self::M215 { sub1: false } => "Sugar Softec UNL-8237 (215.0)",
+            Self::M215 { sub1: true } => "Sugar Softec UNL-8237A (215.1)",
         }
     }
 
@@ -105,6 +138,8 @@ impl ExtBoard {
         match self {
             Self::M114 { sub1: false } => 0,
             Self::M114 { sub1: true } => 1,
+            Self::M215 { sub1: false } => 2,
+            Self::M215 { sub1: true } => 3,
         }
     }
 }
@@ -133,6 +168,51 @@ const M114_SUB1: Scramble = Scramble {
     ],
     index: [0, 2, 5, 3, 6, 1, 7, 4],
 };
+
+/// The identity scramble (mapper 215 patterns 0, 2, 5, 6 and 7).
+const IDENTITY: Scramble = Scramble {
+    addr: [
+        0x8000, 0x8001, 0xA000, 0xA001, 0xC000, 0xC001, 0xE000, 0xE001,
+    ],
+    index: [0, 1, 2, 3, 4, 5, 6, 7],
+};
+
+/// Mapper 215's eight patterns, selected by `$5007`, transcribed from the
+/// page's address table (row = `$5007`, columns `$8000 ... $E001` written)
+/// and index table (row = `$5007`, column = the value written).
+const M215_SCRAMBLE: [Scramble; 8] = [
+    IDENTITY,
+    Scramble {
+        addr: [
+            0xA001, 0xA000, 0x8000, 0xC000, 0x8001, 0xC001, 0xE000, 0xE001,
+        ],
+        index: [0, 2, 6, 1, 7, 3, 4, 5],
+    },
+    Scramble {
+        addr: IDENTITY.addr,
+        index: [0, 5, 4, 1, 7, 2, 6, 3],
+    },
+    Scramble {
+        addr: [
+            0xC001, 0x8000, 0x8001, 0xA000, 0xA001, 0xE001, 0xE000, 0xC000,
+        ],
+        index: [0, 6, 3, 7, 5, 2, 4, 1],
+    },
+    Scramble {
+        addr: [
+            0xA001, 0x8001, 0x8000, 0xC000, 0xA000, 0xC001, 0xE000, 0xE001,
+        ],
+        index: [0, 2, 5, 3, 6, 1, 7, 4],
+    },
+    IDENTITY,
+    IDENTITY,
+    IDENTITY,
+];
+
+/// Mapper 215's `$5001` power-up value, `$xF`: the last outer bank, so the
+/// MMC3's fixed `$E000` bank lands on the image's reset vector. The page
+/// leaves the high nibble undefined; it is taken as 0.
+const M215_OUTER_POWER_UP: u8 = 0x0F;
 
 /// The position of an `$E001`-masked MMC3 address in a [`Scramble`] row.
 const fn scramble_slot(addr: u16) -> usize {
@@ -179,6 +259,7 @@ pub struct Mmc3BoardExt {
     /// Work RAM at `$6000-$7FFF`, only when a NES 2.0 header declares it.
     wram: Box<[u8]>,
     /// Board registers. 114: `regs[0]` = `$6000`, `regs[1]` = `$6001`.
+    /// 215: `regs[0]` = `$5000`, `regs[1]` = `$5001`, `regs[2]` = `$5007`.
     regs: [u8; 4],
 }
 
@@ -219,7 +300,12 @@ impl Mmc3BoardExt {
         // of zero disables the IRQ, on which Aladdin depends."
         let revision = match board {
             ExtBoard::M114 { .. } => Mmc3Revision::Nec,
+            ExtBoard::M215 { .. } => Mmc3Revision::Sharp,
         };
+        let mut regs = [0u8; 4];
+        if matches!(board, ExtBoard::M215 { .. }) {
+            regs[1] = M215_OUTER_POWER_UP;
+        }
         Ok(Self {
             board,
             core: Mmc3::register_core(mirroring, revision),
@@ -227,7 +313,7 @@ impl Mmc3BoardExt {
             chr,
             chr_is_ram,
             wram: vec![0u8; wram_bytes].into_boxed_slice(),
-            regs: [0; 4],
+            regs,
         })
     }
 
@@ -236,6 +322,23 @@ impl Mmc3BoardExt {
         let raw = self.core.prg_bank_raw(addr) as usize;
         match self.board {
             ExtBoard::M114 { .. } => nrom_override(self.regs[0], addr).unwrap_or(raw),
+            ExtBoard::M215 { sub1 } => {
+                let (mode, outer) = (self.regs[0], usize::from(self.regs[1]));
+                let inner = nrom_override(mode, addr).unwrap_or(raw);
+                // PRG A13-A17 inner; in 128 KiB mode A17 is `$5001` bit 4.
+                let inner = if mode & 0x40 != 0 {
+                    (inner & 0x0F) | (((outer >> 4) & 1) << 4)
+                } else {
+                    inner & 0x1F
+                };
+                // PRG A18-A19 (sub 0), A18-A20 (sub 1).
+                let hi = if sub1 {
+                    (outer & 3) | (((outer >> 3) & 1) << 2)
+                } else {
+                    outer & 3
+                };
+                inner | (hi << 5)
+            }
         }
     }
 
@@ -245,6 +348,22 @@ impl Mmc3BoardExt {
         match self.board {
             // `$6001` bit 0 is CHR A18 over the MMC3's A10-A17.
             ExtBoard::M114 { .. } => (raw & 0xFF) | (usize::from(self.regs[1] & 1) << 8),
+            ExtBoard::M215 { sub1 } => {
+                let outer = usize::from(self.regs[1]);
+                // CHR A10-A17 inner; in 128 KiB mode A17 is `$5001` bit 5.
+                let inner = if self.regs[0] & 0x40 != 0 {
+                    (raw & 0x7F) | (((outer >> 5) & 1) << 7)
+                } else {
+                    raw & 0xFF
+                };
+                // CHR A18-A19 (sub 0: bits 2-3), A18-A20 (sub 1: bits 1-3).
+                let hi = if sub1 {
+                    (outer >> 1) & 7
+                } else {
+                    (outer >> 2) & 3
+                };
+                inner | (hi << 8)
+            }
         }
     }
 
@@ -258,6 +377,9 @@ impl Mmc3BoardExt {
         let (addr, value) = match self.board {
             ExtBoard::M114 { sub1: false } => unscramble(&M114_SUB0, addr, value),
             ExtBoard::M114 { sub1: true } => unscramble(&M114_SUB1, addr, value),
+            ExtBoard::M215 { .. } => {
+                unscramble(&M215_SCRAMBLE[usize::from(self.regs[2] & 7)], addr, value)
+            }
         };
         self.core.cpu_write(addr, value);
     }
@@ -274,6 +396,14 @@ impl Mapper for Mmc3BoardExt {
 
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ
+    }
+
+    fn reset(&mut self) {
+        // 215: "The Outer Bank Register is reset to its power-up value if a
+        // Reset has been detected via an interruption of the M2 signal."
+        if matches!(self.board, ExtBoard::M215 { .. }) {
+            self.regs[1] = M215_OUTER_POWER_UP;
+        }
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
@@ -311,6 +441,16 @@ impl Mapper for Mmc3BoardExt {
                     let len = self.wram.len();
                     self.wram[usize::from(addr - 0x6000) % len] = value;
                 }
+            }
+            (ExtBoard::M215 { .. }, 0x5000..=0x5FFF) => match addr & 0xF007 {
+                0x5000 => self.regs[0] = value,
+                0x5001 => self.regs[1] = value,
+                0x5007 => self.regs[2] = value & 7,
+                _ => {}
+            },
+            (_, 0x6000..=0x7FFF) if !self.wram.is_empty() && self.core.prg_ram_writable() => {
+                let len = self.wram.len();
+                self.wram[usize::from(addr - 0x6000) % len] = value;
             }
             _ => {}
         }

@@ -1457,3 +1457,23 @@ fn extended_m182_super_donkey_kong() {
         "extended_m182_super_donkey_kong",
     );
 }
+
+/// Scramble pattern 4 (`$5007` = 4), 256 KiB PRG + 512 KiB CHR.
+#[test]
+fn extended_m215_mortal_kombat_3_extra_60() {
+    check(
+        "mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m215_mortal_kombat_3_extra_60",
+    );
+}
+
+/// Scramble pattern 1 (`$5007` = 1): the 2-in-1 menu.
+#[test]
+fn extended_m215_super_808() {
+    check(
+        "mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].zip",
+        DEFAULT_IDLE,
+        "extended_m215_super_808",
+    );
+}

@@ -1411,6 +1411,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             &h,
         )?,
         182 => mmc3_ext(Mmc3ExtBoardKind::M114 { sub1: false }, prg_rom, chr_rom, &h)?,
+        // Sugar Softec UNL-8237 (215.0) / UNL-8237A (215.1).
+        215 => mmc3_ext(
+            Mmc3ExtBoardKind::M215 {
+                sub1: h.submapper == 1,
+            },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
         44 => Box::new(
             new_m44(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
