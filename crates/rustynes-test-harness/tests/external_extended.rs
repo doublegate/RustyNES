@@ -1574,3 +1574,107 @@ fn extended_m235_260_in_1_mario_bros() {
         "extended_m235_260_in_1_mario_bros",
     );
 }
+
+/// FFE Magic Card / Super Magic Card extractions (mappers 6, 8, 17): START
+/// at f1000 and f1400, A at f1800, START at f2200, each held six frames, then
+/// run to f2600. That reaches play or the first in-game screen on these
+/// titles, past the menus the trainers and the card's IRQs drive.
+const FFE_INTO_PLAY: InputScript = InputScript::Held {
+    presses: &[
+        (1000, Buttons::START),
+        (1400, Buttons::START),
+        (1800, Buttons::A),
+        (2200, Buttons::START),
+    ],
+    hold: 6,
+    resets: &[],
+    frames: 2600,
+};
+
+/// *Wai Wai World* (mapper 6) has a longer intro and character menu: the
+/// script answers it with A and START, then holds RIGHT from f3500 to walk
+/// into the first stage, in play at f3800.
+const FFE_WAI_WAI_WORLD: InputScript = InputScript::Held {
+    presses: &[
+        (1000, Buttons::START),
+        (1300, Buttons::START),
+        (1600, Buttons::A),
+        (1900, Buttons::A),
+        (2200, Buttons::START),
+        (2500, Buttons::A),
+        (2800, Buttons::START),
+        (3100, Buttons::A),
+        (3400, Buttons::RIGHT),
+        (3410, Buttons::RIGHT),
+        (3420, Buttons::RIGHT),
+        (3430, Buttons::RIGHT),
+        (3440, Buttons::RIGHT),
+        (3450, Buttons::RIGHT),
+    ],
+    hold: 10,
+    resets: &[],
+    frames: 3800,
+};
+
+#[test]
+fn extended_m006_ganbare_goemon() {
+    check(
+        "mapper-006-FFE-MagicCard/Ganbare Goemon! - Karakuri Douchuu (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m006_ganbare_goemon",
+    );
+}
+
+#[test]
+fn extended_m006_cosmo_police_galivan() {
+    check(
+        "mapper-006-FFE-MagicCard/Cosmo Police Galivan (J) [hFFE][p1].zip",
+        FFE_INTO_PLAY,
+        "extended_m006_cosmo_police_galivan",
+    );
+}
+
+#[test]
+fn extended_m006_wai_wai_world() {
+    check(
+        "mapper-006-FFE-MagicCard/Wai Wai World (J) [hFFE].zip",
+        FFE_WAI_WAI_WORLD,
+        "extended_m006_wai_wai_world",
+    );
+}
+
+#[test]
+fn extended_m008_mermaids_of_atlantis() {
+    check(
+        "mapper-008-FFE-GNROM/Mermaids of Atlantis - The Riddle of the Magic Bubble (AVE) [T+Rus_Guyver].zip",
+        FFE_INTO_PLAY,
+        "extended_m008_mermaids_of_atlantis",
+    );
+}
+
+#[test]
+fn extended_m017_kaiketsu_yanchamaru_2() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_kaiketsu_yanchamaru_2",
+    );
+}
+
+#[test]
+fn extended_m017_juvei_quest() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Juvei Quest (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_juvei_quest",
+    );
+}
+
+#[test]
+fn extended_m017_dragon_ball_z_iii() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Dragon Ball Z III - Ressen Jinzou Ningen (J) [hFFE][p1].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_dragon_ball_z_iii",
+    );
+}

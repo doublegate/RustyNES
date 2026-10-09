@@ -170,14 +170,6 @@ const UNSUPPORTED: &[(&str, &str)] = &[
         "malformed: mapper 146 PRG is a multiple of 32 KiB and this image has 16 KiB",
     ),
     (
-        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).nes",
-        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
-    ),
-    (
-        "mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip",
-        "dirty iNES 1.0 tail (\"DiskDude!\"): the masked header is mapper 8 (FFE), not implemented",
-    ),
-    (
         "vs-system/VS Castlevania Hack.nes",
         "not an iNES image (no NES<1A> magic)",
     ),
@@ -195,6 +187,9 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// database's NES 2.0 guard made seven of them render, two Doraemon hacks moved
 /// to `UNSUPPORTED` as the mapper 8 images they are, and one documented
 /// blank, Famicom Jump II, was added.
+/// (v3.2.0 implements mapper 8, the FFE Magic Card's GNROM mode, and those two
+/// Doraemon World 3 images left `UNSUPPORTED`: they boot to their title and
+/// stage-select screens and carry ordinary snapshots.)
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
     "mapper-009-MMC2/Gradius II (J) (VC).zip",

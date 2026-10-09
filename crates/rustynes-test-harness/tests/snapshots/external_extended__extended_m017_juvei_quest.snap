@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-017-FFE-SuperMagicCard/Juvei Quest (J) [hFFE].zip
+rom_sha256=755d352e081aa456229f56c39b8eb5ccbd013fb0b13f9d775e0687b2cc3bf745
+frames=2600
+fb_bytes=245760
+cycles=77399522
+audio_samples=1907106
+audio_fnv1a64=06bfa8d2a961e5f8
+checkpoint f2600 fb_fnv1a64=bd88bd5c1d2cb9a9

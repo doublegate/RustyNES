@@ -47,6 +47,7 @@ mod a12_filter;
 mod bmc_simple;
 mod cartridge;
 mod fds;
+mod ffe_super_magic_card;
 mod header;
 mod homebrew_boards;
 mod jaleco_discrete;
@@ -158,6 +159,7 @@ pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
+pub use ffe_super_magic_card::{FfeBoard, SuperMagicCard};
 pub use header::{
     ExpansionDevice, ExtendedConsoleType, Header, VsHardwareType, parse_header,
     serialize_header_preserving,
@@ -1620,6 +1622,31 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             GoldenGame235::new(prg_rom, &chr_rom)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // 6 / 8 / 17: games extracted from FFE Magic Card / Super Magic Card
+        // disks, run on a model of the card (`ffe_super_magic_card.rs`). The
+        // iNES number and submapper pick only the card's initial registers;
+        // the Doctor-format trainer, which `parse` otherwise skips, is handed
+        // to the card to load and call.
+        6 | 8 | 17 => {
+            let trainer = h
+                .has_trainer
+                .then(|| &bytes[header::HEADER_LEN..header::HEADER_LEN + header::TRAINER_LEN]);
+            let board = match h.mapper_id {
+                8 => FfeBoard::MagicCard(4),
+                6 => FfeBoard::MagicCard(if h.is_nes2 { h.submapper & 0x07 } else { 1 }),
+                _ => FfeBoard::SuperMagicCard(if h.is_nes2 { h.submapper & 0x03 } else { 0 }),
+            };
+            Box::new(
+                SuperMagicCard::new(
+                    board,
+                    &prg_rom,
+                    &chr_rom,
+                    trainer,
+                    h.mirroring == Mirroring::Vertical,
+                )
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+            )
+        }
         other => return Err(RomError::UnsupportedMapper(other)),
     };
 

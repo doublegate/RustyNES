@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-006-FFE-MagicCard/Ganbare Goemon! - Karakuri Douchuu (J) [hFFE].zip
+rom_sha256=5ad056d725c64c330ea89c138271434a6869403dd47a99451352ad88428b9de8
+frames=2600
+fb_bytes=245760
+cycles=77399552
+audio_samples=1907107
+audio_fnv1a64=528ae7bcc42b599d
+checkpoint f2600 fb_fnv1a64=f70ba6ebf3b82a3e
