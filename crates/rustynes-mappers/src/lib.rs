@@ -1590,6 +1590,12 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Rambo1::new_m158(prg_rom, chr_rom)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // 207: Taito X1-005 with CHR A17 on CIRAM A10 (*Fudou Myouou Den*;
+        // `m080_taito_x1_005.rs`, `TaitoX1005::new_m207`).
+        207 => Box::new(
+            TaitoX1005::new_m207(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
         other => return Err(RomError::UnsupportedMapper(other)),
     };
 

@@ -34,6 +34,19 @@
 //! reset bank and blanked `Kyonshiizu 2`; `$7EF6` polarity is 0=Horz/1=Vert.)
 //!
 //! See `docs/mappers.md` §Mapper coverage matrix.
+//!
+//! # Mapper 207 (*Fudou Myouou Den*)
+//!
+//! Built with [`TaitoX1005::new_m207`]. Per `nesdev_wiki/INES_Mapper_207.xhtml`
+//! the board "modifies Taito's X1-005 (80) in the exact same way that TLSROM
+//! (118) differs from MMC3 (4)": the chip's CHR A17 output drives CIRAM A10.
+//! The page's register list gives `$7EF0` and `$7EF1` as `[MCCC CCCC]`, with M
+//! (bit 7, which is CHR A17 of the 2 KiB bank) selecting the CIRAM page for
+//! the top (`$7EF0`: `$2000`, `$2400`) and bottom (`$7EF1`: `$2800`,
+//! `$2C00`) nametable rows, "thus [achieving] 1scA/1scB/H controllable
+//! mirroring". `$7EF6-$7EF7`, the "old mirroring control register", is
+//! ignored. Everything else is mapper 80's. The variant is a construction-time
+//! property, not state, so the save-state layout is unchanged.
 
 #![allow(clippy::cast_possible_truncation, clippy::doc_markdown)]
 
@@ -70,6 +83,9 @@ pub struct TaitoX1005 {
     /// `$7EF8` / `$7EF9` enable-latch; RAM is readable/writable only when both
     /// hold `$A3`.
     ram_enable: [u8; 2],
+    /// Mapper 207: CIRAM A10 is CHR A17 (bit 7 of `$7EF0` / `$7EF1`), and
+    /// `$7EF6-$7EF7` are not connected.
+    ciram_from_chr_a17: bool,
 }
 
 impl TaitoX1005 {
@@ -113,7 +129,21 @@ impl TaitoX1005 {
             prg_bank: [0, 1, 2],
             mirroring,
             ram_enable: [0, 0],
+            ciram_from_chr_a17: false,
         })
+    }
+
+    /// Construct the mapper 207 board (*Fudou Myouou Den*): an X1-005 whose
+    /// CHR A17 output selects the CIRAM page per nametable row (see the module
+    /// docs). The header's mirroring does not apply and is not taken.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn new_m207(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
+        let mut m = Self::new(prg_rom, chr_rom, Mirroring::MapperControlled)?;
+        m.ciram_from_chr_a17 = true;
+        Ok(m)
     }
 
     const fn ram_enabled(&self) -> bool {
@@ -123,7 +153,14 @@ impl TaitoX1005 {
     const fn nametable_offset(&self, addr: u16) -> usize {
         let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
-        let physical = self.mirroring.physical_bank(table);
+        let physical = if self.ciram_from_chr_a17 {
+            // Mapper 207: rows 0-1 follow $7EF0 bit 7 (CHR slot 0), rows
+            // 2-3 follow $7EF1 bit 7 (CHR slot 2).
+            let reg = self.chr_1k[if table < 2 { 0 } else { 2 }];
+            (reg >> 7) as usize
+        } else {
+            self.mirroring.physical_bank(table)
+        };
         physical * NAMETABLE_SIZE + local
     }
 
@@ -201,6 +238,8 @@ impl Mapper for TaitoX1005 {
             0x7EF3 => self.chr_1k[5] = value,
             0x7EF4 => self.chr_1k[6] = value,
             0x7EF5 => self.chr_1k[7] = value,
+            // Mapper 207: the old mirroring register is ignored.
+            0x7EF6 | 0x7EF7 if self.ciram_from_chr_a17 => {}
             0x7EF6 | 0x7EF7 => {
                 // $7EF6 bit 0: 0 = Horizontal, 1 = Vertical (nesdev mapper 080;
                 // Mesen2 TaitoX1005).
@@ -248,15 +287,29 @@ impl Mapper for TaitoX1005 {
         }
     }
 
+    fn nametable_address(&self, addr: u16) -> u16 {
+        // Identical to the trait default on mapper 80; mapper 207 needs its
+        // per-row CIRAM page.
+        u16::try_from(self.nametable_offset(addr)).unwrap_or(0)
+    }
+
     fn current_mirroring(&self) -> Mirroring {
-        self.mirroring
+        if self.ciram_from_chr_a17 {
+            Mirroring::MapperControlled
+        } else {
+            self.mirroring
+        }
     }
 
     fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
         let mut info = crate::mapper::MapperDebugInfo {
-            mapper_id: 80,
-            name: "Taito X1-005 (80)".into(),
-            mirroring: crate::mapper::mirroring_name(self.mirroring),
+            mapper_id: if self.ciram_from_chr_a17 { 207 } else { 80 },
+            name: if self.ciram_from_chr_a17 {
+                "Taito X1-005, CHR A17 mirroring (207)".into()
+            } else {
+                "Taito X1-005 (80)".into()
+            },
+            mirroring: crate::mapper::mirroring_name(self.current_mirroring()),
             ..Default::default()
         };
         for (i, b) in self.prg_bank.iter().enumerate() {
@@ -458,5 +511,81 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), m2.ppu_read(0x0000));
         assert_eq!(m.current_mirroring(), m2.current_mirroring());
         assert_eq!(m2.cpu_read(0x7F10), 0xAB);
+    }
+
+    // --- Mapper 207 (Fudou Myouou Den) ----------------------------------
+
+    /// A mapper 207 image through `crate::parse`: 256 KiB PRG, 128 KiB CHR,
+    /// header says vertical.
+    fn m207() -> Box<dyn Mapper> {
+        let mut v = vec![0u8; 16];
+        v[0..4].copy_from_slice(b"NES\x1A");
+        v[4] = 16;
+        v[5] = 16;
+        v[6] = 0xF1; // 207 = 0xCF: low nibble 0xF, vertical
+        v[7] = 0xC0;
+        v.extend_from_slice(&synth_prg(32));
+        v.extend_from_slice(&synth_chr_1k(128));
+        crate::parse(&v)
+            .unwrap_or_else(|e| panic!("mapper 207 must parse: {e:?}"))
+            .1
+    }
+
+    fn pages(m: &dyn Mapper) -> [u16; 4] {
+        [0u16, 1, 2, 3].map(|n| m.nametable_address(0x2000 + n * 0x400 + 0x21) >> 10)
+    }
+
+    #[test]
+    fn m207_7ef0_bit7_pages_the_top_row_and_7ef1_the_bottom() {
+        let mut m = m207();
+        assert_eq!(m.current_mirroring(), Mirroring::MapperControlled);
+        m.cpu_write(0x7EF0, 0x80);
+        m.cpu_write(0x7EF1, 0x00);
+        assert_eq!(pages(m.as_ref()), [1, 1, 0, 0], "horizontal");
+        m.cpu_write(0x7EF0, 0x02);
+        assert_eq!(pages(m.as_ref()), [0, 0, 0, 0], "1scA");
+        m.cpu_write(0x7EF0, 0xFE);
+        m.cpu_write(0x7EF1, 0x81);
+        assert_eq!(pages(m.as_ref()), [1, 1, 1, 1], "1scB");
+        assert_eq!(m.nametable_address(0x2C21) & 0x3FF, 0x21);
+        // The CHR banks are still the 2 KiB banks mapper 80 decodes.
+        m.cpu_write(0x7EF0, 0x86);
+        assert_eq!(
+            m.ppu_read(0x0000),
+            6,
+            "$86 -> 1 KiB bank 134, wrapped to 6 of 128"
+        );
+        assert_eq!(m.ppu_read(0x0400), 7);
+    }
+
+    #[test]
+    fn m207_ignores_the_old_mirroring_register() {
+        let mut m = m207();
+        m.cpu_write(0x7EF0, 0x00);
+        m.cpu_write(0x7EF1, 0x80);
+        m.cpu_write(0x7EF6, 0x01);
+        m.cpu_write(0x7EF7, 0x00);
+        assert_eq!(pages(m.as_ref()), [0, 0, 1, 1]);
+        assert_eq!(m.current_mirroring(), Mirroring::MapperControlled);
+    }
+
+    #[test]
+    fn m207_state_round_trips_and_mapper_80_keeps_7ef6() {
+        let mut a = m207();
+        a.cpu_write(0x7EF1, 0x80);
+        a.ppu_write(0x2800, 0x3C);
+        let blob = a.save_state();
+        let mut b = m207();
+        b.load_state(&blob).unwrap();
+        assert_eq!(b.save_state(), blob);
+        assert_eq!(b.ppu_read(0x2800), 0x3C);
+        assert_eq!(pages(b.as_ref()), [0, 0, 1, 1]);
+        let mut m80 =
+            TaitoX1005::new(synth_prg(16), synth_chr_1k(128), Mirroring::Horizontal).unwrap();
+        m80.cpu_write(0x7EF6, 0x01);
+        assert_eq!(m80.current_mirroring(), Mirroring::Vertical);
+        m80.cpu_write(0x7EF0, 0x80);
+        assert_eq!(m80.nametable_address(0x2000) >> 10, 0, "80 ignores bit 7");
+        assert_eq!(m80.nametable_address(0x2400) >> 10, 1);
     }
 }

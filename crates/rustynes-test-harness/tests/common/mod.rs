@@ -338,6 +338,16 @@ pub mod external {
             free_run: u32,
             checkpoints: &'static [u32],
         },
+        /// v3.2.0 — START HELD for `hold` frames from each frame index in
+        /// `presses` (0-based, ascending), idle otherwise, for `frames` frames;
+        /// one checkpoint at the end. For games whose menus ignore a one-frame
+        /// tap (*Fudou Myouou Den*'s START / CONTINUE menu reads the button
+        /// across several frames), so no single-tap script reaches gameplay.
+        HeldStart {
+            presses: &'static [u32],
+            hold: u32,
+            frames: u32,
+        },
     }
 
     impl InputScript {
@@ -347,7 +357,7 @@ pub mod external {
         #[must_use]
         pub const fn total_frames(&self) -> u32 {
             match *self {
-                Self::IdleOnly { frames } => frames,
+                Self::IdleOnly { frames } | Self::HeldStart { frames, .. } => frames,
                 Self::StartTap {
                     idle_pre,
                     idle_post,
@@ -958,6 +968,34 @@ pub mod external {
                     frame_counter += 1;
                     maybe_emit(frame_counter, &nes);
                 }
+            }
+            InputScript::HeldStart {
+                presses,
+                hold,
+                frames,
+            } => {
+                for f in 0..frames {
+                    let held = presses.iter().any(|&p| f >= p && f < p + hold);
+                    nes.set_buttons(
+                        0,
+                        if held {
+                            Buttons::START
+                        } else {
+                            Buttons::empty()
+                        },
+                    );
+                    pulse_vs_coin!();
+                    nes.run_frame();
+                    samples.extend(nes.drain_audio());
+                    frame_counter += 1;
+                }
+                let fb_hash = fnv1a64(nes.framebuffer());
+                best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
+                checkpoints.push(Checkpoint {
+                    frame: frames,
+                    fb_hash,
+                });
+                dump_frame(&label_safe, &format!("f{frames}"), nes.framebuffer());
             }
         }
 

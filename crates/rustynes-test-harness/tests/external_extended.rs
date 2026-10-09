@@ -1455,3 +1455,24 @@ fn extended_m158_alien_syndrome() {
         "extended_m158_alien_syndrome",
     );
 }
+
+/// *Fudou Myouou Den*: START held three frames at f1900 (skips the intro to
+/// the START / CONTINUE menu) and again at f2100 (starts the game), then play
+/// to f3000, in the first stage with the status bar under the playfield. The
+/// menu ignores one-frame taps, so `HeldStart`. Gameplay is where mapper
+/// 207's CHR A17 nametable select shows: the title screen and the intro draw
+/// identically with it forced to page 0, and this frame does not.
+const FUDOU_IN_PLAY: InputScript = InputScript::HeldStart {
+    presses: &[1900, 2100],
+    hold: 3,
+    frames: 3000,
+};
+
+#[test]
+fn extended_m207_fudou_myouou_den() {
+    check(
+        "mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).zip",
+        FUDOU_IN_PLAY,
+        "extended_m207_fudou_myouou_den",
+    );
+}
