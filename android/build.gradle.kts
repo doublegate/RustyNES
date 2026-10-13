@@ -73,7 +73,7 @@ plugins {
     // Read that job's LOG, never its check mark: it is `continue-on-error: true`
     // (the name says "best-effort packaging"), so a broken Android build leaves
     // the PR green. That is the standing hazard here, not this version.
-    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21" apply false
     // v1.8.8 "Atlas" (Workstream J): the Baseline Profile Gradle plugin. The plan
     // named 1.4.1, but that stable line predates AGP 9 and its module-type guard
     // rejects an AGP-9.x `com.android.application` module ("not a supported android
