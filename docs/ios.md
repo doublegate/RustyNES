@@ -419,8 +419,12 @@ kept in Application Support (`FdsBiosStore`), and every later disk boots with it
 The pill menu gains **Flip disk** (FDS), **Next track** (NSF), **Swap screen**
 (cabinet: the device shows one cabinet screen at a time) and **Insert coin** (any
 Vs. machine). A cabinet's save state is the core's `RVSD` container; netplay,
-movies and Lua are refused on a cabinet. FDS disk writes are exposed by the bridge
-(`diskImageBytes` / `diskIsDirty`) but **not yet persisted by the app**. Settings >
+movies and Lua are refused on a cabinet. **From v3.2.0 FDS disk writes persist**
+(as on Android): a dirty disk is written atomically to
+`Application Support/RustyNES/fds-saves/<identity>.fds.sav` on the battery-flush
+paths, and the next load boots it through `bootSavedDisk`, which keeps the
+pristine disk's identity. The Swift half is not yet compiled (no macOS in that
+change); the Rust bridge and the Android half are tested. Settings >
 Controls also gains **Cancel opposite directions** (default on). **All of this
 Swift compiles** (the iOS workflow's Simulator build, most recently run
 37242884341 on `c0b04195`) **and none of it has run on a device**; the checks are

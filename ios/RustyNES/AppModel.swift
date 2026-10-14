@@ -333,22 +333,19 @@ final class AppModel: ObservableObject {
             audioSession.configure()
             let data = try await library.romData(for: entry)
             // v2.9.7: the stored FDS BIOS rides along (a cartridge or NSF ignores it).
-            var core = try EmulatorCore(romData: data, fdsBios: FdsBiosStore.load())
+            let core = try EmulatorCore(romData: data, fdsBios: FdsBiosStore.load())
             // v2.9.9 (re-audit NF-21): key this game by the core's identity. An
             // entry from before v2.9.9 is keyed by the whole file's hash; move it,
             // then its saves, states, RA progress and overrides, once. The library
             // goes first: when it cannot move, the old key stays for this session
             // and nothing else moves, so the stores never split between two keys.
             let entry = await migrateKey(entry, to: core.romIdentity)
-
-            let fdsUrl = AppModel.fdsDiskUrl(forSha: entry.sha)
-            if FileManager.default.fileExists(atPath: fdsUrl.path) {
-                if let diskBytes = try? Data(contentsOf: fdsUrl), diskBytes.count == data.count {
-                    if let reloaded = try? EmulatorCore(romData: diskBytes, fdsBios: FdsBiosStore.load()) {
-                        core = reloaded
-                    }
-                }
-            }
+            // v3.2.0: an FDS disk boots the copy it saved last session, under the
+            // pristine disk's identity (`bootSavedDisk`), so `entry.sha` keys
+            // everything, the save file included. On any failure the pristine disk
+            // stays loaded. Before the battery and the auto-resume state, which are
+            // newer.
+            AppModel.bootSavedDiskIfAny(core, sha: entry.sha)
             core.isMuted = muted
             // v2.9.2 (AUD-14): pace the gamepad turbo pulse by emulated frames.
             // Captures the manager (a plain class), not `self`, so the closure
@@ -931,9 +928,43 @@ final class AppModel: ObservableObject {
     /// Compares the save RAM once a second and writes it on a change.
     private var batteryTimer: Timer?
 
-    static func fdsDiskUrl(forSha sha: String) -> URL {
+    /// v3.2.0 -- an FDS disk's saved image, `Application Support/RustyNES/
+    /// fds-saves/<identity>.fds.sav` (the desktop's layout). FDS games save to
+    /// the disk itself, so the whole image is the save. Keyed by the PRISTINE
+    /// disk's identity and booted through `bootSavedDisk`, which keeps it; the
+    /// first v3.2.0 draft loaded the saved file as the ROM, which changed the
+    /// game's identity at its first disk write.
+    static func fdsSaveUrl(forSha sha: String) -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("RustyNES/fds/disk_\\(sha).fds")
+        return base.appendingPathComponent("RustyNES/fds-saves/\(sha).fds.sav")
+    }
+
+    /// Boot the saved disk copy for `sha`, if there is one; keep the pristine
+    /// disk on any failure (logged).
+    static func bootSavedDiskIfAny(_ core: EmulatorCore, sha: String) {
+        let url = fdsSaveUrl(forSha: sha)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try core.bootSavedDisk(try Data(contentsOf: url))
+        } catch {
+            NSLog("RustyNES: saved FDS disk not used: \(error)")
+        }
+    }
+
+    /// Write the running disk if the game changed it, atomically. The dirty flag
+    /// is cleared only after the write lands, so a failure is retried by the
+    /// next flush.
+    private func flushFdsDiskIfDirty() {
+        guard let core = emulator, let sha = currentEntry?.sha, core.diskIsDirty else { return }
+        let url = AppModel.fdsSaveUrl(forSha: sha)
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try core.diskImageBytes().write(to: url, options: .atomic)
+            core.clearDiskDirty()
+        } catch {
+            NSLog("RustyNES: FDS disk save failed: \(error)")
+        }
     }
 
     /// Bind `core`'s battery RAM to its `.sav` and load it. Returns a message
@@ -972,16 +1003,7 @@ final class AppModel: ObservableObject {
 
     /// Write the running game's battery save now, and wait for it.
     private func flushBatteryNow() {
-        if let core = emulator, let sha = currentEntry?.sha, core.diskIsDirty() {
-            let url = AppModel.fdsDiskUrl(forSha: sha)
-            do {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try core.diskImageBytes().write(to: url, options: .atomic)
-                core.clearDiskDirty()
-            } catch {
-                NSLog("RustyNES: FDS disk save failed: \\(error)")
-            }
-        }
+        flushFdsDiskIfDirty()
         guard let saver = battery, let core = emulator else { return }
         saver.flushNow(core.batteryRam())
     }
@@ -991,16 +1013,9 @@ final class AppModel: ObservableObject {
     /// is a few KiB, so it runs synchronously within the task rather than handing
     /// a mutable task id across threads.
     private func flushBatteryInBackground() {
-        if let core = emulator, let sha = currentEntry?.sha, core.diskIsDirty() {
+        if emulator?.diskIsDirty == true {
             let task = BackgroundTask(name: "RustyNES FDS save")
-            let url = AppModel.fdsDiskUrl(forSha: sha)
-            do {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try core.diskImageBytes().write(to: url, options: .atomic)
-                core.clearDiskDirty()
-            } catch {
-                NSLog("RustyNES: FDS disk save failed: \\(error)")
-            }
+            flushFdsDiskIfDirty()
             task.end()
         }
         guard let saver = battery, let core = emulator else { return }

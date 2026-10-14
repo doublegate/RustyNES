@@ -307,6 +307,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** v3.2.0: hold `FLAG_KEEP_SCREEN_ON` while a game runs (set from the
+     *  emulation loop on a change of its running state). */
     fun updateScreenWakeLock(running: Boolean) {
         runOnUiThread {
             if (running) {
@@ -574,15 +576,7 @@ class EmulatorHandle {
             runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
                 .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
         }
-        val sha = romSha
-        if (sha != null && ctrl.diskIsDirty()) {
-            runCatching {
-                val fdsDir = java.io.File(context.filesDir, "fds")
-                fdsDir.mkdirs()
-                java.io.File(fdsDir, "disk_$sha.fds").writeBytes(ctrl.diskImageBytes())
-                ctrl.clearDiskDirty()
-            }.onFailure { android.util.Log.w("RustyNES", "FDS disk save failed", it) }
-        }
+        romSha?.let { sha -> FdsSaves.flushIfDirty(context, ctrl, sha) }
     }
 
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
@@ -759,6 +753,59 @@ private class PreparedRom(
     val batteryNotice: String?,
 )
 
+
+/**
+ * v3.2.0 -- an FDS disk's saved image: `filesDir/fds-saves/<identity>.fds.sav`,
+ * the desktop's layout (`EmuCore::bind_fds_save`). FDS games save to the disk
+ * itself, so the whole image is the save.
+ *
+ * The file is keyed by the PRISTINE disk's identity and booted through
+ * [NesController.bootSavedDisk], which keeps that identity. Loading the saved
+ * file as the ROM instead (the first v3.2.0 draft) changed the game's identity
+ * at its first disk write and orphaned its states, RA progress and overrides.
+ */
+internal object FdsSaves {
+    /** The bridge's own ROM size limit; a larger file is not a disk image. */
+    private const val MAX_BYTES = 16L * 1024 * 1024
+
+    private fun file(context: Context, sha: String) =
+        java.io.File(java.io.File(context.filesDir, "fds-saves"), "$sha.fds.sav")
+
+    /** Boot the saved copy if there is one; on any failure keep the pristine disk. */
+    fun bootIfSaved(context: Context, ctrl: NesController, sha: String) {
+        val f = file(context, sha)
+        if (!f.isFile) return
+        runCatching {
+            require(f.length() <= MAX_BYTES) { "saved disk is ${f.length()} bytes" }
+            ctrl.bootSavedDisk(f.readBytes())
+        }.onFailure { android.util.Log.w("RustyNES", "saved FDS disk not used", it) }
+    }
+
+    /**
+     * Write the disk if the game changed it, atomically ([android.util.AtomicFile]:
+     * a crash mid-write keeps the previous file). The dirty flag is cleared only
+     * after the write lands, so a failure is retried by the next flush.
+     */
+    fun flushIfDirty(context: Context, ctrl: NesController, sha: String) {
+        if (!ctrl.diskIsDirty()) return
+        val bytes = ctrl.diskImageBytes()
+        runCatching {
+            val f = file(context, sha)
+            f.parentFile?.mkdirs()
+            val atomic = android.util.AtomicFile(f)
+            val out = atomic.startWrite()
+            try {
+                out.write(bytes)
+                atomic.finishWrite(out)
+            } catch (e: Throwable) {
+                atomic.failWrite(out)
+                throw e
+            }
+            ctrl.clearDiskDirty()
+        }.onFailure { android.util.Log.w("RustyNES", "FDS disk save failed", it) }
+    }
+}
+
 /**
  * The I/O half of loading a ROM (v2.7.4, frontend audit AND-04): build the
  * controller, key it by SHA-256, load its battery save and the auto-resume
@@ -773,22 +820,17 @@ private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: Stri
     // v2.9.7 "Tandem": the stored FDS BIOS (if the user chose one) rides along, so an
     // .fds disk boots; a cartridge or NSF ignores it. Without it a disk throws
     // MobileException.MissingFdsBios, which openRom turns into the BIOS prompt.
-    var ctrl = NesController.newWithFdsBios(bytes, FdsBios.load(context), 48_000u)
+    val ctrl = NesController.newWithFdsBios(bytes, FdsBios.load(context), 48_000u)
     // v2.9.9 (re-audit NF-21): key every per-game store by the core's ROM identity
     // (the bytes after the iNES header, of the unpacked image), not the file as read.
     // Before any store is touched, move whatever the pre-v2.9.9 whole-file key held
     // (once; never over an existing store; see RomKeyMigration).
     val sha = ctrl.romIdentity()
     RomKeyMigration.migrate(context.filesDir, sha256Hex(bytes), sha)
-    val fdsFile = java.io.File(java.io.File(context.filesDir, "fds"), "disk_$sha.fds")
-    if (fdsFile.exists()) {
-        runCatching {
-            val diskBytes = fdsFile.readBytes()
-            if (diskBytes.size == bytes.size) {
-                ctrl = NesController.newWithFdsBios(diskBytes, FdsBios.load(context), 48_000u)
-            }
-        }
-    }
+    // v3.2.0: an FDS disk boots the copy it saved last session, under the pristine
+    // disk's identity (so `sha` above keys everything, the save file included).
+    // Before the battery and the auto-resume state below, which are newer.
+    FdsSaves.bootIfSaved(context, ctrl, sha)
     // Load the cartridge's `.sav` before its first frame, and before the auto-resume
     // state below (a save state is newer and restores cartridge RAM too).
     val (battery, batteryNotice) = attachBattery(context, ctrl, sha)
@@ -852,14 +894,7 @@ private fun publishRom(
                 runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
                     .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
             }
-            if (outgoingSha != null && outgoingCtrl.diskIsDirty()) {
-                runCatching {
-                    val fdsDir = java.io.File(context.filesDir, "fds")
-                    fdsDir.mkdirs()
-                    java.io.File(fdsDir, "disk_$outgoingSha.fds").writeBytes(outgoingCtrl.diskImageBytes())
-                    outgoingCtrl.clearDiskDirty()
-                }.onFailure { android.util.Log.w("RustyNES", "FDS disk save failed", it) }
-            }
+            if (outgoingSha != null) FdsSaves.flushIfDirty(context, outgoingCtrl, outgoingSha)
         }
     }
     // Apply this game's remembered video filter (per-game DB), if any.
@@ -1056,10 +1091,18 @@ private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManage
      * either. Blocks while the ring is full (paces the loop), exactly like [write].
      */
     fun writeBytes(bytes: ByteArray) {
-        if (focusMuted || bytes.isEmpty()) return
-        val written = track.write(bytes, 0, bytes.size, AudioTrack.WRITE_NON_BLOCKING)
-        if (written < 0) {
-            // Handle underrun/error logging
+        // Blocking, deliberately (maintainer, 2026-10-14). A v3.2.0 draft wrote
+        // `write(byte[], ..., WRITE_NON_BLOCKING)`: that overload is for 8/16-bit
+        // PCM, not this PCM_FLOAT track, it dropped any partial write, and it
+        // removed the blocking that clocks this loop to the audio device.
+        // Non-blocking audio needs its own pacing and is a follow-up for a device.
+        if (focusMuted) return // another app holds audio focus (AND-03)
+        if (bytes.isNotEmpty()) {
+            // The samples are little-endian f32 (from `to_le_bytes`); set the buffer
+            // order explicitly so the PCM_FLOAT track reads them correctly regardless
+            // of the JVM's default (BIG_ENDIAN) — Android is LE, so this is identity.
+            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            track.write(bb, bytes.size, AudioTrack.WRITE_BLOCKING)
         }
     }
 
@@ -2789,10 +2832,19 @@ private fun EmulatorScreen(
         // default-off PGS_ENABLED gate; the increment auto-unlocks at the Console step
         // target. DISTINCT from RetroAchievements.
         var turboFrames = 0
+        // v3.2.0: keep the screen on while a game is running (a gamepad player
+        // never touches the screen, so it would otherwise dim and sleep), and let
+        // it sleep again when paused or closed. Only a change calls through.
+        var keepScreenOn: Boolean? = null
         try {
             while (isActive) {
                 try {
                     val ctrl = emulator.controller
+                    val running = ctrl != null && !emulator.paused
+                    if (running != keepScreenOn) {
+                        keepScreenOn = running
+                        (context as? MainActivity)?.updateScreenWakeLock(running)
+                    }
                     if (ctrl != null && !romLoaded) {
                         romLoaded = true
                         // A fresh controller just appeared: (re-)apply Four Score for the
@@ -2905,9 +2957,11 @@ private fun EmulatorScreen(
                             // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
                             // no-op when the GPU renderer is off.
                             gpuSurface?.submitFrame(fb)
-                            if (gpuSurface == null) {
-                                packRgbaToArgb(fb, pixels)
-                            }
+                            // Always converted, also on the GPU path: screenshots, clips
+                            // and the external display read this frame. (A v3.2.0 draft
+                            // skipped it when the GPU renderer was on, which left all three
+                            // showing a stale frame; not redone without a device to test it.)
+                            packRgbaToArgb(fb, pixels)
                         }
                         // Hot path: drain audio as raw bytes (no per-sample Float boxing)
                         // and write straight to the PCM_FLOAT track.
@@ -2925,10 +2979,8 @@ private fun EmulatorScreen(
                             frame = hdBmp.asImageBitmap()
                             presented = hdBmp
                         } else {
-                            if (gpuSurface == null) {
-                                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                                frame = reuse.asImageBitmap()
-                            }
+                            reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                            frame = reuse.asImageBitmap()
                             presented = reuse
                         }
                         // v1.8.8 "Atlas" (Workstream F): publish the gameplay frame for

@@ -73,6 +73,13 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **FDS disk games keep their saves on Android and iOS.** The game's writes to
+  its disk are saved when the app is backgrounded, a game is switched or closed,
+  and the saved disk boots next time under the original game's identity, so its
+  save states, RetroAchievements progress and settings are still found. Before,
+  a disk game's own save was lost on close. (The iOS half is not yet compiled.)
+- **The Android screen stays on during play** and sleeps again when paused or
+  closed; with a gamepad it used to dim and sleep mid-game.
 - **Mapper 290 (*Asder 20-in-1*) boots.** Its 32 KiB PRG mode read the
   upper half through the 16 KiB window, so the reset vector came from the
   wrong bank.

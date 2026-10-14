@@ -1,5 +1,3 @@
-#![allow(clippy::needless_borrow)]
-#![allow(clippy::items_after_statements)]
 //! `rustynes-mobile` — the platform-agnostic mobile control surface over
 //! [`rustynes_core`].
 //!
@@ -1724,9 +1722,12 @@ impl NesController {
 
     /// v2.9.7 — the FDS disk image as it stands, including anything the game
     /// has written to it, in the headerless `.fds` layout. The host writes it
-    /// to its own save file and, on the next launch, loads THAT file as the
-    /// ROM, which is how a disk game's progress persists (FDS games save to
-    /// the disk; there is no battery RAM). Empty for a cartridge or NSF.
+    /// to its own save file (keyed by [`Self::rom_identity`]) and, on the next
+    /// launch, builds from the pristine image and passes the file to
+    /// [`Self::boot_saved_disk`], which is how a disk game's progress persists
+    /// (FDS games save to the disk; there is no battery RAM). Loading the saved
+    /// file AS the ROM instead would change the game's identity (v3.2.0).
+    /// Empty for a cartridge or NSF.
     pub fn disk_image_bytes(&self) -> Vec<u8> {
         self.lock().nes.disk_image_bytes()
     }
@@ -1741,6 +1742,60 @@ impl NesController {
     /// v2.9.7 — clear the disk's dirty flag after the host saved the image.
     pub fn clear_disk_dirty(&self) {
         self.lock().nes.clear_disk_dirty();
+    }
+
+    /// v3.2.0 — boot the host's SAVED copy of the loaded FDS disk (the
+    /// [`Self::disk_image_bytes`] it wrote last session) in place of the
+    /// pristine image, KEEPING the pristine image's identity.
+    ///
+    /// This is the desktop's `.fds.sav` design (`boot_saved_disk` in the
+    /// frontend, NF-17). A host that instead loaded the saved file as the ROM
+    /// would change [`Self::rom_identity`] at the game's first disk save,
+    /// because the core hashes the bytes it boots: every store keyed on it --
+    /// save states, cheats, RA progress, overrides -- would be orphaned, and
+    /// the save file itself (keyed by identity) would never be found again.
+    ///
+    /// Call it right after building the controller from the pristine image,
+    /// with the file keyed by that controller's `rom_identity()`. The BIOS
+    /// and sample rate are the controller's own.
+    ///
+    /// # Errors
+    /// [`MobileError::RomLoad`] if the loaded console is not an FDS disk, or
+    /// the saved image does not parse; the pristine disk stays loaded, so the
+    /// host can log it and play on (the bad file is not overwritten until
+    /// the game writes to the disk again).
+    pub fn boot_saved_disk(&self, saved: Vec<u8>) -> Result<(), MobileError> {
+        check_rom_size(&saved)?;
+        let not_disk = || MobileError::RomLoad {
+            reason: "the loaded game is not an FDS disk".into(),
+        };
+        // What the parse needs, read under the lock; the parse runs with it
+        // released so the render and audio paths are not held up by it.
+        let (bios, pristine, sample_rate) = {
+            let g = self.lock();
+            if g.nes.disk_side_count() == 0 {
+                return Err(not_disk());
+            }
+            let bios = g.fds_bios.clone().ok_or_else(not_disk)?;
+            (bios, *g.nes.rom_sha256(), g.sample_rate)
+        };
+        let mut nes = Nes::from_disk_with_sample_rate(&saved, &bios, sample_rate).map_err(|e| {
+            MobileError::RomLoad {
+                reason: format!("saved FDS disk: {e}"),
+            }
+        })?;
+        nes.set_rom_identity(pristine);
+        let mut g = self.lock();
+        // Install it only over the disk it was read for: a different game
+        // loaded while the lock was released must not be replaced.
+        if *g.nes.rom_sha256() != pristine {
+            return Err(MobileError::RomLoad {
+                reason: "a different game was loaded meanwhile".into(),
+            });
+        }
+        g.nes = nes;
+        drop(g);
+        Ok(())
     }
 
     // --- NSF music files (v2.9.7 "Tandem", plan item 6) -----------------
@@ -3051,7 +3106,7 @@ fn composite_hd_locked(g: &mut Inner) -> Vec<u8> {
     injected_frame_fault();
     let hd_tiles = g.nes.hd_tile_source();
     let framebuffer = g.nes.framebuffer();
-    comp.composite(&framebuffer, &hd_tiles, &watched, |addr| {
+    comp.composite(framebuffer, hd_tiles, &watched, |addr| {
         chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
     })
     .to_vec()
@@ -3159,11 +3214,14 @@ fn nat_phase_detail(phase: &NatPhase) -> String {
 /// input ⇒ byte-identical state) is untouched: the core still cold-boots
 /// deterministically when the session promotes to `InGame`.
 fn nondeterministic_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // OS randomness first (v3.2.0): this seeds the room code and, through the
+    // session RNG, the STUN / TURN transaction ids, which should not be
+    // guessable. The time-and-address mix below is the fallback only.
     let mut buf = [0u8; 8];
     if getrandom::getrandom(&mut buf).is_ok() {
         return u64::from_le_bytes(buf);
     }
-    use std::time::{SystemTime, UNIX_EPOCH};
     // Truncating the 128-bit nanosecond count to 64 bits is intentional — this is
     // a PRNG seed, not a timestamp, so the discarded high bits don't matter.
     #[allow(clippy::cast_possible_truncation)]
@@ -4220,6 +4278,50 @@ mod tests {
         assert!(!ctrl.disk_is_dirty());
         assert_ne!(ctrl.disk_image_bytes(), [] as [u8; 0]);
         assert_eq!(ctrl.nsf_song_count(), 0, "a disk is not an NSF");
+    }
+
+    /// v3.2.0: a saved disk boots under the PRISTINE disk's identity, so the
+    /// stores keyed on it (and the save file itself) survive the game's first
+    /// disk write; a cartridge refuses it and keeps running.
+    #[test]
+    fn a_saved_disk_boots_under_the_pristine_identity() {
+        let ctrl = NesController::new_with_fds_bios(
+            synthetic_fds_disk(1),
+            Some(synthetic_fds_bios()),
+            DEFAULT_SAMPLE_RATE,
+        )
+        .expect("disk loads");
+        let pristine = ctrl.rom_identity();
+        let mut saved = ctrl.disk_image_bytes();
+        let last = saved.len() - 1;
+        saved[last] ^= 0x5A; // stands in for the game's own write
+        assert_ne!(
+            rom_identity_of_file(saved.clone()).unwrap(),
+            pristine,
+            "fixture: the saved bytes hash differently"
+        );
+
+        ctrl.boot_saved_disk(saved.clone())
+            .expect("the saved disk boots");
+        assert_eq!(
+            ctrl.rom_identity(),
+            pristine,
+            "identity is the pristine disk's"
+        );
+        assert_eq!(
+            ctrl.disk_image_bytes(),
+            saved,
+            "and the saved bytes are loaded"
+        );
+        ctrl.step_frame();
+
+        let cart = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let before = cart.rom_identity();
+        assert!(
+            cart.boot_saved_disk(saved).is_err(),
+            "a cartridge refuses it"
+        );
+        assert_eq!(cart.rom_identity(), before, "and keeps running");
     }
 
     /// Plan item 6: the BIOS set on a controller persists across `load_rom`,
