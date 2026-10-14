@@ -65,6 +65,34 @@ less well. The pattern held for the fifth time:
 - **Its best result was indirect.** AUD-02's sweep found the same save-state
   RAM gap on nine boards the report never named (row AUD-02b).
 
+## The v3.2.0 Round 2 audit
+
+A sixth report, found on 2026-10-13 with an unpushed AI-agent branch
+(`agy/perf_impr`, Antigravity with Codex workers): 61 findings across the core,
+mappers, APU, PPU, netplay, frontend, mobile, libretro, security and the MiSTer
+RTL, kept as supplied in
+[`v3.2.0-round2-audit-report.md`](v3.2.0-round2-audit-report.md) under a header
+that marks its self-certification ("clean-room", "certified", "100%
+bit-accurate") as unverified. Unlike the others it arrived with its fixes
+already applied, so its ledger,
+[`v3.2.0-round2-audit-disposition.md`](v3.2.0-round2-audit-disposition.md),
+records a verdict on each APPLIED CHANGE: KEPT (the change landed as written --
+FIXED in the vocabulary below), FIXED (corrected in a named commit with a
+failing test), REVERTED and REJECTED (closer to REJECTED FIX and REFUTED), and
+the standard UNTRIAGED, DEFERRED and CHANGED, UNVERIFIED. The work is the
+v3.2.0 consolidation's.
+
+**Calibration, 2026-10-14.** The Rust findings were usually real and the
+fixes often wrong in detail -- the pattern of every earlier report. Of the 43
+applied changes the test suites caught two (the MMC5 IRQ through the
+commercial-dump oracle, the FDS audio rounding through the dump coverage
+sweep); reading each change against the code it replaced found the rest,
+among them a 47% audio regression, open bus broken on two mappers, MMC3 bank
+masking, a netplay message that was sent and never decoded, two threads
+stepping one core, a heap cap that never fires, and FDS saves that changed a
+game's identity. Two of its self-certifying claims were tested and are false.
+The seven RTL findings are not yet re-derived.
+
 ## What these reports are
 
 They were **written by an AI agent** (the Antigravity CLI, `agy`) and committed in
