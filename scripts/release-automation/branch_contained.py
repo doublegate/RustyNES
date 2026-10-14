@@ -150,8 +150,22 @@ def main() -> int:
 
     absent = 0
     for path in filter(None, untracked):
-        with open(os.path.join(a.path, path), "rb") as f:
-            here = f.read()
+        # `git ls-files --others` lists symlinks too, and opening one that
+        # dangles or names a directory raised a traceback instead of a verdict
+        # (CodeRabbit on #604). Git stores a symlink as a blob holding its
+        # target, so a link is compared by `readlink`, never followed; anything
+        # that is neither a link nor a regular file cannot be compared at all,
+        # and is reported rather than passed.
+        full = os.path.join(a.path, path)
+        if os.path.islink(full):
+            here = os.fsencode(os.readlink(full))
+        elif os.path.isfile(full):
+            with open(full, "rb") as f:
+                here = f.read()
+        else:
+            absent += 1
+            print(f"  UNTRACKED, NOT A FILE OR SYMLINK (cannot compare): {path}")
+            continue
         there = blob(a.path, f"{a.main}:{path}")
         if there != here:
             absent += 1
