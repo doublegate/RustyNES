@@ -29,8 +29,8 @@ cycle-accurate core later replaced.
 ### Breaking
 
 - **Movies and netplay from v3.1.0 are refused.** `EMULATION_EPOCH` rises
-  from 3 to 4: the mapper 290, 24C02, VRC2 and *Fire Hawk* fixes below change
-  what the bus sees. A v3.1.x peer or movie is refused as another emulator
+  from 3 to 4: the mapper 290, 24C02, VRC4 IRQ, VRC2 and *Fire Hawk* fixes
+  below change what the bus sees. A v3.1.x peer or movie is refused as another emulator
   version, naming its epoch. Save states are not affected by the epoch.
 - **Netplay protocol 8 (`"RNE8"`).** Lost inputs are resent as one datagram
   per run of frames instead of one per frame. A v3.1.x peer cannot read that
@@ -49,6 +49,19 @@ cycle-accurate core later replaced.
   (Sugar Softec), 197, 165 (the Chinese *Fire Emblem* ports) and 116
   (SOMARI-P, which switches between VRC2, MMC3 and MMC1). All Curated, each
   booted from real dumps.
+- **Ten more families, each written from its NESdev page**: 6, 8 and 17 (Front
+  Fareast copier-disk games on the Super Magic Card), 158 (Tengen's RAMBO-1
+  with CHR A17 on the nametable line, *Alien Syndrome*), 172 and 173 (TXC
+  JV001 / 05-00002-010), 207 (Taito X1-005 with the same rewiring, *Fudou
+  Myouou Den*), 235 (the *Golden Game* address-latch multicarts) and 252
+  (Waixing's VRC4 clone, *San Guo Zhi*) are Curated; 230 (the 22-in-1 whose
+  RESET button switches chips) is BestEffort, because its page leaves a
+  choice the boot does not settle (ADR 0011 amendment).
+- **The golden exporter takes devices and display options**:
+  `nes_golden_export` gains `--four-score`, `--vaus` and `--genie` for the
+  MiSTer core's input gates, and `--sprite-limit-off` and `--fb-every-frame`
+  for its sprite-limit gate. A run without them writes the same artifacts and
+  manifests as before.
 - **The coverage sweep boots Famicom-only carts as a Famicom.** Ten dumps
   listed as blank since v2.9.6 write the PPU during the front-loading NES's
   power-on warm-up, which ignores those writes; on the Famicom model they
@@ -59,8 +72,9 @@ cycle-accurate core later replaced.
 ### Changed
 
 - **Mappers 47, 121, 154, 191 and 243 are Curated**, on local-dump evidence
-  recorded in `docs/compatibility.md` (maintainer decision D23). The tiers
-  are now 51 Core, 121 Curated and 26 BestEffort.
+  recorded in `docs/compatibility.md` (maintainer decision D23). With the 17
+  families added in this release, the 208 families are 51 Core, 130 Curated
+  and 27 BestEffort (191 families, 51 / 109 / 31, at v3.1.0).
 - **Libretro save states are about 16 KB instead of 260 KB.** The core
   no longer stores the 240 KiB framebuffer in a state (`retro_serialize`);
   the next frame repaints it before anything reads it, so run-ahead, rewind
@@ -83,6 +97,42 @@ cycle-accurate core later replaced.
   checked against services.gradle.org) and the **Compose compiler plugin
   2.4.21** (#603) for the Android app.
 
+### Performance
+
+- **The APU mixes about 2-6% faster when a cartridge adds audio, and 2-3%
+  faster without**, byte-identical, measured in two independent A/B runs
+  (`docs/performance.md`, "v3.2.0 APU"). The change came with an AI-made
+  remediation branch that also made the expansion-audio path 47% SLOWER; the
+  cause, a reshaped ring write, was bisected and left out.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **Two more core options, as on the desktop.** "Sprites per line" draws the
+  sprites past the eighth on a line, matching the emulator's option frame by
+  frame (on-die build only: the extra sprites' pattern fetch is a second read
+  of the on-die CHR memory, which the off-die build does not have; a gate
+  checks it stays absent there). "Load Palette" takes a `.pal` file and applies the
+  emulator's emphasis model to it.
+- **Sixteen more boards**: UN1ROM (94), Nichibutsu UNROM (180), CPROM (13), J87
+  (87), CNROM 185, GxROM (66), Jaleco JF-11/14 (140), Color Dreams (11),
+  NINA-03/06 (79), Camerica 71 (including *Fire Hawk*) and 232, mapper 34
+  (BNROM and NINA-001), Namco 108 (206), TxSROM (118), TQROM (119) and MMC1
+  SUROM (512 KiB, off-die). The NES 2.0 submapper now reaches the cartridge.
+  Each board is gated against the emulator, and for twelve of them a
+  commercial game's frame is compared too (`docs/rung7-mappers.md`).
+- **Three input devices**: the Four Score, the Arkanoid (Vaus) controller and
+  Game Genie cheats, gated against goldens exported with the same device.
+- **The custom palette uses 1,004 fewer combinational ALUTs** (2,390 ->
+  1,386 in synthesis), stored as three per-channel tables. Seven RTL findings from the
+  same AI audit were re-derived; one is a real cost (the nametable is in
+  registers) and is deferred, six did not hold.
+- **The oracle pin moves to v3.2.0**: all 842 golden artifacts from 188 stems
+  reproduce byte for byte from it.
+- **Known issue (off-die build):** a `$2007` read of CHR-RAM soon after a
+  write returns `$00` in simulation. It predates this release, is an expected
+  failure in the off-die ladder, and the on-die build is right.
+- **No hardware has run any bitstream.**
+
 ### Fixed
 
 - **FDS disk games keep their saves on Android and iOS.** The game's writes to
@@ -99,6 +149,12 @@ cycle-accurate core later replaced.
   16 and 157), so a random read returns the byte asked for instead of byte
   `$00`. On the Datach this was the difference between booting and
   reformatting the save at every power-on.
+- **The VRC4's IRQ runs in the mode the game asks for** (mappers 21, 23 and
+  25). Bit 2 of its IRQ control register was read inverted: nesdev's "VRC IRQ"
+  gives 1 = cycle mode, 0 = scanline mode, as the VRC6 and VRC7 already read
+  it. A game that asked for a raster split got a counter about 114 times too
+  fast, and one that asked for cycle mode got a scanline counter. Found by
+  *San Guo Zhi* (mapper 252), whose text box drew with the map's tiles.
 - **VRC2 mirroring has two settings, not four.** A VRC2 ignores bit 1 of its
   mirroring register (nesdev "VRC2 and VRC4"); the one-screen settings are
   VRC4-only, and were decoded on the VRC2 too.
