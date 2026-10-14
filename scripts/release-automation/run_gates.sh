@@ -93,6 +93,11 @@ gate clippy-wasm-browser-cheevos cargo clippy -p rustynes-frontend --target wasm
 gate rustdoc env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 gate rustdoc-cosim env RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --manifest-path "$cosim"
 gate no-std cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-features
+# The iOS FFI is `#[cfg(target_os = "ios")]`, so no cargo invocation above
+# compiles it; this script type-checks it on the host against a stub renderer.
+# Added after v3.2.0's first CI run, where it was the one gate this list
+# lacked, and the one that failed (ffi.rs had moved to a zero-copy render).
+gate ios-host-typecheck scripts/ios-host-typecheck.sh
 gate deny cargo deny check
 gate test-workspace cargo test --workspace
 gate test-cosim cargo test --manifest-path "$cosim"

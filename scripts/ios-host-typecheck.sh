@@ -69,14 +69,17 @@ pub mod audio;
 /// there that \`ffi.rs\` depends on must be mirrored here.
 pub mod gfx_metal {
     use core::ffi::c_void;
-    pub struct MetalGfx(Vec<u8>);
+    /// One 256x240 RGBA frame, as the real module defines it.
+    pub(crate) const FRAME_LEN: usize = 256 * 240 * 4;
+    pub struct MetalGfx;
     impl MetalGfx {
-        pub fn new(_v: *mut c_void, _w: u32, _h: u32) -> Result<Self, String> { Ok(Self(vec![0; 4])) }
+        pub fn new(_v: *mut c_void, _w: u32, _h: u32) -> Result<Self, String> { Ok(Self) }
         pub fn resize(&mut self, _w: u32, _h: u32) {}
         pub fn set_filter(&mut self, _f: u8, _p: [f32; 4]) {}
-        pub fn frame_buf_mut(&mut self) -> &mut [u8] { &mut self.0 }
         pub fn set_index_frame(&mut self, _b: &[u8], _p: u8) {}
-        pub fn render(&mut self) {}
+        // v3.2.0: the frame is passed in (zero-copy) rather than written into
+        // a \`frame_buf_mut()\` the renderer owned.
+        pub fn render(&mut self, _fb: &[u8]) {}
         pub fn render_hd(&mut self, _fb: &[u8], _w: u32, _h: u32) {}
     }
 }
