@@ -147,6 +147,11 @@ impl Mapper for Action52M228 {
         self.data = 0;
     }
 
+    fn may_unmap_prg_rom(&self) -> bool {
+        // The three-chip image's chip 2 is absent: `$8000-$FFFF` floats.
+        true
+    }
+
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         match addr {
             0x4020..=0x7FFF => true,

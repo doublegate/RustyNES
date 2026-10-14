@@ -91,6 +91,10 @@ impl Mapper for Waixing252 {
         self.inner.cpu_read_unmapped(addr)
     }
 
+    fn may_unmap_prg_rom(&self) -> bool {
+        self.inner.may_unmap_prg_rom()
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         self.inner.cpu_read(addr)
     }

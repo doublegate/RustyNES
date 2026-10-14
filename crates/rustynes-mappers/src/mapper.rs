@@ -252,6 +252,25 @@ pub trait Mapper: Send {
         }
     }
 
+    /// Whether [`Self::cpu_read_unmapped`] can ever return `true` for an
+    /// address in `$8000-$FFFF`, on this board, in any state.
+    ///
+    /// Almost every cartridge drives the bus across the whole PRG-ROM window,
+    /// so the bus skips the per-read [`Self::cpu_read_unmapped`] call there
+    /// for every board that leaves this `false` -- PRG-ROM fetches are the
+    /// hottest reads in the machine. A board that can leave part of
+    /// `$8000-$FFFF` undriven (an absent chip, an empty socket) returns
+    /// `true`, and the bus then asks on every read as before. Today that is
+    /// *Action 52* (228) and the Golden Game multicart (235). A board that
+    /// wraps another must forward this along with `cpu_read_unmapped`.
+    ///
+    /// Read once when the bus takes the mapper, so it must not depend on
+    /// runtime state. Debug builds check the contract on every PRG read. The
+    /// default is `false`. Added in v3.2.0.
+    fn may_unmap_prg_rom(&self) -> bool {
+        false
+    }
+
     /// A CPU read the mapper declined ([`Self::cpu_read_unmapped`]) has just
     /// completed, and `value` is what floated on the bus.
     ///
@@ -918,6 +937,54 @@ mod caps_tests {
             vec![9, 10, 35, 90, 96, 163, 165, 209, 211],
             "the impure set moved"
         );
+    }
+
+    /// v3.2.0: the bus skips `cpu_read_unmapped` in `$8000-$FFFF` for every
+    /// board that does not declare `may_unmap_prg_rom`, so a board that can
+    /// float that window and does not declare it would silently read ROM.
+    /// Every parsable mapper number is driven through a spread of register
+    /// writes, and after each one the window is asked; an undeclared `true`
+    /// fails. The declared set is pinned too, so adding a board to it is a
+    /// visible change. Each number is tried with CHR-ROM and again with
+    /// CHR-RAM, since some boards (235 among them) refuse one or the other.
+    #[test]
+    fn only_declared_boards_unmap_prg_rom() {
+        fn chr_ram_rom(id: u8) -> Vec<u8> {
+            let mut rom = synth_rom(id);
+            rom[5] = 0; // no CHR-ROM: CHR-RAM
+            rom.truncate(16 + 32 * 1024);
+            rom
+        }
+        let mut declared = Vec::new();
+        let mut checked = 0usize;
+        for id in 0u8..=255 {
+            for rom in [synth_rom(id), chr_ram_rom(id)] {
+                let Ok((_cart, mut mapper)) = parse(&rom) else {
+                    continue;
+                };
+                if mapper.may_unmap_prg_rom() {
+                    if !declared.contains(&id) {
+                        declared.push(id);
+                    }
+                    continue;
+                }
+                for page in (0x8000u16..=0xFF00).step_by(0x100) {
+                    for value in [0x00u8, 0x5A, 0xFF] {
+                        mapper.cpu_write(page, value);
+                        for addr in [0x8000u16, 0xA000, 0xC000, 0xE000, 0xFFFC] {
+                            assert!(
+                                !mapper.cpu_read_unmapped(addr),
+                                "mapper {id} floats ${addr:04X} after writing ${value:02X} \
+                                 to ${page:04X} but does not declare may_unmap_prg_rom"
+                            );
+                        }
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 150, "only {checked} boards were checked");
+        assert_eq!(declared, vec![228, 235], "the declared set moved");
     }
 
     /// v2.8.0 Phase 4 — the capability-flag contract for the key families.

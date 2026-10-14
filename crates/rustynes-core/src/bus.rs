@@ -345,6 +345,11 @@ pub struct SystemBus {
     /// `notify_frame_event` / `irq_pending`) on boards that don't use
     /// them. Constant per mapper type; NOT part of the save-state.
     mapper_caps: rustynes_mappers::MapperCaps,
+    /// v3.2.0 — [`Mapper::may_unmap_prg_rom`], cached beside
+    /// [`Self::mapper_caps`] with the same refresh points. When `false` the
+    /// `$8000-$FFFF` read path skips the per-read `cpu_read_unmapped`
+    /// dispatch. Constant per mapper type; NOT part of the save-state.
+    prg_may_unmap: bool,
     /// The original iNES/NES-2.0 ROM bytes, kept so [`Self::power_cycle`] can
     /// rebuild the mapper to a true power-on state (fresh bank registers,
     /// cleared CHR-RAM + volatile PRG-RAM). `None` on the FDS path (which has
@@ -949,6 +954,7 @@ impl SystemBus {
         // v2.8.0 Phase 4 — cache the capability flags once (constant per
         // mapper type); the per-cycle hot loop reads the copy.
         let mapper_caps = mapper.caps();
+        let prg_may_unmap = mapper.may_unmap_prg_rom();
         let mut bus = Self {
             ram: fresh_ram(),
             ppu: Ppu::new(region),
@@ -956,6 +962,7 @@ impl SystemBus {
             cart,
             mapper,
             mapper_caps,
+            prg_may_unmap,
             // Set by `with_sample_rate` (iNES path); stays `None` for FDS.
             rom_bytes: None,
             controllers: [Controller::new(); 2],
@@ -1295,6 +1302,7 @@ impl SystemBus {
                 // fresh mapper instance (same type, same flags, but keep
                 // the invariant mechanical).
                 self.mapper_caps = self.mapper.caps();
+                self.prg_may_unmap = self.mapper.may_unmap_prg_rom();
                 // v3.1.0: a fresh board starts on its header's MMC3 revision;
                 // the override is configuration and carries over.
                 if self.mmc3_revision_override.is_some() {
@@ -3802,7 +3810,17 @@ impl SystemBus {
                 self.vs_overlay_4017(base)
             }
             0x4020..=0xFFFF => {
-                if addr < 0x8000 && self.mapper.cpu_read_unmapped(addr) {
+                // `$8000-$FFFF` asks only a board that can leave it undriven
+                // (`prg_may_unmap`, v3.2.0): PRG-ROM fetches are the hottest
+                // reads, and almost every board always drives them. A v3.2.0
+                // import skipped the question above `$8000` for EVERY board,
+                // which read ROM where 228 / 235 float the bus
+                // (`boards_that_unmap_prg_rom_read_open_bus_above_8000`).
+                debug_assert!(
+                    addr < 0x8000 || self.prg_may_unmap || !self.mapper.cpu_read_unmapped(addr),
+                    "mapper unmaps ${addr:04X} but does not declare may_unmap_prg_rom"
+                );
+                if (addr < 0x8000 || self.prg_may_unmap) && self.mapper.cpu_read_unmapped(addr) {
                     // Unmapped read: nothing drives the bus, so the CPU sees
                     // the floating-latch value (nesdev "Open bus behavior":
                     // "all it sees on its data inputs is whatever was left to
@@ -5229,6 +5247,54 @@ mod four_score_tests {
             bus.raw_cpu_read(0x4015) & 0x20,
             0x20,
             "$4015 bit 5 comes from the last non-$4015 cycle: the $5000 read"
+        );
+    }
+
+    /// iNES image for mapper `mapper` with `prg_16k` x 16 KiB of PRG filled
+    /// with `$AA` and CHR-RAM.
+    fn prg_filled_rom(mapper: u8, prg_16k: u8) -> Vec<u8> {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(prg_16k);
+        rom.push(0); // CHR-RAM
+        rom.push((mapper & 0x0F) << 4);
+        rom.push(mapper & 0xF0);
+        rom.extend_from_slice(&[0u8; 8]);
+        rom.resize(16 + usize::from(prg_16k) * 0x4000, 0xAA);
+        rom
+    }
+
+    /// Two boards can leave `$8000-$FFFF` undriven: *Action 52* (mapper 228)
+    /// with its absent third chip selected, and the Golden Game multicart
+    /// (mapper 235) with an empty socket selected. Both must read open bus
+    /// there, not ROM. Regression for a v3.2.0 import that consulted
+    /// `cpu_read_unmapped` only below `$8000` (a hot-path shortcut), which made
+    /// both read the ROM byte (`$AA` here) instead of the floating `$5A`.
+    #[test]
+    fn boards_that_unmap_prg_rom_read_open_bus_above_8000() {
+        // 228: 1.5 MiB = chips 0, 1, 3. `$9000` selects chip 2 (addr bits
+        // 12-11 = 0b10), the one the image does not carry.
+        let mut bus = SystemBus::new(&prg_filled_rom(228, 96)).expect("228 parses");
+        assert_eq!(bus.raw_cpu_read(0x8000), 0xAA, "fixture: chip 0 is ROM");
+        bus.mapper.cpu_write(0x9000, 0x00);
+        bus.ram[0] = 0x5A;
+        assert_eq!(bus.raw_cpu_read(0x0000), 0x5A);
+        assert_eq!(
+            bus.raw_cpu_read(0x8000),
+            0x5A,
+            "228 absent chip floats the bus"
+        );
+
+        // 235: a 1 MiB image fills socket 0 only; `$8100` selects socket 1.
+        let mut bus = SystemBus::new(&prg_filled_rom(235, 64)).expect("235 parses");
+        assert_eq!(bus.raw_cpu_read(0x8000), 0xAA, "fixture: socket 0 is ROM");
+        bus.mapper.cpu_write(0x8100, 0x00);
+        bus.ram[0] = 0x5A;
+        assert_eq!(bus.raw_cpu_read(0x0000), 0x5A);
+        assert_eq!(
+            bus.raw_cpu_read(0xC000),
+            0x5A,
+            "235 empty socket floats the bus"
         );
     }
 

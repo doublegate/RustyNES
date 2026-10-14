@@ -134,6 +134,11 @@ impl Mapper for GoldenGame235 {
         self.reg = 0;
     }
 
+    fn may_unmap_prg_rom(&self) -> bool {
+        // An image smaller than 4 MiB leaves sockets empty: they float.
+        true
+    }
+
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         match addr {
             0x4020..=0x7FFF => true,
