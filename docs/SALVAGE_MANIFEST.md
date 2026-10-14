@@ -203,3 +203,33 @@ it. The facts below are from the dry-run and execution output, not memory.
 | `/tmp/test_fix1.rs`, workspace-root task outputs, the holy-mapperel `hm02` one-line Python fix | small | Not chosen by the maintainer. `hm02` is a scratch clone whose only change is `collections.Sequence` becoming `collections.abc.Sequence`. |
 | `/tmp/agy_env.txt` | 6 KB | An environment dump with lines matching token / key patterns. Never offered for the repository tree. |
 | Foreign agent scratch | 545 matches, MARM-Stack | Another project's. |
+
+## 2026-10-09 — tmp-salvage (move, curated by hand: session f63c2db0, v3.0.1-v3.2.0)
+
+Deferred until the four v3.2.0 agents stopped (they read their briefs from this
+scratch). The tool's own pass could not narrow the claim: with the session's
+scratch as its root every path contains the project token, so all 40,580 files
+matched. The list was therefore built by hand: hand-written file types (`.txt`,
+`.md`, `.py`, `.sh`, `.rs`, `.toml`, `.log`, `.tsv`, `.json`, `.diff`,
+`.patch`, `.sv`, `.cpp`, `.yml`, `.csv`) under 2 MiB, outside the regenerable
+trees listed below. Moved with a SHA-256 check before each move: 883 files,
+15,396,645 bytes, 0 identical-skipped, 0 conflicts, 0 errors.
+
+### Claimed (883 files, 1 ROM)
+
+| Source | Destination | Notes |
+|---|---|---|
+| `scratchpad/{v301,v310,v320,misc,...}` hand-written files | `salvaged/tmp-scratch/f63c2db0/<same relative path>` | Commit-message drafts (`msg-*.txt`), the v3.2.0 agent briefs (`v320/agent-brief.md`, `v320/sibling-brief.md`), probe crates' `src/` and `Cargo.toml` (`tierprobe`, `probe185`), the MiSTer mapper generators (`v320/mappers/mkmapper*.py`), gate / bless / ladder logs, PR review-reply drafts (`v310/replies*`), and the v3.0.1 seed-sweep and ledger JSON (`v301/sweep`). Resuming a stopped v3.2.0 agent needs its brief from here now, not from `/tmp`. |
+| `scratchpad/v320/removed-dumps/Boogerman (Sugar Softec) (Unl) [!].zip` | `salvaged/mislabelled-dumps/m215-header_is-m114s1_Boogerman (Sugar Softec) (Unl) [!].zip` | The GoodNES copy headered as mapper 215, moved out of the corpus in v3.2.0 (it draws grey garbage as 215; the 114 submapper 1 copy with a NES 2.0 header boots). A commercial ROM: `salvaged/` is gitignored, and it must stay out of the tree. |
+
+### Found and deliberately NOT claimed
+
+| Group | Size | Why not |
+|---|---|---|
+| Clones | ~1.6 GB | `oracle-clone`, `oracle-clone-merge`, `oracle-pin`, `cleanclone`, `sprites/oracle`, `acoin/AccuracyCoin`, `wiki/Wiki_MiSTer.wiki`, `v310/lrs`, `v310/acsrc`: git repositories, recreatable from their remotes. |
+| Regenerable bulk | ~2.5 GB | The `mkvenv` Python venv, cargo `target/` trees (`tgt-clean`, the probe crates'), the 1.5 GB `oddskip` perf run and the built `mkdocs-site`. |
+| Copies of tracked files | ~4 MB | `v310/preedit`, `v310/split`, `v310/oam`, `v301/pinsnap` (snapshots of `CHANGELOG.md`, `app.rs` and mutant `.rs` files) and the `v310/slice-*.patch` review slices: all in git history. |
+| NESdev text extracts, the TriCNES trace | ~1 MB | `misc/wiki` re-renders the vendored `nesdev_wiki/` pages; `v310/dma/tri_xc.txt` is a trace the harness regenerates. |
+| Extracted commercial ROMs and frames rendered from them | small | `v320/g2`, `v320/roms290`, PNG dumps: derived from commercial dumps, never for the tree. |
+| 60 loose `/tmp` patches, diffs and parse scripts | ~1.5 MB | Review-bot artifacts of RustyNES PRs (Oct 5-8): regenerable from git, the `.md` drafts already posted. Left by the maintainer's choice. |
+| Foreign agent scratch | 15,425 matches in 39 groups | Other projects' (VeridianOS, MARM-Stack, KDE dry runs and more). Left by the maintainer's choice. |
