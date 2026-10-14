@@ -310,7 +310,13 @@ impl Eeprom {
 
     /// Check a [`Self::save_lines`] record without changing anything, so a
     /// caller can validate every part of a state before restoring any of it.
-    fn check_lines(b: &[u8]) -> Result<(), MapperError> {
+    ///
+    /// It refuses what THIS chip cannot reach as well as what no chip can: the
+    /// read paths index `mem` by `addr` unmasked, so an X24C01 (128 bytes)
+    /// restored with a word address of `$80` or more, or in the 24C02-only
+    /// `ChipAddress` mode, would index past its memory and panic (the
+    /// commit-time security review of 10d0b027).
+    fn check_lines(&self, b: &[u8]) -> Result<(), MapperError> {
         let bad = |what: &str| Err(MapperError::Invalid(format!("EEPROM state: {what}")));
         if b.len() != Self::LINES_LEN {
             return bad("wrong length");
@@ -323,6 +329,13 @@ impl Eeprom {
         }
         if b[7] > 8 {
             return bad("bit counter above 8");
+        }
+        if usize::from(b[5]) >= self.mem.len() {
+            return bad("word address past the chip");
+        }
+        let chip_address = I2cMode::ChipAddress.to_byte();
+        if self.is_x24c01 && (b[2] == chip_address || b[3] == chip_address) {
+            return bad("a device-select phase on an X24C01, which has none");
         }
         Ok(())
     }
@@ -454,7 +467,7 @@ impl Eeprom {
                     } else {
                         // 24C02: sequential read continues to the next byte.
                         self.next_mode = I2cMode::Read;
-                        self.data = self.mem[self.addr as usize];
+                        self.data = self.mem[(self.addr & self.addr_mask()) as usize];
                     }
                 }
             }
@@ -472,7 +485,7 @@ impl Eeprom {
                         self.output = 1;
                         if self.chip_addr & 0x01 != 0 {
                             self.next_mode = I2cMode::Read;
-                            self.data = self.mem[self.addr as usize];
+                            self.data = self.mem[(self.addr & self.addr_mask()) as usize];
                         } else {
                             self.next_mode = I2cMode::Address;
                         }
@@ -709,7 +722,7 @@ impl BandaiFcg {
             return Err(short());
         }
         if let Some(ext) = self.ext_eeprom.as_ref() {
-            Eeprom::check_lines(&tail[1 + ext.mem.len()..fixed])?;
+            ext.check_lines(&tail[1 + ext.mem.len()..fixed])?;
         }
         self.ext_scl = tail[0] != 0;
         if let Some(ext) = self.ext_eeprom.as_mut() {
@@ -1131,7 +1144,7 @@ impl Mapper for BandaiFcg {
         };
         if let Some(ee) = self.eeprom.as_ref() {
             let at = 18 + ee.mem.len();
-            Eeprom::check_lines(&data[at..at + Eeprom::LINES_LEN])?;
+            ee.check_lines(&data[at..at + Eeprom::LINES_LEN])?;
         }
         if self.variant == FcgVariant::Datach {
             self.load_datach_tail(datach_tail)?;
@@ -1444,6 +1457,38 @@ mod tests {
     /// unknown mode tag, a counter past 8 or a line above 1 is refused, and the
     /// board keeps its state. So is an unknown mirroring byte, which used to
     /// return Err only after the banks had been restored (`CodeRabbit` on #607).
+    /// A state the X24C01 could never be in is refused: a word address past
+    /// its 128 bytes, or the 24C02-only device-select phase. Either would make
+    /// the next clocked read index past `mem` and panic.
+    #[test]
+    fn an_x24c01_state_it_cannot_reach_is_refused() {
+        let variant = FcgVariant::Lz93d50_24c01;
+        let m = BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
+        let good = m.save_state();
+        let lines = 18 + m.eeprom.as_ref().unwrap().mem.len();
+        let mut other =
+            BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
+        let before = other.save_state();
+        for (at, value, what) in [
+            (lines + 5, 0x80, "word address $80"),
+            (
+                lines + 2,
+                I2cMode::ChipAddress.to_byte(),
+                "ChipAddress mode",
+            ),
+            (
+                lines + 3,
+                I2cMode::ChipAddress.to_byte(),
+                "ChipAddress next mode",
+            ),
+        ] {
+            let mut bad = good.clone();
+            bad[at] = value;
+            assert!(other.load_state(&bad).is_err(), "{what} refused");
+            assert_eq!(other.save_state(), before, "{what}: nothing restored");
+        }
+    }
+
     #[test]
     fn a_corrupt_state_is_refused_before_anything_changes() {
         let variant = FcgVariant::Lz93d50_24c02;
