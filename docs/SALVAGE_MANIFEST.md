@@ -233,3 +233,55 @@ trees listed below. Moved with a SHA-256 check before each move: 883 files,
 | Extracted commercial ROMs and frames rendered from them | small | `v320/g2`, `v320/roms290`, PNG dumps: derived from commercial dumps, never for the tree. |
 | 60 loose `/tmp` patches, diffs and parse scripts | ~1.5 MB | Review-bot artifacts of RustyNES PRs (Oct 5-8): regenerable from git, the `.md` drafts already posted. Left by the maintainer's choice. |
 | Foreign agent scratch | 15,425 matches in 39 groups | Other projects' (VeridianOS, MARM-Stack, KDE dry runs and more). Left by the maintainer's choice. |
+
+## 2026-10-14 — v3.2.0 release cut, session `f63c2db0` (second pass)
+
+Scope chosen by the maintainer: **hand-written scripts and docs only** from this
+session's agent scratchpad (`/tmp/claude-1000/<project slug>/f63c2db0-.../scratchpad`),
+and none of the `/tmp` test leftovers. The tool's own scope could not express that
+(its `--exclude` does not filter directory candidates, and inside the scratch tree it
+ranks logs as strong), so the list was built by hand from file type, as on
+2026-10-09. Copied with a byte compare before each original was removed: 93 files,
+about 864 KB, 0 identical-skipped, 0 conflicts, 0 errors.
+
+### Claimed (93 files)
+
+| Source | Destination | Notes |
+|---|---|---|
+| `scratchpad/*` hand-written files (70) | `salvaged/tmp-scratch/f63c2db0/<same relative path>` | The gate runner `gates.sh`, `double-compile.sh`, `roadmap_chain.py`, `sheet.py`, `scan_scratch_clones.py`, `scan_transcripts.py`; 50 commit-message drafts (`msg-*.txt`); the v3.2.0 release-notes draft (its committed form is `.github/release-notes/v3.2.0.md`); pre-edit source snapshots from the agy-branch audit (`m019.{base,import,reverted}.rs`, `mesh_net.{base,import}.rs`, `piccolo.with-cap-and-test.rs`, `cgp.{head,fixed}.py`, `regress.head.sh`) and the AI-made palette split (`palette.split.sv`, `palsplit.patch`); id lists (`r2ids.txt`, `bless25-ids.txt`, `agy-files.txt`, `import-files.txt`, `manifest-edits.json`). |
+| `scratchpad/pr598/` (19) | same relative path | Drafted replies and the close comment for PR #598. The PR's document carried an email address and a private Drive id, so this stays in the gitignored tree. |
+| `scratchpad/{shotprobe,tiercount}/` (4) | same relative path | Two probe crates' `Cargo.toml` and `src/main.rs`. |
+
+### Found and deliberately NOT claimed
+
+| Group | Why not |
+|---|---|
+| Every scratchpad log (gate logs, ladders, seed sweeps, A/B runs, `verify-pin*`, Gradle) | The maintainer's scope. The off-die ladder was still writing `ladder-off-final.log` during the move. The figures that matter are in the release notes, `RustyNES.qsf` and `salvaged/rc-v3.2.0-261014/`. |
+| `scratchpad/{shots,dumps2}` frame dumps | Rendered from commercial dumps; regenerable with `RUSTYNES_DUMP_FRAMES=1`. |
+| `scratchpad/{bindgen-cheevos,trunk-cheevos-dist}` | wasm-bindgen and trunk build output. |
+| `/tmp/rustynes-atomic-*` (143 dirs), `/tmp/RustyNES/libretro-abi-*`, `/tmp/rustynes-coverage-collide-*`, `/tmp/rustynes-gamedb-overlay-contract-2`, `/tmp/kotlin-daemon.*.log` | Test fixtures and Gradle daemon logs; the next test run recreates them. |
+| `/tmp/rustynes-baseline-screenshots` | 156 coverage captures at default frame counts, superseded by the committed `screenshots/external/` set (which uses the capture overrides), and derived from commercial dumps. |
+| `/tmp/authy_build` (a git clone) and about 2,500 weak matches (another project's Python venv and the like) | Not this project's. |
+
+## 2026-10-14 — promotions out of `salvaged/`
+
+At the maintainer's request every file in the gitignored `salvaged/` was checked
+for anything that belongs permanently in a repository. Each file was hashed and
+looked up as a blob in both repositories' full history (2,963 of 3,448 matched
+nothing); the 520 untracked scripts and sources were then read and sorted (99
+superseded, 411 one-off, 10 worth keeping). Promoted, each tested before
+committing:
+
+| Now at | Was |
+|---|---|
+| `scripts/release-automation/run_gates.sh` | `salvaged/tools/deps-gates.sh` and the session gate runner |
+| `scripts/release-automation/branch_contained.py` | `salvaged/tools/wtcheck.py`, extended to a branch's committed lines |
+| `scripts/perf/quiet_ab.sh` | the v2.9.9 / v3.0.1 A/B queue scripts |
+| `fuzz/fuzz_targets/movie_import.rs` | a v2.9.9 importer probe, rewritten as a libFuzzer target |
+| `to-dos/plans/research/v3.1-line-survey-*.md` | the three v3.1 line-plan surveys, verbatim |
+| `RustyNES_MiSTer`: `scripts/double-compile.sh`, `tb/mutate_gate.py`, `tb/export_golden.sh`, `tb/sweep_frames.sh` | the double-compile helper and three v3.2.0 mapper-work tools |
+
+The originals stay in `salvaged/`; its `README.md` records the triage. Logs,
+evidence, bitstreams and the mislabelled ROM dumps stay local by design (each
+dump is already named in `docs/mappers.md`, `CHANGELOG.md` or
+`external_coverage.rs`).
