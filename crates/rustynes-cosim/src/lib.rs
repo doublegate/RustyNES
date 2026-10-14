@@ -695,22 +695,15 @@ macro_rules! oracle {
 /// # Safety
 ///
 /// `handle` must be a live pointer from [`rn_open`].
-macro_rules! catch_ffi {
-    ($default:expr, $body:expr) => {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body)) {
-            Ok(res) => res,
-            Err(_) => $default,
-        }
-    };
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rn_run_frame(handle: *mut c_void) -> c_ulonglong {
-    catch_ffi!(0, {
-        let o = oracle!(handle, 0);
-        o.nes.run_frame();
-        o.nes.bus().cycle()
-    })
+    // No `catch_unwind` here, deliberately (v3.2.0 review). A panic escaping an
+    // `extern "C"` function aborts the process, which is what a test oracle
+    // should do: a draft caught it in this one export and returned 0, which the
+    // co-simulation harness would have read as a cycle count.
+    let o = oracle!(handle, 0);
+    o.nes.run_frame();
+    o.nes.bus().cycle()
 }
 
 /// Execute one instruction. Returns the cycles it took.
@@ -760,17 +753,22 @@ pub unsafe extern "C" fn rn_index_framebuffer(
     if out.is_null() || cap < fb.len() {
         return 0;
     }
-    // SAFETY: `out` is non-null and the caller guarantees `cap` writable u16s,
-    // and `cap >= fb.len()` was just checked. The regions cannot overlap: `fb`
-    // borrows emulator-owned memory, `out` is caller-owned.
+    // `out` is non-null and the caller guarantees `cap` writable u16s, and
+    // `cap >= fb.len()` was just checked. The regions cannot overlap: `fb`
+    // borrows emulator-owned memory, `out` is caller-owned. A C caller may pass
+    // a buffer that is not 2-byte aligned, which a `u16` copy may not touch
+    // (v3.2.0), so that case copies the same bytes as bytes.
     if (out as usize) & (core::mem::align_of::<u16>() - 1) == 0 {
+        // SAFETY: as above, and `out` is aligned for `u16`.
         unsafe { core::ptr::copy_nonoverlapping(fb.as_ptr(), out, fb.len()) };
     } else {
+        // SAFETY: as above; a `u8` copy has no alignment requirement, and
+        // `size_of_val(fb)` bytes is exactly the `fb.len()` u16s checked to fit.
         unsafe {
             core::ptr::copy_nonoverlapping(
                 fb.as_ptr().cast::<u8>(),
                 out.cast::<u8>(),
-                fb.len() * core::mem::size_of::<u16>(),
+                core::mem::size_of_val(fb),
             );
         }
     }
