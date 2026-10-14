@@ -326,10 +326,21 @@ pub trait Mapper: Send {
     /// + nametable mirror window). Used as the BG-side / generic fetch path.
     fn ppu_read(&mut self, addr: u16) -> u8;
 
-    /// Read a PPU byte without side-effects for inspection/debugging.
-    fn ppu_peek(&self, _addr: u16) -> u8 {
-        0
-    }
+    /// Read a PPU byte (`$0000-$3FFF`) without side effects, for the
+    /// debugger and other inspection.
+    ///
+    /// It must return exactly the byte [`Self::ppu_read`] would return at
+    /// `addr` in the current state, and change nothing: a CHR latch the read
+    /// would flip is resolved as flipped but not stored, an IRQ counter a
+    /// read would clock is not clocked. `SystemBus::debug_peek_ppu` relies on
+    /// it for every board (until v3.2.0 it called `ppu_read` inside a save /
+    /// restore), and `ppu_peek_matches_a_side_effect_free_ppu_read` checks it
+    /// for every mapper.
+    ///
+    /// Required, with no default: a default `0` (as first written in v3.2.0)
+    /// would make a board that forgot it show a blank pattern table in the
+    /// debugger with no other symptom.
+    fn ppu_peek(&self, addr: u16) -> u8;
 
     /// Read a byte from the PPU pattern-table window (`$0000-$1FFF`) on
     /// behalf of a *sprite* tile fetch. MMC5 in 8x16 sprite mode uses a
@@ -985,6 +996,65 @@ mod caps_tests {
         }
         assert!(checked > 150, "only {checked} boards were checked");
         assert_eq!(declared, vec![228, 235], "the declared set moved");
+    }
+
+    /// v3.2.0: `ppu_peek` returns exactly the byte `ppu_read` would, without
+    /// its side effects. The debugger's PPU view (`SystemBus::debug_peek_ppu`)
+    /// reads CHR through `ppu_peek` on every board; before v3.2.0 it called
+    /// `ppu_read` and, on a board with impure CHR reads, restored the state
+    /// afterwards. That old behaviour is the oracle here: for every parsable
+    /// mapper (CHR-ROM and CHR-RAM), after a spread of register writes, each
+    /// sampled CHR address is read through `ppu_read` inside a save / restore
+    /// and compared with `ppu_peek`.
+    #[test]
+    fn ppu_peek_matches_a_side_effect_free_ppu_read() {
+        fn chr_ram_rom(id: u8) -> Vec<u8> {
+            let mut rom = synth_rom(id);
+            rom[5] = 0;
+            rom.truncate(16 + 32 * 1024);
+            rom
+        }
+        fn rom_with_patterned_chr(id: u8) -> Vec<u8> {
+            let mut rom = synth_rom(id);
+            for (i, b) in rom[16 + 32 * 1024..].iter_mut().enumerate() {
+                let [lo, hi, ..] = i.to_le_bytes();
+                *b = lo.wrapping_mul(31) ^ hi;
+            }
+            rom
+        }
+        let mut checked = 0usize;
+        for id in 0u8..=255 {
+            for rom in [rom_with_patterned_chr(id), chr_ram_rom(id)] {
+                let Ok((_cart, mut mapper)) = parse(&rom) else {
+                    continue;
+                };
+                for (reg, value) in [
+                    (0x8000u16, 0x00u8),
+                    (0x8001, 0x03),
+                    (0xA000, 0x05),
+                    (0xC000, 0x1F),
+                ] {
+                    mapper.cpu_write(reg, value);
+                    // A stride across the window, plus the MMC2 / MMC4-style
+                    // latch triggers, where a read changes the bank it reads.
+                    let triggers = [0x0FD8u16, 0x0FE8, 0x1FD8, 0x1FE8];
+                    for addr in (0u16..0x2000).step_by(0x0FD).chain(triggers) {
+                        let saved = mapper.save_state();
+                        let read = mapper.ppu_read(addr);
+                        mapper
+                            .load_state(&saved)
+                            .expect("a board reloads its own state");
+                        assert_eq!(
+                            mapper.ppu_peek(addr),
+                            read,
+                            "mapper {id}: ppu_peek(${addr:04X}) differs from ppu_read"
+                        );
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 150, "only {checked} boards were checked");
     }
 
     /// v2.8.0 Phase 4 — the capability-flag contract for the key families.
