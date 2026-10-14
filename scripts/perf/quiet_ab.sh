@@ -43,17 +43,27 @@ log_dir="${LOG_DIR:-$state/logs}"
 quiet="${QUIET_LOAD:-1.5}"
 busy="$state/BUSY"
 measuring="$state/MEASURING"
+lock="$state/lock"
 mkdir -p "$state" "$log_dir"
 
 load1() { cut -d' ' -f1 /proc/loadavg; }
 
+# One flock decides who may run: a measurement holds it EXCLUSIVE, every heavy
+# job holds it SHARED, so heavy jobs run together but never under a
+# measurement, and a measurement waits for all of them. BUSY and MEASURING are
+# informational markers only. They used to BE the lock, checked and then
+# touched (a window between the two), and two heavy jobs shared one BUSY file,
+# so the first to finish removed it while the second still ran (CodeRabbit on
+# #605).
 run_one() {
   local label="$1" base="$2"; shift 2
   local la
+  exec 9> "$lock"
   while :; do
-    if [ -e "$busy" ]; then sleep 30; continue; fi
+    flock -x 9
     la=$(load1)
     if awk -v l="$la" -v q="$quiet" 'BEGIN { exit !(l < q) }'; then break; fi
+    flock -u 9
     sleep 60
   done
   echo "$label" > "$measuring"
@@ -66,8 +76,12 @@ run_one() {
     echo "END $(date -Is)  rc=$rc  ($(cat /proc/loadavg))"
   } > "$log_dir/$label.log" 2>&1
   rm -f "$measuring"
-  echo "$label done (start load $la), log $log_dir/$label.log"
+  exec 9>&-
+  echo "$label done (start load $la, rc=$rc), log $log_dir/$label.log"
   grep -E "^LABEL|^START|^END|change:|^==>" "$log_dir/$label.log"
+  # The function's status is ab_check.sh's, not the grep's (which always
+  # matches the LABEL line and so reported every run as a success).
+  return "$rc"
 }
 
 case "${1:-}" in
@@ -75,10 +89,16 @@ case "${1:-}" in
     shift
     [ $# -ge 2 ] || { echo "usage: quiet_ab.sh run LABEL BASE [ab_check args...]" >&2; exit 2; }
     trap 'rm -f "$measuring"' EXIT
-    run_one "$@" ;;
+    run_one "$@"
+    exit $? ;;
   queue)
     q="${2:-}"
     [ -f "$q" ] || { echo "usage: quiet_ab.sh queue FILE (FILE must exist)" >&2; exit 2; }
+    if [ -e "$q.inprogress" ]; then
+      echo "quiet_ab.sh: $q.inprogress names a run that was interrupted: $(cat "$q.inprogress")" >&2
+      echo "quiet_ab.sh: re-queue it if it is still wanted, then delete the marker" >&2
+      exit 2
+    fi
     trap 'rm -f "$measuring"' EXIT
     while :; do
       line=$(grep -v '^[[:space:]]*$' "$q" | grep -v '^#' | head -1)
@@ -91,18 +111,27 @@ lines = open(path).read().splitlines()
 lines.remove(line)
 open(path, "w").write("\n".join(lines) + ("\n" if lines else ""))
 PY
+      # An interrupted run is a void measurement: the marker says which one,
+      # so it is re-queued deliberately rather than silently lost.
+      echo "$line" > "$q.inprogress"
       # `line` holds LABEL BASE and flags, which must word-split.
       # shellcheck disable=SC2086
       run_one $line
-      echo "$line" >> "$q.done"
+      echo "$line rc=$?" >> "$q.done"
+      rm -f "$q.inprogress"
     done ;;
   heavy)
     shift
     [ $# -ge 1 ] || { echo "usage: quiet_ab.sh heavy CMD [args...]" >&2; exit 2; }
-    while [ -e "$measuring" ]; do sleep 20; done
+    exec 9> "$lock"
+    flock -s 9
     touch "$busy"
-    trap 'rm -f "$busy"' EXIT
-    "$@" ;;
+    "$@"
+    rc=$?
+    # Clear the marker only when no other heavy job still holds the lock.
+    flock -u 9
+    if flock -n -x 9; then rm -f "$busy"; flock -u 9; fi
+    exit "$rc" ;;
   *)
     sed -n '/^set -uo/q;2,$p' "$0"
     exit 2 ;;

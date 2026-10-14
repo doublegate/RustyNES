@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# run_gates.sh — run every Rust gate CI runs, locally, one cargo job at a time,
-# and print one PASS/FAIL line per gate.
+# run_gates.sh — run the lint, build and test gates CI runs, locally, one cargo
+# job at a time, and print one PASS/FAIL line per gate.
+#
+# Not transcribed: ci.yml's `bench` (a relative frame-time A/B against the PR
+# base), `fuzz` (nightly cargo-fuzz, its own workspace), `coverage`
+# (cargo-llvm-cov with a 70% floor) and `libretro-cross` (cross toolchains);
+# CI runs those. (Its first header said "every Rust gate", which was not true;
+# CodeRabbit on #604.)
 #
 # Why this exists: CI's gate set is spread across `.github/workflows/ci.yml`,
 # and the invocations that catch real defects are the ones a habitual local
@@ -36,7 +42,11 @@ only=""
 roms=1
 while [ $# -gt 0 ]; do
   case "$1" in
-    --only) only="${2:-}"; shift 2 ;;
+    # `shift 2` with one argument left fails WITHOUT shifting, and without
+    # `set -e` the loop would then spin forever (CodeRabbit on #605).
+    --only)
+      [ $# -ge 2 ] || { echo "run_gates.sh: --only needs a regex" >&2; exit 2; }
+      only="$2"; shift 2 ;;
     --no-roms) roms=0; shift ;;
     -h|--help) sed -n '2,/^# Exit status/p' "$0"; exit 0 ;;
     *) echo "run_gates.sh: unknown argument '$1'" >&2; exit 2 ;;
