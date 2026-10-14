@@ -692,9 +692,10 @@ impl BandaiFcg {
     /// the external SCL level, the external X24C01's 128 bytes when the
     /// cartridge has one (fixed by the header, so not flagged), then the
     /// barcode reader ([`BarcodeReader::save`]). Added with the variant in
-    /// v3.2.0; no earlier blob of this variant exists, so
-    /// [`SAVE_STATE_VERSION`] stays 2 and the other variants' layouts are
-    /// unchanged.
+    /// v3.2.0, so no earlier blob of this variant exists. The tail itself
+    /// needed no version bump; [`SAVE_STATE_VERSION`] is 3 for a different
+    /// reason, the EEPROM protocol state every variant with an EEPROM now
+    /// saves (an earlier draft of this comment said it "stays 2").
     fn save_datach_tail(&self, out: &mut Vec<u8>) {
         out.push(u8::from(self.ext_scl));
         if let Some(ext) = self.ext_eeprom.as_ref() {
