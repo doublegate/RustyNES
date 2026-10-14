@@ -98,6 +98,11 @@ cycle-accurate core later replaced.
   **Gradle wrapper 9.8.1** (#602; distribution and wrapper-jar SHA-256 both
   checked against services.gradle.org) and the **Compose compiler plugin
   2.4.21** (#603) for the Android app.
+- **rustls 0.23.45 -> 0.23.46**, which fixes four advisories published
+  during this release (RUSTSEC-2026-0346 to 0349: TLS secrets in a session
+  value's `Debug`, ECH early data, a 1 GiB Brotli certificate allocation, a
+  ServerHello key-exchange downgrade). It reaches the netplay WebSocket and
+  HTTP clients through `tungstenite` and `ureq`.
 
 ### Records
 
