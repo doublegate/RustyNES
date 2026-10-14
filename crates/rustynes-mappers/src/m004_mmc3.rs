@@ -443,12 +443,21 @@ impl Mmc3 {
         self.regs[r & 7]
     }
 
+    /// Rebuild the four 8 KiB PRG slot offsets from R6 / R7 and the PRG
+    /// mode. Called on every write that changes them, at construction and
+    /// from `load_state`, so `prg_offset` is a table lookup.
+    ///
+    /// R6 / R7 are MASKED to the image (`& last`, the address lines the
+    /// board wires), never reduced modulo the bank count: the two differ for
+    /// a non-power-of-two image (`bank_numbers_are_masked_not_reduced_modulo`).
+    /// Every offset is in range because the constructor requires a non-empty
+    /// multiple of 8 KiB, so `prg_rom` needs no `% len` at the read.
     fn update_prg_offsets(&mut self) {
-        let total_banks = (self.prg_rom.len() / PRG_BANK_8K).max(1);
+        let total_banks = self.prg_rom.len() / PRG_BANK_8K;
         let last = total_banks.saturating_sub(1);
         let second_last = total_banks.saturating_sub(2);
-        let r6 = (self.regs[6] as usize) % total_banks;
-        let r7 = (self.regs[7] as usize) % total_banks;
+        let r6 = (self.regs[6] as usize) & last;
+        let r7 = (self.regs[7] as usize) & last;
         self.prg_offsets[0] = (if !self.prg_mode { r6 } else { second_last }) * PRG_BANK_8K;
         self.prg_offsets[1] = r7 * PRG_BANK_8K;
         self.prg_offsets[2] = (if !self.prg_mode { second_last } else { r6 }) * PRG_BANK_8K;
@@ -509,11 +518,15 @@ impl Mmc3 {
         }
     }
 
+    /// Rebuild the eight 1 KiB CHR slot offsets from R0-R5 and the CHR mode
+    /// (layout in [`Self::chr_bank_1k_for_slot`]). Masked like the PRG table:
+    /// `& (banks - 1)`, not `%`. CHR is a non-zero multiple of 1 KiB (CHR-RAM
+    /// is 8 KiB), so every offset is in range.
     fn update_chr_offsets(&mut self) {
-        let total_banks_1k = (self.chr.len() / CHR_BANK_1K).max(1);
+        let mask = (self.chr.len() / CHR_BANK_1K).saturating_sub(1);
         for slot in 0..8 {
             let bank_1k = self.chr_bank_1k_for_slot(slot);
-            self.chr_offsets[slot] = (bank_1k % total_banks_1k) * CHR_BANK_1K;
+            self.chr_offsets[slot] = (bank_1k & mask) * CHR_BANK_1K;
         }
     }
 
@@ -1062,6 +1075,11 @@ impl Mapper for Mmc3 {
         self.bank_select = data[9];
         self.prg_mode = data[10] != 0;
         self.chr_mode = data[11] != 0;
+        // The offset tables depend on exactly these fields. Rebuild them now,
+        // before any later check can return an error, so a refused state
+        // never leaves the tables describing different registers.
+        self.update_prg_offsets();
+        self.update_chr_offsets();
         self.mirroring = match data[12] {
             0 => Mirroring::Horizontal,
             1 => Mirroring::Vertical,
@@ -1124,8 +1142,6 @@ impl Mapper for Mmc3 {
         self.mmc6_ram_enabled = data[cur] != 0;
         self.mmc6_protect = data[cur + 1] & 0xF0;
         self.mcacc_prescaler = data[cur + 2] & 0x07;
-        self.update_prg_offsets();
-        self.update_chr_offsets();
         Ok(())
     }
 }
@@ -1160,6 +1176,32 @@ mod tests {
             Mmc3Revision::Sharp,
         )
         .unwrap()
+    }
+
+    /// Bank numbers are MASKED to the image (`& (banks - 1)`, the address
+    /// lines a board actually wires), not reduced modulo the bank count. The
+    /// two agree for power-of-two images; for three 8 KiB PRG banks and three
+    /// 1 KiB CHR banks, register value 3 masks to bank 2 but is bank 0 modulo
+    /// 3. Regression for a v3.2.0 import whose cached offset tables used `%`.
+    /// The tables must also follow a restored state, including when
+    /// `load_state` fails after the registers were already written.
+    #[test]
+    fn bank_numbers_are_masked_not_reduced_modulo() {
+        let mut m = fresh(3, 3);
+        m.cpu_write(0x8000, 6); // select R6 (PRG at $8000 in mode 0)
+        m.cpu_write(0x8001, 3);
+        assert_eq!(m.cpu_read(0x8000), 2, "PRG: 3 & 2 = bank 2");
+        m.cpu_write(0x8000, 2); // select R2 (1 KiB CHR at $1000 in mode 0)
+        m.cpu_write(0x8001, 3);
+        assert_eq!(m.ppu_read(0x1000), 2, "CHR: 3 & 2 = bank 2");
+        assert_eq!(m.ppu_peek(0x1000), 2, "and through the peek path");
+
+        // A restore into a fresh board rebuilds the tables.
+        let state = m.save_state();
+        let mut other = fresh(3, 3);
+        other.load_state(&state).unwrap();
+        assert_eq!(other.cpu_read(0x8000), 2);
+        assert_eq!(other.ppu_read(0x1000), 2);
     }
 
     #[test]
