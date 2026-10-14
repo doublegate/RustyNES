@@ -52,18 +52,16 @@ impl GxRom {
                 chr_rom.len()
             )));
         }
-        let _prg_bank_count = (prg_rom.len() / PRG_BANK_32K).max(1);
-        let prg_bank_offset = 0;
-        let _chr_bank_count = (chr_rom.len() / CHR_BANK_8K).max(1);
-        let chr_bank_offset = 0;
         Ok(Self {
             prg_rom,
             chr_rom,
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
             chr_bank: 0,
-            prg_bank_offset,
-            chr_bank_offset,
+            // Bank 0 at power-on; `update_bank_offsets` keeps these in step
+            // with `prg_bank` / `chr_bank` on every write and restore.
+            prg_bank_offset: 0,
+            chr_bank_offset: 0,
             mirroring,
         })
     }
@@ -174,6 +172,9 @@ impl Mapper for GxRom {
         self.prg_bank = data[1];
         self.chr_bank = data[2];
         self.vram.copy_from_slice(&data[3..3 + self.vram.len()]);
+        // The offsets are derived state, not saved: recompute them from the
+        // restored bank registers.
+        self.update_bank_offsets();
         Ok(())
     }
 }
@@ -210,6 +211,27 @@ mod tests {
         m.cpu_write(0x8001, 0x33);
         assert_eq!(m.cpu_read(0x8000), 3); // bank 3 marker
         assert_eq!(m.ppu_read(0x0000), 3);
+    }
+
+    /// A restored state reads through the restored banks. Regression for a
+    /// v3.2.0 import that cached the PRG / CHR bank offsets but did not
+    /// recompute them in `load_state`, so a restore into a fresh instance
+    /// kept reading bank 0 until the next register write.
+    #[test]
+    fn gxrom_load_state_restores_the_bank_offsets() {
+        let mut m = GxRom::new(synth_prg(4), synth_chr(4), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x8001, 0x21); // PRG bank 2, CHR bank 1
+        let state = m.save_state();
+        let mut fresh = GxRom::new(synth_prg(4), synth_chr(4), Mirroring::Vertical).unwrap();
+        assert_eq!(
+            fresh.cpu_read(0x8000),
+            0,
+            "fixture: a fresh board is on bank 0"
+        );
+        fresh.load_state(&state).unwrap();
+        assert_eq!(fresh.cpu_read(0x8000), 2, "PRG bank 2 after restore");
+        assert_eq!(fresh.ppu_read(0x0000), 1, "CHR bank 1 after restore");
+        assert_eq!(fresh.ppu_peek(0x0000), 1, "and through the peek path");
     }
 
     #[test]
