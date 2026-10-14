@@ -136,6 +136,35 @@ fn prg_byte(prg: &[u8], addr: u16) -> u8 {
     prg[off]
 }
 
+/// The save-state tag for a mirroring, below the `0x80` marker bit. H and V
+/// are 0 and 1, the values the first encoding wrote (`0x80` / `0x81`), so
+/// every earlier blob still reads the same. That encoding saved only "vertical
+/// or not": `new` keeps the header's mirroring until the first `$8000` write,
+/// and a four-screen header is not refused by the parser, so such a dump came
+/// back Horizontal after a load and its nametables moved (`CodeRabbit` on #608).
+const fn mirroring_tag(m: Mirroring) -> u8 {
+    match m {
+        Mirroring::Horizontal => 0,
+        Mirroring::Vertical => 1,
+        Mirroring::SingleScreenA => 2,
+        Mirroring::SingleScreenB => 3,
+        Mirroring::FourScreen => 4,
+        Mirroring::MapperControlled => 5,
+    }
+}
+
+const fn mirroring_from_tag(t: u8) -> Option<Mirroring> {
+    Some(match t {
+        0 => Mirroring::Horizontal,
+        1 => Mirroring::Vertical,
+        2 => Mirroring::SingleScreenA,
+        3 => Mirroring::SingleScreenB,
+        4 => Mirroring::FourScreen,
+        5 => Mirroring::MapperControlled,
+        _ => return None,
+    })
+}
+
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / 0x0400) & 0x03) as u8;
     mirroring.physical_bank(table) * NAMETABLE_SIZE + (usize::from(addr) & (NAMETABLE_SIZE - 1))
@@ -316,7 +345,7 @@ impl Mapper for Txc172 {
         out.push(self.output);
         out.push(u8::from(self.increment));
         out.push(u8::from(self.invert));
-        out.push(u8::from(self.mirroring == Mirroring::Vertical) | 0x80);
+        out.push(mirroring_tag(self.mirroring) | 0x80);
         out.extend_from_slice(&self.vram);
         out
     }
@@ -332,19 +361,16 @@ impl Mapper for Txc172 {
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
+        // Decoded before any field changes, so an unknown tag leaves the board
+        // as it was.
+        let mirroring = mirroring_from_tag(data[6] & 0x7F)
+            .ok_or_else(|| MapperError::Invalid(format!("TXC mirroring tag {:#04x}", data[6])))?;
         self.input = data[1] & 0x3F;
         self.register = data[2] & 0x3F;
         self.output = data[3] & 0x3F;
         self.increment = data[4] != 0;
         self.invert = data[5] != 0;
-        // Bit 7 marks a saved H/V choice; the header's mirroring is the only
-        // other value the board can hold, and it is H or V on every dump, so
-        // the bit-0 encoding is complete.
-        self.mirroring = if data[6] & 0x01 != 0 {
-            Mirroring::Vertical
-        } else {
-            Mirroring::Horizontal
-        };
+        self.mirroring = mirroring;
         self.vram.copy_from_slice(&data[7..]);
         Ok(())
     }
@@ -700,6 +726,33 @@ mod tests {
         assert_eq!(b.ppu_read(0x0000), a.ppu_read(0x0000));
         assert_eq!(b.current_mirroring(), a.current_mirroring());
         assert!(b.load_state(&blob[1..]).is_err());
+    }
+
+    /// A four-screen header's mirroring survives a save and load (it came
+    /// back Horizontal when the blob stored only "vertical or not"), an old
+    /// `0x81` blob still reads as Vertical, and an unknown tag is refused with
+    /// the board unchanged.
+    #[test]
+    fn m172_state_keeps_a_four_screen_header_and_refuses_unknown_tags() {
+        let mut img = image(172, 2, 4);
+        img[6] |= 0x08; // four-screen
+        let a = parse(&img).unwrap().1;
+        assert_eq!(a.current_mirroring(), Mirroring::FourScreen, "header");
+        let blob = a.save_state();
+        let mut b = board(172, 2, 4);
+        b.load_state(&blob).unwrap();
+        assert_eq!(b.current_mirroring(), Mirroring::FourScreen);
+
+        let mut old = blob.clone();
+        old[6] = 0x81;
+        b.load_state(&old).unwrap();
+        assert_eq!(b.current_mirroring(), Mirroring::Vertical);
+
+        let mut bad = blob;
+        bad[6] = 0x86; // tags 0-5 are the six mirrorings
+        let before = b.save_state();
+        assert!(b.load_state(&bad).is_err());
+        assert_eq!(b.save_state(), before, "nothing restored");
     }
 
     // --- 173 ---------------------------------------------------------------

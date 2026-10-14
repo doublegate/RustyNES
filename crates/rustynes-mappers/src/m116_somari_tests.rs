@@ -303,3 +303,25 @@ fn m116_state_round_trip() {
     bad[13..17].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(board().load_state(&bad).is_err());
 }
+
+/// A state whose MMC1 part is refused must leave the board as it was: the MMC3
+/// part used to be restored first and kept when the MMC1 part then failed,
+/// mixing new MMC3 state with the old MMC1, VRC2 and RAM (`CodeRabbit` on #608).
+#[test]
+fn m116_a_refused_mmc1_part_leaves_the_mmc3_untouched() {
+    let mut src = board();
+    // MMC3 mode first: in the power-on VRC2 mode these writes never reach the
+    // MMC3, the two boards' MMC3 states would be equal, and the test could not
+    // see the bug (its first draft did exactly that; mutation found it).
+    src.cpu_write(0x4100, 0x01);
+    src.cpu_write(0x8000, 0x06); // MMC3 bank select: R6
+    src.cpu_write(0x8001, 0x03);
+    let mut bad = src.save_state();
+    let mmc3_len = u32::from_le_bytes([bad[13], bad[14], bad[15], bad[16]]) as usize;
+    bad[HEAD + mmc3_len] = 0xEE; // the MMC1 blob's version byte
+
+    let mut m = board();
+    let before = m.save_state();
+    assert!(m.load_state(&bad).is_err());
+    assert_eq!(m.save_state(), before, "nothing restored");
+}

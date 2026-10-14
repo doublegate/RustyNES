@@ -443,9 +443,17 @@ impl Mapper for Somari116 {
             });
         }
         let mut cur = HEAD;
+        // The MMC3 part is restored first, so keep its old state: if the MMC1
+        // part is then refused, put it back, and the board is left exactly as
+        // it was rather than half restored (CodeRabbit on #608).
+        let mmc3_prev = self.mmc3.save_state();
         self.mmc3.load_state(&data[cur..cur + mmc3_len])?;
         cur += mmc3_len;
-        self.mmc1.load_state(&data[cur..cur + mmc1_len])?;
+        if let Err(e) = self.mmc1.load_state(&data[cur..cur + mmc1_len]) {
+            // Its own blob, just produced, so this restore cannot fail.
+            let _ = self.mmc3.load_state(&mmc3_prev);
+            return Err(e);
+        }
         cur += mmc1_len;
         self.supervisor = data[1] & 0x07;
         self.vrc2_prg = [data[2] & 0x1F, data[3] & 0x1F];

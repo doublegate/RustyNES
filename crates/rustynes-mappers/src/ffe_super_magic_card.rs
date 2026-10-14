@@ -4,7 +4,7 @@
 //!
 //! Written from the vendored `NESdev` pages `INES_Mapper_006`,
 //! `INES_Mapper_008`, `INES_Mapper_017` and the page they all point to for the
-//! hardware, `Super_Magic_Card`; no reference-emulator source was read.
+//! hardware, `Super_Magic_Card`.
 //!
 //! These are not cartridge boards. They are copier RAM cartridges: the game
 //! is loaded from a floppy into the Super Magic Card's 512 KiB of PRG DRAM and
@@ -174,8 +174,8 @@ impl SuperMagicCard {
     /// # Errors
     ///
     /// [`MapperError::Invalid`] when the PRG image is empty, larger than the
-    /// 512 KiB DRAM or not a multiple of 8 KiB, or the CHR image is larger than
-    /// the 256 KiB CHR-RAM.
+    /// 512 KiB DRAM or not a multiple of 8 KiB, the CHR image is larger than
+    /// the 256 KiB CHR-RAM, or a trainer is shorter than its 512 bytes.
     pub fn new(
         board: FfeBoard,
         prg_rom: &[u8],
@@ -194,6 +194,17 @@ impl SuperMagicCard {
             return Err(MapperError::Invalid(format!(
                 "FFE CHR image size {} exceeds the card's 256 KiB of CHR-RAM",
                 chr_rom.len()
+            )));
+        }
+        // `parse` always passes exactly 512 bytes, but `new` is public, and both
+        // board arms slice `t[..TRAINER_LEN]` (CodeRabbit on #607: a short
+        // trainer panicked where `# Errors` promises `Invalid`).
+        if let Some(t) = trainer
+            && t.len() < TRAINER_LEN
+        {
+            return Err(MapperError::Invalid(format!(
+                "FFE trainer is {} bytes, expected {TRAINER_LEN}",
+                t.len()
             )));
         }
         let mut prg = vec![0u8; PRG_DRAM].into_boxed_slice();
@@ -709,6 +720,16 @@ impl Mapper for SuperMagicCard {
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
+        // The FDS IRQ phase only ever holds 0..FDS_IRQ_THIRDS (the tick wraps
+        // it), and `+= 3` on a value near u16::MAX would panic in a debug build
+        // and wrap in a release one, so the two builds diverged on a crafted
+        // state (CodeRabbit on #607). Checked before anything is restored.
+        let thirds = u16::from_le_bytes([data[36], data[37]]);
+        if thirds >= FDS_IRQ_THIRDS {
+            return Err(MapperError::Invalid(format!(
+                "FFE FDS IRQ phase {thirds} out of range (below {FDS_IRQ_THIRDS})"
+            )));
+        }
         let mut c = 1;
         let mut byte = || {
             let v = data[c];
@@ -762,6 +783,34 @@ impl Mapper for SuperMagicCard {
 mod tests {
     use super::*;
     use crate::parse;
+
+    #[test]
+    fn a_short_trainer_is_an_error_not_a_panic() {
+        let prg = vec![0u8; BANK_8K * 4];
+        for board in [FfeBoard::MagicCard(1), FfeBoard::SuperMagicCard(0)] {
+            let r = SuperMagicCard::new(board, &prg, &[], Some(&[0u8; 100]), false);
+            assert!(matches!(r, Err(MapperError::Invalid(_))), "{board:?}");
+        }
+    }
+
+    #[test]
+    fn a_state_with_an_impossible_fds_irq_phase_is_refused() {
+        let prg = vec![0u8; BANK_8K * 4];
+        let m = SuperMagicCard::new(FfeBoard::SuperMagicCard(0), &prg, &[], None, false).unwrap();
+        let good = m.save_state();
+        let mut bad = good.clone();
+        bad[36..38].copy_from_slice(&0xFFFEu16.to_le_bytes());
+        let mut other =
+            SuperMagicCard::new(FfeBoard::SuperMagicCard(0), &prg, &[], None, false).unwrap();
+        other.cpu_write(0x4501, 0x01);
+        let before = other.save_state();
+        assert!(matches!(
+            other.load_state(&bad),
+            Err(MapperError::Invalid(_))
+        ));
+        assert_eq!(other.save_state(), before, "nothing restored");
+        other.load_state(&good).unwrap();
+    }
 
     /// An image through `crate::parse`: `prg_16k` x 16 KiB PRG whose every
     /// 16 KiB page opens with its index, `chr_8k` x 8 KiB CHR likewise, NES

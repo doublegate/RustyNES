@@ -2,7 +2,7 @@
 //! Mapper 230: the reset-switched *22-in-1* multicart (v3.2.0).
 //!
 //! Written from the vendored `NESdev` page `INES_Mapper_230`, which carries
-//! Disch's notes; no reference-emulator source was read. The cartridge holds
+//! Disch's notes. The cartridge holds
 //! two PRG chips back to back in the image: chip 0, 128 KiB, is *Contra*;
 //! chip 1, 512 KiB, is the multicart. "Performing a Soft Reset switches
 //! between them" -- the console's RESET button is the mode switch, delivered

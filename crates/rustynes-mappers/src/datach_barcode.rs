@@ -367,6 +367,15 @@ impl BarcodeReader {
         let count = usize::from(u16::from_le_bytes([header[0], header[1]]));
         let pos = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
         let remaining = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
+        // `scan` builds an EAN-8 (67 modules) or EAN-13 (95) symbol between two
+        // quiet zones and `tick` empties the list when the scan ends, so those
+        // are the only lengths a reader can hold. Anything else is a corrupt
+        // or hostile blob, refused before anything changes (CodeRabbit on
+        // #607: it used to accept any count up to 65,535).
+        let quiet = 2 * QUIET_MODULES as usize;
+        if count != 0 && count != 67 + quiet && count != 95 + quiet {
+            return None;
+        }
         let bytes = count.div_ceil(8);
         let packed = data.get(10..10 + bytes)?;
         if count > 0 && (pos as usize >= count || remaining == 0 || remaining > MODULE_CYCLES) {
@@ -386,6 +395,26 @@ mod tests {
     use super::*;
     use alloc::format;
     use alloc::string::String;
+    use alloc::vec::Vec;
+
+    #[test]
+    fn a_saved_scan_of_any_other_length_is_refused() {
+        let mut r = BarcodeReader::default();
+        r.scan(&Barcode::parse("4006381333931").unwrap());
+        let mut blob = Vec::new();
+        r.save(&mut blob);
+        let mut fresh = BarcodeReader::default();
+        assert_eq!(fresh.load(&blob), Some(blob.len()), "a real scan loads");
+        // 1,000 modules, with packed bytes to match, so only the count is wrong.
+        let mut bad = Vec::new();
+        bad.extend_from_slice(&1000u16.to_le_bytes());
+        bad.extend_from_slice(&0u32.to_le_bytes());
+        bad.extend_from_slice(&MODULE_CYCLES.to_le_bytes());
+        bad.resize(10 + 1000usize.div_ceil(8), 0);
+        let mut other = BarcodeReader::default();
+        assert_eq!(other.load(&bad), None);
+        assert!(!other.is_scanning(), "nothing restored");
+    }
 
     fn as_text(modules: &[bool]) -> String {
         modules.iter().map(|&m| if m { '1' } else { '0' }).collect()

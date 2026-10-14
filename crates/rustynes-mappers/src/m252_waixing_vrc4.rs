@@ -50,12 +50,25 @@ impl Waixing252 {
     /// # Errors
     ///
     /// As [`Vrc4::new`]: PRG a non-zero multiple of 8 KiB, CHR-ROM a multiple
-    /// of 1 KiB.
+    /// of 1 KiB. Also when there is no CHR-ROM: the board is CHR-ROM with two
+    /// pages of CHR-RAM ("1 KiB CHR pages 6 and 7 are CHR-RAM",
+    /// `INES_Mapper_252`), and without ROM `Vrc4::new` would build 8 KiB of
+    /// CHR-RAM that this wrapper's page-6/7 routing never reaches.
     pub fn new(
         prg_rom: Box<[u8]>,
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
+        // CodeRabbit on #608 found writes to pages 0-5 dropped on a CHR-less
+        // image. Such an image is not this board, so it is refused here rather
+        // than routed (the VRC4's own CHR-RAM writes unbanked but reads
+        // banked, T-VRC4-CHRRAM-BANKING, so routing would not have worked).
+        if chr_rom.is_empty() {
+            return Err(MapperError::Invalid(
+                "mapper 252 is a CHR-ROM board (pages 6 and 7 are CHR-RAM); this image has no CHR-ROM"
+                    .into(),
+            ));
+        }
         Ok(Self {
             inner: Vrc4::new(prg_rom, chr_rom, 23, 2, mirroring)?,
             chr_ram: vec![0u8; 2 * CHR_BANK_1K].into_boxed_slice(),
@@ -137,6 +150,8 @@ impl Mapper for Waixing252 {
                 self.chr_ram[off] = value;
             }
             // Pages other than 6 and 7 are CHR-ROM: a write there goes nowhere.
+            // `new` refuses an image without CHR-ROM, so there is no CHR-RAM
+            // in the VRC4 for such a write to have reached.
             return;
         }
         self.inner.ppu_write(addr, value);
@@ -272,6 +287,15 @@ mod tests {
         // A bank number that only shares low bits with 6 is ROM.
         chr(m.as_mut(), 0xB000, false, 0x16);
         assert_eq!(m.ppu_read(0x0000), 0x16);
+    }
+
+    /// An image with no CHR-ROM is not this board: refused, rather than built
+    /// with pattern writes that go nowhere.
+    #[test]
+    fn m252_without_chr_rom_is_refused() {
+        let prg = vec![0u8; 0x8000].into_boxed_slice();
+        let r = Waixing252::new(prg, Box::new([]), Mirroring::Vertical);
+        assert!(matches!(r, Err(MapperError::Invalid(_))));
     }
 
     #[test]
