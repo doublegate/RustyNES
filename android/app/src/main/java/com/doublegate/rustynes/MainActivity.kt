@@ -810,30 +810,32 @@ internal object FdsSaves {
     fun needsFlush(ctrl: NesController, sha: String): Boolean = ctrl.diskIsDirty() || sha in retry
 
     /**
-     * A ROM switch, or the first load: write the outgoing disk one last time,
-     * then let the incoming controller write its key. One locked step, so a
-     * flush the outgoing controller queued earlier cannot land after the
-     * incoming one has written the same file (the same disk, reopened).
+     * A ROM switch, or the first load: the incoming controller owns its key
+     * from here, and the outgoing one keeps a retiring right to its own until
+     * the new owner first writes it (see [SaveOwners]). No I/O, so call it on
+     * the main thread where the running controller is swapped; then run the
+     * outgoing disk's final write with [finalFlush].
      */
-    fun handOver(
-        context: Context,
-        outSha: String?,
-        outCtrl: NesController?,
-        inSha: String?,
-        inCtrl: NesController?,
-    ) = owners.handOver(outSha, outCtrl, inSha, inCtrl) {
-        if (outSha != null && outCtrl != null) writeIfDirty(context, outCtrl, outSha)
+    fun transfer(outSha: String?, outCtrl: NesController?, inSha: String?, inCtrl: NesController?) =
+        owners.transfer(outSha, outCtrl, inSha, inCtrl)
+
+    /**
+     * The outgoing controller's last write after [transfer], then its retiring
+     * right is dropped. A no-op once the incoming owner has written the same
+     * key: the disk on file is then newer than this one.
+     */
+    fun finalFlush(context: Context, ctrl: NesController, sha: String) {
+        owners.write(sha, ctrl) { writeIfDirty(context, ctrl, sha) }
+        owners.finish(sha, ctrl)
     }
 
     /** Closing a ROM: one last write, then nothing writes [sha] until the next load. */
     fun close(context: Context, ctrl: NesController, sha: String) =
-        owners.handOver(sha, ctrl, null, null) { writeIfDirty(context, ctrl, sha) }
+        owners.close(sha, ctrl) { writeIfDirty(context, ctrl, sha) }
 
     /**
-     * Write the disk if the game changed it and [ctrl] still owns [sha]. A
-     * refused call changes nothing (the dirty flag stays set), so a flush made
-     * by the incoming controller before its claim landed is simply retried by
-     * the next one.
+     * Write the disk if the game changed it and [ctrl] may write [sha]. A
+     * refused call changes nothing (the dirty flag stays set).
      */
     fun flushIfDirty(context: Context, ctrl: NesController, sha: String) {
         owners.write(sha, ctrl) { writeIfDirty(context, ctrl, sha) }
@@ -953,20 +955,26 @@ private fun publishRom(
     val outgoingCtrl = emulator.controller
     val outgoingBattery = emulator.battery
     val outgoingSha = emulator.romSha
+    // The FDS save keys change hands HERE, on the main thread, before the
+    // running controller is swapped, and with no I/O (review on #604): a claim
+    // made later on an I/O thread left a window in which a close or a pause
+    // was refused, and two quick switches could finish out of order.
+    FdsSaves.transfer(outgoingSha, outgoingCtrl, prepared.sha, prepared.ctrl)
     emulator.controller = prepared.ctrl
     emulator.romSha = prepared.sha
     emulator.romBytes = prepared.bytes
     emulator.battery = prepared.battery
-    scope.launch(Dispatchers.IO) {
-        if (outgoingCtrl != null && outgoingBattery != null) {
-            runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
-                .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+    if (outgoingCtrl != null) {
+        scope.launch(Dispatchers.IO) {
+            if (outgoingBattery != null) {
+                runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
+                    .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+            }
+            // The outgoing disk's last write, through its retiring right: a
+            // no-op if the incoming controller has already written the same
+            // key (the same disk, reopened), whose image is then the newer one.
+            if (outgoingSha != null) FdsSaves.finalFlush(context, outgoingCtrl, outgoingSha)
         }
-        // The outgoing disk's last write and the incoming controller's claim on
-        // its key, as one step (review on #604). Runs on every load, the first
-        // included: until the claim lands, the incoming disk's flushes are
-        // refused and retried, never written.
-        FdsSaves.handOver(context, outgoingSha, outgoingCtrl, prepared.sha, prepared.ctrl)
     }
     // Apply this game's remembered video filter (per-game DB), if any.
     prepared.filter?.let { f ->

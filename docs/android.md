@@ -293,11 +293,13 @@ second) and every session-ending path (background, ROM switch, close) write
 `filesDir/fds-saves/<identity>.fds.sav`, the desktop's layout. The flag is
 cleared BEFORE the image is copied, so a disk write landing during the save sets
 it again and the next flush catches it; a failed file write is retried by the
-next once-a-second check. Each key has one owner (`SaveOwners`): only the
-controller the loop is running may write its game's file, and a ROM switch is
-one locked step, the outgoing disk's last write and then the incoming claim, so
-no flush can put one game's disk in another's file or an older image over a
-newer one when the same disk is reopened (`SaveOwnersTest`). The next load builds from the pristine image and
+next once-a-second check. Each key has one owner (`SaveOwners`): the key moves
+to the incoming controller on the main thread, with no I/O, in the same step
+that swaps the running controller, so there is no moment in which the running
+disk cannot be saved. The outgoing controller keeps the right to write its own
+key for its final flush only until the new owner first writes it, so no flush
+can put one game's disk in another's file, or an older image over a newer one
+when the same disk is reopened (`SaveOwnersTest`). The next load builds from the pristine image and
 calls `bootSavedDisk`, which boots the saved copy under the PRISTINE disk's
 identity, so the save, the states, RA progress and overrides keep one key (loading
 the saved file as the ROM would change it at the first disk write). A bad or
