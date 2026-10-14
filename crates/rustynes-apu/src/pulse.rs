@@ -25,8 +25,9 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
 pub struct Pulse {
     /// Duty selection (0..=3).
     pub(crate) duty: u8,
-    /// Step index into the duty table (0..=7). Incremented on each timer underflow
-    /// (the 2A03 hardware down-counter sequence is mapped chronologically into DUTY_TABLE).
+    /// Step index into the duty table (0..=7), advanced on each timer underflow.
+    /// The 2A03's sequencer counts DOWN from zero (NESdev wiki "APU Pulse");
+    /// `DUTY_TABLE` lists its outputs in time order, so the index counts up.
     pub(crate) step: u8,
     /// 11-bit timer reload (from `$4002`/`$4003` low+high writes).
     pub(crate) timer_period: u16,
@@ -126,8 +127,8 @@ impl Pulse {
     pub fn clock_timer(&mut self) {
         if self.timer == 0 {
             self.timer = self.timer_period;
-            // 8-step duty sequencer. The hardware down-counter sequence is mapped
-            // chronologically in DUTY_TABLE, so step is incremented here.
+            // 8-step duty sequencer (NESdev wiki). The hardware counter runs
+            // down; `DUTY_TABLE` is in time order, so the index runs up.
             self.step = (self.step + 1) & 0x07;
         } else {
             self.timer -= 1;

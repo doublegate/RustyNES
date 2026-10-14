@@ -4307,7 +4307,8 @@ impl Bus for SystemBus {
     }
 
     fn cycle_count(&self) -> u64 {
-        // Cumulative bus-side cycle counter. Used
+        // Cumulative bus-side cycle counter, including DMC DMA cycles
+        // that the CPU's own `Cpu::cycles` field does not count.  Used
         // by the SH* unstable-store family to detect DMA interrupting
         // their dummy-read cycle per Mesen2's `SyaSxaAxa` algorithm.
         self.cycle
