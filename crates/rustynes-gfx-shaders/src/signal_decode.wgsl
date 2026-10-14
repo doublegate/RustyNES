@@ -147,7 +147,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let row = i32(floor(suv.y * rows));
     // Per-line phase offset gives the 3-phase dot crawl (params.x is the frame
     // videoPhase; the row parity contributes the per-line shift). Wrapped
-    // non-negative for the same edge-consistency reason as `composite_at`.
+    // non-negative for the same edge-consistency reason as `composite_at_packed`'s caller.
     let line_phase = pmod(i32(round(u.params.x)) + row * 8, 12);
 
     // Centre position in absolute sub-samples: 8 per pixel.
