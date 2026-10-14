@@ -1150,6 +1150,96 @@ hardware-option and power-cycle plumbing, and the Header and identity changes
 are the candidates. No release-wide speed-up is claimed beyond the one
 established path.
 
+### v3.2.0 APU — an imported 47% regression, bisected; the import's APU changes adopted without it
+
+An AI-made remediation branch (`codex_sec`, imported in v3.2.0) reshaped the
+APU's hot path in three places: `BlipBuf::add_sample_bounded`, a variant of
+`add_sample` without the `is_finite` / `clamp` (called by the default-config
+mix when the expansion sample is zero); the scatter's ring write, as one
+full-length slice when the 32-tap window does not wrap and two runs only when
+it does; and `FilterChain::process` calling each stage's high- or low-pass
+directly instead of branching on `is_hpf`. Measured with `ab_check.sh
+--package rustynes-apu --target apu_throughput` (the `--package` option was
+added for this; the script could reach only `rustynes-core` benches before)
+against the pre-import tree `c922ed40`:
+
+| candidate | `silent_frame` | `active_frame` | `active_frame_with_external` | order-bias control (silent / active / external) |
+| --- | --- | --- | --- | --- |
+| the import as is | +9.86% | -4.16% | **+47.31%** | -0.67% / +3.12% / +0.53% |
+| one scatter call site (hypothesis A) | -5.02% | -7.32% | **+46.53%** | -1.34% / -3.99% / -1.18% |
+| A + the pre-import ring write, run 1 | +0.20% (p = 0.17) | -1.86% | -2.92% | +0.06% / +0.18% / +1.24% |
+| A + the pre-import ring write, run 2 | -0.20% (p = 0.21) | -2.67% | -6.08% | -0.44% / -0.28% / -1.06% |
+
+**Cause: the reshaped ring write.** The leading hypothesis -- two call sites
+inlining the scatter body twice -- was refuted (row 2: still +46.5%). The
+external workload feeds a sample that changes every cycle, so it scatters on
+almost every cycle and the scatter's codegen dominates it; the one-slice
+variant, though it looks simpler, made it nearly half again slower. Restoring
+the two-run form recovered it entirely. Why that form compiles worse was not
+investigated (no disassembly was taken); the site now records the measurement
+so it is not reshaped again.
+
+**Decision: ADOPTED, without the ring change.** Kept: `add_sample_bounded`, now
+reached through one call site with `BlipBuf::sanitize` choosing the value (so
+`add_sample(v)` is literally `add_sample_bounded(sanitize(v))`, byte-identical),
+and the filter split. Rows 3 and 4 are two independent runs with the same sign
+on every workload and drift below the effect: `active_frame` -1.9% / -2.7%,
+`active_frame_with_external` -2.9% / -6.1%, `silent_frame` unchanged. Which of
+the two kept changes earns which part was not separated. Byte identity: the
+APU suite (174 tests) passes; the full suite is re-run at the cut (3,659 passed, 0
+failed). Logs: gitignored `salvaged/evidence/v3.2.0-perf/ab-apu-*.log`.
+
+### v3.2.0 import — the rest of the branch's speed-ups, measured against the tree it joined
+
+The imported branch's handoff claimed, against the **v3.1.0 tag**, mapper
+reads 11-16% faster, MMC3 run-ahead 12.8% and the PPU 3.5%. A v3.1.0 baseline
+credits the import with everything else v3.2.0 did, so each was re-measured
+against **`c922ed40`, the tree immediately before the import**, with the
+working tree at `00c355a2` as the candidate (its uncommitted changes were
+documentation, scripts, the fuzz crate and version strings, none in a benched
+crate's code).
+`scripts/perf/ab_check.sh`, run through `scripts/perf/quiet_ab.sh` (each start
+at a one-minute load under 1.5), two independent runs per target, taken
+interleaved rather than back to back. Each cell is the candidate's change with
+the order-bias control (the reference against itself) in parentheses.
+
+| workload | run 1 | run 2 | verdict |
+| --- | --- | --- | --- |
+| `mapper_dispatch_cpu_read/MMC3 (4)` | -9.22% (-0.24) | -9.31% (-0.38) | **faster, reproduced** |
+| `mapper_dispatch_cpu_read/MMC5 (5)` | +4.63% (-0.13) | +4.66% (-0.08) | **slower, reproduced** |
+| `mapper_dispatch_cpu_read/FME-7 (69)` | +6.07% (-3.04) | +6.06% (+0.20) | **slower** (run 2 clean; run 1's control drifted) |
+| `mapper_dispatch_cpu_read/NROM (0)` | -2.91% (+0.61) | +0.18%, p = 0.18 (+0.00) | no change (signs differ) |
+| `mapper_dispatch_cpu_read/MMC1 (1)` | -3.59% (-0.65) | -0.39% (-0.31) | no change (run 2 within drift) |
+| `mapper_dispatch_cpu_read/M34 (34)` | -0.01%, p = 0.93 | +0.01%, p = 0.93 | no change |
+| `nes_runahead_budget_mmc3` | -6.67% (-1.19) | -6.03% (-0.74) | **faster, about 5% net, reproduced** |
+| `nes_runahead_budget_flowing_palette` | -1.05% (-0.93) | -1.03% (-0.81) | no change (within drift) |
+| `nes_run_frame_nestest` | -3.02% (-3.16) | -0.23%, p = 0.12 (-0.37) | no change (run 1 is drift) |
+| `nes_run_frame_flowing_palette` | -0.42% (+0.18) | -0.83% (-0.29) | at most ~0.5%; too small to call |
+| `nes_run_frame_nestest_fast` | -2.38% (-2.14) | +0.84% (-0.22) | no change (signs differ) |
+| `nes_run_frame_flowing_palette_fast` | -0.75% (+0.04) | -0.20%, p = 0.12 (+0.23) | no change |
+| `ppu_throughput` | -0.12%, p = 0.73 (-0.86) | +0.42%, p = 0.25 (-0.11) | no change |
+
+**What holds.** The MMC3's cached bank offsets (`prg_offsets` / `chr_offsets`,
+recomputed when a bank register or mode actually changes, and in
+`load_state`) make its read about
+9% faster, and carry through to run-ahead on an MMC3 game at about 5%. Nothing
+else the branch claimed is measurable against this tree: the PPU, the frame
+loop and the NROM and MMC1 reads do not move outside their controls. The
+frame workloads are NROM, so the MMC3 gain is not visible there by
+construction.
+
+**What got slower, unexplained.** MMC5 and FME-7 reads are 4.7% and 6.1%
+slower, reproduced, yet `git diff c922ed40 HEAD` shows neither
+`Mmc5::cpu_read` nor `Fme7::cpu_read` changed: their diffs are an audio
+helper and the new required `ppu_peek`. The bench file is unchanged too. Code
+layout of the trait-object dispatch is a candidate and is **not shown**: no
+disassembly or alignment experiment was run. Neither reaches the frame
+benches (both are absent from them) and the effect on a real MMC5 or FME-7
+frame was not measured. Recorded as `T-PERF-MAPPER-READ-DRIFT` rather than
+reverted, because there is no change on the measured path to revert.
+
+Logs: gitignored `salvaged/evidence/v3.2.0-perf/queue/logs/`.
+
 ### v2.9.9 campaign — the leads, measured (one adopted)
 
 Every row is two `scripts/perf/ab_check.sh` runs on a quiet host. A run starts

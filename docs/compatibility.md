@@ -362,3 +362,96 @@ FE-11, which the v3.1 → v4.0 line plan does not schedule:
 
 - **CRC32 vs. SHA-256 for ROM identification.** We use SHA-256 for save state directory naming (lower collision risk). For ROM compatibility databases, CRC32 is the community standard; we may add it as a secondary key.
 - **Region override.** Some users want to play PAL versions of NTSC games at NTSC speed. Plan: expose a region override in the settings UI; warn that this may break timing-sensitive ROMs.
+
+## Curated evidence from local dumps (D23)
+
+A mapper family whose only evidence is a dump that cannot be redistributed may
+still be **Curated** (ADR 0011) when that dump boots to a correct picture and
+this table records it (maintainer decision D23, v3.2.0 `T-CURATED-EVIDENCE`):
+the title, the SHA-256 of the image after its 16-byte header (the key
+`Nes::rom_sha256` uses), the frames the capture ran, and a committed screenshot.
+The capture is the byte-identity `external_coverage` boot (1,141 frames:
+START tapped five times from frame 240, every 150 frames, then 300 free) unless
+the row names an `external_extended` test; the rows for the families new in
+v3.2.0 (6, 8, 17, 114, 116, 158, 165, 172, 173, 182, 197, 207, 215, 235,
+252) give the frame count of their
+`external_extended` boot test, whose script the title cell notes where it is
+not plain idle. The dumps live in the gitignored
+`tests/roms/external/`; only the hash, the snapshot and the screenshot are
+committed.
+
+| mapper | title | SHA-256 after the header | frames | screenshot |
+| --- | --- | --- | --- | --- |
+| 47 | Super Spike V'Ball + Nintendo World Cup (U) | `8951dccb6640b48c857f321ef01c06110c5b8870f5d901dcc538ab1b8db7e2a1` | 1,141 | `screenshots/external/mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U).png` (the first game's menu) |
+| 47 | the same dump, second game | same | 1,000 (`extended_m47_nintendo_world_cup_block_1`: DOWN at 240, START at 260, 480, 700) | `screenshots/external/mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U) - Nintendo World Cup.png` (its team select, from the second 128 KiB block) |
+| 121 | Ultimate Mortal Kombat 3 (Unl) | `040c7b6497754415172735a6dc9e3d6812cb9caef58a8f49ae48b72bfcc435e6` | 1,141 | `screenshots/external/mapper-121-KashengA9711/Ultimate Mortal Kombat 3 (Unl).png` (a fight) |
+| 154 | Devil Man (Japan) | `d2140fc2e6354a9f4d0154dabac757e5559890edba4885799c1c979d8b7a8b20` | 1,141 | `screenshots/external/mapper-154-Namco3453/Devil Man (Japan).png` (the opening cutscene) |
+| 191 | Mighty Final Fight (J) [T+Chi] | `671f372fa92819d02147cae9072139f1193ebcc22030db3d09c61a768fdaec17` | 1,141 | `screenshots/external/mapper-191-Waixing191/Mighty Final Fight (J) [T+Chi_madcell].png` (a cutscene in its CHR-RAM font) |
+| 243 | Honey Peach (Asia) (Ja) (Unl) | `4342d7b1bbd3b263dfc47e3e3cd51abdf0d98f826a89ec9bc67db35a1c2ad871` | 1,141 | `screenshots/external/mapper-243-SachenSA020A/Honey Peach (Asia) (Ja) (Unl).png` (its play screen: both players, the hand symbols) |
+| 157 | Datach - Battle Rush - Build Up Robot Tournament (Japan) | `cbc404d57879beca0b65b855b19fda9e017e7d8cc716941b52bbea8f8a6ee859` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Battle Rush - Build Up Robot Tournament (Japan).png` |
+| 157 | Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan) | `a1370e7410a98a4a2de19f4872281a065b1d7d7cd7b5f2ba0da70504b4a1d52d` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).png` |
+| 157 | Datach - J.League Super Top Players (Japan) | `a7b1e4693093c8a155747f9023399ebb2537064e788970ecdcccee467108b62e` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - J.League Super Top Players (Japan).png` |
+| 157 | Datach - SD Gundam - Gundam Wars (Japan) | `a6a909d829e3d9ef1a14d002f8ac3c59173420530d467c09fe338b28143f4308` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).png` |
+| 157 | Datach - Ultraman Club - Supokon Fight! (Japan) | `85f0ab77ae56df26e18bf55caafb795ec24712c168912f0963756fe4daa2ef65` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).png` |
+| 157 | Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan) | `acc54496853ce6306589790857b0d56145d8382bd00f5d0f40ecdfa2906ad349` | 1,141 | `screenshots/external/mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).png` |
+| 114 | Aladdin (SuperGame) (Mapper 114) [!] | `5489244538c94653f766bd80f07b2aa684ad139bddea68f40b60a0473c9286e2` | 600 | `screenshots/external/mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].png` |
+| 114.1 | Boogerman (Sugar Softec) (Unl) [!] (GoodNES labels it 215; staged with a NES 2.0 114.1 header) | `ba2d65f240d8f97c7b77973042d8141cf15116ffc3d73caed450c21e08fd54a2` | 600 | `screenshots/external/mapper-114-SuperGame/Boogerman (Sugar Softec) (Unl) [!] (NES 2.0 114.1).png` |
+| 182 (as 114.0) | Super Donkey Kong (Unl) [!] | `67d06173c4b8239d46c84335591216b1adfa38344107405ec88c58327217a361` | 600 | `screenshots/external/mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].png` |
+| 116 | Somari (SOMARI-W) (Unl) [!] (START at 400; screenshot = the f1000 checkpoint, Green Hill Zone act 1 in play) | `f5b2998c853ddb5c495e96ac31e4abfff8f1da8367b9ae074efbcb7fdfee452c` | 1200 | `screenshots/external/mapper-116-SomariW/Somari (SOMARI-W) (Unl) [!].png` |
+| 116 | Kart Fighter (SOMARI-W) (Unl) [!] | `8fd609f49be61a9a82233a175a0a32a3d43c722d31a7a4115380f4b7f1e1615f` | 600 | `screenshots/external/mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].png` |
+| 165 | Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch) (START at 700 and 1101; screenshot = the f2100 checkpoint, the intro text over the sword) | `0d396a7615b2499edd0997628b733236d88b002e364833edaf166e0a1c96ecf9` | 2202 | `screenshots/external/mapper-165-FireEmblemCh/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch).png` |
+| 165 | Fire Emblem Gaiden (Ch) (same script; it holds its title) | `621a4d4ee54524e9e62cce97adcba5b332c06bd1e4174a37455f474e747cd35e` | 2202 | `screenshots/external/mapper-165-FireEmblemCh/Fire Emblem Gaiden (Ch).png` |
+| 197 | Super Fighter III (Unl) [!] (submapper 0, PRG CRC32 `C333F621`) | `dfb4771a36dbcb05a2753a95810a11164665282ccac4cf7ee52d26d2ed6e5e4f` | 600 | `screenshots/external/mapper-197-SuperFighter3/Super Fighter III (Unl) [!].png` |
+| 215 | Mortal Kombat 3 Extra 60 (Unl) [!] (scramble pattern 4) | `19ccf8d3a3fc37b82d403d0668b00f05125bfcf01ad510dfff73e3ac30dad827` | 600 | `screenshots/external/mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].png` |
+| 215 | `2-in-1 Super 808 (Unl) [p1][!]` (scramble pattern 1, menu) | `4211468e61181f0956f10259ba6091ea3fead297e61ba7f22d7daa227463414a` | 600 | `screenshots/external/mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].png` |
+| 172 | 1991 Du Ma Racing (Ch) [!] | `4a2ec0f51526ad9659b0ede758216ea8f7acae7d49faaed5db46b6acc7be6915` | 600 | `screenshots/external/mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].png` |
+| 173 | Xiao Ma Li (Ch) [!] | `103e27a9b2e2c029fee9a221e2ffe35b5b0b4a3e529a4df88fd6d71f21cf56a4` | 600 | `screenshots/external/mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].png` |
+| 158 | Alien Syndrome (USA) (Unl) | `d676ef6f7aa3b042ae5a0c95a7f07fabb4c3a5fccb3767ae1950713e51189a47` | 2400 (attract demo, in play) | `screenshots/external/mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).png` |
+| 207 | Fudou Myouou Den (Japan) (En) (1.0) (translation, 207 header) | `e33482a375923d692bb5ddd3be71dab63de6a786ec311e8dfc32417a19e48fb3` | 3000 (START held at 1900 and 2100; stage 1 in play) | `screenshots/external/mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).png` |
+| 252 | San Guo Zhi (Ch) | `659837c9b4ffbc6089aa191e6fdc238f50c1c2116a04b993381a5022444cb652` | 3800 (START held at 1500-3300, A at 3600; first personality question on the map) | `screenshots/external/mapper-252-WaixingVRC4/San Guo Zhi (Ch).png` |
+| 235 | `260-in-1 [p1][!]` (staged with a NES 2.0 header; body unchanged) | `0c62f12da81c712a8a9d56e808ff8825d824169cfff05eee2a15c7456f3ceb91` | 1600 (RIGHT, A, START; Mr. Mario I phase 1) | `screenshots/external/mapper-235-GoldenGame/260-in-1 [p1][!] - Mr. Mario I.png` |
+| 6 | Ganbare Goemon! - Karakuri Douchuu (J) [hFFE] (trainer) | `d390d04843f7ea5b72203ac001956df1fd57ec62febccdba1bba43f88377c064` | 2600 (START/START/A/START; in play) | `screenshots/external/mapper-006-FFE-MagicCard/Ganbare Goemon! - Karakuri Douchuu (J) [hFFE].png` |
+| 6 | Cosmo Police Galivan (J) `[hFFE][p1]` | `4d90a01e16203511877166c804282316cac65105d687724fe6d3714f1e4dda9c` | 2600 (same script; status screen of area 1) | `screenshots/external/mapper-006-FFE-MagicCard/Cosmo Police Galivan (J) [hFFE][p1].png` |
+| 6 | Wai Wai World (J) [hFFE] (trainer) | `eccd72962bb3da25541dc818757d71afcd9b9b5530326597187d30a9fca61f25` | 3800 (menu answered, RIGHT held; first stage in play) | `screenshots/external/mapper-006-FFE-MagicCard/Wai Wai World (J) [hFFE].png` |
+| 8 | Mermaids of Atlantis (AVE) `[T+Rus_Guyver]` | `909158c6d116ffcff01ac7fb616bc2f46d48a4230af970ffff95631ca0ee5bbb` | 2600 (START/START/A/START; in play, paused) | `screenshots/external/mapper-008-FFE-GNROM/Mermaids of Atlantis - The Riddle of the Magic Bubble (AVE) [T+Rus_Guyver].png` |
+| 17 | Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE] | `1ea190b0e2ac856d6caeca343812d3553621c5120689224e1650463eb8cf764b` | 2600 (START/START/A/START; in play) | `screenshots/external/mapper-017-FFE-SuperMagicCard/Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE].png` |
+| 17 | Juvei Quest (J) [hFFE] (trainer) | `1915b1b02ae9fbd27962065b7482c744ccc5f938198b4fefbed71588b1207e9c` | 2600 (same script; name entry) | `screenshots/external/mapper-017-FFE-SuperMagicCard/Juvei Quest (J) [hFFE].png` |
+| 17 | Dragon Ball Z III - Ressen Jinzou Ningen (J) `[hFFE][p1]` | `1d5e6d3a998d3828659da2cfe4bbba1c664dad6a337314cf65c4125afdf473e6` | 2600 (same script; story text box) | `screenshots/external/mapper-017-FFE-SuperMagicCard/Dragon Ball Z III - Ressen Jinzou Ningen (J) [hFFE][p1].png` |
+
+Mapper 157 notes: the six Hearto 1G1R NES 2.0 dumps (the GoodNES copies carry
+a mapper-16 header). The screenshots are `external_coverage`'s final frame
+(1141 frames of START taps): *Battle Rush*'s factory, *Dragon Ball Z*'s
+tournament desk, *J.League*'s title menu, *SD Gundam Wars*' file menu (four
+empty files), *Ultraman Club*'s first event and *Yu Yu Hakusho*'s tournament
+opening. *Dragon Ball Z* and *SD Gundam Wars* also read scanned barcodes
+(`extended_m157_dbz_karin_room_reads_a_scanned_card`,
+`extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card`; what each code
+became is in `docs/mappers.md`, mapper 157).
+
+**Not evidence, and why:**
+
+- **230** (*22-in-1 (Reset Based)*) boots correctly, *Contra* at power-on and
+  the menu after a console RESET, but stays **BestEffort**. Its page is
+  Disch's notes and does not say which mode the board powers on in or what a
+  reset does to its register, so the model chooses both; a correct boot cannot
+  tell a right choice from a lucky one (the maintainer's ruling for v3.2.0,
+  2026-10-09). The boot stays pinned by its `external_coverage` snapshot (the
+  reset-to-*Sky Destroyer* run; ADR 0011 keeps BestEffort out of the
+  byte-identity oracle files), with screenshots under
+  `screenshots/besteffort/`, and a page or a hardware report that states the two
+  behaviours would make it Curated. The notes-only families whose models needed
+  no unstated behaviour, or whose choices a boot visibly settled (47, 121, 191,
+  165), are Curated on the rows above (ADR 0011, v3.2.0 amendment).
+- **The Sachen titles GoodNES headers as mapper 243** (*Strategist*, *Poker
+  III*, *Chinese Checkers*, *Magic Cubes* and others) are SA-015 games, mapper
+  150 (`nesdev_wiki/INES_Mapper_150.xhtml` lists them; 243's page names *Honey
+  Peach* alone). The two board layouts read the same ASIC's CHR bits at
+  different significance, so a 150 game run as 243 renders correctly only when
+  its CHR fits the bits the two share, and *Poker III* and *Strategist* render
+  garbled. The vendored game database also routes most of these titles to 243.
+  *Poker III* renders garbled under both decodes, so it is an open finding
+  recorded in the v3.2.0 plan, not a routing fix.
+- **290** (*Asder 20-in-1*) booted to a uniform grey frame until v3.2.0 fixed its
+  32 KiB PRG mode; it now starts a game, but the capture shows a top band of
+  scrambled tiles that nobody has compared with hardware (NESdev notes one game
+  on the cart glitches in attract mode on a real console). It stays BestEffort.

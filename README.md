@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v3.1.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.99-orange.svg" alt="Rust: 1.99"></a><br>
-  <a href="#accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(146%2F146)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="docs/mappers.md"><img src="https://img.shields.io/badge/mapper%20families-191-informational.svg" alt="Mapper families"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v3.2.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.99-orange.svg" alt="Rust: 1.99"></a><br>
+  <a href="#accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(146%2F146)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="docs/mappers.md"><img src="https://img.shields.io/badge/mapper%20families-208-informational.svg" alt="Mapper families"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platforms"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS%20%7C%20RetroArch-lightgrey.svg" alt="Platform"></a>
 </p>
 
@@ -21,7 +21,7 @@ sprite-zero hit, a mid-scanline scroll write or an MMC3 IRQ lands on the exact d
 without a per-game patch. It passes **AccuracyCoin 146/146** and matches the
 Nintendulator `nestest` log with **zero diff**.
 
-Around that core sits a complete, modern platform: 191 mapper families, the
+Around that core sits a complete, modern platform: 208 mapper families, the
 Famicom Disk System, Vs. System and PlayChoice-10 arcade boards, rollback
 netplay, RetroAchievements, a TAStudio piano-roll editor, a Mesen2-class
 debugger, HD packs, a shader stack, and native apps for desktop, the browser,
@@ -73,7 +73,7 @@ audience: players, RetroArch, mobile and the Rust crates.
 | | |
 | --- | --- |
 | **Cycle-accurate** | CPU, PPU and APU on one master clock: AccuracyCoin 146/146, `nestest` 0-diff, blargg's CPU, APU and PAL suites |
-| **191 mapper families** | NROM through MMC5, the whole VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company, the MMC3 and MMC1 multicarts, Waixing and Nanjing boards, homebrew flash boards with working saves, and a UNIF (`.unf`) loader. Each is classified Core, Curated or BestEffort by the evidence behind it |
+| **208 mapper families** | NROM through MMC5, the whole VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company, the MMC3 and MMC1 multicarts, Waixing and Nanjing boards, homebrew flash boards with working saves, and a UNIF (`.unf`) loader. Each is classified Core, Curated or BestEffort by the evidence behind it |
 | **Famicom Disk System** | Real-BIOS boot, writable disks, side swapping, a timed disk-head model and 2C33 wavetable audio |
 | **Vs. / PlayChoice-10** | Arcade boards in true 2C03 / 2C04 / 2C05 RGB, per-game DIP presets, and Vs. DualSystem two-screen cabinets |
 | **Rollback netplay** | GGPO-style, up to four players over UDP or browser WebRTC, with room codes, TURN traversal and spectators; peers must match on ROM, emulation options and emulation epoch, so a session cannot silently diverge, and a mismatch is refused with its reason |
@@ -166,7 +166,7 @@ in `crates/rustynes-frontend/web`.
 
 ### Cartridges
 
-- **191 mapper families**, written from the NESdev wiki and pinned by test ROMs,
+- **208 mapper families**, written from the NESdev wiki and pinned by test ROMs,
   unit tests and a commercial-ROM oracle. [`docs/mappers.md`](docs/mappers.md)
   lists every family, its tier and its evidence.
 - **Self-flashing homebrew boards** (GTROM, UNROM 512) emulate their SST39SF040
@@ -280,9 +280,9 @@ and the per-suite detail is in [`docs/STATUS.md`](docs/STATUS.md).
 When a document and a passing test ROM disagree, the ROM wins: that is this
 project's definition of cycle-accurate.
 
-**Mapper tiers.** Of the 191 families, 160 are *accuracy-gated*: 51 Core and 109
+**Mapper tiers.** Of the 208 families, 181 are *accuracy-gated*: 51 Core and 130
 Curated, each backed by a test ROM, a commercial dump, or a precise register
-description with a synthetic fixture. The other 31 are *BestEffort*: their
+description with a synthetic fixture. The other 27 are *BestEffort*: their
 documentation is thin, and a CI gate keeps them out of every accuracy claim.
 
 ---
@@ -326,7 +326,7 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 | Crate | Role |
 | --- | --- |
 | `rustynes-cpu`, `rustynes-ppu`, `rustynes-apu` | The 6502, 2C02 and 2A03 |
-| `rustynes-mappers` | 191 mapper families, expansion audio, the UNIF loader |
+| `rustynes-mappers` | 208 mapper families, expansion audio, the UNIF loader |
 | `rustynes-core` | The bus, scheduler, console and save states |
 | `rustynes-frontend` | The `winit` + `wgpu` + `cpal` + `egui` application (`rustynes`) |
 | `rustynes-netplay` | Rollback netcode over UDP and WebRTC |
@@ -357,7 +357,7 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 
 ## Current release
 
-RustyNES's current release is **v3.1.0 "Bellwether"** (2026-10-08) — the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it. Built on **v3.0.1 "Mortar"** (2026-10-07) — a maintenance release: one game's graphics fixed, the MiSTer core's last MMC3 rule exception tested, Rust 1.99 everywhere, every unanswered bot review answered, and the plan to v4.0.0. Built on **v3.0.0 "Cornerstone"** (2026-10-06) — the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core. Built on **v2.9.9 "Ballast"** (2026-10-04) — the release candidate for v3.0.0: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it. Built on **v2.9.8 "Vanguard"** (2026-10-02) — the preparation release for v3.0.0: v3.0.0's breaking changes landed early (a save identity that ignores the header, old states and movies refused, movies and netplay that record the machine, the API removals), every staged game was booted and the defects found were fixed, and the game database's corrections reach every platform. Built on **v2.9.7 "Tandem"** (2026-09-30) — the desktop's features on the web and on phones, the release binaries built with every native feature, and a PPU A12 fix found by real games: Acclaim's MC-ACC games, the J.Y. ASIC and mapper 91 now count at their documented rates. Built on **v2.9.6 "Roster"** (2026-09-30) — seventeen mapper families written from their NESdev pages (174 → 191), GTROM promoted to Curated with a modelled flash chip whose saves persist, mapper 4's NES 2.0 submappers corrected (MMC6, NEC, MC-ACC, T9552), and the local commercial suites re-baselined after drifting unread since about v2.0.0.
+RustyNES's current release is **v3.2.0 "Confluence"** (2026-10-14) — every v3.2.0 branch in both repositories brought into one release: 17 mapper families (208 in all), the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core. Built on **v3.1.0 "Bellwether"** (2026-10-08) — the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it. Built on **v3.0.1 "Mortar"** (2026-10-07) — a maintenance release: one game's graphics fixed, the MiSTer core's last MMC3 rule exception tested, Rust 1.99 everywhere, every unanswered bot review answered, and the plan to v4.0.0. Built on **v3.0.0 "Cornerstone"** (2026-10-06) — the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core. Built on **v2.9.9 "Ballast"** (2026-10-04) — the release candidate for v3.0.0: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it. Built on **v2.9.8 "Vanguard"** (2026-10-02) — the preparation release for v3.0.0: v3.0.0's breaking changes landed early (a save identity that ignores the header, old states and movies refused, movies and netplay that record the machine, the API removals), every staged game was booted and the defects found were fixed, and the game database's corrections reach every platform. Built on **v2.9.7 "Tandem"** (2026-09-30) — the desktop's features on the web and on phones, the release binaries built with every native feature, and a PPU A12 fix found by real games: Acclaim's MC-ACC games, the J.Y. ASIC and mapper 91 now count at their documented rates. Built on **v2.9.6 "Roster"** (2026-09-30) — seventeen mapper families written from their NESdev pages (174 → 191), GTROM promoted to Curated with a modelled flash chip whose saves persist, mapper 4's NES 2.0 submappers corrected (MMC6, NEC, MC-ACC, T9552), and the local commercial suites re-baselined after drifting unread since about v2.0.0.
 
 **v3.0.0 is the API major** ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
 It gathers every breaking change since v2.x, most of them made early in v2.9.8 and

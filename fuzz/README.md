@@ -27,6 +27,7 @@ threads through `rustc`. Install with `rustup toolchain install nightly`.
 | `netplay_message` | `NetMessage::from_bytes` + `SignalMessage::parse` | **untrusted network input** — binary UDP + JSON signaling/lobby parsers |
 | `save_state` | `parse_header` + `Nes::extract_thumbnail` + `restore_quiet` | untrusted `.rns` file: header + section length prefixes |
 | `movie` | `Movie::deserialize` | untrusted `.rnm` file: header, embedded `.rns` start-point, per-frame stream |
+| `movie_import` | `import_fm2` / `import_bk2` / `import_fcm` / `import_fmv` / `import_vmv` | untrusted foreign movies; the first byte selects the importer (v3.2.0) |
 
 The v2.2.0 targets cover the remaining untrusted-input boundaries: the two
 CPU-facing chip register files, the netplay network parsers (highest value —

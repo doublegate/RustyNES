@@ -32,3 +32,22 @@ this tree is markdownlint-exempt like `ref-docs/`.
 | File | Scope |
 |---|---|
 | [`v2.0.0-research-master-clock.md`](v2.0.0-research-master-clock.md) | The one-clock + every-cycle-bus-access collapse, residual closure (R1–R5), Vs.DualSystem, breaking-API/save-state surface, perf re-baseline |
+
+## v3.1.0 → v4.0.0 — the line-plan surveys
+
+The three read-only surveys
+[`../v3.1-to-v4.0-line-plan.md`](../v3.1-to-v4.0-line-plan.md) was drafted from
+(2026-10-06/07, against `release/v3.0.1`). They lived only in session scratch
+until v3.2.0 promoted them, because the plan carries their conclusions but not
+their per-item evidence: of the 86 item ids in the oracle backlog's tables, 25
+appeared nowhere else in `docs/`, `to-dos/`, `ROADMAP.md`, `VERSION-PLAN.md` or
+`CHANGELOG.md` when they were promoted (2026-10-14). **Statuses are as of 2026-10-06**; an item may since have
+shipped under a ticket name (PROV-01 became T-NTSC-PROVENANCE). Unlike the dives
+above, no reference-emulator source was consulted for these; the oracle survey
+records the one incidental contact under PROV-02.
+
+| File | Scope |
+|---|---|
+| [`v3.1-line-survey-oracle-backlog.md`](v3.1-line-survey-oracle-backlog.md) | every open, deferred or proposed oracle item, with status, size, blocker and what it breaks |
+| [`v3.1-line-survey-mister-backlog.md`](v3.1-line-survey-mister-backlog.md) | the same for the MiSTer sibling after v3.0.1 |
+| [`v3.1-line-survey-ecosystem.md`](v3.1-line-survey-ecosystem.md) | the outside ecosystem to about 2027-10 (Android and iOS distribution rules, MiSTer submission, libretro), every claim source-labelled |
