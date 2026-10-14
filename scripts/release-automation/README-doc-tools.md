@@ -70,3 +70,26 @@ corrected in the PR #349 review rather than left standing.
 
 `reflow.py` — stdlib-only and fully testable — has real coverage in
 `test_reflow.py`.
+
+## Release-cut helpers promoted from `salvaged/` (2026-10-14)
+
+Two tools that had lived only in the gitignored `salvaged/tools/` and in session
+scratch, used at every release cut since v3.0.1 and promoted at v3.2.0 so the
+next cut does not have to rebuild them.
+
+| script | needs | what it does |
+| --- | --- | --- |
+| `run_gates.sh` | the repo's toolchain, `cargo-deny`, the wasm32 and thumbv7em targets | Runs every Rust gate `.github/workflows/ci.yml` runs, one cargo job at a time, and prints one PASS / FAIL / SKIP line per gate with a log per gate. `--only <regex>` selects gates, `--no-roms` skips the ROM suites. The commercial suite is SKIP, never PASS, when no dumps are staged. |
+| `branch_contained.py` | stdlib only | Before deleting a squash-merged branch or a worktree: checks that every line the branch added (committed from the merge base, plus a worktree's uncommitted lines and untracked files) is on `main`. Exit 1 lists what is missing. |
+
+`run_gates.sh` is a transcription, so it drifts: when `ci.yml` gains a gate, add
+it there in the same change. Its value is the feature combinations: most of its
+gates name a feature set, target or crate that an everyday
+`cargo clippy --workspace` or `cargo test --workspace` never builds.
+
+`branch_contained.py` replaces a `wtcheck.py` that checked only a worktree's
+uncommitted lines, which would have passed a branch with unmerged commits. Its
+line test is a heuristic: a line moved to another file reads as missing (safe),
+so read every MISSING line before deleting. Tested against a synthetic squash
+merge: 0 missing after the merge, and 1 missing line plus 1 untracked file once
+an unmerged commit and a stray file were added.
