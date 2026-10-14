@@ -19,10 +19,14 @@
 #       headed by the load at the start and the end, goes to LOG_DIR/LABEL.log.
 #
 #   quiet_ab.sh queue FILE
-#       Pop lines `LABEL BASE [args...]` from FILE one at a time and `run` each,
-#       until FILE is empty or its first line is STOP. Lines may be appended
-#       while it runs; `#` lines and blank lines are skipped. Each finished line
-#       is appended to FILE.done.
+#       `run` the lines `LABEL BASE [args...]` of FILE in order, until the next
+#       one is missing or starts with STOP; `#` lines and blank lines are
+#       skipped. FILE is APPEND-ONLY: it is never rewritten, so lines may be
+#       appended while it runs (`echo ... >> FILE`) and none is ever lost.
+#       Progress is a count of entries taken, in FILE.pos; each finished entry
+#       is appended to FILE.done with its exit status, and the queue exits 1 if
+#       any entry failed. One process per queue (FILE.lock); a second refuses.
+#       To re-run a queue from the top, delete FILE.pos.
 #
 #   quiet_ab.sh heavy CMD [args...]
 #       Wait until no measurement holds MEASURING, then hold BUSY while CMD runs,
@@ -94,44 +98,46 @@ case "${1:-}" in
   queue)
     q="${2:-}"
     [ -f "$q" ] || { echo "usage: quiet_ab.sh queue FILE (FILE must exist)" >&2; exit 2; }
+    # ONE processor per queue, for the whole run. The benchmark lock orders
+    # measurements against heavy jobs; it never protected choosing an entry
+    # or recording a result, so two queue processes could take the same one
+    # (CodeRabbit on #604).
+    exec 8>> "$q.lock"
+    flock -n 8 || { echo "quiet_ab.sh: $q is already being processed (holder of $q.lock)" >&2; exit 2; }
     if [ -e "$q.inprogress" ]; then
       echo "quiet_ab.sh: $q.inprogress names a run that was interrupted: $(cat "$q.inprogress")" >&2
       echo "quiet_ab.sh: re-queue it if it is still wanted, then delete the marker" >&2
       exit 2
     fi
     trap 'rm -f "$measuring"' EXIT
+    failed=0
     while :; do
-      line=$(grep -v '^[[:space:]]*$' "$q" | grep -v '^#' | head -1)
+      # FILE is never rewritten. The first version removed each entry by
+      # rewriting the file, which lost a line appended between the read and
+      # the write, and its fixed `FILE.tmp` name could be a planted symlink
+      # (CodeRabbit on #604). Progress is a count instead, and an append can
+      # only ever add entries.
+      pos=$(cat "$q.pos" 2>/dev/null || echo 0)
+      case "$pos" in ''|*[!0-9]*) echo "quiet_ab.sh: $q.pos is not a count: '$pos'" >&2; exit 2 ;; esac
+      line=$(grep -v '^[[:space:]]*$' "$q" | grep -v '^[[:space:]]*#' | sed -n "$((pos + 1))p")
       if [ -z "$line" ] || [[ "$line" == STOP* ]]; then echo "queue empty"; break; fi
-      # An interrupted run is a void measurement: the marker says which one,
-      # so it is re-queued deliberately rather than silently lost. It is
-      # written, and checked, BEFORE the entry leaves the queue: the other
-      # order lost the entry to an interruption between the two steps
-      # (CodeRabbit on #605). Interrupted after the marker and before the
-      # removal, the entry is in both places, and the refusal above names it.
+      # The marker is written, and checked, BEFORE the count moves: interrupted
+      # in between, the entry is still pending AND named by the marker, and the
+      # refusal above stops a silent re-run (CodeRabbit on #605).
       echo "$line" > "$q.inprogress" || { echo "quiet_ab.sh: cannot write $q.inprogress" >&2; exit 2; }
-      # Remove exactly that first occurrence, so lines appended meanwhile stay.
-      # Written to a temporary file and renamed over the queue, because
-      # truncating the queue in place and then dying loses every entry.
-      if ! python3 - "$q" "$line" <<'PY'
-import os, sys
-path, line = sys.argv[1], sys.argv[2]
-lines = open(path).read().splitlines()
-lines.remove(line)
-tmp = path + ".tmp"
-with open(tmp, "w") as f:
-    f.write("\n".join(lines) + ("\n" if lines else ""))
-os.replace(tmp, path)
-PY
-      then
-        echo "quiet_ab.sh: could not remove '$line' from $q; it stays queued" >&2
-        rm -f "$q.inprogress"
+      # A unique file made by mktemp (O_EXCL, so never an existing name or a
+      # symlink), renamed over the count.
+      tmp=""
+      if ! { tmp=$(mktemp "$q.pos.XXXXXX") && echo "$((pos + 1))" > "$tmp" && mv -f "$tmp" "$q.pos"; }; then
+        echo "quiet_ab.sh: could not advance $q.pos; '$line' stays pending" >&2
+        rm -f "$tmp" "$q.inprogress"
         exit 2
       fi
       # `line` holds LABEL BASE and flags, which must word-split.
       # shellcheck disable=SC2086
       run_one $line
       rc=$?
+      [ "$rc" -eq 0 ] || failed=1
       # The marker goes only once the result is recorded: if the append
       # fails, the marker is the one remaining record of the run.
       if echo "$line rc=$rc" >> "$q.done"; then
@@ -140,7 +146,10 @@ PY
         echo "quiet_ab.sh: could not record '$line rc=$rc' in $q.done; $q.inprogress kept" >&2
         exit 2
       fi
-    done ;;
+    done
+    # A queue that drained after a failed benchmark used to exit 0
+    # (Codex, then CodeRabbit on #604); FILE.done says which one failed.
+    [ "$failed" -eq 0 ] || { echo "quiet_ab.sh: at least one queued run failed; see $q.done" >&2; exit 1; } ;;
   heavy)
     shift
     [ $# -ge 1 ] || { echo "usage: quiet_ab.sh heavy CMD [args...]" >&2; exit 2; }
