@@ -1148,12 +1148,23 @@ fn run_frames_with_optional_press(
 /// Refused with `--press-start` rather than combined with it: no recipe needs
 /// both, and an unexercised combination is a place a golden goes quietly wrong.
 fn run_frames_capturing_each(o: &mut Oracle, args: &Args, base: &Path) -> u64 {
+    use std::io::Write as _;
     // `injection_error` has refused `--press-start` with this flag already.
+    //
+    // STREAMED, one frame at a time, through a buffered writer. The first
+    // version collected every frame in a Vec and wrote it at the end, so memory
+    // grew with `--frames` (about 120 KiB a frame: a 20,000-frame capture held
+    // 2.4 GB) and a run that was killed for it left no artifact at all
+    // (CodeRabbit on #604). Memory is now one frame's worth whatever the run
+    // length, and the file's bytes are the same: frames in order, each pixel a
+    // little-endian u16, nothing between them.
+    let path = suffixed(base, "index_fb_frames.bin");
+    let fail = |e: std::io::Error| -> ! { panic!("write {}: {e}", path.display()) };
+    let file = std::fs::File::create(&path).unwrap_or_else(|e| fail(e));
+    let mut out = std::io::BufWriter::new(file);
+    let mut frame = Vec::with_capacity(INDEX_FB_LEN * 2);
     let mut calls = 0u64;
-    // Reserve for at most 600 frames (about 70 MiB) up front; `frames` comes
-    // from the command line, and a reservation sized by it alone could abort
-    // on a typo before a single frame ran. The Vec grows past this if asked.
-    let mut bytes = Vec::with_capacity(INDEX_FB_LEN * 2 * (args.frames as usize).min(600));
+    let mut written = 0u64;
     for _ in 0..args.frames {
         calls += o.advance_frames(1);
         let fb = o.nes().index_framebuffer();
@@ -1162,11 +1173,19 @@ fn run_frames_capturing_each(o: &mut Oracle, args: &Args, base: &Path) -> u64 {
             INDEX_FB_LEN,
             "unexpected index framebuffer length"
         );
+        frame.clear();
         for px in fb {
-            bytes.extend_from_slice(&px.to_le_bytes());
+            frame.extend_from_slice(&px.to_le_bytes());
         }
+        out.write_all(&frame).unwrap_or_else(|e| fail(e));
+        written += frame.len() as u64;
     }
-    write(&suffixed(base, "index_fb_frames.bin"), &bytes);
+    // `into_inner` flushes and reports a failed final flush, which dropping a
+    // BufWriter would swallow; `sync_all` is not needed, `write` does not sync.
+    out.into_inner()
+        .map_err(std::io::IntoInnerError::into_error)
+        .unwrap_or_else(|e| fail(e));
+    println!("  wrote {} ({written} bytes)", path.display());
     calls
 }
 
