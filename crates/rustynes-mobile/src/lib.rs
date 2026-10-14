@@ -1786,6 +1786,16 @@ impl NesController {
         })?;
         nes.set_rom_identity(pristine);
         let mut g = self.lock();
+        // Replacing the console mid-movie or mid-session would desynchronise
+        // it, as a Reset or a state load would, so the same NF-18 rule applies
+        // (`CodeRabbit` on #604 and #605). Both hosts call this right after
+        // building the controller, before either can exist; this guards the
+        // public API, not a path the apps take today.
+        if let Some(why) = timeline_refusal(&g) {
+            return Err(MobileError::RomLoad {
+                reason: format!("saved disk boot refused: {why}"),
+            });
+        }
         // Install it only over the disk it was read for: a different game
         // loaded while the lock was released must not be replaced.
         if *g.nes.rom_sha256() != pristine {
@@ -1794,6 +1804,10 @@ impl NesController {
             });
         }
         g.nes = nes;
+        // A whole new console: nothing a contained panic or a coin pulse left
+        // behind applies to it (as after a state load).
+        g.frozen = false;
+        g.coin_frames = 0;
         drop(g);
         Ok(())
     }
@@ -4328,6 +4342,30 @@ mod tests {
             "a cartridge refuses it"
         );
         assert_eq!(cart.rom_identity(), before, "and keeps running");
+    }
+
+    /// While a movie owns the timeline the saved disk is refused, as a Reset
+    /// or a state load is (NF-18): replacing the console would desynchronise
+    /// the recording (`CodeRabbit` on #604 and #605).
+    #[test]
+    fn a_saved_disk_is_refused_while_a_movie_records() {
+        let ctrl = NesController::new_with_fds_bios(
+            synthetic_fds_disk(1),
+            Some(synthetic_fds_bios()),
+            DEFAULT_SAMPLE_RATE,
+        )
+        .expect("disk loads");
+        let mut saved = ctrl.disk_image_bytes();
+        let last = saved.len() - 1;
+        saved[last] ^= 0x5A;
+        ctrl.movie_record_from_here();
+        assert!(ctrl.movie_is_recording());
+        let before = ctrl.disk_image_bytes();
+        assert!(
+            ctrl.boot_saved_disk(saved).is_err(),
+            "refused under a movie"
+        );
+        assert_eq!(ctrl.disk_image_bytes(), before, "the running disk is kept");
     }
 
     /// Plan item 6: the BIOS set on a controller persists across `load_rom`,

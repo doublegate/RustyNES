@@ -345,6 +345,14 @@ final class AppModel: ObservableObject {
             // everything, the save file included. On any failure the pristine disk
             // stays loaded. Before the battery and the auto-resume state, which are
             // newer.
+            //
+            // The OUTGOING game's disk is flushed first: reopening the running FDS
+            // game used to boot the file before its newest writes reached it, and
+            // the flush that followed was then overwritten by the new core's first
+            // disk write (CodeRabbit on #605). `currentEntry` and `emulator` are
+            // still the outgoing game's here (both change below), so the flush
+            // keys and reads the outgoing disk, as it did when it ran later.
+            flushBatteryNow()
             AppModel.bootSavedDiskIfAny(core, sha: entry.sha)
             core.isMuted = muted
             // v2.9.2 (AUD-14): pace the gamepad turbo pulse by emulated frames.
@@ -352,9 +360,9 @@ final class AppModel: ObservableObject {
             // touches no main-actor state of this model.
             let pads = gamepads
             core.onFrameWillRun = { [weak pads] in pads?.advanceTurboFrame() }
-            // v2.7.4 (MOB-05): the outgoing game's final battery write, then the
-            // incoming game's `.sav`, loaded before its first frame.
-            flushBatteryNow()
+            // v2.7.4 (MOB-05): the outgoing game's final battery write (done above,
+            // with its disk), then the incoming game's `.sav`, loaded before its
+            // first frame.
             let batteryNotice = attachBattery(core: core, sha: entry.sha)
             // Tear any prior session's connectivity state down before freeing its core
             // (RA persists per-game progress; netplay ends on a ROM swap).
@@ -951,18 +959,29 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Write the running disk if the game changed it, atomically. The dirty flag
-    /// is cleared only after the write lands, so a failure is retried by the
-    /// next flush.
+    /// Disks whose last write failed: flushed again even though now clean.
+    private var fdsRetry: Set<String> = []
+
+    /// Write the running disk if the game changed it, atomically.
+    ///
+    /// The dirty flag is cleared BEFORE the image is copied: the three bridge
+    /// calls are separately locked and the emulation thread keeps running, so
+    /// clearing after the write discarded a disk write that landed in between
+    /// (Cursor on #605, for Android; the same shape here). A write after the
+    /// clear sets the flag again; a failed file write is retried via `fdsRetry`.
     private func flushFdsDiskIfDirty() {
-        guard let core = emulator, let sha = currentEntry?.sha, core.diskIsDirty else { return }
+        guard let core = emulator, let sha = currentEntry?.sha else { return }
+        guard core.diskIsDirty || fdsRetry.contains(sha) else { return }
+        core.clearDiskDirty()
+        let bytes = core.diskImageBytes()
         let url = AppModel.fdsSaveUrl(forSha: sha)
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try core.diskImageBytes().write(to: url, options: .atomic)
-            core.clearDiskDirty()
+            try bytes.write(to: url, options: .atomic)
+            fdsRetry.remove(sha)
         } catch {
+            fdsRetry.insert(sha)
             NSLog("RustyNES: FDS disk save failed: \(error)")
         }
     }
@@ -1013,10 +1032,10 @@ final class AppModel: ObservableObject {
     /// is a few KiB, so it runs synchronously within the task rather than handing
     /// a mutable task id across threads.
     private func flushBatteryInBackground() {
-        if emulator?.diskIsDirty == true {
+        if emulator?.diskIsDirty == true || !fdsRetry.isEmpty {
             let task = BackgroundTask(name: "RustyNES FDS save")
+            defer { task.end() }
             flushFdsDiskIfDirty()
-            task.end()
         }
         guard let saver = battery, let core = emulator else { return }
         let task = BackgroundTask(name: "RustyNES battery save")

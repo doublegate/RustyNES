@@ -781,13 +781,26 @@ internal object FdsSaves {
         }.onFailure { android.util.Log.w("RustyNES", "saved FDS disk not used", it) }
     }
 
+    /** Disks whose last write failed: flushed again even though now clean. */
+    private val retry = mutableSetOf<String>()
+
     /**
      * Write the disk if the game changed it, atomically ([android.util.AtomicFile]:
-     * a crash mid-write keeps the previous file). The dirty flag is cleared only
-     * after the write lands, so a failure is retried by the next flush.
+     * a crash mid-write keeps the previous file).
+     *
+     * The dirty flag is cleared BEFORE the image is copied. `diskIsDirty`,
+     * `diskImageBytes` and `clearDiskDirty` are three separately locked bridge
+     * calls, and the game loop keeps running between them (into `onStop`, and
+     * in picture-in-picture), so clearing after the write discarded any disk
+     * write that landed between the copy and the clear (Cursor on #605). A write
+     * after the clear sets the flag again and is caught by the next flush; a
+     * failed file write is remembered in [retry] and flushed again. Synchronized
+     * because the game loop's periodic flush and the lifecycle flush both call it.
      */
+    @Synchronized
     fun flushIfDirty(context: Context, ctrl: NesController, sha: String) {
-        if (!ctrl.diskIsDirty()) return
+        if (!ctrl.diskIsDirty() && sha !in retry) return
+        ctrl.clearDiskDirty()
         val bytes = ctrl.diskImageBytes()
         runCatching {
             val f = file(context, sha)
@@ -801,8 +814,11 @@ internal object FdsSaves {
                 atomic.failWrite(out)
                 throw e
             }
-            ctrl.clearDiskDirty()
-        }.onFailure { android.util.Log.w("RustyNES", "FDS disk save failed", it) }
+            retry.remove(sha)
+        }.onFailure {
+            retry.add(sha)
+            android.util.Log.w("RustyNES", "FDS disk save failed", it)
+        }
     }
 }
 
@@ -2824,6 +2840,8 @@ private fun EmulatorScreen(
         // v2.7.4 (AND-09): the battery save is compared once a second (60 frames)
         // and written on a change, on Dispatchers.IO so the loop never waits on disk.
         var batteryFrame = 0
+        // v3.2.0: an FDS game's disk is checked on the same once-a-second cadence.
+        var fdsFrame = 0
         // v2.7.4: host warnings are drained on the same low cadence (see below).
         var warnFrame = 0
         // v1.8.8 "Atlas" (Workstream E): accumulate frames run with fast-forward
@@ -2872,6 +2890,19 @@ private fun EmulatorScreen(
                                     saver.end()
                                 }
                             }
+                        }
+                    }
+                    // v3.2.0: an FDS disk was written only from the lifecycle flush
+                    // (onPause/onStop, a ROM switch), so a process killed in the
+                    // background lost every disk write since the last one; the
+                    // desktop flushes it every frame (Cursor on #605). Once a
+                    // second, like the battery above; flushIfDirty is synchronized
+                    // and clears the flag first, so a write during it is kept.
+                    val fdsSha = emulator.romSha
+                    if (fdsSha != null && ++fdsFrame >= 60) {
+                        fdsFrame = 0
+                        if (ctrl.diskIsDirty()) {
+                            launch(Dispatchers.IO) { FdsSaves.flushIfDirty(context, ctrl, fdsSha) }
                         }
                     }
                     // Advance the turbo/autofire pulse once per emulated frame, then push
