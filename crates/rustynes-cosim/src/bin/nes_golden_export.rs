@@ -103,6 +103,22 @@ struct Args {
     /// v3.2.0 (item 8) -- the input devices and cheat codes attached for the
     /// whole run. See [`DeviceArgs`].
     devices: DeviceArgs,
+    /// v3.2.0 — `--sprite-limit-off`: run with the v3.1.0 "Disable
+    /// 8-sprite-per-scanline limit" option ON (`Nes::set_sprite_limit_disabled`).
+    ///
+    /// The `MiSTer` core gains the same option (its FB-16), and the only way to
+    /// check a display option is to export the oracle's picture with it set.
+    /// It is render-only (`docs/ppu-2c02.md`), so every CPU-visible artifact of
+    /// such a run must be byte-identical to the same run without it; only the
+    /// framebuffer differs. Recorded in the manifest when set (as
+    /// `sprite_limit_off = true`), so a golden says which picture it is.
+    sprite_limit_off: bool,
+    /// v3.2.0 — `--fb-every-frame`: also write `<stem>.index_fb_frames.bin`,
+    /// the index framebuffer after EACH frame of the run, concatenated
+    /// (frames x 256 x 240 LE `u16`). The single `index_fb.bin` is the last
+    /// frame only, so a display option that is right on the last frame and
+    /// wrong on the others would pass a one-frame gate.
+    fb_every_frame: bool,
 }
 
 /// v3.2.0 (item 8): the STIMULUS the `RustyNES_MiSTer` input and cheat gates
@@ -249,11 +265,18 @@ fn apply_devices(o: &mut Oracle, d: &DeviceArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate the device request, then attach it, or exit with the reason.
+/// Validate the device request, then attach it, or exit with the reason; and
+/// set `--sprite-limit-off`.
 ///
 /// One call in `main`, which sits at the pedantic line limit, for the same
-/// reason [`arm_traces`] is one call.
+/// reason [`arm_traces`] is one call. Both run before the first cycle. The
+/// sprite option is configuration, carried across a power cycle, and
+/// render-only, so setting it here changes the picture and nothing else (no
+/// work RAM byte, no bus cycle).
 fn attach_devices(o: &mut Oracle, args: &Args) {
+    if args.sprite_limit_off {
+        o.nes_mut().set_sprite_limit_disabled(true);
+    }
     if let Some(why) = device_error(args) {
         eprintln!("{why}");
         usage();
@@ -324,7 +347,7 @@ fn usage() -> ! {
          \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
          \x20                       [--inject-nmi-at N] [--inject-irq-at N]\n\
-         \x20                       [--press-start A:B]\n\
+         \x20                       [--press-start A:B] [--sprite-limit-off] [--fb-every-frame]\n\
          \x20                       [--four-score P1:P2:P3:P4] [--vaus POS:FIRE]\n\
          \x20                       [--genie CODE]...\n\
          \x20                       [--ppu-state-trace CAP --pst-frames A:B\n\
@@ -384,6 +407,7 @@ fn parse_args() -> Args {
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
     let mut press_start: Option<(u64, u64)> = None;
     let mut devices = DeviceArgs::default();
+    let (mut sprite_limit_off, mut fb_every_frame) = (false, false);
 
     let mut i = 0;
     // Every value-taking arm below advances `i` by TWO, not one: this loop has
@@ -525,6 +549,15 @@ fn parse_args() -> Args {
                 devices.genie.push(need(i).clone());
                 i += 2;
             }
+            // The two flags that take no value advance `i` by ONE.
+            "--sprite-limit-off" => {
+                sprite_limit_off = true;
+                i += 1;
+            }
+            "--fb-every-frame" => {
+                fb_every_frame = true;
+                i += 1;
+            }
             "--checkpoint-interval" => {
                 checkpoint_interval = need(i).parse().unwrap_or_else(|_| usage());
                 if checkpoint_interval == 0 {
@@ -571,6 +604,8 @@ fn parse_args() -> Args {
         inject_irq_at,
         inject_hold,
         devices,
+        sprite_limit_off,
+        fb_every_frame,
     }
 }
 
@@ -1090,6 +1125,36 @@ fn run_frames_with_optional_press(
     calls
 }
 
+/// Advance the run one frame at a time, writing the index framebuffer after
+/// each frame to `<base>.index_fb_frames.bin` (v3.2.0, `--fb-every-frame`).
+///
+/// The same `run_frame()` calls `advance_frames(total)` would make, split at
+/// each frame boundary, so the run and every other artifact are unchanged.
+/// Refused with `--press-start` rather than combined with it: no recipe needs
+/// both, and an unexercised combination is a place a golden goes quietly wrong.
+fn run_frames_capturing_each(o: &mut Oracle, args: &Args, base: &Path) -> u64 {
+    if args.press_start.is_some() {
+        eprintln!("--fb-every-frame is not supported together with --press-start");
+        usage();
+    }
+    let mut calls = 0u64;
+    let mut bytes = Vec::with_capacity(INDEX_FB_LEN * 2 * args.frames as usize);
+    for _ in 0..args.frames {
+        calls += o.advance_frames(1);
+        let fb = o.nes().index_framebuffer();
+        assert_eq!(
+            fb.len(),
+            INDEX_FB_LEN,
+            "unexpected index framebuffer length"
+        );
+        for px in fb {
+            bytes.extend_from_slice(&px.to_le_bytes());
+        }
+    }
+    write(&suffixed(base, "index_fb_frames.bin"), &bytes);
+    calls
+}
+
 fn main() {
     let args = parse_args();
     let rom =
@@ -1137,6 +1202,8 @@ fn main() {
             args.inject_irq_at,
             args.inject_hold,
         )
+    } else if args.fb_every_frame {
+        run_frames_capturing_each(&mut o, &args, &args.out.join(&stem))
     } else {
         run_frames_with_optional_press(&mut o, u64::from(args.frames), args.press_start)
     };
@@ -1212,7 +1279,8 @@ fn main() {
          ram_len      = {}\n\
          ckpt_interval= {}\n\
          ckpt_count   = {}\n\
-         obs_count    = {}\n",
+         obs_count    = {}\n\
+         {}",
         args.rom.display(),
         sha256_hex(&rom),
         args.seed,
@@ -1224,6 +1292,14 @@ fn main() {
         args.checkpoint_interval,
         checkpoint_count,
         observable_count,
+        // Written only when set, as the device lines are, so every manifest
+        // from a run without the option stays byte-identical to the
+        // exporter before it; `RustyNES_MiSTer`'s Makefile looks for `true`.
+        if args.sprite_limit_off {
+            "sprite_limit_off = true\n"
+        } else {
+            ""
+        },
     );
     write(&suffixed(&base, "manifest.txt"), manifest.as_bytes());
     println!("done; {cycles} CPU cycles simulated");
@@ -1293,6 +1369,8 @@ mod tests {
             inject_irq_at: None,
             inject_hold: 1,
             devices: super::DeviceArgs::default(),
+            sprite_limit_off: false,
+            fb_every_frame: false,
         };
 
         let mut args = base();
@@ -1445,6 +1523,8 @@ mod device_tests {
             inject_irq_at: None,
             inject_hold: 1,
             devices,
+            sprite_limit_off: false,
+            fb_every_frame: false,
         }
     }
 
