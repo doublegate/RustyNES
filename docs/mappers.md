@@ -1012,14 +1012,15 @@ BestEffort families to Curated: each has a **cleanly-booting** staged
 commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
 GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in
 `external_extended.rs` (ADR 0011), taking accuracy-gated coverage from 60 → 146.
-The remaining **26** BestEffort families have no cleanly-booting redistributable
-dump — the 16 NES 2.0 high-id boards
+The remaining **27** BestEffort families (`tier.rs`, `BEST_EFFORT_IDS`) stay
+register-decode and save-state unit-tested only — the 16 NES 2.0 high-id boards
 (268/286/289/290/299/301/303/305/306/312/320/336/348/349/366/513, which GoodNES
 v3.23b's iNES-1.0 headers cannot encode); 8 boards with no matching cart
-(29/39/81/104/174/179/238/261); and 2 boards whose only dump jams at boot
-(50 SMB2j FDS-conversion, and 111, whose "Ninja Ryukenden" dump turned out at
-v2.9.6 to be a different board; GTROM itself is now Curated) — and stay register-decode
-and save-state unit-tested only. To keep that long tail from silently rotting,
+(29/39/81/104/174/179/238/261); 50, whose only dump (the SMB2j FDS-conversion)
+jams at boot; and 2 notes-only boards whose unstated choices were never tested
+against an alternative (194, and 230 since v3.2.0). 111 left the list at v2.9.6
+(its "Ninja Ryukenden" dump turned out to be a different board; GTROM is
+Curated). To keep that long tail from silently rotting,
 the **v2.1.0 "Fathom" F3.1 CI boot-smoke sweep**
 (`crates/rustynes-test-harness/tests/v21_best_effort_sweep.rs`) exercises the
 full parse -> construct -> dispatch -> run-loop integration for **every**

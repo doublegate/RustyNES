@@ -34,6 +34,12 @@ cycle-accurate core later replaced.
   from 3 to 4: the mapper 290, 24C02, VRC4 IRQ, VRC2 and *Fire Hawk* fixes
   below change what the bus sees. A v3.1.x peer or movie is refused as another emulator
   version, naming its epoch. Save states are not affected by the epoch.
+- **v3.1.x save states of Bandai FCG games are refused** (mappers 16, 153,
+  157 and 159). Their state now carries each serial EEPROM's protocol
+  position as well as its contents, so a state taken in the middle of a
+  save-chip transaction resumes it; before, a restore left the chip idle,
+  and rewind, run-ahead and netplay rollback could diverge from a straight
+  run. Every other board's save states are unchanged.
 - **Netplay protocol 8 (`"RNE8"`).** Lost inputs are resent as one datagram
   per run of frames instead of one per frame. A v3.1.x peer cannot read that
   message, so its `"RNE7"` is refused as another emulator version (its epoch
@@ -183,7 +189,12 @@ cycle-accurate core later replaced.
   its disk are saved when the app is backgrounded, a game is switched or closed,
   and the saved disk boots next time under the original game's identity, so its
   save states, RetroAchievements progress and settings are still found. Before,
-  a disk game's own save was lost on close. (The iOS half is not yet compiled.)
+  a disk game's own save was lost on close. On Android the disk is also checked
+  once a second during play, so a process killed in the background keeps the
+  last second's writes; on both, a disk write landing while the save is being
+  written is no longer lost, and on iOS reopening the running disk game no
+  longer boots the save from before its newest writes. (The iOS half is not
+  yet compiled locally.)
 - **The Android screen stays on during play** and sleeps again when paused or
   closed; with a gamepad it used to dim and sleep mid-game.
 - **Mapper 290 (*Asder 20-in-1*) boots.** Its 32 KiB PRG mode read the
@@ -210,6 +221,23 @@ cycle-accurate core later replaced.
   register at the first write there, as nesdev's mapper 71 page recommends
   without a submapper. Before, only an NES 2.0 submapper 1 header enabled it,
   and the `$9000` write selected a PRG bank instead.
+- **A peer timeout no longer runs a stray frame.** The netplay tick that ends
+  a session on a silent peer told the frontend the session was inactive, so it
+  ran one single-player frame on the failure tick.
+- **A Datach barcode scan starts a fresh rewind and clip history**, as a Reset
+  does: a movie does not record the scan, so a clip spanning it could not
+  replay. The barcode window also closes when a game without a reader loads.
+- **New save files are mode `0o600` exactly**, also under a umask that masks
+  owner bits (they were created `0o600 & ~umask`).
+- **Save-state loads refuse a corrupt blob before changing anything** on the
+  Datach barcode reader (an impossible scan length), the FFE Super Magic Card
+  (an out-of-range FDS IRQ phase), mapper 116 (an MMC1 part refused after the
+  MMC3 part had been restored) and mappers 16/153/157/159 (an unknown
+  mirroring byte). A TXC 172 image with a four-screen header keeps its
+  mirroring across a save and load; it came back horizontal.
+- **Mapper 252 refuses an image without CHR-ROM** (the board is CHR-ROM with
+  two CHR-RAM pages), and the FFE card refuses a trainer shorter than 512
+  bytes instead of panicking.
 
 ## [3.1.0] - 2026-10-08 - "Bellwether" (the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it)
 

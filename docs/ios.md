@@ -425,9 +425,10 @@ movies and Lua are refused on a cabinet. **From v3.2.0 FDS disk writes persist**
 paths, and the next load boots it through `bootSavedDisk`, which keeps the
 pristine disk's identity. The Swift half is not yet compiled (no macOS in that
 change); the Rust bridge and the Android half are tested. Settings >
-Controls also gains **Cancel opposite directions** (default on). **All of this
-Swift compiles** (the iOS workflow's Simulator build, most recently run
-37242884341 on `c0b04195`) **and none of it has run on a device**; the checks are
+Controls also gains **Cancel opposite directions** (default on). **The Swift
+from v2.9.7 compiles** (the iOS workflow's Simulator build, run 37242884341 on
+`c0b04195`, which predates the v3.2.0 FDS persistence) **and none of it has run
+on a device**; the checks are
 rows T5-T7, T10 and T12 of `docs/mobile-v2.9.3-run-sheet.md`.
 
 **The game database's load-time corrections (v2.9.8).** The shared bridge now
