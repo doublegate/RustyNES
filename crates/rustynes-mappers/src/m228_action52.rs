@@ -147,6 +147,11 @@ impl Mapper for Action52M228 {
         self.data = 0;
     }
 
+    fn may_unmap_prg_rom(&self) -> bool {
+        // The three-chip image's chip 2 is absent: `$8000-$FFFF` floats.
+        true
+    }
+
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         match addr {
             0x4020..=0x7FFF => true,
@@ -178,6 +183,15 @@ impl Mapper for Action52M228 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[self.chr_bank() * CHR_BANK_8K + usize::from(addr)],
+            0x2000..=0x3EFF => self.vram[self.nt_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr[self.chr_bank() * CHR_BANK_8K + usize::from(addr)],

@@ -132,9 +132,59 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // GTROM (111), promoted from BestEffort once the board matched its
         // page (register window, bonus RAM, self-flashing) and a CC0 fixture
         // pinned it. None has a redistributable commercial ROM.
-        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 163 | 192 | 195 | 228 | 249 => {
+        //
+        // v3.2.0 adds 157, the Datach Joint ROM System, written from
+        // `INES_Mapper_157` (an LZ93D50 variant in m016) with the barcode
+        // reader in `datach_barcode.rs`. Curated on the D23 record: six
+        // staged dumps boot to their title screens and three accept a
+        // scanned code (`docs/compatibility.md`).
+        12 | 37 | 45 | 74 | 83 | 91 | 105 | 111 | 153 | 157 | 163 | 192 | 195 | 228 | 249
+        // --- v3.2.0 D23 promotions (`T-CURATED-EVIDENCE`): a local dump counts
+        // as Curated evidence when the record names the title, its hash, the
+        // frames and a committed screenshot (`docs/compatibility.md`, "Curated
+        // evidence from local dumps"). Each boots to a correct picture in the
+        // byte-identity coverage harness:
+        //   47: Super Spike V'Ball's menu, AND (`extended_m47_...`) Nintendo
+        //       World Cup's team select, reached through the block register
+        //       its page says is writable only with PRG-RAM enabled;
+        //   121: Ultimate Mortal Kombat 3 in a fight, four other titles;
+        //   154: Devil Man (Japan), its opening cutscene;
+        //   191: Mighty Final Fight's cutscene with its CHR-RAM font;
+        //   243: Honey Peach, the one game NESdev lists for the SA-020A (the
+        //       Sachen titles GoodNES headers as 243 are SA-015 games, mapper
+        //       150, and are not evidence for this board).
+        // The v2.9.6 rule capped a page of only Disch's notes, or of masks
+        // marked "probably", at BestEffort. The maintainer's ruling for
+        // v3.2.0 (2026-10-09): such a family is Curated on a D23 record when
+        // every behaviour its page leaves unstated was either not needed or
+        // settled by the dump's boot visibly rejecting the alternative (47,
+        // 121, 191; 165 below, whose three choices the screens settled).
+        // Where the model chose an unstated behaviour no boot tested against
+        // an alternative, a correct boot cannot tell a right choice from a
+        // lucky one, and the family stays BestEffort (230, below). ADR 0011's
+        // v3.2.0 amendment.
+        | 47 | 121 | 154 | 191 | 243 => {
             Some(MapperTier::Curated)
         }
+
+        // --- v3.2.0: MMC3-derived boards written from their NESdev pages
+        // (`mmc3_boards_ext.rs`), each Curated on a D23 record in
+        // `docs/compatibility.md`: a local dump that boots to its title, named
+        // by title and `Nes::rom_sha256`, pinned by a boot snapshot in
+        // `external_extended.rs` and a committed screenshot. 182 is a
+        // duplicate of 114 (the 114 page) and shares its model; 116 (SOMARI-P,
+        // three simulated chips) is in `m116_somari.rs`. A separate arm
+        // so each release's batch keeps its own rationale beside its ids.
+        #[allow(clippy::match_same_arms)]
+        114 | 116 | 165 | 182 | 197 | 215 => Some(MapperTier::Curated),
+
+        // --- v3.2.0: families written from a NESdev page with exact register
+        // masks, each also booted on a local dump recorded with its title,
+        // header-excluded hash, frames and a committed screenshot (D23,
+        // `docs/compatibility.md`). A separate arm so each release's batch
+        // reads as one list; the bodies match on purpose.
+        #[allow(clippy::match_same_arms)]
+        6 | 8 | 17 | 158 | 172 | 173 | 207 | 235 | 252 => Some(MapperTier::Curated),
 
         // --- Tier 2 / BestEffort: the 26 reference-ported long-tail families
         // that lack a *cleanly-booting* redistributable ROM dump (so they cannot
@@ -156,14 +206,21 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // database, which is what routes `Devil Man` from its m88 header to 154
         // and the Sachen 74LS374N set from m150 to 243. Their dumps are staged
         // but not redistributable, so neither can be honestly oracle-gated.
-        29 | 39 | 50 | 81 | 104 | 154 | 174 | 179 | 238 | 243 | 261 | 268 | 286 | 289 | 290
-        | 299 | 301 | 303 | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513 => {
+        // v3.2.0: both moved to Curated under D23 (above).
+        29 | 39 | 50 | 81 | 104 | 174 | 179 | 238 | 261 | 268 | 286 | 289 | 290 | 299 | 301
+        | 303 | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513
+        // --- v2.9.6 "Roster" BestEffort: pages that give only Disch's notes
+        // (194; 47 and 191 until v3.2.0) or register masks marked "probably"
+        // (121 until v3.2.0).
+        | 194
+        // --- v3.2.0 BestEffort: 230 (reset-switched 22-in-1). Its page is
+        // Disch's notes and does not say which mode the board powers on in
+        // or what a console reset does to its register; the model chooses
+        // both, so its correct boot is not Curated evidence (maintainer's
+        // ruling, 2026-10-09; see the D23 arm above).
+        | 230 => {
             Some(MapperTier::BestEffort)
         }
-
-        // --- v2.9.6 "Roster" BestEffort: pages that give only Disch's notes
-        // (47, 191, 194) or register masks marked "probably" (121).
-        47 | 121 | 191 | 194 => Some(MapperTier::BestEffort),
 
         _ => None,
     }
@@ -192,15 +249,11 @@ mod tests {
 
     /// 154 and 243 landed in v2.3.4 and must be classified, or `parse` supports
     /// a mapper the tier table does not know -- the invariant this module exists
-    /// to hold.
+    /// to hold. `BestEffort` until v3.2.0, `Curated` since (D23).
     #[test]
-    fn v234_additions_are_classified_best_effort() {
+    fn v234_additions_are_classified() {
         for id in [154u16, 243] {
-            assert_eq!(
-                mapper_tier(id, 0),
-                Some(MapperTier::BestEffort),
-                "mapper {id}"
-            );
+            assert_eq!(mapper_tier(id, 0), Some(MapperTier::Curated), "mapper {id}");
         }
     }
 
@@ -243,6 +296,11 @@ mod tests {
         225, 226, 227, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 250, 253,
         // v2.9.6 "Roster".
         12, 37, 45, 74, 83, 91, 105, 111, 153, 163, 192, 195, 228, 249,
+        // v3.2.0: the Datach (new), the D23 promotions, and the new boards in
+        // `mmc3_boards_ext.rs` / `m116_somari.rs`.
+        157, 47, 121, 154, 191, 243, 114, 116, 165, 182, 197, 215,
+        // v3.2.0: FFE, TXC, Tengen, Taito, Waixing and two multicarts.
+        6, 8, 17, 158, 172, 173, 207, 235, 252,
     ];
 
     #[test]
@@ -268,8 +326,9 @@ mod tests {
     /// NTDEC/TXC/BMC multicart batch (193/204/221/299).
     const BEST_EFFORT_IDS: &[u16] = &[
         29, 39, 50, 81, 104, 174, 179, 238, 261, 268, 286, 289, 290, 299, 301, 303, 305, 306, 312,
-        320, 336, 348, 349, 366, 513, // v2.9.6 "Roster":
-        47, 121, 191, 194,
+        320, 336, 348, 349, 366, 513, // v2.9.6 "Roster" (47, 121, 191 Curated since v3.2.0):
+        194, // v3.2.0: notes-only with chosen behaviour.
+        230,
     ];
 
     #[test]

@@ -46,7 +46,9 @@ use alloc::{boxed::Box, string::ToString};
 mod a12_filter;
 mod bmc_simple;
 mod cartridge;
+mod datach_barcode;
 mod fds;
+mod ffe_super_magic_card;
 mod header;
 mod homebrew_boards;
 mod jaleco_discrete;
@@ -110,6 +112,7 @@ mod m099_vs_system;
 mod m105_nes_event;
 mod m107_magic_dragon107;
 mod m113_ave_nina006;
+mod m116_somari;
 mod m118_txsrom;
 mod m119_tqrom;
 mod m132_txc_22211;
@@ -118,6 +121,7 @@ mod m151_konami_vs;
 mod m152_bandai152;
 mod m156_daou156;
 mod m163_nanjing;
+mod m172_m173_txc;
 mod m176_bmc_fk23c;
 mod m177_hengedianzi;
 mod m179_hengedianzi;
@@ -126,16 +130,20 @@ mod m184_sunsoft1;
 mod m185_cnrom185;
 mod m210_namco175;
 mod m228_action52;
+mod m230_reset_multicart;
 mod m232_camerica_bf9096;
+mod m235_golden_game;
 mod m240_cne_multicart;
 mod m241_bxrom241;
 mod m244_cne_decathlon;
 mod m246_fong_shen_bang246;
 mod m250_nitra250;
+mod m252_waixing_vrc4;
 mod m268_bmc_coolboy;
 mod m513_sachen_9602;
 mod mapper;
 mod mmc3_boards;
+mod mmc3_boards_ext;
 mod mmc3_clones;
 mod multicart_discrete;
 mod nsf;
@@ -150,10 +158,15 @@ mod waixing;
 
 pub use bmc_simple::{new_m164, new_m261, new_m286, new_m289, new_m320, new_m336, new_m349};
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
+pub use datach_barcode::{
+    Barcode, BarcodeError, BarcodeReader, DARK_LEVEL as BARCODE_DARK_LEVEL,
+    MODULE_CYCLES as BARCODE_MODULE_CYCLES, QUIET_MODULES as BARCODE_QUIET_MODULES,
+};
 pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
+pub use ffe_super_magic_card::{FfeBoard, SuperMagicCard};
 pub use header::{
     ExpansionDevice, ExtendedConsoleType, Header, VsHardwareType, parse_header,
     serialize_header_preserving,
@@ -220,6 +233,7 @@ pub use m099_vs_system::VsSystem;
 pub use m105_nes_event::{NWC_TOURNAMENT_DIP, NesEvent105};
 pub use m107_magic_dragon107::MagicDragon107;
 pub use m113_ave_nina006::Nina006M113;
+pub use m116_somari::Somari116;
 pub use m118_txsrom::TxSrom;
 pub use m119_tqrom::Tqrom;
 pub use m132_txc_22211::Txc132;
@@ -228,6 +242,7 @@ pub use m151_konami_vs::KonamiVs;
 pub use m152_bandai152::Bandai152;
 pub use m156_daou156::Daou156;
 pub use m163_nanjing::Nanjing163;
+pub use m172_m173_txc::{Txc172, Txc173};
 pub use m176_bmc_fk23c::new_m176;
 pub use m177_hengedianzi::Hengedianzi177;
 pub use m179_hengedianzi::Hengedianzi179;
@@ -236,12 +251,15 @@ pub use m184_sunsoft1::Sunsoft1;
 pub use m185_cnrom185::CnRom185;
 pub use m210_namco175::{Namco175, Namco175Board};
 pub use m228_action52::Action52M228;
+pub use m230_reset_multicart::ResetMulticart230;
 pub use m232_camerica_bf9096::Camerica232;
+pub use m235_golden_game::GoldenGame235;
 pub use m240_cne_multicart::Cne240;
 pub use m241_bxrom241::Bxrom241;
 pub use m244_cne_decathlon::Decathlon244;
 pub use m246_fong_shen_bang246::FongShenBang246;
 pub use m250_nitra250::Nitra250;
+pub use m252_waixing_vrc4::Waixing252;
 pub use m268_bmc_coolboy::new_m268;
 pub use m513_sachen_9602::new_m513;
 pub use mapper::{
@@ -249,6 +267,7 @@ pub use mapper::{
     mirroring_name,
 };
 pub use mmc3_boards::{Board as Mmc3BoardKind, Mmc3Board};
+pub use mmc3_boards_ext::{ExtBoard as Mmc3ExtBoardKind, Mmc3BoardExt};
 pub use mmc3_clones::{
     Mmc3CloneMapper, new_m44, new_m49, new_m52, new_m115, new_m134, new_m189, new_m205, new_m238,
     new_m245, new_m348, new_m366,
@@ -297,6 +316,26 @@ fn mmc3_board(
     };
     Ok(Box::new(
         Mmc3Board::new(kind, prg_rom, chr_rom, h.mirroring, wram, chr_ram)
+            .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+    ))
+}
+
+/// Build one of the v3.2.0 MMC3 boards (`mmc3_boards_ext.rs`). Work RAM is
+/// taken only from a NES 2.0 header, for the reason given on [`mmc3_board`]:
+/// iNES 1.0 reports a nominal 8 KiB for every image.
+fn mmc3_ext(
+    kind: Mmc3ExtBoardKind,
+    prg_rom: Box<[u8]>,
+    chr_rom: Box<[u8]>,
+    h: &Header,
+) -> Result<Box<dyn Mapper>, RomError> {
+    let wram = if h.is_nes2 {
+        h.prg_ram_window() as usize
+    } else {
+        0
+    };
+    Ok(Box::new(
+        Mmc3BoardExt::new(kind, prg_rom, chr_rom, h.mirroring, wram)
             .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
     ))
 }
@@ -360,13 +399,19 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
 
     let mut cursor = header::HEADER_LEN;
     if h.has_trainer {
-        if bytes.len() < cursor + header::TRAINER_LEN {
+        let next = cursor
+            .checked_add(header::TRAINER_LEN)
+            .ok_or(RomError::Truncated {
+                needed: usize::MAX,
+                got: bytes.len(),
+            })?;
+        if bytes.len() < next {
             return Err(RomError::Truncated {
-                needed: cursor + header::TRAINER_LEN,
+                needed: next,
                 got: bytes.len(),
             });
         }
-        cursor += header::TRAINER_LEN;
+        cursor = next;
     }
 
     if bytes.len() < cursor + h.prg_size {
@@ -588,17 +633,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // We dispatch by (mapper, submapper) pair.  Default mapping below
         // is conservative; refer to nesdev wiki for the full table.
         21 | 23 | 25 => {
-            // Mapper 21 -> VRC4 only (a/c).
-            // Mapper 22 -> VRC2a (no submapper).
-            // Mapper 23 -> VRC2b/VRC4e/VRC4f.
-            // Mapper 25 -> VRC2c/VRC4b/VRC4d.
-            // We model VRC4 with CPU-cycle IRQ as the superset; submapper
-            // selects pin-decoder variant.  Banking matches between VRC2
-            // and VRC4; the difference is mostly the IRQ counter which
-            // VRC2 lacks (we just leave it idle).
-            let m021_vrc4 = Vrc4::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
-            Box::new(m021_vrc4)
+            if (h.mapper_id == 23 || h.mapper_id == 25) && h.submapper == 3 {
+                let vrc2 = Vrc2::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
+                    .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                Box::new(vrc2)
+            } else {
+                let m021_vrc4 = Vrc4::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
+                    .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                Box::new(m021_vrc4)
+            }
         }
         22 => {
             let vrc2 = Vrc2::new(prg_rom, chr_rom, 22, h.submapper, h.mirroring)
@@ -631,11 +674,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Box::new(fme7)
         }
         71 => {
-            // Some Camerica boards (BF9097) have $9000 mirroring control
-            // (subm 1).  Default off.
+            // Fire Hawk's BF9097 has $9000 single-screen control: NES 2.0
+            // submapper 1 has it from power-on; submapper 0 (every iNES 1.0
+            // image included) detects it at the first $9000 write, per the
+            // NESdev page's compatibility advice; other submappers keep the
+            // header mirroring.
             let has_single_screen = h.is_nes2 && h.submapper == 1;
             let cam = Camerica::new(prg_rom, h.mirroring, has_single_screen)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?
+                .with_single_screen_detection(h.submapper == 0);
             Box::new(cam)
         }
         75 => {
@@ -670,6 +717,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // v2.9.6: Bandai LZ93D50 with 8 KiB WRAM and an outer PRG bank
             // (`INES_Mapper_153.md`).
             let fcg = BandaiFcg::new(prg_rom, chr_rom, h.mirroring, FcgVariant::Lz93d50Wram)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+            Box::new(fcg)
+        }
+        157 => {
+            // v3.2.0: the Datach Joint ROM System (`INES_Mapper_157`). The
+            // NES 2.0 PRG-NVRAM field declares only the game cartridge's own
+            // X24C01 (byte 10 `$10`, *Battle Rush*); the main unit's 24C02 is
+            // always present and not counted there.
+            let fcg = BandaiFcg::new_datach(prg_rom, chr_rom, h.mirroring, h.prg_nvram_size > 0)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
             Box::new(fcg)
         }
@@ -1377,6 +1433,41 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         192 => mmc3_board(Mmc3BoardKind::M192, prg_rom, chr_rom, &h)?,
         194 => mmc3_board(Mmc3BoardKind::M194, prg_rom, chr_rom, &h)?,
         195 => mmc3_board(Mmc3BoardKind::M195, prg_rom, chr_rom, &h)?,
+        // v3.2.0: the SuperGame / Hosenkan scramblers (`mmc3_boards_ext.rs`).
+        // 182 is a duplicate of 114 (`INES_Mapper_114.md`, "Similar
+        // Mappers"; the 182 page is a redirect), so it takes submapper 0.
+        114 => mmc3_ext(
+            Mmc3ExtBoardKind::M114 {
+                sub1: h.submapper == 1,
+            },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
+        182 => mmc3_ext(Mmc3ExtBoardKind::M114 { sub1: false }, prg_rom, chr_rom, &h)?,
+        // MMC3 with 2 / 4 KiB CHR granularity; the submapper is the wiring.
+        197 => mmc3_ext(
+            Mmc3ExtBoardKind::M197 { sub: h.submapper },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
+        // SOMARI-P (Huang-1 / Huang-2): VRC2 / MMC3 / MMC1 by a supervisor.
+        116 => Box::new(
+            Somari116::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // MMC3 + MMC2-style CHR latches and a 4 KiB CHR-RAM page.
+        165 => mmc3_ext(Mmc3ExtBoardKind::M165, prg_rom, chr_rom, &h)?,
+        // Sugar Softec UNL-8237 (215.0) / UNL-8237A (215.1).
+        215 => mmc3_ext(
+            Mmc3ExtBoardKind::M215 {
+                sub1: h.submapper == 1,
+            },
+            prg_rom,
+            chr_rom,
+            &h,
+        )?,
         44 => Box::new(
             new_m44(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
@@ -1567,6 +1658,76 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             new_m299(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // --- v3.2.0: boards written from their NESdev pages (no
+        // reference-emulator source read). Tiers and evidence in `tier.rs`
+        // and `docs/mappers.md`.
+        //
+        // 172 / 173: TXC / Idea-Tek protection-chip boards
+        // (`m172_m173_txc.rs`). 172 controls its own mirroring; 173's is
+        // hard-wired, so the header's is passed for both as the power-on value.
+        172 => Box::new(
+            Txc172::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        173 => Box::new(
+            Txc173::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 158: Tengen 800037 (*Alien Syndrome*), a RAMBO-1 whose CHR A17
+        // drives CIRAM A10 per nametable (`m064_rambo1.rs`, `Rambo1::new_m158`).
+        158 => Box::new(
+            Rambo1::new_m158(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 207: Taito X1-005 with CHR A17 on CIRAM A10 (*Fudou Myouou Den*;
+        // `m080_taito_x1_005.rs`, `TaitoX1005::new_m207`).
+        207 => Box::new(
+            TaitoX1005::new_m207(prg_rom, chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 252: Waixing VRC4e clone with CHR-RAM pages 6 and 7 (*San Guo Zhi*;
+        // `m252_waixing_vrc4.rs`).
+        252 => Box::new(
+            Waixing252::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 230: the reset-switched 22-in-1 (Contra + multicart); the console
+        // RESET toggles the chip (`m230_reset_multicart.rs`).
+        230 => Box::new(
+            ResetMulticart230::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 235: the "Golden Game" address-latch multicart with four 1 MiB
+        // sockets (`m235_golden_game.rs`).
+        235 => Box::new(
+            GoldenGame235::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // 6 / 8 / 17: games extracted from FFE Magic Card / Super Magic Card
+        // disks, run on a model of the card (`ffe_super_magic_card.rs`). The
+        // iNES number and submapper pick only the card's initial registers;
+        // the Doctor-format trainer, which `parse` otherwise skips, is handed
+        // to the card to load and call.
+        6 | 8 | 17 => {
+            let trainer = h
+                .has_trainer
+                .then(|| &bytes[header::HEADER_LEN..header::HEADER_LEN + header::TRAINER_LEN]);
+            let board = match h.mapper_id {
+                8 => FfeBoard::MagicCard(4),
+                6 => FfeBoard::MagicCard(if h.is_nes2 { h.submapper & 0x07 } else { 1 }),
+                _ => FfeBoard::SuperMagicCard(if h.is_nes2 { h.submapper & 0x03 } else { 0 }),
+            };
+            Box::new(
+                SuperMagicCard::new(
+                    board,
+                    &prg_rom,
+                    &chr_rom,
+                    trainer,
+                    h.mirroring == Mirroring::Vertical,
+                )
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+            )
+        }
         other => return Err(RomError::UnsupportedMapper(other)),
     };
 

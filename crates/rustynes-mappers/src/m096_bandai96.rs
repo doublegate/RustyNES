@@ -157,6 +157,15 @@ impl Mapper for Bandai96 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let masked = addr & 0x3FFF;
+        match masked {
+            0x0000..=0x1FFF => self.chr[self.chr_offset(masked)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(masked, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let masked = addr & 0x3FFF;
         if (self.last_ppu_addr & 0x3000) != 0x2000 && (masked & 0x3000) == 0x2000 {

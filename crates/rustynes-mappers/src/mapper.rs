@@ -57,7 +57,7 @@ pub struct BgSplitState {
 /// Mappers override [`Mapper::debug_info`] to surface their banking
 /// registers and any IRQ-counter state. Fields are pre-formatted strings
 /// so the UI doesn't have to know the protocol of each mapper.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MapperDebugInfo {
     /// Mapper id (e.g. `4` for MMC3).
     pub mapper_id: u16,
@@ -252,6 +252,25 @@ pub trait Mapper: Send {
         }
     }
 
+    /// Whether [`Self::cpu_read_unmapped`] can ever return `true` for an
+    /// address in `$8000-$FFFF`, on this board, in any state.
+    ///
+    /// Almost every cartridge drives the bus across the whole PRG-ROM window,
+    /// so the bus skips the per-read [`Self::cpu_read_unmapped`] call there
+    /// for every board that leaves this `false` -- PRG-ROM fetches are the
+    /// hottest reads in the machine. A board that can leave part of
+    /// `$8000-$FFFF` undriven (an absent chip, an empty socket) returns
+    /// `true`, and the bus then asks on every read as before. Today that is
+    /// *Action 52* (228) and the Golden Game multicart (235). A board that
+    /// wraps another must forward this along with `cpu_read_unmapped`.
+    ///
+    /// Read once when the bus takes the mapper, so it must not depend on
+    /// runtime state. Debug builds check the contract on every PRG read. The
+    /// default is `false`. Added in v3.2.0.
+    fn may_unmap_prg_rom(&self) -> bool {
+        false
+    }
+
     /// A CPU read the mapper declined ([`Self::cpu_read_unmapped`]) has just
     /// completed, and `value` is what floated on the bus.
     ///
@@ -306,6 +325,22 @@ pub trait Mapper: Send {
     /// Read a byte from the PPU address space `$0000-$3FFF` (pattern table
     /// + nametable mirror window). Used as the BG-side / generic fetch path.
     fn ppu_read(&mut self, addr: u16) -> u8;
+
+    /// Read a PPU byte (`$0000-$3FFF`) without side effects, for the
+    /// debugger and other inspection.
+    ///
+    /// It must return exactly the byte [`Self::ppu_read`] would return at
+    /// `addr` in the current state, and change nothing: a CHR latch the read
+    /// would flip is resolved as flipped but not stored, an IRQ counter a
+    /// read would clock is not clocked. `SystemBus::debug_peek_ppu` relies on
+    /// it for every board (until v3.2.0 it called `ppu_read` inside a save /
+    /// restore), and `ppu_peek_matches_a_side_effect_free_ppu_read` checks it
+    /// for every mapper.
+    ///
+    /// Required, with no default: a default `0` (as first written in v3.2.0)
+    /// would make a board that forgot it show a blank pattern table in the
+    /// debugger with no other symptom.
+    fn ppu_peek(&self, addr: u16) -> u8;
 
     /// Read a byte from the PPU pattern-table window (`$0000-$1FFF`) on
     /// behalf of a *sprite* tile fetch. MMC5 in 8x16 sprite mode uses a
@@ -459,8 +494,10 @@ pub trait Mapper: Send {
     /// on a console. The boards that clear something are documented per page:
     /// mapper 37's outer latch (`INES_Mapper_037.md`), mapper 45's outer
     /// registers, NES-EVENT's PRG lock (mapper 105), the 76-in-1 BMC's two
-    /// registers (mapper 226, since v2.9.8), and Action 52's register
-    /// (mapper 228). Added in v2.9.6; a power cycle rebuilds the mapper
+    /// registers (mapper 226, since v2.9.8), Action 52's register
+    /// (mapper 228), the 22-in-1's chip toggle (mapper 230, v3.2.0, where
+    /// RESET is the mode switch), and the Golden Game multicart's register
+    /// (mapper 235, v3.2.0). Added in v2.9.6; a power cycle rebuilds the mapper
     /// instead and never calls this.
     fn reset(&mut self) {}
 
@@ -703,6 +740,28 @@ pub trait Mapper: Send {
         self.save_data_mut().fill(0);
     }
 
+    /// Whether [`Self::save_data`] may have changed since the last
+    /// [`Self::clear_save_data_dirty`] (or since the board was built).
+    ///
+    /// `None` -- the default -- means "not tracked": the battery writer then
+    /// compares the bytes, as it always has. A board that returns `Some` lets
+    /// the writer SKIP that comparison while it reports `Some(false)`
+    /// (`BatteryPolicy::differs`), which matters for the two self-flashable
+    /// boards whose save data is the whole multi-hundred-KiB PRG image. So
+    /// `Some(false)` is a promise: every path that can change the save data
+    /// -- a program write, [`Self::save_data_mut`], [`Self::clear_save_data`]
+    /// and [`Self::load_state`] -- must set the flag, or a change is never
+    /// saved. Added in v3.2.0.
+    fn is_save_data_dirty(&self) -> Option<bool> {
+        None
+    }
+
+    /// Mark the save data clean (see [`Self::is_save_data_dirty`]). Nothing in
+    /// the shipped frontends calls it yet, so a tracked board stays dirty after
+    /// its first change and the comparison resumes; it is the hook a writer
+    /// would call after a save it knows to be current. Default: nothing.
+    fn clear_save_data_dirty(&mut self) {}
+
     /// Start recording the diagnostic FDS read-stream trace (off by default;
     /// observation-only). No-op for non-FDS mappers. See [`crate::FdsTraceRec`].
     fn enable_fds_trace(&mut self) {}
@@ -753,6 +812,27 @@ pub trait Mapper: Send {
     /// caller knows to re-run the reset that re-vectors into the driver's
     /// `init`). Default no-op returning `false`.
     fn nsf_set_song(&mut self, _song: u8) -> bool {
+        false
+    }
+
+    /// Whether this cartridge has a barcode reader the player can scan
+    /// with. Only the Datach Joint ROM System (mapper 157) does. Default
+    /// `false`. Added in v3.2.0.
+    fn has_barcode_reader(&self) -> bool {
+        false
+    }
+
+    /// Present `code` to the barcode reader, as if a card were swiped past
+    /// it, starting on the next CPU cycle and replacing any scan in flight.
+    /// Returns `false` (and does nothing) on a board without a reader. The
+    /// stream is timed in CPU cycles and saved with the mapper state; see
+    /// `datach_barcode.rs`. Added in v3.2.0.
+    fn scan_barcode(&mut self, _code: &crate::Barcode) -> bool {
+        false
+    }
+
+    /// Whether a barcode scan is still being presented. Default `false`.
+    fn barcode_scan_in_progress(&self) -> bool {
         false
     }
 
@@ -878,9 +958,117 @@ mod caps_tests {
         assert!(checked > 150, "only {checked} boards were checked");
         assert_eq!(
             impure,
-            vec![9, 10, 35, 90, 96, 163, 209, 211],
+            // v3.2.0: 165 (MMC3 + MMC2-style CHR latches).
+            vec![9, 10, 35, 90, 96, 163, 165, 209, 211],
             "the impure set moved"
         );
+    }
+
+    /// v3.2.0: the bus skips `cpu_read_unmapped` in `$8000-$FFFF` for every
+    /// board that does not declare `may_unmap_prg_rom`, so a board that can
+    /// float that window and does not declare it would silently read ROM.
+    /// Every parsable mapper number is driven through a spread of register
+    /// writes, and after each one the window is asked; an undeclared `true`
+    /// fails. The declared set is pinned too, so adding a board to it is a
+    /// visible change. Each number is tried with CHR-ROM and again with
+    /// CHR-RAM, since some boards (235 among them) refuse one or the other.
+    #[test]
+    fn only_declared_boards_unmap_prg_rom() {
+        fn chr_ram_rom(id: u8) -> Vec<u8> {
+            let mut rom = synth_rom(id);
+            rom[5] = 0; // no CHR-ROM: CHR-RAM
+            rom.truncate(16 + 32 * 1024);
+            rom
+        }
+        let mut declared = Vec::new();
+        let mut checked = 0usize;
+        for id in 0u8..=255 {
+            for rom in [synth_rom(id), chr_ram_rom(id)] {
+                let Ok((_cart, mut mapper)) = parse(&rom) else {
+                    continue;
+                };
+                if mapper.may_unmap_prg_rom() {
+                    if !declared.contains(&id) {
+                        declared.push(id);
+                    }
+                    continue;
+                }
+                for page in (0x8000u16..=0xFF00).step_by(0x100) {
+                    for value in [0x00u8, 0x5A, 0xFF] {
+                        mapper.cpu_write(page, value);
+                        for addr in [0x8000u16, 0xA000, 0xC000, 0xE000, 0xFFFC] {
+                            assert!(
+                                !mapper.cpu_read_unmapped(addr),
+                                "mapper {id} floats ${addr:04X} after writing ${value:02X} \
+                                 to ${page:04X} but does not declare may_unmap_prg_rom"
+                            );
+                        }
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 150, "only {checked} boards were checked");
+        assert_eq!(declared, vec![228, 235], "the declared set moved");
+    }
+
+    /// v3.2.0: `ppu_peek` returns exactly the byte `ppu_read` would, without
+    /// its side effects. The debugger's PPU view (`SystemBus::debug_peek_ppu`)
+    /// reads CHR through `ppu_peek` on every board; before v3.2.0 it called
+    /// `ppu_read` and, on a board with impure CHR reads, restored the state
+    /// afterwards. That old behaviour is the oracle here: for every parsable
+    /// mapper (CHR-ROM and CHR-RAM), after a spread of register writes, each
+    /// sampled CHR address is read through `ppu_read` inside a save / restore
+    /// and compared with `ppu_peek`.
+    #[test]
+    fn ppu_peek_matches_a_side_effect_free_ppu_read() {
+        fn chr_ram_rom(id: u8) -> Vec<u8> {
+            let mut rom = synth_rom(id);
+            rom[5] = 0;
+            rom.truncate(16 + 32 * 1024);
+            rom
+        }
+        fn rom_with_patterned_chr(id: u8) -> Vec<u8> {
+            let mut rom = synth_rom(id);
+            for (i, b) in rom[16 + 32 * 1024..].iter_mut().enumerate() {
+                let [lo, hi, ..] = i.to_le_bytes();
+                *b = lo.wrapping_mul(31) ^ hi;
+            }
+            rom
+        }
+        let mut checked = 0usize;
+        for id in 0u8..=255 {
+            for rom in [rom_with_patterned_chr(id), chr_ram_rom(id)] {
+                let Ok((_cart, mut mapper)) = parse(&rom) else {
+                    continue;
+                };
+                for (reg, value) in [
+                    (0x8000u16, 0x00u8),
+                    (0x8001, 0x03),
+                    (0xA000, 0x05),
+                    (0xC000, 0x1F),
+                ] {
+                    mapper.cpu_write(reg, value);
+                    // A stride across the window, plus the MMC2 / MMC4-style
+                    // latch triggers, where a read changes the bank it reads.
+                    let triggers = [0x0FD8u16, 0x0FE8, 0x1FD8, 0x1FE8];
+                    for addr in (0u16..0x2000).step_by(0x0FD).chain(triggers) {
+                        let saved = mapper.save_state();
+                        let read = mapper.ppu_read(addr);
+                        mapper
+                            .load_state(&saved)
+                            .expect("a board reloads its own state");
+                        assert_eq!(
+                            mapper.ppu_peek(addr),
+                            read,
+                            "mapper {id}: ppu_peek(${addr:04X}) differs from ppu_read"
+                        );
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 150, "only {checked} boards were checked");
     }
 
     /// v2.8.0 Phase 4 — the capability-flag contract for the key families.

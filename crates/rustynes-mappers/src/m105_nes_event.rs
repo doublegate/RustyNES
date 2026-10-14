@@ -233,6 +233,15 @@ impl Mapper for NesEvent105 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        if addr < 0x2000 {
+            self.chr_ram[usize::from(addr)]
+        } else {
+            self.mmc1.ppu_peek(addr)
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if addr < 0x2000 {

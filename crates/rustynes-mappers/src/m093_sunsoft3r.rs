@@ -147,6 +147,22 @@ impl Mapper for Sunsoft3r {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_ram_enabled {
+                    self.chr_ram[addr as usize]
+                } else {
+                    // CHR disabled: reads are open bus (0 here).
+                    0
+                }
+            }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

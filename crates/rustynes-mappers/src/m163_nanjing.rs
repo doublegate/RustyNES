@@ -223,6 +223,15 @@ impl Mapper for Nanjing163 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        if addr < 0x2000 {
+            self.chr_ram[self.chr_offset(addr)]
+        } else {
+            0
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if addr < 0x2000 {

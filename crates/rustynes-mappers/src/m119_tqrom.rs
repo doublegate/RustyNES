@@ -128,6 +128,10 @@ impl Mapper for Tqrom {
         self.inner.cpu_read_unmapped(addr)
     }
 
+    fn may_unmap_prg_rom(&self) -> bool {
+        self.inner.may_unmap_prg_rom()
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let a = addr & 0x3FFF;
         if a < 0x2000 {
@@ -144,6 +148,20 @@ impl Mapper for Tqrom {
         } else {
             // Nametable reads delegate to the MMC3 (mirroring + 4-screen).
             self.inner.ppu_read(a)
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let a = addr & 0x3FFF;
+        if a < 0x2000 {
+            let (is_ram, off) = self.resolve_chr(a);
+            if is_ram {
+                self.chr_ram[off % self.chr_ram.len()]
+            } else {
+                self.inner.ppu_peek(a)
+            }
+        } else {
+            self.inner.ppu_peek(a)
         }
     }
 
