@@ -61,6 +61,10 @@ cycle-accurate core later replaced.
 - **Mappers 47, 121, 154, 191 and 243 are Curated**, on local-dump evidence
   recorded in `docs/compatibility.md` (maintainer decision D23). The tiers
   are now 51 Core, 121 Curated and 26 BestEffort.
+- **New save files are owner-only on Linux and macOS.** A battery save, state,
+  config or recording that does not exist yet is created with mode `0o600`
+  rather than the umask default (usually `0o644`); a file that already exists
+  keeps its mode, so one you widened stays widened.
 
 ### Fixed
 

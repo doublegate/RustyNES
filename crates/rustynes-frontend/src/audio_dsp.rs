@@ -141,16 +141,24 @@ struct Reverb {
     allpasses: Vec<AllPass>,
 }
 
+/// Schroeder's reference comb delays (ms), prime-ish to avoid flutter.
+const COMB_MS: [f32; 4] = [29.7, 37.1, 41.1, 43.7];
+
+/// The combs' outputs are averaged: `1 / COMB_MS.len()`. With four combs this
+/// is 0.25, and multiplying by a power-of-two reciprocal is bit-identical to
+/// the division it replaced (v3.2.0); deriving it from the table keeps the two
+/// from drifting apart if a comb is added.
+#[allow(clippy::cast_precision_loss)] // a handful of combs.
+const COMB_GAIN: f32 = 1.0 / COMB_MS.len() as f32;
+
 impl Reverb {
     /// Build a reverb voiced for `sample_rate`. `room` (0..=1) scales the comb
     /// feedback (decay time); larger = longer tail.
     fn new(sample_rate: u32, room: f32) -> Self {
         let sr = sample_rate.max(1) as f32;
-        // Schroeder's reference comb delays (ms), prime-ish to avoid flutter.
-        let comb_ms = [29.7, 37.1, 41.1, 43.7];
         let allpass_ms = [5.0, 1.7];
         let feedback = Self::room_feedback(room);
-        let combs = comb_ms
+        let combs = COMB_MS
             .iter()
             .map(|&ms| Comb::new(((ms / 1000.0) * sr) as usize, feedback))
             .collect();
@@ -187,7 +195,7 @@ impl Reverb {
         for c in &mut self.combs {
             acc += c.process(x);
         }
-        acc *= 0.25;
+        acc *= COMB_GAIN;
         for a in &mut self.allpasses {
             acc = a.process(acc);
         }

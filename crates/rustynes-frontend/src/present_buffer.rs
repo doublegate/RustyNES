@@ -156,9 +156,15 @@ impl PresentBuffer {
         self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Consumer: if a new frame was published since the last call, swap it
-    /// into the front slot and copy it into `out` (the present-staging buffer
-    /// the GPU uploads).
+    /// Consumer: if a new frame was published since the last call, hand it to
+    /// `out` (the present-staging buffer the GPU uploads).
+    ///
+    /// v3.2.0: by SWAPPING buffers, not copying 240 KiB. The fresh frame's
+    /// buffer moves into `out`, and `out`'s old buffer becomes the new front
+    /// slot. Nothing reads the front slot: `publish` writes only `back`, and
+    /// the next `take_into` reads `ready`, which a publish has refilled by
+    /// then. So the caller always receives the newest frame, and its old
+    /// buffer is recycled as storage (its contents are never presented).
     ///
     /// Returns `Some(stamp)` when `out` was refreshed, where `stamp` is the
     /// instant the emulation thread **published that frame** — carried per slot

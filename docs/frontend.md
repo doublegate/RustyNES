@@ -2352,8 +2352,14 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
 - **Loaded** at ROM load, under the same `EmuCore` lock that installs the `Nes`,
   so no frame runs first. Written through `write_atomic` when the live bytes
   differ from the last write: compared once a second while running, and always
-  at ROM switch, close and exit. There is no core dirty flag; "clean" means equal
-  to the last write.
+  at ROM switch, close and exit. "Clean" means equal to the last write. Since
+  v3.2.0 a board may also report a dirty flag (`Nes::is_save_data_dirty`); only
+  the self-flashable GTROM and UNROM 512 do, whose save data is the whole PRG
+  image, and while one reports clean the comparison is skipped. Each sets the
+  flag on every path that can change its save data (a program write, a state
+  load, a power-on clear, `save_data_mut`), since a missed path is a lost save.
+  A new save file is created owner-only (`0o600`) on Unix; an existing one keeps
+  its mode (`write_atomic`).
 - **The periodic write runs with the lock released.** `BatterySave::due_write`
   copies the changed bytes under a brief `EmuCore` lock; the write, which fsyncs,
   happens after the lock is dropped, and `written` records the outcome. A failed
