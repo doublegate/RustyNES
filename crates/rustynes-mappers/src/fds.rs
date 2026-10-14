@@ -1035,11 +1035,32 @@ impl FdsAudio {
     /// VRC6's loudness ballpark (`~±15k`) — comfortably under `i16::MAX`.
     #[cfg(feature = "mapper-audio")]
     pub(crate) fn output(&self) -> i16 {
+        // Volume gain clamps to 32 at the output multiply (PWM duty 32/32).
         let gain = u32::from(self.vol_gain.min(32));
         let sample = u32::from(self.wave_out_latch & 0x3F);
+        // Master volume: 0=full(2/2), 1=2/3, 2=2/4, 3=2/5. Numerator 2,
+        // denominator (master_volume + 2).
+        let num = 2u32;
         let den = u32::from(self.master_volume) + 2;
-        let diff = sample as i32 - 32;
-        let centered = (diff * gain as i32 * 2) / den as i32;
+        // Raw product range: sample(0..=63) * gain(0..=32) = 0..=2016.
+        let raw = sample * gain;
+        // Apply master volume.
+        let scaled = raw * num / den;
+        // scaled max (master=full) = 2016 * 2 / 2 = 2016. Center bipolar around
+        // the mid-DAC (wave centered at 31.5 * gain * master). We output the raw
+        // level minus its midpoint, scaled to use a good chunk of i16 range.
+        // Midpoint of sample range is 31.5; approximate the DC bias as
+        // 32 * gain * num / den (sample == 32).
+        //
+        // The level and the midpoint are each floored SEPARATELY. A v3.2.0
+        // import folded them into one `(sample - 32) * gain * 2 / den`, which
+        // truncates toward zero instead and moved every FDS game's audio
+        // (`fds_output_floors_level_and_midpoint_separately` pins it).
+        let mid = 32u32 * gain * num / den;
+        let centered = scaled as i32 - mid as i32;
+        // Scale factor 7: peak |centered| ~= 31 * 32 ~= 992 -> *7 ~= 6944 per
+        // full-gain step; the full-scale (gain 32, master full) reaches
+        // ~±6.9k, in the APU-square-x2.4 ballpark and well under i16::MAX.
         (centered * 7) as i16
     }
 
@@ -3303,6 +3324,30 @@ mod tests {
         assert_eq!(fds.audio.mod_counter, 0);
         fds.audio.step_mod_counter(7); // -1
         assert_eq!(fds.audio.mod_counter, -1);
+    }
+
+    /// The output floors the level and the midpoint separately. With master
+    /// volume 2/3 the two roundings differ: sample 63 at gain 1 is
+    /// `63*2/3 - 32*2/3 = 42 - 21 = 21` (x7 = 147), where a single combined
+    /// division gives `31*2/3 = 20` (x7 = 140). The combined form is what a
+    /// v3.2.0 import shipped; it moved all three staged FDS games' audio.
+    #[test]
+    #[cfg(feature = "mapper-audio")]
+    #[allow(clippy::field_reassign_with_default)]
+    fn fds_output_floors_level_and_midpoint_separately() {
+        let mut a = FdsAudio::default();
+        a.vol_gain = 1;
+        a.master_volume = 1;
+        a.wave_out_latch = 63;
+        assert_eq!(a.output(), 147);
+        // Below the midpoint: 0 - 21 = -21 either way (x7 = -147).
+        a.wave_out_latch = 0;
+        assert_eq!(a.output(), -147);
+        // Full gain, full master: (63*32 - 32*32) = 992, x7 = 6944.
+        a.vol_gain = 32;
+        a.master_volume = 0;
+        a.wave_out_latch = 63;
+        assert_eq!(a.output(), 6944);
     }
 
     #[test]
