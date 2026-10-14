@@ -541,6 +541,19 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     if let Some(submapper) = entry.submapper
         && (submapper != 0 || is_nes2)
     {
+        // The submapper field only exists in NES 2.0 headers. A correction that
+        // sets a non-zero submapper on an iNES-1.0 ROM (e.g. Seicross, whose
+        // GoodNES dump is iNES-1.0 mapper 185 sub 0 but is really sub 4 — the
+        // CHR-disable copy-protection variant) must first PROMOTE the header to
+        // NES 2.0 by setting byte-7 bits 2-3 to `10`, otherwise the core's iNES
+        // path forces submapper 0 and the override is silently dropped.
+        //
+        // A correction TO submapper 0 is applied only to an NES 2.0 header (an
+        // iNES-1.0 header already reads as 0, so promoting it would change
+        // nothing but the header). It can only come from the user overlay:
+        // `load_time_entry` clears the vendored table's submapper for NES 2.0
+        // headers, and the overlay's `0` is a deliberate correction
+        // (`parse_overlay_row`). Before v3.2.0 such a correction was dropped.
         if !is_nes2 {
             bytes[7] = (bytes[7] & 0xF3) | 0x08;
             // Promotion reinterprets header fields the iNES-1.0 spec leaves
@@ -704,6 +717,8 @@ fn ines1_as_nes2(bytes: &[u8], region: Region) -> Option<[u8; 16]> {
     };
     let chr_ram = if h.chr_size == 0 { SHIFT_8K } else { 0 };
 
+    // Lowest submapper first, so a board every submapper can express keeps 0.
+    // See `same_board` for why the submapper itself is not compared.
     let mut image = bytes.to_vec();
     for sub in 0..16 {
         header[8] = sub << 4;
@@ -741,6 +756,14 @@ fn same_board(
     ),
 ) -> bool {
     let ((ca, ma), (cb, mb)) = (a, b);
+    // No `submapper` comparison, deliberately (v3.2.0). For an iNES 1.0
+    // original the parsed submapper is always 0, so against the old sub-0
+    // candidate the check could never fail; and some boards read an iNES 1.0
+    // header as a NON-zero NES 2.0 submapper -- an iNES 1.0 mapper 6 is FFE
+    // latch mode 1, which NES 2.0 spells submapper 1 -- so the check refused
+    // the one candidate that IS the same board. `ines1_as_nes2` therefore
+    // tries every submapper, lowest first, and the board is identified by
+    // what it does: the state, the debug description and the sizes below.
     ca.mapper_id == cb.mapper_id
         && ca.mirroring == cb.mirroring
         && ca.console_type == cb.console_type
@@ -1343,6 +1366,34 @@ mod tests {
         assert!(!is_multi_region_title("Pin Bot (Europe).nes"));
         assert!(!is_multi_region_title("Sidewinder (Asia) (PAL) (Unl).nes"));
         assert!(!is_multi_region_title("Gyromite (World).nes"));
+    }
+
+    /// A correction TO submapper 0 lands on an NES 2.0 header (it can only come
+    /// from the user overlay, whose `0` is deliberate). Before v3.2.0 any
+    /// sub-0 correction was skipped, so an overlay could not undo a wrong
+    /// non-zero submapper in an NES 2.0 dump.
+    #[test]
+    fn sub_zero_correction_applies_to_an_nes2_header() {
+        let mut rom = vec![0u8; 16 + 32 * 1024 + 8 * 1024];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2;
+        rom[5] = 1;
+        rom[6] = 0xB1; // mapper 185, vertical
+        rom[7] = 0xB8; // NES 2.0
+        rom[8] = 0x40; // submapper 4
+        let entry = GameDbEntry {
+            crc: 0,
+            region: None,
+            mapper: None,
+            submapper: Some(0),
+            mirroring: None,
+            title: "overlay sub-0 correction".into(),
+        };
+        assert!(apply_header_overrides(&mut rom, &entry));
+        assert_eq!(rom[8] >> 4, 0, "submapper corrected to 0");
+        assert_eq!(rom[7] & 0x0C, 0x08, "still NES 2.0");
+        // Idempotent: applying it again changes nothing.
+        assert!(!apply_header_overrides(&mut rom, &entry));
     }
 
     #[test]
