@@ -403,6 +403,27 @@ impl Mapper for SimpleBmc {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (CHR_BANK_8K - 1)];
+                }
+                if self.board == SimpleBoard::M286 {
+                    let slot = (addr as usize) / CHR_BANK_2K;
+                    let count = (self.chr.len() / CHR_BANK_2K).max(1);
+                    let bank = self.chr2[slot] % count;
+                    return self.chr[bank * CHR_BANK_2K + (addr as usize & (CHR_BANK_2K - 1))];
+                }
+                let bank = self.chr8 % self.chr_count_8k();
+                self.chr[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

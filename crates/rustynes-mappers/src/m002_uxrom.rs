@@ -40,6 +40,8 @@ pub struct UxRom {
     vram: Box<[u8]>,
     chr_is_ram: bool,
     bank: u8,
+    bank_offset: usize,
+    last_bank_offset: usize,
     mirroring: Mirroring,
 }
 
@@ -75,12 +77,16 @@ impl UxRom {
                 chr_rom.len()
             )));
         };
+        let bank_count = (prg_rom.len() / PRG_BANK_16K).max(1);
+        let last_bank_offset = (bank_count - 1) * PRG_BANK_16K;
         Ok(Self {
             prg_rom,
             chr,
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             chr_is_ram,
             bank: 0,
+            bank_offset: 0,
+            last_bank_offset,
             mirroring,
         })
     }
@@ -90,6 +96,12 @@ impl UxRom {
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
         let physical = self.mirroring.physical_bank(table);
         physical * NAMETABLE_SIZE + local
+    }
+    #[inline]
+    fn update_bank_offsets(&mut self) {
+        let bank_count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
+        self.bank_offset = ((self.bank as usize) % bank_count) * PRG_BANK_16K;
+        self.last_bank_offset = (bank_count - 1) * PRG_BANK_16K;
     }
 }
 
@@ -103,16 +115,12 @@ impl Mapper for UxRom {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xBFFF => {
-                let bank_count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-                let bank = (self.bank as usize) % bank_count;
                 let off = (addr - 0x8000) as usize;
-                self.prg_rom[bank * PRG_BANK_16K + off]
+                self.prg_rom[self.bank_offset + off]
             }
             0xC000..=0xFFFF => {
-                let bank_count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-                let last = bank_count - 1;
                 let off = (addr - 0xC000) as usize;
-                self.prg_rom[last * PRG_BANK_16K + off]
+                self.prg_rom[self.last_bank_offset + off]
             }
             _ => 0,
         }
@@ -129,6 +137,7 @@ impl Mapper for UxRom {
             // the bank register is u8.
             let mask = u8::try_from((bank_count - 1) | 0x0F).unwrap_or(u8::MAX);
             self.bank = value & mask;
+            self.update_bank_offsets();
         }
     }
 
@@ -142,6 +151,15 @@ impl Mapper for UxRom {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[addr as usize],
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr[addr as usize],
@@ -201,6 +219,7 @@ impl Mapper for UxRom {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.bank = data[1];
+        self.update_bank_offsets();
         let mut cursor = 2;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);

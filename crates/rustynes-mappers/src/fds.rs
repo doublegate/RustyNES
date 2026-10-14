@@ -1051,6 +1051,11 @@ impl FdsAudio {
         // level minus its midpoint, scaled to use a good chunk of i16 range.
         // Midpoint of sample range is 31.5; approximate the DC bias as
         // 32 * gain * num / den (sample == 32).
+        //
+        // The level and the midpoint are each floored SEPARATELY. A v3.2.0
+        // import folded them into one `(sample - 32) * gain * 2 / den`, which
+        // truncates toward zero instead and moved every FDS game's audio
+        // (`fds_output_floors_level_and_midpoint_separately` pins it).
         let mid = 32u32 * gain * num / den;
         let centered = scaled as i32 - mid as i32;
         // Scale factor 7: peak |centered| ~= 31 * 32 ~= 992 -> *7 ~= 6944 per
@@ -2281,6 +2286,13 @@ impl Mapper for Fds {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[(addr & 0x1FFF) as usize],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         if addr <= 0x1FFF {
             self.chr_ram[(addr & 0x1FFF) as usize] = value;
@@ -3312,6 +3324,30 @@ mod tests {
         assert_eq!(fds.audio.mod_counter, 0);
         fds.audio.step_mod_counter(7); // -1
         assert_eq!(fds.audio.mod_counter, -1);
+    }
+
+    /// The output floors the level and the midpoint separately. With master
+    /// volume 2/3 the two roundings differ: sample 63 at gain 1 is
+    /// `63*2/3 - 32*2/3 = 42 - 21 = 21` (x7 = 147), where a single combined
+    /// division gives `31*2/3 = 20` (x7 = 140). The combined form is what a
+    /// v3.2.0 import shipped; it moved all three staged FDS games' audio.
+    #[test]
+    #[cfg(feature = "mapper-audio")]
+    #[allow(clippy::field_reassign_with_default)]
+    fn fds_output_floors_level_and_midpoint_separately() {
+        let mut a = FdsAudio::default();
+        a.vol_gain = 1;
+        a.master_volume = 1;
+        a.wave_out_latch = 63;
+        assert_eq!(a.output(), 147);
+        // Below the midpoint: 0 - 21 = -21 either way (x7 = -147).
+        a.wave_out_latch = 0;
+        assert_eq!(a.output(), -147);
+        // Full gain, full master: (63*32 - 32*32) = 992, x7 = 6944.
+        a.vol_gain = 32;
+        a.master_volume = 0;
+        a.wave_out_latch = 63;
+        assert_eq!(a.output(), 6944);
     }
 
     #[test]

@@ -324,7 +324,7 @@ impl Mmc5Pulse {
 
     /// Per-cycle 4-bit output (0..=15). 0 when muted.
     pub(crate) fn output(&self) -> u8 {
-        if self.muted() || DUTY_TABLE[self.duty as usize][self.step as usize] == 0 {
+        if DUTY_TABLE[self.duty as usize][self.step as usize] == 0 || self.muted() {
             0
         } else {
             self.envelope_output()
@@ -1290,6 +1290,16 @@ impl Mapper for Mmc5 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        // MMC5 CHR / nametable reads have no side effect here: its scanline
+        // detection runs from `notify_scanline_start` / `notify_vblank`. A
+        // v3.2.0 import moved a nametable-snoop detector into this method,
+        // but the lockstep bus never routes nametable fetches through
+        // `ppu_read` (they go via `peek_nametable`), so the IRQ stopped
+        // firing in real play; reverted (`external_mmc5_*` caught it).
+        self.ppu_peek(addr)
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
