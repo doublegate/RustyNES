@@ -91,7 +91,13 @@ among them a 47% audio regression, open bus broken on two mappers, MMC3 bank
 masking, a netplay message that was sent and never decoded, two threads
 stepping one core, a heap cap that never fires, and FDS saves that changed a
 game's identity. Two of its self-certifying claims were tested and are false.
-The seven RTL findings are not yet re-derived.
+The seven RTL findings, re-derived in simulation and synthesis, kept the RTL
+lane's record: one real cost (the nametable is registers, not block RAM;
+deferred), and six refuted, among them a second DC-blocker overflow, a
+"clock-domain crossing" between two related, analysed clocks, and a latency
+"miss" that was the project's own stress figure for a coincidence the
+console never produces. The palette split one of them audited was measured
+and adopted (-1,004 ALUTs).
 
 ## What these reports are
 
