@@ -1780,6 +1780,13 @@ impl SystemBus {
     pub fn debug_peek_ppu(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
+            // Side-effect-free on every board: a debugger panel or an HD-pack
+            // tile hash must never change the game (until v3.1.0 opening the
+            // pattern viewer on Punch-Out!! flipped its CHR latch). Since v3.2.0
+            // that is `Mapper::ppu_peek`'s contract -- exactly the byte
+            // `ppu_read` would return, with no state change -- checked for every
+            // board by `ppu_peek_matches_a_side_effect_free_ppu_read`, instead of
+            // a save / `ppu_read` / restore around impure boards here.
             0x0000..=0x1FFF => self.mapper.ppu_peek(addr),
             0x2000..=0x3EFF => {
                 let addr = if addr >= 0x3000 && !self.mapper.nametable_unfolded() {

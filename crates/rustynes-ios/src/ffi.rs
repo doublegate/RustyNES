@@ -95,10 +95,16 @@ pub unsafe extern "C" fn rustynes_ios_gfx_render(handle: *mut MetalGfx, fb: *con
         if handle.is_null() || fb.is_null() {
             return;
         }
+        // SAFETY: live handle (see above).
         let gfx = unsafe { &mut *handle };
-        if len != (NES_W * NES_H * 4) as usize {
+        if len != crate::gfx_metal::FRAME_LEN {
             return;
         }
+        // SAFETY: `fb` points to `len` readable bytes (caller contract), and
+        // `len` is exactly one frame. The slice only lives for this call:
+        // `render` hands it to `write_texture`, which copies it into wgpu's
+        // staging before returning (v3.2.0; this used to copy it into a reused
+        // `frame_buf` first, one 240 KiB memcpy per frame for nothing).
         let src = unsafe { core::slice::from_raw_parts(fb, len) };
         gfx.render(src);
     })

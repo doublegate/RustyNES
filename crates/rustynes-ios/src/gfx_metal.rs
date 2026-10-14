@@ -29,6 +29,9 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle, UiKitDisplayHandle, U
 /// NES framebuffer dimensions (must match `rustynes_mobile::{FRAME_WIDTH,_HEIGHT}`).
 const NES_W: u32 = 256;
 const NES_H: u32 = 240;
+/// One RGBA8 frame, in bytes: what `rustynes_ios_gfx_render` accepts and
+/// `MetalGfx::render` uploads.
+pub(crate) const FRAME_LEN: usize = (NES_W * NES_H * 4) as usize;
 /// NES pixel aspect ratio (8:7) → the displayed image is wider than 256:240.
 const PAR_W: f32 = NES_W as f32 * 8.0 / 7.0;
 const IMG_ASPECT: f32 = PAR_W / NES_H as f32;
@@ -556,9 +559,12 @@ impl MetalGfx {
         self.write_uniforms();
     }
 
-    /// Upload the staged 256×240 RGBA frame and present it. Tolerates a transient
-    /// `Lost`/`Outdated` surface by reconfiguring and skipping the frame.
+    /// Upload one 256×240 RGBA frame (`fb`, [`FRAME_LEN`] bytes) and present it.
+    /// Tolerates a transient `Lost`/`Outdated` surface by reconfiguring and
+    /// skipping the frame. `fb` is uploaded straight from the caller's buffer
+    /// (v3.2.0; a reused staging copy before).
     pub fn render(&mut self, fb: &[u8]) {
+        debug_assert_eq!(fb.len(), FRAME_LEN, "one RGBA frame");
         // Re-write the active filter's uniform each frame so the normal path is
         // self-correcting after an HD-pack frame wrote a neutral (plain-blit)
         // uniform into the shared buffer (v1.9.5). One 64-byte write — negligible.
