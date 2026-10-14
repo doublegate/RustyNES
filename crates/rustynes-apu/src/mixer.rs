@@ -125,8 +125,12 @@ impl OnePole {
         }
     }
 
+    /// One sample through the filter as a high-pass:
+    /// `y = coeff * (prev_out + x - prev_in)`. [`Self::process`] picks this or
+    /// [`Self::process_lpf`] from `is_hpf` per call; [`FilterChain`] knows each
+    /// stage's kind and calls the right one directly, which drops that branch
+    /// from every output sample (v3.2.0, byte-identical: the same expression).
     #[inline]
-    /// Process HPF
     pub fn process_hpf(&mut self, x: f32) -> f32 {
         let y = self.coeff * (self.prev_out + x - self.prev_in);
         self.prev_in = x;
@@ -134,8 +138,9 @@ impl OnePole {
         y
     }
 
+    /// One sample through the filter as a low-pass:
+    /// `y = prev_out + coeff * (x - prev_out)`. See [`Self::process_hpf`].
     #[inline]
-    /// Process LPF
     pub fn process_lpf(&mut self, x: f32) -> f32 {
         let y = self.prev_out + self.coeff * (x - self.prev_out);
         self.prev_in = x;
@@ -143,8 +148,8 @@ impl OnePole {
         y
     }
 
+    /// Process one sample, as a high-pass or a low-pass per `is_hpf`.
     #[inline]
-    /// Process filter
     pub fn process(&mut self, x: f32) -> f32 {
         if self.is_hpf {
             self.process_hpf(x)
@@ -229,9 +234,10 @@ impl FilterChain {
         }
     }
 
-    /// Process one sample through all three stages.
+    /// Process one sample through all three stages: two high-passes, then the
+    /// low-pass. Each stage's kind is fixed at construction, so this calls
+    /// [`OnePole::process_hpf`] / [`OnePole::process_lpf`] directly.
     #[inline]
-    /// Process filter
     pub fn process(&mut self, x: f32) -> f32 {
         let a = self.hp1.process_hpf(x);
         let b = self.hp2.process_hpf(a);

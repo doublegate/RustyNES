@@ -1150,6 +1150,45 @@ hardware-option and power-cycle plumbing, and the Header and identity changes
 are the candidates. No release-wide speed-up is claimed beyond the one
 established path.
 
+### v3.2.0 APU — an imported 47% regression, bisected; the import's APU changes adopted without it
+
+An AI-made remediation branch (`codex_sec`, imported in v3.2.0) reshaped the
+APU's hot path in three places: `BlipBuf::add_sample_bounded`, a variant of
+`add_sample` without the `is_finite` / `clamp` (called by the default-config
+mix when the expansion sample is zero); the scatter's ring write, as one
+full-length slice when the 32-tap window does not wrap and two runs only when
+it does; and `FilterChain::process` calling each stage's high- or low-pass
+directly instead of branching on `is_hpf`. Measured with `ab_check.sh
+--package rustynes-apu --target apu_throughput` (the `--package` option was
+added for this; the script could reach only `rustynes-core` benches before)
+against the pre-import tree `c922ed40`:
+
+| candidate | `silent_frame` | `active_frame` | `active_frame_with_external` | order-bias control (silent / active / external) |
+| --- | --- | --- | --- | --- |
+| the import as is | +9.86% | -4.16% | **+47.31%** | -0.67% / +3.12% / +0.53% |
+| one scatter call site (hypothesis A) | -5.02% | -7.32% | **+46.53%** | -1.34% / -3.99% / -1.18% |
+| A + the pre-import ring write, run 1 | +0.20% (p = 0.17) | -1.86% | -2.92% | +0.06% / +0.18% / +1.24% |
+| A + the pre-import ring write, run 2 | -0.20% (p = 0.21) | -2.67% | -6.08% | -0.44% / -0.28% / -1.06% |
+
+**Cause: the reshaped ring write.** The leading hypothesis -- two call sites
+inlining the scatter body twice -- was refuted (row 2: still +46.5%). The
+external workload feeds a sample that changes every cycle, so it scatters on
+almost every cycle and the scatter's codegen dominates it; the one-slice
+variant, though it looks simpler, made it nearly half again slower. Restoring
+the two-run form recovered it entirely. Why that form compiles worse was not
+investigated (no disassembly was taken); the site now records the measurement
+so it is not reshaped again.
+
+**Decision: ADOPTED, without the ring change.** Kept: `add_sample_bounded`, now
+reached through one call site with `BlipBuf::sanitize` choosing the value (so
+`add_sample(v)` is literally `add_sample_bounded(sanitize(v))`, byte-identical),
+and the filter split. Rows 3 and 4 are two independent runs with the same sign
+on every workload and drift below the effect: `active_frame` -1.9% / -2.7%,
+`active_frame_with_external` -2.9% / -6.1%, `silent_frame` unchanged. Which of
+the two kept changes earns which part was not separated. Byte identity: the
+APU suite (174 tests) passes; the full suite is re-run at the cut. Logs are in
+the gitignored session scratch, not committed.
+
 ### v2.9.9 campaign — the leads, measured (one adopted)
 
 Every row is two `scripts/perf/ab_check.sh` runs on a quiet host. A run starts

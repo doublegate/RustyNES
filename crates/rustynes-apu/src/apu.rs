@@ -1326,11 +1326,17 @@ impl Apu {
             if self.audio_prov.is_some() {
                 self.record_mix_armed(mixed, external);
             }
-            if external == 0.0 {
-                self.blip.add_sample_bounded(mixed);
+            // The 2A03's own mix is bounded by its DAC tables, so only a mix
+            // with an expansion-audio sample in it needs `sanitize` (v3.2.0;
+            // byte-identical: `add_sample(v)` is `add_sample_bounded(
+            // sanitize(v))`). The value is chosen and the scatter called once,
+            // so its body is inlined here once.
+            let value = if external == 0.0 {
+                mixed
             } else {
-                self.blip.add_sample(mixed);
-            }
+                BlipBuf::sanitize(mixed)
+            };
+            self.blip.add_sample_bounded(value);
             // Nothing follows the general path's `add_sample` but comments --
             // the get/put flip moved to `dmc_tick_end` under M-2 -- so there is
             // no shared tail to run before returning. Verified by reading it,
