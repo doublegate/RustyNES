@@ -29,7 +29,8 @@ cycle-accurate core later replaced.
 ### Breaking
 
 - **Movies and netplay from v3.1.0 are refused.** `EMULATION_EPOCH` rises
-  from 3 to 4: the mapper 290 and 24C02 fixes below change what the bus sees.
+  from 3 to 4: the mapper 290, 24C02, VRC2 and *Fire Hawk* fixes below change
+  what the bus sees.
   A v3.1.x peer or movie is refused as another emulator version, naming its
   epoch. Save states are not affected by the epoch.
 
@@ -67,6 +68,17 @@ cycle-accurate core later replaced.
   16 and 157), so a random read returns the byte asked for instead of byte
   `$00`. On the Datach this was the difference between booting and
   reformatting the save at every power-on.
+- **VRC2 mirroring has two settings, not four.** A VRC2 ignores bit 1 of its
+  mirroring register (nesdev "VRC2 and VRC4"); the one-screen settings are
+  VRC4-only, and were decoded on the VRC2 too.
+- **Mappers 23 and 25 with NES 2.0 submapper 3 are the VRC2** (VRC2b,
+  VRC2c), built without the VRC4's IRQ and one-screen mirroring. Every 23 / 25
+  image was built as a VRC4 before.
+- ***Fire Hawk* gets its single-screen mirroring from an iNES 1.0 header.**
+  Mapper 71 with submapper 0 switches to the BF9097's `$9000` single-screen
+  register at the first write there, as nesdev's mapper 71 page recommends
+  without a submapper. Before, only an NES 2.0 submapper 1 header enabled it,
+  and the `$9000` write selected a PRG bank instead.
 
 ## [3.1.0] - 2026-10-08 - "Bellwether" (the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it)
 

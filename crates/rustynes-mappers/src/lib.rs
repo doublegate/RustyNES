@@ -674,11 +674,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Box::new(fme7)
         }
         71 => {
-            // Some Camerica boards (BF9097) have $9000 mirroring control
-            // (subm 1).  Default off.
+            // Fire Hawk's BF9097 has $9000 single-screen control: NES 2.0
+            // submapper 1 has it from power-on; submapper 0 (every iNES 1.0
+            // image included) detects it at the first $9000 write, per the
+            // NESdev page's compatibility advice; other submappers keep the
+            // header mirroring.
             let has_single_screen = h.is_nes2 && h.submapper == 1;
             let cam = Camerica::new(prg_rom, h.mirroring, has_single_screen)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?
+                .with_single_screen_detection(h.submapper == 0);
             Box::new(cam)
         }
         75 => {
