@@ -191,8 +191,10 @@ cycle-accurate core later replaced.
   save states, RetroAchievements progress and settings are still found. Before,
   a disk game's own save was lost on close. On Android the disk is also checked
   once a second during play, so a process killed in the background keeps the
-  last second's writes; on both, a disk write landing while the save is being
-  written is no longer lost, and on iOS reopening the running disk game no
+  last second's writes and a failed write is retried, and a game switch can no
+  longer write one game's disk into another game's save or an older copy of the
+  same disk over a newer one; on both, a disk write landing while the save is
+  being written is no longer lost, and on iOS reopening the running disk game no
   longer boots the save from before its newest writes. (The iOS half is not
   yet compiled locally.)
 - **The Android screen stays on during play** and sleeps again when paused or

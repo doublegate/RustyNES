@@ -579,6 +579,16 @@ class EmulatorHandle {
         romSha?.let { sha -> FdsSaves.flushIfDirty(context, ctrl, sha) }
     }
 
+    /**
+     * The session is ending (close, teardown): write the disk one last time and
+     * give up its key, so nothing writes that file until the next load claims
+     * it (v3.2.0, review on #604). Call before clearing [controller].
+     */
+    fun releaseSaves(context: Context) {
+        val ctrl = controller ?: return
+        romSha?.let { sha -> FdsSaves.close(context, ctrl, sha) }
+    }
+
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
     var romSha: String? = null
 
@@ -781,12 +791,57 @@ internal object FdsSaves {
         }.onFailure { android.util.Log.w("RustyNES", "saved FDS disk not used", it) }
     }
 
-    /** Disks whose last write failed: flushed again even though now clean. */
-    private val retry = mutableSetOf<String>()
+    /**
+     * Disks whose last write failed: flushed again even though now clean. A
+     * concurrent set because the game loop reads it ([needsFlush]) without the
+     * lock a disk write holds.
+     */
+    private val retry: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Which controller may write each key: see [SaveOwners] (review on #604). */
+    private val owners = SaveOwners<NesController>()
 
     /**
-     * Write the disk if the game changed it, atomically ([android.util.AtomicFile]:
-     * a crash mid-write keeps the previous file).
+     * Whether the periodic flush should call [flushIfDirty]: the disk changed,
+     * or its last write failed. Checking the dirty flag alone left a failed
+     * write unretried until the next lifecycle flush, because [flushIfDirty]
+     * clears the flag before writing (CodeRabbit on #604).
+     */
+    fun needsFlush(ctrl: NesController, sha: String): Boolean = ctrl.diskIsDirty() || sha in retry
+
+    /**
+     * A ROM switch, or the first load: write the outgoing disk one last time,
+     * then let the incoming controller write its key. One locked step, so a
+     * flush the outgoing controller queued earlier cannot land after the
+     * incoming one has written the same file (the same disk, reopened).
+     */
+    fun handOver(
+        context: Context,
+        outSha: String?,
+        outCtrl: NesController?,
+        inSha: String?,
+        inCtrl: NesController?,
+    ) = owners.handOver(outSha, outCtrl, inSha, inCtrl) {
+        if (outSha != null && outCtrl != null) writeIfDirty(context, outCtrl, outSha)
+    }
+
+    /** Closing a ROM: one last write, then nothing writes [sha] until the next load. */
+    fun close(context: Context, ctrl: NesController, sha: String) =
+        owners.handOver(sha, ctrl, null, null) { writeIfDirty(context, ctrl, sha) }
+
+    /**
+     * Write the disk if the game changed it and [ctrl] still owns [sha]. A
+     * refused call changes nothing (the dirty flag stays set), so a flush made
+     * by the incoming controller before its claim landed is simply retried by
+     * the next one.
+     */
+    fun flushIfDirty(context: Context, ctrl: NesController, sha: String) {
+        owners.write(sha, ctrl) { writeIfDirty(context, ctrl, sha) }
+    }
+
+    /**
+     * The write itself, atomically ([android.util.AtomicFile]: a crash
+     * mid-write keeps the previous file). Called only under [owners]' lock.
      *
      * The dirty flag is cleared BEFORE the image is copied. `diskIsDirty`,
      * `diskImageBytes` and `clearDiskDirty` are three separately locked bridge
@@ -794,11 +849,9 @@ internal object FdsSaves {
      * in picture-in-picture), so clearing after the write discarded any disk
      * write that landed between the copy and the clear (Cursor on #605). A write
      * after the clear sets the flag again and is caught by the next flush; a
-     * failed file write is remembered in [retry] and flushed again. Synchronized
-     * because the game loop's periodic flush and the lifecycle flush both call it.
+     * failed file write is remembered in [retry] and flushed again.
      */
-    @Synchronized
-    fun flushIfDirty(context: Context, ctrl: NesController, sha: String) {
+    private fun writeIfDirty(context: Context, ctrl: NesController, sha: String) {
         if (!ctrl.diskIsDirty() && sha !in retry) return
         ctrl.clearDiskDirty()
         val bytes = ctrl.diskImageBytes()
@@ -904,14 +957,16 @@ private fun publishRom(
     emulator.romSha = prepared.sha
     emulator.romBytes = prepared.bytes
     emulator.battery = prepared.battery
-    if (outgoingCtrl != null) {
-        scope.launch(Dispatchers.IO) {
-            if (outgoingBattery != null) {
-                runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
-                    .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
-            }
-            if (outgoingSha != null) FdsSaves.flushIfDirty(context, outgoingCtrl, outgoingSha)
+    scope.launch(Dispatchers.IO) {
+        if (outgoingCtrl != null && outgoingBattery != null) {
+            runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
+                .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
         }
+        // The outgoing disk's last write and the incoming controller's claim on
+        // its key, as one step (review on #604). Runs on every load, the first
+        // included: until the claim lands, the incoming disk's flushes are
+        // refused and retried, never written.
+        FdsSaves.handOver(context, outgoingSha, outgoingCtrl, prepared.sha, prepared.ctrl)
     }
     // Apply this game's remembered video filter (per-game DB), if any.
     prepared.filter?.let { f ->
@@ -2342,6 +2397,7 @@ private fun EmulatorScreen(
             raSaveProgress()
             // v2.7.4 (AND-09): the final battery write before the controller goes.
             emulator.flushBattery(context)
+            emulator.releaseSaves(context)
             emulator.battery = null
             val ctrl = emulator.controller
             if (settings.raEnabled) runCatching { ctrl?.raUnloadGame() }
@@ -2898,10 +2954,16 @@ private fun EmulatorScreen(
                     // desktop flushes it every frame (Cursor on #605). Once a
                     // second, like the battery above; flushIfDirty is synchronized
                     // and clears the flag first, so a write during it is kept.
+                    // `ctrl` was read at the top of this iteration and the key is
+                    // read here, so after a ROM switch in between they name two
+                    // games; FdsSaves refuses a controller that does not own the
+                    // key, so that pair writes nothing (Cursor on #604). A failed
+                    // write is retried here too, not only by the next lifecycle
+                    // flush (CodeRabbit on #604).
                     val fdsSha = emulator.romSha
                     if (fdsSha != null && ++fdsFrame >= 60) {
                         fdsFrame = 0
-                        if (ctrl.diskIsDirty()) {
+                        if (FdsSaves.needsFlush(ctrl, fdsSha)) {
                             launch(Dispatchers.IO) { FdsSaves.flushIfDirty(context, ctrl, fdsSha) }
                         }
                     }
@@ -3113,6 +3175,7 @@ private fun EmulatorScreen(
             // Persist RA progress before tearing down the controller (ROM unload).
             raSaveProgress()
             emulator.flushBattery(context)
+            emulator.releaseSaves(context)
             emulator.battery = null
             emulator.controller = null
         }
