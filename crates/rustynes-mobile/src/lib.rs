@@ -3003,14 +3003,18 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
     let extracted = (|| {
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).ok()?;
         let idx = (0..archive.len()).find(|&i| {
+            // zip 9: an entry whose name decodes as neither UTF-8 nor CP437
+            // is skipped, the same as an unreadable entry.
             archive.by_index(i).is_ok_and(|e| {
-                std::path::Path::new(e.name())
-                    .extension()
-                    .is_some_and(|ext| {
-                        ["nes", "fds", "unf", "unif", "nsf", "nsfe"]
-                            .iter()
-                            .any(|k| ext.eq_ignore_ascii_case(k))
-                    })
+                e.name().is_ok_and(|n| {
+                    std::path::Path::new(n.as_ref())
+                        .extension()
+                        .is_some_and(|ext| {
+                            ["nes", "fds", "unf", "unif", "nsf", "nsfe"]
+                                .iter()
+                                .any(|k| ext.eq_ignore_ascii_case(k))
+                        })
+                })
             })
         })?;
         let e = archive.by_index(idx).ok()?;
@@ -3047,10 +3051,12 @@ fn read_bk2_members(bytes: &[u8]) -> Result<(String, String), MobileError> {
         let idx = (0..archive.len())
             .find(|&i| {
                 archive.by_index(i).is_ok_and(|e| {
-                    std::path::Path::new(e.name())
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                    e.name().is_ok_and(|name| {
+                        std::path::Path::new(name.as_ref())
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                    })
                 })
             })
             .ok_or_else(|| err(format!(".bk2 is missing '{wanted}'")))?;

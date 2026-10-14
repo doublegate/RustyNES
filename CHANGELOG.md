@@ -71,6 +71,14 @@ cycle-accurate core later replaced.
   rather than the umask default (usually `0o644`); a file that already exists
   keeps its mode, so one you widened stays widened.
 
+### Dependencies
+
+- **zip 8 -> 9 (9.0.3)**, Dependabot #601. `ZipFile::name()` now returns a
+  `Result`, failing only for a name that decodes as neither UTF-8 nor CP437;
+  every ROM, HD-pack and `.bk2` lookup skips such an entry, as it already
+  skipped one it could not read. 9.0.1-9.0.3 fix reads past an entry's
+  declared size and overflows in the ZIP64 and implode paths.
+
 ### Fixed
 
 - **FDS disk games keep their saves on Android and iOS.** The game's writes to

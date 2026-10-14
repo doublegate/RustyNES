@@ -211,13 +211,19 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
     let idx = (0..archive.len()).find(|&i| {
+        // zip 9: an entry whose name decodes as neither UTF-8 nor CP437 is
+        // skipped, the same as an entry that cannot be read at all.
         archive.by_index(i).is_ok_and(|f| {
-            std::path::Path::new(f.name()).extension().is_some_and(|e| {
-                e.eq_ignore_ascii_case("nes")
-                    || e.eq_ignore_ascii_case("fds")
-                    || e.eq_ignore_ascii_case("nsf")
-                    || e.eq_ignore_ascii_case("unf")
-                    || e.eq_ignore_ascii_case("unif")
+            f.name().is_ok_and(|n| {
+                std::path::Path::new(n.as_ref())
+                    .extension()
+                    .is_some_and(|e| {
+                        e.eq_ignore_ascii_case("nes")
+                            || e.eq_ignore_ascii_case("fds")
+                            || e.eq_ignore_ascii_case("nsf")
+                            || e.eq_ignore_ascii_case("unf")
+                            || e.eq_ignore_ascii_case("unif")
+                    })
             })
         })
     })?;
@@ -225,9 +231,15 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     if file.size() > MAX_ENTRY_BYTES {
         return None;
     }
-    let name = std::path::Path::new(file.name())
-        .file_name()
-        .map_or_else(|| "rom".to_string(), |n| n.to_string_lossy().into_owned());
+    let name = file
+        .name()
+        .ok()
+        .and_then(|n| {
+            std::path::Path::new(n.as_ref())
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "rom".to_string());
     let cap = usize::try_from(file.size()).unwrap_or(0);
     let mut out = Vec::with_capacity(cap);
     file.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;

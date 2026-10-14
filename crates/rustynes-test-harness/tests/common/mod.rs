@@ -516,11 +516,15 @@ pub mod external {
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
         let idx = (0..archive.len()).find(|&i| {
             archive.by_index(i).is_ok_and(|f| {
-                std::path::Path::new(f.name()).extension().is_some_and(|e| {
-                    e.eq_ignore_ascii_case("nes")
-                        || e.eq_ignore_ascii_case("fds")
-                        || e.eq_ignore_ascii_case("unf")
-                        || e.eq_ignore_ascii_case("unif")
+                f.name().is_ok_and(|n| {
+                    std::path::Path::new(n.as_ref())
+                        .extension()
+                        .is_some_and(|e| {
+                            e.eq_ignore_ascii_case("nes")
+                                || e.eq_ignore_ascii_case("fds")
+                                || e.eq_ignore_ascii_case("unf")
+                                || e.eq_ignore_ascii_case("unif")
+                        })
                 })
             })
         })?;
