@@ -479,6 +479,12 @@ const CHIPS: &[Chip] = &[
                 "board identity: the mapper's static capability flags",
             ),
             (
+                "prg_may_unmap",
+                "board identity: Mapper::may_unmap_prg_rom, a per-type constant \
+                 (true only for 228 and 235), cached at construction and at the \
+                 mapper re-instantiation in load_state, like mapper_caps",
+            ),
+            (
                 "rom_bytes",
                 "board identity: the ROM image itself; a save state never carries it",
             ),
