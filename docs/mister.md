@@ -761,6 +761,35 @@ Requested and actual are recorded separately because they can legitimately diffe
 a ROM that jams stops advancing frames, and the export still succeeds. What must
 never happen is the manifest claiming a frame count that was not simulated.
 
+### Input-device and cheat stimuli (v3.2.0)
+
+Item 8 of v3.2.0 gives the MiSTer core a Four Score, an Arkanoid (Vaus) paddle
+and Game Genie style cheats, and each needs a golden with the same device
+attached on this side. Three exporter flags attach them for the whole run:
+
+| Flag | Attaches | Manifest line |
+|---|---|---|
+| `--four-score P1:P2:P3:P4` | the Four Score, with four pads' button bytes (two hex digits each, `Buttons` bit order) | `four_score = 01:82:44:a8` |
+| `--vaus POS:FIRE` | an NES (7-pin) Arkanoid controller on `$4017`: knob position (two hex digits) and fire (`0`/`1`) | `vaus = a7:1` |
+| `--genie CODE` (repeatable) | a 6- or 8-letter Game Genie code | `genie = SXIOPO,YYKPOYZZ` |
+
+They call the emulator's existing models (`Nes::set_four_score`,
+`Nes::set_paddle`, `Nes::add_genie_code`) and change no emulated behaviour of
+their own, so `EMULATION_EPOCH` does not move. The manifest gains a line only
+when a flag is given, so every earlier manifest is byte-identical. The inputs
+are held **constant** for the run: a frame-windowed schedule would need the
+DUT's testbench to reproduce the frame boundaries, and a stimulus ROM that reads
+the device every frame exercises every bit of it anyway.
+
+Three combinations are refused rather than exported: `--four-score` with
+`--press-start` (both write port 1's buttons), `--four-score` with `--vaus` (the
+NESdev Arkanoid page: "No version is compatible with four player adapters"), and
+two codes patching one address (the emulator keeps one code per address, so the
+manifest would list a code that never applied). The parsers, the refusals, the
+manifest lines and the attach path are tested in the binary's `device_tests`;
+the attach test runs a ROM that strobes the ports and reads them back, so a flag
+that parsed and attached nothing fails it.
+
 ## The null-DUT gate
 
 `crates/rustynes-cosim/tests/null_dut_self_diff.rs` is rung 0's half of the

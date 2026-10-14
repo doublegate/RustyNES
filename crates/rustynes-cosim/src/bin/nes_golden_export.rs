@@ -6,7 +6,14 @@
 //! nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]
 //!                   [--boot-trace START..END] [--irq-trace CAP]
 //!                   [--checkpoint-interval N]
+//!                   [--four-score P1:P2:P3:P4] [--vaus POS:FIRE] [--genie CODE]...
 //! ```
+//!
+//! The last three (v3.2.0) attach STIMULUS devices for the whole run -- a Four
+//! Score with four pads, an Arkanoid paddle on `$4017`, Game Genie codes -- so
+//! the `RustyNES_MiSTer` input and cheat gates have a golden to compare against.
+//! Each is recorded in the manifest (`four_score`, `vaus`, `genie`) only when
+//! given; see `DeviceArgs`.
 //!
 //! Writes, under `<dir>`:
 //!
@@ -93,6 +100,195 @@ struct Args {
     inject_nmi_at: Option<u64>,
     inject_irq_at: Option<u64>,
     inject_hold: u64,
+    /// v3.2.0 (item 8) -- the input devices and cheat codes attached for the
+    /// whole run. See [`DeviceArgs`].
+    devices: DeviceArgs,
+}
+
+/// v3.2.0 (item 8): the STIMULUS the `RustyNES_MiSTer` input and cheat gates
+/// need on the oracle side -- a Four Score with four pads, an Arkanoid (Vaus)
+/// paddle on port 2, and Game Genie codes.
+///
+/// Every one of these is a console INPUT the emulator already models (`Nes::set_four_score`,
+/// `Nes::set_paddle`, `Nes::add_genie_code`); the exporter only had no way to
+/// ask for them, so a DUT implementing the same device had nothing to be
+/// compared against. They change no emulated behaviour of their own: with none
+/// given, every artifact and every manifest line is byte-identical to the
+/// exporter before this field existed (the manifest gains lines ONLY when one
+/// is set, so the 132 committed manifests stay exactly what they are).
+///
+/// Held CONSTANT for the run, deliberately. A frame-windowed schedule like
+/// `--press-start` would need the DUT's testbench to reproduce the frame
+/// boundaries in CPU cycles; a constant input needs nothing reproduced, and a
+/// stimulus ROM that reads the device every frame exercises every bit of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct DeviceArgs {
+    /// `--four-score P1:P2:P3:P4` -- the adapter on, and the four pads' button
+    /// bytes (bit order as `Buttons`: A, B, Select, Start, Up, Down, Left, Right
+    /// from bit 0).
+    four_score: Option<[u8; 4]>,
+    /// `--vaus POS:FIRE` -- an Arkanoid controller on port 2 (`$4017`), its
+    /// 8-bit knob position and whether the fire button is held.
+    vaus: Option<(u8, bool)>,
+    /// `--genie CODE`, repeatable -- 6- or 8-letter Game Genie codes, kept in
+    /// the order given (the manifest records them in that order).
+    genie: Vec<String>,
+}
+
+/// Parse `--four-score P1:P2:P3:P4`: four two-digit hex bytes.
+///
+/// Exactly two digits each, so `1:2:3:4` is refused rather than read as
+/// `01:02:03:04` -- the manifest records the canonical form, and a recipe
+/// regenerated from it must reproduce the same argument the export saw.
+fn parse_four_score_spec(spec: &str) -> Option<[u8; 4]> {
+    let parts: Vec<&str> = spec.split(':').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut out = [0u8; 4];
+    for (slot, p) in out.iter_mut().zip(&parts) {
+        if p.len() != 2 {
+            return None;
+        }
+        *slot = u8::from_str_radix(p, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Parse `--vaus POS:FIRE`: a two-digit hex knob position and `0` or `1`.
+fn parse_vaus_spec(spec: &str) -> Option<(u8, bool)> {
+    let (pos, fire) = spec.split_once(':')?;
+    if pos.len() != 2 {
+        return None;
+    }
+    let pos = u8::from_str_radix(pos, 16).ok()?;
+    let fire = match fire {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    Some((pos, fire))
+}
+
+/// Refuse a device request that would silently produce a golden describing
+/// something other than what was asked. `None` when the request is coherent.
+///
+/// Each rule names a combination that would RUN and export a plausible golden:
+///
+/// - **Four Score with `--press-start`.** Both write port 1's buttons; the
+///   press would overwrite the Four Score's pad 1 for its window and restore
+///   zero after it, so the manifest's `four_score` line would be false for part
+///   of the run.
+/// - **Four Score with `--vaus`.** The `NESdev` "Arkanoid controller" page: "No
+///   version is compatible with four player adapters." The oracle would let the
+///   paddle take over port 2 regardless, producing a stream no console can.
+/// - **Two Game Genie codes at one address.** The oracle keeps one code per
+///   address, so the second REPLACES the first; the manifest would list a code
+///   that was never active.
+/// - **An undecodable code** is refused here rather than at `add_genie_code`,
+///   so the message names the flag.
+fn device_error(args: &Args) -> Option<String> {
+    let d = &args.devices;
+    if d.four_score.is_some() && args.press_start.is_some() {
+        return Some(
+            "--four-score and --press-start both drive port 1's buttons; the press \
+             would overwrite pad 1 for part of the run"
+                .to_owned(),
+        );
+    }
+    if d.four_score.is_some() && d.vaus.is_some() {
+        return Some(
+            "--four-score with --vaus: the Arkanoid controller is not compatible with \
+             four player adapters (NESdev \"Arkanoid controller\")"
+                .to_owned(),
+        );
+    }
+    let mut seen: Vec<u16> = Vec::with_capacity(d.genie.len());
+    for code in &d.genie {
+        let gc = match rustynes_core::GenieCode::new(code) {
+            Ok(gc) => gc,
+            Err(e) => return Some(format!("--genie {code:?}: {e}")),
+        };
+        if seen.contains(&gc.addr()) {
+            return Some(format!(
+                "--genie {code:?} patches ${:04X}, which an earlier --genie already \
+                 patches; the oracle keeps one code per address, so the earlier one \
+                 would silently stop applying",
+                gc.addr()
+            ));
+        }
+        seen.push(gc.addr());
+    }
+    None
+}
+
+/// Attach the requested devices and codes to a freshly constructed oracle.
+///
+/// Called before a single cycle runs, so the first strobe of the run already
+/// sees them. Infallible once [`device_error`] has passed; the `Result` is the
+/// genie decoder's, kept rather than unwrapped so a future path that skips the
+/// validation fails with a message instead of a panic.
+fn apply_devices(o: &mut Oracle, d: &DeviceArgs) -> Result<(), String> {
+    if let Some(pads) = d.four_score {
+        o.nes_mut().set_four_score(true);
+        for (port, bits) in pads.iter().enumerate() {
+            o.set_buttons(port, *bits);
+        }
+    }
+    if let Some((pos, fire)) = d.vaus {
+        // Port index 1 is `$4017`, where the NES (7-pin) Arkanoid controller
+        // reports -- the Famicom version's `$4016`/`$4017` split is a different
+        // device and is not what the MiSTer core models.
+        o.nes_mut().set_paddle(1, pos, fire);
+    }
+    for code in &d.genie {
+        o.nes_mut()
+            .add_genie_code(code)
+            .map_err(|e| format!("--genie {code:?}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Validate the device request, then attach it, or exit with the reason.
+///
+/// One call in `main`, which sits at the pedantic line limit, for the same
+/// reason [`arm_traces`] is one call.
+fn attach_devices(o: &mut Oracle, args: &Args) {
+    if let Some(why) = device_error(args) {
+        eprintln!("{why}");
+        usage();
+    }
+    if let Err(e) = apply_devices(o, &args.devices) {
+        eprintln!("{e}");
+        usage();
+    }
+}
+
+/// The manifest lines recording the devices, or the empty string when none
+/// was attached -- which is what keeps every existing manifest byte-identical.
+///
+/// Canonical forms (lower-case two-digit hex, upper-case codes) so the
+/// recipe generator in `RustyNES_MiSTer` can turn each line straight back into
+/// the flag that produced it.
+fn device_block(d: &DeviceArgs) -> String {
+    // Lines collected and joined rather than `write!`-ed into one `String`, so
+    // there is no `fmt::Result` to discard (the reason `sha256_hex` is written
+    // the way it is).
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(p) = d.four_score {
+        lines.push(format!(
+            "four_score   = {:02x}:{:02x}:{:02x}:{:02x}\n",
+            p[0], p[1], p[2], p[3]
+        ));
+    }
+    if let Some((pos, fire)) = d.vaus {
+        lines.push(format!("vaus         = {pos:02x}:{}\n", u8::from(fire)));
+    }
+    if !d.genie.is_empty() {
+        let codes: Vec<String> = d.genie.iter().map(|c| c.to_ascii_uppercase()).collect();
+        lines.push(format!("genie        = {}\n", codes.join(",")));
+    }
+    lines.concat()
 }
 
 /// The `--ppu-state-trace` capacity, refused outside a usable range.
@@ -129,6 +325,8 @@ fn usage() -> ! {
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
          \x20                       [--inject-nmi-at N] [--inject-irq-at N]\n\
          \x20                       [--press-start A:B]\n\
+         \x20                       [--four-score P1:P2:P3:P4] [--vaus POS:FIRE]\n\
+         \x20                       [--genie CODE]...\n\
          \x20                       [--ppu-state-trace CAP --pst-frames A:B\n\
          \x20                        [--pst-scanlines A:B] [--pst-dots A:B]]"
     );
@@ -185,6 +383,7 @@ fn parse_args() -> Args {
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
     let mut press_start: Option<(u64, u64)> = None;
+    let mut devices = DeviceArgs::default();
 
     let mut i = 0;
     // Every value-taking arm below advances `i` by TWO, not one: this loop has
@@ -305,6 +504,27 @@ fn parse_args() -> Args {
                 pst_dots = Some(parse_pair_u16(need(i)).unwrap_or_else(|| usage()));
                 i += 2;
             }
+            // v3.2.0 (item 8). A malformed spec EXITS rather than being
+            // ignored: an unparsed device is a golden of a console with nothing
+            // plugged in, under a recipe claiming otherwise.
+            "--four-score" => {
+                devices.four_score = Some(parse_four_score_spec(need(i)).unwrap_or_else(|| {
+                    eprintln!("--four-score wants P1:P2:P3:P4, four two-digit hex bytes");
+                    usage()
+                }));
+                i += 2;
+            }
+            "--vaus" => {
+                devices.vaus = Some(parse_vaus_spec(need(i)).unwrap_or_else(|| {
+                    eprintln!("--vaus wants POS:FIRE, a two-digit hex position and 0 or 1");
+                    usage()
+                }));
+                i += 2;
+            }
+            "--genie" => {
+                devices.genie.push(need(i).clone());
+                i += 2;
+            }
             "--checkpoint-interval" => {
                 checkpoint_interval = need(i).parse().unwrap_or_else(|_| usage());
                 if checkpoint_interval == 0 {
@@ -350,6 +570,7 @@ fn parse_args() -> Args {
         inject_nmi_at,
         inject_irq_at,
         inject_hold,
+        devices,
     }
 }
 
@@ -880,6 +1101,7 @@ fn main() {
     std::fs::create_dir_all(&args.out).expect("create out dir");
 
     let mut o = Oracle::new(&rom, args.seed).unwrap_or_else(|e| panic!("parse rom: {e}"));
+    attach_devices(&mut o, &args);
 
     // The power-on work RAM, captured BEFORE a single cycle runs.
     //
@@ -975,7 +1197,9 @@ fn main() {
         (0, 0)
     };
 
-    let mode_block = run_mode_block(&args, calls, frames_actual);
+    // The device lines ride in the mode block: they describe the run, and an
+    // empty block leaves every pre-v3.2.0 manifest byte-identical.
+    let mode_block = run_mode_block(&args, calls, frames_actual) + &device_block(&args.devices);
 
     let manifest = format!(
         "rom          = {}\n\
@@ -1068,6 +1292,7 @@ mod tests {
             inject_nmi_at: None,
             inject_irq_at: None,
             inject_hold: 1,
+            devices: super::DeviceArgs::default(),
         };
 
         let mut args = base();
@@ -1184,5 +1409,200 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+}
+
+/// v3.2.0 (item 8): the device and cheat stimulus flags.
+///
+/// The rules are tested through the REAL parsers and validator, and the
+/// attach path through a real `Oracle` running a real ROM -- a test that only
+/// checked the parsed `DeviceArgs` would pass while `apply_devices` attached
+/// nothing, which is the "armed but empty" shape this exporter refuses
+/// everywhere else.
+#[cfg(test)]
+mod device_tests {
+    use super::{
+        Args, DeviceArgs, apply_devices, device_block, device_error, parse_four_score_spec,
+        parse_vaus_spec,
+    };
+
+    fn args(devices: DeviceArgs) -> Args {
+        Args {
+            #[cfg(feature = "ppu-state-trace")]
+            ppu_state_trace: None,
+            rom: std::path::PathBuf::from("/dev/null"),
+            out: std::path::PathBuf::from("/tmp"),
+            seed: 0,
+            frames: 1,
+            press_start: None,
+            boot_trace: None,
+            irq_trace: None,
+            fetch_trace: None,
+            apu_trace: None,
+            checkpoint_interval: 4096,
+            inject_instructions: 0,
+            inject_nmi_at: None,
+            inject_irq_at: None,
+            inject_hold: 1,
+            devices,
+        }
+    }
+
+    #[test]
+    fn four_score_spec_takes_exactly_four_two_digit_hex_bytes() {
+        assert_eq!(
+            parse_four_score_spec("01:82:44:a8"),
+            Some([0x01, 0x82, 0x44, 0xA8])
+        );
+        assert_eq!(
+            parse_four_score_spec("FF:00:0f:F0"),
+            Some([0xFF, 0x00, 0x0F, 0xF0])
+        );
+        for bad in [
+            "",
+            "01:82:44",
+            "01:82:44:a8:00",
+            "1:82:44:a8",
+            "001:82:44:a8",
+            "0g:82:44:a8",
+        ] {
+            assert_eq!(parse_four_score_spec(bad), None, "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn vaus_spec_takes_a_position_and_a_fire_bit() {
+        assert_eq!(parse_vaus_spec("a7:1"), Some((0xA7, true)));
+        assert_eq!(parse_vaus_spec("00:0"), Some((0x00, false)));
+        for bad in ["", "a7", "a7:2", "a7:", "7:1", "a7:1:0", "zz:1"] {
+            assert_eq!(parse_vaus_spec(bad), None, "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn incoherent_device_requests_are_refused() {
+        let fs = Some([1, 2, 3, 4]);
+        let mut a = args(DeviceArgs {
+            four_score: fs,
+            ..DeviceArgs::default()
+        });
+        assert!(device_error(&a).is_none(), "a Four Score alone is coherent");
+        a.press_start = Some((1, 2));
+        assert!(
+            device_error(&a).is_some_and(|e| e.contains("--press-start")),
+            "Four Score + press-start"
+        );
+
+        let both = args(DeviceArgs {
+            four_score: fs,
+            vaus: Some((0x80, false)),
+            genie: Vec::new(),
+        });
+        assert!(device_error(&both).is_some_and(|e| e.contains("four player")));
+
+        let bad_code = args(DeviceArgs {
+            genie: vec!["WXIOPO".to_owned()],
+            ..DeviceArgs::default()
+        });
+        assert!(device_error(&bad_code).is_some_and(|e| e.contains("WXIOPO")));
+
+        // SXIOPO and SXIOPOZZ decode to the SAME address ($91D9); the second
+        // would replace the first inside the oracle.
+        let dup = args(DeviceArgs {
+            genie: vec!["SXIOPO".to_owned(), "SXIOPOZZ".to_owned()],
+            ..DeviceArgs::default()
+        });
+        assert!(device_error(&dup).is_some_and(|e| e.contains("$91D9")));
+
+        let ok = args(DeviceArgs {
+            genie: vec!["SXIOPO".to_owned(), "YYKPOYZZ".to_owned()],
+            vaus: Some((0x10, true)),
+            ..DeviceArgs::default()
+        });
+        assert!(device_error(&ok).is_none());
+    }
+
+    #[test]
+    fn no_device_adds_no_manifest_line_and_each_device_adds_its_own() {
+        assert_eq!(device_block(&DeviceArgs::default()), "");
+        let d = DeviceArgs {
+            four_score: Some([0x01, 0x82, 0x44, 0xA8]),
+            vaus: None,
+            genie: vec!["sxiopo".to_owned(), "YYKPOYZZ".to_owned()],
+        };
+        assert_eq!(
+            device_block(&d),
+            "four_score   = 01:82:44:a8\ngenie        = SXIOPO,YYKPOYZZ\n"
+        );
+        let v = DeviceArgs {
+            vaus: Some((0xA7, true)),
+            ..DeviceArgs::default()
+        };
+        assert_eq!(device_block(&v), "vaus         = a7:1\n");
+    }
+
+    /// A 16 KiB NROM that strobes the pads and stores the first `$4016` and
+    /// `$4017` reads at `$00`/`$01`, then spins.
+    fn strobe_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 16384 + 8192];
+        rom[..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 1;
+        rom[5] = 1;
+        let code = [
+            0xA9, 0x01, 0x8D, 0x16, 0x40, // LDA #1 ; STA $4016
+            0xA9, 0x00, 0x8D, 0x16, 0x40, // LDA #0 ; STA $4016
+            0xAD, 0x16, 0x40, 0x85, 0x00, // LDA $4016 ; STA $00
+            0xAD, 0x17, 0x40, 0x85, 0x01, // LDA $4017 ; STA $01
+            0x4C, 0x14, 0x80, // JMP $8014 (itself)
+        ];
+        rom[16..16 + code.len()].copy_from_slice(&code);
+        let v = 16 + 16384 - 6;
+        rom[v..v + 6].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+        rom
+    }
+
+    fn run(d: &DeviceArgs) -> (u8, u8, rustynes_cosim::Oracle) {
+        let mut o = rustynes_cosim::Oracle::new(&strobe_rom(), 0).expect("rom");
+        apply_devices(&mut o, d).expect("attach");
+        o.advance_frames(2);
+        let ram = o.nes().bus().ram_bytes();
+        (ram[0], ram[1], o)
+    }
+
+    #[test]
+    fn the_devices_actually_reach_the_emulated_ports() {
+        // Control: nothing attached. Open bus $40 from the operand's high byte,
+        // D0 = 0 from two unpressed pads.
+        let (p1, p2, _) = run(&DeviceArgs::default());
+        assert_eq!((p1, p2), (0x40, 0x40));
+
+        // Four Score: pad 1's A (bit 0) and pad 2's A are the first bits out.
+        let (p1, p2, o) = run(&DeviceArgs {
+            four_score: Some([0x01, 0x01, 0x00, 0x00]),
+            ..DeviceArgs::default()
+        });
+        assert!(o.nes().four_score());
+        assert_eq!((p1, p2), (0x41, 0x41));
+
+        // Vaus on $4017: knob $A7 has its MSb set, which goes out INVERTED on
+        // D4 (so 0), and fire held is D3 = 1; D0 is not driven. $4016 is
+        // still the standard pad.
+        let (p1, p2, _) = run(&DeviceArgs {
+            vaus: Some((0xA7, true)),
+            ..DeviceArgs::default()
+        });
+        assert_eq!((p1, p2), (0x40, 0x48));
+        let (_, p2, _) = run(&DeviceArgs {
+            vaus: Some((0x27, false)),
+            ..DeviceArgs::default()
+        });
+        assert_eq!(p2, 0x50, "MSb clear goes out as D4 = 1");
+
+        // Game Genie: every code is active, none silently dropped.
+        let (_, _, o) = run(&DeviceArgs {
+            genie: vec!["SXIOPO".to_owned(), "YYKPOYZZ".to_owned()],
+            ..DeviceArgs::default()
+        });
+        assert_eq!(o.nes().genie_codes().count(), 2);
     }
 }
