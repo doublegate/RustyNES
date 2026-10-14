@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-140-Jaleco140/Mississippi Satsujin Jiken (Japan) (Rev A).nes
+rom_sha256=b61c9bc37ec251f0836d2dc457605b428b964287aeddf31d97e3fb393ffc9797
+frames=700
+fb_bytes=245760
+cycles=20816571
+audio_samples=512903
+audio_fnv1a64=9b93b4483c8cc219
+checkpoint f700 fb_fnv1a64=b5872c5122fc5887

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-206-Namcot118/Family Circuit (Japan) (Namcot Collection).nes
+rom_sha256=4b034f661dc6bb2e484385e56fc3777d29b815a9950ad7bd472056495cff9139
+frames=700
+fb_bytes=245760
+cycles=20816572
+audio_samples=512903
+audio_fnv1a64=5faf42b49fe431c3
+checkpoint f700 fb_fnv1a64=5ec4884d35d9e78d

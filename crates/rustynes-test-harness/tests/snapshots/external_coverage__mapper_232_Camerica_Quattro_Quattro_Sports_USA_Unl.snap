@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-232-Camerica-Quattro/Quattro Sports (USA) (Unl).nes
+rom_sha256=bc7fafbfb01a85996fa2c8ca57e1dbec9cbcb7458f2fcf1876d04a7e77b2f439
+frames=1141
+fb_bytes=245760
+cycles=33949791
+audio_samples=836505
+audio_fnv1a64=efcfb178ca267f52
+checkpoint f900 fb_fnv1a64=e18ee694931ba387
+checkpoint f1100 fb_fnv1a64=fb2cd2b5efdad8a0

@@ -336,6 +336,18 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
         resets: &[700],
         frames: 3500,
     };
+    // v3.2.0: titles whose own title screen or attract mode draws only after a
+    // long intro (a story crawl, a slow logo), past both IDLE and IDLE_LONG.
+    // Each frame count was chosen by looking at the frames around it.
+    const IDLE_1500: InputScript = InputScript::IdleOnly { frames: 1500 };
+    const IDLE_1800: InputScript = InputScript::IdleOnly { frames: 1800 };
+    // v3.2.0: Karnov. The default's five START taps PAUSE it in play (the
+    // capture showed "PAUSE"); one tap starts the game, in play by f700.
+    const ONE_START: InputScript = InputScript::Presses {
+        presses: &[(300, Buttons::START)],
+        frames: 1100,
+        checkpoints: &[700, 1100],
+    };
     let idle = [
         "mapper-000-NROM/Gyromite.nes",
         "mapper-001-MMC1/Dr. Mario.nes",
@@ -350,8 +362,31 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
         "mapper-085-VRC7/Lagrange Point (Japan) (En) (1.01).nes",
         "mapper-119-TQROM/High Speed (E) [!].nes",
         "mapper-119-TQROM/Pin Bot (E) [!].nes",
+        // v3.2.0: the title (or, for Play Action Football, an intro cutscene)
+        // instead of the menu or select screen the START taps reach.
+        "mapper-011-ColorDreams/Castle of Deceit (USA) (Unl).nes",
+        "mapper-118-TxSROM/Goal! Two.nes",
+        "mapper-118-TxSROM/NES Play Action Football.nes",
+        "mapper-118-TxSROM/Pro Sport Hockey.nes",
+        "mapper-140-Jaleco140/Mississippi Satsujin Jiken (Japan) (Rev A).nes",
+        "mapper-206-Namcot118/Family Circuit (Japan) (Namcot Collection).nes",
     ];
-    let idle_long = ["mapper-001-MMC1/Tecmo Bowl.nes"];
+    let idle_long = [
+        "mapper-001-MMC1/Tecmo Bowl.nes",
+        // v3.2.0: DW3's stone title (the START taps reach the save menu) and
+        // Babel no Tou's attract-mode play (they reach the floor select).
+        "mapper-001-MMC1/Dragon Warrior III.nes",
+        "mapper-206-Namcot118/Babel no Tou (Japan) (Namcot Collection).nes",
+    ];
+    match rom_rel {
+        // DW4's title logo finishes drawing at about f1700.
+        "mapper-001-MMC1/Dragon Warrior IV.nes" => return Some(IDLE_1800),
+        // Armadillo's title follows a story crawl, from about f1400 (the START
+        // taps reach a "Battle Box not connected" notice).
+        "mapper-118-TxSROM/Armadillo (Japan).nes" => return Some(IDLE_1500),
+        "mapper-206-Namcot118/Karnov.nes" => return Some(ONE_START),
+        _ => {}
+    }
     if rom_rel == "mapper-230-22in1-Reset/22-in-1 (Reset Based) [p1].zip" {
         return Some(RESET_22_IN_1);
     }

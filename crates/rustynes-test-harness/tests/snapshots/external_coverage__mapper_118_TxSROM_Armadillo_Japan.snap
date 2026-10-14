@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/Armadillo (Japan).nes
+rom_sha256=80ea0154250f22f1d0d4a1098a737b57679871af956c915628bf391b5b88fb69
+frames=1500
+fb_bytes=245760
+cycles=44640975
+audio_samples=1099936
+audio_fnv1a64=61f5c31039b6abb3
+checkpoint f1500 fb_fnv1a64=e7abc296808227dd
