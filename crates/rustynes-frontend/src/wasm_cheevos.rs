@@ -202,24 +202,16 @@ impl BrowserRaSession {
         // and the lint fires -- measured both ways rather than assumed. (Review
         // on #423 suggested the note alone would do; it does, but only in this
         // order.)
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let alive = Arc::new(AtomicBool::new(true));
-        let alive_flag = Arc::clone(&alive);
-        let read_ptr: *mut (dyn FnMut(u16) -> u8) = read;
+        #[allow(unsafe_code)] // localized lifetime erasure; see SAFETY below
+        // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
+        // synchronously below, and `closure` is dropped at the end of this
+        // function, so the call can never outlive the real borrow.
+        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) =
+            unsafe { core::mem::transmute(read) };
         let closure = Closure::<dyn FnMut(u32) -> u32>::new(move |addr: u32| {
-            if !alive_flag.load(Ordering::Acquire) {
-                return 0;
-            }
-            // SAFETY: `alive` is set false before `read` goes out of scope,
-            // preventing post-return invocation from dereferencing the stack pointer.
-            unsafe {
-                let reader = &mut *read_ptr;
-                u32::from(reader((addr & 0xffff) as u16))
-            }
+            u32::from(read_static((addr & 0xffff) as u16))
         });
         let json = ra_do_frame(closure.as_ref().unchecked_ref());
-        alive.store(false, Ordering::Release);
         drop(closure);
         parse_unlock_titles(&json)
     }
