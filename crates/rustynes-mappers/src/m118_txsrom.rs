@@ -149,6 +149,10 @@ impl Mapper for TxSrom {
         self.inner.ppu_read(addr)
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        self.inner.ppu_peek(addr)
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         self.inner.ppu_write(addr, value);
     }

@@ -700,9 +700,8 @@ fn run_loop(
         }
         // Idle: no ROM yet, netplay owns the core on the winit thread, or the
         // user paused emulation from the UX shell.
-        let idle = !control.has_rom.load(Ordering::Acquire)
-            || control.netplay_paused.load(Ordering::Acquire)
-            || control.user_paused.load(Ordering::Acquire);
+        let idle =
+            !control.has_rom.load(Ordering::Acquire) || control.user_paused.load(Ordering::Acquire);
         if idle {
             // Frame-advance: while user-paused (but with a ROM and not in
             // netplay), a pending step produces EXACTLY ONE unthrottled frame

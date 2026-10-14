@@ -98,16 +98,20 @@ impl BatteryPolicy {
 
     /// Whether `live` differs from the last successful write.
     #[must_use]
-    pub fn differs(&self, live: &[u8]) -> bool {
-        live != self.last.as_slice()
+    pub fn differs(&self, live: &[u8], is_dirty: Option<bool>) -> bool {
+        if is_dirty == Some(false) {
+            false
+        } else {
+            live != self.last.as_slice()
+        }
     }
 
     /// The bytes to write now, if any: a copy of `live` when a comparison is
     /// due ([`Self::tick`]) and `live` differs from the last write
     /// ([`Self::differs`]). The copy lets the caller write without holding
     /// the emulator.
-    pub fn due(&mut self, live: &[u8], force: bool) -> Option<Vec<u8>> {
-        (self.tick(force) && self.differs(live)).then(|| live.to_vec())
+    pub fn due(&mut self, live: &[u8], is_dirty: Option<bool>, force: bool) -> Option<Vec<u8>> {
+        (self.tick(force) && self.differs(live, is_dirty)).then(|| live.to_vec())
     }
 
     /// Record the outcome of writing `bytes`: on success they become the
@@ -168,30 +172,34 @@ mod tests {
         let dirty = [1u8; 4];
         let mut due = 0;
         for _ in 0..(3 * CHECK_PERIOD_FRAMES) {
-            if p.due(&dirty, false).is_some() {
+            if p.due(&dirty, None, false).is_some() {
                 due += 1;
             }
         }
         assert_eq!(due, 3, "once per period, although always dirty");
-        assert_eq!(p.due(&dirty, true), Some(dirty.to_vec()), "force: now");
+        assert_eq!(
+            p.due(&dirty, None, true),
+            Some(dirty.to_vec()),
+            "force: now"
+        );
     }
 
     #[test]
     fn a_clean_save_is_never_due() {
         let mut p = BatteryPolicy::new(vec![7; 4]);
-        assert!(p.due(&[7; 4], true).is_none());
+        assert!(p.due(&[7; 4], None, true).is_none());
     }
 
     #[test]
     fn a_success_moves_the_baseline_and_a_failure_does_not() {
         let mut p = BatteryPolicy::new(vec![0; 2]);
-        let bytes = p.due(&[5, 6], true).unwrap();
+        let bytes = p.due(&[5, 6], None, true).unwrap();
         assert!(p.written(bytes.clone(), false), "first failure: report");
         assert_eq!(p.baseline(), &[0, 0], "baseline kept, so it retries");
         assert!(!p.written(bytes.clone(), false), "second failure: quiet");
         assert!(!p.written(bytes, true), "success reports nothing");
         assert_eq!(p.baseline(), &[5, 6]);
-        assert!(p.due(&[5, 6], true).is_none(), "and is now clean");
+        assert!(p.due(&[5, 6], None, true).is_none(), "and is now clean");
         assert!(
             p.written(vec![1, 1], false),
             "a new run of failures reports"

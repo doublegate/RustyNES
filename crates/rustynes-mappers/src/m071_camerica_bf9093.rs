@@ -97,7 +97,8 @@ impl Mapper for Camerica {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
-            0x9000..=0x9FFF if self.has_single_screen => {
+            0x9000..=0x9FFF => {
+                self.has_single_screen = true;
                 self.mirroring = if value & 0x10 == 0 {
                     Mirroring::SingleScreenA
                 } else {
@@ -110,6 +111,15 @@ impl Mapper for Camerica {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize % self.chr_ram.len()],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize % self.chr_ram.len()],

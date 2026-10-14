@@ -116,6 +116,16 @@ impl Mapper for Waixing252 {
         self.inner.ppu_read(addr)
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        if addr < 0x2000
+            && let Some(off) = self.ram_offset(addr)
+        {
+            return self.chr_ram[off];
+        }
+        self.inner.ppu_peek(addr)
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if addr < 0x2000 {

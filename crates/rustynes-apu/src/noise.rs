@@ -24,7 +24,7 @@ pub const PAL_NOISE_PERIODS: [u16; 16] = [
 pub struct Noise {
     /// LFSR (initialized to 1 on power-up; only bottom 15 bits used).
     pub(crate) lfsr: u16,
-    /// Mode (false = long / 15-bit, true = short / 6-bit).
+    /// Mode (false = long / 15-bit, true = short / 93-step mode taking feedback from bit 6).
     pub(crate) mode: bool,
     /// Timer reload (from period table).
     pub(crate) timer_period: u16,

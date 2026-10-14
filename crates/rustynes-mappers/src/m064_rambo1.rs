@@ -385,6 +385,18 @@ impl Mapper for Rambo1 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr[off % self.chr.len()]
+            }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

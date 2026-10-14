@@ -589,9 +589,9 @@ where
         // instead of truncating it (CWE-377).
         opts.write(true).create_new(true);
         #[cfg(unix)]
-        if let Some(mode) = existing_mode {
+        {
             use std::os::unix::fs::OpenOptionsExt as _;
-            opts.mode(mode);
+            opts.mode(existing_mode.unwrap_or(0o600));
         }
         // Advance past an occupied scratch name, up to `SCRATCH_ATTEMPTS` times.
         // A crashed run can orphan scratch files, the OS later reuses that pid,

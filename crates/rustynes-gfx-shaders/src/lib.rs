@@ -109,7 +109,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // Overscan crop: remap the visible V (crop.xy) and U (crop.zw) ranges.
     let suv = vec2<f32>(in.uv.x * u.crop.z + u.crop.w, in.uv.y * u.crop.x + u.crop.y);
-    var rgb = textureSample(nes_tex, nes_smp, suv).rgb;
+    var rgb = textureSampleLevel(nes_tex, nes_smp, suv, 0.0).rgb;
 
     // v2.2.8 'Aperture II': do the scanline + mask *darkening* in LINEAR light so a
     // scanline valley at 50% is 50% of the LINEAR luminance (perceptually correct),
@@ -277,7 +277,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let fs = f32(s);
         let samp_col = col + fs / f32(SUB);
         let uvx = samp_col * texel;
-        let src = textureSample(nes_tex, nes_smp, vec2<f32>(uvx, suv.y)).rgb;
+        let src = textureSampleLevel(nes_tex, nes_smp, vec2<f32>(uvx, suv.y), 0.0).rgb;
         let yiq = rgb2yiq(src);
         // Subcarrier phase at this composite sample.
         let ph = TAU * (samp_col / f32(SUB) + phase0) ;

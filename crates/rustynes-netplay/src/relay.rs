@@ -341,10 +341,12 @@ impl TurnClient {
 
     fn next_tx(&mut self) -> TransactionId {
         let mut tx = [0u8; 12];
-        for chunk in tx.chunks_mut(4) {
-            let r = self.rng.next_u64().to_le_bytes();
-            let n = chunk.len();
-            chunk.copy_from_slice(&r[..n]);
+        if getrandom::getrandom(&mut tx).is_err() {
+            for chunk in tx.chunks_mut(4) {
+                let r = self.rng.next_u64().to_le_bytes();
+                let n = chunk.len();
+                chunk.copy_from_slice(&r[..n]);
+            }
         }
         tx
     }

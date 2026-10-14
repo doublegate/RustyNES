@@ -1772,21 +1772,7 @@ impl SystemBus {
     pub fn debug_peek_ppu(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            // v3.1.0: on the five boards whose CHR read changes them (MMC2 and
-            // MMC4 latches, the J.Y. ASIC's read-clocked IRQ, Bandai 96 and
-            // Nanjing 163; `Mapper::chr_reads_are_pure`) the read is bracketed
-            // by the board's own save / load, so a debugger panel or an HD-pack
-            // tile hash no longer changes the game. Until v3.1.0 opening the
-            // pattern viewer on Punch-Out!! flipped its CHR latch. Free on every
-            // other board.
-            0x0000..=0x1FFF if self.mapper.chr_reads_are_pure() => self.mapper.ppu_read(addr),
-            0x0000..=0x1FFF => {
-                let saved = self.mapper.save_state();
-                let v = self.mapper.ppu_read(addr);
-                let restored = self.mapper.load_state(&saved);
-                debug_assert!(restored.is_ok(), "a board must reload its own state");
-                v
-            }
+            0x0000..=0x1FFF => self.mapper.ppu_peek(addr),
             0x2000..=0x3EFF => {
                 let addr = if addr >= 0x3000 && !self.mapper.nametable_unfolded() {
                     addr - 0x1000
@@ -3816,7 +3802,7 @@ impl SystemBus {
                 self.vs_overlay_4017(base)
             }
             0x4020..=0xFFFF => {
-                if self.mapper.cpu_read_unmapped(addr) {
+                if addr < 0x8000 && self.mapper.cpu_read_unmapped(addr) {
                     // Unmapped read: nothing drives the bus, so the CPU sees
                     // the floating-latch value (nesdev "Open bus behavior":
                     // "all it sees on its data inputs is whatever was left to
@@ -4303,8 +4289,7 @@ impl Bus for SystemBus {
     }
 
     fn cycle_count(&self) -> u64 {
-        // Cumulative bus-side cycle counter, including DMC DMA cycles
-        // that the CPU's own `Cpu::cycles` field does not count.  Used
+        // Cumulative bus-side cycle counter. Used
         // by the SH* unstable-store family to detect DMA interrupting
         // their dummy-read cycle per Mesen2's `SyaSxaAxa` algorithm.
         self.cycle

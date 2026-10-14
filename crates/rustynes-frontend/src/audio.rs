@@ -140,18 +140,15 @@ pub enum AudioError {
 /// atomic bit patterns. Capacity is a power of two; head/tail are
 /// monotonically increasing (wrapping) indices masked into the slot array.
 struct Ring {
-    slots: Box<[AtomicU64]>,
+    slots: Box<[AtomicU32]>,
     mask: usize,
 }
 
-// Each slot packs one f32's bits into the low half of an AtomicU64; using
-// 64-bit slots keeps the array uniform on 32-bit wasm targets too. (A plain
-// AtomicU32 would also work; the cost difference is noise at 16 K slots.)
 impl Ring {
     fn new(capacity_pow2: usize) -> Self {
         debug_assert!(capacity_pow2.is_power_of_two());
         let slots = (0..capacity_pow2)
-            .map(|_| AtomicU64::new(0))
+            .map(|_| AtomicU32::new(0))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
@@ -165,13 +162,26 @@ impl Ring {
     }
 }
 
+/// Cache-line alignment wrapper (64 bytes) to eliminate false sharing
+/// between producer and consumer threads on multi-core processors.
+#[repr(align(64))]
+struct CacheAligned<T>(pub T);
+
+impl<T> core::ops::Deref for CacheAligned<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Shared queue state.
 struct QueueInner {
     ring: Ring,
     /// Consumer (read) index — advanced by the audio callback only.
-    head: AtomicUsize,
+    head: CacheAligned<AtomicUsize>,
     /// Producer (write) index — advanced by the app's produce path only.
-    tail: AtomicUsize,
+    tail: CacheAligned<AtomicUsize>,
     /// Total samples dropped by `push` because the ring was full (overrun —
     /// the producer ran ahead of the DAC clock) or skipped by a hard
     /// resync.
@@ -275,8 +285,8 @@ impl SampleQueue {
         Self {
             inner: Arc::new(QueueInner {
                 ring: Ring::new(cap),
-                head: AtomicUsize::new(0),
-                tail: AtomicUsize::new(0),
+                head: CacheAligned(AtomicUsize::new(0)),
+                tail: CacheAligned(AtomicUsize::new(0)),
                 overrun_dropped: AtomicU64::new(0),
                 underruns: AtomicU64::new(0),
                 started: AtomicBool::new(false),
@@ -472,7 +482,7 @@ impl SampleQueue {
         let n = samples.len().min(free);
         for (i, &s) in samples[..n].iter().enumerate() {
             self.inner.ring.slots[tail.wrapping_add(i) & self.inner.ring.mask]
-                .store(u64::from(s.to_bits()), Ordering::Relaxed);
+                .store(s.to_bits(), Ordering::Relaxed);
         }
         self.inner
             .tail
@@ -538,9 +548,8 @@ impl SampleQueue {
         let gain = f32::from_bits(self.inner.gain.load(Ordering::Relaxed) as u32);
         let n = out.len().min(avail);
         for (i, o) in out[..n].iter_mut().enumerate() {
-            #[allow(clippy::cast_possible_truncation)] // low 32 bits hold the f32.
             let bits = self.inner.ring.slots[head.wrapping_add(i) & self.inner.ring.mask]
-                .load(Ordering::Relaxed) as u32;
+                .load(Ordering::Relaxed);
             *o = f32::from_bits(bits) * gain;
         }
         self.inner

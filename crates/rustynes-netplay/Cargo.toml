@@ -31,6 +31,7 @@ signaling-server = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "d
 [dependencies]
 rustynes-core.workspace = true
 thiserror = { workspace = true, features = ["std"] }
+getrandom = "0.2"
 
 # v2.6.0 — signaling-server-only async + JSON deps (native, opt-in). The pure
 # room/relay protocol (the `signaling` module) needs none of these; they back

@@ -695,11 +695,22 @@ macro_rules! oracle {
 /// # Safety
 ///
 /// `handle` must be a live pointer from [`rn_open`].
+macro_rules! catch_ffi {
+    ($default:expr, $body:expr) => {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body)) {
+            Ok(res) => res,
+            Err(_) => $default,
+        }
+    };
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rn_run_frame(handle: *mut c_void) -> c_ulonglong {
-    let o = oracle!(handle, 0);
-    o.nes.run_frame();
-    o.nes.bus().cycle()
+    catch_ffi!(0, {
+        let o = oracle!(handle, 0);
+        o.nes.run_frame();
+        o.nes.bus().cycle()
+    })
 }
 
 /// Execute one instruction. Returns the cycles it took.
@@ -752,7 +763,17 @@ pub unsafe extern "C" fn rn_index_framebuffer(
     // SAFETY: `out` is non-null and the caller guarantees `cap` writable u16s,
     // and `cap >= fb.len()` was just checked. The regions cannot overlap: `fb`
     // borrows emulator-owned memory, `out` is caller-owned.
-    unsafe { core::ptr::copy_nonoverlapping(fb.as_ptr(), out, fb.len()) };
+    if (out as usize) & (core::mem::align_of::<u16>() - 1) == 0 {
+        unsafe { core::ptr::copy_nonoverlapping(fb.as_ptr(), out, fb.len()) };
+    } else {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                fb.as_ptr().cast::<u8>(),
+                out.cast::<u8>(),
+                fb.len() * core::mem::size_of::<u16>(),
+            );
+        }
+    }
     fb.len()
 }
 

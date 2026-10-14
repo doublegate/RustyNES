@@ -134,7 +134,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     for (var i = -1; i <= 1; i = i + 1) {
         let ry = centre + f32(i);
         let sample_v = (ry + 0.5) / rows;
-        var c = textureSample(nes_tex, nes_smp, vec2<f32>(suv.x, sample_v)).rgb;
+        var c = textureSampleLevel(nes_tex, nes_smp, vec2<f32>(suv.x, sample_v), 0.0).rgb;
         c = pow(c, vec3<f32>(gamma_in)); // to linear
         // Beam brightness scales its own width: brighter rows spread more.
         let lum = dot(c, vec3<f32>(0.299, 0.587, 0.114));

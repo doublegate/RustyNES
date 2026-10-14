@@ -1,3 +1,5 @@
+#![allow(clippy::chunks_exact_to_as_chunks)]
+#![allow(clippy::items_after_statements)]
 //! RustyNES Libretro Core.
 //!
 //! This crate implements the C ABI boundary for the `rustynes-core` engine, exposing
@@ -1311,7 +1313,7 @@ impl RustyNesLibretro {
         use rustynes_core::SAVE_STATE_DEVICE_HEADROOM as HEADROOM;
         if let Some(nes) = self.nes.as_ref() {
             self.serialize_buffer.clear();
-            nes.snapshot_core_into(&mut self.serialize_buffer);
+            nes.snapshot_core_into_slim(&mut self.serialize_buffer);
             self.serialize_size = self.serialize_buffer.len() + HEADROOM;
             self.serialize_buffer.reserve(HEADROOM);
         } else if let Some(dual) = self.dual.as_mut() {
@@ -1605,15 +1607,17 @@ impl RustyNesLibretro {
     /// is a belt-and-suspenders no-op that keeps that guarantee true even if the
     /// mono drain buffer is ever grown past 4096.
     fn push_audio(&mut self, ctx: &mut RunContext, produced: usize) {
-        self.audio_buffer.clear();
-        // No-op while capacity already covers `2 * produced` (the common case);
-        // only ever allocates if a future change enlarges `audio_float_buffer`.
-        self.audio_buffer.reserve(produced * 2);
-        for &sample in &self.audio_float_buffer[..produced] {
+        let needed = produced * 2;
+        if self.audio_buffer.len() != needed {
+            self.audio_buffer.resize(needed, 0);
+        }
+        for (&sample, chunk) in self.audio_float_buffer[..produced]
+            .iter()
+            .zip(self.audio_buffer.chunks_exact_mut(2))
+        {
             let s16 = sample_to_i16(sample);
-            // Duplicate the sample for stereo interleaving (Left, Right).
-            self.audio_buffer.push(s16);
-            self.audio_buffer.push(s16);
+            chunk[0] = s16;
+            chunk[1] = s16;
         }
         rust_libretro::contexts::AudioContext::from(&mut *ctx)
             .batch_audio_samples(&self.audio_buffer);
@@ -1637,6 +1641,15 @@ impl RustyNesLibretro {
 
     /// The classic single-console present path: 256x240 XRGB8888 + one audio stream.
     fn run_single(&mut self, ctx: &mut RunContext) {
+        #[inline]
+        fn blit_rgba_to_xrgb(dst: &mut [u8], src: &[u8]) {
+            for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+                d[0] = s[2]; // B
+                d[1] = s[1]; // G
+                d[2] = s[0]; // R
+                d[3] = s[3]; // X (alpha)
+            }
+        }
         // No `poll_input` here: `rust-libretro`'s `retro_run` has already
         // polled the frontend before calling `on_run`, and a second poll per
         // frame was pure overhead (libretro audit §2.5).
@@ -1696,14 +1709,14 @@ impl RustyNesLibretro {
         }
         // An FDS disk the game has written to is saved a second later.
         self.tick_fds_flush();
-        self.video_buffer.clear();
+        const EXPECTED_LEN: usize = NES_W * NES_H * 4;
+        if self.video_buffer.len() != EXPECTED_LEN {
+            self.video_buffer.resize(EXPECTED_LEN, 0);
+        }
         let Some(nes) = self.nes.as_ref() else {
             return;
         };
-        self.video_buffer.extend_from_slice(nes.framebuffer());
-        for chunk in self.video_buffer.as_chunks_mut::<4>().0 {
-            chunk.swap(0, 2); // RGBA8 → XRGB8888 (in-memory B G R X).
-        }
+        blit_rgba_to_xrgb(&mut self.video_buffer, nes.framebuffer());
         ctx.draw_frame(&self.video_buffer, NES_W as u32, NES_H as u32, NES_W * 4);
 
         self.audio_float_buffer.resize(4096, 0.0);
@@ -2684,7 +2697,7 @@ impl Core for RustyNesLibretro {
             let capacity = core.serialize_buffer.capacity();
             if let Some(nes) = core.nes.as_ref() {
                 core.serialize_buffer.clear();
-                nes.snapshot_core_into(&mut core.serialize_buffer);
+                nes.snapshot_core_into_slim(&mut core.serialize_buffer);
             } else if let Some(dual) = core.dual.as_mut() {
                 dual.snapshot_into(&mut core.serialize_buffer);
             } else {

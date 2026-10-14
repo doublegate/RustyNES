@@ -168,6 +168,10 @@ pub(crate) struct Namco163Audio {
     /// 15-cycle prescaler.  When it reaches 15, we update the next
     /// channel and reset.
     prescaler: u8,
+    /// Cached individual channel outputs.
+    channel_outputs: [i16; 8],
+    /// Running sum of all channel outputs.
+    cached_sum: i32,
 }
 
 // When the `mapper-audio` feature is OFF, the audio struct still exists
@@ -182,6 +186,8 @@ pub(crate) struct Namco163Audio {
     auto_inc: bool,
     tick_index: u8,
     prescaler: u8,
+    channel_outputs: [i16; 8],
+    cached_sum: i32,
 }
 
 impl Default for Namco163Audio {
@@ -192,6 +198,8 @@ impl Default for Namco163Audio {
             auto_inc: false,
             tick_index: 0,
             prescaler: 0,
+            channel_outputs: [0; 8],
+            cached_sum: 0,
         }
     }
 }
@@ -212,11 +220,25 @@ impl Namco163Audio {
         }
     }
 
+    #[cfg(feature = "mapper-audio")]
+    fn recompute_cache(&mut self) {
+        self.cached_sum = 0;
+        for ch in 0..8 {
+            let out = self.channel_output(ch);
+            self.channel_outputs[ch as usize] = out;
+            self.cached_sum += i32::from(out);
+        }
+    }
+
+    #[cfg(not(feature = "mapper-audio"))]
+    fn recompute_cache(&mut self) {}
+
     /// Write to the data port (`$4800-$4FFF`).  Stores at the latched
     /// address; advances the latch when auto-increment is set.
     pub(crate) fn write_data_port(&mut self, value: u8) {
         let idx = (self.addr_latch & 0x7F) as usize;
         self.ram[idx] = value;
+        self.recompute_cache();
         self.step_addr();
     }
 
@@ -345,6 +367,11 @@ impl Namco163Audio {
             phase %= modulus;
         }
         self.set_channel_phase(base, phase as u32);
+
+        let old_out = self.channel_outputs[ch as usize];
+        let new_out = self.channel_output(ch);
+        self.channel_outputs[ch as usize] = new_out;
+        self.cached_sum = self.cached_sum - i32::from(old_out) + i32::from(new_out);
     }
 
     /// Per-channel output sample, bipolar: `(nibble - 8) * volume`,
@@ -385,13 +412,9 @@ impl Namco163Audio {
         if n == 0 {
             return 0;
         }
-        let mut sum: i32 = 0;
-        for ch in 0..n {
-            sum += i32::from(self.channel_output(ch));
-        }
         // Per-channel range is -120..=+105; the channel-count-averaged sum has
         // the same envelope.  Scale to the Mesen2 `db_n163` level.
-        ((sum / i32::from(n)) * NAMCO163_MIX_SCALE) as i16
+        ((self.cached_sum / i32::from(n)) * NAMCO163_MIX_SCALE) as i16
     }
 
     /// Feature-off shim: the wavetable generator does not advance with
@@ -445,6 +468,7 @@ impl Namco163Audio {
         self.auto_inc = src[129] != 0;
         self.tick_index = src[130];
         self.prescaler = src[131];
+        self.recompute_cache();
         Ok(())
     }
 }
@@ -754,6 +778,21 @@ impl Mapper for Namco163 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => match self.chr_target(addr) {
+                Ok(off) => self.chr_rom[off % self.chr_rom.len()],
+                Err(ciram) => self.vram[ciram],
+            },
+            0x2000..=0x3EFF => match self.nt_target(addr) {
+                Ok(off) => self.chr_rom[off % self.chr_rom.len()],
+                Err(ciram) => self.vram[ciram],
+            },
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => match self.chr_target(addr) {

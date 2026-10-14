@@ -154,6 +154,8 @@ pub struct Mmc3 {
     // CHR mode (bit 7 of $8000): 0 = 2K@$0000 + 1K@$1000;
     //                             1 = 1K@$0000 + 2K@$1000.
     chr_mode: bool,
+    prg_offsets: [usize; 4],
+    chr_offsets: [usize; 8],
 
     // Mirroring (set via $A000 even).  Ignored on 4-screen carts.
     mirroring: Mirroring,
@@ -306,7 +308,7 @@ impl Mmc3 {
         } else {
             2 * NAMETABLE_SIZE
         };
-        Ok(Self {
+        let mut mapper = Self {
             prg_rom,
             chr,
             prg_ram: vec![0u8; prg_ram_size].into_boxed_slice(),
@@ -316,6 +318,8 @@ impl Mmc3 {
             bank_select: 0,
             prg_mode: false,
             chr_mode: false,
+            prg_offsets: [0; 4],
+            chr_offsets: [0; 8],
             mirroring: initial_mirroring,
             fixed_4screen,
             prg_ram_enabled: true,
@@ -337,7 +341,10 @@ impl Mmc3 {
             mcacc_prescaler: 0,
             #[cfg(feature = "mmc3-a12-phase-probe")]
             probe: Mmc3A12PhaseProbe::default(),
-        })
+        };
+        mapper.update_prg_offsets();
+        mapper.update_chr_offsets();
+        Ok(mapper)
     }
 
     /// Select the board wiring (the NES 2.0 submapper), v2.9.6. An MMC6 gets
@@ -436,25 +443,23 @@ impl Mmc3 {
         self.regs[r & 7]
     }
 
+    fn update_prg_offsets(&mut self) {
+        let total_banks = (self.prg_rom.len() / PRG_BANK_8K).max(1);
+        let last = total_banks.saturating_sub(1);
+        let second_last = total_banks.saturating_sub(2);
+        let r6 = (self.regs[6] as usize) % total_banks;
+        let r7 = (self.regs[7] as usize) % total_banks;
+        self.prg_offsets[0] = (if !self.prg_mode { r6 } else { second_last }) * PRG_BANK_8K;
+        self.prg_offsets[1] = r7 * PRG_BANK_8K;
+        self.prg_offsets[2] = (if !self.prg_mode { second_last } else { r6 }) * PRG_BANK_8K;
+        self.prg_offsets[3] = last * PRG_BANK_8K;
+    }
+
     /// Resolve a CPU PRG address (`$8000-$FFFF`) to a byte offset in
     /// `prg_rom`.  Implements PRG modes 0 and 1.
     fn prg_offset(&self, addr: u16) -> usize {
-        let total_banks = self.prg_rom.len() / PRG_BANK_8K;
-        let last = total_banks.saturating_sub(1);
-        let second_last = total_banks.saturating_sub(2);
-        // R6/R7 are masked to total_banks (typical sizes <= 64 banks => 6 bits).
-        let r6 = (self.regs[6] as usize) & last;
-        let r7 = (self.regs[7] as usize) & last;
-        let bank = match (addr & 0xE000, self.prg_mode) {
-            (0x8000, false) => r6,
-            (0x8000, true) => second_last,
-            (0xA000, _) => r7,
-            (0xC000, false) => second_last,
-            (0xC000, true) => r6,
-            (0xE000, _) => last,
-            _ => 0,
-        };
-        bank * PRG_BANK_8K + ((addr as usize) & 0x1FFF)
+        let idx = ((addr & 0xE000) - 0x8000) >> 13;
+        self.prg_offsets[idx as usize] + ((addr as usize) & 0x1FFF)
     }
 
     /// Resolve a PPU CHR address (`$0000-$1FFF`) to the **raw** 1 KiB CHR
@@ -504,20 +509,19 @@ impl Mmc3 {
         }
     }
 
+    fn update_chr_offsets(&mut self) {
+        let total_banks_1k = (self.chr.len() / CHR_BANK_1K).max(1);
+        for slot in 0..8 {
+            let bank_1k = self.chr_bank_1k_for_slot(slot);
+            self.chr_offsets[slot] = (bank_1k % total_banks_1k) * CHR_BANK_1K;
+        }
+    }
+
     /// Resolve a PPU CHR address (`$0000-$1FFF`) to an offset in `chr`.
     fn chr_offset(&self, addr: u16) -> usize {
         let addr = (addr & 0x1FFF) as usize;
-        let total_banks_1k = self.chr.len() / CHR_BANK_1K;
-        let mask = total_banks_1k.saturating_sub(1);
-        // Slot index in 1K units (0..8).
         let slot = addr / CHR_BANK_1K;
-        // chr_mode false (0): 2K + 2K + 1K + 1K + 1K + 1K
-        //                     R0/R0+1   R1/R1+1   R2 R3 R4 R5
-        // chr_mode true  (1): 1K + 1K + 1K + 1K + 2K + 2K
-        //                     R2 R3 R4 R5  R0/R0+1 R1/R1+1
-        let bank_1k = self.chr_bank_1k_for_slot(slot);
-        let bank = bank_1k & mask;
-        bank * CHR_BANK_1K + (addr & (CHR_BANK_1K - 1))
+        self.chr_offsets[slot] + (addr & (CHR_BANK_1K - 1))
     }
 
     /// Compute the CIRAM byte offset for a PPU address in
@@ -657,7 +661,7 @@ impl Mapper for Mmc3 {
             }
             0x8000..=0xFFFF => {
                 let off = self.prg_offset(addr);
-                self.prg_rom[off % self.prg_rom.len()]
+                self.prg_rom[off]
             }
             _ => 0,
         }
@@ -685,8 +689,16 @@ impl Mapper for Mmc3 {
                 if addr & 1 == 0 {
                     // $8000 even: bank-select.
                     self.bank_select = value & 0x07;
-                    self.prg_mode = (value & 0x40) != 0;
-                    self.chr_mode = (value & 0x80) != 0;
+                    let new_prg = (value & 0x40) != 0;
+                    let new_chr = (value & 0x80) != 0;
+                    if self.prg_mode != new_prg {
+                        self.prg_mode = new_prg;
+                        self.update_prg_offsets();
+                    }
+                    if self.chr_mode != new_chr {
+                        self.chr_mode = new_chr;
+                        self.update_chr_offsets();
+                    }
                     if self.variant == Mmc3Variant::Mmc6 {
                         // "When PRG RAM is disabled via $8000, the mapper
                         // continuously sets $A001 to $00".
@@ -697,7 +709,15 @@ impl Mapper for Mmc3 {
                     }
                 } else {
                     // $8001 odd: bank-data.
-                    self.regs[(self.bank_select & 0x07) as usize] = value;
+                    let reg = (self.bank_select & 0x07) as usize;
+                    if self.regs[reg] != value {
+                        self.regs[reg] = value;
+                        if reg >= 6 {
+                            self.update_prg_offsets();
+                        } else {
+                            self.update_chr_offsets();
+                        }
+                    }
                 }
             }
             0xA000..=0xBFFF => {
@@ -762,7 +782,19 @@ impl Mapper for Mmc3 {
         match addr {
             0x0000..=0x1FFF => {
                 let off = self.chr_offset(addr);
-                self.chr[off % self.chr.len()]
+                self.chr[off]
+            }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr[off]
             }
             0x2000..=0x3EFF => self.vram[self.nametable_offset(addr) % self.vram.len()],
             _ => 0,
@@ -1092,6 +1124,8 @@ impl Mapper for Mmc3 {
         self.mmc6_ram_enabled = data[cur] != 0;
         self.mmc6_protect = data[cur + 1] & 0xF0;
         self.mcacc_prescaler = data[cur + 2] & 0x07;
+        self.update_prg_offsets();
+        self.update_chr_offsets();
         Ok(())
     }
 }

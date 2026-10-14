@@ -241,6 +241,12 @@ impl EmuHandle {
     }
 
     /// Lock the core. Poisoning is ignored deliberately: a panic on one
+    pub fn try_lock(&self) -> Option<std::sync::MutexGuard<'_, EmuCore>> {
+        self.inner.try_lock().ok()
+    }
+
+    /// Obtain a lock. Panics are trapped but the `PoisonError` is deliberately
+    /// swallowed, poisoning the thread but unlocking the shell. A crash in one
     /// thread must not wedge the other (the core's state is a plain value;
     /// the next frame either works or panics identically).
     pub fn lock(&self) -> std::sync::MutexGuard<'_, EmuCore> {

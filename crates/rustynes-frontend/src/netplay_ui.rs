@@ -152,6 +152,8 @@ pub struct NetplayUi {
     /// captured at connect for the handshake + session
     /// ([`SessionIdentity::of`]). The peer must announce an identical one.
     identity: SessionIdentity,
+    last_peer_activity: std::time::Instant,
+    last_confirmed_tracker: u32,
     /// Cached status for the HUD, refreshed each `tick`.
     status: NetplayStatus,
     /// Session config (input delay, rollback window, checksum interval). The
@@ -170,6 +172,8 @@ impl Default for NetplayUi {
             state: NetplayState::Idle,
             is_host: false,
             identity: SessionIdentity::new([0u8; 32], [0u8; 32]),
+            last_peer_activity: std::time::Instant::now(),
+            last_confirmed_tracker: 0,
             status: NetplayStatus::default(),
             config: SessionConfig::default(),
             spectator_delay_frames: 0,
@@ -422,6 +426,8 @@ impl NetplayUi {
                 let transport = conn.into_transport();
                 let session = RollbackSession::new(self.config, transport, self.identity);
                 self.state = NetplayState::InGame(Box::new(session));
+                self.last_peer_activity = std::time::Instant::now();
+                self.last_confirmed_tracker = 0;
                 self.status.phase = NetplayPhase::InGame;
                 NetplayTick {
                     active: true,
@@ -467,6 +473,11 @@ impl NetplayUi {
         };
 
         session.add_local_input(local_buttons);
+        let confirmed = session.last_confirmed_frame();
+        if confirmed > Some(self.last_confirmed_tracker) {
+            self.last_confirmed_tracker = confirmed.unwrap();
+            self.last_peer_activity = std::time::Instant::now();
+        }
         match session.advance(nes) {
             Ok(AdvanceOutcome {
                 produced_frame,
@@ -474,6 +485,15 @@ impl NetplayUi {
                 resimulated_frames,
                 ..
             }) => {
+                if !produced_frame
+                    && self.last_peer_activity.elapsed() > std::time::Duration::from_secs(5)
+                {
+                    self.fail("peer connection lost (no data for several seconds)".to_string());
+                    return NetplayTick {
+                        active: false,
+                        produced_frame: false,
+                    };
+                }
                 self.status.phase = NetplayPhase::InGame;
                 self.status.is_host = self.is_host;
                 self.status.current_frame = session.current_frame();

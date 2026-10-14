@@ -138,6 +138,21 @@ impl Mapper for Irem77 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x07FF => {
+                // Bottom 2 KiB: switchable CHR-ROM bank.
+                let count = (self.chr_rom.len() / CHR_BANK_2K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_2K + addr as usize]
+            }
+            0x0800..=0x1FFF => self.chr_ram[addr as usize - 0x0800],
+            0x2000..=0x3EFF => self.nt_ram[Self::nt_offset(addr)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         // $0000-$07FF is CHR-ROM (read-only); everything else is RAM.

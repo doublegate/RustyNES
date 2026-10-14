@@ -176,6 +176,15 @@ impl Mapper for Inl31 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -356,6 +365,15 @@ impl Mapper for MagicFloor218 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.ciram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.ciram[self.nt_offset(addr)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -504,6 +522,15 @@ impl Mapper for Cufrom29 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -595,6 +622,7 @@ pub struct Gtrom111 {
     prg_bank: u8,
     chr_bank: u8,
     nt_bank: u8,
+    dirty: bool,
 }
 
 /// GTROM save-state layout version. v2 (v2.9.6) grew the nametable pages to
@@ -625,6 +653,7 @@ impl Gtrom111 {
             prg_bank: 0,
             chr_bank: 0,
             nt_bank: 0,
+            dirty: false,
         })
     }
 
@@ -676,6 +705,14 @@ impl Mapper for Gtrom111 {
         self.flash.copy_from_slice(&self.original);
     }
 
+    fn is_save_data_dirty(&self) -> Option<bool> {
+        Some(self.dirty)
+    }
+
+    fn clear_save_data_dirty(&mut self) {
+        self.dirty = false;
+    }
+
     /// The register is write-only and nothing else lives below `$8000`.
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         addr < 0x8000
@@ -701,11 +738,22 @@ impl Mapper for Gtrom111 {
             self.update_register(value);
         } else if addr >= 0x8000 {
             let a = self.chip_addr(addr);
-            self.chip.write(&mut self.flash, a, value);
+            if self.chip.write(&mut self.flash, a, value) {
+                self.dirty = true;
+            }
         }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.nt_ram[self.nt_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
@@ -1021,6 +1069,15 @@ impl Mapper for Action53M28 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -1193,6 +1250,7 @@ pub struct Unrom512M30 {
     /// True when the banking latch responds only to $C000-$FFFF and
     /// $8000-$BFFF is the flash window (submapper 0 w/ battery, or 1/3/4).
     flash_window: bool,
+    dirty: bool,
 }
 
 impl Unrom512M30 {
@@ -1273,6 +1331,7 @@ impl Unrom512M30 {
             nametable,
             bus_conflicts,
             flash_window,
+            dirty: false,
         })
     }
 
@@ -1370,6 +1429,18 @@ impl Mapper for Unrom512M30 {
         }
     }
 
+    fn is_save_data_dirty(&self) -> Option<bool> {
+        if self.flashable() {
+            Some(self.dirty)
+        } else {
+            None
+        }
+    }
+
+    fn clear_save_data_dirty(&mut self) {
+        self.dirty = false;
+    }
+
     /// Nothing drives `$4020-$7FFF` on any wiring.
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         addr < 0x8000
@@ -1404,7 +1475,9 @@ impl Mapper for Unrom512M30 {
                 self.write_latch(addr, value);
             } else if self.flashable() {
                 let a = self.prg_chip_addr(self.prg_bank as usize, addr);
-                self.chip.write(&mut self.prg_rom, a, value);
+                if self.chip.write(&mut self.prg_rom, a, value) {
+                    self.dirty = true;
+                }
             }
         } else {
             // Submapper 0 w/o battery or submapper 2: the latch responds to the
@@ -1414,6 +1487,15 @@ impl Mapper for Unrom512M30 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr[self.chr_offset(addr)],

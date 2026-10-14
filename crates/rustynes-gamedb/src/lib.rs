@@ -539,14 +539,8 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     }
 
     if let Some(submapper) = entry.submapper
-        && submapper != 0
+        && (submapper != 0 || is_nes2)
     {
-        // The submapper field only exists in NES 2.0 headers. A correction that
-        // sets a non-zero submapper on an iNES-1.0 ROM (e.g. Seicross, whose
-        // GoodNES dump is iNES-1.0 mapper 185 sub 0 but is really sub 4 — the
-        // CHR-disable copy-protection variant) must first PROMOTE the header to
-        // NES 2.0 by setting byte-7 bits 2-3 to `10`, otherwise the core's iNES
-        // path forces submapper 0 and the override is silently dropped.
         if !is_nes2 {
             bytes[7] = (bytes[7] & 0xF3) | 0x08;
             // Promotion reinterprets header fields the iNES-1.0 spec leaves
@@ -710,15 +704,18 @@ fn ines1_as_nes2(bytes: &[u8], region: Region) -> Option<[u8; 16]> {
     };
     let chr_ram = if h.chr_size == 0 { SHIFT_8K } else { 0 };
 
-    for (byte10, byte11) in [(prg_ram, chr_ram), (0, 0)] {
-        header[10] = byte10;
-        header[11] = byte11;
-        let mut image = bytes.to_vec();
-        image[..16].copy_from_slice(&header);
-        if let Ok(promoted) = parse(&image)
-            && same_board(&original, &promoted)
-        {
-            return Some(header);
+    let mut image = bytes.to_vec();
+    for sub in 0..16 {
+        header[8] = sub << 4;
+        for (byte10, byte11) in [(prg_ram, chr_ram), (0, 0)] {
+            header[10] = byte10;
+            header[11] = byte11;
+            image[..16].copy_from_slice(&header);
+            if let Ok(promoted) = parse(&image)
+                && same_board(&original, &promoted)
+            {
+                return Some(header);
+            }
         }
     }
     None
@@ -745,7 +742,6 @@ fn same_board(
 ) -> bool {
     let ((ca, ma), (cb, mb)) = (a, b);
     ca.mapper_id == cb.mapper_id
-        && ca.submapper == cb.submapper
         && ca.mirroring == cb.mirroring
         && ca.console_type == cb.console_type
         && ca.vs_ppu_type == cb.vs_ppu_type
@@ -760,7 +756,7 @@ fn same_board(
         && ma.sram().len() == mb.sram().len()
         && ma.save_data().len() == mb.save_data().len()
         && ma.save_state() == mb.save_state()
-        && format!("{:?}", ma.debug_info()) == format!("{:?}", mb.debug_info())
+        && ma.debug_info() == mb.debug_info()
 }
 
 /// Stage one of the load-time correction path every platform shares (v2.9.8):
@@ -967,17 +963,31 @@ pub fn rom_crc32_full(bytes: &[u8]) -> Option<u32> {
 
 /// IEEE CRC-32 (reflected, polynomial `0xEDB8_8320`) — the zip/PNG CRC, matching
 /// TetaNES' `compute_crc32`. Table-less; runs once per ROM load.
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for &byte in data {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        #[allow(clippy::cast_possible_truncation)]
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
             crc = if crc & 1 != 0 {
                 (crc >> 1) ^ 0xEDB8_8320
             } else {
                 crc >> 1
             };
+            j += 1;
         }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        crc = (crc >> 8) ^ CRC32_TABLE[((crc ^ u32::from(byte)) & 0xFF) as usize];
     }
     !crc
 }

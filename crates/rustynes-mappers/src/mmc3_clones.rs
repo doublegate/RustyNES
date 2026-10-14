@@ -646,6 +646,27 @@ impl Mapper for Mmc3CloneMapper {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    if matches!(self.board, CloneBoard::M245) {
+                        let half = if self.core.chr_mode { 0x1000 } else { 0 };
+                        let off = (half ^ (addr as usize & 0x1FFF)) & (self.chr.len() - 1);
+                        return self.chr[off];
+                    }
+                    return self.chr[addr as usize & (self.chr.len() - 1)];
+                }
+                let slot = (addr as usize) / CHR_BANK_1K;
+                let bank = self.resolve_chr(slot);
+                self.chr[bank * CHR_BANK_1K + (addr as usize & 0x3FF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.core.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

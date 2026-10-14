@@ -1035,27 +1035,11 @@ impl FdsAudio {
     /// VRC6's loudness ballpark (`~±15k`) — comfortably under `i16::MAX`.
     #[cfg(feature = "mapper-audio")]
     pub(crate) fn output(&self) -> i16 {
-        // Volume gain clamps to 32 at the output multiply (PWM duty 32/32).
         let gain = u32::from(self.vol_gain.min(32));
         let sample = u32::from(self.wave_out_latch & 0x3F);
-        // Master volume: 0=full(2/2), 1=2/3, 2=2/4, 3=2/5. Numerator 2,
-        // denominator (master_volume + 2).
-        let num = 2u32;
         let den = u32::from(self.master_volume) + 2;
-        // Raw product range: sample(0..=63) * gain(0..=32) = 0..=2016.
-        let raw = sample * gain;
-        // Apply master volume.
-        let scaled = raw * num / den;
-        // scaled max (master=full) = 2016 * 2 / 2 = 2016. Center bipolar around
-        // the mid-DAC (wave centered at 31.5 * gain * master). We output the raw
-        // level minus its midpoint, scaled to use a good chunk of i16 range.
-        // Midpoint of sample range is 31.5; approximate the DC bias as
-        // 32 * gain * num / den (sample == 32).
-        let mid = 32u32 * gain * num / den;
-        let centered = scaled as i32 - mid as i32;
-        // Scale factor 7: peak |centered| ~= 31 * 32 ~= 992 -> *7 ~= 6944 per
-        // full-gain step; the full-scale (gain 32, master full) reaches
-        // ~±6.9k, in the APU-square-x2.4 ballpark and well under i16::MAX.
+        let diff = sample as i32 - 32;
+        let centered = (diff * gain as i32 * 2) / den as i32;
         (centered * 7) as i16
     }
 
@@ -2275,6 +2259,13 @@ impl Mapper for Fds {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[(addr & 0x1FFF) as usize],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.chr_ram[(addr & 0x1FFF) as usize],
             _ => 0,

@@ -147,6 +147,20 @@ impl Mapper for Tqrom {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let a = addr & 0x3FFF;
+        if a < 0x2000 {
+            let (is_ram, off) = self.resolve_chr(a);
+            if is_ram {
+                self.chr_ram[off % self.chr_ram.len()]
+            } else {
+                self.inner.ppu_peek(a)
+            }
+        } else {
+            self.inner.ppu_peek(a)
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let a = addr & 0x3FFF;
         if a < 0x2000 {

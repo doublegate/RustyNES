@@ -488,6 +488,21 @@ impl Mapper for Mmc1 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.map_chr(addr);
+                self.chr[off]
+            }
+            0x2000..=0x3EFF => {
+                let off = self.nametable_offset(addr);
+                self.vram[off]
+            }
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

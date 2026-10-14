@@ -7537,7 +7537,11 @@ impl App {
         let raw_local = self.input.player1();
         let turbo_mask = self.turbo_mask();
         let turbo_period = self.config.input.turbo_period;
-        let mut guard = self.emu.lock();
+        let Some(mut guard) = self.emu.try_lock() else {
+            // Background EmuThread is actively simulating or rolling back;
+            // present previous frame rather than blocking the UI thread.
+            return;
+        };
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
             return;

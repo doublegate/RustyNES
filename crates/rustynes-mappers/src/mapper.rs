@@ -57,7 +57,7 @@ pub struct BgSplitState {
 /// Mappers override [`Mapper::debug_info`] to surface their banking
 /// registers and any IRQ-counter state. Fields are pre-formatted strings
 /// so the UI doesn't have to know the protocol of each mapper.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MapperDebugInfo {
     /// Mapper id (e.g. `4` for MMC3).
     pub mapper_id: u16,
@@ -306,6 +306,11 @@ pub trait Mapper: Send {
     /// Read a byte from the PPU address space `$0000-$3FFF` (pattern table
     /// + nametable mirror window). Used as the BG-side / generic fetch path.
     fn ppu_read(&mut self, addr: u16) -> u8;
+
+    /// Read a PPU byte without side-effects for inspection/debugging.
+    fn ppu_peek(&self, _addr: u16) -> u8 {
+        0
+    }
 
     /// Read a byte from the PPU pattern-table window (`$0000-$1FFF`) on
     /// behalf of a *sprite* tile fetch. MMC5 in 8x16 sprite mode uses a
@@ -704,6 +709,14 @@ pub trait Mapper: Send {
     fn clear_save_data(&mut self) {
         self.save_data_mut().fill(0);
     }
+
+    /// Check dirty
+    fn is_save_data_dirty(&self) -> Option<bool> {
+        None
+    }
+
+    /// Clear dirty
+    fn clear_save_data_dirty(&mut self) {}
 
     /// Start recording the diagnostic FDS read-stream trace (off by default;
     /// observation-only). No-op for non-FDS mappers. See [`crate::FdsTraceRec`].

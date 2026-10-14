@@ -4477,6 +4477,7 @@ dependencies = [
 name = "rustynes-mobile"
 version = "3.1.0"
 dependencies = [
+ "getrandom 0.2.17",
  "rustynes-core",
  "rustynes-gamedb",
  "rustynes-hdpack",
@@ -4494,6 +4495,7 @@ name = "rustynes-netplay"
 version = "3.1.0"
 dependencies = [
  "futures-util",
+ "getrandom 0.2.17",
  "js-sys",
  "rustynes-core",
  "serde_json",

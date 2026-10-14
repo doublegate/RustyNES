@@ -27,6 +27,7 @@ pub struct AxRom {
     vram: Box<[u8]>,
     chr_is_ram: bool,
     bank: u8,
+    bank_offset: usize,
     mirroring_b: bool,
 }
 
@@ -60,6 +61,7 @@ impl AxRom {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             chr_is_ram,
             bank: 0,
+            bank_offset: 0,
             mirroring_b: false,
         })
     }
@@ -68,6 +70,11 @@ impl AxRom {
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
         let physical = usize::from(self.mirroring_b);
         physical * NAMETABLE_SIZE + local
+    }
+    #[inline]
+    fn update_bank_offsets(&mut self) {
+        let bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+        self.bank_offset = ((self.bank as usize) % bank_count) * PRG_BANK_32K;
     }
 }
 
@@ -80,10 +87,8 @@ impl Mapper for AxRom {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if (0x8000..=0xFFFF).contains(&addr) {
-            let bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
-            let bank = (self.bank as usize) % bank_count;
             let off = (addr - 0x8000) as usize;
-            self.prg_rom[bank * PRG_BANK_32K + off]
+            self.prg_rom[self.bank_offset + off]
         } else {
             0
         }
@@ -93,6 +98,7 @@ impl Mapper for AxRom {
         if (0x8000..=0xFFFF).contains(&addr) {
             self.bank = value & 0x07;
             self.mirroring_b = (value & 0x10) != 0;
+            self.update_bank_offsets();
         }
     }
 
@@ -106,6 +112,15 @@ impl Mapper for AxRom {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[addr as usize],
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr[addr as usize],
@@ -166,6 +181,7 @@ impl Mapper for AxRom {
         }
         self.bank = data[1];
         self.mirroring_b = data[2] != 0;
+        self.update_bank_offsets();
         let mut cursor = 3;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);

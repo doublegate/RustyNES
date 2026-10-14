@@ -26,6 +26,7 @@ pub struct CnRom {
     chr_rom: Box<[u8]>,
     vram: Box<[u8]>,
     chr_bank: u8,
+    chr_bank_offset: usize,
     mirroring: Mirroring,
 }
 
@@ -58,6 +59,7 @@ impl CnRom {
             chr_rom,
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             chr_bank: 0,
+            chr_bank_offset: 0,
             mirroring,
         })
     }
@@ -67,6 +69,12 @@ impl CnRom {
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
         let physical = self.mirroring.physical_bank(table);
         physical * NAMETABLE_SIZE + local
+    }
+
+    #[inline]
+    fn update_bank_offsets(&mut self) {
+        let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+        self.chr_bank_offset = ((self.chr_bank as usize) % bank_count) * CHR_BANK_8K;
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -105,24 +113,28 @@ impl Mapper for CnRom {
             let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
             let mask = u8::try_from((bank_count - 1) | 0x03).unwrap_or(u8::MAX);
             self.chr_bank = effective & mask;
+            self.update_bank_offsets();
         }
     }
 
     fn chr_phys(&self, addr: u16) -> Option<u32> {
         // CNROM is CHR-ROM only; the same 8 KiB-bank offset `ppu_read` resolves.
-        let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
-        let bank = usize::from(self.chr_bank) % bank_count;
-        u32::try_from(bank * CHR_BANK_8K + usize::from(addr & 0x1FFF)).ok()
+        u32::try_from(self.chr_bank_offset + usize::from(addr & 0x1FFF)).ok()
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => {
-                let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
-                let bank = (self.chr_bank as usize) % bank_count;
-                self.chr_rom[bank * CHR_BANK_8K + (addr as usize)]
-            }
+            0x0000..=0x1FFF => self.chr_rom[self.chr_bank_offset + (addr as usize)],
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_bank_offset + (addr as usize)],
             0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
             _ => 0,
         }
@@ -166,6 +178,7 @@ impl Mapper for CnRom {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.chr_bank = data[1];
+        self.update_bank_offsets();
         self.vram.copy_from_slice(&data[2..2 + self.vram.len()]);
         Ok(())
     }

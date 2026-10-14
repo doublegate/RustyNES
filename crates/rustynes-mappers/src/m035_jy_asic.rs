@@ -728,6 +728,16 @@ impl Mapper for JyAsic {
         self.chr[off % self.chr.len()]
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        // The bus masks pattern-table reads to `$0000-$1FFF` before they reach
+        // here; nametable bytes are routed through `nametable_fetch` /
+        // `nametable_address` instead (the PPU owns CIRAM), so this only
+        // services CHR.
+        let addr = addr & 0x1FFF;
+        let off = self.chr_offset(addr);
+        self.chr[off % self.chr.len()]
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         // Pattern-table writes only (CHR-RAM). Nametable writes arrive via
         // `nametable_write`; the bus never routes `$2000+` to `ppu_write`.

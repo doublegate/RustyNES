@@ -1326,7 +1326,11 @@ impl Apu {
             if self.audio_prov.is_some() {
                 self.record_mix_armed(mixed, external);
             }
-            self.blip.add_sample(mixed);
+            if external == 0.0 {
+                self.blip.add_sample_bounded(mixed);
+            } else {
+                self.blip.add_sample(mixed);
+            }
             // Nothing follows the general path's `add_sample` but comments --
             // the get/put flip moved to `dmc_tick_end` under M-2 -- so there is
             // no shared tail to run before returning. Verified by reading it,

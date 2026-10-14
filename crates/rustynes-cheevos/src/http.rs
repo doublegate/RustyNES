@@ -99,8 +99,15 @@ impl HttpTransport {
                 // SAFETY: `done.callback` is the exact pointer rcheevos handed
                 // to the trampoline; transmuting the bits back is sound and it
                 // is invoked here on the main thread.
-                unsafe {
-                    std::mem::transmute::<usize, ffi::rc_client_server_callback_t>(done.callback)
+                if done.callback == 0 {
+                    None
+                } else {
+                    // SAFETY: Transmuting the usize back to the function pointer is safe.
+                    unsafe {
+                        std::mem::transmute::<usize, ffi::rc_client_server_callback_t>(
+                            done.callback,
+                        )
+                    }
                 }
             };
             let callback_data = done.callback_data as *mut c_void;
@@ -112,7 +119,9 @@ impl HttpTransport {
             };
             // SAFETY: `cb` is a valid rcheevos completion callback; `response`
             // borrows `done.body` which outlives this call.
-            cb(&raw const response, callback_data);
+            if let Some(cb_fn) = cb {
+                cb_fn(&raw const response, callback_data);
+            }
         }
     }
 }
@@ -257,7 +266,7 @@ pub extern "C" fn server_call_trampoline(
             Some(cstr.to_bytes().to_vec())
         };
 
-        let cb_bits = callback as usize;
+        let cb_bits = callback.map_or(0, |f| f as usize);
         let data_bits = callback_data as usize;
 
         crate::client::with_transport(|t| {

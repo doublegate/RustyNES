@@ -24,6 +24,8 @@ pub struct GxRom {
     vram: Box<[u8]>,
     prg_bank: u8,
     chr_bank: u8,
+    prg_bank_offset: usize,
+    chr_bank_offset: usize,
     mirroring: Mirroring,
 }
 
@@ -50,12 +52,18 @@ impl GxRom {
                 chr_rom.len()
             )));
         }
+        let _prg_bank_count = (prg_rom.len() / PRG_BANK_32K).max(1);
+        let prg_bank_offset = 0;
+        let _chr_bank_count = (chr_rom.len() / CHR_BANK_8K).max(1);
+        let chr_bank_offset = 0;
         Ok(Self {
             prg_rom,
             chr_rom,
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
             chr_bank: 0,
+            prg_bank_offset,
+            chr_bank_offset,
             mirroring,
         })
     }
@@ -67,11 +75,18 @@ impl GxRom {
         physical * NAMETABLE_SIZE + local
     }
 
+    #[inline]
+    fn update_bank_offsets(&mut self) {
+        let prg_bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+        self.prg_bank_offset = ((self.prg_bank as usize) % prg_bank_count) * PRG_BANK_32K;
+
+        let chr_bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+        self.chr_bank_offset = ((self.chr_bank as usize) % chr_bank_count) * CHR_BANK_8K;
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        let bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
-        let bank = (self.prg_bank as usize) % bank_count;
         let off = (addr - 0x8000) as usize;
-        self.prg_rom[bank * PRG_BANK_32K + off]
+        self.prg_rom[self.prg_bank_offset + off]
     }
 }
 
@@ -97,17 +112,23 @@ impl Mapper for GxRom {
             let effective = value & prg_byte;
             self.prg_bank = (effective >> 4) & 0x03;
             self.chr_bank = effective & 0x03;
+            self.update_bank_offsets();
         }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => {
-                let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
-                let bank = (self.chr_bank as usize) % bank_count;
-                self.chr_rom[bank * CHR_BANK_8K + (addr as usize)]
-            }
+            0x0000..=0x1FFF => self.chr_rom[self.chr_bank_offset + (addr as usize)],
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_bank_offset + (addr as usize)],
             0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
             _ => 0,
         }

@@ -698,22 +698,24 @@ impl PiccoloBackend {
     /// `Ok(())` on completion, [`ScriptError::Budget`] if the fuel ran out, or
     /// [`ScriptError::Lua`] if the script raised.
     fn drive(&mut self, executor: &piccolo::StashedExecutor) -> Result<(), ScriptError> {
+        const MAX_HEAP_BYTES: usize = 64 * 1024 * 1024; // 64 MiB sandbox limit
         let fuel_budget = fuel_for(self.budget.get());
-        let finished = self.lua.enter(|ctx| {
+        let res = self.lua.enter(|ctx| {
             let ex = ctx.fetch(executor);
             let mut fuel = Fuel::with(fuel_budget);
             loop {
-                // `step` returns `true` when the executor can make no more
-                // progress (finished or errored).
                 if ex.step(ctx, &mut fuel) {
-                    break true;
+                    break Ok(true);
+                }
+                if ctx.gc_metrics().total_allocation() > MAX_HEAP_BYTES {
+                    break Err(ScriptError::Lua("memory limit exceeded".into()));
                 }
                 if !fuel.should_continue() {
-                    break false;
+                    break Ok(false);
                 }
             }
         });
-        if finished {
+        if res? {
             self.lua
                 .execute::<()>(executor)
                 .map_err(|e| ScriptError::Lua(e.to_string()))

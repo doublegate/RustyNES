@@ -275,7 +275,7 @@ pub struct RaGameSummary {
 }
 
 /// A safe, owned snapshot of the logged-in user (subset of `rc_client_user_t`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RaUser {
     /// The name shown to other users.
     pub display_name: String,
@@ -287,6 +287,18 @@ pub struct RaUser {
     pub score: u32,
     /// The user's softcore score.
     pub score_softcore: u32,
+}
+
+impl std::fmt::Debug for RaUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaUser")
+            .field("display_name", &self.display_name)
+            .field("username", &self.username)
+            .field("token", &"<redacted>")
+            .field("score", &self.score)
+            .field("score_softcore", &self.score_softcore)
+            .finish()
+    }
 }
 
 // ---------------------------------------------------------------------------

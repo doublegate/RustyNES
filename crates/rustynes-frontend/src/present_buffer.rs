@@ -186,9 +186,9 @@ impl PresentBuffer {
         // Swap front <-> ready so the producer's next `publish` reuses our old
         // front as its back, and we now own the freshest frame in `ready`.
         slots.index = Self::pack(ready, front, back);
-        out.clear();
-        out.extend_from_slice(&slots.bufs[ready]);
-        slots.stamps[ready]
+        let stamp = slots.stamps[ready];
+        std::mem::swap(&mut slots.bufs[ready], out);
+        stamp
     }
 
     /// True once at least one frame has been published (so the present path

@@ -95,17 +95,12 @@ pub unsafe extern "C" fn rustynes_ios_gfx_render(handle: *mut MetalGfx, fb: *con
         if handle.is_null() || fb.is_null() {
             return;
         }
-        // SAFETY: live handle (see above).
         let gfx = unsafe { &mut *handle };
-        let dst = gfx.frame_buf_mut();
-        if len != dst.len() {
+        if len != (NES_W * NES_H * 4) as usize {
             return;
         }
-        // SAFETY: `fb` points to `len` readable bytes (caller contract); `len`
-        // equals `dst.len()`, so the copy stays in bounds on both sides.
         let src = unsafe { core::slice::from_raw_parts(fb, len) };
-        dst.copy_from_slice(src);
-        gfx.render();
+        gfx.render(src);
     })
 }
 

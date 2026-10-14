@@ -252,6 +252,27 @@ impl Mapper for Sunsoft4 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr[off % self.chr.len()]
+            }
+            0x2000..=0x3EFF => {
+                // CHR-ROM nametable mode is handled by `nametable_fetch`
+                // (the PPU consults it first). This fallback path serves
+                // CIRAM for the non-ROM-nametable case.
+                if self.nt_rom_mode {
+                    self.chr_nt_byte(addr | 0x2000)
+                } else {
+                    self.vram[self.nametable_offset(addr) % self.vram.len()]
+                }
+            }
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

@@ -1,3 +1,5 @@
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::items_after_statements)]
 //! `rustynes-mobile` — the platform-agnostic mobile control surface over
 //! [`rustynes_core`].
 //!
@@ -3023,9 +3025,7 @@ fn composite_hd_locked(g: &mut Inner) -> Vec<u8> {
         return Vec::new();
     }
     // Snapshot the per-pixel tile source, the CHR (0x0000..0x2000), and the frame.
-    let hd_tiles = g.nes.hd_tile_source().to_vec();
-    let framebuffer = g.nes.framebuffer().to_vec();
-    let mut chr = vec![0u8; 0x2000];
+    let mut chr = [0u8; 0x2000];
     for (addr, slot) in (0u16..0x2000).zip(chr.iter_mut()) {
         *slot = g.nes.peek_ppu(addr);
     }
@@ -3049,6 +3049,8 @@ fn composite_hd_locked(g: &mut Inner) -> Vec<u8> {
     };
     #[cfg(test)]
     injected_frame_fault();
+    let hd_tiles = g.nes.hd_tile_source();
+    let framebuffer = g.nes.framebuffer();
     comp.composite(&framebuffer, &hd_tiles, &watched, |addr| {
         chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
     })
@@ -3157,6 +3159,10 @@ fn nat_phase_detail(phase: &NatPhase) -> String {
 /// input ⇒ byte-identical state) is untouched: the core still cold-boots
 /// deterministically when the session promotes to `InGame`.
 fn nondeterministic_seed() -> u64 {
+    let mut buf = [0u8; 8];
+    if getrandom::getrandom(&mut buf).is_ok() {
+        return u64::from_le_bytes(buf);
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
     // Truncating the 128-bit nanosecond count to 64 bits is intentional — this is
     // a PRNG seed, not a timestamp, so the discarded high bits don't matter.

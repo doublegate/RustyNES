@@ -471,7 +471,8 @@ impl<T: Transport> SpectatorSession<T> {
                 // quality hints (it never stalls the players).
                 NetMessage::InputAck { .. }
                 | NetMessage::Checksum { .. }
-                | NetMessage::Quality { .. } => {}
+                | NetMessage::Quality { .. }
+                | NetMessage::InputBatch { .. } => {}
             }
         }
     }

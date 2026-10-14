@@ -133,7 +133,7 @@ impl Mmc4 {
         bank * PRG_BANK_16K + ((addr as usize) & 0x3FFF)
     }
 
-    fn chr_offset(&mut self, addr: u16) -> usize {
+    fn chr_offset(&self, addr: u16) -> usize {
         let addr = (addr & 0x1FFF) as usize;
         let total_4k = (self.chr_rom.len() / CHR_BANK_4K).max(1);
         let bank = if addr < CHR_BANK_4K {
@@ -233,6 +233,18 @@ impl Mapper for Mmc4 {
                 let v = self.chr_rom[off % self.chr_rom.len()];
                 self.update_latch(addr);
                 v
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr_rom[off % self.chr_rom.len()]
             }
             0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
             _ => 0,

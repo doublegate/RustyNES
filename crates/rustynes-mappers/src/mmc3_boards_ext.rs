@@ -675,6 +675,17 @@ impl Mapper for Mmc3BoardExt {
         value
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        if addr >= 0x2000 {
+            return self.core.ppu_peek(addr);
+        }
+        match self.chr_target(addr) {
+            Chr::Rom(off) => self.chr[off],
+            Chr::Ram(off) => self.chr_ram[off],
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if addr >= 0x2000 {

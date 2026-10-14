@@ -151,6 +151,19 @@ impl Mapper for Decathlon244 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if (0x2000..=0x3EFF).contains(&addr) {

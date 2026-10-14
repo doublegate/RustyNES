@@ -125,16 +125,32 @@ impl OnePole {
         }
     }
 
-    /// Process one sample.
-    pub fn process(&mut self, x: f32) -> f32 {
-        let y = if self.is_hpf {
-            self.coeff * (self.prev_out + x - self.prev_in)
-        } else {
-            self.prev_out + self.coeff * (x - self.prev_out)
-        };
+    #[inline]
+    /// Process HPF
+    pub fn process_hpf(&mut self, x: f32) -> f32 {
+        let y = self.coeff * (self.prev_out + x - self.prev_in);
         self.prev_in = x;
         self.prev_out = y;
         y
+    }
+
+    #[inline]
+    /// Process LPF
+    pub fn process_lpf(&mut self, x: f32) -> f32 {
+        let y = self.prev_out + self.coeff * (x - self.prev_out);
+        self.prev_in = x;
+        self.prev_out = y;
+        y
+    }
+
+    #[inline]
+    /// Process filter
+    pub fn process(&mut self, x: f32) -> f32 {
+        if self.is_hpf {
+            self.process_hpf(x)
+        } else {
+            self.process_lpf(x)
+        }
     }
 
     /// Reset filter state.
@@ -214,10 +230,12 @@ impl FilterChain {
     }
 
     /// Process one sample through all three stages.
+    #[inline]
+    /// Process filter
     pub fn process(&mut self, x: f32) -> f32 {
-        let a = self.hp1.process(x);
-        let b = self.hp2.process(a);
-        self.lp.process(b)
+        let a = self.hp1.process_hpf(x);
+        let b = self.hp2.process_hpf(a);
+        self.lp.process_lpf(b)
     }
 
     /// Reset filter state.

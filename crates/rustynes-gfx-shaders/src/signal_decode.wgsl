@@ -94,11 +94,7 @@ fn pmod(x: i32, n: i32) -> i32 {
 
 // Reconstruct one normalized composite sample for source column `col` at
 // sub-sample `sub` (0..8), given the packed index texel and the line phase.
-fn composite_at(col: i32, sub: i32, row: i32, line_phase: i32) -> f32 {
-    let dim = textureDimensions(idx_tex);
-    let cx = clamp(col, 0, i32(dim.x) - 1);
-    let cy = clamp(row, 0, i32(dim.y) - 1);
-    let packed = i32(textureLoad(idx_tex, vec2<i32>(cx, cy), 0).r);
+fn composite_at_packed(packed: i32, col: i32, sub: i32, line_phase: i32) -> f32 {
     let index = packed & 0x3F;
     let emphasis = (packed >> 6) & 0x7;
 
@@ -184,11 +180,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var i_acc = 0.0;
     var q_acc = 0.0;
     var w_sum = 0.0;
+    var last_col: i32 = -999999;
+    var packed: i32 = 0;
     for (var s = -half; s <= half; s = s + 1) {
         let abs_sub = centre + f32(s);
         let col = i32(floor(abs_sub / 8.0));
         let sub = i32(floor(abs_sub)) % 8;
-        let comp = composite_at(col, sub, row, line_phase);
+        if (col != last_col) {
+            let cx = clamp(col, 0, i32(dim.x) - 1);
+            let cy = clamp(row, 0, i32(dim.y) - 1);
+            packed = i32(textureLoad(idx_tex, vec2<i32>(cx, cy), 0).r);
+            last_col = col;
+        }
+        let comp = composite_at_packed(packed, col, sub, line_phase);
         // Triangular low-pass window.
         let w = 1.0 - abs(f32(s)) / (f32(half) + 1.0);
         y_acc = y_acc + comp * w;

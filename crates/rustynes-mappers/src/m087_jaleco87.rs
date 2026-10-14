@@ -132,6 +132,19 @@ impl Mapper for Jaleco87 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % bank_count;
+                self.chr_rom[bank * CHR_BANK_8K + (addr as usize)]
+            }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {

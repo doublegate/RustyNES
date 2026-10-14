@@ -261,11 +261,10 @@ impl Mapper for Vrc2 {
         match addr & 0xF000 {
             0x8000 => self.prg_lo = value & 0x1F,
             0x9000 => {
-                self.mirroring = match value & 0x03 {
-                    0 => Mirroring::Vertical,
-                    1 => Mirroring::Horizontal,
-                    2 => Mirroring::SingleScreenA,
-                    _ => Mirroring::SingleScreenB,
+                self.mirroring = if (value & 1) == 0 {
+                    Mirroring::Vertical
+                } else {
+                    Mirroring::Horizontal
                 };
             }
             0xA000 => self.prg_mid = value & 0x1F,
@@ -290,6 +289,18 @@ impl Mapper for Vrc2 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr_rom[off % self.chr_rom.len()]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -466,9 +477,9 @@ mod tests {
         m.cpu_write(0x9000, 1);
         assert_eq!(m.mirroring, Mirroring::Horizontal);
         m.cpu_write(0x9000, 2);
-        assert_eq!(m.mirroring, Mirroring::SingleScreenA);
+        assert_eq!(m.mirroring, Mirroring::Vertical);
         m.cpu_write(0x9000, 3);
-        assert_eq!(m.mirroring, Mirroring::SingleScreenB);
+        assert_eq!(m.mirroring, Mirroring::Horizontal);
     }
 
     #[test]

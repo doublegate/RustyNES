@@ -520,22 +520,23 @@ impl Sunsoft5BAudio {
     #[cfg(feature = "mapper-audio")]
     pub(crate) fn mix(&self) -> i32 {
         let mut sum: i32 = 0;
-        for (ch, tone) in [&self.tone_a, &self.tone_b, &self.tone_c]
-            .iter()
-            .enumerate()
-        {
-            let ch = ch as u8;
-            // Per wiki: "If both bits are 1 [disable + disable], the
-            // channel outputs a constant signal at the specified volume.
-            // If both bits are 0, the result is the logical and of noise
-            // and tone."  Equivalent: emit when (tone_enabled => square
-            // high) AND (noise_enabled => noise high), defaulting either
-            // factor to "1" when its source is disabled.
-            let tone_factor = !self.tone_enabled(ch) || tone.level != 0;
-            let noise_factor = !self.noise_enabled(ch) || self.noise.level() != 0;
-            if tone_factor && noise_factor {
-                sum += self.amplitude(ch);
-            }
+
+        let tone_factor_a = !self.tone_enabled(0) || self.tone_a.level != 0;
+        let noise_factor_a = !self.noise_enabled(0) || self.noise.level() != 0;
+        if tone_factor_a && noise_factor_a {
+            sum += self.amplitude(0);
+        }
+
+        let tone_factor_b = !self.tone_enabled(1) || self.tone_b.level != 0;
+        let noise_factor_b = !self.noise_enabled(1) || self.noise.level() != 0;
+        if tone_factor_b && noise_factor_b {
+            sum += self.amplitude(1);
+        }
+
+        let tone_factor_c = !self.tone_enabled(2) || self.tone_c.level != 0;
+        let noise_factor_c = !self.noise_enabled(2) || self.noise.level() != 0;
+        if tone_factor_c && noise_factor_c {
+            sum += self.amplitude(2);
         }
         // Scale the shape table to the hardware-relative level (see
         // `SUNSOFT5B_MIX_SCALE_NUM`), then centre on zero so the BLEP buffer
@@ -848,6 +849,21 @@ impl Mapper for Fme7 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let total_1k = (self.chr_rom.len() / CHR_BANK_1K).max(1);
+                let slot = addr as usize / CHR_BANK_1K;
+                let bank = (self.chr[slot] as usize) % total_1k;
+                let off = bank * CHR_BANK_1K + (addr as usize & (CHR_BANK_1K - 1));
+                self.chr_rom[off % self.chr_rom.len()]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {

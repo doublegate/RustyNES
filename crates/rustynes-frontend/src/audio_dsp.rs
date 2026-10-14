@@ -187,7 +187,7 @@ impl Reverb {
         for c in &mut self.combs {
             acc += c.process(x);
         }
-        acc /= self.combs.len().max(1) as f32;
+        acc *= 0.25;
         for a in &mut self.allpasses {
             acc = a.process(acc);
         }

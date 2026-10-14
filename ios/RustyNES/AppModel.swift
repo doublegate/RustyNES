@@ -333,13 +333,22 @@ final class AppModel: ObservableObject {
             audioSession.configure()
             let data = try await library.romData(for: entry)
             // v2.9.7: the stored FDS BIOS rides along (a cartridge or NSF ignores it).
-            let core = try EmulatorCore(romData: data, fdsBios: FdsBiosStore.load())
+            var core = try EmulatorCore(romData: data, fdsBios: FdsBiosStore.load())
             // v2.9.9 (re-audit NF-21): key this game by the core's identity. An
             // entry from before v2.9.9 is keyed by the whole file's hash; move it,
             // then its saves, states, RA progress and overrides, once. The library
             // goes first: when it cannot move, the old key stays for this session
             // and nothing else moves, so the stores never split between two keys.
             let entry = await migrateKey(entry, to: core.romIdentity)
+
+            let fdsUrl = AppModel.fdsDiskUrl(forSha: entry.sha)
+            if FileManager.default.fileExists(atPath: fdsUrl.path) {
+                if let diskBytes = try? Data(contentsOf: fdsUrl), diskBytes.count == data.count {
+                    if let reloaded = try? EmulatorCore(romData: diskBytes, fdsBios: FdsBiosStore.load()) {
+                        core = reloaded
+                    }
+                }
+            }
             core.isMuted = muted
             // v2.9.2 (AUD-14): pace the gamepad turbo pulse by emulated frames.
             // Captures the manager (a plain class), not `self`, so the closure
@@ -922,6 +931,11 @@ final class AppModel: ObservableObject {
     /// Compares the save RAM once a second and writes it on a change.
     private var batteryTimer: Timer?
 
+    static func fdsDiskUrl(forSha sha: String) -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("RustyNES/fds/disk_\\(sha).fds")
+    }
+
     /// Bind `core`'s battery RAM to its `.sav` and load it. Returns a message
     /// when an existing save could not be used (that session is then not saved,
     /// so the file is never overwritten).
@@ -958,6 +972,16 @@ final class AppModel: ObservableObject {
 
     /// Write the running game's battery save now, and wait for it.
     private func flushBatteryNow() {
+        if let core = emulator, let sha = currentEntry?.sha, core.diskIsDirty() {
+            let url = AppModel.fdsDiskUrl(forSha: sha)
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try core.diskImageBytes().write(to: url, options: .atomic)
+                core.clearDiskDirty()
+            } catch {
+                NSLog("RustyNES: FDS disk save failed: \\(error)")
+            }
+        }
         guard let saver = battery, let core = emulator else { return }
         saver.flushNow(core.batteryRam())
     }
@@ -967,6 +991,18 @@ final class AppModel: ObservableObject {
     /// is a few KiB, so it runs synchronously within the task rather than handing
     /// a mutable task id across threads.
     private func flushBatteryInBackground() {
+        if let core = emulator, let sha = currentEntry?.sha, core.diskIsDirty() {
+            let task = BackgroundTask(name: "RustyNES FDS save")
+            let url = AppModel.fdsDiskUrl(forSha: sha)
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try core.diskImageBytes().write(to: url, options: .atomic)
+                core.clearDiskDirty()
+            } catch {
+                NSLog("RustyNES: FDS disk save failed: \\(error)")
+            }
+            task.end()
+        }
         guard let saver = battery, let core = emulator else { return }
         let task = BackgroundTask(name: "RustyNES battery save")
         defer { task.end() }
@@ -1034,7 +1070,9 @@ final class AppModel: ObservableObject {
     /// interruption is in effect; otherwise pause. (We deliberately declare NO
     /// background-audio mode, so backgrounding pauses.)
     private func applyRunState() {
-        if sceneActive, !menuPaused, !audioInterrupted, !routePaused {
+        let isRunning = sceneActive && !menuPaused && !audioInterrupted && !routePaused
+        UIApplication.shared.isIdleTimerDisabled = isRunning
+        if isRunning {
             emulator?.resume()
         } else {
             emulator?.pause()

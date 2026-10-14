@@ -637,13 +637,43 @@ impl<T: Transport> RollbackSession<T> {
         })
     }
 
+    /// Fold a single remote input into the history, returning the frame it mispredicted (if any).
+    fn ingest_single_input(&mut self, player: u8, frame: u32, input: u8) -> Option<u32> {
+        let lp = self.local_player();
+        // Ignore an out-of-range or self-addressed player index
+        if player >= self.config.num_players || player == lp {
+            return None;
+        }
+        // Drop a frame past the lookahead window before it can size an allocation.
+        if frame > self.max_accepted_frame() {
+            return None;
+        }
+        self.ensure_frame(frame);
+        let slot = &mut self.history[frame as usize];
+        let cell = &mut slot.players[player as usize];
+        let prev = cell.input;
+        let already_simulated = slot.simulated;
+        cell.input = input;
+        cell.confirmed = true;
+        // Misprediction: a frame we already ran used a value that
+        // the just-arrived real input contradicts. Re-running it
+        // (and everything after) is required. A second copy of an
+        // identical input (idempotent resend, whether previously a
+        // prediction or already confirmed) leaves `prev == input`,
+        // so it is correctly NOT treated as a misprediction.
+        if already_simulated && prev != input {
+            Some(frame)
+        } else {
+            None
+        }
+    }
+
     /// Poll the transport and fold in every message. Returns the earliest
     /// frame (if any) whose previously-used prediction was contradicted by a
     /// newly-arrived real remote input.
     fn ingest(&mut self, nes: &Nes) -> Result<Option<u32>, NetplayError> {
         let mut earliest_mispredict: Option<u32> = None;
         let messages = self.transport.poll();
-        let lp = self.local_player();
 
         for msg in messages {
             match msg {
@@ -668,34 +698,23 @@ impl<T: Transport> RollbackSession<T> {
                     frame,
                     input,
                 } => {
-                    // Ignore an out-of-range or self-addressed player index
-                    // (a malformed / foreign packet must never corrupt our own
-                    // authored input or index out of bounds).
-                    if player >= self.config.num_players || player == lp {
-                        continue;
-                    }
-                    // Drop a frame past the lookahead window before it can size
-                    // an allocation (AUD-06; see MAX_SESSION_FRAME_LOOKAHEAD).
-                    // A genuine input is resent until acked, so nothing is lost.
-                    if frame > self.max_accepted_frame() {
-                        continue;
-                    }
-                    self.ensure_frame(frame);
-                    let slot = &mut self.history[frame as usize];
-                    let cell = &mut slot.players[player as usize];
-                    let prev = cell.input;
-                    let already_simulated = slot.simulated;
-                    cell.input = input;
-                    cell.confirmed = true;
-                    // Misprediction: a frame we already ran used a value that
-                    // the just-arrived real input contradicts. Re-running it
-                    // (and everything after) is required. A second copy of an
-                    // identical input (idempotent resend, whether previously a
-                    // prediction or already confirmed) leaves `prev == input`,
-                    // so it is correctly NOT treated as a misprediction.
-                    if already_simulated && prev != input {
+                    if let Some(mispredict) = self.ingest_single_input(player, frame, input) {
                         earliest_mispredict =
-                            Some(earliest_mispredict.map_or(frame, |e| e.min(frame)));
+                            Some(earliest_mispredict.map_or(mispredict, |e| e.min(mispredict)));
+                    }
+                }
+                NetMessage::InputBatch {
+                    player,
+                    start_frame,
+                    inputs,
+                } => {
+                    for (offset, input) in inputs.into_iter().enumerate() {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let frame = start_frame.saturating_add(offset as u32);
+                        if let Some(mispredict) = self.ingest_single_input(player, frame, input) {
+                            earliest_mispredict =
+                                Some(earliest_mispredict.map_or(mispredict, |e| e.min(mispredict)));
+                        }
                     }
                 }
                 NetMessage::InputAck { frame } => {
@@ -980,6 +999,10 @@ impl<T: Transport> RollbackSession<T> {
         // First un-acked frame (the remote has everything <= remote_ack_frame).
         let first_unacked = self.remote_ack_frame.map_or(0, |a| a.saturating_add(1));
         let start = first_unacked.max(newest.saturating_sub(INPUT_RESEND_WINDOW));
+        if start > newest {
+            return;
+        }
+        let mut batched = Vec::with_capacity((newest - start + 1) as usize);
         for frame in start..=newest {
             let idx = frame as usize;
             if idx >= self.history.len() {
@@ -988,12 +1011,17 @@ impl<T: Transport> RollbackSession<T> {
             let slot = self.history[idx].players[lp_idx];
             // Only resend frames we actually authored (confirmed-local).
             if slot.confirmed {
-                self.transport.send(&NetMessage::Input {
-                    player: lp,
-                    frame,
-                    input: slot.input,
-                });
+                batched.push(slot.input);
+            } else {
+                break;
             }
+        }
+        if !batched.is_empty() {
+            self.transport.send(&NetMessage::InputBatch {
+                player: lp,
+                start_frame: start,
+                inputs: batched,
+            });
         }
     }
 

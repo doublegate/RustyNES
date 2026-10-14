@@ -307,6 +307,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun updateScreenWakeLock(running: Boolean) {
+        runOnUiThread {
+            if (running) {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         // Stop listening for controller hot-plug while backgrounded.
@@ -450,7 +460,7 @@ class MainActivity : AppCompatActivity() {
     private fun onPauseSaveState() {
         // v2.7.4 (AND-09): the in-game battery save, synchronously -- the process
         // may be killed at any point once it is in the background.
-        emulator.flushBattery()
+        emulator.flushBattery(this)
         val ctrl = emulator.controller
         val sha = emulator.romSha
         // RetroAchievements progress sidecar (v1.8.6). A no-op when no RA session /
@@ -558,11 +568,21 @@ class EmulatorHandle {
      * land before the controller goes away. A failure is logged and retried by
      * the next flush; the file keeps its previous contents.
      */
-    fun flushBattery() {
-        val saver = battery ?: return
+    fun flushBattery(context: Context) {
         val ctrl = controller ?: return
-        runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
-            .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+        battery?.let { saver ->
+            runCatching { saver.flushIfChanged { ctrl.batteryRam() } }
+                .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+        }
+        val sha = romSha
+        if (sha != null && ctrl.diskIsDirty()) {
+            runCatching {
+                val fdsDir = java.io.File(context.filesDir, "fds")
+                fdsDir.mkdirs()
+                java.io.File(fdsDir, "disk_$sha.fds").writeBytes(ctrl.diskImageBytes())
+                ctrl.clearDiskDirty()
+            }.onFailure { android.util.Log.w("RustyNES", "FDS disk save failed", it) }
+        }
     }
 
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
@@ -753,13 +773,22 @@ private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: Stri
     // v2.9.7 "Tandem": the stored FDS BIOS (if the user chose one) rides along, so an
     // .fds disk boots; a cartridge or NSF ignores it. Without it a disk throws
     // MobileException.MissingFdsBios, which openRom turns into the BIOS prompt.
-    val ctrl = NesController.newWithFdsBios(bytes, FdsBios.load(context), 48_000u)
+    var ctrl = NesController.newWithFdsBios(bytes, FdsBios.load(context), 48_000u)
     // v2.9.9 (re-audit NF-21): key every per-game store by the core's ROM identity
     // (the bytes after the iNES header, of the unpacked image), not the file as read.
     // Before any store is touched, move whatever the pre-v2.9.9 whole-file key held
     // (once; never over an existing store; see RomKeyMigration).
     val sha = ctrl.romIdentity()
     RomKeyMigration.migrate(context.filesDir, sha256Hex(bytes), sha)
+    val fdsFile = java.io.File(java.io.File(context.filesDir, "fds"), "disk_$sha.fds")
+    if (fdsFile.exists()) {
+        runCatching {
+            val diskBytes = fdsFile.readBytes()
+            if (diskBytes.size == bytes.size) {
+                ctrl = NesController.newWithFdsBios(diskBytes, FdsBios.load(context), 48_000u)
+            }
+        }
+    }
     // Load the cartridge's `.sav` before its first frame, and before the auto-resume
     // state below (a save state is newer and restores cartridge RAM too).
     val (battery, batteryNotice) = attachBattery(context, ctrl, sha)
@@ -804,6 +833,7 @@ private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: Stri
  * and never blocks the UI thread.
  */
 private fun publishRom(
+    context: Context,
     scope: kotlinx.coroutines.CoroutineScope,
     emulator: EmulatorHandle,
     prepared: PreparedRom,
@@ -811,14 +841,25 @@ private fun publishRom(
 ): String {
     val outgoingCtrl = emulator.controller
     val outgoingBattery = emulator.battery
+    val outgoingSha = emulator.romSha
     emulator.controller = prepared.ctrl
     emulator.romSha = prepared.sha
     emulator.romBytes = prepared.bytes
     emulator.battery = prepared.battery
-    if (outgoingCtrl != null && outgoingBattery != null) {
+    if (outgoingCtrl != null) {
         scope.launch(Dispatchers.IO) {
-            runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
-                .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+            if (outgoingBattery != null) {
+                runCatching { outgoingBattery.flushIfChanged { outgoingCtrl.batteryRam() } }
+                    .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+            }
+            if (outgoingSha != null && outgoingCtrl.diskIsDirty()) {
+                runCatching {
+                    val fdsDir = java.io.File(context.filesDir, "fds")
+                    fdsDir.mkdirs()
+                    java.io.File(fdsDir, "disk_$outgoingSha.fds").writeBytes(outgoingCtrl.diskImageBytes())
+                    outgoingCtrl.clearDiskDirty()
+                }.onFailure { android.util.Log.w("RustyNES", "FDS disk save failed", it) }
+            }
         }
     }
     // Apply this game's remembered video filter (per-game DB), if any.
@@ -1015,13 +1056,10 @@ private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManage
      * either. Blocks while the ring is full (paces the loop), exactly like [write].
      */
     fun writeBytes(bytes: ByteArray) {
-        if (focusMuted) return // another app holds audio focus (AND-03)
-        if (bytes.isNotEmpty()) {
-            // The samples are little-endian f32 (from `to_le_bytes`); set the buffer
-            // order explicitly so the PCM_FLOAT track reads them correctly regardless
-            // of the JVM's default (BIG_ENDIAN) — Android is LE, so this is identity.
-            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            track.write(bb, bytes.size, AudioTrack.WRITE_BLOCKING)
+        if (focusMuted || bytes.isEmpty()) return
+        val written = track.write(bytes, 0, bytes.size, AudioTrack.WRITE_NON_BLOCKING)
+        if (written < 0) {
+            // Handle underrun/error logging
         }
     }
 
@@ -1348,10 +1386,10 @@ private fun EmulatorScreen(
                     // Write the running game's battery save first, so reopening
                     // the same game reads it back with at most the frames run
                     // during this preparation missing, not up to a second's worth.
-                    emulator.flushBattery()
+                    emulator.flushBattery(context)
                     prepareRom(context, read(), uri, name())
                 }
-                status = publishRom(scope, emulator, prepared, settings)
+                status = publishRom(context, scope, emulator, prepared, settings)
                 emulator.showSubScreen = false
                 mediaTick++
                 recents = withContext(Dispatchers.IO) { RomLibrary.recents(context) }
@@ -2244,7 +2282,7 @@ private fun EmulatorScreen(
         fun closeRom() {
             raSaveProgress()
             // v2.7.4 (AND-09): the final battery write before the controller goes.
-            emulator.flushBattery()
+            emulator.flushBattery(context)
             emulator.battery = null
             val ctrl = emulator.controller
             if (settings.raEnabled) runCatching { ctrl?.raUnloadGame() }
@@ -2867,7 +2905,9 @@ private fun EmulatorScreen(
                             // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
                             // no-op when the GPU renderer is off.
                             gpuSurface?.submitFrame(fb)
-                            packRgbaToArgb(fb, pixels)
+                            if (gpuSurface == null) {
+                                packRgbaToArgb(fb, pixels)
+                            }
                         }
                         // Hot path: drain audio as raw bytes (no per-sample Float boxing)
                         // and write straight to the PCM_FLOAT track.
@@ -2885,8 +2925,10 @@ private fun EmulatorScreen(
                             frame = hdBmp.asImageBitmap()
                             presented = hdBmp
                         } else {
-                            reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                            frame = reuse.asImageBitmap()
+                            if (gpuSurface == null) {
+                                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                                frame = reuse.asImageBitmap()
+                            }
                             presented = reuse
                         }
                         // v1.8.8 "Atlas" (Workstream F): publish the gameplay frame for
@@ -2987,7 +3029,7 @@ private fun EmulatorScreen(
         onDispose {
             // Persist RA progress before tearing down the controller (ROM unload).
             raSaveProgress()
-            emulator.flushBattery()
+            emulator.flushBattery(context)
             emulator.battery = null
             emulator.controller = null
         }

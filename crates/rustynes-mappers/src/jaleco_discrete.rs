@@ -130,6 +130,19 @@ impl Mapper for Jaleco86 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -246,6 +259,19 @@ impl Mapper for Jaleco140 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -530,6 +556,10 @@ impl Mapper for Jaleco72 {
         self.inner.ppu_read(addr)
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        self.inner.ppu_read(addr)
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         self.inner.ppu_write(addr, value);
     }
@@ -584,6 +614,10 @@ impl Mapper for Jaleco92 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        self.inner.ppu_read(addr)
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         self.inner.ppu_read(addr)
     }
 
@@ -668,6 +702,19 @@ impl Mapper for Jaleco101 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {

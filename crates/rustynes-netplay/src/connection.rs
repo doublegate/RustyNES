@@ -328,6 +328,7 @@ impl Transport for UdpTransport {
     fn poll(&mut self) -> Vec<NetMessage> {
         self.poll_with_source()
             .into_iter()
+            .filter(|(_msg, from)| self.remote.is_none_or(|peer| peer == *from))
             .map(|(msg, _from)| msg)
             .collect()
     }
@@ -800,7 +801,8 @@ impl NetplayConnection {
                 NetMessage::Input { .. }
                 | NetMessage::InputAck { .. }
                 | NetMessage::Checksum { .. }
-                | NetMessage::Roster { .. } => {}
+                | NetMessage::Roster { .. }
+                | NetMessage::InputBatch { .. } => {}
             }
         }
 

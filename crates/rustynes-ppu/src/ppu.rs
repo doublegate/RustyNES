@@ -459,6 +459,9 @@ pub struct Ppu {
     // === CPU-facing register state ===
     pub(crate) ctrl: PpuCtrl,
     pub(crate) mask: PpuMask,
+    /// Cached emphasis LUT offset `(emph << 6)` for fast indexing into [`Self::rgba_lut`].
+    /// Maintained by [`Self::update_emph_offset`] on reset, `$2001` writes, and snapshot restore.
+    pub(crate) cached_emph_offset: usize,
     /// Two-stage delay pipeline of `mask` consumed exclusively by the
     /// pre-render dot-339 odd-frame skip check. `mask_for_skip_check` is
     /// the value seen *this* dot; `mask_skip_pipe1` is the staged value
@@ -1512,6 +1515,7 @@ impl Ppu {
             region,
             ctrl: PpuCtrl::empty(),
             mask: PpuMask::empty(),
+            cached_emph_offset: 0,
             mask_for_skip_check: PpuMask::empty(),
             dot0_replaced: false,
             mask_skip_pipe1: PpuMask::empty(),
@@ -2124,6 +2128,15 @@ impl Ppu {
         &mut self.ciram
     }
 
+    pub(crate) const fn update_emph_offset(&mut self) {
+        let raw = (self.mask.bits() >> 5) & 0x07;
+        let emph = match self.region {
+            PpuRegion::Ntsc => raw,
+            _ => (raw & 0b100) | ((raw & 0b001) << 1) | ((raw & 0b010) >> 1),
+        };
+        self.cached_emph_offset = (emph as usize) << 6;
+    }
+
     /// Performs a soft-reset of the PPU (warm boot). Per `docs/ppu-2c02.md`:
     ///   - PPUCTRL := 0
     ///   - PPUMASK := 0
@@ -2136,6 +2149,7 @@ impl Ppu {
     pub const fn reset(&mut self) {
         self.ctrl = PpuCtrl::empty();
         self.mask = PpuMask::empty();
+        self.update_emph_offset();
         self.mask_for_skip_check = PpuMask::empty();
         self.mask_skip_pipe1 = PpuMask::empty();
         self.prev_rendering_enabled = false;
@@ -3127,6 +3141,7 @@ impl Ppu {
                 }
                 let was_rendering = self.mask.rendering_enabled();
                 self.mask = PpuMask::from_bits_truncate(value);
+                self.update_emph_offset();
                 self.arm_oam_corruption_disable(was_rendering);
                 // v2.0 Phase 6 (mc-ppu-subpos): arm the analog `$2001` BG-reload
                 // delay. `self.mask` (and so the sprite-eval / shift / pixel
@@ -3627,8 +3642,7 @@ impl Ppu {
         // no scanline-241 VBL set, no pre-render clear, no OAM-corruption
         // edge, no PPUDATA state machine in flight, no `$2006` copy-V or
         // PPUMASK write delay pending, rendering stably enabled. This gate
-        // detects that regime cheaply and, when the (default-OFF) runtime
-        // knob is on, dispatches to [`Self::tick_visible_render_fast`], which
+        // detects that regime cheaply and dispatches to [`Self::tick_visible_render_fast`], which
         // runs the *identical* helper sequence with the dead branches pruned.
         //
         // BYTE-IDENTITY: the fast handler is byte-identical BY CONSTRUCTION —
@@ -5111,9 +5125,9 @@ impl Ppu {
         let mut hd_sprites: [usize; 4] = [0; 4];
         #[cfg(feature = "hd-pack")]
         let mut hd_spr_n: usize = 0;
-        if self.mask.contains(PpuMask::SHOW_SPRITE)
-            && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
-        {
+        let sprites_active = self.mask.contains(PpuMask::SHOW_SPRITE)
+            && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT));
+        if sprites_active {
             for i in 0..self.spr_count as usize {
                 // v2.0 (ppu-sprite-shifter-counter): a sprite emits when its
                 // X-counter is 0 OR it is in the persistent halted state. The
@@ -5162,11 +5176,7 @@ impl Ppu {
         // none of the eight hardware sprites is opaque (they have the higher
         // OAM indexes, so the lower priority). Never sprite 0, so never a hit.
         // `spr_extra_count` is 0 unless the option is on.
-        if spr_idx == 0
-            && self.spr_extra_count != 0
-            && self.mask.contains(PpuMask::SHOW_SPRITE)
-            && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
-        {
+        if spr_idx == 0 && self.spr_extra_count != 0 && sprites_active {
             for e in 0..usize::from(self.spr_extra_count) {
                 let off = pixel_x.wrapping_sub(u16::from(self.spr_extra_x[e]));
                 if off >= 8 {
@@ -5238,7 +5248,8 @@ impl Ppu {
         let final_idx = self.read_palette(pal_addr) & 0x3F;
 
         // Write RGBA8 to framebuffer.
-        let off = ((pixel_y as usize) * 256 + pixel_x as usize) * 4;
+        let px = (pixel_y as usize) * 256 + pixel_x as usize;
+        let off = px * 4;
         // v2.8.0 Phase 4 — route through the precomputed
         // `(emphasis << 6) | color` lookup (built from the same pure
         // `palette_color_to_rgba`, so byte-identical to the old per-pixel
@@ -5250,13 +5261,7 @@ impl Ppu {
         // and GREEN on the PAL 2C07 and the Dendy, bit 6 the reverse (NESdev
         // "Colour emphasis"), so those two exchange off NTSC. The region is
         // fixed per console, so the branch is constant.
-        let raw = (self.mask.bits() >> 5) & 0x07;
-        let emph = usize::from(if matches!(self.region, PpuRegion::Ntsc) {
-            raw
-        } else {
-            (raw & 0b100) | ((raw & 0b001) << 1) | ((raw & 0b010) >> 1)
-        });
-        let lut_idx = (emph << 6) | usize::from(final_idx);
+        let lut_idx = self.cached_emph_offset | usize::from(final_idx);
         let rgba = self.rgba_lut[lut_idx];
         self.framebuffer[off..off + 4].copy_from_slice(&rgba);
         // Parallel palette-index output for the `NES_NTSC` composite filter
@@ -5271,7 +5276,7 @@ impl Ppu {
         // samples simply redistribute. Not worth the correctness hazard of
         // gating a buffer the NTSC filter, the mobile API, `fast_dotloop_diff`
         // and a unit test all read. See `docs/performance.md`.
-        self.index_framebuffer[off >> 2] = lut_idx as u16;
+        self.index_framebuffer[px] = lut_idx as u16;
 
         // v1.2.0 C3 (hd-pack): record the CHR tile that produced this pixel,
         // mirroring the BG-vs-sprite priority decision above. Output-only; this
@@ -5648,7 +5653,9 @@ impl Ppu {
             // Secondary-OAM clear (cycles 1-64): the bus carries $FF and the
             // parallel secondary OAM is filled with $FF, 1 byte per 2 dots.
             self.oam_bus_copybuffer = 0xFF;
-            self.oam_bus_secondary[((cycle - 1) >> 1) as usize] = 0xFF;
+            if (cycle & 1) == 0 {
+                self.oam_bus_secondary[((cycle - 1) >> 1) as usize] = 0xFF;
+            }
             return;
         }
         if cycle <= 256 {
@@ -7076,6 +7083,7 @@ mod tests {
                 let mut p = Ppu::new(region);
                 p.post_reset_mask_remaining = 0;
                 p.mask = mask; // rendering off: the pixel is the backdrop
+                p.update_emph_offset();
                 p.palette_ram[palette_index(0x3F00)] = 0x21;
                 p.scanline = 10;
                 p.dot = 20;

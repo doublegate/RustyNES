@@ -253,11 +253,22 @@ pub enum NetMessage {
         /// The 0-based player index this input belongs to (0..=3). Lets a
         /// peer route a remote input to the correct controller port; in a
         /// mesh topology every peer's input carries its own player index.
+        /// Player index
         player: u8,
         /// The frame this input applies to.
         frame: u32,
         /// `Buttons::bits()` for that player on that frame.
         input: u8,
+    },
+
+    /// Batched sequence of consecutive inputs for `player` starting at `start_frame`.
+    InputBatch {
+        /// Player index
+        player: u8,
+        /// Start frame
+        start_frame: u32,
+        /// Inputs array
+        inputs: Vec<u8>,
     },
 
     /// Acknowledges receipt of the remote's input up to `frame`. Lets the
@@ -366,6 +377,7 @@ impl NetMessage {
     const TAG_CHECKSUM: u8 = 3;
     const TAG_QUALITY: u8 = 4;
     const TAG_ROSTER: u8 = 5;
+    const TAG_INPUT_BATCH: u8 = 6;
 
     // IP-family tags inside a `Roster` entry's address encoding.
     const IP_V4: u8 = 4;
@@ -395,6 +407,17 @@ impl NetMessage {
                 out.push(player);
                 out.extend_from_slice(&frame.to_le_bytes());
                 out.push(input);
+            }
+            Self::InputBatch {
+                player,
+                start_frame,
+                ref inputs,
+            } => {
+                out.push(Self::TAG_INPUT_BATCH);
+                out.push(player);
+                out.extend_from_slice(&start_frame.to_le_bytes());
+                out.push(u8::try_from(inputs.len().min(u8::MAX as usize)).unwrap_or(u8::MAX));
+                out.extend_from_slice(inputs);
             }
             Self::InputAck { frame } => {
                 out.push(Self::TAG_INPUT_ACK);

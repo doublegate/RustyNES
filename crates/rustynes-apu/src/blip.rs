@@ -261,6 +261,13 @@ impl BlipBuf {
         } else {
             0.0
         };
+        self.add_sample_bounded(value);
+    }
+
+    /// Fast-path decimation entry for trusted, bounded inputs (e.g., internal DAC tables).
+    /// Bypasses the redundant IEEE-754 `is_finite()` and `clamp()` checks.
+    #[inline]
+    pub fn add_sample_bounded(&mut self, value: f32) {
         let delta = value - self.held_value;
         self.held_value = value;
 
@@ -291,18 +298,25 @@ impl BlipBuf {
             // then add — no FMA contraction), so output is bit-identical
             // to the scalar form.
             let start = self.head.wrapping_sub(TAPS / 2) & RING_MASK;
-            let first = (RING_SIZE - start).min(TAPS);
-            for (slot, &coeff) in self.delta_ring[start..start + first]
-                .iter_mut()
-                .zip(&row[..first])
-            {
-                *slot += delta * coeff;
-            }
-            for (slot, &coeff) in self.delta_ring[..TAPS - first]
-                .iter_mut()
-                .zip(&row[first..])
-            {
-                *slot += delta * coeff;
+            if start <= RING_SIZE - TAPS {
+                let dest = &mut self.delta_ring[start..start + TAPS];
+                for (slot, &coeff) in dest.iter_mut().zip(row) {
+                    *slot += delta * coeff;
+                }
+            } else {
+                let first = RING_SIZE - start;
+                for (slot, &coeff) in self.delta_ring[start..RING_SIZE]
+                    .iter_mut()
+                    .zip(&row[..first])
+                {
+                    *slot += delta * coeff;
+                }
+                for (slot, &coeff) in self.delta_ring[..TAPS - first]
+                    .iter_mut()
+                    .zip(&row[first..])
+                {
+                    *slot += delta * coeff;
+                }
             }
         }
 

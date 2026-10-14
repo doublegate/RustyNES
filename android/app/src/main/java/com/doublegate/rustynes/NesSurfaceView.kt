@@ -145,6 +145,7 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
         val w: Worker?
         synchronized(lock) {
             surfaceGone = true
+            pendingSurface = null
             w = worker
             w?.running?.set(false)
         }

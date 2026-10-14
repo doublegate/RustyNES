@@ -101,11 +101,11 @@ fn glow(suv: vec2<f32>) -> vec3<f32> {
     let tx = 1.0 / 256.0;
     let ty = 1.0 / 240.0;
     var acc = vec3<f32>(0.0, 0.0, 0.0);
-    acc = acc + textureSample(nes_tex, nes_smp, suv).rgb * 0.4;
-    acc = acc + textureSample(nes_tex, nes_smp, suv + vec2<f32>( 2.0 * tx, 0.0)).rgb * 0.15;
-    acc = acc + textureSample(nes_tex, nes_smp, suv + vec2<f32>(-2.0 * tx, 0.0)).rgb * 0.15;
-    acc = acc + textureSample(nes_tex, nes_smp, suv + vec2<f32>(0.0,  2.0 * ty)).rgb * 0.15;
-    acc = acc + textureSample(nes_tex, nes_smp, suv + vec2<f32>(0.0, -2.0 * ty)).rgb * 0.15;
+    acc = acc + textureSampleLevel(nes_tex, nes_smp, suv, 0.0).rgb * 0.4;
+    acc = acc + textureSampleLevel(nes_tex, nes_smp, suv + vec2<f32>( 2.0 * tx, 0.0), 0.0).rgb * 0.15;
+    acc = acc + textureSampleLevel(nes_tex, nes_smp, suv + vec2<f32>(-2.0 * tx, 0.0), 0.0).rgb * 0.15;
+    acc = acc + textureSampleLevel(nes_tex, nes_smp, suv + vec2<f32>(0.0,  2.0 * ty), 0.0).rgb * 0.15;
+    acc = acc + textureSampleLevel(nes_tex, nes_smp, suv + vec2<f32>(0.0, -2.0 * ty), 0.0).rgb * 0.15;
     return acc;
 }
 
@@ -129,7 +129,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let suv = vec2<f32>(uv.x * u.crop.z + u.crop.w, uv.y * u.crop.x + u.crop.y);
 
-    var rgb = textureSample(nes_tex, nes_smp, suv).rgb;
+    var rgb = textureSampleLevel(nes_tex, nes_smp, suv, 0.0).rgb;
     rgb = pow(rgb, vec3<f32>(2.2)); // to linear
 
     // Scanline beam in source-row space.

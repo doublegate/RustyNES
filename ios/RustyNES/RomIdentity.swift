@@ -122,6 +122,10 @@ enum RomKeyMigration {
             root.appendingPathComponent("battery/\(legacy).sav"),
             root.appendingPathComponent("battery/\(identity).sav")
         ))
+        outcome.add(moveFile(
+            root.appendingPathComponent("fds/disk_\(legacy).fds"),
+            root.appendingPathComponent("fds/disk_\(identity).fds")
+        ))
         outcome.add(moveDir(
             root.appendingPathComponent("states/\(legacy)", isDirectory: true),
             root.appendingPathComponent("states/\(identity)", isDirectory: true)

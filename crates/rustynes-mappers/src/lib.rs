@@ -399,13 +399,19 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
 
     let mut cursor = header::HEADER_LEN;
     if h.has_trainer {
-        if bytes.len() < cursor + header::TRAINER_LEN {
+        let next = cursor
+            .checked_add(header::TRAINER_LEN)
+            .ok_or(RomError::Truncated {
+                needed: usize::MAX,
+                got: bytes.len(),
+            })?;
+        if bytes.len() < next {
             return Err(RomError::Truncated {
-                needed: cursor + header::TRAINER_LEN,
+                needed: next,
                 got: bytes.len(),
             });
         }
-        cursor += header::TRAINER_LEN;
+        cursor = next;
     }
 
     if bytes.len() < cursor + h.prg_size {
@@ -627,17 +633,15 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // We dispatch by (mapper, submapper) pair.  Default mapping below
         // is conservative; refer to nesdev wiki for the full table.
         21 | 23 | 25 => {
-            // Mapper 21 -> VRC4 only (a/c).
-            // Mapper 22 -> VRC2a (no submapper).
-            // Mapper 23 -> VRC2b/VRC4e/VRC4f.
-            // Mapper 25 -> VRC2c/VRC4b/VRC4d.
-            // We model VRC4 with CPU-cycle IRQ as the superset; submapper
-            // selects pin-decoder variant.  Banking matches between VRC2
-            // and VRC4; the difference is mostly the IRQ counter which
-            // VRC2 lacks (we just leave it idle).
-            let m021_vrc4 = Vrc4::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
-            Box::new(m021_vrc4)
+            if (h.mapper_id == 23 || h.mapper_id == 25) && h.submapper == 3 {
+                let vrc2 = Vrc2::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
+                    .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                Box::new(vrc2)
+            } else {
+                let m021_vrc4 = Vrc4::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
+                    .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+                Box::new(m021_vrc4)
+            }
         }
         22 => {
             let vrc2 = Vrc2::new(prg_rom, chr_rom, 22, h.submapper, h.mirroring)

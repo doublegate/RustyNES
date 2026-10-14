@@ -356,6 +356,16 @@ impl Nes {
         self.bus.mapper.clear_save_data();
     }
 
+    /// Check dirty
+    pub fn is_save_data_dirty(&self) -> Option<bool> {
+        self.bus.mapper.is_save_data_dirty()
+    }
+
+    /// Clear dirty
+    pub fn clear_save_data_dirty(&mut self) {
+        self.bus.mapper.clear_save_data_dirty();
+    }
+
     /// v2.7.3 — whether the cartridge has non-volatile save data: the header
     /// declares battery-backed PRG-RAM (iNES flags 6 bit 1), or (v2.9.6) the
     /// board is self-flashable and its flash is the save (GTROM, mapper 111,
