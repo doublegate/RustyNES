@@ -740,12 +740,26 @@ pub trait Mapper: Send {
         self.save_data_mut().fill(0);
     }
 
-    /// Check dirty
+    /// Whether [`Self::save_data`] may have changed since the last
+    /// [`Self::clear_save_data_dirty`] (or since the board was built).
+    ///
+    /// `None` -- the default -- means "not tracked": the battery writer then
+    /// compares the bytes, as it always has. A board that returns `Some` lets
+    /// the writer SKIP that comparison while it reports `Some(false)`
+    /// (`BatteryPolicy::differs`), which matters for the two self-flashable
+    /// boards whose save data is the whole multi-hundred-KiB PRG image. So
+    /// `Some(false)` is a promise: every path that can change the save data
+    /// -- a program write, [`Self::save_data_mut`], [`Self::clear_save_data`]
+    /// and [`Self::load_state`] -- must set the flag, or a change is never
+    /// saved. Added in v3.2.0.
     fn is_save_data_dirty(&self) -> Option<bool> {
         None
     }
 
-    /// Clear dirty
+    /// Mark the save data clean (see [`Self::is_save_data_dirty`]). Nothing in
+    /// the shipped frontends calls it yet, so a tracked board stays dirty after
+    /// its first change and the comparison resumes; it is the hook a writer
+    /// would call after a save it knows to be current. Default: nothing.
     fn clear_save_data_dirty(&mut self) {}
 
     /// Start recording the diagnostic FDS read-stream trace (off by default;

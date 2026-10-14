@@ -356,12 +356,15 @@ impl Nes {
         self.bus.mapper.clear_save_data();
     }
 
-    /// Check dirty
+    /// Whether the cartridge's save data may have changed since the last
+    /// [`Self::clear_save_data_dirty`]; `None` when the board does not track it
+    /// (the caller then compares bytes). See `Mapper::is_save_data_dirty`.
+    #[must_use]
     pub fn is_save_data_dirty(&self) -> Option<bool> {
         self.bus.mapper.is_save_data_dirty()
     }
 
-    /// Clear dirty
+    /// Mark the cartridge's save data clean. See `Mapper::clear_save_data_dirty`.
     pub fn clear_save_data_dirty(&mut self) {
         self.bus.mapper.clear_save_data_dirty();
     }

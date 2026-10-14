@@ -698,10 +698,17 @@ impl Mapper for Gtrom111 {
     }
 
     fn save_data_mut(&mut self) -> &mut [u8] {
+        // Every path that can change the save data marks it dirty, not just a
+        // flash program write: the battery writer skips its comparison while
+        // this board reports clean (`BatteryPolicy::differs`), so a missed
+        // path is a lost save. A spurious `true` only costs one comparison.
+        self.dirty = true;
         &mut self.flash
     }
 
     fn clear_save_data(&mut self) {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         self.flash.copy_from_slice(&self.original);
     }
 
@@ -834,6 +841,8 @@ impl Mapper for Gtrom111 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         let fixed = 7 + self.chr_ram.len() + self.nt_ram.len();
         if data.len() < fixed {
             return Err(MapperError::WrongLength {
@@ -1416,6 +1425,11 @@ impl Mapper for Unrom512M30 {
     }
 
     fn save_data_mut(&mut self) -> &mut [u8] {
+        // Every path that can change the save data marks it dirty, not just a
+        // flash program write: the battery writer skips its comparison while
+        // this board reports clean (`BatteryPolicy::differs`), so a missed
+        // path is a lost save. A spurious `true` only costs one comparison.
+        self.dirty = true;
         if self.flashable() {
             &mut self.prg_rom
         } else {
@@ -1424,6 +1438,8 @@ impl Mapper for Unrom512M30 {
     }
 
     fn clear_save_data(&mut self) {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         if self.flashable() {
             self.prg_rom.copy_from_slice(&self.original);
         }
@@ -1573,6 +1589,8 @@ impl Mapper for Unrom512M30 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         let chr_len = if self.chr_is_rom { 0 } else { self.chr.len() };
         let fixed = 6 + self.vram.len() + chr_len;
         if data.len() < fixed {
@@ -2177,6 +2195,36 @@ mod tests {
         }
         m.cpu_write(0xC000, 5);
         assert_eq!(m.cpu_read(0x8123), 0xFF);
+    }
+
+    /// v3.2.0: the two flash boards report a dirty flag, and while it reads
+    /// `Some(false)` the battery writer skips its comparison, so EVERY path
+    /// that can change the save data must set it -- not only a program
+    /// write. A restored state, a power-on clear and a direct
+    /// `save_data_mut` each change the flash without a program write.
+    #[test]
+    fn flash_boards_mark_every_save_data_change_dirty() {
+        fn check(m: &mut dyn Mapper, name: &str) {
+            assert_eq!(m.is_save_data_dirty(), Some(false), "{name}: fresh");
+            let state = m.save_state();
+            m.load_state(&state).unwrap();
+            assert_eq!(m.is_save_data_dirty(), Some(true), "{name}: load_state");
+            m.clear_save_data_dirty();
+            m.clear_save_data();
+            assert_eq!(
+                m.is_save_data_dirty(),
+                Some(true),
+                "{name}: clear_save_data"
+            );
+            m.clear_save_data_dirty();
+            let _ = m.save_data_mut();
+            assert_eq!(m.is_save_data_dirty(), Some(true), "{name}: save_data_mut");
+        }
+        check(&mut Gtrom111::new(synth_prg_32k(8), &[]).unwrap(), "GTROM");
+        check(
+            &mut Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap(),
+            "UNROM 512 (flashable)",
+        );
     }
 
     /// The reset a power-on movie performs (`power_on_for_movie` ->

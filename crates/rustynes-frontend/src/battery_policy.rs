@@ -190,6 +190,22 @@ mod tests {
         assert!(p.due(&[7; 4], None, true).is_none());
     }
 
+    /// v3.2.0: a board that tracks its save data (`Some`) lets the policy
+    /// skip the byte comparison while it reports clean; untracked (`None`) and
+    /// dirty (`Some(true)`) boards are compared as before. The skip is only
+    /// sound because such a board marks every change dirty
+    /// (`flash_boards_mark_every_save_data_change_dirty` in the mappers).
+    #[test]
+    fn a_board_reporting_clean_skips_the_comparison() {
+        let mut p = BatteryPolicy::new(vec![0; 4]);
+        assert!(
+            p.due(&[1; 4], Some(false), true).is_none(),
+            "clean: skipped"
+        );
+        assert_eq!(p.due(&[1; 4], Some(true), true), Some(vec![1; 4]), "dirty");
+        assert_eq!(p.due(&[1; 4], None, true), Some(vec![1; 4]), "untracked");
+    }
+
     #[test]
     fn a_success_moves_the_baseline_and_a_failure_does_not() {
         let mut p = BatteryPolicy::new(vec![0; 2]);
