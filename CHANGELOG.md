@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-14 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
+
 ### Breaking
 
 - **Movies and netplay from v3.1.0 are refused.** `EMULATION_EPOCH` rises
@@ -97,6 +99,25 @@ cycle-accurate core later replaced.
   checked against services.gradle.org) and the **Compose compiler plugin
   2.4.21** (#603) for the Android app.
 
+### Records
+
+- **A ninth fuzz target, `movie_import`**, covers the five foreign-movie
+  importers (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`), which no target reached:
+  `movie` fuzzes only the `.rnm` decoder. Clean over 2,000,000 inputs when
+  added; CI's `fuzz` job now expects nine targets.
+- **Tools that existed only in untracked scratch are in the repositories.**
+  The release ceremony's local gate runner and squash-merge containment check
+  (`scripts/release-automation/run_gates.sh`, `branch_contained.py`), the
+  quiet-host A/B queue (`scripts/perf/quiet_ab.sh`), and in the MiSTer
+  repository the double-compile behind every "byte-identical across two clean
+  compiles" claim (`scripts/double-compile.sh`) and three gate-writing tools
+  (`tb/mutate_gate.py`, `tb/export_golden.sh`, `tb/sweep_frames.sh`). Each was
+  tested before it was committed: the containment check against a synthetic
+  squash merge, the mutation tool by a real catch and a no-op control.
+- **The three surveys the v3.1-to-v4.0 line plan was drafted from** are kept
+  verbatim in `to-dos/plans/research/`. 25 of the oracle survey's items appear
+  in no plan or ticket, and `T-SURVEY-UNTICKETED` triages them.
+
 ### Performance
 
 - **The APU mixes about 2-6% faster when a cartridge adds audio, and 2-3%
@@ -104,6 +125,17 @@ cycle-accurate core later replaced.
   (`docs/performance.md`, "v3.2.0 APU"). The change came with an AI-made
   remediation branch that also made the expansion-audio path 47% SLOWER; the
   cause, a reshaped ring write, was bisected and left out.
+- **The rest of that branch's speed-ups, measured against the tree before it**
+  (two independent runs each, `docs/performance.md`, "v3.2.0 import"): an
+  MMC3 cartridge read is about 9% faster (its bank offsets are now cached),
+  and run-ahead on an MMC3 game about 5% faster with it. Whole-frame time,
+  PPU throughput and run-ahead on an NROM game do not change measurably. The
+  branch's own figures (PPU 3.5%, mapper reads 11-16%, MMC3 run-ahead
+  12.8%) were taken against the v3.1.0 tag, and do not hold against the
+  tree it was imported into. Two cartridge reads got
+  slower, MMC5 by about 4.7% and Sunsoft FME-7 by about 6%, although neither
+  read function changed; the cause is not established
+  (`T-PERF-MAPPER-READ-DRIFT`).
 
 ### The MiSTer core (`RustyNES_MiSTer`)
 
@@ -118,8 +150,9 @@ cycle-accurate core later replaced.
   NINA-03/06 (79), Camerica 71 (including *Fire Hawk*) and 232, mapper 34
   (BNROM and NINA-001), Namco 108 (206), TxSROM (118), TQROM (119) and MMC1
   SUROM (512 KiB, off-die). The NES 2.0 submapper now reaches the cartridge.
-  Each board is gated against the emulator, and for twelve of them a
-  commercial game's frame is compared too (`docs/rung7-mappers.md`).
+  Each board is gated against the emulator, and for thirteen of them a
+  commercial game's frame is compared too (SUROM's off-die only;
+  `docs/rung7-mappers.md`).
 - **Three input devices**: the Four Score, the Arkanoid (Vaus) controller and
   Game Genie cheats, gated against goldens exported with the same device.
 - **The custom palette uses 1,004 fewer combinational ALUTs** (2,390 ->
@@ -128,6 +161,12 @@ cycle-accurate core later replaced.
   registers) and is deferred, six did not hold.
 - **The oracle pin moves to v3.2.0**: all 842 golden artifacts from 188 stems
   reproduce byte for byte from it.
+- **The co-simulation ladder: 257 passed, 0 failed, 3 expected failures
+  on-die, 258 / 0 / 5 off-die** (v3.1.0: 212 / 0 / 1 and 213 / 0 / 1), each
+  one frozen-worktree run with nothing skipped. Two commercial frames still
+  differ from the emulator's and are expected failures, unattributed: one
+  pixel of *Mississippi Satsujin Jiken* and three scanlines of *Micro
+  Machines*.
 - **Known issue (off-die build):** a `$2007` read of CHR-RAM soon after a
   write returns `$00` in simulation. It predates this release, is an expected
   failure in the off-die ladder, and the on-die build is right.
