@@ -1980,8 +1980,10 @@ ROM dumps under `tests/roms/external/`, not committed):
 > **v1.7.0 "Forge" to 168** (Workstream G1's reusable-ASIC batch), and
 > **v1.8.9 "Backlog" beta.6 to 172** (the final NTDEC/TXC/BMC multicart batch —
 > m193/204/221/299 — plus a UNIF board-map breadth pass), **v2.3.4 to 174**
-> (154 NAMCOT-3453 and 243 Sachen SA-020A), and **v2.9.6 "Roster" to 191**,
-> the current count (the "Tenth batch" in `docs/mappers.md`). See
+> (154 NAMCOT-3453 and 243 Sachen SA-020A), **v2.9.6 "Roster" to 191** (the
+> "Tenth batch" in `docs/mappers.md`), and **v3.2.0 to 208**, the current count
+> (its three v3.2.0 sections there: the Datach, the MMC3-derived boards and the
+> TXC / Tengen / Taito / Waixing / multicart / FFE batch). See
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -2001,24 +2003,27 @@ reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS, Sachen 9602/3011, Waixing
 breadth pass wiring well-known board aliases to already-implemented families)
 → **174 families at v2.3.4** (154 NAMCOT-3453 and 243 Sachen SA-020A, both
 surfaced once the coverage harness applied the per-game database) → **191
-families at v2.9.6 "Roster"** (the current count: MMC3 boards 12/37/45/47/74/
+families at v2.9.6 "Roster"** (MMC3 boards 12/37/45/47/74/
 121/191/192/194/195/249, Cony 83, J.Y. 91, NES-EVENT 105, Bandai 153, Nanjing
 163 and Action 52 228, all written from their NESdev pages; see
-`docs/mappers.md` "Tenth batch"),
+`docs/mappers.md` "Tenth batch") → **208 families at v3.2.0** (the current
+count: the Bandai Datach 157, MMC3-derived 114/116/165/182/197/215, FFE 6/8/17,
+Tengen 158, TXC 172/173, Taito 207, the 230 and 235 multicarts and Waixing 252),
 tiered for accuracy honesty (`crates/rustynes-mappers/src/tier.rs`):
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
-| **Curated** (v1.2.0 + **v2.1.0 "Fathom" F3** + v2.9.6) | 109 | Yes | notable games + decode spec; register-decode unit tests **+ byte-identity boot-snapshot oracle** (`external_extended.rs`). The 14 added at v2.9.6 (13 new families and GTROM) have no redistributable dump; their evidence is a precise register table on the NESdev page, unit tests and a synthetic CC0 boot fixture (`roster_boards.rs`) |
-| **BestEffort** | 31 | **No** | long-tail with **no cleanly-booting redistributable ROM dump** and thin documentation (16 NES 2.0 high-id boards + 8 with no matching cart + 50, whose only dump jams at boot + 154 and 243 from v2.3.4 + 47/121/191/194 from v2.9.6, whose pages give only Disch's notes or "probably" masks); register-decode + save-state unit tests only. Submappers 91.1 and 176.2 are also BestEffort, although their families are not (4.3, MC-ACC, was too until v2.9.7 promoted it to Curated on six real games) |
+| **Curated** (v1.2.0 + **v2.1.0 "Fathom" F3** + v2.9.6 + v3.2.0) | 130 | Yes | notable games + decode spec; register-decode unit tests **+ byte-identity boot-snapshot oracle** (`external_extended.rs`). The 14 added at v2.9.6 (13 new families and GTROM) have no redistributable dump; their evidence is a precise register table on the NESdev page, unit tests and a synthetic CC0 boot fixture (`roster_boards.rs`). v3.2.0 adds 16 families booted from real dumps or written from a precise page, and promotes 47, 121, 154, 191 and 243 on local-dump evidence (D23, `docs/compatibility.md`) |
+| **BestEffort** | 27 | **No** | long-tail with **no cleanly-booting redistributable ROM dump** and thin documentation (as `mapper_tier()` reports them at v3.2.0: 17 NES 2.0 high-id boards, 261-513 including 290; 29, 39, 81, 104, 174, 179 and 238, with no matching cart; 50, whose only dump jams at boot; 194 from v2.9.6, whose page gives only Disch's notes; and 230 from v3.2.0, whose page leaves a choice the boot does not settle); register-decode + save-state unit tests only. Submappers 91.1 and 176.2 are also BestEffort, although their families are not (4.3, MC-ACC, was too until v2.9.7 promoted it to Curated on six real games) |
 
 The **v2.1.0 "Fathom" F3** sweep promoted **86** families BestEffort → Curated
 (57 already-staged + 29 sourced from GoodNES v3.23b), taking accuracy-gated
 coverage from **60 → 146** of the then 172 families. With v2.3.4's two additions
 the count was **146 accuracy-gated of 174**. v2.9.6 made it **160 of 191**: 13
 new families and GTROM (111) are Curated on a precise decode spec, and 4 new
-families are BestEffort.
+families are BestEffort. v3.2.0 makes it **181 of 208**: 16 new families are
+Curated, 230 is BestEffort, and 47, 121, 154, 191 and 243 were promoted.
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed

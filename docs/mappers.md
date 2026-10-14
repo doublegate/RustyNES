@@ -1003,9 +1003,10 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **191 families** — 51 Core + 109 Curated (**160 accuracy-gated**) +
-31 BestEffort (v2.3.4 added 154 and 243; v2.9.6 added 17 families and promoted
-111, see above). Submapper-level exceptions: 91.1 and 176.2 are BestEffort, 4.3
+Current split: **208 families** — 51 Core + 130 Curated (**181 accuracy-gated**) +
+27 BestEffort (v2.3.4 added 154 and 243; v2.9.6 added 17 families and promoted
+111; v3.2.0 added 17 families, 230 of them BestEffort, and promoted 47, 121,
+154, 191 and 243 on local-dump evidence, maintainer decision D23; see above). Submapper-level exceptions: 91.1 and 176.2 are BestEffort, 4.3
 (MC-ACC) is Curated (BestEffort until v2.9.7), and 12.1 is unsupported. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
 BestEffort families to Curated: each has a **cleanly-booting** staged
 commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
@@ -1192,6 +1193,6 @@ deleted.
   table in `docs/compatibility.md`).
 - **VRC7 FM audio.** YM2413-derived; only Lagrange Point uses it commercially. Banking + IRQ landed in Track C2 / Phase 2.4 (mapper 85; same `mapper-audio` feature flag as VRC6 / Sunsoft 5B / Namco 163 / MMC5). **The FM synthesizer landed** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; ADR 0006 (`docs/adr/0006-vrc7-audio-landed.md`) supersedes the ADR 0004 deferral. *Lagrange Point* plays with in-game audio (mixed via the `mapper-audio` slot).
 - **Pirate / multicart mappers.** *Answered by policy:* none were in the initial
-  scope; many are in now (191 families, `docs/STATUS.md`), each admitted under
+  scope; many are in now (208 families, `docs/STATUS.md`), each admitted under
   the long-tail policy in `docs/compatibility.md` (demand, a fixture or a
   specific NESdev page, and NES 2.0 detection).
