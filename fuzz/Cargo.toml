@@ -85,3 +85,10 @@ path = "fuzz_targets/movie.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "movie_import"
+path = "fuzz_targets/movie_import.rs"
+test = false
+doc = false
+bench = false
