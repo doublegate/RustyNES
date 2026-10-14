@@ -64,7 +64,7 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 
 The line from v3.1.0 to v4.0.0 is indexed in
 [`v3.1-to-v4.0-line-plan.md`](to-dos/plans/v3.1-to-v4.0-line-plan.md), drafted
-2026-10-07 with the maintainer's decisions D1-D29. Version numbers after v3.1.0
+2026-10-07 with the maintainer's decisions D1-D29. Version numbers after v3.2.0
 are slots. The hardware release is the last of v3.9.x, after v3.9.0's RTL
 feature freeze and before v4.0.0 (D29); it takes a number only after its board
 session (D1), and folds into v4.0.0 if its fixes are large. (The first draft
@@ -73,7 +73,6 @@ day.)
 
 | Version | Scope | Plan |
 |---------|-------|------|
-| v3.2.0 | Mapper breadth by real titles, the dump corpus, KNOWN_BLANK triage, tier promotions. MiSTer F1: options and about ten cheap families, paddle, Four Score, cheats | [`v3.2.0-plan.md`](to-dos/plans/v3.2.0-plan.md) |
 | v3.3.0 | Phi2 write placement and the sprite-0 stale shifter; wgpu 31 / egui 0.37. MiSTer F2: the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline | [`v3.3.0-plan.md`](to-dos/plans/v3.3.0-plan.md) |
 | v3.4.0 | Hosted netplay and the browser RA proxy on Cloudflare, RA hardcore compliance, native 3-4 player netplay. MiSTer F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | [`v3.4.0-plan.md`](to-dos/plans/v3.4.0-plan.md) |
 | v3.5.0 | The full movie input stream, Lua sockets and shared memory, desktop polish. MiSTer F3b: MMC5, N163, VRC6/7, Bandai FCG, expansion audio | [`v3.5.0-plan.md`](to-dos/plans/v3.5.0-plan.md) |

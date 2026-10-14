@@ -237,7 +237,8 @@ trees listed below. Moved with a SHA-256 check before each move: 883 files,
 ## 2026-10-14 — v3.2.0 release cut, session `f63c2db0` (second pass)
 
 Scope chosen by the maintainer: **hand-written scripts and docs only** from this
-session's agent scratchpad (`/tmp/claude-1000/<project slug>/f63c2db0-.../scratchpad`),
+session's agent scratchpad (applied as everything hand-written, so the pre-edit
+source snapshots and the two probe crates' sources are included) (`/tmp/claude-1000/<project slug>/f63c2db0-.../scratchpad`),
 and none of the `/tmp` test leftovers. The tool's own scope could not express that
 (its `--exclude` does not filter directory candidates, and inside the scratch tree it
 ranks logs as strong), so the list was built by hand from file type, as on

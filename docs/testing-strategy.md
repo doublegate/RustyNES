@@ -180,7 +180,7 @@ commit is the missing piece that would automate them.
 
 ## Layer 5 — fuzz testing
 
-Eight `cargo-fuzz` harnesses under `fuzz/fuzz_targets/` (a standalone crate,
+Nine `cargo-fuzz` harnesses under `fuzz/fuzz_targets/` (a standalone crate,
 nightly-only because libFuzzer needs it):
 
 - **`cartridge_parser`**: arbitrary `&[u8]` → `parse()`. Must not panic; errors typed.

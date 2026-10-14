@@ -1183,7 +1183,7 @@ so it is not reshaped again.
 reached through one call site with `BlipBuf::sanitize` choosing the value (so
 `add_sample(v)` is literally `add_sample_bounded(sanitize(v))`, byte-identical),
 and the filter split. Rows 3 and 4 are two independent runs with the same sign
-on every workload and drift below the effect: `active_frame` -1.9% / -2.7%,
+on both active workloads and drift below the effect: `active_frame` -1.9% / -2.7%,
 `active_frame_with_external` -2.9% / -6.1%, `silent_frame` unchanged. Which of
 the two kept changes earns which part was not separated. Byte identity: the
 APU suite (174 tests) passes; the full suite is re-run at the cut (3,659 passed, 0
