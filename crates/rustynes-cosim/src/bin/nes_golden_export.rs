@@ -721,6 +721,21 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
 /// Returns the reason rather than exiting, so the rules are testable without a
 /// process boundary.
 fn injection_error(args: &Args) -> Option<String> {
+    // `--fb-every-frame` captures each frame of a plain frame run. With
+    // `--inject-instructions` the injection branch runs instead and no frame
+    // completes, so the flag was silently ignored: no `index_fb_frames.bin`,
+    // exit 0, the "armed but empty" shape refused below for the APU trace
+    // (`CodeRabbit` on #604 and #605). `--press-start` was refused too, but
+    // only after the output directory, the devices and the traces were set
+    // up; both are refused here, before anything happens.
+    if args.fb_every_frame && (args.inject_instructions > 0 || args.press_start.is_some()) {
+        return Some(
+            "--fb-every-frame needs a plain frame run (no --press-start, no \
+             --inject-instructions): an injection run completes no frames, and no \
+             recipe combines it with --press-start"
+                .to_owned(),
+        );
+    }
     // The APU trace is drained at FRAME boundaries, in `advance_frames`, and an
     // injection run steps instructions and completes no frames -- so the two
     // together would write a well-formed, EMPTY `.apu.bin` with a dropped count
@@ -1133,12 +1148,12 @@ fn run_frames_with_optional_press(
 /// Refused with `--press-start` rather than combined with it: no recipe needs
 /// both, and an unexercised combination is a place a golden goes quietly wrong.
 fn run_frames_capturing_each(o: &mut Oracle, args: &Args, base: &Path) -> u64 {
-    if args.press_start.is_some() {
-        eprintln!("--fb-every-frame is not supported together with --press-start");
-        usage();
-    }
+    // `injection_error` has refused `--press-start` with this flag already.
     let mut calls = 0u64;
-    let mut bytes = Vec::with_capacity(INDEX_FB_LEN * 2 * args.frames as usize);
+    // Reserve for at most 600 frames (about 70 MiB) up front; `frames` comes
+    // from the command line, and a reservation sized by it alone could abort
+    // on a typo before a single frame ran. The Vec grows past this if asked.
+    let mut bytes = Vec::with_capacity(INDEX_FB_LEN * 2 * (args.frames as usize).min(600));
     for _ in 0..args.frames {
         calls += o.advance_frames(1);
         let fb = o.nes().index_framebuffer();
@@ -1157,6 +1172,9 @@ fn run_frames_capturing_each(o: &mut Oracle, args: &Args, base: &Path) -> u64 {
 
 fn main() {
     let args = parse_args();
+    // Refuse a contradictory argument set before ANY side effect: no output
+    // directory, no devices, no traces.
+    validate_injection(&args);
     let rom =
         std::fs::read(&args.rom).unwrap_or_else(|e| panic!("read {}: {e}", args.rom.display()));
     let stem = args
@@ -1193,7 +1211,7 @@ fn main() {
     // number of instructions with a pin asserted for part of the run, which is
     // the stimulus rung 2 compares. A frame advance would run past the window
     // and bury the divergence under thousands of unrelated cycles.
-    validate_injection(&args);
+    // (`validate_injection` already ran, first thing in `main`.)
 
     let calls = if args.inject_instructions > 0 {
         o.run_with_injection(
@@ -1394,6 +1412,22 @@ mod tests {
         sweep_only.inject_instructions = 8;
         sweep_only.inject_nmi_at = Some(2);
         assert!(injection_error(&sweep_only).is_none());
+
+        // `--fb-every-frame` with an injection run or `--press-start` is refused;
+        // with a plain frame run it is the normal sprite-limit recipe.
+        let mut fb_inject = base();
+        fb_inject.fb_every_frame = true;
+        fb_inject.inject_instructions = 8;
+        fb_inject.inject_nmi_at = Some(2);
+        let err = injection_error(&fb_inject).expect("refused");
+        assert!(err.contains("--fb-every-frame"), "{err}");
+        let mut fb_start = base();
+        fb_start.fb_every_frame = true;
+        fb_start.press_start = Some((10, 5));
+        assert!(injection_error(&fb_start).is_some());
+        let mut fb_frames = base();
+        fb_frames.fb_every_frame = true;
+        assert!(injection_error(&fb_frames).is_none());
     }
 
     use super::{Args, injection_error, sha256_hex, suffixed};

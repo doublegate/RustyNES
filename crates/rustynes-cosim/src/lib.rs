@@ -1328,6 +1328,22 @@ mod tests {
             // A short buffer must be refused, not partially filled.
             assert_eq!(rn_index_framebuffer(h, fb.as_mut_ptr(), 10), 0);
 
+            // An odd address: the byte-copy branch, which no other call
+            // reaches (`CodeRabbit` on #605). Same bytes as the aligned copy.
+            let n = 256 * 240;
+            // A sentinel fill, not zeros: this ROM's frame is mostly index 0,
+            // so a copy that stopped short would still match a zeroed buffer
+            // (the first draft's mutant, half a copy, was not caught).
+            let mut raw = vec![0xA5u8; n * 2 + 1];
+            let off = usize::from((raw.as_ptr() as usize) & 1 == 0);
+            // The misaligned pointer IS the subject: a C caller may hand one
+            // over, and the function must not do a `u16` copy through it.
+            #[allow(clippy::cast_ptr_alignment)]
+            let odd = raw.as_mut_ptr().add(off).cast::<u16>();
+            assert_eq!(rn_index_framebuffer(h, odd, n), n);
+            let want: Vec<u8> = fb.iter().flat_map(|p| p.to_ne_bytes()).collect();
+            assert_eq!(&raw[off..off + n * 2], &want[..]);
+
             let mut ram = vec![0u8; 2048];
             assert_eq!(rn_ram(h, ram.as_mut_ptr(), ram.len()), 2048);
             assert_eq!(rn_ram(h, ram.as_mut_ptr(), 10), 0);
