@@ -240,13 +240,20 @@ impl EmuHandle {
         guard
     }
 
-    /// Lock the core. Poisoning is ignored deliberately: a panic on one
+    /// Lock the core if no other thread holds it, without waiting; `None`
+    /// only when it is held (v3.2.0, the netplay tick, which skips a frame
+    /// rather than block the UI thread). A poisoned lock is recovered exactly
+    /// as [`Self::lock`] recovers it -- reporting it as "held" would make that
+    /// caller skip every frame forever after one panic.
     pub fn try_lock(&self) -> Option<std::sync::MutexGuard<'_, EmuCore>> {
-        self.inner.try_lock().ok()
+        match self.inner.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
     }
 
-    /// Obtain a lock. Panics are trapped but the `PoisonError` is deliberately
-    /// swallowed, poisoning the thread but unlocking the shell. A crash in one
+    /// Lock the core. Poisoning is ignored deliberately: a panic on one
     /// thread must not wedge the other (the core's state is a plain value;
     /// the next frame either works or panics identically).
     pub fn lock(&self) -> std::sync::MutexGuard<'_, EmuCore> {
@@ -2518,6 +2525,33 @@ pub(crate) fn drive_ra(
 #[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
 mod tests {
     use super::*;
+
+    /// v3.2.0: `try_lock` is `None` only while another thread holds the core;
+    /// a poisoned lock is recovered as `lock` recovers it. Treating poison as
+    /// "held" made the netplay tick skip every frame forever after one panic.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn try_lock_recovers_a_poisoned_core_and_refuses_only_a_held_one() {
+        let handle = EmuHandle::new(EmuCore::new());
+        assert!(handle.try_lock().is_some(), "free: taken");
+
+        let held = handle.lock();
+        let other = handle.clone();
+        let busy = std::thread::spawn(move || other.try_lock().is_none())
+            .join()
+            .unwrap();
+        assert!(busy, "held by another thread: None");
+        drop(held);
+
+        let poisoner = handle.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock();
+            panic!("poison the core lock");
+        })
+        .join();
+        assert!(handle.inner.is_poisoned(), "fixture: the lock is poisoned");
+        assert!(handle.try_lock().is_some(), "poisoned: recovered, not None");
+    }
 
     /// The shared cost model divides the measured cost over `running + 1`
     /// frames: depth 0 is one frame, depth 2 is three.

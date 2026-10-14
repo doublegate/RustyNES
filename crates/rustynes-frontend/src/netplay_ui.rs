@@ -152,7 +152,11 @@ pub struct NetplayUi {
     /// captured at connect for the handshake + session
     /// ([`SessionIdentity::of`]). The peer must announce an identical one.
     identity: SessionIdentity,
+    /// When the session last confirmed a new frame (v3.2.0 peer liveness):
+    /// five seconds of stall past it ends the session with a reason.
     last_peer_activity: std::time::Instant,
+    /// The newest confirmed frame seen, so only progress refreshes
+    /// `last_peer_activity`.
     last_confirmed_tracker: u32,
     /// Cached status for the HUD, refreshed each `tick`.
     status: NetplayStatus,
@@ -473,9 +477,13 @@ impl NetplayUi {
         };
 
         session.add_local_input(local_buttons);
-        let confirmed = session.last_confirmed_frame();
-        if confirmed > Some(self.last_confirmed_tracker) {
-            self.last_confirmed_tracker = confirmed.unwrap();
+        // Peer liveness (v3.2.0): progress is a newly confirmed frame, which
+        // needs the peer's input. Five seconds without one while the session
+        // is stalled ends it with a reason instead of freezing silently.
+        if let Some(confirmed) = session.last_confirmed_frame()
+            && confirmed > self.last_confirmed_tracker
+        {
+            self.last_confirmed_tracker = confirmed;
             self.last_peer_activity = std::time::Instant::now();
         }
         match session.advance(nes) {

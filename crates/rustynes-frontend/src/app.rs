@@ -7537,9 +7537,12 @@ impl App {
         let raw_local = self.input.player1();
         let turbo_mask = self.turbo_mask();
         let turbo_period = self.config.input.turbo_period;
+        // v3.2.0: never block the UI thread here. The emulation thread idles
+        // during netplay, so the core is held only briefly by another thread
+        // (a present copy); if it is, this tick is skipped and the previous
+        // frame stays on screen. The rollback session sees that as one slow
+        // frame. A poisoned lock is recovered, not treated as held.
         let Some(mut guard) = self.emu.try_lock() else {
-            // Background EmuThread is actively simulating or rolling back;
-            // present previous frame rather than blocking the UI thread.
             return;
         };
         let emu = &mut *guard;
