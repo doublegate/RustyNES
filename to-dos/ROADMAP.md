@@ -1455,9 +1455,9 @@ re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE
 | `T-PAL-EMPHASIS` | The PAL/Dendy emphasis red/green swap **DONE v3.1.0** | ACC-01 | v3.1.0 |
 | `T-COMPOSITE-ARTIFACTS` | Differential phase distortion and inter-pixel artifacts, an opt-in video option (D20) **DONE v3.1.0** (differential phase; the inter-pixel artifacts already existed in the signal-decode pass) | ACC-02 | v3.1.0 |
 | `T-MMC3-NEC-OVERRIDE` | The NEC rev B MMC3 as a per-game or config override (D20) **DONE v3.1.0** | ACC-13 | v3.1.0 |
-| `T-MAPPER-BREADTH-V3` | The missing families with real titles, both cores (D26) | MAP-03, MAP-05, FB-1 | v3.2.0, v3.8.0 |
-| `T-KNOWN-BLANK` | Triage the 52 KNOWN_BLANK dumps | ACC-08, ACC-09 | v3.2.0 |
-| `T-CURATED-EVIDENCE` | BestEffort → Curated on local-dump evidence under D23's record | MAP-01 | v3.2.0 |
+| `T-MAPPER-BREADTH-V3` | The missing families with real titles, both cores (D26). **v3.2.0 part DONE**: 17 oracle families (191 -> 208), 16 MiSTer boards; the rest is v3.8.0's | MAP-03, MAP-05, FB-1 | v3.2.0, v3.8.0 |
+| `T-KNOWN-BLANK` | Triage the 52 KNOWN_BLANK dumps. **v3.2.0**: 41 remain; 10 Famicom-only carts boot on the Famicom model (`FAMICOM_WIRED`) | ACC-08, ACC-09 | v3.2.0 |
+| `T-CURATED-EVIDENCE` | BestEffort → Curated on local-dump evidence under D23's record. **DONE v3.2.0**: 47, 121, 154, 191 and 243 (`docs/compatibility.md`) | MAP-01 | v3.2.0 |
 | `T-DUMP-CORPUS` | Every implemented family with a dump in `~/Dropbox/ROMs/` gets a recorded boot; nothing committed but snapshots (D21) | MAP-02 | v3.2.0 |
 | `T-PHI2-WRITE` | Reopen PPU register write placement against the v2.6.17 conditions (D20) | ACC-03 | v3.3.0 |
 | `T-SPRITE0-STALE` | The sprite-0 stale shifter and the internal/external bus split (D20) | ACC-04 | v3.3.0 |
@@ -1473,6 +1473,20 @@ re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE
 | `T-MOB-06-ZEROCOPY` | The zero-copy framebuffer, once UniFFI 0.33 releases `&mut [u8]` (D24) | MOB-04 | v3.7.0 or the first release after UniFFI 0.33 |
 | `T-MOBILE-DISTRIBUTION` | Android developer verification, iOS signing, and the free store listings (D18) | MOB-02, MOB-03 | v3.9.x |
 | `T-API-ENUMS` | The remaining public enums `#[non_exhaustive]`, the v4.0.0 API break (D3) | the backlog's MAJOR section | v3.9.x trial, v4.0.0 |
+
+Minted 2026-10-14 by the v3.2.0 consolidation, from the Round 2 audit ledger
+([`docs/audits/v3.2.0-round2-audit-disposition.md`](../docs/audits/v3.2.0-round2-audit-disposition.md))
+and the sibling's integration. Slots are proposals for the maintainer.
+
+| Ticket | What | Source | Slot |
+| --- | --- | --- | --- |
+| `T-NETPLAY-DATAGRAM-AUTH` | A per-session secret on every netplay datagram. The source-address filters the import added were reverted: they ended a session on a NAT rebinding and authenticated nothing | NET-R2-07 | v3.4.0, with `T-HOSTED-NETPLAY` |
+| `T-ANDROID-AUDIO-NONBLOCKING` | Non-blocking `AudioTrack` writes with explicit pacing; v3.2.0 kept the blocking write, which is the pacing today | AND-R2-01 | v3.6.0, with `T-ANDROID-API37` |
+| `T-ANDROID-GPU-FRAMESKIP` | Skip the CPU frame conversion on the GPU render path while keeping screenshots and clips working; needs a device to measure | AND-01 | v3.7.0 |
+| `T-MAPPER71-DECODE` | Mapper 71's bank select: the oracle also decodes it at `$8000-$BFFF`, while the NESdev page, and the MiSTer core that follows it, take `$C000-$FFFF` only (sibling `docs/oracle-vs-documentation.md` 3.64). No gate exercises the difference, and which one a game needs is unsettled | sibling 3.64 | v3.3.0 |
+| `T-ROUND2-UNTRIAGED` | The 11 Round 2 findings the import never applied, CORE-R2-01 first (it broke determinism when tried; a red test before any change) | Round 2 ledger | v3.3.0 |
+| `T-MISTER-VRAM-M10K` | The 2 KiB nametable is 16,384 register bits; three read sites and a write need a port plan before it can move to block RAM without a latency change | RTL-R2-02 | a MiSTer F-phase release |
+| `T-MISTER-OFFDIE-CHRRAM` | Off-die, a `$2007` CHR-RAM read soon after a write returns `$00` in simulation (pre-existing; `mapper13cprom206`, `mapper119tqrom230` are XFAILs) | sibling `docs/HARDWARE_TESTING.md` | v3.3.0 |
 
 ## Open questions blocking planning
 
