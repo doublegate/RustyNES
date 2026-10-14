@@ -100,7 +100,12 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// v2 (v2.9.6) appends mapper 153's outer bank, WRAM enable and WRAM. Since
 /// v2.9.8 (ADR 0042) a v1 blob is refused; it used to load on the variants
 /// that have neither.
-const SAVE_STATE_VERSION: u8 = 2;
+///
+/// v3 (v3.2.0) adds each EEPROM's protocol state ([`Eeprom::save_lines`],
+/// nine bytes after its contents), so a state taken mid-transaction resumes
+/// it. A v2 blob is refused: on mappers 16 (with an EEPROM), 157 and 159, a
+/// v3.1.x save state does not load.
+const SAVE_STATE_VERSION: u8 = 3;
 
 /// Mapper 153's WRAM.
 const WRAM_153: usize = 0x2000;
@@ -213,7 +218,7 @@ struct Eeprom {
     /// unit's EEPROM and stopped on "no free block" at every boot; keeping it,
     /// the game reaches its title (measured 2026-10-08). Then applied to
     /// mapper 16's 24C02 as well, since it is the chip's behaviour, not the
-    /// board's. Written from that protocol description, not from any emulator.
+    /// board's. Written from that protocol description.
     /// Off for the X24C01, which takes its word address after every START, so
     /// the clearing is unobservable there.
     keeps_word_address: bool,
@@ -228,6 +233,35 @@ enum I2cMode {
     Write,
     SendAck,
     WaitAck,
+}
+
+impl I2cMode {
+    /// The save-state tag. Fixed numbers, not `as u8`, so reordering the enum
+    /// cannot silently change the format.
+    const fn to_byte(self) -> u8 {
+        match self {
+            Self::Idle => 0,
+            Self::ChipAddress => 1,
+            Self::Address => 2,
+            Self::Read => 3,
+            Self::Write => 4,
+            Self::SendAck => 5,
+            Self::WaitAck => 6,
+        }
+    }
+
+    const fn from_byte(b: u8) -> Option<Self> {
+        Some(match b {
+            0 => Self::Idle,
+            1 => Self::ChipAddress,
+            2 => Self::Address,
+            3 => Self::Read,
+            4 => Self::Write,
+            5 => Self::SendAck,
+            6 => Self::WaitAck,
+            _ => return None,
+        })
+    }
 }
 
 impl Eeprom {
@@ -246,6 +280,64 @@ impl Eeprom {
             output: 1,
             keeps_word_address: !is_x24c01,
         }
+    }
+
+    /// Bytes [`Self::save_lines`] writes: the two sampled line levels, both
+    /// protocol modes, and the five transaction registers.
+    const LINES_LEN: usize = 9;
+
+    /// The chip's PROTOCOL state, for a save state (v3.2.0, version 3). The
+    /// contents alone are not enough: a state taken in the middle of a
+    /// transaction must resume it, and since 24C02 random reads keep the word
+    /// address across a START (`keeps_word_address`), `addr` is live between
+    /// transactions too. Before version 3 a restore left all of this at its
+    /// live values, so rollback and run-ahead diverged from a straight run
+    /// (`CodeRabbit` on #604). This is RustyNES's own serialisation of the
+    /// fields above; nothing in it comes from a reference emulator.
+    fn save_lines(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&[
+            self.last_scl,
+            self.last_sda,
+            self.mode.to_byte(),
+            self.next_mode.to_byte(),
+            self.chip_addr,
+            self.addr,
+            self.data,
+            self.counter,
+            self.output,
+        ]);
+    }
+
+    /// Check a [`Self::save_lines`] record without changing anything, so a
+    /// caller can validate every part of a state before restoring any of it.
+    fn check_lines(b: &[u8]) -> Result<(), MapperError> {
+        let bad = |what: &str| Err(MapperError::Invalid(format!("EEPROM state: {what}")));
+        if b.len() != Self::LINES_LEN {
+            return bad("wrong length");
+        }
+        if b[0] > 1 || b[1] > 1 || b[8] > 1 {
+            return bad("a line level above 1");
+        }
+        if I2cMode::from_byte(b[2]).is_none() || I2cMode::from_byte(b[3]).is_none() {
+            return bad("unknown protocol mode");
+        }
+        if b[7] > 8 {
+            return bad("bit counter above 8");
+        }
+        Ok(())
+    }
+
+    /// Restore a record [`Self::check_lines`] accepted.
+    fn load_lines(&mut self, b: &[u8]) {
+        self.last_scl = b[0];
+        self.last_sda = b[1];
+        self.mode = I2cMode::from_byte(b[2]).unwrap_or(I2cMode::Idle);
+        self.next_mode = I2cMode::from_byte(b[3]).unwrap_or(I2cMode::Idle);
+        self.chip_addr = b[4];
+        self.addr = b[5];
+        self.data = b[6];
+        self.counter = b[7];
+        self.output = b[8];
     }
 
     fn addr_mask(&self) -> u8 {
@@ -594,6 +686,7 @@ impl BandaiFcg {
         out.push(u8::from(self.ext_scl));
         if let Some(ext) = self.ext_eeprom.as_ref() {
             out.extend_from_slice(&ext.mem);
+            ext.save_lines(out);
         }
         self.barcode.save(out);
     }
@@ -601,7 +694,10 @@ impl BandaiFcg {
     /// Restore [`Self::save_datach_tail`]. Validates the whole tail before
     /// changing anything.
     fn load_datach_tail(&mut self, tail: &[u8]) -> Result<(), MapperError> {
-        let ext_len = self.ext_eeprom.as_ref().map_or(0, |e| e.mem.len());
+        let ext_len = self
+            .ext_eeprom
+            .as_ref()
+            .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
         let fixed = 1 + ext_len;
         let short = || MapperError::Invalid(format!("Datach state tail of {} bytes", tail.len()));
         if tail.len() < fixed {
@@ -612,9 +708,14 @@ impl BandaiFcg {
         if fixed + used != tail.len() {
             return Err(short());
         }
+        if let Some(ext) = self.ext_eeprom.as_ref() {
+            Eeprom::check_lines(&tail[1 + ext.mem.len()..fixed])?;
+        }
         self.ext_scl = tail[0] != 0;
         if let Some(ext) = self.ext_eeprom.as_mut() {
-            ext.mem.copy_from_slice(&tail[1..fixed]);
+            let n = ext.mem.len();
+            ext.mem.copy_from_slice(&tail[1..=n]);
+            ext.load_lines(&tail[1 + n..fixed]);
         }
         self.barcode = reader;
         Ok(())
@@ -949,7 +1050,10 @@ impl Mapper for BandaiFcg {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let ee_len = self.eeprom.as_ref().map_or(0, |e| e.mem.len());
+        let ee_len = self
+            .eeprom
+            .as_ref()
+            .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
         let mut out = Vec::with_capacity(
             18 + self.vram.len() + ee_len + if self.chr_is_ram { self.chr.len() } else { 0 },
         );
@@ -962,9 +1066,10 @@ impl Mapper for BandaiFcg {
         out.push(u8::from(self.irq_enabled));
         out.push(u8::from(self.irq_pending));
         out.push(self.eeprom_ctrl);
-        // EEPROM contents (if any).
+        // EEPROM contents and protocol state (if any).
         if let Some(ee) = self.eeprom.as_ref() {
             out.extend_from_slice(&ee.mem);
+            ee.save_lines(&mut out);
         }
         out.extend_from_slice(&self.vram);
         if self.chr_is_ram {
@@ -980,7 +1085,10 @@ impl Mapper for BandaiFcg {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let ee_len = self.eeprom.as_ref().map_or(0, |e| e.mem.len());
+        let ee_len = self
+            .eeprom
+            .as_ref()
+            .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         // Only the current version is read (v2.9.8, ADR 0042); a v1 blob,
         // which carried no mapper-153 tail, used to load on boards without one.
@@ -1010,12 +1118,10 @@ impl Mapper for BandaiFcg {
                 got: data.len(),
             });
         }
-        if self.variant == FcgVariant::Datach {
-            self.load_datach_tail(datach_tail)?;
-        }
-        self.prg_bank = data[1];
-        self.chr_banks.copy_from_slice(&data[2..10]);
-        self.mirroring = match data[10] {
+        // Validate everything before changing anything (CodeRabbit on #607:
+        // an unknown mirroring byte used to return Err after the Datach tail,
+        // the PRG bank and the CHR banks had already been restored).
+        let mirroring = match data[10] {
             0 => Mirroring::Horizontal,
             1 => Mirroring::Vertical,
             2 => Mirroring::SingleScreenA,
@@ -1023,6 +1129,16 @@ impl Mapper for BandaiFcg {
             4 => Mirroring::FourScreen,
             other => return Err(MapperError::Invalid(format!("mirroring {other}"))),
         };
+        if let Some(ee) = self.eeprom.as_ref() {
+            let at = 18 + ee.mem.len();
+            Eeprom::check_lines(&data[at..at + Eeprom::LINES_LEN])?;
+        }
+        if self.variant == FcgVariant::Datach {
+            self.load_datach_tail(datach_tail)?;
+        }
+        self.prg_bank = data[1];
+        self.chr_banks.copy_from_slice(&data[2..10]);
+        self.mirroring = mirroring;
         self.irq_latch = u16::from_le_bytes([data[11], data[12]]);
         self.irq_counter = u16::from_le_bytes([data[13], data[14]]);
         self.irq_enabled = data[15] != 0;
@@ -1039,8 +1155,10 @@ impl Mapper for BandaiFcg {
         self.irq_pending = pending != 0;
         self.eeprom_ctrl = ctrl;
         if let Some(ee) = self.eeprom.as_mut() {
-            ee.mem.copy_from_slice(&data[cursor..cursor + ee.mem.len()]);
-            cursor += ee.mem.len();
+            let n = ee.mem.len();
+            ee.mem.copy_from_slice(&data[cursor..cursor + n]);
+            ee.load_lines(&data[cursor + n..cursor + n + Eeprom::LINES_LEN]);
+            cursor += n + Eeprom::LINES_LEN;
         }
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
@@ -1288,6 +1406,69 @@ mod tests {
             }
             byte
         }
+    }
+
+    /// A save state taken MID-TRANSACTION must restore the protocol, not just
+    /// the EEPROM's bytes (`CodeRabbit` on #604). Rollback, run-ahead and rewind
+    /// all restore at arbitrary cycles, and a game polling its save chip spans
+    /// many frames; before v3.2.0's version 3 the blob carried only `mem` and
+    /// `$800D`, so the restored board was Idle where the original was halfway
+    /// through a read, and the two diverged.
+    #[test]
+    fn a_state_saved_mid_read_restores_the_transaction() {
+        let variant = FcgVariant::Lz93d50_24c01;
+        let mut a =
+            BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
+        a.eeprom.as_mut().unwrap().mem[0x05] = 0xAB;
+        {
+            let mut d = I2cDriver { m: &mut a };
+            d.start();
+            d.send_addr_rw(0x05, true);
+            assert!(d.read_ack(), "the X24C01 acknowledges its address");
+        }
+        let blob = a.save_state();
+
+        let mut b =
+            BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
+        b.eeprom.as_mut().unwrap().mem[0x05] = 0x00; // overwritten by the load
+        b.load_state(&blob).unwrap();
+
+        let from_a = I2cDriver { m: &mut a }.recv_data_lsb_first();
+        let from_b = I2cDriver { m: &mut b }.recv_data_lsb_first();
+        assert_eq!(from_a, 0xAB);
+        assert_eq!(from_b, from_a, "the restored board continues the same read");
+        assert_eq!(b.save_state(), a.save_state());
+    }
+
+    /// The protocol bytes are validated before anything is restored: an
+    /// unknown mode tag, a counter past 8 or a line above 1 is refused, and the
+    /// board keeps its state. So is an unknown mirroring byte, which used to
+    /// return Err only after the banks had been restored (`CodeRabbit` on #607).
+    #[test]
+    fn a_corrupt_state_is_refused_before_anything_changes() {
+        let variant = FcgVariant::Lz93d50_24c02;
+        let mut m =
+            BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
+        m.cpu_write(0x8008, 3);
+        let good = m.save_state();
+        let lines = 18 + m.eeprom.as_ref().unwrap().mem.len();
+        let mut other =
+            BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
+        other.cpu_write(0x8008, 1);
+        let before = other.save_state();
+        for (at, value, what) in [
+            (lines + 2, 7, "mode tag"),
+            (lines + 7, 9, "bit counter"),
+            (lines, 2, "SCL level"),
+            (10, 9, "mirroring"),
+        ] {
+            let mut bad = good.clone();
+            bad[at] = value;
+            assert!(other.load_state(&bad).is_err(), "{what} {value} refused");
+            assert_eq!(other.save_state(), before, "{what}: nothing restored");
+        }
+        other.load_state(&good).unwrap();
+        assert_eq!(other.save_state(), good);
     }
 
     #[test]
