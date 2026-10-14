@@ -557,9 +557,6 @@ pub struct Mmc5 {
     in_frame: bool,
     /// Internal scanline counter; ticks each rendered scanline.
     scanline_counter: u8,
-    last_nt_read_addr: u16,
-    consecutive_nt_reads: u8,
-    m2_idle_cycles: u8,
 
     // === Multiplier ===
     /// `$5205` factor 1.
@@ -681,9 +678,6 @@ impl Mmc5 {
             irq_pending: false,
             in_frame: false,
             scanline_counter: 0,
-            last_nt_read_addr: 0xFFFF,
-            consecutive_nt_reads: 0,
-            m2_idle_cycles: 0,
             mul_a: 0,
             mul_b: 0,
             current_mirroring_summary: initial_mirroring,
@@ -1296,65 +1290,13 @@ impl Mapper for Mmc5 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        self.m2_idle_cycles = 0;
-        let clean_addr = addr & 0x3FFF;
-        if (0x2000..=0x2FFF).contains(&clean_addr) {
-            if self.last_nt_read_addr == clean_addr {
-                self.consecutive_nt_reads = self.consecutive_nt_reads.saturating_add(1);
-                if self.consecutive_nt_reads == 3 {
-                    if !self.in_frame {
-                        self.in_frame = true;
-                        self.scanline_counter = 0;
-                    } else {
-                        self.scanline_counter = self.scanline_counter.wrapping_add(1);
-                    }
-                    if self.scanline_counter == self.irq_compare && self.irq_compare != 0 {
-                        self.irq_pending = true;
-                    }
-                }
-            } else {
-                self.last_nt_read_addr = clean_addr;
-                self.consecutive_nt_reads = 1;
-            }
-        } else {
-            self.consecutive_nt_reads = 0;
-            self.last_nt_read_addr = 0xFFFF;
-        }
-        let addr = addr & 0x3FFF;
-        match addr {
-            0x0000..=0x1FFF => {
-                let off = self.chr_offset(addr, true);
-                let len = self.chr.len();
-                self.chr[off % len]
-            }
-            0x2000..=0x3EFF => {
-                // Fill / ExRAM / CIRAM is decided by `$5105`. The lockstep
-                // bus's PPU calls `peek_nametable` first; this `ppu_read`
-                // path is only used by the test bus and direct mapper
-                // probes, so we still service the same logic here.
-                let (src, local) = self.nt_resolve(addr);
-                match src {
-                    NtSource::CiramA => self.vram[local],
-                    NtSource::CiramB => self.vram[NAMETABLE_SIZE + local],
-                    NtSource::ExRam => {
-                        if self.exram_is_nametable() {
-                            self.exram[local]
-                        } else {
-                            0
-                        }
-                    }
-                    NtSource::Fill => {
-                        if local < 0x03C0 {
-                            self.fill_tile
-                        } else {
-                            let a = self.fill_attr & 0x03;
-                            (a << 6) | (a << 4) | (a << 2) | a
-                        }
-                    }
-                }
-            }
-            _ => 0,
-        }
+        // MMC5 CHR / nametable reads have no side effect here: its scanline
+        // detection runs from `notify_scanline_start` / `notify_vblank`. A
+        // v3.2.0 import moved a nametable-snoop detector into this method,
+        // but the lockstep bus never routes nametable fetches through
+        // `ppu_read` (they go via `peek_nametable`), so the IRQ stopped
+        // firing in real play; reverted (`external_mmc5_*` caught it).
+        self.ppu_peek(addr)
     }
 
     fn ppu_peek(&self, addr: u16) -> u8 {
@@ -1604,10 +1546,6 @@ impl Mapper for Mmc5 {
     }
 
     fn notify_cpu_cycle(&mut self) {
-        self.m2_idle_cycles = self.m2_idle_cycles.saturating_add(1);
-        if self.m2_idle_cycles >= 3 {
-            self.in_frame = false;
-        }
         // No CPU-cycle IRQ for MMC5. However, the audio extension's two
         // pulse channels tick their 11-bit timer / duty sequencer every
         // *other* CPU cycle — same as the 2A03 pulses. Envelope &
@@ -1715,9 +1653,6 @@ impl Mapper for Mmc5 {
         // Vertical blank: clear the in-frame flag (the next rendered line
         // re-enters "in-frame" via notify_scanline_start).
         self.in_frame = false;
-        self.consecutive_nt_reads = 0;
-        self.last_nt_read_addr = 0xFFFF;
-        self.m2_idle_cycles = 0;
     }
 
     fn irq_pending(&self) -> bool {
