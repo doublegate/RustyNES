@@ -103,22 +103,43 @@ case "${1:-}" in
     while :; do
       line=$(grep -v '^[[:space:]]*$' "$q" | grep -v '^#' | head -1)
       if [ -z "$line" ] || [[ "$line" == STOP* ]]; then echo "queue empty"; break; fi
+      # An interrupted run is a void measurement: the marker says which one,
+      # so it is re-queued deliberately rather than silently lost. It is
+      # written, and checked, BEFORE the entry leaves the queue: the other
+      # order lost the entry to an interruption between the two steps
+      # (CodeRabbit on #605). Interrupted after the marker and before the
+      # removal, the entry is in both places, and the refusal above names it.
+      echo "$line" > "$q.inprogress" || { echo "quiet_ab.sh: cannot write $q.inprogress" >&2; exit 2; }
       # Remove exactly that first occurrence, so lines appended meanwhile stay.
-      python3 - "$q" "$line" <<'PY'
-import sys
+      # Written to a temporary file and renamed over the queue, because
+      # truncating the queue in place and then dying loses every entry.
+      if ! python3 - "$q" "$line" <<'PY'
+import os, sys
 path, line = sys.argv[1], sys.argv[2]
 lines = open(path).read().splitlines()
 lines.remove(line)
-open(path, "w").write("\n".join(lines) + ("\n" if lines else ""))
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    f.write("\n".join(lines) + ("\n" if lines else ""))
+os.replace(tmp, path)
 PY
-      # An interrupted run is a void measurement: the marker says which one,
-      # so it is re-queued deliberately rather than silently lost.
-      echo "$line" > "$q.inprogress"
+      then
+        echo "quiet_ab.sh: could not remove '$line' from $q; it stays queued" >&2
+        rm -f "$q.inprogress"
+        exit 2
+      fi
       # `line` holds LABEL BASE and flags, which must word-split.
       # shellcheck disable=SC2086
       run_one $line
-      echo "$line rc=$?" >> "$q.done"
-      rm -f "$q.inprogress"
+      rc=$?
+      # The marker goes only once the result is recorded: if the append
+      # fails, the marker is the one remaining record of the run.
+      if echo "$line rc=$rc" >> "$q.done"; then
+        rm -f "$q.inprogress"
+      else
+        echo "quiet_ab.sh: could not record '$line rc=$rc' in $q.done; $q.inprogress kept" >&2
+        exit 2
+      fi
     done ;;
   heavy)
     shift
