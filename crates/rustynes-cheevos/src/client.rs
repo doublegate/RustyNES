@@ -757,3 +757,31 @@ impl Drop for RaClient {
         // `transport` is dropped after this, joining the worker thread.
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RaUser;
+
+    /// v3.2.0: the login token never reaches a `Debug` rendering, so logging a
+    /// user (or a struct holding one) cannot leak the credential.
+    #[test]
+    fn a_users_debug_output_redacts_the_token() {
+        let user = RaUser {
+            display_name: "Shown".into(),
+            username: "acct".into(),
+            token: "s3cr3t-token-value".into(),
+            score: 10,
+            score_softcore: 20,
+        };
+        let shown = format!("{user:?}");
+        assert!(
+            !shown.contains("s3cr3t-token-value"),
+            "token leaked: {shown}"
+        );
+        assert!(shown.contains("<redacted>"));
+        assert!(
+            shown.contains("acct") && shown.contains("Shown"),
+            "the rest is kept"
+        );
+    }
+}

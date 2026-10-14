@@ -96,13 +96,16 @@ impl HttpTransport {
         while let Ok(done) = self.completion_rx.try_recv() {
             // Rebuild the C callback pointer + data from the carried bits.
             let cb: ffi::rc_client_server_callback_t = {
-                // SAFETY: `done.callback` is the exact pointer rcheevos handed
-                // to the trampoline; transmuting the bits back is sound and it
-                // is invoked here on the main thread.
+                // rcheevos may pass a NULL completion callback; the trampoline
+                // carried it as 0 (v3.2.0, the callback type is an `Option`),
+                // and it is skipped below instead of called.
                 if done.callback == 0 {
                     None
                 } else {
-                    // SAFETY: Transmuting the usize back to the function pointer is safe.
+                    // SAFETY: a non-zero `done.callback` is the bits of the exact
+                    // non-null `extern "C" fn` rcheevos handed the trampoline
+                    // (`server_call_trampoline`), so transmuting them back yields
+                    // that pointer; it is invoked here, on the main thread.
                     unsafe {
                         std::mem::transmute::<usize, ffi::rc_client_server_callback_t>(
                             done.callback,
