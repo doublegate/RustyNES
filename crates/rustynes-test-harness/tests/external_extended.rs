@@ -39,6 +39,7 @@
 mod common;
 
 use common::external::{InputScript, run_capture, snapshot_text};
+use rustynes_core::Buttons;
 
 /// Default script: 600 frames idle (no input), 10 s @ NTSC 60 Hz —
 /// past the title-screen ramp-up for the bulk of these games.
@@ -1416,5 +1417,611 @@ fn extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu() {
         "mapper-253-WaixingVRC4-DBZ/Dragon Ball Z - Kyoushuu! Saiya Jin Qi Long Zhu (ES-1064) (Ch).zip",
         DEFAULT_IDLE,
         "extended_m253_dragon_ball_z_kyoushuu_saiya_jin_qi_long_zhu",
+    );
+}
+
+// ============================================================
+// v3.2.0 — tier promotions under D23 (`T-CURATED-EVIDENCE`)
+// ============================================================
+
+/// Mapper 47 (NES-QJ, *Super Spike V'Ball + Nintendo World Cup*): DOWN then
+/// START on the cartridge's game-select screen picks the SECOND game, which
+/// lives in the second 128 KiB block. Reaching it is what exercises the
+/// block-select register at `$6000-$7FFF` (writable only while the MMC3's
+/// PRG-RAM is enabled and writable, NESdev `INES_Mapper_047`); the default
+/// coverage capture only ever starts the first game, block 0.
+const M47_SECOND_GAME: InputScript = InputScript::Presses {
+    presses: &[
+        (240, rustynes_core::Buttons::DOWN),
+        (260, rustynes_core::Buttons::START),
+        (480, rustynes_core::Buttons::START),
+        (700, rustynes_core::Buttons::START),
+    ],
+    frames: 1000,
+    checkpoints: &[239, 300, 600, 1000],
+};
+
+#[test]
+fn extended_m47_nintendo_world_cup_block_1() {
+    check(
+        "mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U) [!].nes",
+        M47_SECOND_GAME,
+        "extended_m47_nintendo_world_cup_block_1",
+    );
+}
+
+// ============================================================
+// Mapper 157 — Bandai Datach Joint ROM System (6 ROMs, v3.2.0)
+// ============================================================
+//
+// Boot baselines: 1200 idle frames (the Datach logo, then each game's own
+// title or attract loop; `docs/compatibility.md`, D23). The barcode tests
+// below drive a game to a screen waiting for a card, swipe a code past the
+// reader through `Nes::scan_barcode`, and pin what the game did with it.
+
+const DATACH_DIR: &str = "mapper-157-Datach";
+
+#[test]
+fn extended_m157_battle_rush() {
+    check(
+        "mapper-157-Datach/Datach - Battle Rush - Build Up Robot Tournament (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_battle_rush",
+    );
+}
+
+#[test]
+fn extended_m157_dragon_ball_z_gekitou_tenkaichi_budoukai() {
+    check(
+        "mapper-157-Datach/Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_dragon_ball_z_gekitou_tenkaichi_budoukai",
+    );
+}
+
+#[test]
+fn extended_m157_j_league_super_top_players() {
+    check(
+        "mapper-157-Datach/Datach - J.League Super Top Players (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_j_league_super_top_players",
+    );
+}
+
+#[test]
+fn extended_m157_sd_gundam_gundam_wars() {
+    check(
+        "mapper-157-Datach/Datach - SD Gundam - Gundam Wars (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_sd_gundam_gundam_wars",
+    );
+}
+
+#[test]
+fn extended_m157_ultraman_club_supokon_fight() {
+    check(
+        "mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_ultraman_club_supokon_fight",
+    );
+}
+
+#[test]
+fn extended_m157_yu_yu_hakusho_bakutou_ankoku_bujutsukai() {
+    check(
+        "mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).nes",
+        LONG_IDLE,
+        "extended_m157_yu_yu_hakusho_bakutou_ankoku_bujutsukai",
+    );
+}
+
+/// One step of a Datach navigation script: run idle frames, or hold a button
+/// for some frames and release it.
+#[derive(Clone, Copy)]
+enum DatachStep {
+    Idle(u32),
+    Hold(rustynes_core::Buttons, u32),
+}
+
+/// Drive `rom` (under `mapper-157-Datach/`) through `steps`, then run
+/// `after` frames three ways from the same state: with no scan, after
+/// scanning `codes[0]`, and after scanning `codes[1]`. Returns the three
+/// final-frame hashes, or `None` (a clean skip) when the dump is not staged.
+fn datach_scan_outcomes(
+    rom: &str,
+    steps: &[DatachStep],
+    codes: [&str; 2],
+    after: u32,
+) -> Option<[u64; 3]> {
+    use common::external::{Load, external_rom_path, load_nes};
+    use rustynes_core::Buttons;
+    let rel = format!("{DATACH_DIR}/{rom}");
+    if !external_rom_path(&rel).exists() {
+        eprintln!("[external_extended] SKIP {rel}: dump not staged");
+        return None;
+    }
+    let Load::Ok(mut nes) = load_nes(&rel) else {
+        panic!("{rel} is a cartridge, not a disk");
+    };
+    assert!(nes.has_barcode_reader(), "mapper 157 has a reader");
+    for step in steps {
+        match *step {
+            DatachStep::Idle(n) => (0..n).for_each(|_| {
+                nes.run_frame();
+            }),
+            DatachStep::Hold(b, n) => {
+                nes.set_buttons(0, b);
+                (0..n).for_each(|_| {
+                    nes.run_frame();
+                });
+                nes.set_buttons(0, Buttons::empty());
+            }
+        }
+    }
+    let at_prompt = nes.snapshot();
+    let mut out = [0u64; 3];
+    for (i, code) in [None, Some(codes[0]), Some(codes[1])]
+        .into_iter()
+        .enumerate()
+    {
+        nes.restore(&at_prompt).expect("restore the prompt state");
+        if let Some(code) = code {
+            nes.scan_barcode(code).expect("a valid code on a Datach");
+            assert!(nes.barcode_scan_in_progress());
+        }
+        for _ in 0..after {
+            nes.run_frame();
+        }
+        assert!(!nes.barcode_scan_in_progress(), "the swipe has ended");
+        let label = code.map_or_else(|| "noscan".to_string(), |c| format!("scan{c}"));
+        common::dump_frame_if_requested("datach", rom, &label, nes.framebuffer());
+        out[i] = common::fnv1a64(nes.framebuffer());
+    }
+    Some(out)
+}
+
+/// *Dragon Ball Z: Gekitou Tenkaichi Budoukai*, Karin's room ("さあ おまえの
+/// バーコードを みせてみろ!", "now show me your barcode!"). Seen when the
+/// expectations were pinned: 4006381333931 brings out Dende ("HPを
+/// かんぜんかいふく", full HP recovery), the EAN-8 96385074 Android 18
+/// (HP 96000 / BP 86750 / DP 12750), and with no scan the room keeps waiting.
+#[test]
+fn extended_m157_dbz_karin_room_reads_a_scanned_card() {
+    use DatachStep::{Hold, Idle};
+    use rustynes_core::Buttons;
+    let steps = [
+        Idle(300),
+        Hold(Buttons::START, 2),
+        Idle(300),
+        Hold(Buttons::START, 2),
+        Idle(60),
+        Hold(Buttons::START, 2),
+        Idle(120),
+        Hold(Buttons::DOWN, 2),
+        Idle(30),
+        Hold(Buttons::START, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(180),
+        Hold(Buttons::A, 2),
+        Idle(120),
+    ];
+    let Some([none, ean13, ean8]) = datach_scan_outcomes(
+        "Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).nes",
+        &steps,
+        ["4006381333931", "96385074"],
+        600,
+    ) else {
+        return;
+    };
+    assert_ne!(none, ean13, "the EAN-13 scan changed nothing");
+    assert_ne!(none, ean8, "the EAN-8 scan changed nothing");
+    assert_ne!(ean13, ean8, "two different cards read the same");
+    insta::assert_snapshot!(
+        "extended_m157_dbz_karin_room_reads_a_scanned_card",
+        format!(
+            "noscan fb={none:016x}\nscan 4006381333931 fb={ean13:016x}\nscan 96385074 fb={ean8:016x}"
+        )
+    );
+}
+
+/// *SD Gundam Wars*, Barcode Lab ("バーコード インプット!"). Seen when the
+/// expectations were pinned: 4006381333931 is analysed ("バーコード
+/// カイセキチュウ") and becomes the unit "ラフレシア" (Rafflesia: mega
+/// particle cannon, CP 10, 1 turn); 96385074 becomes the RX-78 Gundam (HP
+/// 4030, AP 2720, DP 4420, CP 10).
+#[test]
+fn extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card() {
+    use DatachStep::{Hold, Idle};
+    use rustynes_core::Buttons;
+    let steps = [
+        Idle(900),
+        Hold(Buttons::START, 2),
+        Idle(120),
+        Hold(Buttons::DOWN, 2),
+        Idle(20),
+        Hold(Buttons::DOWN, 2),
+        Idle(20),
+        Hold(Buttons::A, 2),
+        Idle(150),
+        Hold(Buttons::A, 2),
+        Idle(300),
+        Hold(Buttons::A, 2),
+        Idle(100),
+    ];
+    let Some([none, ean13, ean8]) = datach_scan_outcomes(
+        "Datach - SD Gundam - Gundam Wars (Japan).nes",
+        &steps,
+        ["4006381333931", "96385074"],
+        720,
+    ) else {
+        return;
+    };
+    assert_ne!(none, ean13, "the EAN-13 scan changed nothing");
+    assert_ne!(none, ean8, "the EAN-8 scan changed nothing");
+    assert_ne!(ean13, ean8, "two different cards read the same");
+    insta::assert_snapshot!(
+        "extended_m157_gundam_wars_barcode_lab_reads_a_scanned_card",
+        format!(
+            "noscan fb={none:016x}\nscan 4006381333931 fb={ean13:016x}\nscan 96385074 fb={ean8:016x}"
+        )
+    );
+}
+
+// ============================================================
+// v3.2.0 — MMC3-derived families written from their NESdev pages
+// (`mmc3_boards_ext.rs`). One GoodNES dump per family, byte-identity boot
+// snapshot; the D23 records are in `docs/compatibility.md`.
+// ============================================================
+
+#[test]
+fn extended_m114_aladdin_supergame() {
+    check(
+        "mapper-114-SuperGame/Aladdin (SuperGame) (Mapper 114) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m114_aladdin_supergame",
+    );
+}
+
+/// Submapper 1's scramble. GoodNES labels this dump mapper 215, the
+/// assignment `INES_Mapper_215.md` says was later withdrawn ("Boogerman
+/// (Mapper 114 Submapper 1) was originally assigned by CaH4e3 to Mapper
+/// 215"); it never writes `$5007`, so it does not boot as 215. The staged
+/// copy carries a NES 2.0 header naming 114.1; the bytes after the header,
+/// and so `Nes::rom_sha256`, are the GoodNES dump's.
+#[test]
+fn extended_m114_1_boogerman() {
+    check(
+        "mapper-114-SuperGame/Boogerman (Sugar Softec) (Unl) [!] (NES 2.0 114.1).nes",
+        DEFAULT_IDLE,
+        "extended_m114_1_boogerman",
+    );
+}
+
+#[test]
+fn extended_m182_super_donkey_kong() {
+    check(
+        "mapper-182-Hosenkan/Super Donkey Kong (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m182_super_donkey_kong",
+    );
+}
+
+/// Scramble pattern 4 (`$5007` = 4), 256 KiB PRG + 512 KiB CHR.
+#[test]
+fn extended_m215_mortal_kombat_3_extra_60() {
+    check(
+        "mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m215_mortal_kombat_3_extra_60",
+    );
+}
+
+/// Scramble pattern 1 (`$5007` = 1): the 2-in-1 menu.
+#[test]
+fn extended_m215_super_808() {
+    check(
+        "mapper-215-SugarSoftec/2-in-1 Super 808 (Unl) [p1][!].zip",
+        DEFAULT_IDLE,
+        "extended_m215_super_808",
+    );
+}
+
+/// Submapper 0 wiring (the page's PRG CRC32 `0xC333F621` copy).
+#[test]
+fn extended_m197_super_fighter_iii() {
+    check(
+        "mapper-197-SuperFighter3/Super Fighter III (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m197_super_fighter_iii",
+    );
+}
+
+/// Fire Emblem translations hold the Waixing logo (drawn from the CHR-RAM
+/// page) until START; a tap at frame 700 reaches the title and a second
+/// tap starts the intro. Checkpoints: the title, then the intro.
+const M165_TITLE_INTRO: InputScript = InputScript::DoubleStartTap {
+    idle_pre: 700,
+    gap: 400,
+    idle_post: 0,
+    free_run: 1100,
+    checkpoints: &[900, 1700, 2100],
+};
+
+#[test]
+fn extended_m165_fire_emblem_ch() {
+    check(
+        "mapper-165-FireEmblemCh/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Ch).zip",
+        M165_TITLE_INTRO,
+        "extended_m165_fire_emblem_ch",
+    );
+}
+
+/// Needs the board's work RAM: without it the title is garbage tiles.
+#[test]
+fn extended_m165_fire_emblem_gaiden_ch() {
+    check(
+        "mapper-165-FireEmblemCh/Fire Emblem Gaiden (Ch).zip",
+        M165_TITLE_INTRO,
+        "extended_m165_fire_emblem_gaiden_ch",
+    );
+}
+
+/// One START at frame 400 starts Green Hill Zone act 1; the f1000 checkpoint
+/// is gameplay (Somari, the HUD and the scrolling zone). The game cycles the
+/// supervisor through all three chips while it initialises.
+const M116_SOMARI_PLAY: InputScript = InputScript::StartTap {
+    idle_pre: 400,
+    idle_post: 0,
+    free_run: 799,
+    checkpoints: &[1000],
+};
+
+#[test]
+fn extended_m116_somari() {
+    check(
+        "mapper-116-SomariW/Somari (SOMARI-W) (Unl) [!].zip",
+        M116_SOMARI_PLAY,
+        "extended_m116_somari",
+    );
+}
+
+#[test]
+fn extended_m116_kart_fighter() {
+    check(
+        "mapper-116-SomariW/Kart Fighter (SOMARI-W) (Unl) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m116_kart_fighter",
+    );
+}
+
+// ============================================================
+// v3.2.0 — boards written from their NESdev pages, each verified on a local
+// dump (D23 records in docs/compatibility.md).
+// ============================================================
+
+#[test]
+fn extended_m172_1991_du_ma_racing() {
+    check(
+        "mapper-172-TXC-JV001/1991 Du Ma Racing (Ch) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m172_1991_du_ma_racing",
+    );
+}
+
+#[test]
+fn extended_m173_xiao_ma_li() {
+    check(
+        "mapper-173-TXC-05-00002-010/Xiao Ma Li (Ch) [!].zip",
+        DEFAULT_IDLE,
+        "extended_m173_xiao_ma_li",
+    );
+}
+
+/// 2400-frame idle: *Alien Syndrome*'s attract demo is in gameplay by then,
+/// scrolling under its status bar, which is where mapper 158's per-nametable
+/// CIRAM select shows. The 600-frame intro text uses one page only.
+const ALIEN_SYNDROME_DEMO: InputScript = InputScript::IdleOnly { frames: 2400 };
+
+#[test]
+fn extended_m158_alien_syndrome() {
+    check(
+        "mapper-158-Tengen800037/Alien Syndrome (USA) (Unl).zip",
+        ALIEN_SYNDROME_DEMO,
+        "extended_m158_alien_syndrome",
+    );
+}
+
+/// *Fudou Myouou Den*: START held three frames at f1900 (skips the intro to
+/// the START / CONTINUE menu) and again at f2100 (starts the game), then play
+/// to f3000, in the first stage with the status bar under the playfield. The
+/// menu ignores one-frame taps, so `Held`. Gameplay is where mapper
+/// 207's CHR A17 nametable select shows: the title screen and the intro draw
+/// identically with it forced to page 0, and this frame does not.
+const FUDOU_IN_PLAY: InputScript = InputScript::Held {
+    presses: &[(1900, Buttons::START), (2100, Buttons::START)],
+    hold: 3,
+    resets: &[],
+    frames: 3000,
+};
+
+#[test]
+fn extended_m207_fudou_myouou_den() {
+    check(
+        "mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).zip",
+        FUDOU_IN_PLAY,
+        "extended_m207_fudou_myouou_den",
+    );
+}
+
+/// *San Guo Zhi* (mapper 252): START held at f1500-f3300 passes the intro,
+/// the difficulty menu and the first prompt to the scenario map, and A at
+/// f3600 answers it, so at f3800 the text box under the map asks the first
+/// personality question. That box sits behind a VRC4 scanline-IRQ bank split
+/// and is drawn from the two CHR-RAM pages; the portraits above it come from
+/// CHR-ROM. The first prompt is not enough: its glyphs are pre-rendered in
+/// CHR-ROM pages 6 and 7, so it draws the same with no CHR-RAM at all, and
+/// only the questions after it are composed in RAM.
+const SAN_GUO_ZHI_QUESTION: InputScript = InputScript::Held {
+    presses: &[
+        (1500, Buttons::START),
+        (1800, Buttons::START),
+        (2100, Buttons::START),
+        (2400, Buttons::START),
+        (3000, Buttons::START),
+        (3300, Buttons::START),
+        (3600, Buttons::A),
+    ],
+    hold: 3,
+    resets: &[],
+    frames: 3800,
+};
+
+#[test]
+fn extended_m252_san_guo_zhi() {
+    check(
+        "mapper-252-WaixingVRC4/San Guo Zhi (Ch).zip",
+        SAN_GUO_ZHI_QUESTION,
+        "extended_m252_san_guo_zhi",
+    );
+}
+
+// Mapper 230 (*22-in-1 (Reset Based)*) is BestEffort (the maintainer's
+// ruling, 2026-10-09: its notes leave the power-on mode and the reset
+// behaviour to the model), so it has no byte-identity oracle test here; ADR
+// 0011 keeps BestEffort out of this file. Its reset-to-*Sky Destroyer* run is
+// `external_coverage`'s capture for that dump (`capture_override`).
+
+/// *260-in-1* (mapper 235): RIGHT moves the menu cursor to entry 21, "MR.
+/// MARIO I", A launches it and START begins a game; phase 1 is in play by
+/// f1600. The staged image is the GoodNES `[!]` dump with its header
+/// rewritten to NES 2.0: its iNES byte 4 is 0, which iNES cannot use for the
+/// 4 MiB it holds (the D23 hash is of the bytes after the header, which are
+/// unchanged).
+const GOLDEN_GAME_MARIO: InputScript = InputScript::Held {
+    presses: &[
+        (600, Buttons::RIGHT),
+        (800, Buttons::A),
+        (1100, Buttons::START),
+    ],
+    hold: 6,
+    resets: &[],
+    frames: 1600,
+};
+
+#[test]
+fn extended_m235_260_in_1_mario_bros() {
+    check(
+        "mapper-235-GoldenGame/260-in-1 [p1][!] (NES 2.0 header, 4 MiB).nes",
+        GOLDEN_GAME_MARIO,
+        "extended_m235_260_in_1_mario_bros",
+    );
+}
+
+/// FFE Magic Card / Super Magic Card extractions (mappers 6, 8, 17): START
+/// at f1000 and f1400, A at f1800, START at f2200, each held six frames, then
+/// run to f2600. That reaches play or the first in-game screen on these
+/// titles, past the menus the trainers and the card's IRQs drive.
+const FFE_INTO_PLAY: InputScript = InputScript::Held {
+    presses: &[
+        (1000, Buttons::START),
+        (1400, Buttons::START),
+        (1800, Buttons::A),
+        (2200, Buttons::START),
+    ],
+    hold: 6,
+    resets: &[],
+    frames: 2600,
+};
+
+/// *Wai Wai World* (mapper 6) has a longer intro and character menu: the
+/// script answers it with A and START, then holds RIGHT from f3500 to walk
+/// into the first stage, in play at f3800.
+const FFE_WAI_WAI_WORLD: InputScript = InputScript::Held {
+    presses: &[
+        (1000, Buttons::START),
+        (1300, Buttons::START),
+        (1600, Buttons::A),
+        (1900, Buttons::A),
+        (2200, Buttons::START),
+        (2500, Buttons::A),
+        (2800, Buttons::START),
+        (3100, Buttons::A),
+        (3400, Buttons::RIGHT),
+        (3410, Buttons::RIGHT),
+        (3420, Buttons::RIGHT),
+        (3430, Buttons::RIGHT),
+        (3440, Buttons::RIGHT),
+        (3450, Buttons::RIGHT),
+    ],
+    hold: 10,
+    resets: &[],
+    frames: 3800,
+};
+
+#[test]
+fn extended_m006_ganbare_goemon() {
+    check(
+        "mapper-006-FFE-MagicCard/Ganbare Goemon! - Karakuri Douchuu (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m006_ganbare_goemon",
+    );
+}
+
+#[test]
+fn extended_m006_cosmo_police_galivan() {
+    check(
+        "mapper-006-FFE-MagicCard/Cosmo Police Galivan (J) [hFFE][p1].zip",
+        FFE_INTO_PLAY,
+        "extended_m006_cosmo_police_galivan",
+    );
+}
+
+#[test]
+fn extended_m006_wai_wai_world() {
+    check(
+        "mapper-006-FFE-MagicCard/Wai Wai World (J) [hFFE].zip",
+        FFE_WAI_WAI_WORLD,
+        "extended_m006_wai_wai_world",
+    );
+}
+
+#[test]
+fn extended_m008_mermaids_of_atlantis() {
+    check(
+        "mapper-008-FFE-GNROM/Mermaids of Atlantis - The Riddle of the Magic Bubble (AVE) [T+Rus_Guyver].zip",
+        FFE_INTO_PLAY,
+        "extended_m008_mermaids_of_atlantis",
+    );
+}
+
+#[test]
+fn extended_m017_kaiketsu_yanchamaru_2() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_kaiketsu_yanchamaru_2",
+    );
+}
+
+#[test]
+fn extended_m017_juvei_quest() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Juvei Quest (J) [hFFE].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_juvei_quest",
+    );
+}
+
+#[test]
+fn extended_m017_dragon_ball_z_iii() {
+    check(
+        "mapper-017-FFE-SuperMagicCard/Dragon Ball Z III - Ressen Jinzou Ningen (J) [hFFE][p1].zip",
+        FFE_INTO_PLAY,
+        "extended_m017_dragon_ball_z_iii",
     );
 }

@@ -30,12 +30,15 @@
 //! | --- | --- | --- | --- |
 //! | Reset, Power Cycle | refused | refused | allowed |
 //! | disk swap / insert / eject | refused | refused | allowed |
+//! | Datach barcode scan | refused | refused | allowed |
 //! | state load | refused | refused | refused |
 //!
 //! Reset and Power Cycle stay legal in hardcore because rcheevos treats them
 //! as legitimate (they are what a real console offers); a state load is the
 //! one thing hardcore exists to forbid. A disk swap is an ordinary act of
-//! play on a real Famicom, so hardcore allows it too.
+//! play on a real Famicom, so hardcore allows it too, and so is swiping a
+//! card through a Datach (v3.2.0): a scan changes the machine through the
+//! cartridge's barcode reader, which neither a movie nor netplay carries.
 //!
 //! When more than one owner refuses, the hardcore reason is reported first
 //! (it is the one the player cannot end on their own), then the movie, then
@@ -53,6 +56,8 @@ pub enum TimelineAction {
     PowerCycle,
     /// Any FDS disk change: cycle sides, insert a specific side, or eject.
     DiskSwap,
+    /// v3.2.0 — a barcode swiped through the Datach reader (mapper 157).
+    BarcodeScan,
     /// Restoring a save state (slot, manager, browser grid, or a script).
     LoadState,
 }
@@ -65,6 +70,7 @@ impl TimelineAction {
             Self::Reset => "Reset",
             Self::PowerCycle => "Power Cycle",
             Self::DiskSwap => "Disk swap",
+            Self::BarcodeScan => "Barcode scan",
             Self::LoadState => "Load state",
         }
     }
@@ -129,10 +135,11 @@ pub const fn refusal(action: TimelineAction, owners: SessionOwners) -> Option<Re
 mod tests {
     use super::*;
 
-    const ALL: [TimelineAction; 4] = [
+    const ALL: [TimelineAction; 5] = [
         TimelineAction::Reset,
         TimelineAction::PowerCycle,
         TimelineAction::DiskSwap,
+        TimelineAction::BarcodeScan,
         TimelineAction::LoadState,
     ];
 
@@ -173,6 +180,7 @@ mod tests {
             TimelineAction::Reset,
             TimelineAction::PowerCycle,
             TimelineAction::DiskSwap,
+            TimelineAction::BarcodeScan,
         ] {
             assert_eq!(refusal(a, hc), None, "{a:?}");
         }
@@ -190,6 +198,19 @@ mod tests {
             Some(Refusal::Hardcore)
         );
         assert_eq!(refusal(TimelineAction::Reset, all), Some(Refusal::Movie));
+    }
+
+    /// The visible reason a Datach scan is refused (v3.2.0).
+    #[test]
+    fn a_barcode_scan_names_itself_when_refused() {
+        assert_eq!(
+            Refusal::Movie.message(TimelineAction::BarcodeScan),
+            "Barcode scan disabled during movie"
+        );
+        assert_eq!(
+            Refusal::Netplay.message(TimelineAction::BarcodeScan),
+            "Barcode scan disabled during netplay"
+        );
     }
 
     #[test]

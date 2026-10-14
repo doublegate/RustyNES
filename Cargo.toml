@@ -77,7 +77,7 @@ default-members = ["crates/rustynes-libretro"]
 # `release-auto.yml` reads the `## [X.Y.Z]` line for BOTH the release body
 # fallback and the title codename — so the date and quoted codename are load-
 # bearing, not decoration.
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
 # The toolchain is 1.99 (rust-toolchain.toml), and every crate inherits this
 # floor, the libretro path included: the libretro buildbot follows the same pin
@@ -99,7 +99,6 @@ rustynes-apu = { path = "crates/rustynes-apu", version = "3.0.0", default-featur
 rustynes-mappers = { path = "crates/rustynes-mappers", version = "3.0.0" }
 rustynes-netplay = { path = "crates/rustynes-netplay", version = "3.0.0" }
 rustynes-script = { path = "crates/rustynes-script", version = "3.0.0" }
-rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "3.0.0" }
 # v1.8.0 "Android" — the shared mobile bridge, consumed by rustynes-android (and
 # v1.9.0's rustynes-ios). Path dep; the version req is a floor.
 rustynes-mobile = { path = "crates/rustynes-mobile", version = "3.0.0" }

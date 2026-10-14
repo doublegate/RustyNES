@@ -50,8 +50,9 @@ pub const RC_OK: c_int = 0;
 pub type rc_client_read_memory_func_t =
     extern "C" fn(address: u32, buffer: *mut u8, num_bytes: u32, client: *mut rc_client_t) -> u32;
 
-pub type rc_client_server_callback_t =
-    extern "C" fn(server_response: *const rc_api_server_response_t, callback_data: *mut c_void);
+pub type rc_client_server_callback_t = Option<
+    extern "C" fn(server_response: *const rc_api_server_response_t, callback_data: *mut c_void),
+>;
 
 pub type rc_client_server_call_t = extern "C" fn(
     request: *const rc_api_request_t,

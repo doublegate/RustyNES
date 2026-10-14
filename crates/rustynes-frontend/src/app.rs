@@ -211,13 +211,19 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
     let idx = (0..archive.len()).find(|&i| {
+        // zip 9: an entry whose name decodes as neither UTF-8 nor CP437 is
+        // skipped, the same as an entry that cannot be read at all.
         archive.by_index(i).is_ok_and(|f| {
-            std::path::Path::new(f.name()).extension().is_some_and(|e| {
-                e.eq_ignore_ascii_case("nes")
-                    || e.eq_ignore_ascii_case("fds")
-                    || e.eq_ignore_ascii_case("nsf")
-                    || e.eq_ignore_ascii_case("unf")
-                    || e.eq_ignore_ascii_case("unif")
+            f.name().is_ok_and(|n| {
+                std::path::Path::new(n.as_ref())
+                    .extension()
+                    .is_some_and(|e| {
+                        e.eq_ignore_ascii_case("nes")
+                            || e.eq_ignore_ascii_case("fds")
+                            || e.eq_ignore_ascii_case("nsf")
+                            || e.eq_ignore_ascii_case("unf")
+                            || e.eq_ignore_ascii_case("unif")
+                    })
             })
         })
     })?;
@@ -225,9 +231,15 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     if file.size() > MAX_ENTRY_BYTES {
         return None;
     }
-    let name = std::path::Path::new(file.name())
-        .file_name()
-        .map_or_else(|| "rom".to_string(), |n| n.to_string_lossy().into_owned());
+    let name = file
+        .name()
+        .ok()
+        .and_then(|n| {
+            std::path::Path::new(n.as_ref())
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "rom".to_string());
     let cap = usize::try_from(file.size()).unwrap_or(0);
     let mut out = Vec::with_capacity(cap);
     file.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;
@@ -2687,6 +2699,28 @@ impl App {
     /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`) — the
     /// Multi-Disk submenu's direct counterpart to [`Self::cycle_disk_side`] (a
     /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
+    /// v3.2.0 — swipe `code` through the Datach barcode reader and report the
+    /// outcome on the status line. The core validates the digits again at its
+    /// boundary; a refusal there (malformed code, no reader) is shown, never
+    /// silently dropped. Callers have already asked `session_policy`.
+    fn scan_barcode(&mut self, code: &str) {
+        let result = {
+            let mut guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_mut() else {
+                return;
+            };
+            nes.scan_barcode(code)
+        };
+        let message = match result {
+            Ok(()) => StatusMessage::info(crate::tf!(ShellBarcodeScanned, code)),
+            Err(rustynes_core::BarcodeScanError::Malformed(e)) => {
+                StatusMessage::error(crate::ui_shell::barcode_error_text(e))
+            }
+            Err(e) => StatusMessage::error(e.to_string()),
+        };
+        self.ui.set_status(message);
+    }
+
     fn set_disk_side(&self, side: Option<usize>) {
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_fds_save(true);
@@ -5465,6 +5499,14 @@ impl App {
                     self.set_disk_side(side);
                 }
             }
+            MenuAction::ScanBarcode(code) => {
+                // v3.2.0 — a Datach scan is not in a movie's or netplay's
+                // input stream, so it is refused (with the reason) while
+                // either owns the timeline, like a disk swap.
+                if !self.refuse_timeline_action(TimelineAction::BarcodeScan) {
+                    self.scan_barcode(&code);
+                }
+            }
             MenuAction::Screenshot => {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.take_screenshot();
@@ -7507,7 +7549,14 @@ impl App {
         let raw_local = self.input.player1();
         let turbo_mask = self.turbo_mask();
         let turbo_period = self.config.input.turbo_period;
-        let mut guard = self.emu.lock();
+        // v3.2.0: never block the UI thread here. The emulation thread idles
+        // during netplay, so the core is held only briefly by another thread
+        // (a present copy); if it is, this tick is skipped and the previous
+        // frame stays on screen. The rollback session sees that as one slow
+        // frame. A poisoned lock is recovered, not treated as held.
+        let Some(mut guard) = self.emu.try_lock() else {
+            return;
+        };
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
             return;
@@ -10678,6 +10727,8 @@ impl ApplicationHandler<AppEvent> for App {
                     disk_sides,
                     inserted_disk_side,
                     vs_system,
+                    // v3.2.0 — a Datach cart (shows "Scan Barcode...").
+                    barcode_reader,
                     mapper_label,
                     region_label,
                     movie_recording,
@@ -10701,6 +10752,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 0usize,
                                 None,
                                 false,
+                                false,
                                 String::new(),
                                 String::new(),
                                 rec,
@@ -10720,6 +10772,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 nes.disk_side_count(),
                                 nes.inserted_disk_side(),
                                 nes.is_vs_system(),
+                                nes.has_barcode_reader(),
                                 mapper_name,
                                 region.to_string(),
                                 rec,
@@ -10741,6 +10794,7 @@ impl ApplicationHandler<AppEvent> for App {
                     disk_sides,
                     inserted_disk_side,
                     vs_system,
+                    barcode_reader,
                     mapper_label: &mapper_label,
                     region_label: &region_label,
                     run_ahead,
@@ -13106,6 +13160,10 @@ mod tests {
             (
                 "MenuAction::SetDiskSide(side) =>",
                 "TimelineAction::DiskSwap",
+            ),
+            (
+                "MenuAction::ScanBarcode(code) =>",
+                "TimelineAction::BarcodeScan",
             ),
             ("MenuAction::LoadState =>", "TimelineAction::LoadState"),
             (

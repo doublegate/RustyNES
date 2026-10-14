@@ -910,6 +910,7 @@ impl Ppu {
             self.cached_idle_line = false;
         }
         self.flags_cached_scanline = i16::MIN;
+        self.update_emph_offset();
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
         if r.pos != data.len() {

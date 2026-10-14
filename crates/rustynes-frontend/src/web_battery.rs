@@ -283,7 +283,7 @@ impl WebBattery {
         let bytes = match in_flight {
             Some(pending) if force => (live != pending.as_slice()).then(|| live.to_vec())?,
             Some(_) => return None,
-            None => policy.due(live, force)?,
+            None => policy.due(live, nes.is_save_data_dirty(), force)?,
         };
         *in_flight = Some(bytes.clone());
         Some(WebBatteryWrite { sha: *sha, bytes })

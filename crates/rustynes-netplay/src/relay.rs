@@ -340,6 +340,12 @@ impl TurnClient {
     // ── internal encoders ───────────────────────────────────────────────────
 
     fn next_tx(&mut self) -> TransactionId {
+        // From the seeded PRNG, so a test's explicit seed fixes the ids. A real
+        // session's seed is OS randomness: the mobile bridge seeds its
+        // `NatConnect` from `getrandom`, and that RNG seeds this one. (v3.2.0
+        // review: drawing from `getrandom` here instead ignored the seed and
+        // made the netplay crate depend on it unconditionally, breaking the
+        // wasm build.)
         let mut tx = [0u8; 12];
         for chunk in tx.chunks_mut(4) {
             let r = self.rng.next_u64().to_le_bytes();

@@ -495,6 +495,14 @@ where
 /// On failure **before the rename** the scratch file is removed and the existing
 /// file is left untouched — a stale-but-valid file is the one worth keeping.
 ///
+/// # Permissions (Unix)
+///
+/// A file being REPLACED keeps its mode. A file being CREATED is created
+/// owner-only, `0o600` (v3.2.0; before, the umask default, typically `0o644`):
+/// these are save data, configuration and recordings, which no other user
+/// needs to read. A user who wants them shared can widen one, and the widened
+/// mode is then kept across every later save.
+///
 /// # One failure happens AFTER the target is replaced
 ///
 /// The parent-directory sync is the last step, and it necessarily runs *after*
@@ -589,9 +597,9 @@ where
         // instead of truncating it (CWE-377).
         opts.write(true).create_new(true);
         #[cfg(unix)]
-        if let Some(mode) = existing_mode {
+        {
             use std::os::unix::fs::OpenOptionsExt as _;
-            opts.mode(mode);
+            opts.mode(existing_mode.unwrap_or(0o600));
         }
         // Advance past an occupied scratch name, up to `SCRATCH_ATTEMPTS` times.
         // A crashed run can orphan scratch files, the OS later reuses that pid,
@@ -887,6 +895,18 @@ mod tests {
 
         let mode = fs::metadata(&p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "mode was widened to {mode:o}");
+    }
+
+    /// v3.2.0: a file that does not exist yet is created owner-only.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_is_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let d = tempdir();
+        let p = d.join("new.sav");
+        write_atomic(&p, b"fresh").expect("write");
+        let mode = fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "a new file landed at {mode:o}");
     }
 
     /// A mode the UMASK would mask must still land exactly.

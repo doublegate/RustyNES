@@ -700,6 +700,12 @@ fn run_loop(
         }
         // Idle: no ROM yet, netplay owns the core on the winit thread, or the
         // user paused emulation from the UX shell.
+        //
+        // `netplay_paused` MUST idle this thread: during netplay the winit
+        // thread advances the core through the rollback session, and two
+        // threads stepping one core in turn would desync it. A v3.2.0 import
+        // dropped this term (to stop the UI thread waiting on the lock); that
+        // goal is kept by the netplay tick's `try_lock` instead.
         let idle = !control.has_rom.load(Ordering::Acquire)
             || control.netplay_paused.load(Ordering::Acquire)
             || control.user_paused.load(Ordering::Acquire);

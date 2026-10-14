@@ -115,7 +115,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let suv = vec2<f32>(uv.x * u.crop.z + u.crop.w, uv.y * u.crop.x + u.crop.y);
 
-    var rgb = textureSample(nes_tex, nes_smp, suv).rgb;
+    var rgb = textureSampleLevel(nes_tex, nes_smp, suv, 0.0).rgb;
     rgb = pow(rgb, vec3<f32>(2.4)); // to linear (Megatron uses ~2.4 EOTF)
 
     // Gaussian beam in source-row space, scaled by luminance (thicker beam for

@@ -373,6 +373,63 @@ impl<T: Transport> SpectatorSession<T> {
         }
     }
 
+    /// Fold one player's input for one frame into the history -- the body of
+    /// the `Input` arm, shared with `InputBatch` (protocol 8), whose every
+    /// element is exactly an `Input` for `start_frame + i`.
+    fn ingest_input(&mut self, player: u8, frame: u32, input: u8) {
+        // Drop an out-of-range player index. `num_players` is fixed
+        // by construction (and only ever set by a `Roster` BEFORE
+        // the first confirmed frame — see the `Roster` arm of `ingest`),
+        // so a `player`
+        // beyond it can never become valid: dropping it is correct,
+        // not merely a best-effort guard, and it keeps a malformed /
+        // foreign packet from indexing out of bounds or corrupting a
+        // real player's stream.
+        if player >= self.config.num_players {
+            return;
+        }
+        // Reject a `frame` that sits implausibly far ahead of the
+        // frame we are currently confirming. A spectator never shows
+        // anything beyond the confirmed horizon, so any legitimate
+        // in-flight `Input.frame` is only a small bounded distance
+        // ahead. Without this cap a peer-supplied `frame` near
+        // `u32::MAX` would make `ensure_frame` resize `history`
+        // unboundedly (an OOM DoS). Dropping it is safe: a real,
+        // in-window frame is retransmitted by the players' session.
+        let horizon = self.last_confirmed_frame.map_or(0, |c| c + 1);
+        if frame > horizon.saturating_add(MAX_SPECTATOR_FRAME_LOOKAHEAD) {
+            return;
+        }
+        // v3.0.0 (T-SPECTATOR-HISTORY): and within the buffer.
+        // The check above bounds one packet's jump from the
+        // confirmed horizon, but the horizon itself walks forward
+        // with every contiguous frame of input, shown or not.
+        // Without this cap, a peer streaming faster than real
+        // time, or a stream that never sends a matching `Sync`,
+        // grew the history without limit. A frame already shown
+        // is past, and dropped too.
+        if frame < self.current_frame {
+            return;
+        }
+        if frame - self.current_frame >= self.buffer_cap {
+            // Dropped, and not resent: remember where playback
+            // will have to stop (v3.0.0, `stream_lost`).
+            *self.dropped.entry(frame).or_default() |= 1 << player;
+            return;
+        }
+        // A dropped input that arrives again in the window is
+        // no longer missing.
+        if let Some(mask) = self.dropped.get_mut(&frame) {
+            *mask &= !(1 << player);
+            if *mask == 0 {
+                self.dropped.remove(&frame);
+            }
+        }
+        let slot = self.slot_mut(frame);
+        slot.inputs[player as usize] = input;
+        slot.arrived |= 1 << player;
+    }
+
     /// Poll the transport and fold in every relevant message. Receive-only: no
     /// ack, checksum, or quality reply is ever sent.
     fn ingest(&mut self) {
@@ -397,56 +454,18 @@ impl<T: Transport> SpectatorSession<T> {
                     frame,
                     input,
                 } => {
-                    // Drop an out-of-range player index. `num_players` is fixed
-                    // by construction (and only ever set by a `Roster` BEFORE
-                    // the first confirmed frame — see below), so a `player`
-                    // beyond it can never become valid: dropping it is correct,
-                    // not merely a best-effort guard, and it keeps a malformed /
-                    // foreign packet from indexing out of bounds or corrupting a
-                    // real player's stream.
-                    if player >= self.config.num_players {
-                        continue;
+                    self.ingest_input(player, frame, input);
+                }
+                // v3.2.0 (protocol 8): the players' retransmit window sends
+                // batches; ignoring them (as first written) lost every resend.
+                NetMessage::InputBatch {
+                    player,
+                    start_frame,
+                    inputs,
+                } => {
+                    for (offset, input) in (0u32..).zip(inputs) {
+                        self.ingest_input(player, start_frame.saturating_add(offset), input);
                     }
-                    // Reject a `frame` that sits implausibly far ahead of the
-                    // frame we are currently confirming. A spectator never shows
-                    // anything beyond the confirmed horizon, so any legitimate
-                    // in-flight `Input.frame` is only a small bounded distance
-                    // ahead. Without this cap a peer-supplied `frame` near
-                    // `u32::MAX` would make `ensure_frame` resize `history`
-                    // unboundedly (an OOM DoS). Dropping it is safe: a real,
-                    // in-window frame is retransmitted by the players' session.
-                    let horizon = self.last_confirmed_frame.map_or(0, |c| c + 1);
-                    if frame > horizon.saturating_add(MAX_SPECTATOR_FRAME_LOOKAHEAD) {
-                        continue;
-                    }
-                    // v3.0.0 (T-SPECTATOR-HISTORY): and within the buffer.
-                    // The check above bounds one packet's jump from the
-                    // confirmed horizon, but the horizon itself walks forward
-                    // with every contiguous frame of input, shown or not.
-                    // Without this cap, a peer streaming faster than real
-                    // time, or a stream that never sends a matching `Sync`,
-                    // grew the history without limit. A frame already shown
-                    // is past, and dropped too.
-                    if frame < self.current_frame {
-                        continue;
-                    }
-                    if frame - self.current_frame >= self.buffer_cap {
-                        // Dropped, and not resent: remember where playback
-                        // will have to stop (v3.0.0, `stream_lost`).
-                        *self.dropped.entry(frame).or_default() |= 1 << player;
-                        continue;
-                    }
-                    // A dropped input that arrives again in the window is
-                    // no longer missing.
-                    if let Some(mask) = self.dropped.get_mut(&frame) {
-                        *mask &= !(1 << player);
-                        if *mask == 0 {
-                            self.dropped.remove(&frame);
-                        }
-                    }
-                    let slot = self.slot_mut(frame);
-                    slot.inputs[player as usize] = input;
-                    slot.arrived |= 1 << player;
                 }
                 NetMessage::Roster { peers } => {
                     // The host's roster tells the spectator how many players to
@@ -631,6 +650,66 @@ mod tests {
         );
         assert_eq!(out.frame, 0);
         assert_eq!(spec.delay_frames(), DELAY);
+    }
+
+    /// v3.2.0 (protocol 8): the players resend inputs as `InputBatch`es, and
+    /// a spectator folds a batch in exactly as the same inputs sent one by
+    /// one. Ignoring batches (as first written) lost every retransmission.
+    #[test]
+    fn a_batch_is_the_same_as_its_inputs_sent_one_by_one() {
+        const FRAMES: u32 = 6;
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let input =
+            |player: u8, frame: u32| frame.to_le_bytes()[0].wrapping_mul(37) ^ (player << 3);
+        let mut runs = Vec::new();
+        for batched in [false, true] {
+            let (link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 3);
+            let mut spec = SpectatorSession::new(
+                SpectatorConfig {
+                    num_players: 2,
+                    delay_frames: 0,
+                },
+                link,
+                hash,
+            );
+            feeder.send(&NetMessage::Sync {
+                magic: NetMessage::SYNC_MAGIC,
+                identity: hash,
+            });
+            for player in 0..2u8 {
+                if batched {
+                    feeder.send(&NetMessage::InputBatch {
+                        player,
+                        start_frame: 0,
+                        inputs: (0..FRAMES).map(|f| input(player, f)).collect(),
+                    });
+                } else {
+                    for frame in 0..FRAMES {
+                        feeder.send(&NetMessage::Input {
+                            player,
+                            frame,
+                            input: input(player, frame),
+                        });
+                    }
+                }
+            }
+            let mut nes = Nes::from_rom(&rom).unwrap();
+            let mut shown = Vec::new();
+            for _ in 0..FRAMES + 2 {
+                let out = spec.advance(&mut nes);
+                if out.produced_frame {
+                    shown.push(out.frame);
+                }
+            }
+            runs.push((shown, nes.snapshot()));
+        }
+        assert_eq!(
+            runs[1].0,
+            (0..FRAMES).collect::<Vec<_>>(),
+            "every batched frame shows"
+        );
+        assert_eq!(runs[0], runs[1], "same frames, same state");
     }
 
     /// An absurd `delay_frames` is clamped to `MAX_DELAY_FRAMES`, so it cannot

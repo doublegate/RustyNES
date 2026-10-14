@@ -1042,7 +1042,8 @@ jobs:
 
   # v2.9.4 — the eight fuzz targets under fuzz/ were built by nobody: no
   # workflow mentioned them, so a target could stop compiling and nothing would
-  # say so. This builds all eight and runs each for a FIXED number of inputs from
+  # say so. This builds them all (nine since v3.2.0's `movie_import`, the five
+  # foreign-movie importers) and runs each for a FIXED number of inputs from
   # a FIXED seed, so a run is reproducible and a failure is a real crash, not a
   # time-box artifact. It starts from an empty corpus (fuzz/corpus is local).
   # Measured on the maintainer's machine with the local corpus: ~70 s for all
@@ -1051,7 +1052,7 @@ jobs:
   # libFuzzer needs nightly; the fuzz crate is its own workspace (fuzz/Cargo.toml),
   # so the project pin in rust-toolchain.toml does not apply to it.
   fuzz:
-    name: fuzz (8 targets, fixed seed)
+    name: fuzz (9 targets, fixed seed)
     needs: [changes, setup]
     if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
     runs-on: ubuntu-26.04
@@ -1065,7 +1066,7 @@ jobs:
           toolchain: nightly
           apt: "false"
           cache-key: fuzz
-      - uses: taiki-e/install-action@v2.87.26
+      - uses: taiki-e/install-action@v2.87.27
         with:
           tool: cargo-fuzz
       - name: Build and run every fuzz target
@@ -1082,7 +1083,7 @@ jobs:
           cargo +nightly fuzz build -O --target x86_64-unknown-linux-gnu
           targets=$(cargo +nightly fuzz list)
           n=$(printf '%s\n' "$targets" | grep -c .)
-          [ "$n" -ge 8 ] || { echo "::error::expected at least 8 fuzz targets, found $n"; exit 1; }
+          [ "$n" -ge 9 ] || { echo "::error::expected at least 9 fuzz targets, found $n"; exit 1; }
           # Run EVERY target even after one crashes, so a single run reports
           # all of them rather than the first (agy on #574).
           failed=""
@@ -1129,7 +1130,7 @@ jobs:
         with:
           components: llvm-tools-preview
           cache-key: coverage
-      - uses: taiki-e/install-action@v2.87.26
+      - uses: taiki-e/install-action@v2.87.27
         with:
           tool: cargo-llvm-cov
       - run: cargo llvm-cov --workspace --lib --summary-only --fail-under-lines 70

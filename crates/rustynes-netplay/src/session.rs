@@ -67,6 +67,9 @@ pub const MAX_PLAYERS: usize = 4;
 /// normal conditions, with acks flowing, far fewer (the in-flight latency
 /// window) are resent.
 const INPUT_RESEND_WINDOW: u32 = 64;
+// The whole retransmit window (`INPUT_RESEND_WINDOW + 1` frames) fits one
+// protocol-8 `InputBatch`, whose count byte caps it.
+const _: () = assert!((INPUT_RESEND_WINDOW as usize) < NetMessage::MAX_INPUT_BATCH);
 
 /// How far past this peer's [`current_frame`](RollbackSession::current_frame)
 /// a remote `Input.frame` / `Checksum.frame` may sit before the message is
@@ -264,19 +267,13 @@ pub struct RollbackSession<T: Transport> {
     /// production build would prune; see the Stage 2/3 handoff).
     history: Vec<InputSlot>,
 
-    /// Save-state ring: `snapshots[f]` is the emulator state *before* frame
-    /// `f` was run (so restoring it and running forward reproduces frame f).
-    /// Indexed by frame; only the trailing `max_rollback_frames + 1` entries
-    /// are guaranteed present (older are `None` after pruning).
-    snapshots: Vec<Option<Vec<u8>>>,
-
     /// Checksums we have *sent* at confirmed frames, kept so a later remote
     /// `Checksum` for the same frame can be compared and so we don't re-send.
     local_checksums: Vec<Option<u64>>,
 
     /// The canonical hash of the deterministic *entering* state of each
     /// checksummed frame, recorded by `resync` the moment the frame becomes
-    /// confirmed (its `snapshots[f]` is then a function of real inputs only).
+    /// confirmed (its entering state is then a function of real inputs only).
     /// Because all peers reach byte-identical entering state for a confirmed
     /// frame, these hashes match across peers — the property that makes the
     /// checksum exchange a sound desync detector.
@@ -345,7 +342,6 @@ impl<T: Transport> RollbackSession<T> {
             remote_ack_frame: None,
             synced: false,
             history: Vec::new(),
-            snapshots: Vec::new(),
             local_checksums: Vec::new(),
             confirmed_hashes: Vec::new(),
             remote_checksums: Vec::new(),
@@ -508,9 +504,6 @@ impl<T: Transport> RollbackSession<T> {
         if self.history.len() < need {
             self.history.resize(need, InputSlot::default());
         }
-        if self.snapshots.len() < need {
-            self.snapshots.resize(need, None);
-        }
         if self.local_checksums.len() < need {
             self.local_checksums.resize(need, None);
         }
@@ -637,13 +630,43 @@ impl<T: Transport> RollbackSession<T> {
         })
     }
 
+    /// Fold a single remote input into the history, returning the frame it mispredicted (if any).
+    fn ingest_single_input(&mut self, player: u8, frame: u32, input: u8) -> Option<u32> {
+        let lp = self.local_player();
+        // Ignore an out-of-range or self-addressed player index
+        if player >= self.config.num_players || player == lp {
+            return None;
+        }
+        // Drop a frame past the lookahead window before it can size an allocation.
+        if frame > self.max_accepted_frame() {
+            return None;
+        }
+        self.ensure_frame(frame);
+        let slot = &mut self.history[frame as usize];
+        let cell = &mut slot.players[player as usize];
+        let prev = cell.input;
+        let already_simulated = slot.simulated;
+        cell.input = input;
+        cell.confirmed = true;
+        // Misprediction: a frame we already ran used a value that
+        // the just-arrived real input contradicts. Re-running it
+        // (and everything after) is required. A second copy of an
+        // identical input (idempotent resend, whether previously a
+        // prediction or already confirmed) leaves `prev == input`,
+        // so it is correctly NOT treated as a misprediction.
+        if already_simulated && prev != input {
+            Some(frame)
+        } else {
+            None
+        }
+    }
+
     /// Poll the transport and fold in every message. Returns the earliest
     /// frame (if any) whose previously-used prediction was contradicted by a
     /// newly-arrived real remote input.
     fn ingest(&mut self, nes: &Nes) -> Result<Option<u32>, NetplayError> {
         let mut earliest_mispredict: Option<u32> = None;
         let messages = self.transport.poll();
-        let lp = self.local_player();
 
         for msg in messages {
             match msg {
@@ -668,34 +691,23 @@ impl<T: Transport> RollbackSession<T> {
                     frame,
                     input,
                 } => {
-                    // Ignore an out-of-range or self-addressed player index
-                    // (a malformed / foreign packet must never corrupt our own
-                    // authored input or index out of bounds).
-                    if player >= self.config.num_players || player == lp {
-                        continue;
-                    }
-                    // Drop a frame past the lookahead window before it can size
-                    // an allocation (AUD-06; see MAX_SESSION_FRAME_LOOKAHEAD).
-                    // A genuine input is resent until acked, so nothing is lost.
-                    if frame > self.max_accepted_frame() {
-                        continue;
-                    }
-                    self.ensure_frame(frame);
-                    let slot = &mut self.history[frame as usize];
-                    let cell = &mut slot.players[player as usize];
-                    let prev = cell.input;
-                    let already_simulated = slot.simulated;
-                    cell.input = input;
-                    cell.confirmed = true;
-                    // Misprediction: a frame we already ran used a value that
-                    // the just-arrived real input contradicts. Re-running it
-                    // (and everything after) is required. A second copy of an
-                    // identical input (idempotent resend, whether previously a
-                    // prediction or already confirmed) leaves `prev == input`,
-                    // so it is correctly NOT treated as a misprediction.
-                    if already_simulated && prev != input {
+                    if let Some(mispredict) = self.ingest_single_input(player, frame, input) {
                         earliest_mispredict =
-                            Some(earliest_mispredict.map_or(frame, |e| e.min(frame)));
+                            Some(earliest_mispredict.map_or(mispredict, |e| e.min(mispredict)));
+                    }
+                }
+                NetMessage::InputBatch {
+                    player,
+                    start_frame,
+                    inputs,
+                } => {
+                    for (offset, input) in inputs.into_iter().enumerate() {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let frame = start_frame.saturating_add(offset as u32);
+                        if let Some(mispredict) = self.ingest_single_input(player, frame, input) {
+                            earliest_mispredict =
+                                Some(earliest_mispredict.map_or(mispredict, |e| e.min(mispredict)));
+                        }
                     }
                 }
                 NetMessage::InputAck { frame } => {
@@ -782,12 +794,11 @@ impl<T: Transport> RollbackSession<T> {
 
         let mut count = 0;
         for f in cp_frame..self.current_frame {
-            // v2.8.0 Phase 3 — encode straight into the ring slot's reused
-            // buffer (the old path built a full thumbnail-carrying snapshot
-            // AND cloned it: two ~320 KiB allocations per replayed frame).
-            let mut slot = self.snapshots[f as usize].take().unwrap_or_default();
-            nes.snapshot_core_into(&mut slot);
-            self.snapshots[f as usize] = Some(slot);
+            // v3.2.0 (NET-01): no per-frame snapshot is taken here any more.
+            // A `snapshots[f]` ring was filled on every replayed frame and
+            // never read -- rollback restores from its checkpoint -- and was
+            // never pruned either, so it cost a full core snapshot per
+            // replayed frame and grew with the session.
             // A confirmed replay enters `f` (f < boundary) on a canonical
             // base, so its entering *gameplay* state is canonical and cross-
             // peer-identical. Record a digest for verification. (We digest the
@@ -980,20 +991,44 @@ impl<T: Transport> RollbackSession<T> {
         // First un-acked frame (the remote has everything <= remote_ack_frame).
         let first_unacked = self.remote_ack_frame.map_or(0, |a| a.saturating_add(1));
         let start = first_unacked.max(newest.saturating_sub(INPUT_RESEND_WINDOW));
+        if start > newest {
+            return;
+        }
+        // v3.2.0 (protocol 8): one `InputBatch` per run of consecutive
+        // confirmed (locally authored) frames, instead of one `Input` per
+        // frame. A frame we did not author ends a run and is skipped, as the
+        // per-frame loop skipped it; the next confirmed frame starts a new
+        // run, so every authored frame in the window is still resent. (The
+        // first form of this batching stopped at the first gap and dropped
+        // the rest of the window.) The window fits one batch (const assert
+        // beside INPUT_RESEND_WINDOW).
+        let mut run_start = start;
+        let mut run: Vec<u8> = Vec::new();
         for frame in start..=newest {
             let idx = frame as usize;
             if idx >= self.history.len() {
                 break;
             }
             let slot = self.history[idx].players[lp_idx];
-            // Only resend frames we actually authored (confirmed-local).
             if slot.confirmed {
-                self.transport.send(&NetMessage::Input {
+                if run.is_empty() {
+                    run_start = frame;
+                }
+                run.push(slot.input);
+            } else if !run.is_empty() {
+                self.transport.send(&NetMessage::InputBatch {
                     player: lp,
-                    frame,
-                    input: slot.input,
+                    start_frame: run_start,
+                    inputs: core::mem::take(&mut run),
                 });
             }
+        }
+        if !run.is_empty() {
+            self.transport.send(&NetMessage::InputBatch {
+                player: lp,
+                start_frame: run_start,
+                inputs: run,
+            });
         }
     }
 
@@ -1063,12 +1098,11 @@ mod tests {
     }
 
     /// The length every per-frame vector must share (they are grown together
-    /// by `ensure_frame`); asserting on all six catches a bound that guarded
+    /// by `ensure_frame`); asserting on all five catches a bound that guarded
     /// only one call site.
-    fn per_frame_lens<T: Transport>(s: &RollbackSession<T>) -> [usize; 6] {
+    fn per_frame_lens<T: Transport>(s: &RollbackSession<T>) -> [usize; 5] {
         [
             s.history.len(),
-            s.snapshots.len(),
             s.local_checksums.len(),
             s.confirmed_hashes.len(),
             s.remote_checksums.len(),

@@ -101,6 +101,10 @@ const CHIPS: &[Chip] = &[
         writer_fns: &[],
         derived_or_config: &[
             (
+                "cached_emph_offset",
+                "derived: reconstructed during load_state based on current region settings",
+            ),
+            (
                 "oam_decay_enabled",
                 "config: the opt-in decay model's enable flag, re-applied by the host on load \
                  (like `region`); the v7 tail serializes the per-row ages, not the switch",
@@ -473,6 +477,12 @@ const CHIPS: &[Chip] = &[
             (
                 "mapper_caps",
                 "board identity: the mapper's static capability flags",
+            ),
+            (
+                "prg_may_unmap",
+                "board identity: Mapper::may_unmap_prg_rom, a per-type constant \
+                 (true only for 228 and 235), cached at construction and at the \
+                 mapper re-instantiation in load_state, like mapper_caps",
             ),
             (
                 "rom_bytes",

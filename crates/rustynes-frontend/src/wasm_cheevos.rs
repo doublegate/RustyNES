@@ -80,10 +80,17 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = ra_load_game)]
     async fn ra_load_game(rom: &[u8]) -> Result<JsValue, JsValue>;
 
-    /// Drive one frame of achievement logic. `read_byte` is a JS callback that
-    /// reads one NES CPU-bus byte. Returns a JSON array of this frame's events.
+    /// Drive one frame of achievement logic. `read_byte` reads one NES CPU-bus
+    /// byte. Returns a JSON array of this frame's events.
+    ///
+    /// `read_byte` is a wasm-bindgen STACK closure (`&mut dyn FnMut`): JS gets
+    /// a function that is valid only until this call returns, and wasm-bindgen
+    /// invalidates it then (a later call throws instead of reaching freed
+    /// memory). That is exactly how `ra_glue.js` uses it -- installed for the
+    /// one `rc_client_do_frame` and cleared in a `finally` -- so the borrow of
+    /// the emulator needs no `'static` and no `unsafe` (v3.2.0).
     #[wasm_bindgen(js_name = ra_do_frame)]
-    fn ra_do_frame(read_byte: &js_sys::Function) -> String;
+    fn ra_do_frame(read_byte: &mut dyn FnMut(u32) -> u32) -> String;
 
     /// Tear down the client + module.
     #[wasm_bindgen(js_name = ra_shutdown)]
@@ -181,38 +188,20 @@ impl BrowserRaSession {
     /// events raised this frame (for HUD toasts). No-op (empty) when the module
     /// is not initialized.
     ///
-    /// The `read` closure is wrapped in a JS function for the side module's
-    /// read-memory trampoline; it is only invoked synchronously inside the
-    /// `ra_do_frame` call, so the borrow never escapes.
+    /// `read` reaches the side module's read-memory trampoline as a
+    /// wasm-bindgen stack closure, valid only for the synchronous
+    /// `ra_do_frame` call, so the borrow cannot escape -- checked by the
+    /// compiler and enforced by wasm-bindgen, not argued in a comment.
     pub fn do_frame(&self, read: &mut dyn FnMut(u16) -> u8) -> Vec<String> {
         if !self.initialized {
             return Vec::new();
         }
-        // `Closure::new` requires a `'static` body, but our `read` borrows the
-        // emulator and only needs to be valid for this synchronous call.
-        // `ra_do_frame` invokes the JS callback ONLY synchronously while we are
-        // inside it (the browser is single-threaded and the side module never
-        // retains the function pointer past the call), then we drop the closure
-        // before returning. So we erase the borrow's lifetime to `'static`,
-        // matching the native bridge's `ReadGuard` idiom.
-        //
-        // The attribute goes ABOVE the SAFETY note, not between it and the `let`.
-        // `clippy::undocumented_unsafe_blocks` looks at the line immediately
-        // preceding the statement, so an attribute sitting there hides the note
-        // and the lint fires -- measured both ways rather than assumed. (Review
-        // on #423 suggested the note alone would do; it does, but only in this
-        // order.)
-        #[allow(unsafe_code)] // localized lifetime erasure; see SAFETY below
-        // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
-        // synchronously below, and `closure` is dropped at the end of this
-        // function, so the call can never outlive the real borrow.
-        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) =
-            unsafe { core::mem::transmute(read) };
-        let closure = Closure::<dyn FnMut(u32) -> u32>::new(move |addr: u32| {
-            u32::from(read_static((addr & 0xffff) as u16))
-        });
-        let json = ra_do_frame(closure.as_ref().unchecked_ref());
-        drop(closure);
+        // A stack closure borrowing `read` for this synchronous call only (see
+        // `ra_do_frame`). Until v3.2.0 this was a `'static` `Closure` over a
+        // `transmute`d `read`, sound by argument (the callback is used only
+        // inside the call) but not checkable by the compiler; now it is.
+        let mut read_u32 = |addr: u32| u32::from(read((addr & 0xffff) as u16));
+        let json = ra_do_frame(&mut read_u32);
         parse_unlock_titles(&json)
     }
 

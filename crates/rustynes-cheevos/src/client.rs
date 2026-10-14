@@ -275,7 +275,7 @@ pub struct RaGameSummary {
 }
 
 /// A safe, owned snapshot of the logged-in user (subset of `rc_client_user_t`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RaUser {
     /// The name shown to other users.
     pub display_name: String,
@@ -287,6 +287,18 @@ pub struct RaUser {
     pub score: u32,
     /// The user's softcore score.
     pub score_softcore: u32,
+}
+
+impl std::fmt::Debug for RaUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaUser")
+            .field("display_name", &self.display_name)
+            .field("username", &self.username)
+            .field("token", &"<redacted>")
+            .field("score", &self.score)
+            .field("score_softcore", &self.score_softcore)
+            .finish()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -743,5 +755,33 @@ impl Drop for RaClient {
         // the HTTP worker is shut down by `transport`'s Drop after this.
         unsafe { ffi::rc_client_destroy(self.raw) };
         // `transport` is dropped after this, joining the worker thread.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RaUser;
+
+    /// v3.2.0: the login token never reaches a `Debug` rendering, so logging a
+    /// user (or a struct holding one) cannot leak the credential.
+    #[test]
+    fn a_users_debug_output_redacts_the_token() {
+        let user = RaUser {
+            display_name: "Shown".into(),
+            username: "acct".into(),
+            token: "s3cr3t-token-value".into(),
+            score: 10,
+            score_softcore: 20,
+        };
+        let shown = format!("{user:?}");
+        assert!(
+            !shown.contains("s3cr3t-token-value"),
+            "token leaked: {shown}"
+        );
+        assert!(shown.contains("<redacted>"));
+        assert!(
+            shown.contains("acct") && shown.contains("Shown"),
+            "the rest is kept"
+        );
     }
 }

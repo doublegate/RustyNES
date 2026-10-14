@@ -52,7 +52,7 @@ plugins {
     // The Compose compiler plugin tracks the Kotlin line AGP builds against, and
     // it is the only Kotlin version coordinate this build sets (see the header).
     // Moved 2.3.10 -> 2.3.21 within the same line at the v2.6.3 refresh.
-    // v2.6.19: 2.3.21 -> 2.4.20 (Dependabot). The constraint people reach for
+    // v2.6.19: 2.3.21 -> 2.4.20, v3.2.0: -> 2.4.21 (both Dependabot). The constraint people reach for
     // here -- "the Compose compiler plugin must equal the Kotlin compiler
     // version" -- is about Kotlin and is NOT read off AGP's POM coordinate; see
     // the header. What the POMs do say, checked directly: each
@@ -68,12 +68,14 @@ plugins {
     // back **BUILD SUCCESSFUL in 17m 41s** on run 34694004147 with this plugin
     // at 2.4.20 and AGP at 9.4.0 -- both `:app:bundleFossRelease` and
     // `:app:bundlePlayRelease` produced their AAB, the Compose mapping tasks
-    // ran, and nothing reported a Kotlin/Compose incompatibility.
+    // ran, and nothing reported a Kotlin/Compose incompatibility. At 2.4.21
+    // (AGP 9.4.1) the same job's log reads BUILD SUCCESSFUL in 11m 52s with
+    // both bundle tasks run (run 38351815675, Dependabot #603).
     //
     // Read that job's LOG, never its check mark: it is `continue-on-error: true`
     // (the name says "best-effort packaging"), so a broken Android build leaves
     // the PR green. That is the standing hazard here, not this version.
-    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21" apply false
     // v1.8.8 "Atlas" (Workstream J): the Baseline Profile Gradle plugin. The plan
     // named 1.4.1, but that stable line predates AGP 9 and its module-type guard
     // rejects an AGP-9.x `com.android.application` module ("not a supported android

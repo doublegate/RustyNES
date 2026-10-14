@@ -38,7 +38,10 @@
 //!   `retro_get_memory_data`/`_size` pointer API and the modern
 //!   `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptor registration RetroAchievements'
 //!   `rcheevos` prefers. Save states serialize statically sized binary blobs natively
-//!   through `Nes::snapshot_core_into` (single console) or `VsDualSystem::snapshot_into`
+//!   through `Nes::snapshot_core_into_slim` (single console; v3.2.0 -- the PPU is
+//!   encoded without its 240 KiB framebuffer, which the next `retro_run` repaints
+//!   before anything reads it; a full-size state, framebuffer included, is still
+//!   accepted) or `VsDualSystem::snapshot_into`
 //!   (dual cabinet) — this is also what RetroArch's own generic rollback netplay and
 //!   movie/rewind features ride on; RustyNES's bespoke `rustynes-netplay` P2P crate is
 //!   intentionally NOT linked into this core, since it would be redundant with (and
@@ -1303,15 +1306,15 @@ impl RustyNesLibretro {
     /// AUD-17). The encoder is the one `on_serialize` calls, so the size is
     /// unchanged; what changes is that the first `retro_serialize` -- the
     /// first frame of run-ahead or rollback netplay -- no longer grows the
-    /// buffer from nothing during gameplay (about 260 KB; 645 KB for a
-    /// cabinet). The single console also reserves the device headroom, so a
+    /// buffer from nothing during gameplay (about 260 KB before v3.2.0's slim
+    /// states, about 16 KB since; 645 KB for a cabinet). The single console also reserves the device headroom, so a
     /// Zapper attached later does not reallocate it either. Pinned by
     /// `abi_tests::no_serialize_reallocates_the_buffer_sized_at_load`.
     fn size_serialize_buffer(&mut self) {
         use rustynes_core::SAVE_STATE_DEVICE_HEADROOM as HEADROOM;
         if let Some(nes) = self.nes.as_ref() {
             self.serialize_buffer.clear();
-            nes.snapshot_core_into(&mut self.serialize_buffer);
+            nes.snapshot_core_into_slim(&mut self.serialize_buffer);
             self.serialize_size = self.serialize_buffer.len() + HEADROOM;
             self.serialize_buffer.reserve(HEADROOM);
         } else if let Some(dual) = self.dual.as_mut() {
@@ -2684,7 +2687,7 @@ impl Core for RustyNesLibretro {
             let capacity = core.serialize_buffer.capacity();
             if let Some(nes) = core.nes.as_ref() {
                 core.serialize_buffer.clear();
-                nes.snapshot_core_into(&mut core.serialize_buffer);
+                nes.snapshot_core_into_slim(&mut core.serialize_buffer);
             } else if let Some(dual) = core.dual.as_mut() {
                 dual.snapshot_into(&mut core.serialize_buffer);
             } else {

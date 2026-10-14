@@ -151,6 +151,18 @@ pub struct TraceRec {
     pub cycle: u64,
 }
 
+/// Why [`Nes::scan_barcode`] refused a scan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum BarcodeScanError {
+    /// The string is not a valid 13- or 8-digit JAN / EAN code.
+    #[error("not a valid JAN/EAN barcode: {0}")]
+    Malformed(rustynes_mappers::BarcodeError),
+    /// The cartridge has no barcode reader (only the Datach, mapper 157,
+    /// does).
+    #[error("this cartridge has no barcode reader")]
+    NoReader,
+}
+
 /// The largest extra-scanline overclock the core accepts.
 ///
 /// [`Nes::set_extra_scanlines`] clamps to it, and a movie's options record
@@ -342,6 +354,19 @@ impl Nes {
     /// or the flash image as loaded.
     pub fn clear_save_data(&mut self) {
         self.bus.mapper.clear_save_data();
+    }
+
+    /// Whether the cartridge's save data may have changed since the last
+    /// [`Self::clear_save_data_dirty`]; `None` when the board does not track it
+    /// (the caller then compares bytes). See `Mapper::is_save_data_dirty`.
+    #[must_use]
+    pub fn is_save_data_dirty(&self) -> Option<bool> {
+        self.bus.mapper.is_save_data_dirty()
+    }
+
+    /// Mark the cartridge's save data clean. See `Mapper::clear_save_data_dirty`.
+    pub fn clear_save_data_dirty(&mut self) {
+        self.bus.mapper.clear_save_data_dirty();
     }
 
     /// v2.7.3 — whether the cartridge has non-volatile save data: the header
@@ -1689,6 +1714,49 @@ impl Nes {
     /// game's "insert side N" prompt.
     pub fn set_disk_side(&mut self, side: Option<usize>) {
         self.bus.set_disk_side(side);
+    }
+
+    // --- Datach barcode reader (mapper 157, v3.2.0) ---
+
+    /// Whether the cartridge has a barcode reader. Only the Bandai Datach
+    /// Joint ROM System (mapper 157) does; a frontend shows its "scan a
+    /// barcode" control only when this is `true`.
+    #[must_use]
+    pub fn has_barcode_reader(&self) -> bool {
+        self.bus.has_barcode_reader()
+    }
+
+    /// Swipe a barcode past the Datach reader.
+    ///
+    /// `code` is a JAN / EAN code of 13 or 8 digits (spaces and hyphens are
+    /// skipped), validated here at the boundary, check digit included. The
+    /// reader then presents the symbol's bars to the CPU over the following
+    /// CPU cycles, deterministically: the same scan at the same cycle yields
+    /// the same frames, and a save state taken mid-scan restores mid-scan.
+    /// A scan replaces any scan still in flight.
+    ///
+    /// A scan is an input that changes emulation, and it is **not** recorded
+    /// by movies or carried by netplay: callers running either must refuse
+    /// it rather than desynchronise (the desktop frontend does).
+    ///
+    /// # Errors
+    ///
+    /// [`BarcodeScanError::Malformed`] for a string that is not a valid
+    /// 13- or 8-digit code, and [`BarcodeScanError::NoReader`] when the
+    /// cartridge has no barcode reader.
+    pub fn scan_barcode(&mut self, code: &str) -> Result<(), BarcodeScanError> {
+        let code = rustynes_mappers::Barcode::parse(code).map_err(BarcodeScanError::Malformed)?;
+        if self.bus.scan_barcode(&code) {
+            Ok(())
+        } else {
+            Err(BarcodeScanError::NoReader)
+        }
+    }
+
+    /// Whether a barcode scan is still being presented to the CPU.
+    #[must_use]
+    pub fn barcode_scan_in_progress(&self) -> bool {
+        self.bus.barcode_scan_in_progress()
     }
 
     /// Start recording the diagnostic FDS read-stream trace (the `$4031` disk-byte
@@ -3486,6 +3554,121 @@ mod tests {
         bytes.extend_from_slice(&prg);
         bytes.extend_from_slice(&vec![0u8; chr_kib * 1024]);
         bytes
+    }
+
+    /// Synthetic MMC5 (mapper 5) image, 32 KiB PRG + 8 KiB CHR. MMC5 powers on
+    /// in PRG mode 3 with the last 8 KiB bank at `$E000`, so the program lives
+    /// there. It waits two vblanks (past the NES PPU warm-up, where a
+    /// `$2001` write is ignored), turns rendering on, arms the scanline IRQ
+    /// at line 20 (`$5203` / `$5204`) and idles with interrupts enabled. The
+    /// IRQ handler counts into `$0000` and acknowledges by reading `$5204`.
+    fn synth_mmc5_scanline_irq() -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(16 + 32 * 1024 + 8 * 1024);
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(2); // 2 x 16 KiB PRG
+        bytes.push(1); // 1 x 8 KiB CHR
+        bytes.push(0x50); // flags6: mapper low nibble 5
+        bytes.push(0); // flags7
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 32 * 1024];
+        let base = 0x6000; // $E000 within the last 8 KiB bank
+        #[rustfmt::skip]
+        let reset: [u8; 35] = [
+            0x78,             // $E000 SEI
+            0xA2, 0xFF,       // $E001 LDX #$FF
+            0x9A,             // $E003 TXS
+            0xA9, 0x40,       // $E004 LDA #$40
+            0x8D, 0x17, 0x40, // $E006 STA $4017 (inhibit the APU frame IRQ)
+            0x2C, 0x02, 0x20, // $E009 BIT $2002
+            0x10, 0xFB,       // $E00C BPL $E009
+            0x2C, 0x02, 0x20, // $E00E BIT $2002
+            0x10, 0xFB,       // $E011 BPL $E00E
+            0xA9, 0x1E,       // $E013 LDA #$1E
+            0x8D, 0x01, 0x20, // $E015 STA $2001 (rendering on)
+            0xA9, 0x14,       // $E018 LDA #20
+            0x8D, 0x03, 0x52, // $E01A STA $5203 (compare = line 20)
+            0xA9, 0x80,       // $E01D LDA #$80
+            0x8D, 0x04, 0x52, // $E01F STA $5204 (IRQ enable)
+            0x58,             // $E022 CLI
+        ];
+        prg[base..base + reset.len()].copy_from_slice(&reset);
+        // $E023: JMP $E023 (idle)
+        prg[base + 0x23..base + 0x26].copy_from_slice(&[0x4C, 0x23, 0xE0]);
+        // $E030: IRQ handler -- INC $00 ; LDA $5204 (ack) ; RTI
+        prg[base + 0x30..base + 0x36].copy_from_slice(&[0xE6, 0x00, 0xAD, 0x04, 0x52, 0x40]);
+        // $E040: NMI handler -- RTI (NMI is never enabled; defensive)
+        prg[base + 0x40] = 0x40;
+        let len = prg.len();
+        prg[len - 6..].copy_from_slice(&[0x40, 0xE0, 0x00, 0xE0, 0x30, 0xE0]);
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&[0u8; 8 * 1024]);
+        bytes
+    }
+
+    /// The MMC5 scanline IRQ fires through the real `SystemBus`, once per
+    /// rendered frame. Regression for a v3.2.0 import that moved the
+    /// scanline detector into `Mmc5::ppu_read` (a nametable-snoop model):
+    /// the lockstep bus fetches nametables through `peek_nametable`, never
+    /// `ppu_read`, so the detector never saw a fetch and the IRQ stopped
+    /// firing in real play (*Castlevania III*, *Uchuu Keibitai SDF* and
+    /// *Bandit Kings* all went red). The `mmc5` test-ROM gate did not catch
+    /// it, because none of those ROMs depends on the scanline IRQ.
+    #[test]
+    fn mmc5_scanline_irq_fires_through_the_real_bus() {
+        let mut nes = Nes::from_rom(&synth_mmc5_scanline_irq()).unwrap();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let count = nes.peek(0x0000);
+        // Rendering is on from about frame 2; one IRQ per frame after that.
+        assert!(
+            (5..=10).contains(&count),
+            "expected one MMC5 scanline IRQ per rendered frame, counted {count}"
+        );
+    }
+
+    /// `Nes::scan_barcode` validates at the boundary, refuses a cartridge
+    /// with no reader, and a scan is part of the save state: a snapshot taken
+    /// mid-swipe restores mid-swipe and the two runs stay identical.
+    #[test]
+    fn datach_barcode_scan_is_validated_and_survives_a_snapshot() {
+        let mut nrom = Nes::from_rom(&synth_nrom(32, 8)).unwrap();
+        assert!(!nrom.has_barcode_reader());
+        assert_eq!(
+            nrom.scan_barcode("4006381333931"),
+            Err(BarcodeScanError::NoReader)
+        );
+
+        let rom = synth_board_rom(157, SweepHeader::Nes2 { submapper: 0 }, 32, 0);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        assert!(nes.has_barcode_reader());
+        assert_eq!(
+            nes.scan_barcode("4006381333932"),
+            Err(BarcodeScanError::Malformed(
+                rustynes_mappers::BarcodeError::BadCheckDigit {
+                    expected: 1,
+                    found: 2
+                }
+            ))
+        );
+        assert!(
+            !nes.barcode_scan_in_progress(),
+            "a refused scan starts nothing"
+        );
+        assert_eq!(nes.scan_barcode("4006381333931"), Ok(()));
+        assert!(nes.barcode_scan_in_progress());
+        nes.run_frame();
+        assert!(nes.barcode_scan_in_progress(), "a swipe outlasts a frame");
+        let mid = nes.snapshot();
+        let mut other = Nes::from_rom(&rom).unwrap();
+        other.restore(&mid).unwrap();
+        assert!(other.barcode_scan_in_progress());
+        for _ in 0..20 {
+            nes.run_frame();
+            other.run_frame();
+        }
+        assert!(!nes.barcode_scan_in_progress(), "the swipe ends");
+        assert_eq!(nes.snapshot(), other.snapshot());
     }
 
     /// Synthetic NES 2.0 NROM with console type Vs. System and a byte-13 Vs.

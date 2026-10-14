@@ -29,6 +29,9 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle, UiKitDisplayHandle, U
 /// NES framebuffer dimensions (must match `rustynes_mobile::{FRAME_WIDTH,_HEIGHT}`).
 const NES_W: u32 = 256;
 const NES_H: u32 = 240;
+/// One RGBA8 frame, in bytes: what `rustynes_ios_gfx_render` accepts and
+/// `MetalGfx::render` uploads.
+pub(crate) const FRAME_LEN: usize = (NES_W * NES_H * 4) as usize;
 /// NES pixel aspect ratio (8:7) → the displayed image is wider than 256:240.
 const PAR_W: f32 = NES_W as f32 * 8.0 / 7.0;
 const IMG_ASPECT: f32 = PAR_W / NES_H as f32;
@@ -92,10 +95,6 @@ pub struct MetalGfx {
     hd_bind_group: Option<wgpu::BindGroup>,
     /// The current HD-pack texture dimensions `(w, h)`, or `(0, 0)` if none.
     hd_dims: (u32, u32),
-    /// Reused framebuffer staging buffer — the FFI copies each frame's bytes in
-    /// place instead of allocating a fresh `Vec` per frame. Length is fixed at
-    /// `NES_W*NES_H*4`.
-    frame_buf: Vec<u8>,
     /// The host-owned `UIView` (`MTKView`) pointer the surface was built from.
     /// The Swift side retains the view for the surface's whole lifetime; we keep
     /// it only as a lifetime marker so the field drop-order intent is explicit.
@@ -456,7 +455,6 @@ impl MetalGfx {
             hd_texture: None,
             hd_bind_group: None,
             hd_dims: (0, 0),
-            frame_buf: vec![0u8; (NES_W * NES_H * 4) as usize],
             _view: view,
         };
         gfx.write_uniforms();
@@ -531,12 +529,6 @@ impl MetalGfx {
             .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));
     }
 
-    /// The reused frame staging buffer; the FFI copies the incoming RGBA bytes
-    /// into this (no per-frame `Vec`). Length is fixed at `NES_W*NES_H*4`.
-    pub fn frame_buf_mut(&mut self) -> &mut [u8] {
-        &mut self.frame_buf
-    }
-
     /// Upload one 256×240 palette-index frame (`NES_W*NES_H*2` little-endian `u16`
     /// bytes — `(emphasis << 6) | colour`) plus the NTSC `phase`, for the Bisqwit
     /// pass. The host calls this each frame only while the Bisqwit filter is active.
@@ -567,9 +559,12 @@ impl MetalGfx {
         self.write_uniforms();
     }
 
-    /// Upload the staged 256×240 RGBA frame and present it. Tolerates a transient
-    /// `Lost`/`Outdated` surface by reconfiguring and skipping the frame.
-    pub fn render(&mut self) {
+    /// Upload one 256×240 RGBA frame (`fb`, [`FRAME_LEN`] bytes) and present it.
+    /// Tolerates a transient `Lost`/`Outdated` surface by reconfiguring and
+    /// skipping the frame. `fb` is uploaded straight from the caller's buffer
+    /// (v3.2.0; a reused staging copy before).
+    pub fn render(&mut self, fb: &[u8]) {
+        debug_assert_eq!(fb.len(), FRAME_LEN, "one RGBA frame");
         // Re-write the active filter's uniform each frame so the normal path is
         // self-correcting after an HD-pack frame wrote a neutral (plain-blit)
         // uniform into the shared buffer (v1.9.5). One 64-byte write — negligible.
@@ -581,7 +576,7 @@ impl MetalGfx {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &self.frame_buf,
+            fb,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(NES_W * 4),

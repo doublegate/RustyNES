@@ -981,6 +981,87 @@ fn a_mid_run_round_trip_serializes_like_a_straight_run() {
     );
 }
 
+/// v3.2.0: states are SLIM (`Nes::snapshot_core_into_slim`): no 240 KiB
+/// framebuffer, which the next `retro_run` repaints. Restored into a FRESH
+/// instance -- the run-ahead "second instance" shape, and a framebuffer that
+/// starts blank -- the next frame's picture and state must equal a straight
+/// run's. A pixel the frame did not repaint would stay blank and differ.
+#[test]
+fn a_slim_state_restored_into_a_fresh_instance_draws_the_same_next_frame() {
+    let _frontend = frontend();
+    KEEP_FRAME.store(true, SeqCst);
+    assert!(load(NESTEST, true));
+    let size = serialize_size();
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut mid = vec![0_u8; size];
+    assert!(serialize(&mut mid));
+    run_frame();
+    let straight_frame = held(&LAST_FRAME).clone();
+    let mut straight = vec![0_u8; size];
+    assert!(serialize(&mut straight));
+    unload();
+
+    assert!(load(NESTEST, true));
+    assert!(
+        unserialize(&mid),
+        "a slim state loads into a fresh instance"
+    );
+    run_frame();
+    let restored_frame = held(&LAST_FRAME).clone();
+    let mut restored = vec![0_u8; size];
+    assert!(serialize(&mut restored));
+    unload();
+    KEEP_FRAME.store(false, SeqCst);
+
+    assert!(!straight_frame.is_empty(), "fixture: a frame was captured");
+    assert!(
+        restored_frame == straight_frame,
+        "the frame after a slim restore differs from a straight run's"
+    );
+    assert!(restored == straight, "and so does the state");
+    assert!(
+        size < 100_000,
+        "states are slim (no framebuffer): {size} bytes"
+    );
+}
+
+/// v3.2.0: a FULL state -- with the framebuffer, as v3.1.0's core wrote --
+/// still loads: the PPU section's version byte marks which encoding it is.
+/// Built here with `Nes::snapshot_core_into` on the same ROM, restored
+/// through `retro_unserialize`, then read back: the state the core holds is
+/// the one the full blob described.
+#[test]
+fn a_full_size_state_still_loads() {
+    let _frontend = frontend();
+    assert!(load(NESTEST, true));
+    let size = serialize_size();
+
+    let mut nes = rustynes_core::Nes::from_rom(NESTEST).expect("nestest parses");
+    for _ in 0..10 {
+        nes.run_frame();
+    }
+    let mut full = Vec::new();
+    nes.snapshot_core_into(&mut full);
+    let mut slim = Vec::new();
+    nes.snapshot_core_into_slim(&mut slim);
+    assert!(
+        full.len() > slim.len() + 200_000,
+        "fixture: the full blob carries the framebuffer"
+    );
+
+    assert!(unserialize(&full), "a full-size state is accepted");
+    let mut back = vec![0_u8; size];
+    assert!(serialize(&mut back));
+    unload();
+    assert_eq!(
+        &back[..slim.len()],
+        &slim[..],
+        "the restored machine is the one the full state described"
+    );
+}
+
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn a_refused_unserialize_logs_the_reason() {

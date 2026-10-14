@@ -567,7 +567,9 @@ impl HdPack {
         // Find the `hires.txt` entry (allow it to live in a subfolder).
         let hires_name = (0..archive.len()).find_map(|i| {
             let e = archive.by_index(i).ok()?;
-            let name = e.name().to_string();
+            // zip 9: `name()` fails only for a name that is neither UTF-8 nor
+            // CP437; such an entry cannot be `hires.txt`, so skip it.
+            let name = e.name().ok()?.into_owned();
             Path::new(&name)
                 .file_name()
                 .is_some_and(|f| f.eq_ignore_ascii_case("hires.txt"))
@@ -2812,7 +2814,7 @@ mod tests {
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).unwrap();
-            let mut out = std::fs::File::create(dir.join(entry.name())).unwrap();
+            let mut out = std::fs::File::create(dir.join(entry.name().unwrap().as_ref())).unwrap();
             std::io::copy(&mut entry, &mut out).unwrap();
         }
         let one = 64 * 64 * 4;

@@ -192,9 +192,16 @@ fn best_effort_set_is_nonempty_and_matches_classifier() {
     // 191 and 194 arrived, whose NESdev pages give only Disch's notes or
     // "probably" masks. The submapper-level BestEffort variants (4.3 MC-ACC,
     // 91.1, 176.2) are not counted here: this sweep classifies submapper 0.
+    //
+    // 31 -> 26 in v3.2.0: 47, 121, 154, 191 and 243 moved to Curated under
+    // D23 (a local dump with its record in `docs/compatibility.md` is
+    // evidence). Then 26 -> 27: 230 arrived BestEffort (its page is Disch's
+    // notes and its model chooses the power-on mode and the reset behaviour;
+    // the maintainer's ruling, 2026-10-09). Every other v3.2.0 family is
+    // Curated.
     assert_eq!(
         ids.len(),
-        31,
+        27,
         "BestEffort family count changed to {} — if intentional, update this \
          assertion and docs/mappers.md; if not, a tier arm regressed",
         ids.len()
