@@ -30,9 +30,12 @@ cycle-accurate core later replaced.
 
 - **Movies and netplay from v3.1.0 are refused.** `EMULATION_EPOCH` rises
   from 3 to 4: the mapper 290, 24C02, VRC2 and *Fire Hawk* fixes below change
-  what the bus sees.
-  A v3.1.x peer or movie is refused as another emulator version, naming its
-  epoch. Save states are not affected by the epoch.
+  what the bus sees. A v3.1.x peer or movie is refused as another emulator
+  version, naming its epoch. Save states are not affected by the epoch.
+- **Netplay protocol 8 (`"RNE8"`).** Lost inputs are resent as one datagram
+  per run of frames instead of one per frame. A v3.1.x peer cannot read that
+  message, so its `"RNE7"` is refused as another emulator version (its epoch
+  would refuse it anyway).
 
 ### Added
 

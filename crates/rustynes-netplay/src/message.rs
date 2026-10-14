@@ -176,9 +176,13 @@ impl SessionIdentity {
                 Err(why) => SyncVerdict::Refuse(why),
             }
         } else if NetMessage::OLDER_SYNC_MAGICS.contains(&magic) {
-            // Protocol 6 carries its epoch (same layout as ours), so the reason
-            // can name it; protocols 4 and 5 have none.
-            let theirs = (magic == NetMessage::PROTOCOL_6_SYNC_MAGIC).then_some(peer.epoch);
+            // Protocols 6 and 7 carry their epoch (same layout as ours), so the
+            // reason can name it; protocols 4 and 5 have none.
+            let theirs = matches!(
+                magic,
+                NetMessage::PROTOCOL_6_SYNC_MAGIC | NetMessage::PROTOCOL_7_SYNC_MAGIC
+            )
+            .then_some(peer.epoch);
             SyncVerdict::Refuse(IdentityMismatch::Emulator {
                 ours: self.epoch,
                 theirs,
@@ -229,8 +233,16 @@ impl SessionIdentity {
 /// is one of [`NetMessage::OLDER_SYNC_MAGICS`] and it is refused as another
 /// emulator version, naming its epoch (protocol 6 carries it).
 ///
+/// `8` (v3.2.0): [`NetMessage::InputBatch`] (tag 6) -- a run of consecutive
+/// inputs for one player in one datagram, which the retransmit window now
+/// sends instead of one `Input` per frame. The `Sync` layout is unchanged
+/// (72 bytes), under the magic `"RNE8"`; a v3.1.x peer's `"RNE7"` joins
+/// [`NetMessage::OLDER_SYNC_MAGICS`] and is refused as another emulator
+/// version, naming its epoch, because it could not decode a batch: its
+/// [`from_bytes`] drops tag 6, so every retransmission would be lost.
+///
 /// [`from_bytes`]: NetMessage::from_bytes
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Messages exchanged between two peers.
 ///
@@ -253,7 +265,6 @@ pub enum NetMessage {
         /// The 0-based player index this input belongs to (0..=3). Lets a
         /// peer route a remote input to the correct controller port; in a
         /// mesh topology every peer's input carries its own player index.
-        /// Player index
         player: u8,
         /// The frame this input applies to.
         frame: u32,
@@ -261,13 +272,22 @@ pub enum NetMessage {
         input: u8,
     },
 
-    /// Batched sequence of consecutive inputs for `player` starting at `start_frame`.
+    /// v3.2.0 (protocol 8): consecutive confirmed inputs for one player, the
+    /// first at `start_frame`, in one datagram. The retransmit window
+    /// ([`crate::RollbackSession`]) sends its resends this way rather than as
+    /// one [`Self::Input`] per frame. Each element is folded in exactly as an
+    /// `Input` for frame `start_frame + i` would be.
+    ///
+    /// Wire: tag, `player`, `start_frame` (LE `u32`), a count byte, then
+    /// `count` input bytes. At most [`Self::MAX_INPUT_BATCH`] inputs; a count
+    /// of 0, a truncated payload or trailing bytes decode to `None`.
     InputBatch {
-        /// Player index
+        /// The 0-based player index the inputs belong to (as for `Input`).
         player: u8,
-        /// Start frame
+        /// The frame of `inputs[0]`.
         start_frame: u32,
-        /// Inputs array
+        /// The inputs for `start_frame`, `start_frame + 1`, ... (1 to
+        /// [`Self::MAX_INPUT_BATCH`] of them).
         inputs: Vec<u8>,
     },
 
@@ -347,7 +367,7 @@ impl NetMessage {
     /// consider the session synced while the v5 side waited for a reply it
     /// refuses. Every version compares the magic, so a changed one is
     /// rejected on both sides.
-    pub const SYNC_MAGIC: u32 = 0x524E_4537; // "RNE7"
+    pub const SYNC_MAGIC: u32 = 0x524E_4538; // "RNE8"
 
     /// `RustyNES`'s own earlier `Sync` magics: protocol 4 (`"RNES"`, v2.5.x to
     /// v2.9.7), protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9) and protocol 6
@@ -355,10 +375,11 @@ impl NetMessage {
     /// is refused with a reason ([`SessionIdentity::check_sync`]). Code that
     /// needs one protocol names its constant below rather than an index, so
     /// adding a protocol to this list cannot silently re-point a check.
-    pub const OLDER_SYNC_MAGICS: [u32; 3] = [
+    pub const OLDER_SYNC_MAGICS: [u32; 4] = [
         Self::PROTOCOL_4_SYNC_MAGIC,
         Self::PROTOCOL_5_SYNC_MAGIC,
         Self::PROTOCOL_6_SYNC_MAGIC,
+        Self::PROTOCOL_7_SYNC_MAGIC,
     ];
     /// Protocol 4's `Sync` magic, `"RNES"` (v2.5.x to v2.9.7): a 36-byte
     /// payload with no config hash and no epoch.
@@ -369,6 +390,13 @@ impl NetMessage {
     /// Protocol 6's `Sync` magic, `"RNE6"` (v3.0.0 and v3.0.1): today's layout,
     /// epoch included, so a refusal can name the peer's epoch.
     pub const PROTOCOL_6_SYNC_MAGIC: u32 = 0x524E_4536;
+    /// Protocol 7's `Sync` magic, `"RNE7"` (v3.1.x): today's layout, epoch
+    /// included. Refused because a protocol 7 peer cannot decode
+    /// [`Self::InputBatch`].
+    pub const PROTOCOL_7_SYNC_MAGIC: u32 = 0x524E_4537;
+    /// The most inputs one [`Self::InputBatch`] carries: what its count byte
+    /// can express. The session's retransmit window is far smaller.
+    pub const MAX_INPUT_BATCH: usize = u8::MAX as usize;
 
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
@@ -413,10 +441,16 @@ impl NetMessage {
                 start_frame,
                 ref inputs,
             } => {
+                // The count byte and the payload must agree, so a batch
+                // longer than the count can express is cut to
+                // MAX_INPUT_BATCH rather than written whole under a wrapped
+                // or saturated count (the receiver would mis-frame it). The
+                // session never builds one that long.
+                let inputs = &inputs[..inputs.len().min(Self::MAX_INPUT_BATCH)];
                 out.push(Self::TAG_INPUT_BATCH);
                 out.push(player);
                 out.extend_from_slice(&start_frame.to_le_bytes());
-                out.push(u8::try_from(inputs.len().min(u8::MAX as usize)).unwrap_or(u8::MAX));
+                out.push(u8::try_from(inputs.len()).unwrap_or(u8::MAX));
                 out.extend_from_slice(inputs);
             }
             Self::InputAck { frame } => {
@@ -500,6 +534,25 @@ impl NetMessage {
         }
     }
 
+    /// The body of an [`Self::InputBatch`] (after its tag): player, LE start
+    /// frame, a count byte, then exactly `count` inputs, at least one. An
+    /// empty batch carries nothing, and a short or long payload is not this
+    /// encoding; both are `None`.
+    fn decode_input_batch(rest: &[u8]) -> Option<Self> {
+        let player = *rest.first()?;
+        let start_frame = u32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
+        let count = usize::from(*rest.get(5)?);
+        let inputs = rest.get(6..)?;
+        if count == 0 || inputs.len() != count {
+            return None;
+        }
+        Some(Self::InputBatch {
+            player,
+            start_frame,
+            inputs: inputs.to_vec(),
+        })
+    }
+
     /// Parse a buffer produced by [`Self::to_bytes`]. Returns `None` on a
     /// malformed / truncated / unknown-tag buffer (the UDP transport drops
     /// such datagrams rather than panicking).
@@ -521,13 +574,14 @@ impl NetMessage {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
                 Some(Self::InputAck { frame })
             }
+            Self::TAG_INPUT_BATCH => Self::decode_input_batch(rest),
             Self::TAG_SYNC => {
                 let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
                 match rest.len() {
-                    // Protocols 6 and 7: magic + epoch + two hashes. Exactly
+                    // Protocols 6, 7 and 8: magic + epoch + two hashes. Exactly
                     // that length: a longer payload is a later protocol's, not
                     // this one's with junk on the end. Which protocol it is
-                    // (`"RNE7"` ours, `"RNE6"` v3.0.x) is `check_sync`'s call.
+                    // (`"RNE8"` ours, `"RNE7"` v3.1.x, `"RNE6"` v3.0.x) is `check_sync`'s call.
                     72 => {
                         let epoch = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
                         let rom_hash: [u8; 32] = rest.get(8..40)?.try_into().ok()?;
@@ -780,6 +834,78 @@ mod tests {
             })
         );
         assert_ne!(NetMessage::SYNC_MAGIC, NetMessage::PROTOCOL_6_SYNC_MAGIC);
+    }
+
+    /// v3.2.0 (protocol 8) — a v3.1.x peer's `"RNE7"` `Sync` has our layout,
+    /// and could even carry our epoch and hashes, but it cannot decode an
+    /// `InputBatch`, so it is refused as another emulator version, naming
+    /// the epoch its layout carries.
+    #[test]
+    fn a_protocol_7_peer_is_refused_as_another_version_naming_its_epoch() {
+        let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
+        // The same identity as ours, but under protocol 7's magic.
+        let bytes = NetMessage::Sync {
+            magic: NetMessage::PROTOCOL_7_SYNC_MAGIC,
+            identity: ours,
+        }
+        .to_bytes();
+        let Some(NetMessage::Sync { magic, identity }) = NetMessage::from_bytes(&bytes) else {
+            panic!("a protocol-7 Sync decodes");
+        };
+        assert_eq!(
+            ours.check_sync(magic, &identity),
+            SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                ours: ours.epoch,
+                theirs: Some(ours.epoch),
+            })
+        );
+        assert_eq!(NetMessage::SYNC_MAGIC, 0x524E_4538, "\"RNE8\"");
+        assert_eq!(PROTOCOL_VERSION, 8);
+    }
+
+    /// v3.2.0 — the `InputBatch` wire form, byte for byte, and its bounds.
+    #[test]
+    fn input_batch_encodes_decodes_and_rejects_malformed_payloads() {
+        let msg = NetMessage::InputBatch {
+            player: 1,
+            start_frame: 0x0102_0304,
+            inputs: vec![0xAA, 0x00, 0x55],
+        };
+        let bytes = msg.to_bytes();
+        assert_eq!(
+            bytes,
+            [6, 1, 0x04, 0x03, 0x02, 0x01, 3, 0xAA, 0x00, 0x55],
+            "tag, player, LE frame, count, inputs"
+        );
+        assert_eq!(NetMessage::from_bytes(&bytes), Some(msg));
+
+        // Truncated anywhere, padded, or empty: refused.
+        for cut in 1..bytes.len() {
+            assert_eq!(NetMessage::from_bytes(&bytes[..cut]), None, "cut at {cut}");
+        }
+        let mut long = bytes;
+        long.push(0);
+        assert_eq!(NetMessage::from_bytes(&long), None, "trailing byte");
+        assert_eq!(
+            NetMessage::from_bytes(&[6, 0, 0, 0, 0, 0, 0]),
+            None,
+            "an empty batch"
+        );
+
+        // The largest batch round-trips; a longer one is cut to the cap so
+        // the count byte and the payload still agree.
+        let full = NetMessage::InputBatch {
+            player: 0,
+            start_frame: 9,
+            inputs: vec![7; NetMessage::MAX_INPUT_BATCH],
+        };
+        roundtrip(&full);
+        let over = NetMessage::InputBatch {
+            player: 0,
+            start_frame: 9,
+            inputs: vec![7; NetMessage::MAX_INPUT_BATCH + 10],
+        };
+        assert_eq!(NetMessage::from_bytes(&over.to_bytes()), Some(full));
     }
 
     #[test]

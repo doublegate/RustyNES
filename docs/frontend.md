@@ -2561,6 +2561,18 @@ settings would otherwise hash differently and be refused as a settings
 mismatch, the wrong reason. Its `"RNE6"` is now one of RustyNES's older magics,
 refused as another emulator version naming its epoch.
 
+**Protocol 8 (`"RNE8"`, v3.2.0)** adds `NetMessage::InputBatch` (tag 6): the
+retransmit window resends each run of consecutive locally-authored inputs as one
+datagram (tag, player, LE start frame, a count byte, then that many inputs; at
+most 255, and the window is 65 frames) instead of one `Input` per frame. The
+`Sync` layout is unchanged; a v3.1.x peer's `"RNE7"` joins the older magics and
+is refused naming its epoch, because it would drop every batch as an unknown
+tag and so never recover a lost input. The spectator folds a batch in exactly as
+it would the same inputs sent one by one. Neither transport filters datagrams by
+source after a peer is adopted: a filter was tried and removed, since it ended
+the session on a NAT rebinding or an IPv4-mapped address and authenticated
+nothing (`connection.rs` says why at `poll`).
+
 - **Another epoch is refused first**, as another emulator version:
   `DisconnectReason::EmulatorMismatch` / `NetplayError::EmulatorMismatch` /
   `MeshError::EmulatorMismatch`, worded by

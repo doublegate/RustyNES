@@ -140,15 +140,10 @@ impl Transport for UdpMeshTransport {
         let mut buf = [0u8; RECV_BUF_LEN];
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
             match self.socket.recv_from(&mut buf) {
-                Ok((len, from)) => {
-                    if !self.peers.contains(&from) {
-                        continue;
-                    }
-                    match NetMessage::from_bytes(&buf[..len]) {
-                        Some(msg) => out.push(msg),
-                        None => self.dropped_invalid = self.dropped_invalid.saturating_add(1),
-                    }
-                }
+                Ok((len, _from)) => match NetMessage::from_bytes(&buf[..len]) {
+                    Some(msg) => out.push(msg),
+                    None => self.dropped_invalid = self.dropped_invalid.saturating_add(1),
+                },
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 // Windows can surface a prior send's ICMP unreachable as a
                 // ConnectionReset on the next recv — not fatal, keep draining.
@@ -408,14 +403,16 @@ impl MeshHost {
                 self.last_roster_sent = Some(now);
                 self.roster_resends -= 1;
             }
+            // v3.2.0: hand off only after the LAST resend. The resends exist to
+            // ride out a lost roster, and they are sent from this pump; once
+            // the host has its transport nothing pumps this handshake again.
+            // Until v3.2.0 it handed off after the first broadcast, so the
+            // other four were never sent and one lost datagram stranded a
+            // joiner. Cost: the host starts about
+            // (ROSTER_RESENDS - 1) x ROSTER_RESEND_INTERVAL = 200 ms later.
             if self.roster_resends > 0 {
                 return Ok(None);
             }
-            // After the first broadcast, build + return the host's transport.
-            // (We still want the joiners to have received it; the resends above
-            // ride out loss, but the host can proceed immediately — its mesh
-            // transport simply starts sending Inputs, which also doubles as
-            // liveness for the joiners.)
             let socket = self.socket.take().expect("host socket present to hand off");
             let peers: Vec<SocketAddr> = self.joiners.keys().copied().collect();
             // We never reach here without at least the resend above; map an I/O
@@ -626,12 +623,11 @@ mod tests {
         let s0 = UdpSocket::bind(loopback()).unwrap();
         let s1 = UdpSocket::bind(loopback()).unwrap();
         let s2 = UdpSocket::bind(loopback()).unwrap();
-        let a0 = s0.local_addr().unwrap();
         let a1 = s1.local_addr().unwrap();
         let a2 = s2.local_addr().unwrap();
         let mut t0 = UdpMeshTransport::new(s0, vec![a1, a2]).unwrap();
-        let mut t1 = UdpMeshTransport::new(s1, vec![a0]).unwrap();
-        let mut t2 = UdpMeshTransport::new(s2, vec![a0]).unwrap();
+        let mut t1 = UdpMeshTransport::new(s1, vec![]).unwrap();
+        let mut t2 = UdpMeshTransport::new(s2, vec![]).unwrap();
 
         let msg = NetMessage::Input {
             player: 0,
@@ -648,24 +644,18 @@ mod tests {
 
     #[test]
     fn mesh_transport_drops_malformed() {
+        let s0 = UdpSocket::bind(loopback()).unwrap();
         let s1 = UdpSocket::bind(loopback()).unwrap();
         let a1 = s1.local_addr().unwrap();
-        let valid_peer = UdpSocket::bind(loopback()).unwrap();
-        let a0 = valid_peer.local_addr().unwrap();
-        let mut t1 = UdpMeshTransport::new(s1, vec![a0]).unwrap();
+        let _t0 = UdpMeshTransport::new(s0, vec![a1]).unwrap();
+        let mut t1 = UdpMeshTransport::new(s1, vec![]).unwrap();
 
-        // Blast junk at t1 directly from a valid peer (to test invalid payloads)
-        // AND from a stray socket (to test invalid sources).
+        // Blast junk at t1 directly from a stray socket.
         let stray = UdpSocket::bind(loopback()).unwrap();
-
-        valid_peer.send_to(&[], a1).unwrap();
-        valid_peer.send_to(&[250, 1, 2], a1).unwrap();
-        valid_peer
-            .send_to(&NetMessage::InputAck { frame: 9 }.to_bytes(), a1)
-            .unwrap();
-
+        stray.send_to(&[], a1).unwrap();
+        stray.send_to(&[250, 1, 2], a1).unwrap();
         stray
-            .send_to(&NetMessage::InputAck { frame: 10 }.to_bytes(), a1)
+            .send_to(&NetMessage::InputAck { frame: 9 }.to_bytes(), a1)
             .unwrap();
 
         let got = drain(&mut t1, 1);
@@ -836,6 +826,8 @@ mod tests {
         let mut done = false;
         let mut j_done = false;
         for _ in 0..500 {
+            // The joiner hands off once it has the roster; stop pumping it
+            // then, as a real caller would (the host keeps resending).
             if !j_done && let Ok(Some(_)) = j.pump() {
                 j_done = true;
             }
