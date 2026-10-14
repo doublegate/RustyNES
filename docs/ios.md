@@ -423,12 +423,12 @@ movies and Lua are refused on a cabinet. **From v3.2.0 FDS disk writes persist**
 (as on Android): a dirty disk is written atomically to
 `Application Support/RustyNES/fds-saves/<identity>.fds.sav` on the battery-flush
 paths, and the next load boots it through `bootSavedDisk`, which keeps the
-pristine disk's identity. The Swift half is not yet compiled (no macOS in that
-change); the Rust bridge and the Android half are tested. Settings >
-Controls also gains **Cancel opposite directions** (default on). **The Swift
-from v2.9.7 compiles** (the iOS workflow's Simulator build, run 37242884341 on
-`c0b04195`, which predates the v3.2.0 FDS persistence) **and none of it has run
-on a device**; the checks are
+pristine disk's identity. Settings > Controls also gains **Cancel opposite
+directions** (default on). **The v3.2.0 Swift compiles** (the iOS workflow's
+Simulator build, run 38644695741 on `d53644fd`, which includes the FDS
+persistence; no iOS or bridge source changed after it; the v2.9.7 Swift's
+run was 37242884341 on `c0b04195`) **and none of it has run on a device**;
+the Rust bridge and the Android half are tested. The device checks are
 rows T5-T7, T10 and T12 of `docs/mobile-v2.9.3-run-sheet.md`.
 
 **The game database's load-time corrections (v2.9.8).** The shared bridge now

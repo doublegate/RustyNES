@@ -195,8 +195,8 @@ cycle-accurate core later replaced.
   longer write one game's disk into another game's save or an older copy of the
   same disk over a newer one; on both, a disk write landing while the save is
   being written is no longer lost, and on iOS reopening the running disk game no
-  longer boots the save from before its newest writes. (The iOS half is not
-  yet compiled locally.)
+  longer boots the save from before its newest writes. (The iOS half compiles
+  in the iOS workflow's Simulator build; neither half has run on a device.)
 - **The Android screen stays on during play** and sleeps again when paused or
   closed; with a gamepad it used to dim and sleep mid-game.
 - **Mapper 290 (*Asder 20-in-1*) boots.** Its 32 KiB PRG mode read the
