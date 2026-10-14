@@ -652,10 +652,13 @@ where
     // fails is replaced by one at the umask default -- which is WIDER. Reporting
     // success there hands the caller a file with weaker permissions than the one
     // it replaced, and says nothing. Found in review of the PR that introduced it.
+    //
+    // A NEW file gets the same exact set, at 0o600: creation alone gives
+    // `0o600 & !umask`, so under a umask that masks owner bits the file landed
+    // narrower than property 5 promises ("then set exactly"). Only existing
+    // files were set until `CodeRabbit` on #605.
     #[cfg(unix)]
-    if let Some(mode) = existing_mode
-        && let Err(e) = apply_mode_using(&tmp, mode, set_permissions_mode)
-    {
+    if let Err(e) = apply_mode_using(&tmp, existing_mode.unwrap_or(0o600), set_permissions_mode) {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }

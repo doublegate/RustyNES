@@ -2502,7 +2502,14 @@ impl UiShell {
         frame: &ShellFrame<'_>,
         out: &mut ShellOutput,
     ) {
-        if !self.show_barcode || !frame.barcode_reader {
+        // A cartridge without a reader also closes the window: returning early
+        // left `show_barcode` set, so it reopened by itself on the next Datach
+        // game (`CodeRabbit` on #604).
+        if !frame.barcode_reader {
+            self.show_barcode = false;
+            return;
+        }
+        if !self.show_barcode {
             return;
         }
         let locked = frame.movie_recording || frame.movie_playing || frame.netplay_active;

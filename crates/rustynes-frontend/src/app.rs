@@ -2706,10 +2706,18 @@ impl App {
     fn scan_barcode(&mut self, code: &str) {
         let result = {
             let mut guard = self.emu.lock();
-            let Some(nes) = guard.nes.as_mut() else {
+            let emu = &mut *guard;
+            let Some(nes) = emu.nes.as_mut() else {
                 return;
             };
-            nes.scan_barcode(code)
+            let r = nes.scan_barcode(code);
+            // A scan is input a `.rnm` does not record, so, as for a Reset
+            // (NF-13), a history clip spanning it could not replay it: start a
+            // fresh timeline (`CodeRabbit` on #604).
+            if r.is_ok() {
+                emu.history.clear();
+            }
+            r
         };
         let message = match result {
             Ok(()) => StatusMessage::info(crate::tf!(ShellBarcodeScanned, code)),
