@@ -168,10 +168,6 @@ pub(crate) struct Namco163Audio {
     /// 15-cycle prescaler.  When it reaches 15, we update the next
     /// channel and reset.
     prescaler: u8,
-    /// Cached individual channel outputs.
-    channel_outputs: [i16; 8],
-    /// Running sum of all channel outputs.
-    cached_sum: i32,
 }
 
 // When the `mapper-audio` feature is OFF, the audio struct still exists
@@ -186,8 +182,6 @@ pub(crate) struct Namco163Audio {
     auto_inc: bool,
     tick_index: u8,
     prescaler: u8,
-    channel_outputs: [i16; 8],
-    cached_sum: i32,
 }
 
 impl Default for Namco163Audio {
@@ -198,8 +192,6 @@ impl Default for Namco163Audio {
             auto_inc: false,
             tick_index: 0,
             prescaler: 0,
-            channel_outputs: [0; 8],
-            cached_sum: 0,
         }
     }
 }
@@ -220,25 +212,11 @@ impl Namco163Audio {
         }
     }
 
-    #[cfg(feature = "mapper-audio")]
-    fn recompute_cache(&mut self) {
-        self.cached_sum = 0;
-        for ch in 0..8 {
-            let out = self.channel_output(ch);
-            self.channel_outputs[ch as usize] = out;
-            self.cached_sum += i32::from(out);
-        }
-    }
-
-    #[cfg(not(feature = "mapper-audio"))]
-    fn recompute_cache(&mut self) {}
-
     /// Write to the data port (`$4800-$4FFF`).  Stores at the latched
     /// address; advances the latch when auto-increment is set.
     pub(crate) fn write_data_port(&mut self, value: u8) {
         let idx = (self.addr_latch & 0x7F) as usize;
         self.ram[idx] = value;
-        self.recompute_cache();
         self.step_addr();
     }
 
@@ -367,11 +345,6 @@ impl Namco163Audio {
             phase %= modulus;
         }
         self.set_channel_phase(base, phase as u32);
-
-        let old_out = self.channel_outputs[ch as usize];
-        let new_out = self.channel_output(ch);
-        self.channel_outputs[ch as usize] = new_out;
-        self.cached_sum = self.cached_sum - i32::from(old_out) + i32::from(new_out);
     }
 
     /// Per-channel output sample, bipolar: `(nibble - 8) * volume`,
@@ -412,9 +385,13 @@ impl Namco163Audio {
         if n == 0 {
             return 0;
         }
+        let mut sum: i32 = 0;
+        for ch in 0..n {
+            sum += i32::from(self.channel_output(ch));
+        }
         // Per-channel range is -120..=+105; the channel-count-averaged sum has
         // the same envelope.  Scale to the Mesen2 `db_n163` level.
-        ((self.cached_sum / i32::from(n)) * NAMCO163_MIX_SCALE) as i16
+        ((sum / i32::from(n)) * NAMCO163_MIX_SCALE) as i16
     }
 
     /// Feature-off shim: the wavetable generator does not advance with
@@ -468,7 +445,6 @@ impl Namco163Audio {
         self.auto_inc = src[129] != 0;
         self.tick_index = src[130];
         self.prescaler = src[131];
-        self.recompute_cache();
         Ok(())
     }
 }
@@ -1175,6 +1151,34 @@ mod tests {
             assert_eq!(m.audio.fetch_nibble(0x20), 0x0B);
             assert_eq!(m.audio.fetch_nibble(0x21), 0x0A);
         }
+    }
+
+    /// The mix sums only the `n` ACTIVE channels. With one channel enabled,
+    /// channel 7's register slot (`$70-$77`) holds a loud, non-silent setup
+    /// -- on hardware those bytes are often wavetable data -- and must not
+    /// reach the output. Regression for a v3.2.0 import that cached a running
+    /// sum over all eight slots, so any game using fewer than eight channels
+    /// heard the inactive slots too.
+    #[test]
+    #[cfg(feature = "mapper-audio")]
+    fn namco163_mix_ignores_inactive_channel_slots() {
+        let mut m = namco163_for_audio();
+        // Wavetable byte 0: low nibble 15 -> (15 - 8) = +7 per volume step.
+        n163_write_ram(&mut m, 0x00, false, 0x0F);
+        // Channel 8 ($78): length 4, wave address 0, phase 0; $7F = C=0
+        // (one channel) and volume 15.
+        n163_write_ram(&mut m, 0x7C, false, 0xFC);
+        n163_write_ram(&mut m, 0x7E, false, 0x00);
+        n163_write_ram(&mut m, 0x7F, false, 0x0F);
+        // Channel 7 ($70), inactive with C=0: the same loud setup.
+        n163_write_ram(&mut m, 0x74, false, 0xFC);
+        n163_write_ram(&mut m, 0x76, false, 0x00);
+        n163_write_ram(&mut m, 0x77, false, 0x0F);
+        assert_eq!(m.audio.channel_count(), 1);
+        assert_eq!(m.audio.channel_output(0), 105);
+        assert_eq!(m.audio.channel_output(1), 105);
+        // Only channel 8 is mixed: 105 / 1 * NAMCO163_MIX_SCALE.
+        assert_eq!(i32::from(m.audio.mix()), 105 * NAMCO163_MIX_SCALE);
     }
 
     #[test]
