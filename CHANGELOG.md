@@ -78,6 +78,10 @@ cycle-accurate core later replaced.
   every ROM, HD-pack and `.bk2` lookup skips such an entry, as it already
   skipped one it could not read. 9.0.1-9.0.3 fix reads past an entry's
   declared size and overflows in the ZIP64 and implode paths.
+- **cc 1.7.0** (#600), **taiki-e/install-action 2.87.27** (#599), the
+  **Gradle wrapper 9.8.1** (#602; distribution and wrapper-jar SHA-256 both
+  checked against services.gradle.org) and the **Compose compiler plugin
+  2.4.21** (#603) for the Android app.
 
 ### Fixed
 
