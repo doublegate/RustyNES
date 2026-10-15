@@ -105,8 +105,24 @@ case "${1:-}" in
     exec 8>> "$q.lock"
     flock -n 8 || { echo "quiet_ab.sh: $q is already being processed (holder of $q.lock)" >&2; exit 2; }
     if [ -e "$q.inprogress" ]; then
-      echo "quiet_ab.sh: $q.inprogress names a run that was interrupted: $(cat "$q.inprogress")" >&2
-      echo "quiet_ab.sh: re-queue it if it is still wanted, then delete the marker" >&2
+      # The marker's first line is the count BEFORE the interrupted entry was
+      # taken. Comparing it with FILE.pos says which of the two states the
+      # interruption left, so the recovery step printed is the right one: the
+      # same marker text used to mean both, and re-queuing in the "still
+      # pending" state ran the entry twice (CodeRabbit on #604).
+      mpos=$(sed -n 1p "$q.inprogress"); entry=$(sed -n 2p "$q.inprogress")
+      cur=$(cat "$q.pos" 2>/dev/null || echo 0)
+      case "$mpos" in ''|*[!0-9]*) mpos="?"; entry=$(cat "$q.inprogress") ;; esac
+      echo "quiet_ab.sh: $q.inprogress names a run that was interrupted: $entry" >&2
+      if [ "$mpos" = "?" ]; then
+        echo "quiet_ab.sh: the marker has no count (written before v3.2.0's format); compare $q.pos ($cur) with the queue by hand" >&2
+      elif [ "$cur" = "$mpos" ]; then
+        echo "quiet_ab.sh: it is STILL PENDING ($q.pos is $cur, not advanced): delete the marker and rerun; do not re-queue it" >&2
+      elif [ "$cur" = "$((mpos + 1))" ]; then
+        echo "quiet_ab.sh: it was TAKEN ($q.pos moved $mpos -> $cur) and did not finish: re-queue it if it is still wanted, then delete the marker" >&2
+      else
+        echo "quiet_ab.sh: $q.pos is $cur and the marker recorded $mpos; inspect both by hand before deleting the marker" >&2
+      fi
       exit 2
     fi
     trap 'rm -f "$measuring"' EXIT
@@ -124,7 +140,7 @@ case "${1:-}" in
       # The marker is written, and checked, BEFORE the count moves: interrupted
       # in between, the entry is still pending AND named by the marker, and the
       # refusal above stops a silent re-run (CodeRabbit on #605).
-      echo "$line" > "$q.inprogress" || { echo "quiet_ab.sh: cannot write $q.inprogress" >&2; exit 2; }
+      printf '%s\n%s\n' "$pos" "$line" > "$q.inprogress" || { echo "quiet_ab.sh: cannot write $q.inprogress" >&2; exit 2; }
       # A unique file made by mktemp (O_EXCL, so never an existing name or a
       # symlink), renamed over the count.
       tmp=""
