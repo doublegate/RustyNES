@@ -57,6 +57,11 @@ on:
   # Linux release asset when the gate passes.
   workflow_call:
     inputs:
+      ref:
+        description: "Git ref to build (release.yml passes the release tag). Empty = the triggering ref."
+        required: false
+        default: ""
+        type: string
       frames:
         description: "Training frames per ROM (default 3600 = 60 s NTSC each)."
         required: false
@@ -106,6 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       # Pinned to the project toolchain (rust-toolchain.toml = 1.99.0), matching
@@ -258,6 +264,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
