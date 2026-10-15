@@ -145,7 +145,13 @@ case "${1:-}" in
       # The marker is written, and checked, BEFORE the count moves: interrupted
       # in between, the entry is still pending AND named by the marker, and the
       # refusal above stops a silent re-run (CodeRabbit on #605).
-      printf '%s\n%s\n' "$pos" "$line" > "$q.inprogress" || { echo "quiet_ab.sh: cannot write $q.inprogress" >&2; exit 2; }
+      # Created with noclobber (O_EXCL), so a symlink planted at the marker's
+      # name between entries is refused rather than followed (CodeRabbit on
+      # #604); the startup check sees only a link whose target exists.
+      if ! (set -C; printf '%s\n%s\n' "$pos" "$line" > "$q.inprogress"); then
+        echo "quiet_ab.sh: cannot create $q.inprogress (it exists, or is a link)" >&2
+        exit 2
+      fi
       # A unique file made by mktemp (O_EXCL, so never an existing name or a
       # symlink), renamed over the count.
       tmp=""

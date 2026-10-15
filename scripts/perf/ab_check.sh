@@ -95,8 +95,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 if ! base_sha="$(git rev-parse --verify --quiet "${BASE_REF}^{commit}")"; then
-    echo "SKIP: cannot resolve base ref '${BASE_REF}'." >&2
-    exit 0
+    # A failure, not a skip. Exit 0 here let a caller record a benchmark that
+    # never ran as a success: quiet_ab.sh's queue wrote `rc=0` to FILE.done
+    # (CodeRabbit on #604). No caller relies on 0; CI does not run this script.
+    echo "FAIL: cannot resolve base ref '${BASE_REF}'; nothing was measured." >&2
+    exit 2
 fi
 
 # Pin to a fixed CPU set when possible. Frequency scaling and scheduler
