@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [3.2.0] - 2026-10-14 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
+## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 
 ### Breaking
 
