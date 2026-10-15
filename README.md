@@ -396,12 +396,13 @@ ported to an FPGA: what can be built is a new implementation checked against thi
 one, cycle by cycle.
 
 Its co-simulation ladder covers the 6502, the bus and interrupts, the 2C02, the
-2A03, AccuracyCoin parity and six mapper boards. Each release attaches a timing-closed
-bitstream pair; v3.0.1's (on-die and off-die, both at fitter seed 2, each compiled
-twice to the same bytes) is a **release candidate, not hardware-verified**. Its
-co-simulation ladder reads 200 passed, 0 failed, 1 expected failure on-die and
-201 / 0 / 1 off-die. **No hardware has run any bitstream yet**, so a booting core, a synced
-display, audible sound and a working pad are not claimed. The details, and what
+2A03, AccuracyCoin parity and twenty-one iNES mappers. Each release attaches a
+timing-closed bitstream pair; v3.2.0's (on-die and off-die, both at fitter seed 4,
+each compiled twice to the same bytes) is a **release candidate, not
+hardware-verified**. Its co-simulation ladder reads 259 passed, 0 failed, 3
+expected failures on-die and 260 / 0 / 5 off-die. **No hardware has run any
+bitstream yet**, so a booting core, a synced display, audible sound and a working
+pad are not claimed. The details, and what
 each rung can and cannot verify, are in [`docs/mister.md`](docs/mister.md).
 
 <p align="center">

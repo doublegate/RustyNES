@@ -172,12 +172,18 @@ cycle-accurate core later replaced.
   registers) and is deferred, six did not hold.
 - **The oracle pin moves to v3.2.0**: all 842 golden artifacts from 188 stems
   reproduce byte for byte from it.
-- **The co-simulation ladder: 257 passed, 0 failed, 3 expected failures
-  on-die, 258 / 0 / 5 off-die** (v3.1.0: 212 / 0 / 1 and 213 / 0 / 1), each
+- **The co-simulation ladder: 259 passed, 0 failed, 3 expected failures
+  on-die, 260 / 0 / 5 off-die** (v3.1.0: 212 / 0 / 1 and 213 / 0 / 1), each
   one frozen-worktree run with nothing skipped. Two commercial frames still
   differ from the emulator's and are expected failures, unattributed: one
   pixel of *Mississippi Satsujin Jiken* and three scanlines of *Micro
   Machines*.
+- **New release-candidate bitstreams at fitter seed 4**, chosen from seeds 1-8
+  at build date 261014 (seeds 1, 3, 5, 6 and 7 do not close off-die), each
+  compiled twice to the same bytes: on-die md5
+  `e24820de2e302d3f6912524b3c97a2be` (+0.213 / +0.079 ns), off-die
+  `c33ae2b14e5b8e07a68b4335c728ca03` (+0.038 / +0.080 ns, an internal path;
+  the SDRAM read capture has +0.453 / +1.180 ns, assuming zero board delay).
 - **Known issue (off-die build):** a `$2007` read of CHR-RAM soon after a
   write returns `$00` in simulation. It predates this release, is an expected
   failure in the off-die ladder, and the on-die build is right.
