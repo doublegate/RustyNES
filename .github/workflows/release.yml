@@ -39,7 +39,7 @@ on:
 
 # Don't kill a release mid-build if a second tag lands on the same ref.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -50,7 +50,36 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # A tag push has no release yet (Auto Release creates one before it calls
+  # this workflow; a re-build dispatched for an existing tag finds one), and
+  # `gh release upload` cannot create it, which the softprops action used to
+  # do. Create it once, ONLY when absent, so an existing release and its notes
+  # are never touched (Copilot and agy on #609).
+  ensure-release:
+    name: ensure the release exists
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release if this tag has none
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$GITHUB_REF}"
+          tag="${tag#refs/tags/}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $tag exists; left as it is"
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --notes ""
+            echo "created release $tag"
+          fi
+
   build:
+    needs: ensure-release
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     # 30 minutes is ~6x the historical aarch64-apple-darwin build wall-clock
@@ -108,15 +137,17 @@ jobs:
 
       - name: Resolve release tag
         id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           # `inputs.tag` is set for workflow_dispatch AND workflow_call; on a
-          # tag push it is empty, so fall back to the pushed ref.
-          if [ -n "${{ inputs.tag }}" ]; then
-            tag="${{ inputs.tag }}"
-          else
-            tag="${GITHUB_REF#refs/tags/}"
-          fi
+          # tag push it is empty, so fall back to the pushed ref. Read through
+          # `env`, not interpolated into the script, and stripped of a
+          # `refs/tags/` prefix either way, so a dispatch given the full ref
+          # names its archive and its upload by the bare tag (agy on #609).
+          tag="${INPUT_TAG:-$GITHUB_REF}"
+          tag="${tag#refs/tags/}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "Resolved tag: ${tag}"
 
@@ -260,11 +291,8 @@ jobs:
         run: |
           # Same resolution as the `build` job: `inputs.tag` on
           # workflow_dispatch / workflow_call, else the pushed ref.
-          if [ -n "$INPUT_TAG" ]; then
-            tag="$INPUT_TAG"
-          else
-            tag="${GITHUB_REF#refs/tags/}"
-          fi
+          tag="${INPUT_TAG:-$GITHUB_REF}"
+          tag="${tag#refs/tags/}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Download the promoted PGO binary
@@ -289,9 +317,9 @@ jobs:
           tar -czf "${stage}.tar.gz" "$stage"
           echo "asset=${stage}.tar.gz" >> "$GITHUB_ENV"
 
-      # `gh release upload --clobber` rather than softprops/action-gh-release:
-      # this is a REPLACEMENT of an asset the `build` job already attached under
-      # the same name, and the API rejects a duplicate asset name without an
+      # `--clobber`, as in the `build` job's upload: here it is required, not
+      # just convenient, because this REPLACES an asset `build` already
+      # attached under the same name, and the API rejects a duplicate asset name without an
       # explicit overwrite. `--clobber` is that overwrite.
       - name: Replace the Linux asset with the PGO build
         env:
