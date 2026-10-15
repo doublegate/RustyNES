@@ -214,13 +214,13 @@ what a session needs before it knows what it is doing.
 | read when the task touches | file | bullets |
 |---|---|---|
 | GitHub Actions, workflows, the release ceremony, lint coverage | [`docs/agents/ci-and-release.md`](docs/agents/ci-and-release.md) | 25 |
-| a PR review — the ceremony, where findings hide, which claims recur | [`docs/agents/review-bots.md`](docs/agents/review-bots.md) | 13 |
-| the libretro core, the buildbot, the upstream `.info`, RetroArch | [`docs/agents/libretro.md`](docs/agents/libretro.md) | 17 |
+| a PR review — the ceremony, where findings hide, which claims recur | [`docs/agents/review-bots.md`](docs/agents/review-bots.md) | 14 |
+| the libretro core, the buildbot, the upstream `.info`, RetroArch | [`docs/agents/libretro.md`](docs/agents/libretro.md) | 19 |
 | the MiSTer sibling — the RTL, Quartus, the rungs, the bitstream | [`docs/agents/mister-cosim.md`](docs/agents/mister-cosim.md) | 35 |
 | accuracy work — AccuracyCoin, blargg, sub-tests, goldens, the PPU | [`docs/agents/accuracy-oracle.md`](docs/agents/accuracy-oracle.md) | 23 |
 | reading a result — what it does and does not prove | [`docs/agents/measurement-discipline.md`](docs/agents/measurement-discipline.md) | 22 |
-| the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 24 |
-| a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 3 |
+| the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 25 |
+| a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 5 |
 | a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 8 |
 
 **Read the file, not a summary of it.** Each bullet carries its own evidence —
