@@ -30,7 +30,7 @@ cycle-accurate core later replaced.
 
 ### Breaking
 
-- **Movies and netplay from v3.1.0 are refused.** `EMULATION_EPOCH` rises
+- **Movies and netplay from v3.1.x are refused.** `EMULATION_EPOCH` rises
   from 3 to 4: the mapper 290, 24C02, VRC4 IRQ, VRC2 and *Fire Hawk* fixes
   below change what the bus sees. A v3.1.x peer or movie is refused as another emulator
   version, naming its epoch. Save states are not affected by the epoch.
