@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-232-Camerica-Quattro/Quattro Adventure (USA) (Unl).nes
+rom_sha256=89aeb310d21ba82c093b95bc4c545a6c929ba0a3541fa5d4a0ff26b5b2854355
+frames=1141
+fb_bytes=245760
+cycles=33949805
+audio_samples=836506
+audio_fnv1a64=da3c45805c65bd49
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=a549da46d55ca6e5

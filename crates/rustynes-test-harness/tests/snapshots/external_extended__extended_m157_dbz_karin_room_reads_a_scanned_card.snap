@@ -1,0 +1,7 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: "format!(\"noscan fb={none:016x}\\nscan 4006381333931 fb={ean13:016x}\\nscan 96385074 fb={ean8:016x}\")"
+---
+noscan fb=5c7373550455d5d3
+scan 4006381333931 fb=9e94d6aeba342f5b
+scan 96385074 fb=bab40f1237650807

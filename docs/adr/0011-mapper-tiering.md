@@ -117,3 +117,33 @@ counts).
   unclassified mapper (it reports `BestEffort` register-decode verification
   dumps, which are permitted in the tree but never wired to a byte-identity
   oracle).
+
+## Amendment (v3.2.0, 2026-10-09): local-dump evidence and notes-only pages
+
+Two rulings refine the evidence a family needs to be Curated. Neither
+changes the invariant above, which `mapper_tier_honesty.rs` still enforces.
+
+- **D23 (local dumps).** A family with no redistributable fixture may be
+  Curated when a staged local dump boots to a correct picture and
+  `docs/compatibility.md` ("Curated evidence from local dumps") records its
+  title, the SHA-256 of its bytes after the header (`Nes::rom_sha256`), the
+  frames the capture ran and a committed screenshot. The dump itself stays
+  gitignored.
+- **Notes-only pages (maintainer, 2026-10-09).** v2.9.6 capped a family whose
+  NESdev page gives only Disch's notes, or register masks marked "probably",
+  at BestEffort. It is now Curated on a D23 record when every behaviour the
+  page leaves unstated was either not needed by the model or **settled by the
+  dump's boot visibly rejecting the alternative**. It stays BestEffort when
+  the model chose an unstated behaviour that no boot tested against an
+  alternative, because then a correct boot cannot tell a right choice from a
+  lucky one. Under this rule 47, 121 and 191 are Curated, and so is 165: its
+  three choices (the MMC2's exact latch triggers, 8 KiB of work RAM, a CHR page
+  of the register value over 4) were each settled by screens, the alternatives
+  drawing a stray bar before every intro line or a garbage title. 230 is
+  BestEffort: its notes do not say which mode the board powers on in or what a
+  console reset does to its register, and the model's choices were never
+  tested against an alternative. A page, a hardware report or a test ROM
+  that states the missing behaviour is what promotes such a family.
+
+A BestEffort family's boots are pinned by `external_coverage`, never by the
+byte-identity oracle files; 230's run moved there for that reason.

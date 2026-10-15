@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-034-BNROM-NINA001/Deadly Towers.nes
+rom_sha256=c3f4257a4909b3db8624eb6ce39050d006150df66d795ce35599f48cafed7692
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=783d99cc51a87bcf
+checkpoint f900 fb_fnv1a64=b28e41cba43df5c5
+checkpoint f1100 fb_fnv1a64=b28e41cba43df5c5

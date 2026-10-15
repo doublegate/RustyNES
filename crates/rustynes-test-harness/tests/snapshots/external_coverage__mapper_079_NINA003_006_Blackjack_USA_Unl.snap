@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-079-NINA003-006/Blackjack (USA) (Unl).nes
+rom_sha256=de0d08a054f06fc0a43709ee0b652aa99af06b566b53ff14ba897839dc33f65b
+frames=1141
+fb_bytes=245760
+cycles=33949787
+audio_samples=836505
+audio_fnv1a64=8f68180ef048ec8a
+checkpoint f900 fb_fnv1a64=98818a08a5d0ad62
+checkpoint f1100 fb_fnv1a64=98818a08a5d0ad62

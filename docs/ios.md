@@ -419,11 +419,16 @@ kept in Application Support (`FdsBiosStore`), and every later disk boots with it
 The pill menu gains **Flip disk** (FDS), **Next track** (NSF), **Swap screen**
 (cabinet: the device shows one cabinet screen at a time) and **Insert coin** (any
 Vs. machine). A cabinet's save state is the core's `RVSD` container; netplay,
-movies and Lua are refused on a cabinet. FDS disk writes are exposed by the bridge
-(`diskImageBytes` / `diskIsDirty`) but **not yet persisted by the app**. Settings >
-Controls also gains **Cancel opposite directions** (default on). **All of this
-Swift compiles** (the iOS workflow's Simulator build, most recently run
-37242884341 on `c0b04195`) **and none of it has run on a device**; the checks are
+movies and Lua are refused on a cabinet. **From v3.2.0 FDS disk writes persist**
+(as on Android): a dirty disk is written atomically to
+`Application Support/RustyNES/fds-saves/<identity>.fds.sav` on the battery-flush
+paths, and the next load boots it through `bootSavedDisk`, which keeps the
+pristine disk's identity. Settings > Controls also gains **Cancel opposite
+directions** (default on). **The v3.2.0 Swift compiles** (the iOS workflow's
+Simulator build, run 38644695741 on `d53644fd`, which includes the FDS
+persistence; no iOS or bridge source changed after it; the v2.9.7 Swift's
+run was 37242884341 on `c0b04195`) **and none of it has run on a device**;
+the Rust bridge and the Android half are tested. The device checks are
 rows T5-T7, T10 and T12 of `docs/mobile-v2.9.3-run-sheet.md`.
 
 **The game database's load-time corrections (v2.9.8).** The shared bridge now

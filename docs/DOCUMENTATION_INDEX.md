@@ -19,7 +19,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [ppu-2c02.md](ppu-2c02.md) | 2C02 PPU — rendering pipeline, scrolling (Loopy), sprite evaluation, registers |
 | [apu-2a03.md](apu-2a03.md) | 2A03 APU — 5 channels, frame sequencer, non-linear mixer, DMC DMA |
 | [scheduler.md](scheduler.md) | PPU-master-clock lockstep scheduler (dot-resolution timing) |
-| [mappers.md](mappers.md) | Mapper system — 191 families (51 Core / 109 Curated / 31 BestEffort tiers), banking, per-mapper IRQ, expansion audio |
+| [mappers.md](mappers.md) | Mapper system — 208 families (51 Core / 130 Curated / 27 BestEffort tiers), banking, per-mapper IRQ, expansion audio |
 | [cartridge-format.md](cartridge-format.md) | iNES / NES 2.0 / FDS parsing |
 | [architecture.md](architecture.md) | Cross-cutting design (Bus owns mutable state, one-directional crate graph, determinism contract) |
 | [frontend.md](frontend.md) | The `rustynes` desktop app (winit + wgpu + cpal + egui), audio engine, pacing, run-ahead, video filters (NES_NTSC / CRT / custom `.pal`), input devices (Power Pad, turbo, input-display overlay), per-game mirroring database, debugger devtools (trace logger, event viewer), Lua Script console |

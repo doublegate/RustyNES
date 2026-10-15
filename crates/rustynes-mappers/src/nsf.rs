@@ -767,6 +767,11 @@ impl Mapper for NsfMapper {
         0
     }
 
+    fn ppu_peek(&self, _addr: u16) -> u8 {
+        // No CHR: NSF files carry no graphics. Reads return open-bus-ish 0.
+        0
+    }
+
     fn ppu_write(&mut self, _addr: u16, _value: u8) {}
 
     fn current_mirroring(&self) -> Mirroring {

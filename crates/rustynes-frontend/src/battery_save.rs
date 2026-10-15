@@ -236,7 +236,9 @@ impl BatterySave {
     /// thread for as long as the disk took (review on #551). Report the
     /// outcome with [`Self::written`].
     pub fn due_write(&mut self, nes: &Nes, force: bool) -> Option<BatteryWrite> {
-        let bytes = self.policy.due(nes.save_data(), force)?;
+        let bytes = self
+            .policy
+            .due(nes.save_data(), nes.is_save_data_dirty(), force)?;
         Some(BatteryWrite {
             path: self.path.clone(),
             bytes,

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-066-GxROM/Dragon Power (USA).nes
+rom_sha256=e52cc421c726181a35f0cc9e8969a8aad50abd17bdc7eea59dc065990a576147
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=f23d1d66017632dc
+checkpoint f900 fb_fnv1a64=ec0e9a58e764f3e0
+checkpoint f1100 fb_fnv1a64=6a91ff4f62a9a940

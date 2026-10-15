@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-017-FFE-SuperMagicCard/Kaiketsu Yanchamaru 2 - Karakuri Land (J) [hFFE].zip
+rom_sha256=d2b410a12d2f2f5b2cffeca5d84b8b1fb8d720f69e76e8c65208da70c4c546a9
+frames=2600
+fb_bytes=245760
+cycles=77399528
+audio_samples=1907107
+audio_fnv1a64=e586393c01987e8f
+checkpoint f2600 fb_fnv1a64=02f9ee19989ccca1

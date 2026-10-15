@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/Goal! Two.nes
+rom_sha256=dd4963d103b3a4bda2a0d46b603799ba4016f650a9fecff9c01553615454d374
+frames=700
+fb_bytes=245760
+cycles=20816573
+audio_samples=512903
+audio_fnv1a64=7c223388f626439a
+checkpoint f700 fb_fnv1a64=bbd9ec6a0db4a3bb

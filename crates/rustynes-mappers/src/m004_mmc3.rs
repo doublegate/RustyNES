@@ -154,6 +154,8 @@ pub struct Mmc3 {
     // CHR mode (bit 7 of $8000): 0 = 2K@$0000 + 1K@$1000;
     //                             1 = 1K@$0000 + 2K@$1000.
     chr_mode: bool,
+    prg_offsets: [usize; 4],
+    chr_offsets: [usize; 8],
 
     // Mirroring (set via $A000 even).  Ignored on 4-screen carts.
     mirroring: Mirroring,
@@ -306,7 +308,7 @@ impl Mmc3 {
         } else {
             2 * NAMETABLE_SIZE
         };
-        Ok(Self {
+        let mut mapper = Self {
             prg_rom,
             chr,
             prg_ram: vec![0u8; prg_ram_size].into_boxed_slice(),
@@ -316,6 +318,8 @@ impl Mmc3 {
             bank_select: 0,
             prg_mode: false,
             chr_mode: false,
+            prg_offsets: [0; 4],
+            chr_offsets: [0; 8],
             mirroring: initial_mirroring,
             fixed_4screen,
             prg_ram_enabled: true,
@@ -337,7 +341,10 @@ impl Mmc3 {
             mcacc_prescaler: 0,
             #[cfg(feature = "mmc3-a12-phase-probe")]
             probe: Mmc3A12PhaseProbe::default(),
-        })
+        };
+        mapper.update_prg_offsets();
+        mapper.update_chr_offsets();
+        Ok(mapper)
     }
 
     /// Select the board wiring (the NES 2.0 submapper), v2.9.6. An MMC6 gets
@@ -428,25 +435,40 @@ impl Mmc3 {
         self.prg_ram_enabled && !self.prg_ram_protect
     }
 
-    /// Resolve a CPU PRG address (`$8000-$FFFF`) to a byte offset in
-    /// `prg_rom`.  Implements PRG modes 0 and 1.
-    fn prg_offset(&self, addr: u16) -> usize {
+    /// Bank register R`r` (`r` = 0-7) exactly as written through `$8001`,
+    /// with no CHR-inversion or 2 KiB pairing applied. For boards that use
+    /// the MMC3's registers in a different banking scheme (mapper 165 reads
+    /// R0 / R1 / R2 / R4 as 4 KiB pages, MMC2 style); v3.2.0.
+    pub(crate) const fn bank_register(&self, r: usize) -> u8 {
+        self.regs[r & 7]
+    }
+
+    /// Rebuild the four 8 KiB PRG slot offsets from R6 / R7 and the PRG
+    /// mode. Called on every write that changes them, at construction and
+    /// from `load_state`, so `prg_offset` is a table lookup.
+    ///
+    /// R6 / R7 are MASKED to the image (`& last`, the address lines the
+    /// board wires), never reduced modulo the bank count: the two differ for
+    /// a non-power-of-two image (`bank_numbers_are_masked_not_reduced_modulo`).
+    /// Every offset is in range because the constructor requires a non-empty
+    /// multiple of 8 KiB, so `prg_rom` needs no `% len` at the read.
+    fn update_prg_offsets(&mut self) {
         let total_banks = self.prg_rom.len() / PRG_BANK_8K;
         let last = total_banks.saturating_sub(1);
         let second_last = total_banks.saturating_sub(2);
-        // R6/R7 are masked to total_banks (typical sizes <= 64 banks => 6 bits).
         let r6 = (self.regs[6] as usize) & last;
         let r7 = (self.regs[7] as usize) & last;
-        let bank = match (addr & 0xE000, self.prg_mode) {
-            (0x8000, false) => r6,
-            (0x8000, true) => second_last,
-            (0xA000, _) => r7,
-            (0xC000, false) => second_last,
-            (0xC000, true) => r6,
-            (0xE000, _) => last,
-            _ => 0,
-        };
-        bank * PRG_BANK_8K + ((addr as usize) & 0x1FFF)
+        self.prg_offsets[0] = (if !self.prg_mode { r6 } else { second_last }) * PRG_BANK_8K;
+        self.prg_offsets[1] = r7 * PRG_BANK_8K;
+        self.prg_offsets[2] = (if !self.prg_mode { second_last } else { r6 }) * PRG_BANK_8K;
+        self.prg_offsets[3] = last * PRG_BANK_8K;
+    }
+
+    /// Resolve a CPU PRG address (`$8000-$FFFF`) to a byte offset in
+    /// `prg_rom`.  Implements PRG modes 0 and 1.
+    fn prg_offset(&self, addr: u16) -> usize {
+        let idx = ((addr & 0xE000) - 0x8000) >> 13;
+        self.prg_offsets[idx as usize] + ((addr as usize) & 0x1FFF)
     }
 
     /// Resolve a PPU CHR address (`$0000-$1FFF`) to the **raw** 1 KiB CHR
@@ -496,20 +518,23 @@ impl Mmc3 {
         }
     }
 
+    /// Rebuild the eight 1 KiB CHR slot offsets from R0-R5 and the CHR mode
+    /// (layout in [`Self::chr_bank_1k_for_slot`]). Masked like the PRG table:
+    /// `& (banks - 1)`, not `%`. CHR is a non-zero multiple of 1 KiB (CHR-RAM
+    /// is 8 KiB), so every offset is in range.
+    fn update_chr_offsets(&mut self) {
+        let mask = (self.chr.len() / CHR_BANK_1K).saturating_sub(1);
+        for slot in 0..8 {
+            let bank_1k = self.chr_bank_1k_for_slot(slot);
+            self.chr_offsets[slot] = (bank_1k & mask) * CHR_BANK_1K;
+        }
+    }
+
     /// Resolve a PPU CHR address (`$0000-$1FFF`) to an offset in `chr`.
     fn chr_offset(&self, addr: u16) -> usize {
         let addr = (addr & 0x1FFF) as usize;
-        let total_banks_1k = self.chr.len() / CHR_BANK_1K;
-        let mask = total_banks_1k.saturating_sub(1);
-        // Slot index in 1K units (0..8).
         let slot = addr / CHR_BANK_1K;
-        // chr_mode false (0): 2K + 2K + 1K + 1K + 1K + 1K
-        //                     R0/R0+1   R1/R1+1   R2 R3 R4 R5
-        // chr_mode true  (1): 1K + 1K + 1K + 1K + 2K + 2K
-        //                     R2 R3 R4 R5  R0/R0+1 R1/R1+1
-        let bank_1k = self.chr_bank_1k_for_slot(slot);
-        let bank = bank_1k & mask;
-        bank * CHR_BANK_1K + (addr & (CHR_BANK_1K - 1))
+        self.chr_offsets[slot] + (addr & (CHR_BANK_1K - 1))
     }
 
     /// Compute the CIRAM byte offset for a PPU address in
@@ -649,7 +674,7 @@ impl Mapper for Mmc3 {
             }
             0x8000..=0xFFFF => {
                 let off = self.prg_offset(addr);
-                self.prg_rom[off % self.prg_rom.len()]
+                self.prg_rom[off]
             }
             _ => 0,
         }
@@ -677,8 +702,16 @@ impl Mapper for Mmc3 {
                 if addr & 1 == 0 {
                     // $8000 even: bank-select.
                     self.bank_select = value & 0x07;
-                    self.prg_mode = (value & 0x40) != 0;
-                    self.chr_mode = (value & 0x80) != 0;
+                    let new_prg = (value & 0x40) != 0;
+                    let new_chr = (value & 0x80) != 0;
+                    if self.prg_mode != new_prg {
+                        self.prg_mode = new_prg;
+                        self.update_prg_offsets();
+                    }
+                    if self.chr_mode != new_chr {
+                        self.chr_mode = new_chr;
+                        self.update_chr_offsets();
+                    }
                     if self.variant == Mmc3Variant::Mmc6 {
                         // "When PRG RAM is disabled via $8000, the mapper
                         // continuously sets $A001 to $00".
@@ -689,7 +722,15 @@ impl Mapper for Mmc3 {
                     }
                 } else {
                     // $8001 odd: bank-data.
-                    self.regs[(self.bank_select & 0x07) as usize] = value;
+                    let reg = (self.bank_select & 0x07) as usize;
+                    if self.regs[reg] != value {
+                        self.regs[reg] = value;
+                        if reg >= 6 {
+                            self.update_prg_offsets();
+                        } else {
+                            self.update_chr_offsets();
+                        }
+                    }
                 }
             }
             0xA000..=0xBFFF => {
@@ -754,7 +795,19 @@ impl Mapper for Mmc3 {
         match addr {
             0x0000..=0x1FFF => {
                 let off = self.chr_offset(addr);
-                self.chr[off % self.chr.len()]
+                self.chr[off]
+            }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr[off]
             }
             0x2000..=0x3EFF => self.vram[self.nametable_offset(addr) % self.vram.len()],
             _ => 0,
@@ -1022,6 +1075,11 @@ impl Mapper for Mmc3 {
         self.bank_select = data[9];
         self.prg_mode = data[10] != 0;
         self.chr_mode = data[11] != 0;
+        // The offset tables depend on exactly these fields. Rebuild them now,
+        // before any later check can return an error, so a refused state
+        // never leaves the tables describing different registers.
+        self.update_prg_offsets();
+        self.update_chr_offsets();
         self.mirroring = match data[12] {
             0 => Mirroring::Horizontal,
             1 => Mirroring::Vertical,
@@ -1118,6 +1176,32 @@ mod tests {
             Mmc3Revision::Sharp,
         )
         .unwrap()
+    }
+
+    /// Bank numbers are MASKED to the image (`& (banks - 1)`, the address
+    /// lines a board actually wires), not reduced modulo the bank count. The
+    /// two agree for power-of-two images; for three 8 KiB PRG banks and three
+    /// 1 KiB CHR banks, register value 3 masks to bank 2 but is bank 0 modulo
+    /// 3. Regression for a v3.2.0 import whose cached offset tables used `%`.
+    /// The tables must also follow a restored state, including when
+    /// `load_state` fails after the registers were already written.
+    #[test]
+    fn bank_numbers_are_masked_not_reduced_modulo() {
+        let mut m = fresh(3, 3);
+        m.cpu_write(0x8000, 6); // select R6 (PRG at $8000 in mode 0)
+        m.cpu_write(0x8001, 3);
+        assert_eq!(m.cpu_read(0x8000), 2, "PRG: 3 & 2 = bank 2");
+        m.cpu_write(0x8000, 2); // select R2 (1 KiB CHR at $1000 in mode 0)
+        m.cpu_write(0x8001, 3);
+        assert_eq!(m.ppu_read(0x1000), 2, "CHR: 3 & 2 = bank 2");
+        assert_eq!(m.ppu_peek(0x1000), 2, "and through the peek path");
+
+        // A restore into a fresh board rebuilds the tables.
+        let state = m.save_state();
+        let mut other = fresh(3, 3);
+        other.load_state(&state).unwrap();
+        assert_eq!(other.cpu_read(0x8000), 2);
+        assert_eq!(other.ppu_read(0x1000), 2);
     }
 
     #[test]

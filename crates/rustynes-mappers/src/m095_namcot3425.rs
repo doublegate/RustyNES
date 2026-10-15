@@ -165,6 +165,15 @@ impl Mapper for Namcot3425M95 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.read_chr(addr),
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if (0x2000..=0x3EFF).contains(&addr) {

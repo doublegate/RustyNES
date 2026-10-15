@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-207-TaitoX1-005-207/Fudou Myouou Den (Japan) (En) (1.0).zip
+rom_sha256=b47c17c4d77c885bfd1552d97d9d5cc66e8bb39d6f92b208a0fc70664610d7c2
+frames=3000
+fb_bytes=245760
+cycles=89311726
+audio_samples=2200623
+audio_fnv1a64=4ab1d2804c22401a
+checkpoint f3000 fb_fnv1a64=5636d4a9162fab33

@@ -154,6 +154,20 @@ impl Mapper for Namcot3446M76 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let slot = (addr >> 11) as usize & 0x03;
+                let count = (self.chr_rom.len() / CHR_BANK_2K).max(1);
+                let bank = (self.chr_banks[slot] as usize) % count;
+                self.chr_rom[bank * CHR_BANK_2K + (addr as usize & 0x07FF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {

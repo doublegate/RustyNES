@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-157-Datach/Datach - J.League Super Top Players (Japan).nes
+rom_sha256=608a3882b8066539a23185c05052fd3f166638be5466ef49911a493cafd8bc54
+frames=1141
+fb_bytes=245760
+cycles=33949794
+audio_samples=836505
+audio_fnv1a64=efb047572f0e710f
+checkpoint f900 fb_fnv1a64=794595d57341dc74
+checkpoint f1100 fb_fnv1a64=794595d57341dc74

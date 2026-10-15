@@ -26,6 +26,236 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-14 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
+
+### Breaking
+
+- **Movies and netplay from v3.1.x are refused.** `EMULATION_EPOCH` rises
+  from 3 to 4: the mapper 290, 24C02, VRC4 IRQ, VRC2 and *Fire Hawk* fixes
+  below change what the bus sees. A v3.1.x peer or movie is refused as another emulator
+  version, naming its epoch. Save states are not affected by the epoch.
+- **v3.1.x save states of Bandai FCG games are refused** (mappers 16, 153,
+  157 and 159). Their state now carries each serial EEPROM's protocol
+  position as well as its contents, so a state taken in the middle of a
+  save-chip transaction resumes it; before, a restore left the chip idle,
+  and rewind, run-ahead and netplay rollback could diverge from a straight
+  run. Every other board's save states are unchanged.
+- **Netplay protocol 8 (`"RNE8"`).** Lost inputs are resent as one datagram
+  per run of frames instead of one per frame. A v3.1.x peer cannot read that
+  message, so its `"RNE7"` is refused as another emulator version (its epoch
+  would refuse it anyway).
+- **The `Mapper` trait requires `ppu_peek`**, a side-effect-free PPU read the
+  debugger uses on every board, with no default (a default would show a
+  board that forgot it as a blank pattern table), so an implementation
+  outside this repository must add it. Seven methods are added with defaults
+  that keep the old behaviour: `cpu_peek` (the debugger's CPU read; the FFE
+  boards override it so a peek cannot retire their trainer boot),
+  `may_unmap_prg_rom`, `is_save_data_dirty`, `clear_save_data_dirty` and
+  the Datach's `has_barcode_reader`, `scan_barcode` and
+  `barcode_scan_in_progress`.
+
+### Added
+
+- **Mapper 157, the Bandai Datach Joint ROM System, with its barcode
+  reader.** Six games boot. *Dragon Ball Z* and *SD Gundam Wars* read a
+  scanned card, entered as a 13- or 8-digit JAN/EAN code from Emulation >
+  Scan Barcode... (refused during movie recording or playback and netplay).
+  The reader's polarity, idle level and speed are not documented anywhere;
+  they were measured against the games.
+- **Six MMC3-derived families**: 114 and 182 (SuperGame / Hosenkan), 215
+  (Sugar Softec), 197, 165 (the Chinese *Fire Emblem* ports) and 116
+  (SOMARI-P, which switches between VRC2, MMC3 and MMC1). All Curated, each
+  booted from real dumps.
+- **Ten more families, each written from its NESdev page**: 6, 8 and 17 (Front
+  Fareast copier-disk games on the Super Magic Card), 158 (Tengen's RAMBO-1
+  with CHR A17 on the nametable line, *Alien Syndrome*), 172 and 173 (TXC
+  JV001 / 05-00002-010), 207 (Taito X1-005 with the same rewiring, *Fudou
+  Myouou Den*), 235 (the *Golden Game* address-latch multicarts) and 252
+  (Waixing's VRC4 clone, *San Guo Zhi*) are Curated; 230 (the 22-in-1 whose
+  RESET button switches chips) is BestEffort, because its page leaves a
+  choice the boot does not settle (ADR 0011 amendment).
+- **The golden exporter takes devices and display options**:
+  `nes_golden_export` gains `--four-score`, `--vaus` and `--genie` for the
+  MiSTer core's input gates, and `--sprite-limit-off` and `--fb-every-frame`
+  for its sprite-limit gate. A run without them writes the same artifacts and
+  manifests as before.
+- **The coverage sweep boots Famicom-only carts as a Famicom.** Ten dumps
+  listed as blank since v2.9.6 write the PPU during the front-loading NES's
+  power-on warm-up, which ignores those writes; on the Famicom model they
+  draw. The frontend still does not pick the model from the ROM: choose
+  Famicom in Settings for *Sansuu 1-3*, *Final Combat*, *Digital Dragon* and
+  the like.
+
+### Changed
+
+- **Mappers 47, 121, 154, 191 and 243 are Curated**, on local-dump evidence
+  recorded in `docs/compatibility.md` (maintainer decision D23). With the 17
+  families added in this release, the 208 families are 51 Core, 130 Curated
+  and 27 BestEffort (191 families, 51 / 109 / 31, at v3.1.0).
+- **Libretro save states are about 16 KB instead of 260 KB.** The core
+  no longer stores the 240 KiB framebuffer in a state (`retro_serialize`);
+  the next frame repaints it before anything reads it, so run-ahead, rewind
+  and RetroArch netplay behave the same and move far less data. A full-size
+  state, framebuffer included, is still accepted.
+- **New save files are owner-only on Linux and macOS.** A battery save, state,
+  config or recording that does not exist yet is created with mode `0o600`
+  rather than the umask default (usually `0o644`); a file that already exists
+  keeps its mode, so one you widened stays widened.
+
+### Dependencies
+
+- **zip 8 -> 9 (9.0.3)**, Dependabot #601. `ZipFile::name()` now returns a
+  `Result`, failing only for a name that decodes as neither UTF-8 nor CP437;
+  every ROM, HD-pack and `.bk2` lookup skips such an entry, as it already
+  skipped one it could not read. 9.0.1-9.0.3 fix reads past an entry's
+  declared size and overflows in the ZIP64 and implode paths.
+- **cc 1.7.0** (#600), **taiki-e/install-action 2.87.27** (#599), the
+  **Gradle wrapper 9.8.1** (#602; distribution and wrapper-jar SHA-256 both
+  checked against services.gradle.org) and the **Compose compiler plugin
+  2.4.21** (#603) for the Android app.
+- **rustls 0.23.45 -> 0.23.46**, which fixes four advisories published
+  during this release (RUSTSEC-2026-0346 to 0349: TLS secrets in a session
+  value's `Debug`, ECH early data, a 1 GiB Brotli certificate allocation, a
+  ServerHello key-exchange downgrade). It reaches the netplay WebSocket and
+  HTTP clients through `tungstenite` and `ureq`.
+
+### Records
+
+- **A ninth fuzz target, `movie_import`**, covers the five foreign-movie
+  importers (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`), which no target reached:
+  `movie` fuzzes only the `.rnm` decoder. Clean over 2,000,000 inputs when
+  added; CI's `fuzz` job now expects nine targets.
+- **Tools that existed only in untracked scratch are in the repositories.**
+  The release ceremony's local gate runner and squash-merge containment check
+  (`scripts/release-automation/run_gates.sh`, `branch_contained.py`), the
+  quiet-host A/B queue (`scripts/perf/quiet_ab.sh`), and in the MiSTer
+  repository the double-compile behind every "byte-identical across two clean
+  compiles" claim (`scripts/double-compile.sh`) and three gate-writing tools
+  (`tb/mutate_gate.py`, `tb/export_golden.sh`, `tb/sweep_frames.sh`). Each was
+  tested before it was committed: the containment check against a synthetic
+  squash merge, the mutation tool by a real catch and a no-op control.
+- **The three surveys the v3.1-to-v4.0 line plan was drafted from** are kept
+  verbatim in `to-dos/plans/research/`. 25 of the oracle survey's items appear
+  in no plan or ticket, and `T-SURVEY-UNTICKETED` triages them.
+
+### Performance
+
+- **The APU mixes about 2-6% faster when a cartridge adds audio, and 2-3%
+  faster without**, byte-identical, measured in two independent A/B runs
+  (`docs/performance.md`, "v3.2.0 APU"). The change came with an AI-made
+  remediation branch that also made the expansion-audio path 47% SLOWER; the
+  cause, a reshaped ring write, was bisected and left out.
+- **The rest of that branch's speed-ups, measured against the tree before it**
+  (two independent runs each, `docs/performance.md`, "v3.2.0 import"): an
+  MMC3 cartridge read is about 9% faster (its bank offsets are now cached),
+  and run-ahead on an MMC3 game about 5% faster with it. Whole-frame time,
+  PPU throughput and run-ahead on an NROM game do not change measurably. The
+  branch's own figures (PPU 3.5%, mapper reads 11-16%, MMC3 run-ahead
+  12.8%) were taken against the v3.1.0 tag, and do not hold against the
+  tree it was imported into. Two cartridge reads got
+  slower, MMC5 by about 4.7% and Sunsoft FME-7 by about 6%, although neither
+  read function changed; the cause is not established
+  (`T-PERF-MAPPER-READ-DRIFT`).
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **Two more core options, as on the desktop.** "Sprites per line" draws the
+  sprites past the eighth on a line, matching the emulator's option frame by
+  frame (on-die build only: the extra sprites' pattern fetch is a second read
+  of the on-die CHR memory, which the off-die build does not have; a gate
+  checks it stays absent there). "Load Palette" takes a `.pal` file and applies the
+  emulator's emphasis model to it.
+- **Sixteen more boards**: UN1ROM (94), Nichibutsu UNROM (180), CPROM (13), J87
+  (87), CNROM 185, GxROM (66), Jaleco JF-11/14 (140), Color Dreams (11),
+  NINA-03/06 (79), Camerica 71 (including *Fire Hawk*) and 232, mapper 34
+  (BNROM and NINA-001), Namco 108 (206), TxSROM (118), TQROM (119) and MMC1
+  SUROM (512 KiB, off-die). The NES 2.0 submapper now reaches the cartridge.
+  Each board is gated against the emulator, and for thirteen of them a
+  commercial game's frame is compared too (SUROM's off-die only;
+  `docs/rung7-mappers.md`).
+- **Three input devices**: the Four Score, the Arkanoid (Vaus) controller and
+  Game Genie cheats, gated against goldens exported with the same device.
+- **The custom palette uses 1,004 fewer combinational ALUTs** (2,390 ->
+  1,386 in synthesis), stored as three per-channel tables. Seven RTL findings from the
+  same AI audit were re-derived; one is a real cost (the nametable is in
+  registers) and is deferred, six did not hold.
+- **The oracle pin moves to v3.2.0**: all 842 golden artifacts from 188 stems
+  reproduce byte for byte from it.
+- **The co-simulation ladder: 259 passed, 0 failed, 3 expected failures
+  on-die, 260 / 0 / 5 off-die** (v3.1.0: 212 / 0 / 1 and 213 / 0 / 1), each
+  one frozen-worktree run with nothing skipped. Two commercial frames still
+  differ from the emulator's and are expected failures, unattributed: one
+  pixel of *Mississippi Satsujin Jiken* and three scanlines of *Micro
+  Machines*.
+- **New release-candidate bitstreams at fitter seed 4**, chosen from seeds 1-8
+  at build date 261014 (seeds 1, 3, 5, 6 and 7 do not close off-die), each
+  compiled twice to the same bytes: on-die md5
+  `e24820de2e302d3f6912524b3c97a2be` (+0.213 / +0.079 ns), off-die
+  `c33ae2b14e5b8e07a68b4335c728ca03` (+0.038 / +0.080 ns, an internal path;
+  the SDRAM read capture has +0.453 / +1.180 ns, assuming zero board delay).
+- **Known issue (off-die build):** a `$2007` read of CHR-RAM soon after a
+  write returns `$00` in simulation. It predates this release, is an expected
+  failure in the off-die ladder, and the on-die build is right.
+- **No hardware has run any bitstream.**
+
+### Fixed
+
+- **FDS disk games keep their saves on Android and iOS.** The game's writes to
+  its disk are saved when the app is backgrounded, a game is switched or closed,
+  and the saved disk boots next time under the original game's identity, so its
+  save states, RetroAchievements progress and settings are still found. Before,
+  a disk game's own save was lost on close. On Android the disk is also checked
+  once a second during play, so a process killed in the background keeps the
+  last second's writes and a failed write is retried, and a game switch can no
+  longer write one game's disk into another game's save or an older copy of the
+  same disk over a newer one; on both, a disk write landing while the save is
+  being written is no longer lost, and on iOS reopening the running disk game no
+  longer boots the save from before its newest writes. (The iOS half compiles
+  in the iOS workflow's Simulator build; neither half has run on a device.)
+- **The Android screen stays on during play** and sleeps again when paused or
+  closed; with a gamepad it used to dim and sleep mid-game.
+- **Mapper 290 (*Asder 20-in-1*) boots.** Its 32 KiB PRG mode read the
+  upper half through the 16 KiB window, so the reset vector came from the
+  wrong bank.
+- **A 24C02 serial EEPROM keeps its word address across a START** (mappers
+  16 and 157), so a random read returns the byte asked for instead of byte
+  `$00`. On the Datach this was the difference between booting and
+  reformatting the save at every power-on.
+- **The VRC4's IRQ runs in the mode the game asks for** (mappers 21, 23 and
+  25). Bit 2 of its IRQ control register was read inverted: nesdev's "VRC IRQ"
+  gives 1 = cycle mode, 0 = scanline mode, as the VRC6 and VRC7 already read
+  it. A game that asked for a raster split got a counter about 114 times too
+  fast, and one that asked for cycle mode got a scanline counter. Found by
+  *San Guo Zhi* (mapper 252), whose text box drew with the map's tiles.
+- **VRC2 mirroring has two settings, not four.** A VRC2 ignores bit 1 of its
+  mirroring register (nesdev "VRC2 and VRC4"); the one-screen settings are
+  VRC4-only, and were decoded on the VRC2 too.
+- **Mappers 23 and 25 with NES 2.0 submapper 3 are the VRC2** (VRC2b,
+  VRC2c), built without the VRC4's IRQ and one-screen mirroring. Every 23 / 25
+  image was built as a VRC4 before.
+- ***Fire Hawk* gets its single-screen mirroring from an iNES 1.0 header.**
+  Mapper 71 with submapper 0 switches to the BF9097's `$9000` single-screen
+  register at the first write there, as nesdev's mapper 71 page recommends
+  without a submapper. Before, only an NES 2.0 submapper 1 header enabled it,
+  and the `$9000` write selected a PRG bank instead.
+- **A peer timeout no longer runs a stray frame.** The netplay tick that ends
+  a session on a silent peer told the frontend the session was inactive, so it
+  ran one single-player frame on the failure tick.
+- **A Datach barcode scan starts a fresh rewind and clip history**, as a Reset
+  does: a movie does not record the scan, so a clip spanning it could not
+  replay. The barcode window also closes when a game without a reader loads.
+- **New save files are mode `0o600` exactly**, also under a umask that masks
+  owner bits (they were created `0o600 & ~umask`).
+- **Save-state loads refuse a corrupt blob before changing anything** on the
+  Datach barcode reader (an impossible scan length), the FFE Super Magic Card
+  (an out-of-range FDS IRQ phase), mapper 116 (an MMC1 part refused after the
+  MMC3 part had been restored) and mappers 16/153/157/159 (an unknown
+  mirroring byte). A TXC 172 image with a four-screen header keeps its
+  mirroring across a save and load; it came back horizontal.
+- **Mapper 252 refuses an image without CHR-ROM** (the board is CHR-ROM with
+  two CHR-RAM pages), and the FFE card refuses a trainer shorter than 512
+  bytes instead of panicking.
+
 ## [3.1.0] - 2026-10-08 - "Bellwether" (the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it)
 
 The first release of the v3.1 to v4.0 line. AccuracyCoin is re-synced to its

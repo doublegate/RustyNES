@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-215-SugarSoftec/5-in-1 (SPC005) [p1][!].zip
+rom_sha256=5b21b42aa6db10ad7e340d3755c568c39934a6650568f1c683317dc0b98d1f3c
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=062ecb35153f9e51
+checkpoint f900 fb_fnv1a64=9247f42dc40ac1e5
+checkpoint f1100 fb_fnv1a64=9247f42dc40ac1e5

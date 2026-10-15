@@ -19,7 +19,7 @@ documented in `docs/cartridge-format.md`.
 
 ## Supported mappers
 
-iNES mapper numbers handled (**191 mapper families**; the table below lists the
+iNES mapper numbers handled (**208 mapper families**; the table below lists the
 most common; the most popular set covers well over 95% of the licensed
 library). Mappers are tracked in three accuracy tiers — Core, Curated, and
 BestEffort — so the breadth count is honest about which families are

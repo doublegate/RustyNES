@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-268-BMC-Coolboy/Meng Huan - Xiang Shuai Chuan Qi Zhi Xue Hai Piao Ling (Asia) (Unl).zip
+rom_sha256=22657034b599fe44000259bdd2cb590dede9ec665cd16f34497be1ae57f2e3d4
+frames=1141
+fb_bytes=245760
+cycles=40428961
+audio_samples=996152
+audio_fnv1a64=0d3758b0913e0249
+checkpoint f900 fb_fnv1a64=0e474a0a51a907b2
+checkpoint f1100 fb_fnv1a64=f0c204fc999ac9a6

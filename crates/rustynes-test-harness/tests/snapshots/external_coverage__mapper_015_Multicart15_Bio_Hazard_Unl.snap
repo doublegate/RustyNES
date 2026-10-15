@@ -2,12 +2,13 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
+console: Famicom (FAMICOM_WIRED)
 rom=mapper-015-Multicart15/Bio Hazard (Unl) [!].nes
 rom_sha256=e35cd7587cc1e03226b861a687a6f35994cb3ff839caa67ab1a83331966397d7
 frames=1141
 fb_bytes=245760
-cycles=33949963
-audio_samples=836509
-audio_fnv1a64=4767b573c7c7a344
-checkpoint f900 fb_fnv1a64=89ee4c476c97a325
-checkpoint f1100 fb_fnv1a64=89ee4c476c97a325
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=d18078d274dd47e8
+checkpoint f900 fb_fnv1a64=d0087fddbf46d25d
+checkpoint f1100 fb_fnv1a64=d3f67e489ab8a1f4

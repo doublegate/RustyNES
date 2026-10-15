@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-013-CPROM/Videomation (USA).nes
+rom_sha256=3b33fe1b73d99b1231b1b384ded66504905e3169876648e06bf557edf3ebe7bd
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=fa7b6130a1ff832d
+checkpoint f900 fb_fnv1a64=0ef97b8869b4f2a2
+checkpoint f1100 fb_fnv1a64=0ef97b8869b4f2a2

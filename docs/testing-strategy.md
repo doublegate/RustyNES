@@ -180,7 +180,7 @@ commit is the missing piece that would automate them.
 
 ## Layer 5 — fuzz testing
 
-Eight `cargo-fuzz` harnesses under `fuzz/fuzz_targets/` (a standalone crate,
+Nine `cargo-fuzz` harnesses under `fuzz/fuzz_targets/` (a standalone crate,
 nightly-only because libFuzzer needs it):
 
 - **`cartridge_parser`**: arbitrary `&[u8]` → `parse()`. Must not panic; errors typed.
@@ -192,8 +192,12 @@ nightly-only because libFuzzer needs it):
   network input).
 - **`save_state`** / **`movie`**: the `.rns` and `.rnm` deserialisers (untrusted
   file input).
+- **`movie_import`** (v3.2.0): the five foreign-movie importers (`.fm2`, `.bk2`,
+  `.fcm`, `.fmv`, `.vmv`), selected by the first input byte. Promoted from a
+  v2.9.9 probe that pushed 200,000 mutated inputs through them; clean over 2,000,000
+  inputs when added.
 
-**In CI since v2.9.4** (the `fuzz` job in `ci.yml`): all eight are built and each
+**In CI since v2.9.4** (the `fuzz` job in `ci.yml`): all nine are built and each
 runs 20,000 inputs from seed 1, so a failure is reproducible, and a crash input is
 uploaded as an artifact. Before v2.9.4 no workflow built them. Locally:
 `cd fuzz && cargo +nightly fuzz run <target> -O -- -runs=20000 -seed=1`. Under a

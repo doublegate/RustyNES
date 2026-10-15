@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-006-FFE-MagicCard/Wai Wai World (J) [hFFE].zip
+rom_sha256=64b80dc565962812d842ef7181b7f2cbe8da1519b4d3abfcb11e11761b636a81
+frames=3800
+fb_bytes=245760
+cycles=113136135
+audio_samples=2787656
+audio_fnv1a64=c9a9e85be51a8ba4
+checkpoint f3800 fb_fnv1a64=e67690e53bef92bf

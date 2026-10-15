@@ -167,6 +167,25 @@ impl Mapper for CnRom185 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_enabled {
+                    let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                    let bank = (self.chr_bank as usize) % count;
+                    self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+                } else {
+                    // CHR disabled by protection: the open bus reads $FF (D0 is
+                    // held high by a pull-up, which $FF already satisfies).
+                    0xFF
+                }
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {

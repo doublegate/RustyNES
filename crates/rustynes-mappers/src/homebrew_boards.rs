@@ -176,6 +176,15 @@ impl Mapper for Inl31 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -356,6 +365,15 @@ impl Mapper for MagicFloor218 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.ciram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.ciram[self.nt_offset(addr)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -504,6 +522,15 @@ impl Mapper for Cufrom29 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -595,6 +622,7 @@ pub struct Gtrom111 {
     prg_bank: u8,
     chr_bank: u8,
     nt_bank: u8,
+    dirty: bool,
 }
 
 /// GTROM save-state layout version. v2 (v2.9.6) grew the nametable pages to
@@ -625,6 +653,7 @@ impl Gtrom111 {
             prg_bank: 0,
             chr_bank: 0,
             nt_bank: 0,
+            dirty: false,
         })
     }
 
@@ -669,11 +698,26 @@ impl Mapper for Gtrom111 {
     }
 
     fn save_data_mut(&mut self) -> &mut [u8] {
+        // Every path that can change the save data marks it dirty, not just a
+        // flash program write: the battery writer skips its comparison while
+        // this board reports clean (`BatteryPolicy::differs`), so a missed
+        // path is a lost save. A spurious `true` only costs one comparison.
+        self.dirty = true;
         &mut self.flash
     }
 
     fn clear_save_data(&mut self) {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         self.flash.copy_from_slice(&self.original);
+    }
+
+    fn is_save_data_dirty(&self) -> Option<bool> {
+        Some(self.dirty)
+    }
+
+    fn clear_save_data_dirty(&mut self) {
+        self.dirty = false;
     }
 
     /// The register is write-only and nothing else lives below `$8000`.
@@ -701,11 +745,22 @@ impl Mapper for Gtrom111 {
             self.update_register(value);
         } else if addr >= 0x8000 {
             let a = self.chip_addr(addr);
-            self.chip.write(&mut self.flash, a, value);
+            if self.chip.write(&mut self.flash, a, value) {
+                self.dirty = true;
+            }
         }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.nt_ram[self.nt_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
@@ -786,6 +841,8 @@ impl Mapper for Gtrom111 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         let fixed = 7 + self.chr_ram.len() + self.nt_ram.len();
         if data.len() < fixed {
             return Err(MapperError::WrongLength {
@@ -1021,6 +1078,15 @@ impl Mapper for Action53M28 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -1193,6 +1259,7 @@ pub struct Unrom512M30 {
     /// True when the banking latch responds only to $C000-$FFFF and
     /// $8000-$BFFF is the flash window (submapper 0 w/ battery, or 1/3/4).
     flash_window: bool,
+    dirty: bool,
 }
 
 impl Unrom512M30 {
@@ -1273,6 +1340,7 @@ impl Unrom512M30 {
             nametable,
             bus_conflicts,
             flash_window,
+            dirty: false,
         })
     }
 
@@ -1357,6 +1425,11 @@ impl Mapper for Unrom512M30 {
     }
 
     fn save_data_mut(&mut self) -> &mut [u8] {
+        // Every path that can change the save data marks it dirty, not just a
+        // flash program write: the battery writer skips its comparison while
+        // this board reports clean (`BatteryPolicy::differs`), so a missed
+        // path is a lost save. A spurious `true` only costs one comparison.
+        self.dirty = true;
         if self.flashable() {
             &mut self.prg_rom
         } else {
@@ -1365,9 +1438,23 @@ impl Mapper for Unrom512M30 {
     }
 
     fn clear_save_data(&mut self) {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         if self.flashable() {
             self.prg_rom.copy_from_slice(&self.original);
         }
+    }
+
+    fn is_save_data_dirty(&self) -> Option<bool> {
+        if self.flashable() {
+            Some(self.dirty)
+        } else {
+            None
+        }
+    }
+
+    fn clear_save_data_dirty(&mut self) {
+        self.dirty = false;
     }
 
     /// Nothing drives `$4020-$7FFF` on any wiring.
@@ -1404,7 +1491,9 @@ impl Mapper for Unrom512M30 {
                 self.write_latch(addr, value);
             } else if self.flashable() {
                 let a = self.prg_chip_addr(self.prg_bank as usize, addr);
-                self.chip.write(&mut self.prg_rom, a, value);
+                if self.chip.write(&mut self.prg_rom, a, value) {
+                    self.dirty = true;
+                }
             }
         } else {
             // Submapper 0 w/o battery or submapper 2: the latch responds to the
@@ -1414,6 +1503,15 @@ impl Mapper for Unrom512M30 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr[self.chr_offset(addr)],
@@ -1491,6 +1589,8 @@ impl Mapper for Unrom512M30 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // Marks the save data dirty; see `save_data_mut`.
+        self.dirty = true;
         let chr_len = if self.chr_is_rom { 0 } else { self.chr.len() };
         let fixed = 6 + self.vram.len() + chr_len;
         if data.len() < fixed {
@@ -2095,6 +2195,36 @@ mod tests {
         }
         m.cpu_write(0xC000, 5);
         assert_eq!(m.cpu_read(0x8123), 0xFF);
+    }
+
+    /// v3.2.0: the two flash boards report a dirty flag, and while it reads
+    /// `Some(false)` the battery writer skips its comparison, so EVERY path
+    /// that can change the save data must set it -- not only a program
+    /// write. A restored state, a power-on clear and a direct
+    /// `save_data_mut` each change the flash without a program write.
+    #[test]
+    fn flash_boards_mark_every_save_data_change_dirty() {
+        fn check(m: &mut dyn Mapper, name: &str) {
+            assert_eq!(m.is_save_data_dirty(), Some(false), "{name}: fresh");
+            let state = m.save_state();
+            m.load_state(&state).unwrap();
+            assert_eq!(m.is_save_data_dirty(), Some(true), "{name}: load_state");
+            m.clear_save_data_dirty();
+            m.clear_save_data();
+            assert_eq!(
+                m.is_save_data_dirty(),
+                Some(true),
+                "{name}: clear_save_data"
+            );
+            m.clear_save_data_dirty();
+            let _ = m.save_data_mut();
+            assert_eq!(m.is_save_data_dirty(), Some(true), "{name}: save_data_mut");
+        }
+        check(&mut Gtrom111::new(synth_prg_32k(8), &[]).unwrap(), "GTROM");
+        check(
+            &mut Unrom512M30::new(synth_prg_16k(16), &[], false, true, 1, false).unwrap(),
+            "UNROM 512 (flashable)",
+        );
     }
 
     /// The reset a power-on movie performs (`power_on_for_movie` ->

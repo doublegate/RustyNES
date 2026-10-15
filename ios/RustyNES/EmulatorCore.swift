@@ -500,6 +500,17 @@ final class EmulatorCore {
         controller.setDiskSide(side: UInt32(next))
     }
 
+    /// v3.2.0 -- the FDS disk save (see `AppModel.fdsSaveUrl`). The game writes
+    /// to the disk itself; the host saves the whole image when it is dirty and
+    /// boots it next session through `bootSavedDisk`, which keeps the pristine
+    /// disk's identity. All four are no-ops / empty for a cartridge or NSF.
+    var diskIsDirty: Bool { controller.diskIsDirty() }
+    func diskImageBytes() -> Data { controller.diskImageBytes() }
+    func clearDiskDirty() { controller.clearDiskDirty() }
+    /// - Throws: `MobileError` if this is not a disk or `saved` does not parse;
+    ///   the pristine disk then stays loaded.
+    func bootSavedDisk(_ saved: Data) throws { try controller.bootSavedDisk(saved: saved) }
+
     /// NSF songs (0 for a cartridge / disk) and the playing one (0-based).
     var nsfSongCount: Int { Int(controller.nsfSongCount()) }
     var nsfCurrentSong: Int { Int(controller.nsfCurrentSong()) }

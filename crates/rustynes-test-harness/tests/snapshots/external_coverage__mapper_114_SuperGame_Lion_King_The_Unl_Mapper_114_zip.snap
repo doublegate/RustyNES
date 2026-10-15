@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-114-SuperGame/Lion King, The (Unl) (Mapper 114).zip
+rom_sha256=6d6d63ddf19804333dbd0c5845d6efe475dbefc4e606096bd516341aa18fcb99
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=aaf7fd6030a7de55
+checkpoint f900 fb_fnv1a64=d255e8f3257a78e3
+checkpoint f1100 fb_fnv1a64=d5cd9dd1b3a6c944

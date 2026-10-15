@@ -219,7 +219,7 @@ fn t9552_scramble<const N: usize>(
 /// power-of-two `count` it is exactly `bank % count`. No allocation, a few
 /// iterations at most (one per set bit of `count`): this runs on every PRG and
 /// CHR-ROM access.
-fn mirror_bank(bank: usize, count: usize) -> usize {
+pub(crate) fn mirror_bank(bank: usize, count: usize) -> usize {
     if count == 0 {
         return 0;
     }
@@ -758,6 +758,15 @@ impl Mapper for Mmc3Board {
             self.read_chr(addr)
         } else {
             self.core.ppu_read(addr)
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        if addr < 0x2000 {
+            self.read_chr(addr)
+        } else {
+            self.core.ppu_peek(addr)
         }
     }
 

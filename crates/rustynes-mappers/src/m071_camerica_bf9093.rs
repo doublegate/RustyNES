@@ -42,7 +42,13 @@ pub struct Camerica {
     vram: Box<[u8]>,
     prg_bank: u8,
     mirroring: Mirroring,
+    /// The `$9000` single-screen register is live (Fire Hawk's BF9097).
+    /// Saved state: detection can turn it on mid-run.
     has_single_screen: bool,
+    /// Turn the register on at the first `$9000-$9FFF` write (submapper 0;
+    /// see [`Self::with_single_screen_detection`]). Configuration from the
+    /// header, not state, so it is not saved.
+    detect_single_screen: bool,
 }
 
 impl Camerica {
@@ -69,7 +75,25 @@ impl Camerica {
             prg_bank: 0,
             mirroring,
             has_single_screen,
+            detect_single_screen: false,
         })
+    }
+
+    /// Enable Fire Hawk detection: the board keeps its header mirroring
+    /// until the first write to `$9000-$9FFF`, then behaves as the BF9097,
+    /// whose register there selects single-screen mirroring.
+    ///
+    /// nesdev "INES Mapper 071": only Fire Hawk has the register, it writes
+    /// it only at `$9000`, and "for compatibility without using a submapper"
+    /// a board starts with fixed mirroring and applies single-screen once
+    /// `$9000-$9FFF` is written. NES 2.0 submapper 1 names Fire Hawk
+    /// outright (the `has_single_screen` constructor flag). Used for
+    /// submapper 0 only (maintainer ruling, 2026-10-13) -- which covers every
+    /// iNES 1.0 image, where the submapper reads as 0. Added in v3.2.0.
+    #[must_use]
+    pub const fn with_single_screen_detection(mut self, on: bool) -> Self {
+        self.detect_single_screen = on;
+        self
     }
 }
 
@@ -97,7 +121,8 @@ impl Mapper for Camerica {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
-            0x9000..=0x9FFF if self.has_single_screen => {
+            0x9000..=0x9FFF if self.has_single_screen || self.detect_single_screen => {
+                self.has_single_screen = true;
                 self.mirroring = if value & 0x10 == 0 {
                     Mirroring::SingleScreenA
                 } else {
@@ -110,6 +135,15 @@ impl Mapper for Camerica {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize % self.chr_ram.len()],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize % self.chr_ram.len()],
@@ -202,5 +236,75 @@ mod tests {
         // Bank 5 (16K bank index, but we have 16K chunks — total_16k = 16).
         // bank 5 at 16K offset. Let's just check it swaps from 0.
         assert_ne!(m.cpu_read(0x8000), 0);
+    }
+
+    /// nesdev "INES Mapper 071" / "NES 2.0 submappers" (071): only Fire Hawk's
+    /// BF9097 has the `$9000` single-screen register, NES 2.0 submapper 1
+    /// names it, and "for compatibility without using a submapper" a board
+    /// starts with its header mirroring and switches to single-screen once
+    /// `$9000-$9FFF` is written. Maintainer ruling (2026-10-13): that
+    /// detection applies on submapper 0 only.
+    #[test]
+    fn submapper_0_detects_fire_hawk_single_screen_on_a_9000_write() {
+        let mut m = Camerica::new(synth(16), Mirroring::Vertical, false)
+            .unwrap()
+            .with_single_screen_detection(true);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical, "header first");
+        m.cpu_write(0x9000, 0x10);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        m.cpu_write(0x9000, 0x00);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+        assert_eq!(m.cpu_read(0x8000), 0, "a $9000 write is not a bank select");
+        // The detected mode survives a state round trip.
+        let state = m.save_state();
+        let mut other = Camerica::new(synth(16), Mirroring::Vertical, false)
+            .unwrap()
+            .with_single_screen_detection(true);
+        other.load_state(&state).unwrap();
+        assert_eq!(other.current_mirroring(), Mirroring::SingleScreenA);
+    }
+
+    /// Submapper 1 (Fire Hawk) has the register from power-on.
+    #[test]
+    fn submapper_1_has_the_register_from_power_on() {
+        let mut m = Camerica::new(synth(16), Mirroring::Vertical, true).unwrap();
+        m.cpu_write(0x9000, 0x10);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+    }
+
+    /// The header wiring in `parse`: an iNES 1.0 image (submapper 0) detects,
+    /// NES 2.0 submapper 1 has the register from power-on, and NES 2.0
+    /// submapper 2 (no meaning assigned) keeps its header mirroring.
+    #[test]
+    fn parse_wires_detection_from_the_submapper() {
+        fn rom(nes2_sub: Option<u8>) -> Vec<u8> {
+            let mut r = vec![0u8; 16 + 128 * 1024];
+            r[..4].copy_from_slice(b"NES\x1A");
+            r[4] = 8; // 128 KiB PRG, CHR-RAM
+            r[6] = 0x71; // mapper 71 low nibble, vertical
+            r[7] = 0x40; // mapper 71 high nibble
+            if let Some(sub) = nes2_sub {
+                r[7] |= 0x08;
+                r[8] = sub << 4;
+            }
+            r
+        }
+        for (sub, expect) in [
+            (None, Mirroring::SingleScreenB),
+            (Some(1), Mirroring::SingleScreenB),
+            (Some(2), Mirroring::Vertical),
+        ] {
+            let (_cart, mut m) = crate::parse(&rom(sub)).expect("mapper 71 parses");
+            m.cpu_write(0x9000, 0x10);
+            assert_eq!(m.current_mirroring(), expect, "submapper {sub:?}");
+        }
+    }
+
+    /// Any other submapper keeps its header mirroring: no detection.
+    #[test]
+    fn without_detection_a_9000_write_keeps_the_header_mirroring() {
+        let mut m = Camerica::new(synth(16), Mirroring::Vertical, false).unwrap();
+        m.cpu_write(0x9000, 0x10);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
     }
 }

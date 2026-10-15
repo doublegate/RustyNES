@@ -305,14 +305,14 @@ Sorted by number of commercial titles using each mapper.
 | 19 | — | Namco 163 | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.2) | Mappy-Land, King of Kings, Final Lap, Rolling Thunder, Megami Tensei II.  1-8 wavetable channels playing 4-bit wavetables from 128 B mapper-internal sound RAM.  Address-port at `$F800-$FFFF` (bit 7 = auto-increment, bits 6-0 = 7-bit RAM address) + data-port at `$4800-$4FFF`; per-channel registers at the top of internal RAM (channel 8 at `$78-$7F`, channel 1 at `$40-$47`); 18-bit frequency + 24-bit phase + 6-bit wave-length + nibble-addressed wave start address + 4-bit volume per channel; `$E000` bit 6 = audio-disable.  Gated behind the `mapper-audio` cargo feature. Nametables and CIRAM-as-CHR (v2.7.2, `nesdev_wiki/INES_Mapper_019.xhtml`): `$C000/$C800/$D000/$D800` select each nametable quadrant (`< $E0` a read-only 1 KiB CHR-ROM page, `>= $E0` CIRAM A/B by the low bit), powering on as the header's layout; CHR values `>= $E0` map CIRAM as CHR-RAM unless `$E800` bit 6 (`$0000-$0FFF`) or bit 7 (`$1000-$1FFF`) disables it. Save state v3 carries the `$E800` bits; an older blob loads as both halves disabled, the pre-v2.7.2 behaviour. IRQ: a 15-bit up-counter at `$5000` (low) / `$5800` (`EHHH HHHH`, bit 7 = enable), clocked every CPU cycle while enabled, firing and stopping at `$7FFF`; a `$5800` write with bit 7 clear disables it, and the enable reads back in bit 7 (v2.9.8 -- before then every `$5800` write enabled the counter, which broke *Megami Tensei II*'s raster bands). |
 | 21 | 1, 2 | VRC4a / VRC4c | 4 | — | CPU | landed (Phase 4 / S3) | Konami; Wai Wai World. |
 | 22 | — | VRC2a | 4 | — | — | landed (Phase 4 / S3) | Konami. |
-| 23 | 1-3 | VRC4e / VRC4f / VRC2b | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
+| 23 | 1-3 | VRC4e / VRC4f / VRC2b | 4 | — | CPU | landed (Phase 4 / S3) | Konami. Submapper 3 (VRC2b) is built as the VRC2 from v3.2.0: no IRQ, and H/V mirroring only (the VRC2 ignores bit 1). |
 | 24 | — | VRC6a | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Akumajou Densetsu.  3 extra audio channels (2 pulse + 1 sawtooth) gated behind the `mapper-audio` cargo feature.  **Power-on CHR = identity (ASSUMPTION, v2.9.8):** the eight 1 KiB CHR registers (`$D000-$E003`) start at 0-7. NESdev documents no VRC6 power-on state; *Pulsewave Invite* (PD) never writes them and draws its postcard only under this layout (all-zero, the old value, scattered its tiles). The other ten staged mapper 24/26 dumps boot to byte-identical frames either way. Power-on only: `Mapper::reset` keeps the registers, as a soft reset does on almost every board. PRG registers still start at 0 (no documentation or evidence for another value). Applies to mapper 26 as well. |
-| 25 | 1-3 | VRC4b / VRC4d / VRC2c | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
+| 25 | 1-3 | VRC4b / VRC4d / VRC2c | 4 | — | CPU | landed (Phase 4 / S3) | Konami. Submapper 3 (VRC2c) is built as the VRC2 from v3.2.0, as for mapper 23. |
 | 26 | — | VRC6b | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2) | Madara, Esper Dream 2.  Same channels as VRC6a; A0/A1 swap.  Same identity power-on CHR assumption as mapper 24. |
 | 34 | 0-2 | BNROM / NINA-001 | 4 | — | — | landed (Phase 4 / S2) | Submapper 1 selects NINA-001. |
 | 66 | — | GxROM | 2 | — | — | landed (Phase 2) | Bus conflict. |
 | 69 | — | Sunsoft FME-7 | 4 | yes (5B, landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.1) | Gimmick!  Sunsoft 5B = YM2149F clone: 3 squares + 32-step envelope generator + 17-bit LFSR noise.  Two-write protocol via `$C000-$DFFF` (address latch) and `$E000-$FFFF` (data); audio gated behind the `mapper-audio` cargo feature. |
-| 71 | — | Camerica BF9093 | 4 | — | — | landed (Phase 4 / S2) | Codemasters titles. |
+| 71 | 0, 1 | Camerica BF9093 / BF9097 | 4 | — | — | landed (Phase 4 / S2) | Codemasters titles. Submapper 1 (*Fire Hawk*, BF9097) has the `$9000` single-screen register from power-on; from v3.2.0 submapper 0 (every iNES 1.0 image) keeps its header mirroring until the first `$9000-$9FFF` write, then switches to it, per the NESdev page's compatibility advice (only *Fire Hawk* writes there). Other submappers ignore it. |
 | 75 | — | VRC1 | 4 | — | — | landed (Phase 4 / S2) | Konami. |
 | 85 | — | VRC7 | 5 | yes (FM, landed) | CPU | banking+IRQ+**OPLL FM audio landed** | Lagrange Point (JP). Banking + CPU-cycle IRQ identical to VRC6's. OPLL FM via the clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT; ADR-0006 supersedes ADR-0004). |
 
@@ -323,7 +323,7 @@ boot-smoke (no redistributable behavioral fixtures exist for these boards).
 
 | iNES | Submapper | Name | Audio | IRQ | Notes |
 |------|-----------|------|-------|-----|-------|
-| 16 / 159 | 0,4,5 | Bandai FCG | — | CPU | DBZ, Famicom Jump II, Datach. +minimal I2C EEPROM (24C02/24C01). |
+| 16 / 159 | 0,4,5 | Bandai FCG | — | CPU | DBZ, Famicom Jump II. +minimal I2C EEPROM (24C02/24C01). The Datach is mapper 157 (v3.2.0, below). |
 | 18 | — | Jaleco SS88006 | — (ADPCM decoded-not-emulated) | CPU | Goemon Gaiden, Doropie. Nibble-paired banking; selectable-width IRQ. |
 | 64 | — | Tengen RAMBO-1 | — | A12 + CPU | Klax, Skull & Crossbones. Dual-mode IRQ (reuses MMC3 A12 filter). The zero test follows a reload as well as a decrement, so a latch of 0 asserts on every clock (v2.9.8; *Skull & Crossbones* depends on it). The reload "+1 kick" and the IRQ delay are not modelled. |
 | 65 | — | Irem H3001 | — | CPU | Daiku no Gen-san, Spartan X 2. 16-bit reload-latch down-counter. |
@@ -838,6 +838,159 @@ path), were all CAUGHT by the unit tests or `roster_boards.rs`. Two needed a new
 test first: the bus's floating-read call, which no mapper-level test can reach,
 and the PPU's unfolded `$3xxx` path. The record is in the v2.9.6 plan.
 
+### Mapper 157 — Bandai Datach Joint ROM System (v3.2.0)
+
+Written from `nesdev_wiki/INES_Mapper_157.xhtml` and the pages it links
+(`Bandai_FCG_board`, `Bandai_Datach_pinout`, `INES_Mapper_016`). No other
+emulator's source was read; the page's link to FCEUX's barcode code was
+deliberately not followed. Curated (D23, `docs/compatibility.md`).
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 157 | — | Datach main unit + LZ93D50 game cartridge (`INES_Mapper_157`) | Curated | LZ93D50 (latched 16-bit M2) | A `FcgVariant::Datach` in `m016_bandai_fcg.rs`, built by `BandaiFcg::new_datach`, outside the file's derived EEPROM region except for one opt-in flag (below). Registers mask `$800F` in `$8000-$FFFF` only. `$8008` PRG bank at `$8000` (last bank fixed at `$C000`), `$8009` mirroring, `$800A-$800C` IRQ: as mapper 16 submapper 5. 8 KiB of unbanked CHR-RAM; no CHR banking. `$8000-$8003` bit 3 is the external X24C01's SCL (CHR A13 OUT); `$8004-$8007` do nothing (PA12/PA13 grounded). `$800D` bit 5 is the internal 24C02's SCL, bit 6 both chips' SDA. `$6000-$7FFF` reads: bit 4 the two EEPROMs' data out ANDed, bit 3 the barcode reader. |
+
+**The two EEPROMs.** The main unit's 256-byte 24C02 is always present and is
+the battery save (`sram()`, 256 bytes). The game cartridge's 128-byte X24C01
+exists only when the NES 2.0 header declares PRG-NVRAM (byte 10 `$10`, *Battle
+Rush*); it is reached through the existing X24C01 state machine, on its own
+clock. It is held in save states but **not** in the battery file: the page
+asks for each EEPROM in its own file, and `Mapper::sram` exposes one slice.
+*Battle Rush*'s cartridge-side save is therefore lost between sessions (a
+known gap). The main unit's EEPROM is likewise saved per game, not shared
+between Datach games as the hardware shares it.
+
+**The 24C02 random read (`keeps_word_address`).** A 24C02 random read is a
+dummy write of the word address, a repeated START, and a read-mode device
+select; the read starts at the address just written. The existing model
+cleared the address on every START, so every random read began at `$00`.
+*Ultraman Club* reads its file table that way: with the address cleared it
+reformatted the EEPROM at every boot and stopped on "no free block"; *Dragon
+Ball Z* and *SD Gundam Wars* listed garbage save files. Mapper 157's 24C02
+keeps the address across a START, written from that protocol description;
+with it all three reach their titles and *SD Gundam Wars* lists four empty
+files. Keeping the address is a property of the 24C02, so v3.2.0 applies it to
+every board that carries one: mapper 16's LZ93D50 + 24C02 too
+(`m016_24c02_random_read_starts_at_the_written_address`, which read `$FF`
+from the cleared address before). No `external_coverage` baseline of the six
+staged mapper-16 dumps, nor of 157 or 159, moved; it falls under v3.2.0's
+`EMULATION_EPOCH` 4 all the same. The X24C01 (mapper 159, and the Datach's
+external chip) is unchanged: it takes its word address after every START, so
+clearing it there is unobservable.
+
+**Power-on EEPROM contents.** `$FF` throughout. Every game detects that as
+unformatted and formats it on first boot (*Ultraman Club* writes `BA` then
+its tables, *Dragon Ball Z* `BA` and `BB`).
+
+**The barcode reader** (`crates/rustynes-mappers/src/datach_barcode.rs`). The
+page says only that bit 3 returns "a sequence of light and dark periods" as a
+card is swiped. The core takes a 13- or 8-digit JAN / EAN code
+(`Nes::scan_barcode`, validated at the boundary, wrong check digit included,
+as `BarcodeScanError::Malformed`), draws its symbol from the published
+EAN-13 / EAN-8 tables (95 / 67 modules), and presents it on bit 3 one module
+per 1,000 CPU cycles, between 128 light modules of card margin on each side.
+Bit 3 reads 1 over light and 0 over a bar and when no card is passing. The
+polarity, the idle level, the module time and the margin are not documented
+anywhere found; they were measured black-box against the games:
+
+| Choice | Measurement |
+|---|---|
+| light = 1, bar = 0 | With the opposite polarity no game reacted to any code at any speed. |
+| idle = 0 (dark) | Idle-light left *Battle Rush*'s title showing one of its three menu items and ignoring A. |
+| 1,000 cycles / module | Accepted windows (128-module margins): *Dragon Ball Z* Karin's room 200-3,000, *SD Gundam Wars* Barcode Lab 200-3,000, *J.League* team select 400-8,000. |
+| 128-module margins | With 32, *Dragon Ball Z* needed 700 or more cycles per module. |
+
+A swipe is therefore about 0.2 s of emulated time, advanced from the mapper's
+M2 hook (no wall clock), and its in-flight position is in the mapper's save
+state. What the games did with a scan (pinned in `external_extended.rs`):
+*Dragon Ball Z* Karin's room turns 4006381333931 into Dende and 96385074 into
+Android 18 (HP 96000 / BP 86750 / DP 12750); *SD Gundam Wars*' Barcode Lab
+turns 4006381333931 into Rafflesia and 96385074 into the RX-78 Gundam;
+*J.League* answers an arbitrary code with "not a team card", having decoded
+it. *Ultraman Club*, *Yu Yu Hakusho* and *Battle Rush* boot and play, but a
+screen that reads a card was not reached in testing, so the reader is not
+verified on them.
+
+**Save state.** The Bandai FCG blob keeps version 2. Mapper 157 appends a
+tail after the fields every variant writes: the external SCL level, the
+X24C01's 128 bytes when present, and the reader (module count, position,
+cycles left, the modules bit-packed). No earlier blob of mapper 157 exists, so
+nothing else's layout changed and no version moved; `PPU_SNAPSHOT_VERSION` and
+`EMULATION_EPOCH` are untouched, because no frame of any game that loaded
+before this change is different.
+
+**Movies and netplay.** A scan is an input that changes emulation and is not
+recorded in `.rnm` movies or carried by netplay. A host must refuse a scan
+while a movie records or plays or a netplay session runs, rather than let it
+desynchronise; the desktop does (`session_policy`'s `BarcodeScan`, the reason
+shown in the menu, the window and the status line). The libretro core, the
+mobile apps and Lua expose no scan yet. Recording scans is future work.
+
+**Open bus.** The six undriven bits of a `$6000-$7FFF` read are open bus on
+the board and read 0 here, as on mapper 16: the bus consults a partial
+driven-bit mask only for `$4020-$5FFF`.
+
+**Mutation proof.** Six mutants, each caught by the unit tests: an L-code
+entry, a first-digit parity row, the bit-3 polarity, the external SCL bit,
+the 24C02 `keeps_word_address` flag, and the EEPROMs' AND. The polarity and
+the EEPROM flag were also caught by the game-level snapshots.
+
+### v3.2.0 — MMC3-derived and multi-mode boards (`mmc3_boards_ext.rs`, `m116_somari.rs`)
+
+Written from the vendored NESdev pages named in the table; no
+reference-emulator source was read. The boards live in a new module,
+`mmc3_boards_ext.rs`, because their board logic sits in FRONT of the MMC3 (a
+register address and index scramble) or rewires the PPU address lines the MMC3
+sees, where the `mmc3_boards.rs` boards only post-process its bank outputs. The
+MMC3 is still the project's own `Mmc3` used as a register file and IRQ counter.
+A family is **Curated** on a D23 record (`docs/compatibility.md`, "Curated
+evidence from local dumps"): a local dump that boots to its title, pinned by a
+boot snapshot in `external_extended.rs` and a committed screenshot.
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 114 | 0/1 | SuperGame / Hosenkan MMC3 scramble (`INES_Mapper_114`) | Curated | MMC3A (alternate) | Register addresses and `$8000` indices permuted per the page's two tables (submapper 1 is Boogerman's pattern). `$6000` (`M.S. BBBb`) is an NROM override of both PRG halves, NROM-256 when S is set; `$6001` bit 0 is CHR A18. Both answer whatever `$A001` says ("not connected to the MMC3 clone's WRAM interface"). The page gives their mask as "probably `$E001`"; that mask is used. GoodNES labels *Boogerman* (Sugar Softec) mapper 215, the assignment the 215 page says was withdrawn; it never writes `$5007` and boots only as 114.1, so its D23 record uses a copy with a NES 2.0 114.1 header (`Nes::rom_sha256` excludes the header, so the identity is the dump's). |
+| 182 | — | (`INES_Mapper_182` → `INES_Mapper_114`) | Curated | as 114 | A duplicate of 114: the 182 page is a redirect, and the 114 page says Hosenkan's 182 games write 0 to `$6000`/`$6001` once and never again. Dispatched as 114 submapper 0; the full 114 model is kept rather than the "no `$600x`" simplification, since the zero writes leave it in the MMC3's own banking. |
+| 116 | — | SOMARI-P, Huang-1 / Huang-2 (`INES_Mapper_116`) | Curated | MMC3's, in MMC3 mode only | In `m116_somari.rs`, not the MMC3 module: a supervisor at `$4100` (mask `$E100`) selects a simulated VRC2b (0), MMC3 (1) or MMC1 (2, 3), and bit 2 is CHR A18 in every mode. Each chip keeps its own registers (the project's `Mmc3` and `Mmc1` as register files, the VRC2 written here from `VRC2_and_VRC4`); only the selected one takes `$8000-$FFFF` writes and drives banks, mirroring and the IRQ line. VRC2 PRG / mirroring / PRG answer in all of `$8xxx` / `$9xxx` / `$Axxx`; its CHR selects power up at `$FF`. Switching INTO MMC1 mode empties the serial shift register (new `Mmc1::reset_shift_register`, which leaves `control` alone). Huang-2 (MMC1 PRG written one bit left) is picked by the page's heuristic, PRG and CHR both 128 KiB. Not on the page, chosen here: power-on in VRC2 mode (the page's note that *Somari* relies on the VRC2's power-up CHR value implies it); deselected chips keep receiving A12 and CPU-cycle clocks. Not modelled: the VRC2 `$6000` microwire latch and submapper 3 (one sentence on the page, no registers). All four staged dumps (Somari, Kart Fighter, Garō Densetsu Special, A.V. Girl Fighting) cycle the supervisor through all three chips while initialising and then run in MMC3 mode, so the boot snapshots do not reach the VRC2 and MMC1 bank details, which are unit-tested only. *Samurai Spirits (Rex Soft)* and *Chuugoku Taitei (Sachen)* are labelled 116 by GoodNES; `INES_Mapper_014` names the former (the 8-character Rex Soft version) as mapper 14, and neither was tried here. |
+| 165 | — | MMC3 + MMC2 latch (`INES_Mapper_165`) | Curated | MMC3 (Sharp) | The page is Disch's notes only, so three readings are this model's. (1) A 4 KiB CHR page is the MMC3 register over 4 (`$0000`: R0 / R1, `$1000`: R2 / R4 by latch), page 0 being the 4 KiB CHR-RAM and page n reading ROM at n x 4 KiB; `$8000` bit 7 has no effect. (2) The latches are the MMC2's (`$0FD8` / `$0FE8` exactly; `$1FD8-$1FDF` / `$1FE8-$1FEF`), switching after the read. The notes' remark that the game reads "`$xFD0` or `$xFE0` via `$2007`" is not taken as a trigger: triggering on all of `$xFD0-$xFDF` drew a stray bar before every intro line on the Fire Emblem translation, the MMC2 triggers draw it clean. (3) 8 KiB of work RAM by default ("SRAM enabling ... as on your vanilla MMC3"): without it *Fire Emblem Gaiden (Ch)* draws its title as garbage. CHR reads are impure (`chr_reads_are_pure` is false). Curated on its D23 records under this release's rule; under v2.9.6's page-only rule a Disch-notes page would have been BestEffort. |
+| 197 | 0-3 | MMC3 with 2 / 4 KiB CHR banks (`INES_Mapper_197`) | Curated | MMC3 | Modelled as the page's WIRING, not its bank table: the MMC3 sees PA10 = PPU A11, PA11 = GND (sub 0, 3), Vcc (sub 1) or PPU A11 (sub 2), PA12 = PPU A12; its CHR outputs A10-A17 drive ROM A11-A18 and PPU A10 drives ROM A10. The page's tables for submappers 0-2 follow (unit-tested row by row), and `$8000` bit 7, which the page does not mention, still swaps the pattern tables as the MMC3 would. Submapper 3's `$6000-$7FFF` register (`S..P`: PRG A17 = P when S is set) is on the WRAM interface, so it is taken only while `$A001` allows a write. PRG, mirroring and IRQ are mapper 4's (Sharp). iNES 1.0 images are wired as submapper 0; the page's submapper 1 / 2 games are identified by PRG CRC32 there, which belongs in the per-game database, and no dump of either is staged. |
+| 215 | 0/1 | Sugar Softec UNL-8237 / UNL-8237A (`INES_Mapper_215`) | Curated | MMC3 (Sharp; the page names no revision) | `$5007` (mask `$F007`) selects one of eight scramble patterns (0, 2, 5, 6, 7 are the identity; 1, 3, 4 per the page's tables). `$5000` `MCS. BBBb` is 114's NROM override plus `C`, the 128 KiB mode that replaces PRG A17 / CHR A17 with `$5001` bits 4 / 5; `C` is applied after the NROM override, since the page describes it as a substitution on the A17 line both drive (the order is not stated). `$5001` is the outer bank (sub 0: PRG A18-A19 = bits 0-1, CHR A18-A19 = bits 2-3; sub 1: PRG A18/A19/A20 = bits 0/1/3, CHR A18-A20 = bits 1-3), power-up `$xF` (taken as `$0F`) and restored on a console reset; `$5000` and `$5007` power up `$00`. No WRAM unless a NES 2.0 header declares it. The page's index tables were checked black-box: pattern 1 (the *Super 808* menu, then *Aladdin* selected from it) and pattern 4 (*Mortal Kombat 3 Extra 60*) both run, and pattern 1's index table is the inverse of 114 submapper 0's, as printed. The "alternative outer bank registers in the `$6xxx` range" some multicarts carry are not modelled. |
+
+### v3.2.0 batch: TXC, Tengen, Taito, Waixing, reset multicarts, FFE
+
+Written from the vendored NESdev page named in each row; no reference-emulator
+source was read. A family is **Curated** when its page gives exact register
+masks AND a local dump boots to a correct title or gameplay screen, recorded
+under D23 in `docs/compatibility.md` (title, header-excluded SHA-256, frames,
+committed screenshot) and pinned by a byte-identity boot snapshot in
+`external_extended.rs`. Otherwise it is **BestEffort**, with the reason here.
+
+| iNES | Sub | Board (page) | Tier | IRQ | Notes |
+|------|-----|--------------|------|-----|-------|
+| 172 | — | Super Mega P-4070, JV001 (`INES_Mapper_172`, `INES_Mapper_136`) | Curated | — | `m172_m173_txc.rs`. The JV001's Input / Register / Output with CPU D0-D5 wired in reverse; Mode and Invert from CPU D5. `$8000-$FFFF` latches Output (CHR bank = Output & 3 in chip order) and sets mirroring from Invert (H when clear, V when set); the header's mirroring holds until then. PRG fixed 32 KiB. `$4100` reads drive D0-D5 only. *1991 Du Ma Racing* passes its protection check and plays. |
+| 173 | — | Idea-Tek ET-xx, 05-00002-010 (`INES_Mapper_173`) | Curated | — | Same module. P/R/Output 3 bits, S/C/V 1 bit; `$4100` reads `[xxxx SRRR]` with S XOR V, D4-D7 open bus. CHR bank = (Output & 1) \| (~V << 1), V read live. Hard-wired mirroring. *Xiao Ma Li*'s 8 KiB EPROM with `/PGM` on pin 27 is not modelled beyond wrapping (the page does not say what a disabled CHR read returns). The TXC *Mahjong Block* (CRC32 `0ACFC3CD`), commonly headered 173, is a mapper 132 board per both pages: as 173 it draws garbage, as the page predicts. |
+| 158 | — | Tengen 800037 (`INES_Mapper_158`, `RAMBO_1` Variants) | Curated | RAMBO-1 (A12 / CPU) | `Rambo1::new_m158` in `m064_rambo1.rs`: the RAMBO-1 with CHR A17 on CIRAM A10, as TLSROM is to MMC3. Nametable *n* takes bit 7 of the 1 KiB bank in slot *n* of `$0000-$0FFF`, after the C and K bits (R0/R1 in 2 KiB mode, R0/R8/R1/R9 with K, R2-R5 under C). `$A000` is not connected. Mapper 64's path is unchanged. The NES 2.0 *Alien Syndrome (USA) (Unl)* is the dump; the GoodNES `(Tengen) [!]` image has the same body headered as 118, and the game database lists that CRC as 118 (its NES 2.0 guard leaves the 158 header alone). |
+| 207 | — | Taito X1-005, CHR A17 mirroring (`INES_Mapper_207`) | Curated | — | `TaitoX1005::new_m207` in `m080_taito_x1_005.rs`: the X1-005 with CHR A17 on CIRAM A10, so bit 7 of `$7EF0` pages nametables `$2000`/`$2400` and bit 7 of `$7EF1` pages `$2800`/`$2C00` (1scA / 1scB / H). `$7EF6-$7EF7` are ignored. Everything else is mapper 80's, whose path is unchanged. Evidence is the English translation, which carries a 207 header; the original Japanese GoodNES `[!]` is headered 80, and the game database lists its CRC as 80 too, so it does not reach this board. The boot snapshot plays into stage 1 (`Held`: the menu ignores one-frame taps). |
+| 252 | — | Waixing VRC4 clone (`INES_Mapper_252`) | Curated | VRC4 (scanline / CPU) | `m252_waixing_vrc4.rs`: the project's `Vrc4` wired as mapper 23 submapper 2 (VRC4e: chip A0 = CPU A2, A1 = CPU A3) with its 8 KiB PRG-RAM and IRQ, plus 2 KiB of CHR-RAM: a 1 KiB slot whose bank register holds exactly 6 or 7 reads and writes RAM instead of CHR-ROM. The page names only the page numbers; a whole-value match is the plain reading, and *San Guo Zhi* rules out a 3-bit match (it would turn the portraits' ROM pages 14 and 23 into RAM). Booting it found the VRC4 IRQ mode-bit inversion described below. Mapper 253's older model in `waixing.rs` is not reused. |
+| 6 | 0-7 | FFE Magic Card 1M/2M extraction (`INES_Mapper_006`, `Super_Magic_Card`) | Curated | card counter (M2 / PA12), FDS adapter timer | `ffe_super_magic_card.rs`: a model of the Super Magic Card in Play mode (512 KiB PRG DRAM, 256 KiB CHR-RAM, 32 KiB WRAM, 4 KiB scratch RAM; the image loaded at the start of each). The submapper is the initial latch mode (iNES 1.0 = 1, UN1ROM+CHRSW); all eight latch modes, the 2M and 4M modes, 1 KiB CHR, CHR-RAM nametables, MMC4 mode, the `$42Fx` write-enable, the card's 16-bit up-counter and the FDS adapter's 149 1/3-cycle disk IRQ (`$4025` bit 7, `$4024` acknowledge) are modelled. The trainer loads at `$7000`, and a power-on reset runs `JSR $7003` then the game's vector through a six-byte overlay at `$7200`. GUI and pass-through modes are not modelled. The mirroring-type encoding `A0 << 1 \| D4` is the only one consistent with the page's two initial values. *Contra (J) [hFFE]* draws stage 1 with a black background under its header's horizontal mirroring and correctly under vertical: the game never writes `$42Fx`, so the header decides, and this dump's header bit looks wrong; it is not staged. *Kaiketsu Yanchamaru (J) [hFFE]* (no trainer) boots to a grey screen: its reset vector in every PRG page points at data, so it needs a set-up the dump does not carry; not staged. |
+| 8 | — | FFE GNROM-mode extraction (`INES_Mapper_008`) | Curated | as 6 | "A synonym of Mapper 6 submapper 4": the same card in latch mode 4 (32 KiB PRG `D5-D4`, 8 KiB CHR `D1-D0`, CHR write-protected). The two *Doraemon World 3* hack images in `mapper-072-Jaleco72/`, whose masked dirty header is mapper 8, now boot and leave `external_coverage`'s `UNSUPPORTED` list. |
+| 17 | 0-3 | FFE Super Magic Card extraction (`INES_Mapper_017`) | Curated | as 6 | The same card starting in 4M mode with `$4504-$4507` on the image's last four 8 KiB banks and 1 KiB CHR enabled (`$4500 = $47`). The submapper is the trainer's load address (`$7000`, `$5D00`, `$5E00`, `$5F00`), and a power-on reset jumps to it instead of the vector. `$4510-$4517` start at 0-7 (the page gives no value). |
+| 235 | — | "Golden Game" 150-in-1 / 260-in-1 (`INES_Mapper_235`) | Curated | — | `m235_golden_game.rs`. Address latch `1xMP RNBB xxxA AAAA`: 32 KiB page A within the 1 MiB socket B; R = 1 maps half P of it twice; M picks CIRAM A10 from PPU A11 / A10 (H / V) and N forces page A (1scA), per the page's 74'153 description. RESET and power-on clear the register ("All eleven bits ... cleared on reset"). Sockets: a 4 MiB image fills all four; a 2 MiB image is sockets 0 and 2 ("00b = ROM 0, 10b = ROM 1"); 1 MiB or less is socket 0; an empty socket is open bus. The GoodNES `260-in-1 [p1][!]` header has iNES byte 4 = 0 for its 4 MiB, which iNES cannot express, so `parse` reads no PRG; it is staged with a NES 2.0 header (PRG MSB 1) and its body unchanged. |
+| 230 | — | 22-in-1, reset-switched (`INES_Mapper_230`, Disch's notes) | BestEffort (the power-on mode and the reset behaviour are the model's choices; `docs/compatibility.md`) | — | `m230_reset_multicart.rs`. Chip 0 (first 128 KiB, *Contra*): `[.... .PPP]` 16 KiB at `$8000`, page 7 fixed at `$C000`, always vertical. Chip 1 (next 512 KiB): `[.MOP PPPP]`, O = 0 one 32 KiB window at P >> 1, O = 1 page P twice, M = 0 horizontal. The console RESET (`Mapper::reset`) toggles the chip and clears the register. The notes leave the power-on mode and the register across a toggle open: this board powers on in *Contra* and clears the register, and the dump behaves that way (title at power-on, menu after RESET). BestEffort under D23 (ADR 0011, maintainer 2026-10-09): the notes do not state the power-on mode or what RESET does to the register, and the model's choices were never tested against an alternative. |
+
+**VRC4 IRQ mode bit, corrected (v3.2.0).** `m021_vrc4.rs` (mappers 21, 23,
+25) read bit 2 of the IRQ control register the wrong way round: `VRC_IRQ`
+gives "IRQ Mode (1 = cycle mode, 0 = scanline mode)", and VRC6 and VRC7 had it
+right. A game that asked for a scanline split got an IRQ that counted CPU
+cycles, roughly 114 times too fast. Found through mapper 252, whose *San Guo
+Zhi* sets latch `$52` in scanline mode for its text box and drew the box from
+the wrong CHR banks. With the bit corrected, nine staged VRC4 dumps render
+differently: *Bio Miracle Bokutte Upa* gains its status bar, the *Wai Wai World
+2* map its logo, *Gradius II* reaches "PLAYER 1 START", and *Crisis Force*
+loses a black band at the top of the playfield. The `external_coverage` and
+`external_real_games` snapshots for them were re-blessed in the same change;
+this moves commercial-ROM output, so the release must raise
+`EMULATION_EPOCH` (ADR 0045).
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by
@@ -850,22 +1003,24 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **191 families** — 51 Core + 109 Curated (**160 accuracy-gated**) +
-31 BestEffort (v2.3.4 added 154 and 243; v2.9.6 added 17 families and promoted
-111, see above). Submapper-level exceptions: 91.1 and 176.2 are BestEffort, 4.3
+Current split: **208 families** — 51 Core + 130 Curated (**181 accuracy-gated**) +
+27 BestEffort (v2.3.4 added 154 and 243; v2.9.6 added 17 families and promoted
+111; v3.2.0 added 17 families, 230 of them BestEffort, and promoted 47, 121,
+154, 191 and 243 on local-dump evidence, maintainer decision D23; see above). Submapper-level exceptions: 91.1 and 176.2 are BestEffort, 4.3
 (MC-ACC) is Curated (BestEffort until v2.9.7), and 12.1 is unsupported. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
 BestEffort families to Curated: each has a **cleanly-booting** staged
 commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
 GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in
 `external_extended.rs` (ADR 0011), taking accuracy-gated coverage from 60 → 146.
-The remaining **26** BestEffort families have no cleanly-booting redistributable
-dump — the 16 NES 2.0 high-id boards
+The remaining **27** BestEffort families (`tier.rs`, `BEST_EFFORT_IDS`) stay
+register-decode and save-state unit-tested only — the 16 NES 2.0 high-id boards
 (268/286/289/290/299/301/303/305/306/312/320/336/348/349/366/513, which GoodNES
 v3.23b's iNES-1.0 headers cannot encode); 8 boards with no matching cart
-(29/39/81/104/174/179/238/261); and 2 boards whose only dump jams at boot
-(50 SMB2j FDS-conversion, and 111, whose "Ninja Ryukenden" dump turned out at
-v2.9.6 to be a different board; GTROM itself is now Curated) — and stay register-decode
-and save-state unit-tested only. To keep that long tail from silently rotting,
+(29/39/81/104/174/179/238/261); 50, whose only dump (the SMB2j FDS-conversion)
+jams at boot; and 2 notes-only boards whose unstated choices were never tested
+against an alternative (194, and 230 since v3.2.0). 111 left the list at v2.9.6
+(its "Ninja Ryukenden" dump turned out to be a different board; GTROM is
+Curated). To keep that long tail from silently rotting,
 the **v2.1.0 "Fathom" F3.1 CI boot-smoke sweep**
 (`crates/rustynes-test-harness/tests/v21_best_effort_sweep.rs`) exercises the
 full parse -> construct -> dispatch -> run-loop integration for **every**
@@ -1039,6 +1194,6 @@ deleted.
   table in `docs/compatibility.md`).
 - **VRC7 FM audio.** YM2413-derived; only Lagrange Point uses it commercially. Banking + IRQ landed in Track C2 / Phase 2.4 (mapper 85; same `mapper-audio` feature flag as VRC6 / Sunsoft 5B / Namco 163 / MMC5). **The FM synthesizer landed** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; ADR 0006 (`docs/adr/0006-vrc7-audio-landed.md`) supersedes the ADR 0004 deferral. *Lagrange Point* plays with in-game audio (mixed via the `mapper-audio` slot).
 - **Pirate / multicart mappers.** *Answered by policy:* none were in the initial
-  scope; many are in now (191 families, `docs/STATUS.md`), each admitted under
+  scope; many are in now (208 families, `docs/STATUS.md`), each admitted under
   the long-tail policy in `docs/compatibility.md` (demand, a fixture or a
   specific NESdev page, and NES 2.0 detection).

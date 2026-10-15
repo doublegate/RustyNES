@@ -768,6 +768,21 @@ impl Mapper for Namco163 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => match self.chr_target(addr) {
+                Ok(off) => self.chr_rom[off % self.chr_rom.len()],
+                Err(ciram) => self.vram[ciram],
+            },
+            0x2000..=0x3EFF => match self.nt_target(addr) {
+                Ok(off) => self.chr_rom[off % self.chr_rom.len()],
+                Err(ciram) => self.vram[ciram],
+            },
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -1136,6 +1151,34 @@ mod tests {
             assert_eq!(m.audio.fetch_nibble(0x20), 0x0B);
             assert_eq!(m.audio.fetch_nibble(0x21), 0x0A);
         }
+    }
+
+    /// The mix sums only the `n` ACTIVE channels. With one channel enabled,
+    /// channel 7's register slot (`$70-$77`) holds a loud, non-silent setup
+    /// -- on hardware those bytes are often wavetable data -- and must not
+    /// reach the output. Regression for a v3.2.0 import that cached a running
+    /// sum over all eight slots, so any game using fewer than eight channels
+    /// heard the inactive slots too.
+    #[test]
+    #[cfg(feature = "mapper-audio")]
+    fn namco163_mix_ignores_inactive_channel_slots() {
+        let mut m = namco163_for_audio();
+        // Wavetable byte 0: low nibble 15 -> (15 - 8) = +7 per volume step.
+        n163_write_ram(&mut m, 0x00, false, 0x0F);
+        // Channel 8 ($78): length 4, wave address 0, phase 0; $7F = C=0
+        // (one channel) and volume 15.
+        n163_write_ram(&mut m, 0x7C, false, 0xFC);
+        n163_write_ram(&mut m, 0x7E, false, 0x00);
+        n163_write_ram(&mut m, 0x7F, false, 0x0F);
+        // Channel 7 ($70), inactive with C=0: the same loud setup.
+        n163_write_ram(&mut m, 0x74, false, 0xFC);
+        n163_write_ram(&mut m, 0x76, false, 0x00);
+        n163_write_ram(&mut m, 0x77, false, 0x0F);
+        assert_eq!(m.audio.channel_count(), 1);
+        assert_eq!(m.audio.channel_output(0), 105);
+        assert_eq!(m.audio.channel_output(1), 105);
+        // Only channel 8 is mixed: 105 / 1 * NAMCO163_MIX_SCALE.
+        assert_eq!(i32::from(m.audio.mix()), 105 * NAMCO163_MIX_SCALE);
     }
 
     #[test]

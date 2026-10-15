@@ -261,11 +261,14 @@ impl Mapper for Vrc2 {
         match addr & 0xF000 {
             0x8000 => self.prg_lo = value & 0x1F,
             0x9000 => {
-                self.mirroring = match value & 0x03 {
-                    0 => Mirroring::Vertical,
-                    1 => Mirroring::Horizontal,
-                    2 => Mirroring::SingleScreenA,
-                    _ => Mirroring::SingleScreenB,
+                // NESdev "VRC2 and VRC4", Mirroring Control: "VRC2 supports
+                // only vertical or horizontal mirroring. Bit 1 is ignored."
+                // (The one-screen values 2 / 3 are VRC4-only.) Until v3.2.0
+                // this decoded all four, like the VRC4.
+                self.mirroring = if (value & 1) == 0 {
+                    Mirroring::Vertical
+                } else {
+                    Mirroring::Horizontal
                 };
             }
             0xA000 => self.prg_mid = value & 0x1F,
@@ -290,6 +293,18 @@ impl Mapper for Vrc2 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr_rom[off % self.chr_rom.len()]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -458,6 +473,43 @@ mod tests {
         assert_eq!(m.cpu_read(0x8000), 2, "high bits above 5-bit field ignored");
     }
 
+    /// NES 2.0 submapper 3 on mappers 23 and 25 is the VRC2 (VRC2b / VRC2c),
+    /// which "should not implement VRC4-only capabilities" (nesdev "NES 2.0
+    /// submappers"): it is built as [`Vrc2`] -- no IRQ, H/V mirroring only --
+    /// while submapper 0 stays the VRC4 superset. Until v3.2.0 every 23 / 25
+    /// image was built as VRC4.
+    #[test]
+    fn mappers_23_and_25_submapper_3_build_the_vrc2() {
+        fn rom(mapper: u8, sub: u8) -> Vec<u8> {
+            let mut r = vec![0u8; 16 + 128 * 1024 + 128 * 1024];
+            r[..4].copy_from_slice(b"NES\x1A");
+            r[4] = 8;
+            r[5] = 16;
+            r[6] = (mapper & 0x0F) << 4;
+            r[7] = (mapper & 0xF0) | 0x08; // NES 2.0
+            r[8] = sub << 4;
+            r
+        }
+        for mapper in [23u8, 25] {
+            let (_c, mut vrc2) = crate::parse(&rom(mapper, 3)).expect("parses");
+            assert!(!vrc2.caps().irq_source, "mapper {mapper} sub 3: no IRQ");
+            vrc2.cpu_write(0x9000, 2);
+            assert_eq!(
+                vrc2.current_mirroring(),
+                Mirroring::Vertical,
+                "mapper {mapper} sub 3"
+            );
+            let (_c, mut vrc4) = crate::parse(&rom(mapper, 0)).expect("parses");
+            assert!(vrc4.caps().irq_source, "mapper {mapper} sub 0: VRC4 IRQ");
+            vrc4.cpu_write(0x9000, 2);
+            assert_eq!(
+                vrc4.current_mirroring(),
+                Mirroring::SingleScreenA,
+                "mapper {mapper} sub 0"
+            );
+        }
+    }
+
     #[test]
     fn vrc2_mirroring_control_register() {
         let mut m = Vrc2::new(synth(8), synth_chr(8), 22, 0, Mirroring::Vertical).unwrap();
@@ -466,9 +518,9 @@ mod tests {
         m.cpu_write(0x9000, 1);
         assert_eq!(m.mirroring, Mirroring::Horizontal);
         m.cpu_write(0x9000, 2);
-        assert_eq!(m.mirroring, Mirroring::SingleScreenA);
+        assert_eq!(m.mirroring, Mirroring::Vertical);
         m.cpu_write(0x9000, 3);
-        assert_eq!(m.mirroring, Mirroring::SingleScreenB);
+        assert_eq!(m.mirroring, Mirroring::Horizontal);
     }
 
     #[test]

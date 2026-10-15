@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-116-SomariW/AV Mei Shao Nv Zhan Shi (Unl).zip
+rom_sha256=13bb3e1a6a3bcf406bfcd5c06cbc45368d11e9cc69f62b8b7df67bf6212a3d0f
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=20f08a21c9aff9ad
+checkpoint f900 fb_fnv1a64=7b1d1161cadfc596
+checkpoint f1100 fb_fnv1a64=10615304c0865eda

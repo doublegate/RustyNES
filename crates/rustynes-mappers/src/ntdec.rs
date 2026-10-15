@@ -172,6 +172,15 @@ impl Mapper for Ntdec63 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -329,6 +338,19 @@ impl Mapper for Ntdec174 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -461,6 +483,15 @@ impl Mapper for Ntdec2722M40 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize],
@@ -640,6 +671,19 @@ impl Mapper for Ntdec81 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if (0x2000..=0x3EFF).contains(&addr) {
@@ -782,6 +826,15 @@ impl Mapper for NtdecAsder112 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.read_chr(addr),
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.read_chr(addr),
@@ -951,6 +1004,23 @@ impl Mapper for NtdecTc112 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (CHR_BANK_8K - 1)];
+                }
+                let slot = (addr as usize) / CHR_BANK_2K;
+                let count = self.chr_count_2k();
+                let bank = self.chr2[slot] % count;
+                self.chr[bank * CHR_BANK_2K + (addr as usize & (CHR_BANK_2K - 1))]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -1167,6 +1237,15 @@ impl Mapper for NtdecN625092 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[addr as usize & (CHR_BANK_8K - 1)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr[addr as usize & (CHR_BANK_8K - 1)],

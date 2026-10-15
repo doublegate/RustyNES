@@ -97,15 +97,16 @@ pub unsafe extern "C" fn rustynes_ios_gfx_render(handle: *mut MetalGfx, fb: *con
         }
         // SAFETY: live handle (see above).
         let gfx = unsafe { &mut *handle };
-        let dst = gfx.frame_buf_mut();
-        if len != dst.len() {
+        if len != crate::gfx_metal::FRAME_LEN {
             return;
         }
-        // SAFETY: `fb` points to `len` readable bytes (caller contract); `len`
-        // equals `dst.len()`, so the copy stays in bounds on both sides.
+        // SAFETY: `fb` points to `len` readable bytes (caller contract), and
+        // `len` is exactly one frame. The slice only lives for this call:
+        // `render` hands it to `write_texture`, which copies it into wgpu's
+        // staging before returning (v3.2.0; this used to copy it into a reused
+        // `frame_buf` first, one 240 KiB memcpy per frame for nothing).
         let src = unsafe { core::slice::from_raw_parts(fb, len) };
-        dst.copy_from_slice(src);
-        gfx.render();
+        gfx.render(src);
     })
 }
 

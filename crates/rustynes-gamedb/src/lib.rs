@@ -539,7 +539,7 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     }
 
     if let Some(submapper) = entry.submapper
-        && submapper != 0
+        && (submapper != 0 || is_nes2)
     {
         // The submapper field only exists in NES 2.0 headers. A correction that
         // sets a non-zero submapper on an iNES-1.0 ROM (e.g. Seicross, whose
@@ -547,6 +547,13 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
         // CHR-disable copy-protection variant) must first PROMOTE the header to
         // NES 2.0 by setting byte-7 bits 2-3 to `10`, otherwise the core's iNES
         // path forces submapper 0 and the override is silently dropped.
+        //
+        // A correction TO submapper 0 is applied only to an NES 2.0 header (an
+        // iNES-1.0 header already reads as 0, so promoting it would change
+        // nothing but the header). It can only come from the user overlay:
+        // `load_time_entry` clears the vendored table's submapper for NES 2.0
+        // headers, and the overlay's `0` is a deliberate correction
+        // (`parse_overlay_row`). Before v3.2.0 such a correction was dropped.
         if !is_nes2 {
             bytes[7] = (bytes[7] & 0xF3) | 0x08;
             // Promotion reinterprets header fields the iNES-1.0 spec leaves
@@ -710,15 +717,20 @@ fn ines1_as_nes2(bytes: &[u8], region: Region) -> Option<[u8; 16]> {
     };
     let chr_ram = if h.chr_size == 0 { SHIFT_8K } else { 0 };
 
-    for (byte10, byte11) in [(prg_ram, chr_ram), (0, 0)] {
-        header[10] = byte10;
-        header[11] = byte11;
-        let mut image = bytes.to_vec();
-        image[..16].copy_from_slice(&header);
-        if let Ok(promoted) = parse(&image)
-            && same_board(&original, &promoted)
-        {
-            return Some(header);
+    // Lowest submapper first, so a board every submapper can express keeps 0.
+    // See `same_board` for why the submapper itself is not compared.
+    let mut image = bytes.to_vec();
+    for sub in 0..16 {
+        header[8] = sub << 4;
+        for (byte10, byte11) in [(prg_ram, chr_ram), (0, 0)] {
+            header[10] = byte10;
+            header[11] = byte11;
+            image[..16].copy_from_slice(&header);
+            if let Ok(promoted) = parse(&image)
+                && same_board(&original, &promoted)
+            {
+                return Some(header);
+            }
         }
     }
     None
@@ -744,8 +756,15 @@ fn same_board(
     ),
 ) -> bool {
     let ((ca, ma), (cb, mb)) = (a, b);
+    // No `submapper` comparison, deliberately (v3.2.0). For an iNES 1.0
+    // original the parsed submapper is always 0, so against the old sub-0
+    // candidate the check could never fail; and some boards read an iNES 1.0
+    // header as a NON-zero NES 2.0 submapper -- an iNES 1.0 mapper 6 is FFE
+    // latch mode 1, which NES 2.0 spells submapper 1 -- so the check refused
+    // the one candidate that IS the same board. `ines1_as_nes2` therefore
+    // tries every submapper, lowest first, and the board is identified by
+    // what it does: the state, the debug description and the sizes below.
     ca.mapper_id == cb.mapper_id
-        && ca.submapper == cb.submapper
         && ca.mirroring == cb.mirroring
         && ca.console_type == cb.console_type
         && ca.vs_ppu_type == cb.vs_ppu_type
@@ -760,7 +779,7 @@ fn same_board(
         && ma.sram().len() == mb.sram().len()
         && ma.save_data().len() == mb.save_data().len()
         && ma.save_state() == mb.save_state()
-        && format!("{:?}", ma.debug_info()) == format!("{:?}", mb.debug_info())
+        && ma.debug_info() == mb.debug_info()
 }
 
 /// Stage one of the load-time correction path every platform shares (v2.9.8):
@@ -967,17 +986,31 @@ pub fn rom_crc32_full(bytes: &[u8]) -> Option<u32> {
 
 /// IEEE CRC-32 (reflected, polynomial `0xEDB8_8320`) — the zip/PNG CRC, matching
 /// TetaNES' `compute_crc32`. Table-less; runs once per ROM load.
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for &byte in data {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        #[allow(clippy::cast_possible_truncation)]
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
             crc = if crc & 1 != 0 {
                 (crc >> 1) ^ 0xEDB8_8320
             } else {
                 crc >> 1
             };
+            j += 1;
         }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        crc = (crc >> 8) ^ CRC32_TABLE[((crc ^ u32::from(byte)) & 0xFF) as usize];
     }
     !crc
 }
@@ -1333,6 +1366,34 @@ mod tests {
         assert!(!is_multi_region_title("Pin Bot (Europe).nes"));
         assert!(!is_multi_region_title("Sidewinder (Asia) (PAL) (Unl).nes"));
         assert!(!is_multi_region_title("Gyromite (World).nes"));
+    }
+
+    /// A correction TO submapper 0 lands on an NES 2.0 header (it can only come
+    /// from the user overlay, whose `0` is deliberate). Before v3.2.0 any
+    /// sub-0 correction was skipped, so an overlay could not undo a wrong
+    /// non-zero submapper in an NES 2.0 dump.
+    #[test]
+    fn sub_zero_correction_applies_to_an_nes2_header() {
+        let mut rom = vec![0u8; 16 + 32 * 1024 + 8 * 1024];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2;
+        rom[5] = 1;
+        rom[6] = 0xB1; // mapper 185, vertical
+        rom[7] = 0xB8; // NES 2.0
+        rom[8] = 0x40; // submapper 4
+        let entry = GameDbEntry {
+            crc: 0,
+            region: None,
+            mapper: None,
+            submapper: Some(0),
+            mirroring: None,
+            title: "overlay sub-0 correction".into(),
+        };
+        assert!(apply_header_overrides(&mut rom, &entry));
+        assert_eq!(rom[8] >> 4, 0, "submapper corrected to 0");
+        assert_eq!(rom[7] & 0x0C, 0x08, "still NES 2.0");
+        // Idempotent: applying it again changes nothing.
+        assert!(!apply_header_overrides(&mut rom, &entry));
     }
 
     #[test]

@@ -155,6 +155,9 @@ pub enum MenuAction {
     CycleDiskSide,
     /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`).
     SetDiskSide(Option<usize>),
+    /// v3.2.0 — swipe this barcode (the digits as typed) through the Datach
+    /// reader (mapper 157). Validated again at the core boundary.
+    ScanBarcode(String),
     /// v1.0.0 — capture a screenshot of the current framebuffer (native).
     Screenshot,
     /// v1.0.0 — copy the current framebuffer to the system clipboard (native;
@@ -293,6 +296,11 @@ pub struct UiShell {
     /// Toggled by the freed backtick (`` ` ``) key, which formerly toggled the
     /// (now-removed) debugger toolbar HUD.
     pub ra_detail: bool,
+    /// v3.2.0 — whether the Datach barcode window is open.
+    pub show_barcode: bool,
+    /// v3.2.0 — the digits typed into the Datach barcode window. Kept between
+    /// openings so the same card can be swiped again.
+    pub barcode_input: String,
 }
 
 /// v1.5.0 "Lens" Workstream I9 — selects which device the Keyboard Shortcuts
@@ -366,6 +374,8 @@ impl UiShell {
             active_slot: 0,
             shortcuts_device: ShortcutsDevice::default(),
             ra_detail: false,
+            show_barcode: false,
+            barcode_input: String::new(),
         }
     }
 
@@ -412,6 +422,9 @@ pub struct ShellFrame<'a> {
     /// v1.0.0 — whether the loaded game is a Vs. System title (enables the
     /// "Insert Coin" item).
     pub vs_system: bool,
+    /// v3.2.0 — whether the cartridge has a barcode reader (the Datach,
+    /// mapper 157). Shows the Emulation menu's "Scan Barcode..." item.
+    pub barcode_reader: bool,
     /// v1.0.0 — the human-readable mapper name (empty when unavailable).
     pub mapper_label: &'a str,
     /// v1.0.0 — the region label (`"NTSC"` / `"PAL"` / `"Dendy"`).
@@ -495,6 +508,7 @@ impl UiShell {
         self.welcome_modal(&ctx, config);
         about_window(&ctx, &mut self.show_about);
         self.shortcuts_window(&ctx, config);
+        self.barcode_window(&ctx, frame, &mut out);
         #[cfg(not(target_arch = "wasm32"))]
         crate::about_fx::render(&ctx);
 
@@ -1042,6 +1056,24 @@ impl UiShell {
                                 }
                             });
                         });
+                    }
+                    // v3.2.0 — the Datach barcode reader (mapper 157 only).
+                    // Locked like the disk controls: a scan changes the
+                    // machine outside the controller input a movie or a
+                    // netplay session carries. The window says why.
+                    if frame.barcode_reader {
+                        ui.separator();
+                        if ui
+                            .add_enabled(
+                                disk_interactive,
+                                egui::Button::new(ic(glyph::BARCODE, crate::t!(ShellScanBarcode))),
+                            )
+                            .on_disabled_hover_text(crate::t!(ShellBarcodeLocked))
+                            .clicked()
+                        {
+                            self.show_barcode = true;
+                            ui.close();
+                        }
                     }
                 });
 
@@ -2440,6 +2472,85 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
     crate::about_fx::pump(ctx);
 }
 
+/// The player-facing reason a typed barcode is not a valid JAN / EAN code,
+/// in the current locale (v3.2.0).
+#[must_use]
+pub fn barcode_error_text(err: rustynes_core::BarcodeError) -> String {
+    use rustynes_core::BarcodeError as E;
+    match err {
+        E::Empty => crate::t!(ShellBarcodeNeedDigits).to_string(),
+        E::NotADigit { index, found } => crate::tf!(ShellBarcodeNotDigit, index + 1, found),
+        E::WrongLength(n) => crate::tf!(ShellBarcodeWrongLength, n),
+        E::BadCheckDigit { expected, found } => crate::tf!(ShellBarcodeBadCheck, found, expected),
+        // `BarcodeError` is not `#[non_exhaustive]`; this arm is unreachable
+        // today and keeps the text honest if a variant is added.
+        #[allow(unreachable_patterns)]
+        other => other.to_string(),
+    }
+}
+
+impl UiShell {
+    /// v3.2.0 — the Datach barcode window: a digits field, a live validity
+    /// line (the same check the core applies at its boundary), and a Scan
+    /// button that dispatches [`MenuAction::ScanBarcode`]. Shown only while a
+    /// cartridge with a reader is loaded. Under a movie or netplay the field
+    /// stays editable but Scan is disabled, with the reason shown: a scan is
+    /// recorded by neither, so it would silently desynchronise them.
+    fn barcode_window(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &ShellFrame<'_>,
+        out: &mut ShellOutput,
+    ) {
+        // A cartridge without a reader also closes the window: returning early
+        // left `show_barcode` set, so it reopened by itself on the next Datach
+        // game (`CodeRabbit` on #604).
+        if !frame.barcode_reader {
+            self.show_barcode = false;
+            return;
+        }
+        if !self.show_barcode {
+            return;
+        }
+        let locked = frame.movie_recording || frame.movie_playing || frame.netplay_active;
+        let mut open = self.show_barcode;
+        let input = &mut self.barcode_input;
+        egui::Window::new(crate::t!(ShellBarcodeTitle))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(crate::t!(ShellBarcodePrompt));
+                let field = ui.add(
+                    egui::TextEdit::singleline(input)
+                        .hint_text("4901234567894")
+                        .char_limit(20),
+                );
+                let parsed = rustynes_core::Barcode::parse(input);
+                // Say why Scan is disabled once something has been typed.
+                if let Err(e) = parsed
+                    && !input.trim().is_empty()
+                {
+                    ui.colored_label(ui.visuals().warn_fg_color, barcode_error_text(e));
+                }
+                if locked {
+                    ui.colored_label(ui.visuals().warn_fg_color, crate::t!(ShellBarcodeLocked));
+                }
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let scan = ui
+                    .add_enabled(
+                        parsed.is_ok() && !locked,
+                        egui::Button::new(crate::t!(ShellBarcodeScan)),
+                    )
+                    .clicked();
+                if (scan || enter) && parsed.is_ok() && !locked {
+                    out.action = Some(MenuAction::ScanBarcode(input.trim().to_string()));
+                }
+            });
+        self.show_barcode = open;
+    }
+}
+
 /// Render the keyboard-shortcuts window.
 impl UiShell {
     /// v1.5.0 "Lens" Workstream I9 — render the Keyboard Shortcuts window from
@@ -2701,6 +2812,21 @@ mod tests {
         };
         let shell = UiShell::new(&config);
         assert!(!shell.show_welcome);
+    }
+
+    /// v3.2.0 — each way a typed barcode can be wrong has its own visible
+    /// reason (English, the default locale), with the 1-based character
+    /// position and the check digit the other digits need.
+    #[test]
+    fn every_barcode_refusal_names_its_reason() {
+        let text = |s: &str| barcode_error_text(rustynes_core::Barcode::parse(s).unwrap_err());
+        assert_eq!(text(""), "Enter 13 or 8 digits.");
+        assert_eq!(text("12a"), "Character 3 ('a') is not a digit.");
+        assert_eq!(text("1234567"), "7 digits: a JAN/EAN barcode has 13 or 8.");
+        assert_eq!(
+            text("4006381333932"),
+            "The check digit is 2; these digits need 1."
+        );
     }
 
     #[test]

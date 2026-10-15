@@ -253,14 +253,33 @@ impl BlipBuf {
     /// limiter.
     #[inline]
     pub fn add_sample(&mut self, value: f32) {
-        // Defensive saturation. Real mixer output never exceeds ~1.5; the
-        // clamp catches NaN/Inf from a runaway mapper-audio path so the
-        // FIR can't propagate non-finite values through the ring.
-        let value = if value.is_finite() {
+        self.add_sample_bounded(Self::sanitize(value));
+    }
+
+    /// The saturation [`Self::add_sample`] applies: a finite value clamped to
+    /// `[-4, 4]`, and 0 for NaN / infinity. Real mixer output never exceeds
+    /// ~1.5; the clamp catches NaN / Inf from a runaway mapper-audio path so
+    /// the FIR cannot propagate non-finite values through the ring.
+    ///
+    /// Separate from the scatter so a caller choosing between a trusted and an
+    /// untrusted input can pick the VALUE and make one call to
+    /// [`Self::add_sample_bounded`] (v3.2.0).
+    #[inline]
+    #[must_use]
+    pub fn sanitize(value: f32) -> f32 {
+        if value.is_finite() {
             value.clamp(-4.0, 4.0)
         } else {
             0.0
-        };
+        }
+    }
+
+    /// [`Self::add_sample`] for an input the caller knows is finite and within
+    /// `[-4, 4]` (the 2A03 DAC tables alone): skips the `is_finite` / `clamp`
+    /// of [`Self::sanitize`], whose result it would leave unchanged, so the
+    /// output is byte-identical.
+    #[inline]
+    pub fn add_sample_bounded(&mut self, value: f32) {
         let delta = value - self.held_value;
         self.held_value = value;
 
@@ -290,6 +309,14 @@ impl BlipBuf {
             // unchanged (`slot += delta * coeff`, one touch per slot, mul
             // then add — no FMA contraction), so output is bit-identical
             // to the scalar form.
+            //
+            // Measured, keep this shape (v3.2.0): a variant that took ONE
+            // full-length slice when the window does not wrap and the two
+            // runs only when it does made `apu_tick_active_frame_with_external`
+            // 46-48% SLOWER in two A/B runs. That workload scatters on almost
+            // every cycle (its expansion sample changes each cycle), so the
+            // scatter's codegen dominates it. Reverting to this form recovered
+            // it (docs/performance.md, "v3.2.0 APU").
             let start = self.head.wrapping_sub(TAPS / 2) & RING_MASK;
             let first = (RING_SIZE - start).min(TAPS);
             for (slot, &coeff) in self.delta_ring[start..start + first]

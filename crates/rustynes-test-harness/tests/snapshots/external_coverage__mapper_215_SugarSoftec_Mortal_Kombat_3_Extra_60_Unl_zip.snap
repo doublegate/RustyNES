@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-215-SugarSoftec/Mortal Kombat 3 Extra 60 (Unl) [!].zip
+rom_sha256=4796d6a0b3dd0e41b2117205d692ffd35b5781479c9c81d19f3a466d8a594282
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=1329a9e1a64c711f
+checkpoint f900 fb_fnv1a64=4de0054e7438e274
+checkpoint f1100 fb_fnv1a64=4de0054e7438e274

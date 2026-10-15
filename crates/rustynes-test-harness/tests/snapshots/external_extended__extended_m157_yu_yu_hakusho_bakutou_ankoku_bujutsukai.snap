@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-157-Datach/Datach - Yu Yu Hakusho - Bakutou Ankoku Bujutsukai (Japan).nes
+rom_sha256=e8286be877a54d1f15171e56a753c677b2c2478a78431ce3cd11613c5d26ebbe
+frames=1200
+fb_bytes=245760
+cycles=35706843
+audio_samples=879799
+audio_fnv1a64=dffca4d48c823c1b
+checkpoint f1200 fb_fnv1a64=899ef14e693462ee

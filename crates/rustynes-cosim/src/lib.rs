@@ -697,6 +697,10 @@ macro_rules! oracle {
 /// `handle` must be a live pointer from [`rn_open`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rn_run_frame(handle: *mut c_void) -> c_ulonglong {
+    // No `catch_unwind` here, deliberately (v3.2.0 review). A panic escaping an
+    // `extern "C"` function aborts the process, which is what a test oracle
+    // should do: a draft caught it in this one export and returned 0, which the
+    // co-simulation harness would have read as a cycle count.
     let o = oracle!(handle, 0);
     o.nes.run_frame();
     o.nes.bus().cycle()
@@ -749,10 +753,25 @@ pub unsafe extern "C" fn rn_index_framebuffer(
     if out.is_null() || cap < fb.len() {
         return 0;
     }
-    // SAFETY: `out` is non-null and the caller guarantees `cap` writable u16s,
-    // and `cap >= fb.len()` was just checked. The regions cannot overlap: `fb`
-    // borrows emulator-owned memory, `out` is caller-owned.
-    unsafe { core::ptr::copy_nonoverlapping(fb.as_ptr(), out, fb.len()) };
+    // `out` is non-null and the caller guarantees `cap` writable u16s, and
+    // `cap >= fb.len()` was just checked. The regions cannot overlap: `fb`
+    // borrows emulator-owned memory, `out` is caller-owned. A C caller may pass
+    // a buffer that is not 2-byte aligned, which a `u16` copy may not touch
+    // (v3.2.0), so that case copies the same bytes as bytes.
+    if (out as usize) & (core::mem::align_of::<u16>() - 1) == 0 {
+        // SAFETY: as above, and `out` is aligned for `u16`.
+        unsafe { core::ptr::copy_nonoverlapping(fb.as_ptr(), out, fb.len()) };
+    } else {
+        // SAFETY: as above; a `u8` copy has no alignment requirement, and
+        // `size_of_val(fb)` bytes is exactly the `fb.len()` u16s checked to fit.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                fb.as_ptr().cast::<u8>(),
+                out.cast::<u8>(),
+                core::mem::size_of_val(fb),
+            );
+        }
+    }
     fb.len()
 }
 
@@ -1308,6 +1327,22 @@ mod tests {
             );
             // A short buffer must be refused, not partially filled.
             assert_eq!(rn_index_framebuffer(h, fb.as_mut_ptr(), 10), 0);
+
+            // An odd address: the byte-copy branch, which no other call
+            // reaches (`CodeRabbit` on #605). Same bytes as the aligned copy.
+            let n = 256 * 240;
+            // A sentinel fill, not zeros: this ROM's frame is mostly index 0,
+            // so a copy that stopped short would still match a zeroed buffer
+            // (the first draft's mutant, half a copy, was not caught).
+            let mut raw = vec![0xA5u8; n * 2 + 1];
+            let off = usize::from((raw.as_ptr() as usize) & 1 == 0);
+            // The misaligned pointer IS the subject: a C caller may hand one
+            // over, and the function must not do a `u16` copy through it.
+            #[allow(clippy::cast_ptr_alignment)]
+            let odd = raw.as_mut_ptr().add(off).cast::<u16>();
+            assert_eq!(rn_index_framebuffer(h, odd, n), n);
+            let want: Vec<u8> = fb.iter().flat_map(|p| p.to_ne_bytes()).collect();
+            assert_eq!(&raw[off..off + n * 2], &want[..]);
 
             let mut ram = vec![0u8; 2048];
             assert_eq!(rn_ram(h, ram.as_mut_ptr(), ram.len()), 2048);

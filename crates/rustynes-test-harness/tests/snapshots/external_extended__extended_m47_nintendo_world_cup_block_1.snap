@@ -1,0 +1,15 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-047-SpikeVBall-NWC/Super Spike V'Ball + Nintendo World Cup (U) [!].nes
+rom_sha256=dbd8f793bd841cf967d499f80fd042b7abd40f7a6567db479ff081ccb984af4c
+frames=1000
+fb_bytes=245760
+cycles=29750734
+audio_samples=733040
+audio_fnv1a64=e973e58678787867
+checkpoint f239 fb_fnv1a64=a2a8d678ac5bf0b9
+checkpoint f300 fb_fnv1a64=cb21c211dd38e481
+checkpoint f600 fb_fnv1a64=6f751aa110b85a54
+checkpoint f1000 fb_fnv1a64=eb2764fd5f2d71ed

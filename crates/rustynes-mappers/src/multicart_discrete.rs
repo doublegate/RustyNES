@@ -259,6 +259,15 @@ impl Mapper for Multicart15 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -438,6 +447,15 @@ impl Mapper for Multicart61 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -602,6 +620,19 @@ impl Mapper for Multicart62 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -724,6 +755,19 @@ impl Mapper for Multicart200 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr.len() / CHR_BANK_8K).max(1);
+                let bank = (self.bank as usize) % count;
+                self.chr[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -892,6 +936,15 @@ impl Mapper for Multicart201 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
@@ -1091,6 +1144,15 @@ impl Mapper for Multicart202 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -1258,6 +1320,15 @@ impl Mapper for Multicart203 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
@@ -1459,6 +1530,15 @@ impl Mapper for Multicart212 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -1623,6 +1703,15 @@ impl Mapper for Multicart213 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
@@ -1799,6 +1888,15 @@ impl Mapper for Multicart214 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_offset(addr)],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -1959,6 +2057,19 @@ impl Mapper for Multicart58 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -2092,6 +2203,19 @@ impl Mapper for Multicart60 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -2210,6 +2334,15 @@ impl Mapper for Multicart231 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize],
@@ -2393,6 +2526,19 @@ impl Mapper for Maxi15M234 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank() as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -2563,6 +2709,19 @@ impl Mapper for Multicart225 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -2719,6 +2878,15 @@ impl Mapper for Multicart226 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize],
@@ -2936,6 +3104,15 @@ impl Mapper for Multicart227 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -3113,6 +3290,19 @@ impl Mapper for Multicart229 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % count;
+                self.chr_rom[bank * CHR_BANK_8K + addr as usize]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if let 0x2000..=0x3EFF = addr {
@@ -3261,6 +3451,15 @@ impl Mapper for Multicart233 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize],
@@ -3506,7 +3705,18 @@ impl Mapper for DiscreteMapper {
             },
             DiscreteBoard::M290 => {
                 if (0x8000..=0xFFFF).contains(&addr) {
-                    self.prg_16k(self.reg0 as usize, addr)
+                    // The latch's `S` bit (A7) picks the window size. `reg0`
+                    // is the 16 KiB bank number (`PPPP` doubled, plus `p` in
+                    // 16 KiB mode), so the 32 KiB bank is `reg0 >> 1`. v3.2.0:
+                    // until then both modes read through the 16 KiB window,
+                    // which repeats `$8000`'s half at `$C000` and broke 32 KiB
+                    // mode -- the power-on mode, so the reset vector came from
+                    // the wrong half (`m290_prg_modes_follow_the_size_bit`).
+                    if self.last_addr & 0x80 != 0 {
+                        self.prg_16k(self.reg0 as usize, addr)
+                    } else {
+                        self.prg_32k(self.reg0 as usize >> 1, addr)
+                    }
                 } else {
                     0
                 }
@@ -3588,6 +3798,9 @@ impl Mapper for DiscreteMapper {
                     } else {
                         Mirroring::Vertical
                     };
+                    // The whole latch, for its `S` bit (read path); already
+                    // part of the board's save state.
+                    self.last_addr = addr;
                 }
             }
             DiscreteBoard::M301 => {
@@ -3604,6 +3817,22 @@ impl Mapper for DiscreteMapper {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (self.chr.len() - 1)];
+                }
+                let count = (self.chr.len() / CHR_BANK_8K).max(1);
+                let bank = self.chr_8k_bank() % count;
+                self.chr[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -3856,6 +4085,21 @@ impl Mapper for Bmc204 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (CHR_BANK_8K - 1)];
+                }
+                let bank = self.chr8 % self.chr_count_8k();
+                self.chr[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -4028,6 +4272,21 @@ impl Mapper for Bmc11160 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (CHR_BANK_8K - 1)];
+                }
+                let bank = self.chr8 % self.chr_count_8k();
+                self.chr[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
@@ -4730,6 +4989,43 @@ mod tests {
         m.cpu_write(0xC000, 0x05);
         assert_eq!(m.cpu_read(0x8000), 37 % 32); // inner ((0x20)|5) = 37.
         assert_eq!(m.cpu_read(0xC000), 47 % 32); // high|0x0F = 47.
+    }
+
+    /// v3.2.0: `nesdev_wiki/NES_2_0_Mapper_290.xhtml`, `A~[1PPP PMCC Sp.. .CCC]`:
+    /// `S` = 0 maps the 32 KiB bank `PPPP` across all of `$8000-$FFFF` (its two
+    /// 16 KiB halves IN ORDER), `S` = 1 maps 16 KiB bank `PPPPp` at both halves.
+    /// Until v3.2.0 the read path used the 16 KiB window in both modes, so in
+    /// 32 KiB mode `$C000-$FFFF` repeated `$8000`'s half; the latch powers up
+    /// at 0, which is 32 KiB mode, so the reset vector came from the wrong
+    /// half and *Asder 20-in-1* never started (a uniform grey frame).
+    #[test]
+    fn m290_prg_modes_follow_the_size_bit() {
+        let mut m = new_m290(synth_prg_16k(16), synth_chr_8k(16), Mirroring::Vertical).unwrap();
+        // Power-on: 32 KiB bank 0, halves 0 and 1.
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(
+            m.cpu_read(0xC000),
+            1,
+            "power-on is 32 KiB mode: $C000 is the upper half"
+        );
+        // S=0, PPPP=1: 32 KiB bank 1 = 16 KiB banks 2 and 3.
+        m.cpu_write(0x8800, 0);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 3);
+        // S=1, p=1, PPPP=1: 16 KiB bank 3 at both halves.
+        m.cpu_write(0x88C0, 0);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        assert_eq!(m.cpu_read(0xC000), 3);
+        // S=1, p=0: 16 KiB bank 2 at both halves.
+        m.cpu_write(0x8880, 0);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 2);
+        // The mode survives a save-state round trip.
+        m.cpu_write(0x8800, 0);
+        let blob = m.save_state();
+        let mut m2 = new_m290(synth_prg_16k(16), synth_chr_8k(16), Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.cpu_read(0xC000), 3);
     }
 
     #[test]

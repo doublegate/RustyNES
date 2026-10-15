@@ -2,8 +2,9 @@
 //!
 //! Per `docs/apu-2a03.md` §Behavior and NESdev wiki "APU Noise" page.
 //!
-//! - Mode 0 (long): feedback = bit 0 XOR bit 1, 15-bit period.
-//! - Mode 1 (short): feedback = bit 0 XOR bit 6, 93-bit period.
+//! - Mode 0 (long): feedback = bit 0 XOR bit 1, a 32767-step period.
+//! - Mode 1 (short): feedback = bit 0 XOR bit 6, a 93- or 31-step period
+//!   (which one depends on the register's state when the mode is set).
 
 use crate::Region;
 use crate::envelope::Envelope;
@@ -24,7 +25,9 @@ pub const PAL_NOISE_PERIODS: [u16; 16] = [
 pub struct Noise {
     /// LFSR (initialized to 1 on power-up; only bottom 15 bits used).
     pub(crate) lfsr: u16,
-    /// Mode (false = long / 15-bit, true = short / 6-bit).
+    /// Mode: false = long (feedback from bit 1, 32767 steps), true = short
+    /// (feedback from bit 6, 93 or 31 steps depending on where the register
+    /// was when the mode was set; NESdev wiki "APU Noise").
     pub(crate) mode: bool,
     /// Timer reload (from period table).
     pub(crate) timer_period: u16,

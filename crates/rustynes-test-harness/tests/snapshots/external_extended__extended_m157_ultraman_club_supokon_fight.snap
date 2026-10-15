@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-157-Datach/Datach - Ultraman Club - Supokon Fight! (Japan).nes
+rom_sha256=3bfe0216c485534c10e9931389e0265e6f27382c2eed3b102cc53434b2920f1b
+frames=1200
+fb_bytes=245760
+cycles=35706848
+audio_samples=879799
+audio_fnv1a64=9ec2aca5d45d0c6f
+checkpoint f1200 fb_fnv1a64=aade9eaf3da4a43a

@@ -24,6 +24,8 @@ pub struct GxRom {
     vram: Box<[u8]>,
     prg_bank: u8,
     chr_bank: u8,
+    prg_bank_offset: usize,
+    chr_bank_offset: usize,
     mirroring: Mirroring,
 }
 
@@ -56,6 +58,10 @@ impl GxRom {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
             chr_bank: 0,
+            // Bank 0 at power-on; `update_bank_offsets` keeps these in step
+            // with `prg_bank` / `chr_bank` on every write and restore.
+            prg_bank_offset: 0,
+            chr_bank_offset: 0,
             mirroring,
         })
     }
@@ -67,11 +73,18 @@ impl GxRom {
         physical * NAMETABLE_SIZE + local
     }
 
+    #[inline]
+    fn update_bank_offsets(&mut self) {
+        let prg_bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+        self.prg_bank_offset = ((self.prg_bank as usize) % prg_bank_count) * PRG_BANK_32K;
+
+        let chr_bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+        self.chr_bank_offset = ((self.chr_bank as usize) % chr_bank_count) * CHR_BANK_8K;
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        let bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
-        let bank = (self.prg_bank as usize) % bank_count;
         let off = (addr - 0x8000) as usize;
-        self.prg_rom[bank * PRG_BANK_32K + off]
+        self.prg_rom[self.prg_bank_offset + off]
     }
 }
 
@@ -97,17 +110,23 @@ impl Mapper for GxRom {
             let effective = value & prg_byte;
             self.prg_bank = (effective >> 4) & 0x03;
             self.chr_bank = effective & 0x03;
+            self.update_bank_offsets();
         }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => {
-                let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
-                let bank = (self.chr_bank as usize) % bank_count;
-                self.chr_rom[bank * CHR_BANK_8K + (addr as usize)]
-            }
+            0x0000..=0x1FFF => self.chr_rom[self.chr_bank_offset + (addr as usize)],
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_rom[self.chr_bank_offset + (addr as usize)],
             0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
             _ => 0,
         }
@@ -153,6 +172,9 @@ impl Mapper for GxRom {
         self.prg_bank = data[1];
         self.chr_bank = data[2];
         self.vram.copy_from_slice(&data[3..3 + self.vram.len()]);
+        // The offsets are derived state, not saved: recompute them from the
+        // restored bank registers.
+        self.update_bank_offsets();
         Ok(())
     }
 }
@@ -189,6 +211,27 @@ mod tests {
         m.cpu_write(0x8001, 0x33);
         assert_eq!(m.cpu_read(0x8000), 3); // bank 3 marker
         assert_eq!(m.ppu_read(0x0000), 3);
+    }
+
+    /// A restored state reads through the restored banks. Regression for a
+    /// v3.2.0 import that cached the PRG / CHR bank offsets but did not
+    /// recompute them in `load_state`, so a restore into a fresh instance
+    /// kept reading bank 0 until the next register write.
+    #[test]
+    fn gxrom_load_state_restores_the_bank_offsets() {
+        let mut m = GxRom::new(synth_prg(4), synth_chr(4), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x8001, 0x21); // PRG bank 2, CHR bank 1
+        let state = m.save_state();
+        let mut fresh = GxRom::new(synth_prg(4), synth_chr(4), Mirroring::Vertical).unwrap();
+        assert_eq!(
+            fresh.cpu_read(0x8000),
+            0,
+            "fixture: a fresh board is on bank 0"
+        );
+        fresh.load_state(&state).unwrap();
+        assert_eq!(fresh.cpu_read(0x8000), 2, "PRG bank 2 after restore");
+        assert_eq!(fresh.ppu_read(0x0000), 1, "CHR bank 1 after restore");
+        assert_eq!(fresh.ppu_peek(0x0000), 1, "and through the peek path");
     }
 
     #[test]

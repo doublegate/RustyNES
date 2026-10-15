@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-157-Datach/Datach - Dragon Ball Z - Gekitou Tenkaichi Budoukai (Japan).nes
+rom_sha256=17fec54a27a7783c6e36739c00cc7ad1c9447d7788e6458486b169354e9a36fa
+frames=1200
+fb_bytes=245760
+cycles=35706859
+audio_samples=879799
+audio_fnv1a64=1462781aeb76a5f1
+checkpoint f1200 fb_fnv1a64=4571059741c49ae8

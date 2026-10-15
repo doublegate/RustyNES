@@ -152,6 +152,12 @@ pub struct NetplayUi {
     /// captured at connect for the handshake + session
     /// ([`SessionIdentity::of`]). The peer must announce an identical one.
     identity: SessionIdentity,
+    /// When the session last confirmed a new frame (v3.2.0 peer liveness):
+    /// five seconds of stall past it ends the session with a reason.
+    last_peer_activity: std::time::Instant,
+    /// The newest confirmed frame seen, so only progress refreshes
+    /// `last_peer_activity`.
+    last_confirmed_tracker: u32,
     /// Cached status for the HUD, refreshed each `tick`.
     status: NetplayStatus,
     /// Session config (input delay, rollback window, checksum interval). The
@@ -170,6 +176,8 @@ impl Default for NetplayUi {
             state: NetplayState::Idle,
             is_host: false,
             identity: SessionIdentity::new([0u8; 32], [0u8; 32]),
+            last_peer_activity: std::time::Instant::now(),
+            last_confirmed_tracker: 0,
             status: NetplayStatus::default(),
             config: SessionConfig::default(),
             spectator_delay_frames: 0,
@@ -422,6 +430,8 @@ impl NetplayUi {
                 let transport = conn.into_transport();
                 let session = RollbackSession::new(self.config, transport, self.identity);
                 self.state = NetplayState::InGame(Box::new(session));
+                self.last_peer_activity = std::time::Instant::now();
+                self.last_confirmed_tracker = 0;
                 self.status.phase = NetplayPhase::InGame;
                 NetplayTick {
                     active: true,
@@ -467,6 +477,15 @@ impl NetplayUi {
         };
 
         session.add_local_input(local_buttons);
+        // Peer liveness (v3.2.0): progress is a newly confirmed frame, which
+        // needs the peer's input. Five seconds without one while the session
+        // is stalled ends it with a reason instead of freezing silently.
+        if let Some(confirmed) = session.last_confirmed_frame()
+            && confirmed > self.last_confirmed_tracker
+        {
+            self.last_confirmed_tracker = confirmed;
+            self.last_peer_activity = std::time::Instant::now();
+        }
         match session.advance(nes) {
             Ok(AdvanceOutcome {
                 produced_frame,
@@ -474,6 +493,19 @@ impl NetplayUi {
                 resimulated_frames,
                 ..
             }) => {
+                if !produced_frame
+                    && self.last_peer_activity.elapsed() > std::time::Duration::from_secs(5)
+                {
+                    self.fail("peer connection lost (no data for several seconds)".to_string());
+                    // `active: true`, like every other `fail()` path: the tick
+                    // was the session's, and `false` would tell the caller to
+                    // run a single-player frame on the failure tick (CodeRabbit
+                    // on #604 and #605).
+                    return NetplayTick {
+                        active: true,
+                        produced_frame: false,
+                    };
+                }
                 self.status.phase = NetplayPhase::InGame;
                 self.status.is_host = self.is_host;
                 self.status.current_frame = session.current_frame();
@@ -753,6 +785,51 @@ mod tests {
         }
         assert_ne!(host.phase(), NetplayPhase::Error, "host did not error");
         assert_ne!(join.phase(), NetplayPhase::Error, "joiner did not error");
+    }
+
+    /// The tick that ends a session on a peer timeout still belongs to the
+    /// session: `active: true`, as on every other failure path, so the caller
+    /// does not run a stray single-player frame on it (`CodeRabbit` on #604).
+    #[test]
+    fn the_peer_timeout_tick_is_still_active() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let probe = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let host_addr = probe.local_addr().unwrap();
+        drop(probe);
+        let mut host = NetplayUi::default();
+        host.start_host(host_addr.port(), 2, hash);
+        let mut join = NetplayUi::default();
+        join.start_join(host_addr, hash);
+        let mut nes_host = Nes::from_rom(&rom).unwrap();
+        let mut nes_join = Nes::from_rom(&rom).unwrap();
+        let mut rounds = 0;
+        while !(host.phase() == NetplayPhase::InGame && join.phase() == NetplayPhase::InGame)
+            && rounds < 500
+        {
+            host.tick(&mut nes_host, Buttons::empty());
+            join.tick(&mut nes_join, Buttons::empty());
+            rounds += 1;
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(host.phase(), NetplayPhase::InGame);
+
+        // The joiner goes silent; the host's last contact is six seconds ago.
+        let stale = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(6))
+            .unwrap();
+        let mut failing_tick = None;
+        for _ in 0..300 {
+            host.last_peer_activity = stale;
+            let t = host.tick(&mut nes_host, Buttons::empty());
+            if host.phase() == NetplayPhase::Error {
+                failing_tick = Some(t);
+                break;
+            }
+        }
+        let t = failing_tick.expect("the host gives up on a silent peer");
+        assert!(t.active, "the failing tick is the session's");
+        assert!(!t.produced_frame);
     }
 
     /// v2.9.0 (`CodeRabbit` on #561): v2.9.0 made a power cycle keep battery

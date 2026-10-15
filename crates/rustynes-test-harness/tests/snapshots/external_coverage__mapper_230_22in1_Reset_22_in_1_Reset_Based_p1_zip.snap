@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-230-22in1-Reset/22-in-1 (Reset Based) [p1].zip
+rom_sha256=15563b6342a5e9aea36c80bac55f12b994fba946b1a015d74415d7733c8ec03c
+frames=3500
+fb_bytes=245760
+cycles=104201980
+audio_samples=2567502
+audio_fnv1a64=2ff54bb2106183e2
+checkpoint f3500 fb_fnv1a64=702db97133b15934

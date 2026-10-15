@@ -4,10 +4,10 @@ expression: text
 ---
 rom=mapper-015-Multicart15/Subor V1.0 (R).nes
 rom_sha256=c6c6ba22d055910adb061b4256d558a97a773c117e9fdd527c2198b61a43764f
-frames=1141
+frames=350
 fb_bytes=245760
-cycles=11373864
-audio_samples=280234
-audio_fnv1a64=bd04a247f901560d
-checkpoint f900 fb_fnv1a64=1719dca5cef7a325
-checkpoint f1100 fb_fnv1a64=1719dca5cef7a325
+cycles=10393398
+audio_samples=256076
+audio_fnv1a64=373ad062b19b55b6
+checkpoint f100 fb_fnv1a64=89ee4c476c97a325
+checkpoint f350 fb_fnv1a64=83e340f562b3ba88

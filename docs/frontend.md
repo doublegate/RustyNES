@@ -1084,8 +1084,15 @@ reorganized the order and regrouped several items — see the per-menu notes):
 - **Emulation** — Pause/Resume (disabled during netplay), Reset, Power Cycle,
   Frame Advance (`\`, single-steps one frame while paused), a hold-`Tab` Fast
   Forward hint, Run-Ahead selector (0-3), Speed presets, Region (read-only
-  display), Vs. Insert Coin (`F10`, Vs. games only), and FDS Swap Disk Side
-  (`F9`, FDS games only; moved here from File in v1.3.0).
+  display), Vs. Insert Coin (`F10`, Vs. games only), FDS Swap Disk Side
+  (`F9`, FDS games only; moved here from File in v1.3.0), and **Scan
+  Barcode...** (v3.2.0, Datach / mapper 157 carts only), which opens the
+  Datach Barcode Reader window: a digits field, a live line naming what is
+  wrong with what was typed (empty, a non-digit, not 13 or 8 digits, a wrong
+  check digit and the one expected; the same checks `Nes::scan_barcode`
+  applies), and a Scan button (or Enter) that dispatches
+  `MenuAction::ScanBarcode`. The outcome ("Scanned barcode ...", or the
+  core's refusal) goes to the status line.
 - **View** — Settings, Theme (Light/Dark/System + the v1.5.0 accessibility
   themes High Contrast / Colorblind-Safe), 8:7 Pixel Aspect, Hide Overscan,
   Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
@@ -1125,9 +1132,14 @@ reorganized the order and regrouped several items — see the per-menu notes):
 
 **Session lockout (v2.9.9, NF-11).** A movie and a netplay session both carry
 controller input only, so anything that changes the machine outside that
-stream breaks them: a Reset, a Power Cycle, an FDS disk change and a state load
-are refused while a movie records or plays, or a netplay session runs, and a
-state load is also refused in RA hardcore. The rule is one pure function,
+stream breaks them: a Reset, a Power Cycle, an FDS disk change, a Datach
+barcode scan (v3.2.0) and a state load are refused while a movie records or
+plays, or a netplay session runs, and a state load is also refused in RA
+hardcore. For the scan the menu item is greyed with the reason on hover, the
+window keeps the field editable but disables Scan and says why, and the
+dispatch refuses with "Barcode scan disabled during movie / netplay"; a scan is
+not recorded in `.rnm` movies or carried by netplay, so allowing it would
+desynchronise them silently. The rule is one pure function,
 `session_policy::refusal`, and every route asks it — the menu (which greys the
 items), the hotkeys, the Save-States manager, the browser grid; a script's load
 honours the `writes_locked` gate its `SetInput` already did. The F8 movie
@@ -2340,8 +2352,14 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
 - **Loaded** at ROM load, under the same `EmuCore` lock that installs the `Nes`,
   so no frame runs first. Written through `write_atomic` when the live bytes
   differ from the last write: compared once a second while running, and always
-  at ROM switch, close and exit. There is no core dirty flag; "clean" means equal
-  to the last write.
+  at ROM switch, close and exit. "Clean" means equal to the last write. Since
+  v3.2.0 a board may also report a dirty flag (`Nes::is_save_data_dirty`); only
+  the self-flashable GTROM and UNROM 512 do, whose save data is the whole PRG
+  image, and while one reports clean the comparison is skipped. Each sets the
+  flag on every path that can change its save data (a program write, a state
+  load, a power-on clear, `save_data_mut`), since a missed path is a lost save.
+  A new save file is created owner-only (`0o600`) on Unix; an existing one keeps
+  its mode (`write_atomic`).
 - **The periodic write runs with the lock released.** `BatterySave::due_write`
   copies the changed bytes under a brief `EmuCore` lock; the write, which fsyncs,
   happens after the lock is dropped, and `written` records the outcome. A failed
@@ -2548,6 +2566,18 @@ under the configuration hash gained two fields: a v3.0.x peer with the same
 settings would otherwise hash differently and be refused as a settings
 mismatch, the wrong reason. Its `"RNE6"` is now one of RustyNES's older magics,
 refused as another emulator version naming its epoch.
+
+**Protocol 8 (`"RNE8"`, v3.2.0)** adds `NetMessage::InputBatch` (tag 6): the
+retransmit window resends each run of consecutive locally-authored inputs as one
+datagram (tag, player, LE start frame, a count byte, then that many inputs; at
+most 255, and the window is 65 frames) instead of one `Input` per frame. The
+`Sync` layout is unchanged; a v3.1.x peer's `"RNE7"` joins the older magics and
+is refused naming its epoch, because it would drop every batch as an unknown
+tag and so never recover a lost input. The spectator folds a batch in exactly as
+it would the same inputs sent one by one. Neither transport filters datagrams by
+source after a peer is adopted: a filter was tried and removed, since it ended
+the session on a NAT rebinding or an IPv4-mapped address and authenticated
+nothing (`connection.rs` says why at `poll`).
 
 - **Another epoch is refused first**, as another emulator version:
   `DisconnectReason::EmulatorMismatch` / `NetplayError::EmulatorMismatch` /

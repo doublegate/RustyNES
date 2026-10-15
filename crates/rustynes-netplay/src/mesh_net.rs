@@ -403,11 +403,16 @@ impl MeshHost {
                 self.last_roster_sent = Some(now);
                 self.roster_resends -= 1;
             }
-            // After the first broadcast, build + return the host's transport.
-            // (We still want the joiners to have received it; the resends above
-            // ride out loss, but the host can proceed immediately — its mesh
-            // transport simply starts sending Inputs, which also doubles as
-            // liveness for the joiners.)
+            // v3.2.0: hand off only after the LAST resend. The resends exist to
+            // ride out a lost roster, and they are sent from this pump; once
+            // the host has its transport nothing pumps this handshake again.
+            // Until v3.2.0 it handed off after the first broadcast, so the
+            // other four were never sent and one lost datagram stranded a
+            // joiner. Cost: the host starts about
+            // (ROSTER_RESENDS - 1) x ROSTER_RESEND_INTERVAL = 200 ms later.
+            if self.roster_resends > 0 {
+                return Ok(None);
+            }
             let socket = self.socket.take().expect("host socket present to hand off");
             let peers: Vec<SocketAddr> = self.joiners.keys().copied().collect();
             // We never reach here without at least the resend above; map an I/O
@@ -819,8 +824,13 @@ mod tests {
         let listen = host.local_addr().unwrap();
         let mut j = MeshJoiner::connect(loopback(), listen, 1, id).unwrap();
         let mut done = false;
+        let mut j_done = false;
         for _ in 0..500 {
-            let _ = j.pump();
+            // The joiner hands off once it has the roster; stop pumping it
+            // then, as a real caller would (the host keeps resending).
+            if !j_done && let Ok(Some(_)) = j.pump() {
+                j_done = true;
+            }
             if host.pump().expect("host pump").is_some() {
                 done = true;
                 break;

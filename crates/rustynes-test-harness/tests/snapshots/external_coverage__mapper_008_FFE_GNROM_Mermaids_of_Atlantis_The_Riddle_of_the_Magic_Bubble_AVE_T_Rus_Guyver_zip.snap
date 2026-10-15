@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-008-FFE-GNROM/Mermaids of Atlantis - The Riddle of the Magic Bubble (AVE) [T+Rus_Guyver].zip
+rom_sha256=018fcac8414972399cb41aeb9ba0c93451a5a067d1216bd892e668f416d449cb
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=c653e0bf72ccba27
+checkpoint f900 fb_fnv1a64=ed9cc421d32a33d0
+checkpoint f1100 fb_fnv1a64=271daa76f225976c

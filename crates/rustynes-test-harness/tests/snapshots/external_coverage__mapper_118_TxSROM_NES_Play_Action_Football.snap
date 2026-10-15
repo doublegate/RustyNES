@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/NES Play Action Football.nes
+rom_sha256=2b03341f9febb511a0124a6e552f8bbc5295041955b5fd94a95d59175162970c
+frames=700
+fb_bytes=245760
+cycles=20816571
+audio_samples=512903
+audio_fnv1a64=d189b6964169323e
+checkpoint f700 fb_fnv1a64=62306352cb723810

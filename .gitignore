@@ -352,6 +352,10 @@ WARP.md
 # Local scratch / salvage working dir (data/docs/logs pulled from /tmp triage); not
 # part of the repo.
 /salvaged/
+# v3.2.0: an AI agent's /tmp-salvage scratch from the agy/Codex remediation
+# branch (session transcripts, a /tmp listing, the author's address). Kept in the
+# gitignored salvaged/ above; it must never be committed under this name either.
+/salvaged_tmp/
 
 # NOTE: BestEffort boot-smoke ROMs (homebrew/unlicensed/multicart) are no longer
 # a separate tree — they live under the already-ignored tests/roms/external/

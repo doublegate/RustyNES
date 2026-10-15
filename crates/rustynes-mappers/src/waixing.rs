@@ -189,6 +189,15 @@ impl Mapper for Waixing242 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
@@ -354,6 +363,15 @@ impl Mapper for WaixingFs304M162 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize],
@@ -551,6 +569,15 @@ impl Mapper for Waixing178 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr_ram[addr as usize],
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.chr_ram[addr as usize],
@@ -763,6 +790,26 @@ impl Mapper for Waixing253 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let slot = (addr as usize) / CHR_BANK_1K;
+                let lo = self.chr_low[slot];
+                if (lo == 4 || lo == 5) && !self.force_chr_rom {
+                    let page = (lo as usize & 0x01) * CHR_BANK_1K;
+                    return self.chr_ram
+                        [(page + (addr as usize & 0x3FF)) & (self.chr_ram.len() - 1)];
+                }
+                let page =
+                    (lo as usize | ((self.chr_high[slot] as usize) << 8)) % self.chr_count_1k;
+                self.chr[page * CHR_BANK_1K + (addr as usize & 0x3FF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {

@@ -573,6 +573,31 @@ impl Mapper for Fk23c {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                // The FS005 mixed-memory overlay outranks the flat CHR window.
+                // `select_chr_ram` is `$5xx0.5`, which on submapper 2 selects
+                // NROM CHR mode rather than the SFC-12B CHR-RAM window, so a
+                // game can have both set -- and if the flat path won, `ppu_write`
+                // would keep writing the overlay while `ppu_read` could never
+                // see it. Resolve the bank first and let the overlay answer.
+                let slot = (addr as usize) / CHR_BANK_1K;
+                let b = self.resolve_chr(slot);
+                if self.chr_bank_is_ram(b) {
+                    return self.chr_ram[b * CHR_BANK_1K + (addr as usize & 0x3FF)];
+                }
+                if self.chr_is_ram || self.select_chr_ram {
+                    return self.chr[addr as usize & (self.chr.len() - 1)];
+                }
+                self.chr[b * CHR_BANK_1K + (addr as usize & 0x3FF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

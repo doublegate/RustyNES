@@ -457,6 +457,26 @@ impl Mapper for KaiserMapper {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (self.chr.len() - 1)];
+                }
+                if self.board == KaiserBoard::M56 {
+                    let slot = (addr as usize) / CHR_BANK_1K;
+                    let count = self.chr_count_1k();
+                    let bank = (self.chr_banks[slot] as usize) % count;
+                    return self.chr[bank * CHR_BANK_1K + (addr as usize & 0x3FF)];
+                }
+                self.chr[addr as usize & (self.chr.len() - 1)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-017-FFE-SuperMagicCard/Dragon Ball Z III - Ressen Jinzou Ningen (J) [hFFE][p1].zip
+rom_sha256=424a49d3a8dd1800ed5710c4371fdc4bdf2d217c3f20276f188e4d7bdef6048f
+frames=1141
+fb_bytes=245760
+cycles=33949789
+audio_samples=836505
+audio_fnv1a64=f35b2a9fe2366738
+checkpoint f900 fb_fnv1a64=5cffd91e66eeff9c
+checkpoint f1100 fb_fnv1a64=d2c5cb61d590b270

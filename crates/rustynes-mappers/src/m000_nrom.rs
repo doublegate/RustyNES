@@ -184,6 +184,21 @@ impl Mapper for Nrom {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[addr as usize],
+            0x2000..=0x3EFF => {
+                let off = self.nametable_offset(addr);
+                self.vram[off]
+            }
+            // $3F00-$3FFF is palette RAM; owned by the PPU, not the mapper.
+            // Returning 0 here matches the behavior expected of mappers that
+            // never see palette accesses (PPU short-circuits).
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

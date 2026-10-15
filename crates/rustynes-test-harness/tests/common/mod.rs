@@ -282,7 +282,7 @@ pub mod external {
     use std::fs;
     use std::path::PathBuf;
 
-    use rustynes_core::{Buttons, Nes};
+    use rustynes_core::{Buttons, ConsoleModel, Nes};
     use rustynes_test_harness::coverage::{FrameHealth, frame_health};
     use sha2::{Digest, Sha256};
 
@@ -338,6 +338,33 @@ pub mod external {
             free_run: u32,
             checkpoints: &'static [u32],
         },
+        /// v3.2.0: arbitrary single-frame presses. `presses` lists
+        /// `(frame, buttons)`, 0-indexed frames in ascending order, each
+        /// held for exactly that one frame; every other frame is idle, and
+        /// the run lasts `frames` frames in all. For a menu that needs more
+        /// than START (a multicart's game list needs DOWN first: mapper 47's
+        /// second game is reached that way, which is what exercises its
+        /// block-select register).
+        Presses {
+            presses: &'static [(u32, Buttons)],
+            frames: u32,
+            checkpoints: &'static [u32],
+        },
+        /// v3.2.0 — each `(frame, buttons)` in `presses` holds those buttons
+        /// for `hold` frames from that frame index (0-based), idle otherwise,
+        /// for `frames` frames; one checkpoint at the end. For games whose
+        /// menus ignore a one-frame tap (*Fudou Myouou Den*'s START /
+        /// CONTINUE menu reads the button across several frames) or need a
+        /// button other than START (*San Guo Zhi*'s questions take A), which
+        /// no other script can reach. The console RESET button is pressed at
+        /// the start of each frame index in `resets` (mapper 230's reset-
+        /// switched multicart).
+        Held {
+            presses: &'static [(u32, Buttons)],
+            hold: u32,
+            resets: &'static [u32],
+            frames: u32,
+        },
     }
 
     impl InputScript {
@@ -347,7 +374,9 @@ pub mod external {
         #[must_use]
         pub const fn total_frames(&self) -> u32 {
             match *self {
-                Self::IdleOnly { frames } => frames,
+                Self::IdleOnly { frames }
+                | Self::Presses { frames, .. }
+                | Self::Held { frames, .. } => frames,
                 Self::StartTap {
                     idle_pre,
                     idle_post,
@@ -487,11 +516,15 @@ pub mod external {
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
         let idx = (0..archive.len()).find(|&i| {
             archive.by_index(i).is_ok_and(|f| {
-                std::path::Path::new(f.name()).extension().is_some_and(|e| {
-                    e.eq_ignore_ascii_case("nes")
-                        || e.eq_ignore_ascii_case("fds")
-                        || e.eq_ignore_ascii_case("unf")
-                        || e.eq_ignore_ascii_case("unif")
+                f.name().is_ok_and(|n| {
+                    std::path::Path::new(n.as_ref())
+                        .extension()
+                        .is_some_and(|e| {
+                            e.eq_ignore_ascii_case("nes")
+                                || e.eq_ignore_ascii_case("fds")
+                                || e.eq_ignore_ascii_case("unf")
+                                || e.eq_ignore_ascii_case("unif")
+                        })
                 })
             })
         })?;
@@ -743,8 +776,25 @@ pub mod external {
     ///
     /// Panics on a file-read / archive-extract / parse failure (hard-fail in a
     /// regression harness); a missing FDS BIOS is the one soft case.
-    #[allow(clippy::too_many_lines)]
     pub fn run_capture_opt(rom_rel: &str, script: InputScript) -> Option<CaptureResult> {
+        run_capture_model(rom_rel, script, ConsoleModel::Nes)
+    }
+
+    /// Like [`run_capture_opt`], on the given [`ConsoleModel`].
+    ///
+    /// v3.2.0: some dumps write `$2000`/`$2006` before the front-loading NES
+    /// PPU leaves its power-on warm-up, so on the default [`ConsoleModel::Nes`]
+    /// those writes are ignored and the game never draws. On a Famicom the PPU
+    /// is never held in reset and they land. The coverage sweep boots such
+    /// dumps the way a player must run them, as a Famicom, instead of listing
+    /// them as blank. The model is applied with a power-cycle, so the warm-up
+    /// counter starts from the model's own state rather than the NES one.
+    #[allow(clippy::too_many_lines)]
+    pub fn run_capture_model(
+        rom_rel: &str,
+        script: InputScript,
+        model: ConsoleModel,
+    ) -> Option<CaptureResult> {
         let path = external_rom_path(rom_rel);
         // The SHA-256 pins the *staged file* (archive bytes for a `.zip`/`.7z`,
         // disk bytes for a `.fds`, ROM bytes for a `.nes`) — a stable identity
@@ -767,6 +817,10 @@ pub mod external {
             Load::Ok(nes) => *nes,
             Load::SkipNoBios => return None,
         };
+        if model != ConsoleModel::Nes {
+            nes.set_console_model(model);
+            nes.power_cycle();
+        }
 
         // Vs. System setup. Vs. arcade carts (iNES mapper 99, mapper 151, or
         // the NES-2.0/header Vs. console flag) boot to an attract loop and
@@ -958,6 +1012,64 @@ pub mod external {
                     frame_counter += 1;
                     maybe_emit(frame_counter, &nes);
                 }
+            }
+            InputScript::Presses {
+                presses,
+                frames,
+                checkpoints: checkpoint_frames,
+            } => {
+                let mut maybe_emit = |frame: u32, nes: &Nes| {
+                    if checkpoint_frames.contains(&frame) {
+                        let fb_hash = fnv1a64(nes.framebuffer());
+                        best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
+                        checkpoints.push(Checkpoint { frame, fb_hash });
+                        dump_frame(&label_safe, &format!("f{frame}"), nes.framebuffer());
+                    }
+                };
+                assert!(
+                    presses.windows(2).all(|w| w[0].0 < w[1].0),
+                    "Presses frames must be strictly ascending"
+                );
+                for f in 0..frames {
+                    let held = presses
+                        .iter()
+                        .find(|&&(at, _)| at == f)
+                        .map_or(Buttons::empty(), |&(_, b)| b);
+                    nes.set_buttons(0, held);
+                    pulse_vs_coin!();
+                    nes.run_frame();
+                    samples.extend(nes.drain_audio());
+                    frame_counter += 1;
+                    maybe_emit(frame_counter, &nes);
+                }
+            }
+            InputScript::Held {
+                presses,
+                hold,
+                resets,
+                frames,
+            } => {
+                for f in 0..frames {
+                    if resets.contains(&f) {
+                        nes.reset();
+                    }
+                    let held = presses
+                        .iter()
+                        .filter(|&&(p, _)| f >= p && f < p + hold)
+                        .fold(Buttons::empty(), |acc, &(_, b)| acc | b);
+                    nes.set_buttons(0, held);
+                    pulse_vs_coin!();
+                    nes.run_frame();
+                    samples.extend(nes.drain_audio());
+                    frame_counter += 1;
+                }
+                let fb_hash = fnv1a64(nes.framebuffer());
+                best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
+                checkpoints.push(Checkpoint {
+                    frame: frames,
+                    fb_hash,
+                });
+                dump_frame(&label_safe, &format!("f{frames}"), nes.framebuffer());
             }
         }
 

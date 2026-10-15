@@ -325,6 +325,13 @@ impl Transport for UdpTransport {
         }
     }
 
+    // No source filter here, deliberately (v3.2.0 review). A filter on
+    // `self.remote` was tried and removed: it dropped every datagram after a
+    // NAT rebinding (the peer's public port changes mid-session) and after an
+    // IPv4 peer reappears as its IPv4-mapped IPv6 form, ending the session,
+    // while protecting nothing -- a UDP source is trivially spoofed, and the
+    // protocol has no authentication for it to stand in for. Adoption
+    // (`set_remote`) is still first-come, so a stray `Sync` cannot re-point it.
     fn poll(&mut self) -> Vec<NetMessage> {
         self.poll_with_source()
             .into_iter()
@@ -800,7 +807,8 @@ impl NetplayConnection {
                 NetMessage::Input { .. }
                 | NetMessage::InputAck { .. }
                 | NetMessage::Checksum { .. }
-                | NetMessage::Roster { .. } => {}
+                | NetMessage::Roster { .. }
+                | NetMessage::InputBatch { .. } => {}
             }
         }
 

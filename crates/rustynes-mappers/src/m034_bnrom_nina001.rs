@@ -187,6 +187,27 @@ impl Mapper for M34 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match (addr, self.variant) {
+            (0x0000..=0x0FFF, M34Variant::Nina001) => {
+                let total_4k = (self.chr.len() / CHR_BANK_4K).max(1);
+                let bank = (self.chr_bank_lo as usize) % total_4k;
+                self.chr[(bank * CHR_BANK_4K + addr as usize) % self.chr.len()]
+            }
+            (0x1000..=0x1FFF, M34Variant::Nina001) => {
+                let total_4k = (self.chr.len() / CHR_BANK_4K).max(1);
+                let bank = (self.chr_bank_hi as usize) % total_4k;
+                self.chr[(bank * CHR_BANK_4K + (addr as usize - 0x1000)) % self.chr.len()]
+            }
+            (0x0000..=0x1FFF, _) => self.chr[addr as usize % self.chr.len()],
+            (0x2000..=0x3EFF, _) => {
+                self.vram[nametable_offset(addr, self.mirroring) % self.vram.len()]
+            }
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {

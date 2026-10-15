@@ -182,6 +182,15 @@ impl Mapper for Sachen8259M137 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.read_chr(addr),
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.current_mirroring())],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         if (0x2000..=0x3EFF).contains(&addr) {
@@ -374,6 +383,23 @@ impl Mapper for Sachen8259 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    return self.chr[addr as usize & (self.chr.len() - 1)];
+                }
+                let slot = (addr as usize) / CHR_2K;
+                let count = (self.chr.len() / CHR_2K).max(1);
+                let bank = self.chr_bank(slot) % count;
+                self.chr[bank * CHR_2K + (addr as usize & (CHR_2K - 1))]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {

@@ -420,6 +420,13 @@ impl JyAsic {
 
     /// Resolve a physical CHR offset for a PPU pattern-table address.
     fn chr_offset(&self, addr: u16) -> usize {
+        self.chr_offset_with_latch(addr, self.chr_latch)
+    }
+
+    /// [`Self::chr_offset`] through an explicit MMC4-style latch, so
+    /// `ppu_peek` can resolve through the latch a fetch WOULD set without
+    /// setting it.
+    fn chr_offset_with_latch(&self, addr: u16, chr_latch: [u8; 2]) -> usize {
         let addr = (addr & 0x1FFF) as usize;
         let total_1k = (self.chr.len() / CHR_BANK_1K).max(1);
         let slot_1k = addr / CHR_BANK_1K; // 0..=7
@@ -429,9 +436,9 @@ impl JyAsic {
             // 4 KiB: two windows, MMC4 latch picks the register for each.
             1 => {
                 let reg = if addr < 0x1000 {
-                    self.chr_latch[0] as usize
+                    chr_latch[0] as usize
                 } else {
-                    self.chr_latch[1] as usize
+                    chr_latch[1] as usize
                 };
                 (self.chr_reg(reg) as usize) * 4 + (slot_1k & 0x03)
             }
@@ -489,17 +496,26 @@ impl JyAsic {
     /// Update the MMC4-like CHR latch on mapper 209 when a pattern fetch hits a
     /// sentinel address ($x FD8-$x FDF / $x FE8-$x FEF).
     fn update_chr_latch_209(&mut self, addr: u16) {
+        self.chr_latch = self.chr_latch_after_fetch(addr);
+    }
+
+    /// The CHR latch as it stands after a pattern fetch of `addr`, without
+    /// storing it: [`Self::update_chr_latch_209`] stores it, `ppu_peek`
+    /// resolves through it (`mapper209_ppu_peek_sees_the_latch_the_read_would_set`).
+    fn chr_latch_after_fetch(&self, addr: u16) -> [u8; 2] {
+        let mut chr_latch = self.chr_latch;
         if !matches!(self.board, JyBoard::M209 | JyBoard::M35) {
-            return;
+            return chr_latch;
         }
         match addr & 0x2FF8 {
             0x0FD8 | 0x0FE8 => {
                 // Mesen: chrLatch[addr>>12] = (addr>>4) & ((addr>>10 & 4) | 2)
                 let idx = (addr >> 12) as usize & 0x01;
-                self.chr_latch[idx] = ((addr >> 4) as u8) & (((addr >> 10) as u8 & 0x04) | 0x02);
+                chr_latch[idx] = ((addr >> 4) as u8) & (((addr >> 10) as u8 & 0x04) | 0x02);
             }
             _ => {}
         }
+        chr_latch
     }
 
     /// Whether the given nametable index ($2000-$2FFF / index 0..=3) reads from
@@ -725,6 +741,18 @@ impl Mapper for JyAsic {
         }
         self.update_chr_latch_209(addr);
         let off = self.chr_offset(addr);
+        self.chr[off % self.chr.len()]
+    }
+
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        // The bus masks pattern-table reads to `$0000-$1FFF` before they reach
+        // here; nametable bytes are routed through `nametable_fetch` /
+        // `nametable_address` instead (the PPU owns CIRAM), so this only
+        // services CHR.
+        let addr = addr & 0x1FFF;
+        // `ppu_read` moves the latch BEFORE it resolves the bank, so a fetch
+        // of a latch trigger reads through the new latch; peek the same way.
+        let off = self.chr_offset_with_latch(addr, self.chr_latch_after_fetch(addr));
         self.chr[off % self.chr.len()]
     }
 
@@ -1314,6 +1342,38 @@ mod tests {
         // chr_latch[0] = (0x0FE8>>4) & ((0x0FE8>>10 & 4)|2)
         //             = 0xFE & ((3 & 4)|2) = 0xFE & 2 = 2.
         assert_eq!(m.chr_latch[0], 2);
+    }
+
+    /// `ppu_peek` returns the byte `ppu_read` would, and `ppu_read` on 209
+    /// updates the MMC4-style latch BEFORE it resolves the bank, so a fetch
+    /// of a latch trigger reads through the NEW latch. Regression for a
+    /// v3.2.0 import whose `ppu_peek` resolved through the old latch, so the
+    /// debugger's CHR view showed a byte the PPU never fetches.
+    #[test]
+    fn mapper209_ppu_peek_sees_the_latch_the_read_would_set() {
+        // Every byte of 1 KiB bank `b` is `b`, so a byte names its bank.
+        let mut chr = vec![0u8; 256 * CHR_BANK_1K];
+        for (i, v) in chr.iter_mut().enumerate() {
+            *v = (i / CHR_BANK_1K) as u8;
+        }
+        let mut m = JyAsic::new(
+            synth_prg(64),
+            chr.into_boxed_slice(),
+            Mirroring::Vertical,
+            JyBoard::M209,
+        )
+        .unwrap();
+        m.cpu_write(0xD000, 0x08); // CHR mode 1: two 4 KiB windows
+        m.cpu_write(0x9000, 1); // reg 0 -> 4 KiB bank 1 (1 KiB banks 4-7)
+        m.cpu_write(0x9002, 2); // reg 2 -> 4 KiB bank 2 (1 KiB banks 8-11)
+        for addr in [0x0FD8u16, 0x0FE8, 0x1FD8, 0x1FE8, 0x0FE0, 0x0000] {
+            let saved = m.save_state();
+            let read = m.ppu_read(addr);
+            m.load_state(&saved).unwrap();
+            assert_eq!(m.ppu_peek(addr), read, "${addr:04X}");
+        }
+        // And the peek really did see a flip: $0FE8 selects reg 2.
+        assert_eq!(m.ppu_peek(0x0FE8), 11, "bank 2 * 4 + slot 3");
     }
 
     #[test]

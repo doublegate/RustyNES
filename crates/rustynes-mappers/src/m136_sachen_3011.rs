@@ -244,6 +244,18 @@ impl Mapper for Sachen3011 {
         }
     }
 
+    fn ppu_peek(&self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let bank = (self.txc.output as usize) % self.chr_count_8k;
+                self.chr[bank * CHR_BANK_8K + (addr as usize & 0x1FFF)]
+            }
+            0x2000..=0x3EFF => self.vram[nametable_offset(addr, self.mirroring)],
+            _ => 0,
+        }
+    }
+
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
