@@ -26,6 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **v3.1.x save states of Bandai FCG games load again** (mappers 16, 153 and
+  159; `T-FCG-EEPROM-STATE`). v3.2.0 refused them when its state began
+  recording each serial EEPROM's protocol position. Such a state never stored
+  that position, so the EEPROM comes back idle with its contents intact,
+  which is what v3.1.x did when it restored one; the result no longer depends
+  on what the board was doing before the load. Mapper 157 first shipped in
+  v3.2.0, so it has no older state to read.
+
 ## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 
 ### Breaking

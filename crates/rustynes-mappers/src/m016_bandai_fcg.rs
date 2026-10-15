@@ -103,9 +103,17 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 ///
 /// v3 (v3.2.0) adds each EEPROM's protocol state ([`Eeprom::save_lines`],
 /// nine bytes after its contents), so a state taken mid-transaction resumes
-/// it. A v2 blob is refused: on mappers 16 (with an EEPROM), 157 and 159, a
-/// v3.1.x save state does not load.
+/// it. v3.2.0 refused a v2 blob, so no v3.1.x save state of mappers 16, 153
+/// or 159 loaded; since v3.3.0 one loads again ([`V2_STATE_VERSION`]).
 const SAVE_STATE_VERSION: u8 = 3;
+
+/// The v3.1.x layout, still read (`T-FCG-EEPROM-STATE`, v3.3.0): version 3
+/// without the protocol record. It never stored one, so the chip is restored
+/// idle ([`Eeprom::idle_after`]): its contents are exact, and a game that
+/// was in the middle of talking to it when the state was taken sees the
+/// transaction end, as it did when v3.1.x restored that state. Mapper 157
+/// postdates it and refuses version 2.
+const V2_STATE_VERSION: u8 = 2;
 
 /// Mapper 153's WRAM.
 const WRAM_153: usize = 0x2000;
@@ -351,6 +359,24 @@ impl Eeprom {
         self.data = b[6];
         self.counter = b[7];
         self.output = b[8];
+    }
+
+    /// The protocol state a version 2 blob restores, which carries none: an
+    /// idle chip whose last sampled lines are the ones `$x00D` (`ctrl`, bit 5
+    /// SCL, bit 6 SDA) last drove, so the game's next write is judged against
+    /// the levels the chip really saw and not against a spurious edge. Every
+    /// field is set, so the result does not depend on what the board was
+    /// doing before the load.
+    fn idle_after(&mut self, ctrl: u8) {
+        self.last_scl = u8::from(ctrl & 0x20 != 0);
+        self.last_sda = u8::from(ctrl & 0x40 != 0);
+        self.mode = I2cMode::Idle;
+        self.next_mode = I2cMode::Idle;
+        self.chip_addr = 0;
+        self.addr = 0;
+        self.data = 0;
+        self.counter = 0;
+        self.output = 1;
     }
 
     fn addr_mask(&self) -> u8 {
@@ -1104,13 +1130,27 @@ impl Mapper for BandaiFcg {
             .as_ref()
             .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        // Only the current version is read (v2.9.8, ADR 0042); a v1 blob,
-        // which carried no mapper-153 tail, used to load on boards without one.
-        let core_len = 18 + self.vram.len() + ee_len + need_chr;
-        let expected = match data.first() {
-            Some(&SAVE_STATE_VERSION) => core_len + 2 + self.wram.len(),
+        // Versions 3 (v3.2.0) and 2 (v3.1.x) are read. Version 2 is version 3
+        // without the EEPROM protocol record (`T-FCG-EEPROM-STATE`); mapper
+        // 157 first shipped at version 3, so it has no version 2 to read. A
+        // v1 blob, which carried no mapper-153 tail, is refused (v2.9.8, ADR
+        // 0042).
+        let lines = match data.first() {
+            // An empty blob fails the length check below.
+            Some(&SAVE_STATE_VERSION) | None => true,
+            Some(&V2_STATE_VERSION) if self.variant != FcgVariant::Datach => false,
             Some(&v) => return Err(MapperError::UnsupportedVersion(v)),
-            None => core_len,
+        };
+        let ee_len = if lines {
+            ee_len
+        } else {
+            ee_len.saturating_sub(Eeprom::LINES_LEN)
+        };
+        let core_len = 18 + self.vram.len() + ee_len + need_chr;
+        let expected = if data.is_empty() {
+            core_len
+        } else {
+            core_len + 2 + self.wram.len()
         };
         // Mapper 157 appends a tail whose length depends on the scan in
         // flight, so it is checked (and restored) separately, after the
@@ -1143,7 +1183,7 @@ impl Mapper for BandaiFcg {
             4 => Mirroring::FourScreen,
             other => return Err(MapperError::Invalid(format!("mirroring {other}"))),
         };
-        if let Some(ee) = self.eeprom.as_ref() {
+        if let Some(ee) = self.eeprom.as_ref().filter(|_| lines) {
             let at = 18 + ee.mem.len();
             ee.check_lines(&data[at..at + Eeprom::LINES_LEN])?;
         }
@@ -1171,8 +1211,13 @@ impl Mapper for BandaiFcg {
         if let Some(ee) = self.eeprom.as_mut() {
             let n = ee.mem.len();
             ee.mem.copy_from_slice(&data[cursor..cursor + n]);
-            ee.load_lines(&data[cursor + n..cursor + n + Eeprom::LINES_LEN]);
-            cursor += n + Eeprom::LINES_LEN;
+            cursor += n;
+            if lines {
+                ee.load_lines(&data[cursor..cursor + Eeprom::LINES_LEN]);
+                cursor += Eeprom::LINES_LEN;
+            } else {
+                ee.idle_after(ctrl);
+            }
         }
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
@@ -1488,6 +1533,160 @@ mod tests {
             assert!(other.load_state(&bad).is_err(), "{what} refused");
             assert_eq!(other.save_state(), before, "{what}: nothing restored");
         }
+    }
+
+    /// Turn a current (version 3) blob into the version 2 blob v3.1.x wrote
+    /// for the same board: the same bytes with the protocol record after the
+    /// EEPROM contents left out (v3.1.0's `save_state`, read from the tag).
+    fn as_v2(m: &BandaiFcg, v3: &[u8]) -> Vec<u8> {
+        let mut v2 = v3.to_vec();
+        v2[0] = 2;
+        if let Some(ee) = m.eeprom.as_ref() {
+            let at = 18 + ee.mem.len();
+            v2.drain(at..at + Eeprom::LINES_LEN);
+        }
+        v2
+    }
+
+    /// A v3.1.x save state (version 2) of a Bandai board loads again
+    /// (`T-FCG-EEPROM-STATE`). v3.2.0 refused it outright when version 3 added
+    /// the chip's protocol record. Version 2 never stored that record, so the
+    /// chip comes back idle; and it comes back idle DETERMINISTICALLY, whatever
+    /// the board was doing before the load, which v3.1.x itself did not do
+    /// (it left the live protocol state in place).
+    #[test]
+    fn a_v3_1_state_loads_with_the_chip_idle() {
+        for variant in [
+            FcgVariant::Both,
+            FcgVariant::Fcg,
+            FcgVariant::Lz93d50_24c02,
+            FcgVariant::Lz93d50_24c01,
+            FcgVariant::Lz93d50Wram,
+        ] {
+            let board = || {
+                let chr = if variant == FcgVariant::Lz93d50Wram {
+                    Box::new([])
+                } else {
+                    synth_chr(16)
+                };
+                BandaiFcg::new(synth_prg(32), chr, Mirroring::Vertical, variant).unwrap()
+            };
+            let mut a = board();
+            a.cpu_write(0x8008, 3);
+            a.cpu_write(0x6008, 3);
+            a.cpu_write(0x800B, 0x34);
+            a.cpu_write(0x800D, 0x60); // SCL and SDA high: an idle bus
+            if let Some(ee) = a.eeprom.as_mut() {
+                ee.mem[0x12] = 0x5A;
+            }
+            let v2 = as_v2(&a, &a.save_state());
+
+            // Two boards in different protocol states before the load.
+            let mut b = board();
+            let mut c = board();
+            if c.eeprom.is_some() {
+                let mut d = I2cDriver { m: &mut c };
+                d.start();
+                d.send_addr_rw(0x05, true);
+            }
+            b.load_state(&v2)
+                .unwrap_or_else(|e| panic!("{variant:?}: {e}"));
+            c.load_state(&v2)
+                .unwrap_or_else(|e| panic!("{variant:?}: {e}"));
+            assert_eq!(b.save_state(), c.save_state(), "{variant:?}: deterministic");
+            assert_eq!(
+                b.cpu_read(0x8000),
+                a.cpu_read(0x8000),
+                "{variant:?}: PRG bank"
+            );
+            assert_eq!(b.irq_latch, a.irq_latch, "{variant:?}: IRQ latch");
+            assert_eq!(b.eeprom_ctrl, a.eeprom_ctrl, "{variant:?}: `$x00D`");
+            if let Some(ee) = b.eeprom.as_ref() {
+                assert_eq!(ee.mem[0x12], 0x5A, "{variant:?}: contents");
+                assert_eq!(ee.mode, I2cMode::Idle, "{variant:?}: idle");
+                assert_eq!((ee.last_scl, ee.last_sda), (1, 1), "{variant:?}: lines");
+            }
+            // The restored chip answers a fresh read (the driver speaks the
+            // X24C01's protocol, which has no device-select byte).
+            if variant == FcgVariant::Lz93d50_24c01 {
+                let mut d = I2cDriver { m: &mut b };
+                d.start();
+                d.send_addr_rw(0x12, true);
+                assert!(d.read_ack(), "{variant:?}: acknowledges");
+                assert_eq!(d.recv_data_lsb_first(), 0x5A, "{variant:?}: reads back");
+            }
+        }
+    }
+
+    /// The same, against bytes the v3.1.0 code itself wrote rather than ones
+    /// derived here: `tests/fixtures/bandai-v3.1.0/` holds `save_state` blobs
+    /// dumped from a v3.1.0 checkout (synthetic PRG and CHR, the register
+    /// writes below). Each loads, and the loaded board, saved again and put
+    /// back in the version 2 layout, reproduces the fixture byte for byte,
+    /// which also shows [`as_v2`] matches the real format.
+    #[test]
+    fn states_written_by_v3_1_0_load() {
+        for (bytes, variant) in [
+            (
+                &include_bytes!("../tests/fixtures/bandai-v3.1.0/both.bin")[..],
+                FcgVariant::Both,
+            ),
+            (
+                &include_bytes!("../tests/fixtures/bandai-v3.1.0/fcg.bin")[..],
+                FcgVariant::Fcg,
+            ),
+            (
+                &include_bytes!("../tests/fixtures/bandai-v3.1.0/c02.bin")[..],
+                FcgVariant::Lz93d50_24c02,
+            ),
+            (
+                &include_bytes!("../tests/fixtures/bandai-v3.1.0/c01.bin")[..],
+                FcgVariant::Lz93d50_24c01,
+            ),
+            (
+                &include_bytes!("../tests/fixtures/bandai-v3.1.0/wram.bin")[..],
+                FcgVariant::Lz93d50Wram,
+            ),
+        ] {
+            let board = || {
+                let chr: Box<[u8]> = if variant == FcgVariant::Lz93d50Wram {
+                    Box::new([])
+                } else {
+                    (0..16 * 1024_usize).map(|i| (i % 251) as u8).collect()
+                };
+                let prg: Box<[u8]> = (0..32 * PRG_BANK_16K)
+                    .map(|i| (i / PRG_BANK_16K) as u8)
+                    .collect();
+                BandaiFcg::new(prg, chr, Mirroring::Vertical, variant).unwrap()
+            };
+            let mut a = board();
+            a.cpu_write(0x8008, 3);
+            a.cpu_write(0x6008, 3);
+            a.cpu_write(0x800B, 0x34);
+            a.cpu_write(0x800D, 0x60);
+            if let Some(ee) = a.eeprom.as_mut() {
+                ee.mem[0x12] = 0x5A;
+            }
+            assert_eq!(as_v2(&a, &a.save_state()), bytes, "{variant:?}: layout");
+            let mut b = board();
+            b.load_state(bytes)
+                .unwrap_or_else(|e| panic!("{variant:?}: {e}"));
+            assert_eq!(as_v2(&b, &b.save_state()), bytes, "{variant:?}: restored");
+        }
+    }
+
+    /// Mapper 157 first shipped in v3.2.0 (version 3), so no version 2 blob of
+    /// it exists to load; one is refused rather than guessed at.
+    #[test]
+    fn a_version_2_datach_state_is_refused() {
+        let m = datach(false);
+        let mut v2 = m.save_state();
+        v2[0] = 2;
+        let mut b = datach(false);
+        assert!(matches!(
+            b.load_state(&v2),
+            Err(MapperError::UnsupportedVersion(2))
+        ));
     }
 
     #[test]
