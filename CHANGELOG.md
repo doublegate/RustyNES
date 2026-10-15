@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [3.2.0] - 2026-10-14 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
+## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 
 ### Breaking
 
@@ -179,8 +179,10 @@ cycle-accurate core later replaced.
   1,386 in synthesis), stored as three per-channel tables. Seven RTL findings from the
   same AI audit were re-derived; one is a real cost (the nametable is in
   registers) and is deferred, six did not hold.
-- **The oracle pin moves to v3.2.0**: all 842 golden artifacts from 188 stems
-  reproduce byte for byte from it.
+- **The oracle pin moves to v3.2.0** (the merge, `40d4bf1c`): all 848 golden
+  artifacts from 189 stems reproduce byte for byte from it. (The ladder ran
+  at the pre-merge pin `3f8a5552`, where 188 stems and 842 artifacts
+  reproduced; the one stem more is the TQROM sprite-limit stimulus.)
 - **The co-simulation ladder: 259 passed, 0 failed, 3 expected failures
   on-die, 260 / 0 / 5 off-die** (v3.1.0: 212 / 0 / 1 and 213 / 0 / 1), each
   one frozen-worktree run with nothing skipped. Two commercial frames still
@@ -193,6 +195,12 @@ cycle-accurate core later replaced.
   `e24820de2e302d3f6912524b3c97a2be` (+0.213 / +0.079 ns), off-die
   `c33ae2b14e5b8e07a68b4335c728ca03` (+0.038 / +0.080 ns, an internal path;
   the SDRAM read capture has +0.453 / +1.180 ns, assuming zero board delay).
+  The pair was compiled on 2026-10-14 and the release merged on 2026-10-15,
+  so the datecoded file is `RustyNES_20261014.rbf`, named for its own build
+  date as at v2.9.8 (the MiSTer menu shows 261014). `release-rbf.sh`
+  refuses a datecode that differs from the tag commit's date, so the three
+  files were attached by hand after each of its report checks was run
+  against the pair.
 - **Known issue (off-die build):** a `$2007` read of CHR-RAM soon after a
   write returns `$00` in simulation. It predates this release, is an expected
   failure in the off-die ladder, and the on-die build is right.
