@@ -268,9 +268,15 @@ jobs:
     name: PGO build + gate (linux x86_64)
     # After the release check, so a bad tag stops before 90 minutes of PGO.
     needs: ensure-release
+    # pgo.yml builds the TRIGGERING commit, which is the tag's on a tag push
+    # and on Auto Release's call, but main's HEAD on a dispatched re-build.
+    # So a dispatched re-build skips PGO and ships the plain Linux binary (as
+    # a run whose PGO misses its gate already does), rather than pass pgo.yml
+    # a ref: checking out a caller-chosen ref there and running it with the
+    # default branch's cache is what CodeQL reports as cache poisoning (5
+    # high alerts on #609's first form).
+    if: github.event_name != 'workflow_dispatch'
     uses: ./.github/workflows/pgo.yml
-    with:
-      ref: refs/tags/${{ inputs.tag || github.ref_name }}
     permissions:
       contents: read
 

@@ -57,11 +57,6 @@ on:
   # Linux release asset when the gate passes.
   workflow_call:
     inputs:
-      ref:
-        description: "Git ref to build (release.yml passes the release tag). Empty = the triggering ref."
-        required: false
-        default: ""
-        type: string
       frames:
         description: "Training frames per ROM (default 3600 = 60 s NTSC each)."
         required: false
@@ -81,7 +76,7 @@ on:
 # Never cancel an in-flight PGO run; let each finish so its A/B numbers + the
 # determinism proof land in the log.
 concurrency:
-  group: pgo-${{ inputs.ref || github.ref_name }}
+  group: pgo-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -111,7 +106,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       # Pinned to the project toolchain (rust-toolchain.toml = 1.99.0), matching
