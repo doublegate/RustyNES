@@ -324,13 +324,35 @@ jobs:
           tag="${tag#refs/tags/}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
+      # pgo.yml built the TRIGGERING commit (GITHUB_SHA), which on Auto
+      # Release's `workflow_run` path is main's HEAD when the run started, not
+      # necessarily the tag: a commit merged after the release would be
+      # trained and shipped under the release's name. This job checked out
+      # the tag, so HEAD is the tag's commit; ship only when the two agree,
+      # and otherwise keep the plain binary `build` attached (security review
+      # of #609).
+      - name: Ship only a PGO build of the tag's own commit
+        id: same
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_sha=$(git rev-parse HEAD)
+          if [ "$tag_sha" = "$GITHUB_SHA" ]; then
+            echo "same=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PGO built $GITHUB_SHA, but the tag is $tag_sha; the plain Linux binary stays."
+          fi
+
       - name: Download the promoted PGO binary
+        if: steps.same.outputs.same == 'true'
         uses: actions/download-artifact@v8
         with:
           name: ${{ needs.pgo.outputs.artifact }}
           path: pgo-bin
 
       - name: Stage + archive (identical layout to the plain Linux asset)
+        if: steps.same.outputs.same == 'true'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         shell: bash
@@ -351,6 +373,7 @@ jobs:
       # attached under the same name, and the API rejects a duplicate asset name without an
       # explicit overwrite. `--clobber` is that overwrite.
       - name: Replace the Linux asset with the PGO build
+        if: steps.same.outputs.same == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
