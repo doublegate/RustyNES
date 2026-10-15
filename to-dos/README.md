@@ -28,7 +28,7 @@ Android platform train), and from there through **`v2.0.0` "Timebase"** (the
 master-clock rewrite, ADR 0002), the v2.x accuracy, platform and audit lines,
 through **`v3.0.0` "Cornerstone"** (2026-10-06, the API major) and **`v3.1.0`
 "Bellwether"** (2026-10-08), to the current release, **`v3.2.0` "Confluence"**
-(2026-10-14).
+(2026-10-15).
 `to-dos/ROADMAP.md` and `docs/STATUS.md` carry the current state; this file's
 v1.8.x-era sections below are kept as history. Version markers in the
 phase bodies that read `v1.x`/`v2.x` are the inbound **engine's** prior lineage
