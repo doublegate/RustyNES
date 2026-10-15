@@ -7,10 +7,9 @@ name: Release
 # (where applicable), bundles it with the README and both LICENSE files, and
 # uploads the resulting archive to the GitHub Release matching the pushed tag.
 #
-# softprops/action-gh-release@v3 is used; v1 was deprecated mid-2025 and v2
-# (Node 20) joined the Node-20-deprecated set in 2026 — v3 moves the action
-# runtime to Node 24 with no input-surface changes. Permissions are
-# minimum-necessary (contents: write only).
+# Assets are attached with `gh release upload --clobber` (since v3.2.0; see
+# the upload step for why softprops/action-gh-release was dropped).
+# Permissions are minimum-necessary (contents: write only).
 #
 # Linux musl + cross-compiled aarch64 Linux are intentionally NOT in the matrix
 # for the v1.0 cut: Sprint 5-3's exit criterion is "binary builds and runs on
@@ -39,8 +38,12 @@ on:
         type: string
 
 # Don't kill a release mid-build if a second tag lands on the same ref.
+# Keyed on the bare tag name: a tag push's `github.ref_name` and a dispatch's
+# `inputs.tag` are both `vX.Y.Z`, so two runs for one release share a group
+# and cannot `--clobber` each other's assets (CodeRabbit on #609). Give a
+# dispatch the bare tag, as the input's description says.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -51,7 +54,46 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # A tag push has no release yet (Auto Release creates one before it calls
+  # this workflow; a re-build dispatched for an existing tag finds one), and
+  # `gh release upload` cannot create it, which the softprops action used to
+  # do. Create it once, ONLY when absent, so an existing release and its notes
+  # are never touched (Copilot and agy on #609).
+  ensure-release:
+    name: ensure the release exists
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release if this tag has none
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$GITHUB_REF}"
+          tag="${tag#refs/tags/}"
+          # Only "not found" means absent. Any other failure (rate limit, 5xx,
+          # token) stops here with its own message instead of falling through
+          # to a create that would fail with a misleading second error.
+          if out=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" 2>&1); then
+            echo "release $tag exists; left as it is"
+          elif grep -qi "release not found" <<<"$out"; then
+            # A tag with a suffix (v1.0.1-rc1) is a candidate, not a release.
+            pre=()
+            case "$tag" in *-*) pre=(--prerelease) ;; esac
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "$tag" --notes "" "${pre[@]}"
+            echo "created release $tag ${pre[*]}"
+          else
+            echo "$out" >&2
+            exit 1
+          fi
+
   build:
+    needs: ensure-release
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     # 30 minutes is ~6x the historical aarch64-apple-darwin build wall-clock
@@ -89,8 +131,17 @@ jobs:
             archive_ext: zip
             bin_name: rustynes.exe
     steps:
+      # Check out the TAG, not the triggering ref. On workflow_dispatch the
+      # ref is the branch the run was started from (main), so without this a
+      # re-build of an existing tag compiled main's HEAD and attached it
+      # under the tag's name. On a tag push `inputs.tag` is empty and
+      # `github.ref` is the tag; on workflow_call it is the tag Auto Release
+      # just created. Qualified as `refs/tags/`, so a branch of the same name
+      # can never be checked out instead (CodeRabbit on #609); give a
+      # dispatch the bare tag.
       - uses: actions/checkout@v7
         with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       # Shared toolchain + Linux deps (no-op on macOS/Windows) + cargo cache.
@@ -102,15 +153,17 @@ jobs:
 
       - name: Resolve release tag
         id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           # `inputs.tag` is set for workflow_dispatch AND workflow_call; on a
-          # tag push it is empty, so fall back to the pushed ref.
-          if [ -n "${{ inputs.tag }}" ]; then
-            tag="${{ inputs.tag }}"
-          else
-            tag="${GITHUB_REF#refs/tags/}"
-          fi
+          # tag push it is empty, so fall back to the pushed ref. Read through
+          # `env`, not interpolated into the script, and stripped of a
+          # `refs/tags/` prefix either way, so a dispatch given the full ref
+          # names its archive and its upload by the bare tag (agy on #609).
+          tag="${INPUT_TAG:-$GITHUB_REF}"
+          tag="${tag#refs/tags/}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "Resolved tag: ${tag}"
 
@@ -155,21 +208,33 @@ jobs:
           Compress-Archive -Path "$env:stage" -DestinationPath "$env:stage.zip"
           "asset=$env:stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # NOTE: do NOT set `body:` or `generate_release_notes: true` here.
-      # softprops/action-gh-release runs once per matrix target and each
-      # invocation OVERWRITES the release body, which clobbers the
-      # comprehensive notes the maintainer authored manually via
-      # `gh release edit --notes-file …` (v1.0.0 + v1.1.0 both hit this).
-      # The release body is owned by the maintainer; CI only attaches
-      # build artifacts.
+      # The release body is owned by Auto Release's notes (or the
+      # maintainer); this step only attaches the build artifact. The
+      # softprops action that preceded it rewrote the body on every matrix
+      # target when given `body:` (v1.0.0 and v1.1.0 lost hand-written notes
+      # that way), which an upload cannot do.
+      #
+      # `gh release upload`, not softprops/action-gh-release (v3.2.0). That
+      # action calls `updateRelease` (tag, target, name, body) on an existing
+      # release before uploading, and at v3.2.0 GitHub refused the update to
+      # the workflow token on all three targets, twice ("Resource not
+      # accessible by integration"), so no binary was attached; v3.1.0's
+      # identical step had passed. The likeliest difference is that v3.2.0's
+      # tagged commit changes `.github/workflows/`, which a GITHUB_TOKEN
+      # without the `workflows` permission may not re-target a release to.
+      # Uploading an asset never updates the release, needs only
+      # `contents: write`, and is what the PGO step below already uses;
+      # `--clobber` makes a re-run replace its own asset instead of failing
+      # on the duplicate name.
       - name: Upload release asset
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: ${{ env.asset }}
-          fail_on_unmatched_files: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${asset:?the archive step did not set asset}"
+          gh release upload "$TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
 
   # --------------------------------------------------------------------------
   # PGO build + promotion gate (linux x86_64 only).
@@ -201,6 +266,19 @@ jobs:
   # cost (~90 min of runner time each), not a freebie.
   pgo:
     name: PGO build + gate (linux x86_64)
+    # After the release check, so a bad tag stops before 90 minutes of PGO.
+    needs: ensure-release
+    # pgo.yml builds the TRIGGERING commit (GITHUB_SHA). That is the tag's
+    # only on a tag push. On Auto Release's `workflow_run` call it is main's
+    # tip when the run started, usually the tag's commit but not always, and
+    # on a dispatched re-build it is main's HEAD. A dispatched re-build
+    # therefore skips PGO, and `pgo-linux-asset` ships a PGO binary only when
+    # GITHUB_SHA equals the tag's commit (Cursor on #609), otherwise keeping
+    # the plain binary. pgo.yml is not handed a ref instead: checking out a
+    # caller-chosen ref there and running it with the default branch's cache
+    # is what CodeQL reports as cache poisoning (5 high alerts on #609's
+    # first form).
+    if: github.event_name != 'workflow_dispatch'
     uses: ./.github/workflows/pgo.yml
     permissions:
       contents: read
@@ -224,8 +302,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Check out the TAG, not the triggering ref. On workflow_dispatch the
+      # ref is the branch the run was started from (main), so without this a
+      # re-build of an existing tag compiled main's HEAD and attached it
+      # under the tag's name. On a tag push `inputs.tag` is empty and
+      # `github.ref` is the tag; on workflow_call it is the tag Auto Release
+      # just created. Qualified as `refs/tags/`, so a branch of the same name
+      # can never be checked out instead (CodeRabbit on #609); give a
+      # dispatch the bare tag.
       - uses: actions/checkout@v7
         with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       - name: Resolve release tag
@@ -236,20 +323,39 @@ jobs:
         run: |
           # Same resolution as the `build` job: `inputs.tag` on
           # workflow_dispatch / workflow_call, else the pushed ref.
-          if [ -n "$INPUT_TAG" ]; then
-            tag="$INPUT_TAG"
-          else
-            tag="${GITHUB_REF#refs/tags/}"
-          fi
+          tag="${INPUT_TAG:-$GITHUB_REF}"
+          tag="${tag#refs/tags/}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
+      # pgo.yml built the TRIGGERING commit (GITHUB_SHA), which on Auto
+      # Release's `workflow_run` path is main's HEAD when the run started, not
+      # necessarily the tag: a commit merged after the release would be
+      # trained and shipped under the release's name. This job checked out
+      # the tag, so HEAD is the tag's commit; ship only when the two agree,
+      # and otherwise keep the plain binary `build` attached (security review
+      # of #609).
+      - name: Ship only a PGO build of the tag's own commit
+        id: same
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_sha=$(git rev-parse HEAD)
+          if [ "$tag_sha" = "$GITHUB_SHA" ]; then
+            echo "same=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PGO built $GITHUB_SHA, but the tag is $tag_sha; the plain Linux binary stays."
+          fi
+
       - name: Download the promoted PGO binary
+        if: steps.same.outputs.same == 'true'
         uses: actions/download-artifact@v8
         with:
           name: ${{ needs.pgo.outputs.artifact }}
           path: pgo-bin
 
       - name: Stage + archive (identical layout to the plain Linux asset)
+        if: steps.same.outputs.same == 'true'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         shell: bash
@@ -265,11 +371,12 @@ jobs:
           tar -czf "${stage}.tar.gz" "$stage"
           echo "asset=${stage}.tar.gz" >> "$GITHUB_ENV"
 
-      # `gh release upload --clobber` rather than softprops/action-gh-release:
-      # this is a REPLACEMENT of an asset the `build` job already attached under
-      # the same name, and the API rejects a duplicate asset name without an
+      # `--clobber`, as in the `build` job's upload: here it is required, not
+      # just convenient, because this REPLACES an asset `build` already
+      # attached under the same name, and the API rejects a duplicate asset name without an
       # explicit overwrite. `--clobber` is that overwrite.
       - name: Replace the Linux asset with the PGO build
+        if: steps.same.outputs.same == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
