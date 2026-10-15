@@ -38,8 +38,12 @@ on:
         type: string
 
 # Don't kill a release mid-build if a second tag lands on the same ref.
+# Keyed on the bare tag name: a tag push's `github.ref_name` and a dispatch's
+# `inputs.tag` are both `vX.Y.Z`, so two runs for one release share a group
+# and cannot `--clobber` each other's assets (CodeRabbit on #609). Give a
+# dispatch the bare tag, as the input's description says.
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -71,11 +75,21 @@ jobs:
           set -euo pipefail
           tag="${INPUT_TAG:-$GITHUB_REF}"
           tag="${tag#refs/tags/}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          # Only "not found" means absent. Any other failure (rate limit, 5xx,
+          # token) stops here with its own message instead of falling through
+          # to a create that would fail with a misleading second error.
+          if out=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" 2>&1); then
             echo "release $tag exists; left as it is"
+          elif grep -qi "release not found" <<<"$out"; then
+            # A tag with a suffix (v1.0.1-rc1) is a candidate, not a release.
+            pre=()
+            case "$tag" in *-*) pre=(--prerelease) ;; esac
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "$tag" --notes "" "${pre[@]}"
+            echo "created release $tag ${pre[*]}"
           else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --notes ""
-            echo "created release $tag"
+            echo "$out" >&2
+            exit 1
           fi
 
   build:
@@ -125,7 +139,7 @@ jobs:
       # just created.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       # Shared toolchain + Linux deps (no-op on macOS/Windows) + cargo cache.
@@ -215,7 +229,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
         shell: bash
-        run: gh release upload "$TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          set -euo pipefail
+          : "${asset:?the archive step did not set asset}"
+          gh release upload "$TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
 
   # --------------------------------------------------------------------------
   # PGO build + promotion gate (linux x86_64 only).
@@ -249,7 +266,7 @@ jobs:
     name: PGO build + gate (linux x86_64)
     uses: ./.github/workflows/pgo.yml
     with:
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ inputs.tag || github.ref_name }}
     permissions:
       contents: read
 
@@ -280,7 +297,7 @@ jobs:
       # just created.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       - name: Resolve release tag
