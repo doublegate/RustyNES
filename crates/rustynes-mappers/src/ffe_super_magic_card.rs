@@ -504,6 +504,18 @@ impl Mapper for SuperMagicCard {
         }
     }
 
+    /// The read's only side effects are the trainer boot's two one-shots
+    /// (`boot_vector` retired by the `$FFFD` read, `stub_live` by the stub's
+    /// last byte); every other path above is a pure lookup. So the peek is
+    /// the read with those two put back, which returns exactly the byte the
+    /// CPU would read and cannot drift from `cpu_read`.
+    fn cpu_peek(&mut self, addr: u16) -> u8 {
+        let (vector, stub) = (self.boot_vector, self.stub_live);
+        let v = self.cpu_read(addr);
+        (self.boot_vector, self.stub_live) = (vector, stub);
+        v
+    }
+
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
             // The FDS RAM adapter under the card.
@@ -1049,6 +1061,26 @@ mod tests {
         let mut m = board(17, 16, 16, None, true);
         m.reset();
         assert_ne!(m.cpu_read(0xFFFD), 0x70);
+    }
+
+    #[test]
+    fn a_debugger_peek_leaves_the_trainer_boot_armed() {
+        // The debugger, the disassembler and Lua read through `cpu_peek`.
+        // Peeking every byte the trainer boot consumes must return what the
+        // CPU would read and leave the boot exactly as armed, so the CPU's
+        // own reads afterwards still take the stub (agy on #604).
+        let mut m = board(6, 16, 0, None, true);
+        let before = m.save_state();
+        assert_eq!((m.cpu_peek(0xFFFC), m.cpu_peek(0xFFFD)), (0x00, 0x72));
+        let stub: Vec<u8> = (0..6).map(|i| m.cpu_peek(0x7200 + i)).collect();
+        assert_eq!(stub, STUB, "a peek shows the stub");
+        assert_eq!(m.save_state(), before, "a peek changed the board");
+        assert_eq!(m.cpu_read(0xFFFD), 0x72, "the CPU still boots the stub");
+        let stub: Vec<u8> = (0..6).map(|i| m.cpu_read(0x7200 + i)).collect();
+        assert_eq!(stub, STUB);
+        // Once the CPU has retired both, a peek sees the game's bytes.
+        assert_eq!(m.cpu_peek(0xFFFD), 0x12);
+        assert_eq!(m.cpu_peek(0x7200), 0);
     }
 
     #[test]

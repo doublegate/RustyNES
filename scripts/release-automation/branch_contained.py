@@ -23,9 +23,13 @@ A line counts as present when its stripped text EQUALS a stripped line of the
 same path on `main` (a substring test would let `return value` pass against
 `return value + 1`). Lines shorter than 8 characters (braces, `end`, blank-ish
 lines) are skipped as uninformative. This is a containment heuristic, not a
-proof: a line moved to a different file reads as missing (a false alarm, safe),
-and a line that also occurs elsewhere in the file reads as present. Read every
-MISSING line before deleting anything.
+proof: a line moved to a different file reads as missing (a false alarm, safe).
+Lines are counted, not just looked up: `main` must hold each added line at
+least as many times as the branch's own copy of the file does, so a branch
+that adds a second copy of a line `main` already has once reads as missing
+(the first form tested set membership and passed it; agy on #604). A line
+`main` removed on its own reads as missing too, which is the safe direction.
+Read every MISSING line before deleting anything.
 
 The exact-line, binary and untracked-contents rules were added after
 `CodeRabbit` on #604 and #605 found the first version weaker than this
@@ -48,7 +52,7 @@ import argparse
 import os
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 MIN_LEN = 8
 SHOW_MISSING = 12
@@ -122,10 +126,19 @@ def main() -> int:
     total = missing = 0
     for path, texts in sorted(lines.items()):
         on_main = git(a.path, "show", f"{a.main}:{path}", check=False).stdout
-        main_lines = {ln.strip() for ln in on_main.splitlines()}
+        main_count = Counter(ln.strip() for ln in on_main.splitlines())
+        # The branch's own copy: the file on disk in a worktree (which holds
+        # the uncommitted lines too), else the branch's committed blob.
+        disk = os.path.join(a.path, path)
+        if checked_out and os.path.isfile(disk) and not os.path.islink(disk):
+            with open(disk, encoding="utf-8", errors="replace") as f:
+                ours = f.read()
+        else:
+            ours = git(a.path, "show", f"{branch}:{path}", check=False).stdout
+        our_count = Counter(ln.strip() for ln in ours.splitlines())
         for text in texts:
             total += 1
-            if text not in main_lines:
+            if main_count[text] < max(our_count[text], 1):
                 missing += 1
                 if missing <= SHOW_MISSING:
                     print(f"  MISSING {path}: {text[:110]}")
@@ -143,7 +156,11 @@ def main() -> int:
     for path in uncommitted_bin:
         binaries += 1
         disk = os.path.join(a.path, path)
-        here = open(disk, "rb").read() if os.path.isfile(disk) else None
+        if os.path.isfile(disk):
+            with open(disk, "rb") as f:
+                here = f.read()
+        else:
+            here = None
         if here != blob(a.path, f"{a.main}:{path}"):
             missing += 1
             print(f"  MISSING (binary, uncommitted) {path}")

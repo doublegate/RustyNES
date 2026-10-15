@@ -3941,6 +3941,32 @@ mod tests {
     }
 
     #[test]
+    fn debug_peek_cpu_leaves_an_ffe_trainer_boot_armed() {
+        // Mapper 6 (FFE) with a trainer boots through a one-shot stub at
+        // $7200 that the CPU's own reads retire. The debugger, disassembler
+        // and Lua read through `debug_peek_cpu`, which must reach the board's
+        // `cpu_peek`: through `cpu_read` it retired the stub, and the game
+        // then never ran its trainer (agy on #604).
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1A");
+        rom.extend_from_slice(&[16, 0, 0x64, 0x00]); // 256 KiB PRG, mapper 6, trainer
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut trainer = vec![0u8; 512];
+        trainer[0] = 0x4C; // JMP, at $7000
+        rom.extend_from_slice(&trainer);
+        rom.extend_from_slice(&vec![0u8; 256 * 1024]);
+        let mut nes = Nes::from_rom(&rom).expect("synthetic FFE ROM parses");
+        let stub: Vec<u8> = (0..6u16)
+            .map(|i| nes.bus_mut().debug_peek_cpu(0x7200 + i))
+            .collect();
+        assert_eq!(stub[0], 0x20, "the stub begins JSR $7003");
+        let again: Vec<u8> = (0..6u16)
+            .map(|i| nes.bus_mut().debug_peek_cpu(0x7200 + i))
+            .collect();
+        assert_eq!(again, stub, "a debugger peek retired the boot stub");
+    }
+
+    #[test]
     fn poke_ram_writes_system_ram_and_ignores_rom() {
         let rom = synth_nrom(16, 8);
         let mut nes = Nes::from_rom(&rom).expect("synthetic NROM parses");

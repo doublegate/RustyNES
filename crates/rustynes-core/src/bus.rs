@@ -1766,8 +1766,10 @@ impl SystemBus {
             0x4000..=0x4014 | 0x4018..=0x401F => self.open_bus,
             0x4020..=0xFFFF => {
                 // Mirror the production read path so the debugger hex viewer
-                // shows the Game-Genie-substituted byte the CPU would see.
-                let raw = self.mapper.cpu_read(addr);
+                // shows the Game-Genie-substituted byte the CPU would see,
+                // through `cpu_peek` so a board whose read consumes state
+                // keeps it (v3.2.0: the FFE trainer boot).
+                let raw = self.mapper.cpu_peek(addr);
                 self.apply_genie(addr, raw)
             }
         }

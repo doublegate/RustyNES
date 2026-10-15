@@ -44,6 +44,15 @@ cycle-accurate core later replaced.
   per run of frames instead of one per frame. A v3.1.x peer cannot read that
   message, so its `"RNE7"` is refused as another emulator version (its epoch
   would refuse it anyway).
+- **The `Mapper` trait requires `ppu_peek`**, a side-effect-free PPU read the
+  debugger uses on every board, with no default (a default would show a
+  board that forgot it as a blank pattern table), so an implementation
+  outside this repository must add it. Seven methods are added with defaults
+  that keep the old behaviour: `cpu_peek` (the debugger's CPU read; the FFE
+  boards override it so a peek cannot retire their trainer boot),
+  `may_unmap_prg_rom`, `is_save_data_dirty`, `clear_save_data_dirty` and
+  the Datach's `has_barcode_reader`, `scan_barcode` and
+  `barcode_scan_in_progress`.
 
 ### Added
 

@@ -213,6 +213,21 @@ pub trait Mapper: Send {
     /// Read a byte from the CPU address space `$4020-$FFFF`.
     fn cpu_read(&mut self, addr: u16) -> u8;
 
+    /// Read a CPU byte (`$4020-$FFFF`) for the debugger, the disassembler
+    /// and scripts, which must never change the game.
+    ///
+    /// `SystemBus::debug_peek_cpu` calls this rather than
+    /// [`Self::cpu_read`]. The default IS `cpu_read`, which is right for every
+    /// board whose CPU read changes nothing; a board whose read consumes
+    /// state overrides it to return the same byte and keep the state. Added
+    /// in v3.2.0 for the FFE boards (6, 8, 17), whose trainer boot is a
+    /// one-shot that the CPU's reset-vector and stub reads retire: a debugger
+    /// peek at `$FFFD` or a disassembly through the stub used to retire it
+    /// first, so the trainer never ran (agy on #604).
+    fn cpu_peek(&mut self, addr: u16) -> u8 {
+        self.cpu_read(addr)
+    }
+
     /// Write a byte to the CPU address space `$4020-$FFFF`.
     fn cpu_write(&mut self, addr: u16, value: u8);
 
