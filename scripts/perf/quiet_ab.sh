@@ -98,6 +98,11 @@ case "${1:-}" in
   queue)
     q="${2:-}"
     [ -f "$q" ] || { echo "usage: quiet_ab.sh queue FILE (FILE must exist)" >&2; exit 2; }
+    # Every sidecar (.lock, .pos, .inprogress, .done) is named from the
+    # CANONICAL path: through a symlink alias the queue would otherwise get a
+    # second lock and a second cursor, and two processors would run it
+    # (CodeRabbit on #604).
+    q=$(realpath -- "$q") || { echo "quiet_ab.sh: cannot resolve $2" >&2; exit 2; }
     # ONE processor per queue, for the whole run. The benchmark lock orders
     # measurements against heavy jobs; it never protected choosing an entry
     # or recording a result, so two queue processes could take the same one
