@@ -136,10 +136,12 @@ jobs:
       # re-build of an existing tag compiled main's HEAD and attached it
       # under the tag's name. On a tag push `inputs.tag` is empty and
       # `github.ref` is the tag; on workflow_call it is the tag Auto Release
-      # just created.
+      # just created. Qualified as `refs/tags/`, so a branch of the same name
+      # can never be checked out instead (CodeRabbit on #609); give a
+      # dispatch the bare tag.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       # Shared toolchain + Linux deps (no-op on macOS/Windows) + cargo cache.
@@ -264,9 +266,11 @@ jobs:
   # cost (~90 min of runner time each), not a freebie.
   pgo:
     name: PGO build + gate (linux x86_64)
+    # After the release check, so a bad tag stops before 90 minutes of PGO.
+    needs: ensure-release
     uses: ./.github/workflows/pgo.yml
     with:
-      ref: ${{ inputs.tag || github.ref_name }}
+      ref: refs/tags/${{ inputs.tag || github.ref_name }}
     permissions:
       contents: read
 
@@ -294,10 +298,12 @@ jobs:
       # re-build of an existing tag compiled main's HEAD and attached it
       # under the tag's name. On a tag push `inputs.tag` is empty and
       # `github.ref` is the tag; on workflow_call it is the tag Auto Release
-      # just created.
+      # just created. Qualified as `refs/tags/`, so a branch of the same name
+      # can never be checked out instead (CodeRabbit on #609); give a
+      # dispatch the bare tag.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       - name: Resolve release tag
