@@ -76,6 +76,10 @@ cycle-accurate core later replaced.
   `T-HISTORY-DISK-SWAP`), as a Reset, a state load and a Datach scan already
   do. A swap is not in a movie's input stream, so a history clip exported
   across one could not replay.
+- **MiSTer core: mapper 185's CHR disable reaches the "more than eight
+  sprites" option** (`T-XS-M185-CHRCS`). With the option on and the board's
+  CHR-ROM disabled, an extra sprite drew real pattern data where the line's
+  other sprites drew the floating bus; it now reads the floating bus too.
 - **The IRQ-timing trace labels an NMI as an NMI** (the `irq-timing-trace`
   developer feature; Round 2 audit CORE-R2-01). Every serviced interrupt
   was labelled an IRQ.
