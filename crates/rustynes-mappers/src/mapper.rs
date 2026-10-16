@@ -771,10 +771,11 @@ pub trait Mapper: Send {
         None
     }
 
-    /// Mark the save data clean (see [`Self::is_save_data_dirty`]). Nothing in
-    /// the shipped frontends calls it yet, so a tracked board stays dirty after
-    /// its first change and the comparison resumes; it is the hook a writer
-    /// would call after a save it knows to be current. Default: nothing.
+    /// Mark the save data clean (see [`Self::is_save_data_dirty`]). The
+    /// desktop and web battery writers call it whenever they have compared or
+    /// copied the live bytes, and after attaching a save (v3.3.0,
+    /// `T-SAVE-DIRTY-CLEAR`; nothing called it before, so a tracked board
+    /// stayed dirty after its first change). Default: nothing.
     fn clear_save_data_dirty(&mut self) {}
 
     /// Start recording the diagnostic FDS read-stream trace (off by default;

@@ -28,11 +28,15 @@
 //!    the web a page hide). A game that uses its battery RAM as scratch memory
 //!    then costs one write a second, not sixty.
 //! 3. **Whether a write is needed** — only when the live bytes differ from the
-//!    last write that SUCCEEDED. The core keeps no save-RAM dirty latch, and
-//!    adding one would change the `Mapper` API for every board; equality with
-//!    the last write is exact and needs nothing from the core. A failed write
-//!    leaves the baseline where it was, so the next comparison retries, and
-//!    only the first failure of a run is reported (agy round 2 on #551).
+//!    last write that SUCCEEDED. Equality with the last write is exact and
+//!    needs nothing from the core. A failed write leaves the baseline where
+//!    it was, so the next comparison retries, and only the first failure of a
+//!    run is reported (agy round 2 on #551). Since v3.2.0 the two
+//!    self-flashable boards, whose save is the whole PRG image, also report a
+//!    dirty flag, and while it says "clean" the comparison is skipped; since
+//!    v3.3.0 the policy clears that flag each time it compares
+//!    ([`BatteryPolicy::due_and_mark_clean`]), and stops trusting it after a
+//!    failed write until one succeeds.
 //!
 //! Nothing here performs I/O or reads a clock, so the policy is pure and every
 //! rule above is tested natively below, for both platforms at once.
@@ -66,6 +70,13 @@ pub struct BatteryPolicy {
     /// failure of a run, so a full disk or quota is shown to the player once
     /// rather than every second.
     failing: bool,
+    /// Whether a board's "clean" report ([`Nes::is_save_data_dirty`] =
+    /// `Some(false)`) may skip the comparison. True until a write fails: the
+    /// board was marked clean when that write's bytes were taken
+    /// ([`Self::due_and_mark_clean`]), so after a failure it reads clean while
+    /// the store is stale, and only a byte comparison finds the difference.
+    /// The next successful write restores it.
+    trust_clean: bool,
 }
 
 impl BatteryPolicy {
@@ -79,6 +90,7 @@ impl BatteryPolicy {
             last: baseline,
             frames: 0,
             failing: false,
+            trust_clean: true,
         }
     }
 
@@ -99,7 +111,7 @@ impl BatteryPolicy {
     /// Whether `live` differs from the last successful write.
     #[must_use]
     pub fn differs(&self, live: &[u8], is_dirty: Option<bool>) -> bool {
-        if is_dirty == Some(false) {
+        if is_dirty == Some(false) && self.trust_clean {
             false
         } else {
             live != self.last.as_slice()
@@ -121,6 +133,7 @@ impl BatteryPolicy {
     /// Returns `true` only for the first failure after a success (or after
     /// the policy was created), so the caller can tell the player once.
     pub fn written(&mut self, bytes: Vec<u8>, ok: bool) -> bool {
+        self.trust_clean = ok;
         if ok {
             self.last = bytes;
             self.failing = false;
@@ -128,6 +141,28 @@ impl BatteryPolicy {
         } else {
             !core::mem::replace(&mut self.failing, true)
         }
+    }
+
+    /// [`Self::due`] for a cartridge the caller holds mutably, which also
+    /// marks a tracking board's save data clean whenever the comparison ran
+    /// (`T-SAVE-DIRTY-CLEAR`, v3.3.0). At that instant the live bytes are
+    /// either the copy returned for writing or equal to the baseline, so
+    /// "clean" is true of them; every later change sets the flag again, and a
+    /// failed write stops [`Self::differs`] trusting it until a write
+    /// succeeds. Before v3.3.0 nothing cleared the flag, so after a board's
+    /// first change its hint never skipped a comparison again: on the
+    /// self-flashable boards that is a 512 KiB comparison a second.
+    pub fn due_and_mark_clean(&mut self, nes: &mut Nes, force: bool) -> Option<Vec<u8>> {
+        if !self.tick(force) {
+            return None;
+        }
+        let dirty = nes.is_save_data_dirty();
+        let live = nes.save_data();
+        let write = self.differs(live, dirty).then(|| live.to_vec());
+        if dirty == Some(true) {
+            nes.clear_save_data_dirty();
+        }
+        write
     }
 
     /// The bytes last written (or read). The value a stored save is
@@ -204,6 +239,47 @@ mod tests {
         );
         assert_eq!(p.due(&[1; 4], Some(true), true), Some(vec![1; 4]), "dirty");
         assert_eq!(p.due(&[1; 4], None, true), Some(vec![1; 4]), "untracked");
+    }
+
+    /// `T-SAVE-DIRTY-CLEAR`: a GTROM board (mapper 111 with the battery bit,
+    /// whose save data is its 512 KiB flash) is marked clean by every
+    /// comparison, so its "clean" report skips the next one; a failed write
+    /// must not be lost to that report, so the policy compares again until a
+    /// write succeeds.
+    #[test]
+    fn a_comparison_marks_the_board_clean_and_a_failed_write_is_retried() {
+        let mut img = b"NES\x1A".to_vec();
+        img.extend_from_slice(&[32, 0, 0xF2, 0x60]); // 512 KiB PRG, mapper 111, battery
+        img.resize(16, 0);
+        img.resize(16 + 512 * 1024, 0xEA);
+        let mut nes = Nes::from_rom(&img).unwrap();
+        assert_eq!(
+            nes.is_save_data_dirty(),
+            Some(false),
+            "fixture: a tracking board"
+        );
+        let mut p = BatteryPolicy::new(nes.save_data().to_vec());
+
+        nes.save_data_mut()[5] ^= 0xFF;
+        let bytes = p.due_and_mark_clean(&mut nes, true).expect("changed");
+        assert_eq!(nes.is_save_data_dirty(), Some(false), "marked clean");
+        assert!(
+            p.due_and_mark_clean(&mut nes, true).is_none(),
+            "in flight: once"
+        );
+
+        assert!(p.written(bytes, false), "the write failed");
+        let retry = p.due_and_mark_clean(&mut nes, true);
+        assert!(
+            retry.is_some(),
+            "a failed write is retried although the board reads clean"
+        );
+        assert!(!p.written(retry.unwrap(), true));
+        assert!(
+            p.due_and_mark_clean(&mut nes, true).is_none(),
+            "clean after success"
+        );
+        assert_eq!(p.baseline(), nes.save_data());
     }
 
     #[test]

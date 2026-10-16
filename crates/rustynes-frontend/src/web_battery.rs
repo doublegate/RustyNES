@@ -252,11 +252,16 @@ impl WebBattery {
         self.state = match outcome {
             // The baseline is taken AFTER the load, so an attached session
             // never rewrites the bytes it just read.
-            Restored::Loaded | Restored::Empty => State::Armed {
-                sha,
-                policy: BatteryPolicy::new(nes.save_data().to_vec()),
-                in_flight: None,
-            },
+            Restored::Loaded | Restored::Empty => {
+                // The baseline is the live bytes, so they are clean (the
+                // load through `save_data_mut` marked a tracking board dirty).
+                nes.clear_save_data_dirty();
+                State::Armed {
+                    sha,
+                    policy: BatteryPolicy::new(nes.save_data().to_vec()),
+                    in_flight: None,
+                }
+            }
             Restored::Refused(_) | Restored::Stale => State::Off,
         };
         outcome
@@ -267,7 +272,7 @@ impl WebBattery {
     /// produced frame), and never while an earlier write is in flight. With
     /// `force`: now, unless the live bytes equal the last successful write or
     /// the write already in flight. Report the outcome with [`Self::written`].
-    pub fn due(&mut self, nes: &Nes, force: bool) -> Option<WebBatteryWrite> {
+    pub fn due(&mut self, nes: &mut Nes, force: bool) -> Option<WebBatteryWrite> {
         let State::Armed {
             sha,
             policy,
@@ -279,11 +284,13 @@ impl WebBattery {
         if nes.rom_sha256() != sha {
             return None;
         }
-        let live = nes.save_data();
         let bytes = match in_flight {
-            Some(pending) if force => (live != pending.as_slice()).then(|| live.to_vec())?,
+            Some(pending) if force => {
+                let live = nes.save_data();
+                (live != pending.as_slice()).then(|| live.to_vec())?
+            }
             Some(_) => return None,
-            None => policy.due(live, nes.is_save_data_dirty(), force)?,
+            None => policy.due_and_mark_clean(nes, force)?,
         };
         *in_flight = Some(bytes.clone());
         Some(WebBatteryWrite { sha: *sha, bytes })
@@ -327,7 +334,7 @@ impl WebBattery {
 
     /// The final write for the outgoing cartridge (forced, and only when the
     /// save changed), then unbind. Call before a new ROM replaces `nes`.
-    pub fn detach(&mut self, nes: Option<&Nes>) -> Option<WebBatteryWrite> {
+    pub fn detach(&mut self, nes: Option<&mut Nes>) -> Option<WebBatteryWrite> {
         let write = nes.and_then(|nes| self.due(nes, true));
         self.state = State::Off;
         write
@@ -408,7 +415,7 @@ pub(crate) mod tests {
         );
         assert!(!b.is_pending() && b.is_armed());
         assert_eq!(nes.save_data(), stored.as_slice(), "the save came back");
-        assert!(b.due(&nes, true).is_none(), "and is not written back");
+        assert!(b.due(&mut nes, true).is_none(), "and is not written back");
     }
 
     #[test]
@@ -439,7 +446,10 @@ pub(crate) mod tests {
             assert!(!b.is_pending(), "the game still runs");
             assert_eq!(nes.save_data()[0], 0, "nothing was loaded");
             run(&mut nes, 3);
-            assert!(b.due(&nes, true).is_none(), "and nothing will be written");
+            assert!(
+                b.due(&mut nes, true).is_none(),
+                "and nothing will be written"
+            );
         }
     }
 
@@ -467,7 +477,7 @@ pub(crate) mod tests {
         let mut writes = 0;
         for _ in 0..(3 * CHECK_PERIOD_FRAMES) {
             nes.run_frame();
-            if let Some(w) = b.due(&nes, false) {
+            if let Some(w) = b.due(&mut nes, false) {
                 writes += 1;
                 assert_eq!(w.key(), battery_key(nes.rom_sha256()));
                 assert!(!b.written(w, true));
@@ -481,28 +491,28 @@ pub(crate) mod tests {
         let mut nes = Nes::from_rom(&rom(true)).unwrap();
         let mut b = armed(&mut nes);
         run(&mut nes, 3);
-        let first = b.due(&nes, true).expect("the program wrote its RAM");
+        let first = b.due(&mut nes, true).expect("the program wrote its RAM");
         for _ in 0..(2 * CHECK_PERIOD_FRAMES) {
             nes.run_frame();
-            assert!(b.due(&nes, false).is_none(), "the first has not landed");
+            assert!(b.due(&mut nes, false).is_none(), "the first has not landed");
         }
         // A forced write goes out anyway when the bytes moved on...
-        let second = b.due(&nes, true).expect("page hide: newer bytes");
+        let second = b.due(&mut nes, true).expect("page hide: newer bytes");
         assert!(
-            b.due(&nes, true).is_none(),
+            b.due(&mut nes, true).is_none(),
             "...but not the same bytes twice"
         );
         // The older write lands behind the newer one: the newer stays in
         // flight, so periodic writes stay paused until it reports.
         assert!(!b.written(first, true));
         for _ in 0..CHECK_PERIOD_FRAMES {
-            assert!(b.due(&nes, false).is_none());
+            assert!(b.due(&mut nes, false).is_none());
         }
         assert!(!b.written(second, true));
         run(&mut nes, 3);
         let mut resumed = false;
         for _ in 0..CHECK_PERIOD_FRAMES {
-            resumed |= b.due(&nes, false).is_some();
+            resumed |= b.due(&mut nes, false).is_some();
         }
         assert!(resumed, "periodic writes resume once nothing is in flight");
     }
@@ -512,9 +522,11 @@ pub(crate) mod tests {
         let mut nes = Nes::from_rom(&rom(true)).unwrap();
         let mut b = armed(&mut nes);
         run(&mut nes, 3);
-        let w = b.due(&nes, true).unwrap();
+        let w = b.due(&mut nes, true).unwrap();
         assert!(b.written(w, false), "first failure: report");
-        let w = b.due(&nes, true).expect("the baseline did not move: retry");
+        let w = b
+            .due(&mut nes, true)
+            .expect("the baseline did not move: retry");
         assert!(!b.written(w, false), "second failure: quiet");
     }
 
@@ -523,11 +535,11 @@ pub(crate) mod tests {
         let mut nes = Nes::from_rom(&rom(true)).unwrap();
         let mut b = armed(&mut nes);
         assert!(
-            b.clone().detach(Some(&nes)).is_none(),
+            b.clone().detach(Some(&mut nes)).is_none(),
             "unchanged: no write"
         );
         run(&mut nes, 3);
-        let w = b.detach(Some(&nes)).expect("the final write");
+        let w = b.detach(Some(&mut nes)).expect("the final write");
         assert_eq!(w.bytes()[0], 0xA5);
         assert!(!b.is_armed());
         assert!(!b.written(w, true), "a write after detach is ignored");

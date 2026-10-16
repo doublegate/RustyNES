@@ -40,6 +40,13 @@ cycle-accurate core later replaced.
   rewind frame, run-ahead step and netplay snapshot. The board uses an MMC1
   only for its registers, and the state carried that MMC1's unused PRG-RAM,
   nametable RAM and CHR-RAM. A v3.2.0 state of the board still loads.
+- **The battery save of a self-flashable board is compared only after it
+  changes** (GTROM, a flashable UNROM 512; desktop and web;
+  `T-SAVE-DIRTY-CLEAR`). v3.2.0 gave both boards a "changed" flag so the
+  periodic save check could skip comparing their whole PRG images (up to
+  512 KiB), but
+  nothing ever reset the flag, so after the first change the comparison
+  ran every second again. A failed write is still retried.
 
 ### Fixed
 

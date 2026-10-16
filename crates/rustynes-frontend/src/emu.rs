@@ -2317,7 +2317,7 @@ impl EmuCore {
     /// outcome with [`Self::battery_written`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn battery_due_write(&mut self) -> Option<crate::battery_save::BatteryWrite> {
-        let (save, nes) = (self.battery.as_mut()?, self.nes.as_ref()?);
+        let (save, nes) = (self.battery.as_mut()?, self.nes.as_mut()?);
         save.due_write(nes, false)
     }
 
@@ -2428,7 +2428,7 @@ impl EmuCore {
     /// [`Self::start_sandboxed_session`], before a movie replaces it.
     #[cfg(not(target_arch = "wasm32"))]
     fn flush_battery(&mut self, force: bool) {
-        let (Some(save), Some(nes)) = (self.battery.as_mut(), self.nes.as_ref()) else {
+        let (Some(save), Some(nes)) = (self.battery.as_mut(), self.nes.as_mut()) else {
             return;
         };
         if let Err(e) = save.flush(nes, force) {
@@ -2493,7 +2493,7 @@ impl EmuCore {
     /// switch). Store it, then report with [`Self::web_battery_written`].
     #[cfg(any(target_arch = "wasm32", test))]
     pub fn web_battery_due(&mut self, force: bool) -> Option<crate::web_battery::WebBatteryWrite> {
-        let nes = self.nes.as_ref()?;
+        let nes = self.nes.as_mut()?;
         self.web_battery.due(nes, force)
     }
 
@@ -2516,7 +2516,7 @@ impl EmuCore {
     /// cartridge, then unbind. Call before a new ROM replaces the `Nes`.
     #[cfg(any(target_arch = "wasm32", test))]
     pub fn detach_web_battery(&mut self) -> Option<crate::web_battery::WebBatteryWrite> {
-        self.web_battery.detach(self.nes.as_ref())
+        self.web_battery.detach(self.nes.as_mut())
     }
 }
 
