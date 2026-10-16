@@ -316,11 +316,20 @@ impl WebBattery {
             return false;
         }
         // An older write finishing behind a newer forced one leaves the newer
-        // one in flight.
-        if in_flight.as_deref() == Some(write.bytes.as_slice()) {
+        // one in flight. It may also finish after the newer one (#611
+        // review): the store then holds the older bytes, so it is still
+        // recorded as the baseline, but the board's clean report no longer
+        // skips the comparison that writes the newer bytes back. Ignoring it
+        // instead would leave a baseline the store does not hold.
+        let current = in_flight.as_deref() == Some(write.bytes.as_slice());
+        if current {
             *in_flight = None;
         }
-        policy.written(write.bytes, ok)
+        let first_failure = policy.written(write.bytes, ok);
+        if !current {
+            policy.distrust_clean();
+        }
+        first_failure
     }
 
     /// Stop persisting for the rest of this ROM session WITHOUT writing: the
@@ -515,6 +524,39 @@ pub(crate) mod tests {
             resumed |= b.due(&mut nes, false).is_some();
         }
         assert!(resumed, "periodic writes resume once nothing is in flight");
+    }
+
+    /// An older write that reports success AFTER a newer one may have landed
+    /// last, so the store can hold its bytes while the board reads clean. On a
+    /// dirty-tracking board (GTROM, mapper 111 with the battery bit) that
+    /// clean report must not skip the comparison that rewrites the newer
+    /// bytes (#611 review). Before the fix the late success re-armed the
+    /// clean hint and the newer save was never written again.
+    #[test]
+    fn a_late_older_completion_does_not_hide_the_newer_save() {
+        let mut img = b"NES\x1A".to_vec();
+        img.extend_from_slice(&[32, 0, 0xF2, 0x60]); // 512 KiB PRG, mapper 111, battery
+        img.resize(16, 0);
+        img.resize(16 + 512 * 1024, 0xEA);
+        let mut nes = Nes::from_rom(&img).unwrap();
+        assert_eq!(nes.is_save_data_dirty(), Some(false), "a tracking board");
+        let mut b = armed(&mut nes);
+
+        nes.save_data_mut()[5] ^= 0xFF;
+        let older = b.due(&mut nes, true).expect("first change");
+        nes.save_data_mut()[6] ^= 0xFF;
+        let newer = b.due(&mut nes, true).expect("page hide: newer bytes");
+        assert!(!b.written(newer, true));
+        // A comparison against the newer baseline: nothing to write, and the
+        // board is marked clean.
+        assert!(b.due(&mut nes, true).is_none());
+        assert_eq!(nes.is_save_data_dirty(), Some(false));
+        // The older write reports last: the store may now hold it.
+        assert!(!b.written(older, true));
+        let rewrite = b
+            .due(&mut nes, true)
+            .expect("the newer bytes are written again");
+        assert_eq!(rewrite.bytes(), nes.save_data());
     }
 
     #[test]

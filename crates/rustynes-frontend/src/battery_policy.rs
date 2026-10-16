@@ -143,6 +143,14 @@ impl BatteryPolicy {
         }
     }
 
+    /// Stop trusting the board's "clean" report until the next write reports
+    /// back, so comparisons run on bytes. For a caller with several writes in
+    /// flight: one that finishes out of order may have landed after a newer
+    /// one, leaving the store older than the clean report implies.
+    pub const fn distrust_clean(&mut self) {
+        self.trust_clean = false;
+    }
+
     /// [`Self::due`] for a cartridge the caller holds mutably, which also
     /// marks a tracking board's save data clean whenever the comparison ran
     /// (`T-SAVE-DIRTY-CLEAR`, v3.3.0). At that instant the live bytes are
