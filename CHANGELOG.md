@@ -89,6 +89,19 @@ cycle-accurate core later replaced.
   developer feature; Round 2 audit CORE-R2-01). Every serviced interrupt
   was labelled an IRQ.
 
+### Performance
+
+- **Correction to v3.2.0: the MMC3 cartridge read is not measurably faster.**
+  v3.2.0 reported it about 9% faster from its cached bank offsets. Built with
+  forced code alignment, the read measures the same before and after that
+  change. In plain builds the same comparison now shows it 22% *slower*, again
+  with no change to the read's code. The difference follows where the linker
+  places the code, not the code itself. The same explains why the MMC5 and
+  Sunsoft FME-7 reads appeared 4.7% and 6% slower in v3.2.0
+  (`T-PERF-MAPPER-READ-DRIFT`, closed): aligned, neither moved
+  (`docs/performance.md`, "v3.3.0"). v3.2.0's other figure stands: built the
+  same way, run-ahead on an MMC3 game measures 6-7% faster, in three runs.
+
 ## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 
 ### Breaking
