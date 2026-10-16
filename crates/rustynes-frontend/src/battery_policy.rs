@@ -35,8 +35,8 @@
 //!    self-flashable boards, whose save is the whole PRG image, also report a
 //!    dirty flag, and while it says "clean" the comparison is skipped; since
 //!    v3.3.0 the policy clears that flag each time it compares
-//!    ([`BatteryPolicy::due_and_mark_clean`]), and stops trusting it after a
-//!    failed write until one succeeds.
+//!    ([`due_and_mark_clean`](crate::battery_policy::BatteryPolicy::due_and_mark_clean)),
+//!    and stops trusting it after a failed write until one succeeds.
 //!
 //! Nothing here performs I/O or reads a clock, so the policy is pure and every
 //! rule above is tested natively below, for both platforms at once.
