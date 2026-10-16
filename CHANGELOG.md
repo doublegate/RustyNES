@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-16 - "Plumbline" (v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes banked on seven boards, mapper 71's decode, Bandai and Somari states, a withdrawn performance figure, IRQ trace goldens that gate, and two off-die MiSTer fixes)
+
 ### Breaking
 
 - **Movies and netplay from v3.2.x are refused.** `EMULATION_EPOCH` rises
@@ -47,6 +49,15 @@ cycle-accurate core later replaced.
   512 KiB), but
   nothing ever reset the flag, so after the first change the comparison
   ran every second again. A failed write is still retried.
+- **The IRQ-timing trace goldens are a test now** (the `irq-timing-trace`
+  developer feature). The fixture rewrote its 21 committed traces on every
+  run and compared nothing, so they caught no regression; 19 of them no
+  longer matched the emulator, and 16 had never been produced by any
+  RustyNES commit (they arrived with the v1.0.0 engine transplant). A run
+  now compares and fails on any difference, and `RUSTYNES_IRQ_TRACE_BLESS=1`
+  re-records. The traces were re-recorded once, with every difference
+  attributed: v2.9.8's `$4017` change (the frame IRQ clears on the write),
+  v3.0.0's MMC3 IRQ timing, and this release's NMI labels.
 
 ### Fixed
 
@@ -85,6 +96,17 @@ cycle-accurate core later replaced.
   sprites" option** (`T-XS-M185-CHRCS`). With the option on and the board's
   CHR-ROM disabled, an extra sprite drew real pattern data where the line's
   other sprites drew the floating bus; it now reads the floating bus too.
+- **MiSTer core, off-die build: a ROM download writes each CHR byte once**
+  (`T-MISTER-LOAD-CHRWE`). The cartridge passed every CHR byte of a download
+  to the SDRAM a second time, a console clock later, through the CHR-RAM
+  write path, which aimed it at the address the held-in-reset PPU was
+  presenting rather than the byte's own. Only an image that carries CHR (a
+  CHR-ROM game) was affected; a CHR-RAM game's download has no CHR bytes.
+  Which byte ended up corrupted, and with what, was not measured: it depends
+  on the address the PPU holds in reset. The simulation's loader holds its
+  enable for the whole image, which reduced the echo to a single write that
+  the bridge discarded, so no co-simulation run showed it; a module gate now
+  drives both loader shapes. Fixed in simulation, not yet run on hardware.
 - **The IRQ-timing trace labels an NMI as an NMI** (the `irq-timing-trace`
   developer feature; Round 2 audit CORE-R2-01). Every serviced interrupt
   was labelled an IRQ.

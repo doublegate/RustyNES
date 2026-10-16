@@ -1,15 +1,32 @@
 //! M2-phase IRQ-timing tracing fixture (Track C1 pre-work).
 //!
-//! Drives `mmc3_test_2/4-scanline_timing` and `cpu_interrupts_v2/{1..5}`
-//! to completion with the `irq-timing-trace` cargo feature enabled.
-//! Each run dumps a full per-CPU-cycle trace to
-//! `target/irq_trace/<rom>.full.csv` (diagnostic; not committed) plus a
-//! filtered "IRQ-relevant cycles only" trace to
-//! `crates/rustynes-test-harness/golden/irq_trace/<rom>.csv` (committed as
-//! the baseline; future trace diffs use it as the empirical oracle the
-//! four rolled-back IRQ-timing attempts could not be evaluated against).
+//! Drives `mmc3_test_2/4-scanline_timing`, `cpu_interrupts_v2/{1..5}` and
+//! `dmc_dma_during_read4/dma_2007_read` to completion with the
+//! `irq-timing-trace` cargo feature enabled. Each run dumps a full
+//! per-CPU-cycle trace to `target/irq_trace/<rom>.full.csv` (diagnostic; not
+//! committed) and three filtered traces -- `<rom>.csv` (IRQ-relevant cycles),
+//! `<rom>.svc.csv` (vector services) and `<rom>.dmc.csv` (DMC scheduler plus
+//! IRQ) -- which are COMPARED, byte for byte, against the goldens committed
+//! under `crates/rustynes-test-harness/golden/irq_trace/`.
 //!
 //! See ADR-0002 "Decision (revised, 2026-05-13)" → "Test fixture".
+//!
+//! # The goldens are a gate (v3.3.0)
+//!
+//! Until v3.3.0 this fixture WROTE the goldens on every run and compared
+//! nothing against them, so they could not catch a regression however far
+//! the timing moved -- and they had not been regenerated since v2.0.0's
+//! betas, so every committed trace described a core that no longer existed,
+//! while each run silently rewrote them in the working tree (where a broad
+//! `git add` could sweep them into an unrelated commit). Now a run compares,
+//! and on a difference it writes what it measured to
+//! `target/irq_trace/<file>.actual` and fails, naming the first differing
+//! line. Re-recording is a deliberate act: set `RUSTYNES_IRQ_TRACE_BLESS=1`,
+//! and commit the result only with every difference attributed to an
+//! intended change -- the same rule as any other golden in this repository.
+//! A capture with a non-default `RUSTYNES_IRQ_TRACE_START_CYCLE` describes a
+//! different window, so it is written to `target/irq_trace/` and never
+//! compared or blessed.
 //!
 //! # Running
 //!
@@ -17,6 +34,9 @@
 //! cargo test -p rustynes-test-harness \
 //!     --features test-roms,irq-timing-trace \
 //!     --test irq_trace_fixture
+//! # re-record, after an intended timing change:
+//! RUSTYNES_IRQ_TRACE_BLESS=1 cargo test -p rustynes-test-harness \
+//!     --features test-roms,irq-timing-trace --test irq_trace_fixture
 //! ```
 //!
 //! # Why this is its own test file
@@ -31,17 +51,25 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use rustynes_core::Nes;
 use rustynes_core::irq_trace::{IrqTrace, ServiceKind};
 
-/// Per-ROM linear-buffer cap.  Sized to comfortably hold the entire
-/// run from `BOOT_FRAMES_TO_SKIP` to final-status detection for every
-/// target ROM (max 126 frames - 10 boot ≈ 116 frames × 29 780 cycles ≈
-/// 3.5 M records).  Records past the cap are silently dropped, but we
-/// size this generously so that does not happen in practice.  Each
-/// record is ~40 bytes → ~160 MB peak across all 6 fixture tests.
-const MAX_RECORDS: usize = 4_000_000;
+/// Per-ROM linear-buffer cap: one record per CPU cycle from the arm point to
+/// the stop condition, which must fit WHOLE -- `run_traced` refuses an
+/// overflowed default-window capture, because a golden taken from a truncated
+/// buffer describes a window that ends wherever the cap happened to fall.
+///
+/// It was 4,000,000, sized when the longest run was ~116 frames, and three
+/// runs had outgrown it unnoticed (measured at v3.3.0, records needed):
+/// `dma_2007_read` 17,570,497 (it never reports a final status and stops at
+/// `MAX_FRAMES`), `5-branch_delays_irq` 11,048,565 and mmc3
+/// `4-scanline_timing` 9,172,439. The next largest fits at 3,663,022. A
+/// record is roughly 80 bytes (its `a12_events` `Vec` plus ~50 bytes of
+/// fields), so the largest run peaks near 1.4 GB and the seven in parallel at
+/// a few GB -- acceptable for a diagnostic fixture CI does not run.
+const MAX_RECORDS: usize = 24_000_000;
 
 /// Frames to run BEFORE enabling the trace, to skip the boot phase where
 /// rendering is off / CHR has not been banked / IRQs have not been
@@ -77,11 +105,6 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Run a single ROM with tracing enabled.  Writes the full per-CPU-cycle
-/// trace to `target/irq_trace/<slug>.full.csv` (diagnostic; not
-/// committed) and the IRQ-event-filtered trace to
-/// `crates/rustynes-test-harness/golden/irq_trace/<slug>.csv` (committed).
-/// Returns the filtered CSV string for the well-formed assertion.
 /// The `RUSTYNES_IRQ_TRACE_START_CYCLE` knob: the CPU cycle after which
 /// recording starts, 0 (the default window) when unset or unparsable.
 fn trace_start_cycle() -> u64 {
@@ -91,7 +114,86 @@ fn trace_start_cycle() -> u64 {
         .unwrap_or(0)
 }
 
+/// `RUSTYNES_IRQ_TRACE_BLESS=1`: re-record the goldens instead of comparing.
+fn bless() -> bool {
+    std::env::var("RUSTYNES_IRQ_TRACE_BLESS").as_deref() == Ok("1")
+}
+
+/// Compares the traces one ROM produced against the committed goldens, or
+/// re-records them under `RUSTYNES_IRQ_TRACE_BLESS=1`. Each entry is
+/// `(file name, measured contents)`. All three files are checked before the
+/// test fails, so one run reports every golden that moved, and each moved one
+/// leaves its measurement at `target/irq_trace/<file>.actual` to diff.
+fn check_goldens(slug: &str, files: &[(String, &str)]) {
+    let golden_dir = workspace_root()
+        .join("crates")
+        .join("rustynes-test-harness")
+        .join("golden")
+        .join("irq_trace");
+    let out_dir = workspace_root().join("target").join("irq_trace");
+    fs::create_dir_all(&out_dir).expect("create target/irq_trace");
+    // A later start cycle is a different capture window: it can be neither
+    // compared with nor blessed over the default-window goldens.
+    if trace_start_cycle() > 0 {
+        for (name, actual) in files {
+            fs::write(out_dir.join(name), actual).expect("write windowed trace csv");
+        }
+        return;
+    }
+    if bless() {
+        fs::create_dir_all(&golden_dir).expect("create golden/irq_trace");
+        for (name, actual) in files {
+            fs::write(golden_dir.join(name), actual).expect("write golden trace csv");
+        }
+        return;
+    }
+    let mut moved = Vec::new();
+    for (name, actual) in files {
+        let golden = fs::read_to_string(golden_dir.join(name)).unwrap_or_default();
+        if golden == *actual {
+            continue;
+        }
+        let first = golden
+            .lines()
+            .zip(actual.lines())
+            .position(|(g, a)| g != a)
+            .unwrap_or_else(|| golden.lines().count().min(actual.lines().count()));
+        let artifact = out_dir.join(format!("{name}.actual"));
+        fs::write(&artifact, actual).expect("write actual trace csv");
+        moved.push(format!(
+            "{name}: first difference at line {} ({} golden lines, {} measured); measured trace in {}",
+            first + 1,
+            golden.lines().count(),
+            actual.lines().count(),
+            artifact.display()
+        ));
+    }
+    assert!(
+        moved.is_empty(),
+        "[{slug}] the IRQ trace moved against the committed goldens. If the change is \
+         intended, re-record with RUSTYNES_IRQ_TRACE_BLESS=1 and attribute every \
+         difference before committing.\n  {}",
+        moved.join("\n  ")
+    );
+}
+
+/// Runs a single ROM with tracing enabled, writes the full per-CPU-cycle trace
+/// to `target/irq_trace/<slug>.full.csv` (diagnostic; not committed), and
+/// checks the three filtered traces against the goldens (`check_goldens`).
+/// Returns the IRQ-filtered CSV for the well-formed assertion.
+/// Serialises the captures. The harness runs these seven tests in parallel by
+/// default, and with every run captured whole (`MAX_RECORDS`) the longest
+/// three would hold their buffers at once: 4.5 GB peak RSS measured at v3.3.0
+/// with all seven concurrent, enough to be killed on a smaller host (Codex on
+/// #612). One capture at a time bounds the peak by the largest single run, so
+/// the documented command needs no `--test-threads=1`. A poisoned lock (a
+/// previous test panicked) is taken anyway: its holder held no shared state.
+static CAPTURE: Mutex<()> = Mutex::new(());
+
 fn run_traced(rel: &str, slug: &str) -> String {
+    let _capture = CAPTURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let path = rom_path(rel);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let mut nes = Nes::from_rom(&bytes).expect("rom must parse");
@@ -178,51 +280,48 @@ fn run_traced(rel: &str, slug: &str) -> String {
     let out_dir = workspace_root().join("target").join("irq_trace");
     fs::create_dir_all(&out_dir).expect("create target/irq_trace");
     fs::write(out_dir.join(format!("{slug}.full.csv")), &full_csv).expect("write full trace csv");
-    // Filtered trace -> crates/rustynes-test-harness/golden/irq_trace/<slug>.csv
-    // (committed as the baseline that future coordinated-change attempts
-    // diff against).
+    // The unfiltered CSV is the largest single allocation here (one line per
+    // CPU cycle); free it before the filtered traces are built.
+    drop(full_csv);
+    // Filtered trace -> golden/irq_trace/<slug>.csv.
     //
     // Session-21 design decision: the IRQ-focused trace uses the same
     // `is_irq_event` filter as before (only IRQ-line / NMI / A12
-    // transitions).  ROMs without DMC activity produce byte-identical
-    // (modulo the new column suffixes) filtered output to the
-    // pre-Session-21 baseline.  For DMC-active ROMs (the new
-    // `dmc_dma_during_read4_*` sentinel) we additionally write a
-    // `*.dmc.csv` golden file using the wider `is_dmc_or_irq_event`
-    // filter — the DMC trace is what Sprint 1 iteration 2's diagnosis
-    // pass cross-diffs against Mesen2.  The two filters are
-    // intentionally separate so committing this branch does not
-    // explode the cpu_interrupts_v2/* golden files (the OAM DMA
-    // window's `dma_cycles_owed` decrement is per-cycle activity and
-    // would 100x the previously-tight IRQ-only baselines).
+    // transitions).  For DMC-active ROMs (the `dmc_dma_during_read4_*`
+    // sentinel) a `*.dmc.csv` golden is written beside it using the wider
+    // `is_dmc_or_irq_event` filter -- the DMC trace is what Sprint 1
+    // iteration 2's diagnosis pass cross-diffs against Mesen2.  The two
+    // filters are intentionally separate so the cpu_interrupts_v2/* goldens
+    // stay tight (the OAM DMA window's `dma_cycles_owed` decrement is
+    // per-cycle activity and would 100x the IRQ-only baselines).
     let filtered_csv = trace.to_csv_filtered(IrqTrace::is_irq_event);
-    let golden_dir = workspace_root()
-        .join("crates")
-        .join("rustynes-test-harness")
-        .join("golden")
-        .join("irq_trace");
-    fs::create_dir_all(&golden_dir).expect("create golden/irq_trace");
-    fs::write(golden_dir.join(format!("{slug}.csv")), &filtered_csv)
-        .expect("write golden trace csv");
-    // Phase 1.2 sidecar: write the vector-service event trace as a
-    // separate `*.svc.csv` golden file.  Schema is documented in
+    // Phase 1.2 sidecar: the vector-service event trace, `*.svc.csv`.
+    // Schema is documented in
     // `crates/rustynes-core/src/irq_trace.rs::IrqTrace::service_events_to_csv`.
     // Each row is one IRQ or NMI vector fetch; cross-diffable against
     // Mesen2's `scripts/mesen2_irq_trace.lua` `irq_svc` / `nmi_svc` rows.
     assert_service_kinds_agree_with_mesen2(slug, &trace);
     let service_csv = trace.service_events_to_csv();
-    fs::write(golden_dir.join(format!("{slug}.svc.csv")), &service_csv)
-        .expect("write golden service-events csv");
-    // Session-21 sidecar: DMC-focused filtered trace.  Uses
-    // `is_dmc_or_irq_event` to retain DMC scheduler state changes (in
-    // addition to IRQ-line transitions).  Written ALONGSIDE the
-    // IRQ-focused trace so the per-cycle DMC visibility is captured in
-    // the committed golden surface without bloating the historical
-    // IRQ-only files.  Sprint 1 iteration 2 cross-diffs against this
-    // sidecar.
+    // Session-21 sidecar: the DMC-focused filtered trace, `*.dmc.csv`.
     let dmc_csv = trace.to_csv_filtered(IrqTrace::is_dmc_or_irq_event);
-    fs::write(golden_dir.join(format!("{slug}.dmc.csv")), &dmc_csv)
-        .expect("write golden DMC trace csv");
+    // A trace that hit `MAX_RECORDS` dropped its tail, so a golden compared
+    // (or blessed) from it would describe a truncated run and could pass or
+    // re-record a capture that never saw the cycles it claims to cover. The
+    // default window is sized never to overflow; a windowed capture is written
+    // to `target/` only, so it is reported above and not refused here.
+    assert!(
+        overflow == 0 || trace_start_cycle() > 0,
+        "[{slug}] the trace dropped {overflow} records past MAX_RECORDS ({MAX_RECORDS}); \
+         raise the cap before comparing or blessing"
+    );
+    check_goldens(
+        slug,
+        &[
+            (format!("{slug}.csv"), filtered_csv.as_str()),
+            (format!("{slug}.svc.csv"), service_csv.as_str()),
+            (format!("{slug}.dmc.csv"), dmc_csv.as_str()),
+        ],
+    );
     filtered_csv
 }
 
@@ -242,11 +341,10 @@ fn run_traced(rel: &str, slug: &str) -> String {
 ///
 /// The hijacks themselves are pinned by count for the two ROMs built to
 /// produce them, before the Mesen2 lookup so they hold without it (#611
-/// review): the `.svc.csv` goldens beside them are rewritten on every run, so
-/// they would not catch a hijack relabelled as NMI. The counts were measured
-/// at v3.3.0 (deterministic over repeated runs); the committed goldens predate
-/// v2.0.0's timing and show 4 for the first ROM, which is why they are not the
-/// reference.
+/// review). The counts were measured at v3.3.0 (deterministic over repeated
+/// runs). The `.svc.csv` goldens beside them now gate every service event too
+/// (they were rewritten on every run, and stale since v2.0.0, until v3.3.0);
+/// the counts stay because they say WHICH property a moved golden broke.
 ///
 /// The counts and the Mesen2 comparison describe the default capture window.
 /// A positive `RUSTYNES_IRQ_TRACE_START_CYCLE` starts recording later, after
