@@ -232,7 +232,30 @@ fn run_traced(rel: &str, slug: &str) -> String {
 /// sequence, so an IRQ or BRK that an NMI hijacks is IRQ-kind with vector
 /// `$FFFA` (see `ServiceEvent::vector`), where Mesen2 logs it as an NMI; and
 /// the two captures cover different windows.
+///
+/// The hijacks themselves are pinned by count for the two ROMs built to
+/// produce them, before the Mesen2 lookup so they hold without it (#611
+/// review): the `.svc.csv` goldens beside them are rewritten on every run, so
+/// they would not catch a hijack relabelled as NMI. The counts were measured
+/// at v3.3.0 (deterministic over repeated runs); the committed goldens predate
+/// v2.0.0's timing and show 4 for the first ROM, which is why they are not the
+/// reference.
 fn assert_service_kinds_agree_with_mesen2(slug: &str, trace: &IrqTrace) {
+    let events = trace.service_events();
+    let expected_hijacks = match slug {
+        "cpu_interrupts_v2_2_nmi_and_brk" | "cpu_interrupts_v2_3_nmi_and_irq" => Some(5),
+        _ => None,
+    };
+    if let Some(expected) = expected_hijacks {
+        let hijacks = events
+            .iter()
+            .filter(|e| e.kind == ServiceKind::Irq && e.vector == 0xFFFA)
+            .count();
+        assert_eq!(
+            hijacks, expected,
+            "[{slug}] IRQ-kind service events that fetched $FFFA (NMI hijacks)"
+        );
+    }
     let mesen = workspace_root()
         .join("crates/rustynes-test-harness/golden/irq_trace/mesen2")
         .join(format!("{slug}.csv"));
@@ -243,7 +266,6 @@ fn assert_service_kinds_agree_with_mesen2(slug: &str, trace: &IrqTrace) {
         .lines()
         .filter(|l| l.split(',').nth(4) == Some("nmi_svc"))
         .count();
-    let events = trace.service_events();
     let ours_nmi: Vec<_> = events
         .iter()
         .filter(|e| e.kind == ServiceKind::Nmi)
