@@ -55,13 +55,20 @@ use std::path::PathBuf;
 use rustynes_core::Nes;
 use rustynes_core::irq_trace::{IrqTrace, ServiceKind};
 
-/// Per-ROM linear-buffer cap.  Sized to comfortably hold the entire
-/// run from `BOOT_FRAMES_TO_SKIP` to final-status detection for every
-/// target ROM (max 126 frames - 10 boot ≈ 116 frames × 29 780 cycles ≈
-/// 3.5 M records).  Records past the cap are silently dropped, but we
-/// size this generously so that does not happen in practice.  Each
-/// record is ~40 bytes → ~160 MB peak across all 6 fixture tests.
-const MAX_RECORDS: usize = 4_000_000;
+/// Per-ROM linear-buffer cap: one record per CPU cycle from the arm point to
+/// the stop condition, which must fit WHOLE -- `run_traced` refuses an
+/// overflowed default-window capture, because a golden taken from a truncated
+/// buffer describes a window that ends wherever the cap happened to fall.
+///
+/// It was 4,000,000, sized when the longest run was ~116 frames, and three
+/// runs had outgrown it unnoticed (measured at v3.3.0, records needed):
+/// `dma_2007_read` 17,570,497 (it never reports a final status and stops at
+/// `MAX_FRAMES`), `5-branch_delays_irq` 11,048,565 and mmc3
+/// `4-scanline_timing` 9,172,439. The next largest fits at 3,663,022. A
+/// record is roughly 80 bytes (its `a12_events` `Vec` plus ~50 bytes of
+/// fields), so the largest run peaks near 1.4 GB and the seven in parallel at
+/// a few GB -- acceptable for a diagnostic fixture CI does not run.
+const MAX_RECORDS: usize = 24_000_000;
 
 /// Frames to run BEFORE enabling the trace, to skip the boot phase where
 /// rendering is off / CHR has not been banked / IRQs have not been
@@ -281,6 +288,16 @@ fn run_traced(rel: &str, slug: &str) -> String {
     let service_csv = trace.service_events_to_csv();
     // Session-21 sidecar: the DMC-focused filtered trace, `*.dmc.csv`.
     let dmc_csv = trace.to_csv_filtered(IrqTrace::is_dmc_or_irq_event);
+    // A trace that hit `MAX_RECORDS` dropped its tail, so a golden compared
+    // (or blessed) from it would describe a truncated run and could pass or
+    // re-record a capture that never saw the cycles it claims to cover. The
+    // default window is sized never to overflow; a windowed capture is written
+    // to `target/` only, so it is reported above and not refused here.
+    assert!(
+        overflow == 0 || trace_start_cycle() > 0,
+        "[{slug}] the trace dropped {overflow} records past MAX_RECORDS ({MAX_RECORDS}); \
+         raise the cap before comparing or blessing"
+    );
     check_goldens(
         slug,
         &[
