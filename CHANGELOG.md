@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-16 - "Plumbline" (v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes banked on seven boards, mapper 71's decode, Bandai and Somari states, a withdrawn performance figure, IRQ trace goldens that gate, and two off-die MiSTer fixes)
+
 ### Breaking
 
 - **Movies and netplay from v3.2.x are refused.** `EMULATION_EPOCH` rises
