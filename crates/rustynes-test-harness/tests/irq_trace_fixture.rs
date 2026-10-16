@@ -82,6 +82,15 @@ fn workspace_root() -> PathBuf {
 /// committed) and the IRQ-event-filtered trace to
 /// `crates/rustynes-test-harness/golden/irq_trace/<slug>.csv` (committed).
 /// Returns the filtered CSV string for the well-formed assertion.
+/// The `RUSTYNES_IRQ_TRACE_START_CYCLE` knob: the CPU cycle after which
+/// recording starts, 0 (the default window) when unset or unparsable.
+fn trace_start_cycle() -> u64 {
+    std::env::var("RUSTYNES_IRQ_TRACE_START_CYCLE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
 fn run_traced(rel: &str, slug: &str) -> String {
     let path = rom_path(rel);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
@@ -101,18 +110,16 @@ fn run_traced(rel: &str, slug: &str) -> String {
     // omits the boot/anchor offset region and exposes only in-test-loop
     // divergence.  Default 0 = behavior is byte-identical to the
     // Phase A baseline.
-    if let Ok(s) = std::env::var("RUSTYNES_IRQ_TRACE_START_CYCLE") {
-        let start_cycle: u64 = s.parse().unwrap_or(0);
-        if start_cycle > 0 {
-            while nes.bus().cycle() < start_cycle {
-                nes.run_frame();
-            }
-            eprintln!(
-                "[{slug}] post-START_CYCLE skip arrived at cycle={} (target {})",
-                nes.bus().cycle(),
-                start_cycle
-            );
+    let start_cycle = trace_start_cycle();
+    if start_cycle > 0 {
+        while nes.bus().cycle() < start_cycle {
+            nes.run_frame();
         }
+        eprintln!(
+            "[{slug}] post-START_CYCLE skip arrived at cycle={} (target {})",
+            nes.bus().cycle(),
+            start_cycle
+        );
     }
     nes.bus_mut().enable_irq_trace(MAX_RECORDS);
     // The blargg test-runner ROMs write `$DE $B0 $61` to `$6001-$6003`
@@ -240,8 +247,23 @@ fn run_traced(rel: &str, slug: &str) -> String {
 /// at v3.3.0 (deterministic over repeated runs); the committed goldens predate
 /// v2.0.0's timing and show 4 for the first ROM, which is why they are not the
 /// reference.
+///
+/// The counts and the Mesen2 comparison describe the default capture window.
+/// A positive `RUSTYNES_IRQ_TRACE_START_CYCLE` starts recording later, after
+/// services those two checks expect, so for such a capture only the per-event
+/// check (an NMI-kind row fetched `$FFFA`) applies (#611 review).
 fn assert_service_kinds_agree_with_mesen2(slug: &str, trace: &IrqTrace) {
     let events = trace.service_events();
+    assert!(
+        events
+            .iter()
+            .filter(|e| e.kind == ServiceKind::Nmi)
+            .all(|e| e.vector == 0xFFFA),
+        "[{slug}] an NMI-kind service fetched another vector"
+    );
+    if trace_start_cycle() > 0 {
+        return;
+    }
     let expected_hijacks = match slug {
         "cpu_interrupts_v2_2_nmi_and_brk" | "cpu_interrupts_v2_3_nmi_and_irq" => Some(5),
         _ => None,
@@ -275,10 +297,6 @@ fn assert_service_kinds_agree_with_mesen2(slug: &str, trace: &IrqTrace) {
         mesen_nmi == 0,
         "[{slug}] {} NMI-kind service events here, {mesen_nmi} nmi_svc in Mesen2",
         ours_nmi.len()
-    );
-    assert!(
-        ours_nmi.iter().all(|e| e.vector == 0xFFFA),
-        "[{slug}] an NMI-kind service fetched another vector"
     );
 }
 
