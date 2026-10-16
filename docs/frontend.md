@@ -2815,6 +2815,63 @@ sub-pages. The content was also expanded to cover the full v1.7.0 feature set
 Input Display, the new debugger depth, and the removed toolbar HUD / repurposed
 backtick).
 
+## RetroAchievements (native, `retroachievements` feature)
+
+The native build drives `rc_client` (vendored rcheevos, `rustynes-cheevos`)
+through the shared `rustynes-ra` session; the mobile bridge drives the same
+session. The browser build is casual-only and separate
+([`cheevos-browser.md`](cheevos-browser.md)).
+
+### Transport and offline unlocks (v3.4.0)
+
+RA requires that "unlocks created while offline must be securely cached and
+sync to RetroAchievements when connectivity returns" ([Hardcore Compliance
+Requirements](https://docs.retroachievements.org/general/hardcore-compliance-requirements.html),
+section A). `rc_client` owns that queue: an award or leaderboard submission
+whose server call fails RETRYABLY is rescheduled and re-sent from
+`rc_client_do_frame` / `rc_client_idle` (at once, then 1 s, 2 s, 4 s ... up to
+120 s), with `RC_CLIENT_EVENT_DISCONNECTED` while something is pending and
+`RC_CLIENT_EVENT_RECONNECTED` when it has all gone through (the HUD toasts
+"Server disconnected" / "Server reconnected"). RustyNES does not duplicate it.
+
+- The HTTP worker (`rustynes-cheevos/src/http.rs`) reports a transport failure
+  (no network, DNS, TLS, refused, timeout) as
+  `RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR` with the error text as the
+  body. Until v3.4.0 it reported the NON-retryable status with an empty body,
+  so an unlock earned offline raised a "server error" toast and was dropped.
+- The worker performs its exchange through a `Fetch` closure: `ureq` in the
+  shipped build, a scripted fake RA server in
+  `client::tests::an_unlock_earned_offline_is_sent_when_the_network_returns`,
+  which fails the first two award calls and asserts the third is sent, with
+  Disconnected before Reconnected and no server error.
+- The queue is in memory. An unlock still pending when the program exits is
+  lost; `rc_client` offers no persistent queue, and persisting the requests
+  ourselves would mean writing the user's API token and a signed award request
+  to disk and replaying it outside `rc_client`'s bookkeeping. That is left as a
+  question for RA review (`docs/ra-integration-request.md`) rather than built.
+- v3.4.0 also turns `rc_client`'s background memory reads off
+  (`rc_client_set_allow_background_memory_reads(0)`). When a game's data
+  arrives, rcheevos validates every address its achievements read through the
+  read callback; by default it does so inside the server-response callback,
+  which runs in `poll_http_completions`, where no read closure is installed.
+  Every read failed, so every achievement was marked unsupported (state 3,
+  DISABLED) at load and nothing could ever unlock natively. The validation now
+  runs in the next `idle` / `do_frame`, against the live emulator. The same
+  end-to-end test caught it (its achievement loaded DISABLED).
+
+### User-Agent
+
+RA's format (compliance requirements, section C; the `rc_client` guide's
+"User-Agent Header") is `EmulatorName/v1.0.0 (OSName 10.0) core_name/v0.5.0`:
+a required unique product token with a numeric incrementing version, an
+optional system clause, optional extensions. RustyNES sends
+`RustyNES/<crate version> (<OS> <arch>) rcheevos/<rcheevos version>`, for
+example `RustyNES/3.4.0 (Linux x86_64) rcheevos/12.5.0`; the OS and architecture
+come from the build target (the OS version is not known at compile time), the
+rcheevos version from the vendored `rc_version.h`. Two tests in `http.rs` pin
+the leading `RustyNES/` token and the three-segment shape. An unrecognized
+client has its hardcore unlocks recorded as casual until RA validates it.
+
 ## Shipped / open
 
 All of the original open questions are resolved in v1.0.0:

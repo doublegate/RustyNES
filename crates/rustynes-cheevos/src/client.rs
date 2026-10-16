@@ -345,13 +345,39 @@ impl RaClient {
     /// by default (hardcore on by default, matching rcheevos).
     #[must_use]
     pub fn new() -> Self {
-        let transport = HttpTransport::new();
+        Self::with_transport(HttpTransport::new())
+    }
+
+    /// A client whose server calls go to `fetch` instead of the network: the
+    /// HTTP seam the end-to-end tests drive with a scripted fake server.
+    #[cfg(test)]
+    pub(crate) fn with_fetch(fetch: http::Fetch) -> Self {
+        Self::with_transport(HttpTransport::with_fetch(fetch))
+    }
+
+    fn with_transport(transport: HttpTransport) -> Self {
         // SAFETY: trampolines are valid function pointers with the rc_client ABI.
         let raw = unsafe { ffi::rc_client_create(read_trampoline, http::server_call_trampoline) };
         assert!(!raw.is_null(), "rc_client_create returned null");
         // SAFETY: raw is a valid client.
         unsafe {
             ffi::rc_client_set_event_handler(raw, events::event_handler_trampoline);
+        }
+        // v3.4.0 — memory may only be read from a call that installs the read
+        // closure (`do_frame`, `idle`, `reset`, `deserialize_progress`). When a
+        // game's data arrives, rcheevos checks every address its achievements
+        // read by calling the read callback, and by default it does so from
+        // the server-response callback, i.e. inside `poll_http_completions`,
+        // where no closure is installed: every read returned 0 bytes, every
+        // address was judged invalid, and every achievement of every game was
+        // DISABLED at load (the end-to-end test below saw state 3 for its one
+        // achievement). With background reads off, rcheevos queues that check
+        // for the next `rc_client_idle` / `rc_client_do_frame`, which read the
+        // live emulator (`rc_client_set_allow_background_memory_reads`, rcheevos
+        // wiki).
+        // SAFETY: raw is a valid client.
+        unsafe {
+            ffi::rc_client_set_allow_background_memory_reads(raw, 0);
         }
         Self {
             raw,
@@ -760,7 +786,177 @@ impl Drop for RaClient {
 
 #[cfg(test)]
 mod tests {
-    use super::RaUser;
+    use super::{RaClient, RaUser};
+    use crate::events::RaEvent;
+    use std::cell::Cell;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    // ---- v3.4.0: an unlock earned offline reaches the server later ---------
+    //
+    // The responses below are the RetroAchievements API's JSON shapes for the
+    // four calls an unlock needs (`login2`, `achievementsets`, `startsession`,
+    // `awardachievement`), trimmed to the fields `rc_client` reads, with one
+    // achievement whose trigger is "RAM byte $0000 equals 1".
+
+    const LOGIN: &str = "{\"Success\":true,\"User\":\"User\",\"AvatarUrl\":\"\",\
+        \"Token\":\"ApiToken\",\"Score\":10,\"SoftcoreScore\":0,\"Messages\":0}";
+    const PATCH: &str = "{\"Success\":true,\"GameId\":1234,\"Title\":\"Test\",\"ConsoleId\":7,\
+        \"ImageIconUrl\":\"\",\"RichPresenceGameId\":1234,\"RichPresencePatch\":\"\",\
+        \"Sets\":[{\"AchievementSetId\":1111,\"GameId\":1234,\"Title\":null,\"Type\":\"core\",\
+        \"ImageIconUrl\":\"\",\"Achievements\":[{\"ID\":5501,\"Title\":\"One\",\
+        \"Description\":\"d\",\"Flags\":3,\"Points\":5,\"MemAddr\":\"0xH0000=1\",\
+        \"Author\":\"a\",\"BadgeName\":\"00001\",\"Created\":1,\"Modified\":1}],\
+        \"Leaderboards\":[]}]}";
+    const SESSION: &str = "{\"Success\":true,\"Unlocks\":[],\"HardcoreUnlocks\":[]}";
+    const AWARD: &str = "{\"Success\":true,\"Score\":15,\"SoftcoreScore\":0,\
+        \"AchievementID\":5501,\"AchievementsRemaining\":0}";
+
+    /// What the fake server saw.
+    #[derive(Default)]
+    struct Server {
+        /// `awardachievement` calls received (failed ones included).
+        awards: u32,
+        /// How many of the first awards fail with a transport error.
+        offline_awards: u32,
+    }
+
+    /// The `r=` method of a request (in the POST body, or the URL for a GET).
+    fn method(url: &str, post: &str) -> String {
+        url.split(['?', '&'])
+            .chain(post.split('&'))
+            .find_map(|kv| kv.strip_prefix("r="))
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// A fake RA server over the HTTP seam: answers each call with the canned
+    /// JSON and, for the first `offline_awards` unlocks, fails the way a dead
+    /// network fails (no HTTP response at all).
+    fn fake_server(state: Arc<Mutex<Server>>) -> crate::http::Fetch {
+        Box::new(move |req: &crate::http::Request<'_>| {
+            let post = req
+                .post
+                .map(|p| String::from_utf8_lossy(p).into_owned())
+                .unwrap_or_default();
+            let body = match method(req.url, &post).as_str() {
+                "login2" => LOGIN,
+                "achievementsets" => PATCH,
+                "startsession" => SESSION,
+                "awardachievement" => {
+                    let offline = {
+                        let mut st = state.lock().unwrap();
+                        st.awards += 1;
+                        st.awards <= st.offline_awards
+                    };
+                    if offline {
+                        return Err("connection refused (test: offline)".into());
+                    }
+                    AWARD
+                }
+                _ => "{\"Success\":true}",
+            };
+            Ok((body.as_bytes().to_vec(), 200))
+        })
+    }
+
+    /// Drive `client` frame by frame (RAM byte 0 = `ram`) until `done` or
+    /// `limit` elapses; returns the events raised meanwhile and whether `done`.
+    fn pump(
+        client: &mut RaClient,
+        ram: &Cell<u8>,
+        limit: Duration,
+        mut done: impl FnMut(&mut RaClient) -> bool,
+    ) -> (Vec<RaEvent>, bool) {
+        let start = Instant::now();
+        let mut events = Vec::new();
+        loop {
+            client.poll_http_completions();
+            client.do_frame(&mut |a| if a == 0 { ram.get() } else { 0 });
+            events.extend(client.take_events());
+            if done(client) {
+                return (events, true);
+            }
+            if start.elapsed() > limit {
+                return (events, false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — RA requires that "unlocks created while
+    /// offline must be securely cached and sync to `RetroAchievements` when
+    /// connectivity returns". `rc_client` keeps a failed unlock queued and
+    /// re-sends it, provided the transport reports the failure as retryable.
+    /// Here the network is down for the first two attempts: the unlock must be
+    /// sent a third time, succeed, and raise Disconnected then Reconnected,
+    /// with no server-error event (the pre-v3.4.0 outcome: one attempt, a
+    /// "server error" toast, and the unlock never sent again).
+    #[test]
+    fn an_unlock_earned_offline_is_sent_when_the_network_returns() {
+        let state = Arc::new(Mutex::new(Server {
+            offline_awards: 2,
+            ..Server::default()
+        }));
+        let mut client = RaClient::with_fetch(fake_server(Arc::clone(&state)));
+        client.set_hardcore_enabled(false);
+        let ram = Cell::new(0u8);
+        let long = Duration::from_secs(10);
+
+        client.begin_login_token("User", "ApiToken", |_| {});
+        let (_, ok) = pump(&mut client, &ram, long, |c| c.user_info().is_some());
+        assert!(ok, "the fake login never completed");
+
+        // Any 16-byte header + PRG image identifies; the fake ignores the hash.
+        let mut rom = vec![0u8; 16 + 0x4000];
+        rom[..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 1;
+        client.begin_load_game(&rom, |_| {});
+        let (_, ok) = pump(&mut client, &ram, long, |c| {
+            c.achievement_list()
+                .iter()
+                .any(|a| a.id == 5501 && a.state == 1)
+        });
+        assert!(ok, "the achievement never became active: {:?}", {
+            client
+                .achievement_list()
+                .iter()
+                .map(|a| (a.id, a.state))
+                .collect::<Vec<_>>()
+        });
+
+        // A new trigger waits until it has evaluated false once, so run a few
+        // frames with the byte at 0 before setting it.
+        let mut frames = 0;
+        let _ = pump(&mut client, &ram, long, |_| {
+            frames += 1;
+            frames > 10
+        });
+        // Trigger it, then wait out the back-off: immediate retry, then 1 s.
+        ram.set(1);
+        let (events, ok) = pump(&mut client, &ram, long, |c| {
+            c.achievement_list().iter().any(|a| a.unlocked) && state.lock().unwrap().awards >= 3
+        });
+        // Let any further (wrong) retries show themselves.
+        let (later, _) = pump(&mut client, &ram, Duration::from_millis(1500), |_| false);
+        let awards = state.lock().unwrap().awards;
+        let all: Vec<&RaEvent> = events.iter().chain(later.iter()).collect();
+        assert!(
+            ok,
+            "the unlock was not re-sent: {awards} award call(s); {all:?}"
+        );
+        assert_eq!(awards, 3, "two failures, one success, nothing after");
+        assert!(
+            !all.iter().any(|e| matches!(e, RaEvent::ServerError { .. })),
+            "an offline unlock was reported as a server error: {all:?}"
+        );
+        let disc = all.iter().position(|e| matches!(e, RaEvent::Disconnected));
+        let reconn = all.iter().position(|e| matches!(e, RaEvent::Reconnected));
+        assert!(
+            matches!((disc, reconn), (Some(d), Some(r)) if d < r),
+            "expected Disconnected then Reconnected: {all:?}"
+        );
+    }
 
     /// v3.2.0: the login token never reaches a `Debug` rendering, so logging a
     /// user (or a struct holding one) cannot leak the credential.

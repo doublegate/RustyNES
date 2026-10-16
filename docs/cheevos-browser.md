@@ -69,7 +69,7 @@ The auth proxy adds a fourth backstop: it refuses to forward a hardcore award
 ## Auth proxy contract
 
 RA identifies/allowlists clients by the HTTP `User-Agent`
-`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>` (the `RA_USER_AGENT` const in
+`RustyNES/<crate-ver> (<OS> <arch>) rcheevos/<rcheevos-ver>` (the `RA_USER_AGENT` const in
 `crates/rustynes-cheevos/src/http.rs`; a native regression test guards the
 leading `RustyNES/` token). Browsers forbid setting it, so every server call from
 the browser is routed through a small proxy that injects the header server-side.
