@@ -76,6 +76,11 @@ cycle-accurate core later replaced.
   `T-HISTORY-DISK-SWAP`), as a Reset, a state load and a Datach scan already
   do. A swap is not in a movie's input stream, so a history clip exported
   across one could not replay.
+- **MiSTer core, off-die build: a `$2007` read of CHR-RAM returns the byte
+  written** (`T-MISTER-OFFDIE-CHRRAM`). The read's address was taken a dot
+  late, so on an odd dot it read the next byte. It predates v3.2.0, and only
+  the off-die (SDRAM) build had it; fixed in simulation, not yet run on
+  hardware.
 - **MiSTer core: mapper 185's CHR disable reaches the "more than eight
   sprites" option** (`T-XS-M185-CHRCS`). With the option on and the board's
   CHR-ROM disabled, an extra sprite drew real pattern data where the line's
