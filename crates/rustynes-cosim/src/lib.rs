@@ -102,6 +102,35 @@ pub struct Oracle {
     /// every frame boundary or lose everything but the last. That drain lives
     /// in [`Self::advance_frames`], which is the only place frames are stepped.
     apu_trace: Option<ApuTrace>,
+    /// v3.4.0 -- the cartridge's expansion-audio output per CPU cycle, as the
+    /// integer the mapper returned (`Mapper::mix_audio`), accumulated across
+    /// frames exactly as `apu_trace` is. See [`Self::take_ext_audio_trace`].
+    ext_audio_trace: Option<ApuTrace>,
+}
+
+/// Bytes per expansion-audio record: `u64` CPU cycle, `i32` sample. See
+/// [`Oracle::take_ext_audio_trace`].
+const EXT_AUDIO_REC_LEN: usize = 12;
+
+/// Upper bound on `--ext-audio-trace`'s capacity, in records -- the same bound
+/// and the same reason as [`MAX_APU_TRACE_CAPACITY`].
+pub const MAX_EXT_AUDIO_TRACE_CAPACITY: usize = MAX_APU_TRACE_CAPACITY;
+
+/// The mapper's integer audio code from a mix record's `external`.
+///
+/// `SystemBus::apu_advance_one` hands the APU `mix_audio() as f32 / 65536.0`,
+/// and both the division and this multiplication are by a power of two, so the
+/// round trip is EXACT for every value with magnitude under 2^24 (the bus's
+/// own comment: every value a board produces is "well under 2^24, where f32 is
+/// still integer-exact"). The `round` is therefore an identity on every real
+/// input; it is there so a non-integral value could never truncate towards
+/// zero silently. Out-of-range inputs saturate (`as` on a float).
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn ext_audio_code(external: f32) -> i32 {
+    // Truncation is impossible for the values this receives (see above);
+    // `as` saturates rather than wrapping on anything else.
+    (external * 65536.0).round() as i32
 }
 
 /// Accumulated rung-4 channel levels, and whether the cap dropped any.
@@ -133,6 +162,7 @@ impl Oracle {
             .map(|nes| Self {
                 nes,
                 apu_trace: None,
+                ext_audio_trace: None,
             })
             .map_err(|e| format!("{e:?}"))
     }
@@ -232,34 +262,51 @@ impl Oracle {
     /// worth, so skipping this loses every frame but the last -- and would do it
     /// silently, since the resulting golden is a well-formed shorter file.
     fn drain_apu_frame(&mut self) {
-        let Some(acc) = self.apu_trace.as_mut() else {
+        if self.apu_trace.is_none() && self.ext_audio_trace.is_none() {
             return;
-        };
+        }
         if let Some(trace) = self.nes.mix_trace() {
             let first = trace.first_cycle();
             for (i, r) in trace.records().iter().enumerate() {
-                if acc.bytes.len() >= acc.cap.saturating_mul(APU_REC_LEN) {
-                    acc.dropped += 1;
-                    continue;
-                }
                 let cycle = first.saturating_add(i as u64);
-                acc.bytes.extend_from_slice(&cycle.to_le_bytes());
-                // The five INTEGER levels only. `mixed` and `external` are
-                // `f32` and are diagnostics per docs/rung4-apu.md -- exporting
-                // them would invite a gate against RustyNES's mixer arithmetic
-                // rather than against the chip.
-                acc.bytes
-                    .extend_from_slice(&[r.pulse1, r.pulse2, r.triangle, r.noise, r.dmc]);
-                // Pad 13 data bytes (8 cycle + 5 levels) out to APU_REC_LEN.
-                // A power-of-two stride keeps the comparator's indexing trivial
-                // and leaves room for the three channels v2.6.0/v2.6.1 add
-                // without changing the record size under an existing golden.
-                acc.bytes.extend_from_slice(&[0u8; 3]);
+                if let Some(acc) = self.apu_trace.as_mut() {
+                    if acc.bytes.len() >= acc.cap.saturating_mul(APU_REC_LEN) {
+                        acc.dropped += 1;
+                    } else {
+                        acc.bytes.extend_from_slice(&cycle.to_le_bytes());
+                        // The five INTEGER levels only. `mixed` is `f32` and a
+                        // diagnostic per docs/rung4-apu.md -- exporting it would
+                        // invite a gate against RustyNES's mixer arithmetic
+                        // rather than against the chip.
+                        acc.bytes
+                            .extend_from_slice(&[r.pulse1, r.pulse2, r.triangle, r.noise, r.dmc]);
+                        // Pad 13 data bytes (8 cycle + 5 levels) out to
+                        // APU_REC_LEN. A power-of-two stride keeps the
+                        // comparator's indexing trivial and leaves room for the
+                        // three channels v2.6.0/v2.6.1 add without changing the
+                        // record size under an existing golden.
+                        acc.bytes.extend_from_slice(&[0u8; 3]);
+                    }
+                }
+                if let Some(acc) = self.ext_audio_trace.as_mut() {
+                    if acc.bytes.len() >= acc.cap.saturating_mul(EXT_AUDIO_REC_LEN) {
+                        acc.dropped += 1;
+                    } else {
+                        acc.bytes.extend_from_slice(&cycle.to_le_bytes());
+                        acc.bytes
+                            .extend_from_slice(&ext_audio_code(r.external).to_le_bytes());
+                    }
+                }
             }
             // The APU flags its own per-frame truncation; fold it in rather than
             // letting a full frame look like a complete one.
             if trace.truncated() {
-                acc.dropped += 1;
+                for acc in [self.apu_trace.as_mut(), self.ext_audio_trace.as_mut()]
+                    .into_iter()
+                    .flatten()
+                {
+                    acc.dropped += 1;
+                }
             }
         }
         // No re-anchor here: `Nes::run_frame` calls
@@ -279,6 +326,35 @@ impl Oracle {
     #[must_use]
     pub fn take_apu_trace(&mut self) -> Option<(Vec<u8>, u64)> {
         self.apu_trace.take().map(|a| (a.bytes, a.dropped))
+    }
+
+    /// Arm the expansion-audio capture (v3.4.0): one record per CPU cycle of the
+    /// cartridge's audio output, for the `RustyNES_MiSTer` Sunsoft 5B gate.
+    ///
+    /// The same two switches as [`Self::enable_apu_trace`] -- the `debug-hooks`
+    /// feature and the audio-provenance arm -- and the same clamp.
+    pub fn enable_ext_audio_trace(&mut self, capacity: usize) {
+        let capacity = capacity.min(MAX_EXT_AUDIO_TRACE_CAPACITY);
+        self.nes.set_audio_provenance(true);
+        self.ext_audio_trace = Some(ApuTrace {
+            bytes: Vec::with_capacity(capacity.saturating_mul(EXT_AUDIO_REC_LEN)),
+            cap: capacity,
+            dropped: 0,
+        });
+    }
+
+    /// Take the accumulated expansion-audio golden and the dropped count.
+    ///
+    /// Record layout, 12 bytes, little-endian: `u64` CPU cycle, then the `i32`
+    /// the mapper's `mix_audio` returned for that cycle -- recovered exactly
+    /// from the mix record's `external`, see [`ext_audio_code`]. It is the
+    /// board's own output code, before any mixer gain, which is what makes it
+    /// a surface a DUT's expansion audio can be compared on; how the gate uses
+    /// it (an order- and partition-preserving comparison that does not depend on
+    /// the oracle's level table) is `RustyNES_MiSTer`'s `tb/ext_audio_diff.py`.
+    #[must_use]
+    pub fn take_ext_audio_trace(&mut self) -> Option<(Vec<u8>, u64)> {
+        self.ext_audio_trace.take().map(|a| (a.bytes, a.dropped))
     }
 
     /// Run `instructions` instructions, asserting an interrupt pin for part of
@@ -1500,6 +1576,64 @@ mod tests {
             o.apu_trace.as_ref().expect("armed").cap,
             MAX_APU_TRACE_CAPACITY,
             "the stored cap must be the clamped one, not the requested one"
+        );
+    }
+
+    /// v3.4.0: a mapper-69 (Sunsoft FME-7 / 5B) image that turns on channel A
+    /// at volume 15 and spins. 32 KiB of PRG (the program in the fixed last
+    /// 8 KiB at `$E000`), 8 KiB of CHR.
+    fn sunsoft5b_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 32768 + 8192];
+        rom[..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 2;
+        rom[5] = 1;
+        rom[6] = 0x50; // mapper 69: low nibble 5
+        rom[7] = 0x40; // high nibble 4
+        // $C000 = register, $E000 = value: period A = $040, the mixer with
+        // only tone A on ($3E), volume A = 15.
+        let mut code = Vec::new();
+        for (reg, val) in [(0x00u8, 0x40u8), (0x01, 0x00), (0x07, 0x3E), (0x08, 0x0F)] {
+            code.extend_from_slice(&[0xA9, reg, 0x8D, 0x00, 0xC0, 0xA9, val, 0x8D, 0x00, 0xE0]);
+        }
+        let spin = 0xE000 + u16::try_from(code.len()).expect("short");
+        code.extend_from_slice(&[0x4C, (spin & 0xFF) as u8, (spin >> 8) as u8]);
+        let base = 16 + 3 * 8192;
+        rom[base..base + code.len()].copy_from_slice(&code);
+        let v = 16 + 32768 - 6;
+        rom[v..v + 6].copy_from_slice(&[0x00, 0xE0, 0x00, 0xE0, 0x00, 0xE0]);
+        rom
+    }
+
+    /// The expansion-audio trace: one 12-byte record per CPU cycle of every
+    /// drained frame, cycles consecutive, and the 5B's tone actually in it --
+    /// both a silent and a sounding code, so a trace stuck at one value fails.
+    #[test]
+    fn the_ext_audio_trace_records_the_5b_every_cycle() {
+        let mut o = Oracle::new(&sunsoft5b_rom(), 0).expect("oracle");
+        o.enable_ext_audio_trace(200_000);
+        o.advance_frames(3);
+        let (bytes, dropped) = o.take_ext_audio_trace().expect("armed");
+        assert_eq!(dropped, 0);
+        assert!(bytes.len() >= EXT_AUDIO_REC_LEN, "armed but empty");
+        assert_eq!(bytes.len() % EXT_AUDIO_REC_LEN, 0);
+        let recs: Vec<(u64, i32)> = bytes
+            .as_chunks::<EXT_AUDIO_REC_LEN>()
+            .0
+            .iter()
+            .map(|r| {
+                (
+                    u64::from_le_bytes(r[..8].try_into().expect("8")),
+                    i32::from_le_bytes(r[8..].try_into().expect("4")),
+                )
+            })
+            .collect();
+        for w in recs.windows(2) {
+            assert_eq!(w[1].0, w[0].0 + 1, "cycles must be consecutive");
+        }
+        let distinct: std::collections::BTreeSet<i32> = recs.iter().map(|r| r.1).collect();
+        assert!(
+            distinct.len() >= 2,
+            "a sounding square wave has at least two levels: {distinct:?}"
         );
     }
 
