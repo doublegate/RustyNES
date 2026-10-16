@@ -1459,8 +1459,8 @@ re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE
 | `T-KNOWN-BLANK` | Triage the 52 KNOWN_BLANK dumps. **v3.2.0**: 41 remain; 10 Famicom-only carts boot on the Famicom model (`FAMICOM_WIRED`) | ACC-08, ACC-09 | v3.2.0 |
 | `T-CURATED-EVIDENCE` | BestEffort → Curated on local-dump evidence under D23's record. **DONE v3.2.0**: 47, 121, 154, 191 and 243 (`docs/compatibility.md`) | MAP-01 | v3.2.0 |
 | `T-DUMP-CORPUS` | Every implemented family with a dump in `~/Dropbox/ROMs/` gets a recorded boot; nothing committed but snapshots (D21). **DONE v3.2.0**: the gap was the families with a library dump and nothing staged (154, 243, 268, 290; `external_coverage.rs` snapshots every staged dump), now staged and blessed | MAP-02 | v3.2.0 |
-| `T-PHI2-WRITE` | Reopen PPU register write placement against the v2.6.17 conditions (D20) | ACC-03 | v3.3.0 |
-| `T-SPRITE0-STALE` | The sprite-0 stale shifter and the internal/external bus split (D20) | ACC-04 | v3.3.0 |
+| `T-PHI2-WRITE` | Reopen PPU register write placement against the v2.6.17 conditions (D20). **REFUTED v3.3.0**: 145/146 at best on the current battery (`docs/accuracy-ledger.md`) | ACC-03 | v3.3.0 |
+| `T-SPRITE0-STALE` | The sprite-0 stale shifter and the internal/external bus split (D20). **CLOSED v3.3.0**: no failing test or documented behaviour to attempt against (`to-dos/plans/v3.3.0-plan.md` row 8) | ACC-04 | v3.3.0 |
 | `T-HOSTED-NETPLAY` | A Cloudflare Worker lobby (Durable Objects) and Cloudflare TURN (D19) | NET-04, NET-02, NET-03 | v3.4.0 |
 | `T-RA-PROXY` | The browser RA proxy, on the same account (D19) | RA-01, RA-02 | v3.4.0 |
 | `T-RA-HARDCORE` | RetroAchievements hardcore compliance, then the application (D25) | RA-03 | v3.4.0 |
