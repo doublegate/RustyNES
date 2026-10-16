@@ -65,6 +65,10 @@ cycle-accurate core later replaced.
   which is what v3.1.x did when it restored one; the result no longer depends
   on what the board was doing before the load. Mapper 157 first shipped in
   v3.2.0, so it has no older state to read.
+- **An FDS disk swap starts a fresh history timeline** (desktop;
+  `T-HISTORY-DISK-SWAP`), as a Reset, a state load and a Datach scan already
+  do. A swap is not in a movie's input stream, so a history clip exported
+  across one could not replay.
 
 ## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 

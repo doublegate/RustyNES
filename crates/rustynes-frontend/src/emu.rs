@@ -1053,6 +1053,42 @@ impl EmuCore {
         restored
     }
 
+    /// Insert FDS disk side `side`, or eject the disk with `None`, and start a
+    /// fresh history timeline (`T-HISTORY-DISK-SWAP`, v3.3.0). A swap is input
+    /// a `.rnm` does not record, so a history clip spanning one could not
+    /// replay it, as for a Reset (NF-13) or a Datach scan.
+    ///
+    /// Returns the disk's side count when the swap happened, and `None` (with
+    /// nothing changed) when no FDS game is loaded or `side` is past the last
+    /// side, as from a stale menu click.
+    pub fn swap_disk(&mut self, side: Option<usize>) -> Option<usize> {
+        let nes = self.nes.as_mut()?;
+        let count = nes.disk_side_count();
+        if count == 0 || side.is_some_and(|s| s >= count) {
+            return None;
+        }
+        nes.set_disk_side(side);
+        self.history.clear();
+        Some(count)
+    }
+
+    /// The side [`Self::swap_disk`] moves to on "next side": ejected, side 0,
+    /// side 1, ..., the last side, then ejected again. `None` without an FDS
+    /// game.
+    #[must_use]
+    pub fn next_disk_side(&self) -> Option<Option<usize>> {
+        let nes = self.nes.as_ref()?;
+        let count = nes.disk_side_count();
+        if count == 0 {
+            return None;
+        }
+        Some(match nes.inserted_disk_side() {
+            None => Some(0),
+            Some(s) if s + 1 < count => Some(s + 1),
+            Some(_) => None,
+        })
+    }
+
     /// Drop any loaded ROM and the cached name with it, so a stale mapper label
     /// cannot outlive the ROM it described.
     pub fn clear_rom(&mut self) {
@@ -3655,6 +3691,49 @@ mod tests {
         rewind.rewind_held = true;
         core.produce_one_frame(&rewind, &mut sinks);
         assert!(core.history.is_empty(), "a rewind step left the timeline");
+    }
+
+    /// `T-HISTORY-DISK-SWAP` (v3.3.0) — an FDS disk swap clears the history
+    /// timeline, as a state load, a rewind, a Reset and a Datach scan do: a
+    /// swap is not in a `.rnm`'s input stream, so a clip spanning one could
+    /// not replay. A refused swap (past the last side, or no FDS game)
+    /// changes nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_disk_swap_clears_the_history_timeline() {
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_disk(&synthetic_fds_disk(), &synthetic_fds_bios()).unwrap());
+        for _ in 0..5 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert!(!core.history.is_empty(), "fixture: frames recorded");
+        assert_eq!(
+            core.swap_disk(Some(1)),
+            None,
+            "a one-sided disk has no side 1"
+        );
+        assert!(
+            !core.history.is_empty(),
+            "a refused swap keeps the timeline"
+        );
+
+        let next = core.next_disk_side().expect("an FDS game");
+        assert_eq!(core.swap_disk(next), Some(1));
+        assert!(core.history.is_empty(), "a disk swap left the timeline");
+        assert_eq!(core.nes.as_ref().unwrap().inserted_disk_side(), next);
+
+        let mut nrom = EmuCore::new();
+        nrom.set_nes(Nes::from_rom(&synth_nrom()).unwrap());
+        nrom.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(nrom.next_disk_side(), None);
+        assert_eq!(nrom.swap_disk(None), None);
+        assert!(!nrom.history.is_empty(), "no disk, nothing to clear");
     }
 
     /// v2.9.9 (NF-22) — `for_each_console` visits both consoles of a cabinet
