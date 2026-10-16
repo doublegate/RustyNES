@@ -33,7 +33,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use rustynes_core::Nes;
-use rustynes_core::irq_trace::IrqTrace;
+use rustynes_core::irq_trace::{IrqTrace, ServiceKind};
 
 /// Per-ROM linear-buffer cap.  Sized to comfortably hold the entire
 /// run from `BOOT_FRAMES_TO_SKIP` to final-status detection for every
@@ -202,6 +202,7 @@ fn run_traced(rel: &str, slug: &str) -> String {
     // `crates/rustynes-core/src/irq_trace.rs::IrqTrace::service_events_to_csv`.
     // Each row is one IRQ or NMI vector fetch; cross-diffable against
     // Mesen2's `scripts/mesen2_irq_trace.lua` `irq_svc` / `nmi_svc` rows.
+    assert_service_kinds_agree_with_mesen2(slug, &trace);
     let service_csv = trace.service_events_to_csv();
     fs::write(golden_dir.join(format!("{slug}.svc.csv")), &service_csv)
         .expect("write golden service-events csv");
@@ -216,6 +217,47 @@ fn run_traced(rel: &str, slug: &str) -> String {
     fs::write(golden_dir.join(format!("{slug}.dmc.csv")), &dmc_csv)
         .expect("write golden DMC trace csv");
     filtered_csv
+}
+
+/// Round 2 audit CORE-R2-01 (v3.3.0): the service events' `kind` must say
+/// NMI where an NMI was serviced. Until v3.3.0 the CPU passed
+/// `vector == NMI_VECTOR` with the IRQ vector the unified dispatch always
+/// enters with, so every service was labelled IRQ.
+///
+/// Checked against the Mesen2 trace for the same ROM, where one exists
+/// (`golden/irq_trace/mesen2/<slug>.csv`, black-box oracle output): this
+/// trace has an NMI-kind row if and only if Mesen2 logged an `nmi_svc`, and
+/// every NMI-kind row fetched `$FFFA`. Counts are not compared, because the
+/// two labels differ by design: `kind` names the request that started the
+/// sequence, so an IRQ or BRK that an NMI hijacks is IRQ-kind with vector
+/// `$FFFA` (see `ServiceEvent::vector`), where Mesen2 logs it as an NMI; and
+/// the two captures cover different windows.
+fn assert_service_kinds_agree_with_mesen2(slug: &str, trace: &IrqTrace) {
+    let mesen = workspace_root()
+        .join("crates/rustynes-test-harness/golden/irq_trace/mesen2")
+        .join(format!("{slug}.csv"));
+    let Ok(mesen) = fs::read_to_string(&mesen) else {
+        return;
+    };
+    let mesen_nmi = mesen
+        .lines()
+        .filter(|l| l.split(',').nth(4) == Some("nmi_svc"))
+        .count();
+    let events = trace.service_events();
+    let ours_nmi: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == ServiceKind::Nmi)
+        .collect();
+    assert_eq!(
+        ours_nmi.is_empty(),
+        mesen_nmi == 0,
+        "[{slug}] {} NMI-kind service events here, {mesen_nmi} nmi_svc in Mesen2",
+        ours_nmi.len()
+    );
+    assert!(
+        ours_nmi.iter().all(|e| e.vector == 0xFFFA),
+        "[{slug}] an NMI-kind service fetched another vector"
+    );
 }
 
 /// Asserts the trace's shape is plausible: monotonically increasing CPU

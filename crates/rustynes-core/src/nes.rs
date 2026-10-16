@@ -183,7 +183,9 @@ pub const MAX_CPU_OVERCLOCK: u8 = 4;
 
 /// Top-level NES emulator handle.
 ///
-/// Owns the CPU, PPU, mapper, RAM, and controller stub. Construct via
+/// Owns the CPU and the bus, which holds the PPU, APU, mapper, RAM and the
+/// input devices (Round 2 audit CORE-R2-07: "controller stub" predated
+/// them). Construct via
 /// [`Nes::from_rom`]; drive forward via [`Nes::run_frame`] or
 /// [`Nes::step_instruction`]. The framebuffer can be sampled at any time via
 /// [`Nes::framebuffer`].

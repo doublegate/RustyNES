@@ -1027,6 +1027,14 @@ impl Cpu {
         // is harmless — the BRK arm sets *cycles = 0 to suppress the
         // trailing burn loop).
         self.cycles_emitted = 0;
+        // Which request started this sequence, for the IRQ-timing trace: an
+        // NMI already pending at entry (the unified dispatch enters with the
+        // IRQ vector for both, so `vector` cannot say). An IRQ or BRK that an
+        // NMI edge hijacks during the sequence fetches `$FFFA` but keeps
+        // `false`. Round 2 audit CORE-R2-01 (v3.3.0): `vector == NMI_VECTOR`
+        // was passed instead, which is never true here, so the trace labelled
+        // every NMI an IRQ.
+        let entered_for_nmi = !brk && self.mc_prev_need_nmi;
         // Reset the per-instruction interrupt sample latches so any NMI
         // edge during the push sequence below is captured here.
         self.nmi_first_tick = u8::MAX;
@@ -1093,9 +1101,9 @@ impl Cpu {
         // at which the CPU enters its vector-fetch micro-op (C6 of the
         // 7-cycle service sequence).  `is_nmi` distinguishes a clean NMI
         // service entry from an IRQ/BRK service entry that an NMI edge
-        // has hijacked to `$FFFA` — both fetch from `$FFFA` but only one
-        // has `vector == NMI_VECTOR` at this call site.
-        bus.notify_irq_service(effective_vector, vector == NMI_VECTOR);
+        // has hijacked to `$FFFA` — both fetch from `$FFFA`, and only the
+        // first had an NMI pending when the sequence began.
+        bus.notify_irq_service(effective_vector, entered_for_nmi);
         let lo = self.read1(bus, effective_vector);
         let hi = self.read1(bus, effective_vector + 1);
         self.pc = u16::from(lo) | (u16::from(hi) << 8);

@@ -76,6 +76,9 @@ cycle-accurate core later replaced.
   `T-HISTORY-DISK-SWAP`), as a Reset, a state load and a Datach scan already
   do. A swap is not in a movie's input stream, so a history clip exported
   across one could not replay.
+- **The IRQ-timing trace labels an NMI as an NMI** (the `irq-timing-trace`
+  developer feature; Round 2 audit CORE-R2-01). Every serviced interrupt
+  was labelled an IRQ.
 
 ## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 
