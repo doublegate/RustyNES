@@ -191,6 +191,27 @@ and the maintainer classified it (2026-10-04) with the GeraNES case above:
 consulted for documented behaviour, not recorded as a §1 derivation. The
 comments are kept as written.
 
+**Mappers 185, 132 and the Waixing boards, cross-referenced (v3.3.0).** Three
+mapper modules carry no `// Provenance:` header but cite reference emulators in
+their comments, which records them as consulted:
+
+| Module | Emulators named | What the comments say |
+| --- | --- | --- |
+| `m185_cnrom185.rs` (mapper 185) | GeraNES, Mesen2 | register decode "cross-referenced, not copied" against GeraNES; the power-on CHR enable and the per-submapper CHR-enable rule attributed to Mesen2's `CnromProtect` |
+| `waixing.rs` (mappers 162, 178, 242, 253) | Mesen2, GeraNES | register decode "verified against" both; mapper 253's CHR-RAM escape described as "the Mesen2 `lo == 4\|5` window" |
+| `m132_txc_22211.rs` (mapper 132) | Mesen2, GeraNES | register decode "verified against" both; one branch "cross-referenced against" GeraNES |
+
+The maintainer classified all three on 2026-10-15 with the GeraNES and UNROM 512
+cases above: cross-referenced for documented behaviour, not recorded as §1
+derivations, and the comments are kept as written. The behaviour each names is on
+the board's NESdev page (`INES_Mapper_185`, `INES_Mapper_132`, and the Waixing
+mapper pages). The question was raised, not settled, by an automated review; like
+everything in this section it is a record of what the comments say and how the
+maintainer classified them, open to a reviewer who reads the code against the
+sources. `m035_jy_asic.rs`, which also quotes Mesen2 in comments (`// Mesen: ...`),
+is a different case: it is a declared §1 derivation with a `// Provenance:`
+header, and those comments sit inside the derived region.
+
 **Status, not a verdict.** The paragraphs above record what was examined and what
 was found; they are deliberately not a clearance. This project's provenance rules
 (`docs/ai-emulator-provenance-guardrails.md`) forbid self-certifying license

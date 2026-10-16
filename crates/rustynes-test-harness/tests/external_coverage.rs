@@ -193,6 +193,9 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 /// v3.2.0 also implements mapper 8, the FFE Magic Card's GNROM mode, so
 /// the two Doraemon World 3 images left `UNSUPPORTED`: they boot to their
 /// title and stage-select screens and carry ordinary snapshots.
+/// v3.3.0 removed the *TwinBee Yahoo!!* music demo: it is a CHR-RAM VRC4
+/// image, and it was blank only because VRC4 wrote CHR-RAM unbanked while
+/// reading it banked (`T-VRC4-CHRRAM-BANKING`). It now draws its display.
 const KNOWN_BLANK: &[&str] = &[
     "fds/Akumajou Dracula (Japan) (Rev 2) (Disk Writer).fds",
     // Cause measured at v3.2.0: a mis-headered dump. The payload is the VRC4
@@ -203,7 +206,6 @@ const KNOWN_BLANK: &[&str] = &[
     "mapper-015-Multicart15/Doraemon (J) (PRG0) [hM15].zip",
     "mapper-015-Multicart15/Dragon Ball - Shen Long no Nazo (J) [hM15].zip",
     "mapper-015-Multicart15/Mobile Suit Z Gundam - Hot Scramble (J) [hM15].zip",
-    "mapper-021-VRC2-VRC4/TwinBee Yahoo!! - Over the Sea Music Demo (PD).zip",
     // Open at v3.2.0. A converted Waixing .WXN image, routed to 176/2 like its
     // two siblings in that directory, which boot. It runs the FS005 copy-
     // protection sequence and the decoded stub at $0100 correctly, then crashes

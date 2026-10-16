@@ -2671,34 +2671,12 @@ impl App {
     /// wrap back to ejected. A no-op for non-FDS games. Flushes any pending
     /// writes to the `.fds.sav` (native) before swapping so they aren't lost.
     fn cycle_disk_side(&self) {
-        // Flush before swapping so an in-progress write isn't lost across the
-        // eject. Native-only (the wasm build has no `.fds.sav` filesystem).
-        #[cfg(not(target_arch = "wasm32"))]
-        self.flush_fds_save(true);
-        let mut guard = self.emu.lock();
-        let Some(nes) = guard.nes.as_mut() else {
-            return;
-        };
-        let count = nes.disk_side_count();
-        if count == 0 {
-            return;
-        }
-        // None -> Some(0) -> Some(1) -> ... -> Some(count-1) -> None.
-        let next = match nes.inserted_disk_side() {
-            None => Some(0),
-            Some(s) if s + 1 < count => Some(s + 1),
-            Some(_) => None,
-        };
-        nes.set_disk_side(next);
-        match next {
-            Some(s) => eprintln!("rustynes: FDS disk -> Side {}/{count}", s + 1),
-            None => eprintln!("rustynes: FDS disk ejected"),
+        let next = self.emu.lock().next_disk_side();
+        if let Some(next) = next {
+            self.set_disk_side(next);
         }
     }
 
-    /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`) — the
-    /// Multi-Disk submenu's direct counterpart to [`Self::cycle_disk_side`] (a
-    /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
     /// v3.2.0 — swipe `code` through the Datach barcode reader and report the
     /// outcome on the status line. The core validates the digits again at its
     /// boundary; a refusal there (malformed code, no reader) is shown, never
@@ -2729,23 +2707,19 @@ impl App {
         self.ui.set_status(message);
     }
 
+    /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`) — the
+    /// Multi-Disk submenu's direct counterpart to [`Self::cycle_disk_side`] (a
+    /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
+    /// The swap starts a fresh history timeline (`EmuCore::swap_disk`,
+    /// `T-HISTORY-DISK-SWAP`).
     fn set_disk_side(&self, side: Option<usize>) {
+        // Flush before swapping so an in-progress write isn't lost across the
+        // eject. Native-only (the wasm build has no `.fds.sav` filesystem).
         #[cfg(not(target_arch = "wasm32"))]
         self.flush_fds_save(true);
-        let mut guard = self.emu.lock();
-        let Some(nes) = guard.nes.as_mut() else {
-            return;
+        let Some(count) = self.emu.lock().swap_disk(side) else {
+            return; // no FDS game, or a stale menu click past the side count.
         };
-        let count = nes.disk_side_count();
-        if count == 0 {
-            return;
-        }
-        if let Some(s) = side
-            && s >= count
-        {
-            return; // stale menu click past the side count.
-        }
-        nes.set_disk_side(side);
         match side {
             Some(s) => eprintln!("rustynes: FDS disk -> Side {}/{count}", s + 1),
             None => eprintln!("rustynes: FDS disk ejected"),

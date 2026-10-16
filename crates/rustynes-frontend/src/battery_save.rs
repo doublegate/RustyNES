@@ -212,6 +212,9 @@ impl BatterySave {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(AttachError::Unreadable(path, e)),
         }
+        // The baseline is the live bytes, so they are clean (attaching a save
+        // through `save_data_mut` marked a tracking board dirty).
+        nes.clear_save_data_dirty();
         Ok(Some(Self {
             path,
             policy: BatteryPolicy::new(nes.save_data().to_vec()),
@@ -235,10 +238,8 @@ impl BatterySave {
     /// includes an fsync, and holding the lock across it stalled the emulation
     /// thread for as long as the disk took (review on #551). Report the
     /// outcome with [`Self::written`].
-    pub fn due_write(&mut self, nes: &Nes, force: bool) -> Option<BatteryWrite> {
-        let bytes = self
-            .policy
-            .due(nes.save_data(), nes.is_save_data_dirty(), force)?;
+    pub fn due_write(&mut self, nes: &mut Nes, force: bool) -> Option<BatteryWrite> {
+        let bytes = self.policy.due_and_mark_clean(nes, force)?;
         Some(BatteryWrite {
             path: self.path.clone(),
             bytes,
@@ -268,7 +269,7 @@ impl BatterySave {
     ///
     /// The directory creation or the atomic write failed. The baseline is not
     /// advanced, so the next flush retries.
-    pub fn flush(&mut self, nes: &Nes, force: bool) -> io::Result<bool> {
+    pub fn flush(&mut self, nes: &mut Nes, force: bool) -> io::Result<bool> {
         let Some(write) = self.due_write(nes, force) else {
             return Ok(false);
         };
@@ -323,7 +324,10 @@ mod tests {
         }
         assert_eq!(nes.sram()[0], 0xA5, "the program ran");
         let written = nes.sram()[..2].to_vec();
-        assert!(save.flush(&nes, true).unwrap(), "unload writes the change");
+        assert!(
+            save.flush(&mut nes, true).unwrap(),
+            "unload writes the change"
+        );
         assert!(save.path().exists());
 
         // Session 2: a fresh console from the same ROM gets the bytes back,
@@ -348,13 +352,13 @@ mod tests {
         for _ in 0..3 {
             nes.run_frame();
         }
-        assert!(save.flush(&nes, true).unwrap());
+        assert!(save.flush(&mut nes, true).unwrap());
         let saved = std::fs::read(save.path()).unwrap();
         assert_eq!(saved[0], 0xA5, "the program's save reached the file");
 
         nes.power_cycle();
         assert_eq!(nes.sram()[0], 0xA5, "battery RAM survives the power cycle");
-        let _ = save.flush(&nes, true).unwrap();
+        let _ = save.flush(&mut nes, true).unwrap();
         assert_eq!(
             std::fs::read(save.path()).unwrap(),
             saved,
@@ -380,7 +384,7 @@ mod tests {
         // The program increments $6001 every frame, so the RAM is always dirty.
         for _ in 0..(3 * CHECK_PERIOD_FRAMES) {
             nes.run_frame();
-            if save.flush(&nes, false).unwrap() {
+            if save.flush(&mut nes, false).unwrap() {
                 writes += 1;
             }
         }
@@ -393,7 +397,7 @@ mod tests {
         let mut nes = Nes::from_rom(&rom(true)).unwrap();
         let mut save = BatterySave::attach(&mut nes, dir.path()).unwrap().unwrap();
         assert!(
-            !save.flush(&nes, true).unwrap(),
+            !save.flush(&mut nes, true).unwrap(),
             "power-on RAM is the baseline"
         );
         assert!(!save.path().exists(), "so nothing was written");
@@ -430,8 +434,8 @@ mod tests {
         }
         let blocker = dir.path().join(BATTERY_DIR);
         std::fs::write(&blocker, b"not a directory").unwrap();
-        let attempt = |save: &mut BatterySave| {
-            let write = save.due_write(&nes, true).expect("still due");
+        let mut attempt = |save: &mut BatterySave| {
+            let write = save.due_write(&mut nes, true).expect("still due");
             let result = write.write();
             (result.is_ok(), save.written(write, &result))
         };
@@ -440,13 +444,13 @@ mod tests {
         std::fs::remove_file(&blocker).unwrap();
         assert_eq!(attempt(&mut save), (true, false), "success clears it");
         assert!(
-            save.due_write(&nes, true).is_none(),
+            save.due_write(&mut nes, true).is_none(),
             "and the baseline moved"
         );
         nes.run_frame(); // the program changes the RAM again
         std::fs::remove_dir_all(&blocker).unwrap(); // the success created it
         std::fs::write(&blocker, b"not a directory").unwrap();
-        let write = save.due_write(&nes, true).expect("due again");
+        let write = save.due_write(&mut nes, true).expect("due again");
         let result = write.write();
         assert!(
             save.written(write, &result),
@@ -476,7 +480,7 @@ mod tests {
         for _ in 0..3 {
             nes.run_frame();
         }
-        let write = save.due_write(&nes, true).expect("RAM changed");
+        let write = save.due_write(&mut nes, true).expect("RAM changed");
         nes.run_frame(); // the console runs on while the file is written
         let result = write.write();
         assert!(result.is_ok());
@@ -484,7 +488,7 @@ mod tests {
         save.written(write, &result);
         assert_eq!(on_disk[0], 0xA5);
         assert!(
-            save.due_write(&nes, true).is_some(),
+            save.due_write(&mut nes, true).is_some(),
             "later changes are still due"
         );
     }

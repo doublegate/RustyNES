@@ -557,7 +557,7 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   frame-counter timing modelled in v2.1.5 with `pal_apu_tests` 10/10.)* already integer-correct on the
   shipping core; the v2.0.0 plan preserves the dividers exactly (NTSC ÷12/÷4, PAL
   ÷16/÷5). Listed as a residual closed-by-construction. Target: **v2.0.0**.
-- `[ ]` **Sprite-0 stale-shifter / internal-vs-external bus-split** — lowest-value;
+- `[x]` **Sprite-0 stale-shifter / internal-vs-external bus-split** — lowest-value;
   ares omits it; partly entangled with the v2.0 axis. Attempt only if a Mesen2
   single-cycle trace oracle is wired and a real game demands it. Source:
   [v1.5.0](plans/v1.5.0-lens-plan.md); [v2.0.0
@@ -570,6 +570,9 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   attempted without a motivating game, in **v3.3.0** as `T-SPRITE0-STALE`. It is
   kept only if AccuracyCoin stays all-pass; otherwise it is recorded as refuted.
   [Line plan](plans/v3.1-to-v4.0-line-plan.md).)*
+  *(2026-10-15, v3.3.0: CLOSED with nothing to attempt against. No test fails
+  in this area and none of the ignored expected-fail probes concerns it; see
+  [`v3.3.0-plan.md`](plans/v3.3.0-plan.md) row 8.)*
 
 ### 6c. Other v2.0-axis items
 

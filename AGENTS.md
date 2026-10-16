@@ -169,7 +169,7 @@ These cross-cutting decisions span multiple files. Reading individual chip docs 
 
 **The Bus owns everything mutable.** `rustynes_core`'s `SystemBus` (named `LockstepBus` until v2.9.8; `rustynes_cpu::Bus` is the trait it implements, so the type is not called `Bus`) holds the PPU, APU, mapper-via-cart, WRAM, controllers, and open-bus latch. `Nes` holds the `Cpu` and the bus, and the CPU borrows the bus for each instruction: `self.cpu.step(&mut self.bus)`, generic over the `rustynes_cpu::Bus` trait. Per the TetaNES postmortem, this single choice avoids the borrow-checker fight that the alternative ("CPU holds PPU, but PPU also needs CPU bus") creates. The PPU sees a smaller trait, `rustynes_ppu::PpuBus`, for mapper-mediated CHR / nametable access. The APU sees no bus at all: the bus drives the DMC sample fetch through `Apu::dmc_dma_pending` / `dmc_dma_addr` / `complete_dmc_dma` inside the CPU's unified DMA. The /NMI line is a level too: the CPU reads `nmi_level()` every cycle and edge-detects it itself. (v2.9.8 removed the unimplemented `ApuBus` trait, the bus-side NMI edge detector and the 18 other `Bus` methods deprecated at v2.7.5, ADR 0042; this paragraph and the one above described the pre-v2.0.0 design until v2.7.5 — core audit §4.2.)
 
-**Workspace dependency graph is one-directional.** `rustynes-cpu` has no PPU or APU dep. `rustynes-ppu` depends on `rustynes-mappers` only (CHR/nametable bus). `rustynes-apu` is independent. `rustynes-core` ties them together. Result: each chip is fuzzable and benchmarkable in isolation. Adding a cross-chip dependency breaks this invariant — don't.
+**Workspace dependency graph is one-directional.** `rustynes-cpu` has no PPU or APU dep. `rustynes-ppu` depends on no other workspace crate (its only dependencies are the external `bitflags`, `thiserror` and `libm`): it reaches CHR and nametables through its own `PpuBus` trait, which the core implements over the mapper. `rustynes-apu` is independent. `rustynes-core` ties them together. Result: each chip is fuzzable and benchmarkable in isolation. Adding a cross-chip dependency breaks this invariant — don't.
 
 **Mapper IRQ logic lives in the mapper, not the PPU.** The PPU calls `Mapper::notify_a12(level)` on every A12 transition; the mapper internally filters (MMC3's "3 falling edges of M2" lives in the MMC3 impl). MMC5 uses different scanline detection via `notify_scanline_start` / `notify_vblank`. VRC2/4/6, Sunsoft FME-7, and Namco 163 tick on `notify_cpu_cycle()`. All such hooks are default-no-op on `Mapper`. See `docs/mappers.md` for the per-mapper IRQ family table.
 
@@ -221,7 +221,7 @@ what a session needs before it knows what it is doing.
 | reading a result — what it does and does not prove | [`docs/agents/measurement-discipline.md`](docs/agents/measurement-discipline.md) | 22 |
 | the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 25 |
 | a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 5 |
-| a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 8 |
+| a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 9 |
 
 **Read the file, not a summary of it.** Each bullet carries its own evidence —
 the command that was run, the number it returned, the mutation that caught it —

@@ -320,9 +320,14 @@ impl Mapper for Vrc2 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
+                // The chip's CHR bank outputs address whatever sits on the
+                // CHR bus, so a CHR-RAM image is written through the same
+                // banking it is read through (`T-VRC4-CHRRAM-BANKING`,
+                // v3.3.0; writes went to `addr % len` before, and a game
+                // could not read back what it wrote).
                 if self.chr_is_ram {
-                    let len = self.chr_rom.len();
-                    self.chr_rom[addr as usize % len] = value;
+                    let off = self.chr_offset(addr);
+                    self.chr_rom[off] = value;
                 }
             }
             0x2000..=0x3EFF => {
@@ -538,6 +543,23 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), 0x12, "CHR slot 0 -> bank 0x12");
     }
 
+    /// `T-VRC4-CHRRAM-BANKING`: on a CHR-RAM image the chip's CHR bank
+    /// outputs address the RAM exactly as they would a ROM, so a pattern byte
+    /// written through a banked slot must be read back through it, and through
+    /// any other slot selecting the same 1 KiB bank. Until v3.3.0 writes went
+    /// to `addr % len`, unbanked, while reads were banked, so a game could not
+    /// read back what it wrote.
+    #[test]
+    fn vrc2_chr_ram_writes_are_banked_like_reads() {
+        let mut m = Vrc2::new(synth(8), Box::new([]), 22, 0, Mirroring::Vertical).unwrap();
+        m.cpu_write(0xB000, 3); // slot 0 -> 1 KiB bank 3
+        m.cpu_write(0xC000, 3); // slot 2 -> 1 KiB bank 3
+        m.ppu_write(0x0005, 0x77);
+        assert_eq!(m.ppu_read(0x0005), 0x77, "read back through the same slot");
+        assert_eq!(m.ppu_read(0x0805), 0x77, "and through slot 2, also bank 3");
+        assert_eq!(m.ppu_read(0x0405), 0x00, "slot 1 is bank 0, untouched");
+    }
+
     /// Core audit v2.9.2 AUD-02: the section carries the 8 KiB PRG-RAM and,
     /// on a CHR-RAM board, the 8 KiB CHR-RAM. The core-level pin is
     /// `rustynes_core::nes::tests::every_board_snapshot_carries_cartridge_ram`.
@@ -547,8 +569,7 @@ mod tests {
         m.cpu_write(0x6000, 0x5A);
         m.cpu_write(0x7FFF, 0xA5);
         m.ppu_write(0x0000, 0x11);
-        // Inside 1 KiB slot 0 (bank 0 at power-on), so the read path's
-        // banking and the write path agree whatever the registers hold.
+        // Inside 1 KiB slot 0, which selects bank 0 at power-on.
         m.ppu_write(0x03FF, 0x22);
         let blob = m.save_state();
         let mut m2 = Vrc2::new(synth(8), Box::new([]), 22, 0, Mirroring::Vertical).unwrap();

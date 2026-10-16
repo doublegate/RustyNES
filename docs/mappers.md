@@ -214,6 +214,8 @@ readers: its container is refused at the header.
 
 Every mapper resolves a CPU/PPU address into a `(bank_index, offset)` pair on every access, then indexes into the cart-owned ROM/RAM. This is hot code — inline aggressively.
 
+A board's CHR bank outputs drive the address lines of whatever chip sits on the CHR bus, so on a CHR-RAM image a PPU **write** resolves through the same banking as a PPU read. Until v3.3.0 seven boards read CHR-RAM banked and wrote it at `addr % len` (VRC2 and VRC4 on mappers 21-23 and 25, VRC6 on 24 and 26, Namco 163 on 19, FME-7 on 69, VRC1 on 75 and 151, and NINA-001 on 34 submapper 1), so a game could not read back the tiles it uploaded (`T-VRC4-CHRRAM-BANKING`, `EMULATION_EPOCH` 5). `crates/rustynes-mappers/tests/chr_ram_read_back.rs` holds every board to it: on every board and submapper that takes a CHR-RAM image, a byte written at a pattern-table address reads straight back at power-on, and after random register writes no write may change some other pattern byte while leaving its own unchanged. The boards whose pattern tables are not RAM at power-on are exempt by name: FFE mapper 6 submappers 4-7 and 12-15 and mapper 8 (write-protected) and TQROM (every bank on CHR-ROM).
+
 ### IRQ counter mechanisms (the four families)
 
 1. **None** — NROM, UxROM, AxROM, MMC1, CNROM, MMC2/4, BNROM, GxROM, Color Dreams, CPROM. No IRQs.
@@ -312,7 +314,7 @@ Sorted by number of commercial titles using each mapper.
 | 34 | 0-2 | BNROM / NINA-001 | 4 | — | — | landed (Phase 4 / S2) | Submapper 1 selects NINA-001. |
 | 66 | — | GxROM | 2 | — | — | landed (Phase 2) | Bus conflict. |
 | 69 | — | Sunsoft FME-7 | 4 | yes (5B, landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.1) | Gimmick!  Sunsoft 5B = YM2149F clone: 3 squares + 32-step envelope generator + 17-bit LFSR noise.  Two-write protocol via `$C000-$DFFF` (address latch) and `$E000-$FFFF` (data); audio gated behind the `mapper-audio` cargo feature. |
-| 71 | 0, 1 | Camerica BF9093 / BF9097 | 4 | — | — | landed (Phase 4 / S2) | Codemasters titles. Submapper 1 (*Fire Hawk*, BF9097) has the `$9000` single-screen register from power-on; from v3.2.0 submapper 0 (every iNES 1.0 image) keeps its header mirroring until the first `$9000-$9FFF` write, then switches to it, per the NESdev page's compatibility advice (only *Fire Hawk* writes there). Other submappers ignore it. |
+| 71 | 0, 1 | Camerica BF9093 / BF9097 | 4 | — | — | landed (Phase 4 / S2) | Codemasters titles. The bank select answers only at `$C000-$FFFF` (from v3.3.0, `T-MAPPER71-DECODE`; it took `$8000-$BFFF` too before, which neither the NESdev page nor Kevin Horton's Camerica notes allow). Submapper 1 (*Fire Hawk*, BF9097) has the single-screen register at `$8000-$9FFF` from power-on; from v3.2.0 submapper 0 (every iNES 1.0 image) keeps its header mirroring until the first `$9000-$9FFF` write, then switches to it, per the NESdev page's compatibility advice (only *Fire Hawk* writes there). Other submappers ignore it. |
 | 75 | — | VRC1 | 4 | — | — | landed (Phase 4 / S2) | Konami. |
 | 85 | — | VRC7 | 5 | yes (FM, landed) | CPU | banking+IRQ+**OPLL FM audio landed** | Lagrange Point (JP). Banking + CPU-cycle IRQ identical to VRC6's. OPLL FM via the clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT; ADR-0006 supersedes ADR-0004). |
 

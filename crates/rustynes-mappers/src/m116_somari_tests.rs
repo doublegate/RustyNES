@@ -325,3 +325,59 @@ fn m116_a_refused_mmc1_part_leaves_the_mmc3_untouched() {
     assert!(m.load_state(&bad).is_err());
     assert_eq!(m.save_state(), before, "nothing restored");
 }
+
+/// The board's register writes behind `tests/fixtures/somari-v3.2.0/state.bin`:
+/// VRC2 state, then MMC3 registers, then four of the MMC1's five serial
+/// bits (so its shift register is mid-load), and a nametable byte.
+fn fixture_writes(m: &mut Somari116) {
+    m.cpu_write(0x8000, 0x05);
+    m.cpu_write(0xB001, 0x03);
+    m.cpu_write(0x4100, 0x01); // MMC3 mode
+    m.cpu_write(0x8000, 6);
+    m.cpu_write(0x8001, 0x09);
+    m.cpu_write(0x4100, 0x02); // MMC1 mode
+    m.cpu_write(0x8000, 0x80);
+    for b in [1u8, 0, 1, 1] {
+        m.cpu_write(0xE000, b);
+    }
+    m.ppu_write(0x2123, 0x44);
+}
+
+/// `T-M116-STATE-SLIM`: the embedded MMC1 is a register file, so its part
+/// of the state is its eight register bytes, not the ~18 KiB of PRG-RAM,
+/// nametable VRAM and CHR-RAM a full MMC1 carried (v3.2.0's version 1).
+#[test]
+fn m116_state_carries_only_the_mmc1_registers() {
+    let mut m = board();
+    fixture_writes(&mut m);
+    let blob = m.save_state();
+    let mmc1_len = u32::from_le_bytes([blob[17], blob[18], blob[19], blob[20]]) as usize;
+    assert_eq!(mmc1_len, 8, "version, six registers, the A12 latch");
+    // 4,168 bytes, against 22,600 for the same board under v3.2.0 (the
+    // fixture): what remains is the board's 2 KiB of nametable RAM and the
+    // MMC3 core's state, which carries its own 2 KiB of VRAM.
+    let v1 = include_bytes!("../tests/fixtures/somari-v3.2.0/state.bin");
+    assert_eq!(
+        v1.len() - blob.len(),
+        18 * 1024,
+        "the MMC1's 8 + 2 + 8 KiB, gone"
+    );
+}
+
+/// A v3.2.0 state (version 1, written by that release's code with the
+/// writes in [`fixture_writes`]) still loads, and restores the same board:
+/// its MMC1 registers are read around the memories the slim core lacks.
+#[test]
+fn m116_a_v3_2_0_state_loads() {
+    let v1 = include_bytes!("../tests/fixtures/somari-v3.2.0/state.bin");
+    assert_eq!(v1[0], 1, "fixture: a version 1 blob");
+    let mut expected = board();
+    fixture_writes(&mut expected);
+    let mut m = board();
+    m.load_state(v1).expect("v3.2.0 state");
+    assert_eq!(m.save_state(), expected.save_state());
+    // The restored shift register is mid-load: the fifth bit commits.
+    m.cpu_write(0xE000, 0);
+    expected.cpu_write(0xE000, 0);
+    assert_eq!(m.save_state(), expected.save_state());
+}

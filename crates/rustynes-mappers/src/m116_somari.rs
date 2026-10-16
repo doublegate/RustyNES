@@ -62,8 +62,14 @@ const PRG_BANK_16K: usize = 0x4000;
 const CHR_BANK_1K: usize = 0x0400;
 const VRAM_SIZE: usize = 0x0800;
 
-/// Save-state layout version for [`Somari116`].
-const SAVE_STATE_VERSION: u8 = 1;
+/// Save-state layout version for [`Somari116`]. Version 2 (v3.3.0,
+/// `T-M116-STATE-SLIM`) embeds the register-only MMC1's eight-byte state;
+/// version 1 (v3.2.0) embedded a full MMC1's, about 18 KiB of PRG-RAM,
+/// nametable VRAM and CHR-RAM the board never used. Version 1 is still read:
+/// its MMC1 registers are the first seven bytes and the last byte of that
+/// part, around the memories.
+const SAVE_STATE_VERSION: u8 = 2;
+const V1_STATE_VERSION: u8 = 1;
 
 /// The VRC2 CHR registers' power-up value (`INES_Mapper_116.md`).
 const VRC2_CHR_POWER_UP: u8 = 0xFF;
@@ -133,14 +139,10 @@ impl Somari116 {
         } else {
             chr_rom
         };
-        // The MMC1 is a register file only: it is handed a minimal ROM it
-        // never reads, and no PRG-RAM is mapped (the board has none).
-        let mmc1 = Mmc1::new(
-            vec![0u8; 2 * PRG_BANK_16K].into_boxed_slice(),
-            Box::new([]),
-            mirroring,
-            0,
-        )?;
+        // The MMC1 is a register file only (`Mmc1::register_core`): no
+        // PRG-RAM (the board has none), and none of the memories a full MMC1
+        // would carry into every save state.
+        let mmc1 = Mmc1::register_core(mirroring);
         Ok(Self {
             prg_rom,
             chr,
@@ -422,7 +424,7 @@ impl Mapper for Somari116 {
                 got: data.len(),
             });
         }
-        if data[0] != SAVE_STATE_VERSION {
+        if data[0] != SAVE_STATE_VERSION && data[0] != V1_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         let len_at = |i: usize| {
@@ -449,7 +451,17 @@ impl Mapper for Somari116 {
         let mmc3_prev = self.mmc3.save_state();
         self.mmc3.load_state(&data[cur..cur + mmc3_len])?;
         cur += mmc3_len;
-        if let Err(e) = self.mmc1.load_state(&data[cur..cur + mmc1_len]) {
+        let mmc1_part = &data[cur..cur + mmc1_len];
+        // A version 1 part is a full MMC1's: its registers are the first seven
+        // bytes and the last, around 18 KiB of memories this core has none of.
+        let slim;
+        let mmc1_part = if data[0] == V1_STATE_VERSION && mmc1_part.len() > 8 {
+            slim = [&mmc1_part[..7], &mmc1_part[mmc1_part.len() - 1..]].concat();
+            &slim[..]
+        } else {
+            mmc1_part
+        };
+        if let Err(e) = self.mmc1.load_state(mmc1_part) {
             // Its own blob, just produced, so this restore cannot fail.
             let _ = self.mmc3.load_state(&mmc3_prev);
             return Err(e);

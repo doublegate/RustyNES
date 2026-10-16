@@ -26,6 +26,82 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Movies and netplay from v3.2.x are refused.** `EMULATION_EPOCH` rises
+  from 4 to 5 for the CHR-RAM and mapper 71 fixes below. A v3.2.x peer or
+  movie is refused as another emulator version, naming its epoch. Save
+  states are not affected by the epoch.
+
+### Changed
+
+- **Mapper 116 (*Somari*) save states are about 18 KiB smaller**
+  (`T-M116-STATE-SLIM`): 4,168 bytes instead of 22,600, in every state,
+  rewind frame, run-ahead step and netplay snapshot. The board uses an MMC1
+  only for its registers, and the state carried that MMC1's unused PRG-RAM,
+  nametable RAM and CHR-RAM. A v3.2.0 state of the board still loads.
+- **The battery save of a self-flashable board is compared only after it
+  changes** (GTROM, a flashable UNROM 512; desktop and web;
+  `T-SAVE-DIRTY-CLEAR`). v3.2.0 gave both boards a "changed" flag so the
+  periodic save check could skip comparing their whole PRG images (up to
+  512 KiB), but
+  nothing ever reset the flag, so after the first change the comparison
+  ran every second again. A failed write is still retried.
+
+### Fixed
+
+- **CHR-RAM writes go through the bank registers on seven boards**
+  (`T-VRC4-CHRRAM-BANKING`). VRC2 and VRC4 (mappers 21-23 and 25), VRC6 (24,
+  26), Namco 163 (19), FME-7 (69), VRC1 (75, 151) and NINA-001 (34
+  submapper 1) read CHR-RAM through their bank registers but wrote it
+  unbanked, so on a CHR-RAM image a game could not read back the tiles it
+  had uploaded. The one staged image it reaches, the *TwinBee Yahoo!! Over
+  the Sea* music demo (a CHR-RAM VRC4), drew a black screen and now draws
+  its display. A new test asks every board the same question, on every
+  submapper.
+- **Mapper 71 (Camerica) selects its PRG bank only at `$C000-$FFFF`**
+  (`T-MAPPER71-DECODE`). A write anywhere in `$8000-$BFFF` used to select it
+  as well, which neither the NESdev page nor Kevin Horton's notes on the
+  Camerica chips allow; *Micro Machines* and *Ultimate Stuntman* write `$00`
+  to `$8000` at startup. *Fire Hawk*'s mirroring register (submapper 1) now
+  answers across `$8000-$9FFF`, as the BF9097 decodes it.
+- **v3.1.x save states of Bandai FCG games load again** (mappers 16, 153 and
+  159; `T-FCG-EEPROM-STATE`). v3.2.0 refused them when its state began
+  recording each serial EEPROM's protocol position. Such a state never stored
+  that position, so the EEPROM comes back idle with its contents intact,
+  which is what v3.1.x did when it restored one; the result no longer depends
+  on what the board was doing before the load. Mapper 157 first shipped in
+  v3.2.0, so it has no older state to read.
+- **An FDS disk swap starts a fresh history timeline** (desktop;
+  `T-HISTORY-DISK-SWAP`), as a Reset, a state load and a Datach scan already
+  do. A swap is not in a movie's input stream, so a history clip exported
+  across one could not replay.
+- **MiSTer core, off-die build: a `$2007` read of CHR-RAM returns the byte
+  written** (`T-MISTER-OFFDIE-CHRRAM`). The read's address was taken a dot
+  late, so on an odd dot it read the next byte. It predates v3.2.0, and only
+  the off-die (SDRAM) build had it; fixed in simulation, not yet run on
+  hardware.
+- **MiSTer core: mapper 185's CHR disable reaches the "more than eight
+  sprites" option** (`T-XS-M185-CHRCS`). With the option on and the board's
+  CHR-ROM disabled, an extra sprite drew real pattern data where the line's
+  other sprites drew the floating bus; it now reads the floating bus too.
+- **The IRQ-timing trace labels an NMI as an NMI** (the `irq-timing-trace`
+  developer feature; Round 2 audit CORE-R2-01). Every serviced interrupt
+  was labelled an IRQ.
+
+### Performance
+
+- **Correction to v3.2.0: the MMC3 cartridge read is not measurably faster.**
+  v3.2.0 reported it about 9% faster from its cached bank offsets. Built with
+  forced code alignment, the read measures the same before and after that
+  change. In plain builds the same comparison now shows it 22% *slower*, again
+  with no change to the read's code. The difference follows where the linker
+  places the code, not the code itself. The same explains why the MMC5 and
+  Sunsoft FME-7 reads appeared 4.7% and 6% slower in v3.2.0
+  (`T-PERF-MAPPER-READ-DRIFT`, closed): aligned, neither moved
+  (`docs/performance.md`, "v3.3.0"). v3.2.0's other figure stands: built the
+  same way, run-ahead on an MMC3 game measures 6-7% faster, in three runs.
+
 ## [3.2.0] - 2026-10-15 - "Confluence" (every v3.2.0 branch in both repositories brought into one release: 17 mapper families, the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core)
 
 ### Breaking

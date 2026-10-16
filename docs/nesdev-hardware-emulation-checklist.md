@@ -79,7 +79,7 @@ Primary source clusters:
 | Loopy v/t/x/w | Keep scroll latch behavior and render-time horizontal/vertical reload timing | Implemented; guarded by PPU tests and visual baselines |
 | Background fetch pipeline | Preserve all visible, prefetch, and extra nametable fetches | Implemented; Mesen2 trace tooling documents exact pipeline |
 | Sprite evaluation | Per-dot secondary-OAM clear, copy, overflow bug, and OAMADDR walk | Implemented; the sub-cycle flag-timing residuals **closed under R1** (AccuracyCoin sprite-eval 9/9) |
-| Sprite 0 hit | Set during rendering with left-edge, dot, and pre-render restrictions | Implemented; the stale-shifter case is still open, as ACC-04 (v3.3.0 in the v3.1 → v4.0 line plan) |
+| Sprite 0 hit | Set during rendering with left-edge, dot, and pre-render restrictions | Implemented. The stale-shifter item (ACC-04) was closed in v3.3.0 with nothing to attempt against: no test in the corpus fails here |
 | NTSC odd-frame skip | Skip dot on odd frames only when rendering is enabled | Implemented and tested by `ppu_vbl_nmi` |
 | Region variants | PAL and Dendy timing must not be inferred from NTSC constants | **Region-exact under the R1 master clock:** 3:1 NTSC/Dendy, hardware-true **3.2:1 PAL**; `region_timing` 4/4 |
 | PPU variants | 2C03/2C04/2C05/Vs. palettes and behavior are separate from stock 2C02 | Out of scope — a separate platform initiative (Vs. System / PlayChoice-10); load-time diagnostics only |
@@ -119,7 +119,7 @@ Primary source clusters:
 | CPU instruction edges | `instr_test_v5`, `instr_misc`, `cpu_timing_test6`, dummy reads/writes | `instr_misc` (5) + `instr_timing` (2) + `cpu_reset` vendored + wired v1.5.0 (T-71-002/003) |
 | CPU interrupts | `cpu_interrupts_v2`, IRQ trace fixture, mapper IRQ tests | Passing; the C1 residual (`mmc3_test_2/4` #3) closed in v3.0.0 |
 | PPU vblank/open bus | `ppu_vbl_nmi`, `ppu_open_bus`, PPU state traces | Passing; keep traces for future changes |
-| Sprites/OAM | sprite hit/overflow, `oam_read`, `oam_stress`, AccuracyCoin | Passing except the sprite-0 stale-shifter case (ACC-04, v3.3.0) |
+| Sprites/OAM | sprite hit/overflow, `oam_read`, `oam_stress`, AccuracyCoin | Passing |
 | APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4`, `sprdma_and_dmc_dma`, `read_joy3`, `pal_apu_tests`, `240pee` (240p suite) | Passing; no AccuracyCoin residual (146/146, v3.1.0). v1.4.0 added the `240pee` UxROM+BNROM render gates and confirmed the DMC-controller-conflict coverage |
 | Mapper timing | `mmc3_test_2`, `mmc3_irq_tests`, Holy Mapperel, mapper-specific ROMs | MMC3: all of `mmc3_test_2` strict (v3.0.0). VRC2/4: AWJ's `vrc24test` is still not in the corpus; coverage is `m22`'s CHR-bank walk (`tests/m22.rs`) and the local dumps in `tests/roms/external/` |
 | Input | Standard pads, DMC conflict, Four Score/Zapper/expansion devices | Standard pads only; expanded devices are v1.x |

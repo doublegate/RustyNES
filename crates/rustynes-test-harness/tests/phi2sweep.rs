@@ -6,6 +6,14 @@
 #![cfg(feature = "phi2-write-sweep")]
 use core::sync::atomic::Ordering::Relaxed;
 use rustynes_test_harness::accuracy_coin_catalog as cat;
+use std::sync::Mutex;
+
+/// The sweeps set process-wide timing knobs and then run whole batteries, and
+/// the test runner may run the two tests on parallel threads: without this,
+/// one test can change a knob in the middle of the other's battery, and a
+/// printed result would belong to settings it does not name (`CodeRabbit` on
+/// #611). Each test holds it for its whole sweep.
+static SWEEP: Mutex<()> = Mutex::new(());
 
 fn run() -> Vec<cat::TestStatus> {
     let (_r, ram) = rustynes_test_harness::accuracy_coin::run_battery_capturing_ram(7_000);
@@ -14,6 +22,9 @@ fn run() -> Vec<cat::TestStatus> {
 
 #[test]
 fn sweep_write_commit_dot() {
+    let _serial = SWEEP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(0, Relaxed);
     rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(0, Relaxed);
     let base = run();
@@ -52,4 +63,55 @@ fn sweep_write_commit_dot() {
     }
     rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(0, Relaxed);
     rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(0, Relaxed);
+}
+
+/// v3.3.0 `T-PHI2-WRITE`: the write at phi2 (`WRITE_PHI_OFFSET = 2`, reads
+/// unmoved) on the re-synced 146-test battery, with the odd-frame skip at the
+/// one stage v2.6.17 derived for phi2 from `ppu_vbl_nmi/10-even_odd_timing`,
+/// sweeping the two `$2001` gate depths a placement move shifts: the dot-339
+/// sprite re-arm's own gate and the shared rendering gate. The shipped
+/// placement loses only `Stale Sprite Shift Regs` under phi2 (the sweep
+/// above); this asks whether any depth recovers it without losing another.
+#[test]
+fn sweep_phi2_gate_depths() {
+    use rustynes_core::rustynes_cpu::{READ_PHI_OFFSET, WRITE_PHI_OFFSET};
+    use rustynes_core::rustynes_ppu::{RENDER_GATE_LAG, SKIP_GATE_LAG, SPRITE_REARM_LAG};
+    let _serial = SWEEP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let reset = || {
+        READ_PHI_OFFSET.store(0, Relaxed);
+        WRITE_PHI_OFFSET.store(0, Relaxed);
+        SKIP_GATE_LAG.store(2, Relaxed);
+        RENDER_GATE_LAG.store(1, Relaxed);
+        SPRITE_REARM_LAG.store(u8::MAX, Relaxed);
+    };
+    reset();
+    let base = run();
+    for render in [1u8, 0, 2] {
+        for rearm in [u8::MAX, 0, 1, 2, 3] {
+            reset();
+            WRITE_PHI_OFFSET.store(2, Relaxed);
+            SKIP_GATE_LAG.store(1, Relaxed);
+            RENDER_GATE_LAG.store(render, Relaxed);
+            SPRITE_REARM_LAG.store(rearm, Relaxed);
+            let now = run();
+            let s = cat::summarise(&now);
+            let mut gained = Vec::new();
+            let mut lost = Vec::new();
+            for ((e, b), n) in cat::catalog().iter().zip(base.iter()).zip(now.iter()) {
+                if !b.is_pass() && n.is_pass() {
+                    gained.push(e.name.clone());
+                } else if b.is_pass() && !n.is_pass() {
+                    lost.push(e.name.clone());
+                }
+            }
+            eprintln!(
+                "PHI2 render_gate={render} rearm={rearm}  passed={}/{}  GAINED={gained:?}  LOST={lost:?}",
+                s.pass + s.pass_with_code,
+                s.assigned(),
+            );
+        }
+    }
+    reset();
 }

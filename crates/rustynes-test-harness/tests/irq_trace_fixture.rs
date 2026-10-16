@@ -33,7 +33,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use rustynes_core::Nes;
-use rustynes_core::irq_trace::IrqTrace;
+use rustynes_core::irq_trace::{IrqTrace, ServiceKind};
 
 /// Per-ROM linear-buffer cap.  Sized to comfortably hold the entire
 /// run from `BOOT_FRAMES_TO_SKIP` to final-status detection for every
@@ -82,6 +82,15 @@ fn workspace_root() -> PathBuf {
 /// committed) and the IRQ-event-filtered trace to
 /// `crates/rustynes-test-harness/golden/irq_trace/<slug>.csv` (committed).
 /// Returns the filtered CSV string for the well-formed assertion.
+/// The `RUSTYNES_IRQ_TRACE_START_CYCLE` knob: the CPU cycle after which
+/// recording starts, 0 (the default window) when unset or unparsable.
+fn trace_start_cycle() -> u64 {
+    std::env::var("RUSTYNES_IRQ_TRACE_START_CYCLE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
 fn run_traced(rel: &str, slug: &str) -> String {
     let path = rom_path(rel);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
@@ -101,18 +110,16 @@ fn run_traced(rel: &str, slug: &str) -> String {
     // omits the boot/anchor offset region and exposes only in-test-loop
     // divergence.  Default 0 = behavior is byte-identical to the
     // Phase A baseline.
-    if let Ok(s) = std::env::var("RUSTYNES_IRQ_TRACE_START_CYCLE") {
-        let start_cycle: u64 = s.parse().unwrap_or(0);
-        if start_cycle > 0 {
-            while nes.bus().cycle() < start_cycle {
-                nes.run_frame();
-            }
-            eprintln!(
-                "[{slug}] post-START_CYCLE skip arrived at cycle={} (target {})",
-                nes.bus().cycle(),
-                start_cycle
-            );
+    let start_cycle = trace_start_cycle();
+    if start_cycle > 0 {
+        while nes.bus().cycle() < start_cycle {
+            nes.run_frame();
         }
+        eprintln!(
+            "[{slug}] post-START_CYCLE skip arrived at cycle={} (target {})",
+            nes.bus().cycle(),
+            start_cycle
+        );
     }
     nes.bus_mut().enable_irq_trace(MAX_RECORDS);
     // The blargg test-runner ROMs write `$DE $B0 $61` to `$6001-$6003`
@@ -202,6 +209,7 @@ fn run_traced(rel: &str, slug: &str) -> String {
     // `crates/rustynes-core/src/irq_trace.rs::IrqTrace::service_events_to_csv`.
     // Each row is one IRQ or NMI vector fetch; cross-diffable against
     // Mesen2's `scripts/mesen2_irq_trace.lua` `irq_svc` / `nmi_svc` rows.
+    assert_service_kinds_agree_with_mesen2(slug, &trace);
     let service_csv = trace.service_events_to_csv();
     fs::write(golden_dir.join(format!("{slug}.svc.csv")), &service_csv)
         .expect("write golden service-events csv");
@@ -216,6 +224,80 @@ fn run_traced(rel: &str, slug: &str) -> String {
     fs::write(golden_dir.join(format!("{slug}.dmc.csv")), &dmc_csv)
         .expect("write golden DMC trace csv");
     filtered_csv
+}
+
+/// Round 2 audit CORE-R2-01 (v3.3.0): the service events' `kind` must say
+/// NMI where an NMI was serviced. Until v3.3.0 the CPU passed
+/// `vector == NMI_VECTOR` with the IRQ vector the unified dispatch always
+/// enters with, so every service was labelled IRQ.
+///
+/// Checked against the Mesen2 trace for the same ROM, where one exists
+/// (`golden/irq_trace/mesen2/<slug>.csv`, black-box oracle output): this
+/// trace has an NMI-kind row if and only if Mesen2 logged an `nmi_svc`, and
+/// every NMI-kind row fetched `$FFFA`. Counts are not compared, because the
+/// two labels differ by design: `kind` names the request that started the
+/// sequence, so an IRQ or BRK that an NMI hijacks is IRQ-kind with vector
+/// `$FFFA` (see `ServiceEvent::vector`), where Mesen2 logs it as an NMI; and
+/// the two captures cover different windows.
+///
+/// The hijacks themselves are pinned by count for the two ROMs built to
+/// produce them, before the Mesen2 lookup so they hold without it (#611
+/// review): the `.svc.csv` goldens beside them are rewritten on every run, so
+/// they would not catch a hijack relabelled as NMI. The counts were measured
+/// at v3.3.0 (deterministic over repeated runs); the committed goldens predate
+/// v2.0.0's timing and show 4 for the first ROM, which is why they are not the
+/// reference.
+///
+/// The counts and the Mesen2 comparison describe the default capture window.
+/// A positive `RUSTYNES_IRQ_TRACE_START_CYCLE` starts recording later, after
+/// services those two checks expect, so for such a capture only the per-event
+/// check (an NMI-kind row fetched `$FFFA`) applies (#611 review).
+fn assert_service_kinds_agree_with_mesen2(slug: &str, trace: &IrqTrace) {
+    let events = trace.service_events();
+    assert!(
+        events
+            .iter()
+            .filter(|e| e.kind == ServiceKind::Nmi)
+            .all(|e| e.vector == 0xFFFA),
+        "[{slug}] an NMI-kind service fetched another vector"
+    );
+    if trace_start_cycle() > 0 {
+        return;
+    }
+    let expected_hijacks = match slug {
+        "cpu_interrupts_v2_2_nmi_and_brk" | "cpu_interrupts_v2_3_nmi_and_irq" => Some(5),
+        _ => None,
+    };
+    if let Some(expected) = expected_hijacks {
+        let hijacks = events
+            .iter()
+            .filter(|e| e.kind == ServiceKind::Irq && e.vector == 0xFFFA)
+            .count();
+        assert_eq!(
+            hijacks, expected,
+            "[{slug}] IRQ-kind service events that fetched $FFFA (NMI hijacks)"
+        );
+    }
+    let mesen = workspace_root()
+        .join("crates/rustynes-test-harness/golden/irq_trace/mesen2")
+        .join(format!("{slug}.csv"));
+    let Ok(mesen) = fs::read_to_string(&mesen) else {
+        return;
+    };
+    let mesen_nmi = mesen
+        .lines()
+        .filter(|l| l.split(',').nth(4) == Some("nmi_svc"))
+        .count();
+    let ours_nmi: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == ServiceKind::Nmi)
+        .collect();
+    assert_eq!(
+        ours_nmi.is_empty(),
+        mesen_nmi == 0,
+        "[{slug}] {} NMI-kind service events here, {mesen_nmi} nmi_svc in Mesen2",
+        ours_nmi.len()
+    );
 }
 
 /// Asserts the trace's shape is plausible: monotonically increasing CPU

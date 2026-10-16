@@ -1240,6 +1240,118 @@ reverted, because there is no change on the measured path to revert.
 
 Logs: gitignored `salvaged/evidence/v3.2.0-perf/queue/logs/`.
 
+### v3.3.0 — the mapper-read drift is code placement (`T-PERF-MAPPER-READ-DRIFT` closed)
+
+The question the section above left open: why MMC5 and FME-7 reads moved
+with neither read function changed. First, the instruction streams:
+`Mmc5::cpu_read` and `Fme7::cpu_read` disassemble byte-identical at
+`c922ed40` and at this tree, and each starts at the same offset within a
+64-byte line, so the functions themselves are not the difference. Second,
+the A/B: `c922ed40` against this tree (`feat/v3.3.0-backlog`), the
+`mapper_dispatch_cpu_read` MMC3, MMC5 and FME-7 workloads, two plain runs,
+then two runs built with every function aligned to 64 bytes and every
+non-fallthrough block to 32
+(`RUSTFLAGS="-C llvm-args=-align-all-functions=6 -C llvm-args=-align-all-nofallthru-blocks=5"`,
+both sides). Each cell is the change with the order-bias control in
+parentheses.
+
+| workload | plain 1 | plain 2 | aligned 1 | aligned 2 |
+| --- | --- | --- | --- | --- |
+| MMC3 (4) | **+22.30%** (-0.74) | **+22.46%** (+3.06) | -0.25%, p = 0.10 (-0.02) | -0.05%, p = 0.80 (-0.41) |
+| MMC5 (5) | **-4.29%** (-0.53) | **-3.81%** (+2.75) | -0.69% (-0.12) | -0.20%, p = 0.23 (-0.03) |
+| FME-7 (69) | **+7.69%** (-0.81) | **+10.49%** (+3.69) | +0.12%, p = 0.38 (+0.92) | +0.08%, p = 0.56 (+0.59) |
+
+Absolute candidate times, plain then aligned: MMC3 1.889 / 1.487 µs, MMC5
+2.359 / 2.288 µs, FME-7 2.589 / 2.288 µs.
+
+**Verdict: code placement, not code.** In plain builds the two trees differ by
+-4% to +22%, reproduced, with signs that disagree across workloads; with
+placement forced, every workload agrees to within 0.7%, which is inside the
+controls. No read path regressed, so nothing is reverted, and the ticket is
+closed. Plain run 2's control drifted about 3%, which does not explain a 22%
+cell, but it is why run 1 carries the weight there.
+
+**What this changes, and what it does not.** The "v3.2.0 import" measured the
+MMC3 read 9% *faster*; the same plain-build comparison against the same base
+now measures it 22% *slower*, and aligned it is unchanged. So the 9% was never
+established as the cached offsets' doing either: it is the same placement
+effect, with the sign it happened to have that day. The cached offsets stay
+(byte-identical, and simpler to reason about than the masked arithmetic), but
+no speed is credited to them. The CHANGELOG's v3.2.0 entry is corrected under
+`[Unreleased]`. Its run-ahead figure (MMC3 about 5% faster) does survive
+alignment; see the next paragraph.
+
+**Run-ahead, aligned.** `c922ed40` against this tree, `snapshot_restore`'s
+`nes_runahead_budget`, four aligned runs (run 2 void: its controls moved 6%
+and 8.6%):
+
+| workload | aligned 1 | aligned 3 | aligned 4 |
+| --- | --- | --- | --- |
+| MMC3 | -6.00% (-2.01) | -7.43% (-0.43, p = 0.20) | -6.20% (-1.05) |
+| flowing palette (NROM) | +24.7%, interval +8.5 to +52.7 (-0.32, p = 0.30) | -1.21% (-0.41, p = 0.22) | -0.97% (-0.30, p = 0.30) |
+
+MMC3 run-ahead is 6-7% faster, reproduced three times outside its controls,
+so v3.2.0's figure stands; since the MMC3 read itself does not move when
+aligned, the gain is not the read's. This compares whole trees, so it does not
+say which change made it. The NROM rows are about 1% faster in the two clean
+runs, which is too small to claim on two runs; run 1's +24.7% cell is a
+disturbed interval, not a result.
+
+**For the next mapper A/B:** a single plain build of
+`mapper_dispatch_cpu_read` can move by more than 20% with no change on its
+path, and two runs reproduce it, because both runs link the same layout. The
+second independent run does not guard against this. Run the aligned build as
+well before attributing a change to code.
+
+Logs: gitignored `salvaged/evidence/v3.3.0-perf/drift/`.
+
+### v3.3.0 — the Round 2 CPU and bus candidates (CORE-R2-03, CORE-R2-05: rejected)
+
+The Round 2 audit left two byte-identical speed-ups untriaged (ledger:
+`docs/audits/v3.2.0-round2-audit-disposition.md`). Each was built as one
+commit on `537e9473` and measured against it with `scripts/perf/ab_check.sh`
+on the four frame workloads, twice as plain builds and twice with the aligned
+`RUSTFLAGS` from the section above, on the strength of that section's finding.
+Each cell is the candidate's change with the order-bias control in
+parentheses.
+
+- **CORE-R2-03** stops `Cpu::step` calling `promote_post_step_interrupts`,
+  whose `armed_*` / `pending_*` latches nothing in emulation reads any more.
+- **CORE-R2-05** builds `run_ppu_to`'s `PpuBusAdapter` once per call instead
+  of once per dot.
+
+| run | nestest | palette | nestest_fast | palette_fast |
+| --- | --- | --- | --- | --- |
+| R2-05 plain 1 | -4.59 (-4.44) | -3.17 (-1.19) | -1.06 (-1.70) | -1.76 (-0.48) |
+| R2-05 plain 2 | -1.24 (-0.65) | -2.38 (-0.84) | +1.29 (+0.77) | -1.26 (**+14.8**) |
+| R2-05 aligned 1 | +1.38 (-0.27) | +3.14 (-0.62) | +1.45 (-0.55) | +1.61 (-0.34) |
+| R2-05 aligned 2 | +0.78 (-1.28) | +3.64 (+0.26) | +1.17 (-0.30) | +1.64 (+0.06) |
+| R2-03 plain 1 | **+29.3** (+0.20) | +8.6 (-0.23) | -0.51 (+1.02) | -0.93 (+0.32) |
+| R2-03 plain 2 | +0.13 (-0.86) | -0.25 (+0.08) | -1.05 (-0.79) | -1.30 (-1.56) |
+| R2-03 aligned 1 | -2.05 (-0.71) | -0.78 (-0.35) | -1.94 (-0.52) | +0.29 (-0.22) |
+| R2-03 aligned 2 | -1.22 (**+4.33**) | +1.44 (+1.05) | -1.63 (+0.93) | +4.03 (-0.86) |
+
+Bold marks a disturbed cell: R2-05 plain 2's palette_fast control and R2-03
+aligned 2's nestest control, and R2-03 plain 1's two first cells, whose
+intervals were wide.
+
+**CORE-R2-05: rejected, it is slower.** Plain, it changes sign on
+nestest_fast between runs. Aligned, both runs agree on every workload, and
+they agree on a slowdown of 0.8% to 3.6%, outside every control. Why the
+hoisted adapter is slower was not investigated: the adapter is three words,
+and the result is reason enough not to take the change.
+
+**CORE-R2-03: rejected, no gain established.** Aligned, nestest and
+nestest_fast move about 1.2% to 2.1% faster in both runs, but palette changes
+sign (-0.78 then +1.44) and the second run's controls reach 4.3%, so the
+result is mixed-sign, which the adoption rule rejects. There is a second
+reason not to take it as dead code: `snapshot.rs` serialises the latches it
+stops updating, so save-state bytes would change though no frame does. A
+cleanup that removes the latches belongs with a state-format change, not with
+a speed-up.
+
+Logs: gitignored `salvaged/evidence/v3.3.0-perf/candidates/`.
+
 ### v2.9.9 campaign — the leads, measured (one adopted)
 
 Every row is two `scripts/perf/ab_check.sh` runs on a quiet host. A run starts

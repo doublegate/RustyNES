@@ -192,9 +192,26 @@ impl Mapper for Vrc1 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
+                // The CHR bank outputs address CHR-RAM exactly as they would a
+                // ROM, so a write takes the read's banked offset
+                // (`T-VRC4-CHRRAM-BANKING`, v3.3.0; it went to `addr % len`,
+                // and a game could not read back what it wrote).
                 if self.chr_is_ram {
+                    let (bank, base) = if addr < 0x1000 {
+                        (
+                            (usize::from(self.chr_lo_msb) << 4) | usize::from(self.chr_lo),
+                            0,
+                        )
+                    } else {
+                        (
+                            (usize::from(self.chr_hi_msb) << 4) | usize::from(self.chr_hi),
+                            0x1000,
+                        )
+                    };
+                    let total_4k = (self.chr_rom.len() / CHR_BANK_4K).max(1);
+                    let off = (bank % total_4k) * CHR_BANK_4K + (addr as usize - base);
                     let len = self.chr_rom.len();
-                    self.chr_rom[addr as usize % len] = value;
+                    self.chr_rom[off % len] = value;
                 }
             }
             0x2000..=0x3EFF => {
