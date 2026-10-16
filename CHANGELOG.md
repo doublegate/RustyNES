@@ -100,8 +100,10 @@ cycle-accurate core later replaced.
   (`T-MISTER-LOAD-CHRWE`). The cartridge passed every CHR byte of a download
   to the SDRAM a second time, a console clock later, through the CHR-RAM
   write path, which aimed it at the address the held-in-reset PPU was
-  presenting. So every download left one CHR byte holding the image's last
-  CHR byte, CHR-ROM and CHR-RAM games alike. The simulation's loader holds its
+  presenting rather than the byte's own. Only an image that carries CHR (a
+  CHR-ROM game) was affected; a CHR-RAM game's download has no CHR bytes.
+  Which byte ended up corrupted, and with what, was not measured: it depends
+  on the address the PPU holds in reset. The simulation's loader holds its
   enable for the whole image, which reduced the echo to a single write that
   the bridge discarded, so no co-simulation run showed it; a module gate now
   drives both loader shapes. Fixed in simulation, not yet run on hardware.
