@@ -1,10 +1,12 @@
 //! Camerica / Codemasters BF9093 and relatives (mapper 71).
 //!
 //! A UxROM-shaped board: a 16 KiB PRG bank selected at `$C000-$FFFF` with the
-//! last bank fixed, CHR-RAM, and no IRQ. The Fire Hawk variant additionally
-//! decodes a single-screen mirroring bit at `$9000-$9FFF`, which is why the
-//! mirroring write window is separated from the bank-select window rather
-//! than sharing one write-anywhere decode.
+//! last bank fixed, CHR-RAM, and no IRQ. Nothing else answers in
+//! `$8000-$BFFF` on the BF9093. The Fire Hawk variant (the BF9097)
+//! additionally decodes a single-screen mirroring bit at `$8000-$9FFF`;
+//! detected on submapper 0, it answers only at `$9000-$9FFF`. Sources: the
+//! `NESdev` page `INES_Mapper_071` and Kevin Horton's "Camerica PCBs and
+//! Mappers" notes.
 //!
 //! See `docs/mappers.md` §Mapper coverage matrix.
 
@@ -49,6 +51,9 @@ pub struct Camerica {
     /// see [`Self::with_single_screen_detection`]). Configuration from the
     /// header, not state, so it is not saved.
     detect_single_screen: bool,
+    /// The board is the BF9097 by its header (NES 2.0 submapper 1), whose
+    /// register also answers at `$8000-$8FFF`. Configuration, not saved.
+    bf9097: bool,
 }
 
 impl Camerica {
@@ -76,6 +81,7 @@ impl Camerica {
             mirroring,
             has_single_screen,
             detect_single_screen: false,
+            bf9097: has_single_screen,
         })
     }
 
@@ -120,17 +126,28 @@ impl Mapper for Camerica {
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x9000..=0x9FFF if self.has_single_screen || self.detect_single_screen => {
-                self.has_single_screen = true;
-                self.mirroring = if value & 0x10 == 0 {
-                    Mirroring::SingleScreenA
-                } else {
-                    Mirroring::SingleScreenB
-                };
-            }
-            0xC000..=0xFFFF | 0x8000..=0xBFFF => self.prg_bank = value & 0x0F,
-            _ => {}
+        // Kevin Horton's Camerica notes and the NESdev page agree: "Writing
+        // anywhere to C000-FFFFh will switch in a 16K PRG ROM bank", and the
+        // BF9093 has no register at `$8000-$BFFF` (`T-MAPPER71-DECODE`,
+        // v3.3.0; that range selected the bank too before). The BF9097's
+        // mirroring register spans `$8000-$9FFF` ("Writing anywhere in the
+        // 8000-9FFFh area will select a nametable"), which submapper 1 names;
+        // submapper 0's detection keeps the page's `$9000-$9FFF`, so another
+        // game's `$00` to `$8000` at startup cannot switch it on.
+        let mirroring_register = match addr {
+            0x8000..=0x8FFF => self.bf9097,
+            0x9000..=0x9FFF => self.has_single_screen || self.detect_single_screen,
+            _ => false,
+        };
+        if mirroring_register {
+            self.has_single_screen = true;
+            self.mirroring = if value & 0x10 == 0 {
+                Mirroring::SingleScreenA
+            } else {
+                Mirroring::SingleScreenB
+            };
+        } else if addr >= 0xC000 {
+            self.prg_bank = value & 0x0F;
         }
     }
 
@@ -262,6 +279,56 @@ mod tests {
             .with_single_screen_detection(true);
         other.load_state(&state).unwrap();
         assert_eq!(other.current_mirroring(), Mirroring::SingleScreenA);
+    }
+
+    /// `T-MAPPER71-DECODE`: the bank select is `$C000-$FFFF` only. Kevin
+    /// Horton's Camerica notes, for all three chips: "Writing anywhere to
+    /// C000-FFFFh will switch in a 16K PRG ROM bank at 8000-BFFFh", and the
+    /// BF9093 has no other register; the `NESdev` page agrees ("Bank select
+    /// ($C000-$FFFF)") and names *Micro Machines* and *Ultimate Stuntman* as
+    /// writing `$00` to `$8000` at startup. Until v3.3.0 a write anywhere in
+    /// `$8000-$BFFF` selected the bank too.
+    #[test]
+    fn only_c000_to_ffff_selects_the_bank() {
+        for sub1 in [false, true] {
+            let mut m = Camerica::new(synth(16), Mirroring::Vertical, sub1).unwrap();
+            m.cpu_write(0xC000, 3);
+            assert_eq!(m.cpu_read(0x8000), 6, "16 KiB bank 3 (8 KiB bank 6)");
+            for addr in [0x8000u16, 0x9000, 0xA000, 0xBFFF] {
+                m.cpu_write(addr, 5);
+                assert_eq!(
+                    m.cpu_read(0x8000),
+                    6,
+                    "a ${addr:04X} write is no bank select"
+                );
+            }
+            m.cpu_write(0xFFFF, 5);
+            assert_eq!(m.cpu_read(0x8000), 10, "$FFFF selects 16 KiB bank 5");
+        }
+    }
+
+    /// The BF9097 (*Fire Hawk*, submapper 1) decodes its mirroring register
+    /// across `$8000-$9FFF` ("Writing anywhere in the 8000-9FFFh area will
+    /// select a nametable. Bit 4 of the byte written selects it", Kevin
+    /// Horton; `NESdev`: "Mirroring ($8000-$9FFF)"). Submapper 0's detection
+    /// keeps the narrower `$9000-$9FFF` the page gives for compatibility, so
+    /// another game's `$00` to `$8000` cannot turn it on.
+    #[test]
+    fn submapper_1_mirroring_spans_8000_to_9fff() {
+        let mut m = Camerica::new(synth(16), Mirroring::Vertical, true).unwrap();
+        m.cpu_write(0x8000, 0x10);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        m.cpu_write(0x9FFF, 0x00);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+        let mut d = Camerica::new(synth(16), Mirroring::Vertical, false)
+            .unwrap()
+            .with_single_screen_detection(true);
+        d.cpu_write(0x8000, 0x10);
+        assert_eq!(
+            d.current_mirroring(),
+            Mirroring::Vertical,
+            "no detection at $8000"
+        );
     }
 
     /// Submapper 1 (Fire Hawk) has the register from power-on.

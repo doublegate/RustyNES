@@ -882,9 +882,17 @@ impl Mapper for Fme7 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
+                // The CHR bank outputs address CHR-RAM exactly as they would a
+                // ROM, so a write takes the read's banked offset
+                // (`T-VRC4-CHRRAM-BANKING`, v3.3.0; it went to `addr % len`,
+                // and a game could not read back what it wrote).
                 if self.chr_is_ram {
+                    let total_1k = (self.chr_rom.len() / CHR_BANK_1K).max(1);
+                    let slot = addr as usize / CHR_BANK_1K;
+                    let bank = (self.chr[slot] as usize) % total_1k;
+                    let off = bank * CHR_BANK_1K + (addr as usize & (CHR_BANK_1K - 1));
                     let len = self.chr_rom.len();
-                    self.chr_rom[addr as usize % len] = value;
+                    self.chr_rom[off % len] = value;
                 }
             }
             0x2000..=0x3EFF => {

@@ -26,8 +26,30 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Movies and netplay from v3.2.x are refused.** `EMULATION_EPOCH` rises
+  from 4 to 5 for the CHR-RAM and mapper 71 fixes below. A v3.2.x peer or
+  movie is refused as another emulator version, naming its epoch. Save
+  states are not affected by the epoch.
+
 ### Fixed
 
+- **CHR-RAM writes go through the bank registers on seven boards**
+  (`T-VRC4-CHRRAM-BANKING`). VRC2 and VRC4 (mappers 21-23 and 25), VRC6 (24,
+  26), Namco 163 (19), FME-7 (69), VRC1 (75, 151) and NINA-001 (34
+  submapper 1) read CHR-RAM through their bank registers but wrote it
+  unbanked, so on a CHR-RAM image a game could not read back the tiles it
+  had uploaded. The one staged image it reaches, the *TwinBee Yahoo!! Over
+  the Sea* music demo (a CHR-RAM VRC4), drew a black screen and now draws
+  its display. A new test asks every board the same question, on every
+  submapper.
+- **Mapper 71 (Camerica) selects its PRG bank only at `$C000-$FFFF`**
+  (`T-MAPPER71-DECODE`). A write anywhere in `$8000-$BFFF` used to select it
+  as well, which neither the NESdev page nor Kevin Horton's notes on the
+  Camerica chips allow; *Micro Machines* and *Ultimate Stuntman* write `$00`
+  to `$8000` at startup. *Fire Hawk*'s mirroring register (submapper 1) now
+  answers across `$8000-$9FFF`, as the BF9097 decodes it.
 - **v3.1.x save states of Bandai FCG games load again** (mappers 16, 153 and
   159; `T-FCG-EEPROM-STATE`). v3.2.0 refused them when its state began
   recording each serial EEPROM's protocol position. Such a state never stored

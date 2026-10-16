@@ -787,12 +787,18 @@ impl Mapper for Namco163 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                if self.chr_is_ram {
-                    let len = self.chr_rom.len();
-                    self.chr_rom[addr as usize % len] = value;
-                } else if let Err(ciram) = self.chr_target(addr) {
-                    // CIRAM mapped as CHR-RAM is writable; CHR-ROM is not.
-                    self.vram[ciram] = value;
+                // A write resolves exactly as the read does: on a CHR-RAM
+                // image through the bank registers (`T-VRC4-CHRRAM-BANKING`,
+                // v3.3.0; it went to `addr % len`, unbanked, before), with a
+                // page of `$E0` or above reaching CIRAM either way. CIRAM
+                // mapped as pattern memory is writable; CHR-ROM is not.
+                match self.chr_target(addr) {
+                    Ok(off) if self.chr_is_ram => {
+                        let len = self.chr_rom.len();
+                        self.chr_rom[off % len] = value;
+                    }
+                    Ok(_) => {}
+                    Err(ciram) => self.vram[ciram] = value,
                 }
             }
             0x2000..=0x3EFF => {

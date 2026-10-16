@@ -212,9 +212,24 @@ impl Mapper for M34 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
+                // A write takes the read's offset: NINA-001 banks its two
+                // 4 KiB halves, and on a CHR-RAM image those bank outputs
+                // address the RAM (`T-VRC4-CHRRAM-BANKING`, v3.3.0; the write
+                // went to `addr % len`, unbanked). BNROM's CHR is unbanked.
                 if self.chr_is_ram {
                     let len = self.chr.len();
-                    self.chr[addr as usize % len] = value;
+                    let total_4k = (len / CHR_BANK_4K).max(1);
+                    let off = match (addr, self.variant) {
+                        (0x0000..=0x0FFF, M34Variant::Nina001) => {
+                            (self.chr_bank_lo as usize % total_4k) * CHR_BANK_4K + addr as usize
+                        }
+                        (_, M34Variant::Nina001) => {
+                            (self.chr_bank_hi as usize % total_4k) * CHR_BANK_4K
+                                + (addr as usize - 0x1000)
+                        }
+                        _ => addr as usize,
+                    };
+                    self.chr[off % len] = value;
                 }
             }
             0x2000..=0x3EFF => {

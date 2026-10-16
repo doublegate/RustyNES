@@ -579,9 +579,13 @@ impl Mapper for Vrc6 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
+                // The CHR bank outputs address CHR-RAM exactly as they would a
+                // ROM, so a write takes the read's banked offset
+                // (`T-VRC4-CHRRAM-BANKING`, v3.3.0; it went to `addr % len`,
+                // and a game could not read back what it wrote).
                 if self.chr_is_ram {
-                    let len = self.chr_rom.len();
-                    self.chr_rom[addr as usize % len] = value;
+                    let off = self.chr_offset(addr) % self.chr_rom.len();
+                    self.chr_rom[off] = value;
                 }
             }
             0x2000..=0x3EFF => {
