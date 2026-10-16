@@ -6,6 +6,14 @@
 #![cfg(feature = "phi2-write-sweep")]
 use core::sync::atomic::Ordering::Relaxed;
 use rustynes_test_harness::accuracy_coin_catalog as cat;
+use std::sync::Mutex;
+
+/// The sweeps set process-wide timing knobs and then run whole batteries, and
+/// the test runner may run the two tests on parallel threads: without this,
+/// one test can change a knob in the middle of the other's battery, and a
+/// printed result would belong to settings it does not name (`CodeRabbit` on
+/// #611). Each test holds it for its whole sweep.
+static SWEEP: Mutex<()> = Mutex::new(());
 
 fn run() -> Vec<cat::TestStatus> {
     let (_r, ram) = rustynes_test_harness::accuracy_coin::run_battery_capturing_ram(7_000);
@@ -14,6 +22,9 @@ fn run() -> Vec<cat::TestStatus> {
 
 #[test]
 fn sweep_write_commit_dot() {
+    let _serial = SWEEP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(0, Relaxed);
     rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(0, Relaxed);
     let base = run();
@@ -65,6 +76,9 @@ fn sweep_write_commit_dot() {
 fn sweep_phi2_gate_depths() {
     use rustynes_core::rustynes_cpu::{READ_PHI_OFFSET, WRITE_PHI_OFFSET};
     use rustynes_core::rustynes_ppu::{RENDER_GATE_LAG, SKIP_GATE_LAG, SPRITE_REARM_LAG};
+    let _serial = SWEEP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let reset = || {
         READ_PHI_OFFSET.store(0, Relaxed);
         WRITE_PHI_OFFSET.store(0, Relaxed);
