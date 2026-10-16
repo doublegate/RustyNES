@@ -33,6 +33,14 @@ cycle-accurate core later replaced.
   movie is refused as another emulator version, naming its epoch. Save
   states are not affected by the epoch.
 
+### Changed
+
+- **Mapper 116 (*Somari*) save states are about 18 KiB smaller**
+  (`T-M116-STATE-SLIM`): 4,168 bytes instead of 22,600, in every state,
+  rewind frame, run-ahead step and netplay snapshot. The board uses an MMC1
+  only for its registers, and the state carried that MMC1's unused PRG-RAM,
+  nametable RAM and CHR-RAM. A v3.2.0 state of the board still loads.
+
 ### Fixed
 
 - **CHR-RAM writes go through the bank registers on seven boards**

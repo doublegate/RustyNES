@@ -165,6 +165,29 @@ impl Mmc1 {
         })
     }
 
+    /// An MMC1 used only as a register file by a board that decodes the
+    /// banks itself (mapper 116, which reads [`Self::registers`] and the
+    /// mirroring). It holds no PRG-RAM, nametable VRAM or CHR-RAM, so its
+    /// save state is the eight register bytes (`T-M116-STATE-SLIM`, v3.3.0):
+    /// a full MMC1 put about 18 KiB of unused memory into every state, rewind
+    /// frame and netplay snapshot of the board. The PRG and CHR it is built
+    /// with are placeholders it never reads, the CHR given as ROM so none is
+    /// saved. Its `ppu_read`, `ppu_peek`, `ppu_write` and `cpu_read` have no
+    /// memory behind them and must not be called; a `$6000-$7FFF` write is
+    /// ignored (the window is empty).
+    pub(crate) fn register_core(mirroring: Mirroring) -> Self {
+        let mut core = Self::new(
+            vec![0u8; PRG_BANK_16K].into_boxed_slice(),
+            vec![0u8; CHR_BANK_4K].into_boxed_slice(),
+            mirroring,
+            0,
+        )
+        .unwrap_or_else(|_| unreachable!("fixed valid sizes"));
+        core.prg_ram = Box::new([]);
+        core.vram = Box::new([]);
+        core
+    }
+
     /// The four internal registers, `(control, chr0, chr1, prg)`, for boards
     /// that embed an MMC1 and resolve banking themselves (mapper 105,
     /// NES-EVENT, v2.9.6). Read-only: the serial port stays the only writer.
