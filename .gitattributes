@@ -15,3 +15,10 @@
 # file is already LF in the index (`git ls-files --eol`: 523 of 523), so this
 # changes no committed byte; it fixes what a Windows checkout writes.
 *.rs text eol=lf
+
+# The IRQ-timing trace goldens are compared BYTE FOR BYTE with what the
+# serialisers emit, which is LF (irq_trace_fixture, v3.3.0). A Windows
+# autocrlf checkout would otherwise write them as CRLF and fail every
+# comparison on an unchanged trace (Copilot on #612). Every one is LF in the
+# index already, so this changes no committed byte.
+crates/rustynes-test-harness/golden/irq_trace/*.csv text eol=lf

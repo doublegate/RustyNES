@@ -51,6 +51,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use rustynes_core::Nes;
 use rustynes_core::irq_trace::{IrqTrace, ServiceKind};
@@ -180,7 +181,19 @@ fn check_goldens(slug: &str, files: &[(String, &str)]) {
 /// to `target/irq_trace/<slug>.full.csv` (diagnostic; not committed), and
 /// checks the three filtered traces against the goldens (`check_goldens`).
 /// Returns the IRQ-filtered CSV for the well-formed assertion.
+/// Serialises the captures. The harness runs these seven tests in parallel by
+/// default, and with every run captured whole (`MAX_RECORDS`) the longest
+/// three would hold their buffers at once: 4.5 GB peak RSS measured at v3.3.0
+/// with all seven concurrent, enough to be killed on a smaller host (Codex on
+/// #612). One capture at a time bounds the peak by the largest single run, so
+/// the documented command needs no `--test-threads=1`. A poisoned lock (a
+/// previous test panicked) is taken anyway: its holder held no shared state.
+static CAPTURE: Mutex<()> = Mutex::new(());
+
 fn run_traced(rel: &str, slug: &str) -> String {
+    let _capture = CAPTURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let path = rom_path(rel);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let mut nes = Nes::from_rom(&bytes).expect("rom must parse");
@@ -267,6 +280,9 @@ fn run_traced(rel: &str, slug: &str) -> String {
     let out_dir = workspace_root().join("target").join("irq_trace");
     fs::create_dir_all(&out_dir).expect("create target/irq_trace");
     fs::write(out_dir.join(format!("{slug}.full.csv")), &full_csv).expect("write full trace csv");
+    // The unfiltered CSV is the largest single allocation here (one line per
+    // CPU cycle); free it before the filtered traces are built.
+    drop(full_csv);
     // Filtered trace -> golden/irq_trace/<slug>.csv.
     //
     // Session-21 design decision: the IRQ-focused trace uses the same
