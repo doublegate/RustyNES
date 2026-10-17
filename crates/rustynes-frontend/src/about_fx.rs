@@ -255,7 +255,7 @@ pub fn render(ctx: &egui::Context) {
         let img_h = img_w * (ih as f32 / iw as f32);
         let mut open = s.open;
         egui::Window::new(s.a.clone())
-            .id(egui::Id::new("afx_res_pane"))
+            .id(egui::Id::unique("afx_res_pane"))
             .resizable(false)
             .collapsible(false)
             .open(&mut open)
