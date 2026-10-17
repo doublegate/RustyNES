@@ -30,7 +30,11 @@
 //!   [`HostedIce::turn_udp`] picks the first `turn:` URL whose transport is UDP
 //!   and splits it into host, port and credentials.
 //! - **The native fetch** ([`fetch_ice`], native + `netplay-client` only): one
-//!   blocking HTTPS GET with a timeout and a response-size cap.
+//!   blocking HTTPS `POST` (empty body) with a timeout and a response-size
+//!   cap. `POST`, not `GET`: the Worker refuses a `GET`, because a browser
+//!   sends one without `Origin` from any page's `<img>`, and a missing
+//!   `Origin` is what a native client looks like (`services/hosted/src/
+//!   turn.ts`, "Why POST only").
 //!
 //! # Why a hand-written JSON reader
 //!
@@ -64,13 +68,28 @@ pub const MAX_URLS_PER_SERVER: usize = 8;
 /// connection is never started on credentials about to lapse.
 pub const EXPIRY_MARGIN_SECS: u64 = 300;
 
-/// Normalize a hosted base URL: trimmed, no trailing `/`, `https://` (or
-/// `http://` to `localhost` / `127.0.0.1` for local development), no query,
-/// fragment or whitespace. `None` when it is not a usable base.
+/// Normalize a hosted base URL; `None` when it is not a usable base.
+///
+/// A usable base is trimmed, has no trailing `/`, is `https://` (or `http://`
+/// to `localhost` / `127.0.0.1` for local development), and has no query,
+/// fragment, userinfo (`@`) or whitespace.
+///
+/// Userinfo is refused because it moves the host: in
+/// `http://localhost:80@evil.example`, `localhost:80` is a user name and
+/// password and the host is `evil.example` (RFC 3986 section 3.2), so the
+/// localhost-only check on the text before the first `/` or `:` would pass a
+/// plain-HTTP base to another machine. A hosted base never needs userinfo, so
+/// any `@` refuses the whole value, which also keeps this check in step with
+/// the browser glue's anchored pattern in `web/cheevos/ra_glue.js`.
 #[must_use]
 pub fn normalize_base(raw: &str) -> Option<String> {
     let s = raw.trim().trim_end_matches('/');
-    if s.is_empty() || s.contains(char::is_whitespace) || s.contains('?') || s.contains('#') {
+    if s.is_empty()
+        || s.contains(char::is_whitespace)
+        || s.contains('?')
+        || s.contains('#')
+        || s.contains('@')
+    {
         return None;
     }
     let rest = match (s.strip_prefix("https://"), s.strip_prefix("http://")) {
@@ -531,13 +550,26 @@ impl Parser<'_> {
                     }
                 }
                 0x00..=0x1F => return None,
+                0x20..=0x7F => {
+                    out.push(char::from(b));
+                    self.i += 1;
+                }
                 _ => {
-                    // Copy one whole UTF-8 sequence (the input is a &str, so
-                    // it is valid; find the next char boundary).
-                    let rest = std::str::from_utf8(&self.s[self.i..]).ok()?;
-                    let c = rest.chars().next()?;
+                    // Copy one whole UTF-8 sequence. The input is a &str, so
+                    // it is valid UTF-8 and `b` is a leading byte; its high
+                    // bits give the sequence length (RFC 3629 section 3). Only
+                    // those bytes are decoded: validating the whole rest of
+                    // the input for every non-ASCII character, as this did
+                    // until v3.4.0's review, is quadratic in the body size.
+                    let width = match b {
+                        0xC0..=0xDF => 2,
+                        0xE0..=0xEF => 3,
+                        _ => 4,
+                    };
+                    let seq = self.s.get(self.i..self.i + width)?;
+                    let c = std::str::from_utf8(seq).ok()?.chars().next()?;
                     out.push(c);
-                    self.i += c.len_utf8();
+                    self.i += width;
                 }
             }
         }
@@ -545,6 +577,8 @@ impl Parser<'_> {
 }
 
 /// Fetch credentials from a hosted base (native, blocking, one request).
+///
+/// The request is a `POST` with an empty body: the Worker refuses `GET`.
 ///
 /// # Errors
 ///
@@ -560,8 +594,8 @@ pub fn fetch_ice(base: &str, timeout: std::time::Duration) -> Result<HostedIce, 
         .build()
         .into();
     let mut resp = agent
-        .get(&turn_credentials_url(base))
-        .call()
+        .post(&turn_credentials_url(base))
+        .send_empty()
         .map_err(|e| HostedIceError::Transport(e.to_string()))?;
     let body = resp
         .body_mut()
@@ -681,6 +715,31 @@ mod tests {
     }
 
     #[test]
+    fn the_parser_is_linear_on_multibyte_strings() {
+        // A maximal body of non-ASCII text: each two-byte character used to
+        // re-validate the whole rest of the input (n^2 / 2 byte checks, about
+        // a billion here): measured at 521 ms in a debug test build on this
+        // project's 20-core host, std's validator being optimised code even
+        // there. Decoding one sequence at a time makes it a single pass.
+        let n = (MAX_RESPONSE_BYTES - 4) / 2;
+        let body = format!("\"{}\"", "\u{e9}".repeat(n));
+        assert!(body.len() <= MAX_RESPONSE_BYTES);
+        let start = std::time::Instant::now();
+        let parsed = Json::parse(&body);
+        let took = start.elapsed();
+        assert_eq!(parsed, Some(Json::Str("\u{e9}".repeat(n))));
+        // The single pass measured 0.24 ms in the same build: 50 ms leaves
+        // a 200x margin for a loaded machine and is still a tenth of what
+        // the quadratic version took.
+        assert!(took < std::time::Duration::from_millis(50), "took {took:?}");
+        // Three- and four-byte sequences decode too, mixed with ASCII.
+        assert_eq!(
+            Json::parse("\"a\u{20ac}b\u{1d11e}c\""),
+            Some(Json::Str("a\u{20ac}b\u{1d11e}c".into()))
+        );
+    }
+
+    #[test]
     fn expiry_includes_the_safety_margin() {
         let ice = parse_turn_credentials(OK).expect("valid answer");
         // Literal times, not expressions of the constant, so a changed margin
@@ -744,6 +803,14 @@ mod tests {
             "https:///x",
             "https://a b",
             "https://x?y",
+            // Userinfo: the host is what follows the `@`, so these would reach
+            // evil.example (the first over plain HTTP) while looking like
+            // localhost / x.dev to the checks above.
+            "http://localhost:80@evil.example",
+            "http://localhost@evil.example",
+            "http://127.0.0.1:8787@evil.example/x",
+            "https://x.dev@evil.example",
+            "https://user:pass@x.dev",
         ] {
             assert_eq!(normalize_base(bad), None, "{bad}");
         }
@@ -761,6 +828,49 @@ mod tests {
             "https://h.dev/turn-credentials"
         );
         assert_eq!(ra_proxy_base("https://h.dev"), "https://h.dev/ra");
+    }
+
+    /// The native client asks with `POST`: the Worker refuses a `GET`
+    /// (`services/hosted/src/turn.ts`, "Why POST only"), so a GET here would
+    /// make every native session fall back to STUN only. A one-shot HTTP
+    /// server on loopback records the request line and answers with the
+    /// Worker's success body.
+    #[cfg(feature = "netplay-client")]
+    #[test]
+    fn fetch_ice_posts_to_the_credential_endpoint() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).expect("request line");
+            // Drain the headers (the body is empty).
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                line.clear();
+            }
+            let mut stream = stream;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{OK}",
+                OK.len()
+            )
+            .expect("respond");
+            request_line
+        });
+        let ice = fetch_ice(
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::from_secs(5),
+        )
+        .expect("fetched");
+        assert_eq!(ice.ttl, 10800);
+        let request_line = server.join().expect("server thread");
+        assert!(
+            request_line.starts_with("POST /turn-credentials HTTP/1.1"),
+            "{request_line:?}"
+        );
     }
 
     #[test]
