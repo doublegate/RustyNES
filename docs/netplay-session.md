@@ -135,6 +135,15 @@ address, and only the first one.
 A joiner finds its own roster entry by its own share, which works through a
 NAT where its address does not.
 
+The roster is the one message a joiner acts on before any key exists, so it is
+untrusted: a joiner keeps a roster only from the host it dialed, and only when
+it has 2 to 4 entries whose player indices are exactly `0..n`, each once
+(`roster_is_well_formed`). A gap, such as `{0, 1, 3}`, would make a 3-player
+session with a peer 3 it does not have, which a release build indexes out of
+range. The frontend checks again before it builds the session
+(`local_player < num_players`), because `RollbackSession::new` only
+`debug_assert!`s it. Pinned by `mesh_net::tests::joiner_ignores_a_malformed_or_foreign_roster`.
+
 ### 2.2 The sealed datagram
 
 ```text

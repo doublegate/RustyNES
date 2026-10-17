@@ -726,7 +726,18 @@ impl MeshJoiner {
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
             match socket.recv_from(&mut buf) {
                 Ok((len, from)) => match NetMessage::from_bytes(&buf[..len]) {
-                    Some(NetMessage::Roster { peers }) => roster = Some(peers),
+                    // The roster arrives BEFORE any key exists, so it is
+                    // untrusted input from anyone who can reach this port:
+                    // only the host we dialed may send it, and only a roster
+                    // whose players are exactly 0..n (2 <= n <= 4) is kept. A
+                    // gap (`{0, 3}`) would otherwise make a 2-player session
+                    // whose local player is 3, which the session indexes out
+                    // of range in a release build.
+                    Some(NetMessage::Roster { peers })
+                        if same_peer(from, self.host) && roster_is_well_formed(&peers) =>
+                    {
+                        roster = Some(peers);
+                    }
                     Some(NetMessage::Sync {
                         magic,
                         identity,
@@ -833,6 +844,24 @@ impl MeshJoiner {
         }
         Ok(None)
     }
+}
+
+/// A roster a joiner may act on: 2 to 4 entries whose player indices are
+/// exactly `0..len`, each once, in any order. The host is player 0 and the
+/// session is built for `len` players, so a gap or a repeat would hand the
+/// session a player index it does not have.
+fn roster_is_well_formed(peers: &[(u8, SocketAddr, KeyShare)]) -> bool {
+    if !(2..=NetMessage::MAX_ROSTER).contains(&peers.len()) {
+        return false;
+    }
+    let mut seen = [false; NetMessage::MAX_ROSTER];
+    for &(player, _, _) in peers {
+        match seen.get_mut(usize::from(player)) {
+            Some(slot) if usize::from(player) < peers.len() && !*slot => *slot = true,
+            _ => return false,
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -1079,6 +1108,90 @@ mod tests {
         }
         assert!(done, "2-player roster filled with one joiner");
         assert_eq!(host.joiners_ready(), 1, "exactly one joiner adopted");
+    }
+
+    /// v3.4.0 (security review of the mesh merge) — the roster is the one
+    /// message a joiner acts on BEFORE any key exists, so it is untrusted
+    /// input from anyone who can reach the joiner's port. A scripted fake host
+    /// learns the joiner's key share and address from its `Sync`, then offers
+    /// rosters: one with a gap in the player indices (`{0, 3}`, which would
+    /// leave the joiner as player 3 of a 2-player session), and a correct one
+    /// sent from a THIRD address. Both must be ignored; the correct roster from
+    /// the dialed host is the control that shows the joiner can hand off.
+    #[test]
+    fn joiner_ignores_a_malformed_or_foreign_roster() {
+        let id = SessionIdentity::new([0x5Au8; 32], [3; 32]);
+        let fake_host = UdpSocket::bind(loopback()).unwrap();
+        fake_host.set_nonblocking(true).unwrap();
+        let host_addr = fake_host.local_addr().unwrap();
+        let stranger = UdpSocket::bind(loopback()).unwrap();
+        let mut joiner = MeshJoiner::connect(loopback(), host_addr, 1, id).unwrap();
+
+        // The joiner's first Sync names its key share; its source is its address.
+        let mut buf = [0u8; RECV_BUF_LEN];
+        let mut learned = None;
+        for _ in 0..500 {
+            let _ = joiner.pump();
+            if let Ok((len, from)) = fake_host.recv_from(&mut buf)
+                && let Some(NetMessage::Sync { key_share, .. }) =
+                    NetMessage::from_bytes(&buf[..len])
+            {
+                learned = Some((from, key_share));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let (joiner_addr, joiner_share) = learned.expect("the joiner sent its Sync");
+        let host_share = [0x42u8; KEY_SHARE_LEN];
+        let roster = |players: [u8; 2]| {
+            NetMessage::Roster {
+                peers: vec![
+                    (players[0], host_addr, host_share),
+                    (players[1], joiner_addr, joiner_share),
+                ],
+            }
+            .to_bytes()
+        };
+        let handed_off_after = |joiner: &mut MeshJoiner, from: &UdpSocket, bytes: &[u8]| {
+            for _ in 0..50 {
+                from.send_to(bytes, joiner_addr).unwrap();
+                std::thread::sleep(Duration::from_millis(1));
+                if let Ok(Some(_)) = joiner.pump() {
+                    return true;
+                }
+            }
+            false
+        };
+
+        assert!(
+            !handed_off_after(&mut joiner, &fake_host, &roster([0, 3])),
+            "a roster with a gap in the player indices is refused"
+        );
+        // A gap on ANOTHER peer's index: this joiner is a valid player 1, so
+        // only the roster shape check can refuse `{0, 1, 3}` (a 3-player
+        // session with a peer 3 it does not have).
+        let third = (3u8, stranger.local_addr().unwrap(), [0x24u8; KEY_SHARE_LEN]);
+        let gapped_elsewhere = NetMessage::Roster {
+            peers: vec![
+                (0, host_addr, host_share),
+                (1, joiner_addr, joiner_share),
+                third,
+            ],
+        }
+        .to_bytes();
+        assert!(
+            !handed_off_after(&mut joiner, &fake_host, &gapped_elsewhere),
+            "a roster with a gap at another peer's index is refused"
+        );
+        assert!(
+            !handed_off_after(&mut joiner, &stranger, &roster([0, 1])),
+            "a roster from anyone but the dialed host is refused"
+        );
+        assert!(
+            handed_off_after(&mut joiner, &fake_host, &roster([0, 1])),
+            "control: the dialed host's well-formed roster is accepted"
+        );
+        assert_eq!(joiner.num_players(), 2);
     }
 
     fn drain(t: &mut UdpMeshTransport, want: usize) -> Vec<NetMessage> {
