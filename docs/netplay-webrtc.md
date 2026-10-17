@@ -208,6 +208,18 @@ refused joiner's `Sync` with its own before returning the error, so the
 joiner reports `EmulatorMismatch` (or the ROM / configuration mismatch) as
 well (`epoch_mismatch_is_named_at_both_ends`). Signaling rooms still match by
 ROM only.
+**Who may refuse (v3.4.0).** The handshake is unsealed, so a refusing `Sync`
+counts only from the peer it concerns. A joiner acts on one only from the host
+it dialed, and a `NetplayConnection` with a known remote only from that remote;
+anything else is ignored (`a_joiner_ignores_a_refusal_not_from_its_host`,
+`a_dialing_connection_ignores_a_refusal_from_a_stranger`). A mesh host always
+answers the refused sender with its own identity, but ends the gathering only
+while it has adopted nobody: once a joiner is waiting, one mismatched (or
+forged) `Sync` would drop it, so the host keeps gathering and its timeout
+reports the refusal it saw instead of a bare timeout
+(`a_refusal_after_adoption_keeps_the_gathering`,
+`a_timed_out_gathering_names_the_refusal_it_saw`). A 2-player listening host,
+which has adopted nobody, still refuses whoever dialed it.
 
 **Verification.** The loopback integration test `tests/mesh_udp.rs` stands up a
 host + 2-3 joiners on `127.0.0.1` ephemeral ports, completes the multi-joiner

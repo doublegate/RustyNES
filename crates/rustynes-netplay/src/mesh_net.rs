@@ -430,6 +430,9 @@ pub struct MeshHost {
     /// v3.4.0 — how long a gathering joiner may go unheard before the host
     /// drops it (see [`Self::JOINER_SILENCE`]).
     joiner_silence: Duration,
+    /// v3.4.0 — the last identity refusal the host answered while it had
+    /// joiners adopted (it then keeps gathering); reported by the timeout.
+    refusal: Option<MeshError>,
 }
 
 impl MeshHost {
@@ -472,6 +475,7 @@ impl MeshHost {
             roster_resends: Self::ROSTER_RESENDS,
             last_roster_sent: None,
             joiner_silence: Self::JOINER_SILENCE,
+            refusal: None,
         })
     }
 
@@ -531,6 +535,18 @@ impl MeshHost {
         peers
     }
 
+    /// The host's zero-share `Sync`: its identity, with no key share. It is
+    /// both the answer to a refused joiner (which then names the mismatch)
+    /// and the "adopted, still gathering" answer to an accepted one.
+    fn identity_sync(&self) -> Vec<u8> {
+        NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: self.identity,
+            key_share: [0; KEY_SHARE_LEN],
+        }
+        .to_bytes()
+    }
+
     /// v3.4.0 — drop a joiner that stopped re-sending its `Sync` while the
     /// host gathered (closed, or gave up), so the session never starts with a
     /// peer that is gone; its seat goes to the next joiner. Only before the
@@ -551,8 +567,11 @@ impl MeshHost {
     /// - `Ok(None)` while still gathering joiners (call again).
     /// - `Ok(Some(transport))` once the roster filled, was broadcast, and the
     ///   host's mesh transport is ready.
-    /// - `Err(MeshError::RomMismatch)` if a joiner announced a different ROM.
-    /// - `Err(MeshError::Timeout)` if the gather timeout elapsed first.
+    /// - `Err(MeshError::RomMismatch)` (or another identity mismatch) if a
+    ///   joiner announced a different ROM while no joiner was adopted yet.
+    ///   Once one is, a refused sender is answered and the gathering goes on.
+    /// - `Err(MeshError::Timeout)` if the gather timeout elapsed first, or the
+    ///   last refusal answered while gathering, when there was one.
     ///
     /// # Errors
     ///
@@ -598,14 +617,18 @@ impl MeshHost {
                         // mismatched `Sync` with the reason. A peer older than
                         // protocol 6 ignores this datagram's magic, so it is
                         // no worse off than before.
-                        let reply = NetMessage::Sync {
-                            magic: NetMessage::SYNC_MAGIC,
-                            identity: self.identity,
-                            key_share: [0; KEY_SHARE_LEN],
+                        let _ = socket.send_to(&self.identity_sync(), from);
+                        // v3.4.0 (Antigravity on #613): a refusal ends the
+                        // gathering only while nobody is adopted. After that
+                        // one mismatched (or forged) `Sync` from any source
+                        // would drop every joiner already waiting, so the
+                        // host keeps gathering and remembers the reason for
+                        // its timeout instead.
+                        if self.joiners.is_empty() {
+                            return Err(MeshError::from(m));
                         }
-                        .to_bytes();
-                        let _ = socket.send_to(&reply, from);
-                        return Err(MeshError::from(m));
+                        self.refusal = Some(MeshError::from(m));
+                        continue;
                     }
                 }
                 // v3.4.0: only a `Sync` with a key share is a joiner's
@@ -638,13 +661,7 @@ impl MeshHost {
                 // its own handshake timeout. Once the roster is full the
                 // roster itself is the answer.
                 if !self.roster_full() {
-                    let gathering = NetMessage::Sync {
-                        magic: NetMessage::SYNC_MAGIC,
-                        identity: self.identity,
-                        key_share: [0; KEY_SHARE_LEN],
-                    }
-                    .to_bytes();
-                    let _ = socket.send_to(&gathering, from);
+                    let _ = socket.send_to(&self.identity_sync(), from);
                 }
             }
             // Non-Sync traffic during the handshake is ignored (early/stray).
@@ -699,9 +716,10 @@ impl MeshHost {
                 .map_err(|_| MeshError::Timeout);
         }
 
-        // Still gathering. Enforce the timeout.
+        // Still gathering. Enforce the timeout, naming a refusal seen on the
+        // way (a mismatched joiner is the likelier reason a seat stayed empty).
         if now.saturating_duration_since(self.started) >= self.timeout {
-            return Err(MeshError::Timeout);
+            return Err(self.refusal.unwrap_or(MeshError::Timeout));
         }
         Ok(None)
     }
@@ -857,7 +875,8 @@ impl MeshJoiner {
     /// other joiner, skipping this joiner's own entry).
     ///
     /// Returns `Ok(None)` while waiting, `Ok(Some(transport))` once the roster
-    /// arrived, `Err(MeshError::RomMismatch)` on a bad-ROM `Sync`, or
+    /// arrived, `Err(MeshError::RomMismatch)` on a bad-ROM `Sync` from the
+    /// dialed host (one from any other source is ignored), or
     /// `Err(MeshError::Timeout)` if the wait elapsed.
     ///
     /// # Errors
@@ -890,7 +909,14 @@ impl MeshJoiner {
                         identity,
                         key_share,
                     }) => match self.identity.check_sync(magic, &identity) {
-                        SyncVerdict::Refuse(m) => return Err(MeshError::from(m)),
+                        // v3.4.0 (Antigravity on #613): only the host we
+                        // dialed can refuse us. The handshake is unsealed, so
+                        // a mismatched `Sync` from anywhere else (a stray, a
+                        // forger, a wrong-ROM peer that dialed us by mistake)
+                        // is ignored rather than ending the handshake.
+                        SyncVerdict::Refuse(m) if same_peer(from, self.host) => {
+                            return Err(MeshError::from(m));
+                        }
                         // v3.4.0 — an accepted `Sync` with a key share, from
                         // the host we dialed, is a 2-player host's answer
                         // (`NetplayConnection::host` echoes the joiner's
@@ -1582,6 +1608,144 @@ mod tests {
                 "host share sorting to sender {host_sender} must still be seat 0"
             );
         }
+    }
+
+    /// A `Sync` from `identity` with a nonzero key share: what a joiner (or
+    /// anyone imitating one) sends.
+    fn sync_bytes(identity: SessionIdentity, share: u8) -> Vec<u8> {
+        NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity,
+            key_share: [share; KEY_SHARE_LEN],
+        }
+        .to_bytes()
+    }
+
+    /// v3.4.0 (Antigravity on #613) — the joiner acts on a refusing `Sync`
+    /// only from the host it dialed. Before, a mismatched `Sync` from ANY
+    /// source aborted the handshake, so anything that could reach the
+    /// joiner's port could end it. The control shows the dialed host's
+    /// refusal still ends it with the reason.
+    #[test]
+    fn a_joiner_ignores_a_refusal_not_from_its_host() {
+        let id = SessionIdentity::new([0x5Bu8; 32], [3; 32]);
+        let other = SessionIdentity::new([0x5Cu8; 32], [3; 32]);
+        let fake_host = UdpSocket::bind(loopback()).unwrap();
+        let host_addr = fake_host.local_addr().unwrap();
+        let stranger = UdpSocket::bind(loopback()).unwrap();
+        let mut joiner = MeshJoiner::connect(loopback(), host_addr, 1, id).unwrap();
+        let joiner_addr = joiner.local_addr().unwrap();
+        for _ in 0..20 {
+            stranger
+                .send_to(&sync_bytes(other, 7), joiner_addr)
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+            assert!(
+                matches!(joiner.pump(), Ok(None)),
+                "a stranger's refusal does not end the handshake"
+            );
+        }
+        let mut refused = false;
+        for _ in 0..50 {
+            fake_host
+                .send_to(&sync_bytes(other, 7), joiner_addr)
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+            if matches!(joiner.pump(), Err(MeshError::RomMismatch)) {
+                refused = true;
+                break;
+            }
+        }
+        assert!(refused, "control: the dialed host's refusal ends it");
+    }
+
+    /// Pump `host` and `joiners` for `budget`, ignoring every result.
+    fn pump_for(host: &mut MeshHost, joiners: &mut [MeshJoiner], budget: Duration) {
+        let start = Instant::now();
+        while start.elapsed() < budget {
+            let _ = host.pump();
+            for j in joiners.iter_mut() {
+                let _ = j.pump();
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// v3.4.0 (Antigravity on #613) — once a joiner is adopted, a refusing
+    /// `Sync` from another source no longer tears the gathering down (it
+    /// dropped every adopted joiner). The host still answers the refused
+    /// sender with its own identity, so a genuine mismatched joiner learns
+    /// why, and the remaining seat fills normally.
+    #[test]
+    fn a_refusal_after_adoption_keeps_the_gathering() {
+        let id = SessionIdentity::new([0x69u8; 32], [9; 32]);
+        let other = SessionIdentity::new([0x6Au8; 32], [9; 32]);
+        let mut host = MeshHost::bind(loopback(), loopback(), 3, id).unwrap();
+        let listen = host.local_addr().unwrap();
+        let mut first = vec![MeshJoiner::connect(loopback(), listen, 1, id).unwrap()];
+        pump_for(&mut host, &mut first, Duration::from_millis(100));
+        assert_eq!(host.joiners_ready(), 1, "the first joiner is adopted");
+
+        let stranger = UdpSocket::bind(loopback()).unwrap();
+        stranger
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        stranger.send_to(&sync_bytes(other, 7), listen).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        for _ in 0..20 {
+            assert!(
+                matches!(host.pump(), Ok(None)),
+                "the gathering survives the refusal"
+            );
+        }
+        assert_eq!(host.joiners_ready(), 1, "the adopted joiner is kept");
+        let mut buf = [0u8; RECV_BUF_LEN];
+        let (len, _) = stranger.recv_from(&mut buf).expect("the refusal reply");
+        assert!(
+            matches!(
+                NetMessage::from_bytes(&buf[..len]),
+                Some(NetMessage::Sync { identity, .. }) if identity == id
+            ),
+            "the refused sender hears the host's identity"
+        );
+
+        let mut all: Vec<MeshJoiner> = first
+            .into_iter()
+            .chain(std::iter::once(
+                MeshJoiner::connect(loopback(), listen, 2, id).unwrap(),
+            ))
+            .collect();
+        let (h, j) = pump_all(&mut host, &mut all, Duration::from_secs(5));
+        assert!(h.is_some(), "the host completed with both genuine joiners");
+        assert!(j.iter().all(Option::is_some));
+    }
+
+    /// The other half of the hybrid rule: a gathering that ends in a timeout
+    /// after refusing someone reports WHY rather than a bare timeout.
+    #[test]
+    fn a_timed_out_gathering_names_the_refusal_it_saw() {
+        let id = SessionIdentity::new([0x6Bu8; 32], [9; 32]);
+        let other = SessionIdentity::new([0x6Bu8; 32], [8; 32]);
+        let mut host = MeshHost::bind(loopback(), loopback(), 3, id)
+            .unwrap()
+            .with_timeout(Duration::from_millis(400));
+        let listen = host.local_addr().unwrap();
+        let mut first = vec![MeshJoiner::connect(loopback(), listen, 1, id).unwrap()];
+        pump_for(&mut host, &mut first, Duration::from_millis(100));
+        assert_eq!(host.joiners_ready(), 1);
+        let stranger = UdpSocket::bind(loopback()).unwrap();
+        stranger.send_to(&sync_bytes(other, 7), listen).unwrap();
+        let start = Instant::now();
+        let err = loop {
+            match host.pump() {
+                Ok(_) => {}
+                Err(e) => break e,
+            }
+            let _ = first[0].pump();
+            assert!(start.elapsed() < Duration::from_secs(5), "never ended");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert_eq!(err, MeshError::ConfigMismatch, "the recorded reason");
     }
 
     fn drain(t: &mut UdpMeshTransport, want: usize) -> Vec<NetMessage> {

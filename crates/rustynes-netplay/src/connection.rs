@@ -79,6 +79,17 @@ pub(crate) fn same_peer(a: SocketAddr, b: SocketAddr) -> bool {
     a.port() == b.port() && a.ip().to_canonical() == b.ip().to_canonical()
 }
 
+/// The [`DisconnectReason`] for a handshake refused over `m`.
+const fn refusal_reason(m: IdentityMismatch) -> DisconnectReason {
+    match m {
+        IdentityMismatch::Emulator { ours, theirs } => {
+            DisconnectReason::EmulatorMismatch { ours, theirs }
+        }
+        IdentityMismatch::Rom => DisconnectReason::RomMismatch,
+        IdentityMismatch::Config => DisconnectReason::ConfigMismatch,
+    }
+}
+
 /// The sealing state of an authenticated [`UdpTransport`] (v3.4.0).
 #[derive(Debug)]
 struct Sealed {
@@ -920,6 +931,14 @@ impl NetplayConnection {
         true
     }
 
+    /// `true` if `from` is not the known remote (always `false` while a
+    /// listening host has adopted no one).
+    fn is_stranger(&self, from: SocketAddr) -> bool {
+        self.transport
+            .remote_addr()
+            .is_some_and(|peer| !same_peer(peer, from))
+    }
+
     /// Drive the connection: poll the socket, advance the handshake, emit
     /// periodic `Sync` resends and `Quality` pings, and update RTT /
     /// frame-advantage estimates. Call periodically (e.g. once per frame) while
@@ -975,6 +994,13 @@ impl NetplayConnection {
                         // Foreign / corrupt — ignore, never panic.
                         SyncVerdict::Ignore => continue,
                         SyncVerdict::Accept => None,
+                        // v3.4.0 (Antigravity on #613): once the remote is
+                        // known only it may refuse us; the handshake is
+                        // unsealed, so a mismatched `Sync` from any other
+                        // source is ignored rather than disconnecting. A
+                        // listening host has adopted nobody and so has nothing
+                        // to lose: it still refuses whoever dialed it.
+                        SyncVerdict::Refuse(_) if self.is_stranger(from) => continue,
                         SyncVerdict::Refuse(m) => Some(m),
                     };
                     if let Some(m) = m {
@@ -982,13 +1008,7 @@ impl NetplayConnection {
                         // rejected the same way whether or not we have adopted
                         // this peer yet.
                         self.state = ConnectionState::Disconnected;
-                        self.disconnect_reason = Some(match m {
-                            IdentityMismatch::Emulator { ours, theirs } => {
-                                DisconnectReason::EmulatorMismatch { ours, theirs }
-                            }
-                            IdentityMismatch::Rom => DisconnectReason::RomMismatch,
-                            IdentityMismatch::Config => DisconnectReason::ConfigMismatch,
-                        });
+                        self.disconnect_reason = Some(refusal_reason(m));
                         return self.state;
                     }
                     self.accept_sync(key_share, from, remote_known);
@@ -1527,6 +1547,46 @@ mod tests {
             c.disconnect_reason(),
             Some(DisconnectReason::HandshakeTimeout)
         );
+    }
+
+    /// v3.4.0 (Antigravity on #613) — once the remote is known, only that
+    /// remote can refuse the handshake. Before, a mismatched `Sync` from any
+    /// third source disconnected a dialing client (the handshake is unsealed,
+    /// so anyone reaching the port could end it). The control shows the real
+    /// peer's refusal still disconnects with the reason.
+    #[test]
+    fn a_dialing_connection_ignores_a_refusal_from_a_stranger() {
+        let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let peer = UdpSocket::bind(local).unwrap();
+        let stranger = UdpSocket::bind(local).unwrap();
+        let id = SessionIdentity::new([0x46u8; 32], [0; 32]);
+        let other = SessionIdentity::new([0x47u8; 32], [0; 32]);
+        let mut c = NetplayConnection::connect(local, peer.local_addr().unwrap(), id).unwrap();
+        let me = c.transport.local_addr().unwrap();
+        let refusal = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: other,
+            key_share: [7; KEY_SHARE_LEN],
+        }
+        .to_bytes();
+        for _ in 0..20 {
+            stranger.send_to(&refusal, me).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+            assert_ne!(
+                c.pump(0),
+                ConnectionState::Disconnected,
+                "a stranger's refusal is ignored: {:?}",
+                c.disconnect_reason()
+            );
+        }
+        for _ in 0..50 {
+            peer.send_to(&refusal, me).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+            if c.pump(0) == ConnectionState::Disconnected {
+                break;
+            }
+        }
+        assert_eq!(c.disconnect_reason(), Some(DisconnectReason::RomMismatch));
     }
 
     /// Drain `b` until at least `want` messages have arrived or a bounded
