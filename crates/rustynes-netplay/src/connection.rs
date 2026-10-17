@@ -379,7 +379,10 @@ impl UdpTransport {
                 self.refused = self.refused.saturating_add(1);
                 let now = Instant::now();
                 if why == Refusal::Unsealed
-                    && data.first() == Some(&NetMessage::TAG_SYNC)
+                    // A whole `Sync` (any protocol's, which decodes to name
+                    // its mismatch), not just its tag byte: a truncated
+                    // `[0x02]` gets no reply (Antigravity on #613).
+                    && matches!(NetMessage::from_bytes(data), Some(NetMessage::Sync { .. }))
                     && self.remote.is_some_and(|r| same_peer(r, from))
                     && sealed.last_reply.is_none_or(|t| {
                         now.saturating_duration_since(t) >= HANDSHAKE_REPLY_INTERVAL
@@ -1587,6 +1590,43 @@ mod tests {
             }
         }
         assert_eq!(c.disconnect_reason(), Some(DisconnectReason::RomMismatch));
+    }
+
+    /// v3.4.0 (Antigravity on #613) — a sealed transport re-sends its
+    /// handshake reply only for a datagram that IS a `Sync`, not for any
+    /// whose first byte is the `Sync` tag: a truncated one-byte `[0x02]` from
+    /// the peer's address gets nothing. The full `Sync` that follows is still
+    /// answered (and the truncated one must not have used up the rate limit).
+    #[test]
+    fn a_truncated_sync_gets_no_handshake_reply() {
+        let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let peer = UdpSocket::bind(local).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let sock = UdpSocket::bind(local).unwrap();
+        let me = sock.local_addr().unwrap();
+        let mut t = UdpTransport::from_socket(sock, peer.local_addr().unwrap()).unwrap();
+        let auth =
+            DatagramAuth::pair(&SessionIdentity::new([1; 32], [2; 32]), [1; 16], [2; 16]).unwrap();
+        t.enable_auth(auth, b"REPLY".to_vec());
+        let mut buf = [0u8; 64];
+
+        peer.send_to(&[NetMessage::TAG_SYNC], me).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(t.poll(), Vec::new());
+        assert!(peer.recv_from(&mut buf).is_err(), "no reply to [0x02]");
+
+        let sync = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: SessionIdentity::new([1; 32], [2; 32]),
+            key_share: [2; KEY_SHARE_LEN],
+        }
+        .to_bytes();
+        peer.send_to(&sync, me).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(t.poll(), Vec::new());
+        let (len, _) = peer.recv_from(&mut buf).expect("a full Sync is answered");
+        assert_eq!(&buf[..len], b"REPLY");
     }
 
     /// Drain `b` until at least `want` messages have arrived or a bounded

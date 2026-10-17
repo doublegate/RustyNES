@@ -183,6 +183,9 @@ range. The frontend checks again before it builds the session
 Receive order: length, marker, sender (known, not ourselves), replay window
 (1024 per sender), tag. Only then is the sequence marked and the message
 parsed. A refusal changes no state and is counted (`refused_datagrams`).
+The send sequence saturates at `u64::MAX` rather than wrapping
+(`the_send_counter_saturates_at_the_end_of_its_space`); 2^64 datagrams is out
+of reach, and a wrap would only re-issue numbers every receiver has passed.
 
 **A message speaks only for its sender's seat (mesh).** On a
 `UdpMeshTransport` the sender index is the player index, and an `Input`,
@@ -203,7 +206,10 @@ session already ignores an input or ack naming its own, so it needs no check.
   moved.
 - An unsealed `Sync` from the peer's address, after the handshake, is
   answered with our handshake `Sync` (a mesh host: the roster), at most every
-  100 ms, without being parsed: the peer lost our reply.
+  100 ms: the peer lost our reply. It must decode as a whole `Sync` (any
+  protocol's); a datagram that only starts with the `Sync` tag, such as a
+  truncated `[0x02]`, gets nothing (`a_truncated_sync_gets_no_handshake_reply`,
+  `a_truncated_sync_gets_no_roster_resend`). Nothing in it reaches the session.
 - Everything else unsealed is refused.
 
 ### 2.4 What is not covered

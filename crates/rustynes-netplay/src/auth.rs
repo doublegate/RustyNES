@@ -316,7 +316,13 @@ impl DatagramAuth {
     #[must_use]
     pub fn seal(&mut self, payload: &[u8]) -> Vec<u8> {
         let seq = self.next_seq;
-        self.next_seq += 1;
+        // Saturating, not wrapping (Antigravity on #613): 2^64 seals is out of
+        // reach (about 5.8e8 years at 1,000 a second), but the arithmetic is
+        // defined anyway. A wrap would re-issue sequence 0, which every
+        // receiver has long since passed; saturation repeats `u64::MAX`, which
+        // the replay window refuses after its first use. Either way the
+        // session would stop, never accept a repeat.
+        self.next_seq = self.next_seq.saturating_add(1);
         let mut out = Vec::with_capacity(payload.len() + SEAL_OVERHEAD);
         out.push(SEALED_MARKER);
         out.push(self.local);
@@ -473,6 +479,19 @@ mod tests {
         }
         let distinct = [(0u8, [1u8; 16]), (1, [2; 16]), (2, [3; 16])];
         assert!(DatagramAuth::mesh(&id(), &distinct, 2).is_some());
+    }
+
+    /// v3.4.0 (Antigravity on #613) — the send counter never overflows: a
+    /// debug build panicked on the `+= 1` past `u64::MAX`. It saturates
+    /// instead (see `seal`), so sealing at the end of the space is defined.
+    #[test]
+    fn the_send_counter_saturates_at_the_end_of_its_space() {
+        let (mut a, _) = pair();
+        a.next_seq = u64::MAX;
+        let first = a.seal(b"\x01x");
+        let second = a.seal(b"\x01x");
+        assert_eq!(first[2..10], u64::MAX.to_le_bytes());
+        assert_eq!(second[2..10], u64::MAX.to_le_bytes());
     }
 
     #[test]

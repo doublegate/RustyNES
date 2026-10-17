@@ -270,7 +270,10 @@ impl UdpMeshTransport {
                 self.refused = self.refused.saturating_add(1);
                 let now = Instant::now();
                 if why == Refusal::Unsealed
-                    && data.first() == Some(&NetMessage::TAG_SYNC)
+                    // A whole `Sync` (any protocol's, which decodes to name
+                    // its mismatch), not just its tag byte: a truncated
+                    // `[0x02]` gets no reply (Antigravity on #613).
+                    && matches!(NetMessage::from_bytes(data), Some(NetMessage::Sync { .. }))
                     && let Some(reply) = sealed.handshake_reply.as_ref()
                     && let Some(i) = self.peers.iter().position(|&a| same_peer(a, from))
                     && sealed.last_reply[i].is_none_or(|t| {
@@ -1795,6 +1798,38 @@ mod tests {
             host.joiners.contains_key(&mapped),
             "the host's own key is kept"
         );
+    }
+
+    /// v3.4.0 (Antigravity on #613) — the mesh transport's handshake reply,
+    /// like the 2-player one, answers only a datagram that decodes as a
+    /// `Sync`: a truncated `[0x02]` from a peer's address gets nothing.
+    #[test]
+    fn a_truncated_sync_gets_no_roster_resend() {
+        let id = SessionIdentity::new([0x6Eu8; 32], [9; 32]);
+        let peer = UdpSocket::bind(loopback()).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let sock = UdpSocket::bind(loopback()).unwrap();
+        let me = sock.local_addr().unwrap();
+        let shares = [(0u8, [1u8; KEY_SHARE_LEN]), (1, [2; KEY_SHARE_LEN])];
+        let auth = DatagramAuth::mesh(&id, &shares, 0).unwrap();
+        let mut t = UdpMeshTransport::new_sealed(
+            sock,
+            &[(1, peer.local_addr().unwrap())],
+            auth,
+            Some(b"ROSTER".to_vec()),
+        )
+        .unwrap();
+        let mut buf = [0u8; 64];
+        peer.send_to(&[NetMessage::TAG_SYNC], me).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(t.poll(), Vec::new());
+        assert!(peer.recv_from(&mut buf).is_err(), "no reply to [0x02]");
+        peer.send_to(&sync_bytes(id, 2), me).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(t.poll(), Vec::new());
+        let (len, _) = peer.recv_from(&mut buf).expect("a full Sync is answered");
+        assert_eq!(&buf[..len], b"ROSTER");
     }
 
     /// Pump `host` and `joiners` for `budget`, ignoring every result, and
