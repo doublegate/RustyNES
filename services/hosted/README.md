@@ -114,6 +114,17 @@ the local service by setting `hosted_base_url = "http://localhost:8787"` in the
 `[netplay]` config table, or `RUSTYNES_HOSTED_BASE=http://localhost:8787` when
 building.
 
+With `npm run dev -- --port 8799` running, the production Rust signalling
+client can be checked against the Worker directly (a full join, peer-joined,
+public-addr in both directions, peer-left):
+
+```bash
+RUSTYNES_HOSTED_LOBBY_URL=ws://127.0.0.1:8799/signal \
+  cargo test -p rustynes-netplay --test hosted_lobby_live -- --ignored
+```
+
+After a deploy the same test takes `wss://<hosted base>/signal`.
+
 The tests use Cloudflare's Vitest plugin against `wrangler.jsonc`, so the
 bindings, Durable Objects and storage are the real runtime's. Only outbound
 `fetch` (Cloudflare's TURN API, retroachievements.org) is mocked. CI runs the
@@ -226,7 +237,8 @@ The plan's gates for rows 1-3, in the order to run them. None can run in CI:
 each needs the deployed service, real browsers or devices, or a real account.
 
 1. **Smoke:** `curl https://rustynes-hosted.<sub>.workers.dev/healthz` prints
-   `ok`; `curl -i .../turn-credentials` returns 200 with `iceServers`, `ttl`
+   `ok`; the `hosted_lobby_live` test above passes against
+   `wss://rustynes-hosted.<sub>.workers.dev/signal`; `curl -i .../turn-credentials` returns 200 with `iceServers`, `ttl`
    10800 and an `expiresAt` three hours ahead; repeat it seven times from one
    address and the seventh is a 429.
 2. **Two browsers through the hosted lobby (row 1):** open the Pages build in
