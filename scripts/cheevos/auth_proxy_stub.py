@@ -30,7 +30,7 @@ Usage:
     # File-driven (local dev):
     python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
     # Env-driven (container / deploy):
-    RA_PROXY_BIND=0.0.0.0:8092 RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+    RA_PROXY_BIND=0.0.0.0:8092 RA_USER_AGENT='RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0' \
         RA_ALLOWED_ORIGINS='https://doublegate.github.io' \
         python3 scripts/cheevos/auth_proxy_stub.py
 
@@ -80,7 +80,7 @@ class Config:
         host, _, port = proxy.get("bind", "127.0.0.1:8092").partition(":")
         self.host = host or "127.0.0.1"
         self.port = _parse_port(port, 8092, "config [proxy] bind")
-        self.user_agent = proxy.get("user_agent", "RustyNES/0.0.0 rcheevos/0.0.0")
+        self.user_agent = proxy.get("user_agent", "RustyNES/0.0.0 (Web wasm32) rcheevos/0.0.0")
         self.upstream = proxy.get("upstream", "https://retroachievements.org").rstrip("/")
         self.allowed_origins = set(proxy.get("allowed_origins", []))
         self.enforce_casual_only = data.get("casual", {}).get("enforce_casual_only", True)

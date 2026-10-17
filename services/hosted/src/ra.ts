@@ -6,7 +6,7 @@
 // # Why a proxy at all
 //
 // RetroAchievements identifies and allowlists a client by its HTTP
-// `User-Agent` (natively `RustyNES/<ver> rcheevos/<ver>`, the RA_USER_AGENT
+// `User-Agent` (natively `RustyNES/<ver> (<OS> <arch>) rcheevos/<ver>`, the RA_USER_AGENT
 // const in crates/rustynes-cheevos/src/http.rs). Browsers forbid scripts from
 // setting `User-Agent`, so the web build's rcheevos calls come here
 // (`ra_glue.js` posts to `RA_PROXY_BASE + "/dorequest.php"`), and this handler

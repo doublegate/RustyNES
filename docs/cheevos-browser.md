@@ -86,7 +86,7 @@ the browser is routed through a small proxy that injects the header server-side.
   python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
   # Env-driven (no config file):
   RA_PROXY_BIND=127.0.0.1:8092 RA_ALLOWED_ORIGINS='http://127.0.0.1:8081' \
-    RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+    RA_USER_AGENT='RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0' \
     python3 scripts/cheevos/auth_proxy_stub.py
   ```
 

@@ -48,7 +48,7 @@ services:
     #   RA_ENFORCE_CASUAL   — "1"/"true" (default) refuses hardcore awards
     environment:
       RA_PROXY_BIND: "0.0.0.0:8092"
-      RA_USER_AGENT: ${RA_USER_AGENT:-RustyNES/0.0.0 rcheevos/0.0.0}
+      RA_USER_AGENT: "${RA_USER_AGENT:-RustyNES/0.0.0 (Web wasm32) rcheevos/0.0.0}"
       RA_UPSTREAM: ${RA_UPSTREAM:-https://retroachievements.org}
       RA_ALLOWED_ORIGINS: ${RA_ALLOWED_ORIGINS:-https://doublegate.github.io}
       RA_ENFORCE_CASUAL: ${RA_ENFORCE_CASUAL:-1}
