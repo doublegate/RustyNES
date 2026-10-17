@@ -1470,10 +1470,14 @@ but its `cost p95` (the emulation work, which egui does not touch) is also 23%
 lower, so that capture ran on a quieter machine, not on better code. The
 second pair, whose `cost p95` agree within 1.3%, differs by at most 1.35 ms on
 any present percentile (p95; the new build lower), inside what the first pair
-shows contention alone can move. `rui` reads 0.00 in all four: with the debugger overlay closed the
-egui pass is too short to register at this column's resolution, so these
-captures do not exercise egui's own cost at all. Not measured: a quiet host,
-run-ahead 0, an open overlay, Fifo, 60 Hz.
+shows contention alone can move. `rui` reads 0.00 in all four, so these
+captures do not measure egui's own cost at all. (**Corrected below**: this
+paragraph first said the egui pass was "too short to register at this column's
+resolution". It was not recorded at all. `ui_cost` was set only on the locked
+branch, and these captures ran on the overlay-hidden branch, where the egui
+build happens inside the paint closure and its time lands in `rwait`. v3.4.0
+times it there too.) Not measured: a quiet host, run-ahead 0, an open overlay,
+Fifo, 60 Hz.
 
 **The CI frame-time gate** (`bench_regression_check.sh`, then
 `bench_relative_check.sh` with `BENCH_BASE_REF=86114215`), which benches
@@ -1491,6 +1495,87 @@ the gate's "beyond 3x the measured noise" exception firing on a noise
 estimate that was itself too low. It is recorded rather than re-run until it
 passes. Raw pacing CSVs and both gate logs were kept in the session scratch
 directory, not in the repository.
+
+#### The egui cost itself, measured by instruction count: +10.2% per shell frame, about 3 µs
+
+Neither measurement above reaches egui: the pacing captures never recorded it,
+and the CI gate benches the core. So the shell was measured directly, with a
+method that host load does not move. `ui_shell::tests::shell_frame_cost_probe`
+(ignored by default) builds the always-on shell, menu bar and status bar, on a
+bare `egui::Context` with the app's fonts and theme, tessellates each frame, and
+reports per-frame build and tessellation time, shapes, vertices, indices and
+texture-upload bytes. The same probe ran in a v3.3.0 worktree (egui 0.36.2) and
+on the v3.4.0 branch (egui 0.37.0), release builds, under
+`perf stat -e instructions:u`. The two repeats of each agree to within about
+2,000 instructions in 240 million, so the count is the reliable number here; the
+microsecond figures are wall time on the same loaded host.
+
+| 1,200 frames | egui 0.36.2 | egui 0.37.0 | change |
+| --- | ---: | ---: | ---: |
+| instructions, idle | 220.24 M | 240.96 M | +9.4% |
+| instructions, pointer sweeping the menu bar | 241.72 M | 264.26 M | +9.3% |
+| instructions per frame (fixed cost of an 11-frame run removed) | 173,500 | 191,200 | **+10.2%** |
+| build, per frame (wall) | ~19 µs | ~22 µs | |
+| tessellation, per frame (wall) | ~3.8 µs | ~4.4 µs | |
+| vertices / indices per frame, idle | 476 / 858 | 476 / 858 | same |
+| texture upload after warm-up | 0 B | 0 B | same |
+
+The fixed cost (process start, font loading) is 14.0 M against 13.6 M
+instructions, the same on both versions. The extra cost is per frame and real.
+In absolute terms it is about 3 µs a frame, under 0.02% of a 16.6 ms frame,
+so it cannot explain a visible slowdown. Nor is there font-atlas churn: neither
+version uploads texture data after the first frames.
+
+**Where the extra instructions go** (`perf record -e instructions:u`, 6,000
+frames each, symbols diffed). Several rows are only renames and inlining
+changes that cancel (`run_ui_dyn` vs `run_pass_dyn`, `AtomLayout` vs
+`ContainerAtom`, the galley cache moving modules). What remains:
+
+- **Text tessellation, the largest share.** `Tessellator::tessellate_shape`,
+  into which the text and rect paths inline, rises from 94.5 M to 132.8 M
+  instructions (+40%), on an identical mesh. epaint 0.37's `tessellate_text` now
+  checks, for each vertex of each text row, whether it belongs to a colour glyph
+  (the colour-emoji support, egui #8490 and #8545). The shell draws no colour
+  glyphs, so this is pure overhead for it, and it is inside epaint. Isolated
+  with an egui-only reproduction (120 labels; a rects-only scene as the
+  control), instructions per `Context::tessellate`: text 620,292 on 0.36.2,
+  999,863 on 0.37.0 and on `main` (`86099aca`), **+61.2%**; rects +0.18%.
+  Removing the colour-glyph code returns text to 627,024. Short-circuiting the
+  check at its call site does not help (1,000,343), so the cost is the
+  conditional write's presence in the per-vertex closure, not running it.
+  Branching once per row, with the 0.36 loop body for rows without colour
+  glyphs, gives 654,382 and passes epaint's tests. Reported upstream with the
+  reproduction and that fix as
+  [emilk/egui#8731](https://github.com/emilk/egui/issues/8731) (2026-10-17).
+  The rect paths diff as equivalent between the versions.
+- **Hovering draws more**: with the pointer sweeping the menu bar, 0.37 emits
+  542.6 vertices and 1,151.9 indices a frame against 0.36's 513.0 and 1,018.8,
+  a different hover highlight, not a cost of the idle shell.
+- **egui 0.37's per-widget style resolution**, the new theme-provider layer
+  (egui #8153): `AtomLayoutStyle::apply` and `DefaultStyle`'s `StyleProvider`,
+  about 13 M over the run with no 0.36 counterpart, and a net of about 3 M
+  more in font metrics lookups (`FontsImpl::family_metrics` / `family_key`,
+  8.7 M, replacing 0.36's `Font::styled_metrics`, 6.1 M) from the restructured
+  font fallback (`Family`, `FaceStore`).
+
+None of this is RustyNES code, and nothing in the shell's own use of egui
+changed cost. Not adopted: caching the shell's tessellated output across frames
+when egui requests no repaint (the idle probe shows 2 repaint requests in 1,200
+frames, so it would usually hit). It would save at most the ~26 µs of the whole
+pass, less whenever a status-bar readout changes and forces a rebuild, against
+the risk of showing a stale UI.
+
+**`rui` is now recorded on the overlay-hidden path.** The redraw handler calls
+`run_shell_ui` and `paint_shell` directly there (exactly what `render_shell`
+does) and times the first. This `rui` sits inside `rwait`, not `rwork`, since
+the egui pass runs in the paint closure after the wait clock restarts. One 20 s
+capture on the same ROM and display, on a loaded host, reads `rui` p50
+0.312 ms, mean 0.372, p99 1.638 (it read 0.000 before). That is about 14 times
+the probe's ~22 µs build. The live pass also covers what the probe leaves out:
+`take_egui_input` from winit, the extra closure's windows (save states, the
+virtual pad, scripts), the debugger's hidden panels, and a contended host. The
+gap is **not yet attributed**. It is the next thing to measure, with a quiet
+host and the probe extended toward the live pass.
 
 ### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
 

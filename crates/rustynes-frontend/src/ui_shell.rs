@@ -2798,6 +2798,126 @@ fn shortcuts_grid(ui: &mut egui::Ui, id: &str) {
 mod tests {
     use super::*;
 
+    /// The egui shell's per-frame cost, headless: `RUSTYNES_SHELL_PROBE_FRAMES`
+    /// (default 600) frames of the always-on shell (menu bar, status bar) built
+    /// on a bare `egui::Context` with the app's fonts and theme, then
+    /// tessellated. Prints wall time and, per frame, shapes, primitives,
+    /// vertices, indices and texture-upload bytes. Ignored: a measurement, not
+    /// an assertion. Run it under `perf stat -e instructions:u` to compare
+    /// egui versions independently of host load.
+    #[test]
+    #[ignore = "measurement probe; run explicitly"]
+    // A measurement printout: the counts stay far below 2^52, and splitting the
+    // one straight-line probe would only scatter its accounting.
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+    fn shell_frame_cost_probe() {
+        let frames: usize = std::env::var("RUSTYNES_SHELL_PROBE_FRAMES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(600);
+        let hover = std::env::var("RUSTYNES_SHELL_PROBE_HOVER").is_ok();
+        let config0 = Config {
+            welcome_shown: true,
+            ..Default::default()
+        };
+        let mut config = config0.clone();
+        let mut shell = UiShell::new(&config0);
+        let ctx = egui::Context::default();
+        crate::icons::install(&ctx);
+        apply_theme(&ctx, config.ui.theme);
+        let frame = ShellFrame {
+            rom_label: "Super Mario Bros. (World).nes",
+            rom_loaded: true,
+            fps: 60.0,
+            netplay_active: false,
+            disk_sides: 0,
+            inserted_disk_side: None,
+            vs_system: false,
+            barcode_reader: false,
+            mapper_label: "NROM (0)",
+            region_label: "NTSC",
+            run_ahead: 1,
+            speed: 1.0,
+            paused: false,
+            movie_recording: false,
+            movie_playing: false,
+            av_recording: false,
+            fast_forwarding: false,
+            hd_pack_building: false,
+            ra_status: None,
+            netplay_detail: None,
+            lag_frames: Some(0),
+        };
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 960.0));
+        let (mut shapes, mut prims, mut verts, mut idx, mut tex) = (0u64, 0u64, 0u64, 0u64, 0u64);
+        let (mut warm_tex, mut repaints) = (0u64, 0u64);
+        let mut build_ns = 0u128;
+        let mut tess_ns = 0u128;
+        for i in 0..frames {
+            let mut raw = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(i as f64 / 60.0),
+                ..Default::default()
+            };
+            if hover {
+                // Sweep the pointer along the menu bar, as a user browsing it.
+                let x = (i % 400) as f32;
+                raw.events
+                    .push(egui::Event::PointerMoved(egui::pos2(x, 10.0)));
+            }
+            let t0 = std::time::Instant::now();
+            let out = ctx.run_ui(raw, |ui| {
+                let _ = shell.build(ui, &mut config, &frame, |_, _, _| {}, |_, _| {});
+            });
+            let t1 = std::time::Instant::now();
+            let ppp = out.pixels_per_point;
+            let n_shapes = out.shapes.len() as u64;
+            let delta_bytes: u64 = out
+                .textures_delta
+                .set
+                .values()
+                .flat_map(|ds| ds.iter())
+                .map(|d| (d.image.width() * d.image.height() * 4) as u64)
+                .sum();
+            if out
+                .viewport_output
+                .values()
+                .any(|v| v.repaint_delay < std::time::Duration::from_secs(1))
+            {
+                repaints += 1;
+            }
+            let clipped = ctx.tessellate(out.shapes, ppp);
+            let t2 = std::time::Instant::now();
+            if i >= 10 {
+                build_ns += (t1 - t0).as_nanos();
+                tess_ns += (t2 - t1).as_nanos();
+                shapes += n_shapes;
+                prims += clipped.len() as u64;
+                for c in &clipped {
+                    if let egui::epaint::Primitive::Mesh(m) = &c.primitive {
+                        verts += m.vertices.len() as u64;
+                        idx += m.indices.len() as u64;
+                    }
+                }
+                warm_tex += delta_bytes;
+            }
+            tex += delta_bytes;
+        }
+        let n = (frames - 10) as f64;
+        println!(
+            "SHELL_PROBE frames={frames} hover={hover} build_us={:.1} tess_us={:.1} \
+             shapes={:.1} prims={:.1} verts={:.1} idx={:.1} tex_bytes_total={tex} \
+             tex_bytes_warm_per_frame={:.1} repaint_requests={repaints}",
+            build_ns as f64 / n / 1000.0,
+            tess_ns as f64 / n / 1000.0,
+            shapes as f64 / n,
+            prims as f64 / n,
+            verts as f64 / n,
+            idx as f64 / n,
+            warm_tex as f64 / n,
+        );
+    }
+
     #[test]
     fn welcome_shows_when_not_yet_shown() {
         let config = Config {

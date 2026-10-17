@@ -121,6 +121,13 @@ cycle-accurate core later replaced.
   another's retransmission to a third that had not received it.
 - **Netplay: a different second value for an already confirmed input is
   ignored**, instead of rewriting a frame below the rollback checkpoint.
+- **The performance log records the egui pass in the normal view.**
+  `RUSTYNES_PERF_LOG`'s `rui` column was recorded only while the debugger
+  overlay or a tool panel was open, so with them closed it read 0.000 although
+  the menu and status bars are built every frame. It now reads the egui build
+  there too (0.31 ms p50 in one capture). egui 0.37 itself costs about 10% more
+  instructions per shell frame than 0.36 (about 3 µs); the text-tessellation
+  part is reported upstream as emilk/egui#8731.
 - **`rustynes-apu`'s `std` feature builds on its own.** The crate never
   loaded `std`, so `--no-default-features --features std` failed on its float
   math; every build that worked got `std` from another dependency. Output is

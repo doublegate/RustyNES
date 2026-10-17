@@ -11735,19 +11735,34 @@ impl ApplicationHandler<AppEvent> for App {
                         };
                         // Debugger panels are skipped (overlay hidden) so
                         // `nes = None` is correct even though a ROM may exist.
-                        shell_out = debugger.render_shell(
-                            device,
-                            queue,
-                            encoder,
+                        //
+                        // v3.4.0 — `render_shell`'s two halves, called here
+                        // directly so the egui build can be timed into `rui`.
+                        // Until v3.4.0 `ui_cost` was set only on the locked
+                        // branch, so on this branch, the one taken whenever the
+                        // overlay and tool panels are closed (the normal case),
+                        // `rui` read 0.000 although the menu and status bars are
+                        // built every frame. `render_shell` is exactly these two
+                        // calls, so behaviour is unchanged. This span runs inside
+                        // the `overlay` closure, after the `t_present` restart,
+                        // so it is ALSO inside `rwait` (docs/performance.md);
+                        // `rui` here is a component of `rwait`, not of `rwork`.
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let t_ui = Instant::now();
+                        let (out, prepared) = debugger.run_shell_ui(
                             &window,
-                            view,
-                            size,
                             None,
                             config,
                             ui_shell,
                             &shell_frame,
                             extra,
                         );
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            ui_cost = Some(t_ui.elapsed());
+                        }
+                        shell_out = out;
+                        debugger.paint_shell(device, queue, encoder, view, size, prepared);
                     };
                     // v1.2.0 C3 — when an HD-pack frame was composited this
                     // redraw, present the upscaled buffer through the dedicated
