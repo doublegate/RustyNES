@@ -198,7 +198,14 @@ impl FcgVariant {
 /// reference emulators' boot-relevant behavior.
 #[derive(Debug, Clone)]
 struct Eeprom {
-    mem: Box<[u8]>,
+    // v3.4.0 (`T-DATACH-EXT-EEPROM-BATTERY`): the chip's CONTENTS are not a
+    // field here. They live in the board's single non-volatile image,
+    // `BandaiFcg::nv`, and every method that reads or writes a cell takes
+    // the chip's slice of it as `mem` (exactly `Self::len` bytes). Mapper
+    // 157 carries two chips, and its battery save has to be one contiguous
+    // slice (`Mapper::save_data` returns `&[u8]`); holding each chip's bytes
+    // in its own allocation made that impossible. The protocol state stays
+    // per chip.
     is_x24c01: bool,
 
     last_scl: u8,
@@ -208,7 +215,7 @@ struct Eeprom {
     next_mode: I2cMode,
     /// Device-select byte (24C02 only; includes the R/W bit).
     chip_addr: u8,
-    /// Word address into `mem`.
+    /// Word address into the chip's contents.
     addr: u8,
     /// Byte being shifted in (write) or out (read).
     data: u8,
@@ -273,9 +280,10 @@ impl I2cMode {
 }
 
 impl Eeprom {
-    fn new(bytes: usize, is_x24c01: bool) -> Self {
+    /// A chip in its power-on protocol state. Its contents are the caller's
+    /// [`Self::len`] bytes of `BandaiFcg::nv`, which start erased (`$FF`).
+    fn new(is_x24c01: bool) -> Self {
         Self {
-            mem: vec![0xFFu8; bytes.max(1)].into_boxed_slice(),
             is_x24c01,
             last_scl: 0,
             last_sda: 0,
@@ -288,6 +296,13 @@ impl Eeprom {
             output: 1,
             keeps_word_address: !is_x24c01,
         }
+    }
+
+    /// The chip's size: 128 bytes for the X24C01 (7-bit word address), 256
+    /// for the 24C02. The address mask is the chip's address range, so the
+    /// two cannot disagree.
+    fn len(&self) -> usize {
+        usize::from(self.addr_mask()) + 1
     }
 
     /// Bytes [`Self::save_lines`] writes: the two sampled line levels, both
@@ -338,7 +353,7 @@ impl Eeprom {
         if b[7] > 8 {
             return bad("bit counter above 8");
         }
-        if usize::from(b[5]) >= self.mem.len() {
+        if usize::from(b[5]) >= self.len() {
             return bad("word address past the chip");
         }
         let chip_address = I2cMode::ChipAddress.to_byte();
@@ -414,8 +429,8 @@ impl Eeprom {
 
     /// Drive the EEPROM lines from the `$x00D` register. `scl`/`sda` are the
     /// host-driven clock/data levels; the device's response appears on
-    /// [`Self::read_sda`].
-    fn write_lines(&mut self, scl_b: bool, sda_b: bool) {
+    /// [`Self::read_sda`]. `mem` is the chip's contents (see the struct).
+    fn write_lines(&mut self, mem: &mut [u8], scl_b: bool, sda_b: bool) {
         let scl = u8::from(scl_b);
         let sda = u8::from(sda_b);
 
@@ -436,9 +451,9 @@ impl Eeprom {
             self.mode = I2cMode::Idle;
             self.output = 1;
         } else if scl > self.last_scl {
-            self.clock_rise(sda);
+            self.clock_rise(mem, sda);
         } else if scl < self.last_scl {
-            self.clock_fall(sda);
+            self.clock_fall(mem, sda);
         }
 
         self.last_scl = scl;
@@ -449,7 +464,7 @@ impl Eeprom {
         self.output != 0
     }
 
-    fn clock_rise(&mut self, sda: u8) {
+    fn clock_rise(&mut self, mem: &[u8], sda: u8) {
         match self.mode {
             I2cMode::ChipAddress => {
                 let mut chip = self.chip_addr;
@@ -467,7 +482,7 @@ impl Eeprom {
                         self.counter = 8;
                         if sda != 0 {
                             self.next_mode = I2cMode::Read;
-                            self.data = self.mem[(self.addr & 0x7F) as usize];
+                            self.data = mem[(self.addr & 0x7F) as usize];
                         } else {
                             self.next_mode = I2cMode::Write;
                         }
@@ -493,7 +508,7 @@ impl Eeprom {
                     } else {
                         // 24C02: sequential read continues to the next byte.
                         self.next_mode = I2cMode::Read;
-                        self.data = self.mem[(self.addr & self.addr_mask()) as usize];
+                        self.data = mem[(self.addr & self.addr_mask()) as usize];
                     }
                 }
             }
@@ -501,7 +516,7 @@ impl Eeprom {
         }
     }
 
-    fn clock_fall(&mut self, _sda: u8) {
+    fn clock_fall(&mut self, mem: &mut [u8], _sda: u8) {
         match self.mode {
             I2cMode::ChipAddress => {
                 if self.counter == 8 {
@@ -511,7 +526,7 @@ impl Eeprom {
                         self.output = 1;
                         if self.chip_addr & 0x01 != 0 {
                             self.next_mode = I2cMode::Read;
-                            self.data = self.mem[(self.addr & self.addr_mask()) as usize];
+                            self.data = mem[(self.addr & self.addr_mask()) as usize];
                         } else {
                             self.next_mode = I2cMode::Address;
                         }
@@ -561,7 +576,7 @@ impl Eeprom {
                     } else {
                         I2cMode::Write
                     };
-                    self.mem[(self.addr & self.addr_mask()) as usize] = self.data;
+                    mem[(self.addr & self.addr_mask()) as usize] = self.data;
                     // The EEPROM byte-address counter is a hardware ring: it advances
                     // within the device and rolls over at the top rather than
                     // faulting. `addr` is a `u8` and `addr_mask()` is 0xFF on every
@@ -604,6 +619,16 @@ pub struct BandaiFcg {
     irq_pending: bool,
 
     eeprom: Option<Eeprom>,
+    /// v3.4.0: the board's serial-EEPROM contents, one image for every chip
+    /// it carries. The main chip ([`Self::eeprom`]: the 24C02 of mapper 16 and
+    /// of the Datach main unit, or mapper 159's X24C01) occupies the first
+    /// [`Eeprom::len`] bytes; on mapper 157 with the cartridge's own X24C01
+    /// ([`Self::ext_eeprom`]) its 128 bytes follow, so *Battle Rush*'s image
+    /// is 384 bytes: `$000-$0FF` main unit, `$100-$17F` cartridge. Empty
+    /// without an EEPROM. This is the battery save ([`Mapper::sram`] /
+    /// `save_data`), which is why it is one slice
+    /// (`T-DATACH-EXT-EEPROM-BATTERY`).
+    nv: Box<[u8]>,
     // Last value written to the EEPROM control register (for save-state).
     eeprom_ctrl: u8,
 
@@ -658,11 +683,9 @@ impl BandaiFcg {
                 chr_rom.len()
             )));
         };
-        let eeprom = if variant.eeprom_bytes() > 0 {
-            Some(Eeprom::new(variant.eeprom_bytes(), variant.is_x24c01()))
-        } else {
-            None
-        };
+        let eeprom = (variant.eeprom_bytes() > 0).then(|| Eeprom::new(variant.is_x24c01()));
+        // Erased cells read `$FF`, as the chips ship.
+        let nv = vec![0xFFu8; eeprom.as_ref().map_or(0, Eeprom::len)].into_boxed_slice();
         Ok(Self {
             prg_rom,
             chr,
@@ -677,6 +700,7 @@ impl BandaiFcg {
             irq_enabled: false,
             irq_pending: false,
             eeprom,
+            nv,
             eeprom_ctrl: 0,
             outer: 0,
             wram_enabled: false,
@@ -709,7 +733,12 @@ impl BandaiFcg {
     ) -> Result<Self, MapperError> {
         let mut m = Self::new(prg_rom, chr_rom, mirroring, FcgVariant::Datach)?;
         if external_x24c01 {
-            m.ext_eeprom = Some(Eeprom::new(128, true));
+            let ext = Eeprom::new(true);
+            // The cartridge chip's cells follow the main unit's (see `nv`).
+            let mut nv = m.nv.to_vec();
+            nv.resize(nv.len() + ext.len(), 0xFF);
+            m.nv = nv.into_boxed_slice();
+            m.ext_eeprom = Some(ext);
         }
         Ok(m)
     }
@@ -725,7 +754,7 @@ impl BandaiFcg {
     fn save_datach_tail(&self, out: &mut Vec<u8>) {
         out.push(u8::from(self.ext_scl));
         if let Some(ext) = self.ext_eeprom.as_ref() {
-            out.extend_from_slice(&ext.mem);
+            out.extend_from_slice(&self.nv[self.main_len()..]);
             ext.save_lines(out);
         }
         self.barcode.save(out);
@@ -737,7 +766,7 @@ impl BandaiFcg {
         let ext_len = self
             .ext_eeprom
             .as_ref()
-            .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
+            .map_or(0, |e| e.len() + Eeprom::LINES_LEN);
         let fixed = 1 + ext_len;
         let short = || MapperError::Invalid(format!("Datach state tail of {} bytes", tail.len()));
         if tail.len() < fixed {
@@ -749,16 +778,23 @@ impl BandaiFcg {
             return Err(short());
         }
         if let Some(ext) = self.ext_eeprom.as_ref() {
-            ext.check_lines(&tail[1 + ext.mem.len()..fixed])?;
+            ext.check_lines(&tail[1 + ext.len()..fixed])?;
         }
         self.ext_scl = tail[0] != 0;
+        let main = self.main_len();
         if let Some(ext) = self.ext_eeprom.as_mut() {
-            let n = ext.mem.len();
-            ext.mem.copy_from_slice(&tail[1..=n]);
+            let n = ext.len();
+            self.nv[main..].copy_from_slice(&tail[1..=n]);
             ext.load_lines(&tail[1 + n..fixed]);
         }
         self.barcode = reader;
         Ok(())
+    }
+
+    /// Bytes of [`Self::nv`] that belong to the main chip; the external
+    /// X24C01's start here.
+    fn main_len(&self) -> usize {
+        self.eeprom.as_ref().map_or(0, Eeprom::len)
     }
 
     /// The data line both EEPROMs drive back toward the CPU. "If there is
@@ -813,8 +849,9 @@ impl BandaiFcg {
             0x0..=0x3 if self.variant == FcgVariant::Datach => {
                 self.ext_scl = value & 0x08 != 0;
                 let sda = self.eeprom_ctrl & 0x40 != 0;
+                let main = self.main_len();
                 if let Some(ext) = self.ext_eeprom.as_mut() {
-                    ext.write_lines(self.ext_scl, sda);
+                    ext.write_lines(&mut self.nv[main..], self.ext_scl, sda);
                 }
             }
             0x4..=0x7 if self.variant == FcgVariant::Datach => {}
@@ -857,16 +894,17 @@ impl BandaiFcg {
             }
             0xD => {
                 self.eeprom_ctrl = value;
+                let main = self.main_len();
                 if let Some(ee) = self.eeprom.as_mut() {
                     // Bit 5 = SCL, bit 6 = SDA (host-driven), bit 7 = dir.
                     let scl = (value & 0x20) != 0;
                     let sda = (value & 0x40) != 0;
-                    ee.write_lines(scl, sda);
+                    ee.write_lines(&mut self.nv[..main], scl, sda);
                 }
                 // Mapper 157: bit 6 is "Both EEPROM's I2C SDA"; the external
                 // chip keeps the clock last written to `$8000-$8003`.
                 if let Some(ext) = self.ext_eeprom.as_mut() {
-                    ext.write_lines(self.ext_scl, value & 0x40 != 0);
+                    ext.write_lines(&mut self.nv[main..], self.ext_scl, value & 0x40 != 0);
                 }
             }
             _ => {}
@@ -875,24 +913,66 @@ impl BandaiFcg {
 }
 
 impl Mapper for BandaiFcg {
-    // Battery save: the serial EEPROM's contents -- 128 bytes (24C01) or 256
+    // Battery save: the serial EEPROM contents -- 128 bytes (X24C01) or 256
     // (24C02) -- when this variant carries one, and nothing otherwise (core
     // audit IMP-08). The EEPROM is reached through an I2C protocol, not a CPU
     // window, so this accessor is the ONLY way the frontend can persist it.
+    // v3.4.0: it is the board's whole image, `nv`, so on *Battle Rush*
+    // (mapper 157 with the cartridge's X24C01) it is 384 bytes, the main
+    // unit's 24C02 then the cartridge's chip, and both persist through the
+    // hosts' one battery file. `save_data` is this slice (the trait default).
     fn sram(&self) -> &[u8] {
         if !self.wram.is_empty() {
             return &self.wram;
         }
-        self.eeprom.as_ref().map_or(&[], |e| &e.mem)
+        &self.nv
     }
     fn sram_mut(&mut self) -> &mut [u8] {
         if !self.wram.is_empty() {
             return &mut self.wram;
         }
-        match self.eeprom.as_mut() {
-            Some(e) => &mut e.mem,
-            None => &mut [],
+        &mut self.nv
+    }
+
+    // v3.4.0: a v3.3.0 *Battle Rush* save is the main unit's 256 bytes alone
+    // (the cartridge chip was never saved), and must still load. It is the
+    // prefix of today's image, so it loads there, and the cartridge chip is
+    // set to the erased state a v3.3.0 session started it in: the old file
+    // says nothing about it, and leaving whatever the board held before the
+    // load would make the result depend on the order a host does things.
+    // Any other length is refused, as on every board.
+    fn accepts_save_len(&self, len: usize) -> bool {
+        len == self.save_data().len() || (self.ext_eeprom.is_some() && len == self.main_len())
+    }
+    fn load_save_data(&mut self, bytes: &[u8]) -> bool {
+        if !self.wram.is_empty() || !self.accepts_save_len(bytes.len()) {
+            return crate::mapper::load_save_data_exact(self, bytes);
         }
+        let n = bytes.len();
+        self.nv[..n].copy_from_slice(bytes);
+        self.nv[n..].fill(0xFF);
+        true
+    }
+
+    // A power-on movie and a netplay start clear the save data
+    // (`power_on_for_movie`). v3.4.0 keeps exactly what v3.3.0 started them
+    // on: the main chip zeroed, the trait default this board has always
+    // used, and the cartridge X24C01 erased (`$FF`), which is what it held
+    // then because it was not part of the save and the power cycle before
+    // the clear rebuilt it blank. Zeroing it too, the default over the
+    // grown image, would change what a *Battle Rush* movie reads from that
+    // chip, so the clear is split here and the movie timeline does not move.
+    // (That the main chip clears to `$00` and not to an EEPROM's erased
+    // `$FF` is v3.3.0's behaviour, kept; changing it would move every Bandai
+    // EEPROM movie and belongs to an `EMULATION_EPOCH` change of its own.)
+    fn clear_save_data(&mut self) {
+        if !self.wram.is_empty() {
+            self.wram.fill(0);
+            return;
+        }
+        let main = self.main_len();
+        self.nv[..main].fill(0);
+        self.nv[main..].fill(0xFF);
     }
 
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
@@ -1082,7 +1162,7 @@ impl Mapper for BandaiFcg {
         info.extra.push((
             "eeprom".into(),
             match self.eeprom.as_ref() {
-                Some(ee) => format!("{} bytes", ee.mem.len()),
+                Some(_) => format!("{} bytes", self.nv.len()),
                 None => "none".into(),
             },
         ));
@@ -1093,7 +1173,7 @@ impl Mapper for BandaiFcg {
         let ee_len = self
             .eeprom
             .as_ref()
-            .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
+            .map_or(0, |e| e.len() + Eeprom::LINES_LEN);
         let mut out = Vec::with_capacity(
             18 + self.vram.len() + ee_len + if self.chr_is_ram { self.chr.len() } else { 0 },
         );
@@ -1108,7 +1188,7 @@ impl Mapper for BandaiFcg {
         out.push(self.eeprom_ctrl);
         // EEPROM contents and protocol state (if any).
         if let Some(ee) = self.eeprom.as_ref() {
-            out.extend_from_slice(&ee.mem);
+            out.extend_from_slice(&self.nv[..ee.len()]);
             ee.save_lines(&mut out);
         }
         out.extend_from_slice(&self.vram);
@@ -1128,7 +1208,7 @@ impl Mapper for BandaiFcg {
         let ee_len = self
             .eeprom
             .as_ref()
-            .map_or(0, |e| e.mem.len() + Eeprom::LINES_LEN);
+            .map_or(0, |e| e.len() + Eeprom::LINES_LEN);
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         // Versions 3 (v3.2.0) and 2 (v3.1.x) are read. Version 2 is version 3
         // without the EEPROM protocol record (`T-FCG-EEPROM-STATE`); mapper
@@ -1184,7 +1264,7 @@ impl Mapper for BandaiFcg {
             other => return Err(MapperError::Invalid(format!("mirroring {other}"))),
         };
         if let Some(ee) = self.eeprom.as_ref().filter(|_| lines) {
-            let at = 18 + ee.mem.len();
+            let at = 18 + ee.len();
             ee.check_lines(&data[at..at + Eeprom::LINES_LEN])?;
         }
         if self.variant == FcgVariant::Datach {
@@ -1209,8 +1289,8 @@ impl Mapper for BandaiFcg {
         self.irq_pending = pending != 0;
         self.eeprom_ctrl = ctrl;
         if let Some(ee) = self.eeprom.as_mut() {
-            let n = ee.mem.len();
-            ee.mem.copy_from_slice(&data[cursor..cursor + n]);
+            let n = ee.len();
+            self.nv[..n].copy_from_slice(&data[cursor..cursor + n]);
             cursor += n;
             if lines {
                 ee.load_lines(&data[cursor..cursor + Eeprom::LINES_LEN]);
@@ -1368,7 +1448,7 @@ mod tests {
         )
         .unwrap();
         assert!(m159.eeprom.is_some());
-        assert_eq!(m159.eeprom.as_ref().unwrap().mem.len(), 128);
+        assert_eq!(m159.sram().len(), 128);
         let mfcg = BandaiFcg::new(
             synth_prg(8),
             synth_chr(16),
@@ -1478,7 +1558,7 @@ mod tests {
         let variant = FcgVariant::Lz93d50_24c01;
         let mut a =
             BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
-        a.eeprom.as_mut().unwrap().mem[0x05] = 0xAB;
+        a.nv[0x05] = 0xAB;
         {
             let mut d = I2cDriver { m: &mut a };
             d.start();
@@ -1489,7 +1569,7 @@ mod tests {
 
         let mut b =
             BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
-        b.eeprom.as_mut().unwrap().mem[0x05] = 0x00; // overwritten by the load
+        b.nv[0x05] = 0x00; // overwritten by the load
         b.load_state(&blob).unwrap();
 
         let from_a = I2cDriver { m: &mut a }.recv_data_lsb_first();
@@ -1511,7 +1591,7 @@ mod tests {
         let variant = FcgVariant::Lz93d50_24c01;
         let m = BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
         let good = m.save_state();
-        let lines = 18 + m.eeprom.as_ref().unwrap().mem.len();
+        let lines = 18 + m.eeprom.as_ref().unwrap().len();
         let mut other =
             BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
         let before = other.save_state();
@@ -1542,7 +1622,7 @@ mod tests {
         let mut v2 = v3.to_vec();
         v2[0] = 2;
         if let Some(ee) = m.eeprom.as_ref() {
-            let at = 18 + ee.mem.len();
+            let at = 18 + ee.len();
             v2.drain(at..at + Eeprom::LINES_LEN);
         }
         v2
@@ -1576,8 +1656,8 @@ mod tests {
             a.cpu_write(0x6008, 3);
             a.cpu_write(0x800B, 0x34);
             a.cpu_write(0x800D, 0x60); // SCL and SDA high: an idle bus
-            if let Some(ee) = a.eeprom.as_mut() {
-                ee.mem[0x12] = 0x5A;
+            if a.eeprom.is_some() {
+                a.nv[0x12] = 0x5A;
             }
             let v2 = as_v2(&a, &a.save_state());
 
@@ -1602,7 +1682,7 @@ mod tests {
             assert_eq!(b.irq_latch, a.irq_latch, "{variant:?}: IRQ latch");
             assert_eq!(b.eeprom_ctrl, a.eeprom_ctrl, "{variant:?}: `$x00D`");
             if let Some(ee) = b.eeprom.as_ref() {
-                assert_eq!(ee.mem[0x12], 0x5A, "{variant:?}: contents");
+                assert_eq!(b.nv[0x12], 0x5A, "{variant:?}: contents");
                 assert_eq!(ee.mode, I2cMode::Idle, "{variant:?}: idle");
                 assert_eq!((ee.last_scl, ee.last_sda), (1, 1), "{variant:?}: lines");
             }
@@ -1664,8 +1744,8 @@ mod tests {
             a.cpu_write(0x6008, 3);
             a.cpu_write(0x800B, 0x34);
             a.cpu_write(0x800D, 0x60);
-            if let Some(ee) = a.eeprom.as_mut() {
-                ee.mem[0x12] = 0x5A;
+            if a.eeprom.is_some() {
+                a.nv[0x12] = 0x5A;
             }
             assert_eq!(as_v2(&a, &a.save_state()), bytes, "{variant:?}: layout");
             let mut b = board();
@@ -1696,7 +1776,7 @@ mod tests {
             BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
         m.cpu_write(0x8008, 3);
         let good = m.save_state();
-        let lines = 18 + m.eeprom.as_ref().unwrap().mem.len();
+        let lines = 18 + m.eeprom.as_ref().unwrap().len();
         let mut other =
             BandaiFcg::new(synth_prg(8), synth_chr(16), Mirroring::Vertical, variant).unwrap();
         other.cpu_write(0x8008, 1);
@@ -1743,7 +1823,7 @@ mod tests {
             assert_eq!(got, 0x5A, "read-back must match the written byte");
             d.stop();
         }
-        assert_eq!(m.eeprom.as_ref().unwrap().mem[0x12], 0x5A);
+        assert_eq!(m.sram()[0x12], 0x5A);
     }
 
     #[test]
@@ -1759,9 +1839,7 @@ mod tests {
         m.cpu_write(0x8000, 5);
         m.cpu_write(0x800B, 0x10);
         m.cpu_write(0x800A, 0x01);
-        if let Some(ee) = m.eeprom.as_mut() {
-            ee.mem[0] = 0x42;
-        }
+        m.sram_mut()[0] = 0x42;
         let blob = m.save_state();
         let mut m2 = BandaiFcg::new(
             synth_prg(8),
@@ -1774,7 +1852,7 @@ mod tests {
         assert_eq!(m.cpu_read(0x8000), m2.cpu_read(0x8000));
         assert_eq!(m.ppu_read(0x0000), m2.ppu_read(0x0000));
         assert_eq!(m.irq_counter, m2.irq_counter);
-        assert_eq!(m2.eeprom.as_ref().unwrap().mem[0], 0x42);
+        assert_eq!(m2.sram()[0], 0x42);
     }
 
     // ---- EEPROM address-counter rollover ------------------------------------
@@ -1788,25 +1866,33 @@ mod tests {
     #[test]
     fn eeprom_address_wraps_at_the_top_of_each_chip() {
         for (bytes, is_x24c01, top) in [(256usize, false, 0xFFu8), (128, true, 0x7F)] {
-            let mut e = Eeprom::new(bytes, is_x24c01);
+            let mut e = Eeprom::new(is_x24c01);
+            assert_eq!(e.len(), bytes, "x24c01={is_x24c01}: chip size");
+            let mut mem = vec![0xFFu8; bytes];
             e.addr = top;
             e.data = 0xA5;
             e.counter = 8;
             e.mode = I2cMode::Write;
             // Completing the byte must advance past the top without trapping.
-            e.clock_fall(0);
+            e.clock_fall(&mut mem, 0);
             assert_eq!(e.addr, 0, "x24c01={is_x24c01}: ${top:02X} + 1 wraps to $00");
+            assert_eq!(
+                mem[usize::from(top)],
+                0xA5,
+                "x24c01={is_x24c01}: the top cell"
+            );
         }
     }
 
     #[test]
     fn eeprom_sequential_read_wraps_at_the_top_of_each_chip() {
         for (bytes, is_x24c01, top) in [(256usize, false, 0xFFu8), (128, true, 0x7F)] {
-            let mut e = Eeprom::new(bytes, is_x24c01);
+            let mut e = Eeprom::new(is_x24c01);
+            let mut mem = vec![0xFFu8; bytes];
             e.addr = top;
             e.counter = 8;
             e.mode = I2cMode::Read;
-            e.clock_fall(0);
+            e.clock_fall(&mut mem, 0);
             assert_eq!(e.addr, 0, "x24c01={is_x24c01}: read rollover reaches $00");
         }
     }
@@ -2028,12 +2114,18 @@ mod tests {
         assert!(!m.irq_pending(), "a $800A write acknowledges");
     }
 
-    /// The main unit's 24C02 is the battery save, 256 bytes, with or without
-    /// the cartridge's X24C01.
+    /// The battery save is the main unit's 24C02, 256 bytes, followed on
+    /// *Battle Rush* by the cartridge's X24C01, 128 more (v3.4.0,
+    /// `T-DATACH-EXT-EEPROM-BATTERY`; until then it was the 24C02 alone with
+    /// or without the second chip, and the second chip was lost at power-off).
+    /// The size is fixed by the header, so a host sees one stable length per
+    /// ROM, which libretro's `RETRO_MEMORY_SAVE_RAM` requires.
     #[test]
-    fn m157_battery_save_is_the_main_units_24c02() {
+    fn m157_battery_save_is_the_24c02_then_the_cartridge_x24c01() {
         assert_eq!(m157(false).sram().len(), 256);
-        assert_eq!(m157(true).sram().len(), 256);
+        assert_eq!(m157(false).save_data().len(), 256);
+        assert_eq!(m157(true).sram().len(), 256 + 128);
+        assert_eq!(m157(true).save_data().len(), 256 + 128);
     }
 
     /// `$6000-$7FFF` read: bit 4 is the EEPROMs' data out (released = high
@@ -2197,8 +2289,15 @@ mod tests {
             assert!(!d.recv_bit(), "data acked");
             d.stop();
         }
-        assert_eq!(m.ext_eeprom.as_ref().unwrap().mem[0x15], 0x6B);
-        assert!(m.sram().iter().all(|&b| b == 0xFF), "24C02 untouched");
+        assert_eq!(
+            m.sram()[256 + 0x15],
+            0x6B,
+            "the cartridge chip's cells follow the 24C02's"
+        );
+        assert!(
+            m.sram()[..256].iter().all(|&b| b == 0xFF),
+            "24C02 untouched"
+        );
         // `$8004` is not the external clock: toggling it with SDA moving
         // does not form a START on the X24C01.
         m.cpu_write(0x8000, 0x00); // external SCL low
@@ -2288,8 +2387,8 @@ mod tests {
         let mut a = datach(true);
         a.cpu_write(0x8008, 3);
         a.cpu_write(0x8001, 0x08);
-        a.ext_eeprom.as_mut().unwrap().mem[5] = 0x99;
-        a.eeprom.as_mut().unwrap().mem[6] = 0x77;
+        a.nv[256 + 5] = 0x99;
+        a.nv[6] = 0x77;
         a.scan_barcode(&Barcode::parse("4006381333931").unwrap());
         for _ in 0..200_000 {
             a.notify_cpu_cycle();
@@ -2300,7 +2399,7 @@ mod tests {
         assert_eq!(b.save_state(), blob);
         assert!(b.barcode_scan_in_progress());
         assert!(b.ext_scl);
-        assert_eq!(b.ext_eeprom.as_ref().unwrap().mem[5], 0x99);
+        assert_eq!(b.sram()[256 + 5], 0x99);
         assert_eq!(b.sram()[6], 0x77);
         for _ in 0..200_000 {
             assert_eq!(a.cpu_read(0x6000), b.cpu_read(0x6000));
@@ -2313,5 +2412,240 @@ mod tests {
         assert!(b.load_state(&long).is_err());
         // A board without the external chip has a shorter tail.
         assert!(datach(false).load_state(&blob).is_err());
+    }
+
+    // --- v3.4.0 `T-DATACH-EXT-EEPROM-BATTERY` ------------------------------
+
+    /// Write `value` to the cartridge X24C01's word `addr` through the bus:
+    /// START, seven address bits LSB-first, R/W = 0, the data LSB-first, STOP
+    /// (the protocol `m157_external_x24c01_is_clocked_by_8000_bit_3_only`
+    /// drives).
+    fn ext_write(m: &mut BandaiFcg, addr: u8, value: u8) {
+        let mut d = DatachI2c { m, external: true };
+        d.start();
+        for i in 0..7 {
+            d.send_bit(addr >> i & 1 != 0);
+        }
+        d.send_bit(false);
+        assert!(!d.recv_bit(), "address acked");
+        for i in 0..8 {
+            d.send_bit(value >> i & 1 != 0);
+        }
+        assert!(!d.recv_bit(), "data acked");
+        d.stop();
+    }
+
+    /// Read the cartridge X24C01's word `addr` back through the bus: the
+    /// address byte with R/W = 1, its ACK, then eight data bits LSB-first,
+    /// sampled on bit 4 of `$6000` (both chips' outputs ANDed; the idle
+    /// 24C02 holds its output high).
+    fn ext_read(m: &mut BandaiFcg, addr: u8) -> u8 {
+        let mut d = DatachI2c { m, external: true };
+        d.start();
+        for i in 0..7 {
+            d.send_bit(addr >> i & 1 != 0);
+        }
+        d.send_bit(true);
+        assert!(!d.recv_bit(), "address acked");
+        let value = (0..8).fold(0u8, |acc, i| acc | u8::from(d.recv_bit()) << i);
+        d.send_bit(true); // no master ACK: the read ends
+        d.stop();
+        value
+    }
+
+    /// Write `value` to the main unit's 24C02 at `addr` (device select
+    /// `$A0`, word address, data, all MSB-first).
+    fn main_write(m: &mut BandaiFcg, addr: u8, value: u8) {
+        let mut d = DatachI2c { m, external: false };
+        d.start();
+        assert!(d.send_msb_first(0xA0), "device select acked");
+        assert!(d.send_msb_first(addr), "word address acked");
+        assert!(d.send_msb_first(value), "data acked");
+        d.stop();
+    }
+
+    /// The ticket's red test. A byte the game writes to *Battle Rush*'s own
+    /// X24C01 must come back after a battery save and a fresh cartridge:
+    /// the host takes `save_data()`, and on the next session copies it into
+    /// a freshly built board's `save_data_mut()` (the path every frontend
+    /// uses). Before v3.4.0 `save_data()` was the 24C02 alone, so the
+    /// 24C01's byte was lost and read back as the blank chip's `$FF`.
+    #[test]
+    fn m157_external_x24c01_survives_a_battery_save() {
+        let mut m = datach(true);
+        ext_write(&mut m, 0x15, 0x6B);
+        main_write(&mut m, 0x37, 0xC4);
+        assert_eq!(ext_read(&mut m, 0x15), 0x6B, "the write landed");
+        let sav = m.save_data().to_vec();
+
+        let mut fresh = datach(true);
+        fresh.save_data_mut().copy_from_slice(&sav);
+        assert_eq!(
+            ext_read(&mut fresh, 0x15),
+            0x6B,
+            "the cartridge X24C01 came back"
+        );
+        assert_eq!(fresh.save_data()[0x37], 0xC4, "the main unit's 24C02 too");
+    }
+
+    /// FNV-1a 64, to pin a save-state blob without committing its bytes.
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xCBF2_9CE4_8422_2325, |h, &b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3)
+        })
+    }
+
+    /// v3.4.0 moved every EEPROM's contents out of the chip model into one
+    /// board-owned image (so the battery save can be one slice). The SAVE
+    /// STATE must not notice: these hashes were taken from the v3.3.0 code,
+    /// before the move, after the same scripted traffic (each chip left in
+    /// the middle of a transaction, so the protocol record is not idle), and
+    /// any change to a variant's blob fails here.
+    #[test]
+    fn eeprom_save_state_bytes_are_unchanged_since_v3_3_0() {
+        let script = |m: &mut BandaiFcg, external: bool| {
+            let mut d = DatachI2c { m, external };
+            d.start();
+            if !external {
+                assert!(d.send_msb_first(0xA0));
+            }
+            d.send_msb_first(0x2E);
+            d.send_msb_first(0x9D);
+            d.send_bit(true); // one bit into the next byte: mid-transaction
+        };
+        let mut m16 = BandaiFcg::new(
+            synth_prg(8),
+            synth_chr(16),
+            Mirroring::Vertical,
+            FcgVariant::Lz93d50_24c02,
+        )
+        .unwrap();
+        script(&mut m16, false);
+        let mut m159 = BandaiFcg::new(
+            synth_prg(8),
+            synth_chr(16),
+            Mirroring::Vertical,
+            FcgVariant::Lz93d50_24c01,
+        )
+        .unwrap();
+        script(&mut m159, false);
+        let mut d0 = datach(false);
+        script(&mut d0, false);
+        let mut d1 = datach(true);
+        ext_write(&mut d1, 0x15, 0x6B);
+        main_write(&mut d1, 0x37, 0xC4);
+        script(&mut d1, true);
+        let got = [
+            fnv1a64(&m16.save_state()),
+            fnv1a64(&m159.save_state()),
+            fnv1a64(&d0.save_state()),
+            fnv1a64(&d1.save_state()),
+        ];
+        assert_eq!(
+            got,
+            [
+                0x5E41_7560_A583_155C,
+                0x34CC_EAED_02CB_EE9E,
+                0x1CC1_1339_6D35_A2F4,
+                0xE8C5_E31E_9F9B_0A8F,
+            ],
+            "{got:#018x?}"
+        );
+    }
+
+    /// The load path every host now uses (`Mapper::load_save_data`) carries
+    /// the full image across: both chips, read back through the bus.
+    #[test]
+    fn m157_load_save_data_restores_both_chips() {
+        let mut m = datach(true);
+        ext_write(&mut m, 0x7F, 0x3C); // the cartridge chip's top cell
+        main_write(&mut m, 0xFF, 0x81); // and the 24C02's
+        let sav = m.save_data().to_vec();
+        let mut fresh = datach(true);
+        assert!(fresh.accepts_save_len(sav.len()));
+        assert!(fresh.load_save_data(&sav));
+        assert_eq!(fresh.save_data(), sav.as_slice());
+        assert_eq!(ext_read(&mut fresh, 0x7F), 0x3C);
+        assert_eq!(fresh.sram()[0xFF], 0x81);
+    }
+
+    /// A v3.3.0 *Battle Rush* save is the 24C02's 256 bytes alone. It still
+    /// loads, into the 24C02, and the cartridge chip is the erased chip a
+    /// v3.3.0 session started with, whatever the board held before the load
+    /// (here, a byte written first, which a stale-tail load would keep).
+    #[test]
+    fn m157_a_v3_3_0_save_loads_into_the_24c02() {
+        let mut v330 = vec![0xFFu8; 256];
+        v330[0x37] = 0xC4;
+        let mut m = datach(true);
+        ext_write(&mut m, 0x15, 0x6B);
+        assert!(m.accepts_save_len(256));
+        assert!(m.load_save_data(&v330));
+        assert_eq!(&m.save_data()[..256], v330.as_slice(), "the 24C02");
+        assert!(
+            m.save_data()[256..].iter().all(|&b| b == 0xFF),
+            "the cartridge chip is erased"
+        );
+        assert_eq!(ext_read(&mut m, 0x15), 0xFF, "and reads so on the bus");
+        // The next save is the full image: the file upgrades in place.
+        assert_eq!(m.save_data().len(), 384);
+    }
+
+    /// Every other length is refused and changes nothing; and a board
+    /// without the cartridge chip, or a mapper-16 / 159 board, accepts only
+    /// its exact size (the trait default), so the legacy rule is confined to
+    /// the one board whose save grew.
+    #[test]
+    fn a_bandai_save_of_another_size_is_refused() {
+        let mut m = datach(true);
+        main_write(&mut m, 0x01, 0x22);
+        let before = m.save_data().to_vec();
+        for len in [0usize, 128, 255, 257, 383, 385, 512] {
+            assert!(!m.accepts_save_len(len), "{len}");
+            assert!(!m.load_save_data(&vec![0u8; len]), "{len}");
+            assert_eq!(m.save_data(), before.as_slice(), "{len}: unchanged");
+        }
+        let mut plain = datach(false);
+        assert!(plain.accepts_save_len(256));
+        assert!(!plain.accepts_save_len(384));
+        assert!(!plain.load_save_data(&[0u8; 384]));
+        for (variant, size) in [
+            (FcgVariant::Lz93d50_24c02, 256usize),
+            (FcgVariant::Lz93d50_24c01, 128),
+            (FcgVariant::Lz93d50Wram, WRAM_153),
+        ] {
+            let mut m =
+                BandaiFcg::new(synth_prg(32), Box::new([]), Mirroring::Vertical, variant).unwrap();
+            assert!(m.accepts_save_len(size), "{variant:?}");
+            assert!(!m.accepts_save_len(size / 2), "{variant:?}");
+            assert!(m.load_save_data(&vec![0x5Au8; size]), "{variant:?}");
+            assert!(m.save_data().iter().all(|&b| b == 0x5A), "{variant:?}");
+        }
+    }
+
+    /// The movie / netplay clear (`Mapper::clear_save_data`) leaves every
+    /// variant where v3.3.0 left it: the main chip zeroed (as the trait
+    /// default did), the Datach cartridge's X24C01 erased, mapper 153's WRAM
+    /// zeroed. Only the cartridge chip's half is new code, because the chip
+    /// only joined the save data in v3.4.0.
+    #[test]
+    fn the_movie_clear_starts_where_v3_3_0_started() {
+        let mut d = datach(true);
+        d.sram_mut().fill(0x5A);
+        d.clear_save_data();
+        assert!(d.save_data()[..256].iter().all(|&b| b == 0), "24C02");
+        assert!(d.save_data()[256..].iter().all(|&b| b == 0xFF), "X24C01");
+        assert_eq!(ext_read(&mut d, 0x15), 0xFF, "as a v3.3.0 movie read it");
+        for variant in [
+            FcgVariant::Lz93d50_24c02,
+            FcgVariant::Lz93d50_24c01,
+            FcgVariant::Lz93d50Wram,
+        ] {
+            let mut m =
+                BandaiFcg::new(synth_prg(32), Box::new([]), Mirroring::Vertical, variant).unwrap();
+            m.sram_mut().fill(0x5A);
+            m.clear_save_data();
+            assert!(m.save_data().iter().all(|&b| b == 0), "{variant:?}");
+        }
     }
 }

@@ -352,6 +352,24 @@ impl Nes {
         self.bus.mapper.save_data_mut()
     }
 
+    /// v3.4.0 — whether a battery file of `len` bytes is one this cartridge
+    /// can load: its [`Self::save_data`] length, or an earlier layout the
+    /// board still reads (mapper 157's v3.3.0 main-unit-only save). A host
+    /// checks it before reading a file in full. See `Mapper::accepts_save_len`.
+    #[must_use]
+    pub fn accepts_save_len(&self, len: usize) -> bool {
+        self.bus.mapper.accepts_save_len(len)
+    }
+
+    /// v3.4.0 — load a battery file into [`Self::save_data`]. Returns
+    /// `false`, changing nothing, for a length [`Self::accepts_save_len`]
+    /// refuses. Every host loads a save through this, so a board's earlier
+    /// layout is handled in the board and not in each frontend. See
+    /// `Mapper::load_save_data`.
+    pub fn load_save_data(&mut self, bytes: &[u8]) -> bool {
+        self.bus.mapper.load_save_data(bytes)
+    }
+
     /// v2.9.6 — return the save data to a never-saved cartridge: zeroed RAM,
     /// or the flash image as loaded.
     pub fn clear_save_data(&mut self) {

@@ -39,7 +39,9 @@
 //! power-on zeros. So [`crate::battery_save::BatterySave::attach`] refuses to arm itself when an
 //! existing file cannot be used: an I/O error other than "not found", or a file
 //! whose length is not the cartridge's save size (a different board revision, a
-//! truncated copy, or another emulator's format). The file is left untouched and
+//! truncated copy, or another emulator's format; since v3.4.0 the board names
+//! the sizes it takes, `Nes::accepts_save_len`, so a save layout that grew in a
+//! release still loads its earlier file). The file is left untouched and
 //! the session simply is not persisted. The baseline copy is taken **after** the
 //! load, so an attached session never rewrites the bytes it just read.
 //!
@@ -183,9 +185,13 @@ impl BatterySave {
         let expected = nes.save_data().len();
         // Size first, from the metadata: reading a file of the wrong size in
         // full would let a huge or corrupt `.sav` allocate without bound
-        // before being refused (review on #551).
+        // before being refused (review on #551). v3.4.0: "the right size" is
+        // the board's to say (`Nes::accepts_save_len`): mapper 157 with the
+        // cartridge's X24C01 also takes the shorter file v3.3.0 wrote. Every
+        // accepted length is at most `expected`, the current layout's.
+        let accepted = |len: u64| usize::try_from(len).is_ok_and(|n| nes.accepts_save_len(n));
         match std::fs::metadata(&path) {
-            Ok(meta) if meta.len() != expected as u64 => {
+            Ok(meta) if !accepted(meta.len()) => {
                 return Err(AttachError::WrongSize {
                     path,
                     found: meta.len(),
@@ -195,10 +201,11 @@ impl BatterySave {
             // Read through `take(expected + 1)`: a file that grows between the
             // metadata check and the read cannot allocate past one byte over,
             // and that byte is what shows it changed (agy round 3 on #551).
+            // The board loads it (`Nes::load_save_data`), refusing a length it
+            // does not take, so a file that changed size in between is caught
+            // there.
             Ok(_) => match read_at_most(&path, expected as u64 + 1) {
-                Ok(bytes) if bytes.len() == expected => {
-                    nes.save_data_mut().copy_from_slice(&bytes);
-                }
+                Ok(bytes) if nes.load_save_data(&bytes) => {}
                 // Changed size between the two calls.
                 Ok(bytes) => {
                     return Err(AttachError::WrongSize {
@@ -511,5 +518,65 @@ mod tests {
             vec![0x11u8; 100],
             "untouched"
         );
+    }
+
+    /// Both EEPROMs reach the `.sav` and come back in the next session:
+    /// the 384-byte image, the cartridge X24C01's cells after the 24C02's.
+    /// (That the bus reads and writes those cells is pinned in the mapper's
+    /// own tests; this pins the desktop's file path.)
+    #[test]
+    fn a_datach_save_keeps_both_eeproms() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = crate::web_battery::tests::datach_rom();
+        let mut nes = Nes::from_rom(&bytes).unwrap();
+        assert_eq!(nes.save_data().len(), 384);
+        let mut save = BatterySave::attach(&mut nes, dir.path()).unwrap().unwrap();
+        nes.save_data_mut()[0x37] = 0xC4; // the main unit's 24C02
+        nes.save_data_mut()[256 + 0x15] = 0x6B; // the cartridge's X24C01
+        assert!(save.flush(&mut nes, true).unwrap());
+        let on_disk = std::fs::read(save.path()).unwrap();
+        assert_eq!(on_disk.len(), 384);
+
+        let mut again = Nes::from_rom(&bytes).unwrap();
+        let _ = BatterySave::attach(&mut again, dir.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            again.save_data(),
+            on_disk.as_slice(),
+            "both chips came back"
+        );
+    }
+
+    /// A v3.3.0 `.sav` of the same game is the 24C02's 256 bytes. It loads
+    /// into the 24C02, the cartridge chip starts erased, and the first write
+    /// after a change rewrites the file at the new size.
+    #[test]
+    fn a_v3_3_0_datach_save_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut nes = Nes::from_rom(&crate::web_battery::tests::datach_rom()).unwrap();
+        let path = sav_path(dir.path(), nes.rom_sha256());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut v330 = vec![0xFFu8; 256];
+        v330[0x37] = 0xC4;
+        std::fs::write(&path, &v330).unwrap();
+        let mut save = BatterySave::attach(&mut nes, dir.path()).unwrap().unwrap();
+        assert_eq!(&nes.save_data()[..256], v330.as_slice());
+        assert!(nes.save_data()[256..].iter().all(|&b| b == 0xFF));
+        assert!(!save.flush(&mut nes, true).unwrap(), "nothing changed yet");
+        nes.save_data_mut()[256] = 0x01;
+        assert!(save.flush(&mut nes, true).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap().len(), 384, "upgraded");
+        // Any other size is still refused, and the file kept.
+        std::fs::write(&path, [0u8; 300]).unwrap();
+        let mut other = Nes::from_rom(&crate::web_battery::tests::datach_rom()).unwrap();
+        assert!(matches!(
+            BatterySave::attach(&mut other, dir.path()),
+            Err(AttachError::WrongSize {
+                found: 300,
+                expected: 384,
+                ..
+            })
+        ));
     }
 }
