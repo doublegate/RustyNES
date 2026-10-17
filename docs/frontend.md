@@ -2371,6 +2371,23 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   metadata, checked before any read) is not the cartridge's save size, or that
   cannot be read, is left untouched and the session is not persisted. The
   reason is shown in the status bar as well as logged.
+- **The board names the sizes it takes (v3.4.0).** "The cartridge's save
+  size" is `Nes::accepts_save_len`, and the file is loaded with
+  `Nes::load_save_data`, not by a host-side length comparison and copy. Every
+  board takes exactly its `save_data()` length except one whose save grew in
+  a release: mapper 157 with the cartridge's own X24C01 (*Battle Rush*) saves
+  384 bytes since v3.4.0 (the main unit's 24C02, then the cartridge chip;
+  `docs/mappers.md`, mapper 157) and still loads the 256-byte v3.3.0 file into
+  the 24C02, with the cartridge chip erased. The next write stores 384. The
+  web store and the mobile bridge (`NesController::load_battery_ram`, and
+  `accepts_battery_ram_len`, which the Android and iOS hosts ask before
+  reading the file) follow the same rule. Pinned by
+  `a_datach_save_keeps_both_eeproms` and `a_v3_3_0_datach_save_still_loads`
+  here, `a_datach_record_restores_both_eeproms_and_its_v3_3_0_size` (web),
+  `a_datach_save_round_trips_both_eeproms_through_the_bridge` (mobile), and
+  `a_battery_save_of_an_accepted_earlier_size_is_read` (the Android saver,
+  JVM). The iOS `BatterySaver` change is not compiled on this project's Linux
+  hosts; its CI job builds it.
 - **Keyed on the full-file hash**, like save states, so a header correction
   starts a new file; the old one is kept.
 - **Loading a save state** restores the save RAM it captured, and the next
@@ -2468,9 +2485,10 @@ headless; `wasm_idb` only moves the bytes.
   event in which an asynchronous write could finish. Loading another ROM,
   closing the ROM, and starting a movie or netplay session force one too.
 - **Never clobbers a record it did not read.** A record whose length is not
-  the cartridge's save size, or a store that could not be read, leaves the
-  session unpersisted and the record untouched, with the reason in the status
-  bar.
+  one the cartridge takes (`Nes::accepts_save_len`; since v3.4.0 that includes
+  the Datach's 256-byte v3.3.0 save beside its 384-byte image), or a store that
+  could not be read, leaves the session unpersisted and the record untouched,
+  with the reason in the status bar.
 - **Not verified headless.** The `IndexedDB` glue (`wasm_idb::get_battery`,
   `put_battery`, the page-hide listener) runs only in a browser; its check is
   manual, recorded in the v2.9.7 notes.

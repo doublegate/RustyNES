@@ -1614,13 +1614,30 @@ impl NesController {
         out
     }
 
+    /// v3.4.0 — whether a `.sav` of `len` bytes is one
+    /// [`Self::load_battery_ram`] takes, for the host to ask BEFORE it reads
+    /// the file (so a file of a refused size is never read into memory). The
+    /// cartridge's save size, or an earlier layout the board still reads:
+    /// today only mapper 157 with the cartridge's own X24C01 (*Battle Rush*),
+    /// whose v3.3.0 save was the main unit's 256-byte 24C02 alone and whose
+    /// current one is 384 bytes, both chips (`T-DATACH-EXT-EEPROM-BATTERY`).
+    /// `false` without a battery. Every accepted size is at most the length
+    /// of [`Self::battery_ram`].
+    pub fn accepts_battery_ram_len(&self, len: u64) -> bool {
+        let g = self.lock();
+        g.nes.has_battery() && usize::try_from(len).is_ok_and(|n| g.nes.accepts_save_len(n))
+    }
+
     /// v2.7.4 (MOB-05) — load a `.sav` into the battery-backed save RAM. Call
     /// right after constructing the controller (or `load_rom`), before the
     /// first frame, so the game boots with its save.
     ///
     /// # Errors
     /// [`MobileError::Battery`] if the cartridge has no battery, or `bytes` is
-    /// not exactly its save size. Nothing is copied on a refusal: a partial
+    /// not a size the cartridge takes: its save size, or (v3.4.0) an earlier
+    /// layout the board still reads, which today is only mapper 157's v3.3.0
+    /// main-unit-only save (`Nes::accepts_save_len`). Nothing is copied on a
+    /// refusal: a partial
     /// copy would mix two saves, and a file of the wrong size is more likely
     /// another game's or another emulator's than a truncated one of ours.
     pub fn load_battery_ram(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
@@ -1631,8 +1648,12 @@ impl NesController {
                 reason: "this cartridge has no battery".into(),
             });
         }
-        let expected = g.nes.save_data().len();
-        if bytes.len() != expected {
+        // v3.4.0: the board loads the bytes and names the sizes it takes
+        // (`Nes::load_save_data`), so mapper 157's v3.3.0 main-unit-only save
+        // still loads beside its current 384-byte image. A refused length
+        // changes nothing.
+        if !g.nes.load_save_data(&bytes) {
+            let expected = g.nes.save_data().len();
             drop(g);
             return Err(MobileError::Battery {
                 reason: format!(
@@ -1641,7 +1662,6 @@ impl NesController {
                 ),
             });
         }
-        g.nes.save_data_mut().copy_from_slice(&bytes);
         // v2.9.7: a cabinet's two consoles each hold a copy of the shared
         // work RAM (the core converges them write by write), so a loaded save
         // goes into the sub console's copy too, or the halves would boot on
@@ -3795,6 +3815,67 @@ mod tests {
             ));
         }
         assert_eq!(ctrl.battery_ram(), before);
+    }
+
+    /// v3.4.0 (`T-DATACH-EXT-EEPROM-BATTERY`): *Battle Rush*'s save through
+    /// the bridge is the 384-byte image of both EEPROMs (the main unit's
+    /// 24C02, then the cartridge's X24C01), and a v3.3.0 save of the same
+    /// game, the 24C02's 256 bytes alone, still loads. The image is a mapper
+    /// 157 NES 2.0 header with the battery bit and PRG-NVRAM byte 10 `$10`.
+    #[test]
+    fn a_datach_save_round_trips_both_eeproms_through_the_bridge() {
+        let rom = || {
+            let mut v = b"NES\x1A".to_vec();
+            v.extend_from_slice(&[2, 0, 0xD2, 0x98, 0, 0, 0x10, 0x07]);
+            v.resize(16, 0);
+            let mut prg = vec![0xEAu8; 0x8000];
+            for at in [0x7FFA, 0x7FFC, 0x7FFE] {
+                prg[at] = 0x00;
+                prg[at + 1] = 0xC0;
+            }
+            v.extend_from_slice(&prg);
+            v
+        };
+        let ctrl = NesController::new(rom(), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(ctrl.has_battery());
+        let mut full = vec![0xFFu8; 384];
+        full[0x37] = 0xC4;
+        full[256 + 0x15] = 0x6B;
+        assert_eq!(ctrl.battery_ram().len(), 384);
+        ctrl.load_battery_ram(full.clone()).expect("the full image");
+        assert_eq!(ctrl.battery_ram(), full);
+
+        let next = NesController::new(rom(), DEFAULT_SAMPLE_RATE).expect("load");
+        next.load_battery_ram(full[..256].to_vec())
+            .expect("a v3.3.0 save");
+        let got = next.battery_ram();
+        assert_eq!(&got[..256], &full[..256]);
+        assert!(
+            got[256..].iter().all(|&b| b == 0xFF),
+            "cartridge chip erased"
+        );
+        for len in [128, 255, 300, 385] {
+            assert!(matches!(
+                next.load_battery_ram(vec![0x11; len]),
+                Err(MobileError::Battery { .. })
+            ));
+        }
+        assert_eq!(next.battery_ram(), got, "a refusal changes nothing");
+        // What the hosts ask before reading the file.
+        for (len, takes) in [(384u64, true), (256, true), (255, false), (300, false)] {
+            assert_eq!(next.accepts_battery_ram_len(len), takes, "{len}");
+        }
+        let plain = NesController::new(battery_nrom(true), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(plain.accepts_battery_ram_len(0x2000));
+        assert!(
+            !plain.accepts_battery_ram_len(256),
+            "only the Datach's old size"
+        );
+        let volatile = NesController::new(battery_nrom(false), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(
+            !volatile.accepts_battery_ram_len(0x2000),
+            "no battery, no save"
+        );
     }
 
     /// v2.7.4 (MOB-03): a panic inside a shim body becomes an error value

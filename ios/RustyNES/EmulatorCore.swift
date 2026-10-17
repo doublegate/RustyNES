@@ -554,8 +554,15 @@ final class EmulatorCore {
     /// A copy of the battery-backed save RAM (empty without a battery).
     func batteryRam() -> Data { controller.batteryRam() }
 
+    /// v3.4.0 — whether a `.sav` of `len` bytes is one `loadBatteryRam` takes:
+    /// the save size, or an earlier layout the board still reads (the
+    /// Datach's v3.3.0 save). Asked before the file is read.
+    func acceptsBatteryRamLen(_ len: Int) -> Bool {
+        len >= 0 && controller.acceptsBatteryRamLen(len: UInt64(len))
+    }
+
     /// Load a `.sav` into the save RAM; call before the first frame. Throws when
-    /// the cartridge has no battery or the size is not its save size.
+    /// the cartridge has no battery or the size is not one it takes.
     func loadBatteryRam(_ data: Data) throws { try controller.loadBatteryRam(bytes: data) }
 
     /// The frame index since power-on.
