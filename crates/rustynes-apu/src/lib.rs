@@ -38,6 +38,17 @@
 
 extern crate alloc;
 
+// The `std` feature selects the inherent `f32` math (`exp`, `sin`, `cos`,
+// `round`), which `std` defines and `core` does not. Loading `std` here makes
+// the feature stand on its own. Until v3.4.0 it compiled only when some other
+// crate in the graph had already loaded `std` (`thiserror/std`, which
+// `rustynes-core`'s own `std` turns on), so `cargo check -p rustynes-apu
+// --no-default-features --features std` failed with E0599 on every one of
+// those calls. `cargo hack --feature-powerset` found it (T-CI-FEATURE-POWERSET).
+// The functions resolved are the same either way, so the output is unchanged.
+#[cfg(feature = "std")]
+extern crate std;
+
 mod apu;
 mod blip;
 mod blip_kernel;

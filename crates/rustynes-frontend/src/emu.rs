@@ -642,6 +642,12 @@ pub struct EmuCore {
     /// [`Self::effective_frame_duration`] — `frame_duration` (the console
     /// rate) is left intact for region / display-sync / perf math.
     pub speed: f32,
+    /// v3.4.0 (`T-RA-HARDCORE`) — RA hardcore, as of the last produce call
+    /// (`FrameInputs::hardcore_blocked`, latched by [`Self::produce_due_frames`]
+    /// and [`Self::produce_one_frame`]). The pacing sites read it through
+    /// [`Self::effective_frame_duration`], so a slowdown set before hardcore
+    /// took effect cannot keep slowing the game.
+    pub hardcore: bool,
     /// Wall-clock target for the next emulator frame.
     pub next_frame_time: Option<Instant>,
     /// Scratch buffer for draining APU samples toward the audio sink.
@@ -1157,6 +1163,7 @@ impl EmuCore {
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
+            hardcore: false,
             next_frame_time: None,
             audio_buf: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1647,6 +1654,8 @@ impl EmuCore {
         // otherwise).
         #[allow(unused_mut)]
         let mut fx = ProduceFx::default();
+        // v3.4.0 — every produce path latches hardcore (the pacing reads it).
+        self.hardcore = inputs.hardcore_blocked;
         // v2.9.7 "Tandem" — the browser reads a battery cartridge's stored save
         // asynchronously. Until it lands, produce nothing: a frame run now would
         // boot the game on power-on RAM, and a game that finds no save may
@@ -1701,6 +1710,32 @@ impl EmuCore {
         if nes.extra_scanlines() != extra_lines {
             nes.set_extra_scanlines(extra_lines);
         }
+        // v3.4.0 (`T-RA-HARDCORE`) — the two hardcore rules that must hold on
+        // the very frame hardcore takes effect, whatever route armed them, are
+        // enforced here, before the frame runs, rather than only where the
+        // player starts them:
+        //
+        // - **movie playback** ("scripting/TAS/recorded input playback are
+        //   strictly prohibited"): a playing movie is stopped, its player
+        //   options restored. Recording stays: RA allows it.
+        // - **Game Genie codes** ("Cheats are disabled", mountable devices
+        //   included): the core's code list is emptied. The Cheats panel and
+        //   the per-ROM cheat file keep the player's list; leaving hardcore
+        //   re-applies it (`App::handle_cheevos_request`). This one is done
+        //   AFTER the movie hook below, not here: a recording re-applies the
+        //   options it captured at its start, codes included, every frame
+        //   (`MovieUi::before_frame`), so a clear made before the hook would be
+        //   undone for the very frame it is meant to protect.
+        //
+        // The raw RAM cheats and the debugger pokes are refused after the
+        // frame below, and rewind just after this block.
+        if crate::session_policy::hardcore::refuses(
+            crate::session_policy::hardcore::Feature::MoviePlayback,
+            hardcore_blocked,
+        ) && self.movie.is_playing()
+        {
+            self.movie.stop_playback(Some(nes));
+        }
         // v3.1.0 — the CPU overclock applies only outside a movie session: a
         // recording captures what the console runs with when it starts, and a
         // playing movie holds the console to its own options every frame.
@@ -1713,9 +1748,16 @@ impl EmuCore {
                 nes.set_sprite_limit_disabled(self.disable_sprite_limit);
             }
         }
-        // v2.7.0 — RetroAchievements hardcore mode disables rewind (already
-        // folded into `inputs.rewind_held` by `App`).
-        let rewinding = inputs.rewind_held;
+        // v2.7.0 — RetroAchievements hardcore mode disables rewind. `App`
+        // folds it into `inputs.rewind_held`; v3.4.0 refuses it here as well,
+        // where the rewind happens, so no other producer of `FrameInputs` (the
+        // emulation thread's published snapshot included) can rewind in
+        // hardcore.
+        let rewinding = inputs.rewind_held
+            && !crate::session_policy::hardcore::refuses(
+                crate::session_policy::hardcore::Feature::Rewind,
+                hardcore_blocked,
+            );
         if rewinding {
             // Rewind is a live-only gesture; it never advances a movie
             // cursor or captures a frame.
@@ -1745,6 +1787,19 @@ impl EmuCore {
             if !self.movie.before_frame(nes) {
                 self.movie.stop_playback(Some(nes));
                 eprintln!("rustynes: movie playback finished");
+            }
+            // v3.4.0 (`T-RA-HARDCORE`) — hardcore runs the frame without Game
+            // Genie codes, whatever put them in the core: a cheat file, a
+            // Reset or Power Cycle re-applying the panel's list, or the hook
+            // just above restoring a recording's captured options (CodeRabbit
+            // on #613). Placed after the hook and before the frame (and
+            // run-ahead), so nothing re-adds them in between.
+            if crate::session_policy::hardcore::refuses(
+                crate::session_policy::hardcore::Feature::Cheats,
+                hardcore_blocked,
+            ) && nes.genie_codes().next().is_some()
+            {
+                nes.clear_genie_codes();
             }
             // v1.7.0 "Forge" Workstream D1 — record this forward frame into the
             // HistoryViewer timeline, at the SAME point as the TAS movie hook
@@ -1873,7 +1928,11 @@ impl EmuCore {
             // are frontend pokes a `.rnm` cannot carry, so a run that used one
             // could never be replayed. Game Genie codes are core state the
             // movie DOES record, so they stay.
-            if !hardcore_blocked && self.movie.mode() == crate::movie_ui::MovieMode::Idle {
+            if !crate::session_policy::hardcore::refuses(
+                crate::session_policy::hardcore::Feature::Cheats,
+                hardcore_blocked,
+            ) && self.movie.mode() == crate::movie_ui::MovieMode::Idle
+            {
                 for cheat in &self.raw_cheats {
                     match cheat.compare {
                         Some(c) if nes.bus_mut().debug_peek_cpu(cheat.address) != c => {}
@@ -1888,7 +1947,12 @@ impl EmuCore {
             // (`hardcore_blocked`). One-shot: drained, so a later replay/record
             // sees no residual perturbation. The empty (no-edit) queue keeps the
             // produce path byte-identical.
-            if !self.writes_locked && !hardcore_blocked {
+            if !self.writes_locked
+                && !crate::session_policy::hardcore::refuses(
+                    crate::session_policy::hardcore::Feature::MemoryEditor,
+                    hardcore_blocked,
+                )
+            {
                 for poke in self.debug_pokes.drain(..) {
                     match poke {
                         DebugPoke::CpuRam { addr, value } => nes.poke_ram(addr, value),
@@ -2103,15 +2167,23 @@ impl EmuCore {
     /// → double the period. The speed is clamped to a sane positive range so
     /// a degenerate value can't produce a zero / infinite period. At speed
     /// 1.0 this returns the console-rate `frame_duration` exactly.
+    ///
+    /// v3.4.0 — under RA hardcore a factor below 1.0 is paced as 1.0: RA
+    /// forbids slowdown ("Slowdown and frame advance are disabled") but allows
+    /// fast forward, so a factor above 1.0 is kept
+    /// (`session_policy::hardcore::paced_speed`). This is the one place every
+    /// pacing site reads the speed through, so the rule holds whichever
+    /// route set the factor.
     #[must_use]
     pub fn effective_frame_duration(&self) -> Duration {
+        let speed = crate::session_policy::hardcore::paced_speed(self.speed, self.hardcore);
         // Speed 1.0 returns the console-rate base EXACTLY (no float round-trip),
         // so the default pacing is bit-identical to the pre-v1.0.0 pacer.
         #[allow(clippy::float_cmp)] // 1.0 is the exact preset value.
-        if self.speed == 1.0 {
+        if speed == 1.0 {
             return self.frame_duration;
         }
-        let speed = self.speed.clamp(0.05, 16.0);
+        let speed = speed.clamp(0.05, 16.0);
         self.frame_duration.div_f32(speed)
     }
 
@@ -2128,6 +2200,9 @@ impl EmuCore {
         // `mut` is only exercised on the RA-feature build.
         #[allow(unused_mut)]
         let mut fx = ProduceFx::default();
+        // v3.4.0 — latch hardcore before the period is computed, so the very
+        // first paced frame after hardcore takes effect is not slowed.
+        self.hardcore = inputs.hardcore_blocked;
         // v1.0.0 — pace against the speed-scaled period (1.0 = console rate).
         let period = self.effective_frame_duration();
         // v1.5.0 "Lens" Workstream H2 — if the gap since the last scheduled
@@ -3754,5 +3829,203 @@ mod tests {
         core.for_each_console(|nes| nes.set_oam_decay(true));
         let dual = core.dual.as_ref().unwrap();
         assert!(dual.main().oam_decay_enabled() && dual.sub().oam_decay_enabled());
+    }
+
+    // ---- v3.4.0 (`T-RA-HARDCORE`): hardcore enforced where the frame runs ----
+
+    /// A sinks value with no audio and no RA session.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn no_sinks<'a>() -> FrameSinks<'a> {
+        FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        }
+    }
+
+    /// RA forbids slowdown ("Slowdown and frame advance are disabled") but
+    /// allows fast forward: under hardcore a speed below 1.0 is paced at the
+    /// console rate, a speed above it keeps its period, and the latch comes
+    /// from the frame inputs (so no route that set the speed can keep it).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_paces_slowdown_at_full_speed_and_keeps_fast_forward() {
+        let mut core = EmuCore::new();
+        core.nes = Some(Nes::from_rom(&synth_nrom()).unwrap());
+        let base = core.frame_duration;
+        let mut hc = quiet_inputs();
+        hc.hardcore_blocked = true;
+        core.speed = 0.5;
+        core.produce_one_frame(&hc, &mut no_sinks());
+        assert!(core.hardcore, "the produce path latches hardcore");
+        assert_eq!(core.effective_frame_duration(), base, "50% runs at 100%");
+        core.speed = 2.0;
+        let ff = core.effective_frame_duration();
+        assert!(
+            (ff.as_secs_f64() - base.as_secs_f64() / 2.0).abs() < 1e-6,
+            "fast forward is kept in hardcore"
+        );
+        core.speed = 0.5;
+        core.produce_one_frame(&quiet_inputs(), &mut no_sinks());
+        assert!(!core.hardcore);
+        let slow = core.effective_frame_duration();
+        assert!(
+            (slow.as_secs_f64() - base.as_secs_f64() * 2.0).abs() < 1e-6,
+            "casual keeps its slowdown"
+        );
+    }
+
+    /// Movie PLAYBACK is prohibited in hardcore ("scripting/TAS/recorded input
+    /// playback"); recording is not. A movie already playing when hardcore
+    /// takes effect is stopped on the next frame, whatever started it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_stops_movie_playback_and_keeps_a_recording() {
+        let rom = synth_nrom();
+        let mut hc = quiet_inputs();
+        hc.hardcore_blocked = true;
+
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&rom).unwrap());
+        let mut probe = Nes::from_rom(&rom).unwrap();
+        let mut rec = rustynes_core::MovieRecorder::from_current_state(&probe);
+        for _ in 0..30 {
+            rec.capture(&probe);
+            probe.run_frame();
+        }
+        core.movie
+            .start_playback(core.nes.as_mut().unwrap(), rec.finish())
+            .unwrap();
+        core.produce_one_frame(&quiet_inputs(), &mut no_sinks());
+        assert!(core.movie.is_playing(), "casual: the movie plays");
+        core.produce_one_frame(&hc, &mut no_sinks());
+        assert!(!core.movie.is_playing(), "hardcore: playback stopped");
+
+        let mut recording = EmuCore::new();
+        recording.set_nes(Nes::from_rom(&rom).unwrap());
+        recording
+            .movie
+            .start_recording_branch(recording.nes.as_mut().unwrap(), false);
+        recording.produce_one_frame(&hc, &mut no_sinks());
+        assert!(
+            recording.movie.is_recording(),
+            "hardcore: recording allowed"
+        );
+    }
+
+    /// Game Genie codes are cheats ("mountable cheat devices (`GameShark`, Game
+    /// Genie, etc.)"): under hardcore the core runs with none, however they
+    /// were added (cheat file, panel, script, a code added mid-session).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_runs_the_frame_without_game_genie_codes() {
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.add_genie_code("SXIOPO").unwrap();
+        let mut core = EmuCore::new();
+        core.nes = Some(nes);
+        core.produce_one_frame(&quiet_inputs(), &mut no_sinks());
+        assert_eq!(
+            core.nes.as_ref().unwrap().genie_codes().count(),
+            1,
+            "casual keeps it"
+        );
+        let mut hc = quiet_inputs();
+        hc.hardcore_blocked = true;
+        core.produce_one_frame(&hc, &mut no_sinks());
+        assert_eq!(
+            core.nes.as_ref().unwrap().genie_codes().count(),
+            0,
+            "hardcore drops it"
+        );
+    }
+
+    /// A recording holds the options it captured at its start, Game Genie
+    /// codes included, by re-applying them in the movie hook every frame
+    /// (`MovieUi::before_frame` -> `HardwareOptions::apply_live`). A recording
+    /// that captured a code must therefore not put it back for a hardcore
+    /// frame: the codes are removed after the hook, not only before it
+    /// (`CodeRabbit` on #613). The recording itself stays, as RA allows.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_runs_a_recording_frame_without_its_captured_codes() {
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.add_genie_code("SXIOPO").unwrap();
+        let mut core = EmuCore::new();
+        core.nes = Some(nes);
+        core.movie
+            .start_recording_branch(core.nes.as_mut().unwrap(), false);
+        core.produce_one_frame(&quiet_inputs(), &mut no_sinks());
+        assert_eq!(
+            core.nes.as_ref().unwrap().genie_codes().count(),
+            1,
+            "casual: the recording keeps its code"
+        );
+        let mut hc = quiet_inputs();
+        hc.hardcore_blocked = true;
+        for _ in 0..2 {
+            core.produce_one_frame(&hc, &mut no_sinks());
+            assert_eq!(
+                core.nes.as_ref().unwrap().genie_codes().count(),
+                0,
+                "hardcore: the movie hook put the recording's code back"
+            );
+        }
+        assert!(core.movie.is_recording(), "hardcore: recording allowed");
+    }
+
+    /// Raw RAM cheats are refused in hardcore (they were since v2.7.0; v3.4.0
+    /// pins it): the same enabled cheat that writes RAM in casual writes
+    /// nothing in hardcore.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_applies_no_raw_ram_cheat() {
+        let cheat = crate::cheats::RawCheat {
+            address: 0x0041,
+            value: 0x5A,
+            compare: None,
+            enabled: true,
+        };
+        for (hardcore, want) in [(false, 0x5A), (true, 0x00)] {
+            let mut core = EmuCore::new();
+            core.nes = Some(Nes::from_rom(&synth_nrom()).unwrap());
+            core.raw_cheats = vec![cheat.clone()];
+            let mut inputs = quiet_inputs();
+            inputs.hardcore_blocked = hardcore;
+            core.produce_one_frame(&inputs, &mut no_sinks());
+            assert_eq!(
+                core.nes.as_mut().unwrap().peek(0x0041),
+                want,
+                "hardcore={hardcore}"
+            );
+        }
+    }
+
+    /// Rewind is refused where it happens, not only where `App` folds the
+    /// gesture: a held rewind in hardcore runs a forward frame instead.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_refuses_a_held_rewind() {
+        // A rewind step re-presents an earlier frame and runs none, so the
+        // frame counter does not advance; a refused rewind runs a frame.
+        for (hardcore, runs_forward) in [(false, false), (true, true)] {
+            let mut core = EmuCore::new();
+            let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+            nes.enable_rewind();
+            core.nes = Some(nes);
+            for _ in 0..10 {
+                core.produce_one_frame(&quiet_inputs(), &mut no_sinks());
+            }
+            let before = core.nes.as_ref().unwrap().frame();
+            let mut rewind = quiet_inputs();
+            rewind.rewind_held = true;
+            rewind.hardcore_blocked = hardcore;
+            core.produce_one_frame(&rewind, &mut no_sinks());
+            let after = core.nes.as_ref().unwrap().frame();
+            assert_eq!(
+                after > before,
+                runs_forward,
+                "hardcore={hardcore}: {before} -> {after}"
+            );
+        }
     }
 }

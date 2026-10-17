@@ -64,7 +64,7 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 
 The line from v3.1.0 to v4.0.0 is indexed in
 [`v3.1-to-v4.0-line-plan.md`](to-dos/plans/v3.1-to-v4.0-line-plan.md), drafted
-2026-10-07 with the maintainer's decisions D1-D29. Version numbers after v3.3.0
+2026-10-07 with the maintainer's decisions D1-D29 (D30-D33 added since). Version numbers after v3.3.0
 are slots (v3.3.0 shipped with part of its slot's scope; the rest moved to
 v3.4.0). The hardware release is the last of v3.9.x, after v3.9.0's RTL
 feature freeze and before v4.0.0 (D29); it takes a number only after its board
@@ -75,14 +75,16 @@ day.)
 | Version | Scope | Plan |
 |---------|-------|------|
 | v3.3.0 | **Shipped 2026-10-16 as "Plumbline"** with rows 7-9 only (Phi2 refuted, sprite-0 closed, epoch 5 for other fixes) plus the v3.2.0 backlog; MiSTer F2 and wgpu 31 / egui 0.37 moved to v3.4.0 | [`v3.3.0-plan.md`](to-dos/plans/v3.3.0-plan.md) |
-| v3.4.0 | Carried from v3.3.0: MiSTer F2 (the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline) and wgpu 31 / egui 0.37. Hosted netplay and the browser RA proxy on Cloudflare, RA hardcore compliance, native 3-4 player netplay. MiSTer F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | [`v3.4.0-plan.md`](to-dos/plans/v3.4.0-plan.md) |
-| v3.5.0 | The full movie input stream, Lua sockets and shared memory, desktop polish. MiSTer F3b: MMC5, N163, VRC6/7, Bandai FCG, expansion audio | [`v3.5.0-plan.md`](to-dos/plans/v3.5.0-plan.md) |
-| v3.6.0 | Libretro Core Options v2, float audio, console targets; Android API 37. MiSTer F4a: PAL and Dendy | [`v3.6.0-plan.md`](to-dos/plans/v3.6.0-plan.md) |
-| v3.7.0 | The mobile extras (iOS box art, widget and external display; EQ and cheat DB; zero-copy frames after UniFFI 0.33). MiSTer F4b: FDS | [`v3.7.0-plan.md`](to-dos/plans/v3.7.0-plan.md) |
-| v3.8.0 | The remaining accuracy residuals, Vs. cabinets, the long-tail mappers. MiSTer F4c: NSF, Vs. System, band-limited audio | [`v3.8.0-plan.md`](to-dos/plans/v3.8.0-plan.md) |
-| v3.9.0 | The MiSTer RTL feature freeze and RC pair; the enum-break trial; the audits re-run; mobile signing set up | [`v3.9.0-plan.md`](to-dos/plans/v3.9.0-plan.md) |
+| v3.4.0 | Carried from v3.3.0: MiSTer F2 (the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline) and the graphics stack (egui 0.37 landed on wgpu 30; wgpu 31 is unreleased upstream). Hosted netplay and the browser RA proxy on Cloudflare, RA hardcore compliance, native 3-4 player netplay. MiSTer F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | [`v3.4.0-plan.md`](to-dos/plans/v3.4.0-plan.md) |
+| v3.5.0 | The full movie input stream, Lua sockets and shared memory, desktop polish. MiSTer F3b: MMC5, N163, VRC6/7, Bandai FCG, expansion audio. D33: speedrun timing and memory interface, an MCP server, dump verification | [`v3.5.0-plan.md`](to-dos/plans/v3.5.0-plan.md) |
+| v3.6.0 | Libretro Core Options v2, float audio, console targets; Android API 37. MiSTer F4a: PAL and Dendy. D33: DAP/GDB source debugging, audio stems and NSF ripping | [`v3.6.0-plan.md`](to-dos/plans/v3.6.0-plan.md) |
+| v3.7.0 | The mobile extras (iOS box art, widget and external display; EQ and cheat DB; zero-copy frames after UniFFI 0.33). MiSTer F4b: FDS. D33: desync forensics, edge-relayed spectators, a BPS live-patch recorder | [`v3.7.0-plan.md`](to-dos/plans/v3.7.0-plan.md) |
+| v3.8.0 | The remaining accuracy residuals, Vs. cabinets, the long-tail mappers. MiSTer F4c: NSF, Vs. System, band-limited audio. D33: the homebrew hazard finder and CI action, the TAS branch tree, ghosts and races | [`v3.8.0-plan.md`](to-dos/plans/v3.8.0-plan.md) |
+| v3.9.0 | The MiSTer RTL feature freeze and RC pair; the enum-break trial; the audits re-run; mobile signing set up. D33: signed, re-simulated leaderboards | [`v3.9.0-plan.md`](to-dos/plans/v3.9.0-plan.md) |
 | HW (the last v3.9.x, numbered after the session) | **Hardware verification** (D29): the SuperStation One board session (Strands A-F) on v3.9.0's frozen pair, the mobile device run, the fixes each produces, then the store listings. No feature RTL | [`v3.9.0-plan.md`](to-dos/plans/v3.9.0-plan.md), [`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md), [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
 | v4.0.0 | **The API major**: the remaining public enums `#[non_exhaustive]`; MiSTer feature parity | [`v4.0.0-plan.md`](to-dos/plans/v4.0.0-plan.md) |
+| v4.1.0 - v4.5.0 | **The power-user line** (D33): reverse debugging and cross-play; console verification and save states shared with the MiSTer core (after the hardware release); PPU-level frame interpolation and accessibility; explain-this-frame and the mobile/web debugger; a reinforcement-learning environment | [`v4.x-power-user-line-plan.md`](to-dos/plans/v4.x-power-user-line-plan.md) |
+| v4.6.0 - v4.9.0 | **The agents-and-scale line** (D34): language models play the games (Claude, Gemini, Codex, local models through LM Studio or any OpenAI-compatible server); game fuzzing and optimal-run search on a CPU batch; an integer-only lane core and, if a measured spike says go, the same fuzzing and search on the GPU | [`v4.x-agents-and-scale-line-plan.md`](to-dos/plans/v4.x-agents-and-scale-line-plan.md) |
 
 ### Post-1.0 release line (v1.1.0 → current)
 

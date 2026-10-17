@@ -145,14 +145,25 @@ handshake). A host-distributed **roster** closes that gap.
   attributes each datagram to its sender. Foreign / malformed datagrams are
   dropped (never panic).
 - **`MeshHost`** — listens, adopts up to `num_players - 1` joiners from their
-  `Sync`s (assigning each the next free player index), then broadcasts the full
-  **`NetMessage::Roster`** — every peer's `SocketAddr` + player index — to all
-  joiners. The roster is **re-sent a few times** for UDP loss tolerance.
+  `Sync`s (assigning each the lowest free player index), then broadcasts the
+  full **`NetMessage::Roster`** — every peer's `SocketAddr`, player index and
+  (protocol 9) key share — to all joiners. The roster is **re-sent a few
+  times** for UDP loss tolerance. While it gathers (v3.4.0) it answers each
+  adopted joiner's `Sync` with an accepted zero-share `Sync`, and drops a
+  joiner it has not heard for 3 s.
 - **`MeshJoiner`** — dials the host, `Sync`s, waits for the roster, then builds
   its own `UdpMeshTransport` wired to the host **and every other joiner**,
-  skipping its own entry. It identifies its own entry by matching its bound
-  source address (works on loopback / LAN); behind a NAT it can't self-observe,
-  it falls back to the index the host assigned it out of band.
+  skipping its own entry. Since protocol 9 it identifies its own entry by its
+  own **key share**, which the host copied from the joiner's `Sync` into the
+  roster: that works behind a NAT, where the address the host lists for the
+  joiner is a rewritten one the joiner cannot observe. (Before protocol 9 it
+  matched its bound source address, which only works on loopback / LAN, and
+  fell back to an index chosen out of band; since v3.4.0 a roster that does
+  not carry the joiner's own share is ignored instead of falling back,
+  `a_roster_without_our_key_share_is_ignored`.) It sends to the host at the
+  address it dialed. Once the host has answered that it is gathering, it waits
+  while the host keeps answering, up to its gather timeout
+  (`docs/netplay-session.md` section 2.1).
 
 **Protocol version.** `PROTOCOL_VERSION` is bumped **2 → 3** for the new
 `NetMessage::Roster` variant. An older (v2) peer's `from_bytes` rejects the
@@ -177,6 +188,21 @@ and magic, since v3.1.0's protocol 7 / `"RNE7"` also v3.0.x's `"RNE6"`, and sinc
 v3.2.0's protocol 8 / `"RNE8"` also v3.1.x's `"RNE7"`, each of which names its
 epoch), fails with `MeshError::EmulatorMismatch` and its counterparts, so
 a mixed-version session is refused with a reason instead of timing out.
+**Desktop (v3.4.0).** The desktop netplay panel reaches this mesh: a host
+that picks 3 or 4 players gathers its joiners through `MeshHost`, and every
+joiner joins through `MeshJoiner`, which completes against a 2-player host as
+player 1 of 2 and against a mesh host as the player the roster gives it, so
+the joiner does not choose. Each joiner sends to the host at the address it
+dialed (a host bound to `0.0.0.0` has no better one to advertise) and finds
+its own roster entry by its key share. Since protocol 9 an `InputAck` names
+the acknowledging player and each peer resends to the least-acknowledged one:
+an ack that named no one let one joiner's ack stop another's retransmission to
+a host that had not received it, and the late-starting host stalled.
+Since v3.4.0's protocol 9 (`"RNE9"`, ADR 0046) the `Sync` also carries a
+16-byte key share, a `Roster` entry carries each peer's share, and every
+native datagram after the handshake is sealed with a per-session HMAC key
+(`docs/netplay-session.md` section 2); a v3.2.x/v3.3.x `"RNE8"` peer is
+refused naming its epoch.
 **Only a v3.0.0-or-later peer can give that reason.** A v2.9.9 or older peer
 ignores the `"RNE6"` magic as a foreign datagram and still times out on its
 side. Between two protocol-6 peers both sides name it: a mesh host answers a
@@ -184,6 +210,18 @@ refused joiner's `Sync` with its own before returning the error, so the
 joiner reports `EmulatorMismatch` (or the ROM / configuration mismatch) as
 well (`epoch_mismatch_is_named_at_both_ends`). Signaling rooms still match by
 ROM only.
+**Who may refuse (v3.4.0).** The handshake is unsealed, so a refusing `Sync`
+counts only from the peer it concerns. A joiner acts on one only from the host
+it dialed, and a `NetplayConnection` with a known remote only from that remote;
+anything else is ignored (`a_joiner_ignores_a_refusal_not_from_its_host`,
+`a_dialing_connection_ignores_a_refusal_from_a_stranger`). A mesh host always
+answers the refused sender with its own identity, but ends the gathering only
+while it has adopted nobody: once a joiner is waiting, one mismatched (or
+forged) `Sync` would drop it, so the host keeps gathering and its timeout
+reports the refusal it saw instead of a bare timeout
+(`a_refusal_after_adoption_keeps_the_gathering`,
+`a_timed_out_gathering_names_the_refusal_it_saw`). A 2-player listening host,
+which has adopted nobody, still refuses whoever dialed it.
 
 **Verification.** The loopback integration test `tests/mesh_udp.rs` stands up a
 host + 2-3 joiners on `127.0.0.1` ephemeral ports, completes the multi-joiner
@@ -397,7 +435,16 @@ rule is **the lower slot of any pair offers to the higher slot** — so when a
 newcomer joins, every *existing* peer is sent `peer-joined { slot: newcomer }`
 and offers to it. The relay routes `offer` / `answer` / `candidate` to the named
 `to` slot (a legacy 2-peer client that omits `from`/`to`/`max_players` falls back
-to 2 players + "the other peer" routing). It verifies every peer in a room
+to 2 players + "the other peer" routing). **The relay never forwards a
+client's own `from`:** it overwrites `from` with the sender's real slot (its
+position in the room's membership list), and drops the frame from a client the
+room does not list. Recipients index their per-peer state by `from` (the
+browser mesh applies the SDP to peer connection `from`, the native NAT
+rendezvous adopts `from` as the peer slot), and the WebSocket's room membership
+is the only thing that authenticates a seat, so a client-chosen `from` would
+let one member of a 3-4 player room present another seat's offer, answer,
+candidate or public address. The rule is identical in the reference relay and
+the hosted lobby, pinned by the conformance vectors. It verifies every peer in a room
 announced the **same `rom_hash`** (`rom-mismatch` otherwise; `room-full` past
 `max_players`). The pure relay logic is unit-tested for 2-, 3-, and 4-peer rooms
 in `rustynes_netplay::signaling`.
@@ -509,6 +556,85 @@ native hole-punch logic for the WebRTC path. STUN alone traverses most home
 which, unlike STUN, carries the media (here the data-channel) so it costs
 bandwidth. Run your own coturn (in the bundle) rather than leaning on public STUN
 for anything beyond a quick test.
+
+### 3.5 The hosted lobby and TURN (v3.4.0, `T-HOSTED-NETPLAY`)
+
+The maintainer also runs the stack as a service, so players need not host
+anything: a Cloudflare Worker in `services/hosted/` (its `README.md` is the
+deploy runbook and design record). It is an **alternative** to §3.4's bundle,
+not a replacement; the reference server, the bundle and user-supplied URLs all
+keep working, and a stock build does not know the hosted service exists.
+
+**Lobby.** `wss://<hosted base>/signal` (also `/`) speaks exactly the §3.2
+protocol. `services/hosted/src/protocol.ts` is a port of
+`rustynes_netplay::signaling` (our own code), parser leniencies included, and
+it is checked against the Rust reference rather than trusted:
+`crates/rustynes-netplay/tests/hosted_signaling_vectors.rs` records what the
+reference `Relay` sends for 12 scenarios (72 steps: 2- and 4-player meshes,
+a member claiming another seat's `from`, the legacy wire form, rejections, the lobby directory, matchmaking, re-joins,
+and the parser's escape and overflow quirks) into
+`services/hosted/test/vectors/signaling-vectors.json`, and fails if the Rust
+code stops producing it; `services/hosted/test/conformance.test.ts` replays
+the file three ways (the TypeScript relay, real WebSockets into the Durable
+Object, and the same with the object evicted before every sending step) and
+compares every outbound frame as an exact string. The one legitimate
+difference is iteration order where the reference has none (a `room-list`
+with several open rooms; a `quick-match` with several candidates): Rust's
+`HashMap` order is random per process, the Worker's is insertion order.
+
+All rooms live in one Durable Object, not one object per room: a client names
+its room only after connecting, and `list-rooms` / `quick-match` span every
+room, so per-room routing would need a different protocol. The object uses the
+WebSocket hibernation API, persisting each socket's room membership in its
+attachment so the relay is rebuilt when the object wakes. Measured caveat: in
+the local workerd test runtime a client CLOSE does not wake a hibernated object
+(the close never arrived within 4 s, while a message after the same eviction
+did), so the eviction replay evicts only before sending steps; Cloudflare
+documents the close as delivered after hibernation in production.
+
+**Boundary rules** the reference server lacks, for a public service: frames
+over 16 KiB refused, room codes `[A-Za-z0-9_-]{1,32}`, ROM hashes empty or up
+to 64 hex digits, a per-socket message bucket, per-IP socket cap (8),
+connection-attempt rate (30/min) and room-creation rate (10/min), a global
+socket cap (2000), and browsers from origins other than the Pages site and
+localhost refused. Refusals use the reference's `error`-then-close shape.
+
+**TURN.** `POST <hosted base>/turn-credentials` (empty body; a GET is
+refused, because a browser sends a GET without `Origin` from any page's
+`<img>`, which would let other sites spend the cap) mints Cloudflare Realtime TURN
+credentials from the TURN key held in Worker secrets, valid for 3 h (why 3 h:
+`services/hosted/src/turn.ts`), behind spend guards (per-IP limit, a daily
+global cap, a kill switch; `services/hosted/README.md` "Spend guards"). Port-53
+URLs are dropped (browsers block them). A refusal is JSON with a reason code,
+and the clients then connect with STUN only.
+
+**Clients.** `rustynes_netplay::hosted` is the shared client half: base-URL
+resolution (`[netplay] hosted_base_url`, else the build-time
+`RUSTYNES_HOSTED_BASE`, else none, which is the default), the derived
+endpoints, a bounded parser for the `/turn-credentials` answer, the expiry
+check, and the native blocking fetch.
+
+- **Browser:** with a hosted base, the lobby's signaling field starts as the
+  hosted lobby, and `BrowserNetplay::connect` fetches TURN credentials (5 s
+  timeout) before sending `join`, so no peer connection is built without the
+  relay servers; a failure or refusal continues with STUN only and says why in
+  the HUD. The timeout's timer is cleared once the fetch settles, and a fetch
+  that completes after `leave` or a later `connect` changes nothing and sends
+  nothing (each `connect` and `leave` moves a generation number the fetch
+  checks).
+- **Android / iOS (the §2.5 room-code path):** `NpNetConfig::to_nat_config`
+  fills an empty signaling URL with the hosted lobby and, when no TURN trio was
+  configured, fetches credentials and hands the first TURN-over-UDP endpoint to
+  `NatConnect`'s relay fallback. User-supplied endpoints always win.
+- **Desktop:** native desktop netplay is direct UDP host/join (§2.4) with no
+  signalling or ICE, so there is nothing to wire; `hosted_base_url` is ignored
+  there.
+
+**Traffic.** NES rollback traffic is about 22 MB per player-hour (an inference
+in the plan); the free 1,000 GB a month (shared with Realtime SFU) is then
+about 45,000 relayed player-hours, and only sessions that cannot connect
+directly use TURN. No usage forecast exists: the first month's measured egress
+is to be recorded here against that figure (runbook step 7).
 
 ---
 
@@ -670,6 +796,7 @@ rollback, so disabling it leaves every frame / checksum / rollback byte-identica
 | `rustynes-netplay` compiles on `wasm32-unknown-unknown` | Build + clippy |
 | TURN relay-transport hand-off for symmetric-NAT pairs (v1.8.7 #40, §2.5) | Integration test (`relay_loopback`) — `UdpTransport::from_relay` routes gameplay over `RelayUdpSocket` against a **mock TURN endpoint** (allocate + permission + relayed-address exchange + N-frame `RollbackSession`); `NpStatus.relayed` reflects the hand-off |
 | N-peer UDP roster handshake (3-4 players) | Loopback integration test (`tests/mesh_udp.rs`, real sockets) |
+| Native 3-4 player desktop netplay (v3.4.0, `T-NETPLAY-MESH-NATIVE`): every confirmed frame equal on every peer and to the reference over 600 frames, with latency, reordering and loss; the desktop host/join state machine reaches it | `tests/mesh_sync.rs` (4 and 3 peers in memory, 4 peers over sealed loopback UDP, a peer that lost its early inputs) and `netplay_ui` unit tests (`three_players_from_the_ui_stay_in_sync`, `four_players_...`, `two_players_...`) |
 | Signaling room/relay protocol (`signaling::Relay`) | Unit tests (default build) |
 | Signaling server builds with its feature | `--features signaling-server` build |
 | `Roster` wire encode/decode + oversized/malformed rejection | Unit tests |
@@ -684,6 +811,8 @@ rollback, so disabling it leaves every frame / checksum / rollback byte-identica
 | Delayed-stream spectator buffer (`delay_frames`, hold-then-reveal in order, clamp to `MAX_DELAY_FRAMES`) (v2.2.0) | Unit tests (`spectator::spectator_delay_buffer_holds_then_reveals` / `spectator_delay_is_clamped`) |
 | Graded desync status (`DesyncStatus` hysteresis + sticky-confirmed) (v2.2.0) | Unit tests (`diagnostics::status_applies_hysteresis_then_confirms_and_sticks` / `threshold_zero_is_treated_as_one`) |
 | Peer-liveness RTT (`PeerLink` Live/Interrupted/TimedOut, `DisconnectReason::PeerTimeout`, `with_peer_timeouts`) (v2.2.0) | Unit tests (`connection`) — synced peer graded by `last_recv` against the 2 s / 5 s thresholds |
+| Hosted lobby is byte-compatible with the reference `Relay` (v3.4.0, §3.5) | `hosted_signaling_vectors` (Rust: the committed vectors equal the reference's output) + `services/hosted/test/conformance.test.ts` (TypeScript relay, Durable Object over WebSockets, and across hibernation) |
+| Hosted lobby boundary rules, TURN spend guards, TTL and expiry, refusal parsing (v3.4.0) | `services/hosted/test/{lobby,turn}.test.ts` (workerd, upstream mocked) + `rustynes_netplay::hosted` unit tests + `rustynes-mobile` `hosted_config` tests |
 | Netplay wire parsers never panic / OOM on hostile input (`NetMessage::from_bytes`, `SignalMessage::parse`) (v2.2.0) | `netplay_message` cargo-fuzz target (`fuzz/`) — tens of thousands of clean iterations |
 
 **Debugging aid (v1.3.0 Workstream G1).** When a session desyncs, the native
@@ -704,7 +833,9 @@ false desync banner.
 | Item | Needs |
 |---|---|
 | Real cross-NAT UDP traversal | A STUN server + two real NATs |
+| Live 3-4 player desktop play across machines (v3.4.0) | Three or four desktops that can reach the host's UDP port (LAN, or a forwarded port): the mesh is direct-IP only, with no room code or TURN path for more than two players. The mobile apps do not host or join 3-4 player sessions yet (`MOB-09`, a later release). |
 | Live mobile room-code play across two cellular devices (§2.5) | The hosted `deploy/` relay (the same signaling + coturn stack) + two real devices behind carrier NAT; live STUN through CGNAT + the punch are exercised against the *real* network, which CI cannot reproduce |
 | Live TURN relay play for symmetric-NAT pairs (§2.5) | A **live coturn** server + **two real symmetric-NAT devices**. The relay-transport hand-off itself is wired and mock-TURN-verified (`UdpTransport::from_relay` + `relay_loopback`, see Verified); only the live cross-network run — which CI/offline cannot reproduce — remains. Cone NAT works end-to-end without the relay. |
 | Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** on a host/domain + N real browsers — cannot verify headlessly. Walk the checklist in `deploy/README.md` (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS/TURN-bandwidth steps). |
+| Hosted lobby and TURN live (v3.4.0, §3.5) | The Worker deployed to the maintainer's account, then: a two-browser session through the hosted lobby, a relayed session across two NATs, credentials observed to expire, and the first month's measured traffic (`services/hosted/README.md`, "Verifying the live gates") |
 | Host-side spectator broadcast/relay + live spectate (H8) | A spectator-aware host fanning the confirmed input stream to N spectators + the `deploy/` relay config running — the frontend driver + byte-identical replay are unit-tested, the live relay is the maintainer's manual run. |

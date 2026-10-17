@@ -147,6 +147,21 @@ impl PerfLogger {
         }
     }
 
+    /// v3.4.0 — whether [`Self::record`] would write a row now: the log is
+    /// open and its row interval has elapsed (or no row is written yet). The
+    /// caller builds the full [`PerfView`] only when this, or a panel that
+    /// shows it, needs one, since building it sorts every stats window and
+    /// [`Self::record`] keeps one view a second. `record`'s own check stays the
+    /// authority; this is the same test, read without writing.
+    #[must_use]
+    pub fn row_due(&self) -> bool {
+        let interval = self.interval.unwrap_or(ROW_INTERVAL);
+        self.active.as_ref().is_some_and(|a| {
+            a.last_row
+                .is_none_or(|t| Instant::now().duration_since(t) >= interval)
+        })
+    }
+
     /// Append a CSV row if the row interval elapsed. No-op while inactive.
     pub fn record(&mut self, view: &PerfView) {
         let interval = self.interval.unwrap_or(ROW_INTERVAL);
@@ -814,6 +829,37 @@ mod tests {
             present_mode: "Fifo".into(),
             ..PerfView::default()
         }
+    }
+
+    /// `row_due` (v3.4.0) answers what `record` would do, without writing:
+    /// nothing is due while the log is closed, a fresh log is due its first
+    /// row, and after a row nothing is due until the interval has passed. The
+    /// caller builds the full view only when this (or an open panel) says so,
+    /// so a `row_due` that stayed false would silently stop the log's rows.
+    #[test]
+    fn row_due_matches_what_record_would_write() {
+        let tmp = std::env::temp_dir().join(format!("rustynes-perflog-due-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let mut slow = PerfLogger::for_test(Duration::from_secs(3600), tmp.clone());
+        assert!(!slow.row_due(), "a closed log is due nothing");
+        slow.sync(true, "smb", PerfLogContext::default);
+        assert!(slow.row_due(), "a fresh log is due its first row");
+        slow.record(&view());
+        assert!(!slow.row_due(), "within the interval, no row is due");
+        slow.sync(false, "smb", PerfLogContext::default);
+        assert!(!slow.row_due(), "a closed log is due nothing");
+
+        let mut fast = PerfLogger::for_test(Duration::ZERO, tmp.clone());
+        fast.sync(true, "smb", PerfLogContext::default);
+        fast.record(&view());
+        assert!(
+            fast.row_due(),
+            "with a zero interval the next row is due at once"
+        );
+        fast.sync(false, "smb", PerfLogContext::default);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Full lifecycle: enable -> header + rows; ROM change -> rotation to a

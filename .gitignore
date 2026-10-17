@@ -110,6 +110,14 @@ wasm-pack.log
 # --- Node.js (web frontend) ---
 node_modules/
 package-lock.json
+# v3.4.0 — the hosted services (`services/hosted/`) are deployed from CI-tested
+# code, so their lockfile IS committed: `npm ci` must reproduce the exact
+# dependency tree the tests ran against (the same reasoning as `Cargo.lock`).
+!/services/hosted/package-lock.json
+# wrangler's local dev state (miniflare storage, temp bundles), and local
+# secrets for `wrangler dev` (never committed).
+/services/hosted/.wrangler/
+/services/hosted/.dev.vars
 yarn.lock
 pnpm-lock.yaml
 

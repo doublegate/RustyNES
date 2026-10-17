@@ -53,19 +53,27 @@ final class BatterySaver: @unchecked Sendable {
     /// Read the save, checking its size against the cartridge's (`expected`
     /// bytes) BEFORE reading it, so a huge or wrong file is never loaded into
     /// memory. An unusable file disables this saver for the session.
-    func read(expected: Int) -> SavedBattery {
-        queue.sync {
+    ///
+    /// v3.4.0: `accepts` decides which sizes are the cartridge's. Without it
+    /// the size must be exactly `expected`; the app passes the bridge's
+    /// `acceptsBatteryRamLen`, which also takes an earlier layout the board
+    /// still reads (today only the Datach's v3.3.0 main-unit-only save, 256
+    /// bytes beside the current 384; `T-DATACH-EXT-EEPROM-BATTERY`). Every
+    /// size the bridge accepts is at most `expected`.
+    func read(expected: Int, accepts: ((Int) -> Bool)? = nil) -> SavedBattery {
+        let takes = accepts ?? { $0 == expected }
+        return queue.sync {
             let path = url.path
             guard FileManager.default.fileExists(atPath: path) else { return .none }
             let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? -1
-            guard size == expected else {
+            guard size >= 0, takes(size) else {
                 disabled = true
                 return .unusable(
                     "The battery save is \(size) bytes; this game's is \(expected). "
                         + "It was left untouched and this session will not be saved."
                 )
             }
-            guard let data = try? Data(contentsOf: url), data.count == expected else {
+            guard let data = try? Data(contentsOf: url), data.count == size else {
                 disabled = true
                 return .unusable("The battery save could not be read.")
             }

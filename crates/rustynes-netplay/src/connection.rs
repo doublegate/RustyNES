@@ -46,7 +46,8 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
+use crate::auth::{DatagramAuth, KeyShare, Refusal, fresh_key_share};
+use crate::message::{IdentityMismatch, KEY_SHARE_LEN, NetMessage, SessionIdentity, SyncVerdict};
 use crate::relay::RelayUdpSocket;
 use crate::transport::Transport;
 
@@ -62,6 +63,42 @@ const RECV_BUF_LEN: usize = 1500;
 /// is read on the next poll. 1024 is far above the handful of messages a
 /// well-behaved peer sends per frame.
 const MAX_DATAGRAMS_PER_POLL: usize = 1024;
+
+/// The shortest interval between two re-sends of the handshake `Sync` by a
+/// sealed transport (see [`UdpTransport::enable_auth`]). Answering every
+/// straggler would let a spoofer make this peer send one datagram per
+/// datagram received; ten a second is plenty for a peer whose handshake reply
+/// was lost.
+const HANDSHAKE_REPLY_INTERVAL: Duration = Duration::from_millis(100);
+
+/// v3.4.0 (protocol 9, ADR 0046) — `true` if `a` and `b` name the same peer,
+/// treating an IPv4 address and its IPv4-mapped IPv6 form as one (a dual-stack
+/// socket reports either). The handshake uses it to take the peer's key share
+/// only from the adopted peer.
+pub(crate) fn same_peer(a: SocketAddr, b: SocketAddr) -> bool {
+    a.port() == b.port() && a.ip().to_canonical() == b.ip().to_canonical()
+}
+
+/// The [`DisconnectReason`] for a handshake refused over `m`.
+const fn refusal_reason(m: IdentityMismatch) -> DisconnectReason {
+    match m {
+        IdentityMismatch::Emulator { ours, theirs } => {
+            DisconnectReason::EmulatorMismatch { ours, theirs }
+        }
+        IdentityMismatch::Rom => DisconnectReason::RomMismatch,
+        IdentityMismatch::Config => DisconnectReason::ConfigMismatch,
+    }
+}
+
+/// The sealing state of an authenticated [`UdpTransport`] (v3.4.0).
+#[derive(Debug)]
+struct Sealed {
+    auth: DatagramAuth,
+    /// Our own unsealed handshake `Sync`, re-sent to the peer while it is
+    /// evidently still handshaking.
+    handshake_reply: Vec<u8>,
+    last_reply: Option<Instant>,
+}
 
 /// The datagram backend a [`UdpTransport`] rides on. Either a plain
 /// [`UdpSocket`] (the direct / hole-punched path) or a [`RelayUdpSocket`] (the
@@ -116,6 +153,14 @@ pub struct UdpTransport {
     /// foreign-version) since construction. Exposed for diagnostics; never
     /// affects behaviour.
     dropped_invalid: u64,
+    /// v3.4.0 — the datagram key, once the handshake has derived it. While
+    /// `None` the transport carries plain `NetMessage` bytes (the handshake
+    /// itself, a spectator, a test).
+    sealed: Option<Box<Sealed>>,
+    /// Datagrams a sealed transport refused (unsealed, forged, replayed).
+    refused: u64,
+    /// Times a sealed transport followed the peer to a new source address.
+    roamed: u64,
 }
 
 impl UdpTransport {
@@ -143,6 +188,9 @@ impl UdpTransport {
             socket: SocketKind::Direct(socket),
             remote,
             dropped_invalid: 0,
+            sealed: None,
+            refused: 0,
+            roamed: 0,
         })
     }
 
@@ -163,6 +211,9 @@ impl UdpTransport {
             socket: SocketKind::Relayed(relay),
             remote: Some(peer_relayed),
             dropped_invalid: 0,
+            sealed: None,
+            refused: 0,
+            roamed: 0,
         })
     }
 
@@ -238,6 +289,114 @@ impl UdpTransport {
         self.dropped_invalid
     }
 
+    /// v3.4.0 (protocol 9, ADR 0046) — seal every datagram from now on, and
+    /// open every one received, with `auth`. Called by [`NetplayConnection`]
+    /// the moment its handshake derives the key; a caller that builds its own
+    /// transport and handshake does the same.
+    ///
+    /// Once sealed, a datagram that does not open is refused before it is
+    /// parsed, whatever its source, so a third party cannot put a message into
+    /// the session, and one that opens is accepted from any source: if it
+    /// comes from a new address the transport follows the peer there (on the
+    /// direct path), which is what keeps a session alive across a NAT
+    /// rebinding. The one unsealed datagram still answered is a `Sync` from
+    /// the peer's address: the peer has not finished its handshake (our reply
+    /// was lost), so `handshake_reply`, our own unsealed `Sync`, is re-sent to
+    /// the peer at most every 100 ms. It is never parsed and never reaches the
+    /// session.
+    pub fn enable_auth(&mut self, auth: DatagramAuth, handshake_reply: Vec<u8>) {
+        self.sealed = Some(Box::new(Sealed {
+            auth,
+            handshake_reply,
+            last_reply: None,
+        }));
+    }
+
+    /// `true` once [`Self::enable_auth`] has sealed the transport.
+    #[must_use]
+    pub const fn is_sealed(&self) -> bool {
+        self.sealed.is_some()
+    }
+
+    /// Datagrams a sealed transport refused: unsealed, forged, replayed or
+    /// from an unknown sender. Diagnostic only.
+    #[must_use]
+    pub const fn refused_datagrams(&self) -> u64 {
+        self.refused
+    }
+
+    /// Times a sealed transport followed the peer to a new source address
+    /// (a NAT rebinding). Diagnostic only.
+    #[must_use]
+    pub const fn roamed(&self) -> u64 {
+        self.roamed
+    }
+
+    /// Send raw bytes to the peer, over whichever socket this transport has.
+    fn send_raw(&mut self, bytes: &[u8]) {
+        let Some(remote) = self.remote else {
+            return;
+        };
+        match &mut self.socket {
+            SocketKind::Direct(s) => {
+                let _ = s.send_to(bytes, remote);
+            }
+            SocketKind::Relayed(r) => {
+                let _ = r.send_to(bytes, remote);
+            }
+        }
+    }
+
+    /// Turn one received datagram into a message, if it is one: decoded as is
+    /// while unsealed, opened and then decoded once sealed.
+    fn accept_datagram(&mut self, data: &[u8], from: SocketAddr) -> Option<NetMessage> {
+        let Some(sealed) = self.sealed.as_mut() else {
+            let msg = NetMessage::from_bytes(data);
+            if msg.is_none() {
+                self.dropped_invalid = self.dropped_invalid.saturating_add(1);
+            }
+            return msg;
+        };
+        match sealed.auth.open(data) {
+            Ok((_sender, payload)) => {
+                let msg = NetMessage::from_bytes(payload);
+                if msg.is_none() {
+                    self.dropped_invalid = self.dropped_invalid.saturating_add(1);
+                    return None;
+                }
+                // Genuine and new: follow the peer if its address changed. On
+                // the relay path the address is the peer's relayed one, which
+                // the TURN permission pins, so it is never re-pointed.
+                if matches!(self.socket, SocketKind::Direct(_))
+                    && self.remote.is_some_and(|r| !same_peer(r, from))
+                {
+                    self.remote = Some(from);
+                    self.roamed = self.roamed.saturating_add(1);
+                }
+                msg
+            }
+            Err(why) => {
+                self.refused = self.refused.saturating_add(1);
+                let now = Instant::now();
+                if why == Refusal::Unsealed
+                    // A whole `Sync` (any protocol's, which decodes to name
+                    // its mismatch), not just its tag byte: a truncated
+                    // `[0x02]` gets no reply (Antigravity on #613).
+                    && matches!(NetMessage::from_bytes(data), Some(NetMessage::Sync { .. }))
+                    && self.remote.is_some_and(|r| same_peer(r, from))
+                    && sealed.last_reply.is_none_or(|t| {
+                        now.saturating_duration_since(t) >= HANDSHAKE_REPLY_INTERVAL
+                    })
+                {
+                    sealed.last_reply = Some(now);
+                    let reply = sealed.handshake_reply.clone();
+                    self.send_raw(&reply);
+                }
+                None
+            }
+        }
+    }
+
     /// Drain all pending datagrams, returning each decoded [`NetMessage`]
     /// paired with the source [`SocketAddr`] it arrived from. Malformed /
     /// truncated / foreign-version datagrams are dropped (and counted), never
@@ -274,13 +433,12 @@ impl UdpTransport {
             match recv {
                 RecvStep::Got(len, from) => {
                     // We accept datagrams from any source (a NAT may rewrite
-                    // the peer's address, and the handshake already bound us to
-                    // one logical peer); a foreign or malformed packet simply
-                    // fails to decode and is dropped below. We do NOT trust the
+                    // the peer's address); a foreign or malformed packet fails
+                    // to decode, and once sealed (v3.4.0) one without the key
+                    // fails to open, and is dropped. We do NOT trust the
                     // address to gate parsing.
-                    match NetMessage::from_bytes(&buf[..len]) {
-                        Some(msg) => out.push((msg, from)),
-                        None => self.dropped_invalid = self.dropped_invalid.saturating_add(1),
+                    if let Some(msg) = self.accept_datagram(&buf[..len], from) {
+                        out.push((msg, from));
                     }
                 }
                 RecvStep::Stray => {}
@@ -307,31 +465,30 @@ impl Transport for UdpTransport {
     fn send(&mut self, msg: &NetMessage) {
         // In host-listen mode the remote is not known yet — there is nowhere
         // to send, so this is a silent no-op until the peer is adopted.
-        let Some(remote) = self.remote else {
+        if self.remote.is_none() {
             return;
-        };
-        let bytes = msg.to_bytes();
+        }
+        let mut bytes = msg.to_bytes();
+        // v3.4.0 — once the handshake has derived a key, every datagram is
+        // sealed.
+        if let Some(sealed) = self.sealed.as_mut() {
+            bytes = sealed.auth.seal(&bytes);
+        }
         // A failed send (e.g. transient ICMP port-unreachable surfacing as
         // ConnectionReset on Windows, or a full socket buffer) is non-fatal:
         // the rollback protocol tolerates loss, and the next resend covers it.
         // We deliberately swallow the error rather than propagate or panic.
-        match &mut self.socket {
-            SocketKind::Direct(s) => {
-                let _ = s.send_to(&bytes, remote);
-            }
-            SocketKind::Relayed(r) => {
-                let _ = r.send_to(&bytes, remote);
-            }
-        }
+        self.send_raw(&bytes);
     }
 
     // No source filter here, deliberately (v3.2.0 review). A filter on
     // `self.remote` was tried and removed: it dropped every datagram after a
     // NAT rebinding (the peer's public port changes mid-session) and after an
     // IPv4 peer reappears as its IPv4-mapped IPv6 form, ending the session,
-    // while protecting nothing -- a UDP source is trivially spoofed, and the
-    // protocol has no authentication for it to stand in for. Adoption
-    // (`set_remote`) is still first-come, so a stray `Sync` cannot re-point it.
+    // while protecting nothing -- a UDP source is trivially spoofed. Since
+    // v3.4.0 the datagram MAC is the authentication (`enable_auth`): a source
+    // proves nothing, a key does. Adoption (`set_remote`) is still
+    // first-come, so a stray `Sync` cannot re-point it.
     fn poll(&mut self) -> Vec<NetMessage> {
         self.poll_with_source()
             .into_iter()
@@ -457,6 +614,13 @@ pub struct NetplayConnection {
     /// We have seen the peer's matching `Sync`.
     peer_synced: bool,
 
+    /// v3.4.0 (protocol 9) — this connection's random key share, sent in
+    /// every handshake `Sync`.
+    key_share: KeyShare,
+    /// The peer's key share, from the first accepted `Sync` the adopted peer
+    /// sent with a non-zero one.
+    peer_share: Option<KeyShare>,
+
     // --- timing (host-side, non-deterministic) ---
     started: Instant,
     handshake_timeout: Duration,
@@ -547,10 +711,12 @@ impl NetplayConnection {
     /// with custom socket options). Sends the opening `Sync` immediately.
     #[must_use]
     pub fn with_transport(mut transport: UdpTransport, identity: SessionIdentity) -> Self {
+        let key_share = fresh_key_share();
         // Announce ourselves right away so a peer already listening syncs fast.
         transport.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity,
+            key_share,
         });
         let now = Instant::now();
         Self {
@@ -559,6 +725,8 @@ impl NetplayConnection {
             state: ConnectionState::Connecting,
             disconnect_reason: None,
             peer_synced: false,
+            key_share,
+            peer_share: None,
             started: now,
             handshake_timeout: Self::DEFAULT_HANDSHAKE_TIMEOUT,
             last_sync_sent: now,
@@ -693,6 +861,87 @@ impl NetplayConnection {
         self.transport
     }
 
+    /// An accepted (right magic, same identity) `Sync` from `from`: adopt the
+    /// peer if we are still listening, take its key share, echo ours once and
+    /// mark the peer synced.
+    fn accept_sync(&mut self, key_share: KeyShare, from: SocketAddr, remote_known: bool) {
+        // v3.4.0 (protocol 9): a `Sync` with no key share is not a
+        // handshake `Sync` (a NAT punch packet, or the one a
+        // running session sends), so it can neither adopt a peer
+        // nor complete the handshake: the key needs the share.
+        if key_share == [0; KEY_SHARE_LEN] {
+            return;
+        }
+        // Right magic + our ROM. If we are a listening host with no
+        // remote yet, adopt THIS source as the peer (only the first
+        // such packet — `set_remote` is a no-op once bound, so a
+        // later third party cannot hijack the session).
+        if !remote_known {
+            let _ = self.transport.set_remote(from);
+        }
+        // The key share is taken from the adopted peer only, and
+        // only the first one: a third party's `Sync`, or a second
+        // share from the peer's address, cannot change the key the
+        // handshake derives.
+        if !self
+            .transport
+            .remote_addr()
+            .is_some_and(|peer| same_peer(peer, from))
+        {
+            return;
+        }
+        match self.peer_share {
+            None => self.peer_share = Some(key_share),
+            Some(first) if first != key_share => return,
+            Some(_) => {}
+        }
+        // Peer is running our ROM. Echo a Sync so it learns we are
+        // here too (the handshake is symmetric: each side needs the
+        // other's Sync), then mark the peer as synced. The echo now
+        // has a concrete remote to reach (just adopted, if it was a
+        // listening host).
+        if !self.peer_synced {
+            self.transport.send(&NetMessage::Sync {
+                magic: NetMessage::SYNC_MAGIC,
+                identity: self.identity,
+                key_share: self.key_share,
+            });
+        }
+        self.peer_synced = true;
+    }
+
+    /// Derive the pair key from both shares, seal the transport and enter
+    /// [`ConnectionState::Synced`]. Returns `false` (and disconnects) when no
+    /// key can be derived: equal shares, a 2^-128 chance or a peer reflecting
+    /// ours.
+    fn complete_handshake(&mut self) -> bool {
+        let Some(auth) = self
+            .peer_share
+            .and_then(|theirs| DatagramAuth::pair(&self.identity, self.key_share, theirs))
+        else {
+            self.state = ConnectionState::Disconnected;
+            self.disconnect_reason = Some(DisconnectReason::HandshakeTimeout);
+            return false;
+        };
+        let reply = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: self.identity,
+            key_share: self.key_share,
+        }
+        .to_bytes();
+        self.transport.enable_auth(auth, reply);
+        self.state = ConnectionState::Synced;
+        true
+    }
+
+    /// `true` if `from` is not the known remote (always `false` while a
+    /// listening host has adopted no one).
+    fn is_stranger(&self, from: SocketAddr) -> bool {
+        self.transport
+            .remote_addr()
+            .is_some_and(|peer| !same_peer(peer, from))
+    }
+
     /// Drive the connection: poll the socket, advance the handshake, emit
     /// periodic `Sync` resends and `Quality` pings, and update RTT /
     /// frame-advantage estimates. Call periodically (e.g. once per frame) while
@@ -727,16 +976,34 @@ impl NetplayConnection {
             // `DisconnectReason::PeerTimeout`. Once a peer is adopted, a
             // datagram from any OTHER source (a third party that can reach the
             // socket) must NOT refresh the clock, or it could indefinitely mask
-            // a genuine peer timeout.
-            if self.transport.remote_addr().is_none_or(|peer| peer == from) {
+            // a genuine peer timeout. v3.4.0: "the adopted peer" is
+            // `same_peer`, as everywhere else here: a dual-stack socket can
+            // report the peer in its IPv4-mapped IPv6 form (CodeRabbit on
+            // #613; `a_mapped_address_keeps_a_synced_peer_live`).
+            if self
+                .transport
+                .remote_addr()
+                .is_none_or(|peer| same_peer(peer, from))
+            {
                 self.last_recv = now;
             }
             match msg {
-                NetMessage::Sync { magic, identity } => {
+                NetMessage::Sync {
+                    magic,
+                    identity,
+                    key_share,
+                } => {
                     let m = match self.identity.check_sync(magic, &identity) {
                         // Foreign / corrupt — ignore, never panic.
                         SyncVerdict::Ignore => continue,
                         SyncVerdict::Accept => None,
+                        // v3.4.0 (Antigravity on #613): once the remote is
+                        // known only it may refuse us; the handshake is
+                        // unsealed, so a mismatched `Sync` from any other
+                        // source is ignored rather than disconnecting. A
+                        // listening host has adopted nobody and so has nothing
+                        // to lose: it still refuses whoever dialed it.
+                        SyncVerdict::Refuse(_) if self.is_stranger(from) => continue,
                         SyncVerdict::Refuse(m) => Some(m),
                     };
                     if let Some(m) = m {
@@ -744,34 +1011,10 @@ impl NetplayConnection {
                         // rejected the same way whether or not we have adopted
                         // this peer yet.
                         self.state = ConnectionState::Disconnected;
-                        self.disconnect_reason = Some(match m {
-                            IdentityMismatch::Emulator { ours, theirs } => {
-                                DisconnectReason::EmulatorMismatch { ours, theirs }
-                            }
-                            IdentityMismatch::Rom => DisconnectReason::RomMismatch,
-                            IdentityMismatch::Config => DisconnectReason::ConfigMismatch,
-                        });
+                        self.disconnect_reason = Some(refusal_reason(m));
                         return self.state;
                     }
-                    // Right magic + our ROM. If we are a listening host with no
-                    // remote yet, adopt THIS source as the peer (only the first
-                    // such packet — `set_remote` is a no-op once bound, so a
-                    // later third party cannot hijack the session).
-                    if !remote_known {
-                        let _ = self.transport.set_remote(from);
-                    }
-                    // Peer is running our ROM. Echo a Sync so it learns we are
-                    // here too (the handshake is symmetric: each side needs the
-                    // other's Sync), then mark the peer as synced. The echo now
-                    // has a concrete remote to reach (just adopted, if it was a
-                    // listening host).
-                    if !self.peer_synced {
-                        self.transport.send(&NetMessage::Sync {
-                            magic: NetMessage::SYNC_MAGIC,
-                            identity: self.identity,
-                        });
-                    }
-                    self.peer_synced = true;
+                    self.accept_sync(key_share, from, remote_known);
                 }
                 NetMessage::Quality {
                     ping_ms,
@@ -812,9 +1055,16 @@ impl NetplayConnection {
             }
         }
 
-        // 2. Promote to Synced once the peer has acknowledged our ROM.
-        if self.peer_synced && matches!(self.state, ConnectionState::Connecting) {
-            self.state = ConnectionState::Synced;
+        // 2. Promote to Synced once the peer has acknowledged our ROM, and
+        //    (v3.4.0, protocol 9) seal the transport with the key both shares
+        //    derive: from here on nothing unsealed reaches the session. Equal
+        //    shares (a 2^-128 chance, or a peer reflecting ours) derive no key
+        //    and end the handshake.
+        if self.peer_synced
+            && matches!(self.state, ConnectionState::Connecting)
+            && !self.complete_handshake()
+        {
+            return self.state;
         }
 
         // 2b. Once synced, enforce the run-time peer-liveness disconnect: a peer
@@ -842,6 +1092,7 @@ impl NetplayConnection {
                 self.transport.send(&NetMessage::Sync {
                     magic: NetMessage::SYNC_MAGIC,
                     identity: self.identity,
+                    key_share: self.key_share,
                 });
                 self.last_sync_sent = now;
             }
@@ -899,7 +1150,10 @@ mod tests {
                 frame: 0x0102_0304,
                 input: 0x5A,
             },
-            NetMessage::InputAck { frame: 77 },
+            NetMessage::InputAck {
+                player: 1,
+                frame: 77,
+            },
             NetMessage::Checksum {
                 frame: 9,
                 hash: 0xDEAD_BEEF_0BAD_F00D,
@@ -933,11 +1187,21 @@ mod tests {
         raw.send_to(&[250, 1, 2, 3], dst).unwrap();
         // Tag 2 == Sync but truncated to 3 bytes (needs 37): must fail decode.
         raw.send_to(&[2u8, 1, 2], dst).unwrap();
-        let valid = NetMessage::InputAck { frame: 5 }.to_bytes();
+        let valid = NetMessage::InputAck {
+            player: 1,
+            frame: 5,
+        }
+        .to_bytes();
         raw.send_to(&valid, dst).unwrap();
 
         let got = drain(&mut b, 1);
-        assert_eq!(got, vec![NetMessage::InputAck { frame: 5 }]);
+        assert_eq!(
+            got,
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 5
+            }]
+        );
         assert!(b.dropped_invalid() >= 3, "malformed datagrams were dropped");
     }
 
@@ -1005,6 +1269,88 @@ mod tests {
         assert_eq!(a.peer_link(), PeerLink::TimedOut);
     }
 
+    /// v3.4.0 (review of #613) — the liveness clock treats an IPv4 peer
+    /// and its IPv4-mapped IPv6 form as one, as `accept_datagram` and
+    /// `accept_sync` already do. A dual-stack socket reports an IPv4 sender
+    /// as `[::ffff:a.b.c.d]:p` while the connection names it `a.b.c.d:p`; the
+    /// check compared them with `==`, so a live peer's datagrams never
+    /// refreshed `last_recv` and a synced session ended in `PeerTimeout`.
+    ///
+    /// Skipped, with a note, where a `[::]` socket does not receive IPv4
+    /// (Windows sets `IPV6_V6ONLY` by default; so can a Linux sysctl).
+    #[test]
+    fn a_mapped_address_keeps_a_synced_peer_live() {
+        let any6 = SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0));
+        let Ok(dual) = UdpSocket::bind(any6) else {
+            eprintln!("skipped: no IPv6 socket on this host");
+            return;
+        };
+        let port = dual.local_addr().unwrap().port();
+        let v4 = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let v4_addr = v4.local_addr().unwrap();
+        let a_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        dual.set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        v4.send_to(b"probe", a_addr).unwrap();
+        let mut buf = [0u8; 16];
+        match dual.recv_from(&mut buf) {
+            Ok((_, from)) if from.is_ipv6() && same_peer(from, v4_addr) => {}
+            other => {
+                eprintln!("skipped: this host's [::] socket is not dual-stack ({other:?})");
+                return;
+            }
+        }
+        // The other direction too: the test has `a` (the dual-stack socket)
+        // SEND to its peer's plain IPv4 address. Linux maps that destination
+        // itself; macOS refuses it (the v3.4.0 release PR's macos-latest run
+        // passed the receive probe above and then never synced). Production
+        // binds IPv4 (`0.0.0.0`) on every frontend, so only a library user
+        // binding `[::]` meets this; where the host cannot send that way, the
+        // case the test exercises cannot arise, and it skips rather than fail.
+        v4.set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let sent = dual.send_to(b"probe", v4_addr).is_ok();
+        if !sent || v4.recv_from(&mut buf).is_err() {
+            eprintln!("skipped: this host's [::] socket cannot send to an IPv4 address");
+            return;
+        }
+        v4.set_read_timeout(None).unwrap();
+        let hash = SessionIdentity::new([0x45u8; 32], [0; 32]);
+        // `a` names its peer in IPv4 form and hears it in mapped form.
+        let mut a = NetplayConnection::with_transport(
+            UdpTransport::from_socket(dual, v4_addr).unwrap(),
+            hash,
+        )
+        .with_peer_timeouts(Duration::from_millis(100), Duration::from_millis(250))
+        .with_ping_interval(Duration::from_millis(20));
+        let mut b =
+            NetplayConnection::with_transport(UdpTransport::from_socket(v4, a_addr).unwrap(), hash)
+                .with_ping_interval(Duration::from_millis(20));
+        for _ in 0..200 {
+            a.pump(0);
+            b.pump(0);
+            if a.is_synced() && b.is_synced() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(a.is_synced() && b.is_synced(), "both synced");
+        // Both keep talking for well past the 250 ms disconnect threshold.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(800) {
+            a.pump(0);
+            b.pump(0);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            a.state(),
+            ConnectionState::Synced,
+            "a live peer in mapped form is not timed out: {:?}",
+            a.disconnect_reason()
+        );
+        assert_eq!(a.peer_link(), PeerLink::Live);
+    }
+
     #[test]
     fn host_listen_adopts_joiner_from_first_sync() {
         // The host binds WITHOUT a known remote; the joiner dials the host's
@@ -1055,7 +1401,14 @@ mod tests {
         let stray = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
         stray.send_to(&[0xFF, 0x00, 0x11], host_addr).unwrap();
         stray
-            .send_to(&NetMessage::InputAck { frame: 1 }.to_bytes(), host_addr)
+            .send_to(
+                &NetMessage::InputAck {
+                    player: 1,
+                    frame: 1,
+                }
+                .to_bytes(),
+                host_addr,
+            )
             .unwrap();
         // Pump so the host drains the stray traffic; it must adopt no one.
         for _ in 0..10 {
@@ -1197,6 +1550,83 @@ mod tests {
             c.disconnect_reason(),
             Some(DisconnectReason::HandshakeTimeout)
         );
+    }
+
+    /// v3.4.0 (Antigravity on #613) — once the remote is known, only that
+    /// remote can refuse the handshake. Before, a mismatched `Sync` from any
+    /// third source disconnected a dialing client (the handshake is unsealed,
+    /// so anyone reaching the port could end it). The control shows the real
+    /// peer's refusal still disconnects with the reason.
+    #[test]
+    fn a_dialing_connection_ignores_a_refusal_from_a_stranger() {
+        let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let peer = UdpSocket::bind(local).unwrap();
+        let stranger = UdpSocket::bind(local).unwrap();
+        let id = SessionIdentity::new([0x46u8; 32], [0; 32]);
+        let other = SessionIdentity::new([0x47u8; 32], [0; 32]);
+        let mut c = NetplayConnection::connect(local, peer.local_addr().unwrap(), id).unwrap();
+        let me = c.transport.local_addr().unwrap();
+        let refusal = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: other,
+            key_share: [7; KEY_SHARE_LEN],
+        }
+        .to_bytes();
+        for _ in 0..20 {
+            stranger.send_to(&refusal, me).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+            assert_ne!(
+                c.pump(0),
+                ConnectionState::Disconnected,
+                "a stranger's refusal is ignored: {:?}",
+                c.disconnect_reason()
+            );
+        }
+        for _ in 0..50 {
+            peer.send_to(&refusal, me).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+            if c.pump(0) == ConnectionState::Disconnected {
+                break;
+            }
+        }
+        assert_eq!(c.disconnect_reason(), Some(DisconnectReason::RomMismatch));
+    }
+
+    /// v3.4.0 (Antigravity on #613) — a sealed transport re-sends its
+    /// handshake reply only for a datagram that IS a `Sync`, not for any
+    /// whose first byte is the `Sync` tag: a truncated one-byte `[0x02]` from
+    /// the peer's address gets nothing. The full `Sync` that follows is still
+    /// answered (and the truncated one must not have used up the rate limit).
+    #[test]
+    fn a_truncated_sync_gets_no_handshake_reply() {
+        let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let peer = UdpSocket::bind(local).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let sock = UdpSocket::bind(local).unwrap();
+        let me = sock.local_addr().unwrap();
+        let mut t = UdpTransport::from_socket(sock, peer.local_addr().unwrap()).unwrap();
+        let auth =
+            DatagramAuth::pair(&SessionIdentity::new([1; 32], [2; 32]), [1; 16], [2; 16]).unwrap();
+        t.enable_auth(auth, b"REPLY".to_vec());
+        let mut buf = [0u8; 64];
+
+        peer.send_to(&[NetMessage::TAG_SYNC], me).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(t.poll(), Vec::new());
+        assert!(peer.recv_from(&mut buf).is_err(), "no reply to [0x02]");
+
+        let sync = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: SessionIdentity::new([1; 32], [2; 32]),
+            key_share: [2; KEY_SHARE_LEN],
+        }
+        .to_bytes();
+        peer.send_to(&sync, me).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(t.poll(), Vec::new());
+        let (len, _) = peer.recv_from(&mut buf).expect("a full Sync is answered");
+        assert_eq!(&buf[..len], b"REPLY");
     }
 
     /// Drain `b` until at least `want` messages have arrived or a bounded

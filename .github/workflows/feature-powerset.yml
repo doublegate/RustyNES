@@ -1,0 +1,61 @@
+name: Feature powerset
+
+# Every feature combination to depth 2, checked once a week (T-CI-FEATURE-POWERSET,
+# v3.4.0 plan row 14).
+#
+# CI's clippy jobs name their feature sets by hand (the workspace default,
+# `full`, `retroachievements`, `scripting,hd-pack`, the harness's
+# `test-roms,commercial-roms`, both wasm32 builds), and `--all-targets` covers
+# each crate's DEFAULT features only. A combination nobody listed is never
+# compiled. The first local run of this sweep found one at once:
+# `rustynes-apu --no-default-features --features std` did not compile (E0599 on
+# `f32::exp` / `sin` / `cos` / `round`), because the crate never loaded `std`
+# itself and every listed build happened to get it from `thiserror/std`.
+#
+# Measured on 2026-10-17 at depth 2: 345 `cargo check` invocations across 19
+# crates (rustynes-core 115, the test harness 92, the frontend 52, the PPU 37),
+# 657 s on 8 jobs of the 20-core development host while other jobs ran. About
+# 3x that on a 4-core runner is too long to run on every PR, so it runs weekly
+# and on demand, like the toolchain canary, and is not in CI's `CI success`
+# aggregate. A red run is a real defect (a combination that does not build),
+# not a note.
+#
+# Excluded: the wasm32-only features (`wasm-winit`, `wasm-canvas`,
+# `script-wasm`, `browser-cheevos`), which do not build for the host target,
+# and `full`, the aggregate CI already lints as its own job.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature-powerset-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  powerset:
+    name: cargo hack check (depth 2)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: feature-powerset
+      - uses: taiki-e/install-action@v2.87.28
+        with:
+          tool: cargo-hack
+      - name: Every combination to depth 2
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          cargo hack check --workspace --feature-powerset --depth 2 \
+            --exclude-features wasm-winit,wasm-canvas,script-wasm,browser-cheevos,full \
+            --keep-going
+          echo "elapsed: $(( $(date +%s) - start )) s"

@@ -1211,6 +1211,20 @@ the 5 MiB gzip wasm budget, so the **same full font ships on native and both
 wasm flavours** — there is no per-target subset (the `wasm-canvas` embed has no
 egui menu and is unaffected).
 
+The text fonts beneath that fallback are egui's own, and since egui 0.37
+(v3.4.0) which of them `egui::FontDefinitions::default()` contains is set by
+egui's cargo features rather than by this code. The workspace enables
+`monochrome_emoji_fonts` (which implies `default_fonts`), the same set egui
+0.36's defaults loaded: Ubuntu-Light and Hack for text, plus `NotoEmoji-Regular`
+and `emoji-icon-font`, the only fonts carrying the media and file glyphs the NSF
+player, replay panel and TAStudio draw (U+23EE, U+23F9, U+1F4BE and six more).
+`crate::icons::definitions` builds the complete set, and
+`icons::tests::the_shell_font_set_covers_every_glyph_the_ui_draws` lays out
+every non-ASCII glyph the frontend's string literals use against it, in both
+families, because a missing font compiles cleanly and shows only as boxes in a
+rendered frame. Three panel glyphs have no font in the set and render as boxes,
+as they did before: U+2442 (replay panel) and U+FF0B / U+FF0D (TAStudio).
+
 ### Accessibility (v1.5.0 "Lens" Workstream E)
 
 Frontend-only, additive, off-by-default — the shipped / native / `no_std` / wasm
@@ -1461,6 +1475,8 @@ Two playback quality-of-life keys ride alongside rewind: **fast-forward**
 with audio muted (a `None` audio sink) so the producer never overruns the
 ring; **frame-advance** (press `\`) single-steps exactly one frame, meant for
 use while paused. Both are default-bound in `[input.system]` and rebindable.
+Under RetroAchievements hardcore (v3.4.0) frame advance and every speed below
+100% are refused; fast forward stays (see "Hardcore mode" below).
 
 ## Input
 
@@ -1691,7 +1707,7 @@ inspection API on `rustynes_core::Nes` once per visible frame.
 - **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC — and (v1.4.0 Workstream D) an **Event breakpoints** section that breaks on hardware events (see below). Loaded symbol labels (D1) annotate the disassembly (a `label:` line above the matching address) and the breakpoint rows.
 - **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer. **v1.5.0 "Lens" Workstream A3** adds a **Scanline trace** tab (the per-scanline scroll/render register-write trace — $2000/$2001/$2005/$2006 — derived from the `debug-hooks` event log, surfacing mid-frame raster splits) and a native **Export CHR to PNG…** button (the combined 256×128 pattern dump) on the Patterns tab.
 - **APU**: per-channel scope (waveform), volume meters, register dump.
-- **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode).
+- **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode; since v3.4.0 hardcore closes every chip inspector and the Cheats, `TAStudio`, `BasicBot`, latency, atlas, divergence and provenance windows — see "Hardcore mode").
 - **Mapper**: identity (mapper id + submapper + name + accuracy tier), ROM/RAM
   sizes with bank counts + battery/NVRAM, the IRQ mechanism (PPU A12 / scanline /
   CPU-cycle) and expansion-audio chip, the live PRG (`$8000-$FFFF`) / CHR
@@ -2371,6 +2387,23 @@ save state. The module is [`battery_save`](../crates/rustynes-frontend/src/batte
   metadata, checked before any read) is not the cartridge's save size, or that
   cannot be read, is left untouched and the session is not persisted. The
   reason is shown in the status bar as well as logged.
+- **The board names the sizes it takes (v3.4.0).** "The cartridge's save
+  size" is `Nes::accepts_save_len`, and the file is loaded with
+  `Nes::load_save_data`, not by a host-side length comparison and copy. Every
+  board takes exactly its `save_data()` length except one whose save grew in
+  a release: mapper 157 with the cartridge's own X24C01 (*Battle Rush*) saves
+  384 bytes since v3.4.0 (the main unit's 24C02, then the cartridge chip;
+  `docs/mappers.md`, mapper 157) and still loads the 256-byte v3.3.0 file into
+  the 24C02, with the cartridge chip erased. The next write stores 384. The
+  web store and the mobile bridge (`NesController::load_battery_ram`, and
+  `accepts_battery_ram_len`, which the Android and iOS hosts ask before
+  reading the file) follow the same rule. Pinned by
+  `a_datach_save_keeps_both_eeproms` and `a_v3_3_0_datach_save_still_loads`
+  here, `a_datach_record_restores_both_eeproms_and_its_v3_3_0_size` (web),
+  `a_datach_save_round_trips_both_eeproms_through_the_bridge` (mobile), and
+  `a_battery_save_of_an_accepted_earlier_size_is_read` (the Android saver,
+  JVM). The iOS `BatterySaver` change is not compiled on this project's Linux
+  hosts; its CI job builds it.
 - **Keyed on the full-file hash**, like save states, so a header correction
   starts a new file; the old one is kept.
 - **Loading a save state** restores the save RAM it captured, and the next
@@ -2468,9 +2501,10 @@ headless; `wasm_idb` only moves the bytes.
   event in which an asynchronous write could finish. Loading another ROM,
   closing the ROM, and starting a movie or netplay session force one too.
 - **Never clobbers a record it did not read.** A record whose length is not
-  the cartridge's save size, or a store that could not be read, leaves the
-  session unpersisted and the record untouched, with the reason in the status
-  bar.
+  one the cartridge takes (`Nes::accepts_save_len`; since v3.4.0 that includes
+  the Datach's 256-byte v3.3.0 save beside its 384-byte image), or a store that
+  could not be read, leaves the session unpersisted and the record untouched,
+  with the reason in the status bar.
 - **Not verified headless.** The `IndexedDB` glue (`wasm_idb::get_battery`,
   `put_battery`, the page-hide listener) runs only in a browser; its check is
   manual, recorded in the v2.9.7 notes.
@@ -2814,6 +2848,141 @@ sub-pages. The content was also expanded to cover the full v1.7.0 feature set
 (TAStudio, A/V recording, HD-Pack Builder, IPC/automation, the consolidated
 Input Display, the new debugger depth, and the removed toolbar HUD / repurposed
 backtick).
+
+## RetroAchievements (native, `retroachievements` feature)
+
+The native build drives `rc_client` (vendored rcheevos, `rustynes-cheevos`)
+through the shared `rustynes-ra` session; the mobile bridge drives the same
+session. The browser build is casual-only and separate
+([`cheevos-browser.md`](cheevos-browser.md)).
+
+### Transport and offline unlocks (v3.4.0)
+
+RA requires that "unlocks created while offline must be securely cached and
+sync to RetroAchievements when connectivity returns" ([Hardcore Compliance
+Requirements](https://docs.retroachievements.org/general/hardcore-compliance-requirements.html),
+section A). `rc_client` owns that queue: an award or leaderboard submission
+whose server call fails RETRYABLY is rescheduled and re-sent from
+`rc_client_do_frame` / `rc_client_idle` (at once, then 1 s, 2 s, 4 s ... up to
+120 s), with `RC_CLIENT_EVENT_DISCONNECTED` while something is pending and
+`RC_CLIENT_EVENT_RECONNECTED` when it has all gone through (the HUD toasts
+"Server disconnected" / "Server reconnected"). RustyNES does not duplicate it.
+
+- The HTTP worker (`rustynes-cheevos/src/http.rs`) reports a transport failure
+  (no network, DNS, TLS, refused, timeout) as
+  `RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR` with the error text as the
+  body. Until v3.4.0 it reported the NON-retryable status with an empty body,
+  so an unlock earned offline raised a "server error" toast and was dropped.
+- The worker performs its exchange through a `Fetch` closure: `ureq` in the
+  shipped build, a scripted fake RA server in
+  `client::tests::an_unlock_earned_offline_is_sent_when_the_network_returns`,
+  which fails the first two award calls and asserts the third is sent, with
+  Disconnected before Reconnected and no server error.
+- The queue is in memory. An unlock still pending when the program exits is
+  lost; `rc_client` offers no persistent queue, and persisting the requests
+  ourselves would mean writing the user's API token and a signed award request
+  to disk and replaying it outside `rc_client`'s bookkeeping. That is left as a
+  question for RA review (`docs/ra-integration-request.md`) rather than built.
+- v3.4.0 also turns `rc_client`'s background memory reads off
+  (`rc_client_set_allow_background_memory_reads(0)`). When a game's data
+  arrives, rcheevos validates every address its achievements read through the
+  read callback; by default it does so inside the server-response callback,
+  which runs in `poll_http_completions`, where no read closure is installed.
+  Every read failed, so every achievement was marked unsupported (state 3,
+  DISABLED) at load and nothing could ever unlock natively. The validation now
+  runs in the next `idle` / `do_frame`, against the live emulator. The same
+  end-to-end test caught it (its achievement loaded DISABLED).
+
+### Hardcore mode (v3.4.0 audit, `T-RA-HARDCORE`)
+
+The rule is one table, `crates/rustynes-ra/src/hardcore.rs`
+(`rustynes_ra::hardcore`; the frontend includes the same file by path as
+`session_policy::hardcore`, so a build without the `retroachievements` feature
+compiles the gates and refuses nothing). Each decision cites RA's [Hardcore
+Compliance Requirements](https://docs.retroachievements.org/general/hardcore-compliance-requirements.html)
+(section B), the [FAQ](https://docs.retroachievements.org/general/faq.html) or
+the [`rc_client` integration guide](https://github.com/RetroAchievements/rcheevos/wiki/rc_client-integration).
+`session_policy::hardcore::tests::every_feature_matches_the_ra_table` pins the
+table row by row. Desktop enforcement:
+
+| feature | refused where | test that fails if the block is removed |
+| --- | --- | --- |
+| state load (every route) | `refuse_timeline_action(LoadState)` at each dispatch site (`session_policy::refusal`) | `session_policy::tests::hardcore_refuses_a_load_only`; `app::tests::every_timeline_action_route_asks_the_session_policy` |
+| Game Genie codes | `EmuCore::produce_one_frame`, after the movie hook and before the frame: the core's code list is emptied (the panel and cheat file keep it; switching hardcore off re-applies it). After the hook because a recording re-applies the options it captured, codes included, every frame; a recording started in hardcore (`handle_movie_record_toggle`, `handle_movie_branch`) is started without codes, since a Reset or Power Cycle re-applies the panel's list between frames | `emu::tests::hardcore_runs_the_frame_without_game_genie_codes`; `emu::tests::hardcore_runs_a_recording_frame_without_its_captured_codes`; `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| raw RAM cheats | `EmuCore::produce_one_frame`, after the frame | `emu::tests::hardcore_applies_no_raw_ram_cheat` |
+| rewind | `App` folds the gesture, and `EmuCore::produce_one_frame` refuses it where it runs | `emu::tests::hardcore_refuses_a_held_rewind` |
+| slowdown (< 100%) | `EmuCore::effective_frame_duration` paces it at 100% (every pacing site reads it); `App::set_speed` refuses it | `emu::tests::hardcore_paces_slowdown_at_full_speed_and_keeps_fast_forward`; `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| frame advance | `App::request_frame_advance` | `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| memory pokes (debugger writeback) | `EmuCore::produce_one_frame` drops the queue | `emu::tests::debug_poke_is_gated_by_writes_locked` (its hardcore case) |
+| memory viewer / Memory Compare, the debugger inspectors, provenance / HD-pixel inspectors, Cheats, `TAStudio`, `BasicBot`, latency oracle, atlas, divergence | `DebuggerOverlay::close_hardcore_forbidden_panels`, the first statement of both panel dispatches | `debugger::tests::hardcore_closes_the_debugger_memory_cheat_and_tas_windows_first` |
+| Lua scripting | `App::load_script_from_path` refuses; `App::stop_script_for_hardcore` stops a running script at the top of `pump_scripts` | `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| movie playback / import | `App::handle_movie_play_toggle` and `handle_movie_import` refuse; `EmuCore::produce_one_frame` stops a playing movie | `emu::tests::hardcore_stops_movie_playback_and_keeps_a_recording`; the start-site shape test |
+| saved achievement progress (`ra-progress/*.rap`) | `RaSession::begin_load_game` / `set_hardcore` drop it | `rustynes_ra::tests::hardcore_never_restores_saved_progress` |
+| switching hardcore ON mid-session | `App::set_ra_hardcore`: refused while a movie or netplay owns the timeline; then stops a script, lifts slowdown, and power-cycles a running game (`do_power_cycle` ends in `rc_client_reset`, which re-enables processing) | `app::tests::switching_hardcore_on_power_cycles_a_running_game`; `rustynes_ra::tests::set_hardcore_reports_only_the_switch_on` |
+
+The mobile bridge (`rustynes-mobile`) enforces the same table:
+`load_state`, `cheat_add_genie`, `load_script` and `movie_play` return
+`HardcoreBlocked`; `poke_ram` is a no-op and `peek_byte`, `debug_read_memory`,
+`debug_disassemble` and `debug_cpu_state` return nothing (keeping the generated
+Kotlin / Swift signatures); every tick first stops playback, removes Game Genie
+codes and unloads a script (`enforce_hardcore`), and removes the codes again
+after the movie hook, which re-applies a recording's captured options
+(`drop_hardcore_codes`; a recording started in hardcore captures none).
+`ra_set_hardcore(true)` / `ra_init(true)` power-cycles the console and calls
+`rc_client_reset`, and is refused while a movie or netplay owns the timeline,
+whether or not a session exists yet: a missing session is created casual and
+then switched (until the v3.4.0 review a missing session was created directly
+in hardcore, with no check and no reset, so a casual recording ran on into
+hardcore). Both return whether hardcore is on afterwards, and both apps
+reconcile their stored toggle with that value (Android's `MainActivity`, iOS's
+`RetroAchievementsModel`), so a refused switch shows casual. rcheevos' `Reset` request,
+which the bridge answered with a soft reset and no `rc_client_reset` (so
+achievement processing stayed suspended after the player switched hardcore
+on), now does the same power cycle. Tests:
+`hardcore_refuses_cheats_scripts_playback_and_memory_tools`,
+`hardcore_tears_down_running_features_on_the_next_frame`,
+`switching_hardcore_on_power_cycles_and_waits_for_a_recording`,
+`creating_a_hardcore_session_obeys_the_switch_rule`,
+`hardcore_runs_a_recording_frame_without_its_captured_codes` (and the
+v1.8.6 `hardcore_blocks_load_state_only`). Outside Rust's reach, the host apps
+were searched for the rest (2026-10-16): neither app has a slowdown or a
+frame-advance control, except the iOS debugger's "Step", which advances one
+frame through the bridge's `step_frame` (the ordinary per-frame tick, which
+the bridge cannot refuse without stopping the game). So the iOS app refuses
+the debugger sheet when `raHardcore()` is set (`GameView`'s `onDebugger`) and
+skips the step if hardcore is switched on while the sheet is open
+(`DebuggerView`); that Swift is compiled only by the `ios` CI job. Android has
+no debugger. Android's auto-resume of the on-background state goes through
+`load_state`, so in hardcore it is refused and the game starts from power-on.
+RA asks a resumed session to drop to casual instead; refusing the resume keeps
+hardcore honest but differs from the letter, which is left to the maintainer as
+`T-RA-HARDCORE-RESUME`.
+
+Allowed in hardcore: saving a state, recording a movie, fast forward, reset and
+power cycle, run-ahead and netplay (RA lists neither), and pausing, which
+`rc_client_can_pause` throttles. Switching hardcore OFF mid-session is allowed.
+When a game is identified a toast says "Hardcore mode" or "Casual mode" (RA
+section E), and the status bar keeps its HARDCORE marker. Leaderboards and rich
+presence have no off switch. The browser build is casual-only.
+
+The App-level rows are source-shape tests: `App` needs a window and the
+emulation thread, so they pin that each start site asks the rule before it
+acts, and the behaviour behind them is tested in `EmuCore`, `RaSession` and the
+table. Each block was shown to fail its test by a value mutation (the v3.4.0
+branch's commit messages list them).
+
+### User-Agent
+
+RA's format (compliance requirements, section C; the `rc_client` guide's
+"User-Agent Header") is `EmulatorName/v1.0.0 (OSName 10.0) core_name/v0.5.0`:
+a required unique product token with a numeric incrementing version, an
+optional system clause, optional extensions. RustyNES sends
+`RustyNES/<crate version> (<OS> <arch>) rcheevos/<rcheevos version>`, for
+example `RustyNES/3.4.0 (Linux x86_64) rcheevos/12.5.0`; the OS and architecture
+come from the build target (the OS version is not known at compile time), the
+rcheevos version from the vendored `rc_version.h`. Two tests in `http.rs` pin
+the leading `RustyNES/` token and the three-segment shape. An unrecognized
+client has its hardcore unlocks recorded as casual until RA validates it.
 
 ## Shipped / open
 

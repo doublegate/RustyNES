@@ -851,15 +851,66 @@ deliberately not followed. Curated (D23, `docs/compatibility.md`).
 |------|-----|--------------|------|-----|-------|
 | 157 | — | Datach main unit + LZ93D50 game cartridge (`INES_Mapper_157`) | Curated | LZ93D50 (latched 16-bit M2) | A `FcgVariant::Datach` in `m016_bandai_fcg.rs`, built by `BandaiFcg::new_datach`, outside the file's derived EEPROM region except for one opt-in flag (below). Registers mask `$800F` in `$8000-$FFFF` only. `$8008` PRG bank at `$8000` (last bank fixed at `$C000`), `$8009` mirroring, `$800A-$800C` IRQ: as mapper 16 submapper 5. 8 KiB of unbanked CHR-RAM; no CHR banking. `$8000-$8003` bit 3 is the external X24C01's SCL (CHR A13 OUT); `$8004-$8007` do nothing (PA12/PA13 grounded). `$800D` bit 5 is the internal 24C02's SCL, bit 6 both chips' SDA. `$6000-$7FFF` reads: bit 4 the two EEPROMs' data out ANDed, bit 3 the barcode reader. |
 
-**The two EEPROMs.** The main unit's 256-byte 24C02 is always present and is
-the battery save (`sram()`, 256 bytes). The game cartridge's 128-byte X24C01
-exists only when the NES 2.0 header declares PRG-NVRAM (byte 10 `$10`, *Battle
-Rush*); it is reached through the existing X24C01 state machine, on its own
-clock. It is held in save states but **not** in the battery file: the page
-asks for each EEPROM in its own file, and `Mapper::sram` exposes one slice.
-*Battle Rush*'s cartridge-side save is therefore lost between sessions (a
-known gap). The main unit's EEPROM is likewise saved per game, not shared
-between Datach games as the hardware shares it.
+**The two EEPROMs.** The main unit's 256-byte 24C02 is always present. The
+game cartridge's 128-byte X24C01 exists only when the NES 2.0 header declares
+PRG-NVRAM (byte 10 `$10`, *Battle Rush*); it is reached through the existing
+X24C01 state machine, on its own clock.
+
+**The battery save holds both (v3.4.0, `T-DATACH-EXT-EEPROM-BATTERY`).** The
+board keeps every EEPROM's cells in one image (`BandaiFcg::nv`; the chip
+models hold only their protocol state and are handed their slice), and that
+image is `sram()` / `save_data()`, so every host persists it through its one
+battery file with no host-specific layout code. The layout is fixed and
+documented:
+
+| Offset | Bytes | Chip |
+|---|---|---|
+| `$000-$0FF` | 256 | the main unit's 24C02 |
+| `$100-$17F` | 128 | the cartridge's X24C01 (*Battle Rush* only) |
+
+A Datach game without the cartridge chip saves the 256 bytes it always did.
+The size is fixed by the header, so a host sees one stable length per ROM,
+which libretro's `RETRO_MEMORY_SAVE_RAM` needs. Until v3.4.0 the battery
+save was the 24C02 alone and *Battle Rush*'s cartridge-side save was lost at
+every power-off (it was kept only in save states).
+
+- **A v3.3.0 save still loads.** *Battle Rush*'s v3.3.0 `.sav` is the 24C02's
+  256 bytes. It is the prefix of today's image, so it loads into the 24C02,
+  and the cartridge chip is set to its erased state (`$FF`), which is what a
+  v3.3.0 session started it at. The board says which lengths it takes
+  (`Mapper::accepts_save_len`: its save size, plus 256 on this one board) and
+  loads them (`Mapper::load_save_data`); the desktop, web and mobile hosts
+  call those instead of comparing lengths themselves, so the rule lives in
+  the board. Any other length is refused and the file left untouched, as on
+  every board. The next write after a change stores the full 384 bytes.
+  libretro needs nothing: RetroArch copies a shorter `.srm` into the start of
+  the buffer (`content_load_ram_file` in its `save.c`), which is the 24C02.
+- **Why one image and not two files.** The page asks emulators to save each
+  EEPROM to its own file, the main unit's shared among all Datach games, as
+  the hardware shares it. That needs a second, per-console store on all four
+  hosts (desktop, browser, libretro, Android / iOS) and a key that is not the
+  ROM's hash; RetroArch exposes one save buffer per content. One image with a
+  fixed layout persists both chips everywhere today, and splitting it later
+  is a slice at `$100`. The main unit's EEPROM is therefore still saved per
+  game, not shared between Datach games (`T-DATACH-SHARED-MAIN-UNIT`, open).
+- **Movies and netplay start where they did.** A power-on movie and a netplay
+  session clear the save data (`clear_save_data`). The 24C02 still clears to
+  `$00` (the trait default it always used); the cartridge chip clears to its
+  erased `$FF`, which is what it held at a v3.3.0 movie start (it was not
+  save data then, and the power cycle before the clear rebuilt it blank).
+  So no movie or netplay frame changes and `EMULATION_EPOCH` does not move.
+  That the 24C02 clears to `$00` rather than an EEPROM's erased `$FF` is
+  v3.3.0 behaviour, kept on purpose: changing it moves every Bandai EEPROM
+  movie and needs an epoch of its own.
+- **A Power Cycle now keeps the cartridge chip** on *Battle Rush*, as it
+  keeps every battery save (`Nes::power_cycle`, v2.9.0); in v3.3.0 the
+  rebuild erased it. A console keeps an EEPROM across power-off. Power Cycle
+  is refused during a movie or netplay session, so no replay sees it.
+- **Save states are byte-identical to v3.3.0.** The blob still writes the
+  main chip's 256 bytes where it always did and the cartridge chip's 128 in
+  the mapper-157 tail; `eeprom_save_state_bytes_are_unchanged_since_v3_3_0`
+  pins the blobs of mappers 16, 159 and 157 (with and without the cartridge
+  chip) to hashes taken from the v3.3.0 code before the change.
 
 **The 24C02 random read (`keeps_word_address`).** A 24C02 random read is a
 dummy write of the word address, a repeated START, and a read-mode device

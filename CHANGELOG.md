@@ -26,6 +26,183 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Netplay with v3.2.x and v3.3.x peers is refused** (protocol 9, `"RNE9"`,
+  ADR 0046). Every native netplay datagram is now authenticated
+  (`T-NETPLAY-DATAGRAM-AUTH`): each peer contributes a random key share in its
+  handshake, and every datagram after it carries an HMAC-SHA-256 tag under a
+  per-session key and a sequence number. A datagram from anyone without the key
+  is refused before it is parsed, a replay is refused, and a peer whose NAT
+  changes its address is kept and followed. In a 3-4 player session a peer's
+  datagrams may speak only for its own player. It defends against off-path
+  forgery, not against someone who observes the handshake. A v3.4.0 peer
+  refuses an `"RNE8"` peer with the reason, naming its emulation epoch; the
+  older peer times out. The signalling room protocol is unchanged. New
+  dependency: `hmac` 0.13 (RustCrypto, MIT OR Apache-2.0).
+- **`rustynes-netplay` API:** `NetMessage::Sync` gains `key_share`,
+  `NetMessage::Roster` entries are `(player, addr, key_share)`, and
+  `NetMessage::InputAck` gains `player`.
+  `RollbackSession::confirmed_entering_digest` keeps the most recent 256
+  frames, and `confirmed_input` the history window. New: the `auth` module
+  (`DatagramAuth`, `KeyShare`, `Refusal`), `UdpTransport::enable_auth`,
+  `UdpMeshTransport::new_sealed` and `misattributed_datagrams`,
+  `MeshJoiner::with_gather_timeout` and `host_answered`,
+  `RollbackSession::retained`, and
+  `impl Transport for Box<T>`.
+
+### Added
+
+- **Hosted netplay and achievements services** (`services/hosted/`,
+  `T-HOSTED-NETPLAY`, `T-RA-PROXY`). A Cloudflare Worker runs the netplay
+  signalling lobby in a Durable Object, byte-compatible with the reference
+  `signaling_server` (Rust-recorded conformance vectors check it). It mints
+  three-hour Cloudflare TURN credentials behind spend guards: a per-address
+  limit, a daily cap and a kill switch. It also forwards the browser's
+  RetroAchievements calls with an allowlist, in casual mode only, behind
+  per-address limits (a tighter one for logins) and a daily cap. With a
+  hosted base configured (`[netplay] hosted_base_url`, or
+  `RUSTYNES_HOSTED_BASE` at build time; unset by default), the browser lobby
+  and the Android and iOS room codes use the hosted lobby and fetch TURN
+  credentials, falling back to STUN only when refused. The browser
+  RetroAchievements glue takes its proxy address from the page and accepts
+  only HTTPS.
+- **A privacy policy**, `PRIVACY.md`, published at
+  <https://doublegate.github.io/RustyNES/privacy/> and linked from the README
+  and the apps. The F-Droid anti-feature decision is recorded in
+  `docs/android.md`.
+- **Netplay: three and four players on the desktop**
+  (`T-NETPLAY-MESH-NATIVE`). The netplay panel's 3 and 4 player choices now
+  gather every joiner and run the full mesh with the Four Score; until now the
+  desktop completed only the first joiner. Joiners do not choose a count: the
+  same Join reaches a 2-player or a 3-4 player host, and waits while the host
+  gathers the others (up to the host's two minutes); a joiner that leaves
+  before the session starts gives up its seat. Direct IP and LAN only
+  (no room code or TURN for more than two players); the mobile apps follow in
+  a later release (`MOB-09`).
+- **MiSTer core: MMC2, MMC4, the Sunsoft FME-7 with 5B audio, Konami
+  VRC2/VRC4, and the Zapper** (Phase F3a). Mappers 9 and 10 (the CHR latch a
+  PPU read sets; *Punch-Out!!*), 69 with the 5B's expansion audio, and 21 / 22
+  / 23 / 25 in every wiring, including the VRC4 IRQ. The NES Zapper is on
+  port 2, aimed with the mouse, with an on-screen crosshair the gun cannot
+  see. Each is gated against new oracle goldens, on and off the die. The 5B's
+  timed behaviour is gated against its NESdev page instead of the oracle,
+  whose 5B departs from the page (filed as `T-S5B-PAGE`). Simulation only;
+  none of it has run on hardware.
+- **The golden exporter takes a Zapper and records expansion audio**:
+  `nes_golden_export` gains `--zapper X:Y:TRIG` (a Zapper on port 2) and
+  `--ext-audio-trace` (the cartridge's per-cycle expansion-audio value), for
+  the MiSTer core's Zapper and Sunsoft 5B gates. A run without them writes the
+  same artifacts and manifests as before.
+
+### Changed
+
+- **MiSTer core, off-die build: the SDRAM arbiter schedules around the
+  console** (FB-20, RTL-9). Refresh and the arbiter's own reads are granted
+  only where they cannot delay one of the console's fixed request phases.
+  Across the whole off-die test ladder (742 million CHR and 536 million PRG
+  requests), the worst CHR fetch is 18 cycles against a 22-cycle budget (it
+  was 25), the worst PRG fetch 20 against 24, and no scheduled request meets
+  a refresh. A new gate holds every off-die run to those budgets. Simulation
+  only.
+- **egui 0.37, and egui-winit from crates.io again.** egui, egui-wgpu and
+  egui-winit move from 0.36 to 0.37.0. wgpu stays on 30, because egui-wgpu
+  0.37 requires it and wgpu 31 is not released. The vendored
+  `vendor/egui-winit/` copy, carried since v2.9.3 for a wasm32 build fix, is
+  removed: the published egui-winit 0.37.0 builds for wasm32 with the same
+  fix. egui 0.37 no longer bundles its UI and emoji fonts by default, so the
+  workspace enables `monochrome_emoji_fonts` and keeps the font set 0.36
+  shipped; without it the NSF player, replay panel and TAStudio buttons would
+  draw boxes. A new frontend test checks that every glyph the UI draws has a
+  font.
+- **RetroAchievements hardcore follows RA's full block list**
+  (`T-RA-HARDCORE`, desktop and mobile). Hardcore now refuses frame advance
+  and slowdown (fast forward is still allowed), Game Genie codes and raw
+  cheats, Lua scripts (a running one is stopped), movie playback, movie
+  import and TAStudio (recording is still allowed), the debugger and memory
+  windows, and restoring saved achievement progress, as well as save-state
+  loading, as before. Switching hardcore on power-cycles a running game, and
+  is refused while a movie or netplay session is active; on Android and iOS
+  the toggle then returns to casual. A toast names the mode when a game is
+  identified.
+- **The RetroAchievements User-Agent** is now
+  `RustyNES/<version> (<OS> <arch>) rcheevos/<version>`, RA's documented
+  three-part shape; the browser proxies send `(Web wasm32)`.
+- **The netplay rollback window** (`T-NETPLAY-ROLLBACK-WINDOW`, Round 2
+  NET-R2-01, -05 and -09). A confirmation whose predictions held no longer
+  replays any frame (it re-simulated several frames per tick before); a
+  misprediction replays from the mispredicted frame; every per-frame store is
+  bounded by the window instead of growing for the whole session; and the
+  state digest is about 15 times faster (209.7 to 13.3 us per frame). One tick
+  of a latent two-peer session went from 20.78 ms to 8.1-8.9 ms (release
+  bench, two runs). NET-R2-02's framebuffer-less snapshots were measured and
+  rejected: they produced false desyncs.
+
+### Fixed
+
+- **Netplay, 3-4 players: a peer that missed early inputs stalled
+  forever.** An `InputAck` named no sender, so one peer's ack stopped
+  another's retransmission to a third that had not received it.
+- **Netplay: a different second value for an already confirmed input is
+  ignored**, instead of rewriting a frame below the rollback checkpoint.
+- **MiSTer core: a battery save is read once per mount.** `save_ctl` read
+  every save twice, because the framework's `img_mounted` stays high for the
+  HPS's whole transaction. It was found by a new gate that simulates `emu.sv`
+  through the framework's real `hps_io`, and fixed in simulation.
+- **The desktop and browser frontends use about half the CPU on their window
+  thread** (measured -46% and -48% on the desktop, in two before/after pairs).
+  Two costs found by profiling the live app, neither in egui. The check that
+  skips re-uploading an unchanged frame hashed all 245,760 bytes on every
+  redraw, about 206 µs, to save a copy of about 6 µs. It now compares against
+  a copy of the last uploaded frame (about 7.7 µs, and it cannot be fooled by
+  a hash collision). The performance statistics were sorted every frame,
+  partly under the emulator lock, even with the Performance panel closed and
+  the log off. They are now built only when a panel shows them or the log
+  writes its once-a-second row. Frame rate and pacing are unchanged.
+- **Restoring a save state no longer rebuilds the audio resampler's filter
+  table.** Run-ahead restores one every frame, as do rewind and netplay
+  rollback, and each one recomputed 8,192 sines and cosines for a table that
+  never changes. It is now copied. About 1.5% fewer instructions on the
+  emulation thread with run-ahead 1; audio and states are byte-identical.
+- **The performance log records the egui pass in the normal view.**
+  `RUSTYNES_PERF_LOG`'s `rui` column was recorded only while the debugger
+  overlay or a tool panel was open, so with them closed it read 0.000 although
+  the menu and status bars are built every frame. It now reads the egui build
+  there too (0.31 ms p50 in one capture). egui 0.37 itself costs about 10% more
+  instructions per shell frame than 0.36 (about 3 µs); the text-tessellation
+  part is reported upstream as emilk/egui#8731.
+- **`rustynes-apu`'s `std` feature builds on its own.** The crate never
+  loaded `std`, so `--no-default-features --features std` failed on its float
+  math; every build that worked got `std` from another dependency. Output is
+  unchanged. Found by a new weekly CI sweep of every feature combination to
+  depth 2 (`T-CI-FEATURE-POWERSET`), which now passes all 345.
+- **Netplay, 3-4 players: a joiner refuses a malformed roster, or one not
+  sent by the host it dialed.** A roster with a gap in its player indices
+  (such as 0, 1, 3) built a session with a peer it did not have, which a
+  release build indexed out of range.
+- **Native RetroAchievements achievements can unlock.** Every achievement was
+  disabled when its game loaded: rcheevos checked memory addresses from the
+  network callback, where no memory reader is installed, so no unlock could
+  fire on desktop or mobile. The check now runs on the next frame.
+- **An unlock earned without a network connection is sent when the
+  connection returns.** Network failures were reported as final server
+  errors, and the unlock was dropped.
+- **Mobile: switching RetroAchievements hardcore on keeps achievements
+  running.** rcheevos' reset request did a soft reset without resetting the
+  achievement runtime, so achievements stopped processing; it now
+  power-cycles and resets it.
+- **The Datach cartridge's own EEPROM is kept in the battery save** (mapper
+  157, `T-DATACH-EXT-EEPROM-BATTERY`). *Battle Rush*'s 128-byte X24C01 was
+  lost at every power-off; it is now saved after the Datach main unit's
+  24C02, on every frontend. *Battle Rush*'s save grows from 256 to 384 bytes;
+  other Datach games still save 256. A v3.3.0 save of *Battle Rush* still
+  loads, into the main unit's EEPROM with the cartridge chip blank, and the
+  next save writes the full size. A Power Cycle on *Battle Rush* now keeps the
+  cartridge chip, as it keeps every battery save. Save states, movies and
+  netplay are unchanged.
+- **The iOS About screen stated the wrong licence**; it now says
+  GPL-3.0-or-later, in English and Spanish.
+
 ## [3.3.0] - 2026-10-16 - "Plumbline" (v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes banked on seven boards, mapper 71's decode, Bandai and Somari states, a withdrawn performance figure, IRQ trace goldens that gate, and two off-die MiSTer fixes)
 
 ### Breaking
