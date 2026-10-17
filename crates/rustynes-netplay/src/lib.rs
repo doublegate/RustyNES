@@ -143,6 +143,11 @@ pub mod signaling_client;
 // `SignalMessage` parse/encode for the browser signaling client.
 pub mod signaling;
 
+// v3.4.0 — the hosted services' client side: base-URL resolution, the
+// `/turn-credentials` parser (portable, used by the wasm frontend too) and the
+// native blocking fetch (`netplay-client`).
+pub mod hosted;
+
 // The WebRTC transport skeleton is wasm-only (it speaks `web_sys`).
 #[cfg(target_arch = "wasm32")]
 pub mod webrtc;

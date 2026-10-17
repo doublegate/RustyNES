@@ -1,0 +1,24 @@
+{
+  "name": "rustynes-hosted",
+  "version": "3.4.0",
+  "private": true,
+  "description": "RustyNES hosted services: the netplay signalling lobby (Durable Object), Cloudflare TURN credential minting, and the browser RetroAchievements proxy.",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.3.4",
+    "@cloudflare/workers-types": "5.20260930.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.145.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -413,6 +413,10 @@ pub struct NpStatus {
     pub relayed: bool,
 }
 
+/// How long the hosted TURN credential request may take before the session
+/// goes ahead without a relay (v3.4.0).
+const HOSTED_ICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Endpoints for a room-code (internet) netplay session (v1.8.7), mapped onto
 /// [`NatConfig`] by [`NesController::np_host_room`] / `np_join_room`.
 ///
@@ -441,7 +445,50 @@ impl NpNetConfig {
     /// Project the FFI config onto the orchestrator's [`NatConfig`]: substitute
     /// the default STUN list when none was supplied, and build a [`TurnConfig`]
     /// only when the URL resolves AND both credentials are present.
+    ///
+    /// v3.4.0 (`T-HOSTED-NETPLAY`): when the build carries a hosted base
+    /// (`RUSTYNES_HOSTED_BASE` at compile time, see
+    /// [`rustynes_netplay::hosted`]; unset by default), an empty signaling URL
+    /// means the hosted lobby, and a missing TURN trio means "ask the hosted
+    /// service for short-lived credentials". The fetch is one blocking HTTPS GET
+    /// (both apps call `np_host_room` / `np_join_room` off the main thread); any
+    /// refusal or failure leaves the relay path off, which is exactly the
+    /// pre-v3.4.0 punch-or-fail behaviour. A user-supplied TURN trio always
+    /// wins, and without a hosted base nothing here changes at all.
     fn to_nat_config(&self) -> NatConfig {
+        self.to_nat_config_with(
+            rustynes_netplay::hosted::resolve_base("").as_deref(),
+            |base| {
+                rustynes_netplay::hosted::fetch_ice(base, HOSTED_ICE_TIMEOUT)
+                    .ok()
+                    .as_ref()
+                    .and_then(rustynes_netplay::hosted::turn_config)
+            },
+        )
+    }
+
+    /// [`to_nat_config`](Self::to_nat_config) with the hosted base and the
+    /// credential fetch injected, so the tests need neither a build-time
+    /// variable nor a network.
+    fn to_nat_config_with(
+        &self,
+        hosted: Option<&str>,
+        fetch_turn: impl FnOnce(&str) -> Option<TurnConfig>,
+    ) -> NatConfig {
+        let mut cfg = self.to_nat_config_static();
+        if let Some(base) = hosted {
+            if cfg.signaling_url.trim().is_empty() {
+                cfg.signaling_url = rustynes_netplay::hosted::signaling_url(base);
+            }
+            if cfg.turn.is_none() {
+                cfg.turn = fetch_turn(base);
+            }
+        }
+        cfg
+    }
+
+    /// The pre-v3.4.0 mapping: the caller's endpoints only.
+    fn to_nat_config_static(&self) -> NatConfig {
         let stun_servers = if self.stun_servers.is_empty() {
             DEFAULT_STUN_SERVERS
                 .iter()
@@ -5612,5 +5659,75 @@ mod tests {
         );
         // Over the limit: refused, as a load is.
         assert!(rom_identity_of_file(vec![0; MAX_ROM_BYTES + 1]).is_err());
+    }
+
+    /// v3.4.0: the hosted base only fills what the caller left empty, and a
+    /// build without one maps the config exactly as before.
+    mod hosted_config {
+        use super::*;
+
+        fn cfg(signaling: &str, turn: bool) -> NpNetConfig {
+            NpNetConfig {
+                stun_servers: vec![],
+                turn_url: turn.then(|| "127.0.0.1:3478".to_string()),
+                turn_user: turn.then(|| "user".to_string()),
+                turn_secret: turn.then(|| "secret".to_string()),
+                signaling_url: signaling.to_string(),
+            }
+        }
+
+        fn relay() -> TurnConfig {
+            TurnConfig {
+                server: "198.51.100.7:3478".parse().expect("addr"),
+                username: "hosted-user".into(),
+                credential: "hosted-cred".into(),
+            }
+        }
+
+        #[test]
+        fn without_a_hosted_base_nothing_changes_and_nothing_is_fetched() {
+            let c = cfg("", false);
+            let nat = c.to_nat_config_with(None, |_| panic!("fetched without a hosted base"));
+            assert_eq!(nat.signaling_url, "");
+            assert!(nat.turn.is_none());
+            // And the real entry point, in a stock build, agrees.
+            if rustynes_netplay::hosted::BUILD_HOSTED_BASE.is_none() {
+                let real = c.to_nat_config();
+                assert_eq!(real.signaling_url, nat.signaling_url);
+                assert!(real.turn.is_none());
+            }
+        }
+
+        #[test]
+        fn a_hosted_base_fills_the_lobby_and_the_relay() {
+            let mut asked = None;
+            let nat =
+                cfg("", false).to_nat_config_with(Some("https://h.example.workers.dev"), |b| {
+                    asked = Some(b.to_string());
+                    Some(relay())
+                });
+            assert_eq!(nat.signaling_url, "wss://h.example.workers.dev/signal");
+            assert_eq!(asked.as_deref(), Some("https://h.example.workers.dev"));
+            let t = nat.turn.expect("hosted relay");
+            assert_eq!(t.username, "hosted-user");
+            assert_eq!(t.server, relay().server);
+        }
+
+        #[test]
+        fn the_callers_endpoints_win() {
+            let nat = cfg("wss://mine.example/", true)
+                .to_nat_config_with(Some("https://h.dev"), |_| {
+                    panic!("fetched despite a configured relay")
+                });
+            assert_eq!(nat.signaling_url, "wss://mine.example/");
+            assert_eq!(nat.turn.expect("configured relay").username, "user");
+        }
+
+        #[test]
+        fn a_refused_fetch_leaves_the_relay_off() {
+            let nat = cfg("", false).to_nat_config_with(Some("https://h.dev"), |_| None);
+            assert_eq!(nat.signaling_url, "wss://h.dev/signal");
+            assert!(nat.turn.is_none());
+        }
     }
 }

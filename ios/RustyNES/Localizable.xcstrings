@@ -552,9 +552,9 @@
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Consola Lua" } }
       }
     },
-    "Made by DoubleGate. Licensed MIT OR Apache-2.0." : {
+    "Made by DoubleGate. Licensed GPL-3.0-or-later." : {
       "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Creado por DoubleGate. Licencia MIT OR Apache-2.0." } }
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Creado por DoubleGate. Licencia GPL-3.0-or-later." } }
       }
     },
     "Mute" : {
@@ -635,6 +635,11 @@
     "Power cycle" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Apagar y encender" } }
+      }
+    },
+    "Privacy policy" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Política de privacidad" } }
       }
     },
     "Project on GitHub" : {

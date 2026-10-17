@@ -1,0 +1,76 @@
+name: Hosted services
+
+# v3.4.0 (T-HOSTED-NETPLAY, T-RA-PROXY): typecheck and test the Cloudflare
+# Worker in services/hosted/ (the netplay lobby, the TURN credential endpoint
+# and its spend guards, the browser RetroAchievements proxy).
+#
+# The tests run inside workerd through the Cloudflare Vitest plugin, with the
+# real Durable Objects, storage and hibernatable WebSockets, and with every
+# outbound fetch (Cloudflare's TURN API, retroachievements.org) mocked. Nothing
+# here deploys, holds a Cloudflare credential, or reaches the network beyond
+# `npm ci` fetching the locked dependency tree. Deployment is a manual,
+# maintainer-run step (services/hosted/README.md).
+#
+# Path-filtered to what the suite reads. The Rust half of the signalling
+# conformance check (crates/rustynes-netplay/tests/hosted_signaling_vectors.rs,
+# which regenerates the vectors this suite replays) runs in ci.yml on every
+# code change, so a protocol change on either side is caught by one of the two.
+# ra_glue.js is listed because test/ra-glue.test.ts imports it.
+#
+# No other workflow is changed: ci.yml has no path filter for this tree to
+# break, and web.yml's filters cover only what the Pages build reads.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/hosted/**"
+      - "crates/rustynes-frontend/web/cheevos/ra_glue.js"
+      - ".github/workflows/hosted.yml"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "services/hosted/**"
+      - "crates/rustynes-frontend/web/cheevos/ra_glue.js"
+      - ".github/workflows/hosted.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: typecheck + test (workerd)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    # Draft gate, as in ci.yml: a draft PR skips until marked ready.
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    defaults:
+      run:
+        working-directory: services/hosted
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: services/hosted/package-lock.json
+
+      # `npm ci` installs exactly package-lock.json (all versions pinned
+      # exactly in package.json) and fails if the two disagree.
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

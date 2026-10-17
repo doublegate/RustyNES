@@ -28,6 +28,9 @@ enum AppInfo {
     }
 
     static let projectURL = URL(string: "https://github.com/doublegate/RustyNES")!
+
+    /// v3.4.0: the privacy policy (PRIVACY.md, served on GitHub Pages).
+    static let privacyURL = URL(string: "https://doublegate.github.io/RustyNES/privacy/")!
 }
 
 struct AboutView: View {
@@ -62,7 +65,7 @@ struct AboutView: View {
             Section("Credits") {
                 LabeledContent("Emulation core", value: "Pure Rust (RustyNES)")
                 LabeledContent("Label font", value: "Press Start 2P (OFL-1.1)")
-                Text("Made by DoubleGate. Licensed MIT OR Apache-2.0.")
+                Text("Made by DoubleGate. Licensed GPL-3.0-or-later.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -70,6 +73,9 @@ struct AboutView: View {
             Section {
                 Link(destination: AppInfo.projectURL) {
                     Label("Project on GitHub", systemImage: "link")
+                }
+                Link(destination: AppInfo.privacyURL) {
+                    Label("Privacy policy", systemImage: "hand.raised")
                 }
             }
         }

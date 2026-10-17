@@ -250,6 +250,45 @@ carries no billing or ad SDKs. See
 [`../to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md)
 for the historical planning record.
 
+## F-Droid anti-features (v3.4.0 decision)
+
+F-Droid labels an app with an anti-feature when it relies on something F-Droid
+users may want to avoid. Two of them concern network services, defined on
+[f-droid.org/docs/Anti-Features](https://f-droid.org/docs/Anti-Features/) and,
+for the 2024 split between them,
+[This Week in F-Droid, 2024-07-25](https://f-droid.org/2024/07/25/twif.html)
+(both read 2026-10-16):
+
+- **`NonFreeNet`**: "applied to apps that promote or depend entirely on a
+  proprietary network service".
+- **`TetheredNet`**: apps relying on services that cannot be changed. The two
+  are "totally orthogonal"; a non-free but self-hostable server is
+  `NonFreeNet` only.
+
+What the `foss` build (the F-Droid artifact) can contact, each only on the
+user's action:
+
+| Service | Free server software? | Changeable by the user? | Verdict |
+| --- | --- | --- | --- |
+| Netplay lobby + TURN | Yes: the lobby is our GPL code (`examples/signaling_server.rs`, `services/hosted/`), the relay is any standard TURN server (the `deploy/` bundle ships coturn) | Yes: signaling URL, STUN list and TURN trio are Settings fields, and F-Droid builds without `RUSTYNES_HOSTED_BASE`, so the build has no built-in service at all | Neither |
+| RetroAchievements | The site's code (RAWeb) is GPL-3.0, but RetroAchievements' [terms](https://retroachievements.org/terms) keep the achievement definitions (trigger logic) proprietary, and those definitions are what the app fetches and runs | No: the app talks to retroachievements.org and exposes no host setting | `NonFreeNet` and `TetheredNet` |
+| Box art (libretro-thumbnails on GitHub; TheGamesDB with the user's own key) | Community image collection / third-party database | No | Not declared: a convenience lookup, neither promoted nor depended on; recorded so F-Droid's reviewers can decide |
+
+**Decision:** declare **`NonFreeNet`** and **`TetheredNet`** on the F-Droid
+build, both for the optional RetroAchievements integration. RustyNES does not
+"depend entirely" on RetroAchievements (it is off until the user logs in, and
+every feature works without it), but the app does promote it (a login screen
+and achievement UI), and its content is proprietary; when the definition can be
+read either way, the label is the honest default for users who avoid such
+services. Netplay needs neither label: everything it uses is free software and
+user-replaceable, and the F-Droid build contains no hosted endpoint.
+
+**Where it is declared:** F-Droid's own metadata for the app (the
+`AntiFeatures:` field of its file in the `fdroiddata` repository), written when
+the app is submitted; this repository has no F-Droid metadata file to carry it.
+The submission is the store-listing step deferred by ADR 0035. F-Droid's
+reviewers make the final call; this records what RustyNES will ask for and why.
+
 ## CI
 
 `.github/workflows/android.yml` runs on changes to the mobile crates / `android/`:
