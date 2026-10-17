@@ -13,8 +13,8 @@ history there is the record of every change.
 - Three **optional** online features use services the maintainer runs on
   Cloudflare: online netplay (the lobby and a relay), and RetroAchievements in
   the **web** version. They are used only when you start one of them.
-- Those services keep no personal data beyond what they need for a few minutes
-  to an hour to stop abuse (described below), and they never store or log your
+- Those services keep no personal data beyond what they need for at most two
+  hours to stop abuse (described below), and they never store or log your
   RetroAchievements password or token.
 - The services are **public**: they run at a `*.workers.dev` address anyone on
   the Internet can reach. Nothing you send them is private from the other
@@ -55,7 +55,11 @@ Android and iOS room codes, in builds that point at the hosted lobby).
   holds your room membership and a pseudonymous key derived from your IP
   address (a salted SHA-256 hash, never the address itself), used to limit how
   many connections and rooms one address can open. The counters behind those
-  limits are kept in memory for at most a minute.
+  limits are kept only in memory, never written to storage. Each counts for
+  one minute; while the lobby is in use (anyone connecting or sending it a
+  message), an expired counter is deleted within two minutes of being
+  created, and when the lobby is idle, the counters are discarded as the
+  service is unloaded from memory.
 
 ### TURN relay credentials and the relay itself
 
@@ -66,10 +70,11 @@ and mobile networks prevent it), the game traffic then flows through
 Cloudflare's TURN relay.
 
 - **The credential endpoint receives:** your IP address. It keeps a salted hash
-  of it, with a count, for up to about an hour, to limit how many credentials
-  one address can obtain; an hourly cleanup deletes expired entries. It also
-  keeps a single number per day, the count of credentials issued, which is not
-  linked to anyone and is deleted the next day. The credentials it returns
+  of it, with a count, to limit how many credentials one address can obtain.
+  The count covers one hour; an hourly cleanup deletes it once that hour is
+  over, so it is kept for at most two hours. It also keeps a single number per
+  day, the count of credentials issued, which is not linked to anyone and is
+  deleted within an hour after that day ends (UTC). The credentials it returns
   expire after three hours and are not stored by the service.
 - **The relay receives:** the game traffic of a relayed session (controller
   input and synchronisation messages, roughly 22 MB per player per hour) and
@@ -89,9 +94,15 @@ them to [retroachievements.org](https://retroachievements.org).
   (when you log in) or your login token (afterwards), the game you are playing,
   and the achievements you unlock. Only requests the web version needs are
   accepted; anything else, including any hardcore-mode request, is refused.
-- **It keeps:** nothing. Your password and token pass through to
+- **It keeps:** no request content. Your password and token pass through to
   RetroAchievements and the answer passes back; the proxy does not store them,
-  does not write them to any log, and does not see them again.
+  does not write them to any log, and does not see them again. To limit abuse
+  of the proxy (for example, many login attempts from one address), it keeps a
+  salted hash of your IP address with two counts, how many requests and how
+  many logins it forwarded for that address, for at most two hours, exactly
+  as the relay credential endpoint does; and a single number per day, the
+  count of requests forwarded, not linked to anyone and deleted within an hour
+  after that day ends (UTC).
 - **RetroAchievements** receives what you would send it from any client, and its
   own [terms and policies](https://retroachievements.org/terms) apply to that.
 

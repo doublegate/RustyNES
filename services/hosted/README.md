@@ -6,8 +6,8 @@ gives the RustyNES clients three things they cannot get from a static page:
 | Route | What it is | Source |
 | --- | --- | --- |
 | `GET /signal` (or `/`) | The netplay lobby: the reference signalling room protocol over a WebSocket, in one Durable Object with the hibernation API | `src/lobby.ts`, `src/protocol.ts` |
-| `GET` or `POST /turn-credentials` | Short-lived Cloudflare Realtime TURN credentials, behind the spend guards | `src/turn.ts`, `src/budget.ts` |
-| `POST /ra/dorequest.php` | The browser RetroAchievements proxy (ADR 0015): an allowlisted forward with RustyNES's User-Agent | `src/ra.ts` |
+| `POST /turn-credentials` | Short-lived Cloudflare Realtime TURN credentials, behind the spend guards (GET is refused: see "Spend guards") | `src/turn.ts`, `src/budget.ts` |
+| `POST /ra/dorequest.php` | The browser RetroAchievements proxy (ADR 0015): an allowlisted forward with RustyNES's User-Agent, behind its own abuse guards | `src/ra.ts`, `src/budget.ts` |
 | `GET /healthz` | Liveness | `src/index.ts` |
 
 **The service is public.** It runs at a `*.workers.dev` address that anyone on
@@ -64,7 +64,8 @@ method to prove it).
 
 Cloudflare bills Realtime TURN egress past the free monthly allowance to the
 account that owns the TURN key, i.e. the maintainer's. Each guard is a var in
-`wrangler.jsonc` and is pinned by a test in `test/turn.test.ts`.
+`wrangler.jsonc` and is pinned by a test in `test/turn.test.ts` (the
+RetroAchievements rows in `test/ra.test.ts`).
 
 | Guard | Var (deployed value) | Behaviour | Test |
 | --- | --- | --- | --- |
@@ -72,6 +73,11 @@ account that owns the TURN key, i.e. the maintainer's. Each guard is a var in
 | Daily global cap | `TURN_DAILY_CAP` (500) | 503 `daily-cap` with `Retry-After` until 00:00 UTC; failed upstream mints are refunded | `caps credentials per UTC day across all callers, and resets the next day`, the six `... is a 502 and does not spend the budget` tests |
 | Short TTL | `TURN_TTL_SECONDS` (10800, clamped 600-86400) | Credentials expire after 3 h | `returns short-lived ICE servers and passes the TTL upstream`, `clamps the configured TTL` |
 | Kill switch | `TURN_ENABLED` (`"true"`) | Anything else: 503 `turn-disabled`, no upstream call | `the kill switch refuses without calling upstream` |
+| POST only | (none) | A GET is 405 before the budget is consulted, so another page cannot spend the cap through its visitors' browsers | `a GET with no Origin, as an <img> on another page sends it, is refused and spends nothing` |
+| RA per-IP rate limit | `RA_PER_IP_PER_HOUR` (240) | 429 with `Retry-After`; in Durable Object storage (the `ra` instance) | `limits one address per hour with 429 and Retry-After` |
+| RA login rate limit | `RA_LOGINS_PER_IP_PER_HOUR` (10) | `login2` calls only; 429 with `Retry-After` | `limits logins per address more tightly than other calls` |
+| RA daily global cap | `RA_DAILY_CAP` (50000) | 503 with `Retry-After` until 00:00 UTC | `caps forwarded calls per UTC day across all addresses` |
+| RA kill switch | `RA_ENABLED` (`"true"`) | Anything else: 503, no upstream call | `the kill switch refuses` |
 | Room-creation rate (lobby) | `LOBBY_ROOMS_PER_IP_PER_MINUTE` (10) | `error` `rate limited`, then close | `test/lobby.test.ts`: `limits room creation per IP` |
 
 **Why 3 hours.** A TURN allocation is kept alive by Refresh requests that
@@ -83,6 +89,23 @@ covers a long sitting with one game and is the shortest value that does; a
 longer session drops its relay and reconnects through the lobby, which mints
 fresh credentials. Shorter is better because the TTL is how long a leaked
 credential stays usable. `src/turn.ts` has the full argument.
+
+**Why POST only.** A request without `Origin` is served, because that is how
+the native apps look. But a browser also omits `Origin` on a GET it sends
+without CORS, such as an `<img src>` on any page, so a minting GET would let a
+third-party page spend one credential of the shared daily cap per visitor. A
+browser always sends `Origin` on a POST (the Fetch standard), so with POST only
+every browser request either carries the RustyNES site's origin or is refused
+with a 403. `src/turn.ts` has the detail; both RustyNES clients send POST.
+
+**Why the RetroAchievements proxy has guards too.** Its Origin check keeps
+other web pages out, but a program can send any `Origin`, and every call it
+pushes through goes to retroachievements.org under RustyNES's shared
+User-Agent. Unmetered, that is a path for credential stuffing (`login2`) and a
+way to get that identity banned for every browser user. The guards count only
+requests that would be forwarded (a refused call type costs nothing). The
+defaults leave room for the casual runtime, which makes about one call a
+minute while a game runs; `src/budget.ts` has the reasoning.
 
 **What the guards do not bound.** They bound how many credentials exist, not
 how many bytes one carries: a credential can relay whatever its holder sends
@@ -238,9 +261,10 @@ each needs the deployed service, real browsers or devices, or a real account.
 
 1. **Smoke:** `curl https://rustynes-hosted.<sub>.workers.dev/healthz` prints
    `ok`; the `hosted_lobby_live` test above passes against
-   `wss://rustynes-hosted.<sub>.workers.dev/signal`; `curl -i .../turn-credentials` returns 200 with `iceServers`, `ttl`
+   `wss://rustynes-hosted.<sub>.workers.dev/signal`; `curl -i -X POST .../turn-credentials` returns 200 with `iceServers`, `ttl`
    10800 and an `expiresAt` three hours ahead; repeat it seven times from one
-   address and the seventh is a 429.
+   address and the seventh is a 429; `curl -i .../turn-credentials` (a GET)
+   is a 405.
 2. **Two browsers through the hosted lobby (row 1):** open the Pages build in
    two browsers (two machines, or two profiles), load the same ROM, join the
    same room code. Both reach `InGame`; the frames stay in sync.

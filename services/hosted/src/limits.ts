@@ -13,12 +13,19 @@
  *
  * Fixed windows allow a burst of up to 2x `limit` across a window boundary;
  * that is accepted here because every limit is a spend or abuse bound with
- * headroom, not a precise quota. Stale keys are swept lazily so the map stays
- * bounded by the number of keys active in the current window.
+ * headroom, not a precise quota.
+ *
+ * Expired keys are pruned lazily, at most once per window, by `hit` and by
+ * `prune` (which the lobby also calls on every message, so any activity
+ * prunes). An entry therefore outlives its window by less than one more
+ * window while its owner is active: PRIVACY.md's "within two minutes" for the
+ * lobby's one-minute windows, pinned by test/limits.test.ts. With no activity
+ * at all nothing prunes, and the entries go when the runtime unloads the idle
+ * object from memory (they are never written to storage).
  */
 export class WindowLimiter {
   private windows = new Map<string, { start: number; count: number }>();
-  private lastSweep = 0;
+  private lastPrune = 0;
 
   constructor(
     private readonly limit: number,
@@ -27,7 +34,7 @@ export class WindowLimiter {
 
   /** Count one event for `key`; `false` (and no count) when over the limit. */
   hit(key: string, now: number): boolean {
-    this.sweep(now);
+    this.prune(now);
     const w = this.windows.get(key);
     if (!w || now - w.start >= this.windowMs) {
       if (this.limit < 1) return false;
@@ -45,10 +52,16 @@ export class WindowLimiter {
     if (w && w.count > 0) w.count -= 1;
   }
 
-  private sweep(now: number): void {
-    if (now - this.lastSweep < this.windowMs) return;
-    this.lastSweep = now;
+  /** Drop expired keys, at most once per window (cheap to call often). */
+  prune(now: number): void {
+    if (now - this.lastPrune < this.windowMs) return;
+    this.lastPrune = now;
     for (const [k, w] of this.windows) if (now - w.start >= this.windowMs) this.windows.delete(k);
+  }
+
+  /** Keys held (for the retention tests). */
+  get size(): number {
+    return this.windows.size;
   }
 }
 

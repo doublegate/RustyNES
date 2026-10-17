@@ -36,8 +36,11 @@ function mockUpstream(impl: (url: string, init: RequestInit) => Promise<Response
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => impl(String(input instanceof Request ? input.url : input), init ?? {}));
 }
 
+// POST, as both clients send it: a GET is refused (see "a GET ... spends
+// nothing" below for why).
 const call = (ip: string, headers: Record<string, string> = {}) =>
-  exports.default.fetch("https://hosted.test/turn-credentials", { headers: { "CF-Connecting-IP": ip, ...headers } });
+  exports.default.fetch("https://hosted.test/turn-credentials", { method: "POST", headers: { "CF-Connecting-IP": ip, ...headers } });
+const mintRequest = () => new Request("https://h/turn-credentials", { method: "POST" });
 
 // Each test starts with an empty global budget, so the daily cap one test
 // spends does not leak into the next.
@@ -101,7 +104,7 @@ describe("minting", () => {
       ["not-a-number", DEFAULT_TTL],
     ] as const) {
       const e = { ...env, TURN_TTL_SECONDS: raw } as Env;
-      const resp = await handleTurn(new Request("https://h/turn-credentials"), e, freshIp(), undefined);
+      const resp = await handleTurn(mintRequest(), e, freshIp(), undefined);
       expect(((await resp.json()) as { ttl: number }).ttl, raw).toBe(want);
       expect(JSON.parse(String(spy.mock.calls.at(-1)![1]!.body)).ttl, raw).toBe(want);
     }
@@ -127,7 +130,7 @@ describe("failure paths", () => {
     const spy = mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
     for (const v of ["false", "", undefined]) {
       const e = { ...env, TURN_ENABLED: v } as Env;
-      const resp = await handleTurn(new Request("https://h/turn-credentials"), e, freshIp(), undefined);
+      const resp = await handleTurn(mintRequest(), e, freshIp(), undefined);
       expect(resp.status).toBe(503);
       expect(((await resp.json()) as { error: string }).error).toBe("turn-disabled");
     }
@@ -137,7 +140,7 @@ describe("failure paths", () => {
   it("an unconfigured key refuses without calling upstream", async () => {
     const spy = mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
     const e = { ...env, TURN_KEY_API_TOKEN: undefined } as Env;
-    const resp = await handleTurn(new Request("https://h/turn-credentials"), e, freshIp(), undefined);
+    const resp = await handleTurn(mintRequest(), e, freshIp(), undefined);
     expect(resp.status).toBe(503);
     expect(((await resp.json()) as { error: string }).error).toBe("turn-not-configured");
     expect(spy).not.toHaveBeenCalled();
@@ -163,9 +166,31 @@ describe("failure paths", () => {
     });
   }
 
-  it("rejects methods other than GET and POST", async () => {
+  it("rejects methods other than POST", async () => {
     const resp = await exports.default.fetch("https://hosted.test/turn-credentials", { method: "DELETE" });
     expect(resp.status).toBe(405);
+  });
+
+  // A third-party page can make its visitors' browsers send a GET with no
+  // Origin at all (`<img src>`, a no-cors fetch), and a missing Origin is how
+  // the native apps look, so a GET that minted would let any page spend the
+  // shared daily cap. Browsers always send Origin on a POST, so POST-only
+  // leaves such a page only its own (refused) Origin.
+  it("a GET with no Origin, as an <img> on another page sends it, is refused and spends nothing", async () => {
+    const spy = mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
+    const before = (await env.BUDGET.getByName("global").usage()).minted;
+    const resp = await exports.default.fetch("https://hosted.test/turn-credentials", {
+      headers: { "CF-Connecting-IP": freshIp() },
+    });
+    expect(resp.status).toBe(405);
+    expect(resp.headers.get("Allow")).toBe("POST, OPTIONS");
+    expect(spy).not.toHaveBeenCalled();
+    expect((await env.BUDGET.getByName("global").usage()).minted).toBe(before);
+  });
+
+  it("a POST with no Origin (the native apps) still mints", async () => {
+    mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
+    expect((await call(freshIp())).status).toBe(200);
   });
 });
 

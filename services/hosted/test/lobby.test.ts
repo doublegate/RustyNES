@@ -4,9 +4,10 @@
 // reference protocol) and the Worker's routing to it.
 
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { describe, expect, it, vi } from "vitest";
 import "../src/index";
-import { MAX_FRAME_BYTES } from "../src/lobby";
+import { type Lobby, MAX_FRAME_BYTES } from "../src/lobby";
 import { connectStub, sleep, waitFor, wrap } from "./helpers";
 
 const err = (reason: string) => `{"type":"error","reason":"${reason}"}`;
@@ -164,6 +165,28 @@ describe("boundary rules", () => {
     await waitFor(() => c.closed(), "close");
     expect(c.inbox.at(-1)).toBe(err("rate limited"));
     expect(c.inbox.length).toBeLessThan(200);
+  });
+
+  // PRIVACY.md: the per-IP counters go within two minutes while the lobby is
+  // in use, even when that use is only in-room messages (no new connection or
+  // room, the only other places the limiters run).
+  it("an in-room message prunes the per-IP counters once they expire", async () => {
+    const stub = env.LOBBY.getByName("prune");
+    const c = await connectStub(stub, "198.51.100.70");
+    await runInDurableObject(stub, async (obj: Lobby, state) => {
+      const counters = obj as unknown as { connects: { size: number } };
+      expect(counters.connects.size).toBe(1);
+      const later = Date.now() + 3 * 60_000;
+      const spy = vi.spyOn(Date, "now").mockReturnValue(later);
+      try {
+        const [ws] = state.getWebSockets();
+        await obj.webSocketMessage(ws, '{"type":"list-rooms"}');
+      } finally {
+        spy.mockRestore();
+      }
+      expect(counters.connects.size).toBe(0);
+    });
+    c.ws.close(1000, "");
   });
 
   it("ignores binary frames, as the reference does", async () => {

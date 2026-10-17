@@ -56,7 +56,8 @@ cycle-accurate core later replaced.
   `signaling_server` (Rust-recorded conformance vectors check it). It mints
   three-hour Cloudflare TURN credentials behind spend guards: a per-address
   limit, a daily cap and a kill switch. It also forwards the browser's
-  RetroAchievements calls with an allowlist, in casual mode only. With a
+  RetroAchievements calls with an allowlist, in casual mode only, behind
+  per-address limits (a tighter one for logins) and a daily cap. With a
   hosted base configured (`[netplay] hosted_base_url`, or
   `RUSTYNES_HOSTED_BASE` at build time; unset by default), the browser lobby
   and the Android and iOS room codes use the hosted lobby and fetch TURN

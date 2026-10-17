@@ -14,7 +14,8 @@
 //   {"ttl": <seconds>}
 //   -> 201 {"iceServers":[{"urls":[...]},{"urls":[...],"username":"…","credential":"…"}]}
 //
-// Response to the client:
+// The client calls `POST /turn-credentials` with an empty body (GET is
+// refused; "Why POST only" below). Response to the client:
 //
 //   200 {"iceServers":[…], "ttl": <seconds>, "expiresAt": <unix seconds>}
 //
@@ -22,6 +23,23 @@
 // Rust clients map to "fall back to STUN only" (crates/rustynes-netplay/src/
 // hosted.rs): `turn-disabled` (the kill switch), `turn-not-configured`,
 // `rate-limited` (429, per IP), `daily-cap` (503, global), `turn-upstream`.
+//
+// # Why POST only
+//
+// A request with no `Origin` is served, because that is how the native apps
+// look (cors.ts). A browser omits `Origin` on a GET it sends without CORS: an
+// `<img src>`, a `<script src>` or a `fetch(..., {mode: "no-cors"})` on ANY
+// page. If a GET minted, every visitor of a third-party page could be made to
+// spend one of the shared TURN_DAILY_CAP credentials (and their own per-IP
+// quota) without that page ever reading the answer: a spend and availability
+// attack, not credential theft. The Fetch standard has a browser send `Origin`
+// on every request whose method is not GET or HEAD, whatever the mode
+// (fetch.spec.whatwg.org, "append a request `Origin` header"), and a page with
+// `Referrer-Policy: no-referrer` sends `Origin: null`, which no allowlist
+// entry matches. So with POST only, a browser request either carries the
+// RustyNES site's Origin or is refused by the router with a 403 before the
+// budget is touched. A native client can still send whatever it likes; that
+// is what the per-IP and daily guards are for.
 //
 // # Why the TTL is 3 hours (TURN_TTL_SECONDS = 10800)
 //
@@ -89,9 +107,11 @@ export async function handleTurn(
   ip: string,
   cors: string | undefined,
 ): Promise<Response> {
-  const h = corsHeaders(cors, "GET, POST, OPTIONS");
-  if (request.method !== "GET" && request.method !== "POST") {
-    return json(405, { error: "method", message: "use GET or POST" }, { ...h, Allow: "GET, POST, OPTIONS" });
+  const h = corsHeaders(cors, "POST, OPTIONS");
+  // POST only, never GET: see "# Why POST only" above. Refused before the
+  // budget is consulted, so a refused method spends nothing.
+  if (request.method !== "POST") {
+    return json(405, { error: "method", message: "use POST" }, { ...h, Allow: "POST, OPTIONS" });
   }
   if (env.TURN_ENABLED !== "true") {
     return json(503, { error: "turn-disabled", message: "TURN relaying is switched off; connect directly (STUN only)." }, h);

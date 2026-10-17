@@ -27,7 +27,13 @@
 //     `awardachievement`, `submitlbentry`, `ping`). Hardcore cannot be trusted
 //     in a browser, and the proxy is the third of ADR 0015's three structural
 //     casual-only layers. The parameter is parsed, not substring-matched: the
-//     reference stub's `b"h=1" in body` would also refuse, e.g., `hash=1…`.
+//     reference stub's `b"h=1" in body` would also refuse, e.g., `hash=1…`;
+//   - more than the abuse guards allow (budget.ts, "The RetroAchievements
+//     guards"): a per-IP hourly limit, a tighter per-IP limit on `login2`, and
+//     a daily cap across all callers. The Origin check stops other web pages,
+//     not other programs, which can send any Origin; these bound what such a
+//     program can push through RustyNES's shared User-Agent. Checked last, so
+//     only a request that would really be forwarded is counted.
 //
 // # Credentials
 //
@@ -56,7 +62,14 @@ export const MAX_RA_BODY = 64 * 1024;
 const FIELD_NAME = /^[A-Za-z0-9_]+$/;
 const UPSTREAM_TIMEOUT_MS = 15000;
 
-export async function handleRa(request: Request, env: Env, cors: string | undefined): Promise<Response> {
+/** `s` without its trailing `/` characters (a linear scan, no regex). */
+export function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return s.slice(0, end);
+}
+
+export async function handleRa(request: Request, env: Env, ip: string, cors: string | undefined): Promise<Response> {
   const h = corsHeaders(cors, "POST, OPTIONS");
   if (env.RA_ENABLED !== "true") {
     return json(503, { Success: false, Error: "The RetroAchievements proxy is switched off." }, h);
@@ -109,10 +122,23 @@ export async function handleRa(request: Request, env: Env, cors: string | undefi
     return json(403, { Success: false, Error: "Hardcore is not available in the browser." }, h);
   }
 
-  const upstream = (env.RA_UPSTREAM ?? "https://retroachievements.org").replace(/\/+$/, "");
+  // Linear, not `.replace(/\/+$/, "")`: that regex backtracks quadratically
+  // on a long run of `/` not at the end (CodeQL js/polynomial-redos). The
+  // value is the operator's var, not request input, but the scan costs
+  // nothing and leaves no pattern to audit.
+  const upstream = trimTrailingSlashes(env.RA_UPSTREAM ?? "https://retroachievements.org");
   const ua = env.RA_USER_AGENT ?? "";
   if (!ua.startsWith("RustyNES/")) {
     return json(503, { Success: false, Error: "The proxy's User-Agent is misconfigured." }, h);
+  }
+
+  const admission = await env.BUDGET.getByName("ra").admitRa(ip, r === "login2");
+  if (!admission.ok) {
+    const message =
+      admission.error === "rate-limited"
+        ? "Too many RetroAchievements requests from this address; try again later."
+        : "The RetroAchievements proxy's daily limit is used up; try again after 00:00 UTC.";
+    return json(admission.status, { Success: false, Error: message }, { ...h, "Retry-After": String(admission.retryAfter) });
   }
   let resp: Response;
   try {

@@ -32,6 +32,9 @@ export interface Env {
   RA_ENABLED?: string;
   RA_UPSTREAM?: string;
   RA_USER_AGENT?: string;
+  RA_PER_IP_PER_HOUR?: string;
+  RA_LOGINS_PER_IP_PER_HOUR?: string;
+  RA_DAILY_CAP?: string;
 }
 
 /** Internal header carrying the client IP from the Worker to a Durable Object. */
