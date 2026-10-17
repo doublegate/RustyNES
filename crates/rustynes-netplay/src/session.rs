@@ -242,6 +242,14 @@ pub const CONFIRMED_DIGEST_RETAIN: usize = 256;
 /// detection missed, not a desync claimed.
 pub const CHECKSUM_RETAIN_FRAMES: u32 = MAX_SESSION_FRAME_LOOKAHEAD;
 
+/// The most distinct peer checksums kept for one pending frame (v3.4.0).
+///
+/// Two suffice: honest peers all send the same value, so a second distinct
+/// value already means at least one of them differs from ours, and comparing
+/// both reports it whichever arrived first. The cap is what keeps a hostile
+/// peer sending a new value per datagram from growing the entry.
+const PENDING_CHECKSUM_VALUES: usize = 2;
+
 /// v3.4.0 — how much per-frame state a session holds right now.
 ///
 /// Returned by [`RollbackSession::retained`]. Diagnostic: the long-session test bounds
@@ -509,8 +517,14 @@ pub struct RollbackSession<T: Transport> {
     confirmed_hashes: BTreeMap<u32, (u64, u64)>,
 
     /// Peers' checksums that arrived before our matching `confirmed_hashes`
-    /// entry existed, compared once it does.
-    remote_checksums: BTreeMap<u32, (u64, u64)>,
+    /// entry existed, compared once it does: every DISTINCT value received
+    /// for the frame, at most [`PENDING_CHECKSUM_VALUES`] of them.
+    ///
+    /// v3.4.0 (Codex on #613): one value per frame let a matching peer's
+    /// checksum overwrite a divergent one in a 3-4 player session. A
+    /// `Checksum` names no sender, so the values are kept rather than the
+    /// senders; every honest peer sends the same value, which is stored once.
+    remote_checksums: BTreeMap<u32, Vec<(u64, u64)>>,
 
     /// The next checksum-boundary frame whose `Checksum` we have not sent.
     next_checksum_frame: u32,
@@ -653,7 +667,8 @@ impl<T: Transport> RollbackSession<T> {
             window_entries: self.window.len(),
             window_bytes: self.window.iter().map(|e| e.snapshot.len()).sum(),
             confirmed_digests: self.confirmed_entering.len(),
-            checksums: self.confirmed_hashes.len() + self.remote_checksums.len(),
+            checksums: self.confirmed_hashes.len()
+                + self.remote_checksums.values().map(Vec::len).sum::<usize>(),
         }
     }
 
@@ -1017,7 +1032,10 @@ impl<T: Transport> RollbackSession<T> {
         let Some(&(local, local_fb)) = self.confirmed_hashes.get(&frame) else {
             // Ours is not ready: compared once we confirm the frame
             // (`compare_pending_checksums`).
-            self.remote_checksums.insert(frame, (hash, fb_hash));
+            let pending = self.remote_checksums.entry(frame).or_default();
+            if !pending.contains(&(hash, fb_hash)) && pending.len() < PENDING_CHECKSUM_VALUES {
+                pending.push((hash, fb_hash));
+            }
             return Ok(());
         };
         // Observational: record the compare (match or mismatch) before any
@@ -1242,27 +1260,28 @@ impl<T: Transport> RollbackSession<T> {
     /// aged out) can never be compared and is dropped.
     fn compare_pending_checksums(&mut self) -> Result<(), NetplayError> {
         let upto = self.last_confirmed_frame.map_or(0, |c| c + 1);
-        while let Some((&f, &(remote_combined, remote_fb))) =
-            self.remote_checksums.first_key_value()
-        {
+        while let Some(entry) = self.remote_checksums.first_entry() {
+            let f = *entry.key();
             if f >= upto {
                 break;
             }
-            self.remote_checksums.remove(&f);
+            let remotes = entry.remove();
             let Some(&(local_combined, local_fb)) = self.confirmed_hashes.get(&f) else {
                 continue;
             };
-            // Observational: record the compare (match or mismatch) before
-            // any fatal exit.
-            self.diagnostics
-                .record(f, local_combined, remote_combined, local_fb, remote_fb);
-            if local_combined != remote_combined {
-                return Err(NetplayError::Desync {
-                    frame: f,
-                    local: local_combined,
-                    remote: remote_combined,
-                    same_framebuffer: local_fb == remote_fb,
-                });
+            for (remote_combined, remote_fb) in remotes {
+                // Observational: record the compare (match or mismatch)
+                // before any fatal exit.
+                self.diagnostics
+                    .record(f, local_combined, remote_combined, local_fb, remote_fb);
+                if local_combined != remote_combined {
+                    return Err(NetplayError::Desync {
+                        frame: f,
+                        local: local_combined,
+                        remote: remote_combined,
+                        same_framebuffer: local_fb == remote_fb,
+                    });
+                }
             }
         }
         Ok(())
@@ -1527,6 +1546,47 @@ mod tests {
             edge as usize + 1,
             "one past the edge must not grow history"
         );
+    }
+
+    /// v3.4.0 (Codex on #613) — in a 3-4 player session several peers'
+    /// checksums for one boundary can arrive before ours exists. Until this
+    /// fix the pending map held one value per frame, so a divergent peer's
+    /// checksum followed by a matching peer's was overwritten and the desync
+    /// went unseen: detection depended on packet order. Both orders must end
+    /// the session, and the same value from every honest peer is kept once.
+    #[test]
+    fn a_divergent_pending_checksum_is_not_overwritten_by_a_matching_one() {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let cfg = SessionConfig {
+            num_players: 3,
+            ..SessionConfig::default()
+        };
+        let frame = cfg.checksum_interval;
+        let (good, bad) = ((0x1111, 0x2222), (0x3333, 0x4444));
+        for order in [[bad, good], [good, bad]] {
+            let (link, _peer) = MemoryTransport::pair(LinkConditions::PERFECT, 14);
+            let mut session = RollbackSession::new(cfg, link, hash);
+            for (h, fb) in order {
+                session
+                    .ingest_checksum(frame, h, fb)
+                    .expect("ours is not ready yet, so nothing is compared");
+            }
+            // A third honest copy of the matching value adds no entry.
+            session.ingest_checksum(frame, good.0, good.1).unwrap();
+            assert_eq!(session.retained().checksums, 2, "{order:?}");
+            // Ours arrives and the frame confirms.
+            session.confirmed_hashes.insert(frame, good);
+            session.last_confirmed_frame = Some(frame);
+            let verdict = session.compare_pending_checksums();
+            assert!(
+                matches!(
+                    verdict,
+                    Err(NetplayError::Desync { frame: f, remote: 0x3333, .. }) if f == frame
+                ),
+                "the divergent checksum is compared, in order {order:?}: {verdict:?}"
+            );
+        }
     }
 
     /// The bound must clear everything a well-behaved peer can send: its input

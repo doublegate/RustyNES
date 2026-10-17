@@ -67,12 +67,17 @@ use rustynes_netplay::{
     SpectatorSession, Transport, UdpTransport,
 };
 
-/// How long a joiner waits for its host to answer, and a 3-4 player host for
-/// all its joiners, before giving up with a reason. A 2-player host's
-/// `NetplayConnection` has the same 10 s handshake timeout.
+/// How long a joiner waits for its host to answer at all before giving up
+/// with a reason, and how long a 3-4 player host that has answered may then
+/// fall silent. A 2-player host's `NetplayConnection` has the same 10 s
+/// handshake timeout.
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// A 3-4 player host waits longer: every joiner has to arrive.
+/// A 3-4 player host waits longer: every joiner has to arrive. A joiner of
+/// such a host waits as long, once the host has answered that it is gathering
+/// (v3.4.0: `MeshHost` answers each gathering joiner's `Sync`; before, it sent
+/// nothing until the roster was full, and the first joiner gave up after
+/// `HANDSHAKE_TIMEOUT` while the host still counted it).
 const MESH_GATHER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The session's transport: a 2-player host's [`UdpTransport`] or a mesh peer's
@@ -335,8 +340,11 @@ impl NetplayUi {
         self.config.local_player = 1;
         match MeshJoiner::connect(local, remote, 1, identity) {
             Ok(joiner) => {
-                self.state =
-                    NetplayState::Joining(Box::new(joiner.with_timeout(HANDSHAKE_TIMEOUT)));
+                self.state = NetplayState::Joining(Box::new(
+                    joiner
+                        .with_timeout(HANDSHAKE_TIMEOUT)
+                        .with_gather_timeout(MESH_GATHER_TIMEOUT),
+                ));
                 self.status = NetplayStatus {
                     phase: NetplayPhase::Connecting,
                     is_host: false,
@@ -577,7 +585,12 @@ impl NetplayUi {
                 }
             }
             Err(rustynes_netplay::MeshError::Timeout) => {
-                self.fail("handshake timed out (no host answered)".to_string());
+                let why = if joiner.host_answered() {
+                    "the host stopped answering, or its other players did not all join in time"
+                } else {
+                    "handshake timed out (no host answered)"
+                };
+                self.fail(why.to_string());
             }
             Err(e) => self.fail(e.to_string()),
         }

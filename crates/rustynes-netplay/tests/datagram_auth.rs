@@ -20,6 +20,13 @@
 //! - [`a_protocol_8_peer_is_refused_with_a_reason`]: the protocol bump.
 //! - [`a_mesh_peer_refuses_a_forgery`] and [`a_mesh_peer_follows_a_rebinding_peer`]:
 //!   the 3-peer mesh, sealed the same way.
+//! - [`a_mesh_peer_cannot_speak_for_another_seat`]: a mesh peer's genuinely
+//!   sealed `Input` / `InputBatch` / `InputAck` naming another player is
+//!   dropped and counted.
+//!
+//! `refused_datagrams` is cumulative and a handshake can leave an unsealed
+//! `Sync` in flight that the sealed side then refuses, so an exact count is
+//! measured from [`settled_refusals`], taken after the handshake.
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
@@ -110,6 +117,36 @@ fn drain<T: Transport>(t: &mut T) -> Vec<NetMessage> {
     got
 }
 
+/// Drain whatever the handshake left in flight and return the refusal count
+/// it leaves behind: the baseline a test's exact count is measured from.
+/// `refused_datagrams` is cumulative and the handshakes do not reset it.
+fn settled_refusals<T: Transport + Refusals>(t: &mut T) -> u64 {
+    let stray = drain(t);
+    assert!(
+        stray.is_empty(),
+        "nothing genuine is in flight yet: {stray:?}"
+    );
+    t.refusals()
+}
+
+/// The two transports' refusal counters, behind one name for
+/// [`settled_refusals`].
+trait Refusals {
+    fn refusals(&self) -> u64;
+}
+
+impl Refusals for UdpTransport {
+    fn refusals(&self) -> u64 {
+        self.refused_datagrams()
+    }
+}
+
+impl Refusals for UdpMeshTransport {
+    fn refusals(&self) -> u64 {
+        self.refused_datagrams()
+    }
+}
+
 const fn checksum(frame: u32) -> NetMessage {
     NetMessage::Checksum {
         frame,
@@ -163,6 +200,10 @@ fn a_forged_datagram_from_a_third_address_is_refused() {
 #[test]
 fn a_replayed_datagram_is_refused() {
     let (mut host, mut peer, host_addr) = handshake();
+    // The handshake can leave an unsealed `Sync` in flight (the hand-played
+    // joiner re-sends one whenever its 5 ms read missed the host's reply),
+    // which the now-sealed host refuses too; count from here.
+    let baseline = settled_refusals(&mut host);
     let sealed = peer.send(
         &NetMessage::InputAck {
             player: 1,
@@ -184,7 +225,11 @@ fn a_replayed_datagram_is_refused() {
         }],
         "accepted once"
     );
-    assert_eq!(host.refused_datagrams(), 2, "both replays refused");
+    assert_eq!(
+        host.refused_datagrams() - baseline,
+        2,
+        "both replays refused"
+    );
     // A NEW datagram from the peer still opens: the refusals changed nothing.
     peer.send(
         &NetMessage::InputAck {
@@ -408,23 +453,26 @@ fn a_mesh_peer_refuses_a_forgery() {
     let mut mesh = mesh3();
     assert!(mesh.iter().all(UdpMeshTransport::is_sealed));
     let host_addr = mesh[0].local_addr().unwrap();
+    // A joiner's late handshake `Sync` can still reach the sealed host and be
+    // refused; count from here.
+    let baseline = settled_refusals(&mut mesh[0]);
     // A forgery straight at the host, unsealed.
     let forger = UdpSocket::bind(loopback()).unwrap();
     forger.send_to(&checksum(30).to_bytes(), host_addr).unwrap();
     // A genuine broadcast from player 2.
     mesh[2].send(&NetMessage::InputAck {
-        player: 1,
+        player: 2,
         frame: 5,
     });
     let got = drain(&mut mesh[0]);
     assert_eq!(
         got,
         vec![NetMessage::InputAck {
-            player: 1,
+            player: 2,
             frame: 5
         }]
     );
-    assert_eq!(mesh[0].refused_datagrams(), 1);
+    assert_eq!(mesh[0].refused_datagrams() - baseline, 1);
     // The peers that hear player 1 hear it once each.
     mesh[1].send(&NetMessage::InputAck {
         player: 1,
@@ -444,6 +492,54 @@ fn a_mesh_peer_refuses_a_forgery() {
             frame: 6
         }]
     );
+}
+
+/// v3.4.0 (Cursor security review on #613) — in a 3-4 player mesh the seal
+/// says WHO sent a datagram, and a message that names a player must name that
+/// sender. Before this check a peer could seal, under its own key, an `Input`,
+/// an `InputBatch` or an `InputAck` naming another seat: the session takes the
+/// first confirmed input for a cell as final, so the forged one stood, and a
+/// forged ack stopped the victim's retransmissions. Player 2 tries all three
+/// for player 1; none reaches the host, each is counted, and player 2's own
+/// input (the control) still does.
+#[test]
+fn a_mesh_peer_cannot_speak_for_another_seat() {
+    let mut mesh = mesh3();
+    let _ = settled_refusals(&mut mesh[0]);
+    let forged = [
+        NetMessage::Input {
+            player: 1,
+            frame: 3,
+            input: 0xFF,
+        },
+        NetMessage::InputBatch {
+            player: 1,
+            start_frame: 3,
+            inputs: vec![0xFF, 0xFF],
+        },
+        NetMessage::InputAck {
+            player: 1,
+            frame: 600,
+        },
+    ];
+    for msg in &forged {
+        mesh[2].send(msg);
+    }
+    let genuine = NetMessage::Input {
+        player: 2,
+        frame: 3,
+        input: 0x01,
+    };
+    mesh[2].send(&genuine);
+    assert_eq!(
+        drain(&mut mesh[0]),
+        vec![genuine],
+        "only player 2's own input reaches the host"
+    );
+    assert_eq!(mesh[0].misattributed_datagrams(), 3);
+    // Messages that name no player are not affected.
+    mesh[2].send(&checksum(30));
+    assert_eq!(drain(&mut mesh[0]), vec![checksum(30)]);
 }
 
 /// The mesh transport follows a peer to a new address too: built directly
