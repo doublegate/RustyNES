@@ -21,7 +21,7 @@ inputs; the session decides which inputs and when to re-run.
 | input history | one slot per frame, from just below the checkpoint to the newest input received | `INPUT_RESEND_WINDOW + 2 * input_delay + 2 * max_rollback_frames + 4` frames for an honest peer (88 with the defaults); a hostile peer can push it to `MAX_SESSION_FRAME_LOOKAHEAD` past the present |
 | rollback window | one entry per frame from the checkpoint to the present: a full core snapshot (about 256 KiB) and the gameplay digest of the same moment | `max_rollback_frames + 3` entries |
 | confirmed digests | the entering digest of the most recent confirmed frames | `CONFIRMED_DIGEST_RETAIN` = 256 |
-| checkpoint digests | ours and the peers' pending ones, one per checksum interval | `CHECKSUM_RETAIN_FRAMES` = 1024 frames behind the checkpoint |
+| checkpoint digests | ours, one per checksum interval, and the peers' pending ones: every distinct value received for the frame, at most two | `CHECKSUM_RETAIN_FRAMES` = 1024 frames behind the checkpoint |
 
 `RollbackSession::retained` reports the sizes and `RetainedWindow::bound`
 computes the bound from the configuration alone.
@@ -135,6 +135,24 @@ address, and only the first one.
 A joiner finds its own roster entry by its own share, which works through a
 NAT where its address does not.
 
+**Gathering (3-4 players).** A mesh host answers each adopted joiner's
+`Sync` with an accepted `Sync` carrying an all-zero share ("adopted, still
+gathering") until the roster is full; then the roster is the answer. A joiner
+that has heard this keeps waiting while the host keeps answering: it fails if
+the host is silent for its handshake timeout (10 s in the desktop UI), and in
+any case at its gather timeout (`MeshJoiner::with_gather_timeout`, the host's
+120 s in the UI). Before any answer the handshake timeout alone applies, so a
+dead address still fails in 10 s. Until this, a mesh host sent nothing before
+the roster was full, so the first joiner gave up at 10 s while the host,
+gathering for 120 s, still counted it. A joiner re-sends its `Sync` every
+50 ms while it waits; the host drops one it has not heard for 3 s
+(`MeshHost::JOINER_SILENCE`) before the roster goes out, so a session never
+starts with a joiner that left, and gives its seat to the next joiner (seats
+are the lowest free index, so the full roster is always `0..n`). Pinned by
+`mesh_net::tests::a_joiner_outlives_its_handshake_timeout_while_the_host_gathers`,
+`a_joiner_of_a_dead_address_still_times_out_quickly` and
+`the_host_drops_a_joiner_that_went_silent_before_the_roster_filled`.
+
 The roster is the one message a joiner acts on before any key exists, so it is
 untrusted: a joiner keeps a roster only from the host it dialed, and only when
 it has 2 to 4 entries whose player indices are exactly `0..n`, each once
@@ -153,6 +171,17 @@ range. The frontend checks again before it builds the session
 Receive order: length, marker, sender (known, not ourselves), replay window
 (1024 per sender), tag. Only then is the sequence marked and the message
 parsed. A refusal changes no state and is counted (`refused_datagrams`).
+
+**A message speaks only for its sender's seat (mesh).** On a
+`UdpMeshTransport` the sender index is the player index, and an `Input`,
+`InputBatch` or `InputAck` whose `player` is not the sender's seat is dropped
+after it opens and counted (`misattributed_datagrams`). The session takes the
+first confirmed input of a cell as final and an ack as the end of a
+retransmission, so without this a peer holding its own key could seal another
+seat's input or ack. On the joiner's 2-player fallback the pair key numbers
+senders by share order, so the host's seat is recorded as player 0 apart from
+its sender index. A 2-player `UdpTransport` has one remote seat, and the
+session already ignores an input or ack naming its own, so it needs no check.
 
 ### 2.3 Address handling
 
@@ -185,7 +214,14 @@ test holds the key:
 | `a_replayed_datagram_is_refused` | the same sealed bytes from the peer and from a third address open once | the replay check disabled |
 | `a_rebinding_peer_is_kept` | the peer's datagrams from a new address open and the transport's next datagram goes there | the roam disabled |
 | `a_mesh_peer_follows_a_rebinding_peer`, `a_mesh_peer_refuses_a_forgery` | the same on a sealed mesh | the mesh roam disabled |
+| `a_mesh_peer_cannot_speak_for_another_seat` | player 2's sealed `Input`, `InputBatch` and `InputAck` naming player 1 reach nothing and are counted; its own input and a `Checksum` do | the seat comparison weakened to `>` |
 | `a_protocol_8_peer_is_refused_with_a_reason` | an `"RNE8"` `Sync` ends the handshake with `EmulatorMismatch` naming its epoch | `"RNE8"` dropped from `OLDER_SYNC_MAGICS` |
+
+Exact refusal counts are measured from a baseline taken after the
+handshake (`settled_refusals`): the counter is cumulative, and a handshake can
+leave an unsealed `Sync` in flight that the sealed side refuses.
+`mesh_net::tests::the_pair_fallback_checks_the_hosts_seat_not_its_sender_index`
+pins the fallback's seat mapping.
 
 `auth.rs` unit tests cover the primitives: both ends of a pair agree, every
 single-bit flip is refused, another key or identity does not open, the window
@@ -206,6 +242,15 @@ Before, the highest ack from any peer stood for all of them: found when the
 3-player UI test's host stalled at frame 9 with nothing confirmed, because it
 starts its session after its roster resends and a joiner's ack had already
 stopped the other joiner resending what the host never received.
+
+**Pending checksums keep every distinct value.** A `Checksum` names no
+sender, and in a 3-4 player session several peers' checksums for one frame
+can arrive before ours exists. The pending store kept one value per frame
+until v3.4.0's review, so a matching peer's checksum overwrote a divergent
+one and the desync went unseen; it now keeps up to two distinct values per
+frame (honest peers send one), and compares each once ours exists. Pinned by
+`session::tests::a_divergent_pending_checksum_is_not_overwritten_by_a_matching_one`,
+in both arrival orders.
 
 **Gates.** `tests/mesh_sync.rs` compares every confirmed frame of every peer
 with the no-rollback reference, frame by frame, for 600 frames: 4 and 3 peers

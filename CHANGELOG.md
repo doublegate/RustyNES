@@ -34,7 +34,8 @@ cycle-accurate core later replaced.
   handshake, and every datagram after it carries an HMAC-SHA-256 tag under a
   per-session key and a sequence number. A datagram from anyone without the key
   is refused before it is parsed, a replay is refused, and a peer whose NAT
-  changes its address is kept and followed. It defends against off-path
+  changes its address is kept and followed. In a 3-4 player session a peer's
+  datagrams may speak only for its own player. It defends against off-path
   forgery, not against someone who observes the handshake. A v3.4.0 peer
   refuses an `"RNE8"` peer with the reason, naming its emulation epoch; the
   older peer times out. The signalling room protocol is unchanged. New
@@ -45,7 +46,9 @@ cycle-accurate core later replaced.
   `RollbackSession::confirmed_entering_digest` keeps the most recent 256
   frames, and `confirmed_input` the history window. New: the `auth` module
   (`DatagramAuth`, `KeyShare`, `Refusal`), `UdpTransport::enable_auth`,
-  `UdpMeshTransport::new_sealed`, `RollbackSession::retained`, and
+  `UdpMeshTransport::new_sealed` and `misattributed_datagrams`,
+  `MeshJoiner::with_gather_timeout` and `host_answered`,
+  `RollbackSession::retained`, and
   `impl Transport for Box<T>`.
 
 ### Added
@@ -71,7 +74,9 @@ cycle-accurate core later replaced.
   (`T-NETPLAY-MESH-NATIVE`). The netplay panel's 3 and 4 player choices now
   gather every joiner and run the full mesh with the Four Score; until now the
   desktop completed only the first joiner. Joiners do not choose a count: the
-  same Join reaches a 2-player or a 3-4 player host. Direct IP and LAN only
+  same Join reaches a 2-player or a 3-4 player host, and waits while the host
+  gathers the others (up to the host's two minutes); a joiner that leaves
+  before the session starts gives up its seat. Direct IP and LAN only
   (no room code or TURN for more than two players); the mobile apps follow in
   a later release (`MOB-09`).
 - **MiSTer core: MMC2, MMC4, the Sunsoft FME-7 with 5B audio, Konami

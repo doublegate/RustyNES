@@ -145,14 +145,23 @@ handshake). A host-distributed **roster** closes that gap.
   attributes each datagram to its sender. Foreign / malformed datagrams are
   dropped (never panic).
 - **`MeshHost`** — listens, adopts up to `num_players - 1` joiners from their
-  `Sync`s (assigning each the next free player index), then broadcasts the full
-  **`NetMessage::Roster`** — every peer's `SocketAddr` + player index — to all
-  joiners. The roster is **re-sent a few times** for UDP loss tolerance.
+  `Sync`s (assigning each the lowest free player index), then broadcasts the
+  full **`NetMessage::Roster`** — every peer's `SocketAddr`, player index and
+  (protocol 9) key share — to all joiners. The roster is **re-sent a few
+  times** for UDP loss tolerance. While it gathers (v3.4.0) it answers each
+  adopted joiner's `Sync` with an accepted zero-share `Sync`, and drops a
+  joiner it has not heard for 3 s.
 - **`MeshJoiner`** — dials the host, `Sync`s, waits for the roster, then builds
   its own `UdpMeshTransport` wired to the host **and every other joiner**,
-  skipping its own entry. It identifies its own entry by matching its bound
-  source address (works on loopback / LAN); behind a NAT it can't self-observe,
-  it falls back to the index the host assigned it out of band.
+  skipping its own entry. Since protocol 9 it identifies its own entry by its
+  own **key share**, which the host copied from the joiner's `Sync` into the
+  roster: that works behind a NAT, where the address the host lists for the
+  joiner is a rewritten one the joiner cannot observe. (Before protocol 9 it
+  matched its bound source address, which only works on loopback / LAN, and
+  fell back to an index chosen out of band.) It sends to the host at the
+  address it dialed. Once the host has answered that it is gathering, it waits
+  while the host keeps answering, up to its gather timeout
+  (`docs/netplay-session.md` section 2.1).
 
 **Protocol version.** `PROTOCOL_VERSION` is bumped **2 → 3** for the new
 `NetMessage::Roster` variant. An older (v2) peer's `from_bytes` rejects the

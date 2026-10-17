@@ -954,8 +954,15 @@ impl NetplayConnection {
             // `DisconnectReason::PeerTimeout`. Once a peer is adopted, a
             // datagram from any OTHER source (a third party that can reach the
             // socket) must NOT refresh the clock, or it could indefinitely mask
-            // a genuine peer timeout.
-            if self.transport.remote_addr().is_none_or(|peer| peer == from) {
+            // a genuine peer timeout. v3.4.0: "the adopted peer" is
+            // `same_peer`, as everywhere else here: a dual-stack socket can
+            // report the peer in its IPv4-mapped IPv6 form (CodeRabbit on
+            // #613; `a_mapped_address_keeps_a_synced_peer_live`).
+            if self
+                .transport
+                .remote_addr()
+                .is_none_or(|peer| same_peer(peer, from))
+            {
                 self.last_recv = now;
             }
             match msg {
@@ -1237,6 +1244,73 @@ mod tests {
         assert!(timed_out, "silent peer eventually times out");
         assert_eq!(a.disconnect_reason(), Some(DisconnectReason::PeerTimeout));
         assert_eq!(a.peer_link(), PeerLink::TimedOut);
+    }
+
+    /// v3.4.0 (review of #613) — the liveness clock treats an IPv4 peer
+    /// and its IPv4-mapped IPv6 form as one, as `accept_datagram` and
+    /// `accept_sync` already do. A dual-stack socket reports an IPv4 sender
+    /// as `[::ffff:a.b.c.d]:p` while the connection names it `a.b.c.d:p`; the
+    /// check compared them with `==`, so a live peer's datagrams never
+    /// refreshed `last_recv` and a synced session ended in `PeerTimeout`.
+    ///
+    /// Skipped, with a note, where a `[::]` socket does not receive IPv4
+    /// (Windows sets `IPV6_V6ONLY` by default; so can a Linux sysctl).
+    #[test]
+    fn a_mapped_address_keeps_a_synced_peer_live() {
+        let any6 = SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0));
+        let Ok(dual) = UdpSocket::bind(any6) else {
+            eprintln!("skipped: no IPv6 socket on this host");
+            return;
+        };
+        let port = dual.local_addr().unwrap().port();
+        let v4 = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let v4_addr = v4.local_addr().unwrap();
+        let a_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        dual.set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        v4.send_to(b"probe", a_addr).unwrap();
+        let mut buf = [0u8; 16];
+        match dual.recv_from(&mut buf) {
+            Ok((_, from)) if from.is_ipv6() && same_peer(from, v4_addr) => {}
+            other => {
+                eprintln!("skipped: this host's [::] socket is not dual-stack ({other:?})");
+                return;
+            }
+        }
+        let hash = SessionIdentity::new([0x45u8; 32], [0; 32]);
+        // `a` names its peer in IPv4 form and hears it in mapped form.
+        let mut a = NetplayConnection::with_transport(
+            UdpTransport::from_socket(dual, v4_addr).unwrap(),
+            hash,
+        )
+        .with_peer_timeouts(Duration::from_millis(100), Duration::from_millis(250))
+        .with_ping_interval(Duration::from_millis(20));
+        let mut b =
+            NetplayConnection::with_transport(UdpTransport::from_socket(v4, a_addr).unwrap(), hash)
+                .with_ping_interval(Duration::from_millis(20));
+        for _ in 0..200 {
+            a.pump(0);
+            b.pump(0);
+            if a.is_synced() && b.is_synced() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(a.is_synced() && b.is_synced(), "both synced");
+        // Both keep talking for well past the 250 ms disconnect threshold.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(800) {
+            a.pump(0);
+            b.pump(0);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            a.state(),
+            ConnectionState::Synced,
+            "a live peer in mapped form is not timed out: {:?}",
+            a.disconnect_reason()
+        );
+        assert_eq!(a.peer_link(), PeerLink::Live);
     }
 
     #[test]

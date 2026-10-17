@@ -344,11 +344,42 @@ fn committed_vectors_match_the_reference_relay() {
     );
 }
 
+/// Every scenario's outbound actions, in order, exactly as [`render`] records
+/// them (what the reference relay SENDS and closes, nothing a client sent).
+fn emitted_actions() -> Vec<Action> {
+    let mut out = Vec::new();
+    for (_, steps) in scenarios() {
+        let mut relay = Relay::new();
+        for step in &steps {
+            out.extend(match step {
+                Step::Send(c, text) => {
+                    SignalMessage::parse(text).map_or_else(Vec::new, |m| relay.handle(*c, m))
+                }
+                Step::Disconnect(c) => relay.disconnect(*c),
+            });
+        }
+    }
+    out
+}
+
 /// The vectors must exercise every message kind the relay routes or answers, or
 /// a gap in the port could hide behind a scenario list that never reaches it.
+///
+/// v3.4.0 (review of #613): checked against the relay's own actions. The
+/// first form searched the rendered file, where a client's inbound frame of
+/// the same type (a spoofed `joined`, a routed `offer` as the client sent it)
+/// satisfied the search by itself, so only `room-list` and `matched`, which
+/// no client sends, were really checked.
 #[test]
 fn vectors_cover_every_routed_message_kind() {
-    let rendered = render();
+    let actions = emitted_actions();
+    let sent: Vec<String> = actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Send { msg, .. } => Some(msg.to_json()),
+            Action::Close { .. } => None,
+        })
+        .collect();
     for kind in [
         "joined",
         "peer-joined",
@@ -361,14 +392,14 @@ fn vectors_cover_every_routed_message_kind() {
         "room-list",
         "matched",
     ] {
-        let needle = format!(r#"\"type\":\"{kind}\""#);
+        let needle = format!(r#""type":"{kind}""#);
         assert!(
-            rendered.contains(&needle),
-            "no expected frame of type {kind} in the vectors"
+            sent.iter().any(|json| json.contains(&needle)),
+            "the relay never sends a frame of type {kind} in the vectors"
         );
     }
     assert!(
-        rendered.contains(r#"{"close":"#),
+        actions.iter().any(|a| matches!(a, Action::Close { .. })),
         "no close action in the vectors"
     );
 }

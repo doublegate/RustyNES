@@ -48,14 +48,24 @@ The browser path is not affected: a WebRTC data channel runs over DTLS.
    from the peer's own address, recognised by its first byte and never
    parsed, is answered with our handshake `Sync` (or, on a mesh host, the
    roster) at most every 100 ms: that peer lost our reply.
-6. **Vetted crates only**: RustCrypto `hmac` 0.13 over `sha2` 0.11 (the SHA-256
+6. **A sealed message speaks only for its sender's seat** (mesh; added in
+   the #613 review). The seal says who sent a datagram, and in a mesh the
+   sender index is the player index, so an `Input`, `InputBatch` or
+   `InputAck` naming another player is dropped after it opens and counted.
+   Without it the key authenticated the peer but not the seat it claimed:
+   any peer of a 3-4 player session could seal another seat's input or ack.
+7. **Vetted crates only**: RustCrypto `hmac` 0.13 over `sha2` 0.11 (the SHA-256
    the core already uses), and `getrandom` 0.4 (already in the graph). All
    are MIT OR Apache-2.0, allowed by `deny.toml`. No primitive is implemented
    in this repository.
-7. **The protocol moves to 9.** The `Sync` grows to 88 bytes (the share) under
+8. **The protocol moves to 9.** The `Sync` grows to 88 bytes (the share) under
    `"RNE9"`; a `Roster` entry ends with the peer's share; the gameplay digest
    changed in the same release (`framebuffer_digest`), and an `InputAck`
-   names the acknowledging player (the mesh retransmission fix, same release). `"RNE8"` joins
+   names the acknowledging player (the mesh retransmission fix, same release).
+   A gathering mesh host answers each adopted joiner's `Sync` with an
+   accepted zero-share `Sync` until its roster is full, so the first joiner
+   of a 3-4 player host knows the host is alive while the others arrive
+   (`docs/netplay-session.md` section 2.1). `"RNE8"` joins
    `OLDER_SYNC_MAGICS` and is refused as another emulator version, naming its
    epoch. The signalling room protocol is unchanged.
 
