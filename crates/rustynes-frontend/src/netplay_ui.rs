@@ -561,9 +561,20 @@ impl NetplayUi {
         match joiner.pump() {
             Ok(None) => {}
             Ok(Some(transport)) => {
-                self.config.num_players = joiner.num_players();
-                self.config.local_player = joiner.my_player();
-                self.enter_game(nes, Box::new(transport));
+                let (num, local) = (joiner.num_players(), joiner.my_player());
+                // `MeshJoiner` refuses a roster that would put this peer out
+                // of range; this is the second check, because
+                // `RollbackSession::new` only `debug_assert!`s it and a
+                // release build would index out of range instead of failing.
+                if !(2..=4).contains(&num) || local >= num {
+                    self.fail(format!(
+                        "the host's roster is unusable (player {local} of {num})"
+                    ));
+                } else {
+                    self.config.num_players = num;
+                    self.config.local_player = local;
+                    self.enter_game(nes, Box::new(transport));
+                }
             }
             Err(rustynes_netplay::MeshError::Timeout) => {
                 self.fail("handshake timed out (no host answered)".to_string());
