@@ -318,6 +318,8 @@ impl NetplayUi {
                 transport.send(&NetMessage::Sync {
                     magic: NetMessage::SYNC_MAGIC,
                     identity,
+                    // A spectator derives no key (v3.4.0): it only listens.
+                    key_share: [0; rustynes_netplay::KEY_SHARE_LEN],
                 });
                 let session = SpectatorSession::new(
                     SpectatorConfig {

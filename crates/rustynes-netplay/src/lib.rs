@@ -116,6 +116,13 @@ pub mod transport;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connection;
 
+// v3.4.0 (T-NETPLAY-DATAGRAM-AUTH, protocol 9, ADR 0046) — the per-session
+// datagram MAC the native UDP transports seal and open every datagram with.
+// Native-only: the browser's WebRTC data channel is DTLS-protected already,
+// and the key shares come from `getrandom`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod auth;
+
 // The N-peer UDP roster handshake + mesh transport (v2.6.0). Native-only
 // (`std::net`); the in-memory `MeshTransport` covers the wasm + harness path.
 #[cfg(not(target_arch = "wasm32"))]
@@ -148,6 +155,8 @@ pub mod signaling;
 pub mod webrtc;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use auth::{DatagramAuth, KeyShare, Refusal, fresh_key_share};
+#[cfg(not(target_arch = "wasm32"))]
 pub use connection::{
     ConnectionState, DisconnectReason, NetplayConnection, PeerLink, UdpTransport,
 };
@@ -155,7 +164,7 @@ pub use diagnostics::{CrcCompare, DesyncDiagnostics, DesyncStatus};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{
-    IdentityMismatch, NetMessage, PROTOCOL_VERSION, SessionIdentity, SyncVerdict,
+    IdentityMismatch, KEY_SHARE_LEN, NetMessage, PROTOCOL_VERSION, SessionIdentity, SyncVerdict,
     emulator_mismatch_text, fnv1a64,
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]

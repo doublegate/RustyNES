@@ -1,8 +1,11 @@
-# Netplay: the rollback session and its window
+# Netplay: the rollback session, its window, and datagram authentication
 
 This is the spec for `rustynes-netplay`'s session layer: how
 `RollbackSession` keeps and uses its rollback window (v3.4.0,
-`T-NETPLAY-ROLLBACK-WINDOW`). Transport, NAT traversal, WebRTC and the lobby are in
+`T-NETPLAY-ROLLBACK-WINDOW`, section 1), and how every native datagram is
+authenticated (v3.4.0, `T-NETPLAY-DATAGRAM-AUTH`, protocol 9, section 2,
+[ADR 0046](adr/0046-a-per-session-secret-authenticates-every-netplay-datagram.md)).
+Transport, NAT traversal, WebRTC and the lobby are in
 [`netplay-webrtc.md`](netplay-webrtc.md).
 
 Netplay is on the frontend side of the determinism contract: nothing here
@@ -108,3 +111,73 @@ the two frames the peers actually run.
   3,002 digests, 6,004 checksum slots).
 
 The `determinism.rs` suite is unchanged and still passes.
+
+## 2. Datagram authentication (protocol 9)
+
+The decision and its limits are in
+[ADR 0046](adr/0046-a-per-session-secret-authenticates-every-netplay-datagram.md);
+this section is the wire and the behaviour.
+
+### 2.1 The handshake
+
+| Path | Who sends a share | Key |
+|---|---|---|
+| 2 players, `NetplayConnection` (desktop host, mobile, room code, TURN) | both, in every handshake `Sync` | `DatagramAuth::pair`; sender 0 is the lower share |
+| 2 players, desktop joiner (`MeshJoiner` meeting a 2-player host) | as above | the same pair key; the joiner runs as player 1 |
+| 3-4 players, `MeshHost` + `MeshJoiner` | each joiner in its `Sync`; the host in the `Roster`, which lists every peer's share | `DatagramAuth::mesh`; sender = player index |
+
+A share is 16 random bytes (`fresh_key_share`, never all zeros). A `Sync` with
+an all-zero share (the one a running session sends, a NAT punch packet, a
+spectator's announcement) is not a handshake `Sync`: it adopts no peer and
+completes no handshake. A host takes the share only from the adopted peer's
+address, and only the first one.
+
+A joiner finds its own roster entry by its own share, which works through a
+NAT where its address does not.
+
+### 2.2 The sealed datagram
+
+```text
+0xA9 | sender u8 | sequence u64 LE | NetMessage bytes | HMAC-SHA-256 tag, first 16 bytes
+```
+
+Receive order: length, marker, sender (known, not ourselves), replay window
+(1024 per sender), tag. Only then is the sequence marked and the message
+parsed. A refusal changes no state and is counted (`refused_datagrams`).
+
+### 2.3 Address handling
+
+- A datagram that opens is accepted from any address. On the direct path the
+  transport then sends to that address (`roamed`): a NAT rebinding keeps the
+  session. A relayed peer's address is pinned by its TURN permission and not
+  moved.
+- An unsealed `Sync` from the peer's address, after the handshake, is
+  answered with our handshake `Sync` (a mesh host: the roster), at most every
+  100 ms, without being parsed: the peer lost our reply.
+- Everything else unsealed is refused.
+
+### 2.4 What is not covered
+
+- An attacker who observes the handshake can derive the key (the shares are
+  in the clear). X25519 plus an authenticated fingerprint is the follow-up.
+- The handshake itself is first-come, as before.
+- Spectators carry no key; no host-side spectator broadcast exists yet.
+- The browser (WebRTC) path does not seal: its data channel is DTLS.
+
+### 2.5 Gates
+
+`tests/datagram_auth.rs`, over loopback UDP, one side played by hand so the
+test holds the key:
+
+| Test | Asserts | Mutation that it catches |
+|---|---|---|
+| `a_forged_datagram_from_a_third_address_is_refused` | an unsealed checksum, an unsealed foreign `Sync` and a datagram sealed under a guessed key from a third socket reach nothing; the peer's does | accepting unsealed datagrams once sealed |
+| `a_forged_checksum_cannot_end_a_session` | two sealed sessions run 240 ticks with a forger sending a desync and a ROM mismatch every tick | the same |
+| `a_replayed_datagram_is_refused` | the same sealed bytes from the peer and from a third address open once | the replay check disabled |
+| `a_rebinding_peer_is_kept` | the peer's datagrams from a new address open and the transport's next datagram goes there | the roam disabled |
+| `a_mesh_peer_follows_a_rebinding_peer`, `a_mesh_peer_refuses_a_forgery` | the same on a sealed mesh | the mesh roam disabled |
+| `a_protocol_8_peer_is_refused_with_a_reason` | an `"RNE8"` `Sync` ends the handshake with `EmulatorMismatch` naming its epoch | `"RNE8"` dropped from `OLDER_SYNC_MAGICS` |
+
+`auth.rs` unit tests cover the primitives: both ends of a pair agree, every
+single-bit flip is refused, another key or identity does not open, the window
+accepts reordering once and refuses the old.

@@ -53,7 +53,7 @@ use std::collections::{BTreeMap, VecDeque};
 use rustynes_core::{Buttons, Nes};
 
 use crate::diagnostics::DesyncDiagnostics;
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
+use crate::message::{IdentityMismatch, KEY_SHARE_LEN, NetMessage, SessionIdentity, SyncVerdict};
 use crate::transport::Transport;
 
 /// The maximum number of players.
@@ -539,9 +539,13 @@ impl<T: Transport> RollbackSession<T> {
             config.local_player < config.num_players,
             "local_player must be < num_players"
         );
+        // The in-session `Sync` carries no key share (v3.4.0): the handshake
+        // that derived the datagram key, if the transport has one, is over,
+        // and on a sealed transport this datagram is itself authenticated.
         transport.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity,
+            key_share: [0; KEY_SHARE_LEN],
         });
         let mut session = Self {
             config,
@@ -917,7 +921,9 @@ impl<T: Transport> RollbackSession<T> {
 
         for msg in messages {
             match msg {
-                NetMessage::Sync { magic, identity } => {
+                NetMessage::Sync {
+                    magic, identity, ..
+                } => {
                     match self.identity.check_sync(magic, &identity) {
                         SyncVerdict::Ignore => continue,
                         SyncVerdict::Accept => {}

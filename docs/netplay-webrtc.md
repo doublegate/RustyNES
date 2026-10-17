@@ -177,6 +177,11 @@ and magic, since v3.1.0's protocol 7 / `"RNE7"` also v3.0.x's `"RNE6"`, and sinc
 v3.2.0's protocol 8 / `"RNE8"` also v3.1.x's `"RNE7"`, each of which names its
 epoch), fails with `MeshError::EmulatorMismatch` and its counterparts, so
 a mixed-version session is refused with a reason instead of timing out.
+Since v3.4.0's protocol 9 (`"RNE9"`, ADR 0046) the `Sync` also carries a
+16-byte key share, a `Roster` entry carries each peer's share, and every
+native datagram after the handshake is sealed with a per-session HMAC key
+(`docs/netplay-session.md` section 2); a v3.2.x/v3.3.x `"RNE8"` peer is
+refused naming its epoch.
 **Only a v3.0.0-or-later peer can give that reason.** A v2.9.9 or older peer
 ignores the `"RNE6"` magic as a foreign datagram and still times out on its
 side. Between two protocol-6 peers both sides name it: a mesh host answers a
