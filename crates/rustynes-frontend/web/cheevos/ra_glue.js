@@ -35,9 +35,40 @@
 //     that live verify.
 
 // The base URL of the auth proxy that injects the RA `User-Agent` server-side.
-// Empty string = not configured; all server calls fail closed. Set this to your
-// deployed proxy origin, e.g. "https://ra-proxy.example.org".
-export const RA_PROXY_BASE = "";
+// Empty string = not configured; all server calls fail closed.
+//
+// v3.4.0 (T-RA-PROXY): the proxy is hosted on the same Cloudflare Worker as the
+// netplay lobby (services/hosted/), at `<hosted base>/ra`. The base is set by
+// the PAGE, not by a URL parameter, so a crafted link can never redirect a
+// user's RetroAchievements password to someone else's proxy. In order:
+//   1. `<meta name="rustynes-ra-proxy-base" content="https://…/ra">` in the
+//      page (what index.html carries once the maintainer has deployed);
+//   2. `globalThis.RUSTYNES_RA_PROXY_BASE`, set by a script that runs before
+//      this module (for local development against `wrangler dev`);
+//   3. HOSTED_RA_PROXY_BASE below (empty in the repository).
+// Only `https://` is accepted, or `http://` to localhost / 127.0.0.1, because
+// the login request carries the password.
+const HOSTED_RA_PROXY_BASE = "";
+
+// Exported for services/hosted/test/ra-glue.test.ts.
+export function resolveProxyBase() {
+  let raw = "";
+  try {
+    const meta = globalThis.document?.querySelector?.('meta[name="rustynes-ra-proxy-base"]');
+    raw = meta?.getAttribute("content") || globalThis.RUSTYNES_RA_PROXY_BASE || HOSTED_RA_PROXY_BASE;
+  } catch (_e) {
+    raw = HOSTED_RA_PROXY_BASE;
+  }
+  const base = String(raw || "").trim().replace(/\/+$/, "");
+  if (base === "") return "";
+  if (/^https:\/\/[^\s/?#]+(\/[^\s?#]*)?$/.test(base)) return base;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?(\/[^\s?#]*)?$/.test(base)) return base;
+  // Anything else is ignored: fail closed rather than send credentials over
+  // plain HTTP or to a malformed address.
+  return "";
+}
+
+export const RA_PROXY_BASE = resolveProxyBase();
 
 // rc_console id for the NES (RC_CONSOLE_NINTENDO). Mirrors the native bridge.
 const RC_CONSOLE_NINTENDO = 7;
