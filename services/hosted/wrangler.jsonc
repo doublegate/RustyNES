@@ -58,10 +58,13 @@
     // --- RetroAchievements proxy ---
     "RA_ENABLED": "true",
     "RA_UPSTREAM": "https://retroachievements.org",
-    // Keep the leading `RustyNES/` token: RetroAchievements identifies and
-    // allowlists the client by it (crates/rustynes-cheevos/src/http.rs,
-    // RA_USER_AGENT). Bump with each release.
-    "RA_USER_AGENT": "RustyNES/3.4.0 (Web) rcheevos/12.5.0"
+    // RA's documented shape, `Name/version (system) extension`, as the native
+    // RA_USER_AGENT (crates/rustynes-cheevos/src/http.rs) sends it with
+    // `(<OS> <arch>)`; the browser's system clause is `(Web wasm32)`. Keep the
+    // leading `RustyNES/` token: RetroAchievements identifies and allowlists
+    // the client by it, and src/ra.ts refuses to forward without it. Bump the
+    // product and rcheevos versions with each release.
+    "RA_USER_AGENT": "RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0"
   }
   // Secrets (wrangler secret put <NAME>):
   //   TURN_KEY_ID         the Realtime TURN key id

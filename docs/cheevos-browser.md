@@ -69,7 +69,7 @@ The auth proxy adds a fourth backstop: it refuses to forward a hardcore award
 ## Auth proxy contract
 
 RA identifies/allowlists clients by the HTTP `User-Agent`
-`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>` (the `RA_USER_AGENT` const in
+`RustyNES/<crate-ver> (<OS> <arch>) rcheevos/<rcheevos-ver>` (the `RA_USER_AGENT` const in
 `crates/rustynes-cheevos/src/http.rs`; a native regression test guards the
 leading `RustyNES/` token). Browsers forbid setting it, so every server call from
 the browser is routed through a small proxy that injects the header server-side.
@@ -86,7 +86,7 @@ the browser is routed through a small proxy that injects the header server-side.
   python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
   # Env-driven (no config file):
   RA_PROXY_BIND=127.0.0.1:8092 RA_ALLOWED_ORIGINS='http://127.0.0.1:8081' \
-    RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+    RA_USER_AGENT='RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0' \
     python3 scripts/cheevos/auth_proxy_stub.py
   ```
 

@@ -1259,6 +1259,7 @@ impl NesController {
         if tick_coin(g) {
             g.nes.clear_coin();
         }
+        enforce_hardcore(g);
         pre_tick_movie(g);
         #[cfg(test)]
         injected_frame_fault();
@@ -2067,6 +2068,8 @@ impl NesController {
     /// [`MobileError::Movie`] if the bytes are not a valid movie or the ROM differs.
     pub fn movie_play(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
         refuse_on_cabinet(&self.lock(), "movie playback")?;
+        // v3.4.0 — RA hardcore prohibits recorded-input playback.
+        refuse_hardcore(&self.lock(), rustynes_ra::hardcore::Feature::MoviePlayback)?;
         // v2.9.9 (NF-18) — movies and netplay are mutually exclusive.
         if netplay_owns_timeline(&self.lock()) {
             return Err(MobileError::Movie {
@@ -2223,6 +2226,8 @@ impl NesController {
     /// compile / load.
     pub fn load_script(&self, src: String) -> Result<(), MobileError> {
         refuse_on_cabinet(&self.lock(), "a Lua script")?;
+        // v3.4.0 — RA hardcore prohibits scripting.
+        refuse_hardcore(&self.lock(), rustynes_ra::hardcore::Feature::Scripting)?;
         let mut engine = rustynes_script::ScriptEngine::new().map_err(|e| MobileError::Script {
             reason: e.to_string(),
         })?;
@@ -2264,7 +2269,7 @@ impl NesController {
     pub fn ra_init(&self, hardcore: bool) {
         let mut g = self.lock();
         if g.ra.is_some() {
-            ensure_ra(&mut g, hardcore).set_hardcore(hardcore);
+            set_ra_hardcore(&mut g, hardcore);
         } else {
             ensure_ra(&mut g, hardcore);
         }
@@ -2346,9 +2351,13 @@ impl NesController {
     }
 
     /// Toggle hardcore mode (creating the session if needed).
+    ///
+    /// v3.4.0 — switching hardcore ON resets the game (a power cycle) and is
+    /// ignored while a movie or netplay owns the timeline; see
+    /// `set_ra_hardcore`. Read [`Self::ra_hardcore`] back to learn the result.
     pub fn ra_set_hardcore(&self, hardcore: bool) {
         let mut g = self.lock();
-        ensure_ra(&mut g, hardcore).set_hardcore(hardcore);
+        set_ra_hardcore(&mut g, hardcore);
         drop(g);
     }
 
@@ -2818,6 +2827,8 @@ impl NesController {
     /// [`MobileError::Cheat`] if the code is not a valid Game Genie code.
     pub fn cheat_add_genie(&self, code: String) -> Result<(), MobileError> {
         let mut g = self.lock();
+        // v3.4.0 — RA hardcore disables cheats, the Game Genie included.
+        refuse_hardcore(&g, rustynes_ra::hardcore::Feature::Cheats)?;
         let r = g.nes.add_genie_code(&code).map_err(|e| MobileError::Cheat {
             reason: e.to_string(),
         });
@@ -2867,14 +2878,23 @@ impl NesController {
     pub fn poke_ram(&self, addr: u16, value: u8) {
         let addr = addr & 0x1FFF;
         let mut g = self.lock();
+        // v3.4.0 — a memory editor: refused (a no-op) in RA hardcore.
+        if refuse_hardcore(&g, rustynes_ra::hardcore::Feature::MemoryEditor).is_err() {
+            return;
+        }
         g.nes.poke_ram(addr, value);
         drop(g);
     }
 
     /// Read one byte from the CPU bus at `addr`, side-effect-free (the core's
     /// `peek`). The single-address convenience over [`Self::debug_read_memory`].
+    ///
+    /// v3.4.0 — returns 0 in RA hardcore (a memory viewer is prohibited).
     pub fn peek_byte(&self, addr: u16) -> u8 {
         let mut g = self.lock();
+        if refuse_hardcore(&g, rustynes_ra::hardcore::Feature::MemoryEditor).is_err() {
+            return 0;
+        }
         let v = g.nes.peek(addr);
         drop(g);
         v
@@ -2887,8 +2907,22 @@ impl NesController {
     // gates the debugger UI off the App-Store build.
 
     /// A read-only snapshot of the CPU registers (`rustynes_core::CpuDebugView`).
+    ///
+    /// v3.4.0 — all zero in RA hardcore (debuggers are prohibited).
     pub fn debug_cpu_state(&self) -> CpuRegs {
         let g = self.lock();
+        if refuse_hardcore(&g, rustynes_ra::hardcore::Feature::Debugger).is_err() {
+            return CpuRegs {
+                a: 0,
+                x: 0,
+                y: 0,
+                s: 0,
+                pc: 0,
+                p: 0,
+                jammed: false,
+                cycles: 0,
+            };
+        }
         let v = g.nes.cpu_snapshot();
         drop(g);
         CpuRegs {
@@ -2906,9 +2940,14 @@ impl NesController {
     /// Read `len` bytes from the CPU bus starting at `start` (wrapping at the
     /// 64 KiB boundary), side-effect-free. `len` is capped at 64 KiB so a
     /// malformed request can never over-allocate. Feeds the debugger hex view.
+    ///
+    /// v3.4.0 — empty in RA hardcore (a memory viewer is prohibited).
     pub fn debug_read_memory(&self, start: u16, len: u32) -> Vec<u8> {
         let len = (len as usize).min(0x1_0000);
         let mut g = self.lock();
+        if refuse_hardcore(&g, rustynes_ra::hardcore::Feature::MemoryEditor).is_err() {
+            return Vec::new();
+        }
         let mut out = Vec::with_capacity(len);
         let mut addr = start;
         for _ in 0..len {
@@ -2929,6 +2968,10 @@ impl NesController {
         // instruction's operand is fully readable; capped at the address space.
         let window = count.saturating_mul(3).saturating_add(3).min(0x1_0000);
         let mut g = self.lock();
+        // v3.4.0 — empty in RA hardcore (debuggers are prohibited).
+        if refuse_hardcore(&g, rustynes_ra::hardcore::Feature::Debugger).is_err() {
+            return Vec::new();
+        }
         let mut buf = vec![0u8; window];
         let mut addr = pc;
         for slot in &mut buf {
@@ -3274,7 +3317,7 @@ fn post_frame_ra(g: &mut Inner) {
     ra.refresh_views();
     ra.expire_toasts();
     if reset {
-        nes.reset();
+        power_cycle_for_ra(g);
     }
 }
 
@@ -3470,6 +3513,85 @@ fn np_tick_in_game(
 /// return a mutable handle to it. The session persists for the controller's life
 /// (across ROM swaps); `hardcore` only seeds the initial flag when it is first
 /// created (a later `ra_set_hardcore` overrides it).
+/// v3.4.0 (`T-RA-HARDCORE`) — whether a hardcore `RetroAchievements` session is
+/// active (the bridge's one hardcore predicate).
+fn hardcore_active(g: &Inner) -> bool {
+    g.ra.as_ref()
+        .is_some_and(rustynes_ra::RaSession::hardcore_blocks)
+}
+
+/// v3.4.0 — refuse `feature` with [`MobileError::HardcoreBlocked`] when hardcore
+/// forbids it. The rule is `rustynes_ra::hardcore`, the same table the desktop
+/// enforces (RA's Hardcore Compliance Requirements, section B).
+fn refuse_hardcore(g: &Inner, feature: rustynes_ra::hardcore::Feature) -> Result<(), MobileError> {
+    if rustynes_ra::hardcore::refuses(feature, hardcore_active(g)) {
+        Err(MobileError::HardcoreBlocked)
+    } else {
+        Ok(())
+    }
+}
+
+/// v3.4.0 — the hardcore rules that must hold on every frame, whatever route
+/// armed them, applied before the frame runs: a playing movie is stopped
+/// (recorded-input playback is prohibited; recording is allowed), the core's
+/// Game Genie codes are removed (cheats are disabled), and a loaded Lua script
+/// is unloaded (scripting is prohibited). A no-op outside hardcore.
+fn enforce_hardcore(g: &mut Inner) {
+    use rustynes_ra::hardcore::{Feature, refuses};
+    let on = hardcore_active(g);
+    if refuses(Feature::MoviePlayback, on) && g.playback.is_some() {
+        end_playback(g);
+    }
+    if refuses(Feature::Cheats, on) && g.nes.genie_codes().next().is_some() {
+        g.nes.clear_genie_codes();
+    }
+    if refuses(Feature::Scripting, on) {
+        g.script = None;
+    }
+}
+
+/// v3.4.0 — set hardcore on the session (creating it if needed), applying RA's
+/// mid-session rule: "Switching from casual mode to hardcore mode is not
+/// allowed mid-session. This action must result in a full reset of the game"
+/// (compliance requirements, section B; an automatic rejection otherwise).
+///
+/// Switching ON while a movie or a netplay session owns the timeline is
+/// ignored (the reset would break the recording or desync the peer; the call
+/// returns nothing, so the host reads [`NesController::ra_hardcore`] back and
+/// asks the player to stop first). Otherwise the forbidden features are torn
+/// down and a single console is power-cycled, then `rc_client_reset` runs,
+/// which also re-enables the processing rcheevos suspends at the switch. A Vs.
+/// cabinet is outside RA's scope and is left running. Switching OFF needs
+/// nothing.
+fn set_ra_hardcore(g: &mut Inner, hardcore: bool) {
+    let currently = g.ra.as_ref().is_some_and(rustynes_ra::RaSession::hardcore);
+    if hardcore && !currently && g.ra.is_some() && timeline_refusal(g).is_some() {
+        return;
+    }
+    if ensure_ra(g, hardcore).set_hardcore(hardcore) {
+        enforce_hardcore(g);
+        if g.dual.is_none() {
+            power_cycle_for_ra(g);
+        }
+    }
+}
+
+/// v3.4.0 — the full reset RA requires when hardcore takes effect over a
+/// running game, and on rcheevos' `Reset` request: a cold power cycle (a soft
+/// reset would keep the RAM a casual session prepared), then `rc_client_reset`.
+/// Before v3.4.0 the `Reset` request soft-reset the console and never called
+/// `rc_client_reset`, so achievement processing stayed suspended for the rest
+/// of the session after the player switched hardcore on.
+fn power_cycle_for_ra(g: &mut Inner) {
+    let Inner { nes, ra, .. } = g;
+    nes.power_cycle();
+    if let Some(ra) = ra.as_mut() {
+        ra.reset(&mut |a| nes.cpu_bus_peek(a));
+    }
+    g.coin_frames = 0;
+    g.frozen = false;
+}
+
 fn ensure_ra(g: &mut Inner, hardcore: bool) -> &mut rustynes_ra::RaSession {
     if g.ra.is_none() {
         let config = rustynes_ra::RaConfig {
@@ -4268,6 +4390,105 @@ mod tests {
         // Softcore re-allows it.
         ctrl.ra_set_hardcore(false);
         ctrl.load_state(blob).expect("softcore load");
+    }
+
+    // ---- v3.4.0 (`T-RA-HARDCORE`): the bridge enforces the hardcore table ----
+
+    /// A short `.rnm` recorded on `ctrl` from its current state (casual).
+    fn short_movie(ctrl: &NesController) -> Vec<u8> {
+        ctrl.movie_record_from_here();
+        for _ in 0..20 {
+            ctrl.step_frame();
+        }
+        let bytes = ctrl.movie_stop_recording();
+        assert!(!bytes.is_empty(), "the recording produced a movie");
+        bytes
+    }
+
+    /// Every start site RA hardcore forbids refuses on the bridge: Game Genie,
+    /// Lua, movie playback, and the memory / debugger reads and pokes (which
+    /// return nothing rather than an error, to keep the generated bindings).
+    #[test]
+    fn hardcore_refuses_cheats_scripts_playback_and_memory_tools() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.step_frame();
+        let movie = short_movie(&ctrl);
+        ctrl.ra_init(true);
+        assert!(matches!(
+            ctrl.cheat_add_genie("SXIOPO".into()),
+            Err(MobileError::HardcoreBlocked)
+        ));
+        assert!(matches!(
+            ctrl.load_script(String::new()),
+            Err(MobileError::HardcoreBlocked)
+        ));
+        assert!(matches!(
+            ctrl.movie_play(movie.clone()),
+            Err(MobileError::HardcoreBlocked)
+        ));
+        ctrl.poke_ram(0x0300, 0xAB);
+        assert_eq!(ctrl.peek_byte(0x0300), 0, "no memory view in hardcore");
+        assert_eq!(ctrl.debug_read_memory(0x8000, 16).len(), 0);
+        assert_eq!(ctrl.debug_disassemble(0x8000, 4).len(), 0);
+        assert_eq!(ctrl.debug_cpu_state().pc, 0, "no CPU view in hardcore");
+        assert_ne!(ctrl.lock().nes.peek(0x0300), 0xAB, "the poke was refused");
+
+        // Casual allows every one of them again.
+        ctrl.ra_set_hardcore(false);
+        ctrl.cheat_add_genie("SXIOPO".into()).expect("casual cheat");
+        ctrl.load_script(String::new()).expect("casual script");
+        ctrl.movie_play(movie).expect("casual playback");
+        ctrl.poke_ram(0x0300, 0xAB);
+        assert_eq!(ctrl.peek_byte(0x0300), 0xAB);
+        assert_ne!(ctrl.debug_cpu_state().pc, 0);
+    }
+
+    /// Features already running when hardcore takes effect stop on the next
+    /// frame: playback ends, Game Genie codes leave the core, the script is
+    /// unloaded.
+    #[test]
+    fn hardcore_tears_down_running_features_on_the_next_frame() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.step_frame();
+        let movie = short_movie(&ctrl);
+        ctrl.cheat_add_genie("SXIOPO".into()).expect("cheat");
+        ctrl.load_script(String::new()).expect("script");
+        ctrl.movie_play(movie).expect("play");
+        assert!(ctrl.movie_is_playing() && ctrl.script_is_loaded());
+        // A session created already in hardcore (no switch, so no reset).
+        ctrl.ra_init(true);
+        ctrl.step_frame();
+        assert!(!ctrl.movie_is_playing(), "playback stopped");
+        assert!(!ctrl.script_is_loaded(), "script unloaded");
+        assert!(
+            ctrl.cheat_genie_codes().is_empty(),
+            "Game Genie codes removed"
+        );
+    }
+
+    /// RA: switching casual -> hardcore mid-session "must result in a full
+    /// reset of the game". The bridge power-cycles the console (the frame
+    /// counter restarts), and ignores the switch while a movie records.
+    #[test]
+    fn switching_hardcore_on_power_cycles_and_waits_for_a_recording() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.ra_init(false);
+        for _ in 0..30 {
+            ctrl.step_frame();
+        }
+        let before = ctrl.lock().nes.frame();
+        ctrl.ra_set_hardcore(true);
+        assert!(ctrl.ra_hardcore());
+        let after = ctrl.lock().nes.frame();
+        assert!(after < before, "no power cycle: frame {before} -> {after}");
+
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.ra_init(false);
+        ctrl.movie_record_from_here();
+        ctrl.step_frame();
+        ctrl.ra_set_hardcore(true);
+        assert!(!ctrl.ra_hardcore(), "switched on during a recording");
+        assert!(ctrl.movie_is_recording(), "the recording survived");
     }
 
     // v1.8.6 — a lazily-created session (login/load before `ra_init`) defaults
