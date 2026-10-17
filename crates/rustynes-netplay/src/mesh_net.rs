@@ -968,20 +968,14 @@ impl MeshJoiner {
         {
             self.my_player = 1;
             self.num_players = 2;
-            let host_sender = auth.remote_senders().next().unwrap_or(0);
+            let seats = [pair_fallback_seat(&auth, self.host)];
             let socket = self
                 .socket
                 .take()
                 .expect("joiner socket present to hand off");
-            // The host is player 0 whatever its pair sender index.
-            return UdpMeshTransport::sealed_with_seats(
-                socket,
-                &[(host_sender, 0, self.host)],
-                auth,
-                None,
-            )
-            .map(Some)
-            .map_err(|_| MeshError::Timeout);
+            return UdpMeshTransport::sealed_with_seats(socket, &seats, auth, None)
+                .map(Some)
+                .map_err(|_| MeshError::Timeout);
         }
 
         self.resend_sync(now);
@@ -1056,6 +1050,19 @@ fn roster_is_well_formed(peers: &[(u8, SocketAddr, KeyShare)]) -> bool {
         }
     }
     true
+}
+
+/// The seat table for a joiner that met a 2-player host (the pair fallback):
+/// one entry, the host, whose authenticated **sender index** under the pair
+/// key is whichever its key share sorts to, but whose **seat** (the `player`
+/// its `Input` / `InputBatch` / `InputAck` must name) is always 0. Pulled out
+/// of [`MeshJoiner::pump`] so the seat rule is tested for both share orders
+/// rather than by whichever order a random share happens to produce: until
+/// v3.4.0's review, the only test that noticed a sender index used as the seat
+/// failed in about half its runs.
+fn pair_fallback_seat(auth: &DatagramAuth, host: SocketAddr) -> (u8, u8, SocketAddr) {
+    let host_sender = auth.remote_senders().next().unwrap_or(0);
+    (host_sender, 0, host)
 }
 
 #[cfg(test)]
@@ -1555,6 +1562,26 @@ mod tests {
         }
         assert_eq!(drain(&mut joiner, 1), vec![own]);
         assert_eq!(joiner.misattributed_datagrams(), 1);
+    }
+
+    /// The pair fallback's host is seat 0 whichever way the two key shares
+    /// sort, so whichever pair sender index it authenticates as. Both orders,
+    /// fixed shares: the mutation "seat = sender index" fails the second.
+    #[test]
+    fn the_pair_fallback_host_is_seat_zero_for_both_share_orders() {
+        let id = SessionIdentity::new([0x31u8; 32], [0x13; 32]);
+        let host = loopback();
+        for (joiner_share, host_share, host_sender) in [
+            ([2u8; KEY_SHARE_LEN], [1u8; KEY_SHARE_LEN], 0u8),
+            ([1u8; KEY_SHARE_LEN], [2u8; KEY_SHARE_LEN], 1u8),
+        ] {
+            let auth = DatagramAuth::pair(&id, joiner_share, host_share).unwrap();
+            assert_eq!(
+                pair_fallback_seat(&auth, host),
+                (host_sender, 0, host),
+                "host share sorting to sender {host_sender} must still be seat 0"
+            );
+        }
     }
 
     fn drain(t: &mut UdpMeshTransport, want: usize) -> Vec<NetMessage> {
