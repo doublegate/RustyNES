@@ -84,6 +84,7 @@ day.)
 | HW (the last v3.9.x, numbered after the session) | **Hardware verification** (D29): the SuperStation One board session (Strands A-F) on v3.9.0's frozen pair, the mobile device run, the fixes each produces, then the store listings. No feature RTL | [`v3.9.0-plan.md`](to-dos/plans/v3.9.0-plan.md), [`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md), [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) (Strands A-F), `docs/mobile-v2.9.3-run-sheet.md` |
 | v4.0.0 | **The API major**: the remaining public enums `#[non_exhaustive]`; MiSTer feature parity | [`v4.0.0-plan.md`](to-dos/plans/v4.0.0-plan.md) |
 | v4.1.0 - v4.5.0 | **The power-user line** (D33): reverse debugging and cross-play; console verification and save states shared with the MiSTer core (after the hardware release); PPU-level frame interpolation and accessibility; explain-this-frame and the mobile/web debugger; a reinforcement-learning environment | [`v4.x-power-user-line-plan.md`](to-dos/plans/v4.x-power-user-line-plan.md) |
+| v4.6.0 - v4.9.0 | **The agents-and-scale line** (D34): language models play the games (Claude, Gemini, Codex, local models through LM Studio or any OpenAI-compatible server); game fuzzing and optimal-run search on a CPU batch; an integer-only lane core and, if a measured spike says go, the same fuzzing and search on the GPU | [`v4.x-agents-and-scale-line-plan.md`](to-dos/plans/v4.x-agents-and-scale-line-plan.md) |
 
 ### Post-1.0 release line (v1.1.0 → current)
 
