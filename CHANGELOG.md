@@ -26,6 +26,28 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Netplay with v3.2.x and v3.3.x peers is refused** (protocol 9, `"RNE9"`,
+  ADR 0046). Every native netplay datagram is now authenticated
+  (`T-NETPLAY-DATAGRAM-AUTH`): each peer contributes a random key share in its
+  handshake, and every datagram after it carries an HMAC-SHA-256 tag under a
+  per-session key and a sequence number. A datagram from anyone without the key
+  is refused before it is parsed, a replay is refused, and a peer whose NAT
+  changes its address is kept and followed. It defends against off-path
+  forgery, not against someone who observes the handshake. A v3.4.0 peer
+  refuses an `"RNE8"` peer with the reason, naming its emulation epoch; the
+  older peer times out. The signalling room protocol is unchanged. New
+  dependency: `hmac` 0.13 (RustCrypto, MIT OR Apache-2.0).
+- **`rustynes-netplay` API:** `NetMessage::Sync` gains `key_share`,
+  `NetMessage::Roster` entries are `(player, addr, key_share)`, and
+  `NetMessage::InputAck` gains `player`. `RollbackSession::
+  confirmed_entering_digest` keeps the most recent 256 frames, and
+  `confirmed_input` the history window. New: the `auth` module
+  (`DatagramAuth`, `KeyShare`, `Refusal`), `UdpTransport::enable_auth`,
+  `UdpMeshTransport::new_sealed`, `RollbackSession::retained`, and
+  `impl Transport for Box<T>`.
+
 ### Added
 
 - **Hosted netplay and achievements services** (`services/hosted/`,
@@ -45,6 +67,13 @@ cycle-accurate core later replaced.
   <https://doublegate.github.io/RustyNES/privacy/> and linked from the README
   and the apps. The F-Droid anti-feature decision is recorded in
   `docs/android.md`.
+- **Netplay: three and four players on the desktop**
+  (`T-NETPLAY-MESH-NATIVE`). The netplay panel's 3 and 4 player choices now
+  gather every joiner and run the full mesh with the Four Score; until now the
+  desktop completed only the first joiner. Joiners do not choose a count: the
+  same Join reaches a 2-player or a 3-4 player host. Direct IP and LAN only
+  (no room code or TURN for more than two players); the mobile apps follow in
+  a later release (`MOB-09`).
 
 ### Changed
 
@@ -70,9 +99,23 @@ cycle-accurate core later replaced.
 - **The RetroAchievements User-Agent** is now
   `RustyNES/<version> (<OS> <arch>) rcheevos/<version>`, RA's documented
   three-part shape; the browser proxies send `(Web wasm32)`.
+- **The netplay rollback window** (`T-NETPLAY-ROLLBACK-WINDOW`, Round 2
+  NET-R2-01, -05 and -09). A confirmation whose predictions held no longer
+  replays any frame (it re-simulated several frames per tick before); a
+  misprediction replays from the mispredicted frame; every per-frame store is
+  bounded by the window instead of growing for the whole session; and the
+  state digest is about 15 times faster (209.7 to 13.3 us per frame). One tick
+  of a latent two-peer session went from 20.78 ms to 8.1-8.9 ms (release
+  bench, two runs). NET-R2-02's framebuffer-less snapshots were measured and
+  rejected: they produced false desyncs.
 
 ### Fixed
 
+- **Netplay, 3-4 players: a peer that missed early inputs stalled
+  forever.** An `InputAck` named no sender, so one peer's ack stopped
+  another's retransmission to a third that had not received it.
+- **Netplay: a different second value for an already confirmed input is
+  ignored**, instead of rewriting a frame below the rollback checkpoint.
 - **Native RetroAchievements achievements can unlock.** Every achievement was
   disabled when its game loaded: rcheevos checked memory addresses from the
   network callback, where no memory reader is installed, so no unlock could
