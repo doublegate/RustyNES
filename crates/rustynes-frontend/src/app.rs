@@ -8407,6 +8407,51 @@ impl App {
         }
     }
 
+    /// v3.4.0 — whether this housekeeping pass builds the full
+    /// [`crate::perf::PerfView`]: a panel that reads it is open, or the perf
+    /// log is due a row. See the comment at the call in
+    /// `post_produce_housekeeping`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn perf_view_wanted(&self) -> bool {
+        self.debugger
+            .as_ref()
+            .is_some_and(DebuggerOverlay::perf_view_wanted)
+            || self.perf_logger.row_due()
+    }
+
+    /// v2.8.0 Phase 3 — feed the run-ahead budget throttle, every produced
+    /// frame. It reads the produce-cost median and count: from the full view
+    /// when one was built, else from that one window alone (v3.4.0).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn feed_runahead_throttle(
+        emu: &mut crate::emu::EmuCore,
+        view: Option<&crate::perf::PerfView>,
+        run_ahead: u32,
+    ) {
+        let produce_cost = view.map_or_else(|| emu.perf.produce_cost_stats(), |v| v.produce_cost);
+        emu.update_runahead_throttle(produce_cost.p50_ms, produce_cost.count, run_ahead);
+    }
+
+    /// The [`crate::perf::PerfView`] fields that live on `App` rather than
+    /// behind the emulator lock: the pacing label, the audio servo, the present
+    /// mode and GPU time, and the winit thread's render series. Called only
+    /// when housekeeping builds the full view (v3.4.0).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fill_app_side_perf(&self, perf_view: &mut crate::perf::PerfView) {
+        perf_view.pacing = self.pacing_label();
+        // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
+        if let Some(audio) = self.audio.as_ref() {
+            perf_view.drc_ratio = audio.drc_ratio_now();
+            perf_view.audio_latency_target_ms = audio.latency_target_ms();
+        }
+        if let Some(gfx) = self.gfx.as_ref() {
+            perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
+            perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
+            perf_view.gpu_ms = gfx.last_gpu_pass_ms();
+        }
+        self.fill_winit_thread_perf(perf_view);
+    }
+
     /// v2.8.0 Phase 2 — per-produced-frame housekeeping shared by the
     /// wall-clock pacer (`pace_frames`) and the display-sync redraw path:
     /// FDS save flush + audio-health refresh + perf/fps/movie pushes into
@@ -8417,7 +8462,7 @@ impl App {
     /// Extracted from `post_produce_housekeeping` only to keep that function
     /// inside the line budget; the sequence is unchanged.
     #[cfg(not(target_arch = "wasm32"))]
-    fn drive_perf_logger(&mut self, perf_view: &crate::perf::PerfView) -> Option<String> {
+    fn drive_perf_logger(&mut self, perf_view: Option<&crate::perf::PerfView>) -> Option<String> {
         let log_enabled = self
             .debugger
             .as_ref()
@@ -8428,7 +8473,9 @@ impl App {
             .then(|| self.perf_log_context());
         self.perf_logger
             .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
-        self.perf_logger.record(perf_view);
+        if let Some(view) = perf_view {
+            self.perf_logger.record(view);
+        }
         self.perf_logger.note()
     }
 
@@ -8455,6 +8502,16 @@ impl App {
         // user can read them from the top toolbar. One scoped lock builds
         // the whole perf snapshot (the gfx fields are App-resident and are
         // filled in after the guard drops).
+        //
+        // v3.4.0 — the full snapshot is built only when something reads it:
+        // the Performance or Latency panel is open, or the perf log is due to
+        // write its once-a-second row. Building it copies and sorts every
+        // 600-sample stats window, the emulator-side ones under this lock, and
+        // a live profile measured that at 11.6% of the winit thread while the
+        // log keeps one view a second and a closed panel keeps none. The
+        // run-ahead throttle reads one window's median and is fed every frame
+        // either way; the fps readout uses an unsorted mean.
+        let want_view = self.perf_view_wanted();
         let (
             fps,
             movie_status,
@@ -8476,7 +8533,11 @@ impl App {
                     overrun_dropped: audio.queue.overrun_dropped(),
                 };
             }
-            let mut view = emu.perf.view();
+            let mut view = if want_view {
+                emu.perf.view()
+            } else {
+                crate::perf::PerfView::default()
+            };
             view.target_ms = emu.frame_duration.as_secs_f32() * 1000.0;
             // v2.3.3 — drain the per-frame trace under the SAME lock that is
             // already held (an O(1) `Vec` swap), and write it to disk after the
@@ -8500,9 +8561,9 @@ impl App {
             // v2.8.0 Phase 3 — feed the run-ahead budget throttle. Keyed off
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
-            emu.update_runahead_throttle(
-                view.produce_cost.p50_ms,
-                view.produce_cost.count,
+            Self::feed_runahead_throttle(
+                emu,
+                want_view.then_some(&view),
                 self.config.input.run_ahead,
             );
             // v1.5.0 "Lens" Workstream H8 — surface the run-ahead + rewind
@@ -8535,22 +8596,15 @@ impl App {
         // so the allocation survives and nothing is retained between frames.
         self.trace_scratch = trace_events;
         let replay_info = self.build_replay_info(region);
-        perf_view.pacing = self.pacing_label();
-        // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
-        if let Some(audio) = self.audio.as_ref() {
-            perf_view.drc_ratio = audio.drc_ratio_now();
-            perf_view.audio_latency_target_ms = audio.latency_target_ms();
+        if want_view {
+            self.fill_app_side_perf(&mut perf_view);
         }
-        if let Some(gfx) = self.gfx.as_ref() {
-            perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
-            perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
-            perf_view.gpu_ms = gfx.last_gpu_pass_ms();
-        }
-        self.fill_winit_thread_perf(&mut perf_view);
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
-        // and reflect the destination/error back into the panel.
-        let log_note = self.drive_perf_logger(&perf_view);
+        // and reflect the destination/error back into the panel. The row is
+        // offered only when the view was built (v3.4.0); `sync` still runs
+        // every frame so the checkbox starts and stops the log at once.
+        let log_note = self.drive_perf_logger(want_view.then_some(&perf_view));
         // v1.1.0 beta.1 (Workstream B) — push the held-button snapshot for the
         // input-display HUD (P1..P4; 4 players shown only with Four Score).
         let input_players = if self.config.input.four_score { 4 } else { 2 };
@@ -8581,7 +8635,9 @@ impl App {
             debugger.set_movie_status(movie_status);
             debugger.set_replay_info(movie_status, replay_info);
             debugger.set_perf_log_note(log_note);
-            debugger.set_perf_view(perf_view);
+            if want_view {
+                debugger.set_perf_view(perf_view);
+            }
             // v1.7.0 — pull the live enabled raw-cheat list edited in the
             // cheat panel so the next produce iteration pokes the current
             // set (mirrors the fps / movie-status pull pattern).

@@ -1516,6 +1516,17 @@ impl DebuggerOverlay {
         self.perf_ui.set_view(view);
     }
 
+    /// v3.4.0 — whether a panel will read the view [`Self::set_perf_view`]
+    /// stores: the Performance panel shows it, and the Latency Oracle reads
+    /// its render-work and present-latency series. With both closed the app
+    /// skips building the view, which sorts every stats window; the panel
+    /// keeps the last view it was given and is refreshed on the first produced
+    /// frame after it opens.
+    #[must_use]
+    pub const fn perf_view_wanted(&self) -> bool {
+        self.show_perf || self.show_latency
+    }
+
     /// v2.8.0 — whether the Perf panel's "Logging" checkbox is set. The app
     /// polls this each housekeeping pass to start/stop its `PerfLogger`.
     /// Native-only (file logging needs a filesystem).

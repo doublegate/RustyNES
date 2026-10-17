@@ -121,6 +121,16 @@ cycle-accurate core later replaced.
   another's retransmission to a third that had not received it.
 - **Netplay: a different second value for an already confirmed input is
   ignored**, instead of rewriting a frame below the rollback checkpoint.
+- **The desktop and browser frontends use about half the CPU on their window
+  thread** (measured -46% and -48% on the desktop, in two before/after pairs).
+  Two costs found by profiling the live app, neither in egui. The check that
+  skips re-uploading an unchanged frame hashed all 245,760 bytes on every
+  redraw, about 206 µs, to save a copy of about 6 µs. It now compares against
+  a copy of the last uploaded frame (about 7.7 µs, and it cannot be fooled by
+  a hash collision). The performance statistics were sorted every frame,
+  partly under the emulator lock, even with the Performance panel closed and
+  the log off. They are now built only when a panel shows them or the log
+  writes its once-a-second row. Frame rate and pacing are unchanged.
 - **The performance log records the egui pass in the normal view.**
   `RUSTYNES_PERF_LOG`'s `rui` column was recorded only while the debugger
   overlay or a tool panel was open, so with them closed it read 0.000 although

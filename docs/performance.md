@@ -1575,7 +1575,88 @@ the probe's ~22 µs build. The live pass also covers what the probe leaves out:
 `take_egui_input` from winit, the extra closure's windows (save states, the
 virtual pad, scripts), the debugger's hidden panels, and a contended host. The
 gap is **not yet attributed**. It is the next thing to measure, with a quiet
-host and the probe extended toward the live pass.
+host and the probe extended toward the live pass. (**Attributed below.**)
+
+#### The live winit thread: a frame hash and per-frame stats were half its CPU; both fixed
+
+**Finding: the live gap is cold execution, not extra egui work, and profiling
+it found two real costs, neither of them egui. Fixing them halves the winit
+thread's CPU time.** A 25 s call-graph profile of the live frontend's winit
+thread (`perf record -g --call-graph fp`, a release build with line tables and
+frame pointers in its own target directory, `flowing_palette.nes`, perf log
+on, load 7-10):
+
+| inclusive share of the winit thread | % |
+| --- | ---: |
+| `Gfx::render_with_overlay` (the present path) | 65.0 |
+| of which `fnv1a64`, the frame-upload skip's hash | **29.0** |
+| `run_shell_ui`, the egui pass | 14.8 |
+| `SampleRing::stats`, the perf statistics | **11.6** |
+
+**The egui pass is ordinary.** Folded beneath `run_shell_ui` it is the menu bar
+36%, egui's pass machinery 22%, tessellation 21% and the status bar 14%, the
+probe's composition. What differs is how warm it runs. The probe paced like
+the live app (`RUSTYNES_SHELL_PROBE_SLEEP_MS=8`) builds in 55.0-63.7 µs
+against 21.2-22.7 µs back to back, and with a 32 MiB cache sweep between
+frames (`RUSTYNES_SHELL_PROBE_EVICT`) in 64.7-106.5 µs. Between redraws the
+CPU drops clock and the caches go cold, so a pass that runs once per 8 ms costs
+3-5 times its hot cost. The remainder is the live pass's extra work and the
+loaded host. No egui defect sits in the gap.
+
+**The frame-upload hash (v2.3.3 F4) cost about 30 times what it saved.** The
+skip exists so that a duplicate present (the 120 Hz display shows each 60 fps
+frame twice) does not re-upload 245,760 identical bytes. It decided that with
+a byte-wise FNV-1a hash, documented as cheap and vectorisable. It is neither.
+Each byte's multiply depends on the previous one, so nothing vectorises.
+Measured in a standalone release build (frames alternating new and duplicate):
+
+| frame-change check, per redraw | µs (two runs) |
+| --- | ---: |
+| byte-wise FNV-1a (v2.3.3 to v3.3.0) | 206.4 / 206.8 |
+| netplay's multiply-rotate digest | 13.6 / 13.6 |
+| exact compare against a copy, copy on change (v3.4.0) | **7.8 / 7.6** |
+| a 245,760-byte memcpy, the CPU side of the upload it saves | 6.3 / 6.0 |
+
+v3.4.0 keeps the skip and decides it by comparing against a copy of the last
+uploaded frame (`remember_if_changed`). It is about 27 times faster, and an
+exact compare cannot collide, where a hash could in principle have shown a
+stale frame. The same code path runs in the browser build.
+
+**The perf statistics were built for consumers that were not listening.**
+Housekeeping built the full `PerfView` on every produced frame. That means
+copying and sorting each 600-sample window, the emulator-side ones while
+holding the emulator lock. Meanwhile the perf log keeps one view a second, a
+closed Performance or Latency panel keeps none, and the fps readout sorted a
+window only to take its mean. From v3.4.0 the view is built only when one of
+those panels is open or the log is due a row (`PerfLogger::row_due`, the test
+`record` already applies). The run-ahead throttle reads the one window it
+needs every frame, and the fps readout uses an unsorted mean.
+
+**Measured, live, before and after both fixes**: the two binaries built with
+identical flags, alternated before / after / before / after, 20 s each, the
+winit thread's CPU time (`perf stat -e task-clock -t`) over 15 s after a 5 s
+warm-up, which host load moves far less than it moves wall time:
+
+| capture | load | winit thread CPU (ms / 15 s) | fps | presented p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| before | 6.97 | 1,062.6 | 60.23 | 14.62 |
+| after | 6.05 | **573.6** | 60.25 | 14.32 |
+| before | 5.61 | 1,045.9 | 60.25 | 9.03 |
+| after | 4.94 | **540.0** | 60.25 | 8.52 |
+
+**-46% and -48%**, the same sign in both pairs: from about 7.0% of a core to
+about 3.7%. The frame rate and the pacing are unchanged, as they should be on
+a vsync-bound present. The saving is CPU and power, and a shorter emulator-lock
+hold. The host load fell across the four captures, so a quiet-host repeat is
+still worth taking. With load spread that wide, `rui` p50 reads 0.05-0.07 ms on
+both builds; the earlier capture's 0.31 ms was at a higher load.
+
+Not adopted, measured as a candidate: reusing the previous frame's egui output
+when nothing changed (no input, no repaint requested, an identical
+`ShellFrame`). Live, it would save most of the ~0.05-0.3 ms pass on most
+redraws, but its correctness depends on every input to the shell being in the
+"unchanged" test, including config edits made by hotkeys outside egui. A missed
+one shows a stale menu with no error, which is a worse failure than the cost.
 
 ### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
 

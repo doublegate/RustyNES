@@ -2816,6 +2816,17 @@ mod tests {
             .and_then(|s| s.parse().ok())
             .unwrap_or(600);
         let hover = std::env::var("RUSTYNES_SHELL_PROBE_HOVER").is_ok();
+        // Pace the frames like the live app (`..._SLEEP_MS`, e.g. 8 for a
+        // 120 Hz redraw) and, optionally, sweep a 32 MiB buffer between them
+        // (`..._EVICT`) as other work does to the caches. Both off by default:
+        // back-to-back frames run with hot caches and a boosted clock.
+        let sleep_ms: u64 = std::env::var("RUSTYNES_SHELL_PROBE_SLEEP_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let mut evict = std::env::var("RUSTYNES_SHELL_PROBE_EVICT")
+            .is_ok()
+            .then(|| vec![0u8; 32 << 20]);
         let config0 = Config {
             welcome_shown: true,
             ..Default::default()
@@ -2865,6 +2876,15 @@ mod tests {
                 raw.events
                     .push(egui::Event::PointerMoved(egui::pos2(x, 10.0)));
             }
+            if sleep_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+            }
+            if let Some(buf) = evict.as_mut() {
+                for chunk in buf.chunks_mut(64) {
+                    chunk[0] = chunk[0].wrapping_add(1);
+                }
+                std::hint::black_box(&buf);
+            }
             let t0 = std::time::Instant::now();
             let out = ctx.run_ui(raw, |ui| {
                 let _ = shell.build(ui, &mut config, &frame, |_, _, _| {}, |_, _| {});
@@ -2905,9 +2925,10 @@ mod tests {
         }
         let n = (frames - 10) as f64;
         println!(
-            "SHELL_PROBE frames={frames} hover={hover} build_us={:.1} tess_us={:.1} \
+            "SHELL_PROBE frames={frames} hover={hover} sleep_ms={sleep_ms} evict={} build_us={:.1} tess_us={:.1} \
              shapes={:.1} prims={:.1} verts={:.1} idx={:.1} tex_bytes_total={tex} \
              tex_bytes_warm_per_frame={:.1} repaint_requests={repaints}",
+            evict.is_some(),
             build_ns as f64 / n / 1000.0,
             tess_ns as f64 / n / 1000.0,
             shapes as f64 / n,

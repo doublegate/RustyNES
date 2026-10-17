@@ -322,14 +322,22 @@ pub struct Gfx {
     /// already holds — about 35 MB/s of pointless staging-belt and GPU-copy
     /// traffic. (Two captures show zero; it depends entirely on present mode.)
     ///
-    /// Keyed on a cheap FNV-1a hash of the frame rather than a caller-supplied
-    /// "is it dirty" flag: a flag has to be correct at every call site and goes
-    /// stale silently as a frozen image, whereas a content hash cannot disagree
-    /// with the content. `None` means "nothing uploaded yet", which always uploads.
+    /// Keyed on the frame's content rather than a caller-supplied "is it
+    /// dirty" flag: a flag has to be correct at every call site and goes stale
+    /// silently as a frozen image, whereas the content cannot disagree with
+    /// itself. Empty means "nothing uploaded yet", which always uploads.
     ///
-    /// This is hygiene, not a measured frame-time win — see `docs/performance.md`
-    /// v2.3.3 F1/F4.
-    nes_texture_key: Option<u64>,
+    /// v3.4.0 — an exact copy of the last uploaded frame, compared byte for
+    /// byte. Until v3.4.0 this was a byte-wise FNV-1a hash, described as cheap
+    /// and vectorisable. It is neither: each byte's multiply waits on the
+    /// previous one, so it ran at about 206 us per 245,760-byte frame, against
+    /// 7.7 us for this compare plus the copy on a change (frames alternating
+    /// new and duplicate, as on a 120 Hz display at 60 fps) and 6.1 us for the
+    /// memcpy the skip exists to avoid. In a live profile
+    /// it was 29% of the winit thread, on every redraw. The compare also
+    /// cannot collide, where the hash could, in principle, show a stale frame.
+    /// Measured in `docs/performance.md`, v3.4.0.
+    nes_texture_shadow: Vec<u8>,
     /// v1.1.0 beta.1 (T-110-A1) — `R16Uint` palette-index source for the true
     /// composite `NES_NTSC` filter; uploaded only while `ntsc_bisqwit` is active.
     index_texture: wgpu::Texture,
@@ -417,21 +425,19 @@ struct DynBlit {
     height: u32,
 }
 
-/// FNV-1a over a frame buffer — the identity key for [`Gfx::nes_texture_key`].
-///
-/// Chosen for being branch-free, allocation-free and vectorisable by the
-/// autovectoriser; it guards a redundant 245,760-byte upload, so it only has to
-/// be cheaper than that copy, which it is by a wide margin. Collisions would
-/// show a stale frame, but at 64 bits over a 240 KiB buffer the probability is
-/// negligible against the alternative (a caller-supplied dirty flag that goes
-/// stale silently whenever a new call site forgets it).
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+/// v3.4.0 — whether `frame` differs from the copy in `shadow`; when it does,
+/// `shadow` becomes a copy of it. The upload skip for
+/// [`Gfx::nes_texture_shadow`]: an exact compare, so no two distinct frames can
+/// ever be taken for one (a hash could collide and show a stale frame), at
+/// about 7.7 us a redraw against the 206 us the byte-wise FNV-1a it replaced
+/// cost. An empty `shadow` matches no frame, so the first one always uploads.
+fn remember_if_changed(shadow: &mut Vec<u8>, frame: &[u8]) -> bool {
+    if shadow.as_slice() == frame {
+        return false;
     }
-    h
+    shadow.clear();
+    shadow.extend_from_slice(frame);
+    true
 }
 
 impl Gfx {
@@ -794,7 +800,7 @@ impl Gfx {
             queue,
             config,
             nes_texture,
-            nes_texture_key: None,
+            nes_texture_shadow: Vec::new(),
             index_texture,
             bind_group,
             uniforms,
@@ -1224,13 +1230,10 @@ impl Gfx {
             );
         }
         // v2.3.3 F4 — skip the upload when the texture already holds these exact
-        // pixels. The hash is over 245,760 bytes and is far cheaper than the
-        // staging copy plus GPU transfer it avoids; on a duplicate present it is
-        // the only work done here.
-        let fb_key = fnv1a64(framebuffer);
-        let fb_fresh = self.nes_texture_key != Some(fb_key);
-        if fb_ok && fb_fresh {
-            self.nes_texture_key = Some(fb_key);
+        // pixels. v3.4.0: decided by comparing against a copy of the last
+        // upload (see `nes_texture_shadow`), not by hashing the frame, which
+        // cost about 30 times the copy it was there to save.
+        if fb_ok && remember_if_changed(&mut self.nes_texture_shadow, framebuffer) {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.nes_texture,
@@ -2099,6 +2102,40 @@ pub fn window_to_nes_pixel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The upload skip (v3.4.0): the first frame uploads, a repeat does not,
+    /// any one-byte change does, and the shadow follows what was uploaded.
+    /// A shadow never updated would upload every frame; one updated before
+    /// the compare would never upload a new frame.
+    #[test]
+    fn the_upload_skip_uploads_exactly_the_changed_frames() {
+        let len = (NES_W * NES_H * 4) as usize;
+        let a = vec![0x11u8; len];
+        let mut b = a.clone();
+        b[len - 1] ^= 0x01; // differs only in the last byte
+        let mut shadow = Vec::new();
+        assert!(
+            remember_if_changed(&mut shadow, &a),
+            "the first frame must upload"
+        );
+        assert!(
+            !remember_if_changed(&mut shadow, &a),
+            "a repeated frame must not"
+        );
+        assert!(
+            remember_if_changed(&mut shadow, &b),
+            "a one-byte change must upload"
+        );
+        assert!(
+            !remember_if_changed(&mut shadow, &b),
+            "and its repeat must not"
+        );
+        assert!(
+            remember_if_changed(&mut shadow, &a),
+            "going back must upload"
+        );
+        assert_eq!(shadow, a, "the shadow holds the last uploaded frame");
+    }
 
     #[test]
     fn compose_dual_side_by_side_places_screens_left_and_right() {
