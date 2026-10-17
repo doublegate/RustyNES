@@ -225,8 +225,10 @@ fn body(ui: &mut egui::Ui, state: &mut WasmLobbyState, config: &mut crate::confi
                 state.message = crate::t!(LobbyNeedRoom).to_string();
             } else {
                 let num_players = state.num_players.clamp(2, 4);
-                // Persist the conveniences for the next launch.
-                config.netplay.signaling_url = signaling_url.clone();
+                // Persist the conveniences for the next launch. The hosted
+                // lobby's own URL is not stored as a choice, so it keeps
+                // following the hosted base (`remember_signaling_url`).
+                config.netplay.remember_signaling_url(&signaling_url);
                 config.netplay.num_players = num_players;
                 state.request = Some(LobbyRequest::Connect {
                     signaling_url,

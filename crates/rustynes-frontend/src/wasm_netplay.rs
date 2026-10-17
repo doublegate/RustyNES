@@ -450,14 +450,26 @@ fn new_peer_connection(servers: &[IceServer]) -> Result<RtcPeerConnection, JsVal
     RtcPeerConnection::new_with_configuration(&cfg)
 }
 
-/// How long the browser waits for the hosted TURN credentials before going
-/// ahead with STUN only (v3.4.0).
+/// How long the browser waits for the hosted TURN credentials, headers and
+/// body together, before going ahead with STUN only (v3.4.0).
 const HOSTED_ICE_TIMEOUT_MS: i32 = 5000;
 
-/// Fetch `/turn-credentials` with the page's `fetch`, giving up after
-/// [`HOSTED_ICE_TIMEOUT_MS`]. The body is parsed by the same
+/// `POST` `/turn-credentials` (empty body) with the page's `fetch`, giving up
+/// after [`HOSTED_ICE_TIMEOUT_MS`]. The body is parsed by the same
 /// [`rustynes_netplay::hosted::parse_turn_credentials`] the native client
 /// uses (unit-tested there), refusals included: they carry a JSON body.
+///
+/// `POST`, not `GET`: the Worker refuses a `GET` (a third-party page can make
+/// a browser send one with no `Origin`; `services/hosted/src/turn.ts`, "Why
+/// POST only"). A body-less `POST` is still a CORS simple request, so it
+/// needs no preflight.
+///
+/// One deadline covers the whole exchange: the same timer promise is raced
+/// against the request (which resolves when the HEADERS arrive) and then
+/// against `response.text()`, so a server that sends headers and stalls the
+/// body still ends in `Transport("timed out")` and the held `join` goes out
+/// with STUN only, instead of the session waiting in `Connecting` forever.
+/// The abandoned fetch is left to finish or fail on its own; nothing reads it.
 ///
 /// `fetch` and `setTimeout` are reached through `js_sys::Reflect` on the
 /// global object, which needs no extra `web-sys` features (and so adds
@@ -478,13 +490,22 @@ async fn fetch_hosted_ice(url: &str) -> Result<HostedIce, HostedIceError> {
             .ok()
             .and_then(|f| f.dyn_into().ok())
             .ok_or_else(|| transport("no setTimeout"))?;
+    let init = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &init,
+        &JsValue::from_str("method"),
+        &JsValue::from_str("POST"),
+    )
+    .map_err(|_| transport("fetch did not start"))?;
     let request: js_sys::Promise = fetch
-        .call1(&global, &JsValue::from_str(url))
+        .call2(&global, &JsValue::from_str(url), &init)
         .ok()
         .and_then(|p| p.dyn_into().ok())
         .ok_or_else(|| transport("fetch did not start"))?;
-    // A promise that resolves to `undefined` after the timeout; racing it
-    // against the request bounds the wait.
+    // A promise that resolves to `undefined` after the timeout. Racing it
+    // against the request, and then against the body read, bounds the whole
+    // wait by the one deadline (a settled promise stays settled, so once the
+    // timer has fired the second race resolves to `undefined` at once).
     let timeout = js_sys::Promise::new(&mut |resolve, _reject| {
         let _ = set_timeout.call2(&global, &resolve, &JsValue::from(HOSTED_ICE_TIMEOUT_MS));
     });
@@ -504,10 +525,15 @@ async fn fetch_hosted_ice(url: &str) -> Result<HostedIce, HostedIceError> {
         .ok()
         .and_then(|p| p.dyn_into().ok())
         .ok_or_else(|| transport("unreadable body"))?;
-    let body = JsFuture::from(text_promise)
+    let body_race = js_sys::Promise::race(&js_sys::Array::of2(&text_promise, &timeout));
+    let body = JsFuture::from(body_race)
         .await
-        .ok()
-        .and_then(|v| v.as_string())
+        .map_err(|_| transport("unreadable body"))?;
+    if body.is_undefined() {
+        return Err(transport("timed out"));
+    }
+    let body = body
+        .as_string()
         .ok_or_else(|| transport("unreadable body"))?;
     rustynes_netplay::hosted::parse_turn_credentials(&body)
 }
