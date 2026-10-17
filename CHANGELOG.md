@@ -74,6 +74,11 @@ cycle-accurate core later replaced.
   same Join reaches a 2-player or a 3-4 player host. Direct IP and LAN only
   (no room code or TURN for more than two players); the mobile apps follow in
   a later release (`MOB-09`).
+- **The golden exporter takes a Zapper and records expansion audio**:
+  `nes_golden_export` gains `--zapper X:Y:TRIG` (a Zapper on port 2) and
+  `--ext-audio-trace` (the cartridge's per-cycle expansion-audio value), for
+  the MiSTer core's Zapper and Sunsoft 5B gates. A run without them writes the
+  same artifacts and manifests as before.
 
 ### Changed
 
@@ -116,6 +121,10 @@ cycle-accurate core later replaced.
   another's retransmission to a third that had not received it.
 - **Netplay: a different second value for an already confirmed input is
   ignored**, instead of rewriting a frame below the rollback checkpoint.
+- **Netplay, 3-4 players: a joiner refuses a malformed roster, or one not
+  sent by the host it dialed.** A roster with a gap in its player indices
+  (such as 0, 1, 3) built a session with a peer it did not have, which a
+  release build indexed out of range.
 - **Native RetroAchievements achievements can unlock.** Every achievement was
   disabled when its game loaded: rcheevos checked memory addresses from the
   network callback, where no memory reader is installed, so no unlock could
