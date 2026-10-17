@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// RustyNES hosted services (v3.4.0: T-HOSTED-NETPLAY, T-RA-PROXY).
+//
+// One Worker, two Durable Object classes:
+//   - Lobby:  the netplay signalling lobby (the reference room protocol of
+//             crates/rustynes-netplay/src/signaling.rs, ported byte for byte),
+//             holding every signalling WebSocket with the hibernation API.
+//   - Budget: the TURN spend guards (per-IP rate limit and the daily
+//             credential cap), one global instance.
+//
+// Everything below `vars` can be changed in the dashboard (Workers & Pages >
+// rustynes-hosted > Settings > Variables and Secrets) without touching code;
+// a change there deploys a new version of the same code. Secrets are set with
+// `wrangler secret put` and never live in this file. See README.md.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "rustynes-hosted",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-30",
+  // Workers Logs off by default: invocation logs record request metadata
+  // (URL, headers, the client's IP in `cf`), which PRIVACY.md promises we do
+  // not keep. Turn on temporarily to debug, then off again (README.md).
+  "observability": { "enabled": false },
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "BUDGET", "class_name": "Budget" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby", "Budget"] }],
+  "vars": {
+    // Comma-separated page origins allowed to use the services from a
+    // browser. `ALLOW_LOCALHOST` additionally admits http://localhost:<port>
+    // and http://127.0.0.1:<port> for `trunk serve` development.
+    "ALLOWED_ORIGINS": "https://doublegate.github.io",
+    "ALLOW_LOCALHOST": "true",
+
+    // --- TURN spend guards (README.md "Spend guards") ---
+    // Kill switch: anything but "true" refuses to mint (clients fall back to
+    // STUN / direct connections only).
+    "TURN_ENABLED": "true",
+    // Credential lifetime, seconds (clamped 600..86400). 3 h: see README.md.
+    "TURN_TTL_SECONDS": "10800",
+    // Credentials minted per UTC day, all callers together.
+    "TURN_DAILY_CAP": "500",
+    // Credentials one client IP may mint per rolling hour.
+    "TURN_PER_IP_PER_HOUR": "6",
+
+    // --- Lobby limits ---
+    "LOBBY_MAX_CONNECTIONS": "2000",
+    "LOBBY_MAX_CONNECTIONS_PER_IP": "8",
+    "LOBBY_CONNECTS_PER_IP_PER_MINUTE": "30",
+    "LOBBY_ROOMS_PER_IP_PER_MINUTE": "10",
+
+    // --- RetroAchievements proxy ---
+    "RA_ENABLED": "true",
+    "RA_UPSTREAM": "https://retroachievements.org",
+    // RA's documented shape, `Name/version (system) extension`, as the native
+    // RA_USER_AGENT (crates/rustynes-cheevos/src/http.rs) sends it with
+    // `(<OS> <arch>)`; the browser's system clause is `(Web wasm32)`. Keep the
+    // leading `RustyNES/` token: RetroAchievements identifies and allowlists
+    // the client by it, and src/ra.ts refuses to forward without it. Bump the
+    // product and rcheevos versions with each release.
+    "RA_USER_AGENT": "RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0"
+  }
+  // Secrets (wrangler secret put <NAME>):
+  //   TURN_KEY_ID         the Realtime TURN key id
+  //   TURN_KEY_API_TOKEN  that key's API token
+}

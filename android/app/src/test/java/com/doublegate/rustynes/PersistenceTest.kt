@@ -127,6 +127,27 @@ class PersistenceTest {
         assertEquals(2.toByte(), (saver().read(8) as SavedBattery.Found).bytes[0])
     }
 
+    /**
+     * v3.4.0: the size check is the caller's predicate when it passes one (the
+     * app passes the bridge's `acceptsBatteryRamLen`), so an earlier, shorter
+     * layout the board still reads is found, and any other size is still
+     * refused before the read.
+     */
+    @Test
+    fun a_battery_save_of_an_accepted_earlier_size_is_read() {
+        val f = tmp.root.resolve("battery/rom.sav")
+        f.parentFile!!.mkdirs()
+        f.writeBytes(ByteArray(4) { 3 })
+        val accepts: (Long) -> Boolean = { it == 8L || it == 4L }
+        val found = BatterySaver(f).read(8, accepts)
+        assertTrue(found is SavedBattery.Found)
+        assertArrayEquals(ByteArray(4) { 3 }, (found as SavedBattery.Found).bytes)
+        f.writeBytes(ByteArray(6) { 3 })
+        assertTrue(BatterySaver(f).read(8, accepts) is SavedBattery.Unusable)
+        f.writeBytes(ByteArray(4) { 3 })
+        assertTrue("the default is the exact size", BatterySaver(f).read(8) is SavedBattery.Unusable)
+    }
+
     /** A saver the bridge refused (disabled) never writes. */
     @Test
     fun a_disabled_battery_saver_never_writes() {

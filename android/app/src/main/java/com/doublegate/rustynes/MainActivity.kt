@@ -997,7 +997,11 @@ private fun attachBattery(
 ): Pair<BatterySaver?, String?> {
     if (!ctrl.hasBattery()) return null to null
     val saver = BatterySaver(BatteryStore.file(context, sha))
-    val notice = when (val saved = saver.read(ctrl.batteryRam().size)) {
+    // v3.4.0: the bridge names the sizes the cartridge takes (a board whose
+    // save grew still loads its earlier file).
+    val notice = when (
+        val saved = saver.read(ctrl.batteryRam().size) { ctrl.acceptsBatteryRamLen(it.toULong()) }
+    ) {
         is SavedBattery.Found ->
             runCatching { ctrl.loadBatteryRam(saved.bytes) }.exceptionOrNull()?.let {
                 saver.disable()

@@ -540,6 +540,13 @@ write-gated.
   process, or the network.
 - **Budget.** A runaway script (e.g. an infinite loop in a callback) is aborted
   by a per-frame VM-instruction budget.
+- **No scripts in RetroAchievements hardcore (v3.4.0).** RA prohibits
+  scripting in hardcore outright ("Memory editors, debuggers, and/or
+  scripting/TAS/recorded input playback are strictly prohibited"), so the
+  write gate below is no longer the whole story there: the desktop refuses to
+  load a script while hardcore is active and stops a running one before its
+  next callback, and the mobile bridge refuses `load_script` and unloads a
+  running script on the next frame (`docs/frontend.md`, "Hardcore mode").
 - **Write gating.** `emu.write` *and* `emu.setInput` mutate state / input, so
   both are **disabled** during netplay, TAS-movie replay/record, and
   RetroAchievements hardcore mode — the same policy as the Game Genie / raw-RAM

@@ -22,6 +22,32 @@
 //! The `rc_client` callback pointer + `callback_data` are carried as `usize` (raw
 //! pointer bits) so the job is `Send`; they are only ever dereferenced back on
 //! the main thread in `poll_completions`.
+//!
+//! ## Offline unlocks (v3.4.0, `T-RA-HARDCORE`)
+//!
+//! RA's compliance page requires that "unlocks created while offline must be
+//! securely cached and sync to `RetroAchievements` when connectivity returns"
+//! (<https://docs.retroachievements.org/general/hardcore-compliance-requirements.html>,
+//! section A). `rc_client` already does the caching: an award or leaderboard
+//! submission whose server call fails RETRYABLY is kept in its scheduled
+//! queue and re-sent from `rc_client_do_frame` / `rc_client_idle` (first retry
+//! at once, then 1 s, 2 s, ... capped at 120 s), raising
+//! `RC_CLIENT_EVENT_DISCONNECTED` while anything is pending and
+//! `RC_CLIENT_EVENT_RECONNECTED` once it all went through
+//! (<https://github.com/RetroAchievements/rcheevos/wiki/rc_client-integration>,
+//! "Server Errors"). This transport does not duplicate that queue. Its one job
+//! is to report a transport failure (no network, DNS, TLS, refused, timeout)
+//! as `RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR` with the error text as
+//! the body. Until v3.4.0 it reported `RC_API_SERVER_RESPONSE_CLIENT_ERROR` (-1)
+//! with an empty body, which rcheevos treats as a final error from the
+//! server: an unlock earned while offline raised a server-error toast and was
+//! never sent again. The queue is in memory, so an unlock still pending when
+//! the program exits is lost; see `docs/frontend.md` for why that is left to
+//! `rc_client`.
+//!
+//! The blocking exchange itself is a [`Fetch`] the worker owns: `ureq` in the
+//! shipped build, a scripted fake server in the tests (the HTTP seam the
+//! end-to-end retry test drives).
 
 use std::os::raw::c_void;
 use std::sync::mpsc::{Receiver, Sender};
@@ -45,6 +71,21 @@ struct HttpJob {
 // they are only turned back into pointers and invoked on the main thread.
 unsafe impl Send for HttpJob {}
 
+/// One request as the [`Fetch`] sees it.
+pub struct Request<'a> {
+    /// The full request URL.
+    pub url: &'a str,
+    /// `Some` => POST with this body, `None` => GET.
+    pub post: Option<&'a [u8]>,
+    /// The POST body's content type (empty for a GET).
+    pub content_type: &'a str,
+}
+
+/// The blocking exchange the worker performs: `Ok((body, http_status))` for
+/// any HTTP response (a 4xx / 5xx included, with its body), `Err(text)` for a
+/// transport failure that produced no HTTP response at all.
+pub type Fetch = Box<dyn FnMut(&Request<'_>) -> Result<(Vec<u8>, i32), String> + Send>;
+
 /// A completed HTTP exchange ready to be delivered to rcheevos.
 struct HttpCompletion {
     body: Vec<u8>,
@@ -66,12 +107,18 @@ pub struct HttpTransport {
 impl HttpTransport {
     /// Spawn the worker thread with a fresh `ureq::Agent`.
     pub(crate) fn new() -> Self {
+        Self::with_fetch(ureq_fetch())
+    }
+
+    /// Spawn the worker thread around `fetch` (the shipped build passes
+    /// [`ureq_fetch`]; the tests pass a scripted fake server).
+    pub(crate) fn with_fetch(fetch: Fetch) -> Self {
         let (job_tx, job_rx) = std::sync::mpsc::channel::<HttpJob>();
         let (completion_tx, completion_rx) = std::sync::mpsc::channel::<HttpCompletion>();
 
         let worker = std::thread::Builder::new()
             .name("ra-http".into())
-            .spawn(move || worker_loop(&job_rx, &completion_tx))
+            .spawn(move || worker_loop(&job_rx, &completion_tx, fetch))
             .expect("spawn ra-http worker thread");
 
         Self {
@@ -167,25 +214,130 @@ fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
     true
 }
 
+/// The operating-system name for the User-Agent's system-information clause,
+/// chosen at compile time. RA's format is
+/// `EmulatorName/v1.0.0 (OSName 10.0) core_name/v0.5.0`, where the
+/// parenthesised system information is optional; the OS VERSION is not known
+/// at compile time and has no portable runtime query, so the clause carries
+/// the OS and the CPU architecture, which RA's own examples show is accepted
+/// free-form ("PCSX/v2.5.103 (Microsoft Windows 10+)").
+#[cfg(target_os = "linux")]
+macro_rules! ra_os {
+    () => {
+        "Linux"
+    };
+}
+#[cfg(target_os = "android")]
+macro_rules! ra_os {
+    () => {
+        "Android"
+    };
+}
+#[cfg(target_os = "macos")]
+macro_rules! ra_os {
+    () => {
+        "macOS"
+    };
+}
+#[cfg(target_os = "ios")]
+macro_rules! ra_os {
+    () => {
+        "iOS"
+    };
+}
+#[cfg(target_os = "windows")]
+macro_rules! ra_os {
+    () => {
+        "Windows"
+    };
+}
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows"
+)))]
+macro_rules! ra_os {
+    () => {
+        "Unknown"
+    };
+}
+
+/// The CPU architecture for the same clause (`x86_64`, `aarch64`, ...).
+#[cfg(target_arch = "x86_64")]
+macro_rules! ra_arch {
+    () => {
+        "x86_64"
+    };
+}
+#[cfg(target_arch = "aarch64")]
+macro_rules! ra_arch {
+    () => {
+        "aarch64"
+    };
+}
+#[cfg(target_arch = "x86")]
+macro_rules! ra_arch {
+    () => {
+        "x86"
+    };
+}
+#[cfg(target_arch = "arm")]
+macro_rules! ra_arch {
+    () => {
+        "arm"
+    };
+}
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "x86",
+    target_arch = "arm"
+)))]
+macro_rules! ra_arch {
+    () => {
+        "other"
+    };
+}
+
 /// The `RetroAchievements` client identification string (HTTP `User-Agent`).
 ///
-/// RA recognizes an emulator by the leading `<Client>/<Version>` token —
-/// here `RustyNES/<crate version>`; an unrecognized client gets the "unknown
-/// emulator" warning and cannot earn hardcore unlocks. Setting this is the
-/// prerequisite for RA to allowlist `RustyNES` server-side (see docs / the
-/// integration request). The canonical `rcheevos/<version>` clause is appended
-/// per RA convention (RA logs it); the rcheevos version comes from the vendored
-/// library via `RCHEEVOS_VERSION` (emitted by `build.rs` from `rc_version.h`),
-/// so it stays correct across a re-vendor. Result, e.g.:
-/// `RustyNES/2.9.2 rcheevos/12.5.0`.
+/// RA's documented format (compliance requirements, section C,
+/// <https://docs.retroachievements.org/general/hardcore-compliance-requirements.html>;
+/// the `rc_client` guide's "User-Agent Header" section gives the same shape as
+/// `<product>/<product-version> (<system-information>) <extensions>`):
+///
+/// ```text
+/// EmulatorName/v1.0.0 (OSName 10.0) core_name/v0.5.0
+/// ```
+///
+/// - **product**: `RustyNES/<crate version>` — required, unique, no spaces,
+///   numeric and incrementing. RA recognizes the client by this token; an
+///   unrecognized one has its hardcore unlocks turned into casual ones until
+///   RA validates it ("contact `RAdmin`", per the guide).
+/// - **system information**: `(<OS> <arch>)` from the build target (v3.4.0;
+///   before it the UA had no system clause). Optional in RA's format.
+/// - **extension**: `rcheevos/<version>`, the clause the guide recommends
+///   (`rc_client_get_user_agent_clause`), from the vendored library via
+///   `RCHEEVOS_VERSION` (emitted by `build.rs` from `rc_version.h`), so it
+///   stays correct across a re-vendor. One core, so no core clause.
+///
+/// Result on a Linux x86-64 build: `RustyNES/3.4.0 (Linux x86_64) rcheevos/12.5.0`.
 pub const RA_USER_AGENT: &str = concat!(
     "RustyNES/",
     env!("CARGO_PKG_VERSION"),
-    " rcheevos/",
+    " (",
+    ra_os!(),
+    " ",
+    ra_arch!(),
+    ") rcheevos/",
     env!("RCHEEVOS_VERSION")
 );
 
-fn worker_loop(job_rx: &Receiver<HttpJob>, completion_tx: &Sender<HttpCompletion>) {
+/// The shipped [`Fetch`]: one `ureq::Agent` with RA's User-Agent and a 30 s
+/// request timeout.
+fn ureq_fetch() -> Fetch {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(30)))
         .user_agent(RA_USER_AGENT)
@@ -194,10 +346,32 @@ fn worker_loop(job_rx: &Receiver<HttpJob>, completion_tx: &Sender<HttpCompletion
         .http_status_as_error(false)
         .build()
         .into();
+    Box::new(move |req: &Request<'_>| {
+        let result = req.post.map_or_else(
+            || agent.get(req.url).call(),
+            |post| {
+                agent
+                    .post(req.url)
+                    .header("Content-Type", req.content_type)
+                    .send(post)
+            },
+        );
+        // With `http_status_as_error(false)` a non-2xx response is still
+        // `Ok(resp)`, so `read_response` reports the real status + body (e.g. a
+        // 401/403/429 JSON body) exactly as RA wants. Only a transport error
+        // (DNS, TLS, refused, timeout, ...) lands in the `Err` arm.
+        result.map(read_response).map_err(|e| e.to_string())
+    })
+}
 
+fn worker_loop(
+    job_rx: &Receiver<HttpJob>,
+    completion_tx: &Sender<HttpCompletion>,
+    mut fetch: Fetch,
+) {
     // Exits when the job sender is dropped (transport Drop).
     while let Ok(job) = job_rx.recv() {
-        let (body, status) = perform(&agent, &job);
+        let (body, status) = perform(&mut fetch, &job);
         let _ = completion_tx.send(HttpCompletion {
             body,
             http_status_code: status,
@@ -207,27 +381,35 @@ fn worker_loop(job_rx: &Receiver<HttpJob>, completion_tx: &Sender<HttpCompletion
     }
 }
 
-/// Perform one HTTP exchange, returning `(body, http_status_code)`.
+/// Perform one exchange, returning `(body, http_status_code)` for rcheevos.
 ///
-/// On a transport-level failure we report status
-/// `RC_API_SERVER_RESPONSE_CLIENT_ERROR` (-1) with an empty body, which
-/// rcheevos treats as a non-retryable client error.
-fn perform(agent: &ureq::Agent, job: &HttpJob) -> (Vec<u8>, i32) {
-    let result = job.post.as_ref().map_or_else(
-        || agent.get(&job.url).call(),
-        |post| {
-            agent
-                .post(&job.url)
-                .header("Content-Type", &job.content_type)
-                .send(post.as_slice())
-        },
-    );
+/// An HTTP response passes through unchanged. A transport failure becomes
+/// [`crate::ffi::RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR`] with the error
+/// text as the body: rcheevos then keeps an unlock or leaderboard entry queued
+/// and re-sends it when the network returns (see the module docs), and shows
+/// the text if a client-initiated call (login, game load) fails outright.
+fn perform(fetch: &mut Fetch, job: &HttpJob) -> (Vec<u8>, i32) {
+    let req = Request {
+        url: &job.url,
+        post: job.post.as_deref(),
+        content_type: &job.content_type,
+    };
+    transport_response(fetch(&req))
+}
 
-    // With `http_status_as_error(false)` a non-2xx response is still `Ok(resp)`, so
-    // `read_response` reports the real status + body (e.g. a 401/403/429 JSON body)
-    // exactly as RA wants. Only a transport error (DNS, TLS, refused, timeout, ...)
-    // lands in the `Err` arm.
-    result.map_or_else(|_| (Vec::new(), -1), read_response)
+/// Map one fetch outcome onto the `(body, status)` pair rcheevos receives.
+fn transport_response(outcome: Result<(Vec<u8>, i32), String>) -> (Vec<u8>, i32) {
+    outcome.unwrap_or_else(|e| {
+        let text = if e.is_empty() {
+            "network request failed".to_owned()
+        } else {
+            e
+        };
+        (
+            text.into_bytes(),
+            ffi::RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR,
+        )
+    })
 }
 
 /// Consume a ureq 3 `Response<Body>`, returning `(body_bytes, http_status_code)`.
@@ -334,5 +516,62 @@ mod tests {
                 .all(|p| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty()),
             "rcheevos version is dotted digits, got {clause:?}"
         );
+    }
+
+    /// v3.4.0 — the User-Agent has RA's documented three-segment shape,
+    /// `Name/version (system information) extension`, with the product token
+    /// first, a numeric incrementing version, a non-empty system clause naming
+    /// this build's OS, and the extension last.
+    #[test]
+    fn ra_user_agent_has_the_documented_three_segment_shape() {
+        let (product, rest) = RA_USER_AGENT
+            .split_once(' ')
+            .expect("product token, then the rest");
+        let version = product.strip_prefix("RustyNES/").expect("RustyNES/ first");
+        assert!(
+            version
+                .trim_start_matches('v')
+                .split('.')
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
+            "the product version is numeric, got {version:?}"
+        );
+        assert_eq!(version, env!("CARGO_PKG_VERSION"), "the crate version");
+        let system = rest
+            .strip_prefix('(')
+            .and_then(|r| r.split_once(") "))
+            .map(|(sys, _)| sys)
+            .expect("a parenthesised system clause after the product");
+        let os = system.split(' ').next().unwrap_or_default();
+        assert!(!os.is_empty(), "an OS name");
+        if cfg!(target_os = "linux") {
+            assert_eq!(os, "Linux");
+        }
+        assert!(
+            RA_USER_AGENT.ends_with(concat!(" rcheevos/", env!("RCHEEVOS_VERSION"))),
+            "the rcheevos extension is last: {RA_USER_AGENT}"
+        );
+        assert!(
+            !RA_USER_AGENT.contains("  "),
+            "no empty segment: {RA_USER_AGENT}"
+        );
+    }
+
+    /// v3.4.0 — a transport failure (no HTTP response at all) is reported to
+    /// rcheevos as RETRYABLE, with the error text as the body, so an unlock
+    /// earned offline stays queued (`rc_client_should_retry` returns 1 only
+    /// for this status among the client-provided ones). An HTTP response,
+    /// even a 503, passes through unchanged for rcheevos to judge.
+    #[test]
+    fn a_transport_failure_is_reported_as_retryable_with_its_text() {
+        let (body, status) = super::transport_response(Err("connection refused".into()));
+        assert_eq!(
+            status,
+            crate::ffi::RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR
+        );
+        assert_eq!(body, b"connection refused");
+        let (body, _) = super::transport_response(Err(String::new()));
+        assert!(!body.is_empty(), "an empty error still carries text");
+        let (body, status) = super::transport_response(Ok((b"busy".to_vec(), 503)));
+        assert_eq!((body.as_slice(), status), (&b"busy"[..], 503));
     }
 }

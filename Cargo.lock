@@ -4589,6 +4589,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tungstenite",
+ "ureq",
  "wasm-bindgen",
  "web-sys",
 ]

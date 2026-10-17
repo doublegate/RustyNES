@@ -128,6 +128,7 @@ use crate::input::{InputState, SysAction};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::save_state;
 use crate::session_policy::TimelineAction;
+use crate::session_policy::hardcore::Feature as HardcoreFeature;
 use crate::ui_shell::StatusMessage;
 
 /// v1.3.0 Sprint 1.4 — winit custom user-event type, used by both
@@ -3245,6 +3246,10 @@ impl App {
             eprintln!("rustynes: leave netplay before playing a movie");
             return;
         }
+        // v3.4.0 — RA hardcore prohibits recorded-input playback.
+        if self.refuse_hardcore(HardcoreFeature::MoviePlayback) {
+            return;
+        }
         let Some(path) = rfd::FileDialog::new()
             .add_filter("RustyNES movie", &["rnm"])
             .set_directory(self.movies_dir().unwrap_or_else(|| PathBuf::from(".")))
@@ -3423,6 +3428,10 @@ impl App {
             self.ui.set_status(StatusMessage::info(
                 "Leave netplay before importing a movie",
             ));
+            return;
+        }
+        // v3.4.0 — an import plays the movie back, which RA hardcore prohibits.
+        if self.refuse_hardcore(HardcoreFeature::MoviePlayback) {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
@@ -5201,6 +5210,29 @@ impl App {
         }
     }
 
+    /// v3.4.0 (`T-RA-HARDCORE`) — refuse `feature` when RA hardcore forbids
+    /// it; returns `true` (with the reason on the status line) when refused.
+    ///
+    /// The rule is `session_policy::hardcore` (the table the mobile bridge
+    /// enforces too); this only supplies the live hardcore flag. Every start
+    /// site of a forbidden feature asks it: frame advance, a slowdown, movie
+    /// playback and movie import, and a Lua script load. The rules that must
+    /// also hold for a feature ALREADY running when hardcore takes effect are
+    /// enforced where the frame runs (`EmuCore::produce_one_frame`: playback,
+    /// Game Genie codes, rewind, raw cheats, pokes; `EmuCore::effective_frame_duration`:
+    /// slowdown), in `pump_scripts` (a running script is stopped) and in the
+    /// debugger overlay (forbidden windows close).
+    fn refuse_hardcore(&mut self, feature: HardcoreFeature) -> bool {
+        if crate::session_policy::hardcore::refuses(feature, self.ra_hardcore_blocks()) {
+            self.ui.set_status(StatusMessage::info(
+                crate::session_policy::hardcore::refusal_message(feature),
+            ));
+            true
+        } else {
+            false
+        }
+    }
+
     /// v2.7.0 — the per-ROM RA progress sidecar directory
     /// (`<data_dir>/ra-progress/`). `None` if no data dir is available.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -5299,10 +5331,74 @@ impl App {
                 self.config.retroachievements.enabled = false;
                 let _ = self.config.save();
             }
-            CheevosRequest::SetHardcore(on) => {
-                ra.set_hardcore(on);
-                self.config.retroachievements.hardcore = on;
-                let _ = self.config.save();
+            CheevosRequest::SetHardcore(on) => self.set_ra_hardcore(on),
+        }
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — switch RA hardcore on or off from the
+    /// achievements panel.
+    ///
+    /// RA: "Switching from casual mode to hardcore mode is not allowed
+    /// mid-session. This action must result in a full reset of the game.
+    /// Switching from hardcore mode to casual mode is allowed mid-session"
+    /// (compliance requirements, section B; section G lists "the ability to
+    /// switch to hardcore mode without a reset of the game" as an automatic
+    /// rejection). Turning it ON therefore:
+    ///
+    /// 1. is refused while a movie or a netplay session owns the timeline
+    ///    (the reset would break the recording / desync the peer; the player
+    ///    stops it first, the same refusal a Power Cycle gets);
+    /// 2. stops a running Lua script and lifts any slowdown, so nothing
+    ///    forbidden survives into the hardcore session; and
+    /// 3. power-cycles a running game (a cold boot, not a soft reset: a soft
+    ///    reset keeps the RAM a casual session prepared), which also calls
+    ///    `rc_client_reset` and so re-enables achievement processing, which
+    ///    rcheevos suspends from the switch until that reset.
+    ///
+    /// Turning it OFF re-applies the player's enabled Game Genie codes, which
+    /// hardcore removed from the core (`EmuCore::produce_one_frame`).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+    fn set_ra_hardcore(&mut self, on: bool) {
+        let Some(currently) = self.ra.as_ref().map(rustynes_ra::RaSession::hardcore) else {
+            return;
+        };
+        if on && !currently {
+            let owners = crate::session_policy::SessionOwners {
+                movie: self.replay_interaction_locked(),
+                netplay: self.netplay_is_active(),
+                hardcore: false,
+            };
+            if crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some() {
+                self.ui.set_status(StatusMessage::info(
+                    "Stop the movie or netplay session before enabling hardcore",
+                ));
+                return;
+            }
+        }
+        let switched_on = self.ra.as_mut().is_some_and(|ra| ra.set_hardcore(on));
+        self.config.retroachievements.hardcore = on;
+        let _ = self.config.save();
+        if let Some(debugger) = self.debugger.as_mut() {
+            debugger.set_hardcore_active(on);
+        }
+        if switched_on {
+            #[cfg(feature = "scripting")]
+            if self.script.is_some() {
+                self.handle_script_action(crate::debugger::ScriptAction::Stop);
+            }
+            if self.speed < 1.0 {
+                self.set_speed(1.0);
+            }
+            let running = self.emu.lock().nes.is_some();
+            if running {
+                self.do_power_cycle();
+                self.ui
+                    .set_status(StatusMessage::info("Hardcore enabled: the game was reset"));
+            }
+        } else if !on {
+            let mut guard = self.emu.lock();
+            if let (Some(nes), Some(debugger)) = (guard.nes.as_mut(), self.debugger.as_mut()) {
+                debugger.reapply_genie_codes(nes);
             }
         }
     }
@@ -5841,6 +5937,11 @@ impl App {
         }
 
         if self.script.is_none() {
+            return;
+        }
+
+        // v3.4.0 — RA hardcore prohibits scripting, not just script writes.
+        if self.stop_script_for_hardcore() {
             return;
         }
 
@@ -6418,6 +6519,29 @@ impl App {
         web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(msg));
     }
 
+    /// v3.4.0 — stop a running script when RA hardcore is active (RA:
+    /// "scripting ... strictly prohibited"), with the same teardown as the
+    /// console's Stop, before its next callback. Returns `true` when it
+    /// stopped one. Called at the top of every `pump_scripts`, so a script
+    /// still running when hardcore takes effect runs no further frame.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn stop_script_for_hardcore(&mut self) -> bool {
+        if self.script.is_none()
+            || !crate::session_policy::hardcore::refuses(
+                HardcoreFeature::Scripting,
+                self.ra_hardcore_blocks(),
+            )
+        {
+            return false;
+        }
+        self.handle_script_action(crate::debugger::ScriptAction::Stop);
+        if let Some(dbg) = self.debugger.as_mut() {
+            dbg.script_panel()
+                .push_log(["[stopped: RetroAchievements hardcore mode]".to_owned()]);
+        }
+        true
+    }
+
     /// Handle a console load/reload/stop request.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     fn handle_script_action(&mut self, action: crate::debugger::ScriptAction) {
@@ -6464,6 +6588,16 @@ impl App {
     /// Read + load a `.lua` file into a fresh engine, reporting to the console.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     fn load_script_from_path(&mut self, path: &Path) {
+        // v3.4.0 — RA hardcore prohibits scripting: refuse before anything
+        // runs, with the reason in the console as well as on the status line.
+        if self.refuse_hardcore(HardcoreFeature::Scripting) {
+            if let Some(dbg) = self.debugger.as_mut() {
+                dbg.script_panel().set_error(
+                    "Lua scripting is disabled in RetroAchievements hardcore mode".into(),
+                );
+            }
+            return;
+        }
         // Drop any running script up front so a failed (re)load can't leave the
         // old script's callbacks + overlay running behind an error (gemini #48).
         self.script = None;
@@ -7035,6 +7169,13 @@ impl App {
     /// the change takes effect without a catch-up burst.
     fn set_speed(&mut self, speed: f32) {
         let speed = speed.clamp(0.05, 16.0);
+        // v3.4.0 — RA hardcore refuses a speed below 100% (fast forward stays
+        // allowed). The pacer enforces the same floor whatever set the factor
+        // (`EmuCore::effective_frame_duration`); this keeps the menu, the
+        // hotkeys and the audio ratio from showing a speed that is not run.
+        if speed < 1.0 && self.refuse_hardcore(HardcoreFeature::Slowdown) {
+            return;
+        }
         self.speed = speed;
         {
             let mut guard = self.emu.lock();
@@ -7318,6 +7459,10 @@ impl App {
     /// - wasm: produce one frame inline + re-arm the rAF loop.
     fn request_frame_advance(&mut self) {
         if !self.ui.paused || self.netplay_is_active() {
+            return;
+        }
+        // v3.4.0 — RA hardcore: "Slowdown and frame advance are disabled".
+        if self.refuse_hardcore(HardcoreFeature::FrameAdvance) {
             return;
         }
         // Make sure the core has the latest input for this stepped frame.
@@ -7687,7 +7832,9 @@ impl App {
                 let mut driver = crate::wasm_netplay::BrowserNetplay::new(identity);
                 driver.set_num_players(num_players);
                 let ice = self.config.netplay.stun_servers.clone();
-                match driver.connect(&signaling_url, &room, &ice) {
+                // v3.4.0: hosted TURN credentials when a hosted base is set.
+                let turn_url = self.config.netplay.hosted_turn_url();
+                match driver.connect(&signaling_url, &room, &ice, turn_url.as_deref()) {
                     Ok(()) => {
                         self.browser_netplay = Some(driver);
                     }
@@ -12375,6 +12522,126 @@ mod tests {
         let rest = &production[start + 4..];
         let end = rest.find("\n    fn ").map_or(rest.len(), |i| i + 1);
         rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// `needle` occurs in `fn name`, before `later` (both whitespace-squashed).
+    fn assert_before(name: &str, needle: &str, later: &str) {
+        let body = production_fn_body(name);
+        let squash = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        let (needle, later) = (squash(needle), squash(later));
+        let at = body
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{name}: `{needle}` is gone"));
+        let after = body
+            .find(&later)
+            .unwrap_or_else(|| panic!("{name}: `{later}` is gone"));
+        assert!(at < after, "{name}: `{needle}` must come before `{later}`");
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — every start site of a feature RA hardcore
+    /// forbids asks the one rule (`session_policy::hardcore`) before it does
+    /// anything. `App` needs a window and the emulation thread, so this pins
+    /// the shape, as the cabinet and per-game tests below do; the behaviour
+    /// of the rule and of the frame-level enforcement is tested where it
+    /// lives (`session_policy::hardcore`, `emu::tests::hardcore_*`).
+    #[test]
+    fn every_hardcore_start_site_asks_the_one_rule() {
+        let refuse = production_fn_body("refuse_hardcore");
+        assert!(
+            refuse.contains(
+                "crate::session_policy::hardcore::refuses(feature, self.ra_hardcore_blocks())"
+            ),
+            "refuse_hardcore no longer reads the live hardcore flag: {refuse}"
+        );
+        for (site, feature, before) in [
+            (
+                "request_frame_advance",
+                "FrameAdvance",
+                "self.latch_input();",
+            ),
+            ("set_speed", "Slowdown", "self.speed = speed;"),
+            (
+                "handle_movie_play_toggle",
+                "MoviePlayback",
+                "rfd::FileDialog::new()",
+            ),
+            (
+                "handle_movie_import",
+                "MoviePlayback",
+                "rfd::FileDialog::new()",
+            ),
+            (
+                "load_script_from_path",
+                "Scripting",
+                "rustynes_script::ScriptEngine::new()",
+            ),
+        ] {
+            assert_before(
+                site,
+                &format!("self.refuse_hardcore(HardcoreFeature::{feature})"),
+                before,
+            );
+        }
+        // A slowdown is refused; a fast-forward factor is not asked about.
+        assert_before(
+            "set_speed",
+            "if speed < 1.0 && self.refuse_hardcore(HardcoreFeature::Slowdown) { return; }",
+            "self.speed = speed;",
+        );
+        // A script already running when hardcore takes effect is stopped
+        // before its next callback.
+        assert_before(
+            "pump_scripts",
+            "if self.stop_script_for_hardcore() { return; }",
+            "engine.set_tas_snapshot(",
+        );
+        assert_before(
+            "stop_script_for_hardcore",
+            "crate::session_policy::hardcore::refuses( HardcoreFeature::Scripting, self.ra_hardcore_blocks(), )",
+            "self.handle_script_action(crate::debugger::ScriptAction::Stop);",
+        );
+    }
+
+    /// v3.4.0 — RA: switching casual -> hardcore mid-session "must result in a
+    /// full reset of the game" (an automatic rejection otherwise). The panel's
+    /// request goes through `set_ra_hardcore`, which refuses while a movie or
+    /// netplay owns the timeline, switches, and then power-cycles a running
+    /// game (`do_power_cycle` ends in `reset_ra`, i.e. `rc_client_reset`).
+    #[test]
+    fn switching_hardcore_on_power_cycles_a_running_game() {
+        assert!(
+            production_fn_body("handle_cheevos_request")
+                .contains("CheevosRequest::SetHardcore(on) => self.set_ra_hardcore(on)"),
+            "the panel's hardcore toggle bypasses set_ra_hardcore"
+        );
+        assert_before(
+            "set_ra_hardcore",
+            "crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some()",
+            "ra.set_hardcore(on)",
+        );
+        assert_before(
+            "set_ra_hardcore",
+            "if switched_on {",
+            "self.do_power_cycle();",
+        );
+        assert_before(
+            "set_ra_hardcore",
+            "self.do_power_cycle();",
+            "debugger.reapply_genie_codes(nes);",
+        );
+        assert!(
+            production_fn_body("do_power_cycle").contains("self.reset_ra();"),
+            "a power cycle no longer resets the RA runtime"
+        );
+        let app_src: &str = include_str!("app.rs");
+        let production = app_src
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(app_src, |(before, _)| before);
+        assert_eq!(
+            production.matches(".set_hardcore(").count(),
+            1,
+            "hardcore is switched outside set_ra_hardcore"
+        );
     }
 
     /// v2.9.8 — every ROM load path installs a Vs. `DualSystem` image as the

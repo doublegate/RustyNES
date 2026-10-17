@@ -155,7 +155,7 @@ trunk build --release
 
 The `ra-proxy` service is the deployable half of ADR 0015's browser
 RetroAchievements carryover. RA identifies/allowlists a client by its HTTP
-`User-Agent` (`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>`), and browsers
+`User-Agent` (`RustyNES/<crate-ver> (<system>) rcheevos/<rcheevos-ver>`; `(Web wasm32)` for the browser), and browsers
 **forbid scripts from setting `User-Agent`** — so every rcheevos server call from
 the wasm build is routed through this proxy, which injects the header
 server-side. The full browser-RA design is in `docs/cheevos-browser.md`; this
@@ -186,7 +186,7 @@ it:
 ```bash
 RA_PROXY_BIND=127.0.0.1:8092 \
 RA_ALLOWED_ORIGINS='http://127.0.0.1:8081' \
-RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+RA_USER_AGENT='RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0' \
   python3 scripts/cheevos/auth_proxy_stub.py
 # then RA_PROXY_BASE = "http://127.0.0.1:8092" in ra_glue.js
 ```

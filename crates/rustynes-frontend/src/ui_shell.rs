@@ -2461,6 +2461,11 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                     "github.com/doublegate/RustyNES",
                     "https://github.com/doublegate/RustyNES",
                 );
+                // v3.4.0: the privacy policy (PRIVACY.md, served on GitHub Pages).
+                ui.hyperlink_to(
+                    "Privacy policy",
+                    "https://doublegate.github.io/RustyNES/privacy/",
+                );
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("GPL-3.0-or-later").weak());
                 ui.add_space(4.0);

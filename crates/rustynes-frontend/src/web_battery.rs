@@ -237,11 +237,11 @@ impl WebBattery {
             return Restored::Stale;
         }
         let expected = nes.save_data().len();
+        // v3.4.0: the board loads the stored bytes and names the sizes it
+        // takes (`Nes::load_save_data`), so mapper 157's v3.3.0
+        // main-unit-only save still loads beside its current 384-byte image.
         let outcome = match stored {
-            Ok(Some(bytes)) if bytes.len() == expected => {
-                nes.save_data_mut().copy_from_slice(&bytes);
-                Restored::Loaded
-            }
+            Ok(Some(bytes)) if nes.load_save_data(&bytes) => Restored::Loaded,
             Ok(Some(bytes)) => Restored::Refused(RestoreError::WrongSize {
                 found: bytes.len(),
                 expected,
@@ -377,6 +377,27 @@ pub(crate) mod tests {
         prg[0x3FFD] = 0xC0;
         v.extend_from_slice(&prg);
         v.extend(core::iter::repeat_n(0u8, 0x2000));
+        v
+    }
+
+    /// v3.4.0 (`T-DATACH-EXT-EEPROM-BATTERY`): a mapper-157 NES 2.0 image
+    /// with the battery bit and PRG-NVRAM byte 10 = `$10`, which is how
+    /// *Battle Rush* declares the cartridge's own X24C01 (`INES_Mapper_157`).
+    /// 32 KiB PRG of `NOP`s with every vector at `$C000`; 8 KiB CHR-RAM.
+    /// Shared with `battery_save`'s tests, as `rom` is.
+    pub fn datach_rom() -> Vec<u8> {
+        let mut v = b"NES\x1A".to_vec();
+        // PRG 2 x 16 KiB, CHR-ROM 0; mapper 157 = $9D (flags 6 high nibble D,
+        // flags 7 high nibble 9), battery, NES 2.0; byte 10 $10 (128-byte
+        // PRG-NVRAM), byte 11 $07 (8 KiB CHR-RAM).
+        v.extend_from_slice(&[2, 0, 0xD2, 0x98, 0, 0, 0x10, 0x07]);
+        v.resize(16, 0);
+        let mut prg = vec![0xEAu8; 0x8000];
+        for at in [0x7FFA, 0x7FFC, 0x7FFE] {
+            prg[at] = 0x00;
+            prg[at + 1] = 0xC0;
+        }
+        v.extend_from_slice(&prg);
         v
     }
 
@@ -585,5 +606,46 @@ pub(crate) mod tests {
         assert_eq!(w.bytes()[0], 0xA5);
         assert!(!b.is_armed());
         assert!(!b.written(w, true), "a write after detach is ignored");
+    }
+
+    /// v3.4.0 (`T-DATACH-EXT-EEPROM-BATTERY`): the browser record of a
+    /// *Battle Rush* save is the 384-byte image (both EEPROMs) and restores
+    /// whole; a v3.3.0 record, the main unit's 256 bytes, restores into the
+    /// 24C02 with the cartridge chip erased; another size is refused.
+    #[test]
+    fn a_datach_record_restores_both_eeproms_and_its_v3_3_0_size() {
+        let mut nes = Nes::from_rom(&datach_rom()).unwrap();
+        assert_eq!(nes.save_data().len(), 384);
+        let mut full = vec![0xFFu8; 384];
+        full[0x37] = 0xC4;
+        full[256 + 0x15] = 0x6B;
+        let mut b = WebBattery::new();
+        let sha = b.begin(&nes).unwrap();
+        assert_eq!(
+            b.restore(&mut nes, sha, Ok(Some(full.clone()))),
+            Restored::Loaded
+        );
+        assert_eq!(nes.save_data(), full.as_slice());
+
+        let mut nes = Nes::from_rom(&datach_rom()).unwrap();
+        let mut b = WebBattery::new();
+        let sha = b.begin(&nes).unwrap();
+        assert_eq!(
+            b.restore(&mut nes, sha, Ok(Some(full[..256].to_vec()))),
+            Restored::Loaded
+        );
+        assert_eq!(&nes.save_data()[..256], &full[..256]);
+        assert!(nes.save_data()[256..].iter().all(|&x| x == 0xFF));
+
+        let mut nes = Nes::from_rom(&datach_rom()).unwrap();
+        let mut b = WebBattery::new();
+        let sha = b.begin(&nes).unwrap();
+        assert!(matches!(
+            b.restore(&mut nes, sha, Ok(Some(vec![0u8; 300]))),
+            Restored::Refused(RestoreError::WrongSize {
+                found: 300,
+                expected: 384
+            })
+        ));
     }
 }

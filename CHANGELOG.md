@@ -26,6 +26,76 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Hosted netplay and achievements services** (`services/hosted/`,
+  `T-HOSTED-NETPLAY`, `T-RA-PROXY`). A Cloudflare Worker runs the netplay
+  signalling lobby in a Durable Object, byte-compatible with the reference
+  `signaling_server` (Rust-recorded conformance vectors check it). It mints
+  three-hour Cloudflare TURN credentials behind spend guards: a per-address
+  limit, a daily cap and a kill switch. It also forwards the browser's
+  RetroAchievements calls with an allowlist, in casual mode only. With a
+  hosted base configured (`[netplay] hosted_base_url`, or
+  `RUSTYNES_HOSTED_BASE` at build time; unset by default), the browser lobby
+  and the Android and iOS room codes use the hosted lobby and fetch TURN
+  credentials, falling back to STUN only when refused. The browser
+  RetroAchievements glue takes its proxy address from the page and accepts
+  only HTTPS.
+- **A privacy policy**, `PRIVACY.md`, published at
+  <https://doublegate.github.io/RustyNES/privacy/> and linked from the README
+  and the apps. The F-Droid anti-feature decision is recorded in
+  `docs/android.md`.
+
+### Changed
+
+- **egui 0.37, and egui-winit from crates.io again.** egui, egui-wgpu and
+  egui-winit move from 0.36 to 0.37.0. wgpu stays on 30, because egui-wgpu
+  0.37 requires it and wgpu 31 is not released. The vendored
+  `vendor/egui-winit/` copy, carried since v2.9.3 for a wasm32 build fix, is
+  removed: the published egui-winit 0.37.0 builds for wasm32 with the same
+  fix. egui 0.37 no longer bundles its UI and emoji fonts by default, so the
+  workspace enables `monochrome_emoji_fonts` and keeps the font set 0.36
+  shipped; without it the NSF player, replay panel and TAStudio buttons would
+  draw boxes. A new frontend test checks that every glyph the UI draws has a
+  font.
+- **RetroAchievements hardcore follows RA's full block list**
+  (`T-RA-HARDCORE`, desktop and mobile). Hardcore now refuses frame advance
+  and slowdown (fast forward is still allowed), Game Genie codes and raw
+  cheats, Lua scripts (a running one is stopped), movie playback, movie
+  import and TAStudio (recording is still allowed), the debugger and memory
+  windows, and restoring saved achievement progress, as well as save-state
+  loading, as before. Switching hardcore on power-cycles a running game, and
+  is refused while a movie or netplay session is active. A toast names the
+  mode when a game is identified.
+- **The RetroAchievements User-Agent** is now
+  `RustyNES/<version> (<OS> <arch>) rcheevos/<version>`, RA's documented
+  three-part shape; the browser proxies send `(Web wasm32)`.
+
+### Fixed
+
+- **Native RetroAchievements achievements can unlock.** Every achievement was
+  disabled when its game loaded: rcheevos checked memory addresses from the
+  network callback, where no memory reader is installed, so no unlock could
+  fire on desktop or mobile. The check now runs on the next frame.
+- **An unlock earned without a network connection is sent when the
+  connection returns.** Network failures were reported as final server
+  errors, and the unlock was dropped.
+- **Mobile: switching RetroAchievements hardcore on keeps achievements
+  running.** rcheevos' reset request did a soft reset without resetting the
+  achievement runtime, so achievements stopped processing; it now
+  power-cycles and resets it.
+- **The Datach cartridge's own EEPROM is kept in the battery save** (mapper
+  157, `T-DATACH-EXT-EEPROM-BATTERY`). *Battle Rush*'s 128-byte X24C01 was
+  lost at every power-off; it is now saved after the Datach main unit's
+  24C02, on every frontend. *Battle Rush*'s save grows from 256 to 384 bytes;
+  other Datach games still save 256. A v3.3.0 save of *Battle Rush* still
+  loads, into the main unit's EEPROM with the cartridge chip blank, and the
+  next save writes the full size. A Power Cycle on *Battle Rush* now keeps the
+  cartridge chip, as it keeps every battery save. Save states, movies and
+  netplay are unchanged.
+- **The iOS About screen stated the wrong licence**; it now says
+  GPL-3.0-or-later, in English and Spanish.
+
 ## [3.3.0] - 2026-10-16 - "Plumbline" (v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes banked on seven boards, mapper 71's decode, Bandai and Somari states, a withdrawn performance figure, IRQ trace goldens that gate, and two off-die MiSTer fixes)
 
 ### Breaking

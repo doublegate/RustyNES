@@ -4,7 +4,7 @@
 # WHY THIS EXISTS
 # ----------------
 # RetroAchievements identifies and allowlists a client by its HTTP `User-Agent`
-# (`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>` — the `RA_USER_AGENT` const in
+# (`RustyNES/<crate-ver> (<OS> <arch>) rcheevos/<rcheevos-ver>` — the `RA_USER_AGENT` const in
 # `crates/rustynes-cheevos/src/http.rs`). Browsers FORBID scripts from setting
 # `User-Agent`, so the browser frontend cannot identify itself directly. The
 # casual-mode browser build therefore routes every rcheevos server call through
@@ -24,7 +24,7 @@ bind = "127.0.0.1:8092"
 # Keep the leading `RustyNES/` token — RA allowlists by it (a native regression
 # test guards the same invariant in rustynes-cheevos). Coordinate this exact
 # string + the casual-only intent with the RA team before going live.
-user_agent = "RustyNES/1.5.0 rcheevos/12.3.0"
+user_agent = "RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0"
 
 # The upstream RA host the proxy forwards to.
 upstream = "https://retroachievements.org"
