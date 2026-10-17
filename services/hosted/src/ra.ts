@@ -52,6 +52,8 @@ export const RA_ALLOWED_REQUESTS: ReadonlySet<string> = new Set([
 ]);
 
 export const MAX_RA_BODY = 64 * 1024;
+/** A form field name rcheevos sends: letters, digits and `_` only. */
+const FIELD_NAME = /^[A-Za-z0-9_]+$/;
 const UPSTREAM_TIMEOUT_MS = 15000;
 
 export async function handleRa(request: Request, env: Env, cors: string | undefined): Promise<Response> {
@@ -78,8 +80,26 @@ export async function handleRa(request: Request, env: Env, cors: string | undefi
   if (declared > MAX_RA_BODY) return json(413, { Success: false, Error: "Body too large." }, h);
   const buf = await request.arrayBuffer();
   if (buf.byteLength > MAX_RA_BODY) return json(413, { Success: false, Error: "Body too large." }, h);
-  const body = new TextDecoder().decode(buf);
-  const params = new URLSearchParams(body);
+  const params = new URLSearchParams(new TextDecoder().decode(buf));
+
+  // The checks below must see exactly what RetroAchievements will run, and
+  // its PHP parses a form differently from URLSearchParams: a repeated field
+  // keeps its LAST value in PHP and its FIRST here (`r=login2&r=submitcodenote`
+  // would pass the allowlist and run the editor call), `name[]` becomes an
+  // array, and `.` or a space in a name is folded to `_`. So every field name
+  // must be a plain identifier, `r` and `h` may each appear at most once, and the body
+  // sent upstream is this parsed set re-serialised, never the raw bytes (a
+  // percent-encoded name such as `%72` then arrives as the `r` it decodes to,
+  // and was counted as one here).
+  for (const key of params.keys()) {
+    if (!FIELD_NAME.test(key)) {
+      return json(400, { Success: false, Error: "Unexpected field name." }, h);
+    }
+  }
+  if (params.getAll("r").length > 1 || params.getAll("h").length > 1) {
+    return json(400, { Success: false, Error: "A field is repeated." }, h);
+  }
+  const body = params.toString();
 
   const r = params.get("r") ?? "";
   if (!RA_ALLOWED_REQUESTS.has(r)) {

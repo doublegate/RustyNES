@@ -66,6 +66,16 @@ describe("forwarding", () => {
     }
   });
 
+  it("forwards exactly the fields it checked, re-encoded, never the raw bytes", async () => {
+    const spy = mockRa();
+    // `%2D` decodes to `-`; the upstream body is the parsed set, re-serialised.
+    const resp = await post("r=gameid&m=ab%2Dcd&u=player");
+    expect(resp.status).toBe(200);
+    const sent = String(spy.mock.calls[0][1]!.body);
+    expect(sent).toBe(new URLSearchParams([["r", "gameid"], ["m", "ab-cd"], ["u", "player"]]).toString());
+    expect([...new URLSearchParams(sent).getAll("r")]).toEqual(["gameid"]);
+  });
+
   it("a network failure is a 502", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network"));
     expect((await post("r=ping&u=player&t=tok")).status).toBe(502);
@@ -89,7 +99,18 @@ describe("refusals (none reach RetroAchievements)", () => {
     ["no request type", () => post("u=player&t=tok"), 403],
     ["a hardcore unlock", () => post("r=awardachievement&u=player&t=tok&a=1&h=1"), 403],
     ["a hardcore session", () => post("r=startsession&u=player&t=tok&g=1&h=1"), 403],
-    ["a second h=1 hidden behind h=0", () => post("r=awardachievement&u=player&t=tok&h=0&h=1"), 403],
+    // Refused as a repeated field (400) before the hardcore check is reached.
+    ["a second h=1 hidden behind h=0", () => post("r=awardachievement&u=player&t=tok&h=0&h=1"), 400],
+    // PHP keeps the LAST value of a repeated field and URLSearchParams.get the
+    // FIRST, so a second `r` would pass the allowlist here and be the request
+    // RetroAchievements runs.
+    ["a second r hidden behind an allowed one", () => post("r=login2&u=player&r=submitcodenote"), 400],
+    ["the same r spelled with a percent-encoded name", () => post("r=ping&%72=uploadachievement&u=player"), 400],
+    // PHP reads `name[]` / `name[k]` as an array field and folds `.` and space
+    // in a name to `_`; no rcheevos call uses either, so they are refused.
+    ["an array-syntax field", () => post("r=ping&h[]=1&u=player"), 400],
+    ["a field name PHP would rewrite", () => post("r=ping&h.x=1&u=player"), 400],
+    ["an empty field name", () => post("r=ping&=1&u=player"), 400],
     ["another origin", () => post("r=ping", { Origin: "https://evil.example" }), 403],
     [
       "no Origin (not the browser build)",
