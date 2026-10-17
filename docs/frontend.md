@@ -2935,12 +2935,19 @@ on), now does the same power cycle. Tests:
 `hardcore_refuses_cheats_scripts_playback_and_memory_tools`,
 `hardcore_tears_down_running_features_on_the_next_frame`,
 `switching_hardcore_on_power_cycles_and_waits_for_a_recording` (and the
-v1.8.6 `hardcore_blocks_load_state_only`). Not in Rust's reach: frame advance
-and slowdown on mobile are host-side pacing in the Kotlin / Swift apps, and
-Android's auto-resume of the on-background state goes through `load_state`, so
-in hardcore it is refused and the game starts from power-on (RA asks a resumed
-session to drop to casual; refusing the resume keeps hardcore honest but
-differs from the letter, a decision left to the maintainer).
+v1.8.6 `hardcore_blocks_load_state_only`). Outside Rust's reach, the host apps
+were searched for the rest (2026-10-16): neither app has a slowdown or a
+frame-advance control, except the iOS debugger's "Step", which advances one
+frame through the bridge's `step_frame` (the ordinary per-frame tick, which
+the bridge cannot refuse without stopping the game). So the iOS app refuses
+the debugger sheet when `raHardcore()` is set (`GameView`'s `onDebugger`) and
+skips the step if hardcore is switched on while the sheet is open
+(`DebuggerView`); that Swift is compiled only by the `ios` CI job. Android has
+no debugger. Android's auto-resume of the on-background state goes through
+`load_state`, so in hardcore it is refused and the game starts from power-on.
+RA asks a resumed session to drop to casual instead; refusing the resume keeps
+hardcore honest but differs from the letter, which is left to the maintainer as
+`T-RA-HARDCORE-RESUME`.
 
 Allowed in hardcore: saving a state, recording a movie, fast forward, reset and
 power cycle, run-ahead and netplay (RA lists neither), and pausing, which

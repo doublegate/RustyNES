@@ -1463,7 +1463,8 @@ re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE
 | `T-SPRITE0-STALE` | The sprite-0 stale shifter and the internal/external bus split (D20). **CLOSED v3.3.0**: no failing test or documented behaviour to attempt against (`to-dos/plans/v3.3.0-plan.md` row 8) | ACC-04 | v3.3.0 |
 | `T-HOSTED-NETPLAY` | A Cloudflare Worker lobby (Durable Objects) and Cloudflare TURN (D19) | NET-04, NET-02, NET-03 | v3.4.0 |
 | `T-RA-PROXY` | The browser RA proxy, on the same account (D19) | RA-01, RA-02 | v3.4.0 |
-| `T-RA-HARDCORE` | RetroAchievements hardcore compliance, then the application (D25) | RA-03 | v3.4.0 |
+| `T-RA-HARDCORE` | RetroAchievements hardcore compliance, then the application (D25). **Built v3.4.0**: one rule table enforced on desktop and the mobile bridge, the iOS debugger step refused, the User-Agent in RA's three-part shape, the request rewritten; the application is the maintainer's to send (D31) | RA-03 | v3.4.0 |
+| `T-RA-HARDCORE-RESUME` | Android's auto-resume of the on-background state goes through `load_state`, so in hardcore it is refused and the game starts from power-on; RA asks a resumed session to drop to casual instead. A maintainer decision: keep the refusal, or resume and drop to casual | v3.4.0's audit | a maintainer decision |
 | `T-NETPLAY-MESH-NATIVE` | Native 3-4 player netplay over `mesh_net.rs`, then mobile | NET-01, MOB-09 | v3.4.0 |
 | `T-MOVIE-INPUT-STREAM` | The Zapper, microphone, Vs. coins and FDS events in `.rnm` | CR-03 | v3.5.0 |
 | `T-LIBRETRO-OPTIONS-V2` | Core Options v2 and float-audio negotiation, behind capability checks | ecosystem 3 | v3.6.0 |

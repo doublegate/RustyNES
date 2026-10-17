@@ -43,7 +43,11 @@ struct DebuggerView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        model.emulator?.debugStep()
+                        // Hardcore may have been switched on while the sheet was
+                        // open: a step is a frame advance, so refuse it then too.
+                        if model.emulator?.raHardcore() != true {
+                            model.emulator?.debugStep()
+                        }
                         refresh()
                     } label: {
                         Label("Step", systemImage: "forward.frame")
