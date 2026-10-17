@@ -121,6 +121,11 @@ cycle-accurate core later replaced.
   another's retransmission to a third that had not received it.
 - **Netplay: a different second value for an already confirmed input is
   ignored**, instead of rewriting a frame below the rollback checkpoint.
+- **`rustynes-apu`'s `std` feature builds on its own.** The crate never
+  loaded `std`, so `--no-default-features --features std` failed on its float
+  math; every build that worked got `std` from another dependency. Output is
+  unchanged. Found by a new weekly CI sweep of every feature combination to
+  depth 2 (`T-CI-FEATURE-POWERSET`), which now passes all 345.
 - **Netplay, 3-4 players: a joiner refuses a malformed roster, or one not
   sent by the host it dialed.** A roster with a gap in its player indices
   (such as 0, 1, 3) built a session with a peer it did not have, which a

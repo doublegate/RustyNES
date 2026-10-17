@@ -360,3 +360,130 @@ fn the_untabled_gap_list_names_only_live_flags() {
         );
     }
 }
+
+/// The frontend features that build only for wasm32. They cannot appear in a
+/// host-target clippy run, so `full` (native) deliberately leaves them out.
+const WASM_ONLY: &[&str] = &[
+    "wasm-winit",
+    "wasm-canvas",
+    "script-wasm",
+    "browser-cheevos",
+];
+
+/// The names listed in `<key> = [ ... ]` inside a manifest's `[features]`
+/// table, the list possibly spread over several lines with comments.
+fn feature_list(manifest: &str, key: &str) -> Option<BTreeSet<String>> {
+    let mut in_features = false;
+    let mut collecting = false;
+    let mut body = String::new();
+    for line in manifest.lines() {
+        let code = line.split('#').next().unwrap_or("");
+        let t = code.trim();
+        if !collecting && t.starts_with('[') {
+            in_features = t == "[features]";
+            continue;
+        }
+        if !in_features {
+            continue;
+        }
+        if collecting {
+            body.push_str(t);
+        } else {
+            let Some((name, rest)) = t.split_once('=') else {
+                continue;
+            };
+            if name.trim() != key {
+                continue;
+            }
+            collecting = true;
+            body.push_str(rest);
+        }
+        if collecting && body.contains(']') {
+            let inner = body.trim().trim_start_matches('[');
+            let inner = inner.split(']').next().unwrap_or("");
+            return Some(
+                inner
+                    .split(',')
+                    .map(|s| s.trim().trim_matches('"').to_owned())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            );
+        }
+    }
+    None
+}
+
+/// Every native opt-in feature of the frontend is linted on every PR, through
+/// `full` (T-CI-FEATURE-POWERSET, v3.4.0 plan row 14).
+///
+/// CI's frontend clippy jobs are written by hand, and `--all-targets` lints
+/// each crate's DEFAULT features only, so a new opt-in feature is compiled by
+/// no PR job unless some invocation names it. The one invocation that names
+/// them all is `--features full`, so the property to hold is that `full`
+/// lists every native feature outside the default set. The weekly
+/// `feature-powerset.yml` covers the combinations; this covers the per-PR
+/// list, which the powerset measurement (345 checks, too long for a PR) left
+/// as the fallback.
+#[test]
+fn full_names_every_native_opt_in_frontend_feature() {
+    let root = repo_root();
+    let manifest_path = root.join("crates/rustynes-frontend/Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", manifest_path.display()));
+    let declared: BTreeSet<String> = declared_features(&root)
+        .into_iter()
+        .filter(|(_, crates)| crates.contains("rustynes-frontend"))
+        .map(|(name, _)| name)
+        .collect();
+    let default = feature_list(&manifest, "default").expect("frontend declares `default`");
+    let full = feature_list(&manifest, "full").expect("frontend declares `full`");
+    assert!(
+        full.len() >= 3 && default.len() >= 2,
+        "parsed full = {full:?}, default = {default:?} -- the list parser is broken"
+    );
+    let missing: Vec<&String> = declared
+        .iter()
+        .filter(|f| {
+            f.as_str() != "full"
+                && !default.contains(*f)
+                && !WASM_ONLY.contains(&f.as_str())
+                && !full.contains(*f)
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "frontend features {missing:?} are native opt-ins that `full` does not \
+         list, so no PR clippy job compiles them. Add them to `full` in \
+         crates/rustynes-frontend/Cargo.toml (or to WASM_ONLY here if they \
+         build only for wasm32)"
+    );
+    for f in WASM_ONLY {
+        assert!(
+            declared.contains(*f),
+            "WASM_ONLY names `{f}`, which the frontend no longer declares"
+        );
+    }
+    let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("read ci.yml");
+    assert!(
+        ci.contains(
+            "cargo clippy -p rustynes-frontend --all-targets --features full -- -D warnings"
+        ),
+        "ci.yml no longer lints the frontend with `--features full`, which is \
+         what makes `full` the per-PR coverage of the opt-in features"
+    );
+}
+
+#[test]
+fn feature_list_reads_a_multi_line_list_with_comments() {
+    let m = "[package]\nname = \"x\"\n\n[features]\ndefault = [\"a\", \"b\"]\n\
+             full = [\n    \"c\",\n    \"d\", # note, with a comma\n]\nother = []\n";
+    assert_eq!(
+        feature_list(m, "full"),
+        Some(["c", "d"].iter().map(|s| (*s).to_owned()).collect())
+    );
+    assert_eq!(
+        feature_list(m, "default"),
+        Some(["a", "b"].iter().map(|s| (*s).to_owned()).collect())
+    );
+    assert_eq!(feature_list(m, "missing"), None);
+}
