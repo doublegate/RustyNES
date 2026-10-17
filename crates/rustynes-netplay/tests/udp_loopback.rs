@@ -33,12 +33,12 @@ use std::time::Duration;
 
 use rustynes_core::{Buttons, Nes};
 use rustynes_netplay::SessionIdentity;
-use rustynes_netplay::{
-    NetplayError, RollbackSession, SessionConfig, SplitMix64, UdpTransport, fnv1a64,
-};
+use rustynes_netplay::{NetplayError, RollbackSession, SessionConfig, SplitMix64, UdpTransport};
 
 fn gameplay_digest(nes: &Nes) -> u64 {
-    fnv1a64(nes.framebuffer()) ^ nes.cycle().wrapping_mul(0x100_0000_01b3)
+    // v3.4.0: the session's own digest, so the test and the session cannot
+    // drift apart when it changes (it did, with protocol 9).
+    rustynes_netplay::gameplay_digest(nes)
 }
 
 fn nestest_rom() -> Vec<u8> {

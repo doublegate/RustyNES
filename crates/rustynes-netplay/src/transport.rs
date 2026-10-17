@@ -34,6 +34,19 @@ pub trait Transport {
     fn poll(&mut self) -> Vec<NetMessage>;
 }
 
+/// v3.4.0 — a boxed transport is a transport, so a frontend can hold one
+/// session type over whichever transport its handshake produced (a 2-player
+/// `UdpTransport` or a mesh `UdpMeshTransport`).
+impl<T: Transport + ?Sized> Transport for Box<T> {
+    fn send(&mut self, msg: &NetMessage) {
+        (**self).send(msg);
+    }
+
+    fn poll(&mut self) -> Vec<NetMessage> {
+        (**self).poll()
+    }
+}
+
 /// One message in flight across the [`MemoryTransport`] link: the payload
 /// plus how many more `poll`s must elapse before it is delivered.
 #[derive(Clone, Debug)]
@@ -322,22 +335,40 @@ mod tests {
     #[test]
     fn perfect_link_delivers_next_poll() {
         let (mut a, mut b) = MemoryTransport::pair(LinkConditions::PERFECT, 1);
-        a.send(&NetMessage::InputAck { frame: 5 });
+        a.send(&NetMessage::InputAck {
+            player: 1,
+            frame: 5,
+        });
         // With zero latency, the message is deliverable on b's next poll.
         let got = b.poll();
-        assert_eq!(got, vec![NetMessage::InputAck { frame: 5 }]);
+        assert_eq!(
+            got,
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 5
+            }]
+        );
         assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
     }
 
     #[test]
     fn fixed_latency_delays_n_polls() {
         let (mut a, mut b) = MemoryTransport::pair(LinkConditions::fixed_latency(3), 7);
-        a.send(&NetMessage::InputAck { frame: 1 });
+        a.send(&NetMessage::InputAck {
+            player: 1,
+            frame: 1,
+        });
         // Three polls of nothing, then delivery.
         assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
         assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
         assert_eq!(b.poll(), [] as [crate::message::NetMessage; 0]);
-        assert_eq!(b.poll(), vec![NetMessage::InputAck { frame: 1 }]);
+        assert_eq!(
+            b.poll(),
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 1
+            }]
+        );
     }
 
     #[test]
@@ -352,9 +383,12 @@ mod tests {
             let (mut a, mut b) = MemoryTransport::pair(cond, 0x00C0_FFEE);
             let mut delivered = Vec::new();
             for f in 0..50u32 {
-                a.send(&NetMessage::InputAck { frame: f });
+                a.send(&NetMessage::InputAck {
+                    player: 1,
+                    frame: f,
+                });
                 for m in b.poll() {
-                    if let NetMessage::InputAck { frame } = m {
+                    if let NetMessage::InputAck { frame, .. } = m {
                         delivered.push(frame);
                     }
                 }
@@ -370,10 +404,28 @@ mod tests {
     #[test]
     fn directions_are_independent() {
         let (mut a, mut b) = MemoryTransport::pair(LinkConditions::PERFECT, 9);
-        a.send(&NetMessage::InputAck { frame: 1 });
-        b.send(&NetMessage::InputAck { frame: 2 });
-        assert_eq!(b.poll(), vec![NetMessage::InputAck { frame: 1 }]);
-        assert_eq!(a.poll(), vec![NetMessage::InputAck { frame: 2 }]);
+        a.send(&NetMessage::InputAck {
+            player: 1,
+            frame: 1,
+        });
+        b.send(&NetMessage::InputAck {
+            player: 1,
+            frame: 2,
+        });
+        assert_eq!(
+            b.poll(),
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 1
+            }]
+        );
+        assert_eq!(
+            a.poll(),
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 2
+            }]
+        );
     }
 
     #[test]

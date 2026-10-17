@@ -28,7 +28,9 @@ use rustynes_netplay::{
 /// future frames; framebuffer + cycle are byte-deterministic across
 /// restore+replay, which is exactly what rollback needs.)
 fn gameplay_digest(nes: &Nes) -> u64 {
-    fnv1a64(nes.framebuffer()) ^ nes.cycle().wrapping_mul(0x100_0000_01b3)
+    // v3.4.0: the session's own digest, so the test and the session cannot
+    // drift apart when it changes (it did, with protocol 9).
+    rustynes_netplay::gameplay_digest(nes)
 }
 
 /// Resolve the committed public-domain nestest ROM (`tests/roms/nestest/`)

@@ -431,9 +431,12 @@ impl NatConnect {
             .last_punch_sent
             .is_none_or(|t| now.saturating_duration_since(t) >= PUNCH_RESEND);
         if due {
+            // v3.4.0: a punch packet carries no key share, so the peer's
+            // handshake never takes it for the handshake `Sync`.
             let pkt = NetMessage::Sync {
                 magic: NetMessage::SYNC_MAGIC,
                 identity: self.identity,
+                key_share: [0; crate::message::KEY_SHARE_LEN],
             }
             .to_bytes();
             let _ = socket.send_to(&pkt, peer);

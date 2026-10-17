@@ -177,6 +177,21 @@ and magic, since v3.1.0's protocol 7 / `"RNE7"` also v3.0.x's `"RNE6"`, and sinc
 v3.2.0's protocol 8 / `"RNE8"` also v3.1.x's `"RNE7"`, each of which names its
 epoch), fails with `MeshError::EmulatorMismatch` and its counterparts, so
 a mixed-version session is refused with a reason instead of timing out.
+**Desktop (v3.4.0).** The desktop netplay panel reaches this mesh: a host
+that picks 3 or 4 players gathers its joiners through `MeshHost`, and every
+joiner joins through `MeshJoiner`, which completes against a 2-player host as
+player 1 of 2 and against a mesh host as the player the roster gives it, so
+the joiner does not choose. Each joiner sends to the host at the address it
+dialed (a host bound to `0.0.0.0` has no better one to advertise) and finds
+its own roster entry by its key share. Since protocol 9 an `InputAck` names
+the acknowledging player and each peer resends to the least-acknowledged one:
+an ack that named no one let one joiner's ack stop another's retransmission to
+a host that had not received it, and the late-starting host stalled.
+Since v3.4.0's protocol 9 (`"RNE9"`, ADR 0046) the `Sync` also carries a
+16-byte key share, a `Roster` entry carries each peer's share, and every
+native datagram after the handshake is sealed with a per-session HMAC key
+(`docs/netplay-session.md` section 2); a v3.2.x/v3.3.x `"RNE8"` peer is
+refused naming its epoch.
 **Only a v3.0.0-or-later peer can give that reason.** A v2.9.9 or older peer
 ignores the `"RNE6"` magic as a foreign datagram and still times out on its
 side. Between two protocol-6 peers both sides name it: a mesh host answers a
@@ -744,6 +759,7 @@ rollback, so disabling it leaves every frame / checksum / rollback byte-identica
 | `rustynes-netplay` compiles on `wasm32-unknown-unknown` | Build + clippy |
 | TURN relay-transport hand-off for symmetric-NAT pairs (v1.8.7 #40, §2.5) | Integration test (`relay_loopback`) — `UdpTransport::from_relay` routes gameplay over `RelayUdpSocket` against a **mock TURN endpoint** (allocate + permission + relayed-address exchange + N-frame `RollbackSession`); `NpStatus.relayed` reflects the hand-off |
 | N-peer UDP roster handshake (3-4 players) | Loopback integration test (`tests/mesh_udp.rs`, real sockets) |
+| Native 3-4 player desktop netplay (v3.4.0, `T-NETPLAY-MESH-NATIVE`): every confirmed frame equal on every peer and to the reference over 600 frames, with latency, reordering and loss; the desktop host/join state machine reaches it | `tests/mesh_sync.rs` (4 and 3 peers in memory, 4 peers over sealed loopback UDP, a peer that lost its early inputs) and `netplay_ui` unit tests (`three_players_from_the_ui_stay_in_sync`, `four_players_...`, `two_players_...`) |
 | Signaling room/relay protocol (`signaling::Relay`) | Unit tests (default build) |
 | Signaling server builds with its feature | `--features signaling-server` build |
 | `Roster` wire encode/decode + oversized/malformed rejection | Unit tests |
@@ -780,6 +796,7 @@ false desync banner.
 | Item | Needs |
 |---|---|
 | Real cross-NAT UDP traversal | A STUN server + two real NATs |
+| Live 3-4 player desktop play across machines (v3.4.0) | Three or four desktops that can reach the host's UDP port (LAN, or a forwarded port): the mesh is direct-IP only, with no room code or TURN path for more than two players. The mobile apps do not host or join 3-4 player sessions yet (`MOB-09`, a later release). |
 | Live mobile room-code play across two cellular devices (§2.5) | The hosted `deploy/` relay (the same signaling + coturn stack) + two real devices behind carrier NAT; live STUN through CGNAT + the punch are exercised against the *real* network, which CI cannot reproduce |
 | Live TURN relay play for symmetric-NAT pairs (§2.5) | A **live coturn** server + **two real symmetric-NAT devices**. The relay-transport hand-off itself is wired and mock-TURN-verified (`UdpTransport::from_relay` + `relay_loopback`, see Verified); only the live cross-network run — which CI/offline cannot reproduce — remains. Cone NAT works end-to-end without the relay. |
 | Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** on a host/domain + N real browsers — cannot verify headlessly. Walk the checklist in `deploy/README.md` (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS/TURN-bandwidth steps). |

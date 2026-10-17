@@ -49,8 +49,14 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
+use crate::auth::{DatagramAuth, KeyShare, Refusal, fresh_key_share};
+use crate::connection::same_peer;
+use crate::message::{IdentityMismatch, KEY_SHARE_LEN, NetMessage, SessionIdentity, SyncVerdict};
 use crate::transport::Transport;
+
+/// The shortest interval between two handshake replies a sealed mesh
+/// transport sends to one peer (see [`UdpMeshTransport::new_sealed`]).
+const HANDSHAKE_REPLY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Largest datagram read in one `recv_from`. The longest [`NetMessage`] is a
 /// full 4-peer `Roster` (tag + count + 4×(player + v6-addr-19) ≈ 82 bytes) or
@@ -81,6 +87,28 @@ pub struct UdpMeshTransport {
     peers: Vec<SocketAddr>,
     /// Count of datagrams that failed to parse. Diagnostic only.
     dropped_invalid: u64,
+    /// v3.4.0 (protocol 9, ADR 0046) — the datagram key and what goes with
+    /// it, for a transport built by the sealed handshake.
+    sealed: Option<Box<SealedMesh>>,
+    /// Datagrams refused by the seal (unsealed, forged, replayed).
+    refused: u64,
+    /// Times a peer was followed to a new source address.
+    roamed: u64,
+}
+
+/// The sealing state of a [`UdpMeshTransport`].
+#[derive(Debug)]
+struct SealedMesh {
+    auth: DatagramAuth,
+    /// The sender index of each entry of `peers`, so a datagram that opens
+    /// can move its sender's address (a NAT rebinding).
+    senders: Vec<u8>,
+    /// What to answer an unsealed `Sync` from a peer's address with: the
+    /// host's roster (a joiner that lost it is still handshaking). `None` on a
+    /// joiner.
+    handshake_reply: Option<Vec<u8>>,
+    /// When each peer was last answered, rate-limiting the replies.
+    last_reply: Vec<Option<Instant>>,
 }
 
 impl UdpMeshTransport {
@@ -96,7 +124,103 @@ impl UdpMeshTransport {
             socket,
             peers,
             dropped_invalid: 0,
+            sealed: None,
+            refused: 0,
+            roamed: 0,
         })
+    }
+
+    /// v3.4.0 (protocol 9) — a transport that seals every datagram it sends
+    /// and opens every one it receives with `auth` (see `crate::auth`).
+    /// `peers` lists every *other* peer's `(sender index, address)`.
+    ///
+    /// A datagram that does not open is refused before it is parsed, whatever
+    /// its source; one that opens is accepted from any source and moves its
+    /// sender's address there (a NAT rebinding). The one unsealed datagram
+    /// answered is a `Sync` from a peer's address, with `handshake_reply` (the
+    /// host's roster) at most every 100 ms per peer: that joiner lost the
+    /// roster and is still handshaking.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error from setting the socket non-blocking.
+    pub fn new_sealed(
+        socket: UdpSocket,
+        peers: &[(u8, SocketAddr)],
+        auth: DatagramAuth,
+        handshake_reply: Option<Vec<u8>>,
+    ) -> io::Result<Self> {
+        let senders: Vec<u8> = peers.iter().map(|&(s, _)| s).collect();
+        let addrs: Vec<SocketAddr> = peers.iter().map(|&(_, a)| a).collect();
+        let mut t = Self::new(socket, addrs)?;
+        t.sealed = Some(Box::new(SealedMesh {
+            auth,
+            last_reply: vec![None; senders.len()],
+            senders,
+            handshake_reply,
+        }));
+        Ok(t)
+    }
+
+    /// `true` if this transport seals its datagrams.
+    #[must_use]
+    pub const fn is_sealed(&self) -> bool {
+        self.sealed.is_some()
+    }
+
+    /// Datagrams refused by the seal. Diagnostic only.
+    #[must_use]
+    pub const fn refused_datagrams(&self) -> u64 {
+        self.refused
+    }
+
+    /// Times a peer was followed to a new source address. Diagnostic only.
+    #[must_use]
+    pub const fn roamed(&self) -> u64 {
+        self.roamed
+    }
+
+    /// One received datagram as a message, if it is one.
+    fn accept_datagram(&mut self, data: &[u8], from: SocketAddr) -> Option<NetMessage> {
+        let Some(sealed) = self.sealed.as_mut() else {
+            let msg = NetMessage::from_bytes(data);
+            if msg.is_none() {
+                self.dropped_invalid = self.dropped_invalid.saturating_add(1);
+            }
+            return msg;
+        };
+        match sealed.auth.open(data) {
+            Ok((sender, payload)) => {
+                let msg = NetMessage::from_bytes(payload);
+                if msg.is_none() {
+                    self.dropped_invalid = self.dropped_invalid.saturating_add(1);
+                    return None;
+                }
+                if let Some(i) = sealed.senders.iter().position(|&s| s == sender)
+                    && !same_peer(self.peers[i], from)
+                {
+                    self.peers[i] = from;
+                    self.roamed = self.roamed.saturating_add(1);
+                }
+                msg
+            }
+            Err(why) => {
+                self.refused = self.refused.saturating_add(1);
+                let now = Instant::now();
+                if why == Refusal::Unsealed
+                    && data.first() == Some(&NetMessage::TAG_SYNC)
+                    && let Some(reply) = sealed.handshake_reply.as_ref()
+                    && let Some(i) = self.peers.iter().position(|&a| same_peer(a, from))
+                    && sealed.last_reply[i].is_none_or(|t| {
+                        now.saturating_duration_since(t) >= HANDSHAKE_REPLY_INTERVAL
+                    })
+                {
+                    sealed.last_reply[i] = Some(now);
+                    let _ = self.socket.send_to(reply, self.peers[i]);
+                }
+                None
+            }
+        }
     }
 
     /// The local address the socket is bound to.
@@ -127,7 +251,12 @@ impl UdpMeshTransport {
 
 impl Transport for UdpMeshTransport {
     fn send(&mut self, msg: &NetMessage) {
-        let bytes = msg.to_bytes();
+        let mut bytes = msg.to_bytes();
+        // v3.4.0 — sealed once, the same datagram to every peer: each keeps
+        // its own replay window for this sender.
+        if let Some(sealed) = self.sealed.as_mut() {
+            bytes = sealed.auth.seal(&bytes);
+        }
         for peer in &self.peers {
             // A failed send is non-fatal (the rollback protocol tolerates loss
             // and resends); swallow it rather than panic.
@@ -140,10 +269,11 @@ impl Transport for UdpMeshTransport {
         let mut buf = [0u8; RECV_BUF_LEN];
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
             match self.socket.recv_from(&mut buf) {
-                Ok((len, _from)) => match NetMessage::from_bytes(&buf[..len]) {
-                    Some(msg) => out.push(msg),
-                    None => self.dropped_invalid = self.dropped_invalid.saturating_add(1),
-                },
+                Ok((len, from)) => {
+                    if let Some(msg) = self.accept_datagram(&buf[..len], from) {
+                        out.push(msg);
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 // Windows can surface a prior send's ICMP unreachable as a
                 // ConnectionReset on the next recv — not fatal, keep draining.
@@ -218,9 +348,12 @@ pub struct MeshHost {
     socket: Option<UdpSocket>,
     identity: SessionIdentity,
     num_players: u8,
-    /// `addr -> player index`, in adoption order (the host itself is player 0,
-    /// never in this map).
-    joiners: BTreeMap<SocketAddr, u8>,
+    /// `addr -> (player index, key share)`, in adoption order (the host
+    /// itself is player 0, never in this map). v3.4.0: the share is the one
+    /// the joiner's first adopting `Sync` carried.
+    joiners: BTreeMap<SocketAddr, (u8, KeyShare)>,
+    /// v3.4.0 (protocol 9) — the host's own key share (player 0's).
+    key_share: KeyShare,
     /// Host's own gameplay address (its bound local addr; for a roster a loopback
     /// or LAN test uses this directly, an internet deployment substitutes the
     /// STUN-discovered public addr — see `docs/netplay-webrtc.md`).
@@ -261,6 +394,7 @@ impl MeshHost {
             identity,
             num_players: num_players.clamp(2, 4),
             joiners: BTreeMap::new(),
+            key_share: fresh_key_share(),
             host_addr: host_gameplay_addr,
             started: Instant::now(),
             timeout: Self::DEFAULT_TIMEOUT,
@@ -302,15 +436,25 @@ impl MeshHost {
         self.joiners.len() + 1 >= self.num_players as usize
     }
 
-    /// Build the full roster (host first, then joiners in adoption order).
-    fn build_roster(&self) -> Vec<(u8, SocketAddr)> {
+    /// The number of players the host gathers (2..=4).
+    #[must_use]
+    pub const fn num_players(&self) -> u8 {
+        self.num_players
+    }
+
+    /// Build the full roster (host first, then joiners in adoption order),
+    /// each entry with its key share.
+    fn build_roster(&self) -> Vec<(u8, SocketAddr, KeyShare)> {
         let mut peers = Vec::with_capacity(self.num_players as usize);
-        peers.push((0u8, self.host_addr));
+        peers.push((0u8, self.host_addr, self.key_share));
         // BTreeMap iterates by address; sort the emitted list by player index
         // instead so the roster is stable + index-ordered.
-        let mut joiners: Vec<(u8, SocketAddr)> =
-            self.joiners.iter().map(|(&a, &p)| (p, a)).collect();
-        joiners.sort_by_key(|&(p, _)| p);
+        let mut joiners: Vec<(u8, SocketAddr, KeyShare)> = self
+            .joiners
+            .iter()
+            .map(|(&a, &(p, share))| (p, a, share))
+            .collect();
+        joiners.sort_by_key(|&(p, _, _)| p);
         peers.extend(joiners);
         peers
     }
@@ -351,7 +495,12 @@ impl MeshHost {
         }
 
         for (msg, from) in inbound {
-            if let NetMessage::Sync { magic, identity } = msg {
+            if let NetMessage::Sync {
+                magic,
+                identity,
+                key_share,
+            } = msg
+            {
                 match self.identity.check_sync(magic, &identity) {
                     SyncVerdict::Ignore => continue,
                     SyncVerdict::Accept => {}
@@ -368,6 +517,7 @@ impl MeshHost {
                         let reply = NetMessage::Sync {
                             magic: NetMessage::SYNC_MAGIC,
                             identity: self.identity,
+                            key_share: [0; KEY_SHARE_LEN],
                         }
                         .to_bytes();
                         let _ = socket.send_to(&reply, from);
@@ -377,9 +527,15 @@ impl MeshHost {
                 // Adopt this source as a new joiner IF there is still room and it
                 // is not already known (idempotent — a re-sent Sync from a known
                 // joiner must not shift indices).
-                if !self.joiners.contains_key(&from) && !self.roster_full() {
+                // v3.4.0: only a `Sync` with a key share is a joiner's
+                // handshake; one without (a stray in-session `Sync`) adopts
+                // no one.
+                if key_share != [0; KEY_SHARE_LEN]
+                    && !self.joiners.contains_key(&from)
+                    && !self.roster_full()
+                {
                     let next_index = u8::try_from(self.joiners.len() + 1).unwrap_or(u8::MAX);
-                    self.joiners.insert(from, next_index);
+                    self.joiners.insert(from, (next_index, key_share));
                 }
             }
             // Non-Sync traffic during the handshake is ignored (early/stray).
@@ -413,12 +569,21 @@ impl MeshHost {
             if self.roster_resends > 0 {
                 return Ok(None);
             }
+            // v3.4.0 (protocol 9): every peer's share, in player order, keys
+            // the mesh; the host is sender 0 and each joiner its player index.
+            let roster = self.build_roster();
+            let shares: Vec<(u8, KeyShare)> = roster.iter().map(|&(p, _, k)| (p, k)).collect();
+            let Some(auth) = DatagramAuth::mesh(&self.identity, &shares, 0) else {
+                return Err(MeshError::Timeout);
+            };
+            let peers: Vec<(u8, SocketAddr)> =
+                self.joiners.iter().map(|(&a, &(p, _))| (p, a)).collect();
+            let reply = NetMessage::Roster { peers: roster }.to_bytes();
             let socket = self.socket.take().expect("host socket present to hand off");
-            let peers: Vec<SocketAddr> = self.joiners.keys().copied().collect();
             // We never reach here without at least the resend above; map an I/O
             // error on the (already-configured non-blocking) socket to a Timeout
             // rather than panic.
-            return UdpMeshTransport::new(socket, peers)
+            return UdpMeshTransport::new_sealed(socket, &peers, auth, Some(reply))
                 .map(Some)
                 .map_err(|_| MeshError::Timeout);
         }
@@ -457,6 +622,11 @@ pub struct MeshJoiner {
     /// This joiner's own player index (assigned by the host scheme; the frontend
     /// supplies it, or it is discovered from the roster — see module docs).
     my_player: u8,
+    /// v3.4.0 — how many players the session has, learned from the roster
+    /// (or 2 when the host turned out to be a 2-player host). `0` until then.
+    num_players: u8,
+    /// v3.4.0 (protocol 9) — this joiner's key share, sent in every `Sync`.
+    key_share: KeyShare,
     started: Instant,
     timeout: Duration,
     last_sync_sent: Option<Instant>,
@@ -480,9 +650,11 @@ impl MeshJoiner {
     ) -> io::Result<Self> {
         let socket = UdpSocket::bind(local)?;
         socket.set_nonblocking(true)?;
+        let key_share = fresh_key_share();
         let sync = NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity,
+            key_share,
         }
         .to_bytes();
         let _ = socket.send_to(&sync, host);
@@ -492,6 +664,8 @@ impl MeshJoiner {
             host,
             identity,
             my_player,
+            num_players: 0,
+            key_share,
             started: now,
             timeout: Self::DEFAULT_TIMEOUT,
             last_sync_sent: Some(now),
@@ -524,6 +698,13 @@ impl MeshJoiner {
         self.my_player
     }
 
+    /// v3.4.0 — the number of players in the session, once
+    /// [`pump`](Self::pump) has returned the transport (`0` before).
+    #[must_use]
+    pub const fn num_players(&self) -> u8 {
+        self.num_players
+    }
+
     /// Drive the joiner one step: re-send `Sync`, watch for the host's `Roster`,
     /// and on receipt build the [`UdpMeshTransport`] (wired to the host + every
     /// other joiner, skipping this joiner's own entry).
@@ -540,16 +721,30 @@ impl MeshJoiner {
 
         let mut buf = [0u8; RECV_BUF_LEN];
         let socket = self.socket.as_ref().expect("joiner socket present in pump");
-        let mut roster: Option<Vec<(u8, SocketAddr)>> = None;
+        let mut roster: Option<Vec<(u8, SocketAddr, KeyShare)>> = None;
+        let mut pair_host_share: Option<KeyShare> = None;
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
             match socket.recv_from(&mut buf) {
-                Ok((len, _from)) => match NetMessage::from_bytes(&buf[..len]) {
+                Ok((len, from)) => match NetMessage::from_bytes(&buf[..len]) {
                     Some(NetMessage::Roster { peers }) => roster = Some(peers),
-                    Some(NetMessage::Sync { magic, identity }) => {
-                        if let SyncVerdict::Refuse(m) = self.identity.check_sync(magic, &identity) {
-                            return Err(MeshError::from(m));
+                    Some(NetMessage::Sync {
+                        magic,
+                        identity,
+                        key_share,
+                    }) => match self.identity.check_sync(magic, &identity) {
+                        SyncVerdict::Refuse(m) => return Err(MeshError::from(m)),
+                        // v3.4.0 — an accepted `Sync` with a key share, from
+                        // the host we dialed, is a 2-player host's answer
+                        // (`NetplayConnection::host` echoes the joiner's
+                        // `Sync`; a mesh host only ever sends a roster). The
+                        // joiner then runs as player 1 of 2 over the pair key.
+                        SyncVerdict::Accept
+                            if key_share != [0; KEY_SHARE_LEN] && same_peer(from, self.host) =>
+                        {
+                            pair_host_share.get_or_insert(key_share);
                         }
-                    }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -558,31 +753,62 @@ impl MeshJoiner {
             }
         }
 
-        if let Some(peers) = roster {
-            // Identify our own entry in the roster. On loopback / LAN there is no
-            // NAT rewrite, so the host saw our real bound source address and we
-            // can match it exactly — the most robust path. Through a NAT the host
-            // saw a rewritten address we cannot observe locally, so we fall back
-            // to the `my_player` index assigned out of band at connect (see
-            // module docs). If the address match succeeds it OVERRIDES the
-            // provided index (it is ground truth).
+        if let Some(mut peers) = roster {
+            // v3.4.0 — the host is reached where this joiner reached it. The
+            // host's own roster entry is the address it believes it has,
+            // which for a host bound to `0.0.0.0` is no address at all; the
+            // one the joiner dialed is the one known to work.
+            for entry in &mut peers {
+                if entry.0 == 0 {
+                    entry.1 = self.host;
+                }
+            }
+            // Identify our own entry in the roster. v3.4.0: by our own key
+            // share, which works through a NAT; failing that (it cannot, from
+            // an honest host), on loopback / LAN by our bound source address,
+            // which the host saw unrewritten; failing both, the `my_player`
+            // index assigned out of band at connect (see module docs).
             let my_local = self.socket.as_ref().and_then(|s| s.local_addr().ok());
-            if let Some(local) = my_local
-                && let Some(&(p, _)) = peers.iter().find(|&&(_, a)| a == local)
+            if let Some(&(p, _, _)) = peers.iter().find(|&&(_, _, k)| k == self.key_share) {
+                self.my_player = p;
+            } else if let Some(local) = my_local
+                && let Some(&(p, _, _)) = peers.iter().find(|&&(_, a, _)| a == local)
             {
                 self.my_player = p;
             }
+            let shares: Vec<(u8, KeyShare)> = peers.iter().map(|&(p, _, k)| (p, k)).collect();
+            let Some(auth) = DatagramAuth::mesh(&self.identity, &shares, self.my_player) else {
+                // A roster that does not form a mesh with us in it (a
+                // duplicate index, a missing share): wait for a good one.
+                return Ok(None);
+            };
+            self.num_players = u8::try_from(peers.len()).unwrap_or(u8::MAX);
             // The mesh is every peer EXCEPT this joiner's own index.
-            let others: Vec<SocketAddr> = peers
+            let others: Vec<(u8, SocketAddr)> = peers
                 .iter()
-                .filter(|&&(p, _)| p != self.my_player)
-                .map(|&(_, a)| a)
+                .filter(|&&(p, _, _)| p != self.my_player)
+                .map(|&(p, a, _)| (p, a))
                 .collect();
             let socket = self
                 .socket
                 .take()
                 .expect("joiner socket present to hand off");
-            return UdpMeshTransport::new(socket, others)
+            return UdpMeshTransport::new_sealed(socket, &others, auth, None)
+                .map(Some)
+                .map_err(|_| MeshError::Timeout);
+        }
+
+        if let Some(theirs) = pair_host_share
+            && let Some(auth) = DatagramAuth::pair(&self.identity, self.key_share, theirs)
+        {
+            self.my_player = 1;
+            self.num_players = 2;
+            let host_sender = auth.remote_senders().next().unwrap_or(0);
+            let socket = self
+                .socket
+                .take()
+                .expect("joiner socket present to hand off");
+            return UdpMeshTransport::new_sealed(socket, &[(host_sender, self.host)], auth, None)
                 .map(Some)
                 .map_err(|_| MeshError::Timeout);
         }
@@ -595,6 +821,7 @@ impl MeshJoiner {
             let sync = NetMessage::Sync {
                 magic: NetMessage::SYNC_MAGIC,
                 identity: self.identity,
+                key_share: self.key_share,
             }
             .to_bytes();
             let _ = socket.send_to(&sync, self.host);
@@ -655,11 +882,24 @@ mod tests {
         stray.send_to(&[], a1).unwrap();
         stray.send_to(&[250, 1, 2], a1).unwrap();
         stray
-            .send_to(&NetMessage::InputAck { frame: 9 }.to_bytes(), a1)
+            .send_to(
+                &NetMessage::InputAck {
+                    player: 1,
+                    frame: 9,
+                }
+                .to_bytes(),
+                a1,
+            )
             .unwrap();
 
         let got = drain(&mut t1, 1);
-        assert_eq!(got, vec![NetMessage::InputAck { frame: 9 }]);
+        assert_eq!(
+            got,
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 9
+            }]
+        );
         assert!(t1.dropped_invalid() >= 2);
     }
 

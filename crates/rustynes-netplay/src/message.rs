@@ -176,11 +176,13 @@ impl SessionIdentity {
                 Err(why) => SyncVerdict::Refuse(why),
             }
         } else if NetMessage::OLDER_SYNC_MAGICS.contains(&magic) {
-            // Protocols 6 and 7 carry their epoch (same layout as ours), so the
-            // reason can name it; protocols 4 and 5 have none.
+            // Protocols 6, 7 and 8 carry their epoch, so the reason can name
+            // it; protocols 4 and 5 have none.
             let theirs = matches!(
                 magic,
-                NetMessage::PROTOCOL_6_SYNC_MAGIC | NetMessage::PROTOCOL_7_SYNC_MAGIC
+                NetMessage::PROTOCOL_6_SYNC_MAGIC
+                    | NetMessage::PROTOCOL_7_SYNC_MAGIC
+                    | NetMessage::PROTOCOL_8_SYNC_MAGIC
             )
             .then_some(peer.epoch);
             SyncVerdict::Refuse(IdentityMismatch::Emulator {
@@ -241,8 +243,26 @@ impl SessionIdentity {
 /// version, naming its epoch, because it could not decode a batch: its
 /// [`from_bytes`] drops tag 6, so every retransmission would be lost.
 ///
+/// `9` (v3.4.0, ADR 0046): every native datagram after the handshake is
+/// **sealed** (`crate::auth`): a marker, the sender, a sequence number, the
+/// message, and an HMAC-SHA-256 tag under a per-session key. The key comes
+/// from a random 16-byte share each peer sends in its handshake `Sync`, so the
+/// `Sync` layout grows to 88 bytes under the magic `"RNE9"`, and a
+/// [`NetMessage::Roster`] entry carries each peer's share. The gameplay digest
+/// a [`NetMessage::Checksum`] carries changed too (a faster framebuffer
+/// checksum, `crate::framebuffer_digest`), so two builds hash the same frame
+/// differently, and an [`NetMessage::InputAck`] names the acknowledging
+/// player (a mesh retransmits to the least-acknowledged peer). A
+/// v3.2.x/v3.3.x peer's `"RNE8"` joins
+/// [`NetMessage::OLDER_SYNC_MAGICS`] and is refused as another emulator
+/// version, naming its epoch: it neither seals nor opens a sealed datagram.
+///
 /// [`from_bytes`]: NetMessage::from_bytes
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
+
+/// v3.4.0 (protocol 9) — the length of one peer's handshake key share, the
+/// random contribution it makes to the session's datagram key (`crate::auth`).
+pub const KEY_SHARE_LEN: usize = 16;
 
 /// Messages exchanged between two peers.
 ///
@@ -294,7 +314,14 @@ pub enum NetMessage {
     /// Acknowledges receipt of the remote's input up to `frame`. Lets the
     /// sender stop retransmitting already-confirmed inputs (Stage 2 uses
     /// this for the sliding-window retransmit cutoff).
+    ///
+    /// v3.4.0 (protocol 9): the ack names its sender. In a mesh every peer
+    /// acks every other's inputs, and an ack that named no one let one peer's
+    /// ack stop another's retransmission to a third that had not received it
+    /// (`mesh_sync.rs`, `a_peer_that_lost_early_inputs_still_gets_them`).
     InputAck {
+        /// The player index of the peer acknowledging.
+        player: u8,
         /// Highest contiguous frame the sender has received.
         frame: u32,
     },
@@ -307,6 +334,13 @@ pub enum NetMessage {
         magic: u32,
         /// The ROM and machine configuration both peers must be running.
         identity: SessionIdentity,
+        /// v3.4.0 (protocol 9): this peer's random contribution to the
+        /// session's datagram key (`crate::auth`). All zeros in a `Sync` that
+        /// is not a key source: the one a running session sends, a NAT punch
+        /// packet, a spectator's announcement, or an older protocol's `Sync`
+        /// (which has no such field). The handshakes ignore an all-zero share
+        /// as a key source.
+        key_share: [u8; KEY_SHARE_LEN],
     },
 
     /// Periodic state checksum for desync detection. Both peers compute a
@@ -318,7 +352,8 @@ pub enum NetMessage {
         /// The combined gameplay digest (framebuffer hash XOR a cycle term) —
         /// the value compared for desync detection.
         hash: u64,
-        /// The framebuffer-only hash (FNV-1a 64), carried alongside `hash` so a
+        /// The framebuffer-only hash (`crate::framebuffer_digest` since
+        /// protocol 9; FNV-1a 64 before), carried alongside `hash` so a
         /// desync can report WHICH component diverged: equal `fb_hash` with
         /// unequal `hash` ⇒ a timing/cycle divergence (same picture, different
         /// cycle count); unequal `fb_hash` ⇒ a state divergence.
@@ -345,16 +380,20 @@ pub enum NetMessage {
     /// them). The host's own entry is included (player 0) so a joiner learns
     /// the host's gameplay address too.
     ///
-    /// Encoded as a count byte followed by that many `(player: u8, addr)`
-    /// entries (each `addr` is a 1-byte IP-family tag + the address bytes + a
-    /// little-endian `u16` port — see [`Self::to_bytes`]). Bounded to
-    /// [`Self::MAX_ROSTER`] entries; a longer or malformed roster decodes to
-    /// `None`.
+    /// Encoded as a count byte followed by that many `(player: u8, addr,
+    /// key_share)` entries (each `addr` is a 1-byte IP-family tag + the
+    /// address bytes + a little-endian `u16` port — see [`Self::to_bytes`];
+    /// since protocol 9 each entry ends with the peer's 16-byte key share).
+    /// Bounded to [`Self::MAX_ROSTER`] entries; a longer or malformed roster
+    /// decodes to `None`.
     Roster {
-        /// Every peer's `(player_index, socket_addr)`, host first. The host's
-        /// gameplay address is the address a joiner should `send_to` for the
-        /// host's player; each other entry is a fellow joiner.
-        peers: Vec<(u8, SocketAddr)>,
+        /// Every peer's `(player_index, socket_addr, key_share)`, host first.
+        /// The host's gameplay address is the address a joiner should
+        /// `send_to` for the host's player; each other entry is a fellow
+        /// joiner. The shares are what every peer derives the mesh's datagram
+        /// keys from (`crate::auth`), and a joiner finds its own entry by its
+        /// own share, which works through a NAT where its address does not.
+        peers: Vec<(u8, SocketAddr, [u8; KEY_SHARE_LEN])>,
     },
 }
 
@@ -367,7 +406,7 @@ impl NetMessage {
     /// consider the session synced while the v5 side waited for a reply it
     /// refuses. Every version compares the magic, so a changed one is
     /// rejected on both sides.
-    pub const SYNC_MAGIC: u32 = 0x524E_4538; // "RNE8"
+    pub const SYNC_MAGIC: u32 = 0x524E_4539; // "RNE9"
 
     /// `RustyNES`'s own earlier `Sync` magics: protocol 4 (`"RNES"`, v2.5.x to
     /// v2.9.7), protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9) and protocol 6
@@ -375,11 +414,12 @@ impl NetMessage {
     /// is refused with a reason ([`SessionIdentity::check_sync`]). Code that
     /// needs one protocol names its constant below rather than an index, so
     /// adding a protocol to this list cannot silently re-point a check.
-    pub const OLDER_SYNC_MAGICS: [u32; 4] = [
+    pub const OLDER_SYNC_MAGICS: [u32; 5] = [
         Self::PROTOCOL_4_SYNC_MAGIC,
         Self::PROTOCOL_5_SYNC_MAGIC,
         Self::PROTOCOL_6_SYNC_MAGIC,
         Self::PROTOCOL_7_SYNC_MAGIC,
+        Self::PROTOCOL_8_SYNC_MAGIC,
     ];
     /// Protocol 4's `Sync` magic, `"RNES"` (v2.5.x to v2.9.7): a 36-byte
     /// payload with no config hash and no epoch.
@@ -394,6 +434,10 @@ impl NetMessage {
     /// included. Refused because a protocol 7 peer cannot decode
     /// [`Self::InputBatch`].
     pub const PROTOCOL_7_SYNC_MAGIC: u32 = 0x524E_4537;
+    /// Protocol 8's `Sync` magic, `"RNE8"` (v3.2.x and v3.3.x): a 72-byte
+    /// payload, epoch included and no key share. Refused because a protocol
+    /// 8 peer neither seals nor opens a sealed datagram (protocol 9).
+    pub const PROTOCOL_8_SYNC_MAGIC: u32 = 0x524E_4538;
     /// The most inputs one [`Self::InputBatch`] carries: what its count byte
     /// can express. The session's retransmit window is far smaller.
     pub const MAX_INPUT_BATCH: usize = u8::MAX as usize;
@@ -401,7 +445,10 @@ impl NetMessage {
     // Tag bytes for the hand-rolled encoding.
     const TAG_INPUT: u8 = 0;
     const TAG_INPUT_ACK: u8 = 1;
-    const TAG_SYNC: u8 = 2;
+    /// The `Sync` tag byte. `pub(crate)` so a sealed transport can recognise
+    /// an unsealed handshake straggler by its first byte alone, without
+    /// parsing it (`crate::connection`, `crate::mesh_net`).
+    pub(crate) const TAG_SYNC: u8 = 2;
     const TAG_CHECKSUM: u8 = 3;
     const TAG_QUALITY: u8 = 4;
     const TAG_ROSTER: u8 = 5;
@@ -453,17 +500,24 @@ impl NetMessage {
                 out.push(u8::try_from(inputs.len()).unwrap_or(u8::MAX));
                 out.extend_from_slice(inputs);
             }
-            Self::InputAck { frame } => {
+            Self::InputAck { player, frame } => {
                 out.push(Self::TAG_INPUT_ACK);
                 out.extend_from_slice(&frame.to_le_bytes());
+                out.push(player);
             }
-            Self::Sync { magic, identity } => {
+            Self::Sync {
+                magic,
+                identity,
+                key_share,
+            } => {
                 out.push(Self::TAG_SYNC);
                 out.extend_from_slice(&magic.to_le_bytes());
                 // v3.0.0 (protocol 6): the emulation epoch.
                 out.extend_from_slice(&identity.epoch.to_le_bytes());
                 out.extend_from_slice(&identity.rom_hash);
                 out.extend_from_slice(&identity.config_hash);
+                // v3.4.0 (protocol 9): the key share.
+                out.extend_from_slice(&key_share);
             }
             Self::Checksum {
                 frame,
@@ -488,9 +542,10 @@ impl NetMessage {
                 // A count byte (peers.len() <= MAX_ROSTER fits a u8 trivially),
                 // then each `(player, addr)` entry.
                 out.push(u8::try_from(peers.len().min(u8::MAX as usize)).unwrap_or(u8::MAX));
-                for &(player, addr) in peers {
+                for &(player, addr, share) in peers {
                     out.push(player);
                     Self::encode_addr(&mut out, addr);
+                    out.extend_from_slice(&share);
                 }
             }
         }
@@ -553,6 +608,81 @@ impl NetMessage {
         })
     }
 
+    /// The body of a [`Self::Sync`] (after its tag), in any layout this build
+    /// recognises: protocol 9's 88 bytes under any magic, and the older
+    /// layouts each at exactly its own length under its own magic, so the
+    /// handshake can refuse an older peer with a reason (`check_sync`).
+    fn decode_sync(rest: &[u8]) -> Option<Self> {
+        let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
+        match rest.len() {
+            // Protocol 9: magic + epoch + two hashes + the key share.
+            // Exactly that length: a longer payload is a later
+            // protocol's, not this one's with junk on the end.
+            88 => {
+                let epoch = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
+                let rom_hash: [u8; 32] = rest.get(8..40)?.try_into().ok()?;
+                let config_hash: [u8; 32] = rest.get(40..72)?.try_into().ok()?;
+                let key_share: [u8; KEY_SHARE_LEN] = rest.get(72..88)?.try_into().ok()?;
+                Some(Self::Sync {
+                    magic,
+                    identity: SessionIdentity {
+                        epoch,
+                        rom_hash,
+                        config_hash,
+                    },
+                    key_share,
+                })
+            }
+            // Protocols 6, 7 and 8 (v3.0.x to v3.3.x): the same without
+            // a key share, accepted only under one of their own magics
+            // so the handshake can refuse them naming the epoch
+            // (`check_sync`).
+            72 if matches!(
+                magic,
+                Self::PROTOCOL_6_SYNC_MAGIC
+                    | Self::PROTOCOL_7_SYNC_MAGIC
+                    | Self::PROTOCOL_8_SYNC_MAGIC
+            ) =>
+            {
+                let epoch = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
+                let rom_hash: [u8; 32] = rest.get(8..40)?.try_into().ok()?;
+                let config_hash: [u8; 32] = rest.get(40..72)?.try_into().ok()?;
+                Some(Self::Sync {
+                    magic,
+                    identity: SessionIdentity {
+                        epoch,
+                        rom_hash,
+                        config_hash,
+                    },
+                    key_share: [0; KEY_SHARE_LEN],
+                })
+            }
+            // An older RustyNES's `Sync`, accepted only at exactly its
+            // own length AND under its own magic, so the handshake can
+            // refuse it with a reason (`check_sync`). Its hashes are
+            // never compared; the epoch field is meaningless (0).
+            68 if magic == Self::PROTOCOL_5_SYNC_MAGIC => Some(Self::Sync {
+                magic,
+                identity: SessionIdentity {
+                    epoch: 0,
+                    rom_hash: rest.get(4..36)?.try_into().ok()?,
+                    config_hash: rest.get(36..68)?.try_into().ok()?,
+                },
+                key_share: [0; KEY_SHARE_LEN],
+            }),
+            36 if magic == Self::PROTOCOL_4_SYNC_MAGIC => Some(Self::Sync {
+                magic,
+                identity: SessionIdentity {
+                    epoch: 0,
+                    rom_hash: rest.get(4..36)?.try_into().ok()?,
+                    config_hash: [0; 32],
+                },
+                key_share: [0; KEY_SHARE_LEN],
+            }),
+            _ => None,
+        }
+    }
+
     /// Parse a buffer produced by [`Self::to_bytes`]. Returns `None` on a
     /// malformed / truncated / unknown-tag buffer (the UDP transport drops
     /// such datagrams rather than panicking).
@@ -572,52 +702,11 @@ impl NetMessage {
             }
             Self::TAG_INPUT_ACK => {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
-                Some(Self::InputAck { frame })
+                let player = *rest.get(4)?;
+                Some(Self::InputAck { player, frame })
             }
             Self::TAG_INPUT_BATCH => Self::decode_input_batch(rest),
-            Self::TAG_SYNC => {
-                let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
-                match rest.len() {
-                    // Protocols 6, 7 and 8: magic + epoch + two hashes. Exactly
-                    // that length: a longer payload is a later protocol's, not
-                    // this one's with junk on the end. Which protocol it is
-                    // (`"RNE8"` ours, `"RNE7"` v3.1.x, `"RNE6"` v3.0.x) is `check_sync`'s call.
-                    72 => {
-                        let epoch = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
-                        let rom_hash: [u8; 32] = rest.get(8..40)?.try_into().ok()?;
-                        let config_hash: [u8; 32] = rest.get(40..72)?.try_into().ok()?;
-                        Some(Self::Sync {
-                            magic,
-                            identity: SessionIdentity {
-                                epoch,
-                                rom_hash,
-                                config_hash,
-                            },
-                        })
-                    }
-                    // An older RustyNES's `Sync`, accepted only at exactly its
-                    // own length AND under its own magic, so the handshake can
-                    // refuse it with a reason (`check_sync`). Its hashes are
-                    // never compared; the epoch field is meaningless (0).
-                    68 if magic == Self::PROTOCOL_5_SYNC_MAGIC => Some(Self::Sync {
-                        magic,
-                        identity: SessionIdentity {
-                            epoch: 0,
-                            rom_hash: rest.get(4..36)?.try_into().ok()?,
-                            config_hash: rest.get(36..68)?.try_into().ok()?,
-                        },
-                    }),
-                    36 if magic == Self::PROTOCOL_4_SYNC_MAGIC => Some(Self::Sync {
-                        magic,
-                        identity: SessionIdentity {
-                            epoch: 0,
-                            rom_hash: rest.get(4..36)?.try_into().ok()?,
-                            config_hash: [0; 32],
-                        },
-                    }),
-                    _ => None,
-                }
-            }
+            Self::TAG_SYNC => Self::decode_sync(rest),
             Self::TAG_CHECKSUM => {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
                 let hash = u64::from_le_bytes(rest.get(4..12)?.try_into().ok()?);
@@ -647,8 +736,10 @@ impl NetMessage {
                 for _ in 0..count {
                     let (&player, after_player) = cursor.split_first()?;
                     let (addr, after_addr) = Self::decode_addr(after_player)?;
-                    peers.push((player, addr));
-                    cursor = after_addr;
+                    let share: [u8; KEY_SHARE_LEN] =
+                        after_addr.get(..KEY_SHARE_LEN)?.try_into().ok()?;
+                    peers.push((player, addr, share));
+                    cursor = &after_addr[KEY_SHARE_LEN..];
                 }
                 // Trailing bytes after a well-formed roster ⇒ malformed.
                 if cursor.is_empty() {
@@ -696,10 +787,14 @@ mod tests {
             frame: 0x1234_5678,
             input: 0xAB,
         });
-        roundtrip(&NetMessage::InputAck { frame: 99 });
+        roundtrip(&NetMessage::InputAck {
+            player: 1,
+            frame: 99,
+        });
         roundtrip(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: SessionIdentity::new([7u8; 32], [9u8; 32]),
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         roundtrip(&NetMessage::Checksum {
             frame: 42,
@@ -725,6 +820,7 @@ mod tests {
         let mut bytes = NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: SessionIdentity::new([7u8; 32], [9u8; 32]),
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         }
         .to_bytes();
         bytes.push(0);
@@ -745,9 +841,11 @@ mod tests {
         let bytes = NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: ours,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         }
         .to_bytes();
-        assert_eq!(bytes.len(), 1 + 72);
+        // v3.4.0 (protocol 9): 72 bytes of identity plus the 16-byte share.
+        assert_eq!(bytes.len(), 1 + 88);
         assert_eq!(&bytes[5..9], &ours.epoch.to_le_bytes());
 
         let mut theirs = ours;
@@ -786,6 +884,7 @@ mod tests {
             let Some(NetMessage::Sync {
                 magic: got,
                 identity,
+                ..
             }) = NetMessage::from_bytes(&bytes)
             else {
                 panic!("an older RustyNES Sync of {payload} bytes must decode");
@@ -821,9 +920,13 @@ mod tests {
         let bytes = NetMessage::Sync {
             magic: NetMessage::PROTOCOL_6_SYNC_MAGIC,
             identity: theirs,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         }
         .to_bytes();
-        let Some(NetMessage::Sync { magic, identity }) = NetMessage::from_bytes(&bytes) else {
+        let Some(NetMessage::Sync {
+            magic, identity, ..
+        }) = NetMessage::from_bytes(&bytes)
+        else {
             panic!("a protocol-6 Sync decodes");
         };
         assert_eq!(
@@ -836,20 +939,32 @@ mod tests {
         assert_ne!(NetMessage::SYNC_MAGIC, NetMessage::PROTOCOL_6_SYNC_MAGIC);
     }
 
-    /// v3.2.0 (protocol 8) — a v3.1.x peer's `"RNE7"` `Sync` has our layout,
-    /// and could even carry our epoch and hashes, but it cannot decode an
-    /// `InputBatch`, so it is refused as another emulator version, naming
-    /// the epoch its layout carries.
+    /// A 72-byte `Sync` (protocols 6 to 8: no key share) under `magic`,
+    /// carrying `identity`, as a v3.0.x to v3.3.x peer sends it.
+    fn sync_72(magic: u32, identity: SessionIdentity) -> Vec<u8> {
+        let mut bytes = NetMessage::Sync {
+            magic,
+            identity,
+            key_share: [0; KEY_SHARE_LEN],
+        }
+        .to_bytes();
+        bytes.truncate(1 + 72);
+        bytes
+    }
+
+    /// v3.2.0 (protocol 8) — a v3.1.x peer's `"RNE7"` `Sync` could even
+    /// carry our epoch and hashes, but it cannot decode an `InputBatch`, so it
+    /// is refused as another emulator version, naming the epoch its layout
+    /// carries.
     #[test]
     fn a_protocol_7_peer_is_refused_as_another_version_naming_its_epoch() {
         let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
         // The same identity as ours, but under protocol 7's magic.
-        let bytes = NetMessage::Sync {
-            magic: NetMessage::PROTOCOL_7_SYNC_MAGIC,
-            identity: ours,
-        }
-        .to_bytes();
-        let Some(NetMessage::Sync { magic, identity }) = NetMessage::from_bytes(&bytes) else {
+        let bytes = sync_72(NetMessage::PROTOCOL_7_SYNC_MAGIC, ours);
+        let Some(NetMessage::Sync {
+            magic, identity, ..
+        }) = NetMessage::from_bytes(&bytes)
+        else {
             panic!("a protocol-7 Sync decodes");
         };
         assert_eq!(
@@ -859,8 +974,54 @@ mod tests {
                 theirs: Some(ours.epoch),
             })
         );
-        assert_eq!(NetMessage::SYNC_MAGIC, 0x524E_4538, "\"RNE8\"");
-        assert_eq!(PROTOCOL_VERSION, 8);
+    }
+
+    /// v3.4.0 (protocol 9) — a v3.2.x/v3.3.x peer's `"RNE8"` `Sync` (72
+    /// bytes, no key share) is decoded and refused as another emulator
+    /// version naming its epoch: it neither seals nor opens a sealed
+    /// datagram, so a session with it could not exchange one message. The
+    /// same 72 bytes under a magic that is not protocol 6, 7 or 8's are not
+    /// decoded at all, and our own magic needs the 88-byte layout.
+    #[test]
+    fn a_protocol_8_peer_is_refused_as_another_version_naming_its_epoch() {
+        let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
+        let mut bytes = sync_72(NetMessage::PROTOCOL_8_SYNC_MAGIC, ours);
+        let Some(NetMessage::Sync {
+            magic,
+            identity,
+            key_share,
+        }) = NetMessage::from_bytes(&bytes)
+        else {
+            panic!("a protocol-8 Sync decodes");
+        };
+        assert_eq!(key_share, [0; KEY_SHARE_LEN], "protocol 8 carries no share");
+        assert_eq!(
+            ours.check_sync(magic, &identity),
+            SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                ours: ours.epoch,
+                theirs: Some(ours.epoch),
+            })
+        );
+        assert!(NetMessage::OLDER_SYNC_MAGICS.contains(&NetMessage::PROTOCOL_8_SYNC_MAGIC));
+        bytes[1..5].copy_from_slice(&NetMessage::SYNC_MAGIC.to_le_bytes());
+        assert_eq!(NetMessage::from_bytes(&bytes), None, "RNE9 is 88 bytes");
+        assert_eq!(NetMessage::SYNC_MAGIC, 0x524E_4539, "\"RNE9\"");
+        assert_eq!(PROTOCOL_VERSION, 9);
+    }
+
+    /// v3.4.0 — the key share round-trips at the end of a protocol 9 `Sync`
+    /// and of every roster entry.
+    #[test]
+    fn the_key_share_is_on_the_wire() {
+        let share = [0xC3; KEY_SHARE_LEN];
+        let msg = NetMessage::Sync {
+            magic: NetMessage::SYNC_MAGIC,
+            identity: SessionIdentity::new([1; 32], [2; 32]),
+            key_share: share,
+        };
+        let bytes = msg.to_bytes();
+        assert_eq!(&bytes[1 + 72..], &share);
+        roundtrip(&msg);
     }
 
     /// v3.2.0 — the `InputBatch` wire form, byte for byte, and its bounds.
@@ -917,13 +1078,23 @@ mod tests {
                 (
                     0,
                     SocketAddr::new(Ipv4Addr::new(192, 168, 1, 5).into(), 7000),
+                    [1; KEY_SHARE_LEN],
                 ),
-                (1, SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0xABCD)),
+                (
+                    1,
+                    SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0xABCD),
+                    [2; KEY_SHARE_LEN],
+                ),
                 (
                     2,
                     SocketAddr::new(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(), 65535),
+                    [3; KEY_SHARE_LEN],
                 ),
-                (3, SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 1)),
+                (
+                    3,
+                    SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 1),
+                    [0xFE; KEY_SHARE_LEN],
+                ),
             ],
         });
         // An empty roster is well-formed too.
@@ -944,7 +1115,11 @@ mod tests {
         assert!(NetMessage::from_bytes(&[NetMessage::TAG_ROSTER, 1]).is_none());
         // A valid one-entry roster with one extra trailing byte ⇒ malformed.
         let mut buf = NetMessage::Roster {
-            peers: vec![(0, SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 5))],
+            peers: vec![(
+                0,
+                SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 5),
+                [7; KEY_SHARE_LEN],
+            )],
         }
         .to_bytes();
         buf.push(0xFF);
