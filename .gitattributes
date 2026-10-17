@@ -22,3 +22,11 @@
 # comparison on an unchanged trace (Copilot on #612). Every one is LF in the
 # index already, so this changes no committed byte.
 crates/rustynes-test-harness/golden/irq_trace/*.csv text eol=lf
+
+# The hosted signalling conformance vectors (v3.4.0) are compared BYTE FOR BYTE
+# with what the Rust reference relay renders, which is LF
+# (`hosted_signaling_vectors::committed_vectors_match_the_reference_relay`), and
+# the Worker's vitest reads the same file. The windows-latest runner's autocrlf
+# checkout wrote it as CRLF and failed that test on the v3.4.0 release PR (#613)
+# with no protocol change. LF in the index already, so no committed byte moves.
+services/hosted/test/vectors/*.json text eol=lf
