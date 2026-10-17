@@ -163,7 +163,10 @@ pub use nat_connect::{NatConfig, NatConnect, NatPhase};
 #[cfg(not(target_arch = "wasm32"))]
 pub use relay::{RelayUdpSocket, TurnClient, TurnConfig};
 pub use rng::SplitMix64;
-pub use session::{AdvanceOutcome, MAX_PLAYERS, NetplayError, RollbackSession, SessionConfig};
+pub use session::{
+    AdvanceOutcome, CHECKSUM_RETAIN_FRAMES, CONFIRMED_DIGEST_RETAIN, MAX_PLAYERS, NetplayError,
+    RetainedWindow, RollbackSession, SessionConfig, framebuffer_digest, gameplay_digest,
+};
 pub use signaling::{Action, ClientId, MAX_ROOM_LIST, Relay, RoomInfo, SignalMessage};
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 pub use signaling_client::{SignalEvent, SignalingClient};

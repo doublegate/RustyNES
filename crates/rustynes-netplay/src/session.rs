@@ -48,10 +48,12 @@
 //! 2-player path is exactly the prior pairwise link (`player` is always the
 //! one remote index).
 
+use std::collections::{BTreeMap, VecDeque};
+
 use rustynes_core::{Buttons, Nes};
 
 use crate::diagnostics::DesyncDiagnostics;
-use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict, fnv1a64};
+use crate::message::{IdentityMismatch, NetMessage, SessionIdentity, SyncVerdict};
 use crate::transport::Transport;
 
 /// The maximum number of players.
@@ -215,6 +217,172 @@ impl AdvanceOutcome {
     };
 }
 
+/// How many confirmed frames' entering digests the session keeps for
+/// [`RollbackSession::confirmed_entering_digest`] (v3.4.0, NET-R2-09).
+///
+/// Until v3.4.0 the digest of every confirmed frame was kept for the whole
+/// session, eight bytes plus an `Option` tag per frame, forever. Nothing in the
+/// session reads them back: they exist for the caller (the determinism
+/// harness, the mobile bridge's debug surface) to compare peers. A caller that
+/// wants every frame reads them as they confirm; 256 frames (about four
+/// seconds at 60 Hz) is far more than the gap between two reads of a caller
+/// that polls once per tick.
+pub const CONFIRMED_DIGEST_RETAIN: usize = 256;
+
+/// How far behind the confirmed boundary a checkpoint digest (ours or a
+/// peer's) is kept for the desync comparison (v3.4.0, NET-R2-09).
+///
+/// A `Checksum` is sent once and never resent, and peers confirm a given frame
+/// at different moments, so a peer's checksum can arrive a little before or a
+/// little after ours for the same frame. Both sides stay within the rollback
+/// window of each other (each stalls past it), so any honest pairing happens
+/// within a few frames; the same 1024-frame allowance as
+/// [`MAX_SESSION_FRAME_LOOKAHEAD`] covers a peer configured far past the
+/// defaults. Older entries are dropped: a comparison that never happened is a
+/// detection missed, not a desync claimed.
+pub const CHECKSUM_RETAIN_FRAMES: u32 = MAX_SESSION_FRAME_LOOKAHEAD;
+
+/// v3.4.0 — how much per-frame state a session holds right now.
+///
+/// Returned by [`RollbackSession::retained`]. Diagnostic: the long-session test bounds
+/// every field by [`RetainedWindow::bound`], which depends on the
+/// configuration and never on how long the session has run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RetainedWindow {
+    /// Frames of input history held (each one `InputSlot`, a few bytes).
+    pub history_frames: usize,
+    /// Entries in the rollback window: one core snapshot plus a digest per
+    /// frame from the first unconfirmed frame to the present.
+    pub window_entries: usize,
+    /// Bytes of snapshot data in those entries.
+    pub window_bytes: usize,
+    /// Confirmed entering digests held for
+    /// [`RollbackSession::confirmed_entering_digest`].
+    pub confirmed_digests: usize,
+    /// Checkpoint digests held for the desync comparison, ours and the
+    /// peers' pending ones together.
+    pub checksums: usize,
+}
+
+impl RetainedWindow {
+    /// The most of each kind an honest session with `cfg` may hold, whatever
+    /// its length. A hostile peer can push `history_frames` further, up to
+    /// [`MAX_SESSION_FRAME_LOOKAHEAD`] past the present (see that constant);
+    /// this bound is the honest one the long-session test asserts.
+    ///
+    /// - history: the retransmit window ([`INPUT_RESEND_WINDOW`]) below the
+    ///   newest local input, which sits `input_delay` ahead of the present,
+    ///   plus a peer's inputs, which can run up to `input_delay +
+    ///   max_rollback_frames + 2` ahead of it.
+    /// - window: one entry per unconfirmed frame and one for the present; the
+    ///   stall keeps at most `max_rollback_frames + 1` frames unconfirmed.
+    /// - checksums: one per checksum interval over
+    ///   [`CHECKSUM_RETAIN_FRAMES`], for ours and for the peers'.
+    #[must_use]
+    pub const fn bound(cfg: &SessionConfig) -> Self {
+        let delay = cfg.input_delay as usize;
+        let rollback = cfg.max_rollback_frames as usize;
+        let interval = if cfg.checksum_interval == 0 {
+            usize::MAX
+        } else {
+            cfg.checksum_interval as usize
+        };
+        Self {
+            history_frames: INPUT_RESEND_WINDOW as usize + 2 * delay + 2 * rollback + 4,
+            window_entries: rollback + 3,
+            window_bytes: usize::MAX,
+            confirmed_digests: CONFIRMED_DIGEST_RETAIN,
+            checksums: 2 * (CHECKSUM_RETAIN_FRAMES as usize / interval + 2),
+        }
+    }
+}
+
+/// v3.4.0 — the digest of one framebuffer, the picture term of the gameplay
+/// digest ([`gameplay_digest`]) and the `fb_hash` a [`NetMessage::Checksum`]
+/// carries.
+///
+/// Until v3.4.0 this was FNV-1a 64 over every byte, one multiply per byte:
+/// measured at 209.7 us for one 245,760-byte frame (`benches/rollback_window.rs`,
+/// `digest_fnv1a_bytewise`, release build), paid at least once per confirmed
+/// frame (NET-R2-05). This one reads the frame as little-endian 64-bit words in
+/// four independent lanes, so the four multiply chains run in parallel, and
+/// each round rotates as well as multiplies, so a high bit of one word reaches
+/// the low bits of the lane before the next word arrives (a bare
+/// XOR-and-multiply only carries bits upward, so two equal high-bit flips in
+/// two words cancel). The round and the final mix are the familiar
+/// multiply-rotate-multiply and xor-shift-multiply shapes of the xxHash family
+/// with its published odd constants; this is not XXH64 and is not claimed to
+/// be, only a deterministic non-cryptographic checksum. Measured at the
+/// figure `docs/netplay-session.md` records.
+///
+/// Deterministic everywhere: the words are read little-endian whatever the
+/// host, so a wasm32 peer and an x86-64 peer agree. Changing this function
+/// changes every `Checksum` peers exchange, which is why it moved with
+/// protocol 9 and must not move without a protocol bump.
+///
+/// Not used for any security purpose.
+#[must_use]
+pub fn framebuffer_digest(data: &[u8]) -> u64 {
+    const P1: u64 = 0x9E37_79B1_85EB_CA87;
+    const P2: u64 = 0xC2B2_AE3D_27D4_EB4F;
+    const P3: u64 = 0x1656_67B1_9E37_79F9;
+    #[inline]
+    const fn round(acc: u64, word: u64) -> u64 {
+        acc.wrapping_add(word.wrapping_mul(P2))
+            .rotate_left(31)
+            .wrapping_mul(P1)
+    }
+    let mut lanes = [P1, P2, P3, P1 ^ P2];
+    let (blocks, tail) = data.as_chunks::<32>();
+    for block in blocks {
+        let (words, _) = block.as_chunks::<8>();
+        for (lane, word) in lanes.iter_mut().zip(words) {
+            *lane = round(*lane, u64::from_le_bytes(*word));
+        }
+    }
+    // A tail shorter than one 32-byte block (none for a NES frame, whose
+    // 245,760 bytes are 7,680 blocks) goes into the first lane bytewise.
+    for &b in tail {
+        lanes[0] = round(lanes[0], u64::from(b));
+    }
+    let mut h = (data.len() as u64).wrapping_mul(P3);
+    for lane in lanes {
+        h = round(h, lane);
+    }
+    h ^= h >> 33;
+    h = h.wrapping_mul(P2);
+    h ^= h >> 29;
+    h = h.wrapping_mul(P3);
+    h ^ (h >> 32)
+}
+
+/// The deterministic gameplay digest of the machine right now.
+///
+/// The framebuffer digest XOR a cycle term, so two machines with the same picture
+/// at different cycle counts still differ. This is the value
+/// [`RollbackSession::confirmed_entering_digest`] reports and a
+/// [`NetMessage::Checksum`] compares.
+///
+/// Framebuffer and cycle, not the full snapshot: the snapshot also carries
+/// audio-synthesis transients that differ with how the audio was drained yet
+/// never affect a later frame, so hashing them would report a desync that is
+/// not one. Both terms are byte-reproducible across a save-state restore and
+/// replay.
+#[must_use]
+pub fn gameplay_digest(nes: &Nes) -> u64 {
+    gameplay_digest_parts(nes).0
+}
+
+/// [`gameplay_digest`] and the framebuffer digest it is built on, as
+/// `(combined, framebuffer)`. Equal framebuffer digests with unequal combined
+/// ones mean the same picture at a different cycle count (a timing bug);
+/// unequal framebuffer digests mean the rendered state itself diverged.
+fn gameplay_digest_parts(nes: &Nes) -> (u64, u64) {
+    let fb = framebuffer_digest(nes.framebuffer());
+    let combined = fb ^ nes.cycle().wrapping_mul(0x100_0000_01b3);
+    (combined, fb)
+}
+
 /// One player's input for a single frame.
 ///
 /// For the local player `confirmed` is set the moment it is authored (we own
@@ -239,6 +407,28 @@ struct InputSlot {
     simulated: bool,
 }
 
+/// v3.4.0 — one entry of the rollback window: the machine as it was entering
+/// one frame.
+///
+/// `snapshot` is a FULL core snapshot, framebuffer included. Round 2 NET-R2-02
+/// proposed a slim one (no framebuffer), on the claim that a replay repaints
+/// every pixel before anything reads the picture. Measured, that is not true:
+/// a `run_frame` boundary can fall a few dots into scanline 0, so the first
+/// pixels of a frame's top row are painted by the call before it. On nestest,
+/// a slim restore of the state entering frames 1, 2 and 3 followed by one
+/// frame left 51, 15 and 6 framebuffer bytes (row 0, x = 1 to 17) holding the
+/// later picture, and the per-frame gate
+/// (`a_misprediction_forces_a_replay_and_every_frame_matches`) failed at
+/// frame 4 as a false desync. A full snapshot restores those pixels too.
+///
+/// `digest` is [`gameplay_digest_parts`] of the same moment. Keeping it beside
+/// the snapshot means a confirmation never has to restore anything to learn
+/// a confirmed frame's digest.
+struct WindowEntry {
+    snapshot: Vec<u8>,
+    digest: (u64, u64),
+}
+
 /// An `N`-player GGPO-style rollback session driving one [`Nes`] over a
 /// [`Transport`].
 ///
@@ -247,6 +437,31 @@ struct InputSlot {
 /// frame. See the module docs for the algorithm. `N` (2..=4) is
 /// [`SessionConfig::num_players`]; with `N == 2` this is exactly the
 /// pairwise 2-player session.
+///
+/// # The rollback window (v3.4.0)
+///
+/// The session holds one [`WindowEntry`] per frame from the first unconfirmed
+/// frame `B` (= `last_confirmed_frame + 1`) to the present, each recorded the
+/// moment the machine entered that frame, during the forward run or a replay.
+/// Every frame below `B` ran with every player's real input, so the entry for
+/// `B` is canonical: byte-identical on every peer. It is the checkpoint.
+///
+/// - **A misprediction at frame `m`** restores entry `m` and replays `m` to the
+///   present, re-predicting the frames still unconfirmed. Before v3.4.0 a
+///   replay always started at the checkpoint.
+/// - **A confirmation** moves `B` forward. The entries between the old and the
+///   new `B` were recorded on inputs that have now all turned out to be right
+///   (otherwise a misprediction would have replayed them), so their digests
+///   are the confirmed digests, and the entries below the new `B` are dropped.
+///   No frame is re-run. Before v3.4.0 every confirmation restored the
+///   checkpoint and replayed to the present, so a session with perfect
+///   predictions still re-ran several frames per tick (NET-R2-01).
+///
+/// Every frame-indexed store is a window too (NET-R2-09): input history from
+/// just below the checkpoint (the retransmit window and the prediction walk
+/// need no more), the last [`CONFIRMED_DIGEST_RETAIN`] confirmed digests, and
+/// checkpoint digests for [`CHECKSUM_RETAIN_FRAMES`]. [`Self::retained`]
+/// reports the sizes.
 pub struct RollbackSession<T: Transport> {
     config: SessionConfig,
     transport: T,
@@ -261,48 +476,43 @@ pub struct RollbackSession<T: Transport> {
     /// `true` once a peer's `Sync` handshake has been validated.
     synced: bool,
 
-    /// Per-frame input history, indexed by frame. Grows as frames are
-    /// produced; old entries below the rollback window are never read again
-    /// but are retained (Stage 1 keeps the full history for simplicity — a
-    /// production build would prune; see the Stage 2/3 handoff).
-    history: Vec<InputSlot>,
+    /// Per-frame input history, `history[i]` being frame `history_base + i`.
+    /// Frames below `history_base` were pruned (see `prune_history`); a late
+    /// datagram naming one is ignored, as every frame there is confirmed.
+    history: VecDeque<InputSlot>,
+    /// The frame `history[0]` holds.
+    history_base: u32,
 
-    /// Checksums we have *sent* at confirmed frames, kept so a later remote
-    /// `Checksum` for the same frame can be compared and so we don't re-send.
-    local_checksums: Vec<Option<u64>>,
+    /// The rollback window: `window[i]` is the machine entering frame
+    /// `window_base + i`, for every frame from the checkpoint (the first
+    /// unconfirmed frame) to the present. Empty until the first frame runs.
+    window: VecDeque<WindowEntry>,
+    /// The frame `window[0]` holds: the checkpoint frame.
+    window_base: u32,
+    /// Snapshot buffers of dropped window entries, reused for new ones so the
+    /// steady state allocates nothing.
+    spare_snapshots: Vec<Vec<u8>>,
 
-    /// The canonical hash of the deterministic *entering* state of each
-    /// checksummed frame, recorded by `resync` the moment the frame becomes
-    /// confirmed (its entering state is then a function of real inputs only).
-    /// Because all peers reach byte-identical entering state for a confirmed
-    /// frame, these hashes match across peers — the property that makes the
-    /// checksum exchange a sound desync detector.
-    /// Each entry is `(combined_digest, framebuffer_hash)`: the combined value
-    /// is what desync detection compares; the framebuffer hash is carried so a
-    /// detected desync can report whether the *picture* diverged (a state bug)
-    /// or only the cycle term (a timing bug).
-    confirmed_hashes: Vec<Option<(u64, u64)>>,
+    /// The canonical entering digest of the most recent confirmed frames,
+    /// `confirmed_entering[i]` being frame `entering_base + i`. A function of
+    /// confirmed inputs alone, so identical across peers.
+    confirmed_entering: VecDeque<u64>,
+    /// The frame `confirmed_entering[0]` holds.
+    entering_base: u32,
 
-    /// Remote checksums that arrived before our matching `confirmed_hashes`
-    /// entry was ready, kept so the comparison happens once we can compute
-    /// ours. `(combined_digest, framebuffer_hash)`, as above.
-    remote_checksums: Vec<Option<(u64, u64)>>,
+    /// Our canonical digest at each confirmed checksum-boundary frame `f`: the
+    /// state AFTER running `f` (entering `f + 1`), as `(combined,
+    /// framebuffer)`. Compared with the peers' `Checksum` for `f`; the
+    /// framebuffer half lets a desync say whether the picture diverged (a
+    /// state bug) or only the cycle term (a timing bug).
+    confirmed_hashes: BTreeMap<u32, (u64, u64)>,
 
-    /// The canonical confirmed checkpoint: `(frame, entering-state snapshot)`,
-    /// where `frame == last_confirmed_frame + 1` (or 0 before any frame). The
-    /// snapshot is the emulator state entering `frame` derived from real
-    /// (confirmed) inputs ONLY, so it is byte-identical across peers. Every
-    /// rollback restores it as the base, and confirmed-frame checksums hash
-    /// it — that is what makes both peer-sync and desync-detection sound.
-    /// `None` until the first frame is produced.
-    checkpoint: Option<(u32, Vec<u8>)>,
+    /// Peers' checksums that arrived before our matching `confirmed_hashes`
+    /// entry existed, compared once it does.
+    remote_checksums: BTreeMap<u32, (u64, u64)>,
 
-    /// The canonical *entering* gameplay digest of each confirmed frame,
-    /// written only from a fully-confirmed replay (so it is cross-peer-
-    /// identical). Stage 1 retains the full history for the determinism
-    /// harness to inspect; a production build would keep only a sliding window
-    /// (see the Stage 2/3 handoff). `confirmed_entering[f]`.
-    confirmed_entering: Vec<Option<u64>>,
+    /// The next checksum-boundary frame whose `Checksum` we have not sent.
+    next_checksum_frame: u32,
 
     /// Observational desync telemetry (v1.3.0 Workstream G1). Records every
     /// confirmed-frame checksum comparison — match or mismatch — for the
@@ -341,12 +551,16 @@ impl<T: Transport> RollbackSession<T> {
             last_confirmed_frame: None,
             remote_ack_frame: None,
             synced: false,
-            history: Vec::new(),
-            local_checksums: Vec::new(),
-            confirmed_hashes: Vec::new(),
-            remote_checksums: Vec::new(),
-            checkpoint: None,
-            confirmed_entering: Vec::new(),
+            history: VecDeque::new(),
+            history_base: 0,
+            window: VecDeque::new(),
+            window_base: 0,
+            spare_snapshots: Vec::new(),
+            confirmed_entering: VecDeque::new(),
+            entering_base: 0,
+            confirmed_hashes: BTreeMap::new(),
+            remote_checksums: BTreeMap::new(),
+            next_checksum_frame: config.checksum_interval,
             diagnostics: DesyncDiagnostics::new(),
         };
         // GGPO input-delay convention: the first `input_delay` frames have no
@@ -356,11 +570,12 @@ impl<T: Transport> RollbackSession<T> {
         // the other peers' matching empty inputs arrive.
         let lp = config.local_player;
         for f in 0..config.input_delay {
-            session.ensure_frame(f);
-            session.history[f as usize].players[lp as usize] = PlayerInput {
-                input: 0,
-                confirmed: true,
-            };
+            if let Some(slot) = session.slot_mut(f) {
+                slot.players[lp as usize] = PlayerInput {
+                    input: 0,
+                    confirmed: true,
+                };
+            }
             session.transport.send(&NetMessage::Input {
                 player: lp,
                 frame: f,
@@ -388,27 +603,30 @@ impl<T: Transport> RollbackSession<T> {
         self.last_confirmed_frame
     }
 
-    /// The canonical gameplay digest of the deterministic state *entering*
-    /// `frame`, available once `frame` is confirmed (every frame before it ran
-    /// with real inputs). It is a function of confirmed inputs alone, so it is
-    /// identical across peers — the basis for cross-peer state verification.
-    /// Returns `None` if `frame` is not yet confirmed. Primarily for tests /
-    /// debugging.
+    /// The canonical gameplay digest ([`gameplay_digest`]) of the
+    /// deterministic state *entering* `frame`, available once every frame
+    /// before it is confirmed. It is a function of confirmed inputs alone, so
+    /// it is identical across peers — the basis for cross-peer state
+    /// verification.
+    ///
+    /// Since v3.4.0 only the most recent [`CONFIRMED_DIGEST_RETAIN`] confirmed
+    /// frames are kept, so `None` means "not confirmed yet" or "confirmed
+    /// long enough ago to have been dropped"; a caller that wants every frame
+    /// reads each one as it confirms. Primarily for tests / debugging.
     #[must_use]
     pub fn confirmed_entering_digest(&self, frame: u32) -> Option<u64> {
-        self.confirmed_entering
-            .get(frame as usize)
-            .copied()
-            .flatten()
+        let i = frame.checked_sub(self.entering_base)? as usize;
+        self.confirmed_entering.get(i).copied()
     }
 
     /// The confirmed per-port input applied at `frame`, if every player is
-    /// confirmed. The returned array is indexed by canonical controller port
-    /// (port 0 = P1, … port 3 = Four Score P4), independent of which player is
-    /// local. Ports `>= num_players` are `0`. For tests / debugging.
+    /// confirmed and the frame is still in the history window. The returned
+    /// array is indexed by canonical controller port (port 0 = P1, … port 3 =
+    /// Four Score P4), independent of which player is local. Ports `>=
+    /// num_players` are `0`. For tests / debugging.
     #[must_use]
     pub fn confirmed_input(&self, frame: u32) -> Option<[u8; MAX_PLAYERS]> {
-        let slot = self.history.get(frame as usize).copied()?;
+        let slot = self.slot(frame).copied()?;
         let n = self.config.num_players as usize;
         if (0..n).all(|p| slot.players[p].confirmed) {
             let mut out = [0u8; MAX_PLAYERS];
@@ -418,6 +636,19 @@ impl<T: Transport> RollbackSession<T> {
             Some(out)
         } else {
             None
+        }
+    }
+
+    /// v3.4.0 — how much per-frame state the session holds now. See
+    /// [`RetainedWindow`].
+    #[must_use]
+    pub fn retained(&self) -> RetainedWindow {
+        RetainedWindow {
+            history_frames: self.history.len(),
+            window_entries: self.window.len(),
+            window_bytes: self.window.iter().map(|e| e.snapshot.len()).sum(),
+            confirmed_digests: self.confirmed_entering.len(),
+            checksums: self.confirmed_hashes.len() + self.remote_checksums.len(),
         }
     }
 
@@ -454,14 +685,15 @@ impl<T: Transport> RollbackSession<T> {
     pub fn add_local_input(&mut self, input: Buttons) {
         let target = self.current_frame + self.config.input_delay;
         let lp = self.local_player();
-        self.ensure_frame(target);
-        self.history[target as usize].players[lp as usize] = PlayerInput {
-            input: input.bits(),
-            confirmed: true,
-        };
-        // Immediately tell every peer (redundant resend of recent inputs is
-        // the UDP transport's job in Stage 2; here we send once per add). The
-        // transport fans this out to all other players (mesh topology).
+        if let Some(slot) = self.slot_mut(target) {
+            slot.players[lp as usize] = PlayerInput {
+                input: input.bits(),
+                confirmed: true,
+            };
+        }
+        // Immediately tell every peer; the retransmit window
+        // (`resend_unacked_local_inputs`) covers a loss. The transport fans
+        // this out to all other players (mesh topology).
         self.transport.send(&NetMessage::Input {
             player: lp,
             frame: target,
@@ -475,12 +707,11 @@ impl<T: Transport> RollbackSession<T> {
     /// (saturating). See the constant for the derivation. Anything later is
     /// dropped before it can size an allocation.
     ///
-    /// Capped one short of `u32::MAX`: the private `ensure_frame`
-    /// sizes its tables as `frame as usize + 1`, which overflows a 32-bit
-    /// `usize` at `u32::MAX`, and saturation alone would let the window reach
-    /// exactly that frame. Unreachable in play (the clock would have to run
-    /// for over two years at 60 fps), but this is the guard, so it holds at
-    /// its own endpoint.
+    /// Capped one short of `u32::MAX`: the private `slot_mut` sizes the
+    /// history as `frame - history_base + 1`, and saturation alone would let
+    /// the window reach exactly `u32::MAX`. Unreachable in play (the clock
+    /// would have to run for over two years at 60 fps), but this is the guard,
+    /// so it holds at its own endpoint.
     #[must_use]
     pub const fn max_accepted_frame(&self) -> u32 {
         let window = self
@@ -495,27 +726,24 @@ impl<T: Transport> RollbackSession<T> {
         }
     }
 
-    /// Grow the per-frame vectors so index `frame` is addressable.
+    /// The history slot for `frame`, if it is inside the history window.
+    fn slot(&self, frame: u32) -> Option<&InputSlot> {
+        let i = frame.checked_sub(self.history_base)? as usize;
+        self.history.get(i)
+    }
+
+    /// The history slot for `frame`, growing the window to reach it. `None`
+    /// for a frame below the window (pruned, so already confirmed).
     ///
     /// Callers pass either a locally-derived frame or a remote one that has
-    /// already been checked against [`max_accepted_frame`](Self::max_accepted_frame).
-    fn ensure_frame(&mut self, frame: u32) {
-        let need = frame as usize + 1;
-        if self.history.len() < need {
-            self.history.resize(need, InputSlot::default());
+    /// already been checked against [`max_accepted_frame`](Self::max_accepted_frame),
+    /// so the growth is bounded.
+    fn slot_mut(&mut self, frame: u32) -> Option<&mut InputSlot> {
+        let i = frame.checked_sub(self.history_base)? as usize;
+        if self.history.len() <= i {
+            self.history.resize(i + 1, InputSlot::default());
         }
-        if self.local_checksums.len() < need {
-            self.local_checksums.resize(need, None);
-        }
-        if self.confirmed_hashes.len() < need {
-            self.confirmed_hashes.resize(need, None);
-        }
-        if self.remote_checksums.len() < need {
-            self.remote_checksums.resize(need, None);
-        }
-        if self.confirmed_entering.len() < need {
-            self.confirmed_entering.resize(need, None);
-        }
+        self.history.get_mut(i)
     }
 
     /// Advance one visual frame. See the module docs for the full algorithm.
@@ -532,10 +760,8 @@ impl<T: Transport> RollbackSession<T> {
         let earliest_mispredict = self.ingest(nes)?;
 
         // 2. Recompute confirmation: newly-arrived inputs may extend the
-        //    confirmed prefix, advancing the canonical checkpoint.
-        let confirmed_before = self.last_confirmed_frame;
+        //    confirmed prefix.
         self.recompute_confirmed();
-        let confirmation_advanced = self.last_confirmed_frame != confirmed_before;
 
         // 2b. Acknowledge inputs with a CUMULATIVE (contiguous) frame, not the
         //     highest one received. `last_confirmed_frame` is the highest frame
@@ -551,26 +777,33 @@ impl<T: Transport> RollbackSession<T> {
             self.transport.send(&NetMessage::InputAck { frame });
         }
 
-        // 3. Roll back + re-simulate when a misprediction contradicted an
-        //    already-run frame, OR when confirmation advanced (the checkpoint
-        //    must move forward over now-confirmed frames). The re-sim restores
-        //    the canonical confirmed checkpoint and replays forward, advancing
-        //    the checkpoint as it crosses confirmed frames. Because the
-        //    checkpoint is derived from confirmed inputs only, every peer
-        //    replays from a byte-identical base — the property the cross-peer
-        //    determinism proof relies on.
-        let mispredicted = earliest_mispredict.is_some_and(|m| m < self.current_frame);
+        // 3. Roll back + re-simulate when a real input contradicted the
+        //    prediction an already-run frame used. The replay starts at that
+        //    frame's window entry, not at the checkpoint: the frames before it
+        //    ran on inputs nothing has contradicted. A confirmation alone
+        //    replays nothing (v3.4.0, NET-R2-01); step 3b promotes what the
+        //    window already holds.
+        let mispredicted = earliest_mispredict.filter(|&m| m < self.current_frame);
         let mut rolled_back = false;
         let mut resimulated = 0u32;
-        if (mispredicted || confirmation_advanced) && self.checkpoint.is_some() {
-            resimulated = self.resync(nes)?;
-            rolled_back = mispredicted;
+        if let Some(m) = mispredicted
+            && !self.window.is_empty()
+        {
+            // A mispredicted frame is never below the checkpoint: every frame
+            // there is confirmed, and a confirmed cell is never rewritten
+            // (`ingest_single_input`). The clamp is defence in depth.
+            resimulated = self.replay_from(nes, m.max(self.window_base))?;
+            rolled_back = true;
         }
 
-        // 3b. Resolve any remote checksums now that the checkpoint advanced.
+        // 3b. Promote the frames that just became confirmed: record their
+        //     canonical digests and drop their window entries.
+        self.promote_confirmed();
+
+        // 3c. Resolve any remote checksums now that more frames are confirmed.
         self.compare_pending_checksums()?;
 
-        // 3c. Redundantly resend the local inputs the remote has NOT yet
+        // 3d. Redundantly resend the local inputs the remote has NOT yet
         //     acknowledged. The transport is unreliable (UDP / an
         //     unreliable+unordered WebRTC data channel): a single dropped Input
         //     would otherwise be lost forever, so the peer mispredicts that
@@ -588,31 +821,33 @@ impl<T: Transport> RollbackSession<T> {
 
         // 4. Predict the remote inputs for the frame we're about to run.
         let frame = self.current_frame;
-        self.ensure_frame(frame);
         self.predict_remotes(frame);
 
-        // 5. Run one frame. Seed the checkpoint on the very first frame (frame
+        // 5. Run one frame, recording the window entry for the frame it enters.
+        //    The very first frame also records its own entering entry: frame
         //    0's entering state is the deterministic power-on, identical
-        //    across peers).
-        if self.checkpoint.is_none() {
-            // v2.8.0 Phase 3 — core snapshot (no thumbnail section); the
-            // checkpoint is machine-consumed only.
-            let mut seed = Vec::new();
-            nes.snapshot_core_into(&mut seed);
-            self.checkpoint = Some((frame, seed));
+        //    across peers, and it is the first checkpoint.
+        if self.window.is_empty() {
+            self.window_base = frame;
+            self.record_entry(nes, frame);
         }
         self.apply_and_run(nes, frame);
-        self.history[frame as usize].simulated = true;
+        if let Some(slot) = self.slot_mut(frame) {
+            slot.simulated = true;
+        }
+        self.record_entry(nes, frame + 1);
 
         // 6. Send our (already-confirmed-local) input for this frame to the
         //    peers. (add_local_input also sent it for the input-delay target;
         //    this resend covers the immediate frame for the zero-delay case.)
         let lp = self.local_player() as usize;
-        if self.history[frame as usize].players[lp].confirmed {
+        if let Some(cell) = self.slot(frame).map(|s| s.players[lp])
+            && cell.confirmed
+        {
             self.transport.send(&NetMessage::Input {
                 player: self.local_player(),
                 frame,
-                input: self.history[frame as usize].players[lp].input,
+                input: cell.input,
             });
         }
 
@@ -622,6 +857,9 @@ impl<T: Transport> RollbackSession<T> {
         // 8. Periodically checksum a confirmed frame and exchange it.
         self.maybe_send_checksum();
 
+        // 9. Drop the history the session no longer reads.
+        self.prune_history();
+
         Ok(AdvanceOutcome {
             produced_frame: true,
             rolled_back,
@@ -630,10 +868,18 @@ impl<T: Transport> RollbackSession<T> {
         })
     }
 
-    /// Fold a single remote input into the history, returning the frame it mispredicted (if any).
+    /// Fold a single remote input into the history, returning the frame it
+    /// mispredicted (if any).
+    ///
+    /// The first real value for a cell is final (v3.4.0): a different value
+    /// for a cell already confirmed is ignored. An honest peer never sends
+    /// one, and honouring it would rewrite a frame that may already sit below
+    /// the checkpoint, where no window entry exists to replay from; the
+    /// pre-v3.4.0 session took it, replayed from the checkpoint above it, and
+    /// left the peers to find the difference at the next checksum.
     fn ingest_single_input(&mut self, player: u8, frame: u32, input: u8) -> Option<u32> {
         let lp = self.local_player();
-        // Ignore an out-of-range or self-addressed player index
+        // Ignore an out-of-range or self-addressed player index.
         if player >= self.config.num_players || player == lp {
             return None;
         }
@@ -641,19 +887,20 @@ impl<T: Transport> RollbackSession<T> {
         if frame > self.max_accepted_frame() {
             return None;
         }
-        self.ensure_frame(frame);
-        let slot = &mut self.history[frame as usize];
-        let cell = &mut slot.players[player as usize];
-        let prev = cell.input;
+        // A frame below the history window is confirmed and was pruned.
+        let slot = self.slot_mut(frame)?;
         let already_simulated = slot.simulated;
+        let cell = &mut slot.players[player as usize];
+        if cell.confirmed {
+            return None;
+        }
+        let prev = cell.input;
         cell.input = input;
         cell.confirmed = true;
-        // Misprediction: a frame we already ran used a value that
-        // the just-arrived real input contradicts. Re-running it
-        // (and everything after) is required. A second copy of an
-        // identical input (idempotent resend, whether previously a
-        // prediction or already confirmed) leaves `prev == input`,
-        // so it is correctly NOT treated as a misprediction.
+        // Misprediction: a frame we already ran used a value that the
+        // just-arrived real input contradicts. Re-running it (and everything
+        // after) is required. A real input equal to the prediction leaves
+        // `prev == input`, so it is correctly NOT a misprediction.
         if already_simulated && prev != input {
             Some(frame)
         } else {
@@ -719,34 +966,7 @@ impl<T: Transport> RollbackSession<T> {
                     hash,
                     fb_hash,
                 } => {
-                    // Same window as `Input` (AUD-06). A peer only checksums
-                    // confirmed frames, which are never past our inputs, so a
-                    // legitimate checksum is always well inside it.
-                    if frame > self.max_accepted_frame() {
-                        continue;
-                    }
-                    self.ensure_frame(frame);
-                    // Record the remote value, then compare if our canonical
-                    // hash for that confirmed frame is ready. If not, the
-                    // stored value is re-checked once we confirm the frame
-                    // (see `advance` after `recompute_confirmed`).
-                    self.remote_checksums[frame as usize] = Some((hash, fb_hash));
-                    if let Some((local, local_fb)) = self.confirmed_hashes[frame as usize] {
-                        // Observational: record the compare (match or mismatch)
-                        // before any fatal exit. The remote slot is cleared so
-                        // the deferred pass does not re-record the same frame.
-                        self.diagnostics
-                            .record(frame, local, hash, local_fb, fb_hash);
-                        self.remote_checksums[frame as usize] = None;
-                        if local != hash {
-                            return Err(NetplayError::Desync {
-                                frame,
-                                local,
-                                remote: hash,
-                                same_framebuffer: local_fb == fb_hash,
-                            });
-                        }
-                    }
+                    self.ingest_checksum(frame, hash, fb_hash)?;
                     let _ = nes;
                 }
                 // `Quality`: Stage 1 time-sync is driven by our own
@@ -764,109 +984,170 @@ impl<T: Transport> RollbackSession<T> {
         Ok(earliest_mispredict)
     }
 
-    /// Restore the canonical confirmed checkpoint and replay forward to
-    /// `current_frame`, applying each frame's best-known inputs from history.
-    ///
-    /// As the replay crosses frames that are now confirmed (`f` below the
-    /// confirmed boundary), it advances the checkpoint to `f + 1`'s entering
-    /// state — a canonical, cross-peer-identical snapshot — and records `f`'s
-    /// confirmed state hash for the checksum exchange. Frames at or past the
-    /// confirmed boundary replay with predictions and update only the
-    /// per-frame snapshot ring (used purely so a subsequent same-tick rollback
-    /// could re-derive them).
-    ///
-    /// Returns the number of frames replayed.
-    fn resync(&mut self, nes: &mut Nes) -> Result<u32, NetplayError> {
-        // v2.8.0 Phase 3 — take + reinstate instead of cloning the ~250 KiB
-        // checkpoint blob on every rollback; `restore_quiet` keeps the
-        // user's rewind ring intact (this is a machine-driven rollback on
-        // the same timeline, not a user load).
-        let (cp_frame, cp_snap) = self
-            .checkpoint
-            .take()
-            .expect("resync called only when a checkpoint exists");
-        let restore_result = nes.restore_quiet(&cp_snap);
-        self.checkpoint = Some((cp_frame, cp_snap));
-        restore_result?;
+    /// Record a peer's checksum for `frame`, comparing it now if our digest
+    /// for the frame exists.
+    fn ingest_checksum(&mut self, frame: u32, hash: u64, fb_hash: u64) -> Result<(), NetplayError> {
+        let interval = self.config.checksum_interval;
+        // Same window as `Input` (AUD-06). A peer only checksums confirmed
+        // frames, which are never past our inputs, so a legitimate checksum is
+        // always well inside it. A frame that is not one of our boundaries
+        // (or any frame, with checksums off) has no digest of ours to meet,
+        // and one older than the retention window is past comparing: neither
+        // is kept, which is what bounds `remote_checksums`.
+        let boundary = self.last_confirmed_frame.map_or(0, |c| c + 1);
+        if frame > self.max_accepted_frame()
+            || interval == 0
+            || !frame.is_multiple_of(interval)
+            || frame.saturating_add(CHECKSUM_RETAIN_FRAMES) < boundary
+        {
+            return Ok(());
+        }
+        let Some(&(local, local_fb)) = self.confirmed_hashes.get(&frame) else {
+            // Ours is not ready: compared once we confirm the frame
+            // (`compare_pending_checksums`).
+            self.remote_checksums.insert(frame, (hash, fb_hash));
+            return Ok(());
+        };
+        // Observational: record the compare (match or mismatch) before any
+        // fatal exit.
+        self.diagnostics
+            .record(frame, local, hash, local_fb, fb_hash);
+        if local != hash {
+            return Err(NetplayError::Desync {
+                frame,
+                local,
+                remote: hash,
+                same_framebuffer: local_fb == fb_hash,
+            });
+        }
+        Ok(())
+    }
 
-        // First unconfirmed frame: frames strictly below it are confirmed.
-        let confirmed_boundary = self.last_confirmed_frame.map_or(0, |c| c + 1);
-
+    /// Restore the window entry for frame `from` and replay forward to the
+    /// present, re-predicting the frames still unconfirmed and re-recording the
+    /// window entry for every frame the replay enters. Returns the number of
+    /// frames replayed.
+    ///
+    /// Re-predicting matters as much as the replay: the frames after `from`
+    /// were first predicted before `from`'s real input was known, so they
+    /// still repeat the stale value; without a new prediction the next
+    /// arrival would contradict each of them in turn and replay again.
+    fn replay_from(&mut self, nes: &mut Nes, from: u32) -> Result<u32, NetplayError> {
+        let idx = (from - self.window_base) as usize;
+        // `restore_quiet` keeps the user's rewind ring intact: this is a
+        // machine-driven rollback on the same timeline, not a user load.
+        nes.restore_quiet(&self.window[idx].snapshot)?;
         let mut count = 0;
-        for f in cp_frame..self.current_frame {
-            // v3.2.0 (NET-01): no per-frame snapshot is taken here any more.
-            // A `snapshots[f]` ring was filled on every replayed frame and
-            // never read -- rollback restores from its checkpoint -- and was
-            // never pruned either, so it cost a full core snapshot per
-            // replayed frame and grew with the session.
-            // A confirmed replay enters `f` (f < boundary) on a canonical
-            // base, so its entering *gameplay* state is canonical and cross-
-            // peer-identical. Record a digest for verification. (We digest the
-            // deterministic gameplay state — framebuffer + cumulative cycle —
-            // NOT the full snapshot: the snapshot also carries audio-synthesis
-            // transients that legitimately differ with drain history yet never
-            // affect future frames, so hashing them would false-desync. The
-            // framebuffer + cycle are proven byte-deterministic across
-            // restore+replay.)
-            if f < confirmed_boundary {
-                self.confirmed_entering[f as usize] = Some(Self::gameplay_digest(nes));
-            }
-
+        for f in from..self.current_frame {
+            self.predict_remotes(f);
             self.apply_and_run(nes, f);
-            self.history[f as usize].simulated = true;
-            count += 1;
-
-            if f < confirmed_boundary {
-                // The resulting state is the canonical entering state of
-                // `f + 1`. Advance the checkpoint (we restore the full
-                // snapshot, whose audio transients are harmless for replay)
-                // and record the confirmed gameplay digest on a checksum
-                // boundary.
-                if self.config.checksum_interval != 0
-                    && f % self.config.checksum_interval == 0
-                    && self.confirmed_hashes[f as usize].is_none()
-                {
-                    self.confirmed_hashes[f as usize] = Some(Self::gameplay_digest_parts(nes));
-                }
-                // v2.8.0 Phase 3 — advance the checkpoint into its reused
-                // buffer (no per-confirmed-frame allocation).
-                let mut cp_buf = self.checkpoint.take().map_or_else(Vec::new, |(_, v)| v);
-                nes.snapshot_core_into(&mut cp_buf);
-                self.checkpoint = Some((f + 1, cp_buf));
+            if let Some(slot) = self.slot_mut(f) {
+                slot.simulated = true;
             }
+            self.record_entry(nes, f + 1);
+            count += 1;
         }
         Ok(count)
     }
 
-    /// A deterministic digest of the emulator's *gameplay* state: the
-    /// framebuffer plus the cumulative CPU cycle count. Both are byte-
-    /// reproducible across save-state restore + replay (unlike the full
-    /// snapshot, which also serializes audio-synthesis transients that vary
-    /// with audio-drain history but never affect future frames). This is the
-    /// right cross-peer desync / sync digest.
-    fn gameplay_digest(nes: &Nes) -> u64 {
-        Self::gameplay_digest_parts(nes).0
+    /// Record the window entry for `frame`: the machine as it is now, which
+    /// must be the state entering `frame`. Overwrites the entry if the frame
+    /// already has one (a replay), else appends it (the frame after the last
+    /// one recorded), reusing a spare buffer.
+    fn record_entry(&mut self, nes: &Nes, frame: u32) {
+        let idx = (frame - self.window_base) as usize;
+        let digest = gameplay_digest_parts(nes);
+        if let Some(entry) = self.window.get_mut(idx) {
+            // A full core snapshot, framebuffer included (see `WindowEntry`).
+            nes.snapshot_core_into(&mut entry.snapshot);
+            entry.digest = digest;
+        } else {
+            debug_assert_eq!(idx, self.window.len(), "window entries are contiguous");
+            let mut snapshot = self.spare_snapshots.pop().unwrap_or_default();
+            nes.snapshot_core_into(&mut snapshot);
+            self.window.push_back(WindowEntry { snapshot, digest });
+        }
     }
 
-    /// Like [`gameplay_digest`](Self::gameplay_digest) but returns
-    /// `(combined, framebuffer_hash)`. The framebuffer hash is kept separately
-    /// so a desync can be classified: equal framebuffer hashes with an unequal
-    /// combined digest mean the *picture* matched but the cumulative cycle count
-    /// diverged (a timing bug); unequal framebuffer hashes mean the rendered
-    /// state itself diverged.
-    fn gameplay_digest_parts(nes: &Nes) -> (u64, u64) {
-        let fb = fnv1a64(nes.framebuffer());
-        // Fold in the cycle count so two distinct cycle positions with the
-        // same framebuffer still differ.
-        let combined = fb ^ nes.cycle().wrapping_mul(0x100_0000_01b3);
-        (combined, fb)
+    /// Move the checkpoint up to the first unconfirmed frame: record the
+    /// canonical digests of the frames that became confirmed since the last
+    /// call, from the window entries recorded while they ran, then drop those
+    /// entries.
+    ///
+    /// Sound because a window entry for frame `g` was recorded on the inputs
+    /// history held for every frame before `g` at the time, and any of those
+    /// that later turned out wrong was a misprediction, which replayed from
+    /// it and re-recorded every entry after it. So once every frame before `g`
+    /// is confirmed, entry `g` was recorded on exactly the confirmed inputs:
+    /// the same machine every peer reaches.
+    fn promote_confirmed(&mut self) {
+        let new_base = self.last_confirmed_frame.map_or(0, |c| c + 1);
+        if self.window.is_empty() || new_base <= self.window_base {
+            return;
+        }
+        // Confirmation never passes the present, and the window always holds
+        // an entry for the present, so every index below is in range.
+        debug_assert!(((new_base - self.window_base) as usize) < self.window.len());
+        let interval = self.config.checksum_interval;
+        for g in self.window_base..new_base {
+            let i = (g - self.window_base) as usize;
+            let entering = self.window[i].digest.0;
+            if self.confirmed_entering.is_empty() {
+                self.entering_base = g;
+            }
+            debug_assert_eq!(
+                self.entering_base as usize + self.confirmed_entering.len(),
+                g as usize,
+                "confirmed digests are recorded once per frame, in order"
+            );
+            self.confirmed_entering.push_back(entering);
+            if self.confirmed_entering.len() > CONFIRMED_DIGEST_RETAIN {
+                self.confirmed_entering.pop_front();
+                self.entering_base += 1;
+            }
+            // The checkpoint digest for a boundary frame is the state AFTER it
+            // ran: the entry for the frame after it.
+            if interval != 0 && g.is_multiple_of(interval) {
+                let after = self.window[i + 1].digest;
+                self.confirmed_hashes.entry(g).or_insert(after);
+            }
+        }
+        while self.window_base < new_base {
+            if let Some(entry) = self.window.pop_front() {
+                self.spare_snapshots.push(entry.snapshot);
+            }
+            self.window_base += 1;
+        }
+        // Keep no more spare buffers than the window can use at once.
+        self.spare_snapshots
+            .truncate(self.config.max_rollback_frames as usize + 3);
+        // Checkpoint digests older than the retention window cannot meet a
+        // peer's any more.
+        let floor = new_base.saturating_sub(CHECKSUM_RETAIN_FRAMES);
+        self.confirmed_hashes = self.confirmed_hashes.split_off(&floor);
+        self.remote_checksums = self.remote_checksums.split_off(&floor);
+    }
+
+    /// Drop input history the session will not read again. Two readers reach
+    /// back into it: the prediction walk, which stops at the newest confirmed
+    /// input of each player (never below the last confirmed frame), and the
+    /// retransmit window, [`INPUT_RESEND_WINDOW`] frames below the newest
+    /// local input. Everything below both goes.
+    fn prune_history(&mut self) {
+        let last_confirmed = self.last_confirmed_frame.unwrap_or(0);
+        let resend_floor =
+            (self.current_frame + self.config.input_delay).saturating_sub(INPUT_RESEND_WINDOW);
+        let floor = last_confirmed.min(resend_floor);
+        while self.history_base < floor && self.history.pop_front().is_some() {
+            self.history_base += 1;
+        }
     }
 
     /// Apply every player's input for `frame` from history and run one
     /// emulator frame. Each player index maps directly to its controller port;
     /// the Four Score adapter is enabled when there are more than two players.
     fn apply_and_run(&self, nes: &mut Nes, frame: u32) {
-        let slot = self.history[frame as usize];
+        let slot = self.slot(frame).copied().unwrap_or_default();
         let n = self.config.num_players as usize;
         // The session owns whether Four Score is on (it is when >2 players);
         // setting it every frame is idempotent and keeps a rollback's restored
@@ -885,25 +1166,34 @@ impl<T: Transport> RollbackSession<T> {
     fn predict_remotes(&mut self, frame: u32) {
         let n = self.config.num_players;
         let lp = self.local_player();
+        if self.slot_mut(frame).is_none() {
+            return;
+        }
         for player in 0..n {
             if player == lp {
                 continue;
             }
             let p = player as usize;
-            if self.history[frame as usize].players[p].confirmed {
+            if self.slot(frame).is_some_and(|s| s.players[p].confirmed) {
                 continue;
             }
-            // Walk back to this player's most recent confirmed input.
+            // Walk back to this player's most recent confirmed input. The
+            // walk never needs history below the last confirmed frame, where
+            // every input is confirmed, so the pruned prefix is never missed.
             let mut predicted = 0u8;
             let mut f = frame;
-            while f > 0 {
+            while f > self.history_base {
                 f -= 1;
-                if self.history[f as usize].players[p].confirmed {
-                    predicted = self.history[f as usize].players[p].input;
+                if let Some(cell) = self.slot(f).map(|s| s.players[p])
+                    && cell.confirmed
+                {
+                    predicted = cell.input;
                     break;
                 }
             }
-            self.history[frame as usize].players[p].input = predicted;
+            if let Some(slot) = self.slot_mut(frame) {
+                slot.players[p].input = predicted;
+            }
         }
     }
 
@@ -914,11 +1204,9 @@ impl<T: Transport> RollbackSession<T> {
         let mut confirmed = self.last_confirmed_frame;
         let start = confirmed.map_or(0, |c| c + 1);
         for f in start..self.current_frame {
-            let slot = self.history[f as usize];
-            if (0..n).all(|p| slot.players[p].confirmed) {
-                confirmed = Some(f);
-            } else {
-                break;
+            match self.slot(f) {
+                Some(slot) if (0..n).all(|p| slot.players[p].confirmed) => confirmed = Some(f),
+                _ => break,
             }
         }
         self.last_confirmed_frame = confirmed;
@@ -936,31 +1224,33 @@ impl<T: Transport> RollbackSession<T> {
         self.frame_advantage() > i32::try_from(self.config.max_rollback_frames).unwrap_or(i32::MAX)
     }
 
-    /// Compare any remote checksums that arrived before our matching
-    /// canonical hash was computed, now that more frames may be confirmed.
+    /// Compare the remote checksums that arrived before our matching digest
+    /// existed, now that more frames may be confirmed. A remote checksum for a
+    /// confirmed frame with no digest of ours (none was ever recorded, or it
+    /// aged out) can never be compared and is dropped.
     fn compare_pending_checksums(&mut self) -> Result<(), NetplayError> {
         let upto = self.last_confirmed_frame.map_or(0, |c| c + 1);
-        for f in 0..upto {
-            if let (Some(local), Some(remote)) = (
-                self.confirmed_hashes[f as usize],
-                self.remote_checksums[f as usize],
-            ) {
-                // Take the remote so we only compare once.
-                self.remote_checksums[f as usize] = None;
-                let (local_combined, local_fb) = local;
-                let (remote_combined, remote_fb) = remote;
-                // Observational: record the compare (match or mismatch) before
-                // any fatal exit.
-                self.diagnostics
-                    .record(f, local_combined, remote_combined, local_fb, remote_fb);
-                if local_combined != remote_combined {
-                    return Err(NetplayError::Desync {
-                        frame: f,
-                        local: local_combined,
-                        remote: remote_combined,
-                        same_framebuffer: local_fb == remote_fb,
-                    });
-                }
+        while let Some((&f, &(remote_combined, remote_fb))) =
+            self.remote_checksums.first_key_value()
+        {
+            if f >= upto {
+                break;
+            }
+            self.remote_checksums.remove(&f);
+            let Some(&(local_combined, local_fb)) = self.confirmed_hashes.get(&f) else {
+                continue;
+            };
+            // Observational: record the compare (match or mismatch) before
+            // any fatal exit.
+            self.diagnostics
+                .record(f, local_combined, remote_combined, local_fb, remote_fb);
+            if local_combined != remote_combined {
+                return Err(NetplayError::Desync {
+                    frame: f,
+                    local: local_combined,
+                    remote: remote_combined,
+                    same_framebuffer: local_fb == remote_fb,
+                });
             }
         }
         Ok(())
@@ -990,7 +1280,9 @@ impl<T: Transport> RollbackSession<T> {
         let newest = self.current_frame + self.config.input_delay;
         // First un-acked frame (the remote has everything <= remote_ack_frame).
         let first_unacked = self.remote_ack_frame.map_or(0, |a| a.saturating_add(1));
-        let start = first_unacked.max(newest.saturating_sub(INPUT_RESEND_WINDOW));
+        let start = first_unacked
+            .max(newest.saturating_sub(INPUT_RESEND_WINDOW))
+            .max(self.history_base);
         if start > newest {
             return;
         }
@@ -1005,11 +1297,9 @@ impl<T: Transport> RollbackSession<T> {
         let mut run_start = start;
         let mut run: Vec<u8> = Vec::new();
         for frame in start..=newest {
-            let idx = frame as usize;
-            if idx >= self.history.len() {
+            let Some(slot) = self.slot(frame).map(|s| s.players[lp_idx]) else {
                 break;
-            }
-            let slot = self.history[idx].players[lp_idx];
+            };
             if slot.confirmed {
                 if run.is_empty() {
                     run_start = frame;
@@ -1032,15 +1322,17 @@ impl<T: Transport> RollbackSession<T> {
         }
     }
 
-    /// Send a `Checksum` for every confirmed checksum-boundary frame whose
-    /// canonical gameplay digest is ready and hasn't been sent yet.
+    /// Send a `Checksum` for every confirmed checksum-boundary frame not sent
+    /// yet.
     ///
-    /// We iterate rather than only handling `last_confirmed_frame` because
-    /// confirmation can jump past a boundary frame in a single tick (a burst
-    /// of inputs arriving), and we must still exchange that boundary's
-    /// checksum. The hash is the canonical confirmed digest recorded by
-    /// `resync` — a function of confirmed inputs only, so all peers compute
-    /// the same value and a mismatch is a true desync.
+    /// A cursor walks the boundaries rather than only handling
+    /// `last_confirmed_frame`, because confirmation can jump past a boundary
+    /// frame in a single tick (a burst of inputs arriving), and that
+    /// boundary's checksum must still go out. The hash is the canonical
+    /// confirmed digest `promote_confirmed` recorded — a function of
+    /// confirmed inputs only, so all peers compute the same value and a
+    /// mismatch is a true desync. (Before v3.4.0 this loop started at frame
+    /// zero on every tick, which grew with the session.)
     fn maybe_send_checksum(&mut self) {
         let interval = self.config.checksum_interval;
         if interval == 0 {
@@ -1049,19 +1341,21 @@ impl<T: Transport> RollbackSession<T> {
         let Some(confirmed) = self.last_confirmed_frame else {
             return;
         };
-        let mut f = interval; // skip frame 0
-        while f <= confirmed {
-            if self.local_checksums[f as usize].is_none()
-                && let Some((hash, fb_hash)) = self.confirmed_hashes[f as usize]
-            {
-                self.local_checksums[f as usize] = Some(hash);
+        while self.next_checksum_frame <= confirmed {
+            let f = self.next_checksum_frame;
+            if let Some(&(hash, fb_hash)) = self.confirmed_hashes.get(&f) {
                 self.transport.send(&NetMessage::Checksum {
                     frame: f,
                     hash,
                     fb_hash,
                 });
             }
-            f += interval;
+            let Some(next) = f.checked_add(interval) else {
+                // The frame space is exhausted; nothing is left to send.
+                self.next_checksum_frame = u32::MAX;
+                break;
+            };
+            self.next_checksum_frame = next;
         }
     }
 }
@@ -1097,16 +1391,14 @@ mod tests {
         bytes
     }
 
-    /// The length every per-frame vector must share (they are grown together
-    /// by `ensure_frame`); asserting on all five catches a bound that guarded
-    /// only one call site.
-    fn per_frame_lens<T: Transport>(s: &RollbackSession<T>) -> [usize; 5] {
+    /// Every frame-indexed store a remote frame number could size: the input
+    /// history and the two checksum maps (v3.4.0: the history is a window and
+    /// the checksums are maps, so a far frame must not grow either).
+    fn per_frame_lens<T: Transport>(s: &RollbackSession<T>) -> [usize; 3] {
         [
             s.history.len(),
-            s.local_checksums.len(),
             s.confirmed_hashes.len(),
             s.remote_checksums.len(),
-            s.confirmed_entering.len(),
         ]
     }
 
@@ -1170,7 +1462,7 @@ mod tests {
     /// dropped. Mutating the comparison in either direction fails one half.
     #[test]
     fn lookahead_window_never_reaches_u32_max() {
-        // `ensure_frame` computes `frame as usize + 1`, which overflows on a
+        // `slot_mut` computes `frame - base + 1`, which overflows on a
         // 32-bit `usize` for `frame == u32::MAX`. The window saturates, so a
         // session near the end of the frame space must still cap it one short
         // (Copilot on #563). Unreachable in play -- the clock would have to
@@ -1206,7 +1498,7 @@ mod tests {
         // `advance` ingests before it moves the clock, so both frames are
         // judged against the window computed above.
         session.advance(&mut nes).expect("advance");
-        let accepted = session.history[edge as usize].players[1];
+        let accepted = session.slot(edge).expect("edge slot").players[1];
         assert!(
             accepted.confirmed,
             "the window edge itself must be accepted"

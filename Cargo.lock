@@ -4552,6 +4552,7 @@ dependencies = [
 name = "rustynes-netplay"
 version = "3.3.0"
 dependencies = [
+ "criterion",
  "futures-util",
  "js-sys",
  "rustynes-core",

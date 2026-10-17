@@ -65,3 +65,11 @@ web-sys = { workspace = true, features = [
 [[example]]
 name = "signaling_server"
 required-features = ["signaling-server"]
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "rollback_window"
+path = "benches/rollback_window.rs"
+harness = false
