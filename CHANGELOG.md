@@ -26,6 +26,26 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Hosted netplay and achievements services** (`services/hosted/`,
+  `T-HOSTED-NETPLAY`, `T-RA-PROXY`). A Cloudflare Worker runs the netplay
+  signalling lobby in a Durable Object, byte-compatible with the reference
+  `signaling_server` (Rust-recorded conformance vectors check it). It mints
+  three-hour Cloudflare TURN credentials behind spend guards: a per-address
+  limit, a daily cap and a kill switch. It also forwards the browser's
+  RetroAchievements calls with an allowlist, in casual mode only. With a
+  hosted base configured (`[netplay] hosted_base_url`, or
+  `RUSTYNES_HOSTED_BASE` at build time; unset by default), the browser lobby
+  and the Android and iOS room codes use the hosted lobby and fetch TURN
+  credentials, falling back to STUN only when refused. The browser
+  RetroAchievements glue takes its proxy address from the page and accepts
+  only HTTPS.
+- **A privacy policy**, `PRIVACY.md`, published at
+  <https://doublegate.github.io/RustyNES/privacy/> and linked from the README
+  and the apps. The F-Droid anti-feature decision is recorded in
+  `docs/android.md`.
+
 ### Changed
 
 - **egui 0.37, and egui-winit from crates.io again.** egui, egui-wgpu and
@@ -50,6 +70,8 @@ cycle-accurate core later replaced.
   next save writes the full size. A Power Cycle on *Battle Rush* now keeps the
   cartridge chip, as it keeps every battery save. Save states, movies and
   netplay are unchanged.
+- **The iOS About screen stated the wrong licence**; it now says
+  GPL-3.0-or-later, in English and Spanish.
 
 ## [3.3.0] - 2026-10-16 - "Plumbline" (v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes banked on seven boards, mapper 71's decode, Bandai and Somari states, a withdrawn performance figure, IRQ trace goldens that gate, and two off-die MiSTer fixes)
 
