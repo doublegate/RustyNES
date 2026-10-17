@@ -52,7 +52,7 @@
 //! The table above covers the actions that change the machine outside the
 //! input stream. RA hardcore forbids more than that — cheats, rewind,
 //! slowdown, frame advance, the debugger, memory editors, scripting, movie
-//! playback — and that list is [`hardcore`]: the SAME source file the mobile
+//! playback — and that list is [`hardcore`](crate::session_policy::hardcore): the SAME source file the mobile
 //! bridge compiles through `rustynes_ra::hardcore`, included here by path so
 //! the gates compile in a build without the `retroachievements` feature (where
 //! no session exists, so nothing is ever refused).

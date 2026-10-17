@@ -8,7 +8,7 @@
 //! frontend depends on it only behind its optional `retroachievements` feature,
 //! because this crate links the rcheevos C library. The rule itself is pure
 //! data, so it lives in this one dependency-free file: `rustynes-ra` compiles
-//! it as [`crate::hardcore`], and the frontend's `session_policy` includes the
+//! it as `rustynes_ra::hardcore`, and the frontend's `session_policy` includes the
 //! same file with `#[path]`, so its gates compile (and refuse nothing) in a
 //! build without RA. One table, two hosts, no copy to drift.
 //!

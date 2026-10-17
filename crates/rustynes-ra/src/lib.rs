@@ -36,8 +36,11 @@
 // separate browser RA scaffolding instead, and never depends on this crate.
 #![cfg(not(target_arch = "wasm32"))]
 
-/// v3.4.0 (`T-RA-HARDCORE`) — the one table of what hardcore forbids, shared
-/// with the desktop frontend by path (see the module docs).
+// v3.4.0 (`T-RA-HARDCORE`) — the one table of what hardcore forbids, shared
+// with the desktop frontend by path (see the module docs). A plain comment, not
+// `///`: rustdoc joins an outer doc comment to the file's own `//!` docs and
+// resolves the joined text's intra-doc links in THIS scope, where the module's
+// `Feature` is not visible, so `RUSTDOCFLAGS="-D warnings" cargo doc` failed.
 pub mod hardcore;
 
 use std::collections::HashMap;
