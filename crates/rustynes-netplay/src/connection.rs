@@ -1277,6 +1277,21 @@ mod tests {
                 return;
             }
         }
+        // The other direction too: the test has `a` (the dual-stack socket)
+        // SEND to its peer's plain IPv4 address. Linux maps that destination
+        // itself; macOS refuses it (the v3.4.0 release PR's macos-latest run
+        // passed the receive probe above and then never synced). Production
+        // binds IPv4 (`0.0.0.0`) on every frontend, so only a library user
+        // binding `[::]` meets this; where the host cannot send that way, the
+        // case the test exercises cannot arise, and it skips rather than fail.
+        v4.set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let sent = dual.send_to(b"probe", v4_addr).is_ok();
+        if !sent || v4.recv_from(&mut buf).is_err() {
+            eprintln!("skipped: this host's [::] socket cannot send to an IPv4 address");
+            return;
+        }
+        v4.set_read_timeout(None).unwrap();
         let hash = SessionIdentity::new([0x45u8; 32], [0; 32]);
         // `a` names its peer in IPv4 form and hears it in mapped form.
         let mut a = NetplayConnection::with_transport(
