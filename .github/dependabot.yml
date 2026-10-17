@@ -38,8 +38,12 @@ updates:
       # FIRST, with no `update-types`, because Dependabot puts a dependency in
       # the first group it matches -- below the catch-all groups, a minor bump
       # of one of these would land alone in `production-dependencies`. Before
-      # merging one: egui-winit is vendored (`vendor/egui-winit/VENDORED.md`),
-      # and a bump past 0.36.2 bypasses that patch, so run both wasm clippy gates.
+      # merging one, run both wasm clippy gates: egui-winit 0.36.2 did not
+      # compile for wasm32 and was vendored until v3.4.0 moved the tier to the
+      # registry 0.37.0 (the history is in `Cargo.toml`), and a release can
+      # regress there again. Also run the frontend's
+      # `icons::tests::the_shell_font_set_covers_every_glyph_the_ui_draws`:
+      # egui 0.37 moved its fonts behind features, which no compile catches.
       egui-wgpu-tier:
         patterns:
           - "egui"

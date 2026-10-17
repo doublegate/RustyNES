@@ -451,7 +451,7 @@ pub(crate) fn detachable_window(
             DETACH_PAINTED.with(|c| c.set(true));
             let mut reattach = false;
             let screen = ctx.content_rect();
-            egui::Area::new(egui::Id::new(("detached", id)))
+            egui::Area::new(egui::Id::unique(("detached", id)))
                 .fixed_pos(screen.min)
                 .show(ctx, |ui| {
                     ui.set_min_size(screen.size());
@@ -2564,7 +2564,7 @@ impl DebuggerOverlay {
                     }
                     &*b
                 };
-                egui::Area::new(egui::Id::new("cheevos_toasts"))
+                egui::Area::new(egui::Id::unique("cheevos_toasts"))
                     .anchor(egui::Align2::RIGHT_TOP, [-12.0, 40.0])
                     .show(ctx, |ui| {
                         for (title, detail, is_error, badge_url) in &toasts {
@@ -2624,7 +2624,7 @@ impl DebuggerOverlay {
             let challenges = status.challenges.clone();
             let progress = status.progress.clone();
             if !challenges.is_empty() || progress.is_some() {
-                egui::Area::new(egui::Id::new("cheevos_indicators"))
+                egui::Area::new(egui::Id::unique("cheevos_indicators"))
                     .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -48.0])
                     .show(ctx, |ui| {
                         egui::Frame::new()
@@ -2657,7 +2657,7 @@ impl DebuggerOverlay {
             // submission): the player's new rank "#N of M" + the top entries.
             let scoreboards = status.scoreboards.clone();
             if !scoreboards.is_empty() {
-                egui::Area::new(egui::Id::new("cheevos_scoreboards"))
+                egui::Area::new(egui::Id::unique("cheevos_scoreboards"))
                     .anchor(egui::Align2::CENTER_TOP, [0.0, 56.0])
                     .show(ctx, |ui| {
                         for sb in &scoreboards {
@@ -2702,7 +2702,7 @@ impl DebuggerOverlay {
             // the scoreboard popups (top). Captured already (and mirrored into the
             // status bar); this surfaces them on-screen the way RA's HUD does.
             if !status.trackers.is_empty() {
-                egui::Area::new(egui::Id::new("cheevos_trackers"))
+                egui::Area::new(egui::Id::unique("cheevos_trackers"))
                     .anchor(egui::Align2::LEFT_BOTTOM, [12.0, -48.0])
                     .show(ctx, |ui| {
                         egui::Frame::new()
@@ -3141,7 +3141,7 @@ impl DebuggerOverlay {
             // About / a tool panel) stay on top and fully readable.
             if shell_frame.paused && shell_frame.rom_loaded {
                 let viewport = ctx.content_rect();
-                egui::Area::new(egui::Id::new("paused_dim"))
+                egui::Area::new(egui::Id::unique("paused_dim"))
                     .order(egui::Order::Background)
                     .interactable(false)
                     .fixed_pos(viewport.min)
@@ -3152,7 +3152,7 @@ impl DebuggerOverlay {
                             egui::Color32::from_black_alpha(102), // ~40% black.
                         );
                     });
-                egui::Area::new(egui::Id::new("paused_overlay"))
+                egui::Area::new(egui::Id::unique("paused_overlay"))
                     .fixed_pos(viewport.center() - egui::vec2(72.0, 28.0))
                     .order(egui::Order::Foreground)
                     .interactable(false)

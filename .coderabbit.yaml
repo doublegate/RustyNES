@@ -134,8 +134,8 @@ reviews:
     - path: "crates/*/Cargo.toml"
       instructions: >
         This workspace pins a single compatible egui/wgpu/winit/naga/
-        accesskit tier (currently egui 0.35 / wgpu 29 / winit 0.30.13 /
-        accesskit 0.24.1). Flag a version bump to any one of these crates
+        accesskit tier (currently egui 0.37 / wgpu 30 / winit 0.30.13 /
+        accesskit 0.25.1). Flag a version bump to any one of these crates
         that isn't accompanied by matching bumps to the others, or that
         would require two incompatible major versions of the same
         transitive dependency to coexist.
