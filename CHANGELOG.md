@@ -58,9 +58,32 @@ cycle-accurate core later replaced.
   shipped; without it the NSF player, replay panel and TAStudio buttons would
   draw boxes. A new frontend test checks that every glyph the UI draws has a
   font.
+- **RetroAchievements hardcore follows RA's full block list**
+  (`T-RA-HARDCORE`, desktop and mobile). Hardcore now refuses frame advance
+  and slowdown (fast forward is still allowed), Game Genie codes and raw
+  cheats, Lua scripts (a running one is stopped), movie playback, movie
+  import and TAStudio (recording is still allowed), the debugger and memory
+  windows, and restoring saved achievement progress, as well as save-state
+  loading, as before. Switching hardcore on power-cycles a running game, and
+  is refused while a movie or netplay session is active. A toast names the
+  mode when a game is identified.
+- **The RetroAchievements User-Agent** is now
+  `RustyNES/<version> (<OS> <arch>) rcheevos/<version>`, RA's documented
+  three-part shape; the browser proxies send `(Web wasm32)`.
 
 ### Fixed
 
+- **Native RetroAchievements achievements can unlock.** Every achievement was
+  disabled when its game loaded: rcheevos checked memory addresses from the
+  network callback, where no memory reader is installed, so no unlock could
+  fire on desktop or mobile. The check now runs on the next frame.
+- **An unlock earned without a network connection is sent when the
+  connection returns.** Network failures were reported as final server
+  errors, and the unlock was dropped.
+- **Mobile: switching RetroAchievements hardcore on keeps achievements
+  running.** rcheevos' reset request did a soft reset without resetting the
+  achievement runtime, so achievements stopped processing; it now
+  power-cycles and resets it.
 - **The Datach cartridge's own EEPROM is kept in the battery save** (mapper
   157, `T-DATACH-EXT-EEPROM-BATTERY`). *Battle Rush*'s 128-byte X24C01 was
   lost at every power-off; it is now saved after the Datach main unit's
