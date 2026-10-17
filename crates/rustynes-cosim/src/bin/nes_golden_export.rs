@@ -7,13 +7,17 @@
 //!                   [--boot-trace START..END] [--irq-trace CAP]
 //!                   [--checkpoint-interval N]
 //!                   [--four-score P1:P2:P3:P4] [--vaus POS:FIRE] [--genie CODE]...
+//!                   [--zapper X:Y:TRIG] [--ext-audio-trace CAP]
 //! ```
 //!
-//! The last three (v3.2.0) attach STIMULUS devices for the whole run -- a Four
-//! Score with four pads, an Arkanoid paddle on `$4017`, Game Genie codes -- so
-//! the `RustyNES_MiSTer` input and cheat gates have a golden to compare against.
-//! Each is recorded in the manifest (`four_score`, `vaus`, `genie`) only when
-//! given; see `DeviceArgs`.
+//! `--four-score`, `--vaus` and `--genie` (v3.2.0) attach STIMULUS devices for
+//! the whole run -- a Four Score with four pads, an Arkanoid paddle on `$4017`,
+//! Game Genie codes -- so the `RustyNES_MiSTer` input and cheat gates have a
+//! golden to compare against; `--zapper` (v3.4.0) attaches an NES Zapper on
+//! `$4017` the same way. Each is recorded in the manifest (`four_score`,
+//! `vaus`, `genie`, `zapper`) only when given; see `DeviceArgs`.
+//! `--ext-audio-trace` (v3.4.0) writes the cartridge's expansion-audio output
+//! per CPU cycle, for the `MiSTer` core's Sunsoft 5B gate.
 //!
 //! Writes, under `<dir>`:
 //!
@@ -25,6 +29,7 @@
 //! | `<stem>.obs.bin` | full-capture observable stream, 16-byte records | the testbench's self-diff, and a window re-run |
 //! | `<stem>.index_fb.bin` | 256x240 LE `u16` | the testbench's frame comparison |
 //! | `<stem>.fetch.bin` | per-dot PPU bus addresses, 12-byte records | rung 3's background-fetch gate |
+//! | `<stem>.ext_audio.bin` | per-CPU-cycle expansion audio, 12-byte records (`u64` cycle, `i32` code) | the `MiSTer` core's Sunsoft 5B gate (v3.4.0) |
 //! | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
 //! | `<stem>.ram_init.bin` | 2 KiB CPU work RAM **before** execution | a co-simulation testbench, so its flat memory starts where the oracle's does |
 //! | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
@@ -85,6 +90,9 @@ struct Args {
     /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
     fetch_trace: Option<usize>,
     apu_trace: Option<usize>,
+    /// v3.4.0 -- `--ext-audio-trace CAP`: the cartridge's expansion-audio
+    /// output per CPU cycle, `<stem>.ext_audio.bin` (`Oracle::take_ext_audio_trace`).
+    ext_audio_trace: Option<usize>,
     /// v2.6.5 — the per-dot PPU state fixture. A **DIAGNOSTIC**, never a gate:
     /// `RustyNES_MiSTer/docs/rung3-ppu.md` fixes that partition, and these
     /// fields are this emulator's decomposition of the chip rather than
@@ -149,6 +157,11 @@ struct DeviceArgs {
     /// `--genie CODE`, repeatable -- 6- or 8-letter Game Genie codes, kept in
     /// the order given (the manifest records them in that order).
     genie: Vec<String>,
+    /// v3.4.0 -- `--zapper X:Y:TRIG`: an NES Zapper on port 2 (`$4017`), aimed
+    /// at screen pixel (X, Y) with the trigger held or not, for the whole run
+    /// (`Nes::set_zapper`). The light bit is the emulator's beam-relative model,
+    /// its default.
+    zapper: Option<(u8, u8, bool)>,
 }
 
 /// Parse `--four-score P1:P2:P3:P4`: four two-digit hex bytes.
@@ -186,6 +199,25 @@ fn parse_vaus_spec(spec: &str) -> Option<(u8, bool)> {
     Some((pos, fire))
 }
 
+/// Parse `--zapper X:Y:TRIG`: two two-digit hex screen coordinates and `0` or
+/// `1`. Y may be past the last visible line (`$F0` and up), which aims the gun
+/// off the screen -- a state the emulator models (it never sees light).
+fn parse_zapper_spec(spec: &str) -> Option<(u8, u8, bool)> {
+    let mut it = spec.split(':');
+    let (x, y, t) = (it.next()?, it.next()?, it.next()?);
+    if it.next().is_some() || x.len() != 2 || y.len() != 2 {
+        return None;
+    }
+    let x = u8::from_str_radix(x, 16).ok()?;
+    let y = u8::from_str_radix(y, 16).ok()?;
+    let trigger = match t {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    Some((x, y, trigger))
+}
+
 /// Refuse a device request that would silently produce a golden describing
 /// something other than what was asked. `None` when the request is coherent.
 ///
@@ -217,6 +249,14 @@ fn device_error(args: &Args) -> Option<String> {
             "--four-score with --vaus: the Arkanoid controller is not compatible with \
              four player adapters (NESdev \"Arkanoid controller\")"
                 .to_owned(),
+        );
+    }
+    // v3.4.0: the Zapper takes port 2, as the Arkanoid controller and the Four
+    // Score's second pad do; the oracle would let the last attached device win
+    // the port, so a combination is a golden of a console no one can build.
+    if d.zapper.is_some() && (d.vaus.is_some() || d.four_score.is_some()) {
+        return Some(
+            "--zapper occupies port 2 ($4017), which --vaus and --four-score also use".to_owned(),
         );
     }
     let mut seen: Vec<u16> = Vec::with_capacity(d.genie.len());
@@ -256,6 +296,12 @@ fn apply_devices(o: &mut Oracle, d: &DeviceArgs) -> Result<(), String> {
         // reports -- the Famicom version's `$4016`/`$4017` split is a different
         // device and is not what the MiSTer core models.
         o.nes_mut().set_paddle(1, pos, fire);
+    }
+    if let Some((x, y, trigger)) = d.zapper {
+        // Port index 1 is `$4017`, the NES Zapper's usual port and the only one
+        // a Famicom Zapper uses (`Zapper.xhtml`).
+        o.nes_mut()
+            .set_zapper(1, u16::from(x), u16::from(y), trigger);
     }
     for code in &d.genie {
         o.nes_mut()
@@ -311,6 +357,12 @@ fn device_block(d: &DeviceArgs) -> String {
         let codes: Vec<String> = d.genie.iter().map(|c| c.to_ascii_uppercase()).collect();
         lines.push(format!("genie        = {}\n", codes.join(",")));
     }
+    if let Some((x, y, trigger)) = d.zapper {
+        lines.push(format!(
+            "zapper       = {x:02x}:{y:02x}:{}\n",
+            u8::from(trigger)
+        ));
+    }
     lines.concat()
 }
 
@@ -344,11 +396,12 @@ fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
-         \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
+         \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--ext-audio-trace CAP]\n\
+         \x20                       [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
          \x20                       [--inject-nmi-at N] [--inject-irq-at N]\n\
          \x20                       [--press-start A:B] [--sprite-limit-off] [--fb-every-frame]\n\
-         \x20                       [--four-score P1:P2:P3:P4] [--vaus POS:FIRE]\n\
+         \x20                       [--four-score P1:P2:P3:P4] [--vaus POS:FIRE] [--zapper X:Y:TRIG]\n\
          \x20                       [--genie CODE]...\n\
          \x20                       [--ppu-state-trace CAP --pst-frames A:B\n\
          \x20                        [--pst-scanlines A:B] [--pst-dots A:B]]"
@@ -398,6 +451,7 @@ fn parse_args() -> Args {
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut fetch_trace: Option<usize> = None;
     let mut apu_trace: Option<usize> = None;
+    let mut ext_audio_trace: Option<usize> = None;
     #[cfg(feature = "ppu-state-trace")]
     let (mut pst_cap, mut pst_frames) = (None::<usize>, None::<(u32, u32)>);
     #[cfg(feature = "ppu-state-trace")]
@@ -489,6 +543,10 @@ fn parse_args() -> Args {
                 apu_trace = Some(parse_apu_cap(need(i)));
                 i += 2;
             }
+            "--ext-audio-trace" => {
+                ext_audio_trace = Some(parse_ext_audio_cap(need(i)));
+                i += 2;
+            }
             #[cfg(not(feature = "ppu-state-trace"))]
             "--ppu-state-trace" | "--pst-frames" | "--pst-scanlines" | "--pst-dots" => {
                 // REFUSED, not ignored. A control build that accepted the flag
@@ -549,6 +607,13 @@ fn parse_args() -> Args {
                 devices.genie.push(need(i).clone());
                 i += 2;
             }
+            "--zapper" => {
+                devices.zapper = Some(parse_zapper_spec(need(i)).unwrap_or_else(|| {
+                    eprintln!("--zapper wants X:Y:TRIG, two two-digit hex coordinates and 0 or 1");
+                    usage()
+                }));
+                i += 2;
+            }
             // The two flags that take no value advance `i` by ONE.
             "--sprite-limit-off" => {
                 sprite_limit_off = true;
@@ -579,6 +644,7 @@ fn parse_args() -> Args {
         irq_trace,
         fetch_trace,
         apu_trace,
+        ext_audio_trace,
         // REFUSED rather than defaulted: a frameless window would record every
         // frame of the run, which at ~46 kB a frame is gigabytes for the
         // 4500-frame goldens -- and the whole point of this trace is a handful
@@ -751,6 +817,15 @@ fn injection_error(args: &Args) -> Option<String> {
                 .to_owned(),
         );
     }
+    // v3.4.0: the expansion-audio trace is drained at the same frame boundaries.
+    if args.ext_audio_trace.is_some() && args.inject_instructions > 0 {
+        return Some(
+            "--ext-audio-trace needs a frame run: it is drained at frame boundaries, \
+             and an injection run completes no frames, so the golden would be \
+             silently empty"
+                .to_owned(),
+        );
+    }
     let pinned = args.inject_nmi_at.is_some() || args.inject_irq_at.is_some();
     if pinned && args.inject_instructions == 0 {
         return Some(
@@ -879,6 +954,21 @@ fn parse_apu_cap(raw: &str) -> usize {
     cap
 }
 
+/// Parse `--ext-audio-trace`'s capacity (v3.4.0), bounded as `--apu-trace` is
+/// and for its reason.
+fn parse_ext_audio_cap(raw: &str) -> usize {
+    let cap: usize = raw.parse().unwrap_or_else(|_| usage());
+    if cap == 0 || cap > rustynes_cosim::MAX_EXT_AUDIO_TRACE_CAPACITY {
+        eprintln!(
+            "--ext-audio-trace must be between 1 and {} records (got {cap}); one \
+             record is one CPU cycle",
+            rustynes_cosim::MAX_EXT_AUDIO_TRACE_CAPACITY
+        );
+        usage();
+    }
+    cap
+}
+
 /// Parse an inclusive `A:B` range. Returns `None` for anything malformed or
 /// inverted, so the caller can refuse rather than silently widen the window.
 ///
@@ -931,6 +1021,9 @@ fn arm_traces(o: &mut Oracle, args: &Args) {
     }
     if let Some(cap) = args.apu_trace {
         o.enable_apu_trace(cap);
+    }
+    if let Some(cap) = args.ext_audio_trace {
+        o.enable_ext_audio_trace(cap);
     }
     arm_ppu_state_trace(o, args);
 }
@@ -993,6 +1086,26 @@ fn write_apu_trace(o: &mut Oracle, base: &Path) {
             std::process::exit(1);
         }
         write(&suffixed(base, "apu.bin"), &bytes);
+    }
+}
+
+/// Write the expansion-audio golden (v3.4.0), when armed. The same two
+/// refusals as [`write_apu_trace`]: armed-but-empty, and a dropped record.
+fn write_ext_audio_trace(o: &mut Oracle, base: &Path) {
+    if let Some((bytes, dropped)) = o.take_ext_audio_trace() {
+        assert!(
+            !bytes.is_empty(),
+            "the expansion-audio trace was armed and produced no records -- a \
+             0-byte golden reports success while covering nothing."
+        );
+        if dropped > 0 {
+            eprintln!(
+                "  ERROR: expansion-audio trace dropped {dropped} record(s) -- \
+                 --ext-audio-trace capacity is too small. No file written."
+            );
+            std::process::exit(1);
+        }
+        write(&suffixed(base, "ext_audio.bin"), &bytes);
     }
 }
 
@@ -1272,6 +1385,7 @@ fn main() {
     write_fetch_trace(&mut o, &base);
     write_ppu_state_trace(&mut o, &args, &base);
     write_apu_trace(&mut o, &base);
+    write_ext_audio_trace(&mut o, &base);
 
     // Checked BEFORE the write, and checked on `ram_init` specifically. The
     // assert below covers the post-run `ram`, so this buffer had no length check
@@ -1400,6 +1514,7 @@ mod tests {
             irq_trace: None,
             fetch_trace: None,
             apu_trace: None,
+            ext_audio_trace: None,
             checkpoint_interval: 4096,
             inject_instructions: 0,
             inject_nmi_at: None,
@@ -1409,6 +1524,18 @@ mod tests {
             sprite_limit_off: false,
             fb_every_frame: false,
         };
+
+        // v3.4.0: the expansion-audio trace is drained where the APU trace is,
+        // so an injection run would leave it empty too.
+        let mut ext = base();
+        ext.ext_audio_trace = Some(1000);
+        ext.inject_instructions = 8;
+        ext.inject_nmi_at = Some(2);
+        let err = injection_error(&ext).expect("refused");
+        assert!(err.contains("--ext-audio-trace"), "{err}");
+        let mut ext_frames = base();
+        ext_frames.ext_audio_trace = Some(1000);
+        assert!(injection_error(&ext_frames).is_none());
 
         let mut args = base();
         args.apu_trace = Some(1000);
@@ -1554,7 +1681,7 @@ mod tests {
 mod device_tests {
     use super::{
         Args, DeviceArgs, apply_devices, device_block, device_error, parse_four_score_spec,
-        parse_vaus_spec,
+        parse_vaus_spec, parse_zapper_spec,
     };
 
     fn args(devices: DeviceArgs) -> Args {
@@ -1570,6 +1697,7 @@ mod device_tests {
             irq_trace: None,
             fetch_trace: None,
             apu_trace: None,
+            ext_audio_trace: None,
             checkpoint_interval: 4096,
             inject_instructions: 0,
             inject_nmi_at: None,
@@ -1630,8 +1758,32 @@ mod device_tests {
             four_score: fs,
             vaus: Some((0x80, false)),
             genie: Vec::new(),
+            zapper: None,
         });
         assert!(device_error(&both).is_some_and(|e| e.contains("four player")));
+
+        // v3.4.0: the Zapper shares port 2 with both.
+        for other in [
+            DeviceArgs {
+                vaus: Some((0x80, false)),
+                ..DeviceArgs::default()
+            },
+            DeviceArgs {
+                four_score: fs,
+                ..DeviceArgs::default()
+            },
+        ] {
+            let z = args(DeviceArgs {
+                zapper: Some((0x80, 0x70, true)),
+                ..other
+            });
+            assert!(device_error(&z).is_some_and(|e| e.contains("--zapper")));
+        }
+        let zapper_alone = args(DeviceArgs {
+            zapper: Some((0x80, 0x70, true)),
+            ..DeviceArgs::default()
+        });
+        assert!(device_error(&zapper_alone).is_none());
 
         let bad_code = args(DeviceArgs {
             genie: vec!["WXIOPO".to_owned()],
@@ -1662,6 +1814,7 @@ mod device_tests {
             four_score: Some([0x01, 0x82, 0x44, 0xA8]),
             vaus: None,
             genie: vec!["sxiopo".to_owned(), "YYKPOYZZ".to_owned()],
+            zapper: None,
         };
         assert_eq!(
             device_block(&d),
@@ -1672,6 +1825,52 @@ mod device_tests {
             ..DeviceArgs::default()
         };
         assert_eq!(device_block(&v), "vaus         = a7:1\n");
+        // The canonical form is the flag's own, so a recipe generator can turn
+        // the line straight back into `--zapper 0a:7f:0`.
+        let z = DeviceArgs {
+            zapper: Some((0x0A, 0x7F, false)),
+            ..DeviceArgs::default()
+        };
+        assert_eq!(device_block(&z), "zapper       = 0a:7f:0\n");
+        assert_eq!(parse_zapper_spec("0a:7f:0"), Some((0x0A, 0x7F, false)));
+    }
+
+    #[test]
+    fn zapper_spec_takes_two_hex_coordinates_and_a_trigger_bit() {
+        assert_eq!(parse_zapper_spec("80:70:1"), Some((0x80, 0x70, true)));
+        assert_eq!(parse_zapper_spec("FF:f0:0"), Some((0xFF, 0xF0, false)));
+        for bad in [
+            "",
+            "80:70",
+            "80:70:2",
+            "8:70:1",
+            "80:700:1",
+            "80:70:1:0",
+            "zz:70:1",
+            "80:70:",
+        ] {
+            assert_eq!(parse_zapper_spec(bad), None, "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn ext_audio_code_recovers_the_mappers_integer_exactly() {
+        // The bus divides by 65536 on the way in; every integer a board returns
+        // (well under 2^24 in magnitude) must come back unchanged.
+        for v in [
+            0_i32,
+            1,
+            -1,
+            4_096,
+            -4_096,
+            123_457,
+            1 << 20,
+            -(1 << 23) + 1,
+        ] {
+            #[allow(clippy::cast_precision_loss)]
+            let external = v as f32 / 65536.0;
+            assert_eq!(rustynes_cosim::ext_audio_code(external), v, "{v}");
+        }
     }
 
     /// A 16 KiB NROM that strobes the pads and stores the first `$4016` and
@@ -1730,6 +1929,24 @@ mod device_tests {
             ..DeviceArgs::default()
         });
         assert_eq!(p2, 0x50, "MSb clear goes out as D4 = 1");
+
+        // v3.4.0, Zapper on $4017: D3 is the light sense, 1 = NO light (the
+        // screen is black, rendering never enabled), D4 the trigger. $4016 is
+        // still the standard pad.
+        let (p1, p2, _) = run(&DeviceArgs {
+            zapper: Some((0x80, 0x70, true)),
+            ..DeviceArgs::default()
+        });
+        assert_eq!(
+            (p1, p2),
+            (0x40, 0x58),
+            "trigger held: D4 = 1, no light: D3 = 1"
+        );
+        let (_, p2, _) = run(&DeviceArgs {
+            zapper: Some((0x80, 0x70, false)),
+            ..DeviceArgs::default()
+        });
+        assert_eq!(p2, 0x48, "trigger released: D4 = 0");
 
         // Game Genie: every code is active, none silently dropped.
         let (_, _, o) = run(&DeviceArgs {
