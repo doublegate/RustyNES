@@ -2101,19 +2101,24 @@ private fun EmulatorScreen(
             val user = settings.raUsername
             val token = settings.raToken
             val live = withContext(Dispatchers.IO) {
-                runCatching {
-                    // The session is created lazily on the first ra_* call; init it
-                    // and token-login — but only when a controller already exists
-                    // (the RA session is controller-scoped). If no ROM is open yet,
-                    // there is no controller, so login happens when one is loaded.
-                    val ctrl = emulator.controller ?: return@runCatching null
-                    // v3.4.0 — `raInit` returns the mode the session runs in:
-                    // hardcore is refused while a movie or netplay owns the
-                    // timeline, and the toggle must show that, not the request.
-                    val mode = ctrl.raInit(requested)
-                    ctrl.raLoginToken(user, token)
-                    mode
-                }.getOrNull()
+                // The session is created lazily on the first ra_* call; init it
+                // and token-login — but only when a controller already exists
+                // (the RA session is controller-scoped). If no ROM is open yet,
+                // there is no controller, so login happens when one is loaded.
+                val ctrl = emulator.controller ?: return@withContext null
+                // v3.4.0 — `raInit` returns the mode the session runs in:
+                // hardcore is refused while a movie or netplay owns the
+                // timeline, and the toggle must show that, not the request.
+                // A bridge failure is reconciled by reading the live mode back,
+                // as the hardcore toggle does.
+                val mode = runCatching { ctrl.raInit(requested) }
+                    .recoverCatching { ctrl.raHardcore() }
+                    .getOrNull() ?: return@withContext null
+                // The login has its own catch: a login exception must not
+                // discard the mode `raInit` already set (v3.4.0 review), or the
+                // toggle would keep claiming hardcore over a casual session.
+                runCatching { ctrl.raLoginToken(user, token) }
+                mode
             }
             // Settings and Compose state are written here, on the main context,
             // never from the IO block (v3.4.0 review).
@@ -2697,27 +2702,28 @@ private fun EmulatorScreen(
                 settings.raUsername = user
                 val requested = settings.raHardcore
                 scope.launch {
-                    // `null` = no controller yet; otherwise the live mode. The
-                    // settings and status are written after the IO block, on the
-                    // main context (v3.4.0 review).
-                    val result = withContext(Dispatchers.IO) {
-                        runCatching {
-                            val ctrl = emulator.controller ?: return@runCatching null
-                            // v3.4.0 — show the mode the session runs in (see
-                            // the auto-login above).
-                            val mode = ctrl.raInit(requested)
-                            ctrl.raLoginPassword(user, pass)
-                            mode
-                        }
+                    // `null` = no controller yet; otherwise the live mode (null
+                    // if even reading it back failed) and whether the login
+                    // started. The settings and status are written after the IO
+                    // block, on the main context (v3.4.0 review).
+                    val outcome = withContext(Dispatchers.IO) {
+                        val ctrl = emulator.controller ?: return@withContext null
+                        // v3.4.0 — show the mode the session runs in (see
+                        // the auto-login above). Init and login are caught
+                        // separately, so a login exception keeps the mode.
+                        val mode = runCatching { ctrl.raInit(requested) }
+                            .recoverCatching { ctrl.raHardcore() }
+                            .getOrNull()
+                        val started = mode != null &&
+                            runCatching { ctrl.raLoginPassword(user, pass) }.isSuccess
+                        mode to started
                     }
-                    val live = result.getOrNull()
-                    when {
-                        result.isFailure -> raStatus = "Login failed to start"
-                        live == null -> raStatus = "Open a ROM first, then log in"
-                        else -> {
-                            if (live != settings.raHardcore) settings.raHardcore = live
-                            raStatus = "Logging in…"
-                        }
+                    if (outcome == null) {
+                        raStatus = "Open a ROM first, then log in"
+                    } else {
+                        val (live, started) = outcome
+                        if (live != null && live != settings.raHardcore) settings.raHardcore = live
+                        raStatus = if (started) "Logging in…" else "Login failed to start"
                     }
                 }
             },
@@ -2738,7 +2744,10 @@ private fun EmulatorScreen(
                         // v3.4.0 — show the mode the session runs in; written on
                         // the main context, not inside the IO block.
                         val live = withContext(Dispatchers.IO) {
-                            runCatching { emulator.controller?.raInit(requested) }.getOrNull()
+                            val ctrl = emulator.controller ?: return@withContext null
+                            runCatching { ctrl.raInit(requested) }
+                                .recoverCatching { ctrl.raHardcore() }
+                                .getOrNull()
                         }
                         if (live != null && live != settings.raHardcore) {
                             settings.raHardcore = live
