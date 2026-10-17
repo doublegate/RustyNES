@@ -74,6 +74,15 @@ cycle-accurate core later replaced.
   same Join reaches a 2-player or a 3-4 player host. Direct IP and LAN only
   (no room code or TURN for more than two players); the mobile apps follow in
   a later release (`MOB-09`).
+- **MiSTer core: MMC2, MMC4, the Sunsoft FME-7 with 5B audio, Konami
+  VRC2/VRC4, and the Zapper** (Phase F3a). Mappers 9 and 10 (the CHR latch a
+  PPU read sets; *Punch-Out!!*), 69 with the 5B's expansion audio, and 21 / 22
+  / 23 / 25 in every wiring, including the VRC4 IRQ. The NES Zapper is on
+  port 2, aimed with the mouse, with an on-screen crosshair the gun cannot
+  see. Each is gated against new oracle goldens, on and off the die. The 5B's
+  timed behaviour is gated against its NESdev page instead of the oracle,
+  whose 5B departs from the page (filed as `T-S5B-PAGE`). Simulation only;
+  none of it has run on hardware.
 - **The golden exporter takes a Zapper and records expansion audio**:
   `nes_golden_export` gains `--zapper X:Y:TRIG` (a Zapper on port 2) and
   `--ext-audio-trace` (the cartridge's per-cycle expansion-audio value), for
@@ -82,6 +91,14 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **MiSTer core, off-die build: the SDRAM arbiter schedules around the
+  console** (FB-20, RTL-9). Refresh and the arbiter's own reads are granted
+  only where they cannot delay one of the console's fixed request phases.
+  Across the whole off-die test ladder (742 million CHR and 536 million PRG
+  requests), the worst CHR fetch is 18 cycles against a 22-cycle budget (it
+  was 25), the worst PRG fetch 20 against 24, and no scheduled request meets
+  a refresh. A new gate holds every off-die run to those budgets. Simulation
+  only.
 - **egui 0.37, and egui-winit from crates.io again.** egui, egui-wgpu and
   egui-winit move from 0.36 to 0.37.0. wgpu stays on 30, because egui-wgpu
   0.37 requires it and wgpu 31 is not released. The vendored
@@ -121,6 +138,10 @@ cycle-accurate core later replaced.
   another's retransmission to a third that had not received it.
 - **Netplay: a different second value for an already confirmed input is
   ignored**, instead of rewriting a frame below the rollback checkpoint.
+- **MiSTer core: a battery save is read once per mount.** `save_ctl` read
+  every save twice, because the framework's `img_mounted` stays high for the
+  HPS's whole transaction. It was found by a new gate that simulates `emu.sv`
+  through the framework's real `hps_io`, and fixed in simulation.
 - **The desktop and browser frontends use about half the CPU on their window
   thread** (measured -46% and -48% on the desktop, in two before/after pairs).
   Two costs found by profiling the live app, neither in egui. The check that
