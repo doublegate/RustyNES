@@ -2908,7 +2908,7 @@ table row by row. Desktop enforcement:
 | feature | refused where | test that fails if the block is removed |
 | --- | --- | --- |
 | state load (every route) | `refuse_timeline_action(LoadState)` at each dispatch site (`session_policy::refusal`) | `session_policy::tests::hardcore_refuses_a_load_only`; `app::tests::every_timeline_action_route_asks_the_session_policy` |
-| Game Genie codes | `EmuCore::produce_one_frame`, before the frame: the core's code list is emptied (the panel and cheat file keep it; switching hardcore off re-applies it) | `emu::tests::hardcore_runs_the_frame_without_game_genie_codes` |
+| Game Genie codes | `EmuCore::produce_one_frame`, after the movie hook and before the frame: the core's code list is emptied (the panel and cheat file keep it; switching hardcore off re-applies it). After the hook because a recording re-applies the options it captured, codes included, every frame; a recording started in hardcore (`handle_movie_record_toggle`, `handle_movie_branch`) is started without codes, since a Reset or Power Cycle re-applies the panel's list between frames | `emu::tests::hardcore_runs_the_frame_without_game_genie_codes`; `emu::tests::hardcore_runs_a_recording_frame_without_its_captured_codes`; `app::tests::every_hardcore_start_site_asks_the_one_rule` |
 | raw RAM cheats | `EmuCore::produce_one_frame`, after the frame | `emu::tests::hardcore_applies_no_raw_ram_cheat` |
 | rewind | `App` folds the gesture, and `EmuCore::produce_one_frame` refuses it where it runs | `emu::tests::hardcore_refuses_a_held_rewind` |
 | slowdown (< 100%) | `EmuCore::effective_frame_duration` paces it at 100% (every pacing site reads it); `App::set_speed` refuses it | `emu::tests::hardcore_paces_slowdown_at_full_speed_and_keeps_fast_forward`; `app::tests::every_hardcore_start_site_asks_the_one_rule` |
@@ -2925,16 +2925,25 @@ The mobile bridge (`rustynes-mobile`) enforces the same table:
 `HardcoreBlocked`; `poke_ram` is a no-op and `peek_byte`, `debug_read_memory`,
 `debug_disassemble` and `debug_cpu_state` return nothing (keeping the generated
 Kotlin / Swift signatures); every tick first stops playback, removes Game Genie
-codes and unloads a script (`enforce_hardcore`); `ra_set_hardcore(true)` /
-`ra_init(true)` on an existing casual session power-cycles the console and
-calls `rc_client_reset`, and is ignored while a movie or netplay owns the
-timeline (the host reads `ra_hardcore()` back). rcheevos' `Reset` request,
+codes and unloads a script (`enforce_hardcore`), and removes the codes again
+after the movie hook, which re-applies a recording's captured options
+(`drop_hardcore_codes`; a recording started in hardcore captures none).
+`ra_set_hardcore(true)` / `ra_init(true)` power-cycles the console and calls
+`rc_client_reset`, and is refused while a movie or netplay owns the timeline,
+whether or not a session exists yet: a missing session is created casual and
+then switched (until the v3.4.0 review a missing session was created directly
+in hardcore, with no check and no reset, so a casual recording ran on into
+hardcore). Both return whether hardcore is on afterwards, and both apps
+reconcile their stored toggle with that value (Android's `MainActivity`, iOS's
+`RetroAchievementsModel`), so a refused switch shows casual. rcheevos' `Reset` request,
 which the bridge answered with a soft reset and no `rc_client_reset` (so
 achievement processing stayed suspended after the player switched hardcore
 on), now does the same power cycle. Tests:
 `hardcore_refuses_cheats_scripts_playback_and_memory_tools`,
 `hardcore_tears_down_running_features_on_the_next_frame`,
-`switching_hardcore_on_power_cycles_and_waits_for_a_recording` (and the
+`switching_hardcore_on_power_cycles_and_waits_for_a_recording`,
+`creating_a_hardcore_session_obeys_the_switch_rule`,
+`hardcore_runs_a_recording_frame_without_its_captured_codes` (and the
 v1.8.6 `hardcore_blocks_load_state_only`). Outside Rust's reach, the host apps
 were searched for the rest (2026-10-16): neither app has a slowdown or a
 frame-advance control, except the iOS debugger's "Step", which advances one

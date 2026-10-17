@@ -3205,12 +3205,25 @@ impl App {
             // attestation recorded under it could never verify. Refusing up
             // front is clearer than emitting one that gets silently dropped.
             let attest = self.config.input.run_ahead == 0;
+            // v3.4.0 (`T-RA-HARDCORE`) — a recording captures the core's Game
+            // Genie codes and holds them every frame. Hardcore runs every frame
+            // without them (`EmuCore::produce_one_frame`), but a Reset or Power
+            // Cycle re-applies the panel's list between frames, so a recording
+            // started then would carry codes its run never had and replay
+            // differently. Start it without them.
+            let hardcore = crate::session_policy::hardcore::refuses(
+                HardcoreFeature::Cheats,
+                self.ra_hardcore_blocks(),
+            );
             // v2.9.0 — the recording starts from cleared save RAM, which must
             // not reach the `.sav` (`EmuCore::start_sandboxed_session`).
             guard.start_sandboxed_session(|emu| {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
+                if hardcore {
+                    nes.clear_genie_codes();
+                }
                 emu.movie.start_recording_power_on(nes, attest);
                 true
             });
@@ -3335,6 +3348,14 @@ impl App {
         };
         // v2.3.2 "Lucid": see the power-on path for the run-ahead caveat.
         let attest = self.config.input.run_ahead == 0;
+        // v3.4.0 — no Game Genie code in a hardcore recording (see the
+        // power-on path).
+        if crate::session_policy::hardcore::refuses(
+            HardcoreFeature::Cheats,
+            self.ra_hardcore_blocks(),
+        ) {
+            nes.clear_genie_codes();
+        }
         emu.movie.start_recording_branch(nes, attest);
         eprintln!("rustynes: movie branch — recording from current state");
     }
@@ -12666,6 +12687,24 @@ mod tests {
             "if self.stop_script_for_hardcore() { return; }",
             "engine.set_tas_snapshot(",
         );
+        // A recording started in hardcore captures no Game Genie code: the
+        // codes a Reset or Power Cycle re-applied are removed first.
+        for (site, start) in [
+            (
+                "handle_movie_record_toggle",
+                "emu.movie.start_recording_power_on(nes, attest);",
+            ),
+            (
+                "handle_movie_branch",
+                "emu.movie.start_recording_branch(nes, attest);",
+            ),
+        ] {
+            assert_before(site, "nes.clear_genie_codes();", start);
+            assert!(
+                production_fn_body(site).contains("HardcoreFeature::Cheats"),
+                "{site}: the recording's codes are no longer gated on hardcore"
+            );
+        }
         assert_before(
             "stop_script_for_hardcore",
             "crate::session_policy::hardcore::refuses( HardcoreFeature::Scripting, self.ra_hardcore_blocks(), )",

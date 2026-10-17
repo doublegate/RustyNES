@@ -723,7 +723,10 @@ final class EmulatorCore {
     // unlock checks, toast/rich-presence refresh) happens inside `post_frame_ra`,
     // which only runs while the core ticks (`runFrame`/`stepFrame`).
 
-    func raInit(hardcore: Bool) { controller.raInit(hardcore: hardcore) }
+    /// v3.4.0 — returns whether hardcore is on afterwards: creating the session
+    /// in hardcore is refused while a movie or netplay owns the timeline.
+    @discardableResult
+    func raInit(hardcore: Bool) -> Bool { controller.raInit(hardcore: hardcore) }
     func raLoginPassword(user: String, password: String) {
         controller.raLoginPassword(user: user, password: password)
     }
@@ -734,7 +737,10 @@ final class EmulatorCore {
     func raLoginStatus() -> RaLoginStatus { controller.raLoginStatus() }
     func raUser() -> RaUserInfo? { controller.raUser() }
     func raToken() -> String? { controller.raToken() }
-    func raSetHardcore(_ hardcore: Bool) { controller.raSetHardcore(hardcore: hardcore) }
+    /// v3.4.0 — returns whether hardcore is on afterwards (a switch ON is
+    /// refused while a movie or netplay owns the timeline).
+    @discardableResult
+    func raSetHardcore(_ hardcore: Bool) -> Bool { controller.raSetHardcore(hardcore: hardcore) }
     func raHardcore() -> Bool { controller.raHardcore() }
     /// Identify + load the achievement set for the loaded ROM. `sha256` is the raw
     /// 32-byte digest; `sidecar` is previously-saved progress ("" / empty if none).
