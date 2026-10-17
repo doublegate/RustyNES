@@ -1261,6 +1261,10 @@ impl NesController {
         }
         enforce_hardcore(g);
         pre_tick_movie(g);
+        // v3.4.0 — a recording re-applies the Game Genie codes it captured in
+        // the hook above, so hardcore removes them again here, after it and
+        // before the frame (CodeRabbit on #613).
+        drop_hardcore_codes(g);
         #[cfg(test)]
         injected_frame_fault();
         let _ = g.nes.run_frame();
@@ -2034,6 +2038,8 @@ impl NesController {
         // their options if a movie was playing, before they are captured.
         end_playback(&mut g);
         rustynes_core::power_on_for_movie(&mut g.nes);
+        // v3.4.0 — a hardcore recording captures no Game Genie code.
+        drop_hardcore_codes(&mut g);
         g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
     }
 
@@ -2051,6 +2057,7 @@ impl NesController {
         // included (the desktop's rule); the player's return at the next load.
         g.playback = None;
         g.playback_player_options = None;
+        drop_hardcore_codes(&mut g);
         g.recorder = Some(rustynes_core::MovieRecorder::from_current_state(&g.nes));
     }
 
@@ -2266,14 +2273,17 @@ impl NesController {
 
     /// Create (or seed) the `RetroAchievements` session with the given hardcore
     /// flag. Idempotent: if a session already exists this just sets hardcore.
-    pub fn ra_init(&self, hardcore: bool) {
+    ///
+    /// v3.4.0 — creating the session in hardcore is a switch from casual
+    /// (`set_ra_hardcore`): it power-cycles the game, and is refused while a
+    /// movie or netplay owns the timeline (the session is then created
+    /// casual). Returns whether hardcore is on afterwards; the host shows
+    /// that, not the value it passed.
+    pub fn ra_init(&self, hardcore: bool) -> bool {
         let mut g = self.lock();
-        if g.ra.is_some() {
-            set_ra_hardcore(&mut g, hardcore);
-        } else {
-            ensure_ra(&mut g, hardcore);
-        }
+        let on = set_ra_hardcore(&mut g, hardcore);
         drop(g);
+        on
     }
 
     /// Whether a `RetroAchievements` session has been created.
@@ -2353,12 +2363,15 @@ impl NesController {
     /// Toggle hardcore mode (creating the session if needed).
     ///
     /// v3.4.0 — switching hardcore ON resets the game (a power cycle) and is
-    /// ignored while a movie or netplay owns the timeline; see
-    /// `set_ra_hardcore`. Read [`Self::ra_hardcore`] back to learn the result.
-    pub fn ra_set_hardcore(&self, hardcore: bool) {
+    /// refused while a movie or netplay owns the timeline; see
+    /// `set_ra_hardcore`. Returns whether hardcore is on afterwards (the same
+    /// value [`Self::ra_hardcore`] reads), so a refused switch reports casual
+    /// and the host reconciles its toggle with it.
+    pub fn ra_set_hardcore(&self, hardcore: bool) -> bool {
         let mut g = self.lock();
-        set_ra_hardcore(&mut g, hardcore);
+        let on = set_ra_hardcore(&mut g, hardcore);
         drop(g);
+        on
     }
 
     /// Whether hardcore mode is enabled (false if no session exists).
@@ -3542,11 +3555,24 @@ fn enforce_hardcore(g: &mut Inner) {
     if refuses(Feature::MoviePlayback, on) && g.playback.is_some() {
         end_playback(g);
     }
-    if refuses(Feature::Cheats, on) && g.nes.genie_codes().next().is_some() {
-        g.nes.clear_genie_codes();
-    }
+    drop_hardcore_codes(g);
     if refuses(Feature::Scripting, on) {
         g.script = None;
+    }
+}
+
+/// v3.4.0 — remove the core's Game Genie codes when hardcore is active
+/// ("Cheats are disabled", mountable devices included). Called by
+/// [`enforce_hardcore`] before the movie hook AND again after it in
+/// `tick_frame`: a recording holds the options it captured at its start by
+/// re-applying them every frame (`pre_tick_movie`), codes included, so a clear
+/// made only before the hook would be undone for the frame it protects. Also
+/// called when a recording starts, so a hardcore recording never captures one.
+fn drop_hardcore_codes(g: &mut Inner) {
+    if rustynes_ra::hardcore::refuses(rustynes_ra::hardcore::Feature::Cheats, hardcore_active(g))
+        && g.nes.genie_codes().next().is_some()
+    {
+        g.nes.clear_genie_codes();
     }
 }
 
@@ -3555,25 +3581,36 @@ fn enforce_hardcore(g: &mut Inner) {
 /// allowed mid-session. This action must result in a full reset of the game"
 /// (compliance requirements, section B; an automatic rejection otherwise).
 ///
+/// Creating the session counts as a switch from casual: a session that does
+/// not exist yet is created casual and then switched, so `ra_init(true)` and
+/// `ra_set_hardcore(true)` on a fresh controller obey the same refusal and the
+/// same reset. Until the v3.4.0 review (Codex and `CodeRabbit` on #613) a missing
+/// session was created directly in hardcore, with no timeline check and no
+/// reset, so a casual recording, and the Game Genie codes it holds, ran on into
+/// a hardcore session.
+///
 /// Switching ON while a movie or a netplay session owns the timeline is
-/// ignored (the reset would break the recording or desync the peer; the call
-/// returns nothing, so the host reads [`NesController::ra_hardcore`] back and
-/// asks the player to stop first). Otherwise the forbidden features are torn
+/// refused (the reset would break the recording or desync the peer); the
+/// session is still created, casual. Otherwise the forbidden features are torn
 /// down and a single console is power-cycled, then `rc_client_reset` runs,
 /// which also re-enables the processing rcheevos suspends at the switch. A Vs.
 /// cabinet is outside RA's scope and is left running. Switching OFF needs
 /// nothing.
-fn set_ra_hardcore(g: &mut Inner, hardcore: bool) {
+///
+/// Returns whether hardcore is on after the call, so the host can show the
+/// mode the session actually runs in rather than the one it asked for.
+fn set_ra_hardcore(g: &mut Inner, hardcore: bool) -> bool {
     let currently = g.ra.as_ref().is_some_and(rustynes_ra::RaSession::hardcore);
-    if hardcore && !currently && g.ra.is_some() && timeline_refusal(g).is_some() {
-        return;
+    if hardcore && !currently && timeline_refusal(g).is_some() {
+        return ensure_ra(g, false).hardcore();
     }
-    if ensure_ra(g, hardcore).set_hardcore(hardcore) {
+    if ensure_ra(g, false).set_hardcore(hardcore) {
         enforce_hardcore(g);
         if g.dual.is_none() {
             power_cycle_for_ra(g);
         }
     }
+    hardcore_active(g)
 }
 
 /// v3.4.0 — the full reset RA requires when hardcore takes effect over a
@@ -4455,8 +4492,13 @@ mod tests {
         ctrl.load_script(String::new()).expect("script");
         ctrl.movie_play(movie).expect("play");
         assert!(ctrl.movie_is_playing() && ctrl.script_is_loaded());
-        // A session created already in hardcore (no switch, so no reset).
-        ctrl.ra_init(true);
+        // Hardcore taking effect under all three. No bridge call reaches this
+        // state any more (switching on, or creating a session in hardcore, is
+        // refused while a movie plays; `creating_a_hardcore_session_obeys_the_switch_rule`),
+        // so the session is switched directly: the per-frame enforcement is
+        // the backstop for any route that does.
+        ctrl.ra_init(false);
+        ctrl.lock().ra.as_mut().expect("session").set_hardcore(true);
         ctrl.step_frame();
         assert!(!ctrl.movie_is_playing(), "playback stopped");
         assert!(!ctrl.script_is_loaded(), "script unloaded");
@@ -4464,6 +4506,71 @@ mod tests {
             ctrl.cheat_genie_codes().is_empty(),
             "Game Genie codes removed"
         );
+    }
+
+    /// A recording re-applies the options it captured at its start, Game
+    /// Genie codes included, in the movie hook every frame (`pre_tick_movie`).
+    /// A hardcore frame must still run without them, so the codes are removed
+    /// after the hook, not only before it (`CodeRabbit` on #613). The session is
+    /// switched directly, as in the test above, to put a recording that holds
+    /// a code under hardcore.
+    #[test]
+    fn hardcore_runs_a_recording_frame_without_its_captured_codes() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.ra_init(false);
+        ctrl.cheat_add_genie("SXIOPO".into()).expect("casual cheat");
+        ctrl.movie_record_from_here();
+        ctrl.step_frame();
+        assert_eq!(ctrl.cheat_genie_codes().len(), 1, "casual keeps the code");
+        ctrl.lock().ra.as_mut().expect("session").set_hardcore(true);
+        for _ in 0..2 {
+            ctrl.step_frame();
+            assert!(
+                ctrl.cheat_genie_codes().is_empty(),
+                "the movie hook put the recording's code back"
+            );
+        }
+        assert!(ctrl.movie_is_recording(), "recording is allowed");
+    }
+
+    /// Creating the session in hardcore is a switch from casual like any other
+    /// (Codex and `CodeRabbit` on #613): before v3.4.0's review fix,
+    /// `ra_init(true)` / `ra_set_hardcore(true)` with no session yet created a
+    /// hardcore one with no timeline check and no reset, so a casual recording
+    /// (and the Game Genie code it holds) ran on into hardcore. Now a movie
+    /// refuses it, as for an existing session, and the call reports casual;
+    /// with nothing owning the timeline the console is power-cycled.
+    #[test]
+    fn creating_a_hardcore_session_obeys_the_switch_rule() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.cheat_add_genie("SXIOPO".into())
+            .expect("no session: casual");
+        ctrl.movie_record_from_here();
+        ctrl.step_frame();
+        assert!(!ctrl.ra_init(true), "a refused creation reports casual");
+        assert!(ctrl.ra_is_enabled(), "the session is still created");
+        assert!(!ctrl.ra_hardcore(), "hardcore created under a recording");
+        assert!(ctrl.movie_is_recording(), "the recording survived");
+        assert_eq!(ctrl.cheat_genie_codes().len(), 1, "casual keeps the code");
+
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.movie_record_from_here();
+        ctrl.step_frame();
+        assert!(
+            !ctrl.ra_set_hardcore(true),
+            "a refused switch reports casual"
+        );
+        assert!(!ctrl.ra_hardcore(), "hardcore created under a recording");
+
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        for _ in 0..30 {
+            ctrl.step_frame();
+        }
+        let before = ctrl.lock().nes.frame();
+        assert!(ctrl.ra_init(true), "an accepted creation reports hardcore");
+        assert!(ctrl.ra_hardcore());
+        let after = ctrl.lock().nes.frame();
+        assert!(after < before, "no power cycle: frame {before} -> {after}");
     }
 
     /// RA: switching casual -> hardcore mid-session "must result in a full
@@ -4477,7 +4584,10 @@ mod tests {
             ctrl.step_frame();
         }
         let before = ctrl.lock().nes.frame();
-        ctrl.ra_set_hardcore(true);
+        assert!(
+            ctrl.ra_set_hardcore(true),
+            "an accepted switch reports hardcore"
+        );
         assert!(ctrl.ra_hardcore());
         let after = ctrl.lock().nes.frame();
         assert!(after < before, "no power cycle: frame {before} -> {after}");
@@ -4486,7 +4596,10 @@ mod tests {
         ctrl.ra_init(false);
         ctrl.movie_record_from_here();
         ctrl.step_frame();
-        ctrl.ra_set_hardcore(true);
+        assert!(
+            !ctrl.ra_set_hardcore(true),
+            "a refused switch reports casual (Codex on #613)"
+        );
         assert!(!ctrl.ra_hardcore(), "switched on during a recording");
         assert!(ctrl.movie_is_recording(), "the recording survived");
     }

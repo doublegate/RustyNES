@@ -1721,18 +1721,20 @@ impl EmuCore {
         // - **Game Genie codes** ("Cheats are disabled", mountable devices
         //   included): the core's code list is emptied. The Cheats panel and
         //   the per-ROM cheat file keep the player's list; leaving hardcore
-        //   re-applies it (`App::handle_cheevos_request`).
+        //   re-applies it (`App::handle_cheevos_request`). This one is done
+        //   AFTER the movie hook below, not here: a recording re-applies the
+        //   options it captured at its start, codes included, every frame
+        //   (`MovieUi::before_frame`), so a clear made before the hook would be
+        //   undone for the very frame it is meant to protect.
         //
         // The raw RAM cheats and the debugger pokes are refused after the
         // frame below, and rewind just after this block.
+        if crate::session_policy::hardcore::refuses(
+            crate::session_policy::hardcore::Feature::MoviePlayback,
+            hardcore_blocked,
+        ) && self.movie.is_playing()
         {
-            use crate::session_policy::hardcore::{Feature, refuses};
-            if refuses(Feature::MoviePlayback, hardcore_blocked) && self.movie.is_playing() {
-                self.movie.stop_playback(Some(nes));
-            }
-            if refuses(Feature::Cheats, hardcore_blocked) && nes.genie_codes().next().is_some() {
-                nes.clear_genie_codes();
-            }
+            self.movie.stop_playback(Some(nes));
         }
         // v3.1.0 — the CPU overclock applies only outside a movie session: a
         // recording captures what the console runs with when it starts, and a
@@ -1785,6 +1787,19 @@ impl EmuCore {
             if !self.movie.before_frame(nes) {
                 self.movie.stop_playback(Some(nes));
                 eprintln!("rustynes: movie playback finished");
+            }
+            // v3.4.0 (`T-RA-HARDCORE`) — hardcore runs the frame without Game
+            // Genie codes, whatever put them in the core: a cheat file, a
+            // Reset or Power Cycle re-applying the panel's list, or the hook
+            // just above restoring a recording's captured options (CodeRabbit
+            // on #613). Placed after the hook and before the frame (and
+            // run-ahead), so nothing re-adds them in between.
+            if crate::session_policy::hardcore::refuses(
+                crate::session_policy::hardcore::Feature::Cheats,
+                hardcore_blocked,
+            ) && nes.genie_codes().next().is_some()
+            {
+                nes.clear_genie_codes();
             }
             // v1.7.0 "Forge" Workstream D1 — record this forward frame into the
             // HistoryViewer timeline, at the SAME point as the TAS movie hook
@@ -3922,6 +3937,40 @@ mod tests {
             0,
             "hardcore drops it"
         );
+    }
+
+    /// A recording holds the options it captured at its start, Game Genie
+    /// codes included, by re-applying them in the movie hook every frame
+    /// (`MovieUi::before_frame` -> `HardwareOptions::apply_live`). A recording
+    /// that captured a code must therefore not put it back for a hardcore
+    /// frame: the codes are removed after the hook, not only before it
+    /// (`CodeRabbit` on #613). The recording itself stays, as RA allows.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hardcore_runs_a_recording_frame_without_its_captured_codes() {
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.add_genie_code("SXIOPO").unwrap();
+        let mut core = EmuCore::new();
+        core.nes = Some(nes);
+        core.movie
+            .start_recording_branch(core.nes.as_mut().unwrap(), false);
+        core.produce_one_frame(&quiet_inputs(), &mut no_sinks());
+        assert_eq!(
+            core.nes.as_ref().unwrap().genie_codes().count(),
+            1,
+            "casual: the recording keeps its code"
+        );
+        let mut hc = quiet_inputs();
+        hc.hardcore_blocked = true;
+        for _ in 0..2 {
+            core.produce_one_frame(&hc, &mut no_sinks());
+            assert_eq!(
+                core.nes.as_ref().unwrap().genie_codes().count(),
+                0,
+                "hardcore: the movie hook put the recording's code back"
+            );
+        }
+        assert!(core.movie.is_recording(), "hardcore: recording allowed");
     }
 
     /// Raw RAM cheats are refused in hardcore (they were since v2.7.0; v3.4.0

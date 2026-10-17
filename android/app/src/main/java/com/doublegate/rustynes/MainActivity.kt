@@ -2106,7 +2106,11 @@ private fun EmulatorScreen(
                     // there is no controller, so login happens when one is loaded.
                     val ctrl = emulator.controller
                     if (ctrl != null) {
-                        ctrl.raInit(settings.raHardcore)
+                        // v3.4.0 — `raInit` returns the mode the session runs in:
+                        // hardcore is refused while a movie or netplay owns the
+                        // timeline, and the toggle must show that, not the request.
+                        val live = ctrl.raInit(settings.raHardcore)
+                        if (live != settings.raHardcore) settings.raHardcore = live
                         ctrl.raLoginToken(settings.raUsername, settings.raToken)
                     }
                 }
@@ -2693,7 +2697,10 @@ private fun EmulatorScreen(
                         runCatching {
                             val ctrl = emulator.controller
                             if (ctrl != null) {
-                                ctrl.raInit(settings.raHardcore)
+                                // v3.4.0 — show the mode the session runs in (see
+                                // the auto-login above).
+                                val live = ctrl.raInit(settings.raHardcore)
+                                if (live != settings.raHardcore) settings.raHardcore = live
                                 ctrl.raLoginPassword(user, pass)
                                 raStatus = "Logging in…"
                             } else {
@@ -2717,7 +2724,13 @@ private fun EmulatorScreen(
                 if (on) {
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            runCatching { emulator.controller?.raInit(settings.raHardcore) }
+                            runCatching {
+                                // v3.4.0 — show the mode the session runs in.
+                                val live = emulator.controller?.raInit(settings.raHardcore)
+                                if (live != null && live != settings.raHardcore) {
+                                    settings.raHardcore = live
+                                }
+                            }
                         }
                     }
                 }
@@ -2726,8 +2739,17 @@ private fun EmulatorScreen(
             onRaHardcoreChange = { hc ->
                 settings.raHardcore = hc
                 scope.launch {
-                    withContext(Dispatchers.IO) {
-                        runCatching { emulator.controller?.raSetHardcore(hc) }
+                    // v3.4.0 — the bridge refuses switching hardcore ON while a
+                    // movie or netplay session owns the timeline (the reset RA
+                    // requires would break it) and returns the mode the session
+                    // actually runs in. Put the toggle back when it differs, so
+                    // the UI never claims hardcore while achievements are casual.
+                    val live = withContext(Dispatchers.IO) {
+                        runCatching { emulator.controller?.raSetHardcore(hc) }.getOrNull()
+                    }
+                    if (live != null && live != hc) {
+                        settings.raHardcore = live
+                        raStatus = "Stop the movie or netplay session before enabling hardcore"
                     }
                 }
             },

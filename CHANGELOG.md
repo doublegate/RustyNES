@@ -121,8 +121,9 @@ cycle-accurate core later replaced.
   import and TAStudio (recording is still allowed), the debugger and memory
   windows, and restoring saved achievement progress, as well as save-state
   loading, as before. Switching hardcore on power-cycles a running game, and
-  is refused while a movie or netplay session is active. A toast names the
-  mode when a game is identified.
+  is refused while a movie or netplay session is active; on Android and iOS
+  the toggle then returns to casual. A toast names the mode when a game is
+  identified.
 - **The RetroAchievements User-Agent** is now
   `RustyNES/<version> (<OS> <arch>) rcheevos/<version>`, RA's documented
   three-part shape; the browser proxies send `(Web wasm32)`.
