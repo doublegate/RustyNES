@@ -1477,7 +1477,7 @@ re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE
 
 ## Power-user line (D33, minted 2026-10-17)
 
-The maintainer's selection from a research synthesis of what the field lacks and what RustyNES's deterministic core and co-simulated MiSTer twin make possible (line plan D33). S and M items are placed in v3.5.0-v3.9.0; L items form the v4.x line in [`plans/v4.x-power-user-line-plan.md`](plans/v4.x-power-user-line-plan.md). Each item's gate is in its release's plan. Prior art for every item was read from documentation only (the provenance firewall); `T-STATE-SHARED-MISTER` and `T-EDU-EXPLAIN-FRAME` are designed from RustyNES's own state spec and RTL, never from another MiSTer core.
+The maintainer's selection from a research synthesis of what the field lacks and what RustyNES's deterministic core and co-simulated MiSTer twin make possible (line plan D33). S and M items are placed in v3.5.0-v3.9.0; L items form the v4.x line in [`plans/v4.x-power-user-line-plan.md`](plans/v4.x-power-user-line-plan.md). Two M items are placed in v4.x by dependency, not size: `T-A11Y-NARRATION` needs the per-game RAM schemas that `T-GHOST-RACE` and `T-SPEEDRUN-MEMIF` start, and `T-RL-ENV` reuses `T-MCP-SERVER`'s fork API. Each item's gate is in its release's plan. Prior art for every item was read from documentation only (the provenance firewall); `T-STATE-SHARED-MISTER` and `T-EDU-EXPLAIN-FRAME` are designed from RustyNES's own state spec and RTL, never from another MiSTer core.
 
 | Ticket | What | From | Slot (size) |
 | --- | --- | --- | --- |
