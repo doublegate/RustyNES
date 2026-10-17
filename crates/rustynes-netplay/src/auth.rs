@@ -238,8 +238,8 @@ impl DatagramAuth {
     /// The N-peer form, for the mesh roster handshake: `shares` lists every
     /// peer's `(player index, key share)` and the sender index of each peer is
     /// its player index. `None` if `local` is not listed, an index repeats or
-    /// exceeds the Four Score's four, a share is all zeros, or fewer than two
-    /// peers are listed.
+    /// exceeds the Four Score's four, a share is all zeros, two peers carry
+    /// the same share, or fewer than two peers are listed.
     #[must_use]
     pub fn mesh(identity: &SessionIdentity, shares: &[(u8, KeyShare)], local: u8) -> Option<Self> {
         let mut ordered: [Option<KeyShare>; MAX_SENDERS] = [None; MAX_SENDERS];
@@ -249,6 +249,13 @@ impl DatagramAuth {
                 return None;
             }
             *slot = Some(share);
+        }
+        // Two seats with one share (as `pair` refuses `ours == theirs`): a
+        // peer that copied another's share added nothing of its own.
+        for (i, a) in ordered.iter().enumerate() {
+            if a.is_some() && ordered[i + 1..].contains(a) {
+                return None;
+            }
         }
         if ordered.get(usize::from(local))?.is_none() || shares.len() < 2 {
             return None;
@@ -452,6 +459,20 @@ mod tests {
         assert!(DatagramAuth::mesh(&id(), &shares[..1], 0).is_none());
         assert!(DatagramAuth::mesh(&id(), &[(0, [1; 16]), (0, [2; 16])], 0).is_none());
         assert!(DatagramAuth::mesh(&id(), &[(0, [1; 16]), (5, [2; 16])], 0).is_none());
+    }
+
+    /// v3.4.0 (Antigravity on #613) — two seats carrying the same key share
+    /// form no mesh, as `pair` already refuses `ours == theirs`. A peer that
+    /// copies another's share (or a host that lists one twice) would
+    /// otherwise contribute nothing of its own to the session secret.
+    #[test]
+    fn mesh_refuses_duplicate_key_shares() {
+        let dup = [(0u8, [1u8; 16]), (1, [2; 16]), (2, [1; 16])];
+        for local in 0..3 {
+            assert!(DatagramAuth::mesh(&id(), &dup, local).is_none());
+        }
+        let distinct = [(0u8, [1u8; 16]), (1, [2; 16]), (2, [3; 16])];
+        assert!(DatagramAuth::mesh(&id(), &distinct, 2).is_some());
     }
 
     #[test]

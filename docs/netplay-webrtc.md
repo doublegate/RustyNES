@@ -158,7 +158,9 @@ handshake). A host-distributed **roster** closes that gap.
   roster: that works behind a NAT, where the address the host lists for the
   joiner is a rewritten one the joiner cannot observe. (Before protocol 9 it
   matched its bound source address, which only works on loopback / LAN, and
-  fell back to an index chosen out of band.) It sends to the host at the
+  fell back to an index chosen out of band; since v3.4.0 a roster that does
+  not carry the joiner's own share is ignored instead of falling back,
+  `a_roster_without_our_key_share_is_ignored`.) It sends to the host at the
   address it dialed. Once the host has answered that it is gathering, it waits
   while the host keeps answering, up to its gather timeout
   (`docs/netplay-session.md` section 2.1).

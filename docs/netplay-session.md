@@ -130,10 +130,22 @@ A share is 16 random bytes (`fresh_key_share`, never all zeros). A `Sync` with
 an all-zero share (the one a running session sends, a NAT punch packet, a
 spectator's announcement) is not a handshake `Sync`: it adopts no peer and
 completes no handshake. A host takes the share only from the adopted peer's
-address, and only the first one.
+address. A 2-player host keeps the first one; a mesh host keeps the latest
+until its roster goes out, so a joiner that restarted on the same address with
+a fresh share is listed with the share it holds
+(`a_restarted_joiner_s_new_key_share_replaces_the_old_before_the_roster`), and
+the listed share is fixed from then on. `DatagramAuth::mesh` refuses a roster
+in which two seats carry the same share, as `pair` refuses `ours == theirs`
+(`mesh_refuses_duplicate_key_shares`).
 
 A joiner finds its own roster entry by its own share, which works through a
-NAT where its address does not.
+NAT where its address does not. A roster that does not carry its share is
+ignored (`a_roster_without_our_key_share_is_ignored`); it used to fall back to
+its bound address and then to the index given at connect, keying the mesh on
+another seat's share. The roster lists each joiner's address in canonical form
+(an IPv4-mapped address as plain IPv4), so an IPv4-bound joiner can dial a
+peer that a dual-stack host heard in mapped form
+(`the_roster_lists_mapped_joiners_in_their_ipv4_form`).
 
 **Gathering (3-4 players).** A mesh host answers each adopted joiner's
 `Sync` with an accepted `Sync` carrying an all-zero share ("adopted, still
