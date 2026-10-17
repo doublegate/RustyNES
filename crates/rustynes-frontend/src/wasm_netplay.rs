@@ -48,6 +48,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_netplay::hosted::{HostedIce, HostedIceError, IceServer};
 use rustynes_netplay::{
     AdvanceOutcome, NetplayError, RollbackSession, SessionConfig, SignalMessage,
     WebRtcMeshTransport,
@@ -101,8 +102,15 @@ struct Shared {
     /// One leg per *other* peer, keyed by that peer's slot. Built lazily as
     /// offers/peer-joined nudges arrive.
     legs: BTreeMap<u8, PeerLeg>,
-    /// STUN/TURN server URLs for each new peer connection (ICE).
-    ice_servers: Vec<String>,
+    /// The ICE servers (STUN, and TURN with credentials when the hosted
+    /// service supplied them) for each new peer connection.
+    ice_servers: Vec<IceServer>,
+    /// v3.4.0: `false` while hosted TURN credentials are being fetched. The
+    /// room `join` is held back until then, so no peer connection is ever
+    /// built before the relay servers are known.
+    ice_ready: bool,
+    /// The `join` frame held back while `ice_ready` is `false`.
+    pending_join: Option<String>,
     /// A short status / error message for the HUD.
     message: String,
 }
@@ -180,6 +188,14 @@ impl BrowserNetplay {
     /// stun_servers`, or [`rustynes_netplay::DEFAULT_STUN_SERVERS`] for the public
     /// default. An empty list falls back to the public default.
     ///
+    /// v3.4.0: `turn_credentials_url` is the hosted service's
+    /// `/turn-credentials` endpoint when a hosted base is configured
+    /// (`NetplayConfig::hosted_turn_url`), else `None`. With it, short-lived
+    /// TURN credentials are fetched first and the room is joined only once
+    /// they arrived (or the fetch failed or was refused, in which case the
+    /// session continues with STUN only and the HUD message says why). With
+    /// `None` nothing is fetched and the behaviour is the pre-v3.4.0 one.
+    ///
     /// This kicks off the async handshake and returns immediately; progress is
     /// observed via [`phase`](Self::phase) and driven by [`tick`](Self::tick).
     ///
@@ -191,12 +207,16 @@ impl BrowserNetplay {
         signaling_url: &str,
         room: &str,
         ice_servers: &[String],
+        turn_credentials_url: Option<&str>,
     ) -> Result<(), JsValue> {
+        let stun: Vec<IceServer> = ice_servers.iter().map(|u| IceServer::from_url(u)).collect();
         {
             let mut s = self.shared.borrow_mut();
             s.phase = BrowserNetplayPhase::Connecting;
             s.message = format!("connecting to {signaling_url} (room {room})");
-            s.ice_servers = ice_servers.to_vec();
+            s.ice_servers.clone_from(&stun);
+            s.ice_ready = turn_credentials_url.is_none();
+            s.pending_join = None;
             s.max_players = self.config.num_players;
         }
 
@@ -226,13 +246,22 @@ impl BrowserNetplay {
         // session's `Sync` handshake (v2.9.8), where a mismatch has a reason.
         let rom_hex_open = hex32(&self.identity.rom_hash);
         let max_players = self.config.num_players;
+        let shared_for_open = Rc::clone(&self.shared);
         let on_open = Closure::<dyn FnMut(JsValue)>::wrap(Box::new(move |_ev: JsValue| {
             let join = SignalMessage::Join {
                 room: room_owned.clone(),
                 rom_hash: rom_hex_open.clone(),
                 max_players,
-            };
-            let _ = ws_for_open.send_with_str(&join.to_json());
+            }
+            .to_json();
+            let mut s = shared_for_open.borrow_mut();
+            if s.ice_ready {
+                drop(s);
+                let _ = ws_for_open.send_with_str(&join);
+            } else {
+                // The credential fetch below sends it when it completes.
+                s.pending_join = Some(join);
+            }
         }));
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
@@ -244,6 +273,35 @@ impl BrowserNetplay {
             s.message = "signaling socket error".to_string();
         }));
         ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+
+        // v3.4.0: fetch hosted TURN credentials, then release the held join.
+        if let Some(url) = turn_credentials_url {
+            let shared = Rc::clone(&self.shared);
+            let ws_for_fetch = ws.clone();
+            let url = url.to_string();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = fetch_hosted_ice(&url).await;
+                let join = {
+                    let mut s = shared.borrow_mut();
+                    match result {
+                        Ok(ice) => {
+                            // The configured STUN list first, then the hosted
+                            // STUN + TURN servers.
+                            s.ice_servers = stun.into_iter().chain(ice.ice_servers).collect();
+                        }
+                        Err(e) => {
+                            log(&format!("rustynes: {e}"));
+                            s.message = format!("{e}; continuing with STUN only");
+                        }
+                    }
+                    s.ice_ready = true;
+                    s.pending_join.take()
+                };
+                if let Some(join) = join {
+                    let _ = ws_for_fetch.send_with_str(&join);
+                }
+            });
+        }
 
         // Keep everything alive.
         self.keepalive_closures
@@ -350,29 +408,108 @@ impl BrowserNetplay {
 
 /// Build an `RtcPeerConnection` with the configured STUN/TURN servers for ICE.
 ///
-/// Each entry is a server URL string (`stun:host:port` or `turn:host:port`); an
-/// empty list falls back to [`rustynes_netplay::DEFAULT_STUN_SERVERS`]. A production
-/// deployment passes its own `coturn` URLs (STUN + a TURN relay for symmetric
-/// NATs) via the `[netplay] stun_servers` config.
-fn new_peer_connection(servers: &[String]) -> Result<RtcPeerConnection, JsValue> {
+/// Each entry becomes one `RTCIceServer` (`urls`, plus `username` /
+/// `credential` for a TURN server from the hosted service, v3.4.0); an empty
+/// list falls back to [`rustynes_netplay::DEFAULT_STUN_SERVERS`]. A self-hosted
+/// deployment can still pass its own `coturn` URLs via the `[netplay]
+/// stun_servers` config.
+fn new_peer_connection(servers: &[IceServer]) -> Result<RtcPeerConnection, JsValue> {
     let cfg = RtcConfiguration::new();
     let ice_servers = js_sys::Array::new();
-    let default_servers: Vec<String> = rustynes_netplay::DEFAULT_STUN_SERVERS
+    let default_servers: Vec<IceServer> = rustynes_netplay::DEFAULT_STUN_SERVERS
         .iter()
-        .map(|s| (*s).to_string())
+        .map(|s| IceServer::from_url(s))
         .collect();
-    let urls: &[String] = if servers.is_empty() {
+    let list: &[IceServer] = if servers.is_empty() {
         &default_servers
     } else {
         servers
     };
-    for url in urls {
+    for s in list {
         let server = js_sys::Object::new();
-        js_sys::Reflect::set(&server, &JsValue::from_str("urls"), &JsValue::from_str(url))?;
+        let urls = js_sys::Array::new();
+        for u in &s.urls {
+            urls.push(&JsValue::from_str(u));
+        }
+        js_sys::Reflect::set(&server, &JsValue::from_str("urls"), &urls)?;
+        if let (Some(user), Some(cred)) = (&s.username, &s.credential) {
+            js_sys::Reflect::set(
+                &server,
+                &JsValue::from_str("username"),
+                &JsValue::from_str(user),
+            )?;
+            js_sys::Reflect::set(
+                &server,
+                &JsValue::from_str("credential"),
+                &JsValue::from_str(cred),
+            )?;
+        }
         ice_servers.push(&server);
     }
     cfg.set_ice_servers(&ice_servers);
     RtcPeerConnection::new_with_configuration(&cfg)
+}
+
+/// How long the browser waits for the hosted TURN credentials before going
+/// ahead with STUN only (v3.4.0).
+const HOSTED_ICE_TIMEOUT_MS: i32 = 5000;
+
+/// Fetch `/turn-credentials` with the page's `fetch`, giving up after
+/// [`HOSTED_ICE_TIMEOUT_MS`]. The body is parsed by the same
+/// [`rustynes_netplay::hosted::parse_turn_credentials`] the native client
+/// uses (unit-tested there), refusals included: they carry a JSON body.
+///
+/// `fetch` and `setTimeout` are reached through `js_sys::Reflect` on the
+/// global object, which needs no extra `web-sys` features (and so adds
+/// nothing to either wasm build's feature set).
+// Always driven by `wasm_bindgen_futures::spawn_local` on the single browser
+// thread, so the JS handles' non-`Send`-ness is irrelevant (the idiom of
+// `wasm_idb.rs` / `wasm_cheevos.rs`).
+#[allow(clippy::future_not_send)]
+async fn fetch_hosted_ice(url: &str) -> Result<HostedIce, HostedIceError> {
+    let transport = |what: &str| HostedIceError::Transport(what.to_string());
+    let global = js_sys::global();
+    let fetch: js_sys::Function = js_sys::Reflect::get(&global, &JsValue::from_str("fetch"))
+        .ok()
+        .and_then(|f| f.dyn_into().ok())
+        .ok_or_else(|| transport("no fetch"))?;
+    let set_timeout: js_sys::Function =
+        js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout"))
+            .ok()
+            .and_then(|f| f.dyn_into().ok())
+            .ok_or_else(|| transport("no setTimeout"))?;
+    let request: js_sys::Promise = fetch
+        .call1(&global, &JsValue::from_str(url))
+        .ok()
+        .and_then(|p| p.dyn_into().ok())
+        .ok_or_else(|| transport("fetch did not start"))?;
+    // A promise that resolves to `undefined` after the timeout; racing it
+    // against the request bounds the wait.
+    let timeout = js_sys::Promise::new(&mut |resolve, _reject| {
+        let _ = set_timeout.call2(&global, &resolve, &JsValue::from(HOSTED_ICE_TIMEOUT_MS));
+    });
+    let race = js_sys::Promise::race(&js_sys::Array::of2(&request, &timeout));
+    let response = JsFuture::from(race)
+        .await
+        .map_err(|_| transport("network error"))?;
+    if response.is_undefined() {
+        return Err(transport("timed out"));
+    }
+    let text_fn: js_sys::Function = js_sys::Reflect::get(&response, &JsValue::from_str("text"))
+        .ok()
+        .and_then(|f| f.dyn_into().ok())
+        .ok_or_else(|| transport("not a Response"))?;
+    let text_promise: js_sys::Promise = text_fn
+        .call0(&response)
+        .ok()
+        .and_then(|p| p.dyn_into().ok())
+        .ok_or_else(|| transport("unreadable body"))?;
+    let body = JsFuture::from(text_promise)
+        .await
+        .ok()
+        .and_then(|v| v.as_string())
+        .ok_or_else(|| transport("unreadable body"))?;
+    rustynes_netplay::hosted::parse_turn_credentials(&body)
 }
 
 /// Drive the N-peer WebRTC mesh handshake in response to one inbound signaling

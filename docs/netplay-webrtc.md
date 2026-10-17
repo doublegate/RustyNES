@@ -510,6 +510,80 @@ which, unlike STUN, carries the media (here the data-channel) so it costs
 bandwidth. Run your own coturn (in the bundle) rather than leaning on public STUN
 for anything beyond a quick test.
 
+### 3.5 The hosted lobby and TURN (v3.4.0, `T-HOSTED-NETPLAY`)
+
+The maintainer also runs the stack as a service, so players need not host
+anything: a Cloudflare Worker in `services/hosted/` (its `README.md` is the
+deploy runbook and design record). It is an **alternative** to §3.4's bundle,
+not a replacement; the reference server, the bundle and user-supplied URLs all
+keep working, and a stock build does not know the hosted service exists.
+
+**Lobby.** `wss://<hosted base>/signal` (also `/`) speaks exactly the §3.2
+protocol. `services/hosted/src/protocol.ts` is a port of
+`rustynes_netplay::signaling` (our own code), parser leniencies included, and
+it is checked against the Rust reference rather than trusted:
+`crates/rustynes-netplay/tests/hosted_signaling_vectors.rs` records what the
+reference `Relay` sends for 11 scenarios (64 steps: 2- and 4-player meshes,
+the legacy wire form, rejections, the lobby directory, matchmaking, re-joins,
+and the parser's escape and overflow quirks) into
+`services/hosted/test/vectors/signaling-vectors.json`, and fails if the Rust
+code stops producing it; `services/hosted/test/conformance.test.ts` replays
+the file three ways (the TypeScript relay, real WebSockets into the Durable
+Object, and the same with the object evicted before every sending step) and
+compares every outbound frame as an exact string. The one legitimate
+difference is iteration order where the reference has none (a `room-list`
+with several open rooms; a `quick-match` with several candidates): Rust's
+`HashMap` order is random per process, the Worker's is insertion order.
+
+All rooms live in one Durable Object, not one object per room: a client names
+its room only after connecting, and `list-rooms` / `quick-match` span every
+room, so per-room routing would need a different protocol. The object uses the
+WebSocket hibernation API, persisting each socket's room membership in its
+attachment so the relay is rebuilt when the object wakes. Measured caveat: in
+the local workerd test runtime a client CLOSE does not wake a hibernated object
+(the close never arrived within 4 s, while a message after the same eviction
+did), so the eviction replay evicts only before sending steps; Cloudflare
+documents the close as delivered after hibernation in production.
+
+**Boundary rules** the reference server lacks, for a public service: frames
+over 16 KiB refused, room codes `[A-Za-z0-9_-]{1,32}`, ROM hashes empty or up
+to 64 hex digits, a per-socket message bucket, per-IP socket cap (8),
+connection-attempt rate (30/min) and room-creation rate (10/min), a global
+socket cap (2000), and browsers from origins other than the Pages site and
+localhost refused. Refusals use the reference's `error`-then-close shape.
+
+**TURN.** `GET <hosted base>/turn-credentials` mints Cloudflare Realtime TURN
+credentials from the TURN key held in Worker secrets, valid for 3 h (why 3 h:
+`services/hosted/src/turn.ts`), behind spend guards (per-IP limit, a daily
+global cap, a kill switch; `services/hosted/README.md` "Spend guards"). Port-53
+URLs are dropped (browsers block them). A refusal is JSON with a reason code,
+and the clients then connect with STUN only.
+
+**Clients.** `rustynes_netplay::hosted` is the shared client half: base-URL
+resolution (`[netplay] hosted_base_url`, else the build-time
+`RUSTYNES_HOSTED_BASE`, else none, which is the default), the derived
+endpoints, a bounded parser for the `/turn-credentials` answer, the expiry
+check, and the native blocking fetch.
+
+- **Browser:** with a hosted base, the lobby's signaling field starts as the
+  hosted lobby, and `BrowserNetplay::connect` fetches TURN credentials (5 s
+  timeout) before sending `join`, so no peer connection is built without the
+  relay servers; a failure or refusal continues with STUN only and says why in
+  the HUD.
+- **Android / iOS (the §2.5 room-code path):** `NpNetConfig::to_nat_config`
+  fills an empty signaling URL with the hosted lobby and, when no TURN trio was
+  configured, fetches credentials and hands the first TURN-over-UDP endpoint to
+  `NatConnect`'s relay fallback. User-supplied endpoints always win.
+- **Desktop:** native desktop netplay is direct UDP host/join (§2.4) with no
+  signalling or ICE, so there is nothing to wire; `hosted_base_url` is ignored
+  there.
+
+**Traffic.** NES rollback traffic is about 22 MB per player-hour (an inference
+in the plan); the free 1,000 GB a month (shared with Realtime SFU) is then
+about 45,000 relayed player-hours, and only sessions that cannot connect
+directly use TURN. No usage forecast exists: the first month's measured egress
+is to be recorded here against that figure (runbook step 7).
+
 ---
 
 ## 4. Spectator mode — read-only (v1.7.0 "Forge" Workstream H8)
@@ -684,6 +758,8 @@ rollback, so disabling it leaves every frame / checksum / rollback byte-identica
 | Delayed-stream spectator buffer (`delay_frames`, hold-then-reveal in order, clamp to `MAX_DELAY_FRAMES`) (v2.2.0) | Unit tests (`spectator::spectator_delay_buffer_holds_then_reveals` / `spectator_delay_is_clamped`) |
 | Graded desync status (`DesyncStatus` hysteresis + sticky-confirmed) (v2.2.0) | Unit tests (`diagnostics::status_applies_hysteresis_then_confirms_and_sticks` / `threshold_zero_is_treated_as_one`) |
 | Peer-liveness RTT (`PeerLink` Live/Interrupted/TimedOut, `DisconnectReason::PeerTimeout`, `with_peer_timeouts`) (v2.2.0) | Unit tests (`connection`) — synced peer graded by `last_recv` against the 2 s / 5 s thresholds |
+| Hosted lobby is byte-compatible with the reference `Relay` (v3.4.0, §3.5) | `hosted_signaling_vectors` (Rust: the committed vectors equal the reference's output) + `services/hosted/test/conformance.test.ts` (TypeScript relay, Durable Object over WebSockets, and across hibernation) |
+| Hosted lobby boundary rules, TURN spend guards, TTL and expiry, refusal parsing (v3.4.0) | `services/hosted/test/{lobby,turn}.test.ts` (workerd, upstream mocked) + `rustynes_netplay::hosted` unit tests + `rustynes-mobile` `hosted_config` tests |
 | Netplay wire parsers never panic / OOM on hostile input (`NetMessage::from_bytes`, `SignalMessage::parse`) (v2.2.0) | `netplay_message` cargo-fuzz target (`fuzz/`) — tens of thousands of clean iterations |
 
 **Debugging aid (v1.3.0 Workstream G1).** When a session desyncs, the native
@@ -707,4 +783,5 @@ false desync banner.
 | Live mobile room-code play across two cellular devices (§2.5) | The hosted `deploy/` relay (the same signaling + coturn stack) + two real devices behind carrier NAT; live STUN through CGNAT + the punch are exercised against the *real* network, which CI cannot reproduce |
 | Live TURN relay play for symmetric-NAT pairs (§2.5) | A **live coturn** server + **two real symmetric-NAT devices**. The relay-transport hand-off itself is wired and mock-TURN-verified (`UdpTransport::from_relay` + `relay_loopback`, see Verified); only the live cross-network run — which CI/offline cannot reproduce — remains. Cone NAT works end-to-end without the relay. |
 | Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** on a host/domain + N real browsers — cannot verify headlessly. Walk the checklist in `deploy/README.md` (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS/TURN-bandwidth steps). |
+| Hosted lobby and TURN live (v3.4.0, §3.5) | The Worker deployed to the maintainer's account, then: a two-browser session through the hosted lobby, a relayed session across two NATs, credentials observed to expire, and the first month's measured traffic (`services/hosted/README.md`, "Verifying the live gates") |
 | Host-side spectator broadcast/relay + live spectate (H8) | A spectator-aware host fanning the confirmed input stream to N spectators + the `deploy/` relay config running — the frontend driver + byte-identical replay are unit-tested, the live relay is the maintainer's manual run. |
