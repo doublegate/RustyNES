@@ -2111,7 +2111,8 @@ private fun EmulatorScreen(
                     // hardcore is refused while a movie or netplay owns the
                     // timeline, and the toggle must show that, not the request.
                     val mode = ctrl.raInit(requested)
-                    ctrl.raLoginToken(user, token)
+                    // A login failure must not discard the mode `raInit` set.
+                    runCatching { ctrl.raLoginToken(user, token) }
                     mode
                 }.getOrNull()
             }
@@ -2706,18 +2707,16 @@ private fun EmulatorScreen(
                             // v3.4.0 — show the mode the session runs in (see
                             // the auto-login above).
                             val mode = ctrl.raInit(requested)
-                            ctrl.raLoginPassword(user, pass)
-                            mode
+                            // A login failure must not discard the mode `raInit` set.
+                            mode to runCatching { ctrl.raLoginPassword(user, pass) }.isSuccess
                         }
                     }
-                    val live = result.getOrNull()
-                    when {
-                        result.isFailure -> raStatus = "Login failed to start"
-                        live == null -> raStatus = "Open a ROM first, then log in"
-                        else -> {
-                            if (live != settings.raHardcore) settings.raHardcore = live
-                            raStatus = "Logging in…"
-                        }
+                    val (live, loginStarted) = result.getOrNull() ?: (null to false)
+                    if (live != null && live != settings.raHardcore) settings.raHardcore = live
+                    raStatus = when {
+                        result.isFailure || (live != null && !loginStarted) -> "Login failed to start"
+                        live == null -> "Open a ROM first, then log in"
+                        else -> "Logging in…"
                     }
                 }
             },
