@@ -41,9 +41,9 @@ cycle-accurate core later replaced.
   dependency: `hmac` 0.13 (RustCrypto, MIT OR Apache-2.0).
 - **`rustynes-netplay` API:** `NetMessage::Sync` gains `key_share`,
   `NetMessage::Roster` entries are `(player, addr, key_share)`, and
-  `NetMessage::InputAck` gains `player`. `RollbackSession::
-  confirmed_entering_digest` keeps the most recent 256 frames, and
-  `confirmed_input` the history window. New: the `auth` module
+  `NetMessage::InputAck` gains `player`.
+  `RollbackSession::confirmed_entering_digest` keeps the most recent 256
+  frames, and `confirmed_input` the history window. New: the `auth` module
   (`DatagramAuth`, `KeyShare`, `Refusal`), `UdpTransport::enable_auth`,
   `UdpMeshTransport::new_sealed`, `RollbackSession::retained`, and
   `impl Transport for Box<T>`.
