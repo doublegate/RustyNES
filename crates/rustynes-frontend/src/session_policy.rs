@@ -46,6 +46,19 @@
 //!
 //! Nothing here reads the `App`, a lock or a clock, so the rule is tested
 //! natively below.
+//!
+//! # Hardcore's other restrictions (v3.4.0)
+//!
+//! The table above covers the actions that change the machine outside the
+//! input stream. RA hardcore forbids more than that — cheats, rewind,
+//! slowdown, frame advance, the debugger, memory editors, scripting, movie
+//! playback — and that list is [`hardcore`]: the SAME source file the mobile
+//! bridge compiles through `rustynes_ra::hardcore`, included here by path so
+//! the gates compile in a build without the `retroachievements` feature (where
+//! no session exists, so nothing is ever refused).
+
+#[path = "../../rustynes-ra/src/hardcore.rs"]
+pub mod hardcore;
 
 /// An action that changes the machine outside the controller-input stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

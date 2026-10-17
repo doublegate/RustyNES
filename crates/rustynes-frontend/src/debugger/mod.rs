@@ -1563,6 +1563,79 @@ impl DebuggerOverlay {
         self.cheevos_ui.set_status(status);
     }
 
+    /// v3.4.0 — latch hardcore directly (the app calls this the moment the
+    /// player switches hardcore on, before the next status push).
+    pub const fn set_hardcore_active(&mut self, active: bool) {
+        self.hardcore_active = active;
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — the `show_*` flag of every window RA's
+    /// hardcore rules forbid. RA: "Memory editors, debuggers, and/or
+    /// scripting/TAS/recorded input playback are strictly prohibited", and
+    /// "Cheats are disabled" (compliance requirements, section B). That is:
+    ///
+    /// - the chip inspectors (CPU/disassembly, PPU, OAM, APU, mapper, trace
+    ///   logger, watch/breakpoints, event viewer) and the Lua console;
+    /// - the memory viewer/editor and Memory Compare (RAM search);
+    /// - the pixel / audio provenance and HD-pixel inspectors (they name the
+    ///   tile, sprite or channel behind what is on screen);
+    /// - the Cheats panel, `TAStudio`, `BasicBot`, the latency oracle, the RAM
+    ///   atlas and the divergence tool (they edit input, drive the emulator
+    ///   with generated input, or snapshot and restore it).
+    ///
+    /// The HD-pixel inspector (`hd-pack`) and the divergence tool
+    /// (`debug-hooks`) exist only in some builds, so they are closed beside
+    /// this list, in [`Self::close_hardcore_forbidden_panels`].
+    ///
+    /// Left open: the NSF player and the header editor (no game state), and
+    /// every settings, input, netplay, performance, ROM-information,
+    /// documentation and achievement window.
+    fn hardcore_forbidden_panels(&mut self) -> [&mut bool; 18] {
+        [
+            &mut self.show_cpu,
+            &mut self.show_ppu,
+            &mut self.show_oam,
+            &mut self.show_apu,
+            &mut self.show_memory,
+            &mut self.show_memory_compare,
+            &mut self.show_mapper,
+            &mut self.show_trace,
+            &mut self.show_watch,
+            &mut self.show_events,
+            &mut self.show_script,
+            &mut self.show_provenance,
+            &mut self.show_audio_provenance,
+            &mut self.show_cheat,
+            &mut self.show_tas,
+            &mut self.show_basic_bot,
+            &mut self.show_latency,
+            &mut self.show_atlas,
+        ]
+    }
+
+    /// v3.4.0 — close every window [`Self::hardcore_forbidden_panels`] names
+    /// while hardcore is active. Called at the top of both panel dispatches,
+    /// so a forbidden window never renders a frame in hardcore however it was
+    /// opened (menu, hotkey, a script load, a detached OS window, or a window
+    /// left open when hardcore was switched on). A detached one is then
+    /// orphaned and reattached by the existing `render_detached_body` check.
+    fn close_hardcore_forbidden_panels(&mut self) {
+        if !self.hardcore_active {
+            return;
+        }
+        for open in self.hardcore_forbidden_panels() {
+            *open = false;
+        }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+        {
+            self.show_hd_pixel = false;
+        }
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.show_divergence = false;
+        }
+    }
+
     /// v1.5.0 "Lens" Workstream I7 — a compact `RetroAchievements` status line
     /// for the always-on status bar (relocated from the retired `` ` `` overlay
     /// HUD). `None` unless the feature is enabled AND a user is logged in (so the
@@ -2122,6 +2195,9 @@ impl DebuggerOverlay {
     /// overlay is visible. v1.7.0 "Forge" beta.5 (#55) removed the toolbar HUD
     /// that this used to draw first.
     fn chip_panels(&mut self, root_ui: &egui::Ui, nes: &mut Nes) {
+        // v3.4.0 — RA hardcore: close every forbidden window before any of
+        // them can render (see `close_hardcore_forbidden_panels`).
+        self.close_hardcore_forbidden_panels();
         // v1.7.0 "Forge" beta.5 (#55) — `root_ui` is now read-only here: with the
         // `debugger_top` toolbar panel removed, the chip windows all render via
         // `ctx` (floating windows), so only the context handle is needed.
@@ -2345,6 +2421,8 @@ impl DebuggerOverlay {
     }
 
     fn tool_panels(&mut self, ctx: &egui::Context, mut nes: Option<&mut Nes>, config: &mut Config) {
+        // v3.4.0 — RA hardcore: as in `chip_panels`.
+        self.close_hardcore_forbidden_panels();
         // The locked-session gate, republished by `App` each frame from the exact
         // same condition `emu.write` uses. Read once here so every panel that
         // mutates or advances the live `Nes` shares one predicate rather than
@@ -3440,5 +3518,81 @@ mod tests {
             "all panels closed => overlay must hide (no sticky-true latch)"
         );
         assert!(!m.any_chip_panel_open());
+    }
+
+    /// The text of one `fn` in this file's production half, whitespace
+    /// squashed, up to the next `fn` at the same indentation.
+    fn production_fn_body(name: &str) -> String {
+        const SRC: &str = include_str!("mod.rs");
+        let production = SRC
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(SRC, |(before, _)| before);
+        let start = production
+            .find(&format!("    fn {name}("))
+            .unwrap_or_else(|| panic!("`fn {name}` not found"));
+        let rest = &production[start + 4..];
+        let end = rest.find("\n    fn ").map_or(rest.len(), |i| i + 1);
+        rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — RA hardcore forbids "memory editors,
+    /// debuggers, and/or scripting/TAS/recorded input playback" and cheats.
+    /// The overlay needs a wgpu device, so no test can construct it; what is
+    /// pinned here is the shape that enforces the rule: both panel dispatches
+    /// close the forbidden windows as their FIRST statement, the close runs
+    /// under `hardcore_active`, and the forbidden list is exactly this one.
+    #[test]
+    fn hardcore_closes_the_debugger_memory_cheat_and_tas_windows_first() {
+        for dispatch in ["chip_panels", "tool_panels"] {
+            let body = production_fn_body(dispatch);
+            let gate = body
+                .find("self.close_hardcore_forbidden_panels();")
+                .unwrap_or_else(|| panic!("{dispatch}: no hardcore gate"));
+            let first_show = body.find("if self.show_").unwrap_or(body.len());
+            assert!(
+                gate < first_show,
+                "{dispatch}: a panel renders before the gate"
+            );
+        }
+        let close = production_fn_body("close_hardcore_forbidden_panels");
+        for needle in [
+            "if !self.hardcore_active { return; } for open in self.hardcore_forbidden_panels() { *open = false; }",
+            "self.show_hd_pixel = false;",
+            "self.show_divergence = false;",
+        ] {
+            assert!(
+                close.contains(needle),
+                "the close lacks `{needle}`: {close}"
+            );
+        }
+        let list = production_fn_body("hardcore_forbidden_panels");
+        let mut got: Vec<&str> = list
+            .split("&mut self.")
+            .skip(1)
+            .map(|t| t.split(',').next().unwrap_or_default().trim())
+            .collect();
+        got.sort_unstable();
+        let mut want = vec![
+            "show_cpu",
+            "show_ppu",
+            "show_oam",
+            "show_apu",
+            "show_memory",
+            "show_memory_compare",
+            "show_mapper",
+            "show_trace",
+            "show_watch",
+            "show_events",
+            "show_script",
+            "show_provenance",
+            "show_audio_provenance",
+            "show_cheat",
+            "show_tas",
+            "show_basic_bot",
+            "show_latency",
+            "show_atlas",
+        ];
+        want.sort_unstable();
+        assert_eq!(got, want, "the hardcore-forbidden window list changed");
     }
 }

@@ -1461,6 +1461,8 @@ Two playback quality-of-life keys ride alongside rewind: **fast-forward**
 with audio muted (a `None` audio sink) so the producer never overruns the
 ring; **frame-advance** (press `\`) single-steps exactly one frame, meant for
 use while paused. Both are default-bound in `[input.system]` and rebindable.
+Under RetroAchievements hardcore (v3.4.0) frame advance and every speed below
+100% are refused; fast forward stays (see "Hardcore mode" below).
 
 ## Input
 
@@ -1691,7 +1693,7 @@ inspection API on `rustynes_core::Nes` once per visible frame.
 - **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC — and (v1.4.0 Workstream D) an **Event breakpoints** section that breaks on hardware events (see below). Loaded symbol labels (D1) annotate the disassembly (a `label:` line above the matching address) and the breakpoint rows.
 - **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer. **v1.5.0 "Lens" Workstream A3** adds a **Scanline trace** tab (the per-scanline scroll/render register-write trace — $2000/$2001/$2005/$2006 — derived from the `debug-hooks` event log, surfacing mid-frame raster splits) and a native **Export CHR to PNG…** button (the combined 256×128 pattern dump) on the Patterns tab.
 - **APU**: per-channel scope (waveform), volume meters, register dump.
-- **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode).
+- **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode; since v3.4.0 hardcore closes every chip inspector and the Cheats, `TAStudio`, `BasicBot`, latency, atlas, divergence and provenance windows — see "Hardcore mode").
 - **Mapper**: identity (mapper id + submapper + name + accuracy tier), ROM/RAM
   sizes with bank counts + battery/NVRAM, the IRQ mechanism (PPU A12 / scanline /
   CPU-cycle) and expansion-audio chip, the live PRG (`$8000-$FFFF`) / CHR
@@ -2858,6 +2860,46 @@ whose server call fails RETRYABLY is rescheduled and re-sent from
   DISABLED) at load and nothing could ever unlock natively. The validation now
   runs in the next `idle` / `do_frame`, against the live emulator. The same
   end-to-end test caught it (its achievement loaded DISABLED).
+
+### Hardcore mode (v3.4.0 audit, `T-RA-HARDCORE`)
+
+The rule is one table, `crates/rustynes-ra/src/hardcore.rs`
+(`rustynes_ra::hardcore`; the frontend includes the same file by path as
+`session_policy::hardcore`, so a build without the `retroachievements` feature
+compiles the gates and refuses nothing). Each decision cites RA's [Hardcore
+Compliance Requirements](https://docs.retroachievements.org/general/hardcore-compliance-requirements.html)
+(section B), the [FAQ](https://docs.retroachievements.org/general/faq.html) or
+the [`rc_client` integration guide](https://github.com/RetroAchievements/rcheevos/wiki/rc_client-integration).
+`session_policy::hardcore::tests::every_feature_matches_the_ra_table` pins the
+table row by row. Desktop enforcement:
+
+| feature | refused where | test that fails if the block is removed |
+| --- | --- | --- |
+| state load (every route) | `refuse_timeline_action(LoadState)` at each dispatch site (`session_policy::refusal`) | `session_policy::tests::hardcore_refuses_a_load_only`; `app::tests::every_timeline_action_route_asks_the_session_policy` |
+| Game Genie codes | `EmuCore::produce_one_frame`, before the frame: the core's code list is emptied (the panel and cheat file keep it; switching hardcore off re-applies it) | `emu::tests::hardcore_runs_the_frame_without_game_genie_codes` |
+| raw RAM cheats | `EmuCore::produce_one_frame`, after the frame | `emu::tests::hardcore_applies_no_raw_ram_cheat` |
+| rewind | `App` folds the gesture, and `EmuCore::produce_one_frame` refuses it where it runs | `emu::tests::hardcore_refuses_a_held_rewind` |
+| slowdown (< 100%) | `EmuCore::effective_frame_duration` paces it at 100% (every pacing site reads it); `App::set_speed` refuses it | `emu::tests::hardcore_paces_slowdown_at_full_speed_and_keeps_fast_forward`; `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| frame advance | `App::request_frame_advance` | `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| memory pokes (debugger writeback) | `EmuCore::produce_one_frame` drops the queue | `emu::tests::debug_poke_is_gated_by_writes_locked` (its hardcore case) |
+| memory viewer / Memory Compare, the debugger inspectors, provenance / HD-pixel inspectors, Cheats, `TAStudio`, `BasicBot`, latency oracle, atlas, divergence | `DebuggerOverlay::close_hardcore_forbidden_panels`, the first statement of both panel dispatches | `debugger::tests::hardcore_closes_the_debugger_memory_cheat_and_tas_windows_first` |
+| Lua scripting | `App::load_script_from_path` refuses; `App::stop_script_for_hardcore` stops a running script at the top of `pump_scripts` | `app::tests::every_hardcore_start_site_asks_the_one_rule` |
+| movie playback / import | `App::handle_movie_play_toggle` and `handle_movie_import` refuse; `EmuCore::produce_one_frame` stops a playing movie | `emu::tests::hardcore_stops_movie_playback_and_keeps_a_recording`; the start-site shape test |
+| saved achievement progress (`ra-progress/*.rap`) | `RaSession::begin_load_game` / `set_hardcore` drop it | `rustynes_ra::tests::hardcore_never_restores_saved_progress` |
+| switching hardcore ON mid-session | `App::set_ra_hardcore`: refused while a movie or netplay owns the timeline; then stops a script, lifts slowdown, and power-cycles a running game (`do_power_cycle` ends in `rc_client_reset`, which re-enables processing) | `app::tests::switching_hardcore_on_power_cycles_a_running_game`; `rustynes_ra::tests::set_hardcore_reports_only_the_switch_on` |
+
+Allowed in hardcore: saving a state, recording a movie, fast forward, reset and
+power cycle, run-ahead and netplay (RA lists neither), and pausing, which
+`rc_client_can_pause` throttles. Switching hardcore OFF mid-session is allowed.
+When a game is identified a toast says "Hardcore mode" or "Casual mode" (RA
+section E), and the status bar keeps its HARDCORE marker. Leaderboards and rich
+presence have no off switch. The browser build is casual-only.
+
+The App-level rows are source-shape tests: `App` needs a window and the
+emulation thread, so they pin that each start site asks the rule before it
+acts, and the behaviour behind them is tested in `EmuCore`, `RaSession` and the
+table. Each block was shown to fail its test by a value mutation (the v3.4.0
+branch's commit messages list them).
 
 ### User-Agent
 
