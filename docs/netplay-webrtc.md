@@ -421,7 +421,16 @@ rule is **the lower slot of any pair offers to the higher slot** — so when a
 newcomer joins, every *existing* peer is sent `peer-joined { slot: newcomer }`
 and offers to it. The relay routes `offer` / `answer` / `candidate` to the named
 `to` slot (a legacy 2-peer client that omits `from`/`to`/`max_players` falls back
-to 2 players + "the other peer" routing). It verifies every peer in a room
+to 2 players + "the other peer" routing). **The relay never forwards a
+client's own `from`:** it overwrites `from` with the sender's real slot (its
+position in the room's membership list), and drops the frame from a client the
+room does not list. Recipients index their per-peer state by `from` (the
+browser mesh applies the SDP to peer connection `from`, the native NAT
+rendezvous adopts `from` as the peer slot), and the WebSocket's room membership
+is the only thing that authenticates a seat, so a client-chosen `from` would
+let one member of a 3-4 player room present another seat's offer, answer,
+candidate or public address. The rule is identical in the reference relay and
+the hosted lobby, pinned by the conformance vectors. It verifies every peer in a room
 announced the **same `rom_hash`** (`rom-mismatch` otherwise; `room-full` past
 `max_players`). The pure relay logic is unit-tested for 2-, 3-, and 4-peer rooms
 in `rustynes_netplay::signaling`.
@@ -547,8 +556,8 @@ protocol. `services/hosted/src/protocol.ts` is a port of
 `rustynes_netplay::signaling` (our own code), parser leniencies included, and
 it is checked against the Rust reference rather than trusted:
 `crates/rustynes-netplay/tests/hosted_signaling_vectors.rs` records what the
-reference `Relay` sends for 11 scenarios (64 steps: 2- and 4-player meshes,
-the legacy wire form, rejections, the lobby directory, matchmaking, re-joins,
+reference `Relay` sends for 12 scenarios (72 steps: 2- and 4-player meshes,
+a member claiming another seat's `from`, the legacy wire form, rejections, the lobby directory, matchmaking, re-joins,
 and the parser's escape and overflow quirks) into
 `services/hosted/test/vectors/signaling-vectors.json`, and fails if the Rust
 code stops producing it; `services/hosted/test/conformance.test.ts` replays

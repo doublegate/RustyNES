@@ -128,6 +128,27 @@ fn scenarios() -> Vec<(&'static str, Vec<Step>)> {
             ],
         ),
         (
+            "relayed from is the sender's real slot, not the claimed one",
+            vec![
+                send(1, &join("spoof", H1, 3)),
+                send(2, &join("spoof", H1, 3)),
+                send(3, &join("spoof", H1, 3)),
+                // Slot 1 (client 2) claims to be slot 0 in every relayable type.
+                send(2, r#"{"type":"offer","from":0,"to":2,"sdp":"forged"}"#),
+                send(2, r#"{"type":"answer","from":0,"to":2,"sdp":"forged"}"#),
+                send(
+                    2,
+                    r#"{"type":"candidate","from":0,"to":2,"candidate":"c","sdp_mid":"0","sdp_m_line_index":0}"#,
+                ),
+                send(
+                    2,
+                    r#"{"type":"public-addr","from":0,"to":2,"addr":"203.0.113.7:9"}"#,
+                ),
+                // An out-of-range claim is stamped too.
+                send(3, r#"{"type":"offer","from":200,"to":0,"sdp":"o"}"#),
+            ],
+        ),
+        (
             "relay to own slot falls back to every other peer",
             vec![
                 send(1, &join("three", "", 3)),
