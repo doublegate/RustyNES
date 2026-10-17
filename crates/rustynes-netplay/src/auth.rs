@@ -238,8 +238,8 @@ impl DatagramAuth {
     /// The N-peer form, for the mesh roster handshake: `shares` lists every
     /// peer's `(player index, key share)` and the sender index of each peer is
     /// its player index. `None` if `local` is not listed, an index repeats or
-    /// exceeds the Four Score's four, a share is all zeros, or fewer than two
-    /// peers are listed.
+    /// exceeds the Four Score's four, a share is all zeros, two peers carry
+    /// the same share, or fewer than two peers are listed.
     #[must_use]
     pub fn mesh(identity: &SessionIdentity, shares: &[(u8, KeyShare)], local: u8) -> Option<Self> {
         let mut ordered: [Option<KeyShare>; MAX_SENDERS] = [None; MAX_SENDERS];
@@ -249,6 +249,13 @@ impl DatagramAuth {
                 return None;
             }
             *slot = Some(share);
+        }
+        // Two seats with one share (as `pair` refuses `ours == theirs`): a
+        // peer that copied another's share added nothing of its own.
+        for (i, a) in ordered.iter().enumerate() {
+            if a.is_some() && ordered[i + 1..].contains(a) {
+                return None;
+            }
         }
         if ordered.get(usize::from(local))?.is_none() || shares.len() < 2 {
             return None;
@@ -309,7 +316,13 @@ impl DatagramAuth {
     #[must_use]
     pub fn seal(&mut self, payload: &[u8]) -> Vec<u8> {
         let seq = self.next_seq;
-        self.next_seq += 1;
+        // Saturating, not wrapping (Antigravity on #613): 2^64 seals is out of
+        // reach (about 5.8e8 years at 1,000 a second), but the arithmetic is
+        // defined anyway. A wrap would re-issue sequence 0, which every
+        // receiver has long since passed; saturation repeats `u64::MAX`, which
+        // the replay window refuses after its first use. Either way the
+        // session would stop, never accept a repeat.
+        self.next_seq = self.next_seq.saturating_add(1);
         let mut out = Vec::with_capacity(payload.len() + SEAL_OVERHEAD);
         out.push(SEALED_MARKER);
         out.push(self.local);
@@ -452,6 +465,33 @@ mod tests {
         assert!(DatagramAuth::mesh(&id(), &shares[..1], 0).is_none());
         assert!(DatagramAuth::mesh(&id(), &[(0, [1; 16]), (0, [2; 16])], 0).is_none());
         assert!(DatagramAuth::mesh(&id(), &[(0, [1; 16]), (5, [2; 16])], 0).is_none());
+    }
+
+    /// v3.4.0 (Antigravity on #613) — two seats carrying the same key share
+    /// form no mesh, as `pair` already refuses `ours == theirs`. A peer that
+    /// copies another's share (or a host that lists one twice) would
+    /// otherwise contribute nothing of its own to the session secret.
+    #[test]
+    fn mesh_refuses_duplicate_key_shares() {
+        let dup = [(0u8, [1u8; 16]), (1, [2; 16]), (2, [1; 16])];
+        for local in 0..3 {
+            assert!(DatagramAuth::mesh(&id(), &dup, local).is_none());
+        }
+        let distinct = [(0u8, [1u8; 16]), (1, [2; 16]), (2, [3; 16])];
+        assert!(DatagramAuth::mesh(&id(), &distinct, 2).is_some());
+    }
+
+    /// v3.4.0 (Antigravity on #613) — the send counter never overflows: a
+    /// debug build panicked on the `+= 1` past `u64::MAX`. It saturates
+    /// instead (see `seal`), so sealing at the end of the space is defined.
+    #[test]
+    fn the_send_counter_saturates_at_the_end_of_its_space() {
+        let (mut a, _) = pair();
+        a.next_seq = u64::MAX;
+        let first = a.seal(b"\x01x");
+        let second = a.seal(b"\x01x");
+        assert_eq!(first[2..10], u64::MAX.to_le_bytes());
+        assert_eq!(second[2..10], u64::MAX.to_le_bytes());
     }
 
     #[test]

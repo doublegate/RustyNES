@@ -158,7 +158,9 @@ handshake). A host-distributed **roster** closes that gap.
   roster: that works behind a NAT, where the address the host lists for the
   joiner is a rewritten one the joiner cannot observe. (Before protocol 9 it
   matched its bound source address, which only works on loopback / LAN, and
-  fell back to an index chosen out of band.) It sends to the host at the
+  fell back to an index chosen out of band; since v3.4.0 a roster that does
+  not carry the joiner's own share is ignored instead of falling back,
+  `a_roster_without_our_key_share_is_ignored`.) It sends to the host at the
   address it dialed. Once the host has answered that it is gathering, it waits
   while the host keeps answering, up to its gather timeout
   (`docs/netplay-session.md` section 2.1).
@@ -208,6 +210,18 @@ refused joiner's `Sync` with its own before returning the error, so the
 joiner reports `EmulatorMismatch` (or the ROM / configuration mismatch) as
 well (`epoch_mismatch_is_named_at_both_ends`). Signaling rooms still match by
 ROM only.
+**Who may refuse (v3.4.0).** The handshake is unsealed, so a refusing `Sync`
+counts only from the peer it concerns. A joiner acts on one only from the host
+it dialed, and a `NetplayConnection` with a known remote only from that remote;
+anything else is ignored (`a_joiner_ignores_a_refusal_not_from_its_host`,
+`a_dialing_connection_ignores_a_refusal_from_a_stranger`). A mesh host always
+answers the refused sender with its own identity, but ends the gathering only
+while it has adopted nobody: once a joiner is waiting, one mismatched (or
+forged) `Sync` would drop it, so the host keeps gathering and its timeout
+reports the refusal it saw instead of a bare timeout
+(`a_refusal_after_adoption_keeps_the_gathering`,
+`a_timed_out_gathering_names_the_refusal_it_saw`). A 2-player listening host,
+which has adopted nobody, still refuses whoever dialed it.
 
 **Verification.** The loopback integration test `tests/mesh_udp.rs` stands up a
 host + 2-3 joiners on `127.0.0.1` ephemeral ports, completes the multi-joiner
@@ -421,7 +435,16 @@ rule is **the lower slot of any pair offers to the higher slot** — so when a
 newcomer joins, every *existing* peer is sent `peer-joined { slot: newcomer }`
 and offers to it. The relay routes `offer` / `answer` / `candidate` to the named
 `to` slot (a legacy 2-peer client that omits `from`/`to`/`max_players` falls back
-to 2 players + "the other peer" routing). It verifies every peer in a room
+to 2 players + "the other peer" routing). **The relay never forwards a
+client's own `from`:** it overwrites `from` with the sender's real slot (its
+position in the room's membership list), and drops the frame from a client the
+room does not list. Recipients index their per-peer state by `from` (the
+browser mesh applies the SDP to peer connection `from`, the native NAT
+rendezvous adopts `from` as the peer slot), and the WebSocket's room membership
+is the only thing that authenticates a seat, so a client-chosen `from` would
+let one member of a 3-4 player room present another seat's offer, answer,
+candidate or public address. The rule is identical in the reference relay and
+the hosted lobby, pinned by the conformance vectors. It verifies every peer in a room
 announced the **same `rom_hash`** (`rom-mismatch` otherwise; `room-full` past
 `max_players`). The pure relay logic is unit-tested for 2-, 3-, and 4-peer rooms
 in `rustynes_netplay::signaling`.
@@ -547,8 +570,8 @@ protocol. `services/hosted/src/protocol.ts` is a port of
 `rustynes_netplay::signaling` (our own code), parser leniencies included, and
 it is checked against the Rust reference rather than trusted:
 `crates/rustynes-netplay/tests/hosted_signaling_vectors.rs` records what the
-reference `Relay` sends for 11 scenarios (64 steps: 2- and 4-player meshes,
-the legacy wire form, rejections, the lobby directory, matchmaking, re-joins,
+reference `Relay` sends for 12 scenarios (72 steps: 2- and 4-player meshes,
+a member claiming another seat's `from`, the legacy wire form, rejections, the lobby directory, matchmaking, re-joins,
 and the parser's escape and overflow quirks) into
 `services/hosted/test/vectors/signaling-vectors.json`, and fails if the Rust
 code stops producing it; `services/hosted/test/conformance.test.ts` replays
@@ -595,7 +618,10 @@ check, and the native blocking fetch.
   hosted lobby, and `BrowserNetplay::connect` fetches TURN credentials (5 s
   timeout) before sending `join`, so no peer connection is built without the
   relay servers; a failure or refusal continues with STUN only and says why in
-  the HUD.
+  the HUD. The timeout's timer is cleared once the fetch settles, and a fetch
+  that completes after `leave` or a later `connect` changes nothing and sends
+  nothing (each `connect` and `leave` moves a generation number the fetch
+  checks).
 - **Android / iOS (the §2.5 room-code path):** `NpNetConfig::to_nat_config`
   fills an empty signaling URL with the hosted lobby and, when no TURN trio was
   configured, fetches credentials and hands the first TURN-over-UDP endpoint to

@@ -130,10 +130,27 @@ A share is 16 random bytes (`fresh_key_share`, never all zeros). A `Sync` with
 an all-zero share (the one a running session sends, a NAT punch packet, a
 spectator's announcement) is not a handshake `Sync`: it adopts no peer and
 completes no handshake. A host takes the share only from the adopted peer's
-address, and only the first one.
+address, and only the first one. On a mesh host a `Sync` from an adopted
+address that carries a different share is not proof of life for that seat and
+replaces nothing, since an off-path attacker can forge one
+(`a_forged_share_from_a_live_joiner_s_address_replaces_nothing`). A joiner
+that restarted on the same address with a fresh share therefore recovers by
+expiry: its old seat is dropped after 3 s without the old share, and its next
+`Sync` is adopted with the share it holds
+(`a_restarted_joiner_is_re_adopted_with_its_new_key_share`). `DatagramAuth::mesh` refuses a roster
+in which two seats carry the same share, as `pair` refuses `ours == theirs`
+(`mesh_refuses_duplicate_key_shares`).
 
 A joiner finds its own roster entry by its own share, which works through a
-NAT where its address does not.
+NAT where its address does not. A roster that does not carry its share is
+ignored as if none had arrived, so its resend and deadline still run
+(`a_roster_without_our_key_share_is_ignored`,
+`a_stream_of_ignored_rosters_does_not_stop_the_deadline`); it used to fall back to
+its bound address and then to the index given at connect, keying the mesh on
+another seat's share. The roster lists each joiner's address in canonical form
+(an IPv4-mapped address as plain IPv4), so an IPv4-bound joiner can dial a
+peer that a dual-stack host heard in mapped form
+(`the_roster_lists_mapped_joiners_in_their_ipv4_form`).
 
 **Gathering (3-4 players).** A mesh host answers each adopted joiner's
 `Sync` with an accepted `Sync` carrying an all-zero share ("adopted, still
@@ -171,6 +188,9 @@ range. The frontend checks again before it builds the session
 Receive order: length, marker, sender (known, not ourselves), replay window
 (1024 per sender), tag. Only then is the sequence marked and the message
 parsed. A refusal changes no state and is counted (`refused_datagrams`).
+The send sequence saturates at `u64::MAX` rather than wrapping
+(`the_send_counter_saturates_at_the_end_of_its_space`); 2^64 datagrams is out
+of reach, and a wrap would only re-issue numbers every receiver has passed.
 
 **A message speaks only for its sender's seat (mesh).** On a
 `UdpMeshTransport` the sender index is the player index, and an `Input`,
@@ -191,7 +211,10 @@ session already ignores an input or ack naming its own, so it needs no check.
   moved.
 - An unsealed `Sync` from the peer's address, after the handshake, is
   answered with our handshake `Sync` (a mesh host: the roster), at most every
-  100 ms, without being parsed: the peer lost our reply.
+  100 ms: the peer lost our reply. It must decode as a whole `Sync` (any
+  protocol's); a datagram that only starts with the `Sync` tag, such as a
+  truncated `[0x02]`, gets nothing (`a_truncated_sync_gets_no_handshake_reply`,
+  `a_truncated_sync_gets_no_roster_resend`). Nothing in it reaches the session.
 - Everything else unsealed is refused.
 
 ### 2.4 What is not covered

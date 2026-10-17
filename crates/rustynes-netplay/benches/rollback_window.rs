@@ -29,14 +29,40 @@ use rustynes_netplay::{
     LinkConditions, MemoryTransport, RollbackSession, SessionConfig, SessionIdentity,
 };
 
-fn nestest() -> Vec<u8> {
+/// The committed nestest ROM, booted, or `None` (with the reason on stderr)
+/// when it cannot be read or parsed. A benchmark that cannot get its input
+/// is skipped with a message rather than panicking the whole run (the `CodeRabbit`
+/// pre-merge check on #613, "No `Unwrap`/`Expect`/`Panic` On Untrusted Input").
+fn nestest() -> Option<(Vec<u8>, Nes)> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let rom = manifest
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root")
-        .join("tests/roms/nestest/nestest.nes");
-    std::fs::read(&rom).unwrap_or_else(|e| panic!("read {}: {e}", rom.display()))
+    let Some(root) = manifest.parent().and_then(|p| p.parent()) else {
+        eprintln!(
+            "rollback_window: skipped, no workspace root above {}",
+            manifest.display()
+        );
+        return None;
+    };
+    let path = root.join("tests/roms/nestest/nestest.nes");
+    let rom = match std::fs::read(&path) {
+        Ok(rom) => rom,
+        Err(e) => {
+            eprintln!(
+                "rollback_window: skipped, cannot read {}: {e}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    match Nes::from_rom(&rom) {
+        Ok(nes) => Some((rom, nes)),
+        Err(e) => {
+            eprintln!(
+                "rollback_window: skipped, {} does not parse: {e}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 /// The pre-v3.4.0 digest, kept here as the A side of the A/B: FNV-1a 64 over
@@ -53,8 +79,9 @@ fn digest_fnv1a_bytewise(nes: &Nes) -> u64 {
 }
 
 fn bench_digest(c: &mut Criterion) {
-    let rom = nestest();
-    let mut nes = Nes::from_rom(&rom).expect("nestest parses");
+    let Some((_, mut nes)) = nestest() else {
+        return;
+    };
     for _ in 0..60 {
         nes.run_frame();
     }
@@ -68,10 +95,16 @@ fn bench_digest(c: &mut Criterion) {
 
 /// Two sessions, already 120 frames into a latent session, so the measured
 /// `advance` pair is the steady state rather than the start-up.
-fn warmed_pair(rom: &[u8]) -> Vec<(RollbackSession<MemoryTransport>, Nes)> {
+/// `None` (with the reason on stderr) if the second console does not boot.
+fn warmed_pair(rom: &[u8], n0: Nes) -> Option<Vec<(RollbackSession<MemoryTransport>, Nes)>> {
     let (a, b) = MemoryTransport::pair(LinkConditions::fixed_latency(3), 0xBE7C);
-    let n0 = Nes::from_rom(rom).expect("nestest parses");
-    let n1 = Nes::from_rom(rom).expect("nestest parses");
+    let n1 = match Nes::from_rom(rom) {
+        Ok(nes) => nes,
+        Err(e) => {
+            eprintln!("rollback_window: session_steady_state skipped, second console: {e}");
+            return None;
+        }
+    };
     let id = SessionIdentity::of(&n0);
     let cfg = SessionConfig::default();
     let s0 = RollbackSession::new(cfg, a, id);
@@ -87,21 +120,29 @@ fn warmed_pair(rom: &[u8]) -> Vec<(RollbackSession<MemoryTransport>, Nes)> {
     for _ in 0..120 {
         step(&mut pair);
     }
-    pair
+    Some(pair)
 }
 
 fn step(pair: &mut [(RollbackSession<MemoryTransport>, Nes)]) {
     for (s, nes) in pair.iter_mut() {
         s.add_local_input(Buttons::empty());
+        // Two identical consoles fed identical (empty) input cannot desync;
+        // a desync here is a broken determinism contract, which the bench
+        // must not measure past (the input is the committed nestest ROM and
+        // constant buttons, not untrusted data).
         let _ = s.advance(nes).expect("no desync");
     }
 }
 
 fn bench_session(c: &mut Criterion) {
-    let rom = nestest();
+    let Some((rom, nes)) = nestest() else {
+        return;
+    };
     // One pair, kept across iterations: the steady state persists, and a fresh
     // pair per iteration would put 240 warm-up frames in every sample's setup.
-    let mut pair = warmed_pair(&rom);
+    let Some(mut pair) = warmed_pair(&rom, nes) else {
+        return;
+    };
     c.bench_function("session_steady_state", |b| {
         b.iter(|| step(black_box(&mut pair)));
     });

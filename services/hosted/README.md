@@ -30,7 +30,7 @@ that, and `PRIVACY.md` at the repository root says so to users.
 reference parser's leniencies, so a client that works against
 `examples/signaling_server.rs` works unchanged here. That is checked, not
 asserted: `crates/rustynes-netplay/tests/hosted_signaling_vectors.rs` records
-the reference's exact outbound frames for 11 scenarios (64 steps) into
+the reference's exact outbound frames for 12 scenarios (72 steps) into
 `test/vectors/signaling-vectors.json` and fails if the Rust code stops
 producing them; `test/conformance.test.ts` replays the same file against the
 TypeScript relay, then end to end over real WebSockets into the Durable

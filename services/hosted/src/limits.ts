@@ -32,7 +32,15 @@ export class WindowLimiter {
     private readonly windowMs: number,
   ) {}
 
-  /** Count one event for `key`; `false` (and no count) when over the limit. */
+  /**
+   * Count one event for `key`; `false` (and no count) when over the limit.
+   *
+   * A counted hit is never refunded. The lobby's `connects` limit counts
+   * attempts, including one then refused as "lobby full", because it bounds
+   * how often one address may try; `roomCreates` is hit only when the room
+   * does not exist yet, where `Relay.handle` cannot refuse the join. (An
+   * unused `refund` was removed for that reason: Antigravity on #613.)
+   */
   hit(key: string, now: number): boolean {
     this.prune(now);
     const w = this.windows.get(key);
@@ -44,12 +52,6 @@ export class WindowLimiter {
     if (w.count >= this.limit) return false;
     w.count += 1;
     return true;
-  }
-
-  /** Undo one counted event (for an operation that failed afterwards). */
-  refund(key: string): void {
-    const w = this.windows.get(key);
-    if (w && w.count > 0) w.count -= 1;
   }
 
   /** Drop expired keys, at most once per window (cheap to call often). */

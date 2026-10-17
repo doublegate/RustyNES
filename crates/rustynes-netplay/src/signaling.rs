@@ -32,7 +32,8 @@
 //! nudges each *existing* peer that a higher-slot newcomer arrived. The rule is
 //! **the lower slot of any pair offers to the higher slot**, so each existing
 //! peer offers to the newcomer. `offer` / `answer` / `candidate` carry
-//! `{ from, to }` slots and are **routed to the `to` peer**.
+//! `{ from, to }` slots and are **routed to the `to` peer**, with `from`
+//! overwritten by the sender's real slot (a client cannot claim another seat).
 //!
 //! ```text
 //! → { "type": "join",      "room": "<code>", "rom_hash": "<hex>", "max_players": 4 }
@@ -840,6 +841,17 @@ impl Relay {
     /// slot. If `to` is the sender's own slot (the legacy 2-peer form encoded
     /// `to = 0`), fall back to forwarding to every *other* peer — which in a
     /// 2-peer room is exactly the one other peer.
+    ///
+    /// **The relayed frame's `from` is overwritten with the sender's real
+    /// slot.** The client-supplied value is never trusted: every recipient
+    /// indexes its per-peer state by `from` (the browser mesh applies the SDP
+    /// to peer connection `from`; the native NAT rendezvous adopts `from` as
+    /// the peer slot), and the WebSocket's room membership is the only thing
+    /// here that authenticates a seat. Without the stamp, a member of a 3-4
+    /// player room could present another seat's offer, answer, candidate or
+    /// public address and take over that pair's handshake. A client that the
+    /// room does not list has no slot to stamp, so its frame is dropped.
+    /// (Cursor security review on #613, comment 4303374320.)
     fn relay(&self, client: ClientId, msg: &SignalMessage) -> Vec<Action> {
         let Some(room_code) = self.client_room.get(&client) else {
             return Vec::new();
@@ -847,13 +859,20 @@ impl Relay {
         let Some(room) = self.rooms.get(room_code) else {
             return Vec::new();
         };
-        let sender_slot = room.slots.iter().position(|&c| c == client);
+        // No slot means nothing to vouch for as `from`: drop the frame.
+        let Some(sender_slot) = room.slots.iter().position(|&c| c == client) else {
+            return Vec::new();
+        };
+        let Ok(sender_from) = u8::try_from(sender_slot) else {
+            return Vec::new();
+        };
+        let msg = &with_sender_slot(msg, sender_from);
         let to_slot = signal_to_slot(msg);
 
         // Route to the explicit `to` slot, unless it names the sender itself
         // (legacy 2-peer fallback) — then broadcast to the other peer(s).
-        let explicit = match (to_slot, sender_slot) {
-            (Some(to), Some(s)) if usize::from(to) != s => room.slots.get(usize::from(to)).copied(),
+        let explicit = match to_slot {
+            Some(to) if usize::from(to) != sender_slot => room.slots.get(usize::from(to)).copied(),
             _ => None,
         };
 
@@ -876,6 +895,20 @@ impl Relay {
             },
         )
     }
+}
+
+/// `msg` with its `from` replaced by the relay-known sender slot `from`
+/// (see [`Relay::relay`]); any other message is returned unchanged.
+fn with_sender_slot(msg: &SignalMessage, from: u8) -> SignalMessage {
+    let mut out = msg.clone();
+    match &mut out {
+        SignalMessage::Offer { from: f, .. }
+        | SignalMessage::Answer { from: f, .. }
+        | SignalMessage::Candidate { from: f, .. }
+        | SignalMessage::PublicAddr { from: f, .. } => *f = from,
+        _ => {}
+    }
+    out
 }
 
 /// The `to` slot a relayable signaling message targets, if any.
@@ -1248,6 +1281,78 @@ mod tests {
         };
         let acts = relay.handle(3, answer.clone());
         assert_eq!(acts, vec![Action::Send { to: 1, msg: answer }]);
+    }
+
+    /// A relayed frame's `from` is the SENDER'S REAL SLOT, whatever the
+    /// client wrote. Every recipient (the browser mesh in `wasm_netplay.rs`,
+    /// the native NAT rendezvous in `nat_connect.rs`) indexes its per-peer
+    /// state by `from`, so a member of a 3-4 player room that could choose
+    /// `from` could replace another pair's SDP or punch address and speak as
+    /// that seat. (Cursor security review on #613, comment 4303374320.)
+    #[test]
+    fn relay_stamps_the_senders_real_slot_as_from() {
+        let mut relay = Relay::new();
+        for id in [1, 2, 3] {
+            let _ = relay.handle(id, join_n("r", "h", 3));
+        }
+        // Client 2 holds slot 1 but claims to be slot 0 when sending to 2.
+        for spoofed in [
+            SignalMessage::Offer {
+                from: 0,
+                to: 2,
+                sdp: "o".into(),
+            },
+            SignalMessage::Answer {
+                from: 0,
+                to: 2,
+                sdp: "a".into(),
+            },
+            SignalMessage::Candidate {
+                from: 0,
+                to: 2,
+                candidate: "c".into(),
+                sdp_mid: "0".into(),
+                sdp_m_line_index: 0,
+            },
+            SignalMessage::PublicAddr {
+                from: 0,
+                to: 2,
+                addr: "198.51.100.1:1".into(),
+            },
+        ] {
+            let acts = relay.handle(2, spoofed);
+            let [Action::Send { to: 3, msg }] = acts.as_slice() else {
+                panic!("routed to slot 2 only: {acts:?}");
+            };
+            let from = match msg {
+                SignalMessage::Offer { from, .. }
+                | SignalMessage::Answer { from, .. }
+                | SignalMessage::Candidate { from, .. }
+                | SignalMessage::PublicAddr { from, .. } => *from,
+                other => panic!("relayed type changed: {other:?}"),
+            };
+            assert_eq!(from, 1, "the relay stamps the sender's real slot");
+        }
+    }
+
+    /// A client mapped to a room that does not list it has no slot to stamp,
+    /// so its relayed frames are dropped rather than forwarded with a `from`
+    /// the relay cannot vouch for.
+    #[test]
+    fn relay_drops_frames_from_a_client_with_no_slot() {
+        let mut relay = Relay::new();
+        let _ = relay.handle(1, join("a", "h"));
+        let _ = relay.handle(2, join("a", "h"));
+        relay.client_room.insert(3, "a".to_string());
+        let acts = relay.handle(
+            3,
+            SignalMessage::Offer {
+                from: 0,
+                to: 1,
+                sdp: "o".into(),
+            },
+        );
+        assert!(acts.is_empty(), "no slot, no relay: {acts:?}");
     }
 
     #[test]

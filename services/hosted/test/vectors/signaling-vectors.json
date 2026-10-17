@@ -20,7 +20,7 @@
         {"op":"send","client":1,"text":"{\"type\":\"join\",\"room\":\"legacy\",\"rom_hash\":\"\"}","expect":[{"send":{"to":1,"text":"{\"type\":\"joined\",\"slot\":0,\"max_players\":2}"}}]},
         {"op":"send","client":2,"text":"{\"type\":\"join\",\"room\":\"legacy\"}","expect":[{"send":{"to":2,"text":"{\"type\":\"joined\",\"slot\":1,\"max_players\":2}"}},{"send":{"to":1,"text":"{\"type\":\"peer-joined\",\"slot\":1}"}}]},
         {"op":"send","client":1,"text":"{\"type\":\"offer\",\"sdp\":\"o\"}","expect":[{"send":{"to":2,"text":"{\"type\":\"offer\",\"from\":0,\"to\":0,\"sdp\":\"o\"}"}}]},
-        {"op":"send","client":2,"text":"{\"type\":\"answer\",\"sdp\":\"a\"}","expect":[{"send":{"to":1,"text":"{\"type\":\"answer\",\"from\":0,\"to\":0,\"sdp\":\"a\"}"}}]}
+        {"op":"send","client":2,"text":"{\"type\":\"answer\",\"sdp\":\"a\"}","expect":[{"send":{"to":1,"text":"{\"type\":\"answer\",\"from\":1,\"to\":0,\"sdp\":\"a\"}"}}]}
       ]
     },
     {
@@ -37,6 +37,19 @@
         {"op":"disconnect","client":2,"expect":[{"send":{"to":1,"text":"{\"type\":\"peer-left\",\"slot\":1}"}},{"send":{"to":3,"text":"{\"type\":\"peer-left\",\"slot\":1}"}},{"send":{"to":4,"text":"{\"type\":\"peer-left\",\"slot\":1}"}}]},
         {"op":"send","client":6,"text":"{\"type\":\"join\",\"room\":\"mesh4\",\"rom_hash\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"max_players\":4}","expect":[{"send":{"to":6,"text":"{\"type\":\"joined\",\"slot\":3,\"max_players\":4}"}},{"send":{"to":1,"text":"{\"type\":\"peer-joined\",\"slot\":3}"}},{"send":{"to":3,"text":"{\"type\":\"peer-joined\",\"slot\":3}"}},{"send":{"to":4,"text":"{\"type\":\"peer-joined\",\"slot\":3}"}}]},
         {"op":"send","client":6,"text":"{\"type\":\"offer\",\"from\":3,\"to\":9,\"sdp\":\"bad-to\"}","expect":[{"send":{"to":1,"text":"{\"type\":\"offer\",\"from\":3,\"to\":9,\"sdp\":\"bad-to\"}"}},{"send":{"to":3,"text":"{\"type\":\"offer\",\"from\":3,\"to\":9,\"sdp\":\"bad-to\"}"}},{"send":{"to":4,"text":"{\"type\":\"offer\",\"from\":3,\"to\":9,\"sdp\":\"bad-to\"}"}}]}
+      ]
+    },
+    {
+      "name": "relayed from is the sender's real slot, not the claimed one",
+      "steps": [
+        {"op":"send","client":1,"text":"{\"type\":\"join\",\"room\":\"spoof\",\"rom_hash\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"max_players\":3}","expect":[{"send":{"to":1,"text":"{\"type\":\"joined\",\"slot\":0,\"max_players\":3}"}}]},
+        {"op":"send","client":2,"text":"{\"type\":\"join\",\"room\":\"spoof\",\"rom_hash\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"max_players\":3}","expect":[{"send":{"to":2,"text":"{\"type\":\"joined\",\"slot\":1,\"max_players\":3}"}},{"send":{"to":1,"text":"{\"type\":\"peer-joined\",\"slot\":1}"}}]},
+        {"op":"send","client":3,"text":"{\"type\":\"join\",\"room\":\"spoof\",\"rom_hash\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"max_players\":3}","expect":[{"send":{"to":3,"text":"{\"type\":\"joined\",\"slot\":2,\"max_players\":3}"}},{"send":{"to":1,"text":"{\"type\":\"peer-joined\",\"slot\":2}"}},{"send":{"to":2,"text":"{\"type\":\"peer-joined\",\"slot\":2}"}}]},
+        {"op":"send","client":2,"text":"{\"type\":\"offer\",\"from\":0,\"to\":2,\"sdp\":\"forged\"}","expect":[{"send":{"to":3,"text":"{\"type\":\"offer\",\"from\":1,\"to\":2,\"sdp\":\"forged\"}"}}]},
+        {"op":"send","client":2,"text":"{\"type\":\"answer\",\"from\":0,\"to\":2,\"sdp\":\"forged\"}","expect":[{"send":{"to":3,"text":"{\"type\":\"answer\",\"from\":1,\"to\":2,\"sdp\":\"forged\"}"}}]},
+        {"op":"send","client":2,"text":"{\"type\":\"candidate\",\"from\":0,\"to\":2,\"candidate\":\"c\",\"sdp_mid\":\"0\",\"sdp_m_line_index\":0}","expect":[{"send":{"to":3,"text":"{\"type\":\"candidate\",\"from\":1,\"to\":2,\"candidate\":\"c\",\"sdp_mid\":\"0\",\"sdp_m_line_index\":0}"}}]},
+        {"op":"send","client":2,"text":"{\"type\":\"public-addr\",\"from\":0,\"to\":2,\"addr\":\"203.0.113.7:9\"}","expect":[{"send":{"to":3,"text":"{\"type\":\"public-addr\",\"from\":1,\"to\":2,\"addr\":\"203.0.113.7:9\"}"}}]},
+        {"op":"send","client":3,"text":"{\"type\":\"offer\",\"from\":200,\"to\":0,\"sdp\":\"o\"}","expect":[{"send":{"to":1,"text":"{\"type\":\"offer\",\"from\":2,\"to\":0,\"sdp\":\"o\"}"}}]}
       ]
     },
     {

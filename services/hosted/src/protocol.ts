@@ -552,14 +552,25 @@ export class Relay {
     }
   }
 
-  private relay(client: ClientId, msg: SignalMessage & { to: number }): Action[] {
+  /**
+   * Route a relayable frame by its `to` slot, with `from` OVERWRITTEN by the
+   * sender's real slot: recipients index their per-peer state by `from`, and
+   * the socket's room membership is the only thing that authenticates a seat,
+   * so a client-chosen `from` would let one member of a 3-4 player room take
+   * over another pair's handshake. A client the room does not list has no
+   * slot to stamp and is dropped. Mirrors `Relay::relay` in the reference.
+   * (Cursor security review on #613, comment 4303374320.)
+   */
+  private relay(client: ClientId, claimed: Extract<SignalMessage, { from: number; to: number }>): Action[] {
     const code = this.clientRoom.get(client);
     if (code === undefined) return [];
     const room = this.rooms.get(code);
     if (!room) return [];
     const sender = room.slots.indexOf(client);
+    if (sender < 0 || sender > 255) return [];
+    const msg: SignalMessage = { ...claimed, from: sender };
     let explicit: ClientId | undefined;
-    if (sender >= 0 && msg.to !== sender) explicit = room.slots[msg.to];
+    if (claimed.to !== sender) explicit = room.slots[claimed.to];
     if (explicit !== undefined) return [{ kind: "send", to: explicit, msg }];
     return room.slots.filter((c) => c !== client).map((peer) => ({ kind: "send" as const, to: peer, msg }));
   }

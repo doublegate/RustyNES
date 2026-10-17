@@ -111,6 +111,12 @@ struct Shared {
     ice_ready: bool,
     /// The `join` frame held back while `ice_ready` is `false`.
     pending_join: Option<String>,
+    /// v3.4.0 — which `connect` this state belongs to, bumped by every
+    /// [`BrowserNetplay::connect`] and [`BrowserNetplay::leave`]. A hosted
+    /// TURN fetch still in flight when the session it was started for has
+    /// gone compares its own generation with this one and, if they differ,
+    /// changes nothing and sends nothing (Antigravity on #613).
+    generation: u64,
     /// A short status / error message for the HUD.
     message: String,
 }
@@ -210,15 +216,17 @@ impl BrowserNetplay {
         turn_credentials_url: Option<&str>,
     ) -> Result<(), JsValue> {
         let stun: Vec<IceServer> = ice_servers.iter().map(|u| IceServer::from_url(u)).collect();
-        {
+        let generation = {
             let mut s = self.shared.borrow_mut();
+            s.generation = s.generation.wrapping_add(1);
             s.phase = BrowserNetplayPhase::Connecting;
             s.message = format!("connecting to {signaling_url} (room {room})");
             s.ice_servers.clone_from(&stun);
             s.ice_ready = turn_credentials_url.is_none();
             s.pending_join = None;
             s.max_players = self.config.num_players;
-        }
+            s.generation
+        };
 
         // The signaling WebSocket. Each peer-to-peer RtcPeerConnection is created
         // lazily during the handshake (in `handle_signal`).
@@ -283,6 +291,12 @@ impl BrowserNetplay {
                 let result = fetch_hosted_ice(&url).await;
                 let join = {
                     let mut s = shared.borrow_mut();
+                    // The session this fetch was for has gone (`leave`, or a
+                    // later `connect` on this driver): touch nothing, and
+                    // above all do not send a join on its socket.
+                    if s.generation != generation {
+                        return;
+                    }
                     match result {
                         Ok(ice) => {
                             // The configured STUN list first, then the hosted
@@ -402,7 +416,14 @@ impl BrowserNetplay {
             }
         }
         self.keepalive_closures.clear();
-        *self.shared.borrow_mut() = Shared::default();
+        // Reset everything but the generation, which moves on so a fetch
+        // started by the session just left cannot match the next one.
+        let mut s = self.shared.borrow_mut();
+        let next = s.generation.wrapping_add(1);
+        *s = Shared {
+            generation: next,
+            ..Shared::default()
+        };
     }
 }
 
@@ -470,6 +491,7 @@ const HOSTED_ICE_TIMEOUT_MS: i32 = 5000;
 /// body still ends in `Transport("timed out")` and the held `join` goes out
 /// with STUN only, instead of the session waiting in `Connecting` forever.
 /// The abandoned fetch is left to finish or fail on its own; nothing reads it.
+/// The timer is cleared whichever way the function returns.
 ///
 /// `fetch` and `setTimeout` are reached through `js_sys::Reflect` on the
 /// global object, which needs no extra `web-sys` features (and so adds
@@ -490,6 +512,10 @@ async fn fetch_hosted_ice(url: &str) -> Result<HostedIce, HostedIceError> {
             .ok()
             .and_then(|f| f.dyn_into().ok())
             .ok_or_else(|| transport("no setTimeout"))?;
+    let clear_timeout: Option<js_sys::Function> =
+        js_sys::Reflect::get(&global, &JsValue::from_str("clearTimeout"))
+            .ok()
+            .and_then(|f| f.dyn_into().ok());
     let init = js_sys::Object::new();
     js_sys::Reflect::set(
         &init,
@@ -506,9 +532,22 @@ async fn fetch_hosted_ice(url: &str) -> Result<HostedIce, HostedIceError> {
     // against the request, and then against the body read, bounds the whole
     // wait by the one deadline (a settled promise stays settled, so once the
     // timer has fired the second race resolves to `undefined` at once).
+    let mut timer_id = JsValue::UNDEFINED;
     let timeout = js_sys::Promise::new(&mut |resolve, _reject| {
-        let _ = set_timeout.call2(&global, &resolve, &JsValue::from(HOSTED_ICE_TIMEOUT_MS));
+        if let Ok(id) = set_timeout.call2(&global, &resolve, &JsValue::from(HOSTED_ICE_TIMEOUT_MS))
+        {
+            timer_id = id;
+        }
     });
+    // v3.4.0 (Antigravity on #613): cancel the timer however this function
+    // returns, so a fast answer does not leave it (and the resolve callback
+    // it holds) alive for the full five seconds. Clearing a timer that has
+    // already fired is a no-op.
+    let _timer = ClearTimerOnDrop {
+        global: global.clone(),
+        clear: clear_timeout,
+        id: timer_id,
+    };
     let race = js_sys::Promise::race(&js_sys::Array::of2(&request, &timeout));
     let response = JsFuture::from(race)
         .await
@@ -536,6 +575,23 @@ async fn fetch_hosted_ice(url: &str) -> Result<HostedIce, HostedIceError> {
         .as_string()
         .ok_or_else(|| transport("unreadable body"))?;
     rustynes_netplay::hosted::parse_turn_credentials(&body)
+}
+
+/// Calls `clearTimeout(id)` when dropped (see `fetch_hosted_ice`).
+struct ClearTimerOnDrop {
+    global: js_sys::Object,
+    clear: Option<js_sys::Function>,
+    id: JsValue,
+}
+
+impl Drop for ClearTimerOnDrop {
+    fn drop(&mut self) {
+        if let Some(clear) = &self.clear
+            && !self.id.is_undefined()
+        {
+            let _ = clear.call1(&self.global, &self.id);
+        }
+    }
 }
 
 /// Drive the N-peer WebRTC mesh handshake in response to one inbound signaling
