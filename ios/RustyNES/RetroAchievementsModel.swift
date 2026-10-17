@@ -36,8 +36,10 @@ final class RetroAchievementsModel: ObservableObject {
             // netplay session owns the timeline (the reset RA requires would
             // break it) and returns the mode the session actually runs in. Put
             // the toggle back when it differs, so the UI never claims hardcore
-            // while achievements are casual. The stored value is written first,
-            // so it is right whether or not the assignment re-enters `didSet`.
+            // while achievements are casual. The requested mode was persisted
+            // above; a returned mode that differs is persisted here before the
+            // assignment, which (being inside this `didSet`) does not run the
+            // observer again, so `raSetHardcore` is called once per change.
             if let live = core?.raSetHardcore(hardcore), live != hardcore {
                 UserDefaults.standard.set(live, forKey: "raHardcore")
                 lastError = "Stop the movie or netplay session before enabling hardcore."

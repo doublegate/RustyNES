@@ -450,8 +450,10 @@ impl NpNetConfig {
     /// (`RUSTYNES_HOSTED_BASE` at compile time, see
     /// [`rustynes_netplay::hosted`]; unset by default), an empty signaling URL
     /// means the hosted lobby, and a missing TURN trio means "ask the hosted
-    /// service for short-lived credentials". The fetch is one blocking HTTPS GET
-    /// (both apps call `np_host_room` / `np_join_room` off the main thread); any
+    /// service for short-lived credentials". The fetch is one blocking HTTPS
+    /// `POST` with an empty body (the Worker refuses `GET`, so a third-party page
+    /// cannot spend the TURN budget with an `<img>`; both apps call
+    /// `np_host_room` / `np_join_room` off the main thread); any
     /// refusal or failure leaves the relay path off, which is exactly the
     /// pre-v3.4.0 punch-or-fail behaviour. A user-supplied TURN trio always
     /// wins, and without a hosted base nothing here changes at all.

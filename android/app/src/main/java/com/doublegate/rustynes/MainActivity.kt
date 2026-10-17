@@ -2097,24 +2097,27 @@ private fun EmulatorScreen(
     // token-login silently (fire-and-forget; status/toasts are polled in the loop).
     LaunchedEffect(Unit) {
         if (settings.raEnabled && settings.raToken.isNotEmpty() && settings.raUsername.isNotEmpty()) {
-            withContext(Dispatchers.IO) {
-                emulator.controller // touch (no-op); RA session is controller-scoped
+            val requested = settings.raHardcore
+            val user = settings.raUsername
+            val token = settings.raToken
+            val live = withContext(Dispatchers.IO) {
                 runCatching {
                     // The session is created lazily on the first ra_* call; init it
                     // and token-login — but only when a controller already exists
                     // (the RA session is controller-scoped). If no ROM is open yet,
                     // there is no controller, so login happens when one is loaded.
-                    val ctrl = emulator.controller
-                    if (ctrl != null) {
-                        // v3.4.0 — `raInit` returns the mode the session runs in:
-                        // hardcore is refused while a movie or netplay owns the
-                        // timeline, and the toggle must show that, not the request.
-                        val live = ctrl.raInit(settings.raHardcore)
-                        if (live != settings.raHardcore) settings.raHardcore = live
-                        ctrl.raLoginToken(settings.raUsername, settings.raToken)
-                    }
-                }
+                    val ctrl = emulator.controller ?: return@runCatching null
+                    // v3.4.0 — `raInit` returns the mode the session runs in:
+                    // hardcore is refused while a movie or netplay owns the
+                    // timeline, and the toggle must show that, not the request.
+                    val mode = ctrl.raInit(requested)
+                    ctrl.raLoginToken(user, token)
+                    mode
+                }.getOrNull()
             }
+            // Settings and Compose state are written here, on the main context,
+            // never from the IO block (v3.4.0 review).
+            if (live != null && live != settings.raHardcore) settings.raHardcore = live
         }
     }
 
@@ -2692,20 +2695,28 @@ private fun EmulatorScreen(
                 // are polled in the emulation loop; on the LOGGED_IN edge the token
                 // is persisted and the loaded game is identified.
                 settings.raUsername = user
+                val requested = settings.raHardcore
                 scope.launch {
-                    withContext(Dispatchers.IO) {
+                    // `null` = no controller yet; otherwise the live mode. The
+                    // settings and status are written after the IO block, on the
+                    // main context (v3.4.0 review).
+                    val result = withContext(Dispatchers.IO) {
                         runCatching {
-                            val ctrl = emulator.controller
-                            if (ctrl != null) {
-                                // v3.4.0 — show the mode the session runs in (see
-                                // the auto-login above).
-                                val live = ctrl.raInit(settings.raHardcore)
-                                if (live != settings.raHardcore) settings.raHardcore = live
-                                ctrl.raLoginPassword(user, pass)
-                                raStatus = "Logging in…"
-                            } else {
-                                raStatus = "Open a ROM first, then log in"
-                            }
+                            val ctrl = emulator.controller ?: return@runCatching null
+                            // v3.4.0 — show the mode the session runs in (see
+                            // the auto-login above).
+                            val mode = ctrl.raInit(requested)
+                            ctrl.raLoginPassword(user, pass)
+                            mode
+                        }
+                    }
+                    val live = result.getOrNull()
+                    when {
+                        result.isFailure -> raStatus = "Login failed to start"
+                        live == null -> raStatus = "Open a ROM first, then log in"
+                        else -> {
+                            if (live != settings.raHardcore) settings.raHardcore = live
+                            raStatus = "Logging in…"
                         }
                     }
                 }
@@ -2722,15 +2733,15 @@ private fun EmulatorScreen(
             onRaEnabledChange = { on ->
                 settings.raEnabled = on
                 if (on) {
+                    val requested = settings.raHardcore
                     scope.launch {
-                        withContext(Dispatchers.IO) {
-                            runCatching {
-                                // v3.4.0 — show the mode the session runs in.
-                                val live = emulator.controller?.raInit(settings.raHardcore)
-                                if (live != null && live != settings.raHardcore) {
-                                    settings.raHardcore = live
-                                }
-                            }
+                        // v3.4.0 — show the mode the session runs in; written on
+                        // the main context, not inside the IO block.
+                        val live = withContext(Dispatchers.IO) {
+                            runCatching { emulator.controller?.raInit(requested) }.getOrNull()
+                        }
+                        if (live != null && live != settings.raHardcore) {
+                            settings.raHardcore = live
                         }
                     }
                 }
@@ -2744,8 +2755,16 @@ private fun EmulatorScreen(
                     // requires would break it) and returns the mode the session
                     // actually runs in. Put the toggle back when it differs, so
                     // the UI never claims hardcore while achievements are casual.
+                    // A missing controller is no mismatch: no session exists, and
+                    // the next `raInit` applies the stored value. A bridge failure
+                    // (UniFFI surfaces an internal panic as an exception, which may
+                    // leave state partly updated) is reconciled by reading the live
+                    // mode back, not by restoring the previous value (v3.4.0 review).
                     val live = withContext(Dispatchers.IO) {
-                        runCatching { emulator.controller?.raSetHardcore(hc) }.getOrNull()
+                        val ctrl = emulator.controller ?: return@withContext null
+                        runCatching { ctrl.raSetHardcore(hc) }
+                            .recoverCatching { ctrl.raHardcore() }
+                            .getOrNull()
                     }
                     if (live != null && live != hc) {
                         settings.raHardcore = live
