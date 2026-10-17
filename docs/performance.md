@@ -1433,6 +1433,65 @@ frame loop, which leaves code layout or inlining as the working explanation,
 untested. No change is adopted; the lead is closed as measured. Logs:
 `salvaged/perf-v3.0.1-palette-ab/` (gitignored).
 
+### v3.4.0 — the egui 0.36 -> 0.37 move: no pacing or frame-time change resolvable on a contended host
+
+**Finding: nothing measured here attributes a change to egui 0.37, and the
+host was too loaded for these numbers to rule a small one out.** The move
+(egui / egui-wgpu / egui-winit 0.37.0, wgpu still 30, the vendored egui-winit
+removed) changes only the frontend; the chip crates and `rustynes-core`'s
+whole dependency graph are identical to v3.3.0 (zero diff under
+`crates/rustynes-{core,cpu,ppu,apu,mappers}`, and `cargo tree -p rustynes-core`
+lists the same 82 packages on both sides).
+
+**Frame pacing, the v2.9.3 method, with two departures stated first.** Release
+frontends from v3.3.0 (`86114215`, egui 0.36, built in a detached worktree) and
+from the egui 0.37 commit, run alternately (old, new, old, new), 45 s each,
+`RUSTYNES_PERF_LOG=1`, `tests/roms/assorted/flowing_palette.nes`, Mailbox, a
+119.991 Hz KDE Wayland monitor. Departures: the one-minute load average was
+**17-25 on 20 cores** throughout (other agents' builds; the method asks for
+under 2), and the maintainer's config had **run-ahead 1** (v2.9.3 used 0); the
+config was not edited. Values are the mean over the 35 per-second rows after
+three warm-up rows; every capture passed `perf_log_check.py`.
+
+| | old 1 | new 1 | old 2 | new 2 |
+| --- | --- | --- | --- | --- |
+| load (1 min) at start | 25.3 | 23.2 | 17.2 | 22.5 |
+| presented mean (ms) | 9.14 | 8.39 | 9.06 | 8.94 |
+| presented p50 | 9.50 | 8.48 | 9.40 | 9.01 |
+| presented p95 | 16.61 | 13.35 | 18.29 | 16.94 |
+| presented p99 | 23.03 | 16.18 | 23.40 | 22.36 |
+| redraw wait (`rwait`) p95 | 7.71 | 8.18 | 7.27 | 7.31 |
+| egui UI time (`rui`) p95 | 0.00 | 0.00 | 0.00 | 0.00 |
+| produced p99 | 22.31 | 20.15 | 20.76 | 21.85 |
+| cost p95 (emulation work) | 12.17 | 9.38 | 11.63 | 11.48 |
+
+**Reading it.** The first pair favours the new build on every present column,
+but its `cost p95` (the emulation work, which egui does not touch) is also 23%
+lower, so that capture ran on a quieter machine, not on better code. The
+second pair, whose `cost p95` agree within 1.3%, differs by at most 1.35 ms on
+any present percentile (p95; the new build lower), inside what the first pair
+shows contention alone can move. `rui` reads 0.00 in all four: with the debugger overlay closed the
+egui pass is too short to register at this column's resolution, so these
+captures do not exercise egui's own cost at all. Not measured: a quiet host,
+run-ahead 0, an open overlay, Fifo, 60 Hz.
+
+**The CI frame-time gate** (`bench_regression_check.sh`, then
+`bench_relative_check.sh` with `BENCH_BASE_REF=86114215`), which benches
+`rustynes-core`'s `full_frame` and therefore the identical code on both sides:
+
+- Absolute ceiling: PASS, 6.618 / 2.934 / 3.906 / 2.650 ms/frame (nestest,
+  flowing_palette, and their `_fast` variants) against 10 ms.
+- Relative, run 1: **FAIL**, `nestest_fast` +66.06% (4.024 -> 6.682 ms,
+  14.18% robust CV) and `flowing_palette_fast` +23.83% (44.29% CV).
+- Relative, run 2, minutes later, same two commits: NO VERDICT,
+  `nestest_fast` **-6.86%** and `flowing_palette_fast` **-24.48%**.
+
+Identical code produced +66% and then -7%: the failure is the contended host,
+the gate's "beyond 3x the measured noise" exception firing on a noise
+estimate that was itself too low. It is recorded rather than re-run until it
+passes. Raw pacing CSVs and both gate logs were kept in the session scratch
+directory, not in the repository.
+
 ### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
 
 **Finding: presents are even in every configuration measured; run-ahead

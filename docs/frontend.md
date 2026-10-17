@@ -1211,6 +1211,20 @@ the 5 MiB gzip wasm budget, so the **same full font ships on native and both
 wasm flavours** — there is no per-target subset (the `wasm-canvas` embed has no
 egui menu and is unaffected).
 
+The text fonts beneath that fallback are egui's own, and since egui 0.37
+(v3.4.0) which of them `egui::FontDefinitions::default()` contains is set by
+egui's cargo features rather than by this code. The workspace enables
+`monochrome_emoji_fonts` (which implies `default_fonts`), the same set egui
+0.36's defaults loaded: Ubuntu-Light and Hack for text, plus `NotoEmoji-Regular`
+and `emoji-icon-font`, the only fonts carrying the media and file glyphs the NSF
+player, replay panel and TAStudio draw (U+23EE, U+23F9, U+1F4BE and six more).
+`crate::icons::definitions` builds the complete set, and
+`icons::tests::the_shell_font_set_covers_every_glyph_the_ui_draws` lays out
+every non-ASCII glyph the frontend's string literals use against it, in both
+families, because a missing font compiles cleanly and shows only as boxes in a
+rendered frame. Three panel glyphs have no font in the set and render as boxes,
+as they did before: U+2442 (replay panel) and U+FF0B / U+FF0D (TAStudio).
+
 ### Accessibility (v1.5.0 "Lens" Workstream E)
 
 Frontend-only, additive, off-by-default — the shipped / native / `no_std` / wasm
