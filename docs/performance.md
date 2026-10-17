@@ -1651,6 +1651,23 @@ hold. The host load fell across the four captures, so a quiet-host repeat is
 still worth taking. With load spread that wide, `rui` p50 reads 0.05-0.07 ms on
 both builds; the earlier capture's 0.31 ms was at a higher load.
 
+**The emulation thread, profiled the same way, held one more.** Every snapshot
+restore rebuilt the APU's band-limiting buffer through `BlipBuf::new`, which
+recomputes the windowed-sinc kernel: 8,192 `sin` / `cos` evaluations for a
+table that never changes (`Kernel::new` takes no arguments). With run-ahead 1
+that runs every frame, and rewind and netplay rollback restore too. It was 1.8%
+of the emulation thread (`Kernel::new` 0.82%, `sinf32` 0.52%, `cosf32` 0.46%).
+v3.4.0's `read_blip` copies the live buffer's kernel instead
+(`BlipBuf::with_kernel`). The table is identical either way. The gates confirm
+it: APU and core 431/0/3, the accuracy battery 508/0/4, the commercial-ROM
+suite with its audio digests 759/0/9, and a new bit-for-bit restore test,
+`a_restore_reproduces_the_sample_stream_bit_for_bit` (mutant caught: the
+restored phase dropped). Emulation-thread instructions over 15 s, run-ahead 1,
+alternated: 74.349 G -> 73.277 G and 74.352 G -> 73.215 G, **-1.44% and
+-1.53%**. The CPU-time column from the same captures had mixed signs on a host
+at load 4-7, so no timing gain is claimed. The instruction count is the
+evidence, and byte identity is the reason it is safe to adopt.
+
 Not adopted, measured as a candidate: reusing the previous frame's egui output
 when nothing changed (no input, no repaint requested, an identical
 `ShellFrame`). Live, it would save most of the ~0.05-0.3 ms pass on most

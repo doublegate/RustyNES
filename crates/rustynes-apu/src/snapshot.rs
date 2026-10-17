@@ -681,7 +681,10 @@ fn write_blip(w: &mut W, b: &BlipBuf) {
         w.f32(v);
     }
 }
-fn read_blip(r: &mut R<'_>) -> Result<BlipBuf, ApuSnapshotError> {
+/// `live` is the buffer being replaced: its kernel, a constant table, is
+/// copied into the rebuilt one rather than recomputed (v3.4.0; see
+/// [`BlipBuf::with_kernel`]). Nothing else is taken from it.
+fn read_blip(r: &mut R<'_>, live: &BlipBuf) -> Result<BlipBuf, ApuSnapshotError> {
     let sample_rate = r.u32()?;
     let cpu_rate = r.f64()?;
     let phase = r.f64()?;
@@ -724,7 +727,7 @@ fn read_blip(r: &mut R<'_>) -> Result<BlipBuf, ApuSnapshotError> {
     if !(0.0..1.0).contains(&phase) {
         return Err(ApuSnapshotError::InvalidResampler("blip.phase"));
     }
-    let mut b = BlipBuf::new(sample_rate, cpu_rate);
+    let mut b = BlipBuf::with_kernel(sample_rate, cpu_rate, live.kernel().clone());
     b.phase = phase;
     b.filter = filter;
     b.held_value = held_value;
@@ -829,7 +832,7 @@ impl Apu {
         // keeps the PAL sequencer positions. `read_fc` returns a counter with
         // `pal = false` (NTSC), which is correct for NTSC/Dendy.
         self.frame_counter.pal = matches!(self.region, Region::Pal);
-        self.blip = read_blip(&mut r)?;
+        self.blip = read_blip(&mut r, &self.blip)?;
 
         self.apu_phase = r.bool()?;
         self.cpu_cycle = r.u64()?;
@@ -922,6 +925,60 @@ mod tests {
                 Ok(()) => panic!("{name} = {bad}: restore ACCEPTED an out-of-range value"),
             }
         }
+    }
+
+    /// v3.4.0 — a restored APU produces exactly the samples the original does.
+    /// The restore now copies the live buffer's band-limiting kernel instead
+    /// of rebuilding it; the kernel is a constant table, so the stream must
+    /// match bit for bit, whether the target was built fresh or had already
+    /// played.
+    #[test]
+    fn a_restore_reproduces_the_sample_stream_bit_for_bit() {
+        fn play(apu: &mut Apu, cycles: usize) -> Vec<u32> {
+            for _ in 0..cycles {
+                apu.tick();
+            }
+            apu.drain_audio().iter().map(|s| s.to_bits()).collect()
+        }
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        // Pulse 1 and triangle sounding, so the band-limited steps are busy.
+        for (addr, v) in [
+            (0x4015, 0x0F),
+            (0x4000, 0xBF),
+            (0x4002, 0x8E),
+            (0x4003, 0x08),
+            (0x4008, 0x81),
+            (0x400A, 0x40),
+            (0x400B, 0x08),
+        ] {
+            a.write_register(addr, v);
+        }
+        let _ = play(&mut a, 20_000);
+        let blob = a.snapshot();
+        let expected = play(&mut a, 60_000);
+        assert!(
+            expected.iter().any(|&s| s != 0.0f32.to_bits()),
+            "the stimulus must produce sound, or the comparison proves nothing"
+        );
+
+        let mut fresh = Apu::new(Region::Ntsc, 44_100);
+        fresh.restore(&blob).expect("restore into a fresh APU");
+        assert_eq!(
+            play(&mut fresh, 60_000),
+            expected,
+            "restored into a fresh APU"
+        );
+
+        // Into one that has already played: the copied kernel is that APU's.
+        let mut used = Apu::new(Region::Ntsc, 44_100);
+        used.write_register(0x4015, 0x01);
+        let _ = play(&mut used, 5_000);
+        used.restore(&blob).expect("restore into a used APU");
+        assert_eq!(
+            play(&mut used, 60_000),
+            expected,
+            "restored into a used APU"
+        );
     }
 
     #[test]

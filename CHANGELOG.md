@@ -131,6 +131,11 @@ cycle-accurate core later replaced.
   partly under the emulator lock, even with the Performance panel closed and
   the log off. They are now built only when a panel shows them or the log
   writes its once-a-second row. Frame rate and pacing are unchanged.
+- **Restoring a save state no longer rebuilds the audio resampler's filter
+  table.** Run-ahead restores one every frame, as do rewind and netplay
+  rollback, and each one recomputed 8,192 sines and cosines for a table that
+  never changes. It is now copied. About 1.5% fewer instructions on the
+  emulation thread with run-ahead 1; audio and states are byte-identical.
 - **The performance log records the egui pass in the normal view.**
   `RUSTYNES_PERF_LOG`'s `rui` column was recorded only while the debugger
   overlay or a tool panel was open, so with them closed it read 0.000 although
