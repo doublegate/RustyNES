@@ -6449,7 +6449,7 @@ impl App {
         let sy = game_h / visible_h;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("lua_script_overlay_wasm"),
+            egui::Id::unique("lua_script_overlay_wasm"),
         ));
         let col = |c: u32| {
             egui::Color32::from_rgba_unmultiplied(
@@ -6704,7 +6704,7 @@ impl App {
         let sy = game_h / visible_h;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("lua_script_overlay"),
+            egui::Id::unique("lua_script_overlay"),
         ));
         let col = |c: u32| {
             egui::Color32::from_rgba_unmultiplied(

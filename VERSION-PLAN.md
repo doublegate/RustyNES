@@ -75,7 +75,7 @@ day.)
 | Version | Scope | Plan |
 |---------|-------|------|
 | v3.3.0 | **Shipped 2026-10-16 as "Plumbline"** with rows 7-9 only (Phi2 refuted, sprite-0 closed, epoch 5 for other fixes) plus the v3.2.0 backlog; MiSTer F2 and wgpu 31 / egui 0.37 moved to v3.4.0 | [`v3.3.0-plan.md`](to-dos/plans/v3.3.0-plan.md) |
-| v3.4.0 | Carried from v3.3.0: MiSTer F2 (the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline) and wgpu 31 / egui 0.37. Hosted netplay and the browser RA proxy on Cloudflare, RA hardcore compliance, native 3-4 player netplay. MiSTer F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | [`v3.4.0-plan.md`](to-dos/plans/v3.4.0-plan.md) |
+| v3.4.0 | Carried from v3.3.0: MiSTer F2 (the SDRAM arbiter, DDR3, save states, rewind; the off-die build becomes the headline) and the graphics stack (egui 0.37 landed on wgpu 30; wgpu 31 is unreleased upstream). Hosted netplay and the browser RA proxy on Cloudflare, RA hardcore compliance, native 3-4 player netplay. MiSTer F3a: MMC2/4, FME-7/5B, VRC2/4, the Zapper | [`v3.4.0-plan.md`](to-dos/plans/v3.4.0-plan.md) |
 | v3.5.0 | The full movie input stream, Lua sockets and shared memory, desktop polish. MiSTer F3b: MMC5, N163, VRC6/7, Bandai FCG, expansion audio | [`v3.5.0-plan.md`](to-dos/plans/v3.5.0-plan.md) |
 | v3.6.0 | Libretro Core Options v2, float audio, console targets; Android API 37. MiSTer F4a: PAL and Dendy | [`v3.6.0-plan.md`](to-dos/plans/v3.6.0-plan.md) |
 | v3.7.0 | The mobile extras (iOS box art, widget and external display; EQ and cheat DB; zero-copy frames after UniFFI 0.33). MiSTer F4b: FDS | [`v3.7.0-plan.md`](to-dos/plans/v3.7.0-plan.md) |

@@ -747,6 +747,29 @@ pub trait Mapper: Send {
         self.sram_mut()
     }
 
+    /// Whether a battery file of `len` bytes is one this board can load
+    /// ([`Self::load_save_data`]). By default exactly [`Self::save_data`]'s
+    /// length. A board whose save grew in a release also accepts the earlier
+    /// length, so the file an earlier release wrote still loads: mapper 157
+    /// with the cartridge's own X24C01 (v3.4.0, `T-DATACH-EXT-EEPROM-BATTERY`)
+    /// takes the 256-byte main-unit-only save v3.3.0 wrote as well as its
+    /// 384-byte image. A host checks this BEFORE reading a file in full, so a
+    /// file of a refused size never allocates (the desktop's metadata check).
+    fn accepts_save_len(&self, len: usize) -> bool {
+        len == self.save_data().len()
+    }
+
+    /// Load a battery file into [`Self::save_data`]. Returns `false`, and
+    /// changes nothing, when [`Self::accepts_save_len`] refuses its length.
+    /// The default copies an exact-length file ([`load_save_data_exact`]); a
+    /// board that accepts an earlier, shorter layout decides where its bytes
+    /// go and what the rest becomes. Every host loads a save through this
+    /// (v3.4.0) rather than `save_data_mut().copy_from_slice`, so a board's
+    /// earlier layout is handled once, here, and not in each frontend.
+    fn load_save_data(&mut self, bytes: &[u8]) -> bool {
+        load_save_data_exact(self, bytes)
+    }
+
     /// Return the save data to the state of a cartridge that has never been
     /// saved to. That is zeroed RAM by default. On a flash board it is the PRG
     /// image as loaded, since a zero-filled flash would be a ROM with no
@@ -881,6 +904,22 @@ pub trait Mapper: Send {
             ..Default::default()
         }
     }
+}
+
+/// The default [`Mapper::load_save_data`].
+///
+/// Copy `bytes` into [`Mapper::save_data_mut`] when the lengths match
+/// exactly, and change nothing (returning `false`) otherwise. A partial copy would mix two saves,
+/// and a file of another size is more likely another game's or another
+/// emulator's than a truncated one of ours. Public so an override can fall
+/// back to it for the lengths it does not treat specially.
+pub fn load_save_data_exact<M: Mapper + ?Sized>(m: &mut M, bytes: &[u8]) -> bool {
+    let dst = m.save_data_mut();
+    if dst.len() != bytes.len() {
+        return false;
+    }
+    dst.copy_from_slice(bytes);
+    true
 }
 
 /// Helper for mapper `debug_info` overrides.

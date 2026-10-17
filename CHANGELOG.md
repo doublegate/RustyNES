@@ -26,6 +26,31 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **egui 0.37, and egui-winit from crates.io again.** egui, egui-wgpu and
+  egui-winit move from 0.36 to 0.37.0. wgpu stays on 30, because egui-wgpu
+  0.37 requires it and wgpu 31 is not released. The vendored
+  `vendor/egui-winit/` copy, carried since v2.9.3 for a wasm32 build fix, is
+  removed: the published egui-winit 0.37.0 builds for wasm32 with the same
+  fix. egui 0.37 no longer bundles its UI and emoji fonts by default, so the
+  workspace enables `monochrome_emoji_fonts` and keeps the font set 0.36
+  shipped; without it the NSF player, replay panel and TAStudio buttons would
+  draw boxes. A new frontend test checks that every glyph the UI draws has a
+  font.
+
+### Fixed
+
+- **The Datach cartridge's own EEPROM is kept in the battery save** (mapper
+  157, `T-DATACH-EXT-EEPROM-BATTERY`). *Battle Rush*'s 128-byte X24C01 was
+  lost at every power-off; it is now saved after the Datach main unit's
+  24C02, on every frontend. *Battle Rush*'s save grows from 256 to 384 bytes;
+  other Datach games still save 256. A v3.3.0 save of *Battle Rush* still
+  loads, into the main unit's EEPROM with the cartridge chip blank, and the
+  next save writes the full size. A Power Cycle on *Battle Rush* now keeps the
+  cartridge chip, as it keeps every battery save. Save states, movies and
+  netplay are unchanged.
+
 ## [3.3.0] - 2026-10-16 - "Plumbline" (v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes banked on seven boards, mapper 71's decode, Bandai and Somari states, a withdrawn performance figure, IRQ trace goldens that gate, and two off-die MiSTer fixes)
 
 ### Breaking

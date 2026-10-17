@@ -41,7 +41,7 @@ members = [
 # Excluding it is what makes that impossible rather than merely unlikely. Its
 # own tests and lints run from explicit invocations in CI; see
 # `.github/workflows/ci.yml`.
-exclude = ["crates/rustynes-cosim", "vendor/rust-libretro-sys", "vendor/egui-winit"]
+exclude = ["crates/rustynes-cosim", "vendor/rust-libretro-sys"]
 # The libretro buildbot's shared CI templates run a bare, unscoped
 # `cargo build --release --target <triple>` from the repo root (no `-p`,
 # no `--manifest-path` — the script is centrally maintained and can't be
@@ -168,40 +168,68 @@ winit = "0.30"
 # wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
 # No effect on native builds. WebGPU-primary is on by default.
 #
-# MOVES WITH THE egui TIER BELOW: `egui-wgpu` 0.36 requires wgpu 30, and a graph
+# MOVES WITH THE egui TIER BELOW: `egui-wgpu` 0.37 requires wgpu ^30, and a graph
 # holding two wgpu majors fails every device/queue handoff, so wgpu, naga and
 # egui are one atomic bump.
 wgpu = { version = "30", features = ["webgl"] }
 cpal = "0.18"
 # ---------------------------------------------------------------------------
-# egui / egui-wgpu / egui-winit 0.36 -- with egui-winit VENDORED (2026-09-28).
+# egui / egui-wgpu / egui-winit 0.37 -- straight from crates.io (v3.4.0).
 #
-# egui-winit 0.36.2, the newest release, does not compile for wasm32, and
-# RustyNES ships a wasm demo:
+# From 2026-09-28 to v3.4.0 egui-winit was VENDORED at `vendor/egui-winit/`,
+# because egui-winit 0.36.2 did not compile for wasm32, and RustyNES ships a wasm
+# demo:
 #
 #   error[E0407]: method `bytes` is not a member of trait `egui::DroppedFile`
 #
-# egui 0.36 declares `DroppedFile::bytes` only off wasm (a browser reads a
-# dropped file asynchronously), while egui-winit's `NativeFile` implements it
-# unconditionally. Upstream fixed it on `main` (PR #8516) without a release.
-# From 2026-09-12 to 2026-09-28 this tier was HELD at 0.35 for that reason; the
-# maintainer then asked for every major bump, so `vendor/egui-winit/` carries the
-# crates.io 0.36.2 package with a three-site `cfg(not(target_arch = "wasm32"))`
-# guard, wired through `[patch.crates-io]` at the end of this file. A git-rev
-# patch was not an option: `deny.toml` denies git sources.
+# egui declares `DroppedFile::bytes` only off wasm (a browser reads a dropped
+# file asynchronously), while egui-winit 0.36.2's `NativeFile` implemented it
+# unconditionally. Upstream fixed it on `main` (PR #8516, merged 2026-09-07) but
+# 0.36.2 shipped without it; the vendored copy carried a three-site
+# `cfg(not(target_arch = "wasm32"))` guard through `[patch.crates-io]`, since
+# `deny.toml` denies git sources. (From 2026-09-12 to 2026-09-28, before the
+# vendoring, this tier was held at 0.35 for the same reason.)
 #
-# REMOVE THE VENDORED COPY the day crates.io carries an egui-winit newer than
-# 0.36.2 that compiles for wasm32 with the feature set below: delete
-# `vendor/egui-winit/`, its `[patch.crates-io]` line and its `exclude` entry, and
-# re-run both wasm clippy gates. Steps and the patch itself:
-# `vendor/egui-winit/VENDORED.md`.
+# The vendored copy, its `[patch.crates-io]` line and its `exclude` entry were
+# REMOVED in v3.4.0, on measured evidence (2026-10-16): a throwaway crate with
+# exactly the feature set below (`default-features = false`, `links` / `wayland`
+# / `x11`) plus egui / egui-wgpu 0.37.0 and wgpu 30 with `webgl` finishes
+# `cargo check --target wasm32-unknown-unknown` clean, and the published 0.37.0
+# `src/lib.rs` gates `mod dropped_file;`, `use dropped_file::NativeFile;` and the
+# `WindowEvent::DroppedFile` arm itself -- the same three sites the vendored
+# patch guarded. Both wasm clippy gates were then re-run against the registry
+# copy. If a later egui-winit regresses on wasm32, the history of the vendored
+# copy is in git (`vendor/egui-winit/VENDORED.md` at v3.3.0) and
+# `docs/agents/dependencies.md`.
+#
+# wgpu stays on 30: egui-wgpu 0.37.0 requires `wgpu ^30.0`, and crates.io's
+# newest wgpu on 2026-10-16 is 30.0.1 (wgpu 31 is not released).
 # ---------------------------------------------------------------------------
-egui = "0.36"
-egui-wgpu = "0.36"
+# The UI fonts are EXPLICIT since 0.37, which changed two defaults (upstream
+# #8583), and neither failure shows at compile time -- only in a rendered frame:
+#
+# * `default_fonts` left egui's default features. Measured 2026-10-16: the bare
+#   `"0.37"` requirement resolved with `epaint_default_fonts` gone from
+#   `Cargo.lock` and still compiled clean. The shell has no other text font
+#   (`icons::install` appends Font Awesome as a trailing fallback to
+#   `FontDefinitions::default()`), so every label would have lost its font:
+#   accented text renders as boxes, and plain ASCII falls through to Font
+#   Awesome, which maps the letters and digits to icons.
+# * Even with it, `default_fonts` no longer carries the two emoji fonts
+#   (`NotoEmoji-Regular`, `emoji-icon-font`); they moved behind
+#   `monochrome_emoji_fonts`, which implies `default_fonts`. Nine glyphs the
+#   debugger panels draw exist ONLY in those two fonts -- checked against each
+#   font's cmap: U+23EE/U+23ED/U+27F2 (NSF player), U+23F9/U+23FA (replay
+#   panel), U+1F4BE/U+1F4C2/U+23F7/U+1F5D1 (TAStudio); U+25C0 reaches the
+#   proportional family only through them. Enabling it keeps the exact font
+#   set 0.36's defaults loaded. Pinned by the frontend test
+#   `icons::tests::the_shell_font_set_covers_every_glyph_the_ui_draws`.
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+egui-wgpu = "0.37"
 # `links` enables egui-winit's URL opener (webbrowser) so hyperlinks (e.g. the
 # About window's GitHub link) actually launch the default browser; without it
 # (default-features = false drops it) hyperlink_to is inert.
-egui-winit = { version = "0.36", default-features = false, features = ["links", "wayland", "x11"] }
+egui-winit = { version = "0.37", default-features = false, features = ["links", "wayland", "x11"] }
 gilrs = "0.11"
 rfd = "0.17"
 directories = "6"
@@ -303,6 +331,3 @@ inherits = "release"
 # never received the frontend's game. See `vendor/rust-libretro-sys/VENDORED.md`.
 [patch.crates-io]
 rust-libretro-sys = { path = "vendor/rust-libretro-sys" }
-# egui-winit 0.36.2 does not compile for wasm32 (E0407 on DroppedFile::bytes);
-# vendored with the three-site fix until a fixed release ships. vendor/egui-winit/VENDORED.md.
-egui-winit = { path = "vendor/egui-winit" }
