@@ -137,10 +137,11 @@ and is stricter than the reference stub:
 | Hardcore | any `h` parameter other than `0` is refused (403), parsed as a form field | substring test `b"h=1" in body`, which also refuses e.g. a hash value containing `h=1` |
 | User-Agent | `RA_USER_AGENT` var, refused unless it starts `RustyNES/` | `RA_USER_AGENT` env |
 | Credentials | never stored or logged (no console output; Workers Logs off); upstream headers such as `Set-Cookie` not passed back | not logged |
+| Rate limits | per client address: `RA_PER_IP_PER_HOUR` (240) forwarded calls and `RA_LOGINS_PER_IP_PER_HOUR` (10) `login2` calls per rolling hour (429); `RA_DAILY_CAP` (50000) forwarded calls per UTC day across all callers (503); both with `Retry-After`. Only a call that would be forwarded counts. The Origin check stops other pages, not other programs, so these bound what a program sending the Pages `Origin` can push through the shared User-Agent (credential stuffing, a ban of that identity) | none |
 
 All of it is pinned by `services/hosted/test/ra.test.ts` (forwarding with the
 User-Agent, status pass-through, every refusal with the upstream never called,
-the hash-value false positive, the kill switch, and a spy on every console
+the hash-value false positive, the kill switch, the three rate limits, and a spy on every console
 method proving neither the password nor the token is logged). What remains is
 the live gate, which only the maintainer can run with their own account: a
 browser login and a casual unlock through the deployed Worker (RA-02;

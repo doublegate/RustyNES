@@ -55,7 +55,7 @@ sha2 = "0.11"
 getrandom = "0.4"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
 
-# v3.4.0 — the blocking HTTPS GET of the hosted service's `/turn-credentials`
+# v3.4.0 — the blocking HTTPS POST to the hosted service's `/turn-credentials`
 # (`src/hosted.rs`, `fetch_ice`). The same pure-Rust TLS stack (`rustls`, no
 # OpenSSL) the RetroAchievements client already pulls into the mobile bridge,
 # so it adds no new crates to the Android/iOS builds. Part of `netplay-client`.

@@ -576,7 +576,9 @@ connection-attempt rate (30/min) and room-creation rate (10/min), a global
 socket cap (2000), and browsers from origins other than the Pages site and
 localhost refused. Refusals use the reference's `error`-then-close shape.
 
-**TURN.** `GET <hosted base>/turn-credentials` mints Cloudflare Realtime TURN
+**TURN.** `POST <hosted base>/turn-credentials` (empty body; a GET is
+refused, because a browser sends a GET without `Origin` from any page's
+`<img>`, which would let other sites spend the cap) mints Cloudflare Realtime TURN
 credentials from the TURN key held in Worker secrets, valid for 3 h (why 3 h:
 `services/hosted/src/turn.ts`), behind spend guards (per-IP limit, a daily
 global cap, a kill switch; `services/hosted/README.md` "Spend guards"). Port-53

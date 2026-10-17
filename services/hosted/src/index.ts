@@ -3,7 +3,8 @@
 // RustyNES hosted services (v3.4.0): the request router.
 //
 //   GET  /signal (or /)        WebSocket upgrade -> the netplay lobby (lobby.ts)
-//   GET|POST /turn-credentials short-lived TURN ICE servers (turn.ts)
+//   POST /turn-credentials     short-lived TURN ICE servers (turn.ts; GET is
+//                              refused, see its "Why POST only")
 //   POST /ra/dorequest.php     the browser RetroAchievements proxy (ra.ts)
 //   GET  /healthz              liveness, for the runbook's checks
 //
@@ -47,13 +48,13 @@ export default {
     }
 
     if (path === "/turn-credentials") {
-      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(cors, "GET, POST, OPTIONS") });
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(cors, "POST, OPTIONS") });
       return handleTurn(request, env, ip, cors);
     }
 
     if (path === "/ra/dorequest.php") {
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(cors, "POST, OPTIONS") });
-      return handleRa(request, env, cors);
+      return handleRa(request, env, ip, cors);
     }
 
     if (path === "/healthz") return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });

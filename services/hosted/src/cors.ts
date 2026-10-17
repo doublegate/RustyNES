@@ -13,7 +13,13 @@
 // A request with no `Origin` is a native client (the Android/iOS apps, the
 // desktop build), which the lobby and TURN endpoints serve. This is NOT
 // authentication: a non-browser caller can send any `Origin` it likes, which is
-// why the TURN endpoint also has its own spend guards (budget.ts).
+// why the TURN endpoint and the RetroAchievements proxy also have their own
+// guards (budget.ts).
+//
+// "No Origin" means "not a browser" only for a POST (or a WebSocket
+// handshake): a browser omits Origin on a GET it sends without CORS (an
+// `<img src>` on any page), which is why `/turn-credentials` is POST-only
+// (turn.ts, "Why POST only").
 
 import type { Env } from "./env";
 

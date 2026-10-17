@@ -22,6 +22,9 @@ export default defineConfig({
           // values are the ones in wrangler.jsonc.
           TURN_DAILY_CAP: "5",
           TURN_PER_IP_PER_HOUR: "3",
+          RA_PER_IP_PER_HOUR: "10",
+          RA_LOGINS_PER_IP_PER_HOUR: "3",
+          RA_DAILY_CAP: "15",
         },
       },
     }),

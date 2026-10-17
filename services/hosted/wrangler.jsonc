@@ -64,7 +64,13 @@
     // leading `RustyNES/` token: RetroAchievements identifies and allowlists
     // the client by it, and src/ra.ts refuses to forward without it. Bump the
     // product and rcheevos versions with each release.
-    "RA_USER_AGENT": "RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0"
+    "RA_USER_AGENT": "RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0",
+    // Abuse guards (README.md "Spend guards"; src/budget.ts): forwarded calls
+    // per client IP per rolling hour, `login2` calls per IP per hour, and
+    // forwarded calls per UTC day, all callers together.
+    "RA_PER_IP_PER_HOUR": "240",
+    "RA_LOGINS_PER_IP_PER_HOUR": "10",
+    "RA_DAILY_CAP": "50000"
   }
   // Secrets (wrangler secret put <NAME>):
   //   TURN_KEY_ID         the Realtime TURN key id

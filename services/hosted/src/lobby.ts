@@ -126,10 +126,15 @@ export class Lobby extends DurableObject<Env> {
     // The reference ignores binary frames; so does the lobby.
     if (typeof message !== "string") return;
     const id = att.id;
+    const now = Date.now();
+    // Any activity prunes the per-IP counters, not only a new connection or
+    // room, so PRIVACY.md's retention bound holds on a lobby whose traffic is
+    // all in-room messages (limits.ts, WindowLimiter).
+    this.connects.prune(now);
+    this.roomCreates.prune(now);
     if (message.length > MAX_FRAME_BYTES || new TextEncoder().encode(message).byteLength > MAX_FRAME_BYTES) {
       return this.refuse(id, "frame too large");
     }
-    const now = Date.now();
     let bucket = this.buckets.get(id);
     if (!bucket) {
       bucket = new TokenBucket(MSG_BURST, MSG_PER_SECOND, now);

@@ -5,10 +5,11 @@
 // credential is used (the "password" below is a placeholder).
 
 import { env, exports } from "cloudflare:workers";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import type { Env } from "../src/env";
-import { MAX_RA_BODY, RA_ALLOWED_REQUESTS, handleRa } from "../src/ra";
+import { MAX_RA_BODY, RA_ALLOWED_REQUESTS, handleRa, trimTrailingSlashes } from "../src/ra";
 
 const PAGES = "https://doublegate.github.io";
 const FORM = "application/x-www-form-urlencoded";
@@ -26,9 +27,21 @@ const post = (body: string, headers: Record<string, string> = {}, path = "/ra/do
     body,
   });
 
+// Each test starts with empty RA guard counters (the limits are the test
+// values in vitest.config.ts: 10 per IP per hour, 3 logins per IP per hour,
+// 15 a day in all), so one test's requests do not spend the next one's.
+beforeEach(async () => {
+  await runInDurableObject(env.BUDGET.getByName("ra"), async (_obj, state) => {
+    await state.storage.deleteAll();
+  });
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+let ipSeq = 0;
+const freshIp = () => `198.51.100.${++ipSeq}`;
 
 describe("forwarding", () => {
   it("forwards an allowed call with RustyNES's User-Agent and passes the answer back", async () => {
@@ -147,7 +160,7 @@ describe("refusals (none reach RetroAchievements)", () => {
     const spy = mockRa();
     const e = { ...env, RA_ENABLED: "false" } as Env;
     const req = new Request("https://h/ra/dorequest.php", { method: "POST", headers: { "Content-Type": FORM }, body: "r=ping" });
-    expect((await handleRa(req, e, PAGES)).status).toBe(503);
+    expect((await handleRa(req, e, freshIp(), PAGES)).status).toBe(503);
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -155,8 +168,104 @@ describe("refusals (none reach RetroAchievements)", () => {
     const spy = mockRa();
     const e = { ...env, RA_USER_AGENT: "SomethingElse/1.0" } as Env;
     const req = new Request("https://h/ra/dorequest.php", { method: "POST", headers: { "Content-Type": FORM }, body: "r=ping" });
-    expect((await handleRa(req, e, PAGES)).status).toBe(503);
+    expect((await handleRa(req, e, freshIp(), PAGES)).status).toBe(503);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("abuse guards", () => {
+  it("limits one address per hour with 429 and Retry-After", async () => {
+    const spy = mockRa();
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) expect((await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": ip })).status, `ping ${i}`).toBe(200);
+    const limited = await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": ip });
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(limited.headers.get("Access-Control-Allow-Origin")).toBe(PAGES);
+    expect(((await limited.json()) as { Success: boolean }).Success).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(10);
+    // Another address is not affected.
+    expect((await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": freshIp() })).status).toBe(200);
+  });
+
+  it("limits logins per address more tightly than other calls", async () => {
+    const spy = mockRa();
+    const ip = freshIp();
+    for (let i = 0; i < 3; i++) expect((await post("r=login2&u=player&p=placeholder", { "CF-Connecting-IP": ip })).status).toBe(200);
+    expect((await post("r=login2&u=player&p=placeholder", { "CF-Connecting-IP": ip })).status).toBe(429);
+    expect(spy).toHaveBeenCalledTimes(3);
+    // The same address's other calls still pass.
+    expect((await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": ip })).status).toBe(200);
+  });
+
+  it("caps forwarded calls per UTC day across all addresses", async () => {
+    const spy = mockRa();
+    for (let i = 0; i < 15; i++) expect((await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": freshIp() })).status, `call ${i}`).toBe(200);
+    const over = await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": freshIp() });
+    expect(over.status).toBe(503);
+    expect(Number(over.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(spy).toHaveBeenCalledTimes(15);
+  });
+
+  it("the hourly sweep deletes expired RA windows and past RA days", async () => {
+    await runInDurableObject(env.BUDGET.getByName("ra"), async (obj, state) => {
+      const now = Date.now();
+      await state.storage.put({
+        "ra-ip:stale": { start: now - 3_600_001, count: 4 },
+        "ra-login:stale": { start: now - 3_600_001, count: 1 },
+        "ra-ip:live": { start: now, count: 1 },
+        "ra-day:2000-01-01": 9,
+      });
+      await obj.alarm();
+      const left = [...(await state.storage.list()).keys()].sort();
+      expect(left).toEqual(["ra-ip:live"]);
+    });
+  });
+
+  // PRIVACY.md says the day's count is deleted within an hour after the UTC
+  // day ends: so the sweep must keep running while today's counter exists,
+  // even when every per-IP window has already gone.
+  it("the sweep stays armed while only today's counter is left, and stops when nothing is", async () => {
+    await runInDurableObject(env.BUDGET.getByName("ra"), async (obj, state) => {
+      const d = new Date().toISOString().slice(0, 10);
+      await state.storage.put(`ra-day:${d}`, 3);
+      await state.storage.deleteAlarm();
+      await obj.alarm();
+      expect(await state.storage.getAlarm()).not.toBeNull();
+      await state.storage.deleteAll();
+      await state.storage.deleteAlarm();
+      await obj.alarm();
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+  });
+
+  it("refused requests spend nothing", async () => {
+    const spy = mockRa();
+    const ip = freshIp();
+    for (let i = 0; i < 20; i++) expect((await post("r=uploadachievement&u=player&t=tok", { "CF-Connecting-IP": ip })).status).toBe(403);
+    expect((await post("r=ping&u=player&t=tok", { "CF-Connecting-IP": ip })).status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("trimTrailingSlashes", () => {
+  it("strips only trailing slashes", () => {
+    expect(trimTrailingSlashes("https://retroachievements.org")).toBe("https://retroachievements.org");
+    expect(trimTrailingSlashes("https://retroachievements.org///")).toBe("https://retroachievements.org");
+    expect(trimTrailingSlashes("https://a/b/")).toBe("https://a/b");
+    expect(trimTrailingSlashes("///")).toBe("");
+    expect(trimTrailingSlashes("")).toBe("");
+  });
+
+  it("is linear on a long run of slashes not at the end (the CodeQL input)", () => {
+    // `/\/+$/` backtracks quadratically on this (measured on Node 26: 10k
+    // slashes 66 ms, 20k 265 ms, 40k 1.07 s, so 200k is about half a
+    // minute); the scan takes well under a millisecond.
+    const s = `${"/".repeat(200_000)}x`;
+    const t0 = performance.now();
+    expect(trimTrailingSlashes(s)).toBe(s);
+    expect(trimTrailingSlashes(`${s}${"/".repeat(200_000)}`)).toBe(s);
+    expect(performance.now() - t0).toBeLessThan(500);
   });
 });
 
