@@ -53,12 +53,12 @@ impl VirtualPad {
         }
         let held = Cell::new(Buttons::empty());
         // D-pad, anchored to the bottom-left corner.
-        egui::Area::new(egui::Id::new("virtual_pad_dpad"))
+        egui::Area::new(egui::Id::unique("virtual_pad_dpad"))
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(MARGIN, -MARGIN))
             .interactable(true)
             .show(ctx, |ui| dpad(ui, &held));
         // Face + system buttons, anchored to the bottom-right corner.
-        egui::Area::new(egui::Id::new("virtual_pad_face"))
+        egui::Area::new(egui::Id::unique("virtual_pad_face"))
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-MARGIN, -MARGIN))
             .interactable(true)
             .show(ctx, |ui| face_buttons(ui, &held));

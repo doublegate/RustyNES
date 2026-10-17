@@ -174,12 +174,21 @@ pub fn label(icon: char, text: &str) -> String {
     s
 }
 
-/// Register the embedded Font Awesome Solid font with the egui context.
+/// The shell's complete font set: egui's defaults plus the embedded Font
+/// Awesome Solid font as the trailing fallback of both text families.
 ///
-/// Idempotent-friendly: call once after the [`egui::Context`] is created. Adds
-/// the font as the trailing fallback for the proportional + monospace families
-/// so only the icon codepoints resolve to it and ordinary text is untouched.
-pub fn install(ctx: &egui::Context) {
+/// Split out of [`install`] so the test below can lay text out against exactly
+/// the definitions the shell installs, without an egui pass.
+///
+/// What `FontDefinitions::default()` contains is decided by egui's CARGO
+/// FEATURES, not by this code, and egui 0.37 changed it twice (upstream #8583):
+/// `default_fonts` stopped being a default feature, and the two emoji fonts
+/// (`NotoEmoji-Regular`, `emoji-icon-font`) moved behind
+/// `monochrome_emoji_fonts`. The workspace `Cargo.toml` enables that feature;
+/// `the_shell_font_set_covers_every_glyph_the_ui_draws` is what notices if a
+/// future bump drops a font, because neither change fails to compile.
+#[must_use]
+pub fn definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         FA_FAMILY.to_owned(),
@@ -195,5 +204,71 @@ pub fn install(ctx: &egui::Context) {
             .or_default()
             .push(FA_FAMILY.to_owned());
     }
-    ctx.set_fonts(fonts);
+    fonts
+}
+
+/// Register the embedded Font Awesome Solid font with the egui context.
+///
+/// Idempotent-friendly: call once after the [`egui::Context`] is created. Adds
+/// the font as the trailing fallback for the proportional + monospace families
+/// so only the icon codepoints resolve to it and ordinary text is untouched.
+pub fn install(ctx: &egui::Context) {
+    ctx.set_fonts(definitions());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::definitions;
+    use super::glyph::CIRCLE_INFO;
+    use egui::epaint::text::{Fonts, TextOptions};
+    use egui::{FontFamily, FontId};
+
+    /// Every glyph the shell and the debugger panels draw must resolve to a
+    /// font in [`definitions`], in both families (a panel may render a label in
+    /// either).
+    ///
+    /// The non-ASCII glyphs below were collected from every string literal
+    /// under `crates/rustynes-frontend/src` (2026-10-16), and each one's font
+    /// was read from the font files' cmaps. The nine media / file glyphs exist
+    /// ONLY in egui's two emoji fonts, and U+25C0 exists in the proportional
+    /// family only through them (of the text fonts, only the monospace Hack has
+    /// it), so this is the test that fails when `monochrome_emoji_fonts` is
+    /// missing. Measured by mutating the workspace feature list: with
+    /// `["default_fonts"]` it fails on U+25C0 (Proportional), and with `[]` on
+    /// U+00F3 -- not on `A`, because Font Awesome maps the ASCII letters and
+    /// digits to icon glyphs, so a font-less shell would draw plain English
+    /// labels as icons rather than as boxes. Three glyphs in the panels are covered
+    /// by no bundled font and render as a box, as they did under egui 0.36:
+    /// U+2442 (replay panel) and U+FF0B / U+FF0D (`TAStudio`). They are left out
+    /// here rather than asserted missing, since adding a font that has them
+    /// would be an improvement, not a regression.
+    #[test]
+    fn the_shell_font_set_covers_every_glyph_the_ui_draws() {
+        // Latin text and the Spanish UI strings (`i18n.rs`).
+        const TEXT: &str = "Aa09\u{f3}\u{ed}\u{e1}\u{e9}\u{fa}\u{f1}\u{bf}\u{e0}";
+        // Punctuation and shapes the default text fonts carry.
+        const PUNCT: &str = "\u{2014}\u{2013}\u{2026}\u{b7}\u{b1}\u{25b6}\u{25c0}\u{25cf}";
+        // Present ONLY in `NotoEmoji-Regular` / `emoji-icon-font`.
+        const EMOJI_ONLY: &str =
+            "\u{23ee}\u{23ed}\u{27f2}\u{23f9}\u{23fa}\u{1f4be}\u{1f4c2}\u{23f7}\u{1f5d1}";
+
+        let mut fonts = Fonts::new(TextOptions::default(), definitions());
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            let id = FontId::new(14.0, family);
+            for c in TEXT.chars().chain(PUNCT.chars()).chain(EMOJI_ONLY.chars()) {
+                assert!(
+                    fonts.has_glyph(&id, c),
+                    "U+{:04X} has no font in the {:?} family",
+                    u32::from(c),
+                    id.family
+                );
+            }
+            // And the Font Awesome fallback is reachable from both families.
+            assert!(
+                fonts.has_glyph(&id, CIRCLE_INFO),
+                "Font Awesome is not a fallback of {:?}",
+                id.family
+            );
+        }
+    }
 }
