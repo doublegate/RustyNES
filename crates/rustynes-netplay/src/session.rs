@@ -270,7 +270,7 @@ impl RetainedWindow {
     /// [`MAX_SESSION_FRAME_LOOKAHEAD`] past the present (see that constant);
     /// this bound is the honest one the long-session test asserts.
     ///
-    /// - history: the retransmit window ([`INPUT_RESEND_WINDOW`]) below the
+    /// - history: the retransmit window (`INPUT_RESEND_WINDOW`, 64) below the
     ///   newest local input, which sits `input_delay` ahead of the present,
     ///   plus a peer's inputs, which can run up to `input_delay +
     ///   max_rollback_frames + 2` ahead of it.
@@ -440,7 +440,7 @@ struct WindowEntry {
 ///
 /// # The rollback window (v3.4.0)
 ///
-/// The session holds one [`WindowEntry`] per frame from the first unconfirmed
+/// The session holds one window entry per frame from the first unconfirmed
 /// frame `B` (= `last_confirmed_frame + 1`) to the present, each recorded the
 /// moment the machine entered that frame, during the forward run or a replay.
 /// Every frame below `B` ran with every player's real input, so the entry for
@@ -472,7 +472,8 @@ pub struct RollbackSession<T: Transport> {
     /// Newest frame for which ALL players' real inputs are known.
     last_confirmed_frame: Option<u32>,
     /// Highest frame at which the peer has confirmed receiving our input.
-    remote_ack_frame: Option<u32>,
+    /// v3.4.0: per remote player, so one peer's ack never stands for another's.
+    remote_ack_frame: [Option<u32>; MAX_PLAYERS],
     /// `true` once a peer's `Sync` handshake has been validated.
     synced: bool,
 
@@ -553,7 +554,7 @@ impl<T: Transport> RollbackSession<T> {
             identity,
             current_frame: 0,
             last_confirmed_frame: None,
-            remote_ack_frame: None,
+            remote_ack_frame: [None; MAX_PLAYERS],
             synced: false,
             history: VecDeque::new(),
             history_base: 0,
@@ -778,7 +779,10 @@ impl<T: Transport> RollbackSession<T> {
         //     the resend of the gap and desync). Sent every tick so a dropped
         //     ack self-heals; harmless before the first confirmed frame.
         if let Some(frame) = self.last_confirmed_frame {
-            self.transport.send(&NetMessage::InputAck { frame });
+            self.transport.send(&NetMessage::InputAck {
+                player: self.local_player(),
+                frame,
+            });
         }
 
         // 3. Roll back + re-simulate when a real input contradicted the
@@ -963,9 +967,11 @@ impl<T: Transport> RollbackSession<T> {
                         }
                     }
                 }
-                NetMessage::InputAck { frame } => {
-                    self.remote_ack_frame =
-                        Some(self.remote_ack_frame.map_or(frame, |a| a.max(frame)));
+                NetMessage::InputAck { player, frame } => {
+                    if player < self.config.num_players && player != self.local_player() {
+                        let ack = &mut self.remote_ack_frame[usize::from(player)];
+                        *ack = Some(ack.map_or(frame, |a| a.max(frame)));
+                    }
                 }
                 NetMessage::Checksum {
                     frame,
@@ -1284,8 +1290,14 @@ impl<T: Transport> RollbackSession<T> {
         // The newest local input we hold (set `input_delay` frames ahead by
         // `add_local_input`).
         let newest = self.current_frame + self.config.input_delay;
-        // First un-acked frame (the remote has everything <= remote_ack_frame).
-        let first_unacked = self.remote_ack_frame.map_or(0, |a| a.saturating_add(1));
+        // First frame some peer has not acknowledged: the LEAST of the peers'
+        // acks (v3.4.0). Each peer has everything up to its own ack; the
+        // retransmission must cover the peer furthest behind.
+        let first_unacked = (0..usize::from(self.config.num_players))
+            .filter(|&p| p != lp_idx)
+            .map(|p| self.remote_ack_frame[p].map_or(0, |a| a.saturating_add(1)))
+            .min()
+            .unwrap_or(0);
         let start = first_unacked
             .max(newest.saturating_sub(INPUT_RESEND_WINDOW))
             .max(self.history_base);

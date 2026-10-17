@@ -181,3 +181,36 @@ test holds the key:
 `auth.rs` unit tests cover the primitives: both ends of a pair agree, every
 single-bit flip is refused, another key or identity does not open, the window
 accepts reordering once and refuses the old.
+
+## 3. Three and four players on the desktop (v3.4.0)
+
+`T-NETPLAY-MESH-NATIVE`. The desktop netplay panel's player count reaches the
+mesh (`docs/netplay-webrtc.md` section 2.4): `NetplayUi::start_host` with 3 or
+4 players binds a `MeshHost`; `start_join` always dials through a
+`MeshJoiner`, which completes as player 1 of 2 against a 2-player host and as
+its roster index against a mesh host. Every session runs over a sealed
+transport boxed as `Box<dyn Transport>` (`impl Transport for Box<T>`).
+
+**Acks are per player (protocol 9).** `InputAck { player, frame }`; the
+session keeps one ack per remote player and resends from the least of them.
+Before, the highest ack from any peer stood for all of them: found when the
+3-player UI test's host stalled at frame 9 with nothing confirmed, because it
+starts its session after its roster resends and a joiner's ack had already
+stopped the other joiner resending what the host never received.
+
+**Gates.** `tests/mesh_sync.rs` compares every confirmed frame of every peer
+with the no-rollback reference, frame by frame, for 600 frames: 4 and 3 peers
+in memory (latency 2, jitter 3, 5% loss), 4 peers over sealed loopback UDP with
+loss, delay and reordering injected on the sockets. The ROM is a 95-byte
+probe written for the test whose picture depends on all four controllers
+(nestest reads only the first, and with it a session that left the Four Score
+off passed). `a_peer_that_lost_early_inputs_still_gets_them` pins the ack fix.
+`netplay_ui` tests drive 2, 3 and 4 `NetplayUi`s through host/join to
+`InGame`, check the player count and distinct indices, and compare 120
+confirmed frames. Mutations caught: the Four Score enabled only above three
+players; player 4's input never applied; the least ack replaced by the
+greatest; the joiner finding the wrong roster entry; a joiner's player index
+capped at 1.
+
+**Not done.** Live play across machines (the maintainer's run); NAT traversal
+or TURN for more than two players (direct IP only); mobile (`MOB-09`).

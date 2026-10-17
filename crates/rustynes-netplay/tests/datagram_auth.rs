@@ -136,12 +136,21 @@ fn a_forged_datagram_from_a_third_address_is_refused() {
         .send_to(&guess.seal(&checksum(60).to_bytes()), host_addr)
         .unwrap();
     // The genuine peer's datagram, last.
-    peer.send(&NetMessage::InputAck { frame: 7 }, host_addr);
+    peer.send(
+        &NetMessage::InputAck {
+            player: 1,
+            frame: 7,
+        },
+        host_addr,
+    );
 
     let got = drain(&mut host);
     assert_eq!(
         got,
-        vec![NetMessage::InputAck { frame: 7 }],
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 7
+        }],
         "only the genuine peer's datagram may reach the session"
     );
     assert!(
@@ -154,7 +163,13 @@ fn a_forged_datagram_from_a_third_address_is_refused() {
 #[test]
 fn a_replayed_datagram_is_refused() {
     let (mut host, mut peer, host_addr) = handshake();
-    let sealed = peer.send(&NetMessage::InputAck { frame: 11 }, host_addr);
+    let sealed = peer.send(
+        &NetMessage::InputAck {
+            player: 1,
+            frame: 11,
+        },
+        host_addr,
+    );
     // The peer's own retransmission of the same bytes, and a third party
     // that recorded them, replaying from its own address.
     peer.socket.send_to(&sealed, host_addr).unwrap();
@@ -163,20 +178,47 @@ fn a_replayed_datagram_is_refused() {
     let got = drain(&mut host);
     assert_eq!(
         got,
-        vec![NetMessage::InputAck { frame: 11 }],
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 11
+        }],
         "accepted once"
     );
     assert_eq!(host.refused_datagrams(), 2, "both replays refused");
     // A NEW datagram from the peer still opens: the refusals changed nothing.
-    peer.send(&NetMessage::InputAck { frame: 12 }, host_addr);
-    assert_eq!(drain(&mut host), vec![NetMessage::InputAck { frame: 12 }]);
+    peer.send(
+        &NetMessage::InputAck {
+            player: 1,
+            frame: 12,
+        },
+        host_addr,
+    );
+    assert_eq!(
+        drain(&mut host),
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 12
+        }]
+    );
 }
 
 #[test]
 fn a_rebinding_peer_is_kept() {
     let (mut host, mut peer, host_addr) = handshake();
-    peer.send(&NetMessage::InputAck { frame: 1 }, host_addr);
-    assert_eq!(drain(&mut host), vec![NetMessage::InputAck { frame: 1 }]);
+    peer.send(
+        &NetMessage::InputAck {
+            player: 1,
+            frame: 1,
+        },
+        host_addr,
+    );
+    assert_eq!(
+        drain(&mut host),
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 1
+        }]
+    );
     let old_addr = peer.socket.local_addr().unwrap();
     assert_eq!(host.remote_addr(), Some(old_addr));
 
@@ -186,13 +228,20 @@ fn a_rebinding_peer_is_kept() {
         .set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
     let new_addr = rebound.local_addr().unwrap();
-    let sealed = peer
-        .auth
-        .seal(&NetMessage::InputAck { frame: 2 }.to_bytes());
+    let sealed = peer.auth.seal(
+        &NetMessage::InputAck {
+            player: 1,
+            frame: 2,
+        }
+        .to_bytes(),
+    );
     rebound.send_to(&sealed, host_addr).unwrap();
     assert_eq!(
         drain(&mut host),
-        vec![NetMessage::InputAck { frame: 2 }],
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 2
+        }],
         "the rebinding peer's datagram is accepted"
     );
     assert_eq!(
@@ -203,7 +252,10 @@ fn a_rebinding_peer_is_kept() {
     assert_eq!(host.roamed(), 1);
 
     // And the host's own datagrams now reach the peer at the new address.
-    host.send(&NetMessage::InputAck { frame: 3 });
+    host.send(&NetMessage::InputAck {
+        player: 1,
+        frame: 3,
+    });
     let mut buf = [0u8; 1500];
     let (n, from) = rebound
         .recv_from(&mut buf)
@@ -212,7 +264,10 @@ fn a_rebinding_peer_is_kept() {
     let (_, payload) = peer.auth.open(&buf[..n]).expect("sealed by the host");
     assert_eq!(
         NetMessage::from_bytes(payload),
-        Some(NetMessage::InputAck { frame: 3 })
+        Some(NetMessage::InputAck {
+            player: 1,
+            frame: 3
+        })
     );
 }
 
@@ -357,14 +412,38 @@ fn a_mesh_peer_refuses_a_forgery() {
     let forger = UdpSocket::bind(loopback()).unwrap();
     forger.send_to(&checksum(30).to_bytes(), host_addr).unwrap();
     // A genuine broadcast from player 2.
-    mesh[2].send(&NetMessage::InputAck { frame: 5 });
+    mesh[2].send(&NetMessage::InputAck {
+        player: 1,
+        frame: 5,
+    });
     let got = drain(&mut mesh[0]);
-    assert_eq!(got, vec![NetMessage::InputAck { frame: 5 }]);
+    assert_eq!(
+        got,
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 5
+        }]
+    );
     assert_eq!(mesh[0].refused_datagrams(), 1);
     // The peers that hear player 1 hear it once each.
-    mesh[1].send(&NetMessage::InputAck { frame: 6 });
-    assert_eq!(drain(&mut mesh[2]), vec![NetMessage::InputAck { frame: 6 }]);
-    assert_eq!(drain(&mut mesh[0]), vec![NetMessage::InputAck { frame: 6 }]);
+    mesh[1].send(&NetMessage::InputAck {
+        player: 1,
+        frame: 6,
+    });
+    assert_eq!(
+        drain(&mut mesh[2]),
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 6
+        }]
+    );
+    assert_eq!(
+        drain(&mut mesh[0]),
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 6
+        }]
+    );
 }
 
 /// The mesh transport follows a peer to a new address too: built directly
@@ -394,12 +473,30 @@ fn a_mesh_peer_follows_a_rebinding_peer() {
         .set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
     rebound
-        .send_to(&p1.seal(&NetMessage::InputAck { frame: 9 }.to_bytes()), a0)
+        .send_to(
+            &p1.seal(
+                &NetMessage::InputAck {
+                    player: 1,
+                    frame: 9,
+                }
+                .to_bytes(),
+            ),
+            a0,
+        )
         .unwrap();
-    assert_eq!(drain(&mut t0), vec![NetMessage::InputAck { frame: 9 }]);
+    assert_eq!(
+        drain(&mut t0),
+        vec![NetMessage::InputAck {
+            player: 1,
+            frame: 9
+        }]
+    );
     assert_eq!(t0.roamed(), 1);
     assert!(t0.peers().contains(&rebound.local_addr().unwrap()));
-    t0.send(&NetMessage::InputAck { frame: 10 });
+    t0.send(&NetMessage::InputAck {
+        player: 1,
+        frame: 10,
+    });
     let mut buf = [0u8; 1500];
     let (n, _) = rebound
         .recv_from(&mut buf)
@@ -408,6 +505,9 @@ fn a_mesh_peer_follows_a_rebinding_peer() {
     assert_eq!(sender, 0);
     assert_eq!(
         NetMessage::from_bytes(payload),
-        Some(NetMessage::InputAck { frame: 10 })
+        Some(NetMessage::InputAck {
+            player: 1,
+            frame: 10
+        })
     );
 }

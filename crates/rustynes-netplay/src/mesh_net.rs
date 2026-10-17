@@ -753,7 +753,16 @@ impl MeshJoiner {
             }
         }
 
-        if let Some(peers) = roster {
+        if let Some(mut peers) = roster {
+            // v3.4.0 — the host is reached where this joiner reached it. The
+            // host's own roster entry is the address it believes it has,
+            // which for a host bound to `0.0.0.0` is no address at all; the
+            // one the joiner dialed is the one known to work.
+            for entry in &mut peers {
+                if entry.0 == 0 {
+                    entry.1 = self.host;
+                }
+            }
             // Identify our own entry in the roster. v3.4.0: by our own key
             // share, which works through a NAT; failing that (it cannot, from
             // an honest host), on loopback / LAN by our bound source address,
@@ -873,11 +882,24 @@ mod tests {
         stray.send_to(&[], a1).unwrap();
         stray.send_to(&[250, 1, 2], a1).unwrap();
         stray
-            .send_to(&NetMessage::InputAck { frame: 9 }.to_bytes(), a1)
+            .send_to(
+                &NetMessage::InputAck {
+                    player: 1,
+                    frame: 9,
+                }
+                .to_bytes(),
+                a1,
+            )
             .unwrap();
 
         let got = drain(&mut t1, 1);
-        assert_eq!(got, vec![NetMessage::InputAck { frame: 9 }]);
+        assert_eq!(
+            got,
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 9
+            }]
+        );
         assert!(t1.dropped_invalid() >= 2);
     }
 

@@ -54,7 +54,8 @@ The browser path is not affected: a WebRTC data channel runs over DTLS.
    in this repository.
 7. **The protocol moves to 9.** The `Sync` grows to 88 bytes (the share) under
    `"RNE9"`; a `Roster` entry ends with the peer's share; the gameplay digest
-   changed in the same release (`framebuffer_digest`). `"RNE8"` joins
+   changed in the same release (`framebuffer_digest`), and an `InputAck`
+   names the acknowledging player (the mesh retransmission fix, same release). `"RNE8"` joins
    `OLDER_SYNC_MAGICS` and is refused as another emulator version, naming its
    epoch. The signalling room protocol is unchanged.
 

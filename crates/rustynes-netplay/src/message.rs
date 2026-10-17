@@ -251,7 +251,9 @@ impl SessionIdentity {
 /// [`NetMessage::Roster`] entry carries each peer's share. The gameplay digest
 /// a [`NetMessage::Checksum`] carries changed too (a faster framebuffer
 /// checksum, `crate::framebuffer_digest`), so two builds hash the same frame
-/// differently. A v3.2.x/v3.3.x peer's `"RNE8"` joins
+/// differently, and an [`NetMessage::InputAck`] names the acknowledging
+/// player (a mesh retransmits to the least-acknowledged peer). A
+/// v3.2.x/v3.3.x peer's `"RNE8"` joins
 /// [`NetMessage::OLDER_SYNC_MAGICS`] and is refused as another emulator
 /// version, naming its epoch: it neither seals nor opens a sealed datagram.
 ///
@@ -312,7 +314,14 @@ pub enum NetMessage {
     /// Acknowledges receipt of the remote's input up to `frame`. Lets the
     /// sender stop retransmitting already-confirmed inputs (Stage 2 uses
     /// this for the sliding-window retransmit cutoff).
+    ///
+    /// v3.4.0 (protocol 9): the ack names its sender. In a mesh every peer
+    /// acks every other's inputs, and an ack that named no one let one peer's
+    /// ack stop another's retransmission to a third that had not received it
+    /// (`mesh_sync.rs`, `a_peer_that_lost_early_inputs_still_gets_them`).
     InputAck {
+        /// The player index of the peer acknowledging.
+        player: u8,
         /// Highest contiguous frame the sender has received.
         frame: u32,
     },
@@ -491,9 +500,10 @@ impl NetMessage {
                 out.push(u8::try_from(inputs.len()).unwrap_or(u8::MAX));
                 out.extend_from_slice(inputs);
             }
-            Self::InputAck { frame } => {
+            Self::InputAck { player, frame } => {
                 out.push(Self::TAG_INPUT_ACK);
                 out.extend_from_slice(&frame.to_le_bytes());
+                out.push(player);
             }
             Self::Sync {
                 magic,
@@ -692,7 +702,8 @@ impl NetMessage {
             }
             Self::TAG_INPUT_ACK => {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
-                Some(Self::InputAck { frame })
+                let player = *rest.get(4)?;
+                Some(Self::InputAck { player, frame })
             }
             Self::TAG_INPUT_BATCH => Self::decode_input_batch(rest),
             Self::TAG_SYNC => Self::decode_sync(rest),
@@ -776,7 +787,10 @@ mod tests {
             frame: 0x1234_5678,
             input: 0xAB,
         });
-        roundtrip(&NetMessage::InputAck { frame: 99 });
+        roundtrip(&NetMessage::InputAck {
+            player: 1,
+            frame: 99,
+        });
         roundtrip(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: SessionIdentity::new([7u8; 32], [9u8; 32]),

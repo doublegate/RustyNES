@@ -1120,7 +1120,10 @@ mod tests {
                 frame: 0x0102_0304,
                 input: 0x5A,
             },
-            NetMessage::InputAck { frame: 77 },
+            NetMessage::InputAck {
+                player: 1,
+                frame: 77,
+            },
             NetMessage::Checksum {
                 frame: 9,
                 hash: 0xDEAD_BEEF_0BAD_F00D,
@@ -1154,11 +1157,21 @@ mod tests {
         raw.send_to(&[250, 1, 2, 3], dst).unwrap();
         // Tag 2 == Sync but truncated to 3 bytes (needs 37): must fail decode.
         raw.send_to(&[2u8, 1, 2], dst).unwrap();
-        let valid = NetMessage::InputAck { frame: 5 }.to_bytes();
+        let valid = NetMessage::InputAck {
+            player: 1,
+            frame: 5,
+        }
+        .to_bytes();
         raw.send_to(&valid, dst).unwrap();
 
         let got = drain(&mut b, 1);
-        assert_eq!(got, vec![NetMessage::InputAck { frame: 5 }]);
+        assert_eq!(
+            got,
+            vec![NetMessage::InputAck {
+                player: 1,
+                frame: 5
+            }]
+        );
         assert!(b.dropped_invalid() >= 3, "malformed datagrams were dropped");
     }
 
@@ -1276,7 +1289,14 @@ mod tests {
         let stray = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
         stray.send_to(&[0xFF, 0x00, 0x11], host_addr).unwrap();
         stray
-            .send_to(&NetMessage::InputAck { frame: 1 }.to_bytes(), host_addr)
+            .send_to(
+                &NetMessage::InputAck {
+                    player: 1,
+                    frame: 1,
+                }
+                .to_bytes(),
+                host_addr,
+            )
             .unwrap();
         // Pump so the host drains the stray traffic; it must adopt no one.
         for _ in 0..10 {
