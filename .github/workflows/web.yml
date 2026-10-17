@@ -7,6 +7,8 @@ name: Deploy Pages (demo + docs)
 #   /        the playable wasm demo (the full winit + wgpu + egui build)
 #   /api/    the workspace API documentation (rustdoc)
 #   /docs/   the Material for MkDocs handbook (subsystem specs + user guide)
+#   /privacy/ the privacy policy (PRIVACY.md rendered by scripts/render_privacy.py;
+#            v3.4.0, linked from the README and the apps)
 #
 # GitHub Pages allows only one deployment source per repo, so the demo, the
 # rustdoc, and the MkDocs handbook are assembled into one artifact and deployed
@@ -36,6 +38,8 @@ on:
       - ".github/workflows/web.yml"
       - "docs/**"
       - "mkdocs.yml"
+      - "PRIVACY.md"
+      - "scripts/render_privacy.py"
   pull_request:
     branches: [main]
     # `ready_for_review` runs the build on a PR opened as a draft; see the
@@ -51,6 +55,8 @@ on:
       - ".github/workflows/web.yml"
       - "docs/**"
       - "mkdocs.yml"
+      - "PRIVACY.md"
+      - "scripts/render_privacy.py"
   workflow_dispatch:
 
 # Read-only by default. `pages: write` and `id-token: write` are granted per
@@ -187,7 +193,13 @@ jobs:
           NO_MKDOCS_2_WARNING: "1"
         run: mkdocs build --strict --site-dir mkdocs-site
 
-      - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/)
+      - name: Render the privacy policy page
+        # v3.4.0: PRIVACY.md -> /privacy/index.html. Runs on pull requests too,
+        # so a policy that fails to render is caught before the deploy. Uses
+        # Python-Markdown, installed above as a dependency of MkDocs.
+        run: python3 scripts/render_privacy.py PRIVACY.md privacy-site/privacy/index.html
+
+      - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/, policy at /privacy/)
         if: env.IS_PR != 'true'
         run: |
           set -euo pipefail
@@ -196,6 +208,7 @@ jobs:
           cp -r crates/rustynes-frontend/web/dist/. _site/
           cp -r target/doc/. _site/api/
           cp -r mkdocs-site/. _site/docs/
+          cp -r privacy-site/. _site/
           # rustdoc emits no root index for a multi-crate workspace; add a
           # redirect to the main library facade so /api/ lands somewhere useful.
           cat > _site/api/index.html <<'HTML'

@@ -7687,7 +7687,9 @@ impl App {
                 let mut driver = crate::wasm_netplay::BrowserNetplay::new(identity);
                 driver.set_num_players(num_players);
                 let ice = self.config.netplay.stun_servers.clone();
-                match driver.connect(&signaling_url, &room, &ice) {
+                // v3.4.0: hosted TURN credentials when a hosted base is set.
+                let turn_url = self.config.netplay.hosted_turn_url();
+                match driver.connect(&signaling_url, &room, &ice, turn_url.as_deref()) {
                     Ok(()) => {
                         self.browser_netplay = Some(driver);
                     }

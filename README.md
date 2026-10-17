@@ -352,6 +352,7 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 | [Decisions](docs/adr/) | Architecture Decision Records |
 | [Libretro core](docs/libretro/WALKTHROUGH.md) | The RetroArch core and how to set it up |
 | [Accuracy ledger](docs/accuracy-ledger.md) | Every known approximation, with its evidence |
+| [Privacy policy](PRIVACY.md) | What the optional online services (netplay lobby, TURN relay, browser RetroAchievements proxy) receive and keep; also [on the web](https://doublegate.github.io/RustyNES/privacy/) |
 
 ---
 
