@@ -618,7 +618,10 @@ check, and the native blocking fetch.
   hosted lobby, and `BrowserNetplay::connect` fetches TURN credentials (5 s
   timeout) before sending `join`, so no peer connection is built without the
   relay servers; a failure or refusal continues with STUN only and says why in
-  the HUD.
+  the HUD. The timeout's timer is cleared once the fetch settles, and a fetch
+  that completes after `leave` or a later `connect` changes nothing and sends
+  nothing (each `connect` and `leave` moves a generation number the fetch
+  checks).
 - **Android / iOS (the §2.5 room-code path):** `NpNetConfig::to_nat_config`
   fills an empty signaling URL with the hosted lobby and, when no TURN trio was
   configured, fetches credentials and hands the first TURN-over-UDP endpoint to
