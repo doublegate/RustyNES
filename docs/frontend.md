@@ -2888,6 +2888,28 @@ table row by row. Desktop enforcement:
 | saved achievement progress (`ra-progress/*.rap`) | `RaSession::begin_load_game` / `set_hardcore` drop it | `rustynes_ra::tests::hardcore_never_restores_saved_progress` |
 | switching hardcore ON mid-session | `App::set_ra_hardcore`: refused while a movie or netplay owns the timeline; then stops a script, lifts slowdown, and power-cycles a running game (`do_power_cycle` ends in `rc_client_reset`, which re-enables processing) | `app::tests::switching_hardcore_on_power_cycles_a_running_game`; `rustynes_ra::tests::set_hardcore_reports_only_the_switch_on` |
 
+The mobile bridge (`rustynes-mobile`) enforces the same table:
+`load_state`, `cheat_add_genie`, `load_script` and `movie_play` return
+`HardcoreBlocked`; `poke_ram` is a no-op and `peek_byte`, `debug_read_memory`,
+`debug_disassemble` and `debug_cpu_state` return nothing (keeping the generated
+Kotlin / Swift signatures); every tick first stops playback, removes Game Genie
+codes and unloads a script (`enforce_hardcore`); `ra_set_hardcore(true)` /
+`ra_init(true)` on an existing casual session power-cycles the console and
+calls `rc_client_reset`, and is ignored while a movie or netplay owns the
+timeline (the host reads `ra_hardcore()` back). rcheevos' `Reset` request,
+which the bridge answered with a soft reset and no `rc_client_reset` (so
+achievement processing stayed suspended after the player switched hardcore
+on), now does the same power cycle. Tests:
+`hardcore_refuses_cheats_scripts_playback_and_memory_tools`,
+`hardcore_tears_down_running_features_on_the_next_frame`,
+`switching_hardcore_on_power_cycles_and_waits_for_a_recording` (and the
+v1.8.6 `hardcore_blocks_load_state_only`). Not in Rust's reach: frame advance
+and slowdown on mobile are host-side pacing in the Kotlin / Swift apps, and
+Android's auto-resume of the on-background state goes through `load_state`, so
+in hardcore it is refused and the game starts from power-on (RA asks a resumed
+session to drop to casual; refusing the resume keeps hardcore honest but
+differs from the letter, a decision left to the maintainer).
+
 Allowed in hardcore: saving a state, recording a movie, fast forward, reset and
 power cycle, run-ahead and netplay (RA lists neither), and pausing, which
 `rc_client_can_pause` throttles. Switching hardcore OFF mid-session is allowed.
