@@ -1496,6 +1496,40 @@ estimate that was itself too low. It is recorded rather than re-run until it
 passes. Raw pacing CSVs and both gate logs were kept in the session scratch
 directory, not in the repository.
 
+#### The release A/B against v3.3.0 (2026-10-18): no regression of that kind; `flowing_palette_fast` about 1.7% slower
+
+The plan held the cut until `scripts/perf/ab_check.sh` ran twice against v3.3.0
+(`86114215`). Four runs, candidate `e5a9dd59` (the release's code; later commits
+are docs, screenshots and the version bump), through `scripts/perf/quiet_ab.sh`.
+**Host conditions, stated because they bound the result:** another session's
+QEMU held one core busy throughout, so the queue's quiet threshold was raised
+from 1.5 to 3.0 (one-minute load 2.0-3.0 at each start); `ab_check.sh` pinned
+its own cores. Two plain runs and, because plain builds can measure link layout
+(`docs/agents/perf-and-panels.md`), two aligned runs
+(`-align-all-functions=6 -align-all-nofallthru-blocks=5` on both sides):
+
+| workload | aligned 1 | aligned 2 | plain 1 | plain 2 |
+| --- | --- | --- | --- | --- |
+| `nes_run_frame_nestest` | +0.27% | +0.06% (p 0.37) | -1.95% | -2.39% |
+| `nes_run_frame_flowing_palette` | +1.31% | +1.09% | -1.49% | -0.73% |
+| `nes_run_frame_nestest_fast` | -0.61% | -0.68% | +1.03% | +0.28% |
+| `nes_run_frame_flowing_palette_fast` | +1.69% | +1.65% | +1.55% (p 0.33) | +0.29% |
+
+Order-bias control (the reference against itself, last): up to -2.86% in the
+plain runs and up to +0.74% in the aligned ones, so the plain columns carry
+more drift than signal and only the aligned pair is read. Positive is slower.
+
+**Reading.** Nothing resembles the +66% above, which was host contention as it
+looked. The aligned runs agree with each other within 0.25 percentage points
+on every workload, and the signs are mixed (one workload faster, three slower),
+so by the adoption rule's standard there is no single effect to name. The one
+movement on a shipped `_fast` path that both aligned runs reproduce above their
+drift is `flowing_palette_fast`, about 1.7% slower than v3.3.0. It is recorded
+here, not chased before the release: under 2%, mixed with a faster
+`nestest_fast`, and not attributed. The CI frame-time gate on the release PR
+passed. Logs are in the session's scratch (`ab/plain{1,2}.log`,
+`ab/aligned{1,2}.log`), not the repository.
+
 #### The egui cost itself, measured by instruction count: +10.2% per shell frame, about 3 µs
 
 Neither measurement above reaches egui: the pacing captures never recorded it,
