@@ -469,13 +469,12 @@ something as blocked, check the blocker applies to the WHOLE item.**
       is committed to the sibling's `releases/` (the date form is the only one
       `Distribution_MiSTer`'s builder and the `Main_MiSTer` core menu accept,
       measured against `Main_MiSTer/file_io.cpp` rather than the wiki's
-      paraphrase), and from v2.6.15 to v3.4.0 a version-named copy,
-      `RustyNES_MiSTer-vX.Y.Z.rbf`, was attached beside it on both repositories'
-      GitHub releases; on 2026-10-18 every such copy with a same-digest
-      datecoded twin in its release was removed (maintainer), and new releases
-      attach the datecoded files only. Version-named files with no twin (the
-      v2.6.7-v2.6.14 sibling releases, v2.6.7-v2.6.23 on the oracle, and every
-      `-offdie.rbf` through v3.3.0) are their releases' only copies and stay. Through v2.6.14 the version-named file was
+      paraphrase), and both repositories' GitHub releases carry the same bytes
+      version-named, `RustyNES_MiSTer-vX.Y.Z.rbf` (plus `-lite.rbf` from
+      v3.4.0). From v2.6.15 to v3.4.0 the releases carried both names; on
+      2026-10-18 the maintainer had the duplicates deleted and then every
+      remaining datecoded asset renamed to the version form, with the release
+      notes rewritten to match. Through v2.6.14 the version-named file was
       the one committed, a divergence from MiSTer's date convention that
       v2.6.15 closed (the sibling's `docs/bitstream-release.md`).
 - [x] Unique Home folder chosen — **since v2.6.7**, resolved against
