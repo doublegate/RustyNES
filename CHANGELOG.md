@@ -26,6 +26,47 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **The hosted services are live** (moved from v3.4.0 by the maintainer). The
+  netplay lobby and the short-lived TURN credentials run on the maintainer's
+  Cloudflare account at <https://rustynes-hosted.parobek.workers.dev>, and the
+  Pages build, the desktop release binaries and the Android and iOS CI builds
+  are compiled with that base (`RUSTYNES_HOSTED_BASE`; a `hosted_base_url` in
+  the config still wins, and F-Droid and plain source builds are unchanged).
+  The live gates passed on 2026-10-18: health check, the lobby test against the
+  live socket, credentials with a three-hour lifetime that a browser can relay
+  through, the per-address limit, and the kill switch. The RetroAchievements
+  proxy is deployed switched off until RetroAchievements answers the
+  integration request.
+
+### Changed
+
+- **MiSTer release assets are version-named**: `RustyNES_MiSTer-<tag>.rbf`
+  (the off-die headline) and `RustyNES_MiSTer-<tag>-lite.rbf` (on-die). The
+  MiSTer repository's `releases/` keeps the dated names MiSTer's updater reads.
+  Every past release's bitstream assets were renamed to that form (the same
+  bytes) and their notes updated to match.
+
+### Fixed
+
+- **The browser RetroAchievements build loads rcheevos.** Three packaging
+  faults each stopped it: an empty `data-cargo-features` attribute in the web
+  page made `trunk build` ignore `--features` and `--no-default-features` (the
+  documented lightweight canvas build came out as the 12.6 MB default build;
+  it is now 1.3 MB), the glue imported rcheevos from a directory trunk does not
+  copy it to, and the rcheevos module had no ES-module export. Web
+  RetroAchievements stays off on the Pages demo for now.
+- **MiSTer save states on a cartridge change** (the v3.4.0 review's two
+  deferred findings): a load interrupted by a ROM download no longer writes one
+  byte outside its grant, and a manual save interrupted mid-write now leaves its
+  slot empty instead of a slot that a later load accepted with a mix of two
+  states.
+- **MiSTer build warnings**: the two findings `release-rbf.sh` refused v3.4.0's
+  bitstreams on (a Quartus width warning in the MMC2/MMC4 CHR slots and the
+  Zapper aim's constant ninth bit) are fixed with no change in behaviour or
+  save-state layout.
+
 ## [3.4.0] - 2026-10-18 - "Waypoint" (authenticated netplay and three- and four-player desktop sessions, RetroAchievements hardcore to its full block list, the hosted services as code, about half the window-thread CPU, egui 0.37, and a MiSTer core whose headline build is off-die, with save states and rewind and Phase F3a's boards)
 
 ### Breaking
