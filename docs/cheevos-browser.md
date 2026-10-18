@@ -69,7 +69,7 @@ The auth proxy adds a fourth backstop: it refuses to forward a hardcore award
 ## Auth proxy contract
 
 RA identifies/allowlists clients by the HTTP `User-Agent`
-`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>` (the `RA_USER_AGENT` const in
+`RustyNES/<crate-ver> (<OS> <arch>) rcheevos/<rcheevos-ver>` (the `RA_USER_AGENT` const in
 `crates/rustynes-cheevos/src/http.rs`; a native regression test guards the
 leading `RustyNES/` token). Browsers forbid setting it, so every server call from
 the browser is routed through a small proxy that injects the header server-side.
@@ -86,7 +86,7 @@ the browser is routed through a small proxy that injects the header server-side.
   python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
   # Env-driven (no config file):
   RA_PROXY_BIND=127.0.0.1:8092 RA_ALLOWED_ORIGINS='http://127.0.0.1:8081' \
-    RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+    RA_USER_AGENT='RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0' \
     python3 scripts/cheevos/auth_proxy_stub.py
   ```
 
@@ -109,9 +109,43 @@ the browser is routed through a small proxy that injects the header server-side.
   through this same path; the glue never sends a password anywhere except as part
   of the rcheevos login request body, and only the returned token is persisted.
 
-Point `RA_PROXY_BASE` in `web/cheevos/ra_glue.js` at the deployed proxy origin.
-Until it is set, `BrowserRaSession::proxy_configured()` is `false`, server calls
+**Where `RA_PROXY_BASE` comes from (v3.4.0).** The glue no longer carries a
+hard-coded constant to edit. The PAGE sets the base, in this order:
+`<meta name="rustynes-ra-proxy-base" content="https://…/ra">` in `index.html`,
+then `globalThis.RUSTYNES_RA_PROXY_BASE` (local development), then the glue's
+`HOSTED_RA_PROXY_BASE` (empty in the repository). A URL parameter is
+deliberately not one of them, so a crafted link cannot send a user's password
+to someone else's proxy, and anything but `https://` (or `http://` to
+localhost / 127.0.0.1) is ignored, because the login request carries the
+password. `services/hosted/test/ra-glue.test.ts` pins all three rules. Until a
+base is set, `BrowserRaSession::proxy_configured()` is `false`, server calls
 fail closed, and the UI shows the "not configured" caveat.
+
+## The hosted proxy (v3.4.0, `T-RA-PROXY`)
+
+The proxy now has a hosted implementation on the same Cloudflare Worker as the
+netplay lobby: `services/hosted/src/ra.ts`, at `<hosted base>/ra/dorequest.php`
+(so `RA_PROXY_BASE` is `<hosted base>/ra`). It implements the contract above
+and is stricter than the reference stub:
+
+| Rule | Hosted proxy | Reference stub |
+| --- | --- | --- |
+| Origin | `https://doublegate.github.io`, plus localhost in development; a request with no `Origin` or another one is refused (403) | CORS header only for allowlisted origins |
+| Path and method | `POST /ra/dorequest.php` only, form body, no query string, body at most 64 KiB | any path, forwarded verbatim |
+| Request types | `r=` must be one of the eight the vendored rc_client 12.5 uses on the casual runtime path (`login2`, `gameid`, `achievementsets`, `patch`, `startsession`, `ping`, `awardachievement`, `submitlbentry`); editor, upload and account-wide calls are refused | anything |
+| Form shape | every field name must be letters, digits and `_`, and `r` and `h` may each appear at most once (else 400); the body sent upstream is the parsed set re-serialised, never the raw bytes. RetroAchievements' PHP keeps the LAST value of a repeated field where `URLSearchParams` returns the FIRST, so `r=login2&r=submitcodenote` would otherwise pass the allowlist and run the editor call; `name[]` (a PHP array) and `.` or a space in a name (folded to `_`) are refused for the same reason | forwarded verbatim |
+| Hardcore | any `h` parameter other than `0` is refused (403), parsed as a form field | substring test `b"h=1" in body`, which also refuses e.g. a hash value containing `h=1` |
+| User-Agent | `RA_USER_AGENT` var, refused unless it starts `RustyNES/` | `RA_USER_AGENT` env |
+| Credentials | never stored or logged (no console output; Workers Logs off); upstream headers such as `Set-Cookie` not passed back | not logged |
+| Rate limits | per client address: `RA_PER_IP_PER_HOUR` (240) forwarded calls and `RA_LOGINS_PER_IP_PER_HOUR` (10) `login2` calls per rolling hour (429); `RA_DAILY_CAP` (50000) forwarded calls per UTC day across all callers (503); both with `Retry-After`. Only a call that would be forwarded counts. The Origin check stops other pages, not other programs, so these bound what a program sending the Pages `Origin` can push through the shared User-Agent (credential stuffing, a ban of that identity) | none |
+
+All of it is pinned by `services/hosted/test/ra.test.ts` (forwarding with the
+User-Agent, status pass-through, every refusal with the upstream never called,
+the hash-value false positive, the kill switch, the three rate limits, and a spy on every console
+method proving neither the password nor the token is logged). What remains is
+the live gate, which only the maintainer can run with their own account: a
+browser login and a casual unlock through the deployed Worker (RA-02;
+`services/hosted/README.md` "Verifying the live gates", step 6).
 
 ## Building + enabling
 

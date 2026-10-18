@@ -52,7 +52,7 @@ use rustynes_netplay::SessionIdentity;
 use rustynes_netplay::signaling::{Action, ClientId, Relay, SignalMessage};
 use rustynes_netplay::{
     ConnectionState, NatConfig, NatConnect, NatPhase, NetplayConnection, RollbackSession,
-    SessionConfig, SplitMix64, TurnConfig, fnv1a64,
+    SessionConfig, SplitMix64, TurnConfig,
 };
 
 const MAGIC_COOKIE: u32 = 0x2112_A442;
@@ -85,7 +85,9 @@ fn nestest_rom() -> Vec<u8> {
 }
 
 fn gameplay_digest(nes: &Nes) -> u64 {
-    fnv1a64(nes.framebuffer()) ^ nes.cycle().wrapping_mul(0x100_0000_01b3)
+    // v3.4.0: the session's own digest, so the test and the session cannot
+    // drift apart when it changes (it did, with protocol 9).
+    rustynes_netplay::gameplay_digest(nes)
 }
 
 // ── tiny STUN/TURN encoder helpers (server side) ─────────────────────────────

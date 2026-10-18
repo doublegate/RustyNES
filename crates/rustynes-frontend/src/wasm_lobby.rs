@@ -116,7 +116,12 @@ impl WasmLobbyState {
 /// on. The host/join controls are disabled while a session is connecting /
 /// in-game; Leave is enabled then.
 pub fn show(ctx: &egui::Context, state: &mut WasmLobbyState, config: &mut crate::config::Config) {
-    state.seed(&config.netplay.signaling_url, config.netplay.num_players);
+    // v3.4.0: with a hosted base in effect, an empty signaling URL starts out
+    // as the hosted lobby's (the user can still overwrite it).
+    state.seed(
+        &config.netplay.effective_signaling_url(),
+        config.netplay.num_players,
+    );
 
     let mut open = state.open;
     egui::Window::new(crate::t!(LobbyTitle))
@@ -220,8 +225,10 @@ fn body(ui: &mut egui::Ui, state: &mut WasmLobbyState, config: &mut crate::confi
                 state.message = crate::t!(LobbyNeedRoom).to_string();
             } else {
                 let num_players = state.num_players.clamp(2, 4);
-                // Persist the conveniences for the next launch.
-                config.netplay.signaling_url = signaling_url.clone();
+                // Persist the conveniences for the next launch. The hosted
+                // lobby's own URL is not stored as a choice, so it keeps
+                // following the hosted base (`remember_signaling_url`).
+                config.netplay.remember_signaling_url(&signaling_url);
                 config.netplay.num_players = num_players;
                 state.request = Some(LobbyRequest::Connect {
                     signaling_url,

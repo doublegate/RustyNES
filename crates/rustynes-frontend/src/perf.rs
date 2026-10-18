@@ -101,6 +101,22 @@ impl SampleRing {
         }
     }
 
+    /// The window's mean alone, without the copy and sort [`Self::stats`] pays
+    /// for its percentiles (v3.4.0). The fps readout needs only this, and it
+    /// is read every produced frame. Summed in arrival order rather than
+    /// sorted order, so the last bits of an f32 mean can differ from
+    /// `stats().mean_ms`; nothing compares the two.
+    fn mean_ms(&self) -> f32 {
+        let n = self.samples_ms.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let sum: f32 = self.samples_ms.iter().sum();
+        #[allow(clippy::cast_precision_loss)] // window bounded by WINDOW.
+        let mean = sum / n as f32;
+        mean
+    }
+
     fn clear(&mut self) {
         self.samples_ms.clear();
     }
@@ -737,7 +753,16 @@ impl PerfStats {
     /// the fps readout's source (fps = 1000 / mean).
     #[must_use]
     pub fn view_produced_mean_ms(&self) -> f32 {
-        self.produced.ring.stats().mean_ms
+        self.produced.ring.mean_ms()
+    }
+
+    /// The produce-cost window's stats alone: what the run-ahead throttle reads
+    /// every produced frame (its median and count). v3.4.0 — so housekeeping
+    /// no longer builds the whole [`Self::view`] (eight sorted windows, under
+    /// the emulator lock) for a value one window supplies.
+    #[must_use]
+    pub fn produce_cost_stats(&self) -> IntervalStats {
+        self.produce_cost.stats()
     }
 
     /// Build the per-frame snapshot for the debugger Performance panel.
@@ -992,6 +1017,24 @@ mod tests {
     fn empty_ring_yields_zeroed_stats() {
         let r = SampleRing::default();
         assert_eq!(r.stats(), IntervalStats::default());
+        assert!(r.mean_ms() == 0.0, "an empty ring's mean is 0, not NaN");
+    }
+
+    /// v3.4.0 — `mean_ms` (the fps readout's source, no sort) agrees with
+    /// `stats().mean_ms`, including once the window is full and older samples
+    /// have been evicted. Their sums run in different orders, so they may
+    /// differ in the last bits; integral samples keep this exact.
+    #[test]
+    fn the_unsorted_mean_matches_the_sorted_one() {
+        let mut r = SampleRing::default();
+        for i in 0..(WINDOW + 50) {
+            #[allow(clippy::cast_precision_loss)]
+            r.push(((i * 37) % 23) as f32);
+        }
+        assert_eq!(r.samples_ms.len(), WINDOW);
+        let (a, b) = (r.mean_ms(), r.stats().mean_ms);
+        assert!((a - b).abs() < 1e-4, "mean_ms {a} vs stats().mean_ms {b}");
+        assert!(a > 0.0);
     }
 
     #[test]

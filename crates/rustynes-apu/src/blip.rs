@@ -158,6 +158,21 @@ impl BlipBuf {
     /// [`CPU_HZ_PAL`]).
     #[must_use]
     pub fn new(sample_rate: u32, cpu_rate: f64) -> Self {
+        Self::with_kernel(sample_rate, cpu_rate, Kernel::new())
+    }
+
+    /// [`Self::new`] with a kernel already built (v3.4.0).
+    ///
+    /// The kernel is a constant table (`Kernel::new` takes no arguments), so
+    /// a buffer rebuilt from a snapshot can take a copy of the live buffer's
+    /// instead of recomputing it. Recomputing is 8,192 `sin` / `cos`
+    /// evaluations, and a snapshot restore did it every time: with
+    /// run-ahead 1 that is every frame, and rewind and netplay rollback
+    /// restore too. Measured at 1.8% of the emulation thread
+    /// (`Kernel::new` plus its `sinf` / `cosf`). The copy is identical to a
+    /// fresh build, so nothing the buffer produces changes.
+    #[must_use]
+    pub(crate) fn with_kernel(sample_rate: u32, cpu_rate: f64, kernel: Kernel) -> Self {
         let step = f64::from(sample_rate) / cpu_rate;
         let mut b = Self {
             sample_rate,
@@ -167,7 +182,7 @@ impl BlipBuf {
             filter: FilterChain::new(sample_rate),
             samples: Vec::with_capacity(8192),
             held_value: 0.0,
-            kernel: Kernel::new(),
+            kernel,
             delta_ring: [0.0; RING_SIZE],
             // Start `head` at TAPS so the initial scatter (writing to
             // `head - TAPS/2 .. head + TAPS/2`) lands at indices
@@ -178,6 +193,11 @@ impl BlipBuf {
         };
         b.reset();
         b
+    }
+
+    /// The polyphase kernel, for [`Self::with_kernel`] (v3.4.0).
+    pub(crate) const fn kernel(&self) -> &Kernel {
+        &self.kernel
     }
 
     /// v2.1.3 — swap the analog output-filter model (see

@@ -85,7 +85,19 @@ struct GameView: View {
                         onLua: { showingLua = true },
                         onCheats: { showingCheats = true },
                         onTAStudio: { showingTAStudio = true },
-                        onDebugger: { showingDebugger = true },
+                        // RetroAchievements hardcore forbids debuggers, and this
+                        // one's "Step" is a frame advance (it calls the bridge's
+                        // `step_frame`, the ordinary per-frame tick, which the
+                        // bridge cannot refuse without stopping the game). So the
+                        // sheet is refused here, on the bridge's own hardcore flag
+                        // (`raHardcore`), the same rule the desktop applies.
+                        onDebugger: {
+                            if model.emulator?.raHardcore() == true {
+                                model.errorMessage = "The debugger is disabled in RetroAchievements hardcore mode."
+                            } else {
+                                showingDebugger = true
+                            }
+                        },
                         onRecord: { model.recorder.toggle() },
                         onSettings: { showingSettings = true },
                         onReset: { model.emulator?.reset() },

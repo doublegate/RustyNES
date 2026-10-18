@@ -76,6 +76,21 @@ fun AboutDialog(onDismiss: () -> Unit) {
                         }
                     },
                 )
+                // v3.4.0: the privacy policy (PRIVACY.md, served on GitHub Pages).
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Privacy policy",
+                    color = Color(0xFF4FC3F7),
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            ctx.startActivity(
+                                Intent(Intent.ACTION_VIEW, "https://doublegate.github.io/RustyNES/privacy/".toUri())
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    },
+                )
             }
         },
     )

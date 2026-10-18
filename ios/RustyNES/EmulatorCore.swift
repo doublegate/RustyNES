@@ -554,8 +554,15 @@ final class EmulatorCore {
     /// A copy of the battery-backed save RAM (empty without a battery).
     func batteryRam() -> Data { controller.batteryRam() }
 
+    /// v3.4.0 — whether a `.sav` of `len` bytes is one `loadBatteryRam` takes:
+    /// the save size, or an earlier layout the board still reads (the
+    /// Datach's v3.3.0 save). Asked before the file is read.
+    func acceptsBatteryRamLen(_ len: Int) -> Bool {
+        len >= 0 && controller.acceptsBatteryRamLen(len: UInt64(len))
+    }
+
     /// Load a `.sav` into the save RAM; call before the first frame. Throws when
-    /// the cartridge has no battery or the size is not its save size.
+    /// the cartridge has no battery or the size is not one it takes.
     func loadBatteryRam(_ data: Data) throws { try controller.loadBatteryRam(bytes: data) }
 
     /// The frame index since power-on.
@@ -716,7 +723,10 @@ final class EmulatorCore {
     // unlock checks, toast/rich-presence refresh) happens inside `post_frame_ra`,
     // which only runs while the core ticks (`runFrame`/`stepFrame`).
 
-    func raInit(hardcore: Bool) { controller.raInit(hardcore: hardcore) }
+    /// v3.4.0 — returns whether hardcore is on afterwards: creating the session
+    /// in hardcore is refused while a movie or netplay owns the timeline.
+    @discardableResult
+    func raInit(hardcore: Bool) -> Bool { controller.raInit(hardcore: hardcore) }
     func raLoginPassword(user: String, password: String) {
         controller.raLoginPassword(user: user, password: password)
     }
@@ -727,7 +737,10 @@ final class EmulatorCore {
     func raLoginStatus() -> RaLoginStatus { controller.raLoginStatus() }
     func raUser() -> RaUserInfo? { controller.raUser() }
     func raToken() -> String? { controller.raToken() }
-    func raSetHardcore(_ hardcore: Bool) { controller.raSetHardcore(hardcore: hardcore) }
+    /// v3.4.0 — returns whether hardcore is on afterwards (a switch ON is
+    /// refused while a movie or netplay owns the timeline).
+    @discardableResult
+    func raSetHardcore(_ hardcore: Bool) -> Bool { controller.raSetHardcore(hardcore: hardcore) }
     func raHardcore() -> Bool { controller.raHardcore() }
     /// Identify + load the achievement set for the loaded ROM. `sha256` is the raw
     /// 32-byte digest; `sidecar` is previously-saved progress ("" / empty if none).

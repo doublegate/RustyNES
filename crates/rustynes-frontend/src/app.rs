@@ -128,6 +128,7 @@ use crate::input::{InputState, SysAction};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::save_state;
 use crate::session_policy::TimelineAction;
+use crate::session_policy::hardcore::Feature as HardcoreFeature;
 use crate::ui_shell::StatusMessage;
 
 /// v1.3.0 Sprint 1.4 — winit custom user-event type, used by both
@@ -3204,12 +3205,25 @@ impl App {
             // attestation recorded under it could never verify. Refusing up
             // front is clearer than emitting one that gets silently dropped.
             let attest = self.config.input.run_ahead == 0;
+            // v3.4.0 (`T-RA-HARDCORE`) — a recording captures the core's Game
+            // Genie codes and holds them every frame. Hardcore runs every frame
+            // without them (`EmuCore::produce_one_frame`), but a Reset or Power
+            // Cycle re-applies the panel's list between frames, so a recording
+            // started then would carry codes its run never had and replay
+            // differently. Start it without them.
+            let hardcore = crate::session_policy::hardcore::refuses(
+                HardcoreFeature::Cheats,
+                self.ra_hardcore_blocks(),
+            );
             // v2.9.0 — the recording starts from cleared save RAM, which must
             // not reach the `.sav` (`EmuCore::start_sandboxed_session`).
             guard.start_sandboxed_session(|emu| {
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
+                if hardcore {
+                    nes.clear_genie_codes();
+                }
                 emu.movie.start_recording_power_on(nes, attest);
                 true
             });
@@ -3243,6 +3257,10 @@ impl App {
         // v2.3.0 — movies and netplay are mutually exclusive.
         if self.netplay.is_active() {
             eprintln!("rustynes: leave netplay before playing a movie");
+            return;
+        }
+        // v3.4.0 — RA hardcore prohibits recorded-input playback.
+        if self.refuse_hardcore(HardcoreFeature::MoviePlayback) {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
@@ -3330,6 +3348,14 @@ impl App {
         };
         // v2.3.2 "Lucid": see the power-on path for the run-ahead caveat.
         let attest = self.config.input.run_ahead == 0;
+        // v3.4.0 — no Game Genie code in a hardcore recording (see the
+        // power-on path).
+        if crate::session_policy::hardcore::refuses(
+            HardcoreFeature::Cheats,
+            self.ra_hardcore_blocks(),
+        ) {
+            nes.clear_genie_codes();
+        }
         emu.movie.start_recording_branch(nes, attest);
         eprintln!("rustynes: movie branch — recording from current state");
     }
@@ -3423,6 +3449,10 @@ impl App {
             self.ui.set_status(StatusMessage::info(
                 "Leave netplay before importing a movie",
             ));
+            return;
+        }
+        // v3.4.0 — an import plays the movie back, which RA hardcore prohibits.
+        if self.refuse_hardcore(HardcoreFeature::MoviePlayback) {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
@@ -5201,6 +5231,29 @@ impl App {
         }
     }
 
+    /// v3.4.0 (`T-RA-HARDCORE`) — refuse `feature` when RA hardcore forbids
+    /// it; returns `true` (with the reason on the status line) when refused.
+    ///
+    /// The rule is `session_policy::hardcore` (the table the mobile bridge
+    /// enforces too); this only supplies the live hardcore flag. Every start
+    /// site of a forbidden feature asks it: frame advance, a slowdown, movie
+    /// playback and movie import, and a Lua script load. The rules that must
+    /// also hold for a feature ALREADY running when hardcore takes effect are
+    /// enforced where the frame runs (`EmuCore::produce_one_frame`: playback,
+    /// Game Genie codes, rewind, raw cheats, pokes; `EmuCore::effective_frame_duration`:
+    /// slowdown), in `pump_scripts` (a running script is stopped) and in the
+    /// debugger overlay (forbidden windows close).
+    fn refuse_hardcore(&mut self, feature: HardcoreFeature) -> bool {
+        if crate::session_policy::hardcore::refuses(feature, self.ra_hardcore_blocks()) {
+            self.ui.set_status(StatusMessage::info(
+                crate::session_policy::hardcore::refusal_message(feature),
+            ));
+            true
+        } else {
+            false
+        }
+    }
+
     /// v2.7.0 — the per-ROM RA progress sidecar directory
     /// (`<data_dir>/ra-progress/`). `None` if no data dir is available.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -5299,10 +5352,74 @@ impl App {
                 self.config.retroachievements.enabled = false;
                 let _ = self.config.save();
             }
-            CheevosRequest::SetHardcore(on) => {
-                ra.set_hardcore(on);
-                self.config.retroachievements.hardcore = on;
-                let _ = self.config.save();
+            CheevosRequest::SetHardcore(on) => self.set_ra_hardcore(on),
+        }
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — switch RA hardcore on or off from the
+    /// achievements panel.
+    ///
+    /// RA: "Switching from casual mode to hardcore mode is not allowed
+    /// mid-session. This action must result in a full reset of the game.
+    /// Switching from hardcore mode to casual mode is allowed mid-session"
+    /// (compliance requirements, section B; section G lists "the ability to
+    /// switch to hardcore mode without a reset of the game" as an automatic
+    /// rejection). Turning it ON therefore:
+    ///
+    /// 1. is refused while a movie or a netplay session owns the timeline
+    ///    (the reset would break the recording / desync the peer; the player
+    ///    stops it first, the same refusal a Power Cycle gets);
+    /// 2. stops a running Lua script and lifts any slowdown, so nothing
+    ///    forbidden survives into the hardcore session; and
+    /// 3. power-cycles a running game (a cold boot, not a soft reset: a soft
+    ///    reset keeps the RAM a casual session prepared), which also calls
+    ///    `rc_client_reset` and so re-enables achievement processing, which
+    ///    rcheevos suspends from the switch until that reset.
+    ///
+    /// Turning it OFF re-applies the player's enabled Game Genie codes, which
+    /// hardcore removed from the core (`EmuCore::produce_one_frame`).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+    fn set_ra_hardcore(&mut self, on: bool) {
+        let Some(currently) = self.ra.as_ref().map(rustynes_ra::RaSession::hardcore) else {
+            return;
+        };
+        if on && !currently {
+            let owners = crate::session_policy::SessionOwners {
+                movie: self.replay_interaction_locked(),
+                netplay: self.netplay_is_active(),
+                hardcore: false,
+            };
+            if crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some() {
+                self.ui.set_status(StatusMessage::info(
+                    "Stop the movie or netplay session before enabling hardcore",
+                ));
+                return;
+            }
+        }
+        let switched_on = self.ra.as_mut().is_some_and(|ra| ra.set_hardcore(on));
+        self.config.retroachievements.hardcore = on;
+        let _ = self.config.save();
+        if let Some(debugger) = self.debugger.as_mut() {
+            debugger.set_hardcore_active(on);
+        }
+        if switched_on {
+            #[cfg(feature = "scripting")]
+            if self.script.is_some() {
+                self.handle_script_action(crate::debugger::ScriptAction::Stop);
+            }
+            if self.speed < 1.0 {
+                self.set_speed(1.0);
+            }
+            let running = self.emu.lock().nes.is_some();
+            if running {
+                self.do_power_cycle();
+                self.ui
+                    .set_status(StatusMessage::info("Hardcore enabled: the game was reset"));
+            }
+        } else if !on {
+            let mut guard = self.emu.lock();
+            if let (Some(nes), Some(debugger)) = (guard.nes.as_mut(), self.debugger.as_mut()) {
+                debugger.reapply_genie_codes(nes);
             }
         }
     }
@@ -5844,6 +5961,11 @@ impl App {
             return;
         }
 
+        // v3.4.0 — RA hardcore prohibits scripting, not just script writes.
+        if self.stop_script_for_hardcore() {
+            return;
+        }
+
         // These reads don't need the emu lock, so resolve them first to keep
         // the lock window below tight (and non-reentrant).
         let netplay_locked = self.netplay.is_active() || self.ra_hardcore_blocks();
@@ -6348,7 +6470,7 @@ impl App {
         let sy = game_h / visible_h;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("lua_script_overlay_wasm"),
+            egui::Id::unique("lua_script_overlay_wasm"),
         ));
         let col = |c: u32| {
             egui::Color32::from_rgba_unmultiplied(
@@ -6418,6 +6540,29 @@ impl App {
         web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(msg));
     }
 
+    /// v3.4.0 — stop a running script when RA hardcore is active (RA:
+    /// "scripting ... strictly prohibited"), with the same teardown as the
+    /// console's Stop, before its next callback. Returns `true` when it
+    /// stopped one. Called at the top of every `pump_scripts`, so a script
+    /// still running when hardcore takes effect runs no further frame.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn stop_script_for_hardcore(&mut self) -> bool {
+        if self.script.is_none()
+            || !crate::session_policy::hardcore::refuses(
+                HardcoreFeature::Scripting,
+                self.ra_hardcore_blocks(),
+            )
+        {
+            return false;
+        }
+        self.handle_script_action(crate::debugger::ScriptAction::Stop);
+        if let Some(dbg) = self.debugger.as_mut() {
+            dbg.script_panel()
+                .push_log(["[stopped: RetroAchievements hardcore mode]".to_owned()]);
+        }
+        true
+    }
+
     /// Handle a console load/reload/stop request.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     fn handle_script_action(&mut self, action: crate::debugger::ScriptAction) {
@@ -6464,6 +6609,16 @@ impl App {
     /// Read + load a `.lua` file into a fresh engine, reporting to the console.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     fn load_script_from_path(&mut self, path: &Path) {
+        // v3.4.0 — RA hardcore prohibits scripting: refuse before anything
+        // runs, with the reason in the console as well as on the status line.
+        if self.refuse_hardcore(HardcoreFeature::Scripting) {
+            if let Some(dbg) = self.debugger.as_mut() {
+                dbg.script_panel().set_error(
+                    "Lua scripting is disabled in RetroAchievements hardcore mode".into(),
+                );
+            }
+            return;
+        }
         // Drop any running script up front so a failed (re)load can't leave the
         // old script's callbacks + overlay running behind an error (gemini #48).
         self.script = None;
@@ -6570,7 +6725,7 @@ impl App {
         let sy = game_h / visible_h;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("lua_script_overlay"),
+            egui::Id::unique("lua_script_overlay"),
         ));
         let col = |c: u32| {
             egui::Color32::from_rgba_unmultiplied(
@@ -7035,6 +7190,13 @@ impl App {
     /// the change takes effect without a catch-up burst.
     fn set_speed(&mut self, speed: f32) {
         let speed = speed.clamp(0.05, 16.0);
+        // v3.4.0 — RA hardcore refuses a speed below 100% (fast forward stays
+        // allowed). The pacer enforces the same floor whatever set the factor
+        // (`EmuCore::effective_frame_duration`); this keeps the menu, the
+        // hotkeys and the audio ratio from showing a speed that is not run.
+        if speed < 1.0 && self.refuse_hardcore(HardcoreFeature::Slowdown) {
+            return;
+        }
         self.speed = speed;
         {
             let mut guard = self.emu.lock();
@@ -7318,6 +7480,10 @@ impl App {
     /// - wasm: produce one frame inline + re-arm the rAF loop.
     fn request_frame_advance(&mut self) {
         if !self.ui.paused || self.netplay_is_active() {
+            return;
+        }
+        // v3.4.0 — RA hardcore: "Slowdown and frame advance are disabled".
+        if self.refuse_hardcore(HardcoreFeature::FrameAdvance) {
             return;
         }
         // Make sure the core has the latest input for this stepped frame.
@@ -7687,7 +7853,9 @@ impl App {
                 let mut driver = crate::wasm_netplay::BrowserNetplay::new(identity);
                 driver.set_num_players(num_players);
                 let ice = self.config.netplay.stun_servers.clone();
-                match driver.connect(&signaling_url, &room, &ice) {
+                // v3.4.0: hosted TURN credentials when a hosted base is set.
+                let turn_url = self.config.netplay.hosted_turn_url();
+                match driver.connect(&signaling_url, &room, &ice, turn_url.as_deref()) {
                     Ok(()) => {
                         self.browser_netplay = Some(driver);
                     }
@@ -8260,6 +8428,51 @@ impl App {
         }
     }
 
+    /// v3.4.0 — whether this housekeeping pass builds the full
+    /// [`crate::perf::PerfView`]: a panel that reads it is open, or the perf
+    /// log is due a row. See the comment at the call in
+    /// `post_produce_housekeeping`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn perf_view_wanted(&self) -> bool {
+        self.debugger
+            .as_ref()
+            .is_some_and(DebuggerOverlay::perf_view_wanted)
+            || self.perf_logger.row_due()
+    }
+
+    /// v2.8.0 Phase 3 — feed the run-ahead budget throttle, every produced
+    /// frame. It reads the produce-cost median and count: from the full view
+    /// when one was built, else from that one window alone (v3.4.0).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn feed_runahead_throttle(
+        emu: &mut crate::emu::EmuCore,
+        view: Option<&crate::perf::PerfView>,
+        run_ahead: u32,
+    ) {
+        let produce_cost = view.map_or_else(|| emu.perf.produce_cost_stats(), |v| v.produce_cost);
+        emu.update_runahead_throttle(produce_cost.p50_ms, produce_cost.count, run_ahead);
+    }
+
+    /// The [`crate::perf::PerfView`] fields that live on `App` rather than
+    /// behind the emulator lock: the pacing label, the audio servo, the present
+    /// mode and GPU time, and the winit thread's render series. Called only
+    /// when housekeeping builds the full view (v3.4.0).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fill_app_side_perf(&self, perf_view: &mut crate::perf::PerfView) {
+        perf_view.pacing = self.pacing_label();
+        // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
+        if let Some(audio) = self.audio.as_ref() {
+            perf_view.drc_ratio = audio.drc_ratio_now();
+            perf_view.audio_latency_target_ms = audio.latency_target_ms();
+        }
+        if let Some(gfx) = self.gfx.as_ref() {
+            perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
+            perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
+            perf_view.gpu_ms = gfx.last_gpu_pass_ms();
+        }
+        self.fill_winit_thread_perf(perf_view);
+    }
+
     /// v2.8.0 Phase 2 — per-produced-frame housekeeping shared by the
     /// wall-clock pacer (`pace_frames`) and the display-sync redraw path:
     /// FDS save flush + audio-health refresh + perf/fps/movie pushes into
@@ -8270,7 +8483,7 @@ impl App {
     /// Extracted from `post_produce_housekeeping` only to keep that function
     /// inside the line budget; the sequence is unchanged.
     #[cfg(not(target_arch = "wasm32"))]
-    fn drive_perf_logger(&mut self, perf_view: &crate::perf::PerfView) -> Option<String> {
+    fn drive_perf_logger(&mut self, perf_view: Option<&crate::perf::PerfView>) -> Option<String> {
         let log_enabled = self
             .debugger
             .as_ref()
@@ -8281,7 +8494,9 @@ impl App {
             .then(|| self.perf_log_context());
         self.perf_logger
             .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
-        self.perf_logger.record(perf_view);
+        if let Some(view) = perf_view {
+            self.perf_logger.record(view);
+        }
         self.perf_logger.note()
     }
 
@@ -8308,6 +8523,16 @@ impl App {
         // user can read them from the top toolbar. One scoped lock builds
         // the whole perf snapshot (the gfx fields are App-resident and are
         // filled in after the guard drops).
+        //
+        // v3.4.0 — the full snapshot is built only when something reads it:
+        // the Performance or Latency panel is open, or the perf log is due to
+        // write its once-a-second row. Building it copies and sorts every
+        // 600-sample stats window, the emulator-side ones under this lock, and
+        // a live profile measured that at 11.6% of the winit thread while the
+        // log keeps one view a second and a closed panel keeps none. The
+        // run-ahead throttle reads one window's median and is fed every frame
+        // either way; the fps readout uses an unsorted mean.
+        let want_view = self.perf_view_wanted();
         let (
             fps,
             movie_status,
@@ -8329,7 +8554,11 @@ impl App {
                     overrun_dropped: audio.queue.overrun_dropped(),
                 };
             }
-            let mut view = emu.perf.view();
+            let mut view = if want_view {
+                emu.perf.view()
+            } else {
+                crate::perf::PerfView::default()
+            };
             view.target_ms = emu.frame_duration.as_secs_f32() * 1000.0;
             // v2.3.3 — drain the per-frame trace under the SAME lock that is
             // already held (an O(1) `Vec` swap), and write it to disk after the
@@ -8353,9 +8582,9 @@ impl App {
             // v2.8.0 Phase 3 — feed the run-ahead budget throttle. Keyed off
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
-            emu.update_runahead_throttle(
-                view.produce_cost.p50_ms,
-                view.produce_cost.count,
+            Self::feed_runahead_throttle(
+                emu,
+                want_view.then_some(&view),
                 self.config.input.run_ahead,
             );
             // v1.5.0 "Lens" Workstream H8 — surface the run-ahead + rewind
@@ -8388,22 +8617,15 @@ impl App {
         // so the allocation survives and nothing is retained between frames.
         self.trace_scratch = trace_events;
         let replay_info = self.build_replay_info(region);
-        perf_view.pacing = self.pacing_label();
-        // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
-        if let Some(audio) = self.audio.as_ref() {
-            perf_view.drc_ratio = audio.drc_ratio_now();
-            perf_view.audio_latency_target_ms = audio.latency_target_ms();
+        if want_view {
+            self.fill_app_side_perf(&mut perf_view);
         }
-        if let Some(gfx) = self.gfx.as_ref() {
-            perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
-            perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
-            perf_view.gpu_ms = gfx.last_gpu_pass_ms();
-        }
-        self.fill_winit_thread_perf(&mut perf_view);
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
-        // and reflect the destination/error back into the panel.
-        let log_note = self.drive_perf_logger(&perf_view);
+        // and reflect the destination/error back into the panel. The row is
+        // offered only when the view was built (v3.4.0); `sync` still runs
+        // every frame so the checkbox starts and stops the log at once.
+        let log_note = self.drive_perf_logger(want_view.then_some(&perf_view));
         // v1.1.0 beta.1 (Workstream B) — push the held-button snapshot for the
         // input-display HUD (P1..P4; 4 players shown only with Four Score).
         let input_players = if self.config.input.four_score { 4 } else { 2 };
@@ -8434,7 +8656,9 @@ impl App {
             debugger.set_movie_status(movie_status);
             debugger.set_replay_info(movie_status, replay_info);
             debugger.set_perf_log_note(log_note);
-            debugger.set_perf_view(perf_view);
+            if want_view {
+                debugger.set_perf_view(perf_view);
+            }
             // v1.7.0 — pull the live enabled raw-cheat list edited in the
             // cheat panel so the next produce iteration pokes the current
             // set (mirrors the fps / movie-status pull pattern).
@@ -11588,19 +11812,34 @@ impl ApplicationHandler<AppEvent> for App {
                         };
                         // Debugger panels are skipped (overlay hidden) so
                         // `nes = None` is correct even though a ROM may exist.
-                        shell_out = debugger.render_shell(
-                            device,
-                            queue,
-                            encoder,
+                        //
+                        // v3.4.0 — `render_shell`'s two halves, called here
+                        // directly so the egui build can be timed into `rui`.
+                        // Until v3.4.0 `ui_cost` was set only on the locked
+                        // branch, so on this branch, the one taken whenever the
+                        // overlay and tool panels are closed (the normal case),
+                        // `rui` read 0.000 although the menu and status bars are
+                        // built every frame. `render_shell` is exactly these two
+                        // calls, so behaviour is unchanged. This span runs inside
+                        // the `overlay` closure, after the `t_present` restart,
+                        // so it is ALSO inside `rwait` (docs/performance.md);
+                        // `rui` here is a component of `rwait`, not of `rwork`.
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let t_ui = Instant::now();
+                        let (out, prepared) = debugger.run_shell_ui(
                             &window,
-                            view,
-                            size,
                             None,
                             config,
                             ui_shell,
                             &shell_frame,
                             extra,
                         );
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            ui_cost = Some(t_ui.elapsed());
+                        }
+                        shell_out = out;
+                        debugger.paint_shell(device, queue, encoder, view, size, prepared);
                     };
                     // v1.2.0 C3 — when an HD-pack frame was composited this
                     // redraw, present the upscaled buffer through the dedicated
@@ -12375,6 +12614,144 @@ mod tests {
         let rest = &production[start + 4..];
         let end = rest.find("\n    fn ").map_or(rest.len(), |i| i + 1);
         rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// `needle` occurs in `fn name`, before `later` (both whitespace-squashed).
+    fn assert_before(name: &str, needle: &str, later: &str) {
+        let body = production_fn_body(name);
+        let squash = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        let (needle, later) = (squash(needle), squash(later));
+        let at = body
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{name}: `{needle}` is gone"));
+        let after = body
+            .find(&later)
+            .unwrap_or_else(|| panic!("{name}: `{later}` is gone"));
+        assert!(at < after, "{name}: `{needle}` must come before `{later}`");
+    }
+
+    /// v3.4.0 (`T-RA-HARDCORE`) — every start site of a feature RA hardcore
+    /// forbids asks the one rule (`session_policy::hardcore`) before it does
+    /// anything. `App` needs a window and the emulation thread, so this pins
+    /// the shape, as the cabinet and per-game tests below do; the behaviour
+    /// of the rule and of the frame-level enforcement is tested where it
+    /// lives (`session_policy::hardcore`, `emu::tests::hardcore_*`).
+    #[test]
+    fn every_hardcore_start_site_asks_the_one_rule() {
+        let refuse = production_fn_body("refuse_hardcore");
+        assert!(
+            refuse.contains(
+                "crate::session_policy::hardcore::refuses(feature, self.ra_hardcore_blocks())"
+            ),
+            "refuse_hardcore no longer reads the live hardcore flag: {refuse}"
+        );
+        for (site, feature, before) in [
+            (
+                "request_frame_advance",
+                "FrameAdvance",
+                "self.latch_input();",
+            ),
+            ("set_speed", "Slowdown", "self.speed = speed;"),
+            (
+                "handle_movie_play_toggle",
+                "MoviePlayback",
+                "rfd::FileDialog::new()",
+            ),
+            (
+                "handle_movie_import",
+                "MoviePlayback",
+                "rfd::FileDialog::new()",
+            ),
+            (
+                "load_script_from_path",
+                "Scripting",
+                "rustynes_script::ScriptEngine::new()",
+            ),
+        ] {
+            assert_before(
+                site,
+                &format!("self.refuse_hardcore(HardcoreFeature::{feature})"),
+                before,
+            );
+        }
+        // A slowdown is refused; a fast-forward factor is not asked about.
+        assert_before(
+            "set_speed",
+            "if speed < 1.0 && self.refuse_hardcore(HardcoreFeature::Slowdown) { return; }",
+            "self.speed = speed;",
+        );
+        // A script already running when hardcore takes effect is stopped
+        // before its next callback.
+        assert_before(
+            "pump_scripts",
+            "if self.stop_script_for_hardcore() { return; }",
+            "engine.set_tas_snapshot(",
+        );
+        // A recording started in hardcore captures no Game Genie code: the
+        // codes a Reset or Power Cycle re-applied are removed first.
+        for (site, start) in [
+            (
+                "handle_movie_record_toggle",
+                "emu.movie.start_recording_power_on(nes, attest);",
+            ),
+            (
+                "handle_movie_branch",
+                "emu.movie.start_recording_branch(nes, attest);",
+            ),
+        ] {
+            assert_before(site, "nes.clear_genie_codes();", start);
+            assert!(
+                production_fn_body(site).contains("HardcoreFeature::Cheats"),
+                "{site}: the recording's codes are no longer gated on hardcore"
+            );
+        }
+        assert_before(
+            "stop_script_for_hardcore",
+            "crate::session_policy::hardcore::refuses( HardcoreFeature::Scripting, self.ra_hardcore_blocks(), )",
+            "self.handle_script_action(crate::debugger::ScriptAction::Stop);",
+        );
+    }
+
+    /// v3.4.0 — RA: switching casual -> hardcore mid-session "must result in a
+    /// full reset of the game" (an automatic rejection otherwise). The panel's
+    /// request goes through `set_ra_hardcore`, which refuses while a movie or
+    /// netplay owns the timeline, switches, and then power-cycles a running
+    /// game (`do_power_cycle` ends in `reset_ra`, i.e. `rc_client_reset`).
+    #[test]
+    fn switching_hardcore_on_power_cycles_a_running_game() {
+        assert!(
+            production_fn_body("handle_cheevos_request")
+                .contains("CheevosRequest::SetHardcore(on) => self.set_ra_hardcore(on)"),
+            "the panel's hardcore toggle bypasses set_ra_hardcore"
+        );
+        assert_before(
+            "set_ra_hardcore",
+            "crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some()",
+            "ra.set_hardcore(on)",
+        );
+        assert_before(
+            "set_ra_hardcore",
+            "if switched_on {",
+            "self.do_power_cycle();",
+        );
+        assert_before(
+            "set_ra_hardcore",
+            "self.do_power_cycle();",
+            "debugger.reapply_genie_codes(nes);",
+        );
+        assert!(
+            production_fn_body("do_power_cycle").contains("self.reset_ra();"),
+            "a power cycle no longer resets the RA runtime"
+        );
+        let app_src: &str = include_str!("app.rs");
+        let production = app_src
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(app_src, |(before, _)| before);
+        assert_eq!(
+            production.matches(".set_hardcore(").count(),
+            1,
+            "hardcore is switched outside set_ra_hardcore"
+        );
     }
 
     /// v2.9.8 — every ROM load path installs a Vs. `DualSystem` image as the

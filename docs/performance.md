@@ -1433,6 +1433,282 @@ frame loop, which leaves code layout or inlining as the working explanation,
 untested. No change is adopted; the lead is closed as measured. Logs:
 `salvaged/perf-v3.0.1-palette-ab/` (gitignored).
 
+### v3.4.0 — the egui 0.36 -> 0.37 move: no pacing or frame-time change resolvable on a contended host
+
+**Finding: nothing measured here attributes a change to egui 0.37, and the
+host was too loaded for these numbers to rule a small one out.** The move
+(egui / egui-wgpu / egui-winit 0.37.0, wgpu still 30, the vendored egui-winit
+removed) changes only the frontend; the chip crates and `rustynes-core`'s
+whole dependency graph are identical to v3.3.0 (zero diff under
+`crates/rustynes-{core,cpu,ppu,apu,mappers}`, and `cargo tree -p rustynes-core`
+lists the same 82 packages on both sides).
+
+**Frame pacing, the v2.9.3 method, with two departures stated first.** Release
+frontends from v3.3.0 (`86114215`, egui 0.36, built in a detached worktree) and
+from the egui 0.37 commit, run alternately (old, new, old, new), 45 s each,
+`RUSTYNES_PERF_LOG=1`, `tests/roms/assorted/flowing_palette.nes`, Mailbox, a
+119.991 Hz KDE Wayland monitor. Departures: the one-minute load average was
+**17-25 on 20 cores** throughout (other agents' builds; the method asks for
+under 2), and the maintainer's config had **run-ahead 1** (v2.9.3 used 0); the
+config was not edited. Values are the mean over the 35 per-second rows after
+three warm-up rows; every capture passed `perf_log_check.py`.
+
+| | old 1 | new 1 | old 2 | new 2 |
+| --- | --- | --- | --- | --- |
+| load (1 min) at start | 25.3 | 23.2 | 17.2 | 22.5 |
+| presented mean (ms) | 9.14 | 8.39 | 9.06 | 8.94 |
+| presented p50 | 9.50 | 8.48 | 9.40 | 9.01 |
+| presented p95 | 16.61 | 13.35 | 18.29 | 16.94 |
+| presented p99 | 23.03 | 16.18 | 23.40 | 22.36 |
+| redraw wait (`rwait`) p95 | 7.71 | 8.18 | 7.27 | 7.31 |
+| egui UI time (`rui`) p95 | 0.00 | 0.00 | 0.00 | 0.00 |
+| produced p99 | 22.31 | 20.15 | 20.76 | 21.85 |
+| cost p95 (emulation work) | 12.17 | 9.38 | 11.63 | 11.48 |
+
+**Reading it.** The first pair favours the new build on every present column,
+but its `cost p95` (the emulation work, which egui does not touch) is also 23%
+lower, so that capture ran on a quieter machine, not on better code. The
+second pair, whose `cost p95` agree within 1.3%, differs by at most 1.35 ms on
+any present percentile (p95; the new build lower), inside what the first pair
+shows contention alone can move. `rui` reads 0.00 in all four, so these
+captures do not measure egui's own cost at all. (**Corrected below**: this
+paragraph first said the egui pass was "too short to register at this column's
+resolution". It was not recorded at all. `ui_cost` was set only on the locked
+branch, and these captures ran on the overlay-hidden branch, where the egui
+build happens inside the paint closure and its time lands in `rwait`. v3.4.0
+times it there too.) Not measured: a quiet host, run-ahead 0, an open overlay,
+Fifo, 60 Hz.
+
+**The CI frame-time gate** (`bench_regression_check.sh`, then
+`bench_relative_check.sh` with `BENCH_BASE_REF=86114215`), which benches
+`rustynes-core`'s `full_frame` and therefore the identical code on both sides:
+
+- Absolute ceiling: PASS, 6.618 / 2.934 / 3.906 / 2.650 ms/frame (nestest,
+  flowing_palette, and their `_fast` variants) against 10 ms.
+- Relative, run 1: **FAIL**, `nestest_fast` +66.06% (4.024 -> 6.682 ms,
+  14.18% robust CV) and `flowing_palette_fast` +23.83% (44.29% CV).
+- Relative, run 2, minutes later, same two commits: NO VERDICT,
+  `nestest_fast` **-6.86%** and `flowing_palette_fast` **-24.48%**.
+
+Identical code produced +66% and then -7%: the failure is the contended host,
+the gate's "beyond 3x the measured noise" exception firing on a noise
+estimate that was itself too low. It is recorded rather than re-run until it
+passes. Raw pacing CSVs and both gate logs were kept in the session scratch
+directory, not in the repository.
+
+#### The release A/B against v3.3.0 (2026-10-18): no regression of that kind; `flowing_palette_fast` about 1.7% slower
+
+The plan held the cut until `scripts/perf/ab_check.sh` ran twice against v3.3.0
+(`86114215`). Four runs, candidate `e5a9dd59` (the release's code; later commits
+are docs, screenshots and the version bump), through `scripts/perf/quiet_ab.sh`.
+**Host conditions, stated because they bound the result:** another session's
+QEMU held one core busy throughout, so the queue's quiet threshold was raised
+from 1.5 to 3.0 (one-minute load 2.0-3.0 at each start); `ab_check.sh` pinned
+its own cores. Two plain runs and, because plain builds can measure link layout
+(`docs/agents/perf-and-panels.md`), two aligned runs
+(`-align-all-functions=6 -align-all-nofallthru-blocks=5` on both sides):
+
+| workload | aligned 1 | aligned 2 | plain 1 | plain 2 |
+| --- | --- | --- | --- | --- |
+| `nes_run_frame_nestest` | +0.27% | +0.06% (p 0.37) | -1.95% | -2.39% |
+| `nes_run_frame_flowing_palette` | +1.31% | +1.09% | -1.49% | -0.73% |
+| `nes_run_frame_nestest_fast` | -0.61% | -0.68% | +1.03% | +0.28% |
+| `nes_run_frame_flowing_palette_fast` | +1.69% | +1.65% | +1.55% (p 0.33) | +0.29% |
+
+Order-bias control (the reference against itself, last): up to -2.86% in the
+plain runs and up to +0.74% in the aligned ones, so the plain columns carry
+more drift than signal and only the aligned pair is read. Positive is slower.
+
+**Reading.** Nothing resembles the +66% above, which was host contention as it
+looked. The aligned runs agree with each other within 0.25 percentage points
+on every workload, and the signs are mixed (one workload faster, three slower),
+so by the adoption rule's standard there is no single effect to name. The one
+movement on a shipped `_fast` path that both aligned runs reproduce above their
+drift is `flowing_palette_fast`, about 1.7% slower than v3.3.0. It is recorded
+here, not chased before the release: under 2%, mixed with a faster
+`nestest_fast`, and not attributed. The CI frame-time gate on the release PR
+passed. Logs are in the session's scratch (`ab/plain{1,2}.log`,
+`ab/aligned{1,2}.log`), not the repository.
+
+#### The egui cost itself, measured by instruction count: +10.2% per shell frame, about 3 µs
+
+Neither measurement above reaches egui: the pacing captures never recorded it,
+and the CI gate benches the core. So the shell was measured directly, with a
+method that host load does not move. `ui_shell::tests::shell_frame_cost_probe`
+(ignored by default) builds the always-on shell, menu bar and status bar, on a
+bare `egui::Context` with the app's fonts and theme, tessellates each frame, and
+reports per-frame build and tessellation time, shapes, vertices, indices and
+texture-upload bytes. The same probe ran in a v3.3.0 worktree (egui 0.36.2) and
+on the v3.4.0 branch (egui 0.37.0), release builds, under
+`perf stat -e instructions:u`. The two repeats of each agree to within about
+2,000 instructions in 240 million, so the count is the reliable number here; the
+microsecond figures are wall time on the same loaded host.
+
+| 1,200 frames | egui 0.36.2 | egui 0.37.0 | change |
+| --- | ---: | ---: | ---: |
+| instructions, idle | 220.24 M | 240.96 M | +9.4% |
+| instructions, pointer sweeping the menu bar | 241.72 M | 264.26 M | +9.3% |
+| instructions per frame (fixed cost of an 11-frame run removed) | 173,500 | 191,200 | **+10.2%** |
+| build, per frame (wall) | ~19 µs | ~22 µs | |
+| tessellation, per frame (wall) | ~3.8 µs | ~4.4 µs | |
+| vertices / indices per frame, idle | 476 / 858 | 476 / 858 | same |
+| texture upload after warm-up | 0 B | 0 B | same |
+
+The fixed cost (process start, font loading) is 14.0 M against 13.6 M
+instructions, the same on both versions. The extra cost is per frame and real.
+In absolute terms it is about 3 µs a frame, under 0.02% of a 16.6 ms frame,
+so it cannot explain a visible slowdown. Nor is there font-atlas churn: neither
+version uploads texture data after the first frames.
+
+**Where the extra instructions go** (`perf record -e instructions:u`, 6,000
+frames each, symbols diffed). Several rows are only renames and inlining
+changes that cancel (`run_ui_dyn` vs `run_pass_dyn`, `AtomLayout` vs
+`ContainerAtom`, the galley cache moving modules). What remains:
+
+- **Text tessellation, the largest share.** `Tessellator::tessellate_shape`,
+  into which the text and rect paths inline, rises from 94.5 M to 132.8 M
+  instructions (+40%), on an identical mesh. epaint 0.37's `tessellate_text` now
+  checks, for each vertex of each text row, whether it belongs to a colour glyph
+  (the colour-emoji support, egui #8490 and #8545). The shell draws no colour
+  glyphs, so this is pure overhead for it, and it is inside epaint. Isolated
+  with an egui-only reproduction (120 labels; a rects-only scene as the
+  control), instructions per `Context::tessellate`: text 620,292 on 0.36.2,
+  999,863 on 0.37.0 and on `main` (`86099aca`), **+61.2%**; rects +0.18%.
+  Removing the colour-glyph code returns text to 627,024. Short-circuiting the
+  check at its call site does not help (1,000,343), so the cost is the
+  conditional write's presence in the per-vertex closure, not running it.
+  Branching once per row, with the 0.36 loop body for rows without colour
+  glyphs, gives 654,382 and passes epaint's tests. Reported upstream with the
+  reproduction and that fix as
+  [emilk/egui#8731](https://github.com/emilk/egui/issues/8731) (2026-10-17).
+  The rect paths diff as equivalent between the versions.
+- **Hovering draws more**: with the pointer sweeping the menu bar, 0.37 emits
+  542.6 vertices and 1,151.9 indices a frame against 0.36's 513.0 and 1,018.8,
+  a different hover highlight, not a cost of the idle shell.
+- **egui 0.37's per-widget style resolution**, the new theme-provider layer
+  (egui #8153): `AtomLayoutStyle::apply` and `DefaultStyle`'s `StyleProvider`,
+  about 13 M over the run with no 0.36 counterpart, and a net of about 3 M
+  more in font metrics lookups (`FontsImpl::family_metrics` / `family_key`,
+  8.7 M, replacing 0.36's `Font::styled_metrics`, 6.1 M) from the restructured
+  font fallback (`Family`, `FaceStore`).
+
+None of this is RustyNES code, and nothing in the shell's own use of egui
+changed cost. Not adopted: caching the shell's tessellated output across frames
+when egui requests no repaint (the idle probe shows 2 repaint requests in 1,200
+frames, so it would usually hit). It would save at most the ~26 µs of the whole
+pass, less whenever a status-bar readout changes and forces a rebuild, against
+the risk of showing a stale UI.
+
+**`rui` is now recorded on the overlay-hidden path.** The redraw handler calls
+`run_shell_ui` and `paint_shell` directly there (exactly what `render_shell`
+does) and times the first. This `rui` sits inside `rwait`, not `rwork`, since
+the egui pass runs in the paint closure after the wait clock restarts. One 20 s
+capture on the same ROM and display, on a loaded host, reads `rui` p50
+0.312 ms, mean 0.372, p99 1.638 (it read 0.000 before). That is about 14 times
+the probe's ~22 µs build. The live pass also covers what the probe leaves out:
+`take_egui_input` from winit, the extra closure's windows (save states, the
+virtual pad, scripts), the debugger's hidden panels, and a contended host. The
+gap is **not yet attributed**. It is the next thing to measure, with a quiet
+host and the probe extended toward the live pass. (**Attributed below.**)
+
+#### The live winit thread: a frame hash and per-frame stats were half its CPU; both fixed
+
+**Finding: the live gap is cold execution, not extra egui work, and profiling
+it found two real costs, neither of them egui. Fixing them halves the winit
+thread's CPU time.** A 25 s call-graph profile of the live frontend's winit
+thread (`perf record -g --call-graph fp`, a release build with line tables and
+frame pointers in its own target directory, `flowing_palette.nes`, perf log
+on, load 7-10):
+
+| inclusive share of the winit thread | % |
+| --- | ---: |
+| `Gfx::render_with_overlay` (the present path) | 65.0 |
+| of which `fnv1a64`, the frame-upload skip's hash | **29.0** |
+| `run_shell_ui`, the egui pass | 14.8 |
+| `SampleRing::stats`, the perf statistics | **11.6** |
+
+**The egui pass is ordinary.** Folded beneath `run_shell_ui` it is the menu bar
+36%, egui's pass machinery 22%, tessellation 21% and the status bar 14%, the
+probe's composition. What differs is how warm it runs. The probe paced like
+the live app (`RUSTYNES_SHELL_PROBE_SLEEP_MS=8`) builds in 55.0-63.7 µs
+against 21.2-22.7 µs back to back, and with a 32 MiB cache sweep between
+frames (`RUSTYNES_SHELL_PROBE_EVICT`) in 64.7-106.5 µs. Between redraws the
+CPU drops clock and the caches go cold, so a pass that runs once per 8 ms costs
+3-5 times its hot cost. The remainder is the live pass's extra work and the
+loaded host. No egui defect sits in the gap.
+
+**The frame-upload hash (v2.3.3 F4) cost about 30 times what it saved.** The
+skip exists so that a duplicate present (the 120 Hz display shows each 60 fps
+frame twice) does not re-upload 245,760 identical bytes. It decided that with
+a byte-wise FNV-1a hash, documented as cheap and vectorisable. It is neither.
+Each byte's multiply depends on the previous one, so nothing vectorises.
+Measured in a standalone release build (frames alternating new and duplicate):
+
+| frame-change check, per redraw | µs (two runs) |
+| --- | ---: |
+| byte-wise FNV-1a (v2.3.3 to v3.3.0) | 206.4 / 206.8 |
+| netplay's multiply-rotate digest | 13.6 / 13.6 |
+| exact compare against a copy, copy on change (v3.4.0) | **7.8 / 7.6** |
+| a 245,760-byte memcpy, the CPU side of the upload it saves | 6.3 / 6.0 |
+
+v3.4.0 keeps the skip and decides it by comparing against a copy of the last
+uploaded frame (`remember_if_changed`). It is about 27 times faster, and an
+exact compare cannot collide, where a hash could in principle have shown a
+stale frame. The same code path runs in the browser build.
+
+**The perf statistics were built for consumers that were not listening.**
+Housekeeping built the full `PerfView` on every produced frame. That means
+copying and sorting each 600-sample window, the emulator-side ones while
+holding the emulator lock. Meanwhile the perf log keeps one view a second, a
+closed Performance or Latency panel keeps none, and the fps readout sorted a
+window only to take its mean. From v3.4.0 the view is built only when one of
+those panels is open or the log is due a row (`PerfLogger::row_due`, the test
+`record` already applies). The run-ahead throttle reads the one window it
+needs every frame, and the fps readout uses an unsorted mean.
+
+**Measured, live, before and after both fixes**: the two binaries built with
+identical flags, alternated before / after / before / after, 20 s each, the
+winit thread's CPU time (`perf stat -e task-clock -t`) over 15 s after a 5 s
+warm-up, which host load moves far less than it moves wall time:
+
+| capture | load | winit thread CPU (ms / 15 s) | fps | presented p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| before | 6.97 | 1,062.6 | 60.23 | 14.62 |
+| after | 6.05 | **573.6** | 60.25 | 14.32 |
+| before | 5.61 | 1,045.9 | 60.25 | 9.03 |
+| after | 4.94 | **540.0** | 60.25 | 8.52 |
+
+**-46% and -48%**, the same sign in both pairs: from about 7.0% of a core to
+about 3.7%. The frame rate and the pacing are unchanged, as they should be on
+a vsync-bound present. The saving is CPU and power, and a shorter emulator-lock
+hold. The host load fell across the four captures, so a quiet-host repeat is
+still worth taking. With load spread that wide, `rui` p50 reads 0.05-0.07 ms on
+both builds; the earlier capture's 0.31 ms was at a higher load.
+
+**The emulation thread, profiled the same way, held one more.** Every snapshot
+restore rebuilt the APU's band-limiting buffer through `BlipBuf::new`, which
+recomputes the windowed-sinc kernel: 8,192 `sin` / `cos` evaluations for a
+table that never changes (`Kernel::new` takes no arguments). With run-ahead 1
+that runs every frame, and rewind and netplay rollback restore too. It was 1.8%
+of the emulation thread (`Kernel::new` 0.82%, `sinf32` 0.52%, `cosf32` 0.46%).
+v3.4.0's `read_blip` copies the live buffer's kernel instead
+(`BlipBuf::with_kernel`). The table is identical either way. The gates confirm
+it: APU and core 431/0/3, the accuracy battery 508/0/4, the commercial-ROM
+suite with its audio digests 759/0/9, and a new bit-for-bit restore test,
+`a_restore_reproduces_the_sample_stream_bit_for_bit` (mutant caught: the
+restored phase dropped). Emulation-thread instructions over 15 s, run-ahead 1,
+alternated: 74.349 G -> 73.277 G and 74.352 G -> 73.215 G, **-1.44% and
+-1.53%**. The CPU-time column from the same captures had mixed signs on a host
+at load 4-7, so no timing gain is claimed. The instruction count is the
+evidence, and byte identity is the reason it is safe to adopt.
+
+Not adopted, measured as a candidate: reusing the previous frame's egui output
+when nothing changed (no input, no repaint requested, an identical
+`ShellFrame`). Live, it would save most of the ~0.05-0.3 ms pass on most
+redraws, but its correctness depends on every input to the shell being in the
+"unchanged" test, including config edits made by hotkeys outside egui. A missed
+one shows a stale menu with no error, which is a worse failure than the cost.
+
 ### v2.9.8 — pacing coverage: 60 Hz, Fifo, and run-ahead (the configurations v2.9.3 left unmeasured)
 
 **Finding: presents are even in every configuration measured; run-ahead

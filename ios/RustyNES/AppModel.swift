@@ -996,7 +996,9 @@ final class AppModel: ObservableObject {
         guard core.hasBattery else { return nil }
         let saver = BatterySaver(url: BatterySaver.url(forSha: sha))
         var notice: String?
-        switch saver.read(expected: core.batteryRam().count) {
+        // v3.4.0: the bridge names the sizes the cartridge takes (a board
+        // whose save grew still loads its earlier file).
+        switch saver.read(expected: core.batteryRam().count, accepts: { core.acceptsBatteryRamLen($0) }) {
         case .found(let data):
             do {
                 try core.loadBatteryRam(data)

@@ -264,7 +264,7 @@ pub use m268_bmc_coolboy::new_m268;
 pub use m513_sachen_9602::new_m513;
 pub use mapper::{
     BgSplitState, ExAttribute, Mapper, MapperCaps, MapperDebugInfo, MapperError, MapperFrameEvents,
-    mirroring_name,
+    load_save_data_exact, mirroring_name,
 };
 pub use mmc3_boards::{Board as Mmc3BoardKind, Mmc3Board};
 pub use mmc3_boards_ext::{ExtBoard as Mmc3ExtBoardKind, Mmc3BoardExt};

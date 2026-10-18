@@ -1403,6 +1403,63 @@ fn save_ram_is_exposed_only_for_a_battery_backed_cartridge() {
     );
 }
 
+/// v3.4.0 (`T-DATACH-EXT-EEPROM-BATTERY`). *Battle Rush* (mapper 157 with
+/// the cartridge's own X24C01, NES 2.0 byte 10 `$10`) exposes BOTH EEPROMs as
+/// save RAM: 384 bytes, the main unit's 24C02 then the cartridge chip, a size
+/// fixed by the header so RetroArch sees one stable length for the ROM. A
+/// v3.3.0 `.srm` is the 24C02's 256 bytes; RetroArch copies a shorter file
+/// into the start of the buffer and leaves the rest as the core had it
+/// (`content_load_ram_file` in RetroArch's `save.c`, read at `master`
+/// `087c08fb`: it copies the file's bytes and truncates only a LARGER file;
+/// RetroArch itself is not run here), which is the
+/// 24C02, with the cartridge chip at its erased power-on `$FF`. Simulated by
+/// copying 256 bytes through the pointer, as RetroArch does.
+#[test]
+fn a_datach_cartridge_exposes_both_eeproms_as_save_ram() {
+    let _frontend = frontend();
+    let mut rom = b"NES\x1A".to_vec();
+    // 2 x 16 KiB PRG, CHR-RAM; mapper 157 ($9D), battery, NES 2.0; 128-byte
+    // PRG-NVRAM (the cartridge X24C01); 8 KiB CHR-RAM.
+    rom.extend_from_slice(&[2, 0, 0xD2, 0x98, 0, 0, 0x10, 0x07]);
+    rom.resize(16, 0);
+    let mut prg = vec![0xEAu8; 0x8000];
+    for at in [0x7FFA, 0x7FFC, 0x7FFE] {
+        prg[at] = 0x00;
+        prg[at + 1] = 0xC0;
+    }
+    rom.extend_from_slice(&prg);
+    assert!(load(Box::leak(rom.into_boxed_slice()), true));
+    let descs: Vec<DescView> = held(&LAST_MAP).iter().map(DescView::from).collect();
+    let size = memory_size(RETRO_MEMORY_SAVE_RAM);
+    let data = memory_data(RETRO_MEMORY_SAVE_RAM);
+    assert_eq!(size, 384, "the 24C02 and the cartridge X24C01");
+    assert!(!data.is_null());
+    // SAFETY: the core keeps the save-RAM buffer alive and in place while the
+    // game is loaded (libretro.h's contract for `retro_get_memory_data`),
+    // `size` is its length, and `_frontend` serialises every test that drives
+    // the core, so nothing else touches it until `unload` below.
+    let srm = unsafe { std::slice::from_raw_parts_mut(data.cast::<u8>(), size) };
+    assert!(
+        srm.iter().all(|&b| b == 0xFF),
+        "both chips erased at power-on"
+    );
+    let mut v330 = [0xFFu8; 256];
+    v330[0x37] = 0xC4;
+    srm[..256].copy_from_slice(&v330);
+    let image = srm.to_vec();
+    unload();
+    assert_eq!(
+        &image[..256],
+        v330.as_slice(),
+        "the v3.3.0 save, in the 24C02"
+    );
+    assert!(
+        image[256..].iter().all(|&b| b == 0xFF),
+        "the cartridge chip erased"
+    );
+    crate::tests::assert_descriptor_shape(&descs, 384, false);
+}
+
 /// libretro re-audit NL-06. The save-RAM descriptor was
 /// `{start: $6000, select: 0, len: sram_len}` whatever the size: 64 KiB
 /// claimed `$6000-$15FFF`, past the 16-bit bus; 32 KiB claimed PRG-ROM at

@@ -346,6 +346,60 @@ pub struct NetplayConfig {
     /// these at its own `coturn` (STUN + TURN). Native netplay ignores this.
     #[serde(default = "default_stun_servers")]
     pub stun_servers: Vec<String>,
+    /// v3.4.0 — the base URL of a **hosted services** deployment (the
+    /// Cloudflare Worker in `services/hosted/`, e.g.
+    /// `https://rustynes-hosted.<account>.workers.dev`). When set (here, or at
+    /// build time through `RUSTYNES_HOSTED_BASE`), the browser lobby defaults
+    /// its signaling URL to the hosted lobby and fetches short-lived TURN
+    /// credentials from it before the WebRTC handshake. Empty by default, which
+    /// keeps the pre-v3.4.0 behaviour exactly. Native netplay ignores it.
+    #[serde(default)]
+    pub hosted_base_url: String,
+}
+
+impl NetplayConfig {
+    /// The hosted base in effect: this config's, else the build-time one.
+    #[must_use]
+    pub fn hosted_base(&self) -> Option<String> {
+        rustynes_netplay::hosted::resolve_base(&self.hosted_base_url)
+    }
+
+    /// The signaling URL the browser lobby starts with: the configured one,
+    /// else the hosted lobby's, else empty (the user types one).
+    #[must_use]
+    pub fn effective_signaling_url(&self) -> String {
+        if !self.signaling_url.trim().is_empty() {
+            return self.signaling_url.clone();
+        }
+        self.hosted_base()
+            .map(|b| rustynes_netplay::hosted::signaling_url(&b))
+            .unwrap_or_default()
+    }
+
+    /// Remember the signaling URL the browser lobby connected with, as a
+    /// choice only when it is one: the hosted lobby's own URL (what the lobby
+    /// seeds an empty field with) is stored as empty, so it keeps following
+    /// the hosted base. Storing it verbatim would make it a user override
+    /// that wins over a later `hosted_base_url` / `RUSTYNES_HOSTED_BASE`
+    /// change, leaving the old deployment's lobby paired with the new one's
+    /// TURN (which [`Self::hosted_turn_url`] always derives afresh).
+    pub fn remember_signaling_url(&mut self, url: &str) {
+        let hosted_default = self
+            .hosted_base()
+            .map(|b| rustynes_netplay::hosted::signaling_url(&b));
+        self.signaling_url = if hosted_default.as_deref() == Some(url) {
+            String::new()
+        } else {
+            url.to_string()
+        };
+    }
+
+    /// Where to fetch TURN credentials, when a hosted base is in effect.
+    #[must_use]
+    pub fn hosted_turn_url(&self) -> Option<String> {
+        self.hosted_base()
+            .map(|b| rustynes_netplay::hosted::turn_credentials_url(&b))
+    }
 }
 
 const fn default_netplay_port() -> u16 {
@@ -371,6 +425,7 @@ impl Default for NetplayConfig {
             num_players: default_netplay_players(),
             signaling_url: String::new(),
             stun_servers: default_stun_servers(),
+            hosted_base_url: String::new(),
         }
     }
 }
@@ -2340,6 +2395,80 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// v3.4.0: the hosted base is opt-in. A config without the key loads with
+    /// it empty, and then (in a build without `RUSTYNES_HOSTED_BASE`) the lobby
+    /// URL and the TURN fetch are exactly what they were before.
+    #[test]
+    fn the_hosted_base_is_opt_in_and_only_fills_blanks() {
+        let old: NetplayConfig =
+            toml::from_str("signaling_url = \"\"\n").expect("pre-v3.4.0 table");
+        assert_eq!(old.hosted_base_url, "");
+        if rustynes_netplay::hosted::BUILD_HOSTED_BASE.is_none() {
+            assert_eq!(old.hosted_base(), None);
+            assert_eq!(old.effective_signaling_url(), "");
+            assert_eq!(old.hosted_turn_url(), None);
+        }
+
+        let hosted = NetplayConfig {
+            hosted_base_url: "https://rustynes-hosted.example.workers.dev/".into(),
+            ..NetplayConfig::default()
+        };
+        assert_eq!(
+            hosted.effective_signaling_url(),
+            "wss://rustynes-hosted.example.workers.dev/signal"
+        );
+        assert_eq!(
+            hosted.hosted_turn_url().as_deref(),
+            Some("https://rustynes-hosted.example.workers.dev/turn-credentials")
+        );
+
+        // A signaling URL the user chose is kept.
+        let mine = NetplayConfig {
+            signaling_url: "wss://mine.example/".into(),
+            ..hosted
+        };
+        assert_eq!(mine.effective_signaling_url(), "wss://mine.example/");
+    }
+
+    /// The browser lobby's Connect remembers the URL it used, but the hosted
+    /// lobby's own URL (the seeded default) must not be stored as a choice:
+    /// it would then win over a later change of the hosted base, pairing the
+    /// old deployment's lobby with the new one's TURN.
+    #[test]
+    fn remembering_the_hosted_default_keeps_the_url_derived() {
+        let mut c = NetplayConfig {
+            hosted_base_url: "https://old.example.workers.dev".into(),
+            ..NetplayConfig::default()
+        };
+        let seeded = c.effective_signaling_url();
+        assert_eq!(seeded, "wss://old.example.workers.dev/signal");
+        c.remember_signaling_url(&seeded);
+        assert_eq!(c.signaling_url, "", "the hosted default is not a choice");
+
+        // The base moves: the lobby URL follows it, matching the TURN URL.
+        c.hosted_base_url = "https://new.example.workers.dev".into();
+        assert_eq!(
+            c.effective_signaling_url(),
+            "wss://new.example.workers.dev/signal"
+        );
+
+        // A URL the user typed is remembered, and then wins.
+        c.remember_signaling_url("wss://mine.example/signal");
+        assert_eq!(c.signaling_url, "wss://mine.example/signal");
+        assert_eq!(c.effective_signaling_url(), "wss://mine.example/signal");
+
+        // Going back to the hosted lobby forgets the override again.
+        c.remember_signaling_url("wss://new.example.workers.dev/signal");
+        assert_eq!(c.signaling_url, "");
+
+        // With no hosted base, every URL is a choice.
+        let mut plain = NetplayConfig::default();
+        if rustynes_netplay::hosted::BUILD_HOSTED_BASE.is_none() {
+            plain.remember_signaling_url("wss://a.example");
+            assert_eq!(plain.signaling_url, "wss://a.example");
+        }
+    }
 
     /// `#[serde(default)]` covers LOADING a config that lacks the key. It says
     /// nothing about SAVING, and the TOML serializer emits an empty table for an

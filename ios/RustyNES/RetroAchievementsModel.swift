@@ -32,7 +32,19 @@ final class RetroAchievementsModel: ObservableObject {
     @Published var hardcore: Bool {
         didSet {
             UserDefaults.standard.set(hardcore, forKey: "raHardcore")
-            core?.raSetHardcore(hardcore)
+            // v3.4.0 — the bridge refuses switching hardcore ON while a movie or
+            // netplay session owns the timeline (the reset RA requires would
+            // break it) and returns the mode the session actually runs in. Put
+            // the toggle back when it differs, so the UI never claims hardcore
+            // while achievements are casual. The requested mode was persisted
+            // above; a returned mode that differs is persisted here before the
+            // assignment, which (being inside this `didSet`) does not run the
+            // observer again, so `raSetHardcore` is called once per change.
+            if let live = core?.raSetHardcore(hardcore), live != hardcore {
+                UserDefaults.standard.set(live, forKey: "raHardcore")
+                lastError = "Stop the movie or netplay session before enabling hardcore."
+                hardcore = live
+            }
         }
     }
 
@@ -88,7 +100,7 @@ final class RetroAchievementsModel: ObservableObject {
         currentSha = sha
         currentRomData = romData
         guard enabled else { stopPolling(); return }
-        core.raInit(hardcore: hardcore)
+        reconcileHardcore(core.raInit(hardcore: hardcore))
         if let token = Keychain.get(account: tokenAccount), !username.isEmpty {
             // Already in the Keychain — record it as the active token so the poll
             // doesn't re-persist it every tick.
@@ -133,6 +145,14 @@ final class RetroAchievementsModel: ObservableObject {
         richPresence = ""
     }
 
+    /// v3.4.0 — show the mode `raInit` reports, which differs from the stored
+    /// toggle only when hardcore was refused (a movie or netplay owned the
+    /// timeline). Assigning re-runs `didSet`, whose `raSetHardcore(false)` is a
+    /// no-op on a casual session.
+    private func reconcileHardcore(_ live: Bool) {
+        if live != hardcore { hardcore = live }
+    }
+
     // MARK: - Login
 
     /// Begin a username + password login (requires a running game on iOS, since the
@@ -146,7 +166,7 @@ final class RetroAchievementsModel: ObservableObject {
         enabled = true // didSet persists raEnabled
         username = user
         UserDefaults.standard.set(user, forKey: "raUsername")
-        core.raInit(hardcore: hardcore)
+        reconcileHardcore(core.raInit(hardcore: hardcore))
         core.raLoginPassword(user: user, password: password)
         // Load the current ROM's achievement set if it wasn't loaded at attach time
         // (RA was disabled / not signed in then). The unlock state reconciles once the

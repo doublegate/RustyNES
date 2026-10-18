@@ -116,6 +116,13 @@ pub mod transport;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connection;
 
+// v3.4.0 (T-NETPLAY-DATAGRAM-AUTH, protocol 9, ADR 0046) — the per-session
+// datagram MAC the native UDP transports seal and open every datagram with.
+// Native-only: the browser's WebRTC data channel is DTLS-protected already,
+// and the key shares come from `getrandom`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod auth;
+
 // The N-peer UDP roster handshake + mesh transport (v2.6.0). Native-only
 // (`std::net`); the in-memory `MeshTransport` covers the wasm + harness path.
 #[cfg(not(target_arch = "wasm32"))]
@@ -143,10 +150,17 @@ pub mod signaling_client;
 // `SignalMessage` parse/encode for the browser signaling client.
 pub mod signaling;
 
+// v3.4.0 — the hosted services' client side: base-URL resolution, the
+// `/turn-credentials` parser (portable, used by the wasm frontend too) and the
+// native blocking fetch (`netplay-client`).
+pub mod hosted;
+
 // The WebRTC transport skeleton is wasm-only (it speaks `web_sys`).
 #[cfg(target_arch = "wasm32")]
 pub mod webrtc;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use auth::{DatagramAuth, KeyShare, Refusal, fresh_key_share};
 #[cfg(not(target_arch = "wasm32"))]
 pub use connection::{
     ConnectionState, DisconnectReason, NetplayConnection, PeerLink, UdpTransport,
@@ -155,7 +169,7 @@ pub use diagnostics::{CrcCompare, DesyncDiagnostics, DesyncStatus};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{
-    IdentityMismatch, NetMessage, PROTOCOL_VERSION, SessionIdentity, SyncVerdict,
+    IdentityMismatch, KEY_SHARE_LEN, NetMessage, PROTOCOL_VERSION, SessionIdentity, SyncVerdict,
     emulator_mismatch_text, fnv1a64,
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
@@ -163,7 +177,10 @@ pub use nat_connect::{NatConfig, NatConnect, NatPhase};
 #[cfg(not(target_arch = "wasm32"))]
 pub use relay::{RelayUdpSocket, TurnClient, TurnConfig};
 pub use rng::SplitMix64;
-pub use session::{AdvanceOutcome, MAX_PLAYERS, NetplayError, RollbackSession, SessionConfig};
+pub use session::{
+    AdvanceOutcome, CHECKSUM_RETAIN_FRAMES, CONFIRMED_DIGEST_RETAIN, MAX_PLAYERS, NetplayError,
+    RetainedWindow, RollbackSession, SessionConfig, framebuffer_digest, gameplay_digest,
+};
 pub use signaling::{Action, ClientId, MAX_ROOM_LIST, Relay, RoomInfo, SignalMessage};
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 pub use signaling_client::{SignalEvent, SignalingClient};

@@ -76,11 +76,21 @@ class BatterySaver(private val file: File) {
      * Read the save, checking its size against the cartridge's ([expected]
      * bytes) BEFORE reading it, so a huge or wrong file is never loaded into
      * memory. An unusable file disables this saver for the session.
+     *
+     * v3.4.0: [accepts] decides which sizes are the cartridge's. The default
+     * is exactly [expected]; the app passes the bridge's
+     * `acceptsBatteryRamLen`, which also takes an earlier layout the board
+     * still reads (today only the Datach's v3.3.0 main-unit-only save, 256
+     * bytes beside the current 384; `T-DATACH-EXT-EEPROM-BATTERY`). Every
+     * size the bridge accepts is at most [expected].
      */
-    fun read(expected: Int): SavedBattery {
+    fun read(
+        expected: Int,
+        accepts: (Long) -> Boolean = { it == expected.toLong() },
+    ): SavedBattery {
         if (!file.exists()) return SavedBattery.None
         val length = file.length()
-        if (length != expected.toLong()) {
+        if (!accepts(length)) {
             disabled = true
             return SavedBattery.Unusable(
                 "The battery save is $length bytes; this game's is $expected. " +
@@ -91,7 +101,7 @@ class BatterySaver(private val file: File) {
             disabled = true
             return SavedBattery.Unusable("The battery save could not be read (${e.message}).")
         }
-        if (bytes.size != expected) {
+        if (bytes.size.toLong() != length) {
             disabled = true
             return SavedBattery.Unusable("The battery save changed size while it was read.")
         }

@@ -43,6 +43,13 @@ pub const RC_CONSOLE_NINTENDO: u32 = 7;
 /// `RC_OK`.
 pub const RC_OK: c_int = 0;
 
+/// `RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR` (`rc_api_request.h`): a
+/// non-HTTP failure (no connection, DNS, TLS, timeout) rcheevos may retry. An
+/// achievement unlock or leaderboard entry reported with this status is
+/// queued by `rc_client` and re-sent from `rc_client_do_frame` /
+/// `rc_client_idle` with a doubling back-off capped at two minutes.
+pub const RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR: c_int = -2;
+
 // ---------------------------------------------------------------------------
 // Callback typedefs.
 // ---------------------------------------------------------------------------
@@ -302,6 +309,7 @@ unsafe extern "C" {
         handler: rc_client_event_handler_t,
     );
     pub fn rc_client_set_unofficial_enabled(client: *mut rc_client_t, enabled: c_int);
+    pub fn rc_client_set_allow_background_memory_reads(client: *mut rc_client_t, allowed: c_int);
     pub fn rc_client_set_hardcore_enabled(client: *mut rc_client_t, enabled: c_int);
     pub fn rc_client_get_hardcore_enabled(client: *const rc_client_t) -> c_int;
 

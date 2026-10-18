@@ -36,6 +36,13 @@
 // separate browser RA scaffolding instead, and never depends on this crate.
 #![cfg(not(target_arch = "wasm32"))]
 
+// v3.4.0 (`T-RA-HARDCORE`) — the one table of what hardcore forbids, shared
+// with the desktop frontend by path (see the module docs). A plain comment, not
+// `///`: rustdoc joins an outer doc comment to the file's own `//!` docs and
+// resolves the joined text's intra-doc links in THIS scope, where the module's
+// `Feature` is not visible, so `RUSTDOCFLAGS="-D warnings" cargo doc` failed.
+pub mod hardcore;
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -293,9 +300,24 @@ impl RaSession {
     /// Toggle hardcore mode. rcheevos resets the active achievement session on
     /// a hardcore change, so this also clears the cached lists; the caller is
     /// responsible for any emulator reset the RA `Reset` event then requests.
-    pub fn set_hardcore(&mut self, enabled: bool) {
+    ///
+    /// Returns `true` exactly when hardcore was OFF and is now ON. RA requires
+    /// that switching to hardcore mid-session "must result in a full reset of
+    /// the game" (compliance requirements, section B; section G makes it an
+    /// automatic rejection), so on `true` a host with a game running must
+    /// power-cycle the console, then call [`Self::reset`] (v3.4.0). Turning
+    /// hardcore off mid-session is allowed and needs nothing.
+    ///
+    /// v3.4.0 — turning hardcore on also drops a saved-progress blob still
+    /// waiting for its game to load (see [`Self::begin_load_game`]).
+    pub fn set_hardcore(&mut self, enabled: bool) -> bool {
+        let was = self.hardcore;
         self.client.set_hardcore_enabled(enabled);
         self.hardcore = self.client.get_hardcore_enabled();
+        if self.hardcore {
+            self.pending_progress = None;
+        }
+        !was && self.hardcore
     }
 
     /// Begin a username + password login (the dialog "Login" button). On
@@ -364,10 +386,22 @@ impl RaSession {
     /// sidecar so a later [`Self::serialize_progress`] / load can find it.
     /// `sidecar` (if any) is the previously-saved progress blob, applied once
     /// the async game-load completes (see `reconcile_game_loaded`).
+    ///
+    /// v3.4.0 — in hardcore the sidecar is NOT applied. It restores hit counts
+    /// an earlier session accumulated onto a console that has just been
+    /// powered on, which is the "resume" RA's compliance requirements say
+    /// "must drop to Casual mode" (section B); its file is also ordinary,
+    /// editable data. Hardcore therefore starts every game's achievement
+    /// state from zero; casual keeps the convenience.
     pub fn begin_load_game(&mut self, rom: &[u8], sha256: [u8; 32], sidecar: Option<Vec<u8>>) {
         self.game_sha256 = Some(sha256);
         self.game_loaded = false;
-        self.pending_progress = sidecar;
+        self.pending_progress =
+            if hardcore::refuses(hardcore::Feature::ProgressRestore, self.hardcore) {
+                None
+            } else {
+                sidecar
+            };
         self.clear_game_caches();
         self.client.begin_load_game(rom, move |_res| {});
     }
@@ -497,6 +531,16 @@ impl RaSession {
         }
         self.game_loaded = true;
         self.refresh_lists();
+        // v3.4.0 — RA: "Hardcore state must be visibly indicated in the UI
+        // during play. This is normally done when the player starts a game"
+        // (compliance requirements, section E). Both hosts show these toasts;
+        // the desktop status bar also keeps a persistent HARDCORE marker.
+        let mode = if self.hardcore {
+            "Hardcore mode"
+        } else {
+            "Casual mode"
+        };
+        self.push_toast("RetroAchievements", mode, false);
         if let Some(blob) = self.pending_progress.take()
             && !blob.is_empty()
         {
@@ -691,6 +735,34 @@ mod tests {
         assert!(!s.hardcore_blocks());
         s.set_hardcore(true);
         assert!(s.hardcore_blocks());
+    }
+
+    /// v3.4.0 — `set_hardcore` reports the OFF -> ON transition (the one RA
+    /// requires a full reset for) and nothing else.
+    #[test]
+    fn set_hardcore_reports_only_the_switch_on() {
+        let mut s = RaSession::new(&cfg(false, false, "", ""));
+        assert!(s.set_hardcore(true), "off -> on");
+        assert!(!s.set_hardcore(true), "on -> on");
+        assert!(!s.set_hardcore(false), "on -> off");
+        assert!(!s.set_hardcore(false), "off -> off");
+    }
+
+    /// v3.4.0 — saved achievement progress is not restored in hardcore (a
+    /// resumed session must drop to casual), whether hardcore was on when
+    /// the game was identified or was switched on before its load finished.
+    #[test]
+    fn hardcore_never_restores_saved_progress() {
+        let blob = Some(vec![1, 2, 3]);
+        let mut casual = RaSession::new(&cfg(false, false, "", ""));
+        casual.begin_load_game(&[0u8; 16], [1u8; 32], blob.clone());
+        assert_eq!(casual.pending_progress, blob, "casual keeps it");
+        casual.set_hardcore(true);
+        assert_eq!(casual.pending_progress, None, "switching on drops it");
+
+        let mut hc = RaSession::new(&cfg(false, true, "", ""));
+        hc.begin_load_game(&[0u8; 16], [1u8; 32], blob);
+        assert_eq!(hc.pending_progress, None, "hardcore never queues it");
     }
 
     #[test]

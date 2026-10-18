@@ -436,7 +436,9 @@ impl<T: Transport> SpectatorSession<T> {
         let messages = self.transport.poll();
         for msg in messages {
             match msg {
-                NetMessage::Sync { magic, identity } => {
+                NetMessage::Sync {
+                    magic, identity, ..
+                } => {
                     // A foreign magic is a different protocol, ignored like any
                     // stray datagram; our magic with another identity, or an
                     // older RustyNES's magic (v3.0.0), is the players' stream
@@ -615,6 +617,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
 
         // Confirm frames 0..=2 (fewer than DELAY past frame 0): nothing reveals.
@@ -676,6 +679,7 @@ mod tests {
             feeder.send(&NetMessage::Sync {
                 magic: NetMessage::SYNC_MAGIC,
                 identity: hash,
+                key_share: [0; crate::message::KEY_SHARE_LEN],
             });
             for player in 0..2u8 {
                 if batched {
@@ -784,6 +788,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         let before = spec.history.len();
         let shown = (0..64)
@@ -820,6 +825,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         let shown = (0..32)
             .filter(|_| spec.advance(&mut nes).produced_frame)
@@ -866,6 +872,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         let shown = (0..8)
             .filter(|_| spec.advance(&mut nes).produced_frame)
@@ -946,6 +953,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         let shown = (0..8)
             .filter(|_| spec.advance(&mut nes).produced_frame)
@@ -980,6 +988,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
 
         // An absurd frame index (near u32::MAX) for a valid player. The horizon
@@ -1026,10 +1035,11 @@ mod tests {
     #[test]
     fn spectator_ignores_late_roster() {
         use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-        let addr = |p: u8| -> (u8, SocketAddr) {
+        let addr = |p: u8| -> (u8, SocketAddr, [u8; crate::message::KEY_SHARE_LEN]) {
             (
                 p,
                 SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 5000 + u16::from(p))),
+                [p + 1; crate::message::KEY_SHARE_LEN],
             )
         };
         let rom = synth_nrom();
@@ -1048,6 +1058,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
 
         // Confirm + show frame 0 (a 2-player match).
@@ -1118,6 +1129,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: hash,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         for (f, (&p0, &p1)) in p0_script.iter().zip(p1_script.iter()).enumerate() {
             let frame = u32::try_from(f).unwrap();
@@ -1194,6 +1206,7 @@ mod tests {
         feeder.send(&NetMessage::Sync {
             magic: NetMessage::SYNC_MAGIC,
             identity: ours,
+            key_share: [0; crate::message::KEY_SHARE_LEN],
         });
         let shown = (0..20)
             .filter(|_| spec.advance(&mut nes).produced_frame)
@@ -1210,6 +1223,7 @@ mod tests {
             feeder.send(&NetMessage::Sync {
                 magic: NetMessage::SYNC_MAGIC,
                 identity: theirs,
+                key_share: [0; crate::message::KEY_SHARE_LEN],
             });
             feed(&mut feeder, 10);
             for _ in 0..20 {
