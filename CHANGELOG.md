@@ -66,15 +66,18 @@ cycle-accurate core later replaced.
 - **MiSTer core: save states and rewind** (FB-4). Four save slots in the
   framework's DDR3 region, from the OSD or the keyboard (Alt+F1-F4 save, F1-F4
   load), and rewind on Backspace, with one capture a second while Rewind is on.
-  Every console register is in a scan chain (4,052 bits on-die, 2,603
+  Every console register is in a scan chain (4,070 bits on-die, 2,621
   off-die) and every console memory is reached through a port it already had.
   A save, a console reset, a pattern written over every register and memory
   byte, and a load are held to the oracle's golden cycle for cycle on 11
   stimuli on-die and 10 off-die (`ss-roundtrip-gate`), and
   `state-coverage-gate` checks that every `always_ff` block of the RTL is
   either in the chain or exempt for a stated reason. A save stalls the picture
-  for about 6 ms on-die and 24 ms off-die. A load is refused only when the
-  state's size differs. Simulation only; the framework's side (slot files
+  for about 6 ms on-die and 24 ms off-die. Each state carries a fingerprint
+  of the scan chain's layout, so a state survives a rebuild that keeps the
+  layout and is refused, with nothing changed, by one that does not
+  (`ss-fingerprint-gate` fails when the committed value is stale). The rewind
+  ring is emptied by a manual load and by a new cartridge. Simulation only; the framework's side (slot files
   loaded and written back by the HPS) is modelled from its documentation and
   has not run on a board.
 - **Hosted netplay and achievements services** (`services/hosted/`,
