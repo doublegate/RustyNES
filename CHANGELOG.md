@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-10-19 - "Beacon" (the hosted lobby and TURN relay live, the browser RetroAchievements build fixed, version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed)
+
 ### Added
 
 - **The hosted services are live** (moved from v3.4.0 by the maintainer). The
