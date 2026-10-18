@@ -319,3 +319,20 @@ salvage and were kept beside it as `<name>.from-tmp-20261018131156.<ext>`:
 | `/tmp/rustynes-atomic-*` (671 dirs), `/tmp/RustyNES/libretro-abi-*`, `/tmp/rustynes-coverage-collide-*` | Test-suite leftovers (30-byte markers) the suites recreate |
 | `/tmp/rustynes-perf` | The A/B queue's live locks |
 | The workspace-root agent slug (`-home-parobek-Code`, 1,611 files), `/tmp/VeridianOS`, Authy and venv trees | Other projects' |
+
+## 2026-10-18 (later) — session f63c2db0, `scratchpad/v340/` after the release
+
+The deferred half of the same day's salvage, under the same scope (this
+session's scratch, strong matches, hand-written text only). **Moved: 300 files
+(2.1 MB)** into `salvaged/tmp-scratch/f63c2db0/v340/`: experiment scripts and
+notes, the Goemon and F3a probes, the egui repro's own files (the upstream
+issue body for emilk/egui#8731, `main.rs`, `measure.sh`), the round-2 testbench
+mutant copies (`r2tb/save`, `r2tb/zap`), commit messages and review captures. No
+conflicts, no errors.
+
+**Left:** `hack-target/` (a cargo target directory); the egui clone and every
+copy of egui's source (`egui-repro/{egui-main,v036,v037,verify36,verify37,patched,main}`,
+`*.orig`; third-party code); every `rtl/`, `tb/` and `sys/` copy (the mutation
+runs' rsync copies of tracked trees); all logs, CSVs and binary captures; the
+release-day sweep, double-compile and A/B logs, which are already archived
+under `salvaged/evidence/v3.4.0-*`.
