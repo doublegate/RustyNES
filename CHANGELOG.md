@@ -50,9 +50,33 @@ cycle-accurate core later replaced.
   `MeshJoiner::with_gather_timeout` and `host_answered`,
   `RollbackSession::retained`, and
   `impl Transport for Box<T>`.
+- **MiSTer core: the core named "RustyNES" is now the off-die build, and
+  needs an SDRAM add-on** (F2-6, line-plan decision D4: on-die stayed the
+  headline until save states existed). `releases/RustyNES_<date>.rbf` is the
+  off-die build, which keeps cartridge memory in the SDRAM module; the on-die
+  build becomes `releases/RustyNES_Lite_<date>.rbf`, shown in the core menu as
+  `RustyNES_Lite`. A board without SDRAM should choose that one. Both keep
+  the same core name inside the bitstream, so they share `games/RustyNES/`
+  and its saves. On GitHub the pair is `RustyNES_MiSTer-<tag>.rbf` and
+  `RustyNES_MiSTer-<tag>-lite.rbf`. No hardware has run either bitstream, and
+  the SDRAM pin constraints are still provisional.
 
 ### Added
 
+- **MiSTer core: save states and rewind** (FB-4). Four save slots in the
+  framework's DDR3 region, from the OSD or the keyboard (Alt+F1-F4 save, F1-F4
+  load), and rewind on Backspace, with one capture a second while Rewind is on.
+  Every console register is in a scan chain (4,052 bits on-die, 2,603
+  off-die) and every console memory is reached through a port it already had.
+  A save, a console reset, a pattern written over every register and memory
+  byte, and a load are held to the oracle's golden cycle for cycle on 11
+  stimuli on-die and 10 off-die (`ss-roundtrip-gate`), and
+  `state-coverage-gate` checks that every `always_ff` block of the RTL is
+  either in the chain or exempt for a stated reason. A save stalls the picture
+  for about 6 ms on-die and 24 ms off-die. A load is refused only when the
+  state's size differs. Simulation only; the framework's side (slot files
+  loaded and written back by the HPS) is modelled from its documentation and
+  has not run on a board.
 - **Hosted netplay and achievements services** (`services/hosted/`,
   `T-HOSTED-NETPLAY`, `T-RA-PROXY`). A Cloudflare Worker runs the netplay
   signalling lobby in a Durable Object, byte-compatible with the reference
