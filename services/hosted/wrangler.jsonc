@@ -56,7 +56,12 @@
     "LOBBY_ROOMS_PER_IP_PER_MINUTE": "10",
 
     // --- RetroAchievements proxy ---
-    "RA_ENABLED": "true",
+    // "false" from the v3.4.1 deploy (maintainer, 2026-10-18): web RA is held
+    // until RetroAchievements answers the integration request (D31), and the
+    // Pages build ships without browser-cheevos, so nothing should be
+    // forwarded under our User-Agent before then. Flip to "true" in the
+    // dashboard or here when RA approves; the limits below apply as they are.
+    "RA_ENABLED": "false",
     "RA_UPSTREAM": "https://retroachievements.org",
     // RA's documented shape, `Name/version (system) extension`, as the native
     // RA_USER_AGENT (crates/rustynes-cheevos/src/http.rs) sends it with
@@ -64,7 +69,7 @@
     // leading `RustyNES/` token: RetroAchievements identifies and allowlists
     // the client by it, and src/ra.ts refuses to forward without it. Bump the
     // product and rcheevos versions with each release.
-    "RA_USER_AGENT": "RustyNES/3.4.0 (Web wasm32) rcheevos/12.5.0",
+    "RA_USER_AGENT": "RustyNES/3.4.1 (Web wasm32) rcheevos/12.5.0",
     // Abuse guards (README.md "Spend guards"; src/budget.ts): forwarded calls
     // per client IP per rolling hour, `login2` calls per IP per hour, and
     // forwarded calls per UTC day, all callers together.
