@@ -286,3 +286,36 @@ The originals stay in `salvaged/`; its `README.md` records the triage. Logs,
 evidence, bitstreams and the mislabelled ROM dumps stay local by design (each
 dump is already named in `docs/mappers.md`, `CHANGELOG.md` or
 `external_coverage.rs`).
+
+## 2026-10-18 — session f63c2db0, the v3.3.0 to v3.4.0 scratch (all but `v340/`)
+
+Run with `/tmp-salvage` during the v3.4.0 cycle. The maintainer chose the scope: this
+session's own agent scratch only, strong matches only, and nothing from elsewhere in
+`/tmp`. **`scratchpad/v340/` is deliberately NOT included yet**: the off-die seed
+sweep was writing its log there, the queued egui A/B ran from a script there, and the
+v3.4.0 release-notes draft lives there. It is salvaged after the release.
+
+**Moved: 541 hand-written text files (10.2 MB)** into gitignored
+`salvaged/tmp-scratch/f63c2db0/`, at their scratchpad-relative paths, next to the
+2026-10-09 salvage of the same session. Kept to scripts, sources, notes, briefs, reply
+bodies, commit messages and tables (`.md .sh .py .sv .cpp .h .rs .tsv .txt .json`
+and similar). The largest groups: `offdie/{src,inst,instfix,fix}` (the v3.3.0 off-die
+CHR investigation's hand-modified RTL variants, 63 files each), the scratchpad root
+(150: commit messages, review-round tables, bot-review captures), `replies/` (34),
+`v330/` (32), `slices/` (16). Six collided with a differing file from the 2026-10-09
+salvage and were kept beside it as `<name>.from-tmp-20261018131156.<ext>`:
+`msg-ios`, `msg-pin`, `msg1`, `msg2`, `msg3` (`.txt`) and `pr-oracle.md`. No errors.
+
+**Found and deliberately left:**
+
+| What | Why |
+|---|---|
+| `scratchpad/v340/` (about 22,000 candidates, 16 GB) | In use by the release; salvaged after it |
+| `scratchpad/dumps2/external/` (53 PNGs) | Framebuffers of commercial games; derived from commercial ROMs, never committed |
+| `scratchpad/offdie/repo-{fix,base}` and `offdie/{,f1-}obj_*` | Exported copies of the sibling's tracked tree (no `.git`; recoverable from history) and Verilator build output |
+| Logs, CSVs, task `.output` files, `.rgba`/`.bin`/`.rbf` | Regenerable by rerunning the gate, or binary captures that may derive from commercial ROMs |
+| `scratchpad/{qab*,bc-*}` | Self-test fixtures for `quiet_ab.sh` and the bump script (copies of tracked scripts, two with test mutations, queue state) |
+| `scratchpad/wiki`, `scratchpad/dl-*` | A clean GitHub wiki clone at `c7cf397` and extracted release downloads |
+| `/tmp/rustynes-atomic-*` (671 dirs), `/tmp/RustyNES/libretro-abi-*`, `/tmp/rustynes-coverage-collide-*` | Test-suite leftovers (30-byte markers) the suites recreate |
+| `/tmp/rustynes-perf` | The A/B queue's live locks |
+| The workspace-root agent slug (`-home-parobek-Code`, 1,611 files), `/tmp/VeridianOS`, Authy and venv trees | Other projects' |

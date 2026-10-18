@@ -469,8 +469,10 @@ something as blocked, check the blocker applies to the WHOLE item.**
       is committed to the sibling's `releases/` (the date form is the only one
       `Distribution_MiSTer`'s builder and the `Main_MiSTer` core menu accept,
       measured against `Main_MiSTer/file_io.cpp` rather than the wiki's
-      paraphrase), and `RustyNES_MiSTer-vX.Y.Z.rbf` is attached to the GitHub
-      release on both repositories. Through v2.6.14 the version-named file was
+      paraphrase), and from v2.6.15 to v3.4.0 a version-named copy,
+      `RustyNES_MiSTer-vX.Y.Z.rbf`, was attached beside it on both repositories'
+      GitHub releases; since 2026-10-18 the datecoded file is the only name
+      there too, the duplicates removed (maintainer). Through v2.6.14 the version-named file was
       the one committed, a divergence from MiSTer's date convention that
       v2.6.15 closed (the sibling's `docs/bitstream-release.md`).
 - [x] Unique Home folder chosen — **since v2.6.7**, resolved against
