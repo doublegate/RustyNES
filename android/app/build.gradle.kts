@@ -65,8 +65,8 @@ android {
         // `scripts/release-automation/bump_release.py` from now on, starting
         // with the 3.0.0 cut. versionCode = MAJOR * 10000 + MINOR * 100 +
         // PATCH, so 20909 still rises past 20004.
-        versionCode = 30300
-        versionName = "3.3.0"
+        versionCode = 30400
+        versionName = "3.4.0"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD is set per-flavor below (`false` for `foss`, `true` for `play`),

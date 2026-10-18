@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-18 - "Waypoint" (authenticated netplay and three- and four-player desktop sessions, RetroAchievements hardcore to its full block list, the hosted services as code, about half the window-thread CPU, egui 0.37, and a MiSTer core whose headline build is off-die, with save states and rewind and Phase F3a's boards)
+
 ### Breaking
 
 - **Netplay with v3.2.x and v3.3.x peers is refused** (protocol 9, `"RNE9"`,
