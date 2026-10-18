@@ -471,8 +471,11 @@ something as blocked, check the blocker applies to the WHOLE item.**
       measured against `Main_MiSTer/file_io.cpp` rather than the wiki's
       paraphrase), and from v2.6.15 to v3.4.0 a version-named copy,
       `RustyNES_MiSTer-vX.Y.Z.rbf`, was attached beside it on both repositories'
-      GitHub releases; since 2026-10-18 the datecoded file is the only name
-      there too, the duplicates removed (maintainer). Through v2.6.14 the version-named file was
+      GitHub releases; on 2026-10-18 every such copy with a same-digest
+      datecoded twin in its release was removed (maintainer), and new releases
+      attach the datecoded files only. Version-named files with no twin (the
+      v2.6.7-v2.6.14 sibling releases, v2.6.7-v2.6.23 on the oracle, and every
+      `-offdie.rbf` through v3.3.0) are their releases' only copies and stay. Through v2.6.14 the version-named file was
       the one committed, a divergence from MiSTer's date convention that
       v2.6.15 closed (the sibling's `docs/bitstream-release.md`).
 - [x] Unique Home folder chosen — **since v2.6.7**, resolved against
