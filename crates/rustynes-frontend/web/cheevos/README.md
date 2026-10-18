@@ -59,13 +59,31 @@ unauthenticated/proxy identity path the browser uses). See
 
 ## Wiring it into the page (maintainer step)
 
-`index.html` does not load this module by default (it ships only when the
-maintainer completes the build + proxy). To enable it, build the Rust frontend
-with the `browser-cheevos` feature and add, before the trunk-built script:
+Measured end to end in v3.4.1 (headless Chromium against a copy of the Pages
+layout: `ra_rcheevos_version()` returned `12.5`, every request a 200). Until
+then this section asked for a `<script>` tag that is not needed and omitted the
+two steps that are, and the browser path could not have loaded in any build.
 
-```html
-<script type="module" src="./cheevos/ra_glue.js"></script>
-```
+1. **Build the module** with `scripts/cheevos/build_rcheevos_wasm.sh` (above).
+   It is emitted as an ES module (`-sEXPORT_ES6=1`, since v3.4.1): the glue
+   loads it with `import()`, and the UMD build it used to be had no default
+   export to import.
+2. **Build the frontend with the feature on the command line:**
+   `trunk build --release --features browser-cheevos`. The glue needs no
+   `<script>` tag: `wasm_cheevos.rs` binds it with
+   `#[wasm_bindgen(module = "/web/cheevos/ra_glue.js")]`, so trunk emits it
+   as a snippet (`snippets/<crate>-<hash>/web/cheevos/ra_glue.js`). (`index.html`
+   carries no `data-cargo-features`; until v3.4.1 an empty one there made
+   trunk ignore `--features`.)
+3. **Place the module beside the page:** copy `rcheevos.js` and `rcheevos.wasm`
+   into `dist/cheevos/`. The glue resolves them against the page, not against
+   its own snippet path (where nothing copies them): `cheevos/` beside the page
+   by default, or the directory a `<meta name="rustynes-rcheevos-base"
+   content="...">` names.
+4. **Point the glue at the proxy:** `<meta name="rustynes-ra-proxy-base"
+   content="https://<host>/ra">` in the page (or `globalThis.RUSTYNES_RA_PROXY_BASE`,
+   or `HOSTED_RA_PROXY_BASE` in `ra_glue.js`); the hosted service is
+   `services/hosted/`.
 
-then point the glue's `RA_PROXY_BASE` at your deployed auth proxy
-(`scripts/cheevos/auth-proxy.example.toml`).
+The public Pages demo does not ship this yet (maintainer, 2026-10-18): it waits
+for RetroAchievements to receive the integration request.

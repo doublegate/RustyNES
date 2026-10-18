@@ -39,8 +39,18 @@
           server sends `Content-Type: application/wasm` — GitHub Pages does,
           and the service worker (`sw.js`) preserves that header on cache hits.
     -->
+    <!--
+        No `data-cargo-features` attribute, deliberately (v3.4.1). Trunk lets
+        the attribute override its command line, and an EMPTY one (which sat
+        here until v3.4.1) silently discarded `trunk build --features ...` and
+        `--no-default-features`: the documented lightweight build
+        (`--no-default-features --features wasm-canvas`) produced the default
+        12.6 MB winit build instead of the 1.3 MB canvas one, and
+        `--features browser-cheevos` produced no RA glue. Choose features on
+        the command line.
+    -->
     <link data-trunk rel="rust" href="../Cargo.toml"
-          data-target-name="rustynes_frontend" data-cargo-features=""
+          data-target-name="rustynes_frontend"
           data-wasm-opt="4" data-wasm-opt-params="--enable-simd --enable-bulk-memory" />
 
     <!--

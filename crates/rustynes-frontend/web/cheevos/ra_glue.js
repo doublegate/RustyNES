@@ -104,11 +104,29 @@ let _readByte = null;
 // JS objects here; ra_do_frame serializes + clears it each frame.
 let _events = [];
 
+// Where `rcheevos.js` and `rcheevos.wasm` are served from (v3.4.1). This file
+// is not served from `web/cheevos/`: `#[wasm_bindgen(module = ...)]` makes trunk
+// emit it as a snippet, `snippets/<crate>-<hash>/web/cheevos/ra_glue.js`, and
+// nothing copies the Emscripten module there, so the `import("./rcheevos.js")`
+// this used to do resolved inside `snippets/` and 404ed (found by building
+// with the feature and listing `dist/`). The module is therefore resolved
+// against the PAGE: `<meta name="rustynes-rcheevos-base" content="...">` when
+// present, else `cheevos/` beside the page, where the deploy copies it.
+function rcheevosBase() {
+  const meta = globalThis.document?.querySelector?.('meta[name="rustynes-rcheevos-base"]');
+  const raw = meta?.getAttribute("content") || "cheevos/";
+  return new URL(raw.endsWith("/") ? raw : raw + "/", globalThis.document?.baseURI ?? globalThis.location?.href).href;
+}
+
 // Instantiate the Emscripten rcheevos module. Resolves once the wasm is ready.
 async function loadModule() {
   if (_module) return _module;
-  const { default: createRcheevosModule } = await import("./rcheevos.js");
-  _module = await createRcheevosModule();
+  const base = rcheevosBase();
+  const { default: createRcheevosModule } = await import(new URL("rcheevos.js", base).href);
+  // `locateFile` points the loader at `rcheevos.wasm` beside it; by default
+  // Emscripten resolves the .wasm against its own script, which is right only
+  // when nothing moved, and saying it here keeps both paths in one place.
+  _module = await createRcheevosModule({ locateFile: (path) => new URL(path, base).href });
   return _module;
 }
 
