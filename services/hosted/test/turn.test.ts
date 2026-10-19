@@ -371,6 +371,18 @@ describe("revocation", () => {
     }
   });
 
+  it("an admission arms the hourly sweep even when a revocation alarm is set hours out", async () => {
+    // CodeRabbit on #618: admit() armed the sweep only when no alarm existed,
+    // so a pending revocation 3 h out kept a salted IP hash past PRIVACY.md's
+    // "at most two hours".
+    await seed(Date.now() + 3 * 3_600_000, "later");
+    mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
+    expect((await call(freshIp())).status).toBe(200);
+    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(Date.now() + 3_600_000);
+  });
+
   it("a credential scheduled while the alarm awaits Cloudflare keeps its earlier alarm", async () => {
     const soon = Date.now() + 120_000;
     mockUpstream(async () => {

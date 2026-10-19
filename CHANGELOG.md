@@ -47,7 +47,9 @@ cycle-accurate core later replaced.
   made-up one, so how long a leaked credential works could not be bounded.
   Sessions connect directly (STUN), which covers most home networks; two
   players behind strict NATs cannot connect until the relay returns. The Worker
-  still revokes every credential at the end of its lifetime, ready for that.
+  now asks Cloudflare to revoke every credential at the end of its lifetime;
+  the revoke calls succeed, but whether that stops a credential being used is
+  unverified, so it is not counted on.
   The RetroAchievements proxy is deployed switched off too, until
   RetroAchievements answers the integration request.
 

@@ -82,7 +82,10 @@ final class NetplayModel: ObservableObject {
         // through (and later break the connection). `ws://` stays valid for LAN relays.
         let u = signalingURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if u.isEmpty { return npHostedAvailable() }
-        return u.hasPrefix("wss://") || u.hasPrefix("ws://")
+        // A scheme AND a host: a bare "ws://" is not a relay (v3.4.1).
+        guard let url = URL(string: u), let scheme = url.scheme,
+              scheme == "ws" || scheme == "wss", let host = url.host, !host.isEmpty else { return false }
+        return true
     }
 
     private weak var core: EmulatorCore?

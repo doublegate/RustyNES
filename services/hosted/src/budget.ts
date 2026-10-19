@@ -207,7 +207,12 @@ export class Budget extends DurableObject<Env> {
     writes[dayKey] = used + 1;
 
     await this.ctx.storage.put(writes);
-    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(now + HOUR_MS);
+    // Armed for the sweep unless an alarm already fires within the hour: a
+    // pending revocation can hold the single alarm hours out, and the sweep
+    // must still delete this window within PRIVACY.md's two hours (CodeRabbit
+    // on #618).
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > now + HOUR_MS) await this.ctx.storage.setAlarm(now + HOUR_MS);
     return { ok: true, day, key };
   }
 

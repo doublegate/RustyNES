@@ -488,3 +488,25 @@ something as blocked, check the blocker applies to the WHOLE item.**
       acceptance means the repo moves, and that is one-way
       **BLOCKED — on being accepted**, and then a maintainer decision rather
       than a task.
+
+## v3.4.2 — carried from the v3.4.1 reviews
+
+- [ ] **`T-MISTER-SS-ABANDON-STATES`: make the save engine's cartridge-change
+      comment true, and abandon before the first save word.** `rtl/savestate.sv`'s
+      abandonment block says it abandons "in any state that is not waiting on
+      the DDR mover", but the condition lists only `E_FREEZE`, `E_CHAIN_OUT`,
+      `E_MEM_OUT`, `E_CHAIN_IN`, `E_MEM_IN` and `E_SETTLE` (Antigravity on
+      sibling PR #67). Read against the RTL, the four states left out are not a
+      shipping defect: a load in `E_HDR_RD` / `E_GET` reaches a listed state, a
+      header refusal or its end within a few cycles, and `E_IDLE` empties the
+      rewind ring for as long as `cart_change` is high (the whole download);
+      `E_HDR_WR` completes a save whose every word was read before the change;
+      and `E_PUT` sends word 0, after which the slot really is damaged and the
+      `zap` that follows is right. Two changes remain worth making: correct the
+      comment to name the states and why the rest are safe, and add `E_PUT`
+      with `widx == 0` (straight after `E_FREEZE`) to the list, so a change that
+      arrives before any word is sent keeps the slot's previous state instead
+      of emptying it. Not done in v3.4.1: any `rtl/` edit, a comment included,
+      makes `release-rbf.sh` refuse the already-compiled bitstreams. Gate:
+      `ss-engine-gate` gains a case 9d (cart change on the first `E_PUT`: the
+      slot's previous state still loads), with its mutant caught.

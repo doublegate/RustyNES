@@ -105,8 +105,12 @@ fun onlineNetplayConfigured(settings: AppSettings): Boolean {
     // relay, which must be a WebSocket URL, as the iOS app requires (agy on
     // #618): a malformed value no longer enables room codes it cannot serve.
     if (url.isEmpty()) return npHostedAvailable()
-    return url.startsWith("wss://") || url.startsWith("ws://")
+    // A scheme AND a host: a bare "ws://" is not a relay (CodeRabbit on #618).
+    return RELAY_URL.matches(url)
 }
+
+/** `ws://` or `wss://`, then a host of at least one character before any path. */
+private val RELAY_URL = Regex("^wss?://[^/\\s?#]+.*$")
 
 /**
  * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.
