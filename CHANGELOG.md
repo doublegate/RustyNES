@@ -33,9 +33,14 @@ cycle-accurate core later replaced.
 - **The hosted services are live** (moved from v3.4.0 by the maintainer). The
   netplay lobby and the short-lived TURN credentials run on the maintainer's
   Cloudflare account at <https://rustynes-hosted.parobek.workers.dev>, and the
-  Pages build, the desktop release binaries and the Android and iOS CI builds
-  are compiled with that base (`RUSTYNES_HOSTED_BASE`; a `hosted_base_url` in
-  the config still wins, and F-Droid and plain source builds are unchanged).
+  Pages build, the desktop release binaries (the profile-guided Linux build
+  included) and every Android and iOS build made by this project's CI (the
+  FOSS-flavour artifact too) are compiled with that base
+  (`RUSTYNES_HOSTED_BASE`). A `hosted_base_url` in the config still wins; builds
+  made elsewhere, F-Droid's own and plain source builds, are unchanged. On
+  Android and iOS a fresh install now hosts and joins room codes with no relay
+  set: the apps previously refused unless a relay URL was entered, and Android
+  sent its placeholder URL instead of letting the hosted lobby fill in.
   The live gates passed on 2026-10-18: health check, the lobby test against the
   live socket, credentials with a three-hour lifetime that a browser can relay
   through, the per-address limit, and the kill switch. The RetroAchievements
@@ -44,6 +49,12 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Dependencies at their newest compatible versions**: Rust 1.99.1 (from
+  1.99.0, with the libretro buildbot), every Cargo lockfile (sha2 0.11.1, tokio
+  1.53.3, serde_json 1.0.154, proptest 1.12, cc 1.8, arboard 3.7 among them,
+  the three open Dependabot updates folded in), the hosted Worker's toolchain
+  (TypeScript 7, vitest 5, wrangler 4.151), Python 3.15 for the handbook
+  build, and the newest pins of the CI actions.
 - **MiSTer release assets are version-named**: `RustyNES_MiSTer-<tag>.rbf`
   (the off-die headline) and `RustyNES_MiSTer-<tag>-lite.rbf` (on-die). The
   MiSTer repository's `releases/` keeps the dated names MiSTer's updater reads.

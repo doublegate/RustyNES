@@ -197,7 +197,8 @@ and a live RA login (below).
 1. **Stand the proxy up on a real host** — `docker compose up` in `deploy/` with
    `RA_USER_AGENT`/`RA_ALLOWED_ORIGINS` set (TLS via Caddy), and coordinate the
    exact `User-Agent` + casual-only intent with the RA team. Then set
-   `RA_PROXY_BASE` in `web/cheevos/ra_glue.js` to `https://<DOMAIN>/ra`. The
+   `<meta name="rustynes-ra-proxy-base">` in the page to `https://<DOMAIN>/ra`
+   (the glue's `resolveProxyBase()` reads it). The
    service + config are code-complete (`deploy/README.md` §"Browser
    RetroAchievements"); only running it on a live host + the RA-team coordination
    remain.
