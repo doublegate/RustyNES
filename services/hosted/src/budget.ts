@@ -117,7 +117,8 @@ type RevokeOutcome = "done" | "retry" | "config";
 
 /** `revoke:<due ms, 15 digits>:<username>`, so keys sort by due time. */
 function revokeKey(dueMs: number, username: string): string {
-  return `${REVOKE_PREFIX}${String(dueMs).padStart(15, "0")}:${username}`;
+  // Truncated, so a fractional time can never widen the fixed 15-digit field.
+  return `${REVOKE_PREFIX}${String(Math.trunc(dueMs)).padStart(15, "0")}:${username}`;
 }
 
 /** The due time and username of a `revoke:` key. */
@@ -278,26 +279,34 @@ export class Budget extends DurableObject<Env> {
   private async revokeDue(now: number): Promise<void> {
     let handled = 0;
     let revoked = 0;
-    for (const [key, value] of await this.ctx.storage.list<Revocation>({ prefix: REVOKE_PREFIX })) {
+    // At most a batch (plus one) is read: keys sort by attempt time, and the
+    // loop never handles more than REVOKE_BATCH.
+    for (const [key, value] of await this.ctx.storage.list<Revocation>({ prefix: REVOKE_PREFIX, limit: REVOKE_BATCH + 1 })) {
       const { dueMs: attemptAt, username } = parseRevokeKey(key);
       if (attemptAt > now || handled >= REVOKE_BATCH) break; // keys sort by attempt time
       handled += 1;
       const firstDue = value?.dueMs ?? attemptAt;
       const outcome = await this.revokeOne(username);
+      // Each request can take up to REVOKE_TIMEOUT_MS, so later decisions use
+      // the time after it, not the alarm's start (agy on #618).
+      const after = Date.now();
       if (outcome === "done") {
         await this.ctx.storage.delete(key);
         revoked += 1;
         continue;
       }
-      if (now - firstDue >= REVOKE_GIVE_UP_MS) {
-        console.error(`turn revoke: given up ${Math.round((now - firstDue) / HOUR_MS)} h after the credential's expiry`);
+      if (after - firstDue >= REVOKE_GIVE_UP_MS) {
+        console.error(`turn revoke: given up ${Math.round((after - firstDue) / HOUR_MS)} h after the credential's expiry`);
         await this.ctx.storage.delete(key);
         continue;
       }
       const attempts = (value?.attempts ?? 0) + (outcome === "retry" ? 1 : 0);
       const delay = outcome === "config" ? HOUR_MS : Math.min(REVOKE_RETRY_MS * 2 ** Math.max(0, attempts - 1), HOUR_MS);
+      // The new key is written before the old one is deleted, so an eviction
+      // between the two leaves a duplicate (revoked twice, harmlessly), never
+      // a lost revocation.
+      await this.ctx.storage.put(revokeKey(after + delay, username), { attempts, dueMs: firstDue });
       await this.ctx.storage.delete(key);
-      await this.ctx.storage.put(revokeKey(now + delay, username), { attempts, dueMs: firstDue });
     }
     // A count only: an operator tailing the Worker can see revocations happen.
     if (revoked > 0) console.log(`turn revoke: ${revoked} revoked`);
@@ -351,13 +360,15 @@ export class Budget extends DurableObject<Env> {
     // next admission arms it again.
     const nextSweep = remaining > 0 ? now + HOUR_MS : undefined;
     // Read fresh, after the awaits above: a credential scheduled meanwhile
-    // set its own alarm, which must not be pushed later.
-    const nextRevoke = await this.nextRevocation(now);
+    // set its own alarm, which must not be pushed later. And the time is read
+    // again, because the revocations above may have taken a while.
+    const end = Date.now();
+    const nextRevoke = await this.nextRevocation(end);
     const pending = await this.ctx.storage.getAlarm();
     const next = Math.min(
       nextSweep ?? Infinity,
       nextRevoke ?? Infinity,
-      pending !== null && pending > now ? pending : Infinity,
+      pending !== null && pending > end ? pending : Infinity,
     );
     if (Number.isFinite(next)) await this.ctx.storage.setAlarm(next);
   }

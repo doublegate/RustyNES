@@ -384,7 +384,7 @@ private struct NetplaySettingsView: View {
             } footer: {
                 // v3.4.1: with the hosted lobby, empty fields fetch short-lived credentials.
                 Text(npHostedAvailable()
-                    ? "A TURN server lets strict (symmetric) NATs fall back to a relay. Leave all three empty to use short-lived credentials from the RustyNES hosted service, or fill in all three for your own server."
+                    ? "A TURN server lets strict (symmetric) NATs fall back to a relay. Leave all three empty to use the RustyNES hosted service's relay when it offers one, or fill in all three for your own server."
                     : "A TURN server lets strict (symmetric) NATs fall back to a relay. All three fields are needed together; otherwise room-code play is punch-or-fail.")
             }
         }

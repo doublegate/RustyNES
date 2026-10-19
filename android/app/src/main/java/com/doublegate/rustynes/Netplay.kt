@@ -109,8 +109,8 @@ fun onlineNetplayConfigured(settings: AppSettings): Boolean {
     return RELAY_URL.matches(url)
 }
 
-/** `ws://` or `wss://`, then a host of at least one character before any path. */
-private val RELAY_URL = Regex("^wss?://[^/\\s?#]+.*$")
+/** `ws://` or `wss://`, a host (not just `:port`), and no whitespace anywhere. */
+private val RELAY_URL = Regex("^wss?://[^/\\s?#:][^/\\s?#]*\\S*$", RegexOption.IGNORE_CASE)
 
 /**
  * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.

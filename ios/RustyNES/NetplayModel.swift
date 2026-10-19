@@ -84,7 +84,7 @@ final class NetplayModel: ObservableObject {
         if u.isEmpty { return npHostedAvailable() }
         // A scheme AND a host: a bare "ws://" is not a relay (v3.4.1).
         guard let url = URL(string: u), let scheme = url.scheme,
-              scheme == "ws" || scheme == "wss", let host = url.host, !host.isEmpty else { return false }
+              ["ws", "wss"].contains(scheme.lowercased()), let host = url.host, !host.isEmpty else { return false }
         return true
     }
 
