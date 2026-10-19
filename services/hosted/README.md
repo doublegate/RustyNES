@@ -116,6 +116,15 @@ requests that would be forwarded (a refused call type costs nothing). The
 defaults leave room for the casual runtime, which makes about one call a
 minute while a game runs; `src/budget.ts` has the reasoning.
 
+**TURN is off (v3.4.1).** `TURN_ENABLED` is `"false"` in `wrangler.jsonc`, the
+maintainer's decision of 2026-10-19: Cloudflare kept creating relay allocations
+for credentials that were expired, and for credentials the Worker had revoked
+through Cloudflare's own API (the revoke calls returned 204), while refusing a
+made-up credential. Until that is understood (`T-HOSTED-TURN-EXPIRY` in
+`to-dos/ROADMAP.md`), no credentials are issued and clients connect directly.
+The revocation code stays deployed and tested, so switching TURN back on is one
+variable.
+
 **What the guards do not bound.** They bound how many credentials exist, not
 how many bytes one carries: a credential can relay whatever its holder sends
 until it is revoked at the end of its TTL. That is why the budget alert below is a deploy prerequisite,

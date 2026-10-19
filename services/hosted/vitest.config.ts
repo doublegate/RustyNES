@@ -30,6 +30,10 @@ export default defineConfig({
           // still under test, so the tests switch it on. ra.test.ts's
           // kill-switch case sets "false" itself.
           RA_ENABLED: "true",
+          // TURN is deployed off too (wrangler.jsonc, v3.4.1); its code stays
+          // under test, so the tests switch it on. The kill-switch test sets
+          // "false" itself.
+          TURN_ENABLED: "true",
         },
       },
     }),

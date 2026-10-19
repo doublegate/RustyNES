@@ -272,6 +272,7 @@ export class Budget extends DurableObject<Env> {
    */
   private async revokeDue(now: number): Promise<void> {
     let handled = 0;
+    let revoked = 0;
     for (const [key, value] of await this.ctx.storage.list<Revocation>({ prefix: REVOKE_PREFIX })) {
       const { dueMs: attemptAt, username } = parseRevokeKey(key);
       if (attemptAt > now || handled >= REVOKE_BATCH) break; // keys sort by attempt time
@@ -280,6 +281,7 @@ export class Budget extends DurableObject<Env> {
       const outcome = await this.revokeOne(username);
       if (outcome === "done") {
         await this.ctx.storage.delete(key);
+        revoked += 1;
         continue;
       }
       if (now - firstDue >= REVOKE_GIVE_UP_MS) {
@@ -292,6 +294,8 @@ export class Budget extends DurableObject<Env> {
       await this.ctx.storage.delete(key);
       await this.ctx.storage.put(revokeKey(now + delay, username), { attempts, dueMs: firstDue });
     }
+    // A count only: an operator tailing the Worker can see revocations happen.
+    if (revoked > 0) console.log(`turn revoke: ${revoked} revoked`);
   }
 
   /** When the earliest pending revocation is due (read fresh), if any. */

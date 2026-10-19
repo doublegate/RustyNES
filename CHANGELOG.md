@@ -26,14 +26,12 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [3.4.1] - 2026-10-19 - "Beacon" (the hosted lobby and TURN relay live, the browser RetroAchievements build fixed, version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed)
+## [3.4.1] - 2026-10-19 - "Beacon" (the hosted lobby live (the TURN relay held off), the browser RetroAchievements build fixed, version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed)
 
 ### Added
 
-- **The hosted services are live** (moved from v3.4.0 by the maintainer). The
-  netplay lobby and the short-lived TURN credentials run on the maintainer's
-  Cloudflare account at <https://rustynes-hosted.parobek.workers.dev>, and the
-  Pages build, the desktop release binaries (the profile-guided Linux build
+- **The hosted lobby is live** (moved from v3.4.0 by the maintainer). The
+  netplay lobby runs on the maintainer's Cloudflare account, and the Pages build, the desktop release binaries (the profile-guided Linux build
   included) and every Android and iOS build made by this project's CI (the
   FOSS-flavour artifact too) are compiled with that base
   (`RUSTYNES_HOSTED_BASE`). A `hosted_base_url` in the config still wins; builds
@@ -42,10 +40,16 @@ cycle-accurate core later replaced.
   set: the apps previously refused unless a relay URL was entered, and Android
   sent its placeholder URL instead of letting the hosted lobby fill in.
   The live gates passed on 2026-10-18: health check, the lobby test against the
-  live socket, credentials with a three-hour lifetime that a browser can relay
-  through, the per-address limit, and the kill switch. The RetroAchievements
-  proxy is deployed switched off until RetroAchievements answers the
-  integration request.
+  live socket, the per-address limit, and the kill switch. **The TURN relay is
+  deployed switched off** (the maintainer's decision, 2026-10-19): Cloudflare
+  kept creating relay allocations for credentials that were past their
+  three-hour lifetime and even revoked through its own API, while refusing a
+  made-up one, so how long a leaked credential works could not be bounded.
+  Sessions connect directly (STUN), which covers most home networks; two
+  players behind strict NATs cannot connect until the relay returns. The Worker
+  still revokes every credential at the end of its lifetime, ready for that.
+  The RetroAchievements proxy is deployed switched off too, until
+  RetroAchievements answers the integration request.
 
 ### Changed
 
