@@ -351,7 +351,10 @@ private struct NetplaySettingsView: View {
                 // v3.4.1: optional when this build carries the hosted lobby.
                 Text(npHostedAvailable() ? "Signaling relay (optional)" : "Signaling relay (required)")
             } footer: {
-                Text("Room-code play relays the initial handshake through this server. The maintainer must deploy and host it (a documented carryover mirroring the Android deploy bundle). Same-Wi-Fi play does not use it.")
+                // v3.4.1: a build with the hosted lobby needs no relay here.
+                Text(npHostedAvailable()
+                    ? "Room-code play relays the initial handshake through a signaling server. Leave this empty to use the RustyNES hosted lobby, or enter your own relay. Same-Wi-Fi play does not use it."
+                    : "Room-code play relays the initial handshake through this server. The maintainer must deploy and host it (a documented carryover mirroring the Android deploy bundle). Same-Wi-Fi play does not use it.")
             }
 
             Section {
@@ -376,7 +379,10 @@ private struct NetplaySettingsView: View {
             } header: {
                 Text("TURN relay (optional)")
             } footer: {
-                Text("A TURN server lets strict (symmetric) NATs fall back to a relay. All three fields are needed together; otherwise room-code play is punch-or-fail.")
+                // v3.4.1: with the hosted lobby, empty fields fetch short-lived credentials.
+                Text(npHostedAvailable()
+                    ? "A TURN server lets strict (symmetric) NATs fall back to a relay. Leave all three empty to use short-lived credentials from the RustyNES hosted service, or fill in all three for your own server."
+                    : "A TURN server lets strict (symmetric) NATs fall back to a relay. All three fields are needed together; otherwise room-code play is punch-or-fail.")
             }
         }
         .navigationTitle("Netplay")

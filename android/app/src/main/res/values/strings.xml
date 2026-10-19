@@ -127,6 +127,7 @@
     <string name="settings_hardcore_mode">Hardcore mode</string>
     <string name="settings_netplay_online">Netplay (online)</string>
     <string name="settings_netplay_online_hint">Room-code play needs a relay server. The default URL is a placeholder — set your hosted signaling relay to enable it.</string>
+    <string name="settings_netplay_online_hint_hosted">Room-code play uses the RustyNES hosted lobby and relay by default. Enter your own signaling relay or TURN server only to replace them.</string>
     <string name="settings_signaling_url">Signaling URL (wss://…)</string>
     <string name="settings_turn_url">TURN URL (optional, host:port)</string>
     <string name="settings_turn_user">TURN username (optional)</string>

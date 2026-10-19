@@ -1,5 +1,6 @@
 package com.doublegate.rustynes
 
+import uniffi.rustynes_mobile.npHostedAvailable
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -661,7 +662,11 @@ fun SettingsSheet(
             // enable the symmetric-NAT relay fallback.
             Text(stringResource(R.string.settings_netplay_online))
             Text(
-                stringResource(R.string.settings_netplay_online_hint),
+                // v3.4.1: a build carrying the hosted lobby needs no relay set.
+                stringResource(
+                    if (npHostedAvailable()) R.string.settings_netplay_online_hint_hosted
+                    else R.string.settings_netplay_online_hint,
+                ),
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
             )
             var npSig by remember { mutableStateOf(settings.npSignalingUrl) }
