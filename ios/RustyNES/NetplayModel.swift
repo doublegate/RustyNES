@@ -71,10 +71,17 @@ final class NetplayModel: ObservableObject {
     }
 
     /// Whether the signaling URL is configured well enough to attempt room-code play.
+    ///
+    /// v3.4.1: an EMPTY URL is also enough when this build carries a hosted base
+    /// (`RUSTYNES_HOSTED_BASE`, reported by the bridge's `npHostedAvailable()`):
+    /// the bridge then uses the hosted lobby, which it does only for an empty URL.
+    /// An explicit URL is still checked for a WebSocket scheme and wins, and a
+    /// build without a base still asks for one.
     var signalingConfigured: Bool {
         // Trim newlines too so a trailing CR/LF from a copy-pasted URL doesn't slip
         // through (and later break the connection). `ws://` stays valid for LAN relays.
         let u = signalingURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if u.isEmpty { return npHostedAvailable() }
         return u.hasPrefix("wss://") || u.hasPrefix("ws://")
     }
 

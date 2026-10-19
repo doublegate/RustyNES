@@ -41,6 +41,7 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import uniffi.rustynes_mobile.NpNetConfig
 import uniffi.rustynes_mobile.defaultPaletteArgb
+import uniffi.rustynes_mobile.npHostedAvailable
 import uniffi.rustynes_mobile.NpPhase
 import uniffi.rustynes_mobile.NpStatus
 
@@ -79,6 +80,29 @@ object NetplayEndpoints {
 }
 
 /**
+ * The signaling URL the user actually chose, or empty for "none" (v3.4.1).
+ *
+ * The Settings default is the [NetplayEndpoints.SIGNALING_URL] placeholder, so a
+ * fresh install stores it. Forwarding it to the bridge defeated the hosted
+ * lobby: the bridge substitutes the compiled-in hosted base only for an EMPTY
+ * URL, and the placeholder is not empty. So the placeholder (and a blank value)
+ * now mean "no override", and any other value is the user's relay and wins.
+ */
+fun userSignalingUrl(settings: AppSettings): String {
+    val url = settings.npSignalingUrl.trim()
+    return if (url == NetplayEndpoints.SIGNALING_URL) "" else url
+}
+
+/**
+ * Whether room-code play can be attempted (v3.4.1): the user configured a relay,
+ * or this build carries a hosted base (`RUSTYNES_HOSTED_BASE`, which the bridge
+ * reports through [npHostedAvailable]). A build without a base and with no relay
+ * set (F-Droid, a plain source build) still shows the setup caveat.
+ */
+fun onlineNetplayConfigured(settings: AppSettings): Boolean =
+    userSignalingUrl(settings).isNotEmpty() || npHostedAvailable()
+
+/**
  * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.
  * Empty STUN → the bridge falls back to Google's public STUN servers. TURN is only
  * configured when the URL + both credentials are present (else punch-or-fail).
@@ -92,7 +116,7 @@ fun netplayConfig(settings: AppSettings): NpNetConfig {
         turnUrl = turnUrl,
         turnUser = turnUser,
         turnSecret = turnSecret,
-        signalingUrl = settings.npSignalingUrl.trim(),
+        signalingUrl = userSignalingUrl(settings),
     )
 }
 

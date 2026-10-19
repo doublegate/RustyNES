@@ -348,7 +348,8 @@ private struct NetplaySettingsView: View {
                         .foregroundStyle(.orange)
                 }
             } header: {
-                Text("Signaling relay (required)")
+                // v3.4.1: optional when this build carries the hosted lobby.
+                Text(npHostedAvailable() ? "Signaling relay (optional)" : "Signaling relay (required)")
             } footer: {
                 Text("Room-code play relays the initial handshake through this server. The maintainer must deploy and host it (a documented carryover mirroring the Android deploy bundle). Same-Wi-Fi play does not use it.")
             }

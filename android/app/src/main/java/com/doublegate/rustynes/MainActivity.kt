@@ -2887,9 +2887,9 @@ private fun EmulatorScreen(
             roomCode = npRoomCode,
             lastJoinAddress = settings.lastJoinAddress,
             lastRoomCode = settings.lastRoomCode,
-            // Online play needs a real (non-placeholder) signaling relay configured.
-            onlineConfigured = settings.npSignalingUrl.trim().isNotEmpty() &&
-                settings.npSignalingUrl.trim() != NetplayEndpoints.SIGNALING_URL,
+            // Online play needs a real (non-placeholder) signaling relay, or a
+            // hosted base compiled into this build (v3.4.1).
+            onlineConfigured = onlineNetplayConfigured(settings),
             onHost = { port, players -> netplayHost(port, players) },
             onJoin = { addr -> netplayJoin(addr) },
             onHostRoom = { netplayHostRoom() },
