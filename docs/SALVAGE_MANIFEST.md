@@ -336,3 +336,31 @@ copy of egui's source (`egui-repro/{egui-main,v036,v037,verify36,verify37,patche
 runs' rsync copies of tracked trees); all logs, CSVs and binary captures; the
 release-day sweep, double-compile and A/B logs, which are already archived
 under `salvaged/evidence/v3.4.0-*`.
+
+## 2026-10-18 (night) — session f63c2db0, before a reboot
+
+Scope set by the maintainer: this session's scratch only, strong matches only,
+and only what cannot be rebuilt. The dry run's 4,629 strong candidates were cut
+to 29 by measurement, not by name: 505 were byte-identical to a blob in either
+repository's git history; the rest were run output (812 `.out` / `.log`),
+generated code, builds and downloads, text already published (94 review-reply
+bodies, every commit-message and PR-body draft), and applied one-off edit
+scripts. **Moved: 29 files (about 12 MB)** into
+`salvaged/tmp-scratch/f63c2db0/`, relative paths kept, no conflicts:
+
+- `v340/prune/` (25): every release body of both repositories as fetched before
+  the 2026-10-18 asset delete and rename and both body rewrites, the
+  intermediate states, the delete / rename plans and logs, and the rewrite
+  scripts. GitHub keeps no history of a release body, so this is the only copy.
+- `v340/notes/` (3): the oracle and sibling session notes and the v3.4.0 notes
+  draft before publication.
+- `v340/research/v4-options.md`: its companion `nes-mister-resources.md` was
+  already in `salvaged/evidence/v3.4.0-research/`, byte for byte.
+
+**Left:** the workspace-root agent slug (1,817 files) and every other project's
+files; all 24,360 weak matches; the Python 3.15 venv, the MkDocs build output,
+the two sibling-repo copies from the v3.4.0 off-die investigation, and the
+ladder worktree copies; `live/turn1.json`, a short-lived TURN credential that
+must not be kept. Earlier the same evening, 10 GB of this session's regenerable
+build output (a cargo target directory and Verilator `obj_dir` trees) was
+deleted to recover a full `/tmp`.
