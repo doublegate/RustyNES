@@ -44,9 +44,11 @@
 // # Why the TTL is 3 hours (TURN_TTL_SECONDS = 10800)
 //
 // A TURN allocation is kept alive by Refresh requests, which authenticate with
-// the same long-term credential. Once the credential expires the server
+// the same long-term credential. Once the credential stops working the server
 // refuses the next Refresh and the allocation lapses at the end of its current
-// lifetime (RFC 8656 section 7: 10 minutes by default). Neither RustyNES client
+// lifetime (RFC 8656 section 7: 10 minutes by default). Cloudflare does not
+// stop it working at the TTL by itself (measured 2026-10-19), so the Worker
+// revokes it then; budget.ts, "Revoking credentials when their TTL ends". Neither RustyNES client
 // re-fetches credentials mid-session (the browser would need
 // `RTCPeerConnection.setConfiguration`, the native TURN client a new
 // Allocate), so the credential must outlive the session it relays, which is
@@ -152,5 +154,9 @@ export async function handleTurn(
     return json(502, { error: "turn-upstream", message: "Could not obtain TURN credentials; connect directly (STUN only)." }, h);
   }
   const expiresAt = Math.floor(Date.now() / 1000) + ttl;
+  // Cloudflare does not refuse a credential once its TTL has passed, so the
+  // budget object revokes it then (budget.ts, "Revoking credentials").
+  const usernames = [...new Set(servers.flatMap((s) => (s.username ? [s.username] : [])))];
+  await budget.scheduleRevoke(usernames, expiresAt * 1000);
   return json(200, { iceServers: servers, ttl, expiresAt }, h);
 }

@@ -71,7 +71,7 @@ RetroAchievements rows in `test/ra.test.ts`).
 | --- | --- | --- | --- |
 | Per-IP rate limit | `TURN_PER_IP_PER_HOUR` (6) | 429 `rate-limited` with `Retry-After`; the window is in Durable Object storage, so it survives eviction | `limits one IP with 429 and Retry-After`, `keeps per-IP windows across an eviction` |
 | Daily global cap | `TURN_DAILY_CAP` (500) | 503 `daily-cap` with `Retry-After` until 00:00 UTC; failed upstream mints are refunded | `caps credentials per UTC day across all callers, and resets the next day`, the six `... is a 502 and does not spend the budget` tests |
-| Short TTL | `TURN_TTL_SECONDS` (10800, clamped 600-86400) | Credentials expire after 3 h | `returns short-lived ICE servers and passes the TTL upstream`, `clamps the configured TTL` |
+| Short TTL, enforced | `TURN_TTL_SECONDS` (10800, clamped 600-86400) | Credentials are asked to expire after 3 h, and the budget object revokes each one when its TTL ends, because Cloudflare does not refuse expired credentials (v3.4.1) | `returns short-lived ICE servers and passes the TTL upstream`, `clamps the configured TTL`, the `revocation` tests |
 | Kill switch | `TURN_ENABLED` (`"true"`) | Anything else: 503 `turn-disabled`, no upstream call | `the kill switch refuses without calling upstream` |
 | POST only | (none) | A GET is 405 before the budget is consulted, so another page cannot spend the cap through its visitors' browsers | `a GET with no Origin, as an <img> on another page sends it, is refused and spends nothing` |
 | RA per-IP rate limit | `RA_PER_IP_PER_HOUR` (240) | 429 with `Retry-After`; in Durable Object storage (the `ra` instance) | `limits one address per hour with 429 and Retry-After` |
@@ -89,6 +89,15 @@ covers a long sitting with one game and is the shortest value that does; a
 longer session drops its relay and reconnects through the lobby, which mints
 fresh credentials. Shorter is better because the TTL is how long a leaked
 credential stays usable. `src/turn.ts` has the full argument.
+
+**The TTL is enforced by revocation (v3.4.1).** Cloudflare does not refuse a
+credential once the TTL it was minted with has passed: on 2026-10-19 a 3-hour
+credential still obtained a relay 2 h 38 min after its expiry, and a 600 s one
+6.6 minutes after, although Cloudflare's own page says an expired credential is
+disconnected. So the Worker revokes each credential itself when its TTL ends,
+through Cloudflare's revoke endpoint, from the budget object's alarm; a failed
+revocation is retried every 5 minutes, six attempts in all. `src/budget.ts`,
+"Revoking credentials when their TTL ends", has the details.
 
 **Why POST only.** A request without `Origin` is served, because that is how
 the native apps look. But a browser also omits `Origin` on a GET it sends
@@ -109,7 +118,7 @@ minute while a game runs; `src/budget.ts` has the reasoning.
 
 **What the guards do not bound.** They bound how many credentials exist, not
 how many bytes one carries: a credential can relay whatever its holder sends
-until it expires. That is why the budget alert below is a deploy prerequisite,
+until it is revoked at the end of its TTL. That is why the budget alert below is a deploy prerequisite,
 not an option.
 
 **What clients do when refused.** Every refusal is JSON
@@ -190,8 +199,9 @@ Do this first, so that a surprise is an email and not an invoice.
    check it exists and lower it.
 3. **Know the backstop.** If spend runs away, the kill switch
    (`TURN_ENABLED`, below) stops new credentials within one deploy of a var;
-   credentials already issued stay valid until they expire (at most 3 h), and
-   can be revoked individually through the TURN API's revoke endpoint.
+   credentials already issued stay valid until the Worker revokes them at the
+   end of their TTL (at most 3 h), and can be revoked earlier, one at a time,
+   through the TURN API's revoke endpoint.
 
 ### 1. Log in and install
 
@@ -275,9 +285,12 @@ each needs the deployed service, real browsers or devices, or a real account.
    pair of type `relay`, and the native apps' netplay status reports
    `relayed`. Cloudflare's TURN analytics show the egress.
 4. **Credentials expire (row 1):** take the `username`/`credential` from step 1
-   and, more than 3 h later, try them in an ICE test page (for example the
-   WebRTC samples' "Trickle ICE" page): no `relay` candidate is gathered. Within
-   the TTL the same test gathers one.
+   and, more than 3 h later (plus a minute for the revocation alarm), try them
+   in an ICE test page (for example the WebRTC samples' "Trickle ICE" page): no
+   `relay` candidate is gathered. Within the TTL the same test gathers one. To
+   check it faster, deploy with `TURN_TTL_SECONDS` 600, mint one credential,
+   redeploy the normal value, and test 11 minutes later. Before v3.4.1 this
+   step failed: Cloudflare kept honouring expired credentials.
 5. **Spend guards live:** set `TURN_ENABLED` to `false` in the dashboard (it
    deploys a new version of the same code); `/turn-credentials` answers 503
    `turn-disabled` and a browser session still connects directly. Set it back.

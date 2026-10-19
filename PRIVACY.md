@@ -75,7 +75,11 @@ Cloudflare's TURN relay.
   over, so it is kept for at most two hours. It also keeps a single number per
   day, the count of credentials issued, which is not linked to anyone and is
   deleted within an hour after that day ends (UTC). The credentials it returns
-  expire after three hours and are not stored by the service.
+  are meant to expire after three hours. The relay provider does not enforce
+  that by itself, so the service keeps each credential's username (a random
+  identifier the provider issues, with no link to you or your address) until
+  the three hours are up, then tells the provider to revoke the credential and
+  deletes the username. The secret half of the credential is not stored.
 - **The relay receives:** the game traffic of a relayed session (controller
   input and synchronisation messages, roughly 22 MB per player per hour) and
   the IP addresses of both ends. It does not receive the game itself, your
