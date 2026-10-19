@@ -106,6 +106,13 @@ const REVOKE_RETRY_MS = 5 * 60_000;
 const REVOKE_TIMEOUT_MS = 5000;
 /** Revocations handled per alarm, so one alarm stays short. */
 const REVOKE_BATCH = 50;
+/**
+ * Wall-clock budget for one alarm's revocations. The object is single-threaded,
+ * so a full batch of timed-out requests (50 x 5 s) would hold admissions for
+ * minutes; past this the loop stops and the alarm re-arms for the rest at once
+ * (agy on #618).
+ */
+const REVOKE_ALARM_BUDGET_MS = 15_000;
 
 interface Revocation {
   attempts: number;
@@ -279,11 +286,13 @@ export class Budget extends DurableObject<Env> {
   private async revokeDue(now: number): Promise<void> {
     let handled = 0;
     let revoked = 0;
+    const started = Date.now();
     // At most a batch (plus one) is read: keys sort by attempt time, and the
     // loop never handles more than REVOKE_BATCH.
     for (const [key, value] of await this.ctx.storage.list<Revocation>({ prefix: REVOKE_PREFIX, limit: REVOKE_BATCH + 1 })) {
       const { dueMs: attemptAt, username } = parseRevokeKey(key);
       if (attemptAt > now || handled >= REVOKE_BATCH) break; // keys sort by attempt time
+      if (Date.now() - started >= REVOKE_ALARM_BUDGET_MS) break; // the rest are still due, so the alarm re-arms now
       handled += 1;
       const firstDue = value?.dueMs ?? attemptAt;
       const outcome = await this.revokeOne(username);

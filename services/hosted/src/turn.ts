@@ -157,6 +157,15 @@ export async function handleTurn(
   // Cloudflare does not refuse a credential once its TTL has passed, so the
   // budget object revokes it then (budget.ts, "Revoking credentials").
   const usernames = [...new Set(servers.flatMap((s) => (s.username ? [s.username] : [])))];
-  await budget.scheduleRevoke(usernames, expiresAt * 1000);
+  try {
+    await budget.scheduleRevoke(usernames, expiresAt * 1000);
+  } catch {
+    // Fail closed: a credential whose revocation could not be recorded is
+    // never handed out, and the admission is given back (agy on #618). The
+    // minted credential is then unused by anyone and lapses at its TTL.
+    console.error("turn: could not schedule revocation; credential withheld");
+    await budget.refundTurn(admission.key, admission.day);
+    return json(503, { error: "turn-unavailable", message: "Could not issue TURN credentials; connect directly (STUN only)." }, h);
+  }
   return json(200, { iceServers: servers, ttl, expiresAt }, h);
 }
