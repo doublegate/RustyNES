@@ -64,6 +64,11 @@ describe("ra_glue.js rcheevos base", () => {
     expect(rcheevosBase()).toBe("https://cdn.example/rc/");
   });
 
+  it("falls back to cheevos/ when the meta value is not a URL", () => {
+    withMeta("http://[bad");
+    expect(rcheevosBase()).toBe("https://doublegate.github.io/RustyNES/cheevos/");
+  });
+
   it("treats a blank meta value as absent", () => {
     withMeta("   ");
     expect(rcheevosBase()).toBe("https://doublegate.github.io/RustyNES/cheevos/");

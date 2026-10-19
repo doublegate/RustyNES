@@ -206,10 +206,20 @@ fun NetplaySheet(
                         color = Color.Gray,
                     )
                     if (!onlineConfigured) {
+                        // v3.4.1 (Cursor on #618): in a build with the hosted
+                        // lobby, "not configured" can only mean the relay URL
+                        // in Settings is not a WebSocket URL, and clearing it
+                        // is the fix, as the iOS app says.
                         Text(
-                            "Online play requires a relay server. None is configured yet, " +
-                                "so only LAN works until one is set in Settings → " +
-                                "Netplay (online).",
+                            if (npHostedAvailable()) {
+                                "The relay URL in Settings → Netplay (online) is not a " +
+                                    "wss:// (or ws://) address. Clear it to use the " +
+                                    "RustyNES hosted lobby, or correct it."
+                            } else {
+                                "Online play requires a relay server. None is configured yet, " +
+                                    "so only LAN works until one is set in Settings → " +
+                                    "Netplay (online)."
+                            },
                             fontSize = 12.sp,
                             color = Color(0xFFFFB300),
                         )
@@ -278,6 +288,9 @@ fun NetplaySheet(
                             Text("Players: 2", fontSize = 13.sp)
                             Button(
                                 onClick = onHostRoom,
+                                // Not with a relay URL the bridge cannot use
+                                // (v3.4.1), as iOS disables its room buttons.
+                                enabled = onlineConfigured,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text("Host online") }
                         }
@@ -304,7 +317,7 @@ fun NetplaySheet(
                                     onSaveRoomCode(code)
                                     onJoinRoom(code)
                                 },
-                                enabled = roomText.length == 6,
+                                enabled = roomText.length == 6 && onlineConfigured,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text("Join online") }
                         }

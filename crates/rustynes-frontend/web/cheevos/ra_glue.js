@@ -118,7 +118,17 @@ let _events = [];
 export function rcheevosBase() {
   const meta = globalThis.document?.querySelector?.('meta[name="rustynes-rcheevos-base"]');
   const raw = meta?.getAttribute("content")?.trim() || "cheevos/";
-  return new URL(raw.endsWith("/") ? raw : raw + "/", globalThis.document?.baseURI ?? globalThis.location?.href).href;
+  const pageBase = globalThis.document?.baseURI ?? globalThis.location?.href;
+  // A malformed value falls back to the default rather than throwing out of
+  // ra_init (agy on #618), as resolveProxyBase() refuses a bad proxy base.
+  for (const candidate of [raw, "cheevos/"]) {
+    try {
+      return new URL(candidate.endsWith("/") ? candidate : candidate + "/", pageBase).href;
+    } catch {
+      // try the next candidate
+    }
+  }
+  return "cheevos/";
 }
 
 // Instantiate the Emscripten rcheevos module. Resolves once the wasm is ready.
