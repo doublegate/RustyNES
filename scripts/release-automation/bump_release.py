@@ -75,6 +75,15 @@ MANIFESTS = [
     ("android/app/build.gradle.kts", 'versionName = "{v}"'),
     ("android/app/build.gradle.kts", 'versionCode = {code}'),
     ("ios/project.yml", 'MARKETING_VERSION: "{v}"'),
+    # The hosted Worker (v3.4.1, agy on #618): the RA proxy's User-Agent
+    # names the release, and its comment said to bump it by hand, which v3.4.1
+    # did and nothing enforced. The package root carries the version too; the
+    # lockfile's two root entries are matched with the name line before them,
+    # because a bare `"version": "X"` also matches any dependency at X.
+    ("services/hosted/wrangler.jsonc", '"RA_USER_AGENT": "RustyNES/{v} (Web wasm32)'),
+    ("services/hosted/package.json", '"name": "rustynes-hosted",\n  "version": "{v}"'),
+    ("services/hosted/package-lock.json", '"name": "rustynes-hosted",\n  "version": "{v}"'),
+    ("services/hosted/package-lock.json", '"name": "rustynes-hosted",\n      "version": "{v}"'),
 ]
 
 

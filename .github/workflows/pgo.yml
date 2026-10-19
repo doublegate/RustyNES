@@ -62,6 +62,16 @@ on:
         required: false
         default: "3600"
         type: string
+      # v3.4.1: the hosted base the shipped binary is compiled with. A called
+      # workflow does not inherit the caller's workflow-level `env:`, so without
+      # this the promoted PGO archive replaced release.yml's Linux binary with
+      # one built WITHOUT the base (Copilot / Antigravity on #618). Empty (the
+      # default, and every workflow_dispatch run) leaves it unset.
+      hosted_base:
+        description: "RUSTYNES_HOSTED_BASE for the optimized build (empty = none)."
+        required: false
+        default: ""
+        type: string
     outputs:
       promotable:
         description: "'true' when the PGO build cleared BOTH the >3% speedup bar and the byte-identical determinism oracle."
@@ -108,7 +118,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Pinned to the project toolchain (rust-toolchain.toml = 1.99.0), matching
+      # Pinned to the project toolchain (rust-toolchain.toml = 1.99.1), matching
       # the other jobs. PGO needs the llvm-tools-preview component (profdata
       # merge) and the wgpu/winit/cpal apt deps (the optimized rebuild links the
       # full `rustynes-frontend` binary).
@@ -149,7 +159,12 @@ jobs:
       - name: PGO instrument + train + optimized rebuild
         env:
           PGO_FRAMES: ${{ inputs.frames || '3600' }}
-        run: scripts/pgo/run.sh "$PGO_FRAMES"
+          HOSTED_BASE: ${{ inputs.hosted_base }}
+        # Exported only when non-empty: `option_env!` would read an empty
+        # string as a (normalised-away) value rather than as "unset".
+        run: |
+          if [ -n "$HOSTED_BASE" ]; then export RUSTYNES_HOSTED_BASE="$HOSTED_BASE"; fi
+          scripts/pgo/run.sh "$PGO_FRAMES"
 
       # ---- Stage 3: PGO full_frame bench (A/B vs the `plain` baseline) ---
       - name: PGO full_frame bench

@@ -1459,3 +1459,107 @@ fn mask_code_hides_parentheses_that_live_inside_code() {
         "an unterminated backtick run must not mask everything after it"
     );
 }
+
+/// v3.4.1 (agy on #618): the hosted Worker's version strings follow the
+/// workspace. `RA_USER_AGENT` is what the RA server identifies the browser
+/// client by, and its comment asked for a bump by hand each release that
+/// nothing enforced; `package.json` and the two lockfile root entries carry the
+/// same version. `bump_release.py`'s MANIFESTS moves all four, and this keeps a
+/// hand edit from drifting.
+#[test]
+fn the_hosted_worker_names_the_workspace_version() {
+    let v = workspace_package_field("version");
+    let wrangler = read("services/hosted/wrangler.jsonc");
+    let ua = format!("\"RA_USER_AGENT\": \"RustyNES/{v} (Web wasm32)");
+    assert_eq!(
+        wrangler.matches(&ua).count(),
+        1,
+        "services/hosted/wrangler.jsonc must carry {ua:?} exactly once"
+    );
+    let pkg = read("services/hosted/package.json");
+    let root = format!("\"name\": \"rustynes-hosted\",\n  \"version\": \"{v}\"");
+    assert_eq!(
+        pkg.matches(&root).count(),
+        1,
+        "package.json root is not {v}"
+    );
+    let lock = read("services/hosted/package-lock.json");
+    let pkg_entry = format!("\"name\": \"rustynes-hosted\",\n      \"version\": \"{v}\"");
+    assert_eq!(
+        lock.matches(&root).count(),
+        1,
+        "package-lock.json root is not {v}"
+    );
+    assert_eq!(
+        lock.matches(&pkg_entry).count(),
+        1,
+        "package-lock.json packages[\"\"] is not {v}"
+    );
+}
+
+/// v3.4.1: every shipped build compiles the same hosted base, and the test
+/// workflow compiles none.
+///
+/// `web.yml`, `release.yml`, `android.yml` and `ios.yml` set
+/// `RUSTYNES_HOSTED_BASE` in their workflow-level `env:`. `release.yml` also
+/// passes it to the reusable `pgo.yml` as a literal (`with: hosted_base:`),
+/// because a called workflow inherits no `env:` and `env` is not an allowed
+/// context in `with:`; without it the promoted PGO archive replaced the Linux
+/// release binary with one built without the base (Copilot / Antigravity on
+/// #618). Two literals that must agree are a drift waiting to happen, so this
+/// compares them. `ci.yml` must not set it: `a_stock_build_has_no_hosted_base`
+/// asserts the default only when the variable is absent, so setting it there
+/// would make that test vacuous rather than fail it.
+#[test]
+fn every_shipped_build_compiles_the_same_hosted_base() {
+    fn values(text: &str, key: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                let rest = t.strip_prefix(key)?.trim_start().strip_prefix(':')?;
+                Some(rest.trim().trim_matches('"').to_string())
+            })
+            .collect()
+    }
+    let mut seen = Vec::new();
+    for wf in ["web", "release", "android", "ios"] {
+        let text = read(&format!(".github/workflows/{wf}.yml"));
+        let v = values(&text, "RUSTYNES_HOSTED_BASE");
+        assert_eq!(
+            v.len(),
+            1,
+            "{wf}.yml must set RUSTYNES_HOSTED_BASE once, found {v:?}"
+        );
+        seen.push((format!("{wf}.yml env"), v[0].clone()));
+    }
+    let release = read(".github/workflows/release.yml");
+    let pgo = values(&release, "hosted_base");
+    assert_eq!(
+        pgo.len(),
+        1,
+        "release.yml must pass hosted_base to pgo.yml once, found {pgo:?}"
+    );
+    seen.push(("release.yml -> pgo.yml".into(), pgo[0].clone()));
+    let first = &seen[0].1;
+    assert!(
+        first.starts_with("https://"),
+        "the hosted base must be an https URL, got {first:?}"
+    );
+    for (site, v) in &seen {
+        assert_eq!(
+            v, first,
+            "{site} names {v:?}, but {} names {first:?}",
+            seen[0].0
+        );
+    }
+    let pgo_wf = read(".github/workflows/pgo.yml");
+    assert!(
+        pgo_wf.contains("RUSTYNES_HOSTED_BASE=\"$HOSTED_BASE\""),
+        "pgo.yml must export the hosted_base input to the optimized build"
+    );
+    let ci = read(".github/workflows/ci.yml");
+    assert!(
+        values(&ci, "RUSTYNES_HOSTED_BASE").is_empty(),
+        "ci.yml must not set RUSTYNES_HOSTED_BASE (a_stock_build_has_no_hosted_base needs it absent)"
+    );
+}

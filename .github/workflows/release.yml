@@ -287,6 +287,11 @@ jobs:
     # first form).
     if: github.event_name != 'workflow_dispatch'
     uses: ./.github/workflows/pgo.yml
+    # v3.4.1: the same base as the workflow-level env above. A literal because
+    # `env` is not an allowed context in a reusable workflow's `with:`; the two
+    # must name the same URL, which release_anchor_audit checks.
+    with:
+      hosted_base: "https://rustynes-hosted.parobek.workers.dev"
     permissions:
       contents: read
 
