@@ -78,7 +78,24 @@ cycle-accurate core later replaced.
 - **MiSTer build warnings**: the two findings `release-rbf.sh` refused v3.4.0's
   bitstreams on (a Quartus width warning in the MMC2/MMC4 CHR slots and the
   Zapper aim's constant ninth bit) are fixed with no change in behaviour or
-  save-state layout.
+  save-state layout. The width warning came from the CHR register index, not
+  the slot index a first attempt changed; the release check found it, and the
+  bitstreams were rebuilt.
+- **The profile-guided Linux release binary**: when the PGO gate promoted, the
+  archive it replaced the plain Linux binary with was a test build, without
+  RetroAchievements, scripting or the other `full` features (a later stage
+  rebuilt the binary at the same path). The binary that was optimized is now
+  the one shipped, and it must carry the hosted base to be promoted. The release
+  history shows one promotion, v2.9.6 (2026-09-30): its Linux download lacks the
+  RetroAchievements client, and it is rebuilt from the v2.9.6 tag with the
+  full features after this release.
+- **Android and iOS netplay settings**: a custom relay must be a `ws://` or
+  `wss://` URL on Android as on iOS, Android's settings no longer show a
+  placeholder relay URL, and both apps explain that clearing the field returns
+  to the hosted lobby.
+- **Code scanning**: the PPU's emphasis table is now an ordinary Rust module
+  rather than an `include!`d expression, which CodeQL's Rust extractor failed
+  to parse (100 extraction errors, the largest share of those it reported).
 
 ## [3.4.0] - 2026-10-18 - "Waypoint" (authenticated netplay and three- and four-player desktop sessions, RetroAchievements hardcore to its full block list, the hosted services as code, about half the window-thread CPU, egui 0.37, and a MiSTer core whose headline build is off-die, with save states and rewind and Phase F3a's boards)
 
