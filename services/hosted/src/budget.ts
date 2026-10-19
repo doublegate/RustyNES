@@ -55,14 +55,31 @@
 // disconnected. So the Worker enforces it. Each minted TURN username is stored
 // here as `revoke:<due ms, zero-padded>:<username>` (keys sort by due time),
 // and the alarm revokes every due one through Cloudflare's revoke endpoint
-// (`POST .../credentials/<username>/revoke`, 204 on success). A 404 means
-// Cloudflare no longer knows it, which is also done. Anything else is retried
-// every REVOKE_RETRY_MS, up to REVOKE_MAX_ATTEMPTS attempts, then dropped
-// rather than retried forever. Revocation happens at the TTL, never earlier,
-// so a session inside its three hours is untouched.
+// (`POST .../credentials/<username>/revoke`, 204 on success). Revocation
+// happens at the TTL, never earlier, so a session inside its three hours is
+// untouched. A failure is never silent and never cut short:
+//
+//   - 2xx: done. 404: done too (Cloudflare does not know the credential), and
+//     logged, because a 404 from a wrong key id would look the same.
+//   - A missing key, 401 or 403: a configuration fault, logged as an error and
+//     retried hourly WITHOUT counting as an attempt, so a broken token cannot
+//     use up the retries before anyone fixes it.
+//   - Anything else (5xx, a timeout): retried with backoff, 5 minutes doubling
+//     to an hour.
+//   - Only an entry REVOKE_GIVE_UP_MS (48 h, the longest TTL Cloudflare
+//     allows) past its due time is dropped, with an error log.
+//
+// A retry is re-keyed under its next attempt time, so the key order stays the
+// order of work; the value keeps the original due time and the attempt count.
+// Logs carry the status and attempt count only, never the username, and
+// Workers Logs are off in production anyway (wrangler.jsonc).
 //
 // The object has one alarm. It is set to the earlier of the hourly sweep and
 // the next due revocation; whichever fires, both kinds of work are checked.
+// The re-arm at the end of an alarm reads the revocation list AGAIN and keeps
+// an earlier alarm set meanwhile: a credential minted while the alarm awaited
+// Cloudflare would otherwise be overwritten by a later re-arm (the automated
+// security review on v3.4.1).
 //
 // # Why the counts are persisted
 //
@@ -82,9 +99,9 @@ import { TURN_API } from "./turn";
 const HOUR_MS = 3_600_000;
 /** Storage-key prefix of the pending credential revocations. */
 const REVOKE_PREFIX = "revoke:";
-/** Attempts per credential before a revocation is given up. */
-export const REVOKE_MAX_ATTEMPTS = 6;
-/** Delay before a failed revocation is retried. */
+/** How long past its due time a revocation keeps being retried (48 h). */
+export const REVOKE_GIVE_UP_MS = 48 * HOUR_MS;
+/** First retry delay; doubles per attempt up to an hour. */
 const REVOKE_RETRY_MS = 5 * 60_000;
 const REVOKE_TIMEOUT_MS = 5000;
 /** Revocations handled per alarm, so one alarm stays short. */
@@ -92,7 +109,11 @@ const REVOKE_BATCH = 50;
 
 interface Revocation {
   attempts: number;
+  /** The credential's expiry, when the first attempt was due (ms). */
+  dueMs?: number;
 }
+
+type RevokeOutcome = "done" | "retry" | "config";
 
 /** `revoke:<due ms, 15 digits>:<username>`, so keys sort by due time. */
 function revokeKey(dueMs: number, username: string): string {
@@ -213,9 +234,12 @@ export class Budget extends DurableObject<Env> {
     if (alarm === null || alarm > dueMs) await this.ctx.storage.setAlarm(dueMs);
   }
 
-  /** One revocation request: true when Cloudflare no longer honours it. */
-  private async revokeOne(username: string): Promise<boolean> {
-    if (!this.env.TURN_KEY_ID || !this.env.TURN_KEY_API_TOKEN) return false;
+  /** One revocation request, classified (see "Revoking credentials"). */
+  private async revokeOne(username: string): Promise<RevokeOutcome> {
+    if (!this.env.TURN_KEY_ID || !this.env.TURN_KEY_API_TOKEN) {
+      console.error("turn revoke: TURN key not configured; revocation deferred");
+      return "config";
+    }
     try {
       const resp = await fetch(
         `${TURN_API}/${encodeURIComponent(this.env.TURN_KEY_ID)}/credentials/${encodeURIComponent(username)}/revoke`,
@@ -225,39 +249,56 @@ export class Budget extends DurableObject<Env> {
           signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
         },
       );
-      return resp.status === 204 || resp.status === 404 || resp.ok;
+      if (resp.ok) return "done";
+      if (resp.status === 404) {
+        console.warn("turn revoke: 404, credential unknown to Cloudflare; treated as revoked");
+        return "done";
+      }
+      if (resp.status === 401 || resp.status === 403) {
+        console.error(`turn revoke: ${resp.status}, the TURN key token was refused; revocation deferred`);
+        return "config";
+      }
+      console.warn(`turn revoke: ${resp.status}; will retry`);
+      return "retry";
     } catch {
-      return false;
+      console.warn("turn revoke: request failed or timed out; will retry");
+      return "retry";
     }
   }
 
   /**
-   * Revoke every due credential (at most REVOKE_BATCH per call). Returns when
-   * the next revocation is due, or `undefined` when none is pending.
+   * Revoke every due credential (at most REVOKE_BATCH per call); a failure
+   * is re-keyed under its next attempt time.
    */
-  private async revokeDue(now: number): Promise<number | undefined> {
-    let next: number | undefined;
+  private async revokeDue(now: number): Promise<void> {
     let handled = 0;
     for (const [key, value] of await this.ctx.storage.list<Revocation>({ prefix: REVOKE_PREFIX })) {
-      const { dueMs, username } = parseRevokeKey(key);
-      if (dueMs > now || handled >= REVOKE_BATCH) {
-        next = Math.min(next ?? Infinity, Math.max(dueMs, now + 1000));
-        break; // keys sort by due time, so everything after is later
-      }
+      const { dueMs: attemptAt, username } = parseRevokeKey(key);
+      if (attemptAt > now || handled >= REVOKE_BATCH) break; // keys sort by attempt time
       handled += 1;
-      if (await this.revokeOne(username)) {
+      const firstDue = value?.dueMs ?? attemptAt;
+      const outcome = await this.revokeOne(username);
+      if (outcome === "done") {
         await this.ctx.storage.delete(key);
         continue;
       }
-      const attempts = (value?.attempts ?? 0) + 1;
-      if (attempts >= REVOKE_MAX_ATTEMPTS) {
+      if (now - firstDue >= REVOKE_GIVE_UP_MS) {
+        console.error(`turn revoke: given up ${Math.round((now - firstDue) / HOUR_MS)} h after the credential's expiry`);
         await this.ctx.storage.delete(key);
-      } else {
-        await this.ctx.storage.put(key, { attempts });
-        next = Math.min(next ?? Infinity, now + REVOKE_RETRY_MS);
+        continue;
       }
+      const attempts = (value?.attempts ?? 0) + (outcome === "retry" ? 1 : 0);
+      const delay = outcome === "config" ? HOUR_MS : Math.min(REVOKE_RETRY_MS * 2 ** Math.max(0, attempts - 1), HOUR_MS);
+      await this.ctx.storage.delete(key);
+      await this.ctx.storage.put(revokeKey(now + delay, username), { attempts, dueMs: firstDue });
     }
-    return next;
+  }
+
+  /** When the earliest pending revocation is due (read fresh), if any. */
+  private async nextRevocation(now: number): Promise<number | undefined> {
+    const first = await this.ctx.storage.list({ prefix: REVOKE_PREFIX, limit: 1 });
+    for (const k of first.keys()) return Math.max(parseRevokeKey(k).dueMs, now + 1000);
+    return undefined;
   }
 
   /** Credentials minted today (for the runbook's checks and the tests). */
@@ -277,7 +318,7 @@ export class Budget extends DurableObject<Env> {
    */
   async alarm(): Promise<void> {
     const now = Date.now();
-    const nextRevoke = await this.revokeDue(now);
+    await this.revokeDue(now);
     let remaining = 0;
     const stale: string[] = [];
     for (const prefix of WINDOW_PREFIXES) {
@@ -300,7 +341,15 @@ export class Budget extends DurableObject<Env> {
     // an hour after the day ends". With nothing left the alarm stops, and the
     // next admission arms it again.
     const nextSweep = remaining > 0 ? now + HOUR_MS : undefined;
-    const next = Math.min(nextSweep ?? Infinity, nextRevoke ?? Infinity);
+    // Read fresh, after the awaits above: a credential scheduled meanwhile
+    // set its own alarm, which must not be pushed later.
+    const nextRevoke = await this.nextRevocation(now);
+    const pending = await this.ctx.storage.getAlarm();
+    const next = Math.min(
+      nextSweep ?? Infinity,
+      nextRevoke ?? Infinity,
+      pending !== null && pending > now ? pending : Infinity,
+    );
     if (Number.isFinite(next)) await this.ctx.storage.setAlarm(next);
   }
 }

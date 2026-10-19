@@ -9,7 +9,7 @@ import { env, exports } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
-import { REVOKE_MAX_ATTEMPTS, utcDay } from "../src/budget";
+import { REVOKE_GIVE_UP_MS, utcDay } from "../src/budget";
 import type { Env } from "../src/env";
 import { DEFAULT_TTL, TURN_API, handleTurn, sanitizeIceServers } from "../src/turn";
 
@@ -314,21 +314,75 @@ describe("revocation", () => {
     expect(await pending()).toEqual([]);
   });
 
-  it("a failed revocation is retried, and dropped after the last attempt", async () => {
+  it("a failed revocation backs off and is kept until 48 h past its expiry", async () => {
     mockUpstream(() => new Response("busy", { status: 503 }));
-    await seed(Date.now() - 1, "flaky");
+    const due = Date.now() - 1;
+    await seed(due, "flaky");
     await runDurableObjectAlarm(budget());
-    const rows = await pending();
+    let rows = await pending();
     expect(rows.length).toBe(1);
-    expect(rows[0][1]).toEqual({ attempts: 1 });
-    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
-    expect(alarm).not.toBeNull();
+    expect(rows[0][1]).toEqual({ attempts: 1, dueMs: due });
+    // Re-keyed under the next attempt, 5 minutes on.
+    const retryAt = Number(rows[0][0].split(":")[1]);
+    expect(retryAt - Date.now()).toBeGreaterThan(4 * 60_000);
+    expect(retryAt - Date.now()).toBeLessThanOrEqual(5 * 60_000);
 
+    // Still failing, but not yet 48 h past expiry: kept.
     await runInDurableObject(budget(), async (_obj, state) => {
-      await state.storage.put(rows[0][0], { attempts: REVOKE_MAX_ATTEMPTS - 1 });
-      await state.storage.setAlarm(Date.now());
+      await state.storage.deleteAll();
+    });
+    await seed(Date.now() - 1, "flaky");
+    await runInDurableObject(budget(), async (_obj, state) => {
+      const [k] = [...(await state.storage.list({ prefix: "revoke:" })).keys()];
+      await state.storage.put(k, { attempts: 40, dueMs: Date.now() - REVOKE_GIVE_UP_MS + 60_000 });
+    });
+    await runDurableObjectAlarm(budget());
+    rows = await pending();
+    expect(rows.length).toBe(1);
+
+    // Past 48 h: given up.
+    await runInDurableObject(budget(), async (_obj, state) => {
+      const [k] = [...(await state.storage.list({ prefix: "revoke:" })).keys()];
+      await state.storage.delete(k);
+    });
+    await seed(Date.now() - 1, "ancient");
+    await runInDurableObject(budget(), async (_obj, state) => {
+      const [k] = [...(await state.storage.list({ prefix: "revoke:" })).keys()];
+      await state.storage.put(k, { attempts: 3, dueMs: Date.now() - REVOKE_GIVE_UP_MS - 1 });
     });
     await runDurableObjectAlarm(budget());
     expect(await pending()).toEqual([]);
+  });
+
+  it("a refused token (401/403) is retried hourly without using up attempts", async () => {
+    for (const status of [401, 403]) {
+      await runInDurableObject(budget(), async (_obj, state) => {
+        await state.storage.deleteAll();
+      });
+      vi.restoreAllMocks();
+      mockUpstream(() => new Response("no", { status }));
+      await seed(Date.now() - 1, "cfg");
+      await runDurableObjectAlarm(budget());
+      const rows = await pending();
+      expect(rows.length, String(status)).toBe(1);
+      expect((rows[0][1] as { attempts: number }).attempts, String(status)).toBe(0);
+      const retryAt = Number(rows[0][0].split(":")[1]);
+      expect(retryAt - Date.now(), String(status)).toBeGreaterThan(59 * 60_000);
+    }
+  });
+
+  it("a credential scheduled while the alarm awaits Cloudflare keeps its earlier alarm", async () => {
+    const soon = Date.now() + 120_000;
+    mockUpstream(async () => {
+      // A mint lands while the alarm is mid-revocation.
+      await budget().scheduleRevoke(["minted-meanwhile"], soon);
+      return new Response(null, { status: 204 });
+    });
+    await seed(Date.now() - 1, "due");
+    await runDurableObjectAlarm(budget());
+    expect((await pending()).map(([k]) => k.split(":").pop())).toEqual(["minted-meanwhile"]);
+    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(soon);
   });
 });
