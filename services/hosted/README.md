@@ -210,7 +210,12 @@ Do this first, so that a surprise is an email and not an invoice.
    (`TURN_ENABLED`, below) stops new credentials within one deploy of a var;
    credentials already issued stay valid until the Worker revokes them at the
    end of their TTL (at most 3 h), and can be revoked earlier, one at a time,
-   through the TURN API's revoke endpoint.
+   through the TURN API's revoke endpoint. **v3.4.1 measured that neither
+   expiry nor revocation stops Cloudflare creating allocations for an issued
+   credential** ("TURN is off" below), so for a leaked credential the
+   remaining stop is likely deleting the TURN key itself (create a new key, set
+   the two secrets, delete the old one). That is untested; the budget alert is
+   the backstop that is known to work.
 
 ### 1. Log in and install
 
