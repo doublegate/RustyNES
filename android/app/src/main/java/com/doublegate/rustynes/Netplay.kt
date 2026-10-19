@@ -41,6 +41,7 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import uniffi.rustynes_mobile.NpNetConfig
 import uniffi.rustynes_mobile.defaultPaletteArgb
+import uniffi.rustynes_mobile.npHostedAvailable
 import uniffi.rustynes_mobile.NpPhase
 import uniffi.rustynes_mobile.NpStatus
 
@@ -79,6 +80,39 @@ object NetplayEndpoints {
 }
 
 /**
+ * The signaling URL the user actually chose, or empty for "none" (v3.4.1).
+ *
+ * The Settings default is the [NetplayEndpoints.SIGNALING_URL] placeholder, so a
+ * fresh install stores it. Forwarding it to the bridge defeated the hosted
+ * lobby: the bridge substitutes the compiled-in hosted base only for an EMPTY
+ * URL, and the placeholder is not empty. So the placeholder (and a blank value)
+ * now mean "no override", and any other value is the user's relay and wins.
+ */
+fun userSignalingUrl(settings: AppSettings): String {
+    val url = settings.npSignalingUrl.trim()
+    return if (url == NetplayEndpoints.SIGNALING_URL) "" else url
+}
+
+/**
+ * Whether room-code play can be attempted (v3.4.1): the user configured a relay,
+ * or this build carries a hosted base (`RUSTYNES_HOSTED_BASE`, which the bridge
+ * reports through [npHostedAvailable]). A build without a base and with no relay
+ * set (F-Droid, a plain source build) still shows the setup caveat.
+ */
+fun onlineNetplayConfigured(settings: AppSettings): Boolean {
+    val url = userSignalingUrl(settings)
+    // Empty: the hosted lobby, when this build has one. Otherwise the user's
+    // relay, which must be a WebSocket URL, as the iOS app requires (agy on
+    // #618): a malformed value no longer enables room codes it cannot serve.
+    if (url.isEmpty()) return npHostedAvailable()
+    // A scheme AND a host: a bare "ws://" is not a relay (CodeRabbit on #618).
+    return RELAY_URL.matches(url)
+}
+
+/** `ws://` or `wss://`, a host (not just `:port`), and no whitespace anywhere. */
+private val RELAY_URL = Regex("^wss?://[^/\\s?#:][^/\\s?#]*\\S*$", RegexOption.IGNORE_CASE)
+
+/**
  * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.
  * Empty STUN → the bridge falls back to Google's public STUN servers. TURN is only
  * configured when the URL + both credentials are present (else punch-or-fail).
@@ -92,7 +126,7 @@ fun netplayConfig(settings: AppSettings): NpNetConfig {
         turnUrl = turnUrl,
         turnUser = turnUser,
         turnSecret = turnSecret,
-        signalingUrl = settings.npSignalingUrl.trim(),
+        signalingUrl = userSignalingUrl(settings),
     )
 }
 
@@ -176,10 +210,20 @@ fun NetplaySheet(
                         color = Color.Gray,
                     )
                     if (!onlineConfigured) {
+                        // v3.4.1 (Cursor on #618): in a build with the hosted
+                        // lobby, "not configured" can only mean the relay URL
+                        // in Settings is not a WebSocket URL, and clearing it
+                        // is the fix, as the iOS app says.
                         Text(
-                            "Online play requires a relay server. None is configured yet, " +
-                                "so only LAN works until one is set in Settings → " +
-                                "Netplay (online).",
+                            if (npHostedAvailable()) {
+                                "The relay URL in Settings → Netplay (online) is not a " +
+                                    "wss:// (or ws://) address. Clear it to use the " +
+                                    "RustyNES hosted lobby, or correct it."
+                            } else {
+                                "Online play requires a relay server. None is configured yet, " +
+                                    "so only LAN works until one is set in Settings → " +
+                                    "Netplay (online)."
+                            },
                             fontSize = 12.sp,
                             color = Color(0xFFFFB300),
                         )
@@ -248,6 +292,9 @@ fun NetplaySheet(
                             Text("Players: 2", fontSize = 13.sp)
                             Button(
                                 onClick = onHostRoom,
+                                // Not with a relay URL the bridge cannot use
+                                // (v3.4.1), as iOS disables its room buttons.
+                                enabled = onlineConfigured,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text("Host online") }
                         }
@@ -274,7 +321,7 @@ fun NetplaySheet(
                                     onSaveRoomCode(code)
                                     onJoinRoom(code)
                                 },
-                                enabled = roomText.length == 6,
+                                enabled = roomText.length == 6 && onlineConfigured,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text("Join online") }
                         }

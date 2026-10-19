@@ -26,6 +26,83 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-10-19 - "Beacon" (the hosted lobby live (the TURN relay held off), the browser RetroAchievements build fixed, version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed)
+
+### Added
+
+- **The hosted lobby is live** (moved from v3.4.0 by the maintainer). The
+  netplay lobby runs on the maintainer's Cloudflare account, and the Pages build, the desktop release binaries (the profile-guided Linux build
+  included) and every Android and iOS build made by this project's CI (the
+  FOSS-flavour artifact too) are compiled with that base
+  (`RUSTYNES_HOSTED_BASE`). A `hosted_base_url` in the config still wins; builds
+  made elsewhere, F-Droid's own and plain source builds, are unchanged. On
+  Android and iOS a fresh install now hosts and joins room codes with no relay
+  set: the apps previously refused unless a relay URL was entered, and Android
+  sent its placeholder URL instead of letting the hosted lobby fill in.
+  The live gates passed on 2026-10-18: health check, the lobby test against the
+  live socket, the per-address limit, and the kill switch. **The TURN relay is
+  deployed switched off** (the maintainer's decision, 2026-10-19): Cloudflare
+  kept creating relay allocations for credentials that were past their
+  three-hour lifetime and even revoked through its own API, while refusing a
+  made-up one, so how long a leaked credential works could not be bounded.
+  Sessions connect directly (STUN), which covers most home networks; two
+  players behind strict NATs cannot connect until the relay returns. The Worker
+  now asks Cloudflare to revoke every credential at the end of its lifetime;
+  the revoke calls succeed, but whether that stops a credential being used is
+  unverified, so it is not counted on.
+  The RetroAchievements proxy is deployed switched off too, until
+  RetroAchievements answers the integration request.
+
+### Changed
+
+- **Dependencies at their newest compatible versions**: Rust 1.99.1 (from
+  1.99.0, with the libretro buildbot), every Cargo lockfile (sha2 0.11.1, tokio
+  1.53.3, serde_json 1.0.154, proptest 1.12, cc 1.8, arboard 3.7 among them,
+  the three open Dependabot updates folded in), the hosted Worker's toolchain
+  (TypeScript 7, vitest 5, wrangler 4.151), Python 3.15 for the handbook
+  build, and the newest pins of the CI actions.
+- **MiSTer release assets are version-named**: `RustyNES_MiSTer-<tag>.rbf`
+  (the off-die headline) and `RustyNES_MiSTer-<tag>-lite.rbf` (on-die). The
+  MiSTer repository's `releases/` keeps the dated names MiSTer's updater reads.
+  Every past release's bitstream assets were renamed to that form (the same
+  bytes) and their notes updated to match.
+
+### Fixed
+
+- **The browser RetroAchievements build loads rcheevos.** Three packaging
+  faults each stopped it: an empty `data-cargo-features` attribute in the web
+  page made `trunk build` ignore `--features` and `--no-default-features` (the
+  documented lightweight canvas build came out as the 12.6 MB default build;
+  it is now 1.3 MB), the glue imported rcheevos from a directory trunk does not
+  copy it to, and the rcheevos module had no ES-module export. Web
+  RetroAchievements stays off on the Pages demo for now.
+- **MiSTer save states on a cartridge change** (the v3.4.0 review's two
+  deferred findings): a load interrupted by a ROM download no longer writes one
+  byte outside its grant, and a manual save interrupted mid-write now leaves its
+  slot empty instead of a slot that a later load accepted with a mix of two
+  states.
+- **MiSTer build warnings**: the two findings `release-rbf.sh` refused v3.4.0's
+  bitstreams on (a Quartus width warning in the MMC2/MMC4 CHR slots and the
+  Zapper aim's constant ninth bit) are fixed with no change in behaviour or
+  save-state layout. The width warning came from the CHR register index, not
+  the slot index a first attempt changed; the release check found it, and the
+  bitstreams were rebuilt.
+- **The profile-guided Linux release binary**: when the PGO gate promoted, the
+  archive it replaced the plain Linux binary with was a test build, without
+  RetroAchievements, scripting or the other `full` features (a later stage
+  rebuilt the binary at the same path). The binary that was optimized is now
+  the one shipped, and it must carry the hosted base to be promoted. The release
+  history shows one promotion, v2.9.6 (2026-09-30): its Linux download lacks the
+  RetroAchievements client, and it is rebuilt from the v2.9.6 tag with the
+  full features after this release.
+- **Android and iOS netplay settings**: a custom relay must be a `ws://` or
+  `wss://` URL on Android as on iOS, Android's settings no longer show a
+  placeholder relay URL, and both apps explain that clearing the field returns
+  to the hosted lobby.
+- **Code scanning**: the PPU's emphasis table is now an ordinary Rust module
+  rather than an `include!`d expression, which CodeQL's Rust extractor failed
+  to parse (100 extraction errors, the largest share of those it reported).
+
 ## [3.4.0] - 2026-10-18 - "Waypoint" (authenticated netplay and three- and four-player desktop sessions, RetroAchievements hardcore to its full block list, the hosted services as code, about half the window-thread CPU, egui 0.37, and a MiSTer core whose headline build is off-die, with save states and rewind and Phase F3a's boards)
 
 ### Breaking

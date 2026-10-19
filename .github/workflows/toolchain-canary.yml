@@ -2,7 +2,7 @@ name: Toolchain canary
 
 # Early warning for toolchain drift, NOT a gate.
 #
-# The project pins a Rust release in rust-toolchain.toml (1.99.0 since v3.0.1;
+# The project pins a Rust release in rust-toolchain.toml (1.99.1 since v3.4.1, 1.99.0 from v3.0.1;
 # 1.96.0 before it, held from 2026-09-28 because the libretro buildbot image
 # passed `-C ar`, a hard error from 1.97; the image dropped it on 2026-09-03 and
 # the buildbot follows the pin again).

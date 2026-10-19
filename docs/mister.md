@@ -256,12 +256,11 @@ did not publish it.
 
 **Why the reversal is right.** The MiSTer distribution mechanism reads the
 `.rbf` out of the *repository*'s `releases/` — since v2.6.15 as
-`releases/RustyNES_YYYYMMDD.rbf`, the only form both MiSTer parsers accept, and
-under that name on the GitHub releases (a version-named copy,
-`RustyNES_MiSTer-vX.Y.Z.rbf`, was attached beside it from v2.6.15 to v3.4.0;
-on 2026-10-18 every copy with a same-digest datecoded twin was removed, while a
-version-named file with no such twin, an older release's only copy, was kept;
-the sibling's `docs/bitstream-release.md`) — so an empty
+`releases/RustyNES_YYYYMMDD.rbf`, the only form both MiSTer parsers accept (the
+GitHub releases carry the same bytes version-named, `RustyNES_MiSTer-vX.Y.Z.rbf`
+and, from v3.4.0, `RustyNES_MiSTer-vX.Y.Z-lite.rbf`; every release's assets
+were renamed to that form on 2026-10-18; the sibling's
+`docs/bitstream-release.md`) — so an empty
 `releases/` does not describe a cautious core — it describes an undistributable
 one, withheld from exactly the people who own the boards this project does not.
 And a claim nobody made is not the same as a claim marked unverified: only the

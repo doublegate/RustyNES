@@ -469,13 +469,12 @@ something as blocked, check the blocker applies to the WHOLE item.**
       is committed to the sibling's `releases/` (the date form is the only one
       `Distribution_MiSTer`'s builder and the `Main_MiSTer` core menu accept,
       measured against `Main_MiSTer/file_io.cpp` rather than the wiki's
-      paraphrase), and from v2.6.15 to v3.4.0 a version-named copy,
-      `RustyNES_MiSTer-vX.Y.Z.rbf`, was attached beside it on both repositories'
-      GitHub releases; on 2026-10-18 every such copy with a same-digest
-      datecoded twin in its release was removed (maintainer), and new releases
-      attach the datecoded files only. Version-named files with no twin (the
-      v2.6.7-v2.6.14 sibling releases, v2.6.7-v2.6.23 on the oracle, and every
-      `-offdie.rbf` through v3.3.0) are their releases' only copies and stay. Through v2.6.14 the version-named file was
+      paraphrase), and both repositories' GitHub releases carry the same bytes
+      version-named, `RustyNES_MiSTer-vX.Y.Z.rbf` (plus `-lite.rbf` from
+      v3.4.0). From v2.6.15 to v3.4.0 the releases carried both names; on
+      2026-10-18 the maintainer had the duplicates deleted and then every
+      remaining datecoded asset renamed to the version form, with the release
+      notes rewritten to match. Through v2.6.14 the version-named file was
       the one committed, a divergence from MiSTer's date convention that
       v2.6.15 closed (the sibling's `docs/bitstream-release.md`).
 - [x] Unique Home folder chosen — **since v2.6.7**, resolved against
@@ -489,3 +488,25 @@ something as blocked, check the blocker applies to the WHOLE item.**
       acceptance means the repo moves, and that is one-way
       **BLOCKED — on being accepted**, and then a maintainer decision rather
       than a task.
+
+## v3.4.2 — carried from the v3.4.1 reviews
+
+- [ ] **`T-MISTER-SS-ABANDON-STATES`: make the save engine's cartridge-change
+      comment true, and abandon before the first save word.** `rtl/savestate.sv`'s
+      abandonment block says it abandons "in any state that is not waiting on
+      the DDR mover", but the condition lists only `E_FREEZE`, `E_CHAIN_OUT`,
+      `E_MEM_OUT`, `E_CHAIN_IN`, `E_MEM_IN` and `E_SETTLE` (Antigravity on
+      sibling PR #67). Read against the RTL, the four states left out are not a
+      shipping defect: a load in `E_HDR_RD` / `E_GET` reaches a listed state, a
+      header refusal or its end within a few cycles, and `E_IDLE` empties the
+      rewind ring for as long as `cart_change` is high (the whole download);
+      `E_HDR_WR` completes a save whose every word was read before the change;
+      and `E_PUT` sends word 0, after which the slot really is damaged and the
+      `zap` that follows is right. Two changes remain worth making: correct the
+      comment to name the states and why the rest are safe, and add `E_PUT`
+      with `widx == 0` (straight after `E_FREEZE`) to the list, so a change that
+      arrives before any word is sent keeps the slot's previous state instead
+      of emptying it. Not done in v3.4.1: any `rtl/` edit, a comment included,
+      makes `release-rbf.sh` refuse the already-compiled bitstreams. Gate:
+      `ss-engine-gate` gains a case 9d (cart change on the first `E_PUT`: the
+      slot's previous state still loads), with its mutant caught.

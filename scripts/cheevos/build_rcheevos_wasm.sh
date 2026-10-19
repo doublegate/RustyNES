@@ -119,6 +119,7 @@ emcc "$work/librcheevos.a" -O3 \
   -sALLOW_TABLE_GROWTH=1 \
   -sALLOW_MEMORY_GROWTH=1 \
   -sMODULARIZE=1 \
+  -sEXPORT_ES6=1 \
   -sEXPORT_NAME=createRcheevosModule \
   -sENVIRONMENT=web \
   -o "$out/rcheevos.js"

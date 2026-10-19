@@ -156,8 +156,11 @@ export PATH=/usr/lib/emscripten:$PATH
 
 # 2. Build the Rust frontend with the feature on (wasm-only, default OFF).
 cargo build -p rustynes-frontend --target wasm32-unknown-unknown --features browser-cheevos
-#   ... or via trunk, adding `--features browser-cheevos` to the rust link in
-#   web/index.html (and a `<script type="module" src="./cheevos/ra_glue.js">`).
+#   ... or `trunk build --release --features browser-cheevos`, then copy
+#   rcheevos.js + rcheevos.wasm into dist/cheevos/. No <script> tag: the glue is
+#   bundled by #[wasm_bindgen(module = ...)]. (Until v3.4.1 this said to add one,
+#   and an empty data-cargo-features in index.html made trunk ignore --features.)
+#   Full steps, measured in a browser: web/cheevos/README.md.
 ```
 
 ## Status + remaining maintainer-manual steps
@@ -194,13 +197,16 @@ and a live RA login (below).
 1. **Stand the proxy up on a real host** — `docker compose up` in `deploy/` with
    `RA_USER_AGENT`/`RA_ALLOWED_ORIGINS` set (TLS via Caddy), and coordinate the
    exact `User-Agent` + casual-only intent with the RA team. Then set
-   `RA_PROXY_BASE` in `web/cheevos/ra_glue.js` to `https://<DOMAIN>/ra`. The
+   `<meta name="rustynes-ra-proxy-base">` in the page to `https://<DOMAIN>/ra`
+   (the glue's `resolveProxyBase()` reads it). The
    service + config are code-complete (`deploy/README.md` §"Browser
    RetroAchievements"); only running it on a live host + the RA-team coordination
    remain.
 2. **Live-browser verification with a real RA account** — build with
-   `--features browser-cheevos`, add the `<script type="module" src="./cheevos/ra_glue.js">`
-   to `web/index.html`, build the side module, log in through the deployed proxy,
+   `--features browser-cheevos`, build the side module and copy it into
+   `dist/cheevos/` (`web/cheevos/README.md`, "Wiring it into the page"; this
+   step said to add a `<script>` tag to `web/index.html`, which is not needed),
+   log in through the deployed proxy,
    and confirm a casual unlock in a real browser. CI cannot do this (it needs a
    human, a live RA login, and the deployed proxy). This is the acceptance gate
    for flipping ADR 0015 to fully Implemented; native RA is unaffected. The

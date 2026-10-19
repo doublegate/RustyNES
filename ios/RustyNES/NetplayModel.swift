@@ -71,11 +71,21 @@ final class NetplayModel: ObservableObject {
     }
 
     /// Whether the signaling URL is configured well enough to attempt room-code play.
+    ///
+    /// v3.4.1: an EMPTY URL is also enough when this build carries a hosted base
+    /// (`RUSTYNES_HOSTED_BASE`, reported by the bridge's `npHostedAvailable()`):
+    /// the bridge then uses the hosted lobby, which it does only for an empty URL.
+    /// An explicit URL is still checked for a WebSocket scheme and wins, and a
+    /// build without a base still asks for one.
     var signalingConfigured: Bool {
         // Trim newlines too so a trailing CR/LF from a copy-pasted URL doesn't slip
         // through (and later break the connection). `ws://` stays valid for LAN relays.
         let u = signalingURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        return u.hasPrefix("wss://") || u.hasPrefix("ws://")
+        if u.isEmpty { return npHostedAvailable() }
+        // A scheme AND a host: a bare "ws://" is not a relay (v3.4.1).
+        guard let url = URL(string: u), let scheme = url.scheme,
+              ["ws", "wss"].contains(scheme.lowercased()), let host = url.host, !host.isEmpty else { return false }
+        return true
     }
 
     private weak var core: EmulatorCore?
@@ -237,7 +247,10 @@ final class NetplayModel: ObservableObject {
     }
 
     private var signalingHint: String {
-        "Set a signaling relay URL (wss://...) in Settings > Netplay before using room codes."
+        // v3.4.1: with the hosted lobby, an invalid URL is fixed by clearing it.
+        npHostedAvailable()
+            ? "The signaling relay URL must start with wss:// (or ws://). Clear it in Settings > Netplay to use the RustyNES hosted lobby."
+            : "Set a signaling relay URL (wss://...) in Settings > Netplay before using room codes."
     }
 
     /// Build the bridge `NpNetConfig` from the persisted settings: a required signaling

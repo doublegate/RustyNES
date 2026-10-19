@@ -3716,6 +3716,22 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// v3.4.1 — whether this build carries a hosted netplay base
+/// (`RUSTYNES_HOSTED_BASE` at compile time; see [`rustynes_netplay::hosted`]).
+///
+/// The shells gate room-code play on it. `NpNetConfig::to_nat_config`
+/// already treats an EMPTY signaling URL as "use the hosted lobby" when a base
+/// is compiled in, but both apps refused to get that far: Android forwarded its
+/// placeholder relay URL (non-empty, so never substituted) and disabled the
+/// room-code buttons on it, and iOS accepted only an explicit `ws://` /
+/// `wss://` URL. With this, a fresh install of a build that carries a base can
+/// host and join with no setup, an explicit user URL still wins, and a build
+/// without a base (F-Droid, a plain source build) behaves exactly as before.
+#[uniffi::export]
+pub fn np_hosted_available() -> bool {
+    rustynes_netplay::hosted::resolve_base("").is_some()
+}
+
 /// v2.9.9 (re-audit NF-21) — the identity of `rom`, without building a console.
 ///
 /// It is what [`NesController::rom_identity`] reports for a console built
@@ -5797,6 +5813,19 @@ mod tests {
                 username: "hosted-user".into(),
                 credential: "hosted-cred".into(),
             }
+        }
+
+        /// v3.4.1: the shells' room-code gate reports exactly whether a base
+        /// is compiled in. The value is the build's, so the assertion is too:
+        /// a stock (CI) build reports false, a release build true.
+        #[test]
+        fn hosted_availability_follows_the_compiled_base() {
+            assert_eq!(
+                np_hosted_available(),
+                rustynes_netplay::hosted::BUILD_HOSTED_BASE
+                    .and_then(rustynes_netplay::hosted::normalize_base)
+                    .is_some()
+            );
         }
 
         #[test]

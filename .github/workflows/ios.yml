@@ -67,6 +67,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # v3.4.1: bake the deployed hosted services (lobby + TURN credentials,
+  # services/hosted/) into every shipped build. `rustynes-netplay` reads it
+  # with option_env!, so it is a COMPILE-time setting; a build without it
+  # keeps the v3.4.0 behaviour (no hosted base, direct and LAN play only).
+  # A user's `hosted_base_url` config still overrides it. ci.yml leaves it
+  # unset on purpose: hosted.rs's default-behaviour test needs it absent.
+  RUSTYNES_HOSTED_BASE: "https://rustynes-hosted.parobek.workers.dev"
 
 jobs:
   testflight:

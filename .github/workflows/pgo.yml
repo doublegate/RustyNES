@@ -62,6 +62,16 @@ on:
         required: false
         default: "3600"
         type: string
+      # v3.4.1: the hosted base the shipped binary is compiled with. A called
+      # workflow does not inherit the caller's workflow-level `env:`, so without
+      # this the promoted PGO archive replaced release.yml's Linux binary with
+      # one built WITHOUT the base (Copilot / Antigravity on #618). Empty (the
+      # default, and every workflow_dispatch run) leaves it unset.
+      hosted_base:
+        description: "RUSTYNES_HOSTED_BASE for the optimized build (empty = none)."
+        required: false
+        default: ""
+        type: string
     outputs:
       promotable:
         description: "'true' when the PGO build cleared BOTH the >3% speedup bar and the byte-identical determinism oracle."
@@ -108,7 +118,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Pinned to the project toolchain (rust-toolchain.toml = 1.99.0), matching
+      # Pinned to the project toolchain (rust-toolchain.toml = 1.99.1), matching
       # the other jobs. PGO needs the llvm-tools-preview component (profdata
       # merge) and the wgpu/winit/cpal apt deps (the optimized rebuild links the
       # full `rustynes-frontend` binary).
@@ -149,7 +159,23 @@ jobs:
       - name: PGO instrument + train + optimized rebuild
         env:
           PGO_FRAMES: ${{ inputs.frames || '3600' }}
-        run: scripts/pgo/run.sh "$PGO_FRAMES"
+          HOSTED_BASE: ${{ inputs.hosted_base }}
+        # Exported only when non-empty: `option_env!` would read an empty
+        # string as a (normalised-away) value rather than as "unset".
+        run: |
+          if [ -n "$HOSTED_BASE" ]; then export RUSTYNES_HOSTED_BASE="$HOSTED_BASE"; fi
+          scripts/pgo/run.sh "$PGO_FRAMES"
+          # Keep THIS binary (v3.4.1). Stage 4's `cargo test --workspace`
+          # rebuilds `rustynes` at the same path, because cargo builds a
+          # package's binaries for its integration tests, and it does so
+          # with `--features test-roms` only and no hosted base. Until v3.4.1
+          # the upload below read that path, so a promoted PGO archive
+          # carried the test build: no `full` features (RetroAchievements,
+          # scripting, HD packs) and, once v3.4.1 baked a base in, no hosted
+          # lobby either (agy on #618). The copy is what ships.
+          triple="$(rustc -vV | sed -n 's/host: //p')"
+          mkdir -p pgo-out
+          cp "target/${triple}/release/rustynes" pgo-out/rustynes
 
       # ---- Stage 3: PGO full_frame bench (A/B vs the `plain` baseline) ---
       - name: PGO full_frame bench
@@ -181,6 +207,8 @@ jobs:
       # ---- Stage 5: compute delta + decide promotion --------------------
       - name: Compute speedup + promotion decision
         id: gate
+        env:
+          HOSTED_BASE: ${{ inputs.hosted_base }}
         run: |
           base_ns="${{ steps.baseline.outputs.mean_ns }}"
           pgo_est="target/criterion/nes_run_frame_nestest/pgo/estimates.json"
@@ -201,12 +229,20 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           faster="$(python3 -c "print('1' if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else '0')")"
-          if [ "${faster}" = "1" ] && [ "${{ steps.oracle.outputs.oracle_ok }}" = "true" ]; then
+          # The kept binary must carry the base it was asked for (v3.4.1):
+          # `option_env!` compiles the URL in as a literal, so it is in the
+          # file. A miss refuses promotion rather than failing the job.
+          base_ok=1
+          if [ -n "$HOSTED_BASE" ] && ! grep -aqF "$HOSTED_BASE" pgo-out/rustynes; then
+            base_ok=0
+            echo "| Hosted base in binary | MISSING (${HOSTED_BASE}) |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${faster}" = "1" ] && [ "${base_ok}" = "1" ] && [ "${{ steps.oracle.outputs.oracle_ok }}" = "true" ]; then
             echo "promotable=true" >> "$GITHUB_OUTPUT"
             echo "PROMOTE: PGO is ${speedup}% faster (> ${PGO_MIN_SPEEDUP_PCT}%) AND byte-identical." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo "promotable=false" >> "$GITHUB_OUTPUT"
-            echo "NO PROMOTE: speedup ${speedup}% (need > ${PGO_MIN_SPEEDUP_PCT}%) / oracle=${{ steps.oracle.outputs.oracle_ok }}." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "NO PROMOTE: speedup ${speedup}% (need > ${PGO_MIN_SPEEDUP_PCT}%) / oracle=${{ steps.oracle.outputs.oracle_ok }} / hosted base present=${base_ok}." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
       # ---- Stage 6: upload the PGO binary ONLY when promotable ----------
@@ -231,7 +267,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rustynes-pgo-${{ steps.triple.outputs.triple }}
-          path: target/${{ steps.triple.outputs.triple }}/release/rustynes
+          # The Stage 2 copy, not target/: see "Keep THIS binary" above.
+          path: pgo-out/rustynes
           if-no-files-found: error
 
   # ---- Optional Linux-only BOLT post-link stage ----------------------------

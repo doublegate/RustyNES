@@ -118,7 +118,8 @@
     <string name="settings_log_in">Iniciar sesión</string>
     <string name="settings_hardcore_mode">Modo hardcore</string>
     <string name="settings_netplay_online">Juego en red (en línea)</string>
-    <string name="settings_netplay_online_hint">El juego con código de sala necesita un servidor de retransmisión. La URL predeterminada es un marcador de posición: configura tu relé de señalización para habilitarlo.</string>
+    <string name="settings_netplay_online_hint">El juego con código de sala necesita un relé de señalización. Introduce su dirección (wss://…) para habilitarlo.</string>
+    <string name="settings_netplay_online_hint_hosted">El juego con código de sala usa por defecto el lobby alojado de RustyNES. Introduce tu propio relé de señalización o servidor TURN solo para sustituirlo.</string>
     <string name="settings_signaling_url">URL de señalización (wss://…)</string>
     <string name="settings_turn_url">URL TURN (opcional, host:puerto)</string>
     <string name="settings_turn_user">Usuario TURN (opcional)</string>

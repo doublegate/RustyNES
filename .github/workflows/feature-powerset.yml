@@ -48,7 +48,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: feature-powerset
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: taiki-e/install-action@v2.87.29
         with:
           tool: cargo-hack
       - name: Every combination to depth 2

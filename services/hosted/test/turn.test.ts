@@ -6,10 +6,10 @@
 // 3 per IP per hour); wrangler.jsonc holds the deployed ones.
 
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
-import { utcDay } from "../src/budget";
+import { REVOKE_GIVE_UP_MS, utcDay } from "../src/budget";
 import type { Env } from "../src/env";
 import { DEFAULT_TTL, TURN_API, handleTurn, sanitizeIceServers } from "../src/turn";
 
@@ -252,5 +252,154 @@ describe("sanitizeIceServers", () => {
     expect(sanitizeIceServers({ iceServers: [{ urls: ["http://x"] }] })).toBeUndefined();
     expect(sanitizeIceServers(null)).toBeUndefined();
     expect(sanitizeIceServers({ iceServers: "x" })).toBeUndefined();
+  });
+});
+
+// v3.4.1 (T-HOSTED-TURN-EXPIRY): Cloudflare kept honouring credentials past the
+// TTL the Worker requested (a 3-hour credential 2 h 38 min after expiry, a
+// 600 s one 6.6 min after), so the Worker revokes each one itself when its
+// TTL ends, through Cloudflare's revoke endpoint, from the budget object's
+// alarm.
+describe("revocation", () => {
+  const budget = () => env.BUDGET.getByName("global");
+  const revokeUrl = (u: string) => `${TURN_API}/test-key-id/credentials/${u}/revoke`;
+  const pending = () =>
+    runInDurableObject(budget(), async (_obj, state) => [...(await state.storage.list({ prefix: "revoke:" })).entries()]);
+  const seed = (dueMs: number, username: string, attempts = 0) =>
+    runInDurableObject(budget(), async (_obj, state) => {
+      await state.storage.put(`revoke:${String(dueMs).padStart(15, "0")}:${username}`, { attempts });
+      // As scheduleRevoke does: the alarm must be armed for it to run. But
+      // never in the past: workerd fires a past-due alarm by itself, which
+      // races the test's own runDurableObjectAlarm (a red CI run on ce80d0fb:
+      // the alarm had already run, so the explicit one returned false).
+      // runDurableObjectAlarm runs an armed alarm at once whatever its time.
+      const armAt = Math.max(dueMs, Date.now() + 60_000);
+      const alarm = await state.storage.getAlarm();
+      if (alarm === null || alarm > armAt) await state.storage.setAlarm(armAt);
+    });
+
+  it("minting schedules the credential's revocation at its expiry", async () => {
+    mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
+    const resp = await call(freshIp());
+    const body = (await resp.json()) as { expiresAt: number };
+    const rows = await pending();
+    expect(rows.map(([k]) => k)).toEqual([`revoke:${String(body.expiresAt * 1000).padStart(15, "0")}:u-short-lived`]);
+    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(body.expiresAt * 1000);
+  });
+
+  it("a failed mint schedules nothing", async () => {
+    mockUpstream(() => new Response("nope", { status: 500 }));
+    expect((await call(freshIp())).status).toBe(502);
+    expect(await pending()).toEqual([]);
+  });
+
+  it("the alarm revokes every due credential with the key's token, and only due ones", async () => {
+    const spy = mockUpstream(() => new Response(null, { status: 204 }));
+    const now = Date.now();
+    await seed(now - 1000, "due-a");
+    await seed(now - 500, "due-b");
+    await seed(now + 3_600_000, "later");
+    expect(await runDurableObjectAlarm(budget())).toBe(true);
+    const calls = spy.mock.calls.map(([u, i]) => [String(u), (i as RequestInit).method, ((i as RequestInit).headers as Record<string, string>).Authorization]);
+    expect(calls).toEqual([
+      [revokeUrl("due-a"), "POST", "Bearer test-api-token"],
+      [revokeUrl("due-b"), "POST", "Bearer test-api-token"],
+    ]);
+    expect((await pending()).map(([k]) => k.split(":").pop())).toEqual(["later"]);
+    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
+    expect(alarm).toBe(now + 3_600_000);
+  });
+
+  it("a credential Cloudflare no longer knows (404) is done too", async () => {
+    mockUpstream(() => new Response("not found", { status: 404 }));
+    await seed(Date.now() - 1, "gone");
+    await runDurableObjectAlarm(budget());
+    expect(await pending()).toEqual([]);
+  });
+
+  it("a failed revocation backs off and is kept until 48 h past its expiry", async () => {
+    mockUpstream(() => new Response("busy", { status: 503 }));
+    const due = Date.now() - 1;
+    await seed(due, "flaky");
+    await runDurableObjectAlarm(budget());
+    let rows = await pending();
+    expect(rows.length).toBe(1);
+    expect(rows[0][1]).toEqual({ attempts: 1, dueMs: due });
+    // Re-keyed under the next attempt, 5 minutes on.
+    const retryAt = Number(rows[0][0].split(":")[1]);
+    expect(retryAt - Date.now()).toBeGreaterThan(4 * 60_000);
+    expect(retryAt - Date.now()).toBeLessThanOrEqual(5 * 60_000);
+
+    // Still failing, but not yet 48 h past expiry: kept.
+    await runInDurableObject(budget(), async (_obj, state) => {
+      await state.storage.deleteAll();
+    });
+    await seed(Date.now() - 1, "flaky");
+    await runInDurableObject(budget(), async (_obj, state) => {
+      const [k] = [...(await state.storage.list({ prefix: "revoke:" })).keys()];
+      await state.storage.put(k, { attempts: 40, dueMs: Date.now() - REVOKE_GIVE_UP_MS + 60_000 });
+    });
+    await runDurableObjectAlarm(budget());
+    rows = await pending();
+    expect(rows.length).toBe(1);
+
+    // Past 48 h: given up.
+    await runInDurableObject(budget(), async (_obj, state) => {
+      const [k] = [...(await state.storage.list({ prefix: "revoke:" })).keys()];
+      await state.storage.delete(k);
+    });
+    await seed(Date.now() - 1, "ancient");
+    await runInDurableObject(budget(), async (_obj, state) => {
+      const [k] = [...(await state.storage.list({ prefix: "revoke:" })).keys()];
+      await state.storage.put(k, { attempts: 3, dueMs: Date.now() - REVOKE_GIVE_UP_MS - 1 });
+    });
+    await runDurableObjectAlarm(budget());
+    expect(await pending()).toEqual([]);
+  });
+
+  it("a refused token (401/403) is retried hourly without using up attempts", async () => {
+    for (const status of [401, 403]) {
+      await runInDurableObject(budget(), async (_obj, state) => {
+        await state.storage.deleteAll();
+      });
+      vi.restoreAllMocks();
+      mockUpstream(() => new Response("no", { status }));
+      await seed(Date.now() - 1, "cfg");
+      await runDurableObjectAlarm(budget());
+      const rows = await pending();
+      expect(rows.length, String(status)).toBe(1);
+      expect((rows[0][1] as { attempts: number }).attempts, String(status)).toBe(0);
+      const retryAt = Number(rows[0][0].split(":")[1]);
+      expect(retryAt - Date.now(), String(status)).toBeGreaterThan(59 * 60_000);
+    }
+  });
+
+  it("an admission arms the hourly sweep even when a revocation alarm is set hours out", async () => {
+    // CodeRabbit on #618: admit() armed the sweep only when no alarm existed,
+    // so a pending revocation 3 h out kept a salted IP hash past PRIVACY.md's
+    // "at most two hours".
+    await seed(Date.now() + 3 * 3_600_000, "later");
+    mockUpstream(() => Response.json(UPSTREAM_OK, { status: 201 }));
+    expect((await call(freshIp())).status).toBe(200);
+    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(Date.now() + 3_600_000);
+  });
+
+  it("a credential scheduled while the alarm awaits Cloudflare keeps its earlier alarm", async () => {
+    const soon = Date.now() + 120_000;
+    mockUpstream(async () => {
+      // A mint lands while the alarm is mid-revocation.
+      await budget().scheduleRevoke(["minted-meanwhile"], soon);
+      return new Response(null, { status: 204 });
+    });
+    await seed(Date.now() - 1, "due");
+    await runDurableObjectAlarm(budget());
+    expect((await pending()).map(([k]) => k.split(":").pop())).toEqual(["minted-meanwhile"]);
+    const alarm = await runInDurableObject(budget(), (_obj, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(soon);
   });
 });

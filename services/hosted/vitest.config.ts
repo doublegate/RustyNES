@@ -25,6 +25,15 @@ export default defineConfig({
           RA_PER_IP_PER_HOUR: "10",
           RA_LOGINS_PER_IP_PER_HOUR: "3",
           RA_DAILY_CAP: "15",
+          // The deployed proxy is off until RetroAchievements answers the
+          // integration request (wrangler.jsonc, v3.4.1); the proxy itself is
+          // still under test, so the tests switch it on. ra.test.ts's
+          // kill-switch case sets "false" itself.
+          RA_ENABLED: "true",
+          // TURN is deployed off too (wrangler.jsonc, v3.4.1); its code stays
+          // under test, so the tests switch it on. The kill-switch test sets
+          // "false" itself.
+          TURN_ENABLED: "true",
         },
       },
     }),

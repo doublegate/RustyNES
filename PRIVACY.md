@@ -1,6 +1,6 @@
 # RustyNES privacy policy
 
-Effective 2026-10-16 (v3.4.0). Published at
+Effective 2026-10-19 (v3.4.1). Published at
 <https://doublegate.github.io/RustyNES/privacy/>; the source is `PRIVACY.md` in
 the [RustyNES repository](https://github.com/doublegate/RustyNES), and its
 history there is the record of every change.
@@ -75,7 +75,16 @@ Cloudflare's TURN relay.
   over, so it is kept for at most two hours. It also keeps a single number per
   day, the count of credentials issued, which is not linked to anyone and is
   deleted within an hour after that day ends (UTC). The credentials it returns
-  expire after three hours and are not stored by the service.
+  are meant to expire after their lifetime (three hours as deployed; the
+  service allows up to 24). The relay provider does not enforce that by
+  itself, so the service keeps each credential's username (a random identifier
+  the provider issues, with no link to you or your address) until the
+  lifetime is up, then asks the provider to revoke the credential and deletes
+  the username once the provider confirms. If the provider does not confirm,
+  the request is retried and the username kept for at most 48 hours after the
+  credential's lifetime ends, then deleted. The secret half of the credential
+  is not stored. **Since v3.4.1 the relay is switched off**, so no credentials
+  are issued and none of this is kept.
 - **The relay receives:** the game traffic of a relayed session (controller
   input and synchronisation messages, roughly 22 MB per player per hour) and
   the IP addresses of both ends. It does not receive the game itself, your

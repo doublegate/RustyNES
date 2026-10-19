@@ -104,12 +104,58 @@ let _readByte = null;
 // JS objects here; ra_do_frame serializes + clears it each frame.
 let _events = [];
 
+// Where `rcheevos.js` and `rcheevos.wasm` are served from (v3.4.1). This file
+// is not served from `web/cheevos/`: `#[wasm_bindgen(module = ...)]` makes trunk
+// emit it as a snippet, `snippets/<crate>-<hash>/web/cheevos/ra_glue.js`, and
+// nothing copies the Emscripten module there, so the `import("./rcheevos.js")`
+// this used to do resolved inside `snippets/` and 404ed (found by building
+// with the feature and listing `dist/`). The module is therefore resolved
+// against the PAGE: `<meta name="rustynes-rcheevos-base" content="...">` when
+// present, else `cheevos/` beside the page, where the deploy copies it.
+// The value is trimmed, as resolveProxyBase() trims its own, so a stray space
+// in the attribute neither breaks the URL nor turns a blank value into a base
+// (agy on #618). Exported for services/hosted/test/ra-glue.test.ts.
+export function rcheevosBase() {
+  const meta = globalThis.document?.querySelector?.('meta[name="rustynes-rcheevos-base"]');
+  const raw = meta?.getAttribute("content")?.trim() || "cheevos/";
+  const pageBase = globalThis.document?.baseURI ?? globalThis.location?.href;
+  // A malformed value falls back to the default rather than throwing out of
+  // ra_init (agy on #618), as resolveProxyBase() refuses a bad proxy base.
+  for (const candidate of [raw, "cheevos/"]) {
+    try {
+      return new URL(candidate.endsWith("/") ? candidate : candidate + "/", pageBase).href;
+    } catch {
+      // try the next candidate
+    }
+  }
+  return "cheevos/";
+}
+
 // Instantiate the Emscripten rcheevos module. Resolves once the wasm is ready.
+//
+// The IN-FLIGHT promise is cached, not only the finished module (agy on #618):
+// ra_init() and ra_rcheevos_version() can both be called before the first load
+// finishes, and caching only the result let each of them import and
+// instantiate its own rcheevos.wasm. A failed load clears the cache so the next
+// call can retry.
+let _moduleLoading = null;
 async function loadModule() {
   if (_module) return _module;
-  const { default: createRcheevosModule } = await import("./rcheevos.js");
-  _module = await createRcheevosModule();
-  return _module;
+  if (!_moduleLoading) {
+    _moduleLoading = (async () => {
+      const base = rcheevosBase();
+      const { default: createRcheevosModule } = await import(new URL("rcheevos.js", base).href);
+      // `locateFile` points the loader at `rcheevos.wasm` beside it; by default
+      // Emscripten resolves the .wasm against its own script, which is right only
+      // when nothing moved, and saying it here keeps both paths in one place.
+      _module = await createRcheevosModule({ locateFile: (path) => new URL(path, base).href });
+      return _module;
+    })().catch((e) => {
+      _moduleLoading = null;
+      throw e;
+    });
+  }
+  return _moduleLoading;
 }
 
 // --- The rc_client C trampolines (wasm function-table entries) --------------

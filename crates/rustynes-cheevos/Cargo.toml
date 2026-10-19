@@ -37,4 +37,4 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 # default targets, but 32-bit on 32-bit Android (armeabi-v7a, opt-in in
 # `android/app/build.gradle.kts`) and 32-bit glibc, where a hard-coded `i64`
 # would shift every later field and grow the struct.
-libc = "0.2.189"
+libc = "0.2.191"
