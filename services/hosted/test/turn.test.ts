@@ -268,9 +268,14 @@ describe("revocation", () => {
   const seed = (dueMs: number, username: string, attempts = 0) =>
     runInDurableObject(budget(), async (_obj, state) => {
       await state.storage.put(`revoke:${String(dueMs).padStart(15, "0")}:${username}`, { attempts });
-      // As scheduleRevoke does: the alarm must be armed for it to run.
+      // As scheduleRevoke does: the alarm must be armed for it to run. But
+      // never in the past: workerd fires a past-due alarm by itself, which
+      // races the test's own runDurableObjectAlarm (a red CI run on ce80d0fb:
+      // the alarm had already run, so the explicit one returned false).
+      // runDurableObjectAlarm runs an armed alarm at once whatever its time.
+      const armAt = Math.max(dueMs, Date.now() + 60_000);
       const alarm = await state.storage.getAlarm();
-      if (alarm === null || alarm > dueMs) await state.storage.setAlarm(dueMs);
+      if (alarm === null || alarm > armAt) await state.storage.setAlarm(armAt);
     });
 
   it("minting schedules the credential's revocation at its expiry", async () => {
