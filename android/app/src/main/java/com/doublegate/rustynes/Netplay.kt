@@ -99,8 +99,14 @@ fun userSignalingUrl(settings: AppSettings): String {
  * reports through [npHostedAvailable]). A build without a base and with no relay
  * set (F-Droid, a plain source build) still shows the setup caveat.
  */
-fun onlineNetplayConfigured(settings: AppSettings): Boolean =
-    userSignalingUrl(settings).isNotEmpty() || npHostedAvailable()
+fun onlineNetplayConfigured(settings: AppSettings): Boolean {
+    val url = userSignalingUrl(settings)
+    // Empty: the hosted lobby, when this build has one. Otherwise the user's
+    // relay, which must be a WebSocket URL, as the iOS app requires (agy on
+    // #618): a malformed value no longer enables room codes it cannot serve.
+    if (url.isEmpty()) return npHostedAvailable()
+    return url.startsWith("wss://") || url.startsWith("ws://")
+}
 
 /**
  * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.

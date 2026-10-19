@@ -1517,7 +1517,10 @@ fn every_shipped_build_compiles_the_same_hosted_base() {
             .filter_map(|l| {
                 let t = l.trim();
                 let rest = t.strip_prefix(key)?.trim_start().strip_prefix(':')?;
-                Some(rest.trim().trim_matches('"').to_string())
+                // A trailing YAML comment and either quote style are not
+                // part of the value (agy on #618).
+                let rest = rest.split(" #").next().unwrap_or(rest).trim();
+                Some(rest.trim_matches(|c| c == '"' || c == '\'').to_string())
             })
             .collect()
     }
@@ -1552,10 +1555,23 @@ fn every_shipped_build_compiles_the_same_hosted_base() {
             seen[0].0
         );
     }
+    // pgo.yml must export the input to the optimized build, KEEP that binary
+    // before Stage 4's `cargo test --workspace` rebuilds the same path with
+    // test features and no base, upload the kept copy, and refuse promotion
+    // when the copy lacks the base (agy on #618: a substring check alone let
+    // the overwrite through).
     let pgo_wf = read(".github/workflows/pgo.yml");
+    for needle in [
+        "RUSTYNES_HOSTED_BASE=\"$HOSTED_BASE\"",
+        "cp \"target/${triple}/release/rustynes\" pgo-out/rustynes",
+        "path: pgo-out/rustynes",
+        "grep -aqF \"$HOSTED_BASE\" pgo-out/rustynes",
+    ] {
+        assert!(pgo_wf.contains(needle), "pgo.yml must contain {needle:?}");
+    }
     assert!(
-        pgo_wf.contains("RUSTYNES_HOSTED_BASE=\"$HOSTED_BASE\""),
-        "pgo.yml must export the hosted_base input to the optimized build"
+        !pgo_wf.contains("path: target/${{ steps.triple.outputs.triple }}/release/rustynes"),
+        "pgo.yml must not upload target/<triple>/release/rustynes, which Stage 4 overwrites"
     );
     let ci = read(".github/workflows/ci.yml");
     assert!(

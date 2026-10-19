@@ -244,7 +244,10 @@ final class NetplayModel: ObservableObject {
     }
 
     private var signalingHint: String {
-        "Set a signaling relay URL (wss://...) in Settings > Netplay before using room codes."
+        // v3.4.1: with the hosted lobby, an invalid URL is fixed by clearing it.
+        npHostedAvailable()
+            ? "The signaling relay URL must start with wss:// (or ws://). Clear it in Settings > Netplay to use the RustyNES hosted lobby."
+            : "Set a signaling relay URL (wss://...) in Settings > Netplay before using room codes."
     }
 
     /// Build the bridge `NpNetConfig` from the persisted settings: a required signaling

@@ -343,7 +343,10 @@ private struct NetplaySettingsView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                 if !netplay.signalingConfigured {
-                    Label("Enter a relay URL (wss://; ws:// only for local testing).", systemImage: "exclamationmark.triangle")
+                    Label(npHostedAvailable()
+                          ? "Enter a wss:// relay URL, or clear the field to use the hosted lobby."
+                          : "Enter a relay URL (wss://; ws:// only for local testing).",
+                          systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }

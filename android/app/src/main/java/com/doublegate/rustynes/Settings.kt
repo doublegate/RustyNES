@@ -258,11 +258,14 @@ class AppSettings(context: Context) {
     // config. Empty STUN falls back to the bridge's public Google STUN list.
 
     /** The signaling relay URL — pathless `wss://<DOMAIN>` (the `deploy/Caddyfile`
-     *  proxies the WebSocket at the site root, no `/ws` segment). Placeholder
-     *  default until the maintainer hosts the `deploy/` stack and replaces it. */
+     *  proxies the WebSocket at the site root, no `/ws` segment). Empty means
+     *  "no override": the hosted lobby in a build that carries one, otherwise
+     *  unconfigured. v3.4.1: the default was the placeholder
+     *  [NetplayEndpoints.SIGNALING_URL], which then sat in the Settings field
+     *  as if it were a real relay; a stored placeholder now reads as empty. */
     var npSignalingUrl: String
-        get() = prefs.getString("npSignalingUrl", NetplayEndpoints.SIGNALING_URL)
-            ?: NetplayEndpoints.SIGNALING_URL
+        get() = (prefs.getString("npSignalingUrl", "") ?: "")
+            .let { if (it.trim() == NetplayEndpoints.SIGNALING_URL) "" else it }
         set(v) { prefs.edit().putString("npSignalingUrl", v).apply() }
 
     /** Optional TURN relay `host:port` for the symmetric-NAT fallback (empty =
