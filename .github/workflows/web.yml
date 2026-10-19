@@ -163,9 +163,13 @@ jobs:
       # than straight into `_site/docs`, because the assemble step below clears +
       # recreates `_site`.
       - name: Set up Python for MkDocs
+        # 3.15 from v3.4.1 (3.15.0 released 2026-10-09). Verified before the
+        # move: `mkdocs-material[imaging]` installs from wheels on 3.15.0
+        # (Pillow 13.0.0, cairosvg, MkDocs 1.6.1) and `mkdocs build --strict`
+        # completes with no warning.
         uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install the social-card image libraries (Cairo + Pango)
         # Required by the mkdocs-material `social` plugin's PNG renderer.

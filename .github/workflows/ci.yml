@@ -252,7 +252,7 @@ jobs:
   # spin-ups vs three separate jobs. fmt runs first (it compiles nothing), so
   # a formatting slip still fails in seconds.
   #
-  # Pinned to the project toolchain (rust-toolchain.toml = 1.99.0), NOT a
+  # Pinned to the project toolchain (rust-toolchain.toml = 1.99.1), NOT a
   # floating `stable`: clippy adds lints every release, so `stable` makes the
   # lint gate drift and break on a toolchain bump. Pinning ALSO makes the
   # rustdoc gate match local `cargo doc` exactly (rust-toolchain.toml pins the
@@ -845,7 +845,7 @@ jobs:
       # must move together: v3.0.1 briefly held the buildbot on 1.96.0 (the
       # build image's `-C ar`, a hard error from 1.97) and lifted the hold the
       # same release once the image dropped the flag (pipeline 119614, 15/15
-      # on 1.99.0). The check keeps a drift from being found on the buildbot
+      # on 1.99.0; 1.99.1 at v3.4.1). The check keeps a drift from being found on the buildbot
       # after merge. `.github/` still carries no version literal
       # (`docs/agents/ci-and-release.md`). Both parsers are table-scoped and
       # fail-closed, like `rust-setup`'s own resolver.
@@ -1073,7 +1073,7 @@ jobs:
           toolchain: nightly
           apt: "false"
           cache-key: fuzz
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: taiki-e/install-action@v2.87.29
         with:
           tool: cargo-fuzz
       - name: Build and run every fuzz target
@@ -1137,7 +1137,7 @@ jobs:
         with:
           components: llvm-tools-preview
           cache-key: coverage
-      - uses: taiki-e/install-action@v2.87.28
+      - uses: taiki-e/install-action@v2.87.29
         with:
           tool: cargo-llvm-cov
       - run: cargo llvm-cov --workspace --lib --summary-only --fail-under-lines 70

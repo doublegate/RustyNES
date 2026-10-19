@@ -116,9 +116,14 @@ runs:
     # one. Verified against `refs/tags/v1` at each bump: e97e2d8c originally,
     # 6c977a6c as of the v2.6.3 dependency refresh. The 13 commits between
     # them were reviewed rather than trusted -- runner updates, patch-release
-    # table entries, a cross-device-copy fix and checkout bumps.
+    # table entries, a cross-device-copy fix and checkout bumps. 683b588c at
+    # v3.4.1 (2026-10-18), from 7e38f4b4: four commits, reviewed -- every
+    # `${{ }}` interpolation into a `run:` script moved into an `env:` variable
+    # ("Safely handle action inputs", closing a script-injection path through
+    # the toolchain/targets/components inputs), the flags step folded into the
+    # install step as a bash array, and 1.99.1 added to the patch table.
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
       with:
         toolchain: ${{ steps.resolve.outputs.toolchain }}
         targets: ${{ inputs.targets }}

@@ -31,7 +31,7 @@
 # Why every job carries a `before_script` (pipeline #91899 post-mortem)
 # ---------------------------------------------------------------------------
 # (History, 2026-07-20. The mechanism still holds; two details moved since:
-# the pin is whatever `rust-toolchain.toml` says (1.99.0 at v3.0.1), and since
+# the pin is whatever `rust-toolchain.toml` says (1.99.0 at v3.0.1, 1.99.1 at v3.4.1), and since
 # v3.0.1 each job runs `rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile
 # minimal --target ${RUST_TARGET}`, which installs the pinned toolchain WITH
 # its target in one step, where this record says `rustup target add`.)
@@ -88,7 +88,7 @@
     # as no longer supported by rust"), and a test branch built on 1.99.0
     # (pipeline 119614) passed all 15 jobs, the four Apple ones included, so
     # the hold was lifted in the same release.
-    RUSTUP_TOOLCHAIN: "1.99.0"
+    RUSTUP_TOOLCHAIN: "1.99.1"
 
 # Shared `before_script` for the jobs whose upstream template defines none
 # (Windows, Linux, and all four Android). See the post-mortem above.
