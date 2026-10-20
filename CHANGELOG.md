@@ -49,6 +49,20 @@ bitstreams are unchanged.
   re-download RustyNES there. A new test keeps the setting from being
   dropped.
 
+### Security
+
+- **TLS certificate checks** (RUSTSEC-2026-0382, RUSTSEC-2026-0381, both
+  published after v3.4.1): `rustls-webpki` 0.103.16 and `webpki-roots`
+  1.0.10, which stop trusting distrusted emSign intermediates. These are the
+  TLS roots of the netplay signaling client and the RetroAchievements
+  client. `webpki-roots` 0.26.11 stays in the tree, pulled by `tungstenite`
+  0.30.0 (the newest), but it only re-exports 1.0.10's roots; its advisory is
+  ignored by ID, and a new test fails if the lock ever resolves 1.x below
+  1.0.10.
+- `basic-toml` (RUSTSEC-2026-0374, unmaintained, not a vulnerability) is
+  ignored: it runs only at compile time, inside UniFFI's template macro, and
+  the newest UniFFI still needs it.
+
 ## [3.4.1] - 2026-10-19 - "Beacon" (the hosted lobby live (the TURN relay held off), the browser RetroAchievements build fixed, version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed)
 
 ### Added

@@ -31,6 +31,26 @@ ignore = [
     # carries the identical `ttf-parser 0.25.1` and is affected equally. Revisit
     # when a future winit bump drops the ab_glyph/ttf-parser chain.
     "RUSTSEC-2026-0192",
+    # webpki-roots (RUSTSEC-2026-0381, distrusted emSign roots), for the
+    # 0.26.11 shim. cargo-deny can scope an ignore to one crate version only
+    # for YANKED crates, so this is by ID and also mutes the advisory for 1.x;
+    # `dependency_floor_audit` keeps that safe by failing if the lock ever
+    # resolves webpki-roots 1.x below 1.0.10. 0.26.11 is the newest 0.26 release and a semver-trick shim: its whole
+    # lib is `pub use parent::TLS_SERVER_ROOTS` with `parent` = webpki-roots
+    # 1.x, which the lock resolves to 1.0.10, the fixed root set (120 roots,
+    # one emSign root fewer than 1.0.9's 121; checked 2026-10-20). It is
+    # pulled in by tungstenite 0.30.0 (the newest) for rustynes-netplay.
+    # Expires when tungstenite depends on webpki-roots 1 directly, or if the
+    # 1.x the shim resolves to is ever below 1.0.10.
+    { id = "RUSTSEC-2026-0381", reason = "only webpki-roots 0.26.11, a shim re-exporting the fixed 1.0.10; dependency_floor_audit guards 1.x" },
+    # basic-toml unmaintained (RUSTSEC-2026-0374, informational, not a
+    # vulnerability). Reached only through uniffi 0.32.2 -> uniffi_bindgen ->
+    # askama 0.16.1 -> askama_derive, a PROC-MACRO that reads askama's
+    # template config at COMPILE time; no TOML from outside the build is ever
+    # parsed with it, and it is not in any shipped binary's runtime. All
+    # three are the newest releases (2026-10-20), so no manifest change
+    # removes it. Expires when askama_derive (or uniffi) drops basic-toml.
+    { id = "RUSTSEC-2026-0374", reason = "compile-time only, via uniffi's askama derive; no maintained replacement upstream yet" },
 ]
 
 [licenses]

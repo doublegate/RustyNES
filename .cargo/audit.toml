@@ -16,4 +16,12 @@ ignore = [
     # wayland-scanner moves to quick-xml >= 0.40. Full rationale in deny.toml.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # webpki-roots (RUSTSEC-2026-0381). cargo-audit can only ignore by ID, so
+    # this mutes it for every version (cargo-deny's is by ID too); the
+    # dependency_floor_audit test fails if the lock resolves webpki-roots 1.x
+    # below the fixed 1.0.10. Full rationale in deny.toml.
+    "RUSTSEC-2026-0381",
+    # basic-toml unmaintained (informational) — compile-time only, via
+    # uniffi's askama derive macro. Full rationale in deny.toml.
+    "RUSTSEC-2026-0374",
 ]
