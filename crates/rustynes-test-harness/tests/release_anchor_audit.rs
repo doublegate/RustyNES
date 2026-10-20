@@ -1476,14 +1476,19 @@ fn the_hosted_worker_names_the_workspace_version() {
         1,
         "services/hosted/wrangler.jsonc must carry {ua:?} exactly once"
     );
-    let pkg = read("services/hosted/package.json");
+    // The two JSON files are matched across a line break, so the checkout's
+    // line endings matter: Windows CI checks them out with CRLF, which failed
+    // this test on the v3.4.1 merge's `test (windows-latest)` while every Linux
+    // run passed (agy had flagged the layout coupling on #618). Normalised
+    // here rather than parsed, because the point is the exact root entry.
+    let pkg = read("services/hosted/package.json").replace("\r\n", "\n");
     let root = format!("\"name\": \"rustynes-hosted\",\n  \"version\": \"{v}\"");
     assert_eq!(
         pkg.matches(&root).count(),
         1,
         "package.json root is not {v}"
     );
-    let lock = read("services/hosted/package-lock.json");
+    let lock = read("services/hosted/package-lock.json").replace("\r\n", "\n");
     let pkg_entry = format!("\"name\": \"rustynes-hosted\",\n      \"version\": \"{v}\"");
     assert_eq!(
         lock.matches(&root).count(),
