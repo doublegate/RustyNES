@@ -31,10 +31,13 @@ cycle-accurate core later replaced.
 ### Added
 
 - **The hosted lobby is live** (moved from v3.4.0 by the maintainer). The
-  netplay lobby runs on the maintainer's Cloudflare account, and the Pages build, the desktop release binaries (the profile-guided Linux build
-  included) and every Android and iOS build made by this project's CI (the
+  netplay lobby runs on the maintainer's Cloudflare account, and the Pages build and every Android and iOS build made by this project's CI (the
   FOSS-flavour artifact too) are compiled with that base
-  (`RUSTYNES_HOSTED_BASE`). A `hosted_base_url` in the config still wins; builds
+  (`RUSTYNES_HOSTED_BASE`). Native desktop netplay does not use the hosted
+  lobby: it connects directly by address, as before. The desktop release builds
+  set the variable too, but nothing native reads it, and the v3.4.1 Linux
+  download measures no copy of the address (corrected 2026-10-20; this entry
+  first listed the desktop binaries). A `hosted_base_url` in the config still wins; builds
   made elsewhere, F-Droid's own and plain source builds, are unchanged. On
   Android and iOS a fresh install now hosts and joins room codes with no relay
   set: the apps previously refused unless a relay URL was entered, and Android
@@ -91,7 +94,11 @@ cycle-accurate core later replaced.
   archive it replaced the plain Linux binary with was a test build, without
   RetroAchievements, scripting or the other `full` features (a later stage
   rebuilt the binary at the same path). The binary that was optimized is now
-  the one shipped, and it must carry the hosted base to be promoted. The release
+  the one shipped when the gate promotes, and it must be the `full` build (it
+  carries the RetroAchievements User-Agent) to be promoted. The first version of
+  that check required the hosted base, which a native binary never contains, so
+  it could not pass (corrected 2026-10-20). v3.4.1's own gate did not promote:
+  the PGO build measured 5.05% slower than plain. The release
   history shows one promotion, v2.9.6 (2026-09-30): its Linux download lacks the
   RetroAchievements client, and it is rebuilt from the v2.9.6 tag with the
   full features after this release.

@@ -1509,9 +1509,10 @@ fn the_hosted_worker_names_the_workspace_version() {
 /// `RUSTYNES_HOSTED_BASE` in their workflow-level `env:`. `release.yml` also
 /// passes it to the reusable `pgo.yml` as a literal (`with: hosted_base:`),
 /// because a called workflow inherits no `env:` and `env` is not an allowed
-/// context in `with:`; without it the promoted PGO archive replaced the Linux
-/// release binary with one built without the base (Copilot / Antigravity on
-/// #618). Two literals that must agree are a drift waiting to happen, so this
+/// context in `with:`, so the optimized build is configured like the plain one
+/// (Copilot / Antigravity on #618). The base matters to the browser and mobile
+/// builds; native desktop netplay does not read it, so a desktop binary does
+/// not contain it (measured on v3.4.1's Linux download). Two literals that must agree are a drift waiting to happen, so this
 /// compares them. `ci.yml` must not set it: `a_stock_build_has_no_hosted_base`
 /// asserts the default only when the variable is absent, so setting it there
 /// would make that test vacuous rather than fail it.
@@ -1563,14 +1564,16 @@ fn every_shipped_build_compiles_the_same_hosted_base() {
     // pgo.yml must export the input to the optimized build, KEEP that binary
     // before Stage 4's `cargo test --workspace` rebuilds the same path with
     // test features and no base, upload the kept copy, and refuse promotion
-    // when the copy lacks the base (agy on #618: a substring check alone let
-    // the overwrite through).
+    // when the copy is not the `full` build (agy on #618: a substring check
+    // alone let the overwrite through). The marker is the RetroAchievements
+    // User-Agent, not the hosted base: native netplay never reads the base,
+    // so its literal is optimized out and that check could never pass.
     let pgo_wf = read(".github/workflows/pgo.yml");
     for needle in [
         "RUSTYNES_HOSTED_BASE=\"$HOSTED_BASE\"",
         "cp \"target/${triple}/release/rustynes\" pgo-out/rustynes",
         "path: pgo-out/rustynes",
-        "grep -aqF \"$HOSTED_BASE\" pgo-out/rustynes",
+        "grep -aqF \") rcheevos/\" pgo-out/rustynes",
     ] {
         assert!(pgo_wf.contains(needle), "pgo.yml must contain {needle:?}");
     }

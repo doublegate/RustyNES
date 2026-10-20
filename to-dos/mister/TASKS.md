@@ -510,3 +510,15 @@ something as blocked, check the blocker applies to the WHOLE item.**
       makes `release-rbf.sh` refuse the already-compiled bitstreams. Gate:
       `ss-engine-gate` gains a case 9d (cart change on the first `E_PUT`: the
       slot's previous state still loads), with its mutant caught.
+- [ ] **`T-MISTER-RTL-MUTANT-RUNS`: run the RTL mutation table as targets.**
+      Every row of the mutation table in the sibling's `docs/ddr3-savestates.md`
+      (R1 onward; v3.4.1 added R8 and R9) is an RTL edit applied by hand, its
+      result recorded in prose. Only `--break-rotate`, a testbench-side
+      mutation, has a Makefile run (CodeRabbit on sibling PR #67). Build each
+      mutant from a patched copy of the RTL in a scratch directory, run the
+      gate it names, and fail when the mutant survives, so the table is
+      re-measured rather than remembered. Gate: `make -C tb mutants` runs every
+      row and prints exactly one result per row, naming the mutant (CAUGHT,
+      NOT CAUGHT or BUILD-FAILED); it exits non-zero on any NOT CAUGHT and on
+      any patch, build or gate-execution error, reporting BUILD-FAILED (a
+      mutant that does not compile proves nothing) apart from the others.
