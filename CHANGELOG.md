@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [3.4.2] - 2026-10-20 - "Keystone" (the RetroArch core loads on Apple Silicon Macs again)
+## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or
 mobile apps or the MiSTer core changes: movies, netplay sessions and save

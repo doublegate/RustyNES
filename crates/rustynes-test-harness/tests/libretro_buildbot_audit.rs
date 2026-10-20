@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The libretro buildbot recipe (`.gitlab-ci.yml`), checked as text (v3.4.2).
 //!
-//! The buildbot is a third CI system that only runs after a merge, on
-//! libretro's GitLab, so a regression in its recipe is invisible to this
-//! repository's own CI until users report a core that does not load. This
-//! audit pins the one setting whose absence did exactly that.
+//! The buildbot is a third CI system, on libretro's GitLab. Its mirror builds
+//! every pushed branch, so a recipe change CAN be checked before merge, but
+//! only by fetching the job's artifact and inspecting it: a green job proves
+//! that the core linked, not that it loads. Nothing in this repository's own
+//! CI builds for macOS that way, so a regression here surfaced only when a
+//! user reported a core that would not load. This audit pins the one setting
+//! whose absence did exactly that.
 //!
 //! **The macOS arm64 core must not be stripped after linking.** libretro's
 //! `rust-apple.yml` template runs `$STRIP -S` on the dylib when
@@ -61,7 +64,7 @@ fn the_macos_arm64_core_is_not_stripped_after_signing() {
         .expect("libretro-build-osx-arm64 has a variables: block");
     let in_vars = body[vars + 1..]
         .iter()
-        .take_while(|l| l.starts_with("    "))
+        .take_while(|l| l.is_empty() || l.starts_with("    "))
         .any(|l| l.trim() == "STRIP_CORE_LIB: \"0\"");
     assert!(
         in_vars,
