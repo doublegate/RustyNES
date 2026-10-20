@@ -207,8 +207,6 @@ jobs:
       # ---- Stage 5: compute delta + decide promotion --------------------
       - name: Compute speedup + promotion decision
         id: gate
-        env:
-          HOSTED_BASE: ${{ inputs.hosted_base }}
         run: |
           base_ns="${{ steps.baseline.outputs.mean_ns }}"
           pgo_est="target/criterion/nes_run_frame_nestest/pgo/estimates.json"
@@ -229,20 +227,25 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           faster="$(python3 -c "print('1' if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else '0')")"
-          # The kept binary must carry the base it was asked for (v3.4.1):
-          # `option_env!` compiles the URL in as a literal, so it is in the
-          # file. A miss refuses promotion rather than failing the job.
-          base_ok=1
-          if [ -n "$HOSTED_BASE" ] && ! grep -aqF "$HOSTED_BASE" pgo-out/rustynes; then
-            base_ok=0
-            echo "| Hosted base in binary | MISSING (${HOSTED_BASE}) |" >> "$GITHUB_STEP_SUMMARY"
+          # The kept binary must be the `full` build, not Stage 4's test build
+          # at the same path. v3.4.1 checked for the hosted base URL here, but
+          # native netplay never reads that base, so the optimizer drops the
+          # literal and the check could never pass (the v3.4.1 release run:
+          # "hosted base present=0" on a correct binary). The RetroAchievements
+          # User-Agent (`RustyNES/<v> (<os>) rcheevos/<v>`) is compiled in only
+          # with the `full` features' `retroachievements`, so it marks the
+          # right binary. A miss refuses promotion rather than failing the job.
+          full_ok=1
+          if ! grep -aqF ") rcheevos/" pgo-out/rustynes; then
+            full_ok=0
+            echo "| Full-feature build kept | MISSING (no RetroAchievements User-Agent) |" >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "${faster}" = "1" ] && [ "${base_ok}" = "1" ] && [ "${{ steps.oracle.outputs.oracle_ok }}" = "true" ]; then
+          if [ "${faster}" = "1" ] && [ "${full_ok}" = "1" ] && [ "${{ steps.oracle.outputs.oracle_ok }}" = "true" ]; then
             echo "promotable=true" >> "$GITHUB_OUTPUT"
             echo "PROMOTE: PGO is ${speedup}% faster (> ${PGO_MIN_SPEEDUP_PCT}%) AND byte-identical." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo "promotable=false" >> "$GITHUB_OUTPUT"
-            echo "NO PROMOTE: speedup ${speedup}% (need > ${PGO_MIN_SPEEDUP_PCT}%) / oracle=${{ steps.oracle.outputs.oracle_ok }} / hosted base present=${base_ok}." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "NO PROMOTE: speedup ${speedup}% (need > ${PGO_MIN_SPEEDUP_PCT}%) / oracle=${{ steps.oracle.outputs.oracle_ok }} / full build kept=${full_ok}." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
       # ---- Stage 6: upload the PGO binary ONLY when promotable ----------

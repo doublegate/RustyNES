@@ -1563,14 +1563,16 @@ fn every_shipped_build_compiles_the_same_hosted_base() {
     // pgo.yml must export the input to the optimized build, KEEP that binary
     // before Stage 4's `cargo test --workspace` rebuilds the same path with
     // test features and no base, upload the kept copy, and refuse promotion
-    // when the copy lacks the base (agy on #618: a substring check alone let
-    // the overwrite through).
+    // when the copy is not the `full` build (agy on #618: a substring check
+    // alone let the overwrite through). The marker is the RetroAchievements
+    // User-Agent, not the hosted base: native netplay never reads the base,
+    // so its literal is optimized out and that check could never pass.
     let pgo_wf = read(".github/workflows/pgo.yml");
     for needle in [
         "RUSTYNES_HOSTED_BASE=\"$HOSTED_BASE\"",
         "cp \"target/${triple}/release/rustynes\" pgo-out/rustynes",
         "path: pgo-out/rustynes",
-        "grep -aqF \"$HOSTED_BASE\" pgo-out/rustynes",
+        "grep -aqF \") rcheevos/\" pgo-out/rustynes",
     ] {
         assert!(pgo_wf.contains(needle), "pgo.yml must contain {needle:?}");
     }
