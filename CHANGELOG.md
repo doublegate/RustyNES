@@ -33,9 +33,11 @@ cycle-accurate core later replaced.
 - **The hosted lobby is live** (moved from v3.4.0 by the maintainer). The
   netplay lobby runs on the maintainer's Cloudflare account, and the Pages build and every Android and iOS build made by this project's CI (the
   FOSS-flavour artifact too) are compiled with that base
-  (`RUSTYNES_HOSTED_BASE`). The desktop release builds set it too, but native
-  desktop netplay does not use the hosted lobby, so the base is not in those
-  binaries (corrected 2026-10-20; this entry first listed them). A `hosted_base_url` in the config still wins; builds
+  (`RUSTYNES_HOSTED_BASE`). Native desktop netplay does not use the hosted
+  lobby: it connects directly by address, as before. The desktop release builds
+  set the variable too, but nothing native reads it, and the v3.4.1 Linux
+  download measures no copy of the address (corrected 2026-10-20; this entry
+  first listed the desktop binaries). A `hosted_base_url` in the config still wins; builds
   made elsewhere, F-Droid's own and plain source builds, are unchanged. On
   Android and iOS a fresh install now hosts and joins room codes with no relay
   set: the apps previously refused unless a relay URL was entered, and Android

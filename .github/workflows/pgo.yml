@@ -62,11 +62,13 @@ on:
         required: false
         default: "3600"
         type: string
-      # v3.4.1: the hosted base the shipped binary is compiled with. A called
-      # workflow does not inherit the caller's workflow-level `env:`, so without
-      # this the promoted PGO archive replaced release.yml's Linux binary with
-      # one built WITHOUT the base (Copilot / Antigravity on #618). Empty (the
-      # default, and every workflow_dispatch run) leaves it unset.
+      # v3.4.1: the hosted base release.yml's builds are compiled with, passed
+      # because a called workflow does not inherit the caller's `env:`. Kept
+      # so the optimized build is configured exactly like the plain one; the
+      # native desktop binary does not use the base (only the browser and
+      # mobile builds do), so its literal is optimized out, and promotion
+      # checks for the `full` build instead (Stage 5). Empty (the default, and
+      # every workflow_dispatch run) leaves it unset.
       hosted_base:
         description: "RUSTYNES_HOSTED_BASE for the optimized build (empty = none)."
         required: false
@@ -171,8 +173,7 @@ jobs:
           # with `--features test-roms` only and no hosted base. Until v3.4.1
           # the upload below read that path, so a promoted PGO archive
           # carried the test build: no `full` features (RetroAchievements,
-          # scripting, HD packs) and, once v3.4.1 baked a base in, no hosted
-          # lobby either (agy on #618). The copy is what ships.
+          # scripting, HD packs; agy on #618). The copy is what ships.
           triple="$(rustc -vV | sed -n 's/host: //p')"
           mkdir -p pgo-out
           cp "target/${triple}/release/rustynes" pgo-out/rustynes

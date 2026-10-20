@@ -51,10 +51,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # v3.4.1: bake the deployed hosted services (lobby + TURN credentials,
-  # services/hosted/) into every shipped build. `rustynes-netplay` reads it
-  # with option_env!, so it is a COMPILE-time setting; a build without it
-  # keeps the v3.4.0 behaviour (no hosted base, direct and LAN play only).
+  # v3.4.1: the deployed hosted services (lobby + TURN credentials,
+  # services/hosted/), set for every release build so they are configured
+  # alike. `rustynes-netplay` reads it with option_env!, a COMPILE-time
+  # setting. Native desktop netplay does not use it (direct and LAN play
+  # only), so the desktop binaries do not contain it; it matters to the
+  # browser and mobile builds, which set it in their own workflows.
   # A user's `hosted_base_url` config still overrides it. ci.yml leaves it
   # unset on purpose: hosted.rs's default-behaviour test needs it absent.
   RUSTYNES_HOSTED_BASE: "https://rustynes-hosted.parobek.workers.dev"
