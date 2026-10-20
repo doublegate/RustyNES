@@ -518,6 +518,7 @@ something as blocked, check the blocker applies to the WHOLE item.**
       mutant from a patched copy of the RTL in a scratch directory, run the
       gate it names, and fail when the mutant survives, so the table is
       re-measured rather than remembered. Gate: `make -C tb mutants` runs every
-      row and reports each CAUGHT; it exits non-zero on any NOT CAUGHT and on
+      row and prints exactly one result per row, naming the mutant (CAUGHT,
+      NOT CAUGHT or BUILD-FAILED); it exits non-zero on any NOT CAUGHT and on
       any patch, build or gate-execution error, reporting BUILD-FAILED (a
       mutant that does not compile proves nothing) apart from the others.
