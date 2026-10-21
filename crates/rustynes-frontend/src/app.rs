@@ -12378,6 +12378,21 @@ impl ApplicationHandler<AppEvent> for App {
 /// Propagates the winit run error.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(rom_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    run_with(rom_path, &crate::speedrun_host::SpeedrunOptions::default())
+}
+
+/// [`run`], with the v3.5.0 speedrun options (`--splits`, `--memif`): the
+/// timer and the memory-export block are installed on the emulation core
+/// before the first frame (`EmuCore::speedrun`).
+///
+/// # Errors
+///
+/// As [`run`], plus a splits file or block that cannot be set up.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_with(
+    rom_path: &Path,
+    speedrun: &crate::speedrun_host::SpeedrunOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
     use winit::event_loop::EventLoop;
     let event_loop = EventLoop::<AppEvent>::with_user_event().build()?;
     // Initial control flow is `Poll` so `resumed()` runs immediately;
@@ -12385,6 +12400,9 @@ pub fn run(rom_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     // `WaitUntil(next_frame_time)` to avoid burning CPU between frames.
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new(rom_path)?;
+    if speedrun.is_active() {
+        app.emu.lock().speedrun = Some(crate::speedrun_host::SpeedrunHost::new(speedrun)?);
+    }
     // v2.8.0 Phase 5 increment 3 — hand the app the proxy the emulation
     // thread uses to deliver `AppEvent::EmuFrame` back into this loop.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]

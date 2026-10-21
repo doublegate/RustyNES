@@ -57,7 +57,35 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(CliCommand::Verify { movie, rom }) => run_verify(&movie, &rom),
-        None => run_emulator(cli.rom),
+        // v3.5.0 (`T-SPEEDRUN-MEMIF`) — headless speedrun timing.
+        Some(CliCommand::Speedrun {
+            rom,
+            splits,
+            movie,
+            frames,
+            json,
+            memif,
+            memif_name,
+            memif_hold_ms,
+        }) => ExitCode::from(rustynes_frontend::speedrun_cli::run(
+            &rustynes_frontend::speedrun_cli::SpeedrunArgs {
+                rom,
+                splits,
+                movie,
+                frames,
+                json,
+                memif: memif.then_some(memif_name),
+                memif_hold_ms,
+            },
+        )),
+        None => run_emulator(
+            cli.rom,
+            &rustynes_frontend::speedrun_host::SpeedrunOptions {
+                splits: cli.splits,
+                splits_json: cli.splits_json,
+                memif: cli.memif.then_some(cli.memif_name),
+            },
+        ),
     }
 }
 
@@ -161,7 +189,10 @@ fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitC
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_emulator(rom: Option<std::path::PathBuf>) -> ExitCode {
+fn run_emulator(
+    rom: Option<std::path::PathBuf>,
+    speedrun: &rustynes_frontend::speedrun_host::SpeedrunOptions,
+) -> ExitCode {
     // No ROM: the native binary has no bare-launch path (`app::run` always
     // loads a cartridge), so — preserving the historical behavior — print the
     // long help and exit with the usage code. Use the menu / F12 inside a
@@ -178,7 +209,7 @@ fn run_emulator(rom: Option<std::path::PathBuf>) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    match app::run(&rom_path) {
+    match app::run_with(&rom_path, speedrun) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("rustynes: {e}");

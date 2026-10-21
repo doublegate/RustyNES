@@ -599,6 +599,12 @@ pub struct EmuCore {
     pub history: crate::history_viewer::HistoryViewer,
     /// Enabled raw RAM cheats, pulled from the cheat panel each frame.
     pub raw_cheats: Vec<RawCheat>,
+    /// v3.5.0 (`T-SPEEDRUN-MEMIF`) — the speedrun timer and memory-export
+    /// block (`--splits`, `--memif`). `None` unless asked for. Fed once per
+    /// persistent frame, after run-ahead's rollback, so it times and
+    /// publishes exactly the timeline a replay reproduces. Read-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub speedrun: Option<crate::speedrun_host::SpeedrunHost>,
     /// v1.7.0 "Forge" Workstream A1 — one-shot debugger writeback edits, queued
     /// by the editing-capable debugger panels (tile/CHR, palette, nametable,
     /// OAM, hex). Drained in the SAME gated post-frame stage as `raw_cheats`,
@@ -1155,6 +1161,8 @@ impl EmuCore {
             hd_capture: false,
             history: crate::history_viewer::HistoryViewer::default(),
             raw_cheats: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            speedrun: None,
             debug_pokes: Vec::new(),
             writes_locked: false,
             overclock_scanlines: 0,
@@ -1919,6 +1927,20 @@ impl EmuCore {
                 // the shared Web Audio ring.
                 #[cfg(target_arch = "wasm32")]
                 crate::wasm_audio::push_samples(&nes.drain_audio());
+            }
+
+            // v3.5.0 (`T-SPEEDRUN-MEMIF`) — time and publish the finished
+            // persistent frame (both paths above end on it), before any
+            // caller-side poke below changes RAM for the next one.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(sr) = self.speedrun.as_mut()
+                && let Some(event) = sr.after_frame(nes)
+                && let Some(timer) = sr.timer()
+            {
+                eprintln!(
+                    "rustynes speedrun: {}",
+                    crate::speedrun_host::describe(event, timer, nes)
+                );
             }
 
             // v1.7.0 — apply the enabled raw RAM cheats AFTER the frame,

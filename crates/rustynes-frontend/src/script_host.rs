@@ -436,7 +436,7 @@ impl Drop for ScriptHost {
     /// thread, on Reload) for up to 20 s per queued request. Now the cancel
     /// flag makes the worker abandon the backlog at the next job boundary,
     /// and the join is bounded: a worker still inside a network call after
-    /// [`DROP_GRACE`] is detached. That is safe because it owns everything it
+    /// `DROP_GRACE` is detached. That is safe because it owns everything it
     /// touches (its agent, socket and MMF map, its end of both channels, and
     /// its clone of the flag) and calls back into nothing; it exits when the
     /// call returns, bounded by the agent's timeout.

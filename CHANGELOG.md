@@ -50,6 +50,20 @@ cycle-accurate core later replaced.
   that is not ours and owner-only is refused rather than used, so another
   local user cannot pre-create a name to read or plant data.
   `docs/scripting.md` has the layout and the threat model.
+- **Speedrun auto-timing and a memory-export interface (`T-SPEEDRUN-MEMIF`).**
+  A splits file names a start, splits and an optional reset as RAM conditions
+  in the RetroAchievements condition grammar (`start = 0xH0770=1_d0xH0770=0`,
+  `split = World 1 | 0xH075F=1`), and the run is timed in the console's
+  master-clock cycles, so the same movie gives the same splits on every
+  machine and replay. `rustynes speedrun --rom ... --splits ... --movie ...`
+  times a movie headlessly and prints a JSON result; `rustynes game.nes
+  --splits any.rnsplits` times a live session. With the `memif` feature
+  (part of `full`), `--memif` publishes a fixed-layout shared-memory block
+  every frame (RAM, frame and master clock, the timer and its splits) at
+  documented offsets that do not change between builds, so a LiveSplit-style
+  tool reads it by offset instead of hunting per-version addresses.
+  `docs/memory-export-interface.md` is the contract (ADR 0047), and
+  `scripts/memif/reference_splitter.py` a reader written from it alone.
 
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
