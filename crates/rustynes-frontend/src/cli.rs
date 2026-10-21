@@ -492,9 +492,13 @@ ADR 0012).
 See docs/scripting.md for the full API. Enable it with:
   cargo run -p rustynes-frontend --features scripting -- game.nes";
 
+// The heading underline is written `=\x3d=====` (it prints as seven `=`):
+// a source line that is exactly seven `=` is a git conflict marker to the
+// `check-merge-conflict` pre-commit hook, which then refuses every merge
+// commit that touches this file.
 const NETPLAY_BODY: &str = "\
 Netplay
-=======
+=\x3d=====
 
 GGPO-style rollback netcode for 2-4 players:
 
@@ -688,5 +692,13 @@ mod tests {
         for t in HELP_TOPICS {
             assert!(ids.contains(t.id), "{} missing from topic_ids()", t.id);
         }
+    }
+
+    /// `NETPLAY_BODY` spells its underline `=\x3d=====` to keep a bare
+    /// seven-`=` line out of the source (see the comment on the const); the
+    /// rendered heading must still be "Netplay" over seven `=`.
+    #[test]
+    fn netplay_heading_renders_seven_equals() {
+        assert!(NETPLAY_BODY.starts_with("Netplay\n=======\n\n"));
     }
 }
