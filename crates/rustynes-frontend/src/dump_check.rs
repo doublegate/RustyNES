@@ -52,6 +52,12 @@
 //!
 //! # Input handling
 //!
+//! Every string the report takes from an input file (DAT game names, the
+//! database's names and mirroring values) and the ROM path are passed through
+//! `printable`, which turns each control character into a visible `\u{..}`
+//! escape, so a crafted file cannot inject terminal escape sequences (ESC,
+//! CSI U+009B) into the output.
+//!
 //! The DAT and the database are untrusted files. They are read with a size cap,
 //! parsed by a small tag scanner that never panics on malformed text (it skips
 //! what it cannot read, and refuses a file in which it finds no game at all),
@@ -266,7 +272,7 @@ impl Dat {
                     attrs,
                     ..
                 } => {
-                    game = Some(attr(&attrs, "name").unwrap_or_default());
+                    game = Some(printable(&attr(&attrs, "name").unwrap_or_default()));
                 }
                 XmlItem::Close("game" | "machine") => game = None,
                 XmlItem::Open {
@@ -399,7 +405,7 @@ impl Nes20Db {
                     if let Some(g) = cur.as_mut()
                         && g.name.is_empty()
                     {
-                        g.name = text.trim().to_string();
+                        g.name = printable(text.trim());
                     }
                 }
                 XmlItem::Open { name, attrs, .. } => {
@@ -457,7 +463,7 @@ impl Nes20Game {
             "pcb" => {
                 self.mapper = attr(attrs, "mapper").and_then(|v| v.trim().parse().ok());
                 self.submapper = small("submapper");
-                self.mirroring = attr(attrs, "mirroring");
+                self.mirroring = attr(attrs, "mirroring").map(|m| printable(&m));
                 self.battery = small("battery").map(|b| b != 0);
             }
             "console" => {
@@ -1057,7 +1063,7 @@ pub fn read_capped(path: &Path) -> Result<Vec<u8>, String> {
 #[must_use]
 pub fn render(path: &str, r: &DumpReport) -> String {
     let mut s = String::new();
-    let _ = writeln!(s, "Dump check: {path} ({} bytes)", r.len);
+    let _ = writeln!(s, "Dump check: {} ({} bytes)", printable(path), r.len);
     let _ = writeln!(
         s,
         "  header        {}",
@@ -1294,6 +1300,25 @@ impl<'a> Iterator for XmlScanner<'a> {
             });
         }
     }
+}
+
+/// Make a string from an input file safe to print on a terminal: every
+/// control character (C0, DEL and C1, `char::is_control`) becomes a visible
+/// `\u{..}` escape. A crafted DAT or database could otherwise put ESC or CSI
+/// (U+009B) sequences in a game name and drive the terminal that shows the
+/// report. Applied once, where such a string enters the report (DAT game
+/// names, database names and mirroring values, the ROM path), so every later
+/// use is already clean.
+fn printable(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            let _ = write!(out, "\\u{{{:x}}}", u32::from(c));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn attr(attrs: &[(String, String)], key: &str) -> Option<String> {
@@ -1917,6 +1942,40 @@ mod tests {
         );
         let r = run(&rom, Some(&Dat::parse(&text).unwrap()), None);
         assert_eq!(r.dat, DatMatch::NotListed { rows: 1 });
+    }
+
+    /// A crafted DAT or database cannot put a raw control character (an
+    /// ESC sequence, a C1 CSI) into the printed report.
+    #[test]
+    fn file_strings_render_with_no_raw_control_character() {
+        let rom = nrom(IDLE, 1, 0x01);
+        let evil = "Evil&#x1b;[2J&#x9b;31m&#7;";
+        let dat = Dat::parse(&format!(
+            "<datafile><game name='{evil}'><rom size='{}' sha256='{}'/></game></datafile>",
+            rom.len() - 16,
+            sha_hex(&rom[16..])
+        ))
+        .unwrap();
+        let db = Nes20Db::parse(&format!(
+            "<nes20db><game><!-- N\u{1b}[2J\u{9b}x --><prgrom size='16384'/>\
+             <rom size='{}' crc32='{:08X}'/><pcb mapper='0' mirroring='H\u{1b}'/></game></nes20db>",
+            rom.len() - 16,
+            rustynes_gamedb::crc32(&rom[16..])
+        ))
+        .unwrap();
+        let r = check(
+            &rom,
+            &CheckOptions {
+                dat: Some(&dat),
+                nes20db: Some(&db),
+                frames: 0,
+            },
+        );
+        let out = render("rom\u{1b}[2J.nes", &r);
+        assert!(!out.chars().any(|c| c.is_control() && c != '\n'), "{out:?}");
+        assert!(out.contains("Evil\\u{1b}[2J\\u{9b}31m\\u{7}"), "{out}");
+        assert!(out.contains("N\\u{1b}[2J\\u{9b}x"), "{out}");
+        assert!(out.contains("rom\\u{1b}[2J.nes"), "{out}");
     }
 
     #[test]

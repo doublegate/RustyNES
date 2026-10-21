@@ -92,6 +92,13 @@ tag or quote ends the scan, an unknown entity is kept as written, every
 number has a failure path, and a file in which no game is found is refused.
 `the_xml_scanner_survives_malformed_input` feeds it the malformed shapes.
 
+Every string the report takes from a file (DAT game names, the database's
+names and mirroring values) and the ROM path pass through one helper,
+`printable`, that turns each control character (C0, DEL, C1) into a visible
+`\u{..}` escape, so a crafted DAT cannot drive the terminal with an ESC or
+CSI (U+009B) sequence in a game name.
+`file_strings_render_with_no_raw_control_character` pins it.
+
 ## Gates
 
 `cargo test -p rustynes-frontend --lib dump_check` (fixtures are built in the
