@@ -1,0 +1,45 @@
+# v3.5.0 T-MCP-SERVER (D33) — a Model Context Protocol server over the
+# headless core. ADR 0047 records the decisions; `docs/mcp-server.md` is the
+# spec.
+#
+# A separate crate and binary, not a frontend feature: the server needs no
+# window, no GPU and no audio device, so it must build where the frontend
+# cannot (CI's headless images, a server with no display stack). Like
+# `rustynes-probe` it depends on `rustynes-core` and nothing heavier, plus the
+# official MCP SDK and the sandboxed Lua engine.
+[package]
+name = "rustynes-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "MCP server over the RustyNES headless core: observe, step, fork, replay"
+
+[[bin]]
+name = "rustynes-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# `debug-hooks` for exec breakpoints. `rustynes-script` already enables it on
+# the core, so workspace feature unification is unchanged by this line.
+rustynes-core = { workspace = true, features = ["debug-hooks"] }
+# Agent-supplied Lua runs in this crate's sandbox (no io/os/require/load, an
+# instruction budget, a host-memory limit) with writes locked.
+rustynes-script = { workspace = true }
+# The official Rust MCP SDK (modelcontextprotocol/rust-sdk), Apache-2.0.
+# Server role and the stdio transport only: no HTTP client or server, no auth
+# stack, no child-process transport is compiled in.
+rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["rt", "macros", "io-std"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = "1"
+png = "0.18"
+base64 = "0.23"
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[lints]
+workspace = true

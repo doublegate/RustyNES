@@ -26,6 +26,25 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **An MCP server over the headless core, `rustynes-mcp`** (`T-MCP-SERVER`,
+  D33; [ADR 0047](docs/adr/0047-an-mcp-server-over-the-headless-core.md),
+  [docs/mcp-server.md](docs/mcp-server.md)). A new binary that serves one ROM
+  to a Model Context Protocol client over stdio, built on the official Rust
+  SDK (`rmcp` 3.5.1, Apache-2.0). 25 declared tools: pause and real-time
+  resume, frame and instruction stepping, exec breakpoints, side-effect-free
+  memory reads, a work-RAM-only write, the observation layers (the frame as a
+  PNG, nametables as tile text, OAM, CPU), sandboxed read-only Lua, and
+  experiments: `fork_create` -> `fork_run(inputs)` -> `fork_diff`. Every fork
+  records its inputs as an ordinary `.rnm`, and `movie_verify` replays it on
+  a fresh machine and compares save state, RAM and framebuffer byte for byte;
+  the main machine keeps a journal segment that replays the same way. An
+  undeclared tool, an undeclared argument, a write outside `$0000-$07FF`, a
+  Lua write, and a file write outside the operator's `--out-dir` are all
+  refused. No network listener. Nothing in the emulation core changes (no
+  epoch, movie-format or protocol change).
+
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or

@@ -39,6 +39,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [nesdev-hardware-emulation-checklist.md](nesdev-hardware-emulation-checklist.md) | Hardware-behavior coverage checklist |
 | [netplay-webrtc.md](netplay-webrtc.md) | Rollback netplay (UDP + browser WebRTC) design |
 | [scripting.md](scripting.md) | Lua scripting `emu` API reference (sandboxed Lua 5.4, `scripting` feature, native-only) |
+| [mcp-server.md](mcp-server.md) | `rustynes-mcp`: the MCP server over the headless core (tools, forks and replay, security posture; ADR 0047) |
 | [ppu-trace-tooling.md](ppu-trace-tooling.md) | PPU state-trace diagnostic tooling |
 | [ra-integration-request.md](ra-integration-request.md) | RetroAchievements allowlisting request template |
 | [cheevos-browser.md](cheevos-browser.md) | Casual-mode browser RetroAchievements scaffolding (the off-by-default `browser-cheevos` feature, ADR 0015) |
