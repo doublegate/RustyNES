@@ -53,6 +53,9 @@ mod nes;
 mod rewind;
 pub mod save_state;
 pub mod scheduler;
+// v3.5.0 (`T-SPEEDRUN-MEMIF`) — speedrun auto-timing: RetroAchievements-
+// grammar RAM predicates, times in master-clock cycles. Read-only over `Nes`.
+pub mod speedrun;
 pub mod vs_db;
 // v2.0.0 beta.5 (Workstream C) — the Vs. DualSystem dual-core wrapper: two
 // complete Nes instances + the cabinet's $4016-bit-1 comms protocol, the

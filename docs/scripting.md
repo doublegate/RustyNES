@@ -140,7 +140,8 @@ closes it on the native backend:
   | `emu.drawText` text; `client.opentool` / `addcheat` / `removecheat`; `tastudio` markers, branch text, cell text and icon keys | 4 KiB each (the log-line cap), so with the 8,192-per-frame count cap each queue holds at most 32 MiB | clipped |
   | one `comm.*` request (URL plus body or payload) | 1 MiB | Lua error |
   | the `comm.*` outbound queue, between host drains | 16 MiB | not queued; `httpGet` / `httpPost` / `ws_open` / `mmfRead` return 0 |
-  | the host's memory-mapped-file map | 16 MiB and 256 names | write dropped |
+  | the script's memory-mapped files (names plus mapped regions, header and page rounding included; v3.5.0) | 16 MiB and 256 names | write dropped |
+  | inbound WebSocket text the frame thread has not drained (v3.5.0) | 4 MiB, then the socket is not read until it drains; one message or frame at most 1 MiB | a larger message closes the socket |
   | a `userdata` key / value | 4 KiB / 1 MiB | Lua error |
   | the `userdata` store | 16 MiB and 65,536 keys | Lua error |
 
@@ -459,11 +460,11 @@ result. See ADR 0016.
 | `comm.socketServerSend(data)` | Send `data` over the host's configured outbound TCP socket (`RUSTYNES_COMM_TCP` endpoint). Fire-and-forget. |
 | `comm.httpGet(url)` → `id` | Issue an HTTP GET; returns a correlation `id`. |
 | `comm.httpPost(url, body)` → `id` | Issue an HTTP POST. |
-| `comm.ws_open(url)` → `id` | Open a WebSocket (host-owned). |
-| `comm.ws_send(text)` | Send a text frame. |
+| `comm.ws_open(url)` → `id` | Open a WebSocket (`ws://` or `wss://`, host-owned). One socket at a time: a second `ws_open` closes the first. Since v3.5.0. |
+| `comm.ws_send(text)` | Send a text frame on the open socket (dropped if none is open). |
 | `comm.ws_close()` | Close the WebSocket. |
-| `comm.mmfWrite(name, data)` | Write `data` to the host's named memory-mapped-file buffer. |
-| `comm.mmfRead(name, len)` → `id` | Read up to `len` bytes from a named MMF. |
+| `comm.mmfWrite(name, data)` | Write `data` into the named shared-memory region `rnmf-<name>`, which another process can open (since v3.5.0). |
+| `comm.mmfRead(name, len)` → `id` | Read up to `len` bytes from the region `rnmf-<name>`, whether this script or another process wrote it. |
 | `comm.receive()` → table or `nil` | Pop the oldest host-fulfilled result. `{kind="http", id, status, body}`, `{kind="ws", id, open, message}`, or `{kind="mmf", id, data}`. |
 
 `comm.*` is a **new non-deterministic source**, so every verb is gated EXACTLY
@@ -495,6 +496,96 @@ arrangement as TCP, where the user names the endpoint (`RUSTYNES_COMM_TCP`).
 - Response bodies are limited to 10 MiB. A body that is larger, or that
   cannot be read to the end, is a transport failure: `status = 0` and an empty
   `body`, never a truncated one.
+
+#### WebSockets (v3.5.0, CR-01)
+
+Until v3.5.0 `comm.ws_open` answered `{kind="ws", open=false}` at once. It is
+now a WebSocket client (`tungstenite`, the crate the netplay signaling client
+already uses), and the script still never holds the socket:
+
+- **Events.** Every result is a `{kind="ws", id, open, message}` table, `id`
+  being the one `ws_open` returned: `open=true, message=nil` once the
+  handshake completes; `open=true, message=<text>` for each inbound message, in
+  order; and exactly one `open=false` when the socket ends, however it ends
+  (`ws_close`, the server closing, an error, a refused destination, a second
+  `ws_open`). A binary message is delivered as text with invalid UTF-8
+  replaced.
+- **Destinations** follow the HTTP rule above, on the addresses the socket
+  connects to: the host resolves the name once, refuses it if any address is
+  non-public and the host is not in `RUSTYNES_COMM_HTTP_ALLOW`, and dials one
+  of those addresses itself before the WebSocket handshake begins. Only `ws://`
+  and `wss://` are accepted; `wss://` verifies the server against the bundled
+  web PKI roots. No proxy, no redirects.
+- **Bounds.** The connect and each handshake are limited to 10 s. One inbound
+  message (or frame) is at most 1 MiB; a larger one closes the socket. While
+  4 MiB of inbound text waits for the frame thread to drain it, the socket is
+  not read at all, so a server that floods it is held back by its own TCP
+  window rather than by this process's memory.
+- **Off the frame thread.** The socket runs on a thread of its own; the IPC
+  worker only hands it messages, so a slow handshake delays no HTTP request
+  and no frame. Nothing about the Lua side changed: `ws_send` queues a request
+  under the same per-request (1 MiB) and per-frame queue (16 MiB) bounds as
+  every `comm.*` verb, and results arrive through `comm.receive()` under the
+  same instruction budget. Stopping the script closes the socket.
+
+#### Memory-mapped files (v3.5.0, CR-02)
+
+Until v3.5.0 a memory-mapped file was a map inside the emulator, invisible to
+any other program. `comm.mmfWrite(name, data)` now writes real OS shared
+memory, named `rnmf-<name>`, that any process run by the same user can open:
+
+| Platform | Object | How another program opens it |
+| --- | --- | --- |
+| Linux | POSIX shared memory (`/dev/shm/rnmf-<name>.<uid>`) | `shm_open("/rnmf-<name>.<uid>")` |
+| macOS | POSIX shared memory | `shm_open("/rnmf-<name>.<uid>")` |
+| Windows | a named file mapping in the session's `Local\` namespace | `OpenFileMappingW(..., L"Local\\rnmf-<name>")` |
+
+`<uid>` is the user's effective uid in lowercase hexadecimal (`os.geteuid()`
+formatted with `:x` in Python; `3e8` for uid 1000). In Python,
+`multiprocessing.shared_memory.SharedMemory(f"rnmf-<name>.{os.geteuid():x}")` on
+POSIX and `SharedMemory("Local\\rnmf-<name>")` on Windows.
+
+- **Names** are 1 to 16 characters of `A-Z a-z 0-9 _ . -` (the prefix, the name
+  and the `.<uid>` suffix must fit macOS's 30-character limit); anything else is refused (a write
+  is dropped, a read returns an empty buffer). The prefix means a script can
+  only open regions in RustyNES's namespace, never another program's.
+- **Layout.** Each region begins with a 32-byte header, then the payload. All
+  fields are little-endian `u32`:
+
+  | Offset | Field |
+  | --- | --- |
+  | 0 | magic `RNMF` (the bytes `52 4E 4D 46`) |
+  | 4 | layout version, `1` |
+  | 8 | capacity: payload bytes the region can hold |
+  | 12 | length: payload bytes currently valid |
+  | 16 | sequence counter: odd while a write is in progress |
+  | 20-31 | reserved, zero |
+  | 32 | the payload |
+
+  A reader loads the sequence counter; if it is odd, or differs after the copy,
+  the copy raced a write and is retried. A tool writing a region for a script
+  to read follows the same protocol (make the counter odd, write, make it
+  even), and writes the header itself; a region with no valid header reads as
+  empty.
+- **Size.** A region is sized to its first write (header plus payload, rounded
+  up to 4 KiB). A larger later write replaces it with a bigger region and clears
+  the old one's magic, which is a reader's signal to reopen the name.
+- **Lifetime.** The regions a script wrote are removed when the IPC host stops
+  (Stop or Reload). A region another program created is opened afresh for each
+  `mmfRead` and is never removed by RustyNES.
+- **Permissions and other users (threat model).** Shared-memory names are a
+  namespace other local users can create objects in, so a hostile user could
+  pre-create a region's name to read what a script publishes, plant data it
+  reads, or block the name. Three rules stop the first two: the OS name is
+  per user (the `.<uid>` suffix on POSIX, the session's `Local\` namespace on
+  Windows); RustyNES creates regions owner-only (POSIX mode `0600` with
+  `O_EXCL`; on Windows a protected DACL granting only the owner); and an
+  existing object is used only after checking it is ours (POSIX: owned by our
+  effective uid with no group or other permission bits; Windows: owned by our
+  user SID). One that fails is refused (a write is dropped and reported once,
+  a read returns an empty buffer), never adopted. A squatter can still make
+  the name unusable (denial of service); a process running as the same user
+  can read and write the region, as it can the user's files.
 
 ### `client` — host automation (E2)
 

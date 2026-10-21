@@ -87,6 +87,31 @@ pub struct Cli {
     #[arg(long, value_name = "WHEN", value_enum, default_value_t = ColorWhen::Auto, global = true)]
     pub color: ColorWhen,
 
+    /// Time the session against a speedrun splits file (RAM predicates in
+    /// the `RetroAchievements` condition grammar; see
+    /// `docs/memory-export-interface.md`).
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    pub splits: Option<PathBuf>,
+
+    /// Write a finished run's result (JSON) here.
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath, requires = "splits")]
+    pub splits_json: Option<PathBuf>,
+
+    /// Publish the speedrun memory-export block (shared memory) every frame.
+    /// Needs a `memif` build.
+    #[arg(long)]
+    pub memif: bool,
+
+    /// The memory-export block's name (default `rustynes-memif`; 1-21
+    /// characters of A-Z a-z 0-9 _ . -), for example to run two instances.
+    #[arg(
+        long,
+        value_name = "NAME",
+        default_value = "rustynes-memif",
+        requires = "memif"
+    )]
+    pub memif_name: String,
+
     /// Subcommands: `help [<topic>]`, `completions <shell>`.
     #[command(subcommand)]
     pub command: Option<CliCommand>,
@@ -155,6 +180,48 @@ pub enum CliCommand {
         /// hash stored in the movie.
         #[arg(long, value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
         rom: PathBuf,
+    },
+
+    /// Time a movie (or N input-free frames) against a speedrun splits file.
+    ///
+    /// v3.5.0 (`T-SPEEDRUN-MEMIF`). Headless like `verify`: the times are
+    /// master-clock cycles of the deterministic core, so the same movie gives
+    /// the same splits on every machine. Prints each event and a JSON result.
+    /// See `docs/memory-export-interface.md`.
+    ///
+    /// Exit codes: 0 the run finished, 2 the input ended first, 1 an error.
+    Speedrun {
+        /// The ROM.
+        #[arg(long, value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// The splits definition.
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        splits: PathBuf,
+
+        /// The `.rnm` movie to replay.
+        #[arg(long, value_name = "MOVIE", value_hint = clap::ValueHint::FilePath, conflicts_with = "frames")]
+        movie: Option<PathBuf>,
+
+        /// Without a movie: how many input-free frames to run (default 216000).
+        #[arg(long, value_name = "N")]
+        frames: Option<u64>,
+
+        /// Also write the JSON result here.
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        json: Option<PathBuf>,
+
+        /// Publish the memory-export block while it runs (a `memif` build).
+        #[arg(long)]
+        memif: bool,
+
+        /// The block's name.
+        #[arg(long, value_name = "NAME", default_value = "rustynes-memif")]
+        memif_name: String,
+
+        /// Keep the block published this many milliseconds after the run.
+        #[arg(long, value_name = "MS", default_value_t = 0)]
+        memif_hold_ms: u64,
     },
 }
 

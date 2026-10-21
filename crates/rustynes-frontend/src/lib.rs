@@ -265,6 +265,24 @@ pub mod save_states_ui;
 // socket; off by default, disabled under a locked session. See ADR 0016.
 #[cfg(all(not(target_arch = "wasm32"), feature = "script-ipc"))]
 pub mod script_host;
+// v3.5.0 (CR-02, `T-SPEEDRUN-MEMIF`) — named OS shared memory (POSIX
+// `shm_open`, Windows named file mappings), the backing of `comm.mmf*` and of
+// the speedrun memory-export interface. Native-only, compiled only when a
+// feature that uses it is on.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(feature = "script-ipc", feature = "memif")
+))]
+pub mod shm;
+// v3.5.0 (`T-SPEEDRUN-MEMIF`) — the memory-export block (behind `memif`), the
+// speedrun timer's frontend glue, and the headless `rustynes speedrun` command.
+// Native-only: shared memory and the CLI do not exist in the browser.
+#[cfg(all(not(target_arch = "wasm32"), feature = "memif"))]
+pub mod memif;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod speedrun_cli;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod speedrun_host;
 // v1.4.0 Workstream D (D1) — debugger symbol/label file loading
 // (`.sym` / Mesen `.mlb` / FCEUX `.nl`). Frontend display aid only; the parsed
 // `address -> label` map annotates the disassembler / breakpoint / trace views

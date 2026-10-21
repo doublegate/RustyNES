@@ -87,6 +87,43 @@ cycle-accurate core later replaced.
   1 dropped them), and stamping a button macro keeps each target frame's
   non-controller input.
 
+- **Lua WebSockets (CR-01, `script-ipc`).** `comm.ws_open` / `ws_send` /
+  `ws_close` are a real WebSocket client (`ws://` and `wss://`); until now
+  `ws_open` reported a closed socket at once. Inbound messages arrive through
+  `comm.receive()` as `{kind="ws", id, open=true, message}`, and the end of
+  the socket, however it ends, as one `open=false`. The host still owns the
+  socket: destinations follow the HTTP rule (public addresses, or hosts the user
+  lists in `RUSTYNES_COMM_HTTP_ALLOW`), checked on the address it connects to;
+  a message is at most 1 MiB, and the socket stops being read while 4 MiB
+  waits to be drained. The Lua side and its budget are unchanged.
+- **Lua memory-mapped files are real shared memory (CR-02, `script-ipc`).**
+  `comm.mmfWrite(name, data)` writes the OS shared-memory region
+  `rnmf-<name>` (POSIX `shm_open` on Linux and macOS, a named file mapping
+  on Windows), so another program can open it by name, and `comm.mmfRead`
+  reads a region another program wrote. Each region starts with a small
+  documented header (length and a sequence counter, so a reader never takes a
+  half-written payload). Until now the "file" was a map inside the emulator
+  that nothing else could see. Regions are per user and owner-only: the OS
+  name carries the user (`.<uid>` on POSIX, `Local\` on Windows), they are
+  created mode `0600` (an owner-only DACL on Windows), and an existing object
+  that is not ours and owner-only is refused rather than used, so another
+  local user cannot pre-create a name to read or plant data.
+  `docs/scripting.md` has the layout and the threat model.
+- **Speedrun auto-timing and a memory-export interface (`T-SPEEDRUN-MEMIF`).**
+  A splits file names a start, splits and an optional reset as RAM conditions
+  in the RetroAchievements condition grammar (`start = 0xH0770=1_d0xH0770=0`,
+  `split = World 1 | 0xH075F=1`), and the run is timed in the console's
+  master-clock cycles, so the same movie gives the same splits on every
+  machine and replay. `rustynes speedrun --rom ... --splits ... --movie ...`
+  times a movie headlessly and prints a JSON result; `rustynes game.nes
+  --splits any.rnsplits` times a live session. With the `memif` feature
+  (part of `full`), `--memif` publishes a fixed-layout shared-memory block
+  every frame (RAM, frame and master clock, the timer and its splits) at
+  documented offsets that do not change between builds, so a LiveSplit-style
+  tool reads it by offset instead of hunting per-version addresses.
+  `docs/memory-export-interface.md` is the contract (ADR 0047), and
+  `scripts/memif/reference_splitter.py` a reader written from it alone.
+
 ### Fixed
 
 - **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu

@@ -39,6 +39,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [nesdev-hardware-emulation-checklist.md](nesdev-hardware-emulation-checklist.md) | Hardware-behavior coverage checklist |
 | [netplay-webrtc.md](netplay-webrtc.md) | Rollback netplay (UDP + browser WebRTC) design |
 | [scripting.md](scripting.md) | Lua scripting `emu` API reference (sandboxed Lua 5.4, `scripting` feature, native-only) |
+| [memory-export-interface.md](memory-export-interface.md) | Speedrun auto-timing (RetroAchievements-grammar RAM predicates, master-clock times, `rustynes speedrun`) and the memory-export shared-memory block's layout v1 (`memif` feature) |
 | [ppu-trace-tooling.md](ppu-trace-tooling.md) | PPU state-trace diagnostic tooling |
 | [ra-integration-request.md](ra-integration-request.md) | RetroAchievements allowlisting request template |
 | [cheevos-browser.md](cheevos-browser.md) | Casual-mode browser RetroAchievements scaffolding (the off-by-default `browser-cheevos` feature, ADR 0015) |
