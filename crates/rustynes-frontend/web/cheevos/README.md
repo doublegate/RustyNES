@@ -83,7 +83,10 @@ two steps that are, and the browser path could not have loaded in any build.
 4. **Point the glue at the proxy:** `<meta name="rustynes-ra-proxy-base"
    content="https://<host>/ra">` in the page (or `globalThis.RUSTYNES_RA_PROXY_BASE`,
    or `HOSTED_RA_PROXY_BASE` in `ra_glue.js`); the hosted service is
-   `services/hosted/`.
+   `services/hosted/`. The glue reads these when `ra_init()` starts a session,
+   not when the module is imported (v3.5.0, `T-WEB-RA-PROXY-LAZY`), so a page
+   may set the base at any point before RetroAchievements starts; a live
+   session keeps the base it started with until `ra_shutdown()`.
 
 The public Pages demo does not ship this yet (maintainer, 2026-10-18): it waits
 for RetroAchievements to receive the integration request.

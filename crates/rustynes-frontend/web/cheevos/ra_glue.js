@@ -22,13 +22,13 @@
 //      server call is routed through a maintainer-deployed AUTH PROXY that adds
 //      the identifying header server-side. The proxy contract is documented in
 //      `docs/cheevos-browser.md` + `scripts/cheevos/auth-proxy.example.toml`.
-//      Point `RA_PROXY_BASE` at your deployed proxy. Until it is set, server
+//      Point the proxy base (below) at your deployed proxy. Until it is set, server
 //      calls fail closed (http_status_code -1) and the Rust UI shows the
 //      experimental / not-configured caveat — nothing silently "works".
 //
 // MAINTAINER-MANUAL CARRYOVERS (no headless path — ADR 0015):
 //   - Deploy the auth proxy (scripts/cheevos/auth_proxy_stub.py is a reference)
-//     and point RA_PROXY_BASE at its origin.
+//     and point the proxy base (below) at its origin.
 //   - Verify a casual unlock end-to-end in a real browser with a real RA
 //     account. CI cannot do this (it needs a human + a live RA login + the
 //     deployed proxy). The trampoline marshalling below is exercised only by
@@ -44,10 +44,19 @@
 //   1. `<meta name="rustynes-ra-proxy-base" content="https://…/ra">` in the
 //      page (what index.html carries once the maintainer has deployed);
 //   2. `globalThis.RUSTYNES_RA_PROXY_BASE`, set by a script that runs before
-//      this module (for local development against `wrangler dev`);
+//      ra_init() (for local development against `wrangler dev`);
 //   3. HOSTED_RA_PROXY_BASE below (empty in the repository).
 // Only `https://` is accepted, or `http://` to localhost / 127.0.0.1, because
 // the login request carries the password.
+//
+// v3.5.0 (T-WEB-RA-PROXY-LAZY, Antigravity on #618): the base is read at
+// ra_init(), not at module import. Until v3.4.2 it was a module-level constant
+// evaluated on import while rcheevosBase() was read at loadModule(), so a page
+// that set the base after the glue was imported got a working rcheevos module
+// and a proxy that failed closed. Now both page settings are read when the
+// session starts. A live session keeps the base it started with (a mid-session
+// change would send one session's calls to two proxies); ra_shutdown() lets
+// the next ra_init() read it again.
 const HOSTED_RA_PROXY_BASE = "";
 
 // Exported for services/hosted/test/ra-glue.test.ts.
@@ -68,7 +77,14 @@ export function resolveProxyBase() {
   return "";
 }
 
-export const RA_PROXY_BASE = resolveProxyBase();
+// The proxy base the current session uses; "" until ra_init() resolves it, so
+// every server call before then fails closed.
+let _proxyBase = "";
+
+// Exported for services/hosted/test/ra-glue.test.ts.
+export function raProxyBase() {
+  return _proxyBase;
+}
 
 // rc_console id for the NES (RC_CONSOLE_NINTENDO). Mirrors the native bridge.
 const RC_CONSOLE_NINTENDO = 7;
@@ -249,7 +265,7 @@ function serverCallTrampoline(request, callback, callbackData, _client) {
     }
   };
 
-  if (RA_PROXY_BASE === "") {
+  if (_proxyBase === "") {
     // Not configured: fail closed (status -1), exactly as documented. The Rust
     // UI then shows the not-configured caveat — nothing silently "works".
     complete(-1, "");
@@ -266,7 +282,7 @@ function serverCallTrampoline(request, callback, callbackData, _client) {
   } catch (_e) {
     // Relative/odd URL — forward as-is.
   }
-  const target = RA_PROXY_BASE.replace(/\/$/, "") + path;
+  const target = _proxyBase.replace(/\/$/, "") + path;
 
   fetch(target, {
     method: postData ? "POST" : "GET",
@@ -330,6 +346,10 @@ function eventTrampoline(eventPtr, _client) {
 // enabled here (the toggle is unexported); rcheevos stays in its casual path for
 // the proxy/identity flow.
 export async function ra_init() {
+  // Resolved first, before the module load can fail, so ra_proxy_configured()
+  // (which the Rust bridge reads right after this) reflects the page's setting
+  // as it stands now. Only when no session is live: see HOSTED_RA_PROXY_BASE.
+  if (_client === 0) _proxyBase = resolveProxyBase();
   try {
     const m = await loadModule();
     if (_client !== 0) return true;
@@ -369,7 +389,7 @@ export async function ra_init() {
 // True only when the auth proxy is configured (a precondition for any RA login
 // or unlock). The Rust UI uses this to render the "not configured" caveat.
 export function ra_proxy_configured() {
-  return RA_PROXY_BASE !== "";
+  return _proxyBase !== "";
 }
 
 // The rcheevos version string from the module (for the UI / identity line).

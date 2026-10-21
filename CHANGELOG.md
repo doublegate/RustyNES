@@ -38,6 +38,13 @@ cycle-accurate core later replaced.
   told to connect directly. TURN stays switched off in production
   (`T-HOSTED-TURN-EXPIRY`); this lands first so it is in place when TURN is
   switched back on.
+- **Browser RetroAchievements: the proxy address is read when a session
+  starts** (`T-WEB-RA-PROXY-LAZY`). The browser glue read the
+  RetroAchievements proxy address once, when the script was loaded, so a page
+  that set it later had every RetroAchievements call refused. It is now read
+  when RetroAchievements starts, as the location of the rcheevos module
+  already was. Browser RetroAchievements stays off on the public demo until
+  RetroAchievements answers the integration request.
 
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
