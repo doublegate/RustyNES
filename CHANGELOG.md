@@ -39,6 +39,14 @@ cycle-accurate core later replaced.
   movie, or (full web build) the 8 KiB `disksys.rom` to install the FDS
   BIOS. Until now the browser opened a dropped file itself and only the file
   picker loaded a game. The lightweight canvas embed takes ROMs and movies.
+- **Vs. DualSystem games in the lightweight browser embed** (`FE-10`). The
+  canvas embed now runs both consoles of a two-console Vs. cabinet (Tennis,
+  Mahjong, Wrecking Crew, Balloon Fight) and shows the two screens side by
+  side, as the full web build and the desktop do; before, it ran the main
+  console alone and the game stayed on its attract screen. `F10` inserts a
+  coin there, for single Vs. games too, which the embed could not do at
+  all. Save states cover both consoles; movies stay unavailable on a
+  cabinet, as everywhere.
 
 ### Changed
 

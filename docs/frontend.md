@@ -601,8 +601,50 @@ the `.rnm` route, and the canvas embed.
 The wasm-winit build persists battery saves to `IndexedDB` (see
 [Battery saves in the browser](#battery-saves-in-the-browser-indexeddb-wasm-winit-v297))
 and runs Vs. `DualSystem` cabinets with both screens (see the "Web
-`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed does
-neither: it has no battery store and warns that a cabinet runs main-only.
+`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed has no
+battery store; it runs cabinets since v3.5.0 (below).
+
+**`DualSystem` in the `wasm-canvas` embed (v3.5.0, `FE-10`).** Until v3.5.0
+the embed ran a cabinet's main console alone and warned that it would not get
+past the attract screen. It now builds the cabinet by the same rule as the
+other frontends (`app::is_dual_system`). The DOM-free half is
+`canvas_dual.rs`, compiled for the embed and for the native tests:
+`build_cabinet` (both consoles get the game database's mirroring correction
+and the Vs. database's palette and DIP preset, as the embed's single path
+gives a Vs. game), `CabinetFrame::step` (P1 from the keyboard and Gamepad API
+on the main console's port 0, the touch overlay added to its chosen port so
+P3 / P4 reach the sub; the coin countdown; `VsDualSystem::run_frame`; the two
+screens side by side through the desktop's `gfx::compose_dual_into`), and
+`drain_audio` (the main console's samples played, the sub's drained and
+dropped, as on the desktop). `wasm.rs` sizes the canvas 512x240 with an
+inline `aspect-ratio: 1024 / 480` (the page's stylesheet fixes 512:480, which
+would stretch the pair to twice its height) and restores 256x240 and the
+page's rule for a single console. F1 / F4 save and load the cabinet's own
+"RVSD" snapshot under the ROM hash. F6-F8 and a dropped `.rnm` are refused
+with a console note (TAS is scoped out of dual mode, ADR 0032); there is no
+rewind, run-ahead or netplay, which the embed lacks for one console too.
+
+`F10` inserts a coin, the desktop's default Insert Coin key, into the
+cabinet's main acceptor or a single Vs. console's (before v3.5.0 the embed had
+no coin key at all, so no Vs. game could be started in it). The countdown is
+the desktop's: `VS_COIN_HOLD_FRAMES` = 3, and the latch is cleared at the top
+of the frame on which it reaches 0, so the coin reads on `$4016` through two
+emulated frames (`a_coin_reads_for_two_frames_then_is_released`; the
+desktop's comment calls this a three-frame hold).
+
+Verified: five `canvas_dual` tests (cabinet decision, frame-for-frame
+equality with a hand-driven cabinet and pixel-exact composition, port
+routing, the coin bit on `$4016`, the audio drain) and, on 2026-10-20, the
+embed's debug build in headless Chromium over the DevTools protocol: a
+dropped synthetic NROM ran at 256x240 with no inline style; the synthetic
+flashing cabinet (`runahead::tests::flashing_cabinet`) switched the canvas to
+512x240 with the inline aspect ratio, and three samples of the two halves
+showed different, changing colours (`218,109,0` / `255,182,0`, then
+`182,182,182` / `255,255,255`, then `0,109,218` / `109,182,255`); F7 logged
+the refusal; a second NROM restored 256x240 and removed the style. **Still
+manual:** a real `DualSystem` title (Tennis, Mahjong, Wrecking Crew, Balloon
+Fight) coined and played in a desktop browser, and the canvas layout at
+narrow widths.
 
 ### wasm size & startup + software blitter (v2.1.8 "Performance", A2 + A4)
 

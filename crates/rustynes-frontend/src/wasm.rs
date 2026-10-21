@@ -43,6 +43,8 @@ use crate::wasm_audio;
 // state machine (the SAME one the native + winit-wasm paths use) so the
 // canvas embed records/replays the deterministic `.rnm` format byte-for-byte.
 use crate::movie_ui::MovieUi;
+// v3.5.0 (`FE-10`) — the DOM-free half of this embed's Vs. `DualSystem` cabinet.
+use crate::canvas_dual::{CabinetFrame, CoinLatch};
 
 const NES_W: u32 = 256;
 const NES_H: u32 = 240;
@@ -58,6 +60,14 @@ const CANVAS_SLOT: u8 = 0;
 /// the `Nes` and the current button state live behind `Rc<RefCell>`.
 struct Emu {
     nes: Option<Nes>,
+    /// v3.5.0 (`FE-10`) — a Vs. `DualSystem` cabinet, installed INSTEAD of
+    /// `nes` (exactly one of the two is `Some` once a ROM is loaded), as
+    /// `EmuCore` holds `dual` beside `nes` on the desktop.
+    dual: Option<Box<rustynes_core::VsDualSystem>>,
+    /// v3.5.0 — the cabinet's coin hold and composed-image buffer.
+    cabinet: CabinetFrame,
+    /// v3.5.0 — the coin hold for a single Vs. System console (`F10`).
+    coin: CoinLatch,
     buttons: Buttons,
     /// v1.4.0 E1 — TAS movie record/play state. Idle until the user
     /// presses F6 (record) / F7 (play) / F8 (branch).
@@ -67,6 +77,9 @@ struct Emu {
 thread_local! {
     static EMU: Rc<RefCell<Emu>> = Rc::new(RefCell::new(Emu {
         nes: None,
+        dual: None,
+        cabinet: CabinetFrame::default(),
+        coin: CoinLatch::default(),
         buttons: Buttons::empty(),
         movie: MovieUi::default(),
     }));
@@ -271,31 +284,99 @@ fn load_rom_bytes(mut bytes: Vec<u8>) {
             if let Some(crc) = crc {
                 crate::game_db::correct_console(&mut nes, crc);
             }
-            // v2.9.7 "Tandem" (plan item 5) — this embed draws ONE
-            // 256x240 canvas through the 2D `ImageData` path; it has
-            // no two-screen present path and no second console. A Vs.
-            // `DualSystem` title therefore runs as its main console
-            // alone. Say so in the console rather than leave a black
-            // attract screen unexplained; the full web build
-            // (wasm-winit) runs the two-console cabinet.
-            if crate::app::is_dual_system(&nes) {
-                crate::app::warn_dual_system_main_only(
-                    "The lightweight canvas embed runs the main console only; \
-                     the full web build (wasm-winit) runs both consoles.",
-                );
-            }
+            // v3.5.0 (`FE-10`) — a Vs. `DualSystem` title gets the
+            // two-console cabinet, as on the desktop and in the full web
+            // build. Until v3.5.0 this embed ran the main console alone
+            // with a warning, which never gets past the attract screen.
+            // The warning stays for a cabinet that fails to build.
+            crate::canvas_dual::apply_vs_db_defaults(&mut nes);
+            let cabinet = match crate::canvas_dual::build_cabinet(&nes, &bytes, crc, sample_rate) {
+                Some(Ok(dual)) => Some(dual),
+                Some(Err(e)) => {
+                    crate::app::warn_dual_system_main_only(&format!(
+                        "The two-console cabinet failed to build ({e})."
+                    ));
+                    None
+                }
+                None => None,
+            };
+            let dual_mode = cabinet.is_some();
             // NOT `EmuCore::set_nes`: this is the canvas embed's own
             // `Emu`, which holds no mapper-name cache to refresh, so
             // there is nothing for a setter to keep consistent. (The
             // v2.3.2 F3 sweep rewrote this site along with the four
             // real `EmuCore` ones and broke the `wasm-canvas` build,
             // which no native feature combo compiles.)
-            EMU.with(|emu| emu.borrow_mut().nes = Some(nes));
+            EMU.with(|emu| {
+                let mut emu = emu.borrow_mut();
+                if let Some(dual) = cabinet {
+                    emu.nes = None;
+                    emu.dual = Some(dual);
+                } else {
+                    emu.dual = None;
+                    emu.nes = Some(nes);
+                }
+                emu.coin = CoinLatch::default();
+                emu.cabinet = CabinetFrame::default();
+            });
+            set_canvas_for(dual_mode);
             wasm_audio::clear_ring();
-            log(&format!("ROM loaded ({} bytes). Running.", bytes.len()));
+            log(&format!(
+                "ROM loaded ({} bytes{}). Running.",
+                bytes.len(),
+                if dual_mode {
+                    ", Vs. DualSystem: two consoles, F10 inserts a coin"
+                } else {
+                    ""
+                }
+            ));
         }
         Err(e) => log(&format!("ROM parse error: {e:?}")),
     }
+}
+
+/// v3.5.0 (`FE-10`) — size the canvas for one screen (256x240) or a
+/// cabinet's two side by side (512x240).
+///
+/// The host page's stylesheet fixes `#nes-canvas` at a 512:480 aspect, which
+/// would stretch a two-screen image to twice its height, so a cabinet also
+/// gets an inline `aspect-ratio` (inline style beats the stylesheet); a
+/// single console drops it again and the page's own rule applies, exactly
+/// as before.
+fn set_canvas_for(dual: bool) {
+    let Some(canvas) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("nes-canvas"))
+        .and_then(|el| el.dyn_into::<HtmlCanvasElement>().ok())
+    else {
+        return;
+    };
+    if dual {
+        canvas.set_width(NES_W * 2);
+        canvas.set_height(NES_H);
+        let _ = canvas.set_attribute("style", "aspect-ratio: 1024 / 480");
+    } else {
+        canvas.set_width(NES_W);
+        canvas.set_height(NES_H);
+        let _ = canvas.remove_attribute("style");
+    }
+}
+
+/// v3.5.0 (`FE-10`) — `F10` inserts a coin (the desktop's default Insert Coin
+/// key): into the cabinet's main acceptor, or a single Vs. System console's.
+/// Held, then released, by the desktop's countdown (`canvas_dual::CoinLatch`). On a
+/// non-Vs. cartridge the latch is unwired and changes nothing.
+fn insert_coin() {
+    EMU.with(|emu| {
+        let mut emu = emu.borrow_mut();
+        let emu = &mut *emu;
+        if let Some(dual) = emu.dual.as_mut() {
+            emu.cabinet.insert_coin(dual);
+        } else if let Some(nes) = emu.nes.as_mut() {
+            nes.insert_coin(0);
+            emu.coin.insert();
+        }
+    });
 }
 
 /// Wire keydown/keyup listeners that OR/clear player-1 buttons and
@@ -331,6 +412,12 @@ fn install_keyboard_handlers(document: &web_sys::Document) {
             "F8" => {
                 ev.prevent_default();
                 movie_branch();
+                return;
+            }
+            // v3.5.0 (`FE-10`) — Vs. System coin.
+            "F10" => {
+                ev.prevent_default();
+                insert_coin();
                 return;
             }
             _ => {}
@@ -393,7 +480,29 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
             // (Xbox-style → P1), OR'd into the keyboard mask at this single latch
             // site. Empty when no pad is connected (byte-identical default).
             let buttons = emu.buttons | crate::wasm_gamepad::gamepad_buttons();
-            if let Some(nes) = emu.nes.as_mut() {
+            // v3.5.0 (`FE-10`) — a Vs. `DualSystem` cabinet: the keyboard and
+            // pad drive P1 (main console port 0), the touch overlay adds to
+            // its chosen port (P3 / P4 reach the sub console), and the two
+            // screens are blitted side by side. No movie hook: TAS is scoped
+            // out of dual mode (ADR 0032), and F6-F8 refuse it.
+            if let Some(dual) = emu.dual.as_mut() {
+                let mut ports = [Buttons::empty(); 4];
+                ports[0] = buttons;
+                if let Some(p) = ports.get_mut(touch_port) {
+                    *p |= touch_buttons;
+                }
+                let (img, w, h) = emu.cabinet.step(dual, ports);
+                if let Ok(image) =
+                    ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(img), w, h)
+                {
+                    let _ = ctx.put_image_data(&image, 0, 0);
+                }
+                wasm_audio::push_samples(&crate::canvas_dual::drain_audio(dual));
+            } else if let Some(nes) = emu.nes.as_mut() {
+                // v3.5.0 — a single Vs. console's coin hold (F10).
+                if emu.coin.tick() {
+                    nes.clear_coin();
+                }
                 // Player 1 is the keyboard-mapped port; the touch overlay can
                 // route its mask to any of ports 0..=3.
                 if touch_port == 0 {
@@ -457,6 +566,11 @@ fn request_animation_frame(f: &Closure<dyn FnMut()>) {
 fn save_state() {
     let Some((sha, blob)) = EMU.with(|emu| {
         let emu = emu.borrow();
+        // v3.5.0 (`FE-10`) — a cabinet saves its own two-console snapshot
+        // (`VsDualSystem::snapshot`, the "RVSD" container) under the ROM hash.
+        if let Some(dual) = emu.dual.as_ref() {
+            return Some((*dual.main().rom_sha256(), dual.snapshot()));
+        }
         emu.nes
             .as_ref()
             .map(|nes| (*nes.rom_sha256(), nes.snapshot()))
@@ -476,7 +590,13 @@ fn save_state() {
 /// `spawn_local` task that re-borrows `EMU` only AFTER the read resolves,
 /// guarding against a mid-read ROM swap by re-checking the SHA.
 fn load_state() {
-    let Some(sha) = EMU.with(|emu| emu.borrow().nes.as_ref().map(|n| *n.rom_sha256())) else {
+    let Some(sha) = EMU.with(|emu| {
+        let emu = emu.borrow();
+        emu.dual.as_ref().map_or_else(
+            || emu.nes.as_ref().map(|n| *n.rom_sha256()),
+            |d| Some(*d.main().rom_sha256()),
+        )
+    }) else {
         log("load state: no ROM loaded");
         return;
     };
@@ -487,6 +607,17 @@ fn load_state() {
         };
         EMU.with(|emu| {
             let mut emu = emu.borrow_mut();
+            if let Some(dual) = emu.dual.as_mut() {
+                if *dual.main().rom_sha256() != sha {
+                    log("load state: ROM changed during load — skipped");
+                    return;
+                }
+                match dual.restore(&blob) {
+                    Ok(()) => log("state loaded"),
+                    Err(e) => log(&format!("load state: restore failed: {e:?}")),
+                }
+                return;
+            }
             let Some(nes) = emu.nes.as_mut() else {
                 return;
             };
@@ -502,11 +633,25 @@ fn load_state() {
     });
 }
 
+/// v3.5.0 (`FE-10`) — `true` (after a console note) while a Vs. `DualSystem`
+/// cabinet runs: TAS movies are scoped out of dual mode on every frontend
+/// (ADR 0032), so F6 / F7 / F8 and a dropped `.rnm` do nothing then.
+fn dual_refuses_movies() -> bool {
+    let dual = EMU.with(|emu| emu.borrow().dual.is_some());
+    if dual {
+        log("movies are not available on a Vs. DualSystem cabinet (ADR 0032)");
+    }
+    dual
+}
+
 /// F6 — toggle TAS movie recording (v1.4.0 E1). **Start**: power-cycle the
 /// running `Nes` and record from that fresh power-on. **Stop**: finish the
 /// movie, serialize the `.rnm`, and trigger a browser Blob download (the
 /// canvas embed has no `rfd` dialog — same path the winit wasm frontend uses).
 fn movie_record_toggle() {
+    if dual_refuses_movies() {
+        return;
+    }
     EMU.with(|emu| {
         let mut emu = emu.borrow_mut();
         let emu = &mut *emu;
@@ -548,6 +693,9 @@ fn movie_record_toggle() {
 /// `change` handler deserializes + replays). The `.click()` runs inside this
 /// keydown gesture, satisfying the browser file-picker policy.
 fn movie_play_toggle() {
+    if dual_refuses_movies() {
+        return;
+    }
     let playing = EMU.with(|emu| emu.borrow().movie.is_playing());
     if playing {
         EMU.with(|emu| {
@@ -563,6 +711,9 @@ fn movie_play_toggle() {
 
 /// F8 — branch the current state into a new recording (v1.4.0 E1).
 fn movie_branch() {
+    if dual_refuses_movies() {
+        return;
+    }
     EMU.with(|emu| {
         let mut emu = emu.borrow_mut();
         let emu = &mut *emu;
@@ -636,6 +787,9 @@ fn install_movie_loader(document: &web_sys::Document) {
 /// Deserialize uploaded `.rnm` bytes, seek the running `Nes` to the movie's
 /// start point, and begin playback (v1.4.0 E1).
 fn start_movie_from_bytes(bytes: &[u8]) {
+    if dual_refuses_movies() {
+        return;
+    }
     let movie = match rustynes_core::Movie::deserialize(bytes) {
         Ok(m) => m,
         Err(e) => {
