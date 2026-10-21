@@ -316,6 +316,17 @@ cycle-accurate core later replaced.
     remaining differences are the in-frame flag and no counting with
     rendering off, not attributed further. *Gemfire* and *L'Empereur* were
     not bisected. `EMULATION_EPOCH` 6.
+  - **What the evidence is, and is not.** No test ROM in the battery
+    measures MMC5 IRQ timing: AccuracyCoin, nestest, blargg, kevtris and
+    `mmc3_test_2` all still pass, which shows the fix breaks nothing they
+    cover, and the three MMC5 ROMs in `tests/roms/mmc5` check only that
+    games run. The new timing rests on the NESdev page (the rule stated
+    twice in prose and once as a state diagram), blargg's 2005 hardware
+    measurement (line resolution), and *Uchuu Keibitai SDF*'s grid becoming
+    even. The sources still disagree by two PPU dots on the detection point;
+    that question is left for hardware (a row in the MiSTer sibling's
+    `docs/HARDWARE_TESTING.md`). The fix is kept on that evidence, the epoch
+    break included (2026-10-21, under the maintainer's delegation).
 
 - **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu
   item's dispatch) inserted a coin on one peer's console only, and nothing
