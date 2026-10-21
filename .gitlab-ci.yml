@@ -231,12 +231,26 @@ libretro-build-osx-x64:
     - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
 
 # macOS ARM 64-bit
+#
+# `STRIP_CORE_LIB: "0"` keeps the template from running `$STRIP -S` on the
+# linked dylib (v3.4.2). On arm64 the linker ad-hoc signs the library, and
+# macOS on Apple Silicon refuses to load arm64 code whose signature does not
+# match its bytes: RetroArch is killed outright (SIGKILL) the moment it loads
+# the core. The image's strip (osxcross, run on Linux) rewrites the file and
+# does not re-sign it. Measured on the buildbot's 2026-10-20 core: 101 of 538
+# CodeDirectory page hashes no longer matched, and the signed range ended 32
+# bytes short of where the signature had moved to, while two C cores built
+# natively on libretro's Mac runner (gambatte, snes9x) verified with 0
+# mismatches. The release profile carries no debug info, so `-S` removed
+# little; the x86_64 job keeps stripping because an x86_64 dylib carries no
+# signature and loads either way. `libretro_buildbot_audit` pins this.
 libretro-build-osx-arm64:
   extends:
     - .libretro-rust-osx-arm64-default
     - .core-defs
   variables:
     RUST_TARGET: aarch64-apple-darwin
+    STRIP_CORE_LIB: "0"
   before_script:
     - !reference [.libretro-rust-osx-arm64-default, before_script]
     - export SDKROOT=$OSX_SDKROOT

@@ -26,6 +26,43 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
+
+A one-fix patch release. Nothing in the emulation core, the desktop or
+mobile apps or the MiSTer core changes: movies, netplay sessions and save
+states from v3.4.1 are compatible (epoch 5, protocol 9), and the v3.4.1
+bitstreams are unchanged.
+
+### Fixed
+
+- **The RetroArch core on Apple Silicon Macs.** Loading RustyNES from
+  RetroArch's Online Updater froze RetroArch and dropped it back to the
+  shell. libretro's build template strips the core after linking, which on
+  arm64 leaves the linker's code signature no longer matching the file, and
+  macOS kills any process that loads arm64 code with a broken signature.
+  The buildbot's core of 2026-10-20 had 101 of its 538 signed pages
+  mismatched; natively built C cores on the same server verified clean.
+  The arm64 build is no longer stripped, so its signature ships intact.
+  Intel Macs were not affected (an x86_64 core carries no signature), nor
+  were the desktop app, iOS or tvOS. RetroArch gets cores from libretro's
+  nightly build of `main`, so the fix arrives through the Online Updater:
+  re-download RustyNES there. A new test keeps the setting from being
+  dropped.
+
+### Security
+
+- **TLS certificate checks** (RUSTSEC-2026-0382, RUSTSEC-2026-0381, both
+  published after v3.4.1): `rustls-webpki` 0.103.16 and `webpki-roots`
+  1.0.10, which stop trusting distrusted emSign intermediates. These are the
+  TLS roots of the netplay signaling client and the RetroAchievements
+  client. `webpki-roots` 0.26.11 stays in the tree, pulled by `tungstenite`
+  0.30.0 (the newest), but it only re-exports 1.0.10's roots; its advisory is
+  ignored by ID, and a new test fails if the lock ever resolves 1.x below
+  1.0.10.
+- `basic-toml` (RUSTSEC-2026-0374, unmaintained, not a vulnerability) is
+  ignored: it runs only at compile time, inside UniFFI's template macro, and
+  the newest UniFFI still needs it.
+
 ## [3.4.1] - 2026-10-19 - "Beacon" (the hosted lobby live (the TURN relay held off), the browser RetroAchievements build fixed, version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed)
 
 ### Added
