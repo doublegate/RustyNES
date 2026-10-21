@@ -124,6 +124,23 @@ cycle-accurate core later replaced.
   `docs/memory-export-interface.md` is the contract (ADR 0047), and
   `scripts/memif/reference_splitter.py` a reader written from it alone.
 
+- **An MCP server over the headless core, `rustynes-mcp`** (`T-MCP-SERVER`,
+  D33; [ADR 0048](docs/adr/0048-an-mcp-server-over-the-headless-core.md),
+  [docs/mcp-server.md](docs/mcp-server.md)). A new binary that serves one ROM
+  to a Model Context Protocol client over stdio, built on the official Rust
+  SDK (`rmcp` 3.5.1, Apache-2.0). 25 declared tools: pause and real-time
+  resume, frame and instruction stepping, exec breakpoints, side-effect-free
+  memory reads, a work-RAM-only write, the observation layers (the frame as a
+  PNG, nametables as tile text, OAM, CPU), sandboxed read-only Lua, and
+  experiments: `fork_create` -> `fork_run(inputs)` -> `fork_diff`. Every fork
+  records its inputs as an ordinary `.rnm`, and `movie_verify` replays it on
+  a fresh machine and compares save state, RAM and framebuffer byte for byte;
+  the main machine keeps a journal segment that replays the same way. An
+  undeclared tool, an undeclared argument, a write outside `$0000-$07FF`, a
+  Lua write, and a file write outside the operator's `--out-dir` are all
+  refused. No network listener. Nothing in the emulation core changes (no
+  epoch, movie-format or protocol change).
+
 ### Fixed
 
 - **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu

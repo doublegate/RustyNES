@@ -139,6 +139,7 @@ nav:
   - Frontend & Features:
       - Frontend Shell: frontend.md
       - Scripting (Lua): scripting.md
+      - MCP Server: mcp-server.md
       - Creator Tools: creator-tools.md
       - Pixel Provenance: pixel-provenance.md
       - Audio Provenance: audio-provenance.md
