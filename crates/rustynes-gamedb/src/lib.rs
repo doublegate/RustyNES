@@ -1007,7 +1007,15 @@ const CRC32_TABLE: [u32; 256] = {
     table
 };
 
-fn crc32(data: &[u8]) -> u32 {
+/// IEEE CRC-32 of arbitrary bytes.
+///
+/// The function [`rom_crc32`] and [`rom_crc32_full`] key by. Public since
+/// v3.5.0 for the dump checker
+/// (`rustynes dump-check`, `T-PRESERVE-DUMP-VERIFY`), which hashes a ROM's
+/// bytes after its header, trainer included, the span No-Intro DATs and the
+/// NES 2.0 database's `<rom crc32>` cover.
+#[must_use]
+pub fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &byte in data {
         crc = (crc >> 8) ^ CRC32_TABLE[((crc ^ u32::from(byte)) & 0xFF) as usize];

@@ -145,6 +145,7 @@ nav:
       - Latency Oracle: latency-oracle.md
       - RAM Atlas: ram-atlas.md
       - Divergence Lens: divergence-lens.md
+      - Dump Check: dump-check.md
       - CRT / Composite Video: crt-composite.md
       - Netplay (WebRTC): netplay-webrtc.md
       - RetroAchievements: cheevos-browser.md

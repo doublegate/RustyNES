@@ -75,6 +75,8 @@ pub mod cheats;
 // color-print deps are gated out of the wasm target in `Cargo.toml`.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
+// v3.5.0 (T-PRESERVE-DUMP-VERIFY) — `rustynes dump-check`, the headless dump
+// verification report. Native-only, like the CLI that runs it.
 /// v2.3.3 — absolute `CLOCK_MONOTONIC` / `CLOCK_THREAD_CPUTIME_ID` readings,
 /// with the frontend's only `clock_gettime` call site.
 ///
@@ -84,6 +86,8 @@ pub mod cli;
 pub mod clock;
 pub mod config;
 pub mod debugger;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod dump_check;
 // v2.3.0 "Datum II" — true multi-viewport tool-window detach: each detached tool
 // panel gets its own real OS window with a private egui stack. Native-only (wasm
 // is single-canvas and keeps panels docked).

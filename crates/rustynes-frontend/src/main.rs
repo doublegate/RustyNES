@@ -57,6 +57,12 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(CliCommand::Verify { movie, rom }) => run_verify(&movie, &rom),
+        Some(CliCommand::DumpCheck {
+            rom,
+            dat,
+            nes20db,
+            frames,
+        }) => run_dump_check(&rom, dat.as_deref(), nes20db.as_deref(), frames),
         None => run_emulator(cli.rom),
     }
 }
@@ -72,6 +78,62 @@ fn main() -> ExitCode {
 /// Exit codes are distinct on purpose: 0 verified, 1 mismatch or I/O error, 3
 /// "no attestation recorded". A movie that makes no claim has not failed, and
 /// collapsing the two would make a script unable to tell them apart.
+/// `rustynes dump-check <ROM> [--dat FILE] [--nes20db FILE] [--frames N]`
+/// (v3.5.0, `T-PRESERVE-DUMP-VERIFY`): read the files, run
+/// [`rustynes_frontend::dump_check::check`], print its report.
+///
+/// Exit codes: 0 nothing found (verified or not), 4 at least one finding, 1 an
+/// error before a report could be made. 2 stays clap's usage error and 3
+/// `verify`'s "no attestation", so a script can tell all of them apart.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_dump_check(
+    rom_path: &std::path::Path,
+    dat_path: Option<&std::path::Path>,
+    db_path: Option<&std::path::Path>,
+    frames: u32,
+) -> ExitCode {
+    use rustynes_frontend::dump_check::{self, CheckOptions, Dat, Nes20Db};
+
+    let text = |p: &std::path::Path| -> Result<String, String> {
+        let bytes = dump_check::read_capped(p)?;
+        String::from_utf8(bytes).map_err(|e| format!("{} is not UTF-8 text: {e}", p.display()))
+    };
+    let run = || -> Result<dump_check::DumpReport, String> {
+        let rom = dump_check::read_capped(rom_path)?;
+        let dat = dat_path
+            .map(|p| Dat::parse(&text(p)?).map_err(|e| format!("{}: {e}", p.display())))
+            .transpose()?;
+        let db = db_path
+            .map(|p| Nes20Db::parse(&text(p)?).map_err(|e| format!("{}: {e}", p.display())))
+            .transpose()?;
+        Ok(dump_check::check(
+            &rom,
+            &CheckOptions {
+                dat: dat.as_ref(),
+                nes20db: db.as_ref(),
+                frames,
+            },
+        ))
+    };
+    match run() {
+        Ok(report) => {
+            print!(
+                "{}",
+                dump_check::render(&rom_path.display().to_string(), &report)
+            );
+            if report.verdict().is_some() {
+                ExitCode::from(4)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(e) => {
+            eprintln!("rustynes: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitCode {
     use rustynes_core::{Movie, Nes, VerifyOutcome};

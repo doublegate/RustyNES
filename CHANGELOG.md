@@ -26,6 +26,20 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **`rustynes dump-check`: is this ROM file the dump it claims to be?**
+  (`T-PRESERVE-DUMP-VERIFY`) A headless report on one file: its hashes; a
+  match against a No-Intro DAT you supply (RustyNES ships none); its header
+  compared field by field with the NES 2.0 database you supply, and with the
+  corrections RustyNES's own game database would make at load; a suspected
+  overdump (a ROM whose halves are identical); a truncated file or trailing
+  data; and the header against what the program actually does when run
+  (registers written on a board the header says has none, tiles uploaded to
+  memory the header says is read-only, work RAM used where the header
+  declares none). Exit code 0 means nothing was found, 4 that something was.
+  `docs/dump-check.md` says what it can and cannot establish.
+
 ### Changed
 
 - **The hosted TURN relay is on again** (`T-HOSTED-TURN-EXPIRY`). It was

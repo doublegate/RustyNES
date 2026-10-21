@@ -42,6 +42,8 @@ appends a colored "Examples" + "Keyboard" footer (`color-print`'s `cstr!`).
 | `rustynes --help` / `-V` | clap-styled help / version (exit 0). |
 | `rustynes help [<topic>]` | Topic help (see below). |
 | `rustynes completions <bash\|zsh\|fish\|powershell>` | Print a shell-completion script (`clap_complete`). |
+| `rustynes verify <MOVIE> --rom <ROM>` | Replay an attested movie headless (`docs/pixel-provenance.md`). |
+| `rustynes dump-check <ROM> [--dat F] [--nes20db F] [--frames N]` | v3.5.0: a dump's verification report (`docs/dump-check.md`); exit 0 clean, 4 findings, 1 error. |
 
 Help topics (`controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
 `scripting`, `netplay`, `about`) come from a single structured registry
