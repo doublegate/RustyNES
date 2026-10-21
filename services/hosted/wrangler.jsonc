@@ -41,14 +41,15 @@
     // --- TURN spend guards (README.md "Spend guards") ---
     // Kill switch: anything but "true" refuses to mint (clients fall back to
     // STUN / direct connections only).
-    // "false" from v3.4.1 (maintainer, 2026-10-19): Cloudflare kept creating
-    // relay allocations for credentials that were expired AND revoked through
-    // its API (a made-up credential is refused, so authentication works),
-    // while its FAQ says an expired credential stops being billed at once.
-    // Until that is measured or Cloudflare explains it, no credentials are
-    // issued; clients connect directly (STUN only). The Worker revokes each
-    // credential at its TTL regardless (budget.ts). README.md, "TURN is off".
-    "TURN_ENABLED": "false",
+    // "false" in v3.4.1 and v3.4.2 (maintainer, 2026-10-19): Cloudflare kept
+    // creating relay allocations for expired AND revoked credentials. "true"
+    // again from v3.5.0 (maintainer, 2026-10-20) after the stricter test of
+    // 2026-10-21 (T-HOSTED-TURN-EXPIRY): Cloudflare still RELAYS for expired
+    // and revoked credentials, but never BILLS that traffic, so the account's
+    // exposure is only credentials within their TTL, which the per-IP and
+    // daily limits bound and the Worker's revoke-at-TTL (budget.ts) ends.
+    // README.md, "TURN is on again (v3.5.0)".
+    "TURN_ENABLED": "true",
     // Credential lifetime, seconds (clamped 600..86400). 3 h: see README.md.
     "TURN_TTL_SECONDS": "10800",
     // Credentials minted per UTC day, all callers together.

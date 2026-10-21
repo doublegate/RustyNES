@@ -42,6 +42,7 @@ import java.net.NetworkInterface
 import uniffi.rustynes_mobile.NpNetConfig
 import uniffi.rustynes_mobile.defaultPaletteArgb
 import uniffi.rustynes_mobile.npHostedAvailable
+import uniffi.rustynes_mobile.npValidateRelayUrl
 import uniffi.rustynes_mobile.NpPhase
 import uniffi.rustynes_mobile.NpStatus
 
@@ -102,15 +103,16 @@ fun userSignalingUrl(settings: AppSettings): String {
 fun onlineNetplayConfigured(settings: AppSettings): Boolean {
     val url = userSignalingUrl(settings)
     // Empty: the hosted lobby, when this build has one. Otherwise the user's
-    // relay, which must be a WebSocket URL, as the iOS app requires (agy on
-    // #618): a malformed value no longer enables room codes it cannot serve.
+    // relay, which must be a URL the bridge's connect path can dial.
     if (url.isEmpty()) return npHostedAvailable()
-    // A scheme AND a host: a bare "ws://" is not a relay (CodeRabbit on #618).
-    return RELAY_URL.matches(url)
+    // v3.5.0 (T-MOBILE-RELAY-VALIDATE): the bridge's validator, which is the
+    // parser the connect path uses, so this, the iOS app and the connect agree
+    // by construction (crates/rustynes-netplay/testdata/relay_urls.tsv). It
+    // replaces a regex here that accepted a malformed port (`wss://h:notaport`,
+    // which the connect then dialled on 443), an unclosed IPv6 literal and an
+    // upper-case scheme the connect refuses.
+    return npValidateRelayUrl(url)
 }
-
-/** `ws://` or `wss://`, a host (not just `:port`), and no whitespace anywhere. */
-private val RELAY_URL = Regex("^wss?://[^/\\s?#:][^/\\s?#]*\\S*$", RegexOption.IGNORE_CASE)
 
 /**
  * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.

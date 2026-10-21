@@ -948,6 +948,32 @@ const fn timeline_refusal(g: &Inner) -> Option<&'static str> {
     }
 }
 
+/// v3.5.0 — why an FDS disk swap or a Vs. coin must not run now, or `None`.
+///
+/// The desktop's rule (`session_policy`, `TimelineAction::DiskSwap` /
+/// `InsertCoin`): refused during a netplay session, which exchanges controller
+/// input only, so the swap or the coin would happen on this device alone and
+/// desync the peer (the coin is never released either: the frame loop that
+/// counts it down is the session's); refused during playback, which drives the
+/// machine from the movie; ALLOWED during a recording, which records both in
+/// its input stream from `.rnm` format 7 (`T-MOVIE-INPUT-STREAM`). Until v3.5.0
+/// the bridge asked nothing at all before either (found by the ora-movie
+/// agent). The error variants are the existing ones (`Netplay`, `Movie`), so
+/// the generated Kotlin / Swift error types do not change.
+fn media_refusal(g: &Inner, what: &str) -> Result<(), MobileError> {
+    if netplay_owns_timeline(g) {
+        Err(MobileError::Netplay {
+            reason: format!("{what} is refused during a netplay session (the peer would desync)"),
+        })
+    } else if g.playback.is_some() {
+        Err(MobileError::Movie {
+            reason: format!("{what} is refused while a movie plays back"),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// v2.9.9 (NF-18) — refuse to start netplay while a movie records or plays
 /// (the desktop's v2.3.0 rule). Uses the existing `Netplay` error, so the
 /// generated Kotlin / Swift bindings are unchanged.
@@ -1735,9 +1761,18 @@ impl NesController {
     /// v2.9.7 — insert side `side` (0-based), or eject with `None`. Inserting
     /// opens the core's short "not ready" window that the BIOS waits out; an
     /// out-of-range side is ignored, as is any call on a cartridge or NSF.
-    pub fn set_disk_side(&self, side: Option<u32>) {
+    ///
+    /// # Errors
+    /// v3.5.0: [`MobileError::Netplay`] during a netplay session and
+    /// [`MobileError::Movie`] during playback (see `media_refusal`); the disk
+    /// is left as it was.
+    pub fn set_disk_side(&self, side: Option<u32>) -> Result<(), MobileError> {
         let side = side.and_then(|s| usize::try_from(s).ok());
-        self.lock().nes.set_disk_side(side);
+        let mut g = self.lock();
+        media_refusal(&g, "a disk swap")?;
+        g.nes.set_disk_side(side);
+        drop(g);
+        Ok(())
     }
 
     /// v2.9.9 (re-audit NF-21) — the loaded game's persistent identity,
@@ -1903,15 +1938,23 @@ impl NesController {
     /// switch reads closed for three frames, then the bridge releases it, as
     /// the desktop does. An acceptor the machine lacks, and any call on a
     /// non-Vs. cartridge, does nothing.
-    pub fn insert_coin(&self, acceptor: u32) {
+    ///
+    /// # Errors
+    /// v3.5.0: [`MobileError::Netplay`] during a netplay session and
+    /// [`MobileError::Movie`] during playback (see `media_refusal`); no coin is
+    /// inserted.
+    pub fn insert_coin(&self, acceptor: u32) -> Result<(), MobileError> {
         let acceptor = u8::try_from(acceptor).unwrap_or(u8::MAX);
         let mut g = self.lock();
+        media_refusal(&g, "a coin insert")?;
         // Seated: at rest the cabinet's own main slot holds the spare, so
         // acceptors 0/1 must be latched with the real main console in place.
         if with_cabinet(&mut g, |cab| cab.insert_coin(acceptor)).is_none() {
             g.nes.insert_coin(acceptor);
         }
         g.coin_frames = VS_COIN_HOLD_FRAMES;
+        drop(g);
+        Ok(())
     }
 
     /// The number of frames emulated since power-on.
@@ -3696,6 +3739,25 @@ pub fn np_hosted_available() -> bool {
     rustynes_netplay::hosted::resolve_base("").is_some()
 }
 
+/// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`) — whether `url` is a signaling relay URL
+/// the room-code connect path can dial.
+///
+/// The verdict is `rustynes_netplay::signaling_client::validate_signaling_url`,
+/// the same parser `SignalingClient::connect` uses, so a URL this accepts is
+/// one the bridge will dial as written and a URL it refuses is one the bridge
+/// would have refused (or, before v3.5.0, silently dialled on the scheme's
+/// default port: a non-numeric or out-of-range port). Both shells call this
+/// in place of their own checks (Android's `RELAY_URL` regex, iOS's
+/// `URL(string:)` plus a host test), so the three agree by construction; the
+/// shared table in `crates/rustynes-netplay/testdata/relay_urls.tsv` pins the
+/// verdicts. The shells trim user input before asking and treat an empty URL
+/// as "use the hosted lobby" ([`np_hosted_available`]) before asking; this
+/// function refuses the empty string and any surrounding whitespace.
+#[uniffi::export]
+pub fn np_validate_relay_url(url: String) -> bool {
+    rustynes_netplay::signaling_client::validate_signaling_url(&url).is_ok()
+}
+
 /// v2.9.9 (re-audit NF-21) — the identity of `rom`, without building a console.
 ///
 /// It is what [`NesController::rom_identity`] reports for a console built
@@ -4733,11 +4795,11 @@ mod tests {
         assert_eq!(ctrl.disk_side_count(), 2);
         assert_eq!(ctrl.inserted_disk_side(), Some(0));
         ctrl.step_frame();
-        ctrl.set_disk_side(Some(1));
+        ctrl.set_disk_side(Some(1)).expect("no session: allowed");
         assert_eq!(ctrl.inserted_disk_side(), Some(1));
-        ctrl.set_disk_side(None);
+        ctrl.set_disk_side(None).expect("no session: allowed");
         assert_eq!(ctrl.inserted_disk_side(), None, "ejected");
-        ctrl.set_disk_side(Some(7));
+        ctrl.set_disk_side(Some(7)).expect("no session: allowed");
         assert_eq!(ctrl.inserted_disk_side(), None, "out of range is ignored");
         assert!(!ctrl.disk_is_dirty());
         assert_ne!(ctrl.disk_image_bytes(), [] as [u8; 0]);
@@ -4867,7 +4929,7 @@ mod tests {
         assert_eq!(ctrl.frame(), start + 6, "the main console advanced");
         ctrl.set_buttons(3, 0x81)
             .expect("port 3 reaches the sub console");
-        ctrl.insert_coin(2);
+        ctrl.insert_coin(2).expect("no session: allowed");
         let state = ctrl.save_state();
         assert_eq!(&state[..4], b"RVSD", "the cabinet's own container");
         for _ in 0..10 {
@@ -5659,6 +5721,59 @@ mod tests {
         ctrl.np_leave();
     }
 
+    /// v3.5.0 — a disk swap and a coin are refused during a netplay session
+    /// (the peer would desync) and during playback, allowed outside both and
+    /// during a recording (format 7 records them). Found by the ora-movie
+    /// agent: until v3.5.0 the bridge asked nothing before either.
+    #[test]
+    fn disk_swaps_and_coins_are_refused_during_netplay_and_playback() {
+        // Disk: normal path, then netplay.
+        let disk = NesController::new_with_fds_bios(
+            synthetic_fds_disk(2),
+            Some(synthetic_fds_bios()),
+            DEFAULT_SAMPLE_RATE,
+        )
+        .expect("disk loads");
+        disk.step_frame();
+        disk.set_disk_side(Some(1)).expect("outside netplay");
+        assert_eq!(disk.inserted_disk_side(), Some(1));
+        disk.np_host(0, 2).expect("host bind");
+        let err = disk.set_disk_side(Some(0)).expect_err("during netplay");
+        assert!(matches!(err, MobileError::Netplay { .. }), "{err}");
+        assert_eq!(disk.inserted_disk_side(), Some(1), "the disk did not move");
+        disk.np_leave();
+        disk.set_disk_side(Some(0)).expect("after leaving");
+        assert_eq!(disk.inserted_disk_side(), Some(0));
+
+        // Coin: normal path (the bridge latches the hold even on a non-Vs.
+        // cartridge, where the core ignores the coin), then netplay.
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.insert_coin(0).expect("outside netplay");
+        assert_eq!(ctrl.lock().coin_frames, VS_COIN_HOLD_FRAMES);
+        ctrl.step_frame();
+        let held = ctrl.lock().coin_frames;
+        ctrl.np_host(0, 2).expect("host bind");
+        let err = ctrl.insert_coin(0).expect_err("during netplay");
+        assert!(matches!(err, MobileError::Netplay { .. }), "{err}");
+        assert_eq!(ctrl.lock().coin_frames, held, "no coin latched");
+        ctrl.np_leave();
+
+        // A recording allows both (format 7 records them); playback refuses.
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.movie_record_from_here();
+        ctrl.insert_coin(0).expect("during a recording");
+        for _ in 0..4 {
+            ctrl.step_frame();
+        }
+        let movie = ctrl.movie_stop_recording();
+        ctrl.movie_play(movie).expect("play");
+        assert!(ctrl.movie_is_playing());
+        let err = ctrl.insert_coin(0).expect_err("during playback");
+        assert!(matches!(err, MobileError::Movie { .. }), "{err}");
+        let err = ctrl.set_disk_side(None).expect_err("during playback");
+        assert!(matches!(err, MobileError::Movie { .. }), "{err}");
+    }
+
     /// v2.9.9 (NF-22) — on a Vs. `DualSystem` cabinet the palette and Four
     /// Score setters reach BOTH consoles, and a Power Cycle (which rebuilds
     /// the cabinet from its ROM) keeps them.
@@ -5777,6 +5892,90 @@ mod tests {
                 username: "hosted-user".into(),
                 credential: "hosted-cred".into(),
             }
+        }
+
+        /// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`): the exported validator gives
+        /// every row of the shared relay-URL table the same verdict as the
+        /// parser the connect path uses (the netplay crate runs the table
+        /// against that parser directly).
+        #[test]
+        fn the_exported_relay_validator_matches_the_shared_table() {
+            let mut rows = 0;
+            let mut accepted = 0;
+            let mut wrong = Vec::new();
+            for line in include_str!("../../rustynes-netplay/testdata/relay_urls.tsv").lines() {
+                if line.starts_with('#') || line.is_empty() {
+                    continue;
+                }
+                let mut f = line.splitn(3, '\t');
+                let accept = f.next() == Some("accept");
+                let url = f.next().expect("url");
+                let url = if url == "<empty>" {
+                    String::new()
+                } else {
+                    url.replace("\\n", "\n")
+                };
+                rows += 1;
+                accepted += usize::from(accept);
+                if np_validate_relay_url(url.clone()) != accept {
+                    wrong.push(format!("{url:?}: want accept={accept}"));
+                }
+            }
+            assert!(
+                accepted >= 10 && rows - accepted >= 20,
+                "{accepted} of {rows}"
+            );
+            assert!(
+                wrong.is_empty(),
+                "{} of {rows} wrong: {wrong:?}",
+                wrong.len()
+            );
+        }
+
+        /// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`): both shells decide "is this a
+        /// relay URL" by calling the bridge and nothing else. Kotlin and Swift
+        /// cannot be compiled in this crate's test run, so this is a source
+        /// check of the two gates: each must return the bridge's verdict and
+        /// must not carry a parser of its own (Android's old `RELAY_URL`
+        /// regex, iOS's old `URL(string:)` host test), which is how the three
+        /// disagreed before.
+        #[test]
+        fn the_shells_ask_the_bridge_and_parse_nothing_themselves() {
+            fn body<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
+                let i = src
+                    .find(start)
+                    .unwrap_or_else(|| panic!("{start:?} not found"));
+                let rest = &src[i..];
+                let j = rest
+                    .find(end)
+                    .unwrap_or_else(|| panic!("end of {start:?} not found"));
+                &rest[..j]
+            }
+            let kt = include_str!(
+                "../../../android/app/src/main/java/com/doublegate/rustynes/Netplay.kt"
+            );
+            let gate = body(kt, "fun onlineNetplayConfigured(", "\n}\n");
+            assert!(
+                gate.contains("return npValidateRelayUrl(url)"),
+                "Android gate: {gate}"
+            );
+            assert!(
+                !gate.contains("Regex") && !gate.contains(".matches("),
+                "Android gate parses: {gate}"
+            );
+            assert!(
+                !kt.contains("RELAY_URL"),
+                "Android still carries its own relay regex"
+            );
+            assert!(kt.contains("import uniffi.rustynes_mobile.npValidateRelayUrl"));
+
+            let swift = include_str!("../../../ios/RustyNES/NetplayModel.swift");
+            let gate = body(swift, "var signalingConfigured: Bool {", "\n    }\n");
+            assert!(
+                gate.contains("return npValidateRelayUrl(url: u)"),
+                "iOS gate: {gate}"
+            );
+            assert!(!gate.contains("URL(string"), "iOS gate parses: {gate}");
         }
 
         /// v3.4.1: the shells' room-code gate reports exactly whether a base

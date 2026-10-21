@@ -173,6 +173,17 @@ cycle-accurate core later replaced.
   the 72 Family BASIC keyboard positions, which were fixed until now. They
   are saved as `[input.device_keys]`, written only once something differs
   from the old layout, which stays the default.
+- **`rustynes dump-check`: is this ROM file the dump it claims to be?**
+  (`T-PRESERVE-DUMP-VERIFY`) A headless report on one file: its hashes; a
+  match against a No-Intro DAT you supply (RustyNES ships none); its header
+  compared field by field with the NES 2.0 database you supply, and with the
+  corrections RustyNES's own game database would make at load; a suspected
+  overdump (a ROM whose halves are identical); a truncated file or trailing
+  data; and the header against what the program actually does when run
+  (registers written on a board the header says has none, tiles uploaded to
+  memory the header says is read-only, work RAM used where the header
+  declares none). Exit code 0 means nothing was found, 4 that something was.
+  `docs/dump-check.md` says what it can and cannot establish.
 
 ### Changed
 
@@ -199,6 +210,14 @@ cycle-accurate core later replaced.
   privileges, stay below the audio thread, and leave it at the default if the
   system refuses. Linux was already elevated. The line the app prints at
   start says which outcome applied.
+- **The hosted TURN relay is on again** (`T-HOSTED-TURN-EXPIRY`). It was
+  held off in v3.4.1 and v3.4.2 because Cloudflare kept relaying for expired
+  and revoked credentials; a stricter test on 2026-10-21 found that it still
+  relays for them but never bills that traffic, so the cost is bounded by
+  credentials within their three-hour lifetime, which the existing per-address
+  and daily limits already bound. Players whose networks cannot connect
+  directly can play online through the relay again. The privacy policy is
+  updated to say what is kept while the relay is on.
 
 ### Fixed
 
@@ -223,6 +242,38 @@ cycle-accurate core later replaced.
 - **The history timeline survives a disk swap or a barcode scan**, which a
   `.rnm` now records, so an exported clip spanning one replays it
   (`T-HISTORY-DISK-SWAP` had cleared it since v3.3.0).
+- **Hosted TURN credentials with an empty username or password**
+  (`T-HOSTED-TURN-SANITIZE`). The Worker passed on a `turn:` or `turns:`
+  server whose username or credential was the empty string as if it were
+  usable, so a client would have failed only when it tried to relay. Such an
+  entry is now dropped, and an answer with no usable relay entry left
+  (a STUN-only one included) is treated as an upstream failure: the request
+  is not counted against the daily or per-address limits and the client is
+  told to connect directly. TURN stays switched off in production
+  (`T-HOSTED-TURN-EXPIRY`); this lands first so it is in place when TURN is
+  switched back on.
+- **Android and iOS: a disk swap or a coin no longer desyncs online play.**
+  Turning an FDS disk over or dropping a coin into a Vs. System machine
+  happened on one player's device only during a netplay session, so the two
+  games went out of step. Both are now refused during netplay and while a
+  movie plays back, with the reason shown, and still work otherwise
+  (including while recording a movie). The desktop refuses them the same way.
+- **Android and iOS: one check for a custom netplay relay address**
+  (`T-MOBILE-RELAY-VALIDATE`). The two apps each checked the address with
+  their own rules, and both accepted some the connection code then refused or
+  misread: a port that was not a number (`wss://host:notaport`), out of range
+  or empty was taken as no port at all, so the app connected to port 443 (or
+  80) instead of saying the address was wrong; Android also accepted an
+  unclosed IPv6 address and an upper-case `WSS://`. Both apps now ask the
+  emulator core, which uses the same parser it connects with, and the core
+  refuses those ports at connect time too.
+- **Browser RetroAchievements: the proxy address is read when a session
+  starts** (`T-WEB-RA-PROXY-LAZY`). The browser glue read the
+  RetroAchievements proxy address once, when the script was loaded, so a page
+  that set it later had every RetroAchievements call refused. It is now read
+  when RetroAchievements starts, as the location of the rcheevos module
+  already was. Browser RetroAchievements stays off on the public demo until
+  RetroAchievements answers the integration request.
 
 ### Not changed, and why
 

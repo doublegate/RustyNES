@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The relay-URL table (v3.5.0, T-MOBILE-RELAY-VALIDATE): every signaling URL
+# here must get the same verdict from the parser the connect path uses
+# (rustynes_netplay::signaling_client::parse_signaling_url), from the mobile
+# bridge's np_validate_relay_url, and therefore from the Android
+# (Netplay.kt onlineNetplayConfigured) and iOS (NetplayModel.swift
+# signalingConfigured) checks, which call the bridge and parse nothing
+# themselves.
+#
+# Columns, tab-separated: verdict (accept | refuse), url, why.
+# The url column is taken byte for byte, except: the token <empty> is the
+# empty string, and \n is a newline. The apps trim user input before asking;
+# the validator itself refuses surrounding whitespace.
+#
+# Read by: crates/rustynes-netplay/src/signaling_client.rs (tests) and
+# crates/rustynes-mobile/src/lib.rs (tests).
+accept	ws://h	plain, default port 80
+accept	wss://h	TLS, default port 443
+accept	ws://h:9000	LAN relay with a port
+accept	wss://h.example/signal	a path
+accept	wss://h/signal?x=1	a query
+accept	ws://192.168.1.2:9000	IPv4 literal
+accept	ws://[::1]:9000	IPv6 literal with a port
+accept	wss://[2001:db8::1]/signal	IPv6 literal, default port
+accept	wss://h:443	explicit default port
+accept	ws://h:1	lowest port
+accept	ws://h:65535	highest port
+accept	wss://h:080	leading zero, port 80
+accept	wss://user:pw@h	userinfo (sent by the handshake as given)
+refuse	<empty>	empty (the apps treat empty as "hosted lobby" before asking)
+refuse	ws://	no host
+refuse	wss://	no host
+refuse	ws://:9000	empty host with a port
+refuse	wss://[]	empty IPv6 literal
+refuse	wss://h:notaport	non-numeric port (Android's regex accepted it; connect dialled 443)
+refuse	wss://h:9000x	port with trailing junk (connect dialled 443)
+refuse	wss://h:	empty port (connect dialled 443)
+refuse	wss://h:+80	signed port
+refuse	wss://h:0	port 0
+refuse	wss://h:65536	port out of range (connect dialled 443)
+refuse	wss://h:99999	port out of range (connect dialled 443)
+refuse	wss://[::1	unclosed IPv6 literal (Android's regex accepted it)
+refuse	ws://[::1:9000	unclosed IPv6 literal with a port
+refuse	wss://[::1]x	junk after an IPv6 literal (connect dialled 443)
+refuse	WSS://h	upper-case scheme: the connect path refuses it (Android's regex accepted it)
+refuse	http://h	not a WebSocket scheme
+refuse	https://h	not a WebSocket scheme
+refuse	h:9000	no scheme
+refuse	//h	no scheme
+refuse	wss:h	no authority
+refuse	ws:///path	no authority
+refuse	 wss://h	leading space
+refuse	wss://h 	trailing space
+refuse	wss://h\n	trailing newline
+refuse	wss://h /x	space inside
+refuse	wss://ä.example	non-ASCII host (not punycode)

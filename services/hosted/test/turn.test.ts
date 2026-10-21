@@ -29,6 +29,11 @@ const UPSTREAM_OK = {
   ],
 };
 
+/** A STUN entry plus one TURN entry carrying the given credentials. */
+const withTurnCreds = (username: string, credential: string, url = "turn:turn.cloudflare.com:3478?transport=udp") => ({
+  iceServers: [UPSTREAM_OK.iceServers[0], { urls: [url], username, credential }],
+});
+
 let ipSeq = 0;
 const freshIp = () => `203.0.113.${++ipSeq}`;
 
@@ -153,6 +158,16 @@ describe("failure paths", () => {
     ["a non-JSON body", () => new Response("<html>", { status: 201 })],
     ["a body without iceServers", () => Response.json({ servers: [] }, { status: 201 })],
     ["TURN URLs without credentials", () => Response.json({ iceServers: [{ urls: ["turn:x:3478"] }] }, { status: 201 })],
+    // T-HOSTED-TURN-SANITIZE (Antigravity on #618): an empty string is a
+    // string, so `typeof === "string"` alone let these through as a "usable"
+    // TURN entry that every client would then fail to authenticate with.
+    ["a TURN entry with an empty username", () => Response.json(withTurnCreds("", "c-short-lived"), { status: 201 })],
+    ["a TURN entry with an empty credential", () => Response.json(withTurnCreds("u-short-lived", ""), { status: 201 })],
+    ["a turns: entry with an empty username", () => Response.json(withTurnCreds("", "c", "turns:t:5349?transport=tcp"), { status: 201 })],
+    ["a turns: entry with an empty credential", () => Response.json(withTurnCreds("u", "", "turns:t:5349?transport=tcp"), { status: 201 })],
+    // What the endpoint exists for is the relay; a STUN-only answer adds
+    // nothing a client does not already have, so it is an upstream failure.
+    ["a STUN-only answer", () => Response.json({ iceServers: [UPSTREAM_OK.iceServers[0]] }, { status: 201 })],
   ] as Array<[string, () => Response | Promise<Response>]>) {
     it(`${name} is a 502 and does not spend the budget`, async () => {
       mockUpstream(impl);
@@ -162,7 +177,14 @@ describe("failure paths", () => {
       const body = (await resp.json()) as { error: string; message: string };
       expect(body.error).toBe("turn-upstream");
       expect(body.message).toContain("STUN only");
+      // The refund: the admission is taken before the upstream call, so an
+      // unchanged `minted` count proves refundTurn gave it back; and no
+      // revocation is scheduled for a credential nobody received.
       expect((await env.BUDGET.getByName("global").usage()).minted).toBe(before.minted);
+      const revokes = await runInDurableObject(env.BUDGET.getByName("global"), async (_obj, state) => [
+        ...(await state.storage.list({ prefix: "revoke:" })).keys(),
+      ]);
+      expect(revokes).toEqual([]);
     });
   }
 
@@ -248,10 +270,38 @@ describe("spend guards", () => {
 
 describe("sanitizeIceServers", () => {
   it("accepts a single-string urls field and rejects junk", () => {
-    expect(sanitizeIceServers({ iceServers: [{ urls: "stun:a:3478" }] })).toEqual([{ urls: ["stun:a:3478"] }]);
+    expect(
+      sanitizeIceServers({ iceServers: [{ urls: "stun:a:3478" }, { urls: "turn:a:3478", username: "u", credential: "c" }] }),
+    ).toEqual([{ urls: ["stun:a:3478"] }, { urls: ["turn:a:3478"], username: "u", credential: "c" }]);
     expect(sanitizeIceServers({ iceServers: [{ urls: ["http://x"] }] })).toBeUndefined();
     expect(sanitizeIceServers(null)).toBeUndefined();
     expect(sanitizeIceServers({ iceServers: "x" })).toBeUndefined();
+  });
+
+  it("refuses a turn:/turns: entry with an empty username or credential, field by field", () => {
+    for (const url of ["turn:a:3478", "turns:a:5349?transport=tcp"]) {
+      for (const [username, credential] of [
+        ["", "c"],
+        ["u", ""],
+        ["", ""],
+      ]) {
+        const out = sanitizeIceServers({ iceServers: [{ urls: [url], username, credential }] });
+        expect(out, `${url} u=${JSON.stringify(username)} c=${JSON.stringify(credential)}`).toBeUndefined();
+      }
+    }
+    // A bad entry is dropped; a good one beside it survives.
+    expect(
+      sanitizeIceServers({
+        iceServers: [
+          { urls: ["turn:a:3478"], username: "", credential: "c" },
+          { urls: ["turn:b:3478"], username: "u", credential: "c" },
+        ],
+      }),
+    ).toEqual([{ urls: ["turn:b:3478"], username: "u", credential: "c" }]);
+  });
+
+  it("treats a list with no usable TURN entry as nothing usable", () => {
+    expect(sanitizeIceServers({ iceServers: [{ urls: ["stun:a:3478"] }] })).toBeUndefined();
   });
 });
 

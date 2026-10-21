@@ -638,10 +638,17 @@ class EmulatorHandle {
     private var keyboardMask: Int = 0
 
     /** Drop a coin into the acceptor of the screen on show: 2 on a cabinet's
-     *  right-hand (sub) screen, else 0. The bridge holds it three frames. */
-    fun insertCoin() {
-        val c = controller ?: return
-        c.insertCoin(if (showSubScreen && c.isDualSystem()) SUB_CONSOLE_COIN else MAIN_CONSOLE_COIN)
+     *  right-hand (sub) screen, else 0. The bridge holds it three frames.
+     *  v3.5.0: returns the bridge's refusal (during netplay or movie playback,
+     *  where a coin on this device alone would desync the session), or null. */
+    fun insertCoin(): String? {
+        val c = controller ?: return null
+        return try {
+            c.insertCoin(if (showSubScreen && c.isDualSystem()) SUB_CONSOLE_COIN else MAIN_CONSOLE_COIN)
+            null
+        } catch (e: MobileException) {
+            e.message
+        }
     }
 
     private companion object {
@@ -2500,7 +2507,13 @@ private fun EmulatorScreen(
                 // prompt is answered here.
                 OutlinedButton(onClick = {
                     val next = media.diskSide?.let { (it + 1) % media.diskSides } ?: 0
-                    emulator.controller?.setDiskSide(next.toUInt())
+                    // v3.5.0: the bridge refuses a swap during netplay or movie
+                    // playback (it would desync the session); say why.
+                    try {
+                        emulator.controller?.setDiskSide(next.toUInt())
+                    } catch (e: MobileException) {
+                        android.widget.Toast.makeText(context, e.message, android.widget.Toast.LENGTH_SHORT).show()
+                    }
                     mediaTick++
                 }) {
                     Text(
@@ -2537,7 +2550,11 @@ private fun EmulatorScreen(
                 // The coin goes to the screen on show: on a cabinet, acceptors
                 // 0/1 are the main (left) console's and 2/3 the sub's. A single
                 // Vs. console always uses 0. (Copilot on #577, for iOS.)
-                OutlinedButton(onClick = { emulator.insertCoin() }) {
+                OutlinedButton(onClick = {
+                    emulator.insertCoin()?.let {
+                        android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) {
                     Text(stringResource(R.string.action_insert_coin))
                 }
             }

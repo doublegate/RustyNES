@@ -223,6 +223,33 @@ pub enum CliCommand {
         #[arg(long, value_name = "MS", default_value_t = 0)]
         memif_hold_ms: u64,
     },
+
+    /// Check a ROM dump: hashes, a No-Intro DAT, the NES 2.0 database,
+    /// overdumps, and the header against the board's behaviour.
+    ///
+    /// v3.5.0 (`T-PRESERVE-DUMP-VERIFY`). Headless. The DAT and the database
+    /// are files you supply; `RustyNES` ships neither. Without a DAT the dump is
+    /// reported as unverified, whatever else passes.
+    ///
+    /// Exit codes: 0 nothing found, 4 findings reported, 1 error (a file could
+    /// not be read, or a DAT / database did not parse).
+    DumpCheck {
+        /// The ROM image to check.
+        #[arg(value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// A No-Intro DAT (Logiqx XML, as DAT-o-MATIC exports it).
+        #[arg(long, value_name = "DAT", value_hint = clap::ValueHint::FilePath)]
+        dat: Option<PathBuf>,
+
+        /// The NES 2.0 database (`nes20db.xml`) to check the header against.
+        #[arg(long, value_name = "XML", value_hint = clap::ValueHint::FilePath)]
+        nes20db: Option<PathBuf>,
+
+        /// Frames to run for the behaviour check (0 skips it).
+        #[arg(long, value_name = "N", default_value_t = crate::dump_check::DEFAULT_FRAMES)]
+        frames: u32,
+    },
 }
 
 /// Parse `std::env::args`, returning the typed [`Cli`].
@@ -558,6 +585,42 @@ mod tests {
             cli.command,
             Some(CliCommand::Completions {
                 shell: clap_complete::Shell::Bash
+            })
+        ));
+    }
+
+    #[test]
+    fn dump_check_subcommand_parses() {
+        let cli = Cli::try_parse_from([
+            "rustynes",
+            "dump-check",
+            "g.nes",
+            "--dat",
+            "n.dat",
+            "--frames",
+            "5",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(CliCommand::DumpCheck {
+                rom,
+                dat,
+                nes20db,
+                frames,
+            }) => {
+                assert_eq!(rom, PathBuf::from("g.nes"));
+                assert_eq!(dat, Some(PathBuf::from("n.dat")));
+                assert_eq!(nes20db, None);
+                assert_eq!(frames, 5);
+            }
+            other => panic!("expected dump-check, got {other:?}"),
+        }
+        let cli = Cli::try_parse_from(["rustynes", "dump-check", "g.nes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::DumpCheck {
+                frames: crate::dump_check::DEFAULT_FRAMES,
+                ..
             })
         ));
     }
