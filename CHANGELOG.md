@@ -34,6 +34,11 @@ cycle-accurate core later replaced.
   sound later, negative earlier. It corrects latency added after the
   emulator (a TV, a capture chain); the capture itself was already in step.
   At 0, the default, recordings are made exactly as before.
+- **Drag-and-drop in the browser** (`FE-05`). Drop a `.nes`, `.fds`,
+  `.unf` or `.unif` onto the web page to load it, a `.rnm` to play the
+  movie, or (full web build) the 8 KiB `disksys.rom` to install the FDS
+  BIOS. Until now the browser opened a dropped file itself and only the file
+  picker loaded a game. The lightweight canvas embed takes ROMs and movies.
 
 ### Changed
 

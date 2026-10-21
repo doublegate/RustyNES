@@ -76,6 +76,8 @@ rustynes                    # launch empty, then use File -> Open ROM (F12)
 Once running, load a ROM any of three ways: **File → Open ROM…** (`F12`)
 for a native file picker, **File → Open Recent** for a previously-opened
 ROM, or simply **drag and drop** a `.nes` / `.fds` file onto the window.
+The browser version accepts a dropped ROM too (since v3.5.0), as well as a
+`.rnm` movie and the FDS `disksys.rom`.
 On a brand-new install a one-time Welcome modal greets you with a
 quick-start shortcut list.
 

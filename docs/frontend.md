@@ -566,6 +566,36 @@ the two newest upstream PPU tests are known gaps).
   is length-capped (8 KiB) and tolerant of malformed input (silently keeps
   defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
 
+### Drag-and-drop in the browser (v3.5.0, `FE-05`)
+
+Both browser builds accept a file dropped anywhere on the page. winit's web
+backend delivers no `WindowEvent::DroppedFile`, so each build registers DOM
+`dragover` / `drop` listeners on the document itself
+(`wasm_winit::install_drop_loader`, `wasm::install_drop_loader`); both cancel
+the default, or the browser would open the file instead. The first dropped file
+is routed by `drop_route::classify` (the rule is a pure function, unit-tested on
+native, and the desktop's `DroppedFile` handler reads its ROM list from the same
+`is_rom_name`):
+
+| dropped file | wasm-winit | wasm-canvas |
+|---|---|---|
+| `.nes` / `.fds` / `.unf` / `.unif` | `AppEvent::RomLoaded`, as the picker | `load_rom_bytes`, as the picker (no FDS: its parse fails and is logged) |
+| `.rnm` | `AppEvent::MovieLoaded`, as F7's picker | `start_movie_from_bytes`, as F7's picker |
+| `.rom` / `.bin` of exactly 8 KiB | `AppEvent::FdsBiosLoaded`, as the BIOS upload | refused (the embed has no FDS) |
+| anything else | refused, logged to the console by name | the same |
+
+The list is narrower than the desktop's File → Open on purpose: the browser load
+path extracts no `.zip` and plays no `.nsf`. A drop is a user gesture, so a
+dropped ROM starts Web Audio exactly as the picker's `change` handler does.
+No unit test can run the DOM events. On 2026-10-20 the wasm-winit debug build
+(`trunk build`) was driven in headless Chromium over the DevTools protocol,
+dispatching synthetic `dragover` / `drop` events whose `DataTransfer` held a
+real `File`: `notes.txt` logged "dropped file ignored", an 8 KiB `disksys.rom`
+reached the app ("FDS BIOS accepted (8192 bytes)"), a 24,592-byte NROM was read
+and delivered with Web Audio armed, and both events reported
+`defaultPrevented`. **Still manual:** a real mouse drag in a desktop browser,
+the `.rnm` route, and the canvas embed.
+
 ### Web battery saves and Vs. `DualSystem` (v2.9.7 "Tandem")
 
 The wasm-winit build persists battery saves to `IndexedDB` (see

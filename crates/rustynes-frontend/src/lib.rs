@@ -89,6 +89,9 @@ pub mod debugger;
 // is single-canvas and keeps panels docked).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod detached;
+// v3.5.0 (`FE-05`) — what a dropped file is (ROM / movie / FDS BIOS), decided
+// once for the desktop's drop handler and both browser builds' drop zones.
+pub mod drop_route;
 // v2.8.0 Phase 5 — the emulation core extracted from `App` (per-frame
 // produce state; the boundary the emulation thread spawns onto).
 pub mod emu;

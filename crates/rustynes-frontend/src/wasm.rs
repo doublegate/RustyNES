@@ -125,6 +125,8 @@ pub fn start() -> Result<(), JsValue> {
     // host page doesn't provide one). F7 `.click()`s it from its gesture
     // handler; the selected bytes are deserialized + replayed.
     install_movie_loader(&document);
+    // v3.5.0 (`FE-05`) — drag-and-drop a ROM or a movie anywhere on the page.
+    install_drop_loader(&document);
     start_raf_loop(&canvas)?;
 
     log("RustyNES wasm32 — armed. Load a .nes ROM to begin.");
@@ -152,64 +154,7 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             let Ok(buffer) = reader_clone.result() else {
                 return;
             };
-            let array = js_sys::Uint8Array::new(&buffer);
-            let mut bytes = array.to_vec();
-            // v2.3.7 — the per-game database's header corrections, applied
-            // before the core parses the header. Same fix as the `wasm-winit`
-            // demo's `AppEvent::RomLoaded` arm: the helper used to be `cfg`-gated
-            // off wasm because a LATER stage of it reads a filesystem, so this
-            // stage — a compiled-in table needing nothing — was lost with it, and
-            // every mapper / submapper / region fix was absent in the browser.
-            // `None` means "not an iNES image" -- which includes formats this
-            // path legitimately handles -- so it must not abort the load;
-            // `Nes::from_rom` reports a genuinely malformed one.
-            //
-            // v2.9.8 — the CRC is kept now (it was discarded before): stage two of the shared correction
-            // path (`correct_console`, the hardwired-mirroring override) runs on
-            // the built console below. This embed skipped it until v2.9.8, so
-            // its mirroring corrections were missing even where its header
-            // corrections were not.
-            let crc = crate::app::apply_game_db_header_overrides(&mut bytes);
-            // The file-pick is a user gesture, so it's safe to create
-            // the AudioContext here (the browser autoplay policy
-            // requires a gesture). Create the Nes at the audio
-            // context's native sample rate so the APU output needs no
-            // resampling before hitting the Web Audio graph.
-            let sample_rate = wasm_audio::ensure_audio();
-            let nes_result = sample_rate.map_or_else(
-                || Nes::from_rom(&bytes),
-                |sr| Nes::from_rom_with_sample_rate(&bytes, sr),
-            );
-            match nes_result {
-                Ok(mut nes) => {
-                    if let Some(crc) = crc {
-                        crate::game_db::correct_console(&mut nes, crc);
-                    }
-                    // v2.9.7 "Tandem" (plan item 5) — this embed draws ONE
-                    // 256x240 canvas through the 2D `ImageData` path; it has
-                    // no two-screen present path and no second console. A Vs.
-                    // `DualSystem` title therefore runs as its main console
-                    // alone. Say so in the console rather than leave a black
-                    // attract screen unexplained; the full web build
-                    // (wasm-winit) runs the two-console cabinet.
-                    if crate::app::is_dual_system(&nes) {
-                        crate::app::warn_dual_system_main_only(
-                            "The lightweight canvas embed runs the main console only; \
-                             the full web build (wasm-winit) runs both consoles.",
-                        );
-                    }
-                    // NOT `EmuCore::set_nes`: this is the canvas embed's own
-                    // `Emu`, which holds no mapper-name cache to refresh, so
-                    // there is nothing for a setter to keep consistent. (The
-                    // v2.3.2 F3 sweep rewrote this site along with the four
-                    // real `EmuCore` ones and broke the `wasm-canvas` build,
-                    // which no native feature combo compiles.)
-                    EMU.with(|emu| emu.borrow_mut().nes = Some(nes));
-                    wasm_audio::clear_ring();
-                    log(&format!("ROM loaded ({} bytes). Running.", bytes.len()));
-                }
-                Err(e) => log(&format!("ROM parse error: {e:?}")),
-            }
+            load_rom_bytes(js_sys::Uint8Array::new(&buffer).to_vec());
         });
         reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
         on_load.forget();
@@ -217,6 +162,140 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
     });
     rom_input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
     on_change.forget();
+}
+
+/// v3.5.0 (`FE-05`) — accept a ROM or a `.rnm` movie dropped anywhere on the
+/// page, routed by [`crate::drop_route::classify`]: the canvas embed's
+/// counterpart to `wasm_winit::install_drop_loader`. A ROM goes through
+/// [`load_rom_bytes`] (the picker's path), a movie through
+/// [`start_movie_from_bytes`] (the movie picker's). This embed has no FDS
+/// BIOS upload, so a dropped BIOS is refused with a note, like any other file
+/// it cannot load. The drop is a user gesture, so the `AudioContext` that
+/// [`load_rom_bytes`] creates is allowed to start.
+fn install_drop_loader(document: &web_sys::Document) {
+    use crate::drop_route::{DropKind, classify};
+
+    let on_dragover = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|ev: web_sys::DragEvent| {
+        ev.prevent_default();
+        if let Some(dt) = ev.data_transfer() {
+            dt.set_drop_effect("copy");
+        }
+    });
+    let _ =
+        document.add_event_listener_with_callback("dragover", on_dragover.as_ref().unchecked_ref());
+    on_dragover.forget();
+
+    let on_drop = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|ev: web_sys::DragEvent| {
+        ev.prevent_default();
+        let Some(file) = ev
+            .data_transfer()
+            .and_then(|dt| dt.files())
+            .and_then(|files| files.get(0))
+        else {
+            return;
+        };
+        let name = file.name();
+        // `File.size` is a JS number of bytes; any real file fits a usize.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let kind = classify(&name, file.size() as usize);
+        match kind {
+            DropKind::Rom | DropKind::Movie => {}
+            DropKind::FdsBios => {
+                log(&format!(
+                    "dropped {name}: the canvas embed has no FDS support (the full web build has)"
+                ));
+                return;
+            }
+            DropKind::Unsupported => {
+                log(&format!(
+                    "dropped file ignored (not a .nes / .unf / .rnm): {name}"
+                ));
+                return;
+            }
+        }
+        let Ok(reader) = FileReader::new() else {
+            return;
+        };
+        let reader_clone = reader.clone();
+        let on_load = Closure::<dyn FnMut()>::new(move || {
+            let Ok(buffer) = reader_clone.result() else {
+                return;
+            };
+            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+            if kind == DropKind::Movie {
+                start_movie_from_bytes(&bytes);
+            } else {
+                load_rom_bytes(bytes);
+            }
+        });
+        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
+        on_load.forget();
+        let _ = reader.read_as_array_buffer(&file);
+    });
+    let _ = document.add_event_listener_with_callback("drop", on_drop.as_ref().unchecked_ref());
+    on_drop.forget();
+}
+
+/// Build the console from picked or dropped ROM bytes and install it in
+/// [`EMU`]. Shared by the `<input>` picker and the drop zone (v3.5.0; until
+/// then this body was inline in the picker's `onload`).
+fn load_rom_bytes(mut bytes: Vec<u8>) {
+    // v2.3.7 — the per-game database's header corrections, applied
+    // before the core parses the header. Same fix as the `wasm-winit`
+    // demo's `AppEvent::RomLoaded` arm: the helper used to be `cfg`-gated
+    // off wasm because a LATER stage of it reads a filesystem, so this
+    // stage — a compiled-in table needing nothing — was lost with it, and
+    // every mapper / submapper / region fix was absent in the browser.
+    // `None` means "not an iNES image" -- which includes formats this
+    // path legitimately handles -- so it must not abort the load;
+    // `Nes::from_rom` reports a genuinely malformed one.
+    //
+    // v2.9.8 — the CRC is kept now (it was discarded before): stage two of the shared correction
+    // path (`correct_console`, the hardwired-mirroring override) runs on
+    // the built console below. This embed skipped it until v2.9.8, so
+    // its mirroring corrections were missing even where its header
+    // corrections were not.
+    let crc = crate::app::apply_game_db_header_overrides(&mut bytes);
+    // The file-pick (or drop) is a user gesture, so it's safe to create
+    // the AudioContext here (the browser autoplay policy
+    // requires a gesture). Create the Nes at the audio
+    // context's native sample rate so the APU output needs no
+    // resampling before hitting the Web Audio graph.
+    let sample_rate = wasm_audio::ensure_audio();
+    let nes_result = sample_rate.map_or_else(
+        || Nes::from_rom(&bytes),
+        |sr| Nes::from_rom_with_sample_rate(&bytes, sr),
+    );
+    match nes_result {
+        Ok(mut nes) => {
+            if let Some(crc) = crc {
+                crate::game_db::correct_console(&mut nes, crc);
+            }
+            // v2.9.7 "Tandem" (plan item 5) — this embed draws ONE
+            // 256x240 canvas through the 2D `ImageData` path; it has
+            // no two-screen present path and no second console. A Vs.
+            // `DualSystem` title therefore runs as its main console
+            // alone. Say so in the console rather than leave a black
+            // attract screen unexplained; the full web build
+            // (wasm-winit) runs the two-console cabinet.
+            if crate::app::is_dual_system(&nes) {
+                crate::app::warn_dual_system_main_only(
+                    "The lightweight canvas embed runs the main console only; \
+                     the full web build (wasm-winit) runs both consoles.",
+                );
+            }
+            // NOT `EmuCore::set_nes`: this is the canvas embed's own
+            // `Emu`, which holds no mapper-name cache to refresh, so
+            // there is nothing for a setter to keep consistent. (The
+            // v2.3.2 F3 sweep rewrote this site along with the four
+            // real `EmuCore` ones and broke the `wasm-canvas` build,
+            // which no native feature combo compiles.)
+            EMU.with(|emu| emu.borrow_mut().nes = Some(nes));
+            wasm_audio::clear_ring();
+            log(&format!("ROM loaded ({} bytes). Running.", bytes.len()));
+        }
+        Err(e) => log(&format!("ROM parse error: {e:?}")),
+    }
 }
 
 /// Wire keydown/keyup listeners that OR/clear player-1 buttons and

@@ -10576,20 +10576,20 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             }
             WindowEvent::DroppedFile(path) => {
-                // Native filesystem drag-and-drop. On wasm32 browser
-                // file drops are a follow-up (the file picker is the
-                // primary ROM-load path there).
+                // Native filesystem drag-and-drop. winit's web backend never
+                // delivers this event; the browser builds listen for the DOM
+                // `drop` event themselves (v3.5.0, `crate::drop_route`).
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     // Accept any path with a `.nes` / `.fds` / `.unf` / `.unif`
                     // extension (case-insensitive). v2.2.0 added `.fds`; v1.6.0
-                    // (E2) added the UNIF container.
-                    let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                        e.eq_ignore_ascii_case("nes")
-                            || e.eq_ignore_ascii_case("fds")
-                            || e.eq_ignore_ascii_case("unf")
-                            || e.eq_ignore_ascii_case("unif")
-                    });
+                    // (E2) added the UNIF container. v3.5.0: the list lives in
+                    // `drop_route::is_rom_name`, shared with the browser drop.
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy())
+                        .unwrap_or_default();
+                    let ok = crate::drop_route::is_rom_name(&name);
                     if ok {
                         self.load_rom_from_path(&path);
                     } else {
