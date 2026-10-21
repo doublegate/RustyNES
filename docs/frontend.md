@@ -1672,8 +1672,21 @@ the default (no-device) input path stays byte-identical:
   power-cycle.
 - **Family BASIC keyboard.** The full `9 × 8` positional keyboard matrix
   (`FamilyKeyboardState`, and the Subor clone) is selectable as the port-2
-  expansion device; `input::family_keyboard_index` maps host keys 1:1 onto the
-  72-key matrix (row-select via the `$4016` strobe + column-half on `$4017`).
+  expansion device; host keys map onto the 72-key matrix (row-select via the
+  `$4016` strobe + column-half on `$4017`). The default layout is
+  `input::FAMILY_KEYBOARD_DEFAULT_KEYS` (`family_keyboard_index` looks a key up
+  in it); since v3.5.0 (`FE-07`) the live layout is the rebindable
+  `[input.device_keys] family_keyboard` (`InputState::family_keyboard_positions`),
+  and the microphone key and the 12 Power Pad mat keys are rebindable beside it
+  (`input::DeviceKeyMap`, Settings -> Input -> Device keys). The table is
+  `#[serde(default)]` and written only when it differs from the defaults, so an
+  untouched config loads and saves byte-identically. Tests:
+  `the_default_device_keys_are_the_old_fixed_layout`, the three rebound-key
+  tests in `input.rs`, `device_keys_load_partially_and_round_trip`,
+  `device_slots_write_and_clear_the_device_keys`. Not unit-reachable: the
+  `app.rs` key-event hunk that feeds `family_keyboard_positions` into the
+  matrix, and the panel's rendering (manual check: rebind a keyboard position
+  with Family BASIC selected and type the key in BASIC).
 - **Zapper light-timing.** The photodiode now integrates a **3×3 aperture**
   (field-of-view) around the aim point rather than a single pixel, asserting
   light only when ≥2 pixels cross the luma threshold (`ZAPPER_APERTURE_*`). This

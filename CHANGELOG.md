@@ -47,6 +47,12 @@ cycle-accurate core later replaced.
   coin there, for single Vs. games too, which the embed could not do at
   all. Save states cover both consoles; movies stay unavailable on a
   cabinet, as everywhere.
+- **Rebindable microphone, Power Pad and Family BASIC keyboard keys**
+  (`FE-07`). Settings → Input → *Device keys* rebinds the Famicom
+  microphone's hold key, the 12 Power Pad / Family Trainer mat buttons and
+  the 72 Family BASIC keyboard positions, which were fixed until now. They
+  are saved as `[input.device_keys]`, written only once something differs
+  from the old layout, which stays the default.
 
 ### Changed
 

@@ -10681,15 +10681,16 @@ impl ApplicationHandler<AppEvent> for App {
                 // unconditionally (cheap); consumed only when a Family BASIC
                 // keyboard is the active device. Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key
-                    && let Some(idx) = crate::input::family_keyboard_index(code)
-                {
-                    let row = idx / 8;
-                    let bit = 1u8 << (idx % 8);
-                    if event.state == winit::event::ElementState::Pressed {
-                        self.family_keyboard[row] |= bit;
-                    } else {
-                        self.family_keyboard[row] &= !bit;
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
+                    // v3.5.0 (`FE-07`): the live, rebindable layout.
+                    let pressed = event.state == winit::event::ElementState::Pressed;
+                    for idx in self.input.family_keyboard_positions(code) {
+                        let (row, bit) = (idx / 8, 1u8 << (idx % 8));
+                        if pressed {
+                            self.family_keyboard[row] |= bit;
+                        } else {
+                            self.family_keyboard[row] &= !bit;
+                        }
                     }
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);

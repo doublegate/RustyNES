@@ -223,8 +223,94 @@ pub struct InputConfig {
     /// [`PowerPadLayout::SideA`] is the previous fixed mapping (byte-identical).
     #[serde(default)]
     pub power_pad_layout: PowerPadLayout,
+    /// v3.5.0 (`FE-07`) — the expansion-device keys: microphone, Power Pad mat,
+    /// Family BASIC keyboard. `#[serde(default)]` = the layout these devices
+    /// had fixed before v3.5.0, so a config without the table loads unchanged;
+    /// `skip_serializing_if` keeps the table out of the file until the player
+    /// rebinds one of them, so an untouched config also SAVES byte-identically
+    /// (`a_default_config_writes_no_empty_opt_in_tables`).
+    #[serde(default, skip_serializing_if = "DeviceKeyBindings::is_default")]
+    pub device_keys: DeviceKeyBindings,
     /// System-level bindings.
     pub system: SystemBindings,
+}
+
+/// v3.5.0 (`FE-07`) — the persisted expansion-device keys (`[input.device_keys]`).
+///
+/// Key names are the `KeyCode` debug names the pad bindings use (`"KeyN"`,
+/// `"Digit1"`); an empty string leaves a slot unbound. Each list is indexed by
+/// slot: `power_pad[i]` is mat button `i + 1`, `family_keyboard[i]` is matrix
+/// position `i` (`row * 8 + bit`). A list of the wrong length is accepted
+/// (missing slots unbound, extra entries ignored) and [`Self::normalized`]
+/// pads or truncates it for the Settings editor. Resolved into the live
+/// layout by `input::DeviceKeyMap::from_config`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceKeyBindings {
+    /// The 12 Power Pad / Family Trainer mat buttons.
+    #[serde(default = "DeviceKeyBindings::default_power_pad")]
+    pub power_pad: Vec<String>,
+    /// The Famicom microphone's hold-to-talk key.
+    #[serde(default = "DeviceKeyBindings::default_microphone")]
+    pub microphone: String,
+    /// The 72 Family BASIC keyboard matrix positions.
+    #[serde(default = "DeviceKeyBindings::default_family_keyboard")]
+    pub family_keyboard: Vec<String>,
+}
+
+impl Default for DeviceKeyBindings {
+    fn default() -> Self {
+        Self {
+            power_pad: Self::default_power_pad(),
+            microphone: Self::default_microphone(),
+            family_keyboard: Self::default_family_keyboard(),
+        }
+    }
+}
+
+impl DeviceKeyBindings {
+    /// The mat keys before v3.5.0 (`input::POWER_PAD_KEYS`).
+    #[must_use]
+    pub fn default_power_pad() -> Vec<String> {
+        crate::input::POWER_PAD_KEYS
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect()
+    }
+
+    /// The microphone key before v3.5.0 (`input::MICROPHONE_KEY`).
+    #[must_use]
+    pub fn default_microphone() -> String {
+        format!("{:?}", crate::input::MICROPHONE_KEY)
+    }
+
+    /// The keyboard layout before v3.5.0
+    /// (`input::FAMILY_KEYBOARD_DEFAULT_KEYS`, then unbound positions).
+    #[must_use]
+    pub fn default_family_keyboard() -> Vec<String> {
+        let mut v: Vec<String> = crate::input::FAMILY_KEYBOARD_DEFAULT_KEYS
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect();
+        v.resize(crate::input::FAMILY_KEYBOARD_POSITIONS, String::new());
+        v
+    }
+
+    /// Whether this is the default layout (the table is then not written).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// A copy with each list padded (with unbound slots) or truncated to its
+    /// slot count, so the Settings editor can index every slot.
+    #[must_use]
+    pub fn normalized(&self) -> Self {
+        let mut out = self.clone();
+        out.power_pad.resize(12, String::new());
+        out.family_keyboard
+            .resize(crate::input::FAMILY_KEYBOARD_POSITIONS, String::new());
+        out
+    }
 }
 
 /// Serde default for [`InputConfig::pointer_scale`].
@@ -493,6 +579,7 @@ impl Default for InputConfig {
             mouse_sensitivity: 0,
             pointer_scale: default_pointer_scale(),
             power_pad_layout: PowerPadLayout::default(),
+            device_keys: DeviceKeyBindings::default(),
             system: SystemBindings::default(),
         }
     }
@@ -2627,7 +2714,12 @@ mod tests {
     #[test]
     fn a_default_config_writes_no_empty_opt_in_tables() {
         let text = toml::to_string_pretty(&Config::default()).expect("serialize default");
-        for key in ["latency_reports", "hd_packs", "shader_presets"] {
+        for key in [
+            "latency_reports",
+            "hd_packs",
+            "shader_presets",
+            "device_keys",
+        ] {
             assert!(
                 !text.contains(key),
                 "`{key}` was written for a default config, so an untouched file \
@@ -3543,6 +3635,50 @@ debug_overlay = "Backquote"
             Config::load_from(&path).unwrap().recording.audio_offset_ms,
             -85
         );
+    }
+
+    /// v3.5.0 (`FE-07`) — `[input.device_keys]`: absent loads the old fixed
+    /// layout; a partial table fills the rest from the defaults; a rebind is
+    /// written and read back; the default table is not written at all.
+    #[test]
+    fn device_keys_load_partially_and_round_trip() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.input.device_keys.is_default());
+        assert_eq!(cfg.input.device_keys.power_pad.len(), 12);
+        assert_eq!(cfg.input.device_keys.family_keyboard.len(), 72);
+        assert_eq!(cfg.input.device_keys.microphone, "KeyN");
+
+        let mut cfg = Config::default();
+        cfg.input.device_keys.microphone = "KeyV".into();
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        assert!(text.contains("[input.device_keys]"), "{text}");
+        let back: DeviceKeyBindings = toml::from_str("microphone = \"KeyV\"\n").unwrap();
+        assert_eq!(back.microphone, "KeyV");
+        assert_eq!(back.power_pad, DeviceKeyBindings::default_power_pad());
+        assert_eq!(
+            back.family_keyboard,
+            DeviceKeyBindings::default_family_keyboard()
+        );
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        cfg.input.device_keys.family_keyboard[70] = "Numpad5".into();
+        cfg.save_to(&path).unwrap();
+        let loaded = Config::load_from(&path).unwrap();
+        assert_eq!(loaded.input.device_keys, cfg.input.device_keys);
+        // Every default name parses back to a key.
+        let d = DeviceKeyBindings::default();
+        for name in d
+            .power_pad
+            .iter()
+            .chain(&d.family_keyboard)
+            .chain([&d.microphone])
+        {
+            assert!(
+                name.is_empty() || crate::input::parse_keycode(name).is_some(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
