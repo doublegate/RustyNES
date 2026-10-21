@@ -50,6 +50,14 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **The host warning codes live in the emulation core** (`FE-06`).
+  `HostWarning` (the codes the Android and iOS apps localise, with their
+  English text) moved from the mobile bridge to `rustynes-core`, which the
+  desktop and browser frontends share with it, so every frontend takes a
+  warning's code and wording from one place. The apps see no change: the
+  generated Kotlin and Swift differ only in documentation comments. The
+  desktop and browser never showed either warning (neither can occur
+  there), so nothing they display changes.
 - **The emulation thread runs at a raised priority on Windows and macOS too**
   (`FE-08`). Windows sets it one step above normal
   (`THREAD_PRIORITY_ABOVE_NORMAL`); macOS puts it in the `USER_INTERACTIVE`

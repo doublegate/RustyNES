@@ -36,6 +36,9 @@ mod controller;
 pub mod cpu_boot_trace;
 pub mod debug;
 pub mod genie;
+// v3.5.0 (`FE-06`) — the host-facing warning codes every frontend shares
+// (moved from the mobile bridge, which re-exports them to Kotlin / Swift).
+pub mod host_warning;
 pub mod input_device;
 #[cfg(feature = "irq-timing-trace")]
 pub mod irq_trace;
@@ -82,6 +85,7 @@ pub use genie::{GenieCode, GenieError};
 pub use hardware_options::{
     BoardDescription, EMULATION_EPOCH, HardwareOptions, OptionsDecodeError, config_digest,
 };
+pub use host_warning::HostWarning;
 pub use input_device::{
     BandaiHyperShotState, FamilyKeyboardState, InputDevice, KonamiHyperShotState, PowerPadState,
     SnesMouseState, VausState, ZapperState,

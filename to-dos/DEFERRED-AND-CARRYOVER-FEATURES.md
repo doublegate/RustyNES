@@ -1033,9 +1033,18 @@ the bridge at v2.9.7; their device rows are T1-T12 of the run sheet. In the
   shipped v2.0.5, commit `2cd53129`: `EmulatorCore.drainWarnings()` in
   `ios/RustyNES/EmulatorCore.swift` maps each `HostWarning` through
   `String(localized:)`, with EN + ES entries in
-  `ios/RustyNES/Localizable.xcstrings`. The OPTIONAL desktop/wasm migration named
-  below was never done and is **unscheduled**; the two stay in parity through
-  `HostWarning::message()`.)* the
+  `ios/RustyNES/Localizable.xcstrings`. **Desktop/wasm half: v3.5.0 (`FE-06`).** The
+  enum and its English text moved to `rustynes-core` (`rustynes_core::HostWarning`,
+  module `host_warning`), the surface the desktop and browser share with the
+  bridge; the bridge declares it to UniFFI as a remote enum (generated Kotlin /
+  Swift identical apart from doc comments, C header identical). Measured on the
+  way: the desktop and browser carried NO copy of either message (`rg` over
+  `crates/rustynes-frontend/src` finds neither text), because neither warning has
+  a producer there: `PreTimebaseMovie` is produced nowhere since v2.9.8, and
+  `RecoveredFromInternalError` needs an unwinding panic, which the desktop's and
+  browser's release profile (`panic = "abort"`) never has. So there was no
+  literal to migrate; a desktop or browser warning added later takes its code and
+  English from the core.)* the
   `rustynes-mobile` bridge previously handed the host a pre-composed *English*
   advisory string for the pre-v2.0.0 movie/epoch notice (`movie_play` →
   `drain_warnings`). **Bridge + Android DONE (v2.0.3 + v2.0.4):** v2.0.3 added the

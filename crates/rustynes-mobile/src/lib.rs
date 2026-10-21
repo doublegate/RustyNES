@@ -52,6 +52,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rustynes_core::{Buttons, Emu, Nes, Region, VsDualSystem};
+// v3.5.0 (`FE-06`) — the shared warning codes, declared to UniFFI below as a remote enum.
+pub use rustynes_core::HostWarning;
 use rustynes_netplay::{
     AdvanceOutcome, ConnectionState, DEFAULT_STUN_SERVERS, DisconnectReason, NatConfig, NatConnect,
     NatPhase, NetplayConnection, NetplayError, RollbackSession, SessionConfig, TurnConfig,
@@ -617,70 +619,32 @@ pub struct DisasmRow {
 /// [`NesController::drain_warnings`] (or [`host_warning_message`]) and get the exact,
 /// byte-identical English they got before.
 ///
-/// The enum is **additive and non-breaking**: the legacy `Vec<String>` drain still
-/// works (it maps each code through [`HostWarning::message`]), and every existing
-/// English string is preserved verbatim by [`HostWarning::message`], so the desktop /
-/// wasm frontends — which carry their own identical warning text and are deliberately
-/// untouched here — stay at exact parity.
+/// **v3.5.0 (`FE-06`): defined in `rustynes-core`**, at the surface the desktop and
+/// browser frontends share with this bridge, so every host takes the codes and the
+/// English text from one place (`rustynes_core::host_warning`, which also records
+/// which host produces which code). This is a UniFFI *remote* declaration of that
+/// type: it re-states the variants for the binding generator, the compiler checks
+/// that they match the core definition, and the generated Kotlin / Swift differ
+/// from the v3.4.x bindings only in these doc comments (verified by generating
+/// both before and after the move: every non-comment line and the C header are
+/// identical). The `message` / `Display` used below are the core's.
 ///
-/// Grow it by adding variants (each with its own `message` arm); do **not** repurpose
-/// an existing variant, so a host's per-code localization table never silently shifts
-/// meaning under it.
+/// Grow it by adding the variant in `rustynes-core` first, then here; do **not**
+/// repurpose an existing variant, so a host's per-code localization table never
+/// silently shifts meaning under it.
 ///
 /// Generated binding names:
-///   * Kotlin: `enum class HostWarning { PRE_TIMEBASE_MOVIE }`
-///   * Swift:  `enum HostWarning { case preTimebaseMovie }`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+///   * Kotlin: `enum class HostWarning { PRE_TIMEBASE_MOVIE, RECOVERED_FROM_INTERNAL_ERROR }`
+///   * Swift:  `enum HostWarning { case preTimebaseMovie, recoveredFromInternalError }`
+#[uniffi::remote(Enum)]
 pub enum HostWarning {
-    /// A `.rnm` recorded on a pre-v2.0.0 "Timebase" build was loaded: its recorded
-    /// *input* replays faithfully, but exact framebuffer/audio reproduction is not
-    /// guaranteed across the engine-timebase boundary (ADR 0028).
-    ///
-    /// **No longer produced (v2.9.8).** `.rnm` format 3 records the emulation
-    /// options, and [`NesController::movie_play`] now refuses every older movie
-    /// with a [`MobileError::Movie`] that says to re-record it, so a pre-v2.0.0
-    /// movie never reaches playback. The variant stays so the generated Kotlin /
-    /// Swift enums and hosts' localization tables keep their meaning (the
-    /// "never repurpose a variant" rule above).
+    /// A `.rnm` recorded on a pre-v2.0.0 "Timebase" build was loaded (no longer
+    /// produced since v2.9.8; see `rustynes_core::HostWarning::PreTimebaseMovie`).
     PreTimebaseMovie,
-    /// v2.7.4 (frontend audit MOB-07) — a call panicked inside the bridge. The
-    /// panic was contained (the mobile libraries unwind since v2.7.4), but it
-    /// may have left the emulator mid-update, so any netplay session was ended
-    /// and the machine is frozen: the app stays open, the picture holds, and
-    /// no further emulated cycle runs until the player reopens the game, power
-    /// cycles, or loads a save state. Queued once per panic by the recovery in
-    /// `NesController::lock`.
+    /// A call panicked inside the bridge and was contained; the machine is frozen
+    /// until the player reopens the game, power cycles or loads a state (see
+    /// `rustynes_core::HostWarning::RecoveredFromInternalError`).
     RecoveredFromInternalError,
-}
-
-impl HostWarning {
-    /// The default (English) presentation string for this warning code.
-    ///
-    /// This is the single source of the legacy `Vec<String>` drain: it returns the
-    /// *exact* text the bridge queued before v2.0.3, so a legacy host observes no
-    /// change. A localizing host ignores this and renders its own copy keyed on the
-    /// variant.
-    #[must_use]
-    pub fn message(&self) -> String {
-        match self {
-            // Kept byte-for-byte identical to the pre-v2.0.3 literal (and to the
-            // desktop / wasm frontends' notice) so the default drain is unchanged.
-            Self::PreTimebaseMovie => "this movie was recorded on a pre-v2.0.0 build -- \
-                 input replay proceeds, but exact framebuffer/audio reproduction is not \
-                 guaranteed across the engine-timebase boundary (see ADR 0028)"
-                .to_string(),
-            Self::RecoveredFromInternalError => "RustyNES stopped the game after an internal \
-                 error. Any netplay session was ended. Reopen the game or load a save \
-                 state to continue."
-                .to_string(),
-        }
-    }
-}
-
-impl core::fmt::Display for HostWarning {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(&self.message())
-    }
 }
 
 /// The default (English) presentation string for a [`HostWarning`] code (v2.0.3).
