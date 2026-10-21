@@ -71,8 +71,8 @@ RetroAchievements rows in `test/ra.test.ts`).
 | --- | --- | --- | --- |
 | Per-IP rate limit | `TURN_PER_IP_PER_HOUR` (6) | 429 `rate-limited` with `Retry-After`; the window is in Durable Object storage, so it survives eviction | `limits one IP with 429 and Retry-After`, `keeps per-IP windows across an eviction` |
 | Daily global cap | `TURN_DAILY_CAP` (500) | 503 `daily-cap` with `Retry-After` until 00:00 UTC; failed upstream mints are refunded | `caps credentials per UTC day across all callers, and resets the next day`, the eleven `... is a 502 and does not spend the budget` tests (which also assert no revocation was scheduled) |
-| Short TTL, revocation attempted | `TURN_TTL_SECONDS` (10800, clamped 600-86400) | Credentials are asked to expire after 3 h, and the budget object asks Cloudflare to revoke each one when its TTL ends. Neither has been seen to stop Cloudflare accepting the credential (v3.4.1, `T-HOSTED-TURN-EXPIRY`) | `returns short-lived ICE servers and passes the TTL upstream`, `clamps the configured TTL`, the `revocation` tests |
-| Kill switch | `TURN_ENABLED` (`"false"` since v3.4.1: "TURN is off" below) | Anything else: 503 `turn-disabled`, no upstream call | `the kill switch refuses without calling upstream` |
+| Short TTL, revocation at the TTL | `TURN_TTL_SECONDS` (10800, clamped 600-86400) | Credentials are asked to expire after 3 h, and the budget object asks Cloudflare to revoke each one when its TTL ends. Neither stops Cloudflare relaying for the credential, but both stop it being billed (measured 2026-10-21, `T-HOSTED-TURN-EXPIRY`) | `returns short-lived ICE servers and passes the TTL upstream`, `clamps the configured TTL`, the `revocation` tests |
+| Kill switch | `TURN_ENABLED` (`"true"`; it was `"false"` in v3.4.1 and v3.4.2: "TURN is on again" below) | Anything else: 503 `turn-disabled`, no upstream call | `the kill switch refuses without calling upstream` |
 | POST only | (none) | A GET is 405 before the budget is consulted, so another page cannot spend the cap through its visitors' browsers | `a GET with no Origin, as an <img> on another page sends it, is refused and spends nothing` |
 | RA per-IP rate limit | `RA_PER_IP_PER_HOUR` (240) | 429 with `Retry-After`; in Durable Object storage (the `ra` instance) | `limits one address per hour with 429 and Retry-After` |
 | RA login rate limit | `RA_LOGINS_PER_IP_PER_HOUR` (10) | `login2` calls only; 429 with `Retry-After` | `limits logins per address more tightly than other calls` |
@@ -90,17 +90,17 @@ longer session drops its relay and reconnects through the lobby, which mints
 fresh credentials. Shorter is better because the TTL is how long a leaked
 credential stays usable. `src/turn.ts` has the full argument.
 
-**Revocation is attempted at the TTL; its effect is unverified (v3.4.1).**
+**Revocation at the TTL: it ends billing, not relaying (measured 2026-10-21).**
 Cloudflare does not refuse a credential once the TTL it was minted with has
 passed: on 2026-10-19 a 3-hour credential still obtained a relay 2 h 38 min
 after its expiry, and 600 s ones minutes after theirs, although Cloudflare's
 own page says an expired credential is disconnected. So the Worker asks
 Cloudflare to revoke each credential when its TTL ends, through the revoke
 endpoint, from the budget object's alarm. The revoke calls succeed, and the
-revoked credentials were still accepted for new allocations too ("TURN is off"
-below), so this does NOT bound how long a credential works; what Cloudflare
-does with relayed traffic and billing after expiry or revocation is unmeasured
-(`T-HOSTED-TURN-EXPIRY`). The retry policy: success is a 2xx, and a 404 is
+revoked credentials are still accepted for new allocations too, so this does
+NOT bound how long a credential works. It does bound what it costs: the
+stricter test of 2026-10-21 ("TURN is on again" below) found no billed usage
+at all for an expired or revoked credential's traffic. The retry policy: success is a 2xx, and a 404 is
 taken as done (logged); a missing key, 401 or 403 is logged as an error and
 retried hourly without counting as an attempt; any other failure is retried
 with a delay starting at 5 minutes and doubling to an hour; an entry is
@@ -124,19 +124,39 @@ requests that would be forwarded (a refused call type costs nothing). The
 defaults leave room for the casual runtime, which makes about one call a
 minute while a game runs; `src/budget.ts` has the reasoning.
 
-**TURN is off (v3.4.1).** `TURN_ENABLED` is `"false"` in `wrangler.jsonc`, the
-maintainer's decision of 2026-10-19: Cloudflare kept creating relay allocations
-for credentials that were expired, and for credentials the Worker had revoked
-through Cloudflare's own API (the revoke calls returned 204), while refusing a
-made-up credential. Until that is understood (`T-HOSTED-TURN-EXPIRY` in
-`to-dos/ROADMAP.md`), no credentials are issued and clients connect directly.
-The revocation code stays deployed and tested, so switching TURN back on is one
-variable.
+**TURN is on again (v3.5.0).** `TURN_ENABLED` was `"false"` in v3.4.1 and
+v3.4.2 (the maintainer's decision of 2026-10-19): Cloudflare kept creating
+relay allocations for credentials that were expired, and for credentials the
+Worker had revoked through Cloudflare's own API (the revoke calls returned
+204), while refusing a made-up credential. The stricter test of 2026-10-21
+(`T-HOSTED-TURN-EXPIRY` in `to-dos/ROADMAP.md`, with a throwaway TURN key: two
+relay-only peers moving a checksummed payload, usage read per credential from
+`callsTurnUsageAdaptiveGroups`) measured:
 
-**What the guards do not bound.** They bound how many credentials exist, not
-how many bytes one carries, nor how long one keeps working: neither its expiry
-nor its revocation was seen to stop Cloudflare accepting it (above). That is why the budget alert below is a deploy prerequisite,
-not an option.
+- An expired credential (19 s, 14 min 46 s and 25 min past expiry) and a
+  revoked one each relayed 5 MiB relay-to-relay with matching checksums, and
+  each held a connection for 15 min (924 s, 28 of 28 pings delivered), past
+  the 10-minute allocation lifetime, so refreshes succeed too.
+- **Neither has a usage row at all**: Cloudflare does not bill an expired or
+  revoked credential's traffic. The one credential billed after its key was
+  deleted (15,976,704 B egress) was still within its TTL.
+- Deleting the TURN key does not stop its credentials relaying (seen 5 s,
+  67 s and 8 min after deletion), and does not stop billing for those still
+  within their TTL. It is not a kill switch.
+
+So the account's exposure is credentials within their TTL: at most
+`TURN_DAILY_CAP` a day, `TURN_PER_IP_PER_HOUR` per address, each billed for
+at most `TURN_TTL_SECONDS` before the Worker's revocation ends its billing.
+That is what the guards above were sized for, and the maintainer switched TURN
+back on (2026-10-20). Relaying past the TTL is Cloudflare's cost, not ours,
+and nothing here relies on it continuing to be unbilled; telling Cloudflare
+about it is still open.
+
+**What the guards do not bound.** They bound how many credentials exist and
+how long each is billed, not how many bytes one carries within its TTL, nor
+how long it keeps relaying: neither its expiry nor its revocation stops
+Cloudflare accepting it, only billing it (above). That is why the budget alert
+below is a deploy prerequisite, not an option.
 
 **What counts as an upstream failure.** Besides an HTTP error, a timeout or a
 non-JSON body, `sanitizeIceServers` turns an answer with no usable TURN entry
@@ -228,12 +248,12 @@ Do this first, so that a surprise is an email and not an invoice.
    (`TURN_ENABLED`, below) stops new credentials within one deploy of a var;
    credentials already issued are not stopped by it. The Worker asks Cloudflare
    to revoke each one at the end of its TTL, and one can be revoked earlier
-   through the TURN API's revoke endpoint, but **v3.4.1 measured that neither
-   expiry nor revocation stops Cloudflare creating allocations for an issued
-   credential** ("TURN is off" below), so for a leaked credential the
-   remaining stop is likely deleting the TURN key itself (create a new key, set
-   the two secrets, delete the old one). That is untested; the budget alert is
-   the backstop that is known to work.
+   through the TURN API's revoke endpoint. **Neither expiry nor revocation
+   stops Cloudflare relaying for an issued credential, but both stop it being
+   billed** (measured 2026-10-21, "TURN is on again" above), so for a leaked
+   credential the stop is revoking it. Deleting the TURN key is NOT a stop: a
+   deleted key's credentials keep relaying, and those within their TTL keep
+   being billed. The budget alert remains the backstop for everything else.
 
 ### 1. Log in and install
 
@@ -321,9 +341,12 @@ each needs the deployed service, real browsers or devices, or a real account.
    in an ICE test page (for example the WebRTC samples' "Trickle ICE" page): no
    `relay` candidate is gathered. Within the TTL the same test gathers one. To
    check it faster, deploy with `TURN_TTL_SECONDS` 600, mint one credential,
-   redeploy the normal value, and test 11 minutes later. **As of v3.4.1 this
-   step still fails**, with or without the Worker's revocation:
-   `T-HOSTED-TURN-EXPIRY`.
+   redeploy the normal value, and test 11 minutes later. **This step fails,
+   and is expected to** (v3.4.1, and again on 2026-10-21): Cloudflare relays
+   for expired and revoked credentials. What it checks instead is billing:
+   `callsTurnUsageAdaptiveGroups` grouped by `customIdentifier` or username
+   shows no egress for the credential after its expiry or revocation
+   (`T-HOSTED-TURN-EXPIRY`).
 5. **Spend guards live:** set `TURN_ENABLED` to `false` in the dashboard (it
    deploys a new version of the same code); `/turn-credentials` answers 503
    `turn-disabled` and a browser session still connects directly. Set it back.
@@ -345,8 +368,10 @@ each needs the deployed service, real browsers or devices, or a real account.
 - **Stop TURN spend now:** dashboard **Workers & Pages > rustynes-hosted >
   Settings > Variables and Secrets**, set `TURN_ENABLED` to `false`, save
   (or edit `wrangler.jsonc` and `npx wrangler deploy`). Clients fall back to
-  STUN only. To also kill credentials already issued, delete the TURN key in
-  Realtime > TURN Server (every credential minted from it stops working).
+  STUN only. Credentials already issued are not stopped by it: revoke them
+  (each one's billing stops; the Worker does this at the TTL). Deleting the
+  TURN key does NOT stop them (measured 2026-10-21: a deleted key's
+  credentials keep relaying, and those within their TTL keep being billed).
 - **Stop the RA proxy:** the same, with `RA_ENABLED` set to `false`.
 - **Roll back a bad deploy:** `npx wrangler deployments list`, then
   `npx wrangler rollback <version-id>` (or the dashboard's Deployments tab).

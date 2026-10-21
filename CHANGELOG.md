@@ -26,6 +26,17 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **The hosted TURN relay is on again** (`T-HOSTED-TURN-EXPIRY`). It was
+  held off in v3.4.1 and v3.4.2 because Cloudflare kept relaying for expired
+  and revoked credentials; a stricter test on 2026-10-21 found that it still
+  relays for them but never bills that traffic, so the cost is bounded by
+  credentials within their three-hour lifetime, which the existing per-address
+  and daily limits already bound. Players whose networks cannot connect
+  directly can play online through the relay again. The privacy policy is
+  updated to say what is kept while the relay is on.
+
 ### Fixed
 
 - **Hosted TURN credentials with an empty username or password**
