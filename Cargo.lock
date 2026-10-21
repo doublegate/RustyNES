@@ -4490,6 +4490,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml",
+ "tungstenite",
  "ureq",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4499,6 +4500,7 @@ dependencies = [
  "web-time",
  "wgpu",
  "wide",
+ "windows-sys 0.61.2",
  "winit",
  "zip",
 ]

@@ -80,11 +80,34 @@ scripting = ["dep:rustynes-script"]
 # `CommCmd`, the host does the I/O off the emulator lock, and feeds plain values
 # back via `CommResult`. IPC is a new non-deterministic source, so every verb is
 # gated like `emu.write` and is disabled under replay / netplay / RA exactly the
-# same way. Reuses the already-present native-only optional `ureq` (HTTP); TCP +
-# the in-process memory-mapped-file bridge use std only, so no new dependency is
-# pulled. Requires `scripting`. Enable with:
+# same way. Reuses the already-present native-only optional `ureq` (HTTP); TCP
+# uses std only. (Until v3.5.0 the memory-mapped file was an in-process map and
+# the WebSocket reported a closed socket; see below.) Requires `scripting`.
+# Enable with:
 #   cargo build -p rustynes-frontend --features scripting,script-ipc
-script-ipc = ["scripting", "rustynes-script/script-ipc", "dep:ureq"]
+#
+# v3.5.0 (CR-01, CR-02): the WebSocket is real (`tungstenite`, already in the
+# tree through netplay) and the memory-mapped file is real OS shared memory
+# (`src/shm.rs`: `libc` on POSIX, `windows-sys` on Windows; both already in the
+# lock file). Still no crate the lock file did not have.
+script-ipc = [
+    "scripting",
+    "rustynes-script/script-ipc",
+    "dep:ureq",
+    "dep:tungstenite",
+    "dep:libc",
+    "dep:windows-sys",
+]
+
+# v3.5.0 (`T-SPEEDRUN-MEMIF`) — the speedrun memory-export interface (default
+# OFF, native-only): with `--memif`, every frame's CPU RAM, cartridge RAM,
+# frame and master-clock counters and the speedrun timer's state are published
+# into the named shared-memory block `rustynes-memif`, at the fixed offsets
+# `docs/memory-export-interface.md` documents, so a LiveSplit-style tool reads
+# them by offset with no per-version base address. Output-only: it reads the
+# emulator after the frame and never writes it. Pulls only `libc` / `windows-sys`
+# (already in the lock file) for `src/shm.rs`.
+memif = ["dep:libc", "dep:windows-sys"]
 
 # v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua scripting (default OFF, wasm-only).
 # Forwards into `rustynes-script`'s pure-Rust piccolo backend (the
@@ -192,6 +215,7 @@ full = [
     "hd-pack",
     "debug-hooks",
     "av-record",
+    "memif",
 ]
 
 [[bin]]
@@ -326,6 +350,13 @@ rustynes-script = { workspace = true, optional = true }
 # `cfg(not(target_arch = "wasm32"))` table so the wasm builds never see them,
 # and `optional = true` keeps them out of the default (feature-off) build.
 ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
+# v3.5.0 (CR-01) — the `comm.ws_*` WebSocket client in `script_host`. The SAME
+# crate, version and feature set the netplay signaling client already pulls
+# (`rustynes-netplay`'s default `netplay-client`), so it adds no crate to the
+# lock file: blocking `tungstenite` over a `TcpStream` the host dials itself
+# (so the SEC-04 destination check sees the address it connects to), rustls
+# with the webpki roots for `wss://`. Optional, behind `script-ipc`.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
 # `png` decodes the embedded app icon (window icon + About dialog, v1.1.0) and
 # the RA badge PNGs. Non-optional on native (the icon ships in every desktop
 # build); native-only (in this `cfg(not(wasm))` table) so the wasm builds never
@@ -513,3 +544,15 @@ harness = false
 wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client"] }
 raw-window-handle = "0.6"
+
+# v3.5.0 (CR-02, `T-SPEEDRUN-MEMIF`) — named OS shared memory on Windows
+# (`CreateFileMappingW` / `MapViewOfFile`, `src/shm.rs`). `windows-sys 0.61` is
+# already in the lock file (through winit, wgpu and others), so this adds no
+# crate; the features only switch on the bindings `shm.rs` calls. Optional,
+# behind `script-ipc` and `memif`, so a build with neither does not name it.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Memory",
+] }

@@ -29,9 +29,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{
+    Receiver, Sender, SyncSender, TryRecvError, TrySendError, channel, sync_channel,
+};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -124,16 +126,24 @@ fn host_allowlisted(uri: &ureq::http::Uri, allow: &[String]) -> bool {
     let Some(host) = uri.host() else {
         return false;
     };
-    // `[::1]` in a URI; the allowlist may name it with or without brackets.
-    let host = host
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_ascii_lowercase();
     let port = uri.port_u16().or_else(|| match uri.scheme_str() {
         Some("https") => Some(443),
         Some("http") => Some(80),
         _ => None,
     });
+    host_port_allowlisted(host, port, allow)
+}
+
+/// Whether `host` (or `host:port`) is on the user's allowlist. Split from
+/// [`host_allowlisted`] in v3.5.0 so the WebSocket client, whose URI type is
+/// `tungstenite`'s rather than `ureq`'s, applies the SAME rule.
+#[cfg(feature = "script-ipc")]
+fn host_port_allowlisted(host: &str, port: Option<u16>, allow: &[String]) -> bool {
+    // `[::1]` in a URI; the allowlist may name it with or without brackets.
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
     allow.iter().any(|entry| {
         let entry = entry.trim_start_matches('[').replace("]:", ":");
         let entry = entry.trim_end_matches(']');
@@ -247,6 +257,11 @@ pub struct ScriptHost {
     cancel: Arc<AtomicBool>,
     /// The worker thread handle (joined, or detached after a grace, on drop).
     worker: Option<JoinHandle<()>>,
+    /// v3.5.0 (CR-01) — bytes of inbound WebSocket text sitting in
+    /// `result_rx`, not yet drained. The socket thread stops reading while it
+    /// is over [`WS_INBOUND_BUDGET`], so a server that floods the socket
+    /// pushes back on its own TCP window instead of growing this process.
+    ws_pending: Arc<AtomicUsize>,
 }
 
 /// v2.9.0 re-audit NF-08 — how many `comm.*` requests may wait for the worker.
@@ -271,31 +286,53 @@ impl ScriptHost {
     /// Spawn the IPC worker thread.
     #[must_use]
     pub fn new() -> Self {
-        Self::spawn(None)
+        Self::spawn(None, MMF_PREFIX.to_string())
     }
 
     /// Spawn with an explicit HTTP allowlist instead of reading
     /// `RUSTYNES_COMM_HTTP_ALLOW`, so a test can reach a loopback listener
     /// without mutating the process environment (which other tests share).
+    /// The MMF prefix is unique to the test as well: shared-memory names are
+    /// global to the machine, and parallel tests (or two `cargo test` runs)
+    /// writing "frame" under the production prefix would share one region.
     #[cfg(all(test, feature = "script-ipc"))]
     fn with_allowlist(allow: Vec<String>) -> Self {
-        Self::spawn(Some(allow))
+        Self::spawn(Some(allow), test_prefix())
     }
 
-    fn spawn(allow: Option<Vec<String>>) -> Self {
+    /// Spawn with no allowlist and a test-unique MMF prefix (see
+    /// [`Self::with_allowlist`]).
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Self::spawn(Some(Vec::new()), test_prefix())
+    }
+
+    fn spawn(allow: Option<Vec<String>>, mmf_prefix: String) -> Self {
         let (job_tx, job_rx) = sync_channel::<CommCmd>(COMM_QUEUE_DEPTH);
         let (result_tx, result_rx) = channel::<CommResult>();
         let cancel = Arc::new(AtomicBool::new(false));
+        let ws_pending = Arc::new(AtomicUsize::new(0));
         let worker_cancel = Arc::clone(&cancel);
+        let worker_pending = Arc::clone(&ws_pending);
         let worker = std::thread::Builder::new()
             .name("script-ipc".to_string())
-            .spawn(move || worker_loop(&job_rx, &result_tx, &worker_cancel, allow))
+            .spawn(move || {
+                worker_loop(
+                    &job_rx,
+                    &result_tx,
+                    &worker_cancel,
+                    allow,
+                    mmf_prefix,
+                    &worker_pending,
+                );
+            })
             .ok();
         Self {
             job_tx,
             result_rx,
             cancel,
             worker,
+            ws_pending,
         }
     }
 
@@ -371,6 +408,14 @@ impl ScriptHost {
     pub fn drain_results(&self) -> Vec<CommResult> {
         let mut out = Vec::new();
         while let Ok(r) = self.result_rx.try_recv() {
+            // CR-01: hand the drained message's bytes back to the socket
+            // thread's inbound budget.
+            if let CommResult::WsState {
+                message: Some(m), ..
+            } = &r
+            {
+                self.ws_pending.fetch_sub(m.len(), Ordering::AcqRel);
+            }
             out.push(r);
         }
         out
@@ -426,20 +471,18 @@ fn join_or_detach(worker: JoinHandle<()>, grace: Duration) -> bool {
 fn worker_loop(
     job_rx: &Receiver<CommCmd>,
     result_tx: &Sender<CommResult>,
-    cancel: &AtomicBool,
+    cancel: &Arc<AtomicBool>,
     allow: Option<Vec<String>>,
+    mmf_prefix: String,
+    ws_pending: &Arc<AtomicUsize>,
 ) {
     // Host-owned connection state — the script can NEVER name any of these
     // handles; it only ever sees the marshalled `CommResult` values below.
-    // `allow` is `Some` only from the test constructor; production reads the
+    // `allow` is `Some` only from the test constructors; production reads the
     // user's environment.
-    #[cfg(feature = "script-ipc")]
-    let agent =
-        http_agent(allow.unwrap_or_else(|| {
-            parse_allowlist(&std::env::var(HTTP_ALLOW_ENV).unwrap_or_default())
-        }));
-    #[cfg(not(feature = "script-ipc"))]
-    let _ = allow;
+    let allow = allow
+        .unwrap_or_else(|| parse_allowlist(&std::env::var(HTTP_ALLOW_ENV).unwrap_or_default()));
+    let agent = http_agent(allow.clone());
     // A single outbound TCP socket (`socketServerSend`) — lazily connected to the
     // host's configured endpoint via the env override (off-by-default; an
     // unconfigured host simply drops the byte stream). Kept host-side.
@@ -448,13 +491,15 @@ fn worker_loop(
     // than re-paying `TCP_CONNECT_TIMEOUT` on every queued send (see
     // `try_connect_tcp`). `None` = no attempt yet.
     let mut last_connect_attempt: Option<Instant> = None;
-    // The in-process memory-mapped-file bridge: a host-owned named byte buffer
-    // map. A real OS shared-memory backing is a maintainer follow-up; this gives
-    // a deterministic, dependency-free host-owned MMF surface today.
-    let mmf: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+    // v3.5.0 (CR-02): the memory-mapped files are real OS shared memory,
+    // named `<prefix><script name>`, so another process can open them.
+    let mut mmf = MmfStore::new(mmf_prefix);
     // Whether a refused MMF write has been reported (once per worker, so a
     // script retrying every frame does not flood stderr; agy on #561).
     let mut mmf_refusal_reported = false;
+    // v3.5.0 (CR-01): the one open WebSocket (`ws_send` names no socket, so
+    // there is at most one), run on its own thread.
+    let mut ws: Option<WsLink> = None;
 
     while let Ok(cmd) = job_rx.recv() {
         // NF-08: once the host is dropped, the backlog is abandoned, not run.
@@ -472,12 +517,10 @@ fn worker_loop(
                     tcp = None; // drop a dead socket; reconnect (backed-off) next send.
                 }
             }
-            #[cfg(feature = "script-ipc")]
             CommCmd::HttpGet { id, url } => {
                 let (status, body) = http_call(agent.get(&url).call());
                 let _ = result_tx.send(CommResult::Http { id, status, body });
             }
-            #[cfg(feature = "script-ipc")]
             CommCmd::HttpPost { id, url, body } => {
                 // Pass the owned `body` by value (ureq reuses the allocation) and keep
                 // ureq 2 `send_string`'s implicit `text/plain; charset=utf-8` content type.
@@ -493,76 +536,541 @@ fn worker_loop(
                     body: resp,
                 });
             }
-            CommCmd::WsOpen { id, .. } => {
-                // A full WebSocket client is a maintainer follow-up (it needs a
-                // ws crate); the host-owned contract is in place. Report a clean
-                // closed/error state so a portable script does not hang.
-                let _ = result_tx.send(CommResult::WsState {
+            CommCmd::WsOpen { id, url } => {
+                // A second open replaces the first: the old socket is told to
+                // close (and reports `open = false` under ITS id) while the new
+                // one connects on a thread of its own, so the worker never
+                // waits on either handshake.
+                if let Some(old) = ws.take() {
+                    old.close();
+                }
+                ws = WsLink::spawn(
                     id,
-                    open: false,
-                    message: None,
-                });
+                    url,
+                    allow.clone(),
+                    result_tx.clone(),
+                    Arc::clone(cancel),
+                    Arc::clone(ws_pending),
+                );
+                if ws.is_none() {
+                    // The OS would not start a thread: report the failure the
+                    // way every other transport failure is reported.
+                    let _ = result_tx.send(CommResult::WsState {
+                        id,
+                        open: false,
+                        message: None,
+                    });
+                }
             }
-            CommCmd::WsSend(_) | CommCmd::WsClose => {
-                // No open WS connection (see WsOpen) — drop.
+            CommCmd::WsSend(text) => {
+                // No open socket: dropped, as before (fire-and-forget).
+                if let Some(link) = ws.as_ref() {
+                    link.send(text);
+                }
+            }
+            CommCmd::WsClose => {
+                if let Some(link) = ws.take() {
+                    link.close();
+                }
             }
             CommCmd::MmfWrite { name, data } => {
-                if let Ok(mut m) = mmf.lock() {
-                    // NF-03: a write that would take the map past its budget
-                    // is dropped, like any other fire-and-forget request, and
-                    // reported once so a script author can see why.
-                    if !mmf_store(&mut m, name, data) && !mmf_refusal_reported {
-                        mmf_refusal_reported = true;
-                        eprintln!(
-                            "rustynes: script memory-mapped file write refused: the map \
-                             holds at most {MAX_MMF_NAMES} names and {} MiB",
-                            MAX_MMF_BYTES >> 20
-                        );
-                    }
+                // NF-03: a write that would take the store past its budget is
+                // dropped, like any other fire-and-forget request, and
+                // reported once so a script author can see why.
+                if let Err(why) = mmf.write(&name, &data)
+                    && !mmf_refusal_reported
+                {
+                    mmf_refusal_reported = true;
+                    eprintln!("rustynes: script memory-mapped file write refused: {why}");
                 }
             }
             CommCmd::MmfRead { id, name, len } => {
-                let data = mmf
-                    .lock()
-                    .ok()
-                    .and_then(|m| m.get(&name).cloned())
-                    .map_or_else(Vec::new, |mut v| {
-                        v.truncate(len as usize);
-                        v
-                    });
+                let data = mmf.read(&name, len as usize);
                 let _ = result_tx.send(CommResult::Mmf { id, data });
             }
-            // The remaining variants only exist under `script-ipc` (the only
-            // config that compiles this module), so this arm is unreachable; the
-            // catch-all keeps the match total if a variant is later cfg-gated.
-            #[allow(unreachable_patterns)]
-            _ => {}
         }
+    }
+    // Leaving: the WebSocket thread sees its command channel close and shuts
+    // the socket; the MMF store unlinks the regions it created (on drop).
+    if let Some(link) = ws.take() {
+        link.close();
     }
 }
 
-/// v2.9.0 re-audit NF-03 — the most bytes (names plus data) the host-owned
-/// memory-mapped-file map may hold. The map lives as long as the worker, so
-/// unlike a per-frame queue it never empties by itself: before this cap a
-/// script writing distinct names grew it without bound. Each write is also
-/// capped by the engine at `MAX_COMM_PAYLOAD_BYTES` (1 MiB).
+// ---------------------------------------------------------------------------
+// v3.5.0 (CR-02) — memory-mapped files backed by real OS shared memory
+// ---------------------------------------------------------------------------
+
+/// The prefix every script MMF name gets before it reaches the OS.
+///
+/// A script can therefore only ever open regions in the emulator's own corner
+/// of the shared-memory namespace, never another program's (Python's, a
+/// browser's, a sound server's).
+///
+/// A tool that wants the region a script named `frame` opens
+/// `rnes-mmf-frame`.
+pub const MMF_PREFIX: &str = "rnes-mmf-";
+
+/// The longest script MMF name: the portable shared-memory name limit less the
+/// prefix (21 characters).
+pub const MAX_MMF_NAME_LEN: usize = crate::shm::MAX_NAME_LEN - MMF_PREFIX.len();
+
+/// Size of the header in front of every MMF payload, in bytes.
+pub const MMF_HEADER_LEN: usize = 32;
+
+/// The header's first four bytes.
+pub const MMF_MAGIC: [u8; 4] = *b"RNMF";
+
+/// The header layout version this host writes and accepts.
+pub const MMF_LAYOUT_VERSION: u32 = 1;
+
+// Header field offsets (all little-endian `u32`, see `docs/scripting.md`).
+const MMF_OFF_VERSION: usize = 4;
+const MMF_OFF_CAPACITY: usize = 8;
+const MMF_OFF_LENGTH: usize = 12;
+const MMF_OFF_SEQ: usize = 16;
+
+/// How many times a reader retries a copy that raced a writer before giving up
+/// (and returning an empty buffer, the transport-failure value).
+const MMF_READ_ATTEMPTS: u32 = 64;
+
+/// v2.9.0 re-audit NF-03 — the most bytes (names plus mapped regions) the
+/// script's memory-mapped files may hold. The regions live as long as the
+/// worker, so unlike a per-frame queue they never empty by themselves: before
+/// this cap a script writing distinct names grew the store without bound. Each
+/// write is also capped by the engine at `MAX_COMM_PAYLOAD_BYTES` (1 MiB).
+/// Since v3.5.0 the bytes counted are the mapped size (header and page
+/// rounding included), which is what the OS actually holds.
 const MAX_MMF_BYTES: usize = 16 * 1024 * 1024;
 
-/// v2.9.0 re-audit NF-03 — the most names the MMF map may hold.
+/// v2.9.0 re-audit NF-03 — the most names the script may hold.
 const MAX_MMF_NAMES: usize = 256;
 
-/// Store `data` under `name` if the map stays within [`MAX_MMF_BYTES`] and
-/// [`MAX_MMF_NAMES`]; overwriting a name reuses its share. Returns whether it
-/// was stored.
-fn mmf_store(map: &mut HashMap<String, Vec<u8>>, name: String, data: Vec<u8>) -> bool {
-    let held: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
-    let old = map.get(&name).map(|v| name.len() + v.len());
-    let next = held - old.unwrap_or(0) + name.len() + data.len();
-    if next > MAX_MMF_BYTES || (old.is_none() && map.len() >= MAX_MMF_NAMES) {
-        return false;
+/// The OS page granularity the regions are rounded to (4 KiB on every shipped
+/// target; Windows allocates mapping views at 64 KiB granularity, but
+/// commits only the pages the size covers).
+const MMF_PAGE: usize = 4096;
+
+/// The mapped size for a payload of `len` bytes: header plus payload, rounded
+/// up to whole pages.
+const fn mmf_region_len(len: usize) -> usize {
+    (MMF_HEADER_LEN + len).div_ceil(MMF_PAGE) * MMF_PAGE
+}
+
+/// The script's memory-mapped files: one shared-memory region per name this
+/// host has written. Dropping the store unmaps them, and on POSIX unlinks the
+/// ones it created.
+struct MmfStore {
+    prefix: String,
+    regions: HashMap<String, crate::shm::SharedRegion>,
+}
+
+impl MmfStore {
+    fn new(prefix: String) -> Self {
+        Self {
+            prefix,
+            regions: HashMap::new(),
+        }
     }
-    map.insert(name, data);
-    true
+
+    /// The OS name for a script name, or `None` if the script name is not
+    /// one the portable rule (and [`MAX_MMF_NAME_LEN`]) accepts.
+    fn os_name(&self, name: &str) -> Option<String> {
+        let full = format!("{}{name}", self.prefix);
+        (!name.is_empty() && crate::shm::validate_name(&full).is_ok()).then_some(full)
+    }
+
+    /// Bytes (names plus mapped regions) the store holds.
+    fn held_bytes(&self) -> usize {
+        self.regions.iter().map(|(k, r)| k.len() + r.len()).sum()
+    }
+
+    /// Write `data` under `name`, creating (or growing) its region. Refused,
+    /// with the reason, when the name is invalid, the store would pass
+    /// [`MAX_MMF_BYTES`] or [`MAX_MMF_NAMES`], or the OS refuses.
+    fn write(&mut self, name: &str, data: &[u8]) -> Result<(), String> {
+        let Some(full) = self.os_name(name) else {
+            return Err(format!(
+                "the name {name:?} must be 1-{MAX_MMF_NAME_LEN} characters of A-Z a-z 0-9 _ . -"
+            ));
+        };
+        let fits = self
+            .regions
+            .get(name)
+            .is_some_and(|r| r.len() - MMF_HEADER_LEN >= data.len());
+        if !fits {
+            let want = mmf_region_len(data.len());
+            let old = self.regions.get(name).map(|r| name.len() + r.len());
+            let next = self.held_bytes() - old.unwrap_or(0) + name.len() + want;
+            if next > MAX_MMF_BYTES || (old.is_none() && self.regions.len() >= MAX_MMF_NAMES) {
+                return Err(format!(
+                    "the store holds at most {MAX_MMF_NAMES} names and {} MiB",
+                    MAX_MMF_BYTES >> 20
+                ));
+            }
+            // Too small (or absent): drop the old mapping first, so on POSIX
+            // its name is unlinked and the create below makes a fresh object
+            // of the new size rather than reopening the small one. A reader
+            // still mapping the old object sees its magic cleared, which is
+            // its signal to reopen the name.
+            if let Some(old) = self.regions.remove(name) {
+                mmf_publish(&old, |r| r.write_bytes(0, &[0; 4]));
+            }
+            let region = crate::shm::SharedRegion::create(&full, want)
+                .map_err(|e| format!("cannot create {full}: {e}"))?;
+            if region.len() < want {
+                return Err(format!("{full} exists and is too small"));
+            }
+            // A fresh (zero-filled) or reopened region: (re)initialise the
+            // header under the sequence counter, like any write.
+            let capacity = u32::try_from(region.len() - MMF_HEADER_LEN).unwrap_or(u32::MAX);
+            mmf_publish(&region, |r| {
+                r.write_bytes(0, &MMF_MAGIC);
+                r.write_bytes(MMF_OFF_VERSION, &MMF_LAYOUT_VERSION.to_le_bytes());
+                r.write_bytes(MMF_OFF_CAPACITY, &capacity.to_le_bytes());
+            });
+            self.regions.insert(name.to_owned(), region);
+        }
+        let region = &self.regions[name];
+        let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
+        mmf_publish(region, |r| {
+            r.write_bytes(MMF_OFF_LENGTH, &len.to_le_bytes());
+            r.write_bytes(MMF_HEADER_LEN, data);
+        });
+        Ok(())
+    }
+
+    /// Read up to `max` bytes of the named region's payload. A region this
+    /// host wrote is read from its own mapping; any other is opened by name
+    /// for this one read (so a region another process re-creates is always
+    /// seen fresh). Empty when the name is invalid or absent, the header is
+    /// not a valid v1 header, or a writer kept racing the copy.
+    fn read(&self, name: &str, max: usize) -> Vec<u8> {
+        let Some(full) = self.os_name(name) else {
+            return Vec::new();
+        };
+        if let Some(r) = self.regions.get(name) {
+            return mmf_read_region(r, max).unwrap_or_default();
+        }
+        crate::shm::SharedRegion::open(&full)
+            .ok()
+            .and_then(|r| mmf_read_region(&r, max))
+            .unwrap_or_default()
+    }
+}
+
+/// Run `write` as one seqlock-published update of `region`: the counter goes
+/// odd before the first byte changes and even after the last, so a reader can
+/// tell a torn copy from a whole one.
+fn mmf_publish(region: &crate::shm::SharedRegion, write: impl FnOnce(&crate::shm::SharedRegion)) {
+    let seq = region.atomic_u32(MMF_OFF_SEQ);
+    let s = seq.load(Ordering::Relaxed);
+    seq.store(s.wrapping_add(1) | 1, Ordering::Relaxed);
+    std::sync::atomic::fence(Ordering::Release);
+    write(region);
+    seq.store((s.wrapping_add(1) | 1).wrapping_add(1), Ordering::Release);
+}
+
+/// One consistent copy of a region's payload (at most `max` bytes), or `None`
+/// for a region whose header is not a valid v1 header, or a copy that raced a
+/// writer [`MMF_READ_ATTEMPTS`] times.
+fn mmf_read_region(region: &crate::shm::SharedRegion, max: usize) -> Option<Vec<u8>> {
+    if region.len() < MMF_HEADER_LEN {
+        return None;
+    }
+    let u32_at = |off: usize| {
+        let mut b = [0u8; 4];
+        region.read_bytes(off, &mut b);
+        u32::from_le_bytes(b)
+    };
+    let seq = region.atomic_u32(MMF_OFF_SEQ);
+    for _ in 0..MMF_READ_ATTEMPTS {
+        let s1 = seq.load(Ordering::Acquire);
+        if s1 & 1 == 1 {
+            std::thread::yield_now();
+            continue;
+        }
+        let mut magic = [0u8; 4];
+        region.read_bytes(0, &mut magic);
+        let capacity = u32_at(MMF_OFF_CAPACITY) as usize;
+        let length = u32_at(MMF_OFF_LENGTH) as usize;
+        let valid = magic == MMF_MAGIC
+            && u32_at(MMF_OFF_VERSION) == MMF_LAYOUT_VERSION
+            && capacity <= region.len() - MMF_HEADER_LEN
+            && length <= capacity;
+        let data = valid.then(|| {
+            let mut v = vec![0u8; length.min(max)];
+            region.read_bytes(MMF_HEADER_LEN, &mut v);
+            v
+        });
+        std::sync::atomic::fence(Ordering::Acquire);
+        if seq.load(Ordering::Relaxed) == s1 {
+            return data;
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// v3.5.0 (CR-01) — the WebSocket client
+// ---------------------------------------------------------------------------
+
+/// The TCP connect and the WebSocket (and TLS) handshake are each bounded by
+/// this, so an unreachable or stalled server ends in `open = false` rather
+/// than a socket thread that never reports.
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The socket thread's read timeout once connected: how often it looks at its
+/// outbound queue and the cancel flag between inbound frames.
+const WS_POLL: Duration = Duration::from_millis(20);
+
+/// The largest inbound WebSocket message (and frame) accepted, the same 1 MiB
+/// the engine allows one outbound `comm.*` request. A larger one ends the
+/// connection (`open = false`): a script cannot hold it anyway.
+const WS_MAX_MESSAGE: usize = 1024 * 1024;
+
+/// Inbound text not yet drained by the frame thread above which the socket
+/// thread stops reading (see [`ScriptHost::ws_pending`]). The engine's own
+/// `comm.receive()` inbox is capped at `MAX_QUEUED_CMDS` results (drop
+/// oldest); this bounds the step before it, the channel to the frame thread.
+const WS_INBOUND_BUDGET: usize = 4 * 1024 * 1024;
+
+/// A command for the socket thread.
+enum WsOut {
+    Text(String),
+    Close,
+}
+
+/// The host's handle on the one open WebSocket. The socket itself lives on
+/// its thread; dropping the handle (or [`Self::close`]) closes it.
+struct WsLink {
+    out_tx: Sender<WsOut>,
+}
+
+impl WsLink {
+    /// Start a socket thread for `url`. It connects, reports `open = true`
+    /// (under `id`), then reports each inbound text message, and finally
+    /// `open = false` once, however it ends. `None` if the OS would not start
+    /// the thread.
+    fn spawn(
+        id: u64,
+        url: String,
+        allow: Vec<String>,
+        result_tx: Sender<CommResult>,
+        cancel: Arc<AtomicBool>,
+        pending: Arc<AtomicUsize>,
+    ) -> Option<Self> {
+        let (out_tx, out_rx) = channel::<WsOut>();
+        std::thread::Builder::new()
+            .name("script-ws".to_string())
+            .spawn(move || {
+                ws_thread(id, &url, &allow, &out_rx, &result_tx, &cancel, &pending);
+            })
+            .ok()
+            .map(|_detached| Self { out_tx })
+    }
+
+    fn send(&self, text: String) {
+        let _ = self.out_tx.send(WsOut::Text(text));
+    }
+
+    /// Ask the socket to close. The thread finishes the closing handshake (or
+    /// gives up after [`WS_CONNECT_TIMEOUT`]) and reports `open = false`.
+    fn close(self) {
+        let _ = self.out_tx.send(WsOut::Close);
+    }
+}
+
+type WsSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
+
+/// Dial `url` under the SEC-04 destination rule and complete the WebSocket
+/// handshake (TLS first for `wss://`).
+///
+/// The address check is the HTTP one, made on the addresses this function
+/// then connects to: the name is resolved once, every resolved address must
+/// be public unless the user allowlisted the host in
+/// `RUSTYNES_COMM_HTTP_ALLOW`, and the TCP connection is made here, to one of
+/// those addresses, before `tungstenite` sees the stream. Letting
+/// `tungstenite::connect` dial instead would resolve the name a second time,
+/// out of the check's sight (the DNS-rebinding hole the HTTP resolver closes).
+/// `tungstenite` follows no redirects, and no proxy is consulted.
+fn ws_connect(url: &str, allow: &[String]) -> Result<WsSocket, String> {
+    use tungstenite::client::{IntoClientRequest, uri_mode};
+    use tungstenite::stream::Mode;
+
+    let request = url.into_client_request().map_err(|e| e.to_string())?;
+    let uri = request.uri().clone();
+    // `ws` / `wss` only: anything else is refused here.
+    let mode = uri_mode(&uri).map_err(|e| e.to_string())?;
+    let host = uri.host().ok_or("no host in the WebSocket URL")?;
+    let bare = host
+        .strip_prefix('[')
+        .map_or(host, |h| h.strip_suffix(']').unwrap_or(h));
+    let port = uri.port_u16().unwrap_or(match mode {
+        Mode::Plain => 80,
+        Mode::Tls => 443,
+    });
+    let addrs: Vec<std::net::SocketAddr> = (bare, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {bare}:{port}: {e}"))?
+        .collect();
+    if !host_port_allowlisted(host, Some(port), allow)
+        && let Some(blocked) = addrs.iter().find(|a| !is_public(a.ip()))
+    {
+        return Err(format!(
+            "blocked: {bare} resolves to {}, a non-public address; list the host in {HTTP_ALLOW_ENV} to allow it",
+            blocked.ip()
+        ));
+    }
+    let mut last = format!("no addresses for {bare}:{port}");
+    let mut stream = None;
+    for addr in &addrs {
+        match TcpStream::connect_timeout(addr, WS_CONNECT_TIMEOUT) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => last = format!("connect {addr}: {e}"),
+        }
+    }
+    let stream = stream.ok_or(last)?;
+    let _ = stream.set_nodelay(true);
+    // The handshake runs under the generous timeout; the loop then switches
+    // to `WS_POLL` (the netplay signaling client's lesson: a 20 ms timeout
+    // during a slow handshake aborts it with an interrupted-handshake error).
+    stream
+        .set_read_timeout(Some(WS_CONNECT_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(WS_CONNECT_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    let config = tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(WS_MAX_MESSAGE))
+        .max_frame_size(Some(WS_MAX_MESSAGE));
+    let (socket, _resp) = tungstenite::client_tls_with_config(request, stream, Some(config), None)
+        .map_err(|e| e.to_string())?;
+    Ok(socket)
+}
+
+/// The raw TCP stream under a plain or TLS socket, to change its timeout.
+fn ws_tcp(socket: &WsSocket) -> Option<&TcpStream> {
+    match socket.get_ref() {
+        tungstenite::stream::MaybeTlsStream::Plain(s) => Some(s),
+        tungstenite::stream::MaybeTlsStream::Rustls(s) => Some(&s.sock),
+        _ => None,
+    }
+}
+
+/// The socket thread: connect, then interleave the outbound queue with
+/// inbound frames until either side closes, the host is dropped, or the
+/// worker hands the slot to a new socket.
+fn ws_thread(
+    id: u64,
+    url: &str,
+    allow: &[String],
+    out_rx: &Receiver<WsOut>,
+    result_tx: &Sender<CommResult>,
+    cancel: &AtomicBool,
+    pending: &AtomicUsize,
+) {
+    let closed = || {
+        let _ = result_tx.send(CommResult::WsState {
+            id,
+            open: false,
+            message: None,
+        });
+    };
+    let mut socket = match ws_connect(url, allow) {
+        Ok(s) => s,
+        Err(why) => {
+            eprintln!("rustynes: script WebSocket {url}: {why}");
+            closed();
+            return;
+        }
+    };
+    if let Some(tcp) = ws_tcp(&socket) {
+        let _ = tcp.set_read_timeout(Some(WS_POLL));
+    }
+    let _ = result_tx.send(CommResult::WsState {
+        id,
+        open: true,
+        message: None,
+    });
+    // Set once `Close` is requested: the loop keeps reading until the server
+    // answers the close frame, or this passes.
+    let mut closing_since: Option<Instant> = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = socket.close(None);
+            let _ = socket.flush();
+            return; // the host is gone; nobody reads a final state.
+        }
+        if closing_since.is_some_and(|t| t.elapsed() > WS_CONNECT_TIMEOUT) {
+            break;
+        }
+        // 1. Outbound.
+        if closing_since.is_none() {
+            loop {
+                match out_rx.try_recv() {
+                    Ok(WsOut::Text(t)) => {
+                        if socket.send(tungstenite::Message::Text(t.into())).is_err() {
+                            closed();
+                            return;
+                        }
+                    }
+                    Ok(WsOut::Close) | Err(TryRecvError::Disconnected) => {
+                        let _ = socket.close(None);
+                        let _ = socket.flush();
+                        closing_since = Some(Instant::now());
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                }
+            }
+        }
+        // 2. Back-pressure: while the frame thread has not drained enough,
+        // leave inbound bytes in the kernel (the server's TCP window fills).
+        if pending.load(Ordering::Acquire) > WS_INBOUND_BUDGET {
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+        // 3. Inbound, bounded by `WS_POLL`.
+        let text = match socket.read() {
+            Ok(tungstenite::Message::Text(t)) => t.as_str().to_owned(),
+            // A Lua string is bytes, but the result carries text: a binary
+            // message is delivered with invalid UTF-8 replaced.
+            Ok(tungstenite::Message::Binary(b)) => String::from_utf8_lossy(&b).into_owned(),
+            Ok(tungstenite::Message::Close(_)) => break,
+            Ok(_) => {
+                // Ping / pong / raw frame: tungstenite queues the pong; send it.
+                let _ = socket.flush();
+                continue;
+            }
+            Err(tungstenite::Error::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => break,
+        };
+        // Counted before it is sent, so the drain's subtraction never runs
+        // ahead of this addition.
+        pending.fetch_add(text.len(), Ordering::AcqRel);
+        if result_tx
+            .send(CommResult::WsState {
+                id,
+                open: true,
+                message: Some(text),
+            })
+            .is_err()
+        {
+            return; // the host is gone.
+        }
+    }
+    closed();
 }
 
 /// Attempt to (re)connect the outbound TCP socket to the `RUSTYNES_COMM_TCP`
@@ -618,16 +1126,39 @@ fn http_call(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> (
     )
 }
 
+/// A machine-unique MMF prefix for one test host (see
+/// [`ScriptHost::with_allowlist`]); short enough that prefix plus a test's
+/// name stays inside the portable 30-character limit.
+#[cfg(test)]
+fn test_prefix() -> String {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    // Exactly as long as `MMF_PREFIX` (9), so the name-length rule tests the
+    // production limit.
+    format!("t{:05}{:02}-", std::process::id() % 100_000, n % 100)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Wait up to two seconds for the worker's first result.
+    fn first_result(host: &ScriptHost) -> Option<CommResult> {
+        for _ in 0..2000 {
+            if let Some(r) = host.drain_results().into_iter().next() {
+                return Some(r);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        None
+    }
+
     /// The host-owned memory-mapped-file bridge round-trips through the worker:
     /// a `MmfWrite` then a `MmfRead` returns the stored bytes (truncated to the
-    /// requested length) as a `CommResult` — no socket, no OS surface.
+    /// requested length) as a `CommResult`.
     #[test]
     fn mmf_write_then_read_round_trips_via_the_host() {
-        let host = ScriptHost::new();
+        let host = ScriptHost::for_test();
         host.submit(CommCmd::MmfWrite {
             name: "frame".to_string(),
             data: vec![1, 2, 3, 4, 5],
@@ -639,18 +1170,8 @@ mod tests {
             len: 3,
         })
         .expect("queued");
-        // Poll briefly for the worker to produce the result.
-        let mut got = None;
-        for _ in 0..200 {
-            let results = host.drain_results();
-            if let Some(r) = results.into_iter().next() {
-                got = Some(r);
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
         assert_eq!(
-            got,
+            first_result(&host),
             Some(CommResult::Mmf {
                 id: 7,
                 data: vec![1, 2, 3],
@@ -663,23 +1184,15 @@ mod tests {
     /// error leaking to the script).
     #[test]
     fn mmf_read_unknown_name_is_empty() {
-        let host = ScriptHost::new();
+        let host = ScriptHost::for_test();
         host.submit(CommCmd::MmfRead {
             id: 1,
             name: "nope".to_string(),
             len: 16,
         })
         .expect("queued");
-        let mut got = None;
-        for _ in 0..200 {
-            if let Some(r) = host.drain_results().into_iter().next() {
-                got = Some(r);
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
         assert_eq!(
-            got,
+            first_result(&host),
             Some(CommResult::Mmf {
                 id: 1,
                 data: vec![]
@@ -687,27 +1200,449 @@ mod tests {
         );
     }
 
-    /// v2.9.0 re-audit NF-03: the MMF map outlives every frame, so it has its
-    /// own budget. 32 distinct 1 MiB writes must not all be kept.
+    /// A reader written from the DOCUMENTED layout only (`docs/scripting.md`,
+    /// "Memory-mapped files"): magic, version, capacity, length and sequence
+    /// at fixed offsets, the payload at 32. It shares no code with
+    /// `mmf_read_region`, so a layout change on one side shows up here.
+    fn read_documented(region: &crate::shm::SharedRegion) -> Vec<u8> {
+        let u32_at = |off: usize| {
+            let mut b = [0u8; 4];
+            region.read_bytes(off, &mut b);
+            u32::from_le_bytes(b)
+        };
+        // Bounded, so a writer that never finishes fails the test instead of
+        // hanging it.
+        for _ in 0..1_000_000 {
+            let s1 = region.atomic_u32(16).load(Ordering::Acquire);
+            if s1 % 2 == 1 {
+                std::thread::yield_now();
+                continue;
+            }
+            let mut magic = [0u8; 4];
+            region.read_bytes(0, &mut magic);
+            assert_eq!(&magic, b"RNMF");
+            assert_eq!(u32_at(4), 1, "layout version");
+            let capacity = u32_at(8) as usize;
+            let length = u32_at(12) as usize;
+            assert!(length <= capacity && 32 + capacity <= region.len());
+            let mut data = vec![0u8; length];
+            region.read_bytes(32, &mut data);
+            if region.atomic_u32(16).load(Ordering::Acquire) == s1 {
+                return data;
+            }
+        }
+        panic!("the sequence counter never settled: a write never completed");
+    }
+
+    /// A reader must never return a copy taken while a write is in
+    /// progress. A writer stalled mid-write (the counter held odd, as when
+    /// the writing process is descheduled) leaves a payload that may be half
+    /// old and half new; the reader must refuse it (empty, the transport-
+    /// failure value) rather than return it. A test with two live threads
+    /// almost never lands a copy entirely inside one write, so the stall is
+    /// set up directly.
     #[test]
-    fn the_mmf_map_is_bounded() {
-        let mut map = HashMap::new();
+    fn a_read_never_returns_a_copy_taken_mid_write() {
+        let mut store = MmfStore::new(test_prefix());
+        store.write("tear", b"whole").unwrap();
+        let region = &store.regions["tear"];
+        let seq = region.atomic_u32(MMF_OFF_SEQ);
+        let even = seq.load(Ordering::Acquire);
+        assert_eq!(even % 2, 0, "a finished write leaves the counter even");
+        seq.store(even + 1, Ordering::Release); // a writer is "inside" now
+        region.write_bytes(MMF_HEADER_LEN, b"ha");
+        assert_eq!(mmf_read_region(region, 64), None, "a copy during a write");
+        assert_eq!(store.read("tear", 64), Vec::<u8>::new());
+        seq.store(even + 2, Ordering::Release); // the write completes
+        assert_eq!(store.read("tear", 64), b"haole");
+    }
+
+    /// CR-02's host test: what a script writes is real OS shared memory. A
+    /// second, independent mapping opened BY NAME (`<prefix><script name>`) on
+    /// another thread reads the script's bytes through the documented layout.
+    /// (`shm::tests::another_process_reads_the_region_by_name` proves the same
+    /// object is visible from a second process.)
+    #[test]
+    fn a_script_mmf_write_is_readable_by_name_from_outside() {
+        let prefix = test_prefix();
+        let host = ScriptHost::spawn(Some(Vec::new()), prefix.clone());
+        host.submit(CommCmd::MmfWrite {
+            name: "state".into(),
+            data: b"lives=3;world=1-2".to_vec(),
+        })
+        .unwrap();
+        // A read through the host is the barrier that the write was done.
+        host.submit(CommCmd::MmfRead {
+            id: 1,
+            name: "state".into(),
+            len: 64,
+        })
+        .unwrap();
+        assert!(first_result(&host).is_some());
+        let name = format!("{prefix}state");
+        let seen = std::thread::spawn(move || {
+            let r = crate::shm::SharedRegion::open(&name).expect("open the script's region");
+            read_documented(&r)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(seen, b"lives=3;world=1-2");
+        // Dropping the host removes the regions it made.
+        drop(host);
+        assert!(crate::shm::SharedRegion::open(&format!("{prefix}state")).is_err());
+    }
+
+    /// The other direction: a region another program made, in the documented
+    /// layout, is what `comm.mmfRead` returns.
+    #[test]
+    fn a_region_made_outside_is_read_by_the_script() {
+        let prefix = test_prefix();
+        let host = ScriptHost::spawn(Some(Vec::new()), prefix.clone());
+        let outside = crate::shm::SharedRegion::create(&format!("{prefix}cmd"), 4096).unwrap();
+        outside.write_bytes(0, b"RNMF");
+        outside.write_bytes(4, &1u32.to_le_bytes());
+        outside.write_bytes(8, &(4096u32 - 32).to_le_bytes());
+        outside.write_bytes(12, &5u32.to_le_bytes());
+        outside.write_bytes(32, b"RIGHT");
+        host.submit(CommCmd::MmfRead {
+            id: 9,
+            name: "cmd".into(),
+            len: 100,
+        })
+        .unwrap();
+        assert_eq!(
+            first_result(&host),
+            Some(CommResult::Mmf {
+                id: 9,
+                data: b"RIGHT".to_vec()
+            })
+        );
+        // A region without the header is not read as data.
+        let raw = crate::shm::SharedRegion::create(&format!("{prefix}raw"), 4096).unwrap();
+        raw.write_bytes(32, b"junk");
+        host.submit(CommCmd::MmfRead {
+            id: 10,
+            name: "raw".into(),
+            len: 100,
+        })
+        .unwrap();
+        assert_eq!(
+            first_result(&host),
+            Some(CommResult::Mmf {
+                id: 10,
+                data: Vec::new()
+            })
+        );
+    }
+
+    /// A write larger than the region grows it, and the old mapping's magic
+    /// is cleared so a reader holding it knows to reopen the name.
+    #[test]
+    fn a_larger_write_replaces_the_region() {
+        let mut store = MmfStore::new(test_prefix());
+        store.write("grow", &[1u8; 10]).unwrap();
+        let first = &store.regions["grow"];
+        assert_eq!(first.len(), 4096);
+        let reader = crate::shm::SharedRegion::open(first.name()).unwrap();
+        store.write("grow", &[2u8; 10_000]).unwrap();
+        assert_eq!(store.regions["grow"].len(), 12_288);
+        let mut magic = [0u8; 4];
+        reader.read_bytes(0, &mut magic);
+        assert_eq!(magic, [0; 4], "the stale mapping is marked invalid");
+        assert_eq!(store.read("grow", usize::MAX), vec![2u8; 10_000]);
+    }
+
+    /// Script names outside the portable rule are refused (and never reach
+    /// the OS as a path): no separators, no over-long names.
+    #[test]
+    fn mmf_names_are_checked() {
+        let mut store = MmfStore::new(test_prefix());
+        for bad in ["", "a/b", "..", "x\\y", &"n".repeat(MAX_MMF_NAME_LEN + 1)] {
+            if bad == ".." {
+                continue; // dots are legal characters; ".." is just a name.
+            }
+            assert!(store.write(bad, b"x").is_err(), "{bad:?}");
+            assert_eq!(store.read(bad, 8), Vec::<u8>::new());
+        }
+        assert!(store.write(&"n".repeat(MAX_MMF_NAME_LEN), b"x").is_ok());
+        assert_eq!(
+            MMF_PREFIX.len() + MAX_MMF_NAME_LEN,
+            crate::shm::MAX_NAME_LEN
+        );
+    }
+
+    /// v2.9.0 re-audit NF-03: the store outlives every frame, so it has its
+    /// own budget. 32 distinct 1 MiB writes must not all be kept, and the
+    /// name count is capped.
+    #[test]
+    fn the_mmf_store_is_bounded() {
+        let mut store = MmfStore::new(test_prefix());
         let mut kept = 0;
         for i in 0..32 {
-            if mmf_store(&mut map, format!("m{i}"), vec![0u8; 1024 * 1024]) {
+            if store
+                .write(&format!("m{i}"), &vec![0u8; 1024 * 1024])
+                .is_ok()
+            {
                 kept += 1;
             }
         }
-        let held: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
-        assert!(held <= MAX_MMF_BYTES, "the map holds {held} bytes");
-        assert!(kept < 32, "a full map refuses");
-        // Overwriting a kept name reuses its share.
-        assert!(mmf_store(&mut map, "m0".into(), vec![1u8; 1024 * 1024]));
-        let mut names = HashMap::new();
+        assert!(
+            store.held_bytes() <= MAX_MMF_BYTES,
+            "the store holds {} bytes",
+            store.held_bytes()
+        );
+        assert!(kept < 32, "a full store refuses");
+        assert!(kept >= 14, "only {kept} kept: the budget is 16 MiB");
+        // Overwriting a kept name reuses its region.
+        assert!(store.write("m0", &vec![1u8; 1024 * 1024]).is_ok());
+        drop(store);
+        let mut names = MmfStore::new(test_prefix());
         for i in 0..=MAX_MMF_NAMES {
-            mmf_store(&mut names, format!("n{i}"), Vec::new());
+            let _ = names.write(&format!("n{i}"), &[]);
         }
-        assert_eq!(names.len(), MAX_MMF_NAMES, "the name count is capped");
+        assert_eq!(
+            names.regions.len(),
+            MAX_MMF_NAMES,
+            "the name count is capped"
+        );
+    }
+
+    // --- CR-01: the WebSocket client ---------------------------------------
+
+    /// A local WebSocket echo server: answers each text message with
+    /// `echo:<text>`, and a `close-me` message by closing. Returns its port.
+    fn echo_server() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let Ok(mut ws) = tungstenite::accept(stream) else {
+                        return;
+                    };
+                    while let Ok(msg) = ws.read() {
+                        match msg {
+                            tungstenite::Message::Text(t) if t.as_str() == "close-me" => {
+                                let _ = ws.close(None);
+                            }
+                            tungstenite::Message::Text(t) => {
+                                let reply = format!("echo:{}", t.as_str());
+                                if ws.send(tungstenite::Message::Text(reply.into())).is_err() {
+                                    return;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// Collect results until `pred` holds for one, or five seconds pass.
+    fn wait_for(
+        host: &ScriptHost,
+        seen: &mut Vec<CommResult>,
+        pred: impl Fn(&CommResult) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            for r in host.drain_results() {
+                let hit = pred(&r);
+                seen.push(r);
+                if hit {
+                    return true;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        false
+    }
+
+    /// CR-01's host test: open, send, receive the echo, close, against a local
+    /// echo server. Until v3.5.0 `ws_open` reported `open = false` at once.
+    #[test]
+    fn a_websocket_opens_sends_receives_and_closes() {
+        let port = echo_server();
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        host.submit(CommCmd::WsOpen {
+            id: 42,
+            url: format!("ws://127.0.0.1:{port}/"),
+        })
+        .unwrap();
+        let mut seen = Vec::new();
+        assert!(
+            wait_for(&host, &mut seen, |r| matches!(
+                r,
+                CommResult::WsState {
+                    id: 42,
+                    open: true,
+                    message: None
+                }
+            )),
+            "no open event: {seen:?}"
+        );
+        host.submit(CommCmd::WsSend("hello".into())).unwrap();
+        host.submit(CommCmd::WsSend("world".into())).unwrap();
+        assert!(
+            wait_for(&host, &mut seen, |r| matches!(
+                r,
+                CommResult::WsState { message: Some(m), .. } if m == "echo:world"
+            )),
+            "no echo: {seen:?}"
+        );
+        let messages: Vec<&str> = seen
+            .iter()
+            .filter_map(|r| match r {
+                CommResult::WsState {
+                    id: 42,
+                    open: true,
+                    message: Some(m),
+                } => Some(m.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            ["echo:hello", "echo:world"],
+            "in order, under the open id"
+        );
+        host.submit(CommCmd::WsClose).unwrap();
+        assert!(
+            wait_for(&host, &mut seen, |r| matches!(
+                r,
+                CommResult::WsState {
+                    id: 42,
+                    open: false,
+                    ..
+                }
+            )),
+            "no close event: {seen:?}"
+        );
+        // Everything drained: the inbound budget is back to zero.
+        assert_eq!(host.ws_pending.load(Ordering::Acquire), 0);
+    }
+
+    /// A server that closes the socket is reported as `open = false`.
+    #[test]
+    fn a_server_close_is_reported() {
+        let port = echo_server();
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        host.submit(CommCmd::WsOpen {
+            id: 5,
+            url: format!("ws://127.0.0.1:{port}/"),
+        })
+        .unwrap();
+        let mut seen = Vec::new();
+        assert!(wait_for(&host, &mut seen, |r| matches!(
+            r,
+            CommResult::WsState { open: true, .. }
+        )));
+        host.submit(CommCmd::WsSend("close-me".into())).unwrap();
+        assert!(
+            wait_for(&host, &mut seen, |r| matches!(
+                r,
+                CommResult::WsState {
+                    id: 5,
+                    open: false,
+                    ..
+                }
+            )),
+            "{seen:?}"
+        );
+    }
+
+    /// SEC-04 holds for a WebSocket: without the user's allowlist a loopback
+    /// URL is refused before any connection is made.
+    #[test]
+    fn a_loopback_websocket_is_refused_without_the_allowlist() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let host = ScriptHost::for_test();
+        host.submit(CommCmd::WsOpen {
+            id: 3,
+            url: format!("ws://127.0.0.1:{port}/"),
+        })
+        .unwrap();
+        let mut seen = Vec::new();
+        assert!(
+            wait_for(&host, &mut seen, |r| matches!(
+                r,
+                CommResult::WsState {
+                    id: 3,
+                    open: false,
+                    ..
+                }
+            )),
+            "{seen:?}"
+        );
+        assert!(
+            !seen
+                .iter()
+                .any(|r| matches!(r, CommResult::WsState { open: true, .. })),
+            "it must never report open"
+        );
+        assert!(listener.accept().is_err(), "no connection was made");
+        let blocked = ws_connect(&format!("ws://127.0.0.1:{port}/"), &[]).unwrap_err();
+        assert!(blocked.contains("blocked"), "{blocked}");
+        // And a non-WebSocket scheme is refused outright.
+        assert!(ws_connect("http://example.com/", &[]).is_err());
+    }
+
+    /// Back-pressure: a server that floods the socket is read only while the
+    /// undrained inbound text is under `WS_INBOUND_BUDGET`, so an idle frame
+    /// thread cannot be made to hold an unbounded backlog.
+    #[test]
+    fn a_flooding_server_is_held_to_the_inbound_budget() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut ws = tungstenite::accept(stream).unwrap();
+            let chunk = "x".repeat(64 * 1024);
+            // 64 MiB offered; the client must stop near 4 MiB.
+            for _ in 0..1024 {
+                if ws
+                    .send(tungstenite::Message::Text(chunk.clone().into()))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        host.submit(CommCmd::WsOpen {
+            id: 1,
+            url: format!("ws://127.0.0.1:{port}/"),
+        })
+        .unwrap();
+        // Do not drain for a while: let the socket thread run into the budget.
+        std::thread::sleep(Duration::from_millis(1500));
+        let held = host.ws_pending.load(Ordering::Acquire);
+        assert!(
+            held <= WS_INBOUND_BUDGET + 64 * 1024,
+            "{held} bytes undrained: the budget is {WS_INBOUND_BUDGET}"
+        );
+        assert!(held > 0, "the socket was read at all");
+        // Draining releases it and reading resumes.
+        let first: usize = host
+            .drain_results()
+            .iter()
+            .filter_map(|r| match r {
+                CommResult::WsState {
+                    message: Some(m), ..
+                } => Some(m.len()),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(first, held);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            host.ws_pending.load(Ordering::Acquire) > 0,
+            "reading resumed"
+        );
     }
 
     /// A local listener that accepts every connection and never answers,

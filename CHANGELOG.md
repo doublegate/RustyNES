@@ -26,6 +26,26 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Lua WebSockets (CR-01, `script-ipc`).** `comm.ws_open` / `ws_send` /
+  `ws_close` are a real WebSocket client (`ws://` and `wss://`); until now
+  `ws_open` reported a closed socket at once. Inbound messages arrive through
+  `comm.receive()` as `{kind="ws", id, open=true, message}`, and the end of
+  the socket, however it ends, as one `open=false`. The host still owns the
+  socket: destinations follow the HTTP rule (public addresses, or hosts the user
+  lists in `RUSTYNES_COMM_HTTP_ALLOW`), checked on the address it connects to;
+  a message is at most 1 MiB, and the socket stops being read while 4 MiB
+  waits to be drained. The Lua side and its budget are unchanged.
+- **Lua memory-mapped files are real shared memory (CR-02, `script-ipc`).**
+  `comm.mmfWrite(name, data)` writes the OS shared-memory region
+  `rnes-mmf-<name>` (POSIX `shm_open` on Linux and macOS, a named file mapping
+  on Windows), so another program can open it by name, and `comm.mmfRead`
+  reads a region another program wrote. Each region starts with a small
+  documented header (length and a sequence counter, so a reader never takes a
+  half-written payload). Until now the "file" was a map inside the emulator
+  that nothing else could see. `docs/scripting.md` has the layout.
+
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or
