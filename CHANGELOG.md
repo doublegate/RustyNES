@@ -40,6 +40,15 @@ cycle-accurate core later replaced.
 - **`TAStudio` projects are written as `.rnmproj` version 2**, which a v3.4.x
   build refuses as too new. Version-1 projects still load.
 
+- **MiSTer core: a v3.4.x save state is refused on both builds.** The
+  Famicom peripherals and the Phase F3b boards lengthen the scan chain, so the
+  layout fingerprint each state carries moved (on the die `0CF5891F`, 4,097
+  bits; off the die `FD9917DA`, 4,319 bits, before MMC5) and the engine refuses
+  an older state by its header rather than loading it as garbage.
+- **MiSTer core: the OSD's Controllers option moved to status bits 23:21**, to
+  make room for the Power Pad and the Family BASIC keyboard. An older saved
+  configuration reads as Gamepads.
+
 ### Added
 
 - **Movies record the Zapper, the other expansion devices, the microphone,
@@ -185,6 +194,29 @@ cycle-accurate core later replaced.
   declares none). Exit code 0 means nothing was found, 4 that something was.
   `docs/dump-check.md` says what it can and cannot establish.
 
+- **MiSTer core: the Lite tier.** `RustyNES_Lite` (the on-die build) keeps
+  exactly the boards it carried in v3.4.x, and every board added from v3.5.0
+  on is built off the die only, in the headline `RustyNES`; the Lite build
+  refuses such a board as an unsupported mapper. `tier-gate` asks the RTL's own
+  decision about every mapper and submapper at both builds' parameters and
+  compares it with the published table of which build carries which board.
+- **MiSTer core: the Bandai FCG boards (16, 153, 159) with their serial EEPROMs,
+  the Konami VRC6 (24, 26) with its audio, the Namco 163 (19) with its
+  wavetable audio, and the Konami VRC7's (85) banking, WRAM and IRQ**, all off
+  the die only (MiSTer Phase F3b). Each has bus, checkpoint and save-state
+  gates against the oracle, a module gate against the NESdev pages or the
+  EEPROM data sheets where the oracle departs from them (ledger 3.90, 3.91,
+  3.120-3.125), and commercial frame gates.
+- **MiSTer core: the Famicom peripherals** (FB-11): the Family BASIC keyboard
+  from a PS/2 keyboard, the Power Pad on port 2 (mat buttons on keys 1-4, Q-R
+  and A-F) and the second controller's microphone (a "Mic" button). They are
+  gated against the NESdev pages, because the oracle's golden export cannot
+  attach them; on the keyboard's register bits the oracle departs from the page
+  and the core follows the page (ledger 3.96).
+- **MiSTer core: `make -C tb mutants`** builds every row of the save engine's
+  mutation table from a patched copy of the RTL and fails unless each is
+  caught (`T-MISTER-RTL-MUTANT-RUNS`); 13 of 13 rows are caught.
+
 ### Changed
 
 - **Provenance: the Power Pad serial layout is recorded as derived from
@@ -275,6 +307,12 @@ cycle-accurate core later replaced.
   already was. Browser RetroAchievements stays off on the public demo until
   RetroAchievements answers the integration request.
 
+- **MiSTer core: a save interrupted by a cartridge change before its first
+  word keeps the slot's earlier state** (`T-MISTER-SS-ABANDON-STATES`). It used
+  to send the header word anyway, damaging the slot, which was then emptied.
+  The abandonment's comment now names the states it covers and why each other
+  state is safe.
+
 ### Not changed, and why
 
 - **Netplay carries none of the new inputs** (protocol 9 unchanged). A session
@@ -288,6 +326,16 @@ cycle-accurate core later replaced.
   recorded.
 - **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) still carry
   controllers only: their FDS and Vs. coin commands are not translated.
+- **The MiSTer core's VRC7 is silent.** Mapper 85 ships with its banking, WRAM
+  and IRQ; its FM synthesis moves to v3.8.0 (`T-MISTER-VRC7-OPLL`), because the
+  public documentation does not determine its modulation depth, envelope steps,
+  table resolution, tremolo depth, LFO shapes, key-on reset or percussive
+  release, and the oracle's `opll.rs` is a derived region.
+- **The MiSTer core's Namco 163 does not answer a CHR-ROM page as a nametable**
+  (a select below `$E0`, which *Mappy Kids* uses after its title screen), nor
+  use CIRAM as CHR-RAM or keep its chip RAM as battery RAM.
+- **No Miracle Piano** on either core: the oracle has no model of it, and its
+  NESdev page is too thin to gate one.
 
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
