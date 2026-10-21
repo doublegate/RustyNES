@@ -76,7 +76,18 @@ export interface IceServer {
 /**
  * Validate the upstream ICE server list. Drops port-53 URLs, which Cloudflare
  * notes browsers block (a client without trickle ICE would wait for them to
- * time out). Returns `undefined` when nothing usable is left.
+ * time out), and any `turn:` / `turns:` entry whose `username` or `credential`
+ * is missing, not a string, or EMPTY: an empty string is a string, and before
+ * v3.5.0 (T-HOSTED-TURN-SANITIZE, Antigravity on #618) such an entry was
+ * returned as usable, so every client would have tried to authenticate a relay
+ * allocation with it and failed only at connect.
+ *
+ * Returns `undefined` unless at least one usable TURN entry is left. The
+ * endpoint exists to hand out the relay: a STUN-only answer gives a client
+ * nothing it does not already have (both clients carry a STUN default), and
+ * returning it as a 200 would spend a credential admission on it. `undefined`
+ * makes `handleTurn` refund the admission and answer 502 `turn-upstream`,
+ * which every client maps to "continue with STUN only".
  */
 export function sanitizeIceServers(body: unknown): IceServer[] | undefined {
   if (!body || typeof body !== "object") return undefined;
@@ -92,16 +103,18 @@ export function sanitizeIceServers(body: unknown): IceServer[] | undefined {
     if (urls.length === 0) continue;
     const { username, credential } = s as { username?: unknown; credential?: unknown };
     const entry: IceServer = { urls };
-    if (typeof username === "string" && typeof credential === "string") {
+    if (typeof username === "string" && username.length > 0 && typeof credential === "string" && credential.length > 0) {
       entry.username = username;
       entry.credential = credential;
-    } else if (urls.some((u) => u.startsWith("turn"))) {
-      continue; // a TURN URL without credentials is useless
+    } else if (urls.some(isTurnUrl)) {
+      continue; // a TURN URL without (non-empty) credentials is useless
     }
     out.push(entry);
   }
-  return out.length > 0 ? out : undefined;
+  return out.some((e) => e.urls.some(isTurnUrl)) ? out : undefined;
 }
+
+const isTurnUrl = (u: string): boolean => /^turns?:/.test(u);
 
 export async function handleTurn(
   request: Request,

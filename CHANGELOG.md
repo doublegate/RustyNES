@@ -26,6 +26,19 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hosted TURN credentials with an empty username or password**
+  (`T-HOSTED-TURN-SANITIZE`). The Worker passed on a `turn:` or `turns:`
+  server whose username or credential was the empty string as if it were
+  usable, so a client would have failed only when it tried to relay. Such an
+  entry is now dropped, and an answer with no usable relay entry left
+  (a STUN-only one included) is treated as an upstream failure: the request
+  is not counted against the daily or per-address limits and the client is
+  told to connect directly. TURN stays switched off in production
+  (`T-HOSTED-TURN-EXPIRY`); this lands first so it is in place when TURN is
+  switched back on.
+
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or

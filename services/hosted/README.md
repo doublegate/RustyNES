@@ -70,7 +70,7 @@ RetroAchievements rows in `test/ra.test.ts`).
 | Guard | Var (deployed value) | Behaviour | Test |
 | --- | --- | --- | --- |
 | Per-IP rate limit | `TURN_PER_IP_PER_HOUR` (6) | 429 `rate-limited` with `Retry-After`; the window is in Durable Object storage, so it survives eviction | `limits one IP with 429 and Retry-After`, `keeps per-IP windows across an eviction` |
-| Daily global cap | `TURN_DAILY_CAP` (500) | 503 `daily-cap` with `Retry-After` until 00:00 UTC; failed upstream mints are refunded | `caps credentials per UTC day across all callers, and resets the next day`, the six `... is a 502 and does not spend the budget` tests |
+| Daily global cap | `TURN_DAILY_CAP` (500) | 503 `daily-cap` with `Retry-After` until 00:00 UTC; failed upstream mints are refunded | `caps credentials per UTC day across all callers, and resets the next day`, the eleven `... is a 502 and does not spend the budget` tests (which also assert no revocation was scheduled) |
 | Short TTL, revocation attempted | `TURN_TTL_SECONDS` (10800, clamped 600-86400) | Credentials are asked to expire after 3 h, and the budget object asks Cloudflare to revoke each one when its TTL ends. Neither has been seen to stop Cloudflare accepting the credential (v3.4.1, `T-HOSTED-TURN-EXPIRY`) | `returns short-lived ICE servers and passes the TTL upstream`, `clamps the configured TTL`, the `revocation` tests |
 | Kill switch | `TURN_ENABLED` (`"false"` since v3.4.1: "TURN is off" below) | Anything else: 503 `turn-disabled`, no upstream call | `the kill switch refuses without calling upstream` |
 | POST only | (none) | A GET is 405 before the budget is consulted, so another page cannot spend the cap through its visitors' browsers | `a GET with no Origin, as an <img> on another page sends it, is refused and spends nothing` |
@@ -137,6 +137,16 @@ variable.
 how many bytes one carries, nor how long one keeps working: neither its expiry
 nor its revocation was seen to stop Cloudflare accepting it (above). That is why the budget alert below is a deploy prerequisite,
 not an option.
+
+**What counts as an upstream failure.** Besides an HTTP error, a timeout or a
+non-JSON body, `sanitizeIceServers` turns an answer with no usable TURN entry
+into a 502 `turn-upstream` with the admission refunded: a `turn:` / `turns:`
+entry whose `username` or `credential` is missing or the empty string is
+dropped, and so is a STUN-only answer, which gives a client nothing its own
+STUN default does not (v3.5.0, `T-HOSTED-TURN-SANITIZE`; an empty field used to
+be returned as a usable credential). Tests: `refuses a turn:/turns: entry with
+an empty username or credential, field by field` and the empty-field and
+STUN-only `... is a 502` cases.
 
 **What clients do when refused.** Every refusal is JSON
 `{"error": code, "message": text}`. The Rust parser
