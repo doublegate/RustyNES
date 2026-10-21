@@ -161,7 +161,7 @@ would bring its own dependency set (`nix` among them) for what is six calls per
 platform, and `memmap2` maps files, which a Windows named mapping is not. Choices
 made:
 
-- Every script name is prefixed `rnes-mmf-` before it reaches the OS, so a
+- Every script name is prefixed `rnmf-` before it reaches the OS, so a
   script can open only RustyNES's regions, never another program's (shared
   memory is a per-user namespace that browsers, sound servers and Python all
   use). Names are limited to the characters and length every platform accepts
@@ -173,6 +173,16 @@ made:
   have left every reader guessing at the length and unable to tell a torn read.
 - The budget (16 MiB, 256 names) now counts the mapped bytes, since that is
   what the OS holds.
+- Other local users are the threat (review of the first CR-02 commit: an
+  existing object under our name was adopted without checking who made it, so
+  a user who pre-created it could read or inject data). The OS name is per
+  user (`.<euid hex>` on POSIX, `Local\` on Windows), objects are created
+  owner-only (`0600` + `O_EXCL`; Windows DACL `D:P(A;;GA;;;OW)`), and an
+  existing object is refused unless it is owned by us and owner-only (POSIX
+  `fstat`: uid and `mode & 0o077 == 0`; Windows: owner SID equals the token
+  user SID). Denial of service by squatting remains; it fails loudly. The
+  name limit fell to 21 characters (16 for a script, under the `rnmf-` prefix)
+  to fit the suffix inside macOS's 31 bytes.
 
 The memory-export interface of `T-SPEEDRUN-MEMIF` is built on the same module
 (ADR 0047).

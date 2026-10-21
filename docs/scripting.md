@@ -463,8 +463,8 @@ result. See ADR 0016.
 | `comm.ws_open(url)` → `id` | Open a WebSocket (`ws://` or `wss://`, host-owned). One socket at a time: a second `ws_open` closes the first. Since v3.5.0. |
 | `comm.ws_send(text)` | Send a text frame on the open socket (dropped if none is open). |
 | `comm.ws_close()` | Close the WebSocket. |
-| `comm.mmfWrite(name, data)` | Write `data` into the named shared-memory region `rnes-mmf-<name>`, which another process can open (since v3.5.0). |
-| `comm.mmfRead(name, len)` → `id` | Read up to `len` bytes from the region `rnes-mmf-<name>`, whether this script or another process wrote it. |
+| `comm.mmfWrite(name, data)` | Write `data` into the named shared-memory region `rnmf-<name>`, which another process can open (since v3.5.0). |
+| `comm.mmfRead(name, len)` → `id` | Read up to `len` bytes from the region `rnmf-<name>`, whether this script or another process wrote it. |
 | `comm.receive()` → table or `nil` | Pop the oldest host-fulfilled result. `{kind="http", id, status, body}`, `{kind="ws", id, open, message}`, or `{kind="mmf", id, data}`. |
 
 `comm.*` is a **new non-deterministic source**, so every verb is gated EXACTLY
@@ -532,18 +532,21 @@ already uses), and the script still never holds the socket:
 
 Until v3.5.0 a memory-mapped file was a map inside the emulator, invisible to
 any other program. `comm.mmfWrite(name, data)` now writes real OS shared
-memory, named `rnes-mmf-<name>`, that any process run by the same user can open:
+memory, named `rnmf-<name>`, that any process run by the same user can open:
 
 | Platform | Object | How another program opens it |
 | --- | --- | --- |
-| Linux | POSIX shared memory (`/dev/shm/rnes-mmf-<name>`) | `shm_open("/rnes-mmf-<name>")` |
-| macOS | POSIX shared memory | `shm_open("/rnes-mmf-<name>")` |
-| Windows | a named file mapping in the session's `Local\` namespace | `OpenFileMappingW(..., L"rnes-mmf-<name>")` |
+| Linux | POSIX shared memory (`/dev/shm/rnmf-<name>.<uid>`) | `shm_open("/rnmf-<name>.<uid>")` |
+| macOS | POSIX shared memory | `shm_open("/rnmf-<name>.<uid>")` |
+| Windows | a named file mapping in the session's `Local\` namespace | `OpenFileMappingW(..., L"Local\\rnmf-<name>")` |
 
-In Python, on all three, `multiprocessing.shared_memory.SharedMemory("rnes-mmf-<name>")`.
+`<uid>` is the user's effective uid in lowercase hexadecimal (`os.geteuid()`
+formatted with `:x` in Python; `3e8` for uid 1000). In Python,
+`multiprocessing.shared_memory.SharedMemory(f"rnmf-<name>.{os.geteuid():x}")` on
+POSIX and `SharedMemory("Local\\rnmf-<name>")` on Windows.
 
-- **Names** are 1 to 21 characters of `A-Z a-z 0-9 _ . -` (the prefix plus the
-  name must fit macOS's 30-character limit); anything else is refused (a write
+- **Names** are 1 to 16 characters of `A-Z a-z 0-9 _ . -` (the prefix, the name
+  and the `.<uid>` suffix must fit macOS's 30-character limit); anything else is refused (a write
   is dropped, a read returns an empty buffer). The prefix means a script can
   only open regions in RustyNES's namespace, never another program's.
 - **Layout.** Each region begins with a 32-byte header, then the payload. All
@@ -570,8 +573,19 @@ In Python, on all three, `multiprocessing.shared_memory.SharedMemory("rnes-mmf-<
 - **Lifetime.** The regions a script wrote are removed when the IPC host stops
   (Stop or Reload). A region another program created is opened afresh for each
   `mmfRead` and is never removed by RustyNES.
-- **Permissions.** POSIX regions are mode `0600`; Windows mappings get the
-  default security of the user's session.
+- **Permissions and other users (threat model).** Shared-memory names are a
+  namespace other local users can create objects in, so a hostile user could
+  pre-create a region's name to read what a script publishes, plant data it
+  reads, or block the name. Three rules stop the first two: the OS name is
+  per user (the `.<uid>` suffix on POSIX, the session's `Local\` namespace on
+  Windows); RustyNES creates regions owner-only (POSIX mode `0600` with
+  `O_EXCL`; on Windows a protected DACL granting only the owner); and an
+  existing object is used only after checking it is ours (POSIX: owned by our
+  effective uid with no group or other permission bits; Windows: owned by our
+  user SID). One that fails is refused (a write is dropped and reported once,
+  a read returns an empty buffer), never adopted. A squatter can still make
+  the name unusable (denial of service); a process running as the same user
+  can read and write the region, as it can the user's files.
 
 ### `client` — host automation (E2)
 

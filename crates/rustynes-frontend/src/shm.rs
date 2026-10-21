@@ -15,6 +15,10 @@
 //! | Linux, macOS, the BSDs | `shm_open` + `ftruncate` + `mmap` | `/<name>` (on Linux, a file in `/dev/shm`) | until `shm_unlink`; the creator unlinks it on drop |
 //! | Windows | `CreateFileMappingW` (pagefile-backed) + `MapViewOfFile` | `<name>` in the session's `Local\` namespace | until the last handle closes |
 //!
+//! The OS-level name carries the user (see "Threat model"): on POSIX the
+//! object for `<name>` is `/<name>.<euid in lowercase hex>`, on Windows it is
+//! `Local\<name>`. [`os_object_name`] spells it.
+//!
 //! These are the same objects Python's `multiprocessing.shared_memory`
 //! opens by name, which is what `scripts/memif/reference_splitter.py` (the
 //! speedrun gate's reference reader) uses on all three platforms; a C, C# or
@@ -24,18 +28,41 @@
 //!
 //! [`validate_name`] accepts 1 to [`MAX_NAME_LEN`] characters of
 //! `[A-Za-z0-9_.-]`. The bound is macOS's: `PSHMNAMLEN` is 31 bytes including
-//! the leading `/`, and a longer name fails there with `ENAMETOOLONG` while
-//! working on Linux, which is the portability trap the single limit avoids.
-//! No `/` and no `\` are accepted, so a name can never become a path. Callers
-//! that take a name from a script add their own prefix before calling this
-//! module (`script_host` uses `rnes-mmf-`), so a script cannot open an
-//! arbitrary shared-memory object belonging to another program.
+//! the leading `/`, which must also hold the `.<uid>` suffix (at most nine
+//! bytes), and a longer name fails there with `ENAMETOOLONG` while working on
+//! Linux, which is the portability trap the single limit avoids. No `/` and no
+//! `\` are accepted, so a name can never become a path. Callers that take a
+//! name from a script add their own prefix before calling this module
+//! (`script_host` uses `rnmf-`), so a script cannot open an arbitrary
+//! shared-memory object belonging to another program.
 //!
-//! # Permissions
+//! # Threat model
 //!
-//! POSIX objects are created mode `0600` (the user only). Windows mappings get
-//! the default security descriptor, which grants the creating user and SYSTEM;
-//! the `Local\` namespace keeps them inside the user's logon session.
+//! Shared-memory names are a namespace other local users can write into
+//! (POSIX `/dev/shm` is world-writable; Windows' `Global\` is shared). A
+//! hostile local user who pre-creates the name `RustyNES` is about to use
+//! ("name squatting") could otherwise read what a script or the memif block
+//! publishes, inject data a script then reads, or block the name. Three rules
+//! close that, and an object that fails any of them is refused with
+//! `PermissionDenied` naming the reason, never adopted:
+//!
+//! 1. **The name is per user.** POSIX names end in `.<effective uid, hex>`;
+//!    Windows names live in the session's `Local\` namespace. Two users never
+//!    compute the same object name, so a squatter has to guess ours on purpose,
+//!    which rule 2 then defeats.
+//! 2. **An existing object is checked before it is used.** POSIX: `fstat` must
+//!    show our effective uid as the owner and no group or other permission bits
+//!    (`mode & 0o077 == 0`). Windows: the mapping's owner SID must be the
+//!    process token's user SID. This holds for [`SharedRegion::open`] and for
+//!    [`SharedRegion::create`] finding the name taken.
+//! 3. **What we create is owner-only.** POSIX objects are created with
+//!    `O_EXCL` and mode `0600`; Windows mappings get the descriptor
+//!    `D:P(A;;GA;;;OW)` (a protected DACL granting access only to the owner).
+//!
+//! What remains: another user can still squat the name to make `RustyNES`'s
+//! create fail (denial of service, reported as `PermissionDenied`), and
+//! anything running as the same user can read and write the region; that is
+//! the same user, whom no file permission separates either.
 //!
 //! # Concurrency
 //!
@@ -62,9 +89,16 @@ use std::io;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 
-/// The longest accepted name, in bytes (macOS `PSHMNAMLEN` = 31, less the
-/// leading `/`).
-pub const MAX_NAME_LEN: usize = 30;
+/// The longest accepted name, in bytes: macOS `PSHMNAMLEN` (31) less the
+/// leading `/` and the `.<uid>` suffix (a `.` and up to eight hex digits).
+pub const MAX_NAME_LEN: usize = 21;
+
+/// The OS-level object name for `name` (see the module docs): what another
+/// program passes to `shm_open` (POSIX) or `OpenFileMappingW` (Windows).
+#[must_use]
+pub fn os_object_name(name: &str) -> String {
+    sys::os_name(name)
+}
 
 /// Check `name` against the portable rule (see the module docs).
 ///
@@ -250,10 +284,57 @@ mod sys {
     use super::{NonNull, SharedRegion, io};
     use std::ffi::CString;
 
+    /// `/<name>.<euid hex>`: the per-user object name (threat-model rule 1).
+    pub(super) fn os_name(name: &str) -> String {
+        // SAFETY: `geteuid` has no preconditions and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        format!("/{name}.{uid:x}")
+    }
+
     fn c_name(name: &str) -> io::Result<CString> {
         // `validate_name` already refused NUL, so this cannot fail; map it
         // anyway rather than unwrap.
-        CString::new(format!("/{name}")).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+        CString::new(os_name(name)).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+    }
+
+    /// The rule 2 predicate: owned by `me`, and no group or other bits. Split
+    /// out so a test can exercise the uid half, which needs a second user to
+    /// reach through the OS.
+    // The mask reads as the permission bits it tests; `trailing_zeros` would not.
+    #[allow(clippy::verbose_bit_mask)]
+    pub(super) const fn owner_ok(uid: libc::uid_t, mode: u32, me: libc::uid_t) -> bool {
+        uid == me && mode & 0o077 == 0
+    }
+
+    /// Threat-model rule 2: refuse an existing object that is not ours and
+    /// owner-only. `name` is for the message.
+    fn check_owner(fd: libc::c_int, name: &str) -> io::Result<()> {
+        // SAFETY: an all-zero `stat` is a valid value of the plain C struct;
+        // `fstat` only writes it.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: `fd` is an open descriptor owned by the caller, and `st` is
+        // a valid, writable `stat`.
+        if unsafe { libc::fstat(fd, &raw mut st) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `geteuid` has no preconditions and cannot fail.
+        let me = unsafe { libc::geteuid() };
+        // `st_mode` is a u32 on Linux and a u16 on macOS.
+        #[allow(clippy::useless_conversion)]
+        let mode = u32::from(st.st_mode) & 0o777;
+        if !owner_ok(st.st_uid, mode, me) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing shared-memory object {}: owned by uid {} with mode {mode:03o}, \
+                     expected uid {me} and no group/other access (another user may have \
+                     created it)",
+                    os_name(name),
+                    st.st_uid
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// `shm_open`, papering over the variadic macOS prototype.
@@ -325,6 +406,10 @@ mod sys {
             if fd < 0 {
                 return Err(io::Error::last_os_error());
             }
+            if let Err(e) = check_owner(fd, name) {
+                close_fd(fd);
+                return Err(e);
+            }
         }
         let have = match file_len(fd) {
             Ok(n) => n,
@@ -378,6 +463,10 @@ mod sys {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
+        if let Err(e) = check_owner(fd, name) {
+            close_fd(fd);
+            return Err(e);
+        }
         let len = file_len(fd);
         let len = match len {
             Ok(0) => Err(io::Error::new(
@@ -416,16 +505,109 @@ mod sys {
     //! Windows named file mappings over the paging file.
     use super::{NonNull, SharedRegion, io};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        CloseHandle, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError, HANDLE,
+        INVALID_HANDLE_VALUE, LocalFree,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+        SE_KERNEL_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
     };
     use windows_sys::Win32::System::Memory::{
         CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_BASIC_INFORMATION,
         MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, OpenFileMappingW, PAGE_READWRITE,
         UnmapViewOfFile, VirtualQuery,
     };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// `Local\<name>`: the session-local object name (threat-model rule 1).
+    pub(super) fn os_name(name: &str) -> String {
+        format!("Local\\{name}")
+    }
 
     fn wide(name: &str) -> Vec<u16> {
-        name.encode_utf16().chain(std::iter::once(0)).collect()
+        os_name(name)
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    fn close_handle(h: HANDLE) {
+        // SAFETY: `h` is a live handle this module owns, closed once.
+        unsafe { CloseHandle(h) };
+    }
+
+    /// Threat-model rule 2: the mapping's owner SID must be this process's
+    /// user SID.
+    fn check_owner(mapping: HANDLE, name: &str) -> io::Result<()> {
+        let mut token: HANDLE = std::ptr::null_mut();
+        // SAFETY: the pseudo-handle of the current process, a query-only
+        // token request, and a valid out-pointer.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // TOKEN_USER plus the SID it points into; 256 bytes is ample (a SID is
+        // at most 68 bytes). `u64` storage keeps it pointer-aligned.
+        let mut buf = [0u64; 32];
+        let mut got = 0u32;
+        // SAFETY: `token` is live; `buf` is writable for the length passed.
+        let ok = unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buf.as_mut_ptr().cast(),
+                u32::try_from(std::mem::size_of_val(&buf)).unwrap_or(u32::MAX),
+                &raw mut got,
+            )
+        };
+        close_handle(token);
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: GetTokenInformation(TokenUser) succeeded, so `buf` begins
+        // with a TOKEN_USER whose SID points inside `buf`, which outlives this
+        // read; `buf` is 8-aligned.
+        let me: PSID = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        let mut owner: PSID = std::ptr::null_mut();
+        let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: `mapping` is a live kernel-object handle; only the owner is
+        // requested; the descriptor it allocates is freed below.
+        let rc = unsafe {
+            GetSecurityInfo(
+                mapping,
+                SE_KERNEL_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &raw mut owner,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &raw mut sd,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(
+                i32::try_from(rc).unwrap_or(i32::MAX),
+            ));
+        }
+        // SAFETY: both SIDs are valid: `owner` points into `sd` (still
+        // allocated), `me` into `buf`.
+        let same = unsafe { EqualSid(owner, me) } != 0;
+        // SAFETY: `sd` was allocated by GetSecurityInfo with LocalAlloc.
+        unsafe { LocalFree(sd) };
+        if same {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing shared-memory object {}: it is owned by another user",
+                    os_name(name)
+                ),
+            ))
+        }
     }
 
     /// Map the whole of `handle` and report the view's size.
@@ -466,24 +648,57 @@ mod sys {
         let len64 = len as u64;
         #[allow(clippy::cast_possible_truncation)] // the high and low halves.
         let (hi, lo) = ((len64 >> 32) as u32, len64 as u32);
+        // Threat-model rule 3: a protected DACL granting access to the owner
+        // only.
+        let sddl: Vec<u16> = "D:P(A;;GA;;;OW)"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: a NUL-terminated SDDL string and a valid out-pointer; the
+        // descriptor is LocalAlloc'd and freed below.
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &raw mut sd,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let attrs = SECURITY_ATTRIBUTES {
+            nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(u32::MAX),
+            lpSecurityDescriptor: sd,
+            bInheritHandle: 0,
+        };
         // SAFETY: a pagefile-backed mapping (INVALID_HANDLE_VALUE) with the
-        // default security, named by a NUL-terminated UTF-16 string that
-        // outlives the call.
+        // owner-only descriptor above, named by a NUL-terminated UTF-16 string
+        // that outlives the call.
         let handle = unsafe {
             CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
-                std::ptr::null(),
+                &raw const attrs,
                 PAGE_READWRITE,
                 hi,
                 lo,
                 w.as_ptr(),
             )
         };
-        if handle.is_null() {
-            return Err(io::Error::last_os_error());
-        }
         // SAFETY: read immediately after the call that set it.
-        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        let existed = !handle.is_null() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        let create_err = handle.is_null().then(io::Error::last_os_error);
+        // SAFETY: `sd` came from the conversion above; the mapping copied it.
+        unsafe { LocalFree(sd) };
+        if let Some(e) = create_err {
+            return Err(e);
+        }
+        // Rule 2: a name someone already holds is only used if it is ours.
+        if existed && let Err(e) = check_owner(handle, name) {
+            close_handle(handle);
+            return Err(e);
+        }
         let (ptr, size) = match map_all(handle) {
             Ok(v) => v,
             Err(e) => {
@@ -519,6 +734,10 @@ mod sys {
         let handle = unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, w.as_ptr()) };
         if handle.is_null() {
             return Err(io::Error::last_os_error());
+        }
+        if let Err(e) = check_owner(handle, name) {
+            close_handle(handle);
+            return Err(e);
         }
         match map_all(handle) {
             Ok((ptr, len)) => Ok(SharedRegion {
@@ -637,6 +856,80 @@ mod tests {
     fn opening_a_missing_name_is_not_found() {
         let e = SharedRegion::open(&unique("missing")).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::NotFound);
+    }
+
+    /// Threat-model rule 1: the OS name is per user.
+    #[test]
+    fn the_os_name_carries_the_user() {
+        let n = os_object_name("rustynes-memif");
+        #[cfg(unix)]
+        {
+            // SAFETY: `geteuid` has no preconditions.
+            let uid = unsafe { libc::geteuid() };
+            assert_eq!(n, format!("/rustynes-memif.{uid:x}"));
+            // The longest name plus the longest suffix fits macOS's 31 bytes.
+            const { assert!(1 + MAX_NAME_LEN + 1 + 8 <= 31) };
+        }
+        #[cfg(windows)]
+        assert_eq!(n, "Local\\rustynes-memif");
+    }
+
+    /// Threat-model rule 2 (the review finding on d279e0b0): an object that
+    /// already exists under our name but is readable or writable by others,
+    /// as one a squatter pre-created would be, is refused by both `open` and
+    /// `create`, with a message saying why, and never adopted. Creating an
+    /// object owned by ANOTHER uid needs root, so the test plants a wrong-MODE
+    /// object owned by us, which the same check refuses.
+    #[cfg(unix)]
+    #[test]
+    fn a_squatted_object_with_open_permissions_is_refused() {
+        use std::ffi::CString;
+        let name = unique("sq");
+        let c = CString::new(os_object_name(&name)).unwrap();
+        // SAFETY: a valid C string; a new object, mode 0666 (umask may clear
+        // some bits; the fchmod below sets them regardless).
+        let fd = unsafe {
+            libc::shm_open(
+                c.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+                0o666 as libc::c_uint,
+            )
+        };
+        assert!(fd >= 0, "plant: {}", io::Error::last_os_error());
+        // SAFETY: `fd` is the descriptor just opened.
+        unsafe {
+            assert_eq!(libc::ftruncate(fd, 4096), 0);
+            assert_eq!(libc::fchmod(fd, 0o666), 0);
+            libc::close(fd);
+        }
+        for err in [
+            SharedRegion::open(&name).unwrap_err(),
+            SharedRegion::create(&name, 4096).unwrap_err(),
+        ] {
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+            assert!(err.to_string().contains("mode 666"), "{err}");
+        }
+        // Clean up the plant; then the normal path works again.
+        // SAFETY: a valid C string naming the object planted above.
+        unsafe { libc::shm_unlink(c.as_ptr()) };
+        let r = SharedRegion::create(&name, 4096).expect("a fresh create works");
+        assert!(r.created());
+        assert!(SharedRegion::open(&name).is_ok(), "and so does an open");
+    }
+
+    /// Rule 2's predicate directly: the uid half cannot be reached through
+    /// the OS without a second account (only root can plant an object owned
+    /// by another uid), so it is pinned here.
+    #[cfg(unix)]
+    #[test]
+    fn the_owner_rule() {
+        use super::sys::owner_ok;
+        assert!(owner_ok(1000, 0o600, 1000));
+        assert!(owner_ok(1000, 0o400, 1000));
+        assert!(!owner_ok(1001, 0o600, 1000), "another user's object");
+        assert!(!owner_ok(0, 0o600, 1000), "root's object");
+        assert!(!owner_ok(1000, 0o640, 1000), "group-readable");
+        assert!(!owner_ok(1000, 0o602, 1000), "other-writable");
     }
 
     /// The env var a child test process reads its region name from.

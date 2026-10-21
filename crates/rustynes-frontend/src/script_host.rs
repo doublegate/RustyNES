@@ -608,11 +608,12 @@ fn worker_loop(
 /// browser's, a sound server's).
 ///
 /// A tool that wants the region a script named `frame` opens
-/// `rnes-mmf-frame`.
-pub const MMF_PREFIX: &str = "rnes-mmf-";
+/// `rnmf-frame` (on POSIX the OS object is `/rnmf-frame.<uid hex>`, on
+/// Windows `Local\rnmf-frame`; see `crate::shm`).
+pub const MMF_PREFIX: &str = "rnmf-";
 
 /// The longest script MMF name: the portable shared-memory name limit less the
-/// prefix (21 characters).
+/// prefix (16 characters).
 pub const MAX_MMF_NAME_LEN: usize = crate::shm::MAX_NAME_LEN - MMF_PREFIX.len();
 
 /// Size of the header in front of every MMF payload, in bytes.
@@ -1356,7 +1357,11 @@ mod tests {
     /// the OS as a path): no separators, no over-long names.
     #[test]
     fn mmf_names_are_checked() {
-        let mut store = MmfStore::new(test_prefix());
+        // A prefix exactly as long as the production one, so the length
+        // limit tested is the production limit.
+        let prefix = format!("u{:03}-", std::process::id() % 1000);
+        assert_eq!(prefix.len(), MMF_PREFIX.len());
+        let mut store = MmfStore::new(prefix);
         for bad in ["", "a/b", "..", "x\\y", &"n".repeat(MAX_MMF_NAME_LEN + 1)] {
             if bad == ".." {
                 continue; // dots are legal characters; ".." is just a name.

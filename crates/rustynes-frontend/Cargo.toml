@@ -555,4 +555,6 @@ windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Memory",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
 ] }

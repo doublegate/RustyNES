@@ -39,12 +39,17 @@ cycle-accurate core later replaced.
   waits to be drained. The Lua side and its budget are unchanged.
 - **Lua memory-mapped files are real shared memory (CR-02, `script-ipc`).**
   `comm.mmfWrite(name, data)` writes the OS shared-memory region
-  `rnes-mmf-<name>` (POSIX `shm_open` on Linux and macOS, a named file mapping
+  `rnmf-<name>` (POSIX `shm_open` on Linux and macOS, a named file mapping
   on Windows), so another program can open it by name, and `comm.mmfRead`
   reads a region another program wrote. Each region starts with a small
   documented header (length and a sequence counter, so a reader never takes a
   half-written payload). Until now the "file" was a map inside the emulator
-  that nothing else could see. `docs/scripting.md` has the layout.
+  that nothing else could see. Regions are per user and owner-only: the OS
+  name carries the user (`.<uid>` on POSIX, `Local\` on Windows), they are
+  created mode `0600` (an owner-only DACL on Windows), and an existing object
+  that is not ours and owner-only is refused rather than used, so another
+  local user cannot pre-create a name to read or plant data.
+  `docs/scripting.md` has the layout and the threat model.
 
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
