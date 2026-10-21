@@ -42,7 +42,8 @@ file-by-file table (source file, function, and line references).
   frame-IRQ clear and PAL step table (ApuFrameCounter), the DMC-DMA
   _needHalt / _needDummyRead latches (NesCpu), the Vs. DualSystem stepping,
   reset seed and coin routing (NesConsole, VsControlManager) and the Namco
-  163 output weight (NesSoundMixer); the raw NTSC composite-signal
+  163 output weight (NesSoundMixer); the Power Pad serial layout (classified
+  derived 2026-10-21; the layout is also on the NESdev Power Pad page); the raw NTSC composite-signal
   model ("raw palette"); the Bisqwit NTSC filter as
   Mesen2 implements it; the UNIF board tables; the debug-symbol importer
   (DbgImporter); and the PGO training harness (PGOHelper).

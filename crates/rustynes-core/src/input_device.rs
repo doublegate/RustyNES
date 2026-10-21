@@ -1,3 +1,5 @@
+// Provenance: the Power Pad's serial layout (`PowerPadState` and its `reload`, written in v1.1.0 citing "Mesen's implementation" beside the NESdev "Power Pad" page) is treated as derived from Mesen2 (GPL-3.0-or-later), by the maintainer's decision of 2026-10-21: whether Mesen2 source was read in June 2026 is not recorded, and the conservative reading was chosen. The layout itself is stated verbatim on `nesdev_wiki/Power_Pad.xhtml`. Only the Power Pad region is covered. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Optional non-standard input-device overlays for the `$4016`/`$4017`
 //! controller ports: the Arkanoid "Vaus" paddle and the NES Zapper light gun.
 //!

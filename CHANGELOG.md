@@ -176,6 +176,14 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Provenance: the Power Pad serial layout is recorded as derived from
+  Mesen2** (`crates/rustynes-core/src/input_device.rs`, a `// Provenance:`
+  header, a section 1 row in `docs/originality-and-provenance.md` and a
+  `NOTICE` line). It was written in v1.1.0 citing "Mesen's implementation"
+  beside the NESdev "Power Pad" page; whether Mesen2's source was read then is
+  not recorded, so the maintainer chose the conservative reading (2026-10-21).
+  The layout itself is stated verbatim on the NESdev page. No code changes.
+
 - **The host warning codes live in the emulation core** (`FE-06`).
   `HostWarning` (the codes the Android and iOS apps localise, with their
   English text) moved from the mobile bridge to `rustynes-core`, which the
