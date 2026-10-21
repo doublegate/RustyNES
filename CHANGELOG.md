@@ -32,13 +32,23 @@ cycle-accurate core later replaced.
   refused** with the reason (`MovieError::FormatTooOld`: it "does not record
   everything a faithful replay needs; re-record it"). Format 7 records every
   input the core takes besides the controllers (`T-MOVIE-INPUT-STREAM`, backlog
-  CR-03, ADR 0044 amendment). The emulation is unchanged, so the emulation
-  epoch stays 5 and netplay stays protocol 9. `rustynes verify` attestations
+  CR-03, ADR 0044 amendment). The movie change alone moves no emulation, so
+  it raises neither the emulation epoch nor the netplay protocol (9); the
+  MMC5 scanline fix below raises the epoch to 6. `rustynes verify` attestations
   are version 3 (a version-2 tail is not compared).
 - **`rustynes-core` API:** `FrameInput::apply_to` and `FrameInput::held_on`
   are no longer `const fn`.
 - **`TAStudio` projects are written as `.rnmproj` version 2**, which a v3.4.x
   build refuses as too new. Version-1 projects still load.
+- **The emulation epoch is 6** (ADR 0045): the MMC5 scanline fix under Fixed
+  moves frames and audio of MMC5 games, so a movie or netplay peer from
+  epoch 5 is refused with both epochs named. **An MMC5 save state from v3.4.x
+  is refused** (`MapperError::UnsupportedVersion(6)`; the board writes v7,
+  which carries the new detector's state).
+- **`rustynes-mappers` / `rustynes-ppu` API (additive):** `Mapper` gains
+  `snoops_ppu_reads` (default `false`) and `notify_ppu_read` (default
+  no-op), and `PpuBus` gains `notify_ppu_read` (default no-op). Every
+  existing implementation compiles unchanged.
 
 - **MiSTer core: a v3.4.x save state is refused on both builds.** The
   Famicom peripherals and the Phase F3b boards lengthen the scan chain, so the
@@ -252,6 +262,60 @@ cycle-accurate core later replaced.
   updated to say what is kept while the relay is on.
 
 ### Fixed
+
+- **The MMC5's scanline IRQ came a whole line early, and counted with
+  rendering off.** The counter ticked from the PPU's line hook at dot 0 of
+  the pre-render line and of every visible line, rendering or not, so visible
+  line N read N + 1 and a `$5203` = N IRQ rose at dot 0 of line N - 1 (found
+  by the MiSTer sibling, its ledger 3.100). It now follows
+  `nesdev_wiki/MMC5.xhtml`, "Scanline Detection and Scanline IRQ": the chip
+  watches the PPU's reads, and the read after three consecutive reads of one
+  nametable address (a line's two dummy fetches and the next line's first) is
+  the detection, the attribute fetch at dot 4. Line 0 is the first detection
+  (in frame set, counter 0, IRQ acknowledged), line N reads N, `$00` never
+  matches. "In frame" clears after three CPU cycles with no PPU read (early on
+  line 240, or when rendering stops), on a `$2001` write with bits 3-4 clear,
+  and on a `$FFFA` / `$FFFB` read (which also acknowledges the IRQ and resets
+  the counter); the `$2001` off-to-on transition acknowledges and resets too.
+  blargg's 2005 hardware timings agree at line resolution. Where the page's
+  prose and diagram (detection at the attribute read) and its pseudocode (one
+  read earlier) disagree, the model takes the prose; the `$2002` / `$4014`
+  counter resets and pin 92 are not modelled. The PPU reports every read
+  through the new `PpuBus::notify_ppu_read`, which the core forwards only to a
+  board whose `snoops_ppu_reads` is true (the MMC5 alone), and the MMC5's
+  8x16 CHR-set choice keeps its old window, so no CHR fetch moves. A debugger
+  peek at `$5204` no longer acknowledges the IRQ (`Mmc5::cpu_peek`).
+  - **Gate:** `rustynes-test-harness/tests/mmc5_scanline_irq.rs` (default
+    build, a synthetic MMC5 cartridge through the public `Nes` API): `$5203`
+    = 1, 2, 20, 100, 239 each rise on line N near dot 4 with the counter at N;
+    in frame is clear on the pre-render line, set at line 0, clear early on
+    line 240; nothing counts with rendering off; `$00` never flags. 3 of its 4
+    tests fail on the old counter ("the flag rose on line 0 dot 2 with the
+    counter at 1"). Eleven unit tests in `m005_mmc5.rs` pin the detector read
+    by read (the attribute-read detection point, the idle rule, the `$2001`
+    and `$FFFA` rules, the compare-0/240 cases, the v7 state round trip and
+    v6 refusal, peeks without side effects), and
+    `only_the_mmc5_snoops_ppu_reads` pins the dispatch gate on every board.
+  - **Mutations:** the first detection setting the counter to 1 (the old line
+    numbering) fails 2 of the 4 gate tests and returns *Uchuu Keibitai SDF*'s
+    frame to its old hash; detecting at the third matching read (the
+    pseudocode's point, two dots early) fails 3 unit tests and moves *Bandit
+    Kings of Ancient China*'s audio, but is NOT CAUGHT by the gate file,
+    whose stimulus samples at instruction granularity (up to 9 dots), so the
+    unit tests are what guard the dot.
+  - **Moved baselines** (re-blessed, each inspected): *Uchuu Keibitai SDF*
+    (`external_real_games`, f600): the playfield grid below the game's raster
+    split near line 16 moves down one line, and its rows go from a 7-pixel seam (lines 7,
+    15, 22, 38, ...) to an even 8-pixel pitch (7, 15, 23, 39, ...), so the
+    game's split now lands where it draws a seamless grid. *Castlevania III*
+    (`external_real_games` and `external_coverage`), *Gemfire* and
+    *L'Empereur* (`external_coverage`): audio hash only, framebuffer and cycle
+    count identical. For *Castlevania III* it is not the line numbering (the
+    counter-1 mutant keeps the new hash), the detection dot, or any one of
+    the three acknowledgement rules (each reverted alone keeps it); the
+    remaining differences are the in-frame flag and no counting with
+    rendering off, not attributed further. *Gemfire* and *L'Empereur* were
+    not bisected. `EMULATION_EPOCH` 6.
 
 - **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu
   item's dispatch) inserted a coin on one peer's console only, and nothing

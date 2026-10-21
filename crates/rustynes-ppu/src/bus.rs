@@ -101,13 +101,31 @@ pub trait PpuBus {
     /// MMC3 / MMC5 use this internally for IRQ counter clocking.
     fn notify_a12(&mut self, _level: bool) {}
 
+    /// v3.5.0 — notification of one PPU memory read at `addr`
+    /// (`$0000-$3FFF`), made just before the read itself: every background
+    /// nametable and attribute fetch, every pattern fetch (background and
+    /// sprite), the sprite window's garbage nametable reads, and `$2007`
+    /// reads. PPU writes are not reported (the PPU's /RD stays high for
+    /// them).
+    ///
+    /// The MMC5 builds its scanline detector and its in-frame flag from this
+    /// stream, as the chip does from the PPU's /RD and address pins
+    /// (`nesdev_wiki/MMC5.xhtml`, "Scanline Detection and Scanline IRQ").
+    /// The display-only extra sprite reads of the "disable sprite limit"
+    /// option are deliberately NOT reported, so that option still cannot
+    /// change emulation. Default no-op.
+    fn notify_ppu_read(&mut self, _addr: u16) {}
+
     /// Notification that the PPU is starting a new rendered scanline (visible
-    /// or pre-render). MMC5 uses this to drive its scanline IRQ counter.
-    /// Default no-op.
+    /// or pre-render). Since v3.5.0 the MMC5 no longer counts scanlines from
+    /// it (it detects them from [`Self::notify_ppu_read`]); it keeps it only
+    /// to open the window in which a pattern fetch counts as a background
+    /// fetch for its 8x16 CHR-set choice. Default no-op.
     fn notify_scanline_start(&mut self) {}
 
-    /// Notification that the PPU has entered vertical blank. MMC5 uses this
-    /// to clear its "in-frame" flag. Default no-op.
+    /// Notification that the PPU has entered vertical blank. The MMC5 closes
+    /// the background-fetch window of [`Self::notify_scanline_start`] here.
+    /// Default no-op.
     fn notify_vblank(&mut self) {}
 
     /// Resolve a logical nametable address in `$2000-$3EFF` to a CIRAM offset

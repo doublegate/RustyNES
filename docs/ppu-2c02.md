@@ -18,7 +18,8 @@ Implement the 2C02 PPU as a state machine that advances exactly one dot per `tic
 pub trait PpuBus {
     fn ppu_read(&mut self, addr: u16) -> u8;        // $0000-$3FFF, mapper-mediated CHR + nametable
     fn ppu_write(&mut self, addr: u16, value: u8);
-    fn notify_a12(&mut self, level: bool);           // for MMC3/MMC5 IRQ counters
+    fn notify_a12(&mut self, level: bool);           // for MMC3-style IRQ counters
+    fn notify_ppu_read(&mut self, addr: u16) {}      // v3.5.0: every PPU read, before it (MMC5 scanline detector)
 }
 
 pub struct Ppu {
@@ -45,6 +46,8 @@ impl Ppu {
 ```
 
 The PPU owns its 2 KB internal VRAM but routes all `$0000-$3FFF` accesses through the `PpuBus` so the mapper can override CHR (banking) and nametable mirroring. Palette RAM (`$3F00-$3FFF`) is internal to the PPU.
+
+**Every PPU read is reported (v3.5.0).** `read_vram_unobserved`, the choke point for background nametable / attribute / pattern fetches, the sprite window's garbage nametable reads and `$2007` reads, calls `PpuBus::notify_ppu_read(addr)` with the address the PPU drives (before any `$3xxx` fold) just before the read; the sprite pattern fetches, which call `ppu_read_sprite` directly, report themselves. Writes are not reported, nor are the display-only extra sprite reads of the "disable sprite limit" option, so that option still cannot change emulation. The MMC5 builds its scanline detector and in-frame flag from this stream (`docs/mappers.md`, IRQ family 3); the core's adapter forwards it only to a board whose `Mapper::snoops_ppu_reads` is true, so every other board pays one branch per read. Default no-op on the trait.
 
 ## State
 

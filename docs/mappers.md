@@ -33,6 +33,12 @@ pub trait Mapper: Send {
 
     // v3.1.0 (`T-SPRITE-LIMIT`): `false` when a CHR read changes the board.
     fn chr_reads_are_pure(&self) -> bool { true }
+
+    // v3.5.0: every PPU read (address the PPU drives), for boards that watch
+    // the PPU bus. Delivered only when `snoops_ppu_reads` is true (MMC5 only;
+    // the bus caches the answer and skips the dispatch for every other board).
+    fn snoops_ppu_reads(&self) -> bool { false }
+    fn notify_ppu_read(&mut self, addr: u16) {}
 }
 
 // `#[non_exhaustive]` since v3.0.0: outside `rustynes-mappers`, build one with
@@ -220,7 +226,7 @@ A board's CHR bank outputs drive the address lines of whatever chip sits on the 
 
 1. **None** — NROM, UxROM, AxROM, MMC1, CNROM, MMC2/4, BNROM, GxROM, Color Dreams, CPROM. No IRQs.
 2. **PPU A12 edge counter** — MMC3 (and clones, e.g., Namco 108 derivatives). Notify on every A12 transition; filter is *internal to the mapper*. Per `ref-docs/research-report.md` §MMC3, the filter requires A12 to remain low for 3 falling edges of M2 before the next rising edge counts.
-3. **PPU scanline count** — MMC5. Detects scanline by observing PPU attribute-table fetches; IRQ at PPU cycle 4 of the target scanline.
+3. **PPU scanline count** — MMC5. Detects scanlines from the PPU's reads, delivered by `Mapper::notify_ppu_read` (v3.5.0): three consecutive reads of one `$2000-$2FFF` address (a line's two dummy nametable reads and the next line's first nametable fetch), then the next read, the attribute fetch at PPU cycle 4, is the detection (`nesdev_wiki/MMC5.xhtml`, "Scanline Detection and Scanline IRQ"). The first detection of a frame (visible line 0) sets "in frame" and the counter to 0; each later one increments the counter, so visible line N reads N, and `$5203` = N raises the flag at line N, dot 4. "In frame" clears when three CPU cycles pass with no PPU read (early on line 240, or when rendering stops), on a `$2001` write with bits 3-4 clear, and on a `$FFFA` / `$FFFB` read (which also acknowledges the IRQ and resets the counter). With rendering off nothing is read, so nothing counts. **Changed in v3.5.0:** until then the counter ticked from `notify_scanline_start` at dot 0 of the pre-render line and of every visible line, rendering or not, so line N read N + 1 and a `$5203` = N IRQ rose at dot 0 of line N - 1, a whole line early (the MiSTer sibling's ledger 3.100; `EMULATION_EPOCH` 6). Where the page's prose, pseudocode and state diagram disagree, and what is not modelled, is in the rustdoc of `Mmc5` (`crates/rustynes-mappers/src/m005_mmc5.rs`, "Scanline detection").
 4. **CPU cycle counter** — VRC2/4/6/7, Sunsoft FME-7, Namco 163, plus the BestEffort M2-counter pirate boards (NTDEC 2722 / mapper 40, Nitra / mapper 250). Tick on every CPU cycle (`notify_cpu_cycle`).
 
 ### Mirroring

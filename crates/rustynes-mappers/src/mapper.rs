@@ -523,20 +523,51 @@ pub trait Mapper: Send {
     /// channels). Default no-op.
     fn notify_frame_event(&mut self, _events: MapperFrameEvents) {}
 
+    /// v3.5.0 — whether this board wants [`Self::notify_ppu_read`].
+    ///
+    /// The PPU reports every one of its memory reads, roughly 170 per
+    /// rendered line, and almost no board cares. The bus caches this answer
+    /// beside [`Self::caps`] and skips the dispatch entirely when it is
+    /// `false`, so the hook costs the other boards one predictable branch
+    /// per read and no virtual call. A board that overrides
+    /// [`Self::notify_ppu_read`] MUST return `true` here, or it never hears
+    /// a read. Constant per board type. Default `false`.
+    fn snoops_ppu_reads(&self) -> bool {
+        false
+    }
+
+    /// v3.5.0 — one PPU memory read at `addr` (`$0000-$3FFF`, the address
+    /// the PPU drives), reported just before the read: background
+    /// nametable / attribute / pattern fetches, sprite pattern fetches, the
+    /// sprite window's garbage nametable reads, and `$2007` reads. Writes
+    /// are not reported.
+    ///
+    /// The MMC5 detects scanlines from this stream and clears its in-frame
+    /// flag on its absence (`nesdev_wiki/MMC5.xhtml`, "Scanline Detection
+    /// and Scanline IRQ"). Delivered only when [`Self::snoops_ppu_reads`] is
+    /// `true`. Never called by a debugger peek (`Self::nametable_fetch` and
+    /// `Self::ppu_peek` stay side-effect-free). Default no-op.
+    fn notify_ppu_read(&mut self, _addr: u16) {}
+
     /// Notify the mapper that the PPU is starting a new rendered scanline.
     ///
-    /// Called by the PPU at the start of each visible scanline (and the
-    /// pre-render line) before any tile fetches happen. MMC5 uses this to
-    /// drive its scanline IRQ counter (which clocks at PPU cycle 4 of each
-    /// rendered line — different from MMC3's A12-edge-driven counter).
+    /// Called by the PPU at dot 0 of each visible scanline and of the
+    /// pre-render line, before any tile fetches happen, whether or not the
+    /// PPU is rendering. Until v3.5.0 the MMC5 counted scanlines from it,
+    /// which put its counter a line ahead of the chip; it now detects lines
+    /// from [`Self::notify_ppu_read`] and uses this only to bound the window
+    /// in which a pattern fetch is a background fetch (its 8x16 CHR-set
+    /// choice).
     ///
-    /// Default is a no-op; only mappers with scanline-counter IRQs override.
+    /// Default is a no-op.
     fn notify_scanline_start(&mut self) {}
 
     /// Notify the mapper that the PPU has entered vertical blank.
     ///
-    /// MMC5 uses this to clear its "in-frame" flag (bit 6 of `$5204`).
-    /// Default no-op.
+    /// The MMC5 closes the background-fetch window of
+    /// [`Self::notify_scanline_start`] here. (Its `$5204` in-frame flag no
+    /// longer follows this since v3.5.0: it clears when the PPU stops
+    /// reading.) Default no-op.
     fn notify_vblank(&mut self) {}
 
     /// v2.0.0 beta.5 (Vs. `DualSystem`): provision the board's shared 2 KiB
@@ -1149,6 +1180,24 @@ mod caps_tests {
         let m24 = caps_of(24);
         assert!(m24.cpu_cycle_hook && m24.irq_source && !m24.frame_event_hook);
         assert_eq!(m24.audio, cfg!(feature = "mapper-audio"));
+    }
+
+    /// v3.5.0 — only the MMC5 asks for every PPU read
+    /// (`Mapper::snoops_ppu_reads`); the bus skips the dispatch for every
+    /// other board, so a board that started overriding `notify_ppu_read`
+    /// without saying so here would hear nothing, and one that said so
+    /// without needing it would cost every PPU read a virtual call.
+    #[test]
+    fn only_the_mmc5_snoops_ppu_reads() {
+        let mut checked = 0usize;
+        for id in 0u8..=255 {
+            let Ok((_cart, mapper)) = parse(&synth_rom(id)) else {
+                continue;
+            };
+            checked += 1;
+            assert_eq!(mapper.snoops_ppu_reads(), id == 5, "mapper {id}");
+        }
+        assert!(checked > 150, "only {checked} boards were checked");
     }
 
     fn hardwired_of(mapper_id: u8) -> bool {

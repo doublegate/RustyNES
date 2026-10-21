@@ -3445,6 +3445,15 @@ impl Ppu {
                 addr: a,
             });
         }
+        // v3.5.0 — report the read to the cartridge before it is made. The
+        // MMC5 detects scanlines from this stream (three consecutive reads of
+        // one `$2xxx` address, then the next read; `nesdev_wiki/MMC5.xhtml`,
+        // "Scanline Detection and Scanline IRQ"), and clears its in-frame
+        // flag on its absence. The address is the one the PPU drives (before
+        // any `$3xxx` fold), as the chip's address pins see it. Default
+        // no-op; the core's adapter skips even the mapper dispatch for every
+        // board that does not ask for it.
+        bus.notify_ppu_read(a);
         let val = if a < 0x2000 {
             bus.ppu_read(a)
         } else {
@@ -6381,8 +6390,16 @@ impl Ppu {
         // Sprite CHR fetch: route through `ppu_read_sprite` so MMC5
         // (and any other mapper with split sprite vs. BG CHR banking)
         // can use its sprite-specific bank registers.
+        //
+        // v3.5.0 — these two reads bypass `read_vram_unobserved`, the choke
+        // point that reports every other PPU read, so they report themselves:
+        // the MMC5's scanline detector watches the PPU's reads, and a sprite
+        // pattern read is one of the reads that breaks a run of matching
+        // nametable addresses (`PpuBus::notify_ppu_read`).
+        bus.notify_ppu_read(addr_lo);
         let mut lo = bus.ppu_read_sprite(addr_lo);
         self.observe_a12_addr(bus, addr_hi);
+        bus.notify_ppu_read(addr_hi);
         let mut hi = bus.ppu_read_sprite(addr_hi);
         // W2 ($2007 Stress): stash the RAW (pre-h-flip) pattern bytes so the
         // per-dot sprite-fetch read cadence (`tick_sprite_fetch_read`) can
