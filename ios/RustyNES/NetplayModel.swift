@@ -82,10 +82,12 @@ final class NetplayModel: ObservableObject {
         // through (and later break the connection). `ws://` stays valid for LAN relays.
         let u = signalingURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if u.isEmpty { return npHostedAvailable() }
-        // A scheme AND a host: a bare "ws://" is not a relay (v3.4.1).
-        guard let url = URL(string: u), let scheme = url.scheme,
-              ["ws", "wss"].contains(scheme.lowercased()), let host = url.host, !host.isEmpty else { return false }
-        return true
+        // v3.5.0 (T-MOBILE-RELAY-VALIDATE): the bridge's validator, which is the
+        // parser the connect path uses, so this, the Android app and the connect
+        // agree by construction (crates/rustynes-netplay/testdata/relay_urls.tsv).
+        // It replaces Foundation's URL parser plus a host test, which accepted
+        // a non-numeric or out-of-range port the connect then dialled on 443.
+        return npValidateRelayUrl(url: u)
     }
 
     private weak var core: EmulatorCore?

@@ -3732,6 +3732,25 @@ pub fn np_hosted_available() -> bool {
     rustynes_netplay::hosted::resolve_base("").is_some()
 }
 
+/// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`) — whether `url` is a signaling relay URL
+/// the room-code connect path can dial.
+///
+/// The verdict is `rustynes_netplay::signaling_client::validate_signaling_url`,
+/// the same parser `SignalingClient::connect` uses, so a URL this accepts is
+/// one the bridge will dial as written and a URL it refuses is one the bridge
+/// would have refused (or, before v3.5.0, silently dialled on the scheme's
+/// default port: a non-numeric or out-of-range port). Both shells call this
+/// in place of their own checks (Android's `RELAY_URL` regex, iOS's
+/// `URL(string:)` plus a host test), so the three agree by construction; the
+/// shared table in `crates/rustynes-netplay/testdata/relay_urls.tsv` pins the
+/// verdicts. The shells trim user input before asking and treat an empty URL
+/// as "use the hosted lobby" ([`np_hosted_available`]) before asking; this
+/// function refuses the empty string and any surrounding whitespace.
+#[uniffi::export]
+pub fn np_validate_relay_url(url: String) -> bool {
+    rustynes_netplay::signaling_client::validate_signaling_url(&url).is_ok()
+}
+
 /// v2.9.9 (re-audit NF-21) — the identity of `rom`, without building a console.
 ///
 /// It is what [`NesController::rom_identity`] reports for a console built
@@ -5813,6 +5832,90 @@ mod tests {
                 username: "hosted-user".into(),
                 credential: "hosted-cred".into(),
             }
+        }
+
+        /// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`): the exported validator gives
+        /// every row of the shared relay-URL table the same verdict as the
+        /// parser the connect path uses (the netplay crate runs the table
+        /// against that parser directly).
+        #[test]
+        fn the_exported_relay_validator_matches_the_shared_table() {
+            let mut rows = 0;
+            let mut accepted = 0;
+            let mut wrong = Vec::new();
+            for line in include_str!("../../rustynes-netplay/testdata/relay_urls.tsv").lines() {
+                if line.starts_with('#') || line.is_empty() {
+                    continue;
+                }
+                let mut f = line.splitn(3, '\t');
+                let accept = f.next() == Some("accept");
+                let url = f.next().expect("url");
+                let url = if url == "<empty>" {
+                    String::new()
+                } else {
+                    url.replace("\\n", "\n")
+                };
+                rows += 1;
+                accepted += usize::from(accept);
+                if np_validate_relay_url(url.clone()) != accept {
+                    wrong.push(format!("{url:?}: want accept={accept}"));
+                }
+            }
+            assert!(
+                accepted >= 10 && rows - accepted >= 20,
+                "{accepted} of {rows}"
+            );
+            assert!(
+                wrong.is_empty(),
+                "{} of {rows} wrong: {wrong:?}",
+                wrong.len()
+            );
+        }
+
+        /// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`): both shells decide "is this a
+        /// relay URL" by calling the bridge and nothing else. Kotlin and Swift
+        /// cannot be compiled in this crate's test run, so this is a source
+        /// check of the two gates: each must return the bridge's verdict and
+        /// must not carry a parser of its own (Android's old `RELAY_URL`
+        /// regex, iOS's old `URL(string:)` host test), which is how the three
+        /// disagreed before.
+        #[test]
+        fn the_shells_ask_the_bridge_and_parse_nothing_themselves() {
+            fn body<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
+                let i = src
+                    .find(start)
+                    .unwrap_or_else(|| panic!("{start:?} not found"));
+                let rest = &src[i..];
+                let j = rest
+                    .find(end)
+                    .unwrap_or_else(|| panic!("end of {start:?} not found"));
+                &rest[..j]
+            }
+            let kt = include_str!(
+                "../../../android/app/src/main/java/com/doublegate/rustynes/Netplay.kt"
+            );
+            let gate = body(kt, "fun onlineNetplayConfigured(", "\n}\n");
+            assert!(
+                gate.contains("return npValidateRelayUrl(url)"),
+                "Android gate: {gate}"
+            );
+            assert!(
+                !gate.contains("Regex") && !gate.contains(".matches("),
+                "Android gate parses: {gate}"
+            );
+            assert!(
+                !kt.contains("RELAY_URL"),
+                "Android still carries its own relay regex"
+            );
+            assert!(kt.contains("import uniffi.rustynes_mobile.npValidateRelayUrl"));
+
+            let swift = include_str!("../../../ios/RustyNES/NetplayModel.swift");
+            let gate = body(swift, "var signalingConfigured: Bool {", "\n    }\n");
+            assert!(
+                gate.contains("return npValidateRelayUrl(url: u)"),
+                "iOS gate: {gate}"
+            );
+            assert!(!gate.contains("URL(string"), "iOS gate parses: {gate}");
         }
 
         /// v3.4.1: the shells' room-code gate reports exactly whether a base

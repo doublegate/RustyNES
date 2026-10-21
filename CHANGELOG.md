@@ -49,6 +49,15 @@ cycle-accurate core later replaced.
   told to connect directly. TURN stays switched off in production
   (`T-HOSTED-TURN-EXPIRY`); this lands first so it is in place when TURN is
   switched back on.
+- **Android and iOS: one check for a custom netplay relay address**
+  (`T-MOBILE-RELAY-VALIDATE`). The two apps each checked the address with
+  their own rules, and both accepted some the connection code then refused or
+  misread: a port that was not a number (`wss://host:notaport`), out of range
+  or empty was taken as no port at all, so the app connected to port 443 (or
+  80) instead of saying the address was wrong; Android also accepted an
+  unclosed IPv6 address and an upper-case `WSS://`. Both apps now ask the
+  emulator core, which uses the same parser it connects with, and the core
+  refuses those ports at connect time too.
 - **Browser RetroAchievements: the proxy address is read when a session
   starts** (`T-WEB-RA-PROXY-LAZY`). The browser glue read the
   RetroAchievements proxy address once, when the script was loaded, so a page
