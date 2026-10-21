@@ -155,6 +155,12 @@ pub enum MenuAction {
     CycleDiskSide,
     /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`).
     SetDiskSide(Option<usize>),
+    /// v3.5.0 (`FE-04`) — load slot `i` of the open cartridge bundle
+    /// (Emulation → Multicart).
+    SelectBundleSlot(usize),
+    /// v3.5.0 (`FE-04`) — File → New Multi-Disk Bundle… (native only; the
+    /// variant stays un-gated so the dispatch match is exhaustive).
+    NewBundle,
     /// v3.2.0 — swipe this barcode (the digits as typed) through the Datach
     /// reader (mapper 157). Validated again at the core boundary.
     ScanBarcode(String),
@@ -419,6 +425,15 @@ pub struct ShellFrame<'a> {
     /// v1.8.9 — the currently inserted FDS disk side, or `None` when ejected, for
     /// the Multi-Disk submenu's radio state.
     pub inserted_disk_side: Option<usize>,
+    /// v3.5.0 (`FE-04`) — one name per disk side when the disk set came from a
+    /// Multi-Disk bundle (`"Disk 1 side A"`, ...); empty otherwise, and the
+    /// menu falls back to "Side N".
+    pub disk_side_names: &'a [String],
+    /// v3.5.0 (`FE-04`) — the open cartridge bundle's slot names (Emulation →
+    /// Multicart); empty when no cartridge bundle is open.
+    pub bundle_slots: &'a [String],
+    /// v3.5.0 — the loaded cartridge-bundle slot, for the radio state.
+    pub bundle_slot: Option<usize>,
     /// v1.0.0 — whether the loaded game is a Vs. System title (enables the
     /// "Insert Coin" item).
     pub vs_system: bool,
@@ -613,6 +628,19 @@ impl UiShell {
                     .clicked()
                     {
                         out.action = Some(MenuAction::OpenRom);
+                        ui.close();
+                    }
+                    // v3.5.0 (`FE-04`) — write a `.rnbundle` from picked images
+                    // and open it.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui
+                        .add_enabled(
+                            !rom_change_restricted,
+                            egui::Button::new(ic(glyph::FOLDER_OPEN, crate::t!(MenuNewBundle))),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::NewBundle);
                         ui.close();
                     }
 
@@ -1036,11 +1064,14 @@ impl UiShell {
                             // item above (v3.5.0: a recording records the swap).
                             ui.add_enabled_ui(disk_interactive, |ui| {
                                 for i in 0..frame.disk_sides {
+                                    // v3.5.0 — a bundle's side names, else
+                                    // the numbered default.
+                                    let label = frame.disk_side_names.get(i).map_or_else(
+                                        || crate::tf!(ShellSideN, i + 1),
+                                        Clone::clone,
+                                    );
                                     if ui
-                                        .radio(
-                                            frame.inserted_disk_side == Some(i),
-                                            crate::tf!(ShellSideN, i + 1),
-                                        )
+                                        .radio(frame.inserted_disk_side == Some(i), label)
                                         .clicked()
                                     {
                                         out.action = Some(MenuAction::SetDiskSide(Some(i)));
@@ -1057,6 +1088,22 @@ impl UiShell {
                                 {
                                     out.action = Some(MenuAction::SetDiskSide(None));
                                     ui.close();
+                                }
+                            });
+                        });
+                    }
+                    // v3.5.0 (`FE-04`) — the open cartridge bundle's slots. Each
+                    // is its own game, so picking one is a ROM load (locked
+                    // out with Open ROM while netplay forbids a ROM change).
+                    if !frame.bundle_slots.is_empty() {
+                        ui.separator();
+                        ui.menu_button(ic(glyph::FOLDER_OPEN, crate::t!(ShellMulticart)), |ui| {
+                            ui.add_enabled_ui(!rom_change_restricted, |ui| {
+                                for (i, name) in frame.bundle_slots.iter().enumerate() {
+                                    if ui.radio(frame.bundle_slot == Some(i), name).clicked() {
+                                        out.action = Some(MenuAction::SelectBundleSlot(i));
+                                        ui.close();
+                                    }
                                 }
                             });
                         });
@@ -2848,6 +2895,9 @@ mod tests {
             netplay_active: false,
             disk_sides: 0,
             inserted_disk_side: None,
+            disk_side_names: &[],
+            bundle_slots: &[],
+            bundle_slot: None,
             vs_system: false,
             barcode_reader: false,
             mapper_label: "NROM (0)",

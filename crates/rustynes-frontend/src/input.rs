@@ -29,6 +29,11 @@
 //! The Famicom microphone is held on `N` (`M` before v2.7.3, which was also
 //! the menu-bar toggle).
 //!
+//! v3.5.0 (`FE-07`): the microphone key, the 12 Power Pad / Family Trainer mat
+//! keys and the 72 Family BASIC keyboard positions are rebindable too, persisted
+//! as `[input.device_keys]` (written only once something differs from the
+//! defaults below) and edited in Settings -> Input -> Device keys.
+//!
 //! System defaults: `Esc` quit, `F1` save state, `F4` load state, `F5`
 //! rewind (held), `F2` reset, `F3` power-cycle, `F6` TAS movie record
 //! toggle, `F7` TAS movie play toggle, `F8` TAS movie branch, `F9` cycle
@@ -131,6 +136,59 @@ pub struct KeyBindings {
     pub player4: HashMap<KeyCode, Buttons>,
     /// `KeyCode -> action` for system bindings.
     pub system: HashMap<KeyCode, SysAction>,
+    /// v3.5.0 (`FE-07`) — the expansion-device keys (microphone, Power Pad
+    /// mat, Family BASIC keyboard), resolved from `[input.device_keys]`.
+    pub devices: DeviceKeyMap,
+}
+
+/// v3.5.0 (`FE-07`) — the resolved expansion-device key layout.
+///
+/// Each slot holds the one host key bound to it, or `None` when it is
+/// unbound (an empty string in the config) or its name is not a known key (a
+/// warning is printed, as for the pad bindings). A host key may serve several
+/// slots, and each slot is consulted on every key event, so two mat buttons
+/// bound to one key press together; nothing is assumed to be one-to-one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceKeyMap {
+    /// Power Pad / Family Trainer mat button `i + 1` (the `power_pad` mask's
+    /// bit `i`, before the side-B remap).
+    pub power_pad: [Option<KeyCode>; 12],
+    /// The Famicom microphone's hold-to-talk key.
+    pub microphone: Option<KeyCode>,
+    /// Family BASIC keyboard matrix position `i` (`row * 8 + bit`, the index
+    /// [`family_keyboard_index`] returns for the default layout).
+    pub family_keyboard: [Option<KeyCode>; FAMILY_KEYBOARD_POSITIONS],
+}
+
+impl DeviceKeyMap {
+    /// Resolve the configured names. A list shorter than its slot count leaves
+    /// the missing slots unbound; extra entries are ignored.
+    #[must_use]
+    pub fn from_config(cfg: &crate::config::DeviceKeyBindings) -> Self {
+        let resolve = |name: &str| -> Option<KeyCode> {
+            if name.is_empty() {
+                return None;
+            }
+            let code = parse_keycode(name);
+            if code.is_none() {
+                eprintln!("rustynes: unknown device keycode {name:?} in input config");
+            }
+            code
+        };
+        let mut power_pad = [None; 12];
+        for (slot, name) in power_pad.iter_mut().zip(&cfg.power_pad) {
+            *slot = resolve(name);
+        }
+        let mut family_keyboard = [None; FAMILY_KEYBOARD_POSITIONS];
+        for (slot, name) in family_keyboard.iter_mut().zip(&cfg.family_keyboard) {
+            *slot = resolve(name);
+        }
+        Self {
+            power_pad,
+            microphone: resolve(&cfg.microphone),
+            family_keyboard,
+        }
+    }
 }
 
 impl Default for KeyBindings {
@@ -209,6 +267,7 @@ impl KeyBindings {
             player3,
             player4,
             system,
+            devices: DeviceKeyMap::from_config(&cfg.device_keys),
         }
     }
 }
@@ -731,7 +790,8 @@ pub const fn socd_neutral(b: Buttons) -> Buttons {
 /// buttons (mat button `i+1` ⇒ index `i`): a left-hand 3×4 grid `1 2 3 4` /
 /// `Q W E R` / `A S D F`.
 ///
-/// Fixed for now (rebindable mat keys are a follow-up). Deliberately avoids the
+/// The DEFAULT mat keys; rebindable since v3.5.0 (`[input.device_keys]`,
+/// [`DeviceKeyMap`]). Deliberately avoids the
 /// `P1` keys (arrows / `Z` `X` / Enter / `RShift`) and the system bindings — in
 /// particular `0` `-` `=`, which are the default speed controls. The overlap
 /// with the `P2` controller keys (`WASD` / `Q` `E`) is harmless: a Power Pad
@@ -785,7 +845,8 @@ pub const BANDAI_HYPER_SHOT_KEYS: [KeyCode; 8] = [
 /// Default hold-to-talk key for the Famicom built-in microphone (v2.2.0).
 ///
 /// The microphone is read on `$4016` bit 2; games such as *Zelda* (Pols Voice)
-/// and *Kid Icarus* poll it. Fixed for now (a rebindable mic key is a follow-up).
+/// and *Kid Icarus* poll it. The DEFAULT key; rebindable since v3.5.0
+/// (`[input.device_keys] microphone`, [`DeviceKeyMap`]).
 ///
 /// v2.7.3 (frontend audit DESK-02): `N`, not `M`. `M` is also the menu-bar
 /// toggle, so holding it to speak flipped the menu on every press.
@@ -793,7 +854,12 @@ pub const BANDAI_HYPER_SHOT_KEYS: [KeyCode; 8] = [
 /// every default pad and system binding.
 pub const MICROPHONE_KEY: KeyCode = KeyCode::KeyN;
 
-/// v1.2.0 Workstream D — host-key -> Family BASIC keyboard matrix-index map.
+/// v1.2.0 Workstream D — the number of Family BASIC keyboard matrix
+/// positions: `9` rows x `2` column-halves x `4` switches.
+pub const FAMILY_KEYBOARD_POSITIONS: usize = 72;
+
+/// v1.2.0 Workstream D — the DEFAULT host key for each Family BASIC keyboard
+/// matrix position, in position order (position `i` = element `i`).
 ///
 /// The Famicom Family BASIC keyboard is a `9 x 8` switch matrix (`9` rows x
 /// `2` column-halves x `4` switches = 72 key positions). We expose the matrix
@@ -802,79 +868,85 @@ pub const MICROPHONE_KEY: KeyCode = KeyCode::KeyN;
 /// than reproduce the exact (and partly undocumented) Japanese-layout switch
 /// positions, this is a **direct passthrough**: the host PC key is mapped to a
 /// matrix position so typing on the host drives the emulated keyboard. The
-/// position assignment is arbitrary-but-stable (it only has to be one-to-one);
-/// a faithful per-key positional layout is a follow-up.
+/// position assignment is arbitrary-but-stable (it only has to be one-to-one):
+/// letters A-Z (0..26), digits 0-9 (26..36), then control / punctuation keys.
+/// Positions 58..72 have no default key.
 ///
-/// Returns `None` for keys with no keyboard position (they fall through to the
-/// normal controller / system handling).
+/// v3.5.0 (`FE-07`): these are the defaults of a rebindable layout
+/// (`[input.device_keys] family_keyboard`, [`DeviceKeyMap`]); until v3.5.0 the
+/// table lived inside [`family_keyboard_index`]'s `match` and could not be
+/// changed. A faithful per-key positional layout is still a follow-up; with the
+/// layout rebindable, a player can now build one.
+pub const FAMILY_KEYBOARD_DEFAULT_KEYS: [KeyCode; 58] = [
+    KeyCode::KeyA,
+    KeyCode::KeyB,
+    KeyCode::KeyC,
+    KeyCode::KeyD,
+    KeyCode::KeyE,
+    KeyCode::KeyF,
+    KeyCode::KeyG,
+    KeyCode::KeyH,
+    KeyCode::KeyI,
+    KeyCode::KeyJ,
+    KeyCode::KeyK,
+    KeyCode::KeyL,
+    KeyCode::KeyM,
+    KeyCode::KeyN,
+    KeyCode::KeyO,
+    KeyCode::KeyP,
+    KeyCode::KeyQ,
+    KeyCode::KeyR,
+    KeyCode::KeyS,
+    KeyCode::KeyT,
+    KeyCode::KeyU,
+    KeyCode::KeyV,
+    KeyCode::KeyW,
+    KeyCode::KeyX,
+    KeyCode::KeyY,
+    KeyCode::KeyZ,
+    KeyCode::Digit0,
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+    KeyCode::Space,
+    KeyCode::Enter,
+    KeyCode::Backspace,
+    KeyCode::Minus,
+    KeyCode::Equal,
+    KeyCode::BracketLeft,
+    KeyCode::BracketRight,
+    KeyCode::Semicolon,
+    KeyCode::Quote,
+    KeyCode::Comma,
+    KeyCode::Period,
+    KeyCode::Slash,
+    KeyCode::Backslash,
+    KeyCode::ShiftLeft,
+    KeyCode::ShiftRight,
+    KeyCode::ControlLeft,
+    KeyCode::Tab,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowDown,
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowRight,
+    KeyCode::Escape,
+];
+
+/// The DEFAULT Family BASIC keyboard matrix position for a host key.
+///
+/// Its index in [`FAMILY_KEYBOARD_DEFAULT_KEYS`], or `None` for a key with no
+/// default position (it falls through to the controller / system handling). The live
+/// layout, which the player may have rebound, is
+/// [`InputState::family_keyboard_positions`].
 #[must_use]
-pub const fn family_keyboard_index(code: KeyCode) -> Option<usize> {
-    // A fixed, one-to-one assignment over the printable + control keys, packed
-    // into the 0..72 matrix space. Letters A-Z (0..26), digits 0-9 (26..36),
-    // then a handful of control/punctuation keys.
-    let idx = match code {
-        KeyCode::KeyA => 0,
-        KeyCode::KeyB => 1,
-        KeyCode::KeyC => 2,
-        KeyCode::KeyD => 3,
-        KeyCode::KeyE => 4,
-        KeyCode::KeyF => 5,
-        KeyCode::KeyG => 6,
-        KeyCode::KeyH => 7,
-        KeyCode::KeyI => 8,
-        KeyCode::KeyJ => 9,
-        KeyCode::KeyK => 10,
-        KeyCode::KeyL => 11,
-        KeyCode::KeyM => 12,
-        KeyCode::KeyN => 13,
-        KeyCode::KeyO => 14,
-        KeyCode::KeyP => 15,
-        KeyCode::KeyQ => 16,
-        KeyCode::KeyR => 17,
-        KeyCode::KeyS => 18,
-        KeyCode::KeyT => 19,
-        KeyCode::KeyU => 20,
-        KeyCode::KeyV => 21,
-        KeyCode::KeyW => 22,
-        KeyCode::KeyX => 23,
-        KeyCode::KeyY => 24,
-        KeyCode::KeyZ => 25,
-        KeyCode::Digit0 => 26,
-        KeyCode::Digit1 => 27,
-        KeyCode::Digit2 => 28,
-        KeyCode::Digit3 => 29,
-        KeyCode::Digit4 => 30,
-        KeyCode::Digit5 => 31,
-        KeyCode::Digit6 => 32,
-        KeyCode::Digit7 => 33,
-        KeyCode::Digit8 => 34,
-        KeyCode::Digit9 => 35,
-        KeyCode::Space => 36,
-        KeyCode::Enter => 37,
-        KeyCode::Backspace => 38,
-        KeyCode::Minus => 39,
-        KeyCode::Equal => 40,
-        KeyCode::BracketLeft => 41,
-        KeyCode::BracketRight => 42,
-        KeyCode::Semicolon => 43,
-        KeyCode::Quote => 44,
-        KeyCode::Comma => 45,
-        KeyCode::Period => 46,
-        KeyCode::Slash => 47,
-        KeyCode::Backslash => 48,
-        KeyCode::ShiftLeft => 49,
-        KeyCode::ShiftRight => 50,
-        KeyCode::ControlLeft => 51,
-        KeyCode::Tab => 52,
-        KeyCode::ArrowUp => 53,
-        KeyCode::ArrowDown => 54,
-        KeyCode::ArrowLeft => 55,
-        KeyCode::ArrowRight => 56,
-        KeyCode::Escape => 57,
-        // 58..72 are matrix positions with no default host-key binding.
-        _ => return None,
-    };
-    Some(idx)
+pub fn family_keyboard_index(code: KeyCode) -> Option<usize> {
+    FAMILY_KEYBOARD_DEFAULT_KEYS.iter().position(|&k| k == code)
 }
 
 impl InputState {
@@ -934,6 +1006,19 @@ impl InputState {
     #[must_use]
     pub fn clean_all_directions(&self, ports: [Buttons; MAX_PADS]) -> [Buttons; MAX_PADS] {
         ports.map(|b| self.clean_directions(b))
+    }
+
+    /// v3.5.0 (`FE-07`) — the Family BASIC keyboard matrix positions the
+    /// live layout binds to `code` (usually zero or one; several when the
+    /// player bound one host key to more than one position).
+    pub fn family_keyboard_positions(&self, code: KeyCode) -> impl Iterator<Item = usize> + '_ {
+        self.bindings
+            .devices
+            .family_keyboard
+            .iter()
+            .enumerate()
+            .filter(move |(_, k)| **k == Some(code))
+            .map(|(i, _)| i)
     }
 
     /// Default bindings (matches the legacy hardcoded layout).
@@ -1171,14 +1256,18 @@ impl InputState {
             }
         }
 
-        // v1.1.0 beta.1 (T-110-B1) — Power Pad mat buttons (fixed default keys).
-        // Tracked unconditionally; only consumed when a Power Pad is attached.
-        if let Some(i) = POWER_PAD_KEYS.iter().position(|&k| k == code) {
-            let bit = 1u16 << i;
-            if pressed {
-                self.power_pad |= bit;
-            } else {
-                self.power_pad &= !bit;
+        // v1.1.0 beta.1 (T-110-B1) — Power Pad mat buttons. Tracked
+        // unconditionally; only consumed when a Power Pad is attached. v3.5.0
+        // (`FE-07`): the keys are the configured ones, and every mat button
+        // bound to this key follows it.
+        for (i, slot) in self.bindings.devices.power_pad.iter().enumerate() {
+            if *slot == Some(code) {
+                let bit = 1u16 << i;
+                if pressed {
+                    self.power_pad |= bit;
+                } else {
+                    self.power_pad &= !bit;
+                }
             }
         }
 
@@ -1205,7 +1294,8 @@ impl InputState {
         // v2.2.0 "Capstone" — Famicom microphone hold-to-talk key. Tracked
         // unconditionally; the core only surfaces it on $4016.D2 when driven, so
         // the no-mic path stays byte-identical.
-        if code == MICROPHONE_KEY {
+        // v3.5.0 (`FE-07`): the configured key.
+        if self.bindings.devices.microphone == Some(code) {
             self.microphone = pressed;
         }
 
@@ -2003,5 +2093,110 @@ mod tests {
         assert_eq!(canonical_keycode_name("F5"), "F5");
         // Unrecognized names pass through (migration shouldn't drop them).
         assert_eq!(canonical_keycode_name("PrintScreen"), "PrintScreen");
+    }
+
+    // ---- v3.5.0 (`FE-07`): rebindable device keys ----
+
+    fn state_with(edit: impl FnOnce(&mut crate::config::DeviceKeyBindings)) -> InputState {
+        let mut cfg = InputConfig::default();
+        edit(&mut cfg.device_keys);
+        InputState::from_config(&cfg)
+    }
+
+    fn press(s: &mut InputState, code: KeyCode) {
+        let (k, e) = down(code);
+        s.handle_key(k, e);
+    }
+
+    /// The default configuration resolves to exactly the layout the three
+    /// devices had fixed before v3.5.0.
+    #[test]
+    fn the_default_device_keys_are_the_old_fixed_layout() {
+        let d = &KeyBindings::default().devices;
+        assert_eq!(d.power_pad, POWER_PAD_KEYS.map(Some));
+        assert_eq!(d.microphone, Some(MICROPHONE_KEY));
+        for (i, slot) in d.family_keyboard.iter().enumerate() {
+            let expected = FAMILY_KEYBOARD_DEFAULT_KEYS.get(i).copied();
+            assert_eq!(*slot, expected, "position {i}");
+        }
+        let s = InputState::with_defaults();
+        for (i, &k) in FAMILY_KEYBOARD_DEFAULT_KEYS.iter().enumerate() {
+            assert_eq!(s.family_keyboard_positions(k).collect::<Vec<_>>(), [i]);
+        }
+    }
+
+    #[test]
+    fn a_rebound_mat_button_follows_its_new_key_only() {
+        let mut s = state_with(|d| d.power_pad[0] = "KeyZ".into());
+        press(&mut s, KeyCode::Digit1);
+        assert_eq!(s.power_pad & 1, 0, "the old key no longer presses button 1");
+        press(&mut s, KeyCode::KeyZ);
+        assert_eq!(s.power_pad & 1, 1, "the new key does");
+        // Two buttons on one key press together.
+        let mut s = state_with(|d| d.power_pad[11] = "KeyZ".into());
+        press(&mut s, KeyCode::KeyZ);
+        assert_eq!(s.power_pad, 1 << 11, "only button 12 follows Z here");
+        let mut s = state_with(|d| {
+            d.power_pad[0] = "KeyZ".into();
+            d.power_pad[11] = "KeyZ".into();
+        });
+        press(&mut s, KeyCode::KeyZ);
+        assert_eq!(s.power_pad, 1 | (1 << 11));
+    }
+
+    #[test]
+    fn a_rebound_microphone_key_holds_the_microphone() {
+        let mut s = state_with(|d| d.microphone = "KeyV".into());
+        press(&mut s, MICROPHONE_KEY);
+        assert!(!s.microphone(), "the old key is free");
+        press(&mut s, KeyCode::KeyV);
+        assert!(s.microphone());
+        let (k, e) = up(KeyCode::KeyV);
+        s.handle_key(k, e);
+        assert!(!s.microphone());
+        // Unbound: nothing holds it.
+        let mut s = state_with(|d| d.microphone.clear());
+        press(&mut s, MICROPHONE_KEY);
+        assert!(!s.microphone());
+    }
+
+    #[test]
+    fn a_rebound_keyboard_position_moves_and_an_unknown_name_unbinds() {
+        let s = state_with(|d| {
+            d.family_keyboard[0] = "Numpad1".into();
+            d.family_keyboard[60] = "KeyA".into();
+            d.family_keyboard[1] = "NotAKey".into();
+        });
+        assert_eq!(
+            s.family_keyboard_positions(KeyCode::Numpad1)
+                .collect::<Vec<_>>(),
+            [0]
+        );
+        assert_eq!(
+            s.family_keyboard_positions(KeyCode::KeyA)
+                .collect::<Vec<_>>(),
+            [60]
+        );
+        assert_eq!(s.family_keyboard_positions(KeyCode::KeyB).count(), 0);
+        // A short list leaves the rest unbound rather than shifting anything.
+        let s = state_with(|d| d.family_keyboard.truncate(3));
+        assert_eq!(
+            s.family_keyboard_positions(KeyCode::KeyC)
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        assert_eq!(s.family_keyboard_positions(KeyCode::KeyD).count(), 0);
+    }
+
+    /// A rebind reaches a live `InputState` through `reload_bindings`, the
+    /// path the Settings panel's dirty flag takes.
+    #[test]
+    fn reload_bindings_applies_rebound_device_keys() {
+        let mut s = InputState::with_defaults();
+        let mut cfg = InputConfig::default();
+        cfg.device_keys.power_pad[4] = "KeyY".into();
+        s.reload_bindings(&cfg);
+        press(&mut s, KeyCode::KeyY);
+        assert_eq!(s.power_pad, 1 << 4);
     }
 }

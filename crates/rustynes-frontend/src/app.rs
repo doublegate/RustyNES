@@ -272,14 +272,34 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
 /// [`apply_game_db_header_overrides`] — the half that used to be missing, and
 /// which this sentence previously papered over by claiming the wasm path
 /// "preprocesses separately" when it preprocessed nothing at all.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// v3.5.0: `App::new` calls [`load_startup_rom`], which also returns the
+/// Multi-Disk bundle; this two-value form remains for the tests that pin the
+/// zip / patch behaviour.
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)> {
-    let mut bytes = std::fs::read(rom_path)?;
-    let mut label = rom_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("rom.nes")
-        .to_string();
+    load_startup_rom(rom_path).map(|(bytes, label, _)| (bytes, label))
+}
+
+/// [`load_and_preprocess_rom`], also returning the Multi-Disk bundle when
+/// `rom_path` is a `.rnbundle` manifest (v3.5.0, `FE-04`): its merged FDS disk
+/// set or its first cartridge slot is the image, and the bundle names the label.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_startup_rom(
+    rom_path: &Path,
+) -> std::io::Result<(Vec<u8>, String, Option<crate::bundle::LoadedBundle>)> {
+    let (mut bytes, bundle) = crate::bundle::read_rom_or_bundle(rom_path, 0)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    let mut label = bundle.as_ref().map_or_else(
+        || {
+            rom_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("rom.nes")
+                .to_string()
+        },
+        crate::bundle::LoadedBundle::label,
+    );
     if rom_path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
@@ -317,7 +337,7 @@ fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)
         }
         break;
     }
-    Ok((bytes, label))
+    Ok((bytes, label, bundle))
 }
 
 /// Rewrite an iNES header with every load-time correction, in the order the
@@ -970,6 +990,11 @@ pub struct App {
     #[cfg(not(target_arch = "wasm32"))]
     startup_rom_path: PathBuf,
     rom_label: String,
+    /// v3.5.0 (`FE-04`) — the Multi-Disk bundle the loaded image came from, if
+    /// any: its side names label the FDS menu, its slots fill Emulation →
+    /// Multicart. Cleared by every load that is not a bundle.
+    #[cfg(not(target_arch = "wasm32"))]
+    bundle: Option<crate::bundle::LoadedBundle>,
     /// v2.8.0 Phase 5 — the emulation core: ALL per-frame produce state
     /// (the `Nes`, movie, run-ahead, perf, presented framebuffer, pacing
     /// deadlines, …) extracted from `App` into `emu.rs`. `App` keeps the
@@ -1396,7 +1421,7 @@ impl App {
     pub fn new(rom_path: &std::path::Path) -> std::io::Result<Self> {
         // The CLI / initial-ROM path must run the same `.zip` extraction +
         // same-stem soft-patching as `load_rom_from_path` (see the helper).
-        let (rom_bytes, rom_label) = load_and_preprocess_rom(rom_path)?;
+        let (rom_bytes, rom_label, bundle) = load_startup_rom(rom_path)?;
         let config = Config::load_or_default();
         let input = InputState::from_config(&config.input);
         let data_dir = Config::default_data_dir();
@@ -1411,6 +1436,7 @@ impl App {
             rom_bytes,
             startup_rom_path: rom_path.to_path_buf(),
             rom_label,
+            bundle,
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
             present_index_staging: Vec::new(),
@@ -1662,11 +1688,80 @@ impl App {
     fn open_rom_dialog(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("NES / FDS / UNIF image", &["nes", "fds", "unf", "unif"])
+            // v3.5.0 (`FE-04`) — a Multi-Disk bundle opens like a ROM.
+            .add_filter("Multi-Disk bundle", &[crate::bundle::BUNDLE_EXTENSION])
             .pick_file()
         else {
             return;
         };
         self.load_rom_from_path(&path);
+    }
+
+    /// v3.5.0 (`FE-04`) — the open bundle's menu facts: the disk side names
+    /// (FDS bundle), the slot names and the loaded slot (cartridge bundle).
+    /// All empty / `None` without a bundle, and always on wasm.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
+    )]
+    fn bundle_menu_facts(&self) -> (Vec<String>, Vec<String>, Option<usize>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(b) = self.bundle.as_ref() {
+            return match b.bundle.kind {
+                crate::bundle::BundleKind::Fds => (b.side_names.clone(), Vec::new(), None),
+                crate::bundle::BundleKind::Cartridge => (
+                    Vec::new(),
+                    b.bundle.slots.iter().map(|s| s.name.clone()).collect(),
+                    Some(b.current),
+                ),
+            };
+        }
+        (Vec::new(), Vec::new(), None)
+    }
+
+    /// v3.5.0 (`FE-04`) — File → New Multi-Disk Bundle…: pick the images (all
+    /// FDS disks, or all cartridges), choose where to save the manifest, write
+    /// it (each slot named by its file's stem; rename them in the file) and
+    /// open it. A failure is shown on the status line; nothing is written
+    /// unless both dialogs complete.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn new_bundle_dialog(&mut self) {
+        let Some(images) = rfd::FileDialog::new()
+            .set_title("Choose the disks or cartridges, in order")
+            .add_filter("FDS disk / NES cartridge", &["fds", "nes", "unf", "unif"])
+            .pick_files()
+        else {
+            return;
+        };
+        let Some(first) = images.first() else {
+            return;
+        };
+        let dir = first.parent().map(Path::to_path_buf).unwrap_or_default();
+        let stem = first
+            .file_stem()
+            .map_or_else(|| "bundle".to_owned(), |s| s.to_string_lossy().into_owned());
+        let Some(manifest) = rfd::FileDialog::new()
+            .set_title("Save the Multi-Disk bundle")
+            .set_directory(&dir)
+            .set_file_name(format!("{stem}.{}", crate::bundle::BUNDLE_EXTENSION))
+            .add_filter("Multi-Disk bundle", &[crate::bundle::BUNDLE_EXTENSION])
+            .save_file()
+        else {
+            return;
+        };
+        let name = manifest
+            .file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        let manifest_dir = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
+        let text = crate::bundle::manifest_text_for(&name, &manifest_dir, &images);
+        if let Err(e) = crate::atomic_write::write_atomic(&manifest, text.as_bytes()) {
+            self.ui.set_status(StatusMessage::error(format!(
+                "Could not write {}: {e}",
+                manifest.display()
+            )));
+            return;
+        }
+        self.load_rom_from_path(&manifest);
     }
 
     /// Apply the Vs. System per-game database (v2.7.0) to a freshly built
@@ -1883,9 +1978,19 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::too_many_lines)] // sequential per-format load + device/cheat/DB setup
     fn load_rom_from_path(&mut self, path: &Path) {
-        let mut bytes = match std::fs::read(path) {
+        self.load_rom_at(path, 0);
+    }
+
+    /// [`Self::load_rom_from_path`] with a Multi-Disk bundle slot (v3.5.0,
+    /// `FE-04`): `slot` picks the cartridge of a cartridge bundle and is
+    /// ignored for anything else. A `.rnbundle` reads as its merged FDS disk
+    /// set or its chosen cartridge (`bundle::read_rom_or_bundle`); every other
+    /// step is the ordinary load.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_lines)] // sequential per-format load + device/cheat/DB setup
+    fn load_rom_at(&mut self, path: &Path, slot: usize) {
+        let (mut bytes, loaded_bundle) = match crate::bundle::read_rom_or_bundle(path, slot) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("rustynes: failed to read {}: {e}", path.display());
@@ -2095,11 +2200,16 @@ impl App {
             debugger.set_rom_crc_full(rom_crc_full);
         }
 
-        self.rom_label = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("rom.nes")
-            .to_string();
+        self.rom_label = loaded_bundle.as_ref().map_or_else(
+            || {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("rom.nes")
+                    .to_string()
+            },
+            crate::bundle::LoadedBundle::label,
+        );
+        self.bundle = loaded_bundle;
         self.rom_bytes = bytes;
         // v2.1.2 F2.1 — cache the dual flag for the per-redraw present branch.
         #[cfg(not(target_arch = "wasm32"))]
@@ -3142,17 +3252,9 @@ impl App {
             rec.crf,
             &rec.preset,
             rec.audio_bitrate_k,
-        );
-        let params = AvParams {
-            out_path: out_path.clone(),
-            sample_rate,
-            fps_num,
-            fps_den,
-            video_codec: opts.video_codec,
-            crf: opts.crf,
-            preset: opts.preset,
-            audio_bitrate_k: opts.audio_bitrate_k,
-        };
+        )
+        .with_audio_offset_ms(rec.audio_offset_ms);
+        let params = AvParams::new(out_path.clone(), sample_rate, fps_num, fps_den, opts);
         match AvRecorder::start(params) {
             Ok(recorder) => {
                 self.emu.lock().av_recorder = Some(recorder);
@@ -5620,6 +5722,21 @@ impl App {
                 if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
                     self.cycle_disk_side();
                 }
+            }
+            MenuAction::SelectBundleSlot(slot) => {
+                // v3.5.0 (`FE-04`) — a cartridge-bundle slot is a ROM load of
+                // that slot through the manifest, so the bundle stays open.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(manifest) = self.bundle.as_ref().map(|b| b.bundle.manifest_path.clone())
+                {
+                    self.load_rom_at(&manifest, slot);
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = slot;
+            }
+            MenuAction::NewBundle => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.new_bundle_dialog();
             }
             MenuAction::SetDiskSide(side) => {
                 if !self.refuse_timeline_action(TimelineAction::DiskSwap) {
@@ -10602,20 +10719,23 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             }
             WindowEvent::DroppedFile(path) => {
-                // Native filesystem drag-and-drop. On wasm32 browser
-                // file drops are a follow-up (the file picker is the
-                // primary ROM-load path there).
+                // Native filesystem drag-and-drop. winit's web backend never
+                // delivers this event; the browser builds listen for the DOM
+                // `drop` event themselves (v3.5.0, `crate::drop_route`).
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     // Accept any path with a `.nes` / `.fds` / `.unf` / `.unif`
                     // extension (case-insensitive). v2.2.0 added `.fds`; v1.6.0
-                    // (E2) added the UNIF container.
-                    let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                        e.eq_ignore_ascii_case("nes")
-                            || e.eq_ignore_ascii_case("fds")
-                            || e.eq_ignore_ascii_case("unf")
-                            || e.eq_ignore_ascii_case("unif")
-                    });
+                    // (E2) added the UNIF container. v3.5.0: the list lives in
+                    // `drop_route::is_rom_name`, shared with the browser drop.
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy())
+                        .unwrap_or_default();
+                    // v3.5.0 (`FE-04`): a Multi-Disk bundle drops like a ROM
+                    // (desktop only; the browser has no paths to resolve).
+                    let ok = crate::drop_route::is_rom_name(&name)
+                        || crate::bundle::is_bundle_path(&path);
                     if ok {
                         self.load_rom_from_path(&path);
                     } else {
@@ -10707,15 +10827,16 @@ impl ApplicationHandler<AppEvent> for App {
                 // unconditionally (cheap); consumed only when a Family BASIC
                 // keyboard is the active device. Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key
-                    && let Some(idx) = crate::input::family_keyboard_index(code)
-                {
-                    let row = idx / 8;
-                    let bit = 1u8 << (idx % 8);
-                    if event.state == winit::event::ElementState::Pressed {
-                        self.family_keyboard[row] |= bit;
-                    } else {
-                        self.family_keyboard[row] &= !bit;
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
+                    // v3.5.0 (`FE-07`): the live, rebindable layout.
+                    let pressed = event.state == winit::event::ElementState::Pressed;
+                    for idx in self.input.family_keyboard_positions(code) {
+                        let (row, bit) = (idx / 8, 1u8 << (idx % 8));
+                        if pressed {
+                            self.family_keyboard[row] |= bit;
+                        } else {
+                            self.family_keyboard[row] &= !bit;
+                        }
                     }
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
@@ -11010,6 +11131,8 @@ impl ApplicationHandler<AppEvent> for App {
                 let run_ahead = self.config.input.run_ahead;
                 // Keep the shell's save-slot mirror in sync with the app's.
                 self.ui.active_slot = self.active_save_slot;
+                // v3.5.0 (`FE-04`) — the open Multi-Disk bundle's names.
+                let (bundle_side_names, bundle_slots, bundle_slot) = self.bundle_menu_facts();
                 let shell_frame = crate::ui_shell::ShellFrame {
                     rom_label: &self.rom_label,
                     rom_loaded,
@@ -11017,6 +11140,9 @@ impl ApplicationHandler<AppEvent> for App {
                     netplay_active,
                     disk_sides,
                     inserted_disk_side,
+                    disk_side_names: &bundle_side_names,
+                    bundle_slots: &bundle_slots,
+                    bundle_slot,
                     vs_system,
                     barcode_reader,
                     mapper_label: &mapper_label,
@@ -12808,7 +12934,9 @@ mod tests {
     /// FDS / NSF exclusion `cabinet_for_image` applies).
     #[test]
     fn every_load_path_installs_a_dual_system_cabinet() {
-        for name in ["load_rom_from_path", "finish_start_nes", "install_nes_wasm"] {
+        // v3.5.0: the menu load's body is `load_rom_at` (`load_rom_from_path`
+        // now forwards to it with bundle slot 0).
+        for name in ["load_rom_at", "finish_start_nes", "install_nes_wasm"] {
             let body = production_fn_body(name);
             let decided = body
                 .find("self.cabinet_for_image(")
@@ -12896,7 +13024,8 @@ mod tests {
     #[test]
     fn every_load_path_configures_the_console_before_installing_it() {
         for (name, install) in [
-            ("load_rom_from_path", "emu.set_nes(nes)"),
+            // v3.5.0: `load_rom_from_path` forwards to `load_rom_at`.
+            ("load_rom_at", "emu.set_nes(nes)"),
             ("finish_start_nes", "guard.set_nes(nes)"),
         ] {
             let body = production_fn_body(name);

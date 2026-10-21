@@ -141,6 +141,57 @@ cycle-accurate core later replaced.
   refused. No network listener. Nothing in the emulation core changes (no
   epoch, movie-format or protocol change).
 
+- **An A/V sync offset for recordings** (`FE-03`). Settings → Recording →
+  *A/V sync offset* shifts the recorded audio against the video by up to a
+  second either way when an `.mp4` or `.mkv` is written: positive makes the
+  sound later, negative earlier. It corrects latency added after the
+  emulator (a TV, a capture chain); the capture itself was already in step.
+  At 0, the default, recordings are made exactly as before.
+- **Drag-and-drop in the browser** (`FE-05`). Drop a `.nes`, `.fds`,
+  `.unf` or `.unif` onto the web page to load it, a `.rnm` to play the
+  movie, or (full web build) the 8 KiB `disksys.rom` to install the FDS
+  BIOS. Until now the browser opened a dropped file itself and only the file
+  picker loaded a game. The lightweight canvas embed takes ROMs and movies.
+- **Vs. DualSystem games in the lightweight browser embed** (`FE-10`). The
+  canvas embed now runs both consoles of a two-console Vs. cabinet (Tennis,
+  Mahjong, Wrecking Crew, Balloon Fight) and shows the two screens side by
+  side, as the full web build and the desktop do; before, it ran the main
+  console alone and the game stayed on its attract screen. `F10` inserts a
+  coin there, for single Vs. games too, which the embed could not do at
+  all. Save states cover both consoles; movies stay unavailable on a
+  cabinet, as everywhere.
+- **Multi-Disk bundles** (`FE-04`). A `.rnbundle` file names a set of disk
+  or cartridge images and opens like a ROM. A Famicom Disk System game dumped
+  as one file per disk plays as one disk set, its sides named in the Famicom
+  Disk System menu ("Disk 1 side A", ...), where before only the first file's
+  sides could be inserted. A bundle of cartridges adds an Emulation →
+  Multicart menu to switch between them. File → New Multi-Disk Bundle…
+  writes one from the files you pick.
+- **Rebindable microphone, Power Pad and Family BASIC keyboard keys**
+  (`FE-07`). Settings → Input → *Device keys* rebinds the Famicom
+  microphone's hold key, the 12 Power Pad / Family Trainer mat buttons and
+  the 72 Family BASIC keyboard positions, which were fixed until now. They
+  are saved as `[input.device_keys]`, written only once something differs
+  from the old layout, which stays the default.
+
+### Changed
+
+- **The host warning codes live in the emulation core** (`FE-06`).
+  `HostWarning` (the codes the Android and iOS apps localise, with their
+  English text) moved from the mobile bridge to `rustynes-core`, which the
+  desktop and browser frontends share with it, so every frontend takes a
+  warning's code and wording from one place. The apps see no change: the
+  generated Kotlin and Swift differ only in documentation comments. The
+  desktop and browser never showed either warning (neither can occur
+  there), so nothing they display changes.
+- **The emulation thread runs at a raised priority on Windows and macOS too**
+  (`FE-08`). Windows sets it one step above normal
+  (`THREAD_PRIORITY_ABOVE_NORMAL`); macOS puts it in the `USER_INTERACTIVE`
+  quality-of-service class. Both affect that one thread only, need no
+  privileges, stay below the audio thread, and leave it at the default if the
+  system refuses. Linux was already elevated. The line the app prints at
+  start says which outcome applied.
+
 ### Fixed
 
 - **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu

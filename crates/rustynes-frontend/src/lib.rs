@@ -31,6 +31,8 @@ pub mod audio;
 /// needed: decided once, for the desktop `.sav` file and the browser's
 /// `IndexedDB` record alike, so the two cannot drift.
 pub mod battery_policy;
+// v3.5.0 (`FE-04`) — the Multi-Disk Bundler: `.rnbundle` manifests naming a
+// set of FDS disks (merged into one disk set) or cartridges (one per slot).
 /// v2.7.3 "Hearth" (FE-01) — cartridge battery RAM, persisted to disk.
 ///
 /// Files live at `<data_dir>/battery/<rom_sha256>.sav`. Until this release the
@@ -39,6 +41,8 @@ pub mod battery_policy;
 /// `web_battery` (an IndexedDB record, v2.9.7).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod battery_save;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bundle;
 /// v2.9.9 (NF-11) — which timeline-changing actions a running movie, netplay
 /// session or RA hardcore session refuses.
 ///
@@ -89,6 +93,13 @@ pub mod debugger;
 // is single-canvas and keeps panels docked).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod detached;
+// v3.5.0 (`FE-05`) — what a dropped file is (ROM / movie / FDS BIOS), decided
+// once for the desktop's drop handler and both browser builds' drop zones.
+pub mod drop_route;
+// v3.5.0 (`FE-10`) — the Vs. `DualSystem` cabinet in the `wasm-canvas` embed:
+// the DOM-free half, compiled for that build and for the native unit tests.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-canvas")))]
+pub mod canvas_dual;
 // v2.8.0 Phase 5 — the emulation core extracted from `App` (per-frame
 // produce state; the boundary the emulation thread spawns onto).
 pub mod emu;

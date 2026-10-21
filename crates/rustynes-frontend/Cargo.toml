@@ -385,7 +385,10 @@ rustynes-hdpack = { workspace = true, optional = true }
 # the `rtprio`/`nice` rlimit (join the `realtime` group / install
 # `realtime-privileges`). `libc` is already in the native dep tree
 # (transitively via cpal/alsa); this just makes it a direct dep. Behind the
-# `emu-thread` feature so a feature-off build doesn't pull it.
+# `emu-thread` feature so a feature-off build doesn't pull it. v3.5.0
+# (`FE-08`): macOS uses it too, for `pthread_set_qos_class_self_np`; the
+# Windows variant declares its two `kernel32` functions itself and needs no
+# crate.
 libc = { version = "0.2", optional = true }
 
 # v1.3.0 Sprint 1.1 — wasm32 target dependencies.

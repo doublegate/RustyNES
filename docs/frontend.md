@@ -119,9 +119,16 @@ not the winit thread:
   stored knobs.
   Pinned by `every_load_path_configures_the_console_before_installing_it` and
   `configure_console_restores_what_a_power_cycle_drops`.
-- Best-effort Linux priority elevation runs on the emu thread (SCHED_RR →
-  `nice` → `PR_SET_TIMERSLACK`, degrading silently without the `realtime`
-  rlimit).
+- Best-effort priority elevation runs on the emu thread, per thread and
+  never for the process. Linux: SCHED_RR → `nice` → `PR_SET_TIMERSLACK`,
+  degrading silently without the `realtime` rlimit. Windows (v3.5.0):
+  `SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL)`, one step above normal and
+  below the MMCSS audio thread. macOS (v3.5.0): QoS class
+  `USER_INTERACTIVE` via `pthread_set_qos_class_self_np`, short of the Mach
+  real-time policy Core Audio's thread uses. Each logs its outcome once on
+  stderr. No test can observe an OS scheduler class: the Windows and macOS
+  variants are type-checked for their targets in CI and confirmed by hand
+  on those systems (the stderr line says which outcome applied).
 
 `cargo run --no-default-features` keeps the synchronous path (the emulator
 runs on the winit thread) for A/B comparison. The browser builds
@@ -559,13 +566,85 @@ the two newest upstream PPU tests are known gaps).
   is length-capped (8 KiB) and tolerant of malformed input (silently keeps
   defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
 
+### Drag-and-drop in the browser (v3.5.0, `FE-05`)
+
+Both browser builds accept a file dropped anywhere on the page. winit's web
+backend delivers no `WindowEvent::DroppedFile`, so each build registers DOM
+`dragover` / `drop` listeners on the document itself
+(`wasm_winit::install_drop_loader`, `wasm::install_drop_loader`); both cancel
+the default, or the browser would open the file instead. The first dropped file
+is routed by `drop_route::classify` (the rule is a pure function, unit-tested on
+native, and the desktop's `DroppedFile` handler reads its ROM list from the same
+`is_rom_name`):
+
+| dropped file | wasm-winit | wasm-canvas |
+|---|---|---|
+| `.nes` / `.fds` / `.unf` / `.unif` | `AppEvent::RomLoaded`, as the picker | `load_rom_bytes`, as the picker (no FDS: its parse fails and is logged) |
+| `.rnm` | `AppEvent::MovieLoaded`, as F7's picker | `start_movie_from_bytes`, as F7's picker |
+| `.rom` / `.bin` of exactly 8 KiB | `AppEvent::FdsBiosLoaded`, as the BIOS upload | refused (the embed has no FDS) |
+| anything else | refused, logged to the console by name | the same |
+
+The list is narrower than the desktop's File → Open on purpose: the browser load
+path extracts no `.zip` and plays no `.nsf`. A drop is a user gesture, so a
+dropped ROM starts Web Audio exactly as the picker's `change` handler does.
+No unit test can run the DOM events. On 2026-10-20 the wasm-winit debug build
+(`trunk build`) was driven in headless Chromium over the DevTools protocol,
+dispatching synthetic `dragover` / `drop` events whose `DataTransfer` held a
+real `File`: `notes.txt` logged "dropped file ignored", an 8 KiB `disksys.rom`
+reached the app ("FDS BIOS accepted (8192 bytes)"), a 24,592-byte NROM was read
+and delivered with Web Audio armed, and both events reported
+`defaultPrevented`. **Still manual:** a real mouse drag in a desktop browser,
+the `.rnm` route, and the canvas embed.
+
 ### Web battery saves and Vs. `DualSystem` (v2.9.7 "Tandem")
 
 The wasm-winit build persists battery saves to `IndexedDB` (see
 [Battery saves in the browser](#battery-saves-in-the-browser-indexeddb-wasm-winit-v297))
 and runs Vs. `DualSystem` cabinets with both screens (see the "Web
-`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed does
-neither: it has no battery store and warns that a cabinet runs main-only.
+`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed has no
+battery store; it runs cabinets since v3.5.0 (below).
+
+**`DualSystem` in the `wasm-canvas` embed (v3.5.0, `FE-10`).** Until v3.5.0
+the embed ran a cabinet's main console alone and warned that it would not get
+past the attract screen. It now builds the cabinet by the same rule as the
+other frontends (`app::is_dual_system`). The DOM-free half is
+`canvas_dual.rs`, compiled for the embed and for the native tests:
+`build_cabinet` (both consoles get the game database's mirroring correction
+and the Vs. database's palette and DIP preset, as the embed's single path
+gives a Vs. game), `CabinetFrame::step` (P1 from the keyboard and Gamepad API
+on the main console's port 0, the touch overlay added to its chosen port so
+P3 / P4 reach the sub; the coin countdown; `VsDualSystem::run_frame`; the two
+screens side by side through the desktop's `gfx::compose_dual_into`), and
+`drain_audio` (the main console's samples played, the sub's drained and
+dropped, as on the desktop). `wasm.rs` sizes the canvas 512x240 with an
+inline `aspect-ratio: 1024 / 480` (the page's stylesheet fixes 512:480, which
+would stretch the pair to twice its height) and restores 256x240 and the
+page's rule for a single console. F1 / F4 save and load the cabinet's own
+"RVSD" snapshot under the ROM hash. F6-F8 and a dropped `.rnm` are refused
+with a console note (TAS is scoped out of dual mode, ADR 0032); there is no
+rewind, run-ahead or netplay, which the embed lacks for one console too.
+
+`F10` inserts a coin, the desktop's default Insert Coin key, into the
+cabinet's main acceptor or a single Vs. console's (before v3.5.0 the embed had
+no coin key at all, so no Vs. game could be started in it). The countdown is
+the desktop's: `VS_COIN_HOLD_FRAMES` = 3, and the latch is cleared at the top
+of the frame on which it reaches 0, so the coin reads on `$4016` through two
+emulated frames (`a_coin_reads_for_two_frames_then_is_released`; the
+desktop's comment calls this a three-frame hold).
+
+Verified: five `canvas_dual` tests (cabinet decision, frame-for-frame
+equality with a hand-driven cabinet and pixel-exact composition, port
+routing, the coin bit on `$4016`, the audio drain) and, on 2026-10-20, the
+embed's debug build in headless Chromium over the DevTools protocol: a
+dropped synthetic NROM ran at 256x240 with no inline style; the synthetic
+flashing cabinet (`runahead::tests::flashing_cabinet`) switched the canvas to
+512x240 with the inline aspect ratio, and three samples of the two halves
+showed different, changing colours (`218,109,0` / `255,182,0`, then
+`182,182,182` / `255,255,255`, then `0,109,218` / `109,182,255`); F7 logged
+the refusal; a second NROM restored 256x240 and removed the style. **Still
+manual:** a real `DualSystem` title (Tennis, Mahjong, Wrecking Crew, Balloon
+Fight) coined and played in a desktop browser, and the canvas layout at
+narrow widths.
 
 ### wasm size & startup + software blitter (v2.1.8 "Performance", A2 + A4)
 
@@ -1599,8 +1678,21 @@ the default (no-device) input path stays byte-identical:
   power-cycle.
 - **Family BASIC keyboard.** The full `9 × 8` positional keyboard matrix
   (`FamilyKeyboardState`, and the Subor clone) is selectable as the port-2
-  expansion device; `input::family_keyboard_index` maps host keys 1:1 onto the
-  72-key matrix (row-select via the `$4016` strobe + column-half on `$4017`).
+  expansion device; host keys map onto the 72-key matrix (row-select via the
+  `$4016` strobe + column-half on `$4017`). The default layout is
+  `input::FAMILY_KEYBOARD_DEFAULT_KEYS` (`family_keyboard_index` looks a key up
+  in it); since v3.5.0 (`FE-07`) the live layout is the rebindable
+  `[input.device_keys] family_keyboard` (`InputState::family_keyboard_positions`),
+  and the microphone key and the 12 Power Pad mat keys are rebindable beside it
+  (`input::DeviceKeyMap`, Settings -> Input -> Device keys). The table is
+  `#[serde(default)]` and written only when it differs from the defaults, so an
+  untouched config loads and saves byte-identically. Tests:
+  `the_default_device_keys_are_the_old_fixed_layout`, the three rebound-key
+  tests in `input.rs`, `device_keys_load_partially_and_round_trip`,
+  `device_slots_write_and_clear_the_device_keys`. Not unit-reachable: the
+  `app.rs` key-event hunk that feeds `family_keyboard_positions` into the
+  matrix, and the panel's rendering (manual check: rebind a keyboard position
+  with Family BASIC selected and type the key in BASIC).
 - **Zapper light-timing.** The photodiode now integrates a **3×3 aperture**
   (field-of-view) around the aim point rather than a single pixel, asserting
   light only when ≥2 pixels cross the luma threshold (`ZAPPER_APERTURE_*`). This
@@ -2143,6 +2235,22 @@ compiled). Implemented in `src/av_record.rs`.
   crisp GIF); `.wav` = audio-only transcode of the mono `f32le` PCM to canonical
   16-bit PCM. The arg builders (`ffmpeg_args` → `gif_args` / `wav_args`) are pure
   and unit-tested.
+- **A/V sync offset (v3.5.0, `FE-03`).** Settings → Recording → *A/V sync
+  offset*, `-1000..=1000` ms, persisted as `recording.audio_offset_ms`
+  (`#[serde(default)]` = 0). It is applied once, at the stop-time mux, to the
+  `.mp4` / `.mkv` audio track: positive adds the output filter `adelay=<ms>`
+  (the sound comes later), negative puts `-ss <seconds>` on the audio input
+  (its first `|ms|` is dropped, so the sound comes earlier), and `0` adds no
+  argument at all, so the default mux is unchanged (the whole argument vector is
+  pinned by `a_zero_sync_offset_leaves_the_mux_arguments_unchanged`). The
+  capture needs no correction (each frame's audio is the audio produced for
+  that frame); the offset is for latency a TV, capture chain or editor adds
+  on playback. GIF and WAV ignore it. `the_sync_offset_moves_the_audio_in_a_real_encode`
+  encodes a click at 0.5 s with offsets 0 / +120 / -120 ms through the real
+  `ffmpeg`, decodes the track back and requires the click to move by the
+  offset within 3 ms (measured 2026-10-20, ffmpeg n9.0.2: 500.40 / 620.27 /
+  380.27 ms); it returns early, saying so, where `ffmpeg` is absent, as in the
+  CI images.
 
 - **Capture is a read-only tap on the already-produced output.** Inside
   `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the
@@ -2241,11 +2349,49 @@ separate OS window; v2.3.0's `detached.rs` replaced that embedding (the
 **Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
 controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,
 BasicBot (savestate-anchored brute-force search), A/V dump codec/sync depth,
-FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler, and a first-class
+FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler (shipped v3.5.0,
+`FE-04`; below), and a first-class
 headless Batch Runner. The shipped subset (spectator + Genie encoder + `.tbl` + `.srt`) is the
 self-contained, fully-tested core; the deferred items are larger and more
 cross-cutting (most touch `app.rs`/the emu thread heavily, which a parallel-merge
 cut keeps minimal).
+
+### Multi-Disk Bundler (v3.5.0, `FE-04`)
+
+`bundle.rs` (native-only). A `.rnbundle` TOML manifest names image slots
+(`[[slot]] name / path`, paths relative to the manifest, names defaulting to
+the file stem); every slot must be the same kind, by extension:
+
+- **FDS bundle** — `merge_fds` parses each slot with the core's `parse_fds` (so
+  fwNES, headerless and QD dumps are all accepted, as a single `.fds` load
+  accepts them) and concatenates the sides, in slot order, into one headerless
+  image; that image loads exactly as a `.fds` does (`build_fds_nes`, the BIOS,
+  the `.fds.sav` keyed by the merged image's pristine hash, which is stable for
+  a given manifest and images). Each side gets a name, `"<slot> side A"`, ...,
+  which the Famicom Disk System submenu shows instead of "Side N"
+  (`ShellFrame::disk_side_names`). More than 255 sides together is refused.
+- **Cartridge bundle** — slot `i`'s image is the ROM (`read_rom_or_bundle(path,
+  i)`, clamped); Emulation → Multicart (`ShellFrame::bundle_slots`,
+  `MenuAction::SelectBundleSlot`) reloads through the manifest with another
+  slot. Each slot is an ordinary ROM load (its own saves, cheats, overlay).
+
+`read_rom_or_bundle` replaces the `std::fs::read` of both ROM load paths
+(`load_rom_at`, behind `load_rom_from_path`, and the command line's
+`load_startup_rom`), so a bundle opens from the menu, Open Recent, a drop and
+argv alike; any other file reads as itself, unchanged. `App::bundle` holds the
+open bundle and every non-bundle load clears it. File → New Multi-Disk Bundle…
+(`new_bundle_dialog`) picks the images, then the manifest path, writes the
+manifest atomically (`manifest_text_for`: relative paths when the images sit
+under the manifest's directory) and opens it. Reads are bounded (manifest
+64 KiB, each image 16 MiB, at most 64 slots).
+
+Tests: eight in `bundle.rs` — manifest resolution and refusals (no slots, too
+many, mixed kinds, an unsupported image, bad TOML), the merge's side order and
+names, a bad disk and the 255-side bound, both kinds opened from real files, a
+written manifest round-tripping, and the merged set building a three-side
+console (`Nes::from_disk`, an 8 KiB zero image standing in for the BIOS).
+**Manual:** the dialogs and menus, and a real multi-disk game booting from a
+bundle with its BIOS.
 
 ### Game Genie code database + per-game nomination (v1.8.9 / v2.1.3)
 

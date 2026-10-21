@@ -135,6 +135,29 @@ All other fields fall back to the defaults documented above. A missing
 file is fine — the emulator creates one with defaults the first time you
 save settings from the in-app modal.
 
+### Expansion-device keys (v3.5.0)
+
+The Famicom microphone (`N`), the 12 Power Pad / Family Trainer mat buttons
+(`1 2 3 4` / `Q W E R` / `A S D F`) and the 72 Family BASIC keyboard
+positions (letters, digits and a few control keys; positions 58-71 start
+unbound) were fixed until v3.5.0. They are rebindable in the same panel,
+under **Device keys**: click **rebind** and press a key, or **clear** to
+unbind one; **Reset device keys** restores this layout. In `config.toml`
+they live in one table, written only once something differs from the
+defaults:
+
+```toml
+[input.device_keys]
+microphone = "KeyV"
+power_pad = ["Digit1", "Digit2", "Digit3", "Digit4", "KeyQ", "KeyW",
+             "KeyE", "KeyR", "KeyA", "KeyS", "KeyD", "KeyF"]
+# family_keyboard = [ ...72 names, "" for an unbound position... ]
+```
+
+Any field left out keeps its default. A key may serve several slots (two mat
+buttons on one key press together). The two Hyper Shot devices keep their
+fixed keys.
+
 ## Key names
 
 Key names follow the `winit::keyboard::KeyCode` enum:
