@@ -1481,6 +1481,7 @@ re-minted: `T-PS-dual-runahead` (ADR 0032; **DONE v3.1.0**), `T-MISTER-SAVESTATE
 | `T-ANDROID-API37` | `ACCESS_LOCAL_NETWORK` for LAN netplay, lifecycle-safe background audio, `targetSdk` 37 | ecosystem 5 | v3.6.0 |
 | `T-MOBILE-EXTRAS` | iOS box art, widget and external display; EQ and cheat DB on both apps; the live Kotlin TODOs (D24) | MOB-07, MOB-08 | v3.7.0 |
 | `T-MOB-06-ZEROCOPY` | The zero-copy framebuffer, once UniFFI 0.33 releases `&mut [u8]` (D24) | MOB-04 | v3.7.0 or the first release after UniFFI 0.33 |
+| `T-MISTER-VRC7-OPLL` | The VRC7's OPLL FM synthesis on the MiSTer core (deferred from v3.5.0, maintainer, 2026-10-21, D15). v3.5.0 ships mapper 85 with banking, WRAM and IRQ, off-die only, and silent: the public documentation does not determine the modulation depth, the envelope steps, the sine/exponent table resolution and DAC curve, the tremolo depth, the LFO shapes, the key-on reset or the percussive release (the sibling's `docs/rung7-mappers.md`, F3b section, lists each with what the pages do say). The oracle's `opll.rs` is Provenance-headered, so rungs 1-3 first (documentation, the open Internet, a black-box comparison of the oracle's audio output) and rung 4 only through an ADR 0037 amendment naming the maintainer | FB-12 | v3.8.0 |
 | `T-MOBILE-DISTRIBUTION` | Android developer verification, iOS signing, and the free store listings (D18) | MOB-02, MOB-03 | v3.9.x |
 | `T-API-ENUMS` | The remaining public enums `#[non_exhaustive]`, the v4.0.0 API break (D3) | the backlog's MAJOR section | v3.9.x trial, v4.0.0 |
 
