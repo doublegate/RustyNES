@@ -16,7 +16,7 @@
 //! ```text
 //! HEADER:
 //!     magic           : "RNESMOV1"   (8 bytes)
-//!     format version  : u16 LE        (currently 5 = MOVIE_FORMAT_VERSION)
+//!     format version  : u16 LE        (currently 7 = MOVIE_FORMAT_VERSION)
 //!     emulation epoch : u32 LE        (format 5+; `EMULATION_EPOCH`, ADR 0045)
 //!     region          : u8            (0 = NTSC, 1 = PAL, 2 = Dendy)
 //!     flags           : u8            (bit0 = embedded save-state start point,
@@ -34,6 +34,13 @@
 //! INPUT STREAM:
 //!     frame_count * bytes_per_frame raw bytes; each frame =
 //!     [p1, p2, p3, p4, expansion]
+//! INPUT EVENTS (format 7+): u32 LE length + that many bytes:
+//!     u32 LE event count, then per event: u32 LE frame index, u8 kind,
+//!     kind-specific payload -- the non-controller inputs (expansion
+//!     devices, microphone, Vs. coin / service, FDS disk, barcode) as the
+//!     changes between frames; see `crate::movie_extra`
+//! RE-RECORD COUNT: u32 LE (optional tail)
+//! ATTESTATION: "RNAT" ... (optional tail)
 //! ```
 //!
 //! This module is `no_std`-clean: it uses only `core` + `alloc` and the
@@ -46,6 +53,7 @@ use alloc::string::String;
 use crate::Region;
 use crate::controller::Buttons;
 use crate::hardware_options::{BoardDescription, HardwareOptions, OptionsDecodeError};
+use crate::movie_extra::{self, ExtraInput};
 use crate::nes::Nes;
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
 use thiserror::Error;
@@ -99,14 +107,26 @@ pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 ///   decode as garbage, so v5 is refused. No replayable movie is lost: every
 ///   v5 movie was recorded under epoch 1 or 2, which v3.1.0 (epoch 3) refuses
 ///   anyway.
-pub const MOVIE_FORMAT_VERSION: u16 = 6;
+/// - **v7 (v3.5.0, `T-MOVIE-INPUT-STREAM`)**: an INPUT EVENTS block follows
+///   the input stream, carrying every non-controller input [`Nes`] accepts
+///   ([`crate::ExtraInput`]: the expansion devices on both ports, the Famicom
+///   microphone, the Vs. coin acceptors and service button, the inserted FDS
+///   disk side and Datach barcode scans). A v6 movie recorded none of them,
+///   so a Zapper, Vs. or FDS run replayed with the trigger never pulled, no
+///   coin and no disk swap; it is refused rather than replayed on a guess.
+///   The emulation is unchanged ([`EMULATION_EPOCH`](crate::EMULATION_EPOCH)
+///   stays as it was), so a v6 movie of a controller-only game would still
+///   replay -- but its file cannot say it was one, so it is refused as too
+///   old, with the reason, like every earlier format.
+pub const MOVIE_FORMAT_VERSION: u16 = 7;
 
-/// The oldest container version this build replays: v6.
+/// The oldest container version this build replays: v7.
 ///
-/// v6 is the first whose options record carries the CPU overclock and the
-/// sprite-limit option (v5 first recorded the emulation epoch, v4 the board,
-/// v3 the options). Older movies fail with [`MovieError::FormatTooOld`].
-pub const MIN_MOVIE_FORMAT_VERSION: u16 = 6;
+/// v7 is the first that records the non-controller inputs (v6 first
+/// recorded the CPU overclock and the sprite-limit option, v5 the emulation
+/// epoch, v4 the board, v3 the options). Older movies fail with
+/// [`MovieError::FormatTooOld`].
+pub const MIN_MOVIE_FORMAT_VERSION: u16 = 7;
 
 /// Peek a `.rnm` blob's header to learn its recording epoch.
 ///
@@ -164,10 +184,21 @@ const FLAG_HAS_BOARD: u8 = 0x02;
 /// later format cannot be half-read.
 const KNOWN_FLAGS: u8 = FLAG_HAS_SAVE_STATE | FLAG_HAS_BOARD;
 
-/// Per-frame controller input: four controller ports plus an expansion byte.
+/// Per-frame input: four controller ports, a reserved expansion byte, and
+/// (v3.5.0) every non-controller input in [`Self::extra`].
 ///
 /// Each port is a `Buttons` value. Bit layout matches FCEUX `.fm2`
 /// (`bit0=A .. bit7=Right`), which is exactly [`Buttons::bits`].
+///
+/// # The non-controller inputs (v3.5.0)
+///
+/// [`Self::extra`] holds the expansion devices, the Famicom microphone, the
+/// Vs. coin and service inputs, the FDS disk side and Datach barcode scans
+/// ([`ExtraInput`]). [`Self::held_on`] always fills it; a frame built with
+/// [`Self::new`], [`Self::four_players`] or [`Default`] leaves it `None`,
+/// which [`Self::apply_to`] reads as "drive the controllers only", exactly
+/// what a frame meant before v3.5.0. So a foreign import, a TAS editor's
+/// blank frame or an input macro does not eject a disk or unplug a Zapper.
 ///
 /// # Players 3 and 4 (v2.9.8)
 ///
@@ -198,8 +229,13 @@ pub struct FrameInput {
     pub p3: Buttons,
     /// Player 4 (Four Score, multiplexed on `$4017`) button state.
     pub p4: Buttons,
-    /// Reserved expansion-port byte (currently always `0`).
+    /// Reserved expansion-port byte (currently always `0`). The expansion
+    /// devices themselves are in [`Self::extra`] since v3.5.0.
     pub expansion: u8,
+    /// v3.5.0 (`T-MOVIE-INPUT-STREAM`) — the non-controller inputs held for
+    /// this frame, or `None` when the frame does not drive them (see the
+    /// type docs). Recorded in `.rnm` format 7's INPUT EVENTS block.
+    pub extra: Option<ExtraInput>,
 }
 
 impl FrameInput {
@@ -218,6 +254,7 @@ impl FrameInput {
             p3,
             p4,
             expansion: 0,
+            extra: None,
         }
     }
 
@@ -252,27 +289,136 @@ impl FrameInput {
         }
     }
 
-    /// v2.9.8 — drive all four controller ports of `nes` from this frame.
+    /// v2.9.8 — drive all four controller ports of `nes` from this frame,
+    /// and (v3.5.0) its non-controller inputs when [`Self::extra`] holds
+    /// them ([`ExtraInput::apply`]).
     ///
     /// Ports 2 and 3 are only polled while the Four Score is plugged in, so
     /// setting them on a two-pad machine changes nothing it reads.
-    pub const fn apply_to(&self, nes: &mut Nes) {
+    ///
+    /// No longer a `const fn` (v3.5.0): attaching an expansion device and
+    /// inserting a disk side are not.
+    pub fn apply_to(&self, nes: &mut Nes) {
         nes.set_buttons(0, self.p1);
         nes.set_buttons(1, self.p2);
         nes.set_buttons(2, self.p3);
         nes.set_buttons(3, self.p4);
+        if let Some(extra) = &self.extra {
+            extra.apply(nes);
+        }
     }
 
-    /// v2.9.8 — the input currently held on all four ports of `nes`.
+    /// v2.9.8 — the input currently held on all four ports of `nes`, and
+    /// (v3.5.0) every non-controller input it holds ([`ExtraInput::capture`]),
+    /// so [`Self::extra`] is always `Some`.
+    ///
+    /// No longer a `const fn` (v3.5.0).
     #[must_use]
-    pub const fn held_on(nes: &Nes) -> Self {
-        Self::four_players(
+    pub fn held_on(nes: &Nes) -> Self {
+        let mut frame = Self::four_players(
             nes.buttons(0),
             nes.buttons(1),
             nes.buttons(2),
             nes.buttons(3),
-        )
+        );
+        frame.extra = Some(ExtraInput::capture(nes));
+        frame
     }
+
+    /// v3.5.0 — encode a frame list as `.rnm` format 7 encodes its input:
+    /// a `u32` LE frame count, the 5-byte records, then the length-prefixed
+    /// INPUT EVENTS block. For a host that stores an input log outside a
+    /// movie (the desktop `TAStudio` project, `.rnmproj` version 2) and must
+    /// not lose what a movie keeps: players 3 and 4 and every
+    /// [`Self::extra`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `frames` holds more than `u32::MAX` frames.
+    #[must_use]
+    pub fn encode_log(frames: &[Self]) -> Vec<u8> {
+        let mut w = BinWriter::with_capacity(8 + frames.len() * usize::from(BYTES_PER_FRAME));
+        w.u32(u32::try_from(frames.len()).expect("frame count exceeds u32"));
+        write_frames(&mut w, frames);
+        w.into_vec()
+    }
+
+    /// v3.5.0 — decode what [`Self::encode_log`] wrote, exactly (trailing
+    /// bytes are refused).
+    ///
+    /// # Errors
+    ///
+    /// [`MovieError::Eof`] for a truncated log, [`MovieError::BadInputEvents`]
+    /// for a malformed INPUT EVENTS block, and [`MovieError::BadOptions`] for
+    /// bytes after the log. Never panics, and never reserves more than the
+    /// input could hold.
+    pub fn decode_log(bytes: &[u8]) -> Result<Vec<Self>, MovieError> {
+        let mut r = BinReader::new(bytes);
+        let count = r.u32().map_err(map_eof)? as usize;
+        let frames = read_frames(&mut r, count, usize::from(BYTES_PER_FRAME))?;
+        if r.remaining() != 0 {
+            return Err(MovieError::BadOptions(
+                "unexpected bytes after the input log",
+            ));
+        }
+        Ok(frames)
+    }
+}
+
+/// Write the input stream (one 5-byte record per frame) and, since format 7,
+/// the INPUT EVENTS block carrying each frame's [`FrameInput::extra`] as the
+/// changes between frames, length-prefixed so the decoder can bound it and
+/// confirm it consumed exactly what was written.
+fn write_frames(w: &mut BinWriter, frames: &[FrameInput]) {
+    for f in frames {
+        w.u8(f.p1.bits());
+        w.u8(f.p2.bits());
+        w.u8(f.p3.bits());
+        w.u8(f.p4.bits());
+        w.u8(f.expansion);
+    }
+    w.lp_bytes(&movie_extra::encode_events(
+        frames.iter().map(|f| f.extra.as_ref()),
+    ));
+}
+
+/// Read `frame_count` records of `width` bytes (`width >= 1`), then the
+/// INPUT EVENTS block, which a format-7 stream always carries (an empty one
+/// holds a zero count).
+///
+/// SECURITY: `frame_count` is an untrusted 4-byte field (up to ~4.3
+/// billion). Pre-sizing `Vec::with_capacity(frame_count)` from it lets a
+/// 53-byte header claim a multi-gigabyte allocation -- an OOM `DoS` (found by
+/// the `movie` fuzz target). A real stream carries exactly
+/// `frame_count * width` more bytes, so the reservation is capped at what the
+/// remaining input could actually hold: for a valid file this equals
+/// `frame_count` (identical allocation, byte-for-byte the same result), and
+/// for a truncated / hostile one the `r.take(width)` below still fails
+/// cleanly with an EOF error once the real bytes run out.
+fn read_frames(
+    r: &mut BinReader<'_>,
+    frame_count: usize,
+    width: usize,
+) -> Result<Vec<FrameInput>, MovieError> {
+    let max_plausible_frames = r.remaining() / width;
+    let mut frames = Vec::with_capacity(frame_count.min(max_plausible_frames));
+    for _ in 0..frame_count {
+        let rec = r.take(width).map_err(map_eof)?;
+        // Format 3: rec = [p1, p2, p3, p4, expansion]. A narrower record
+        // defaults the fields it does not reach (released pads, no expansion
+        // byte).
+        let pad = |i: usize| Buttons::from_bits_truncate(rec.get(i).copied().unwrap_or(0));
+        let mut frame = FrameInput::four_players(pad(0), pad(1), pad(2), pad(3));
+        frame.expansion = rec.get(4).copied().unwrap_or(0);
+        frames.push(frame);
+    }
+    let block = r.lp_bytes().map_err(map_eof)?;
+    let extras =
+        movie_extra::decode_events(block, frames.len()).map_err(MovieError::BadInputEvents)?;
+    for (frame, extra) in frames.iter_mut().zip(extras) {
+        frame.extra = extra;
+    }
+    Ok(frames)
 }
 
 /// Marker for the optional attestation tail: `"RNAT"` little-endian.
@@ -286,7 +432,12 @@ pub const ATTESTATION_MAGIC: u32 = u32::from_le_bytes(*b"RNAT");
 ///
 /// 2 (v2.9.8): each frame folds in all four players' bytes, not two, so a
 /// version-1 tail describes a different hash and is not compared.
-pub const ATTESTATION_VERSION: u16 = 2;
+///
+/// 3 (v3.5.0): each frame also folds in its non-controller inputs
+/// ([`FrameInput::extra`]), so an edited Zapper aim or a removed disk swap
+/// fails verification the way an edited button does. A version-2 tail is not
+/// compared (and every movie that carried one is format 6, refused anyway).
+pub const ATTESTATION_VERSION: u16 = 3;
 
 /// Frames between recorded checkpoint hashes.
 ///
@@ -420,6 +571,10 @@ impl AttestationBuilder {
             input.p4.bits(),
             input.expansion,
         ]);
+        // v3.5.0 (attestation version 3) — the non-controller inputs, as a
+        // fixed-size canonical record (`None` folds in as all zeros).
+        self.hash
+            .write(&movie_extra::attestation_bytes(input.extra.as_ref()));
         self.hash.write(framebuffer);
         self.frame_count = self.frame_count.saturating_add(1);
         if self
@@ -657,6 +812,12 @@ pub enum MovieError {
     #[error("movie region byte {0} is not a known region")]
     BadRegion(u8),
 
+    /// v3.5.0 — the INPUT EVENTS block (format 7) is malformed: an unknown
+    /// event kind or device, events out of order or past the last frame, a
+    /// value no input can hold, or an event that changes nothing.
+    #[error("movie non-controller input events are malformed: {0}")]
+    BadInputEvents(&'static str),
+
     /// The body (start point and/or input stream) ran past EOF.
     #[error("movie truncated mid-body at offset {0}")]
     Eof(usize),
@@ -812,13 +973,7 @@ impl Movie {
         if let StartPoint::SaveState(blob) = &self.start {
             w.lp_bytes(blob);
         }
-        for f in &self.frames {
-            w.u8(f.p1.bits());
-            w.u8(f.p2.bits());
-            w.u8(f.p3.bits());
-            w.u8(f.p4.bits());
-            w.u8(f.expansion);
-        }
+        write_frames(&mut w, &self.frames);
         // Trailing re-record count (v1.8.9). Appended AFTER the fixed-count input
         // stream so a reader that stops at `frame_count` records — including older
         // builds — simply ignores it; deserialize below reads it when present and
@@ -941,27 +1096,9 @@ impl Movie {
         // Input stream: `frame_count` records of `bytes_per_frame` bytes
         // (`width >= 1`, enforced above).
         let width = usize::from(bytes_per_frame);
-        // SECURITY: `frame_count` is an untrusted 4-byte field (up to ~4.3
-        // billion). Pre-sizing `Vec::with_capacity(frame_count)` from it lets a
-        // 53-byte header claim a multi-gigabyte allocation — an OOM DoS (found
-        // by the `movie` fuzz target). A real movie carries exactly
-        // `frame_count * width` more bytes, so cap the reservation at what the
-        // remaining input could actually hold: for a valid file this equals
-        // `frame_count` (identical allocation, byte-for-byte the same result),
-        // and for a truncated / hostile one the `r.take(width)` below still
-        // fails cleanly with an EOF error once the real bytes run out.
-        let max_plausible_frames = r.remaining() / width;
-        let mut frames = Vec::with_capacity(frame_count.min(max_plausible_frames));
-        for _ in 0..frame_count {
-            let rec = r.take(width).map_err(map_eof)?;
-            // Format 3: rec = [p1, p2, p3, p4, expansion]. A narrower record
-            // defaults the fields it does not reach (released pads, no
-            // expansion byte).
-            let pad = |i: usize| Buttons::from_bits_truncate(rec.get(i).copied().unwrap_or(0));
-            let mut frame = FrameInput::four_players(pad(0), pad(1), pad(2), pad(3));
-            frame.expansion = rec.get(4).copied().unwrap_or(0);
-            frames.push(frame);
-        }
+        // SECURITY: `frame_count` is untrusted; `read_frames` bounds the
+        // reservation by what the input holds (see it for the full note).
+        let frames = read_frames(&mut r, frame_count, width)?;
         // Optional trailing re-record count (v1.8.9). Absent in pre-v1.8.9 `.rnm`
         // files, which stop exactly at the input stream — default to 0.
         let rerecord_count = r.u32().unwrap_or(0);
@@ -1302,10 +1439,11 @@ impl MovieRecorder {
     /// Reads `nes.buttons(0..=3)`. Until v2.9.8 [`FrameInput`] modelled ports
     /// 0 and 1 only, so a four-player session recorded half of what drove it
     /// and diverged on playback; the `.rnm` format 3 epoch widened the record
-    /// and the struct together. Inputs that are not controller buttons --
-    /// expansion devices (Zapper, Vaus, keyboards ...), the Famicom
-    /// microphone, Vs. coins / service, FDS disk swaps -- are still not
-    /// recorded; see `docs/frontend.md` § "What a movie records".
+    /// and the struct together. Since v3.5.0 (format 7) the inputs that are
+    /// not controller buttons -- expansion devices, the Famicom microphone,
+    /// Vs. coins / service, FDS disk swaps, Datach scans -- are recorded too
+    /// ([`FrameInput::held_on`] fills [`FrameInput::extra`]); see
+    /// `docs/frontend.md` § "The non-controller inputs".
     pub fn capture(&mut self, nes: &Nes) {
         self.frames.push(FrameInput::held_on(nes));
     }
@@ -1671,6 +1809,51 @@ mod tests {
         match movie.verify(&mut fresh).expect("verify runs") {
             VerifyOutcome::Mismatch { .. } => {}
             other => panic!("an edited input log must not verify, got {other:?}"),
+        }
+    }
+
+    /// v3.5.0 (attestation version 3): an edited NON-controller input fails
+    /// verification too, on a ROM that reads nothing at all -- the Zapper aim
+    /// and the microphone are folded into the hash beside the buttons.
+    #[test]
+    fn an_edited_extra_input_fails_verification() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        let mut rec = MovieRecorder::power_on(&nes);
+        rec.enable_attestation();
+        for i in 0..6u16 {
+            nes.set_zapper(1, i, 100, false);
+            rec.capture(&nes);
+            let fb = nes.run_frame().to_vec();
+            rec.attest_frame(&fb);
+        }
+        let honest = rec.finish();
+        let mut fresh = Nes::from_rom(&rom).expect("parse");
+        assert!(matches!(
+            honest.verify(&mut fresh).expect("verify runs"),
+            VerifyOutcome::Match { .. }
+        ));
+        let edits: [fn(&mut crate::ExtraInput); 2] = [
+            |e| e.microphone = true,
+            |e| {
+                e.devices[1] = crate::DeviceInput::Zapper {
+                    x: 200,
+                    y: 100,
+                    trigger: false,
+                };
+            },
+        ];
+        for edit in edits {
+            let mut movie = honest.clone();
+            edit(movie.frames[3].extra.as_mut().expect("recorded"));
+            let mut fresh = Nes::from_rom(&rom).expect("parse");
+            assert!(
+                matches!(
+                    movie.verify(&mut fresh).expect("verify runs"),
+                    VerifyOutcome::Mismatch { .. }
+                ),
+                "an edited extra input must not verify"
+            );
         }
     }
 
@@ -2411,7 +2594,6 @@ mod tests {
     /// old rather than decoded one field short.
     #[test]
     fn a_format_5_movie_is_refused_as_too_old() {
-        assert_eq!(MIN_MOVIE_FORMAT_VERSION, 6);
         let mut bytes = Movie::new(
             Region::Ntsc,
             [0; 32],
@@ -2424,8 +2606,42 @@ mod tests {
         bytes[8..10].copy_from_slice(&5u16.to_le_bytes());
         assert!(matches!(
             Movie::deserialize(&bytes),
-            Err(MovieError::FormatTooOld { got: 5, min: 6 })
+            Err(MovieError::FormatTooOld {
+                got: 5,
+                min: MIN_MOVIE_FORMAT_VERSION
+            })
         ));
+    }
+
+    /// v3.5.0 (`T-MOVIE-INPUT-STREAM`): a format-6 movie (v3.1.0 to v3.4.x)
+    /// records the controllers only, so a Zapper, Vs. or FDS run in one
+    /// would replay without its trigger, coins or disk swaps. It is refused
+    /// as too old, with the reason the message gives, rather than replayed.
+    #[test]
+    fn a_format_6_movie_is_refused_as_too_old_with_its_reason() {
+        assert_eq!(MIN_MOVIE_FORMAT_VERSION, 7);
+        let mut bytes = Movie::new(
+            Region::Ntsc,
+            [0; 32],
+            crate::HardwareOptions::default(),
+            None,
+            StartPoint::PowerOn,
+            vec![FrameInput::default(); 3],
+        )
+        .serialize();
+        bytes[8..10].copy_from_slice(&6u16.to_le_bytes());
+        let err = Movie::deserialize(&bytes).expect_err("format 6 is refused");
+        assert!(
+            matches!(err, MovieError::FormatTooOld { got: 6, min: 7 }),
+            "{err:?}"
+        );
+        let text = alloc::string::ToString::to_string(&err);
+        assert!(
+            text.contains("format version 6")
+                && text.contains("does not record everything a faithful replay needs")
+                && text.contains("re-record it"),
+            "the refusal says why and what to do: {text}"
+        );
     }
 
     #[test]

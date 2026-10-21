@@ -44,19 +44,28 @@ what makes movie replay exact — see [`testing-strategy.md`](testing-strategy.m
 for the determinism contract. The `.rnm` deserializer is hardened against
 malformed input (bounded allocations; fuzz-tested, see `fuzz/`).
 
-**Movies record two ports.** `FrameInput` models P1 and P2, so a recording made
-with the **Four Score** adapter active captures half of what drove the run and
-replays as a different one. The console carries four ports and the emulator
-drives all four; the movie format does not. This is a documented limit rather
-than a defect being worked around: widening `FrameInput` is a `.rnm` format epoch
-change (ADR 0028), not an additive one, and the `.fm2` importer takes the same
-position — it keeps pads 1 and 2, drops 3 and 4, and preserves the `fourscore`
-flag so the caller is not misled.
+**What a movie records.** Since v2.9.8 (`.rnm` format 3) a frame records all
+four controller ports, so a Four Score session replays whole; the `.fm2`
+importer keeps pads 3 and 4 too. Since v3.5.0 (`.rnm` format 7,
+`T-MOVIE-INPUT-STREAM`) a frame also records every other input the core takes
+from a host: the expansion device on each port (Zapper aim and trigger, Vaus,
+Power Pad, Family Trainer, SNES mouse, Family BASIC and Subor keyboards, both
+Hyper Shots), the Famicom microphone, the Vs. coin acceptors and service button,
+the inserted FDS disk side, and Datach barcode scans (`rustynes_core::ExtraInput`).
+So a Zapper, Vs. or FDS run replays byte-identically, and a disk swap or a
+barcode scan made while recording is recorded rather than refused. Reset and
+Power Cycle are still not recorded, and are still refused while a movie records
+or plays.
 
-The failure is silent at record time, so it is surfaced where the claim is made:
-the Replay panel prints the caveat directly under the "Four Score (P1..P4)"
-topology row, and `rustynes verify` catches a divergent replay after the fact
-because its attestation folds in the video the run produced, not just the input.
+A frame from an importer, a TAStudio blank frame or an input macro carries no
+non-controller input (`extra` is `None`) and leaves the machine's devices and
+disk as they are, so it cannot unplug a Zapper or eject a disk. The TAStudio
+project file (`.rnmproj`) keeps the whole frame since its version 2 (players 3
+and 4 included); a version-1 project still loads, with players 1 and 2 only.
+
+`rustynes verify` catches a divergent replay after the fact, because its
+attestation folds in the input (controller and non-controller) and the video
+the run produced.
 
 ## Scripting (Lua)
 

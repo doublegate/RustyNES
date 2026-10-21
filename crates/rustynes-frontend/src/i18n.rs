@@ -602,7 +602,7 @@ catalog! {
     ShellBarcodeTitle => "Datach Barcode Reader", Some("Lector de códigos de barras Datach");
     ShellBarcodePrompt => "Type the 13- or 8-digit number printed under the card's barcode, then press Scan.", Some("Escribe el número de 13 u 8 dígitos impreso bajo el código de barras de la tarjeta y pulsa Escanear.");
     ShellBarcodeScan => "Scan", Some("Escanear");
-    ShellBarcodeLocked => "Scanning is disabled while a movie records or plays, or during netplay: neither records a scan.", Some("El escaneo está desactivado mientras se graba o reproduce una película, o durante el juego en red: ninguno registra el escaneo.");
+    ShellBarcodeLocked => "Scanning is disabled while a movie plays (it scans what was recorded) and during netplay (which does not carry a scan).", Some("El escaneo está desactivado mientras se reproduce una película (escanea lo que se grabó) y durante el juego en red (que no transmite el escaneo).");
     ShellBarcodeNeedDigits => "Enter 13 or 8 digits.", Some("Introduce 13 u 8 dígitos.");
     ShellBarcodeNotDigit => "Character {0} ('{1}') is not a digit.", Some("El carácter {0} ('{1}') no es un dígito.");
     ShellBarcodeWrongLength => "{0} digits: a JAN/EAN barcode has 13 or 8.", Some("{0} dígitos: un código JAN/EAN tiene 13 u 8.");

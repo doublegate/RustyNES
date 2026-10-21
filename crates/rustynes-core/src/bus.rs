@@ -2415,6 +2415,19 @@ impl SystemBus {
         self.vs_service = pressed;
     }
 
+    /// v3.5.0 — the latched coin-insert bits (bit 0 = acceptor #1, bit 1 =
+    /// acceptor #2), for a movie recorder.
+    #[must_use]
+    pub const fn vs_coin(&self) -> u8 {
+        self.vs_coin
+    }
+
+    /// v3.5.0 — whether the service button is held, for a movie recorder.
+    #[must_use]
+    pub const fn vs_service(&self) -> bool {
+        self.vs_service
+    }
+
     /// v2.0.0 beta.5 (Vs. `DualSystem`): mark this console as the SUB half of a
     /// `DualSystem` pair (`$4016` reads return bit 7 = `0x80`). Wrapper-only.
     pub const fn set_vs_sub(&mut self, is_sub: bool) {

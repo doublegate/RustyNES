@@ -46,6 +46,8 @@ pub mod legacy_movie;
 // v2.9.8 — the emulation options a movie or a netplay session must agree on.
 mod hardware_options;
 mod movie;
+// v3.5.0 (`T-MOVIE-INPUT-STREAM`) — the non-controller half of a movie frame.
+mod movie_extra;
 pub mod movie_interop;
 mod nes;
 mod rewind;
@@ -95,6 +97,7 @@ pub use movie::{
     MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie, MovieError, MoviePlayer, MovieRecorder, StartPoint,
     VerifyOutcome, power_on_for_movie, recorded_before_v2_timebase,
 };
+pub use movie_extra::{DeviceInput, ExtraInput};
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;
 pub use nes::{

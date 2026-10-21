@@ -3,9 +3,10 @@
 //! This is the frontend plumbing on top of the deterministic movie CORE
 //! that landed in Sprint 4.1 (`rustynes_core::{Movie, MovieRecorder,
 //! MoviePlayer, StartPoint}`). The core is caller-driven: the recorder's
-//! `capture` reads `Nes::buttons(0/1)` and must be called AFTER the
-//! frontend's `set_buttons` and BEFORE `run_frame`; the player's
-//! `apply_next` sets the buttons itself and must be called BEFORE
+//! `capture` reads the held input (all four ports and, since v3.5.0, the
+//! non-controller inputs: `FrameInput::held_on`) and must be called AFTER
+//! the frontend's input calls and BEFORE `run_frame`; the player's
+//! `apply_next` sets them itself and must be called BEFORE
 //! `run_frame`. This module wires those two hooks into the frontend's
 //! per-frame produce path (`App::produce_one_frame`) and tracks the
 //! record / play / idle mode for the egui status indicator.
