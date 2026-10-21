@@ -65,7 +65,10 @@ fn the_macos_arm64_core_is_not_stripped_after_signing() {
     let in_vars = body[vars + 1..]
         .iter()
         .take_while(|l| l.is_empty() || l.starts_with("    "))
-        .any(|l| l.trim() == "STRIP_CORE_LIB: \"0\"");
+        // A DIRECT entry: exactly four spaces, then the key. Deeper text (a
+        // block scalar inside another variable) is not a job variable even
+        // if it reads the same once trimmed (CodeRabbit on #623).
+        .any(|l| l == "    STRIP_CORE_LIB: \"0\"");
     assert!(
         in_vars,
         "STRIP_CORE_LIB: \"0\" must be in the job's variables: block"
