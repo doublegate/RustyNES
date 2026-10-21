@@ -273,6 +273,9 @@ pub struct AvRecordOptions {
     pub preset: EncodePreset,
     /// AAC audio bitrate in kbit/s.
     pub audio_bitrate_k: u32,
+    /// A/V sync offset in milliseconds (v3.5.0, `FE-03`); see
+    /// [`AvParams::audio_offset_ms`].
+    pub audio_offset_ms: i32,
 }
 
 impl Default for AvRecordOptions {
@@ -282,9 +285,17 @@ impl Default for AvRecordOptions {
             crf: 18,
             preset: EncodePreset::Veryfast,
             audio_bitrate_k: 192,
+            audio_offset_ms: 0,
         }
     }
 }
+
+/// The largest A/V sync offset, either way, in milliseconds (v3.5.0).
+///
+/// A second is far beyond any device or player latency worth correcting, and
+/// a bound keeps a hand-edited config from trimming a whole recording's
+/// audio away.
+pub const MAX_AUDIO_OFFSET_MS: i32 = 1000;
 
 impl AvRecordOptions {
     /// Build from persisted config fields (the codec / preset id strings plus
@@ -305,7 +316,17 @@ impl AvRecordOptions {
             crf: crf.min(max_crf),
             preset: EncodePreset::from_id(preset_id),
             audio_bitrate_k: audio_bitrate_k.clamp(32, 512),
+            audio_offset_ms: 0,
         }
+    }
+
+    /// Set the A/V sync offset (v3.5.0), clamped to
+    /// plus or minus [`MAX_AUDIO_OFFSET_MS`], as the other knobs are clamped in
+    /// [`Self::from_parts`].
+    #[must_use]
+    pub fn with_audio_offset_ms(mut self, offset_ms: i32) -> Self {
+        self.audio_offset_ms = offset_ms.clamp(-MAX_AUDIO_OFFSET_MS, MAX_AUDIO_OFFSET_MS);
+        self
     }
 }
 
@@ -331,6 +352,74 @@ pub struct AvParams {
     pub preset: EncodePreset,
     /// AAC audio bitrate in kbit/s (e.g. 192).
     pub audio_bitrate_k: u32,
+    /// A/V sync offset in milliseconds (v3.5.0, `FE-03`), applied to the
+    /// audio track at mux time. Positive delays the audio against the video
+    /// (the sound comes later); negative advances it (the first `|offset|`
+    /// of audio is dropped, so the sound comes earlier). `0` is the prior
+    /// pipeline exactly: no extra arguments.
+    ///
+    /// The capture itself is already in sync: each frame's audio is the
+    /// audio the core produced for that frame. The offset is for the
+    /// playback side, where a TV, a capture chain or an editor adds latency
+    /// to one stream and not the other. Clamped to plus or minus
+    /// [`MAX_AUDIO_OFFSET_MS`] when the arguments are built. The A/V containers only: a GIF has no
+    /// audio and a WAV has no video to be in sync with.
+    pub audio_offset_ms: i32,
+}
+
+impl AvParams {
+    /// The parameters for one recording: where it goes, the stream rates, and
+    /// the persisted encode options (already parsed and clamped by
+    /// [`AvRecordOptions::from_parts`] / [`AvRecordOptions::with_audio_offset_ms`]).
+    #[must_use]
+    pub const fn new(
+        out_path: PathBuf,
+        sample_rate: u32,
+        fps_num: u32,
+        fps_den: u32,
+        opts: AvRecordOptions,
+    ) -> Self {
+        Self {
+            out_path,
+            sample_rate,
+            fps_num,
+            fps_den,
+            video_codec: opts.video_codec,
+            crf: opts.crf,
+            preset: opts.preset,
+            audio_bitrate_k: opts.audio_bitrate_k,
+            audio_offset_ms: opts.audio_offset_ms,
+        }
+    }
+}
+
+/// The `ffmpeg` arguments that shift the audio track by `offset_ms`
+/// (v3.5.0, `FE-03`), as two halves: options that go before the audio
+/// `-i` (input options), and options that go with the output.
+///
+/// * `offset_ms > 0` (audio later): the output filter `adelay=<ms>`, which
+///   prepends that much silence to the (mono) audio.
+/// * `offset_ms < 0` (audio earlier): the input option `-ss <seconds>` on the
+///   audio input, which starts reading it that far in.
+/// * `0`: nothing at all, so the argument vector is byte-identical to the
+///   pre-v3.5.0 pipeline.
+///
+/// Both are sample-exact in the decoded PCM (the input is raw `f32le`, so
+/// `-ss` seeks to a sample, not a packet). Pure, so the unit tests and the
+/// ffmpeg round-trip test check the same strings the recorder runs.
+fn audio_offset_args(offset_ms: i32) -> (Vec<String>, Vec<String>) {
+    let ms = offset_ms.clamp(-MAX_AUDIO_OFFSET_MS, MAX_AUDIO_OFFSET_MS);
+    match ms.cmp(&0) {
+        core::cmp::Ordering::Greater => (Vec::new(), vec!["-af".into(), format!("adelay={ms}")]),
+        core::cmp::Ordering::Less => {
+            let abs = ms.unsigned_abs();
+            (
+                vec!["-ss".into(), format!("{}.{:03}", abs / 1000, abs % 1000)],
+                Vec::new(),
+            )
+        }
+        core::cmp::Ordering::Equal => (Vec::new(), Vec::new()),
+    }
 }
 
 /// Build the `ffmpeg` argument vector for the final (stop-time) mux.
@@ -349,6 +438,7 @@ pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec
         Container::Wav => return wav_args(params, audio_raw),
         Container::Mp4 | Container::Mkv => {}
     }
+    let (offset_in, offset_out) = audio_offset_args(params.audio_offset_ms);
     let mut args: Vec<String> = vec![
         // Overwrite the output without prompting.
         "-y".into(),
@@ -370,9 +460,12 @@ pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec
         params.sample_rate.to_string(),
         "-ac".into(),
         "1".into(),
-        "-i".into(),
-        audio_raw.to_string_lossy().into_owned(),
     ];
+    // A negative sync offset seeks into the audio input (an input option, so
+    // it goes before that input's `-i`).
+    args.extend(offset_in);
+    args.push("-i".into());
+    args.push(audio_raw.to_string_lossy().into_owned());
     // ---- encode ----
     // Video: the selected encoder + its constant-quality (CRF) control.
     args.push("-c:v".into());
@@ -399,6 +492,8 @@ pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec
     // yuv420p so the output plays everywhere (rgba -> yuv420p).
     args.push("-pix_fmt".into());
     args.push("yuv420p".into());
+    // A positive sync offset delays the audio (an output filter).
+    args.extend(offset_out);
     // Audio: AAC at the chosen bitrate.
     args.push("-c:a".into());
     args.push("aac".into());
@@ -756,7 +851,192 @@ mod tests {
             crf: 18,
             preset: EncodePreset::Veryfast,
             audio_bitrate_k: 192,
+            audio_offset_ms: 0,
         }
+    }
+
+    /// v3.5.0 (`FE-03`) — a zero offset is the pre-v3.5.0 pipeline exactly.
+    /// The whole vector is pinned, so an offset argument that leaks into the
+    /// default recording (or any reordering) fails here.
+    #[test]
+    fn a_zero_sync_offset_leaves_the_mux_arguments_unchanged() {
+        let args = ffmpeg_args(&params(), Path::new("/v.raw"), Path::new("/a.raw"));
+        let expected = [
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgba",
+            "-video_size",
+            "256x240",
+            "-framerate",
+            "60098814/1000000",
+            "-i",
+            "/v.raw",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "1",
+            "-i",
+            "/a.raw",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+            "/tmp/out.mp4",
+        ];
+        assert_eq!(args, expected);
+    }
+
+    /// v3.5.0 (`FE-03`) — a positive offset delays the audio with an output
+    /// filter; a negative one seeks into the audio INPUT, so its `-ss` must
+    /// sit between the audio format options and the audio `-i` (before the
+    /// video `-i` it would seek the video instead).
+    #[test]
+    fn the_sync_offset_places_its_arguments_on_the_audio_stream() {
+        let mut p = params();
+        p.audio_offset_ms = 150;
+        let a = ffmpeg_args(&p, Path::new("/v.raw"), Path::new("/a.raw"));
+        let af = a.iter().position(|x| x == "-af").expect("an audio filter");
+        assert_eq!(a[af + 1], "adelay=150");
+        assert!(!a.iter().any(|x| x == "-ss"));
+        // The filter is an output option: after both inputs.
+        let last_input = a.iter().rposition(|x| x == "-i").unwrap();
+        assert!(af > last_input);
+
+        p.audio_offset_ms = -250;
+        let a = ffmpeg_args(&p, Path::new("/v.raw"), Path::new("/a.raw"));
+        let ss = a.iter().position(|x| x == "-ss").expect("an input seek");
+        assert_eq!(a[ss + 1], "0.250");
+        assert_eq!(a[ss + 2], "-i");
+        assert_eq!(a[ss + 3], "/a.raw", "the seek applies to the audio input");
+        assert!(!a.iter().any(|x| x == "-af"));
+
+        // Clamped both ways.
+        p.audio_offset_ms = 5000;
+        let a = ffmpeg_args(&p, Path::new("/v"), Path::new("/a"));
+        assert!(a.iter().any(|x| x == "adelay=1000"));
+        p.audio_offset_ms = -5000;
+        let a = ffmpeg_args(&p, Path::new("/v"), Path::new("/a"));
+        assert!(a.iter().any(|x| x == "1.000"));
+        assert_eq!(
+            AvRecordOptions::default()
+                .with_audio_offset_ms(-7000)
+                .audio_offset_ms,
+            -MAX_AUDIO_OFFSET_MS
+        );
+    }
+
+    /// GIF has no audio and WAV no video: the offset has nothing to align
+    /// there and must not change either pipeline.
+    #[test]
+    fn the_sync_offset_does_not_touch_gif_or_wav() {
+        for ext in ["gif", "wav"] {
+            let mut p = params();
+            p.out_path = PathBuf::from(format!("/tmp/out.{ext}"));
+            let base = ffmpeg_args(&p, Path::new("/v"), Path::new("/a"));
+            p.audio_offset_ms = 300;
+            assert_eq!(ffmpeg_args(&p, Path::new("/v"), Path::new("/a")), base);
+            p.audio_offset_ms = -300;
+            assert_eq!(ffmpeg_args(&p, Path::new("/v"), Path::new("/a")), base);
+        }
+    }
+
+    /// v3.5.0 (`FE-03`) — the offset measured in a real encode. A click at
+    /// 0.5 s is muxed with offsets 0, +120 and -120 ms, the audio track is
+    /// decoded back, and the click must move by the offset. Comparing against
+    /// the zero-offset encode cancels AAC's encoder delay, which is not the
+    /// offset's to correct.
+    ///
+    /// Needs `ffmpeg` on `PATH` and returns early, saying so, without it (the
+    /// recorder itself needs it at run time; the CI images do not ship it).
+    #[test]
+    fn the_sync_offset_moves_the_audio_in_a_real_encode() {
+        if AvRecorder::probe_ffmpeg().is_err() {
+            eprintln!("skipped: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let rate = 48_000_u32;
+        // 1.5 s of black video and silence with one full-scale click at 0.5 s.
+        let frames = 90_usize;
+        std::fs::write(dir.path().join("v.raw"), vec![0u8; FRAME_BYTES * frames]).unwrap();
+        let mut pcm = vec![0f32; (rate as usize) * 3 / 2];
+        let click = rate as usize / 2;
+        for s in &mut pcm[click..click + 48] {
+            *s = 0.9;
+        }
+        let bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
+        std::fs::write(dir.path().join("a.raw"), bytes).unwrap();
+
+        let click_at = |offset_ms: i32| -> f64 {
+            let out = dir.path().join(format!("o{offset_ms}.mkv"));
+            let p = AvParams {
+                out_path: out.clone(),
+                sample_rate: rate,
+                fps_num: 60,
+                fps_den: 1,
+                video_codec: VideoCodec::H264,
+                crf: 30,
+                preset: EncodePreset::Ultrafast,
+                audio_bitrate_k: 128,
+                audio_offset_ms: offset_ms,
+            };
+            let args = ffmpeg_args(&p, &dir.path().join("v.raw"), &dir.path().join("a.raw"));
+            let st = Command::new("ffmpeg")
+                .args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(st.success(), "mux at {offset_ms} ms: {st}");
+            let dec = Command::new("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(&out)
+                .args(["-map", "0:a", "-f", "f32le", "-ac", "1", "-ar"])
+                .arg(rate.to_string())
+                .arg("-")
+                .output()
+                .unwrap();
+            assert!(dec.status.success(), "decode at {offset_ms} ms");
+            let samples: Vec<f32> = dec
+                .stdout
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
+                .collect();
+            let peak = samples
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+                .map(|(i, _)| i)
+                .unwrap();
+            f64::from(u32::try_from(peak).unwrap()) * 1000.0 / f64::from(rate)
+        };
+        let base = click_at(0);
+        let later = click_at(120);
+        let earlier = click_at(-120);
+        eprintln!("click at {base:.2} / {later:.2} / {earlier:.2} ms");
+        assert!(
+            (later - base - 120.0).abs() < 3.0,
+            "+120: {base} -> {later}"
+        );
+        assert!(
+            (base - earlier - 120.0).abs() < 3.0,
+            "-120: {base} -> {earlier}"
+        );
     }
 
     #[test]

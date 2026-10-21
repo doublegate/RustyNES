@@ -26,6 +26,15 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **An A/V sync offset for recordings** (`FE-03`). Settings → Recording →
+  *A/V sync offset* shifts the recorded audio against the video by up to a
+  second either way when an `.mp4` or `.mkv` is written: positive makes the
+  sound later, negative earlier. It corrects latency added after the
+  emulator (a TV, a capture chain); the capture itself was already in step.
+  At 0, the default, recordings are made exactly as before.
+
 ### Changed
 
 - **The emulation thread runs at a raised priority on Windows and macOS too**

@@ -1758,6 +1758,12 @@ pub struct RecordingConfig {
     pub preset: String,
     /// AAC audio bitrate in kbit/s.
     pub audio_bitrate_k: u32,
+    /// v3.5.0 (`FE-03`) — A/V sync offset in milliseconds: positive delays the
+    /// recorded audio against the video, negative advances it (clamped to
+    /// `±1000` when a recording is armed). `#[serde(default)]` (= 0, no
+    /// shift), so a config written before v3.5.0 loads unchanged.
+    #[serde(default)]
+    pub audio_offset_ms: i32,
 }
 
 impl Default for RecordingConfig {
@@ -1767,6 +1773,7 @@ impl Default for RecordingConfig {
             crf: 18,
             preset: "veryfast".into(),
             audio_bitrate_k: 192,
+            audio_offset_ms: 0,
         }
     }
 }
@@ -3514,6 +3521,28 @@ debug_overlay = "Backquote"
         // The rest of the (pre-v2.2.0) config is behaviourally unchanged, apart
         // from the P2 Select key the file saved (see `legacy_default`).
         assert_eq!(cfg, legacy_default());
+    }
+
+    /// v3.5.0 (`FE-03`) — a `[recording]` table written before the A/V sync
+    /// offset existed loads with no offset, and a set offset survives a save.
+    #[test]
+    fn a_recording_table_without_a_sync_offset_loads_with_none() {
+        let cfg: Config = toml::from_str(
+            "[recording]\nvideo_codec = \"vp9\"\ncrf = 30\npreset = \"slow\"\naudio_bitrate_k = 256\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.recording.audio_offset_ms, 0);
+        assert_eq!(cfg.recording.video_codec, "vp9");
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let mut cfg = Config::default();
+        cfg.recording.audio_offset_ms = -85;
+        cfg.save_to(&path).unwrap();
+        assert_eq!(
+            Config::load_from(&path).unwrap().recording.audio_offset_ms,
+            -85
+        );
     }
 
     #[test]

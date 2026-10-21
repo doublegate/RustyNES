@@ -632,6 +632,8 @@ catalog! {
     SetCrf => "CRF (lower = better)", Some("CRF (menor = mejor)");
     SetPreset => "Preset", Some("Preajuste");
     SetX264Only => "(x264/x265 only)", Some("(solo x264/x265)");
+    SetAudioOffset => "A/V sync offset", Some("Desfase A/V");
+    SetAudioOffsetHover => "Shifts the recorded audio against the video when the file is written: + makes the sound later, - makes it earlier. MP4 and MKV only.", Some("Desplaza el audio grabado respecto al vídeo al escribir el archivo: + retrasa el sonido, - lo adelanta. Solo MP4 y MKV.");
     SetGraphics => "Graphics", Some("Gráficos");
     SetPresentMode => "Present mode", Some("Modo de presentación");
     SetRestartToApply => "(restart to apply)", Some("(reinicia para aplicar)");

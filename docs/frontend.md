@@ -2144,6 +2144,22 @@ compiled). Implemented in `src/av_record.rs`.
   crisp GIF); `.wav` = audio-only transcode of the mono `f32le` PCM to canonical
   16-bit PCM. The arg builders (`ffmpeg_args` → `gif_args` / `wav_args`) are pure
   and unit-tested.
+- **A/V sync offset (v3.5.0, `FE-03`).** Settings → Recording → *A/V sync
+  offset*, `-1000..=1000` ms, persisted as `recording.audio_offset_ms`
+  (`#[serde(default)]` = 0). It is applied once, at the stop-time mux, to the
+  `.mp4` / `.mkv` audio track: positive adds the output filter `adelay=<ms>`
+  (the sound comes later), negative puts `-ss <seconds>` on the audio input
+  (its first `|ms|` is dropped, so the sound comes earlier), and `0` adds no
+  argument at all, so the default mux is unchanged (the whole argument vector is
+  pinned by `a_zero_sync_offset_leaves_the_mux_arguments_unchanged`). The
+  capture needs no correction (each frame's audio is the audio produced for
+  that frame); the offset is for latency a TV, capture chain or editor adds
+  on playback. GIF and WAV ignore it. `the_sync_offset_moves_the_audio_in_a_real_encode`
+  encodes a click at 0.5 s with offsets 0 / +120 / -120 ms through the real
+  `ffmpeg`, decodes the track back and requires the click to move by the
+  offset within 3 ms (measured 2026-10-20, ffmpeg n9.0.2: 500.40 / 620.27 /
+  380.27 ms); it returns early, saying so, where `ffmpeg` is absent, as in the
+  CI images.
 
 - **Capture is a read-only tap on the already-produced output.** Inside
   `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the

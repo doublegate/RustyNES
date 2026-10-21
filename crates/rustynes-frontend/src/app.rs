@@ -3142,17 +3142,9 @@ impl App {
             rec.crf,
             &rec.preset,
             rec.audio_bitrate_k,
-        );
-        let params = AvParams {
-            out_path: out_path.clone(),
-            sample_rate,
-            fps_num,
-            fps_den,
-            video_codec: opts.video_codec,
-            crf: opts.crf,
-            preset: opts.preset,
-            audio_bitrate_k: opts.audio_bitrate_k,
-        };
+        )
+        .with_audio_offset_ms(rec.audio_offset_ms);
+        let params = AvParams::new(out_path.clone(), sample_rate, fps_num, fps_den, opts);
         match AvRecorder::start(params) {
             Ok(recorder) => {
                 self.emu.lock().av_recorder = Some(recorder);
