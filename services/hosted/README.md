@@ -138,11 +138,17 @@ relay-only peers moving a checksummed payload, usage read per credential from
   each held a connection for 15 min (924 s, 28 of 28 pings delivered), past
   the 10-minute allocation lifetime, so refreshes succeed too.
 - **Neither has a usage row at all**: Cloudflare does not bill an expired or
-  revoked credential's traffic. The one credential billed after its key was
-  deleted (15,976,704 B egress) was still within its TTL.
-- Deleting the TURN key does not stop its credentials relaying (seen 5 s,
-  67 s and 8 min after deletion), and does not stop billing for those still
-  within their TTL. It is not a kill switch.
+  revoked credential's traffic.
+- A controlled re-run on a fresh key in a fresh browser profile ruled out the
+  dead traffic being billed to another credential: an expired credential's
+  5 MiB transfer and 6-minute hold (11 of 11 pings) and a valid credential
+  never used both have no usage row, while a valid positive control on the
+  same key shows 12,233,180 B egress.
+- Deleting the TURN key never stops its credentials relaying (seen 5 s, 67 s
+  and 8 min after deletion) and stops billing only within minutes: the runs
+  5 s and 67 s after deletion, by a credential still within its TTL, were
+  billed (15,976,704 B), the run 8 min after has no usage row. It is a slow
+  billing stop, not a kill switch.
 
 So the account's exposure is credentials within their TTL: at most
 `TURN_DAILY_CAP` a day, `TURN_PER_IP_PER_HOUR` per address, each billed for
@@ -251,9 +257,10 @@ Do this first, so that a surprise is an email and not an invoice.
    through the TURN API's revoke endpoint. **Neither expiry nor revocation
    stops Cloudflare relaying for an issued credential, but both stop it being
    billed** (measured 2026-10-21, "TURN is on again" above), so for a leaked
-   credential the stop is revoking it. Deleting the TURN key is NOT a stop: a
-   deleted key's credentials keep relaying, and those within their TTL keep
-   being billed. The budget alert remains the backstop for everything else.
+   credential the stop is revoking it. Deleting the TURN key stops billing
+   only within minutes (runs 5 s and 67 s after deletion were billed, one 8
+   min after was not) and never stops relaying, so revocation is the quicker
+   stop. The budget alert remains the backstop for everything else.
 
 ### 1. Log in and install
 
@@ -370,8 +377,9 @@ each needs the deployed service, real browsers or devices, or a real account.
   (or edit `wrangler.jsonc` and `npx wrangler deploy`). Clients fall back to
   STUN only. Credentials already issued are not stopped by it: revoke them
   (each one's billing stops; the Worker does this at the TTL). Deleting the
-  TURN key does NOT stop them (measured 2026-10-21: a deleted key's
-  credentials keep relaying, and those within their TTL keep being billed).
+  TURN key never stops them relaying and stops their billing only within
+  minutes (measured 2026-10-21: billed 5 s and 67 s after deletion, not 8 min
+  after).
 - **Stop the RA proxy:** the same, with `RA_ENABLED` set to `false`.
 - **Roll back a bad deploy:** `npx wrangler deployments list`, then
   `npx wrangler rollback <version-id>` (or the dashboard's Deployments tab).
