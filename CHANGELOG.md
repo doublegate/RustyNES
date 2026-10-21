@@ -49,6 +49,12 @@ cycle-accurate core later replaced.
   told to connect directly. TURN stays switched off in production
   (`T-HOSTED-TURN-EXPIRY`); this lands first so it is in place when TURN is
   switched back on.
+- **Android and iOS: a disk swap or a coin no longer desyncs online play.**
+  Turning an FDS disk over or dropping a coin into a Vs. System machine
+  happened on one player's device only during a netplay session, so the two
+  games went out of step. Both are now refused during netplay and while a
+  movie plays back, with the reason shown, and still work otherwise
+  (including while recording a movie). The desktop refuses them the same way.
 - **Android and iOS: one check for a custom netplay relay address**
   (`T-MOBILE-RELAY-VALIDATE`). The two apps each checked the address with
   their own rules, and both accepted some the connection code then refused or

@@ -493,11 +493,13 @@ final class EmulatorCore {
 
     /// Insert the next disk side, wrapping; from ejected, side A. Answers a game's
     /// "insert side B" prompt.
-    func flipDisk() {
+    /// - Throws: `MobileError` (v3.5.0) during netplay or movie playback, where
+    ///   a swap on this device alone would desync the session; the disk stays.
+    func flipDisk() throws {
         let count = diskSideCount
         guard count > 0 else { return }
         let next = insertedDiskSide.map { ($0 + 1) % count } ?? 0
-        controller.setDiskSide(side: UInt32(next))
+        try controller.setDiskSide(side: UInt32(next))
     }
 
     /// v3.2.0 -- the FDS disk save (see `AppModel.fdsSaveUrl`). The game writes
@@ -532,9 +534,10 @@ final class EmulatorCore {
     /// the bridge. On a cabinet, acceptors 0/1 are the main (left) console's and
     /// 2/3 the sub (right) console's, so the right-hand screen credits acceptor 2
     /// (Copilot on #577). A single Vs. console always uses 0.
-    func insertCoin() {
+    /// - Throws: `MobileError` (v3.5.0) during netplay or movie playback.
+    func insertCoin() throws {
         let acceptor: UInt32 = isDualSystem && showSubScreen ? 2 : 0
-        controller.insertCoin(acceptor: acceptor)
+        try controller.insertCoin(acceptor: acceptor)
     }
 
     // MARK: - Save states
