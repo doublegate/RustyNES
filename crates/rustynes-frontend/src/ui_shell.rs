@@ -577,7 +577,10 @@ impl UiShell {
         // dispatch sites refuse the same cases (`session_policy`); this only
         // makes the menu say so before the click.
         let load_interactive = rom_interactive && !rom_change_restricted;
-        let disk_interactive = !replay_locked && !rom_change_restricted;
+        // v3.5.0 — a recording records the disk, a scan and a coin
+        // (`rustynes_core::ExtraInput`), so only playback and netplay grey
+        // them; `session_policy` refuses the same cases.
+        let disk_interactive = !frame.movie_playing && !rom_change_restricted;
         // egui-0.34 menu close model (BUG-3 investigation). The new `MenuBar`
         // builds each top item as a `MenuButton` that inherits the bar's
         // `MenuConfig::close_behavior`, which defaults to
@@ -988,11 +991,12 @@ impl UiShell {
                         )),
                     );
                     // (H1) Inserting a Vs. coin is a hardware action — locked
-                    // during netplay (the host drives arcade hardware).
+                    // during netplay (the host drives arcade hardware), and
+                    // (v3.5.0) during movie playback; a recording records it.
                     if frame.vs_system
                         && accel_enabled(
                             ui,
-                            rom && !rom_change_restricted,
+                            rom && disk_interactive,
                             &ic(glyph::COINS, crate::t!(ShellVsInsertCoin)),
                             &keys.insert_coin,
                         )
@@ -1003,8 +1007,8 @@ impl UiShell {
                     }
                     // v1.3.0 menu reorg — FDS disk controls (only meaningful for
                     // FDS games; moved here from the File menu). (H1) Disk-swap
-                    // mutates the running session — locked during a replay (it
-                    // would diverge the recorded timeline).
+                    // mutates the running session — locked during playback
+                    // and netplay; since v3.5.0 a recording records it.
                     if frame.disk_sides > 0 {
                         ui.separator();
                         // v2.3.6 menu reorg — the swap accelerator and the
@@ -1028,8 +1032,8 @@ impl UiShell {
                             ui.separator();
                             // v1.8.9 — Multi-Disk: insert a specific side directly (a
                             // multi-disk FDS game prompts "insert side N"), or eject.
-                            // Disabled during a replay (mutating the disk diverges the
-                            // recorded timeline), like the cycle item above.
+                            // Disabled during playback and netplay, like the cycle
+                            // item above (v3.5.0: a recording records the swap).
                             ui.add_enabled_ui(disk_interactive, |ui| {
                                 for i in 0..frame.disk_sides {
                                     if ui
@@ -1058,9 +1062,9 @@ impl UiShell {
                         });
                     }
                     // v3.2.0 — the Datach barcode reader (mapper 157 only).
-                    // Locked like the disk controls: a scan changes the
-                    // machine outside the controller input a movie or a
-                    // netplay session carries. The window says why.
+                    // Locked like the disk controls: during playback (the
+                    // movie scans what it recorded) and netplay (which does
+                    // not carry a scan). The window says why.
                     if frame.barcode_reader {
                         ui.separator();
                         if ui
@@ -2517,7 +2521,8 @@ impl UiShell {
         if !self.show_barcode {
             return;
         }
-        let locked = frame.movie_recording || frame.movie_playing || frame.netplay_active;
+        // v3.5.0 — a recording records the scan; playback and netplay refuse it.
+        let locked = frame.movie_playing || frame.netplay_active;
         let mut open = self.show_barcode;
         let input = &mut self.barcode_input;
         egui::Window::new(crate::t!(ShellBarcodeTitle))

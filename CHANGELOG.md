@@ -26,6 +26,105 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`.rnm` movies are format 7; a format-6 movie (v3.1.0 to v3.4.x) is
+  refused** with the reason (`MovieError::FormatTooOld`: it "does not record
+  everything a faithful replay needs; re-record it"). Format 7 records every
+  input the core takes besides the controllers (`T-MOVIE-INPUT-STREAM`, backlog
+  CR-03, ADR 0044 amendment). The emulation is unchanged, so the emulation
+  epoch stays 5 and netplay stays protocol 9. `rustynes verify` attestations
+  are version 3 (a version-2 tail is not compared).
+- **`rustynes-core` API:** `FrameInput::apply_to` and `FrameInput::held_on`
+  are no longer `const fn`.
+- **`TAStudio` projects are written as `.rnmproj` version 2**, which a v3.4.x
+  build refuses as too new. Version-1 projects still load.
+
+### Added
+
+- **Movies record the Zapper, the other expansion devices, the microphone,
+  Vs. coins and service, FDS disk swaps and Datach barcode scans** (`.rnm`
+  format 7). `FrameInput` gains `extra: Option<ExtraInput>`; `ExtraInput` and
+  `DeviceInput` are new public types, enumerated from `Nes`'s own setters:
+  each port's device (Zapper aim and trigger, Vaus, Power Pad, Family Trainer,
+  SNES mouse, Family BASIC and Subor keyboards, both Hyper Shots), the
+  microphone, the two coin acceptors, the service button, the inserted disk
+  side, and a scan on the frame it preceded. Recorders read them off the
+  machine (`FrameInput::held_on`), so the desktop, browser, Android and iOS
+  record them with no change of their own; on disk they are an INPUT EVENTS
+  block of changes between frames (four bytes for a controller-only movie).
+  A frame with `extra: None` (an importer's, a `TAStudio` blank frame, an
+  input macro) drives the controllers only, as before. New `Nes` getters:
+  `vs_coin`, `vs_service`, `microphone`, `barcode_this_frame`, and
+  `scan_barcode_code`; `FrameInput::encode_log` / `decode_log`.
+  - **Gate** (`rustynes-test-harness/tests/movie_input_stream.rs`, default
+    build, synthetic ROMs and BIOS): a Zapper movie (with the microphone and
+    ten frames unplugged), a Vs. System movie (both acceptors, the service
+    button) and an FDS movie (eject, side B, back to side A) each replay
+    byte-identically per frame on the framebuffer, the audio and the full save
+    state, through the serialized `.rnm`; dropping each event kind makes the
+    replay differ; every device kind captures, applies and round-trips; a
+    barcode scan is recorded once and replays. 6 tests.
+  - **Mutations** (each run against the gate, then reverted): dropping the
+    device, microphone, coin, service, disk or barcode events from the writer
+    each fails it (Zapper / Vs. / FDS / barcode test, at frames 1, 1, 10, 50,
+    1, and the end state); applying every disk insert as side A, never
+    re-inserting, inserting every coin into acceptor #1, recording the trigger
+    released, recording the microphone released, not unplugging a device, and
+    carrying a barcode into the next frame each fail it. Two were first NOT
+    CAUGHT (stimulus blind): "never unplug" until the Zapper movie unplugged
+    the gun for ten frames, and "every insert is side A" until the gate
+    compared a per-frame state digest -- the synthetic BIOS's `$4032` reads
+    the same for either side, which is recorded in the test. Removing the
+    extra input from the attestation fails
+    `an_edited_extra_input_fails_verification`.
+- **A recording allows a disk swap, a barcode scan and a Vs. coin, and
+  records them** (`session_policy::recorded`). Playback and netplay still
+  refuse them, and Reset, Power Cycle and state loads are still refused during
+  a movie.
+- **`TAStudio` projects keep players 3 and 4 and the non-controller inputs**
+  (`.rnmproj` version 2 stores each log in the `.rnm` input encoding; version
+  1 dropped them), and stamping a button macro keeps each target frame's
+  non-controller input.
+
+### Fixed
+
+- **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu
+  item's dispatch) inserted a coin on one peer's console only, and nothing
+  released it, because the emulation thread that counts the coin down idles
+  during netplay. Inserting a coin is now refused during netplay and movie
+  playback (`TimelineAction::InsertCoin`), and the guard is held by
+  `every_timeline_action_route_asks_the_session_policy`. Found by reading the
+  code while checking whether netplay should carry the new inputs; not
+  reproduced in a live session.
+- **A recorded coin is held for the frames it ran with.** The desktop counted
+  the coin down after the movie hook, so a recording that reads the coin off
+  the machine would have claimed it one frame too long; the countdown now runs
+  before the hook (the live run is unchanged). `a_recorded_coin_replays_to_the_live_machine`
+  fails with the countdown moved back, on the recorded frames and, with that
+  assertion removed, on the replay at frame 8; the replay half was first blind
+  (its program read `$4016` only at vblank, so the extra frame's coin was never
+  sampled) until the program polled all frame. Restoring the history clear, or
+  dropping the disk events from the writer, fails
+  `a_history_clip_spanning_a_disk_swap_replays_it`.
+- **The history timeline survives a disk swap or a barcode scan**, which a
+  `.rnm` now records, so an exported clip spanning one replays it
+  (`T-HISTORY-DISK-SWAP` had cleared it since v3.3.0).
+
+### Not changed, and why
+
+- **Netplay carries none of the new inputs** (protocol 9 unchanged). A session
+  exchanges one controller byte per player per frame and its tick drives
+  `set_buttons` only, so it never feeds an expansion device or the microphone,
+  and it refuses disk swaps, scans and (now) coins: nothing diverges, the
+  inputs are unavailable. Carrying them needs a wider input cell and a
+  prediction rule for an aim point, a feature rather than a fix.
+- **Reset and Power Cycle are still not recorded**, and still refused while a
+  movie records; the FDS write-protect flag is a property of the medium, not
+  recorded.
+- **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) still carry
+  controllers only: their FDS and Vs. coin commands are not translated.
+
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or

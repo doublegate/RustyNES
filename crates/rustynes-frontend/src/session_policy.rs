@@ -3,11 +3,14 @@
 //!
 //! # Why this is its own module
 //!
-//! A `.rnm` movie records controller input and nothing else
-//! (`rustynes_core::FrameInput`), and a netplay session exchanges controller
-//! input and nothing else. Anything that changes the machine OUTSIDE that
-//! input stream — a Reset, a Power Cycle, an FDS disk swap, a state load —
-//! therefore breaks whichever of the two owns the timeline:
+//! A netplay session exchanges controller input and nothing else, and a
+//! `.rnm` movie records the controllers plus (since v3.5.0, format 7) the
+//! non-controller inputs: expansion devices, the microphone, Vs. coins and
+//! service, FDS disk swaps and Datach barcode scans
+//! (`rustynes_core::ExtraInput`). Anything that changes the machine OUTSIDE
+//! the stream its owner carries -- a Reset, a Power Cycle, a state load
+//! always; a disk swap, a scan or a coin outside a recording -- therefore
+//! breaks whichever owns the timeline:
 //!
 //! - **during a recording** the action is not in the movie, so the saved file
 //!   no longer replays the run it claims to (and an attested recording would
@@ -26,19 +29,28 @@
 //!
 //! # The rule
 //!
-//! | action | movie | netplay | RA hardcore |
-//! | --- | --- | --- | --- |
-//! | Reset, Power Cycle | refused | refused | allowed |
-//! | disk swap / insert / eject | refused | refused | allowed |
-//! | Datach barcode scan | refused | refused | allowed |
-//! | state load | refused | refused | refused |
+//! | action | movie recording | movie playing | netplay | RA hardcore |
+//! | --- | --- | --- | --- | --- |
+//! | Reset, Power Cycle | refused | refused | refused | allowed |
+//! | disk swap / insert / eject | **allowed** (recorded) | refused | refused | allowed |
+//! | Datach barcode scan | **allowed** (recorded) | refused | refused | allowed |
+//! | Vs. coin insert | **allowed** (recorded) | refused | refused | allowed |
+//! | state load | refused | refused | refused | refused |
 //!
 //! Reset and Power Cycle stay legal in hardcore because rcheevos treats them
 //! as legitimate (they are what a real console offers); a state load is the
 //! one thing hardcore exists to forbid. A disk swap is an ordinary act of
 //! play on a real Famicom, so hardcore allows it too, and so is swiping a
-//! card through a Datach (v3.2.0): a scan changes the machine through the
-//! cartridge's barcode reader, which neither a movie nor netplay carries.
+//! card through a Datach (v3.2.0) or dropping a coin into a Vs. cabinet.
+//!
+//! **v3.5.0 (`T-MOVIE-INPUT-STREAM`)**: a recording now carries the disk, the
+//! scan and the coin, so a recording allows them and records them. Playback
+//! still refuses them (the movie drives those inputs, so the player's would be
+//! overwritten on the next frame, or worse, half-applied), and netplay still
+//! refuses them (it carries none of them). The coin row is new: until v3.5.0
+//! the coin was not asked about at all, and the bound hotkey inserted one on
+//! one netplay peer only, which nothing then cleared -- the emulation thread
+//! that counts the coin down idles during netplay -- so the session desynced.
 //!
 //! When more than one owner refuses, the hardcore reason is reported first
 //! (it is the one the player cannot end on their own), then the movie, then
@@ -71,6 +83,8 @@ pub enum TimelineAction {
     DiskSwap,
     /// v3.2.0 — a barcode swiped through the Datach reader (mapper 157).
     BarcodeScan,
+    /// v3.5.0 — a coin dropped into a Vs. System acceptor.
+    InsertCoin,
     /// Restoring a save state (slot, manager, browser grid, or a script).
     LoadState,
 }
@@ -84,6 +98,7 @@ impl TimelineAction {
             Self::PowerCycle => "Power Cycle",
             Self::DiskSwap => "Disk swap",
             Self::BarcodeScan => "Barcode scan",
+            Self::InsertCoin => "Coin insert",
             Self::LoadState => "Load state",
         }
     }
@@ -92,10 +107,13 @@ impl TimelineAction {
 /// Who owns the timeline right now. Each flag is read by the caller from the
 /// live session (`EmuCore::movie`, the netplay driver, the RA session).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(clippy::struct_excessive_bools)] // three independent owners, not a state machine
+#[allow(clippy::struct_excessive_bools)] // independent owners read from the live session
 pub struct SessionOwners {
-    /// A movie is recording or playing back.
-    pub movie: bool,
+    /// A movie is recording.
+    pub recording: bool,
+    /// v3.5.0 — a movie is playing back. (Until v3.5.0 one `movie` flag held
+    /// both; a recording now allows the inputs it records.)
+    pub playing: bool,
     /// A netplay session (player, not spectator) is active.
     pub netplay: bool,
     /// `RetroAchievements` hardcore mode is enforcing its restrictions.
@@ -135,7 +153,7 @@ pub const fn refusal(action: TimelineAction, owners: SessionOwners) -> Option<Re
     if owners.hardcore && matches!(action, TimelineAction::LoadState) {
         return Some(Refusal::Hardcore);
     }
-    if owners.movie {
+    if owners.playing || (owners.recording && !recorded(action)) {
         return Some(Refusal::Movie);
     }
     if owners.netplay {
@@ -144,15 +162,26 @@ pub const fn refusal(action: TimelineAction, owners: SessionOwners) -> Option<Re
     None
 }
 
+/// v3.5.0 — whether a recording carries `action` in its input stream
+/// (`rustynes_core::ExtraInput`), so it may run while a movie records.
+#[must_use]
+pub const fn recorded(action: TimelineAction) -> bool {
+    matches!(
+        action,
+        TimelineAction::DiskSwap | TimelineAction::BarcodeScan | TimelineAction::InsertCoin
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL: [TimelineAction; 5] = [
+    const ALL: [TimelineAction; 6] = [
         TimelineAction::Reset,
         TimelineAction::PowerCycle,
         TimelineAction::DiskSwap,
         TimelineAction::BarcodeScan,
+        TimelineAction::InsertCoin,
         TimelineAction::LoadState,
     ];
 
@@ -164,19 +193,43 @@ mod tests {
     }
 
     #[test]
-    fn a_movie_or_netplay_refuses_every_action() {
+    fn playback_or_netplay_refuses_every_action() {
         for a in ALL {
-            let movie = SessionOwners {
-                movie: true,
+            let playing = SessionOwners {
+                playing: true,
                 ..SessionOwners::default()
             };
             let netplay = SessionOwners {
                 netplay: true,
                 ..SessionOwners::default()
             };
-            assert_eq!(refusal(a, movie), Some(Refusal::Movie), "{a:?}");
+            assert_eq!(refusal(a, playing), Some(Refusal::Movie), "{a:?}");
             assert_eq!(refusal(a, netplay), Some(Refusal::Netplay), "{a:?}");
         }
+    }
+
+    /// v3.5.0 — a recording allows exactly the actions it records (the disk,
+    /// a scan, a coin) and still refuses the rest.
+    #[test]
+    fn a_recording_allows_what_it_records_and_refuses_the_rest() {
+        let recording = SessionOwners {
+            recording: true,
+            ..SessionOwners::default()
+        };
+        for a in ALL {
+            let want = if recorded(a) {
+                None
+            } else {
+                Some(Refusal::Movie)
+            };
+            assert_eq!(refusal(a, recording), want, "{a:?}");
+        }
+        assert!(recorded(TimelineAction::DiskSwap));
+        assert!(recorded(TimelineAction::BarcodeScan));
+        assert!(recorded(TimelineAction::InsertCoin));
+        assert!(!recorded(TimelineAction::Reset));
+        assert!(!recorded(TimelineAction::PowerCycle));
+        assert!(!recorded(TimelineAction::LoadState));
     }
 
     #[test]
@@ -202,7 +255,8 @@ mod tests {
     #[test]
     fn hardcore_is_reported_before_the_movie_and_the_movie_before_netplay() {
         let all = SessionOwners {
-            movie: true,
+            recording: false,
+            playing: true,
             netplay: true,
             hardcore: true,
         };

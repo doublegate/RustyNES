@@ -1130,21 +1130,27 @@ reorganized the order and regrouped several items — see the per-menu notes):
   overhauled in v1.7.0 beta.5 #53 with word-wrap, colorization, navigable
   sub-pages, and intra-doc links), Keyboard Shortcuts, About.
 
-**Session lockout (v2.9.9, NF-11).** A movie and a netplay session both carry
-controller input only, so anything that changes the machine outside that
-stream breaks them: a Reset, a Power Cycle, an FDS disk change, a Datach
-barcode scan (v3.2.0) and a state load are refused while a movie records or
-plays, or a netplay session runs, and a state load is also refused in RA
-hardcore. For the scan the menu item is greyed with the reason on hover, the
-window keeps the field editable but disables Scan and says why, and the
-dispatch refuses with "Barcode scan disabled during movie / netplay"; a scan is
-not recorded in `.rnm` movies or carried by netplay, so allowing it would
-desynchronise them silently. The rule is one pure function,
-`session_policy::refusal`, and every route asks it — the menu (which greys the
-items), the hotkeys, the Save-States manager, the browser grid; a script's load
-honours the `writes_locked` gate its `SetInput` already did. The F8 movie
-branch refuses netplay, as record, play and import do. Until v2.9.9 only the
-menu enforced this, so a hotkey reached the same handler unguarded.
+**Session lockout (v2.9.9, NF-11; v3.5.0).** A netplay session carries
+controller input only, and a movie carries the controllers plus (since v3.5.0,
+`.rnm` format 7) the non-controller inputs: expansion devices, the microphone,
+Vs. coins, FDS disk changes and Datach barcode scans. So a Reset, a Power Cycle
+and a state load are refused while a movie records or plays or a netplay
+session runs, and a state load is also refused in RA hardcore; an FDS disk
+change, a barcode scan (v3.2.0) and a Vs. coin (v3.5.0) are refused during
+playback and netplay but **allowed while a movie records, which records them**.
+Until v3.5.0 a recording refused the disk change and the scan too, and the
+coin was asked about nowhere: the F10 hotkey inserted a coin on one netplay
+peer only, which nothing then released (the emulation thread that counts the
+coin down idles during netplay), so the session desynced. For the scan the
+menu item is greyed with the reason on hover, the window keeps the field
+editable but disables Scan and says why, and the dispatch refuses with
+"Barcode scan disabled during movie / netplay". The rule is one pure function,
+`session_policy::refusal` (with `session_policy::recorded` naming what a
+recording carries), and every route asks it — the menu (which greys the items),
+the hotkeys, the Save-States manager, the browser grid; a script's load honours
+the `writes_locked` gate its `SetInput` already did. The F8 movie branch
+refuses netplay, as record, play and import do. Until v2.9.9 only the menu
+enforced this, so a hotkey reached the same handler unguarded.
 
 **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only,
 determinism-neutral (the core stays byte-identical; AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps).
@@ -2589,6 +2595,60 @@ overclock is recorded as set and replayed with it.
   the player had set; the cycle now keeps them itself, and the re-application
   guarantees the options whatever a cycle does.
 
+### The non-controller inputs (v3.5.0, format 7)
+
+`.rnm` format 7 (`MOVIE_FORMAT_VERSION` 7, minimum 7; `T-MOVIE-INPUT-STREAM`,
+backlog CR-03) records every input `Nes` accepts besides the controllers, in
+`FrameInput::extra` (`rustynes_core::ExtraInput`): each port's expansion device
+and the fields its host sets (`DeviceInput`: Zapper aim and trigger, Vaus
+position and fire, the Power Pad and Family Trainer masks, the SNES mouse's
+deltas, buttons and sensitivity, both keyboards' rows, both Hyper Shots), the
+Famicom microphone, the Vs. coin acceptors and service button, the inserted FDS
+disk side, and a Datach barcode scan. The set was enumerated from `Nes`'s
+setters; the survey table above gives the verdict for each.
+
+- **Captured from the machine, not from the host.** `FrameInput::held_on` reads
+  the levels the host has set (`ExtraInput::capture`), so every recorder --
+  desktop, browser, Android and iOS -- records them with no change of its own.
+  A barcode is an event, not a level: `Nes::barcode_this_frame` holds a scan
+  from `scan_barcode` until the next `run_frame` starts, which is exactly the
+  window a recorder reads in.
+- **Applied as the host applied them.** `FrameInput::apply_to` writes the
+  devices, microphone, coin and service every frame, as a host's per-frame call
+  does; it changes the disk only when the recorded side differs (an insert
+  resets the head and opens the not-ready window, so repeating it would not be
+  the same input); and it swipes a recorded barcode.
+- **Stored as changes.** On disk the levels are an INPUT EVENTS block after the
+  5-byte records: a `u32` count, then events of a `u32` frame, a kind byte and a
+  payload, written only where a frame differs from the one before (plus every
+  scan). A controller-only movie spends four bytes on it. The decoder is strict
+  (events in order and inside the movie, values a device can hold, no event
+  that changes nothing) so a parsed movie re-encodes to the same bytes.
+- **`None` means "leave it alone".** A frame from an importer, a TAStudio blank
+  frame or an input macro has `extra: None`, and playback drives its
+  controllers only, as before v3.5.0. The neutral `ExtraInput` is a real input
+  (no device, disk ejected), so a blank frame does not unplug the Zapper or
+  eject the disk.
+- **A format-6 movie is refused** as too old (`MovieError::FormatTooOld`, which
+  says the movie does not record everything a faithful replay needs and to
+  re-record it). The emulation is unchanged, so `EMULATION_EPOCH` did not rise.
+- **The attestation folds it in** (attestation version 3), so an edited
+  non-controller input fails `rustynes verify`.
+- **Netplay does not carry it, unchanged by design.** A session exchanges one
+  controller byte per player per frame, and the netplay tick drives
+  `set_buttons` only: it never feeds an expansion device or the microphone, and
+  disk swaps and barcode scans are refused during a session. So nothing diverges
+  -- the inputs are simply not available in netplay. Carrying them is a protocol
+  change (a wider input cell, and a prediction rule for an aim point) and is
+  left as a feature, not a fix. One exception was found while checking: the Vs.
+  coin (`F10`) is not refused during a desktop netplay session, so a coin
+  inserted on one peer reaches only its own console; see the v3.5.0 CHANGELOG.
+- **The gate**: `crates/rustynes-test-harness/tests/movie_input_stream.rs`
+  records a Zapper, a Vs. System and an FDS movie (synthetic ROMs and a
+  synthetic BIOS, so it runs in the default build) and requires the replay to
+  match per frame on the framebuffer, the audio and the full save state; it
+  also requires that dropping each event kind makes the replay differ.
+
 ### Netplay
 
 The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the
@@ -2660,10 +2720,13 @@ compared.
 | Region (header, after game-database correction) | yes: clock dividers | checked, not applied |
 | Cartridge header (mapper, submapper, mirroring, RAM, battery, trainer, console type) | yes: the machine built | checked (`BoardDescription`) |
 | `set_buttons` ports 0-3 | yes: input | the per-frame input stream |
-| `set_expansion_device`, `set_zapper`, `set_paddle`, `set_power_pad`, `set_snes_mouse`, keyboards, Family Trainer, Hyper Shots | yes: input | **not recorded**: per-frame device input a `.rnm` has no field for |
-| `set_microphone` | yes: `$4016` bit 2 | **not recorded** (input) |
-| `insert_coin` / `clear_coin` / `set_vs_service` | yes: Vs. inputs | **not recorded** (input) |
-| `set_disk_side` / `set_disk_write_protected` | yes: FDS drive state | **not recorded** (disk events during play) |
+| `set_expansion_device`, `set_zapper`, `set_paddle`, `set_power_pad`, `set_snes_mouse`, keyboards, Family Trainer, Hyper Shots | yes: input | the per-frame input stream (`ExtraInput::devices`, format 7; v3.5.0) |
+| `set_microphone` | yes: `$4016` bit 2 | the per-frame input stream (`ExtraInput::microphone`, format 7) |
+| `insert_coin` / `clear_coin` / `set_vs_service` | yes: Vs. inputs | the per-frame input stream (`ExtraInput::vs_coin` / `vs_service`, format 7) |
+| `set_disk_side` | yes: FDS drive state | the per-frame input stream (`ExtraInput::disk_side`, format 7) |
+| `scan_barcode` (Datach, mapper 157) | yes: the reader's bit stream | the per-frame input stream (`ExtraInput::barcode`, format 7: the frame the scan preceded) |
+| `set_disk_write_protected` | yes: `$4032` bit 2 and dropped writes | not recorded: a property of the medium the host sets at load, never during play |
+| Reset / Power Cycle (`reset`, `power_cycle`) | yes | not recorded; refused while a movie records or plays (`session_policy`) |
 | Raw RAM cheats (frontend) | yes: post-frame pokes | suspended while a movie records or plays |
 | `set_fast_dotloop` | no: byte-identical by proof (`fast_dotloop_diff`) | preserved across `power_on_for_movie`, not recorded |
 | `set_custom_palette` | no: presentation (the RGBA LUT) | not recorded |
@@ -2673,10 +2736,11 @@ compared.
 | Run-ahead, rewind capture, frame skip, pacing | no: frontend timeline orchestration | not recorded |
 | Breakpoints, tracing, event / access / exec / interrupt logging, pixel / audio / write provenance | no: observability | not recorded |
 
-Two caveats the table cannot hold: `Movie::verify` hashes the RGBA framebuffer,
+One caveat the table cannot hold: `Movie::verify` hashes the RGBA framebuffer,
 so a custom palette or Vs. palette on the verifier changes the hash without
-changing emulation; and a movie whose ROM needs an expansion device replays
-with the device's input absent.
+changing emulation. (Until v3.5.0 there was a second: a movie whose ROM needs
+an expansion device replayed with the device's input absent. Format 7 records
+it; see "The non-controller inputs" below.)
 
 ## ROM file handling
 

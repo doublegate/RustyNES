@@ -2690,12 +2690,11 @@ impl App {
                 return;
             };
             let r = nes.scan_barcode(code);
-            // A scan is input a `.rnm` does not record, so, as for a Reset
-            // (NF-13), a history clip spanning it could not replay it: start a
-            // fresh timeline (`CodeRabbit` on #604).
-            if r.is_ok() {
-                emu.history.clear();
-            }
+            // v3.5.0 — no longer clears the history timeline: a `.rnm`
+            // records the scan since format 7 (`ExtraInput::barcode`), and the
+            // history viewer captures it through `FrameInput::held_on`, so a
+            // clip spanning it replays it. (Cleared from v3.2.0, `CodeRabbit`
+            // on #604, while a movie could not carry it.)
             r
         };
         let message = match result {
@@ -2711,8 +2710,9 @@ impl App {
     /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`) — the
     /// Multi-Disk submenu's direct counterpart to [`Self::cycle_disk_side`] (a
     /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
-    /// The swap starts a fresh history timeline (`EmuCore::swap_disk`,
-    /// `T-HISTORY-DISK-SWAP`).
+    /// Since v3.5.0 a movie records the swap and the history timeline keeps
+    /// it (`EmuCore::swap_disk`; it cleared the timeline under
+    /// `T-HISTORY-DISK-SWAP`, v3.3.0 to v3.4.x).
     fn set_disk_side(&self, side: Option<usize>) {
         // Flush before swapping so an in-progress write isn't lost across the
         // eject. Native-only (the wasm build has no `.fds.sav` filesystem).
@@ -5200,8 +5200,32 @@ impl App {
     /// equivalent replay-interaction lockout (observed as a black-box oracle; no
     /// code derived from it).
     fn replay_interaction_locked(&self) -> bool {
+        let (recording, playing) = self.movie_session();
+        recording || playing
+    }
+
+    /// Drop a coin into Vs. acceptor #1 (the main cabinet's on a
+    /// `DualSystem`) and hold it for `VS_COIN_HOLD_FRAMES`; a no-op on a
+    /// non-Vs. game. Callers have asked `session_policy` first (v3.5.0: one
+    /// body for the menu item and the hotkey, which were two copies).
+    fn insert_vs_coin(&self) {
+        let mut guard = self.emu.lock();
+        let emu = &mut *guard;
+        if let Some(nes) = emu.nes.as_mut() {
+            nes.insert_coin(0);
+            emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+        } else if let Some(dual) = emu.dual.as_mut() {
+            // v2.1.2 F2.1 — coin into the MAIN cabinet acceptor.
+            dual.insert_coin(0);
+            emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+        }
+    }
+
+    /// v3.5.0 — whether a movie is (recording, playing), for
+    /// `session_policy`: a recording allows the inputs it records.
+    fn movie_session(&self) -> (bool, bool) {
         let emu = self.emu.lock();
-        emu.movie.is_recording() || emu.movie.is_playing()
+        (emu.movie.is_recording(), emu.movie.is_playing())
     }
 
     /// v2.9.9 (NF-11) — refuse `action` when a movie, a netplay session or RA
@@ -5216,8 +5240,10 @@ impl App {
     /// [`crate::session_policy::refusal`]; this only gathers the three owners
     /// from the live session.
     fn refuse_timeline_action(&mut self, action: TimelineAction) -> bool {
+        let (recording, playing) = self.movie_session();
         let owners = crate::session_policy::SessionOwners {
-            movie: self.replay_interaction_locked(),
+            recording,
+            playing,
             netplay: self.netplay_is_active(),
             hardcore: self.ra_hardcore_blocks(),
         };
@@ -5384,8 +5410,10 @@ impl App {
             return;
         };
         if on && !currently {
+            let (recording, playing) = self.movie_session();
             let owners = crate::session_policy::SessionOwners {
-                movie: self.replay_interaction_locked(),
+                recording,
+                playing,
                 netplay: self.netplay_is_active(),
                 hardcore: false,
             };
@@ -5726,15 +5754,10 @@ impl App {
                 self.handle_av_record_toggle();
             }
             MenuAction::InsertCoin => {
-                let mut guard = self.emu.lock();
-                let emu = &mut *guard;
-                if let Some(nes) = emu.nes.as_mut() {
-                    nes.insert_coin(0);
-                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
-                } else if let Some(dual) = emu.dual.as_mut() {
-                    // v2.1.2 F2.1 — coin into the MAIN cabinet acceptor.
-                    dual.insert_coin(0);
-                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+                // v3.5.0 — recorded by a movie; refused during playback and
+                // netplay (`session_policy`).
+                if !self.refuse_timeline_action(TimelineAction::InsertCoin) {
+                    self.insert_vs_coin();
                 }
             }
             MenuAction::OpenPanel(panel) => {
@@ -7440,15 +7463,10 @@ impl App {
             SysAction::InsertCoin => {
                 // v2.5.0 — insert a Vs. System coin (acceptor #1). No-op for
                 // non-Vs. games. The coin latch clears a few frames later.
-                let mut guard = self.emu.lock();
-                let emu = &mut *guard;
-                if let Some(nes) = emu.nes.as_mut() {
-                    nes.insert_coin(0);
-                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
-                } else if let Some(dual) = emu.dual.as_mut() {
-                    // v2.1.2 F2.1 — coin into the MAIN cabinet acceptor.
-                    dual.insert_coin(0);
-                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+                // v3.5.0 — recorded by a movie, refused during playback and
+                // netplay (the hotkey reached netplay unguarded and desynced it).
+                if !self.refuse_timeline_action(TimelineAction::InsertCoin) {
+                    self.insert_vs_coin();
                 }
             }
             SysAction::ToggleFullscreen => self.toggle_fullscreen(),
@@ -13516,6 +13534,8 @@ mod tests {
             ("MenuAction::Reset =>", "TimelineAction::Reset"),
             ("MenuAction::PowerCycle =>", "TimelineAction::PowerCycle"),
             ("MenuAction::CycleDiskSide =>", "TimelineAction::DiskSwap"),
+            ("MenuAction::InsertCoin =>", "TimelineAction::InsertCoin"),
+            ("SysAction::InsertCoin =>", "TimelineAction::InsertCoin"),
             (
                 "MenuAction::SetDiskSide(side) =>",
                 "TimelineAction::DiskSwap",

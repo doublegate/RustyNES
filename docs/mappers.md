@@ -971,12 +971,15 @@ nothing else's layout changed and no version moved; `PPU_SNAPSHOT_VERSION` and
 `EMULATION_EPOCH` are untouched, because no frame of any game that loaded
 before this change is different.
 
-**Movies and netplay.** A scan is an input that changes emulation and is not
-recorded in `.rnm` movies or carried by netplay. A host must refuse a scan
-while a movie records or plays or a netplay session runs, rather than let it
-desynchronise; the desktop does (`session_policy`'s `BarcodeScan`, the reason
-shown in the menu, the window and the status line). The libretro core, the
-mobile apps and Lua expose no scan yet. Recording scans is future work.
+**Movies and netplay.** A scan is an input that changes emulation. Since
+v3.5.0 a `.rnm` movie records it (format 7, `ExtraInput::barcode`, on the
+frame the scan preceded: `Nes::barcode_this_frame` holds it until the next
+frame starts) and playback swipes it again; netplay still does not carry it. A
+host must refuse a scan during movie playback or a netplay session, rather than
+let it desynchronise; the desktop does (`session_policy`'s `BarcodeScan`, the
+reason shown in the menu, the window and the status line), and allows it while
+a movie records. The libretro core, the mobile apps and Lua expose no scan
+yet.
 
 **Open bus.** The six undriven bits of a `$6000-$7FFF` read are open bus on
 the board and read 0 here, as on mapper 16: the bus consults a partial
