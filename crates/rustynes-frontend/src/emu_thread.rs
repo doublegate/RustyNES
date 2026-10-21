@@ -1014,12 +1014,13 @@ fn block_until_native(target: Instant) {
 /// When none of the elevations are permitted (no `realtime` group, no
 /// caps) the thread runs at default priority exactly as before — the
 /// feature "just works" once the user joins the group and harms nothing
-/// otherwise. macOS / Windows keep the documented no-op for now (Windows
-/// `SetThreadPriority(ABOVE_NORMAL)` is the follow-up).
+/// otherwise. Windows and macOS have their own variants below (v3.5.0,
+/// `FE-08`); every other target keeps the no-op.
 ///
-/// This is the only `unsafe` in `rustynes-frontend` (workspace `unsafe_code =
-/// "warn"`): three libc scheduler syscalls on the calling thread, each with
-/// a `// SAFETY:` justification below.
+/// These three functions are the frontend's only `unsafe` outside the
+/// `rustynes-cheevos` FFI it links (workspace `unsafe_code = "warn"`): OS
+/// scheduler calls on the calling thread, each with a `// SAFETY:`
+/// justification.
 #[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn elevate_thread_priority() {
@@ -1056,11 +1057,87 @@ fn elevate_thread_priority() {
     }
 }
 
-/// Non-Linux best-effort priority elevation: a documented no-op for now.
-/// Rust's `std` sleeps already use high-resolution timers, so the pacer is
-/// precise regardless; Windows `SetThreadPriority(ABOVE_NORMAL)` / macOS
-/// QoS are the follow-up if profiling shows scheduler jitter there.
-#[cfg(not(target_os = "linux"))]
+/// Win32 `THREAD_PRIORITY_ABOVE_NORMAL` (`processthreadsapi.h`): one step
+/// above the normal priority of the process's priority class. Not a
+/// real-time level: `THREAD_PRIORITY_TIME_CRITICAL` (15) and the
+/// `REALTIME_PRIORITY_CLASS` are deliberately not used, so the emu thread's
+/// end-of-frame spin can never starve the WASAPI audio thread, which runs
+/// under MMCSS "Pro Audio" well above this level.
+#[cfg(windows)]
+const THREAD_PRIORITY_ABOVE_NORMAL: i32 = 1;
+
+/// Best-effort emu-thread priority elevation (Windows, v3.5.0 `FE-08`).
+///
+/// `SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL)`:
+/// the calling thread only, never the process. Any user may raise a thread
+/// of its own process within its priority class, so this needs no
+/// privilege; a failure (which the documentation does not expect for this
+/// level) leaves the thread at normal priority, exactly as before, and is
+/// reported once on stderr like the Linux variant's outcome.
+///
+/// The two functions are declared here rather than through `windows-sys`
+/// so the frontend takes no new dependency for two `kernel32` symbols whose
+/// signatures have been stable since Windows NT 3.1: `GetCurrentThread`
+/// returns a pseudo-handle (`HANDLE`, a pointer) that needs no
+/// `CloseHandle`, and `SetThreadPriority` returns a nonzero `BOOL` on
+/// success.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn elevate_thread_priority() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentThread() -> *mut core::ffi::c_void;
+        fn SetThreadPriority(thread: *mut core::ffi::c_void, priority: i32) -> i32;
+    }
+    // SAFETY: `GetCurrentThread` takes no arguments and returns the calling
+    // thread's pseudo-handle, which is always valid for the caller and is
+    // never dereferenced here. `SetThreadPriority` receives that handle and
+    // a documented priority constant; it writes through no pointer of ours
+    // and only returns a status we inspect. Both declarations match the
+    // `kernel32` exports' `extern "system"` (stdcall on x86, the platform
+    // ABI elsewhere) signatures.
+    let ok = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) } != 0;
+    if ok {
+        eprintln!("rustynes: emu thread raised to THREAD_PRIORITY_ABOVE_NORMAL.");
+    } else {
+        eprintln!("rustynes: emu thread at normal priority (SetThreadPriority refused).");
+    }
+}
+
+/// Best-effort emu-thread priority elevation (macOS, v3.5.0 `FE-08`).
+///
+/// macOS schedules by quality-of-service class rather than by a raw
+/// priority a process may set for itself: `pthread_set_qos_class_self_np`
+/// puts the calling thread in `QOS_CLASS_USER_INTERACTIVE`, the class Apple
+/// documents for work the user is watching (animation, frame production),
+/// at relative priority 0 within it. That raises its scheduling priority
+/// and keeps it off the efficiency cores on Apple silicon, without the
+/// Mach real-time time-constraint policy, which is reserved for the audio
+/// path (Core Audio's own I/O thread already runs there, so it still wins).
+/// No privilege is needed; on failure the thread keeps the default class.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn elevate_thread_priority() {
+    // SAFETY: `pthread_set_qos_class_self_np` acts on the calling thread
+    // only, takes two plain values (an enum member and an int in the
+    // documented `QOS_MIN_RELATIVE_PRIORITY..=0` range), touches no memory
+    // of ours and returns 0 or an errno we inspect. It must be called on a
+    // thread whose scheduling policy was not changed with
+    // `pthread_setschedparam`, which is true of this freshly spawned one.
+    let rc = unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+    };
+    if rc == 0 {
+        eprintln!("rustynes: emu thread in QoS class USER_INTERACTIVE.");
+    } else {
+        eprintln!("rustynes: emu thread at the default QoS class (error {rc}).");
+    }
+}
+
+/// Every other target (the BSDs, ...): a documented no-op. Rust's `std`
+/// sleeps already use high-resolution timers, so the pacer is precise
+/// regardless.
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 #[allow(clippy::missing_const_for_fn)]
 fn elevate_thread_priority() {}
 

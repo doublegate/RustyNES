@@ -26,6 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **The emulation thread runs at a raised priority on Windows and macOS too**
+  (`FE-08`). Windows sets it one step above normal
+  (`THREAD_PRIORITY_ABOVE_NORMAL`); macOS puts it in the `USER_INTERACTIVE`
+  quality-of-service class. Both affect that one thread only, need no
+  privileges, stay below the audio thread, and leave it at the default if the
+  system refuses. Linux was already elevated. The line the app prints at
+  start says which outcome applied.
+
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or

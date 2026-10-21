@@ -119,9 +119,16 @@ not the winit thread:
   stored knobs.
   Pinned by `every_load_path_configures_the_console_before_installing_it` and
   `configure_console_restores_what_a_power_cycle_drops`.
-- Best-effort Linux priority elevation runs on the emu thread (SCHED_RR →
-  `nice` → `PR_SET_TIMERSLACK`, degrading silently without the `realtime`
-  rlimit).
+- Best-effort priority elevation runs on the emu thread, per thread and
+  never for the process. Linux: SCHED_RR → `nice` → `PR_SET_TIMERSLACK`,
+  degrading silently without the `realtime` rlimit. Windows (v3.5.0):
+  `SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL)`, one step above normal and
+  below the MMCSS audio thread. macOS (v3.5.0): QoS class
+  `USER_INTERACTIVE` via `pthread_set_qos_class_self_np`, short of the Mach
+  real-time policy Core Audio's thread uses. Each logs its outcome once on
+  stderr. No test can observe an OS scheduler class: the Windows and macOS
+  variants are type-checked for their targets in CI and confirmed by hand
+  on those systems (the stderr line says which outcome applied).
 
 `cargo run --no-default-features` keeps the synchronous path (the emulator
 runs on the winit thread) for A/B comparison. The browser builds
