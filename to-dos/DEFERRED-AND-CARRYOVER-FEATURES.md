@@ -224,7 +224,8 @@ bundler shipped in the v1.8.9 "Backlog" beta train.)*
   so the debugger/TAStudio panels can pop out into OS windows. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9. Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/debugger/`.
-- `[~]` **A/V dump-options depth (codec / sync)** — *(2026-09-29: the CODEC half
+- `[x]` **A/V dump-options depth (codec / sync)** — *(v3.5.0, `FE-03`: the sync
+  half, an A/V sync offset in Settings → Recording. Earlier state:)* *(2026-09-29: the CODEC half
   shipped v1.8.9, commit `a87a732a`: `crates/rustynes-frontend/src/av_record.rs`
   `VideoCodec` (H.264 / H.265 / VP9) + `AvRecordOptions` (CRF, preset, AAC
   bitrate). No user-facing A/V-sync control exists — `AvRecordOptions` has no
@@ -238,7 +239,11 @@ bundler shipped in the v1.8.9 "Backlog" beta train.)*
   (8 KiB gate + SHA-256 match), surfaced in `debugger/settings_panel.rs`.)* FDS BIOS hash-verify/resolve UI (supports the
   v1.6.0 FDS-proper work). Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H9.
   Target: **v1.7.x (beta.5)**. Files: frontend FDS handling.
-- `[~]` **Multi-Disk Bundler** — *(2026-09-29: the FDS half shipped v1.8.9,
+- `[x]` **Multi-Disk Bundler** — *(v3.5.0, `FE-04`: `.rnbundle` manifests with
+  named slots, `crates/rustynes-frontend/src/bundle.rs`. FDS slots merge into one
+  disk set whose sides the Disk Side submenu lists by name; cartridge slots fill
+  an Emulation → Multicart submenu; File → New Multi-Disk Bundle… writes one.
+  Earlier state:)* *(2026-09-29: the FDS half shipped v1.8.9,
   commit `2f06b1bc`: an Emulation → Disk Side submenu inserts any side directly
   (`set_disk_side` in `crates/rustynes-frontend/src/app.rs`, menu in
   `ui_shell.rs`). No NAMED slot management and nothing for multicarts exists.

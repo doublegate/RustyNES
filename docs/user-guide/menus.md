@@ -16,7 +16,8 @@ the hotkey and the menu item do exactly the same thing.
 
 | Item | Key | Notes |
 |------|-----|-------|
-| Open ROM… | `F12` | Native file picker for a `.nes` / `.fds` ROM |
+| Open ROM… | `F12` | Native file picker for a `.nes` / `.fds` ROM, or a `.rnbundle` Multi-Disk bundle |
+| New Multi-Disk Bundle… | | Pick several `.fds` disks (or several cartridges) in order, then where to save the bundle; it is written and opened. See [Multi-Disk bundles](#multi-disk-bundles) (native only) |
 | Open Recent ▸ | | The recently-opened ROMs; missing files are greyed out. "Clear Recent" empties the list |
 | Swap Disk Side | `F9` | FDS only — cycle the inserted disk side |
 | Save State | `F1` | Save to the active slot |
@@ -42,7 +43,38 @@ the hotkey and the menu item do exactly the same thing.
 | Run-Ahead ▸ | | Choose the run-ahead depth, 0–3 frames. **Tools → Analysis → Latency Oracle** can measure the depth this game actually needs |
 | Region | | Read-only NTSC / PAL / Dendy label |
 | Vs. Insert Coin | `F10` | Vs. System games only — insert a coin into acceptor #1 |
-| Famicom Disk System ▸ | `F9` | FDS games only — Swap Disk Side, plus direct side selection and Eject. `F9` works without opening the menu |
+| Famicom Disk System ▸ | `F9` | FDS games only — Swap Disk Side, plus direct side selection and Eject. `F9` works without opening the menu. A disk set opened from a bundle lists its sides by name ("Disk 1 side A", ...) |
+| Multicart ▸ | | Only while a cartridge bundle is open — its slots by name; pick one to load it |
+
+#### Multi-Disk bundles
+
+A bundle (`.rnbundle`, v3.5.0) is a short text file naming a set of images,
+opened like a ROM (File → Open ROM, Open Recent, drag-and-drop, the command
+line):
+
+```toml
+name = "Zelda no Densetsu"
+
+[[slot]]
+name = "Disk 1"
+path = "zelda-disk1.fds"
+
+[[slot]]
+name = "Save disk"
+path = "zelda-save.fds"
+```
+
+- **All `.fds`:** a game dumped as one file per disk plays as ONE disk set;
+  the Famicom Disk System menu lists every side by name, and the disk save
+  is kept for the set.
+- **All cartridges (`.nes` / `.unf` / `.unif`):** the first slot loads and
+  Emulation → Multicart switches between them; each is its own game with its
+  own saves.
+
+Paths are relative to the bundle file (or absolute); a slot without a `name`
+uses its file name. File → New Multi-Disk Bundle… writes one for you; rename
+the slots by editing the file. Mixing disks and cartridges in one bundle is
+refused with a message.
 
 ### Tools
 

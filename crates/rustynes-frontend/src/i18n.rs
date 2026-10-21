@@ -461,6 +461,8 @@ catalog! {
     RebindExportError => "export error: {0}", Some("error al exportar: {0}");
     RebindAllowOpposingHover => "Off: holding opposite directions together reads as neither, as on a real NES pad. On: both reach the game (some games glitch on it).", Some("Desactivado: mantener direcciones opuestas a la vez no se lee como ninguna, como en un control real de NES. Activado: ambas llegan al juego (algunos juegos fallan con ello).");
     RebindRebound => "Rebound {0} -> {1}", Some("Reasignado {0} -> {1}");
+    ShellMulticart => "Multicart", Some("Multicartucho");
+    MenuNewBundle => "New Multi-Disk Bundle\u{2026}", Some("Nuevo paquete multidisco\u{2026}");
     RebindDeviceKeys => "Device keys (microphone, Power Pad, Family BASIC keyboard)", Some("Teclas de dispositivos (micrófono, Power Pad, teclado Family BASIC)");
     RebindDeviceKeysReset => "Reset device keys", Some("Restablecer teclas de dispositivos");
     RebindMicrophoneKey => "Microphone (hold)", Some("Micrófono (mantener)");

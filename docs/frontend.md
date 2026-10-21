@@ -2343,11 +2343,49 @@ separate OS window; v2.3.0's `detached.rs` replaced that embedding (the
 **Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
 controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,
 BasicBot (savestate-anchored brute-force search), A/V dump codec/sync depth,
-FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler, and a first-class
+FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler (shipped v3.5.0,
+`FE-04`; below), and a first-class
 headless Batch Runner. The shipped subset (spectator + Genie encoder + `.tbl` + `.srt`) is the
 self-contained, fully-tested core; the deferred items are larger and more
 cross-cutting (most touch `app.rs`/the emu thread heavily, which a parallel-merge
 cut keeps minimal).
+
+### Multi-Disk Bundler (v3.5.0, `FE-04`)
+
+`bundle.rs` (native-only). A `.rnbundle` TOML manifest names image slots
+(`[[slot]] name / path`, paths relative to the manifest, names defaulting to
+the file stem); every slot must be the same kind, by extension:
+
+- **FDS bundle** — `merge_fds` parses each slot with the core's `parse_fds` (so
+  fwNES, headerless and QD dumps are all accepted, as a single `.fds` load
+  accepts them) and concatenates the sides, in slot order, into one headerless
+  image; that image loads exactly as a `.fds` does (`build_fds_nes`, the BIOS,
+  the `.fds.sav` keyed by the merged image's pristine hash, which is stable for
+  a given manifest and images). Each side gets a name, `"<slot> side A"`, ...,
+  which the Famicom Disk System submenu shows instead of "Side N"
+  (`ShellFrame::disk_side_names`). More than 255 sides together is refused.
+- **Cartridge bundle** — slot `i`'s image is the ROM (`read_rom_or_bundle(path,
+  i)`, clamped); Emulation → Multicart (`ShellFrame::bundle_slots`,
+  `MenuAction::SelectBundleSlot`) reloads through the manifest with another
+  slot. Each slot is an ordinary ROM load (its own saves, cheats, overlay).
+
+`read_rom_or_bundle` replaces the `std::fs::read` of both ROM load paths
+(`load_rom_at`, behind `load_rom_from_path`, and the command line's
+`load_startup_rom`), so a bundle opens from the menu, Open Recent, a drop and
+argv alike; any other file reads as itself, unchanged. `App::bundle` holds the
+open bundle and every non-bundle load clears it. File → New Multi-Disk Bundle…
+(`new_bundle_dialog`) picks the images, then the manifest path, writes the
+manifest atomically (`manifest_text_for`: relative paths when the images sit
+under the manifest's directory) and opens it. Reads are bounded (manifest
+64 KiB, each image 16 MiB, at most 64 slots).
+
+Tests: eight in `bundle.rs` — manifest resolution and refusals (no slots, too
+many, mixed kinds, an unsupported image, bad TOML), the merge's side order and
+names, a bad disk and the 255-side bound, both kinds opened from real files, a
+written manifest round-tripping, and the merged set building a three-side
+console (`Nes::from_disk`, an 8 KiB zero image standing in for the BIOS).
+**Manual:** the dialogs and menus, and a real multi-disk game booting from a
+bundle with its BIOS.
 
 ### Game Genie code database + per-game nomination (v1.8.9 / v2.1.3)
 

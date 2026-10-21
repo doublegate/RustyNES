@@ -47,6 +47,13 @@ cycle-accurate core later replaced.
   coin there, for single Vs. games too, which the embed could not do at
   all. Save states cover both consoles; movies stay unavailable on a
   cabinet, as everywhere.
+- **Multi-Disk bundles** (`FE-04`). A `.rnbundle` file names a set of disk
+  or cartridge images and opens like a ROM. A Famicom Disk System game dumped
+  as one file per disk plays as one disk set, its sides named in the Famicom
+  Disk System menu ("Disk 1 side A", ...), where before only the first file's
+  sides could be inserted. A bundle of cartridges adds an Emulation →
+  Multicart menu to switch between them. File → New Multi-Disk Bundle…
+  writes one from the files you pick.
 - **Rebindable microphone, Power Pad and Family BASIC keyboard keys**
   (`FE-07`). Settings → Input → *Device keys* rebinds the Famicom
   microphone's hold key, the 12 Power Pad / Family Trainer mat buttons and
