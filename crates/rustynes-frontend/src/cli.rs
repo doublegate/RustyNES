@@ -189,7 +189,8 @@ pub enum CliCommand {
     /// the same splits on every machine. Prints each event and a JSON result.
     /// See `docs/memory-export-interface.md`.
     ///
-    /// Exit codes: 0 the run finished, 2 the input ended first, 1 an error.
+    /// Exit codes: 0 the run finished, 5 the input ended first, 1 an error
+    /// (2 stays clap's usage error).
     Speedrun {
         /// The ROM.
         #[arg(long, value_name = "ROM", value_hint = clap::ValueHint::FilePath)]

@@ -350,6 +350,10 @@ pub mod wasm_winit;
 // Shared Web Audio output for both wasm frontends (Sprint 1.4c).
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_audio;
+// v3.5.0 — one self-freeing `FileReader` read for every browser file picker
+// and drop zone (the forgotten per-read closures kept each file's bytes).
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_file;
 // v1.6.0 Sprint 4 — shared browser I/O: localStorage save-states, base64
 // codec, Blob downloads, file-picker triggers. Used by both wasm frontends.
 #[cfg(target_arch = "wasm32")]

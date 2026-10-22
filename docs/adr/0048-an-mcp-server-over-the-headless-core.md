@@ -92,10 +92,11 @@ what an untrusted agent may and may not do.
 - The journal is a segment, not a history: after a RAM write the frames
   before it are no longer in the replayable record. An agent that needs a
   whole experiment reproducible runs it on a fork.
-- The movie records controller input only. When `T-MOVIE-INPUT-STREAM`
-  (v3.5.0 row 1) adds Zapper, microphone, Vs. coin and FDS events to
-  `.rnm`, a fork's input segments can grow the same fields; until then the
-  server exposes no non-controller input, so nothing it does is unrecorded.
+- The movie records controller input only. `T-MOVIE-INPUT-STREAM` (the
+  same release, `.rnm` format 7) adds Zapper, microphone, Vs. coin and FDS
+  events to `.rnm`, so a fork's input segments can grow the same fields when
+  the server's tools offer them; today the server exposes no non-controller
+  input, so nothing it does is unrecorded.
 - Forks and the main machine are built from iNES / NES 2.0 images only; FDS
   and NSF sessions are not offered.
 - New dependencies, all permissive and already allowed: `rmcp`, `schemars`

@@ -318,9 +318,14 @@ fn load_startup_rom(
             }
         }
     }
+    // A bundle's patch belongs to its slot image, not to the manifest.
+    let patch_base = crate::bundle::patch_base(rom_path, bundle.as_ref());
     for ext in ["bps", "ups", "ips"] {
-        let patch_path = rom_path.with_extension(ext);
-        if patch_path == rom_path {
+        let Some(base) = patch_base.as_deref() else {
+            break;
+        };
+        let patch_path = base.with_extension(ext);
+        if patch_path == base {
             continue;
         }
         let Ok(patch_bytes) = std::fs::read(&patch_path) else {
@@ -1753,7 +1758,15 @@ impl App {
             .file_stem()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
         let manifest_dir = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
-        let text = crate::bundle::manifest_text_for(&name, &manifest_dir, &images);
+        let text = match crate::bundle::manifest_text_for(&name, &manifest_dir, &images) {
+            Ok(text) => text,
+            Err(e) => {
+                // Nothing is written: an existing file at that path is kept.
+                self.ui
+                    .set_status(StatusMessage::error(format!("Cannot make the bundle: {e}")));
+                return;
+            }
+        };
         if let Err(e) = crate::atomic_write::write_atomic(&manifest, text.as_bytes()) {
             self.ui.set_status(StatusMessage::error(format!(
                 "Could not write {}: {e}",
@@ -1928,6 +1941,13 @@ impl App {
             emu.next_frame_time = None;
         }
         self.dual_mode = false;
+        // v3.5.0 — a closed bundle offers no Multicart slots: left set, the
+        // menu kept listing them and a pick reloaded the closed bundle
+        // (CodeRabbit on #624).
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.bundle = None;
+        }
         // v2.9.9 (NF-12) — `clear_rom` ended any movie; offer a recording.
         self.deliver_interrupted_recording();
         // v1.6.0 "Studio" A2 — a TAStudio session anchors on the closed ROM; end it.
@@ -2035,9 +2055,15 @@ impl App {
         // unchanged (save-states / netplay / oracle all see the patched bytes).
         // Only the highest-precedence patch present is applied; a malformed
         // patch is surfaced and the unpatched ROM still loads.
+        // A bundle's patch belongs to its slot image, not to the manifest
+        // (`bundle::patch_base`).
+        let patch_base = crate::bundle::patch_base(path, loaded_bundle.as_ref());
         for ext in ["bps", "ups", "ips"] {
-            let patch_path = path.with_extension(ext);
-            if patch_path == path {
+            let Some(base) = patch_base.as_deref() else {
+                break;
+            };
+            let patch_path = base.with_extension(ext);
+            if patch_path == base {
                 continue;
             }
             let Ok(patch_bytes) = std::fs::read(&patch_path) else {

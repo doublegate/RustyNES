@@ -51,11 +51,13 @@
 //! | comparison | `=` `!=` `<` `<=` `>` `>=` |
 //! | hit target | `.N.`: the condition must have been true on `N` evaluations (counted while its trigger is armed) |
 //!
-//! Addresses are the `RetroAchievements` NES flat space, the same one
-//! `rustynes-cheevos` maps (`ra_addr_to_nes`): `0x0000..=0x07FF` is the 2 KiB
-//! system RAM, `0x0800..=0x27FF` is cartridge RAM at `$6000..=$7FFF`, and
-//! anything else reads 0. [`ra_flat_to_cpu`] is the mapping; a test in the
-//! frontend pins it to the cheevos crate's.
+//! Addresses are `RetroAchievements` NES addresses, the same ones
+//! `rustynes-cheevos` maps (`ra_addr_to_nes`): the CPU bus itself, per the
+//! rcheevos region table (system RAM at `0x0000`, cartridge RAM at `0x6000`,
+//! ROM at `0x8000`), read side-effect-free; anything above `0xFFFF` reads 0.
+//! [`ra_flat_to_cpu`] is the mapping; a frontend test (in a
+//! `retroachievements` build) pins it to the cheevos crate's. (Until v3.5.0's review both mapped `0x0800..=0x27FF` onto
+//! cartridge RAM, which is not RA's layout; `CodeRabbit` on #624.)
 //!
 //! **Not implemented**, and refused with a message rather than misread:
 //! condition flags (`R:` reset-if, `P:` pause-if, `A:` add-source, `B:`,
@@ -129,15 +131,13 @@ pub fn cycles_to_seconds(cycles: u64, region: Region) -> f64 {
     cycles as f64 * d as f64 / n as f64
 }
 
-/// A `RetroAchievements` NES flat address as a CPU-bus address (`None` for an
-/// address outside the two mapped windows). See the module docs.
+/// A `RetroAchievements` NES address as a CPU-bus address: the identity over
+/// `0x0000..=0xFFFF`, `None` above it. See the module docs.
 #[must_use]
-#[allow(clippy::cast_possible_truncation)] // both casts are range-checked.
+#[allow(clippy::cast_possible_truncation)] // the cast is range-checked.
 pub const fn ra_flat_to_cpu(addr: u32) -> Option<u16> {
-    if addr < 0x0800 {
+    if addr <= 0xFFFF {
         Some(addr as u16)
-    } else if addr < 0x0800 + 0x2000 {
-        Some(0x6000 + (addr - 0x0800) as u16)
     } else {
         None
     }
@@ -300,7 +300,20 @@ impl Operand {
                     // the current one stands in, so `d` never reports a change
                     // that did not happen (no edge on the first frame).
                     Modifier::Delta => delta.unwrap_or(now),
-                    Modifier::Prior => prior,
+                    // The same rule for `p`: with no history (the first frame,
+                    // or the first after a discontinuity cleared it) the
+                    // current value stands in. Until v3.5.0's review this
+                    // returned the stored prior, 0 on the first frame and the
+                    // pre-jump value after a state load, so `p` could report a
+                    // change that never happened in this timeline (Antigravity
+                    // on #624).
+                    Modifier::Prior => {
+                        if delta.is_some() {
+                            prior
+                        } else {
+                            now
+                        }
+                    }
                     Modifier::Bcd => bcd(now),
                     Modifier::Invert => !now & size.mask(),
                 }
@@ -1167,6 +1180,13 @@ mod tests {
         m.0[1] = 9;
         fire(&mut prior, &m);
         assert!(fire(&mut prior, &m), "the value before the last change");
+        // A discontinuity clears the history: the next evaluation has no
+        // prior, so the current value (9) stands in, not the stale 7.
+        prior.reset_history();
+        assert!(!fire(&mut prior, &m), "no stale prior after a reset");
+        let mut first = Trigger::parse("p0xH0003=0").unwrap();
+        m.0[3] = 5;
+        assert!(!fire(&mut first, &m), "no prior of 0 on the first frame");
 
         let mut held = Trigger::parse("0xH0002=1.3.").unwrap();
         m.0[2] = 1;
@@ -1204,9 +1224,10 @@ mod tests {
     fn the_flat_map_matches_the_ra_layout() {
         assert_eq!(ra_flat_to_cpu(0), Some(0));
         assert_eq!(ra_flat_to_cpu(0x07FF), Some(0x07FF));
-        assert_eq!(ra_flat_to_cpu(0x0800), Some(0x6000));
-        assert_eq!(ra_flat_to_cpu(0x27FF), Some(0x7FFF));
-        assert_eq!(ra_flat_to_cpu(0x2800), None);
+        assert_eq!(ra_flat_to_cpu(0x0800), Some(0x0800));
+        assert_eq!(ra_flat_to_cpu(0x6000), Some(0x6000));
+        assert_eq!(ra_flat_to_cpu(0xFFFF), Some(0xFFFF));
+        assert_eq!(ra_flat_to_cpu(0x1_0000), None);
     }
 
     #[test]

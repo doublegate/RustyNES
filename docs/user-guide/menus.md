@@ -76,6 +76,11 @@ uses its file name. File → New Multi-Disk Bundle… writes one for you; rename
 the slots by editing the file. Mixing disks and cartridges in one bundle is
 refused with a message.
 
+A same-name soft patch (`.bps`, `.ups` or `.ips`) is found beside the
+cartridge it patches: `game.ips` next to `game.nes` applies whenever that slot
+loads, and a patch named after the bundle file is not used. A disk set is not
+patched this way; list a patched disk image in the bundle instead.
+
 ### Tools
 
 These open as floating windows directly — you do **not** need the debugger

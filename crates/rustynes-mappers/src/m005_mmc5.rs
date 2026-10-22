@@ -1472,12 +1472,15 @@ impl Mapper for Mmc5 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        // MMC5 CHR / nametable reads have no side effect here: its scanline
-        // detection runs from `notify_scanline_start` / `notify_vblank`. A
-        // v3.2.0 import moved a nametable-snoop detector into this method,
-        // but the lockstep bus never routes nametable fetches through
-        // `ppu_read` (they go via `peek_nametable`), so the IRQ stopped
-        // firing in real play; reverted (`external_mmc5_*` caught it).
+        // MMC5 CHR / nametable reads have no side effect here. Since v3.5.0
+        // its scanline detection watches every PPU read through
+        // `notify_ppu_read` (the bus reports them because `snoops_ppu_reads`
+        // is true), not this method; `notify_scanline_start` /
+        // `notify_vblank` only bound the render window. A v3.2.0 import
+        // moved a nametable-snoop detector into this method, but the
+        // lockstep bus never routes nametable fetches through `ppu_read`
+        // (they go via `peek_nametable`), so the IRQ stopped firing in real
+        // play; reverted (`external_mmc5_*` caught it).
         self.ppu_peek(addr)
     }
 

@@ -107,16 +107,22 @@ def u64(b, at):
     return struct.unpack_from("<Q", b, at)[0]
 
 
-def snapshot(buf):
-    """One consistent copy (the sequence-counter protocol of the page)."""
+def snapshot(buf, deadline):
+    """One consistent copy (the sequence-counter protocol of the page), or None
+    once `deadline` passes: a producer that dies mid-write leaves the counter
+    odd for good, and retrying forever would outlive --timeout."""
     while True:
         s1 = u32(buf, OFF_SEQ)
         if s1 & 1:
+            if time.monotonic() > deadline:
+                return None
             time.sleep(0)
             continue
         copy = bytes(buf[:LAYOUT_SIZE])
         if u32(buf, OFF_SEQ) == s1:
             return copy
+        if time.monotonic() > deadline:
+            return None
 
 
 def decode(b):
@@ -166,8 +172,12 @@ def main():
         deadline = time.monotonic() + args.timeout
         seen_running = False
         while True:
+            copy = snapshot(shm.buf, deadline)
+            if copy is None:
+                print("timed out: the block never held a consistent copy", file=sys.stderr)
+                return 2
             try:
-                state = decode(snapshot(shm.buf))
+                state = decode(copy)
             except ValueError as e:
                 print(f"malformed block: {e}", file=sys.stderr)
                 return 1

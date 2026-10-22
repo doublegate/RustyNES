@@ -40,7 +40,11 @@ pub const EXIT_FINISHED: u8 = 0;
 /// Exit status: an error (a file, the ROM, the movie, the splits file).
 pub const EXIT_ERROR: u8 = 1;
 /// Exit status: the input ended before the last split fired.
-pub const EXIT_UNFINISHED: u8 = 2;
+///
+/// Not 2, which is clap's usage error, nor 3 (`verify`'s "no attestation") or 4
+/// (`dump-check`'s "a finding"), so a script can tell every outcome apart; it
+/// was 2 until v3.5.0's review (`CodeRabbit` on #624).
+pub const EXIT_UNFINISHED: u8 = 5;
 
 /// Run the command; returns the exit status.
 #[must_use]
@@ -95,9 +99,14 @@ fn run_inner(args: &SpeedrunArgs) -> Result<u8, String> {
 
     if let Some(t) = host.timer() {
         print!("{}", t.to_json());
-        if !finished && let Some(path) = &args.json {
-            // A finish writes it from the host; an unfinished run still gets
-            // its partial result written, so a script always finds the file.
+        if let Some(path) = &args.json {
+            // Written here for BOTH outcomes, so a failed write is an error
+            // exit. The host also writes it when the run finishes, but only
+            // logs a failure there (a live session must not stop over it);
+            // until v3.5.0's review this skipped finished runs, so an
+            // unwritable path exited 0 with no file (Copilot on #624). An
+            // unfinished run gets its partial result, so a script always
+            // finds the file.
             crate::atomic_write::write_atomic(path, t.to_json().as_bytes())
                 .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
         }
@@ -115,6 +124,7 @@ fn run_inner(args: &SpeedrunArgs) -> Result<u8, String> {
 /// Run one frame, time it, print its event; `true` once the run finished.
 fn step(nes: &mut Nes, host: &mut SpeedrunHost) -> bool {
     nes.run_frame();
+    drop_audio(nes);
     if let Some(event) = host.after_frame(nes)
         && let Some(t) = host.timer()
     {
@@ -122,4 +132,95 @@ fn step(nes: &mut Nes, host: &mut SpeedrunHost) -> bool {
         return event == rustynes_core::speedrun::TimerEvent::Finished;
     }
     false
+}
+
+/// Discard the frame's audio: nothing here plays it, and the core keeps every
+/// sample until drained (about 800 a frame, so an hour's run would hold some
+/// 600 MiB; `Copilot` on #624). `drain_audio_into` keeps what does not fit, so
+/// this loops until a drain comes back short.
+fn drop_audio(nes: &mut Nes) {
+    let mut sink = [0.0f32; 1024];
+    while nes.drain_audio_into(&mut sink) == sink.len() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal NROM image (16 KiB PRG + 8 KiB CHR, all zero).
+    fn synth_nrom() -> Vec<u8> {
+        let mut rom = vec![0x4E, 0x45, 0x53, 0x1A, 1, 1, 0, 0];
+        rom.extend(std::iter::repeat_n(0u8, 8));
+        rom.extend(std::iter::repeat_n(0u8, 16 * 1024));
+        rom.extend(std::iter::repeat_n(0u8, 8 * 1024));
+        rom
+    }
+
+    /// The timer reads the same addresses an achievement does: its mapping
+    /// and the achievements client's agree over the whole RA space and past
+    /// it. The speedrun module's docs promised this pin before it existed.
+    #[cfg(feature = "retroachievements")]
+    #[test]
+    fn the_timer_maps_addresses_as_the_achievements_client_does() {
+        for addr in 0..=0x1_0010u32 {
+            assert_eq!(
+                rustynes_core::speedrun::ra_flat_to_cpu(addr),
+                rustynes_cheevos::ra_addr_to_nes(addr),
+                "address {addr:#x}"
+            );
+        }
+    }
+
+    /// Each step leaves nothing buffered. Mutation-checked by deleting the
+    /// `drop_audio` call in `step`.
+    #[test]
+    fn a_step_leaves_no_audio_buffered() {
+        let mut nes = Nes::from_rom(&synth_nrom()).expect("loads");
+        let mut host = SpeedrunHost::new(&SpeedrunOptions::default()).expect("host");
+        for _ in 0..30 {
+            let _ = step(&mut nes, &mut host);
+        }
+        assert_eq!(nes.drain_audio().len(), 0);
+    }
+
+    /// A FINISHED run whose `--json` path cannot be written is an error, not
+    /// exit 0 with no file. Mutation-checked by restoring the `!finished`
+    /// guard on the CLI's write.
+    #[test]
+    fn a_finished_run_reports_an_unwritable_result_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rom = dir.path().join("t.nes");
+        std::fs::write(&rom, synth_nrom()).expect("rom");
+        let splits = dir.path().join("t.splits");
+        // $0000 stays zero on this ROM, so the run starts and finishes at once.
+        std::fs::write(
+            &splits,
+            "game = T\ncategory = Any%\nstart = 0xH0000=0\nsplit = End | 0xH0000=0\n",
+        )
+        .expect("splits");
+        let base = SpeedrunArgs {
+            rom,
+            splits,
+            movie: None,
+            frames: Some(30),
+            json: None,
+            memif: None,
+            memif_hold_ms: 0,
+        };
+        assert_eq!(
+            run_inner(&base),
+            Ok(EXIT_FINISHED),
+            "the fixture must finish"
+        );
+        // A missing directory would be created (`write_atomic` makes parents),
+        // so the parent here is a regular file, which no write can pass.
+        let blocker = dir.path().join("a-file");
+        std::fs::write(&blocker, b"").expect("blocker");
+        let unwritable = SpeedrunArgs {
+            json: Some(blocker.join("out.json")),
+            ..base
+        };
+        let err = run_inner(&unwritable).expect_err("an unwritable path is an error");
+        assert!(err.starts_with("cannot write"), "{err}");
+    }
 }

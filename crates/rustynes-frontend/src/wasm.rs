@@ -31,8 +31,7 @@ use rustynes_core::{Buttons, Nes};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    CanvasRenderingContext2d, Event, FileReader, HtmlCanvasElement, HtmlInputElement, ImageData,
-    KeyboardEvent,
+    CanvasRenderingContext2d, Event, HtmlCanvasElement, HtmlInputElement, ImageData, KeyboardEvent,
 };
 
 // v1.3.0 Sprint 1.4c — Web Audio output moved to the shared
@@ -158,20 +157,14 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
         };
         let Some(files) = input.files() else { return };
         let Some(file) = files.get(0) else { return };
+        // Web Audio starts HERE, inside the `change` gesture: the read ends
+        // asynchronously, outside it, where `AudioContext.resume()` may leave
+        // the context suspended (the winit build does the same).
+        let _ = wasm_audio::ensure_audio();
 
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            load_rom_bytes(js_sys::Uint8Array::new(&buffer).to_vec());
+        let _ = crate::wasm_file::read_file_once(&file, load_rom_bytes, |name| {
+            log(&format!("could not read {name}"));
         });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
     });
     rom_input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
     on_change.forget();
@@ -183,8 +176,9 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
 /// [`load_rom_bytes`] (the picker's path), a movie through
 /// [`start_movie_from_bytes`] (the movie picker's). This embed has no FDS
 /// BIOS upload, so a dropped BIOS is refused with a note, like any other file
-/// it cannot load. The drop is a user gesture, so the `AudioContext` that
-/// [`load_rom_bytes`] creates is allowed to start.
+/// it cannot load. The drop is a user gesture, so a ROM drop starts the
+/// `AudioContext` in the handler itself; [`load_rom_bytes`], which runs when
+/// the read ends, finds it already running.
 fn install_drop_loader(document: &web_sys::Document) {
     use crate::drop_route::{DropKind, classify};
 
@@ -212,7 +206,13 @@ fn install_drop_loader(document: &web_sys::Document) {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let kind = classify(&name, file.size() as usize);
         match kind {
-            DropKind::Rom | DropKind::Movie => {}
+            // The drop is the gesture: start Web Audio now, not in the read's
+            // asynchronous end, where it may stay suspended (CodeRabbit on
+            // #624; the winit build already did this).
+            DropKind::Rom => {
+                let _ = wasm_audio::ensure_audio();
+            }
+            DropKind::Movie => {}
             DropKind::FdsBios => {
                 log(&format!(
                     "dropped {name}: the canvas embed has no FDS support (the full web build has)"
@@ -226,24 +226,17 @@ fn install_drop_loader(document: &web_sys::Document) {
                 return;
             }
         }
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            if kind == DropKind::Movie {
-                start_movie_from_bytes(&bytes);
-            } else {
-                load_rom_bytes(bytes);
-            }
-        });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
+        let _ = crate::wasm_file::read_file_once(
+            &file,
+            move |bytes| {
+                if kind == DropKind::Movie {
+                    start_movie_from_bytes(&bytes);
+                } else {
+                    load_rom_bytes(bytes);
+                }
+            },
+            |name| log(&format!("could not read {name}")),
+        );
     });
     let _ = document.add_event_listener_with_callback("drop", on_drop.as_ref().unchecked_ref());
     on_drop.forget();
@@ -310,6 +303,11 @@ fn load_rom_bytes(mut bytes: Vec<u8>) {
             EMU.with(|emu| {
                 let mut emu = emu.borrow_mut();
                 if let Some(dual) = cabinet {
+                    // A cabinet refuses every movie hotkey (ADR 0032), so a
+                    // session left running here could never be saved or
+                    // stopped. End it first, against the console it ran on
+                    // (CodeRabbit on #624).
+                    end_movie_session(&mut emu);
                     emu.nes = None;
                     emu.dual = Some(dual);
                 } else {
@@ -644,6 +642,31 @@ fn dual_refuses_movies() -> bool {
     dual
 }
 
+/// End any movie session before the console is replaced by a cabinet: a
+/// recording is finished and offered for download, playback is stopped on the
+/// console it was driving.
+fn end_movie_session(emu: &mut Emu) {
+    if emu.movie.is_recording() {
+        if let Some(movie) = emu.movie.finish_recording() {
+            let bytes = movie.serialize();
+            log(&format!(
+                "movie finished ({} frames) — a Vs. DualSystem cabinet was loaded",
+                movie.len()
+            ));
+            crate::wasm_io::save_file_with_fallback(
+                "rustynes-movie.rnm",
+                "RustyNES TAS movie",
+                ".rnm",
+                "application/octet-stream",
+                bytes,
+            );
+        }
+    } else if emu.movie.is_playing() {
+        emu.movie.stop_playback(emu.nes.as_mut());
+        log("movie playback stopped — a Vs. DualSystem cabinet was loaded");
+    }
+}
+
 /// F6 — toggle TAS movie recording (v1.4.0 E1). **Start**: power-cycle the
 /// running `Nes` and record from that fresh power-on. **Stop**: finish the
 /// movie, serialize the `.rnm`, and trigger a browser Blob download (the
@@ -765,20 +788,11 @@ fn install_movie_loader(document: &web_sys::Document) {
         };
         let Some(files) = input.files() else { return };
         let Some(file) = files.get(0) else { return };
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            start_movie_from_bytes(&bytes);
-        });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
+        let _ = crate::wasm_file::read_file_once(
+            &file,
+            |bytes| start_movie_from_bytes(&bytes),
+            |name| log(&format!("could not read {name}")),
+        );
     });
     input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
     on_change.forget();

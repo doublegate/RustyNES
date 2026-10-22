@@ -84,11 +84,10 @@ memory; the `client` mutators reuse the existing gated host paths).
 - A reproducible RL episode is possible: with `script-ipc` enabled and writes
   unlocked, an agent drives input via `emu.setInput` and exchanges observations
   over `comm.*`, while the deterministic core keeps the run replayable.
-- The WebSocket transport currently reports a clean closed/error state (the
-  host-owned contract + marshalling is in place); a full WS client (a `ws`
-  crate) and an OS shared-memory MMF backing are maintainer follow-ups. The
-  in-process named-buffer MMF works today for same-host single-process bridges.
-  (Both done in v3.5.0: see the 2026-10-20 amendment.)
+- Until v3.5.0 the WebSocket transport reported a clean closed/error state
+  over the host-owned contract, and the MMF was an in-process named buffer.
+  v3.5.0 replaced both with a real WebSocket client and OS shared memory (see
+  the 2026-10-20 amendment), under the same host-mediated contract.
 - The off-by-default + gated + host-mediated triad means the feature can never
   perturb the determinism oracle: with `script-ipc` off the builds are
   byte-identical, and with it on a locked session queues nothing.

@@ -146,11 +146,21 @@ impl Host {
                 limits::MAX_REALTIME_FRAMES
             )));
         }
-        if self.inner.running.load(Ordering::SeqCst) {
+        // Claim the flag in ONE step. Calls run on separate blocking threads,
+        // so a load followed later by a store let two concurrent `resume`s
+        // both pass and start two runners on one timeline, the first one
+        // detached (CodeRabbit on #624).
+        if self
+            .inner
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Err(ToolError::Refused("already running".into()));
         }
         // A run that ended by itself (breakpoint, jam, max_frames) left its
-        // finished thread behind.
+        // finished thread behind; it has already cleared the flag, so this
+        // join cannot wait on a live run.
         self.join_runner();
         let frame_time = {
             let mut s = lock(&self.inner.session);
@@ -159,7 +169,6 @@ impl Host {
         };
         self.inner.rt_frames.store(0, Ordering::SeqCst);
         lock(&self.inner.rt_stop).clear();
-        self.inner.running.store(true, Ordering::SeqCst);
         let inner = Arc::clone(&self.inner);
         let handle = std::thread::Builder::new()
             .name("mcp-realtime".into())
@@ -199,7 +208,12 @@ impl Host {
                 lock(&inner.session).set_running(false);
                 *lock(&inner.rt_stop) = stop;
             })
-            .map_err(|e| ToolError::Failed(format!("runner thread: {e}")))?;
+            .map_err(|e| {
+                // No runner exists, so nothing is running: release the claim.
+                self.inner.running.store(false, Ordering::SeqCst);
+                lock(&self.inner.session).set_running(false);
+                ToolError::Failed(format!("runner thread: {e}"))
+            })?;
         *lock(&self.inner.runner) = Some(handle);
         Ok(ToolOutput {
             json: json!({ "running": true, "max_frames": max }),

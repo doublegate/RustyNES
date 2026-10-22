@@ -345,12 +345,12 @@ each needs the deployed service, real browsers or devices, or a real account.
    `relayed`. Cloudflare's TURN analytics show the egress.
 4. **Credentials expire (row 1):** take the `username`/`credential` from step 1
    and, more than 3 h later (plus a minute for the revocation alarm), try them
-   in an ICE test page (for example the WebRTC samples' "Trickle ICE" page): no
-   `relay` candidate is gathered. Within the TTL the same test gathers one. To
-   check it faster, deploy with `TURN_TTL_SECONDS` 600, mint one credential,
-   redeploy the normal value, and test 11 minutes later. **This step fails,
-   and is expected to** (v3.4.1, and again on 2026-10-21): Cloudflare relays
-   for expired and revoked credentials. What it checks instead is billing:
+   in an ICE test page (for example the WebRTC samples' "Trickle ICE" page).
+   **Expect a `relay` candidate anyway**: Cloudflare relays for expired and
+   revoked credentials (found in v3.4.1, and again on 2026-10-21), so the
+   candidate is not the check. To check it faster, deploy with
+   `TURN_TTL_SECONDS` 600, mint one credential, redeploy the normal value, and
+   test 11 minutes later. What the step verifies is billing:
    `callsTurnUsageAdaptiveGroups` grouped by `customIdentifier` or username
    shows no egress for the credential after its expiry or revocation
    (`T-HOSTED-TURN-EXPIRY`).

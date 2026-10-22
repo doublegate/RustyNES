@@ -29,7 +29,7 @@
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::{Event, FileReader, HtmlInputElement};
+use web_sys::{Event, HtmlInputElement};
 use winit::event_loop::EventLoopProxy;
 
 use crate::app::{AppEvent, run_wasm};
@@ -71,30 +71,23 @@ pub fn start() -> Result<(), JsValue> {
         let Some(file) = files.get(0) else { return };
         // Start Web Audio HERE in the `change` handler — this is the
         // reliable user-gesture point for `AudioContext.resume()`. The
-        // later async `FileReader.onload` may fall outside the gesture
+        // later async `FileReader` load may fall outside the gesture
         // window, leaving the context suspended (silent).
         let _ = crate::wasm_audio::ensure_audio();
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
         let proxy = proxy.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            log(&format!(
-                "ROM selected ({} bytes) — handing to winit App",
-                bytes.len()
-            ));
-            // Deliver into the event loop; the App creates the Nes at
-            // the now-established audio sample rate.
-            let _ = proxy.send_event(AppEvent::RomLoaded(bytes));
-        });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
+        let _ = crate::wasm_file::read_file_once(
+            &file,
+            move |bytes| {
+                log(&format!(
+                    "ROM selected ({} bytes) — handing to winit App",
+                    bytes.len()
+                ));
+                // Deliver into the event loop; the App creates the Nes at
+                // the now-established audio sample rate.
+                let _ = proxy.send_event(AppEvent::RomLoaded(bytes));
+            },
+            |name| log(&format!("could not read {name}")),
+        );
     });
     rom_input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
     on_change.forget();
@@ -170,28 +163,21 @@ fn install_drop_loader(document: &web_sys::Document, proxy: EventLoopProxy<AppEv
         if kind == DropKind::Rom {
             let _ = crate::wasm_audio::ensure_audio();
         }
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
         let proxy = proxy.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            log(&format!("dropped {name} ({} bytes)", bytes.len()));
-            let event = match kind {
-                DropKind::Rom => AppEvent::RomLoaded(bytes),
-                DropKind::Movie => AppEvent::MovieLoaded(bytes),
-                DropKind::FdsBios => AppEvent::FdsBiosLoaded(bytes),
-                DropKind::Unsupported => return,
-            };
-            let _ = proxy.send_event(event);
-        });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
+        let _ = crate::wasm_file::read_file_once(
+            &file,
+            move |bytes| {
+                log(&format!("dropped {name} ({} bytes)", bytes.len()));
+                let event = match kind {
+                    DropKind::Rom => AppEvent::RomLoaded(bytes),
+                    DropKind::Movie => AppEvent::MovieLoaded(bytes),
+                    DropKind::FdsBios => AppEvent::FdsBiosLoaded(bytes),
+                    DropKind::Unsupported => return,
+                };
+                let _ = proxy.send_event(event);
+            },
+            |name| log(&format!("could not read {name}")),
+        );
     });
     let _ = document.add_event_listener_with_callback("drop", on_drop.as_ref().unchecked_ref());
     on_drop.forget();
@@ -243,25 +229,18 @@ fn install_movie_loader(document: &web_sys::Document, proxy: EventLoopProxy<AppE
         };
         let Some(files) = input.files() else { return };
         let Some(file) = files.get(0) else { return };
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
         let proxy = proxy.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            log(&format!(
-                "movie selected ({} bytes) — handing to winit App",
-                bytes.len()
-            ));
-            let _ = proxy.send_event(AppEvent::MovieLoaded(bytes));
-        });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
+        let _ = crate::wasm_file::read_file_once(
+            &file,
+            move |bytes| {
+                log(&format!(
+                    "movie selected ({} bytes) — handing to winit App",
+                    bytes.len()
+                ));
+                let _ = proxy.send_event(AppEvent::MovieLoaded(bytes));
+            },
+            |name| log(&format!("could not read {name}")),
+        );
     });
     input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
     on_change.forget();
@@ -307,22 +286,15 @@ fn install_fds_bios_loader(document: &web_sys::Document, proxy: EventLoopProxy<A
         };
         let Some(files) = input.files() else { return };
         let Some(file) = files.get(0) else { return };
-        let Ok(reader) = FileReader::new() else {
-            return;
-        };
-        let reader_clone = reader.clone();
         let proxy = proxy.clone();
-        let on_load = Closure::<dyn FnMut()>::new(move || {
-            let Ok(buffer) = reader_clone.result() else {
-                return;
-            };
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            log(&format!("FDS BIOS selected ({} bytes)", bytes.len()));
-            let _ = proxy.send_event(AppEvent::FdsBiosLoaded(bytes));
-        });
-        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
-        on_load.forget();
-        let _ = reader.read_as_array_buffer(&file);
+        let _ = crate::wasm_file::read_file_once(
+            &file,
+            move |bytes| {
+                log(&format!("FDS BIOS selected ({} bytes)", bytes.len()));
+                let _ = proxy.send_event(AppEvent::FdsBiosLoaded(bytes));
+            },
+            |name| log(&format!("could not read {name}")),
+        );
     });
     input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
     on_change.forget();

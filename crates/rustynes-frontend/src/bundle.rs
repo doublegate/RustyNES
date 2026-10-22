@@ -253,14 +253,32 @@ impl Bundle {
 }
 
 /// Read `path` whole, refusing a file larger than `limit` bytes.
+///
+/// The bound is on the READ, not on the metadata: a device or FIFO reports a
+/// length of 0 and can stream forever (`/dev/zero` named `x.fds` in a shared
+/// manifest), so a metadata check alone let a hostile bundle grow the buffer
+/// until allocation failed (`CodeRabbit` on #624). The metadata check stays as
+/// the fast refusal for an ordinary oversized file.
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, BundleError> {
-    let len = std::fs::metadata(path)
-        .map_err(|e| BundleError::Io(path.to_path_buf(), e))?
-        .len();
+    use std::io::Read as _;
+    let io = |e| BundleError::Io(path.to_path_buf(), e);
+    let len = std::fs::metadata(path).map_err(io)?.len();
     if len > limit {
         return Err(BundleError::TooLarge(path.to_path_buf(), len));
     }
-    std::fs::read(path).map_err(|e| BundleError::Io(path.to_path_buf(), e))
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(io)?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() as u64 > limit {
+        return Err(BundleError::TooLarge(
+            path.to_path_buf(),
+            bytes.len() as u64,
+        ));
+    }
+    Ok(bytes)
 }
 
 /// The side letter for side `i` of one disk image: `A`, `B`, ... (a two-sided
@@ -381,11 +399,44 @@ pub fn read_rom_or_bundle(
     }
 }
 
+/// The file a same-stem soft patch (`.bps` / `.ups` / `.ips`) belongs to.
+///
+/// That is the ROM itself, a cartridge bundle's loaded slot image, and
+/// nothing for an FDS bundle, whose merged disk set has no single file (patch
+/// a disk by listing a patched image in the manifest).
+///
+/// Until v3.5.0's review both loaders looked beside the `.rnbundle` manifest,
+/// so `<bundle>.ips` was applied to every cartridge slot (each slot switch is
+/// a load through the manifest) and a slot's own `<slot>.ips` was never
+/// found (`Antigravity` on #624).
+#[must_use]
+pub fn patch_base(path: &Path, loaded: Option<&LoadedBundle>) -> Option<PathBuf> {
+    loaded.map_or_else(
+        || Some(path.to_path_buf()),
+        |l| match l.bundle.kind {
+            BundleKind::Fds => None,
+            BundleKind::Cartridge => l.bundle.slots.get(l.current).map(|slot| slot.path.clone()),
+        },
+    )
+}
+
 /// The manifest text for `images`, each slot named by its file stem and listed
 /// relative to `manifest_dir` when it lies inside it (so the bundle can move
 /// with its images), absolute otherwise.
-#[must_use]
-pub fn manifest_text_for(name: &str, manifest_dir: &Path, images: &[PathBuf]) -> String {
+///
+/// # Errors
+/// [`BundleError::Parse`] when the manifest cannot be written as text (an
+/// image path that is not UTF-8), and whatever [`Bundle::from_manifest`]
+/// refuses (no slots, too many, disks mixed with cartridges, an unsupported
+/// image): the text is validated by the same parser that opens a bundle, so
+/// nothing is written that would not open. Until v3.5.0's review a failure
+/// returned an empty string, which the save dialog wrote over the chosen file
+/// (`CodeRabbit` on #624).
+pub fn manifest_text_for(
+    name: &str,
+    manifest_dir: &Path,
+    images: &[PathBuf],
+) -> Result<String, BundleError> {
     let slots = images
         .iter()
         .map(|p| SlotEntry {
@@ -399,10 +450,12 @@ pub fn manifest_text_for(name: &str, manifest_dir: &Path, images: &[PathBuf]) ->
         name: name.to_owned(),
         slots,
     };
-    // A `Manifest` of strings and paths always serializes; fall back to an
-    // empty manifest (which then fails to open with a clear error) rather than
-    // panic if a path is not valid UTF-8.
-    toml::to_string_pretty(&manifest).unwrap_or_default()
+    let text = toml::to_string_pretty(&manifest).map_err(|e| BundleError::Parse(e.to_string()))?;
+    Bundle::from_manifest(
+        &manifest_dir.join(format!("bundle.{BUNDLE_EXTENSION}")),
+        &text,
+    )?;
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -525,6 +578,19 @@ mod tests {
         ));
     }
 
+    /// An endless source is cut off at the limit, not read until memory runs
+    /// out: `/dev/zero` reports a length of 0, so only the bounded read
+    /// refuses it. (Not mutation-run: the unbounded `fs::read` it replaced
+    /// would not return here, it would exhaust memory.)
+    #[cfg(unix)]
+    #[test]
+    fn an_endless_source_is_refused_at_the_limit() {
+        assert!(matches!(
+            read_bounded(Path::new("/dev/zero"), 4096),
+            Err(BundleError::TooLarge(_, 4097))
+        ));
+    }
+
     /// The whole read through real files: an FDS bundle yields the merged set,
     /// a cartridge bundle yields the chosen slot's file (clamped), and a plain
     /// file is read as itself.
@@ -563,6 +629,18 @@ mod tests {
 
         let (bytes, loaded) = read_rom_or_bundle(&p.join("one.nes"), 0).unwrap();
         assert_eq!((bytes.as_slice(), loaded), (&b"first"[..], None));
+
+        // Same-stem patches belong to the image, never to the manifest.
+        let multi = p.join("multi.RNBUNDLE");
+        let (_, loaded) = read_rom_or_bundle(&multi, 1).unwrap();
+        let base = patch_base(&multi, loaded.as_ref()).unwrap();
+        assert_eq!(base.file_name().unwrap(), "two.nes");
+        let (_, loaded) = read_rom_or_bundle(&p.join("set.rnbundle"), 0).unwrap();
+        assert_eq!(patch_base(&p.join("set.rnbundle"), loaded.as_ref()), None);
+        assert_eq!(
+            patch_base(&p.join("one.nes"), None),
+            Some(p.join("one.nes"))
+        );
         assert!(matches!(
             read_rom_or_bundle(&p.join("missing.rnbundle"), 0),
             Err(BundleError::Io(..))
@@ -578,13 +656,18 @@ mod tests {
             dir.join("Disk 1.fds"),
             PathBuf::from("/elsewhere/Disk 2.fds"),
         ];
-        let text = manifest_text_for("My set", dir, &images);
+        let text = manifest_text_for("My set", dir, &images).unwrap();
         assert!(text.contains("path = \"Disk 1.fds\""), "{text}");
         let b = Bundle::from_manifest(&dir.join("my.rnbundle"), &text).unwrap();
         assert_eq!(b.name, "My set");
         assert_eq!(b.slots[0].path, images[0]);
         assert_eq!(b.slots[1].path, images[1]);
         assert_eq!(b.slots[1].name, "Disk 2");
+
+        // A set the opener would refuse is refused before anything is written.
+        let mixed = [dir.join("a.fds"), dir.join("b.nes")];
+        assert!(manifest_text_for("Mixed", dir, &mixed).is_err());
+        assert!(manifest_text_for("Empty", dir, &[]).is_err());
     }
 
     /// The merged image is what the FDS load path builds a console from: the

@@ -490,9 +490,18 @@ fn pointer_scale_slider(ui: &mut egui::Ui, state: &mut InputPanelState, config: 
 pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
     // Apply any captured rebind from the previous input event.
     if let Some((slot, name)) = state.captured.take() {
-        apply_slot(config, slot, &name);
-        state.status = crate::tf!(RebindRebound, slot_display(slot), name);
-        state.bindings_dirty = true;
+        // v3.5.0 — a device slot resolves its name through `parse_keycode`
+        // when the bindings are rebuilt, and an unknown name leaves the slot
+        // unbound; refuse such a key here rather than report a rebind that
+        // never takes effect (CodeRabbit on #624). Player slots are left as
+        // they were.
+        if refuses_capture(slot, &name) {
+            state.status = crate::tf!(RebindKeyNotBindable, slot_display(slot), name);
+        } else {
+            apply_slot(config, slot, &name);
+            state.status = crate::tf!(RebindRebound, slot_display(slot), name);
+            state.bindings_dirty = true;
+        }
     }
 
     {
@@ -1015,6 +1024,21 @@ fn read_slot(cfg: &Config, slot: Slot) -> String {
     }
 }
 
+/// The microphone, Power Pad and Family BASIC keyboard slots (v3.5.0
+/// `FE-07`), whose names must resolve through `parse_keycode`.
+const fn is_device_slot(slot: Slot) -> bool {
+    matches!(
+        slot,
+        Slot::Microphone | Slot::PowerPad(_) | Slot::FamilyKey(_)
+    )
+}
+
+/// Whether a captured key name is refused for `slot`: a device slot whose
+/// name the bindings cannot resolve.
+fn refuses_capture(slot: Slot, name: &str) -> bool {
+    is_device_slot(slot) && crate::input::parse_keycode(name).is_none()
+}
+
 fn apply_slot(cfg: &mut Config, slot: Slot, name: &str) {
     let i = &mut cfg.input;
     // v3.5.0 (`FE-07`): device slots index lists, padded first so a short
@@ -1118,6 +1142,18 @@ fn apply_slot(cfg: &mut Config, slot: Slot, name: &str) {
 
 #[cfg(test)]
 mod tests {
+    /// A device slot refuses a key the bindings cannot resolve, and keeps
+    /// one they can; player slots are not affected by the check.
+    #[test]
+    fn a_device_slot_refuses_an_unresolvable_key() {
+        assert!(crate::input::parse_keycode("Delete").is_none());
+        assert!(refuses_capture(Slot::Microphone, "Delete"));
+        assert!(refuses_capture(Slot::PowerPad(0), "Delete"));
+        assert!(refuses_capture(Slot::FamilyKey(3), "Delete"));
+        assert!(!refuses_capture(Slot::Microphone, "KeyN"));
+        assert!(!refuses_capture(Slot::P1A, "Delete"));
+    }
+
     use super::*;
 
     #[test]

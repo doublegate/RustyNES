@@ -375,3 +375,34 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
         "{p}"
     );
 }
+
+/// Concurrent `resume` calls start exactly one runner: the flag is claimed in
+/// one atomic step, so every other call is refused. Repeated, because the
+/// race this guards is a timing window.
+#[test]
+fn concurrent_resumes_start_one_runner() {
+    for _ in 0..25 {
+        let h = host();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        // Collected on purpose: every thread must be spawned before any is
+        // joined, or the first join waits on a barrier no other thread reaches.
+        #[allow(clippy::needless_collect)]
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let h = h.clone();
+                let b = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    b.wait();
+                    call(&h, "resume", json!({ "max_frames": 600 })).is_ok()
+                })
+            })
+            .collect();
+        let started = handles
+            .into_iter()
+            .map(|t| t.join().expect("thread"))
+            .filter(|&ok| ok)
+            .count();
+        ok(&h, "pause", Value::Null);
+        assert_eq!(started, 1, "{started} resumes started a runner");
+    }
+}

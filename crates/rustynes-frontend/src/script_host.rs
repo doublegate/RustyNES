@@ -717,8 +717,38 @@ impl MmfStore {
             if let Some(old) = self.regions.remove(name) {
                 mmf_publish(&old, |r| r.write_bytes(0, &[0; 4]));
             }
-            let region = crate::shm::SharedRegion::create(&full, want)
-                .map_err(|e| format!("cannot create {full}: {e}"))?;
+            let region = match crate::shm::SharedRegion::create(&full, want) {
+                Ok(region) => region,
+                Err(e) => {
+                    // Windows keeps a mapping alive while ANY process holds a
+                    // handle or view, so with a reader attached the name could
+                    // not be released and the create met the old, smaller
+                    // object (Antigravity on #624). Take that object back, so
+                    // the name keeps working at its old capacity, re-validate
+                    // its header (the clear above told readers to reopen), and
+                    // refuse this write with the reason. On POSIX the name was
+                    // unlinked, so the open finds nothing and only the error
+                    // is reported.
+                    if let Ok(back) = crate::shm::SharedRegion::open(&full)
+                        && back.len() > MMF_HEADER_LEN
+                    {
+                        let capacity =
+                            u32::try_from(back.len() - MMF_HEADER_LEN).unwrap_or(u32::MAX);
+                        mmf_publish(&back, |r| {
+                            r.write_bytes(0, &MMF_MAGIC);
+                            r.write_bytes(MMF_OFF_VERSION, &MMF_LAYOUT_VERSION.to_le_bytes());
+                            r.write_bytes(MMF_OFF_CAPACITY, &capacity.to_le_bytes());
+                        });
+                        self.regions.insert(name.to_owned(), back);
+                        return Err(format!(
+                            "cannot grow {full} to {} bytes while another program has it \
+                             open (it keeps {capacity} bytes): {e}",
+                            data.len()
+                        ));
+                    }
+                    return Err(format!("cannot create {full}: {e}"));
+                }
+            };
             if region.len() < want {
                 return Err(format!("{full} exists and is too small"));
             }
@@ -1339,6 +1369,7 @@ mod tests {
     /// A write larger than the region grows it, and the old mapping's magic
     /// is cleared so a reader holding it knows to reopen the name.
     #[test]
+    #[cfg(not(windows))]
     fn a_larger_write_replaces_the_region() {
         let mut store = MmfStore::new(test_prefix());
         store.write("grow", &[1u8; 10]).unwrap();
@@ -1351,6 +1382,28 @@ mod tests {
         reader.read_bytes(0, &mut magic);
         assert_eq!(magic, [0; 4], "the stale mapping is marked invalid");
         assert_eq!(store.read("grow", usize::MAX), vec![2u8; 10_000]);
+    }
+
+    /// Windows cannot release a mapping another process still has open, so a
+    /// grow with a reader attached is refused with the reason, and the region
+    /// keeps working at its old capacity: same name, header valid, old data
+    /// readable, and a write that fits still lands. Without the recovery the
+    /// name dropped out of the store and every later write failed too.
+    #[test]
+    #[cfg(windows)]
+    fn a_larger_write_with_a_reader_attached_is_refused_and_the_region_kept() {
+        let mut store = MmfStore::new(test_prefix());
+        store.write("grow", &[1u8; 10]).unwrap();
+        let reader = crate::shm::SharedRegion::open(store.regions["grow"].name()).unwrap();
+        let err = store.write("grow", &[2u8; 10_000]).unwrap_err();
+        assert!(err.contains("another program has it open"), "{err}");
+        let mut magic = [0u8; 4];
+        reader.read_bytes(0, &mut magic);
+        assert_eq!(magic, MMF_MAGIC, "the kept region is valid again");
+        assert_eq!(store.read("grow", usize::MAX), vec![1u8; 10]);
+        store.write("grow", &[3u8; 20]).unwrap();
+        assert_eq!(store.read("grow", usize::MAX), vec![3u8; 20]);
+        drop(reader);
     }
 
     /// Script names outside the portable rule are refused (and never reach

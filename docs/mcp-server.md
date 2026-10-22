@@ -187,7 +187,9 @@ ROM (the fixture is the only ROM the suite runs).
 
 - No HTTP transport (stdio covers every MCP host that launches a command).
 - No per-game RAM schemas (`T-AI-PLAY`, `T-GHOST-RACE`).
-- No non-controller input (Zapper, microphone, Vs. coins, FDS disk events)
-  until `.rnm` carries it (`T-MOVIE-INPUT-STREAM`).
+- No non-controller input (Zapper, microphone, Vs. coins, FDS disk events).
+  `.rnm` format 7 carries them (`T-MOVIE-INPUT-STREAM`, the same release),
+  but the server's tools expose controller input only, so a fork's movie
+  never holds one.
 - No audio observation.
 - FDS and NSF images are not loaded.

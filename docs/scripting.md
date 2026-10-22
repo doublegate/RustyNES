@@ -569,7 +569,12 @@ POSIX and `SharedMemory("Local\\rnmf-<name>")` on Windows.
   empty.
 - **Size.** A region is sized to its first write (header plus payload, rounded
   up to 4 KiB). A larger later write replaces it with a bigger region and clears
-  the old one's magic, which is a reader's signal to reopen the name.
+  the old one's magic, which is a reader's signal to reopen the name. **On
+  Windows** a region cannot be replaced while another program still has it
+  open (the OS keeps a mapping alive until every handle closes), so such a
+  write is refused with that reason and the region keeps its old capacity,
+  header and data; a write that fits still lands. Size the first write for the
+  largest payload, or have the reader close the region before it grows.
 - **Lifetime.** The regions a script wrote are removed when the IPC host stops
   (Stop or Reload). A region another program created is opened afresh for each
   `mmfRead` and is never removed by RustyNES.

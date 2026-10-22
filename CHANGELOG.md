@@ -272,6 +272,27 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The desktop and mobile apps' RetroAchievements read the wrong memory
+  for cartridge RAM.** RetroAchievements addresses NES memory as the CPU bus
+  (the vendored rcheevos region table: system RAM at `0x0000` with its
+  mirrors, cartridge RAM at `0x6000`, ROM at `0x8000`), but the native client
+  mapped `0x0800-0x27FF` onto cartridge RAM and refused everything above, so a
+  condition on a cartridge-RAM address read nothing and one on a RAM mirror
+  read cartridge RAM. The address is now passed through unchanged, as the
+  browser build and the libretro core's memory map already did; the read is
+  side-effect-free. The speedrun timer's splits use the same mapping, and a
+  test now pins the two together. (`CodeRabbit` on #624, against the timer's
+  copy.)
+- **The browser builds kept every file they opened in memory.** Each file
+  picker and drop zone read through a `FileReader` callback that was never
+  freed and held the reader's result, so every ROM and movie a session opened
+  stayed as a whole buffer after it was replaced. One self-freeing read
+  (`wasm_file::read_file_once`, on `loadend`, so success, failure and abort
+  all release it) now serves all seven sites. The canvas embed also starts Web
+  Audio inside the pick or drop gesture rather than when the read ends, and
+  ends a movie session before a Vs. DualSystem cabinet replaces the console,
+  since a cabinet refuses every movie hotkey. (Copilot and `CodeRabbit` on
+  #624.)
 - **The MMC5's scanline IRQ came a whole line early, and counted with
   rendering off.** The counter ticked from the PPU's line hook at dot 0 of
   the pre-render line and of every visible line, rendering or not, so visible

@@ -139,11 +139,15 @@ struct Fork {
 }
 
 /// Drop the samples the core buffered for the last frame (see the module
-/// docs). `drain_audio_into` discards whatever does not fit, so a one-sample
-/// buffer empties it without an allocation.
+/// docs). `drain_audio_into` KEEPS whatever does not fit for the next drain,
+/// so this loops until a drain comes back short; the fixed sink keeps it
+/// allocation-free. Until v3.5.0's review this drained into a one-sample
+/// buffer on the belief that the remainder was discarded, which removed one
+/// sample per frame and let a session's buffer grow by about 800 samples a
+/// frame (`Copilot` on #624, against the speedrun runner's same omission).
 fn drop_audio(nes: &mut Nes) {
-    let mut sink = [0.0f32; 1];
-    let _ = nes.drain_audio_into(&mut sink);
+    let mut sink = [0.0f32; 1024];
+    while nes.drain_audio_into(&mut sink) == sink.len() {}
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -964,6 +968,19 @@ mod tests {
             Value::Object(m) => m,
             _ => serde_json::Map::new(),
         }
+    }
+
+    /// A session's audio buffer stays empty however long it runs: every
+    /// stepped frame's samples are dropped in full. Mutation-checked by
+    /// draining into a one-sample sink once (the pre-fix `drop_audio`),
+    /// which leaves a whole frame's samples behind.
+    #[test]
+    fn stepping_leaves_no_audio_buffered() {
+        let mut s = session();
+        s.call("step_frames", Some(&args(json!({ "frames": 120 }))))
+            .expect("steps");
+        let left = s.nes.drain_audio().len();
+        assert_eq!(left, 0, "{left} samples stayed buffered after 120 frames");
     }
 
     /// The second layer: if the sandbox's write lock ever failed, the

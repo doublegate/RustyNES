@@ -13,8 +13,8 @@ A headless report on one ROM file: whether it is the dump it claims to be,
 whether its header describes the cartridge, and whether its bytes are whole.
 Exit codes: **0** nothing found, **4** at least one finding, **1** an error
 before a report could be made (a file unreadable or over 64 MiB, a DAT or
-database that does not parse). 2 stays clap's usage error and 3 `verify`'s
-"no attestation".
+database that does not parse). 2 stays clap's usage error, 3 `verify`'s
+"no attestation" and 5 `speedrun`'s "the run did not finish".
 
 **RustyNES ships no DAT and no database.** Both are files the user supplies:
 a No-Intro DAT (Logiqx XML, as DAT-o-MATIC exports it) and NewRisingSun's NES

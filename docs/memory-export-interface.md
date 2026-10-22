@@ -102,10 +102,14 @@ written from RetroAchievements' public documentation of the syntax:
 
 Comparisons: `=`, `!=`, `<`, `<=`, `>`, `>=`.
 
-**Addresses** are the RetroAchievements NES flat space (the mapping
-`rustynes-cheevos` uses): `0x0000-0x07FF` is the 2 KiB system RAM and
-`0x0800-0x27FF` is cartridge RAM at CPU `$6000-$7FFF`. Anything else reads 0.
-A condition copied from an achievement set therefore means the same thing here.
+**Addresses** are RetroAchievements NES addresses, which are CPU-bus
+addresses (the rcheevos region table, and the mapping `rustynes-cheevos`
+uses): system RAM at `0x0000-0x07FF` with its mirrors, cartridge RAM at
+`0x6000-0x7FFF`, ROM at `0x8000-0xFFFF`, all read without side effects.
+Anything above `0xFFFF` reads 0. A condition copied from an achievement set
+therefore means the same thing here. (Before v3.5.0's review this page, the
+timer and the desktop achievements client put cartridge RAM at
+`0x0800-0x27FF`, which is not RA's layout.)
 
 **Refused** (an error naming the text, never a silent misreading): condition
 flags (`R:`, `P:`, `A:`, `B:`, `C:`, `N:`, `M:`, `Q:`, `I:`, `T:`, `Z:`, `O:`,
@@ -124,8 +128,10 @@ sizes. The splits file's own `reset` covers what `R:` is mostly used for.
 
 `rustynes speedrun` prints one line per event (`start`, `split`, `finish`,
 `reset`, `discontinuity`) with its frame and master clock, then the result. Its
-exit code is 0 when the run finished, 2 when it did not (the start or a split
-never fired), and 1 on an error.
+exit code is 0 when the run finished, 5 when it did not (the start or a split
+never fired), and 1 on an error. 2 stays clap's usage error, 3 `verify`'s "no
+attestation" and 4 `dump-check`'s "a finding", so a script can tell every
+outcome apart.
 
 ### The result
 

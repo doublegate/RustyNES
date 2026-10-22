@@ -2336,8 +2336,11 @@ impl Nes {
         self.bus.genie_codes()
     }
 
-    /// Drain into a slice; returns the count copied.  Excess samples are
-    /// dropped if `out` is smaller than the buffered count.
+    /// Drain into a slice; returns the count copied. Samples that do not fit
+    /// are KEPT for the next drain, so a caller discarding audio must loop
+    /// until a drain returns less than `out.len()`. Until v3.5.0 this comment
+    /// said the excess was dropped, which the buffer never did, and one
+    /// caller (`rustynes-mcp`) trusted it.
     pub fn drain_audio_into(&mut self, out: &mut [f32]) -> usize {
         self.bus.drain_audio_into(out)
     }
@@ -6593,7 +6596,7 @@ mod tests {
     /// be filled, while `docs/audio-provenance.md` and the `REG_COUNT` doc
     /// comment both stated they were "tracked anyway".
     ///
-    /// Caught by the Antigravity reviewer on PR #404. This test fails without
+    /// Caught by the `Antigravity` reviewer on PR #404. This test fails without
     /// `Apu::record_bus_handled_register_write` being called from both bus arms:
     /// remove either call and the corresponding `get()` returns `None`.
     #[cfg(feature = "debug-hooks")]

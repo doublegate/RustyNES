@@ -2789,8 +2789,9 @@ setters; the survey table above gives the verdict for each.
   -- the inputs are simply not available in netplay. Carrying them is a protocol
   change (a wider input cell, and a prediction rule for an aim point) and is
   left as a feature, not a fix. One exception was found while checking: the Vs.
-  coin (`F10`) is not refused during a desktop netplay session, so a coin
-  inserted on one peer reaches only its own console; see the v3.5.0 CHANGELOG.
+  coin (`F10`) was not refused during a desktop netplay session, so a coin
+  inserted on one peer reached only its own console. v3.5.0 refuses it there,
+  through `session_policy::refusal` (see "Session lockouts" above).
 - **The gate**: `crates/rustynes-test-harness/tests/movie_input_stream.rs`
   records a Zapper, a Vs. System and an FDS movie (synthetic ROMs and a
   synthetic BIOS, so it runs in the default build) and requires the replay to
