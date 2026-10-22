@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-22 - "Chorus" (creator tools: the full movie input stream, Lua WebSockets and shared memory, an MCP server, speedrun timing and dump checks; and the MiSTer core's MMC5, VRC6, Namco 163, VRC7 and Bandai FCG boards, off the die)
+
 ### Breaking
 
 - **`.rnm` movies are format 7; a format-6 movie (v3.1.0 to v3.4.x) is
@@ -363,9 +365,9 @@ cycle-accurate core later replaced.
   entry is now dropped, and an answer with no usable relay entry left
   (a STUN-only one included) is treated as an upstream failure: the request
   is not counted against the daily or per-address limits and the client is
-  told to connect directly. TURN stays switched off in production
-  (`T-HOSTED-TURN-EXPIRY`); this lands first so it is in place when TURN is
-  switched back on.
+  told to connect directly. It landed while TURN was still switched off in
+  production, so it was in place before this release switched TURN back on
+  (`T-HOSTED-TURN-EXPIRY`, under Changed).
 - **Android and iOS: a disk swap or a coin no longer desyncs online play.**
   Turning an FDS disk over or dropping a coin into a Vs. System machine
   happened on one player's device only during a netplay session, so the two

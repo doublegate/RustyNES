@@ -1,6 +1,6 @@
 {
   "name": "rustynes-hosted",
-  "version": "3.4.2",
+  "version": "3.5.0",
   "private": true,
   "description": "RustyNES hosted services: the netplay signalling lobby (Durable Object), Cloudflare TURN credential minting, and the browser RetroAchievements proxy.",
   "license": "GPL-3.0-or-later",
