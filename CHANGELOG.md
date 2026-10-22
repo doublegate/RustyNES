@@ -53,7 +53,7 @@ cycle-accurate core later replaced.
 - **MiSTer core: a v3.4.x save state is refused on both builds.** The
   Famicom peripherals and the Phase F3b boards lengthen the scan chain, so the
   layout fingerprint each state carries moved (on the die `0CF5891F`, 4,097
-  bits; off the die `FD9917DA`, 4,319 bits, before MMC5) and the engine refuses
+  bits; off the die `F27C2FF4`, 4,736 bits, with the MMC5) and the engine refuses
   an older state by its header rather than loading it as garbage.
 - **MiSTer core: the OSD's Controllers option moved to status bits 23:21**, to
   make room for the Power Pad and the Family BASIC keyboard. An older saved
@@ -217,6 +217,13 @@ cycle-accurate core later replaced.
   gates against the oracle, a module gate against the NESdev pages or the
   EEPROM data sheets where the oracle departs from them (ledger 3.90, 3.91,
   3.120-3.125), and commercial frame gates.
+- **MiSTer core: the MMC5 (5)**, off the die only: PRG and CHR banking to
+  1 MiB, 64 KiB of PRG-RAM, ExRAM, extended attributes, the fill and vertical
+  split, the multiplier, its two pulses and PCM (to the NESdev page, where the
+  oracle departs, ledger 3.104), and the scanline IRQ, which detects scanlines
+  from PPU reads as the oracle now does (the fix under Fixed; ledger 3.100,
+  closed). Bus, checkpoint, IRQ-rise, picture and save-state gates against
+  the oracle on five stimulus ROMs, and *Castlevania III*'s frame 440.
 - **MiSTer core: the Famicom peripherals** (FB-11): the Family BASIC keyboard
   from a PS/2 keyboard, the Power Pad on port 2 (mat buttons on keys 1-4, Q-R
   and A-F) and the second controller's microphone (a "Mic" button). They are
