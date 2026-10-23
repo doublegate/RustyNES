@@ -914,10 +914,17 @@ fn gamedb_correction(rom: &[u8], findings: &mut Vec<Finding>) {
 
 /// The CPU-side model of the PPU's address register: enough to tell which
 /// `$2007` accesses land in the pattern tables.
+///
+/// `t` is modelled whole, from `nesdev_wiki/PPU_scrolling.xhtml`: `$2000`,
+/// `$2005` and `$2006` all write it and share the one write toggle, so after
+/// an odd number of `$2005` writes the next `$2006` write is the SECOND and
+/// copies a `t` that `$2000` and `$2005` set. Until v3.5.0's review only the
+/// `$2006` high byte was kept, so that case used a stale high byte
+/// (Antigravity on #624, round 3).
 #[derive(Default)]
 struct PpuAddrModel {
     v: u16,
-    t_hi: u8,
+    t: u16,
     second_write: bool,
     increment_32: bool,
 }
@@ -930,14 +937,31 @@ impl PpuAddrModel {
             return false;
         }
         match (addr & 7, write) {
-            (0, true) => self.increment_32 = value & 0x04 != 0,
+            (0, true) => {
+                self.increment_32 = value & 0x04 != 0;
+                // t: ...GH.. ........ <- d: ......GH
+                self.t = (self.t & !0x0C00) | (u16::from(value & 0x03) << 10);
+            }
             (2, false) => self.second_write = false,
-            (5, true) => self.second_write = !self.second_write,
+            (5, true) => {
+                let d = u16::from(value);
+                self.t = if self.second_write {
+                    // t: FGH..AB CDE..... <- d: ABCDEFGH
+                    (self.t & !0x73E0) | ((d & 0x07) << 12) | ((d >> 3) << 5)
+                } else {
+                    // t: ....... ...ABCDE <- d: ABCDE...
+                    (self.t & !0x001F) | (d >> 3)
+                };
+                self.second_write = !self.second_write;
+            }
             (6, true) => {
                 if self.second_write {
-                    self.v = (u16::from(self.t_hi) << 8) | u16::from(value);
+                    // t: ....... ABCDEFGH <- d; v = t
+                    self.t = (self.t & 0xFF00) | u16::from(value);
+                    self.v = self.t;
                 } else {
-                    self.t_hi = value & 0x3F;
+                    // t: .CDEFGH ........ <- d: ..CDEFGH, bit 14 cleared
+                    self.t = (self.t & 0x00FF) | (u16::from(value & 0x3F) << 8);
                 }
                 self.second_write = !self.second_write;
             }
@@ -1790,6 +1814,24 @@ mod tests {
         almost[16383] ^= 1;
         assert_eq!(repeat_period(&almost, 8192), 16384);
         assert_eq!(repeat_period(&vec![0; 16384], 8192), 8192);
+    }
+
+    /// After an odd number of `$2005` writes the toggle is set, so a single
+    /// `$2006` write is the second and copies `t`, whose high bits the
+    /// `$2005` writes set (fine Y 2 puts bit 13 in, $2000), not any earlier
+    /// `$2006`. So the `$2007` write lands in a nametable; the old model kept
+    /// the last `$2006` high byte ($00) and counted a CHR write at $0000.
+    #[test]
+    fn an_odd_scroll_write_hands_t_to_the_next_address_write() {
+        let mut m = PpuAddrModel::default();
+        m.access(true, 0x2006, 0x00);
+        m.access(true, 0x2006, 0x00); // v = t = $0000
+        m.access(true, 0x2005, 0x00); // first write
+        m.access(true, 0x2005, 0x02); // second: fine Y 2 -> t = $2000
+        m.access(true, 0x2005, 0x00); // first again: toggle set
+        m.access(true, 0x2006, 0x00); // the SECOND write: v = t
+        assert_eq!(m.v, 0x2000);
+        assert!(!m.access(true, 0x2007, 1), "$2000 is not a pattern table");
     }
 
     #[test]
