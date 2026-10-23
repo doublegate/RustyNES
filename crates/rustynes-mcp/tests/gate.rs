@@ -343,6 +343,18 @@ fn observation_layers_describe_the_machine() {
 fn real_time_running_pauses_and_stops_at_breakpoints() {
     let h = host();
     ok(&h, "set_input", p1(&["Right"]));
+    // A RAM write is refused while a run is live. Its own long run, paused at
+    // once, so the runner cannot finish before the call (CodeRabbit on #624:
+    // inside the 30-frame run below, the budget could expire first).
+    ok(&h, "resume", json!({ "max_frames": 600 }));
+    assert!(
+        matches!(
+            call(&h, "write_ram", json!({ "addr": 0x10, "bytes": [1] })),
+            Err(rustynes_mcp::ToolError::Refused(_))
+        ),
+        "a RAM write while running is refused"
+    );
+    ok(&h, "pause", Value::Null);
     ok(&h, "resume", json!({ "max_frames": 30 }));
     assert!(
         matches!(
@@ -350,13 +362,6 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
             Err(rustynes_mcp::ToolError::Refused(_))
         ),
         "stepping while running is refused"
-    );
-    assert!(
-        matches!(
-            call(&h, "write_ram", json!({ "addr": 0x10, "bytes": [1] })),
-            Err(rustynes_mcp::ToolError::Refused(_))
-        ),
-        "a RAM write while running is refused"
     );
     // Observation still answers while running.
     ok(&h, "cpu_state", Value::Null);

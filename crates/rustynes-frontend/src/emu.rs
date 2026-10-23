@@ -1117,6 +1117,7 @@ impl EmuCore {
         // `no_game` existed but nothing called it, so a closed game stayed
         // published with its hash, RAM and timer (Antigravity on #624,
         // round 4). The next game rebinds on its first frame.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(sr) = self.speedrun.as_mut() {
             sr.no_game();
         }
