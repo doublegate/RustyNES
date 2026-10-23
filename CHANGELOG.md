@@ -34,7 +34,12 @@ cycle-accurate core later replaced.
   holds. The `full-build` job compiled that code on both systems and no job ran
   its tests. Both legs now run the store's, the script host's and `memif`'s
   tests on the `full` build; each group must show a passing test, and on
-  Windows the grow test must pass by name (`T-WIN-SCRIPT-IPC-CI`).
+  Windows the grow test must pass by name (`T-WIN-SCRIPT-IPC-CI`). Its first
+  run passed on Windows, including the grow test, and failed one test on
+  macOS: the test that plants a shared-memory object other users can read
+  changed the object's mode with `fchmod`, which macOS does not support on
+  such objects. The refusal itself works there; the test now plants with the
+  mode the system gives a new object and reads that mode back.
 
 ### Documentation
 
