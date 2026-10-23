@@ -42,7 +42,18 @@ fn parse_args() -> Result<SessionConfig, String> {
     if len > limits::MAX_ROM_BYTES {
         return Err(format!("{}: {len} bytes is too large", rom.display()));
     }
-    let bytes = std::fs::read(&rom).map_err(|e| format!("{}: {e}", rom.display()))?;
+    // The metadata check is the fast refusal; the read is bounded as well,
+    // because a device or FIFO reports 0 bytes and can stream forever.
+    let mut bytes = Vec::new();
+    std::fs::File::open(&rom)
+        .and_then(|f| {
+            use std::io::Read as _;
+            f.take(limits::MAX_ROM_BYTES + 1).read_to_end(&mut bytes)
+        })
+        .map_err(|e| format!("{}: {e}", rom.display()))?;
+    if bytes.len() as u64 > limits::MAX_ROM_BYTES {
+        return Err(format!("{}: too large", rom.display()));
+    }
     if let Some(dir) = &out_dir
         && !dir.is_dir()
     {

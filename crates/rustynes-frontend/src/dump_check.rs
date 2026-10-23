@@ -1054,7 +1054,23 @@ pub fn read_capped(path: &Path) -> Result<Vec<u8>, String> {
             path.display()
         ));
     }
-    std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))
+    // Bound the READ too: a device or FIFO reports 0 bytes and can stream
+    // forever (`/dev/zero`), so the metadata check alone is not a limit
+    // (Antigravity on #624, after `bundle::read_bounded`'s same fix).
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|f| {
+            use std::io::Read as _;
+            f.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)
+        })
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(format!(
+            "{} is over the {MAX_INPUT_BYTES}-byte limit",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Render the report as the text `rustynes dump-check` prints.
@@ -1380,6 +1396,16 @@ fn parse_hex_32(s: &str) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `/dev/zero` reports 0 bytes but never ends: the bounded read refuses
+    /// it at the limit instead of filling memory.
+    #[cfg(unix)]
+    #[test]
+    fn an_endless_source_is_refused_at_the_limit() {
+        let err = read_capped(Path::new("/dev/zero")).unwrap_err();
+        assert!(err.contains("limit"), "{err}");
+    }
+
     use super::*;
 
     // --- Planted fixtures: tiny NROM programs built here, never a dump. ---

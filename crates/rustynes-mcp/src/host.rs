@@ -49,6 +49,14 @@ struct Inner {
     rt_frames: AtomicU64,
     /// Why the last real-time run stopped.
     rt_stop: Mutex<String>,
+    /// Held for the whole of `resume` and `pause`, so the two never
+    /// interleave. The atomic claim on `running` alone could not order them:
+    /// a `pause` landing between a `resume`'s claim and its storing the
+    /// runner handle found no runner to join, and a second `resume` could
+    /// then claim the flag while the first was still spawning, giving two
+    /// runners (Antigravity on #624, round 2). The runner thread never takes
+    /// it, so `pause` may join while holding it.
+    lifecycle: Mutex<()>,
 }
 
 /// The session plus its runner. Cheap to clone (an `Arc`).
@@ -74,6 +82,7 @@ impl Host {
                 runner: Mutex::new(None),
                 rt_frames: AtomicU64::new(0),
                 rt_stop: Mutex::new(String::new()),
+                lifecycle: Mutex::new(()),
             }),
         }
     }
@@ -119,6 +128,7 @@ impl Host {
     }
 
     fn pause(&self) -> ToolOutput {
+        let _lifecycle = lock(&self.inner.lifecycle);
         let was_running = self.inner.running.swap(false, Ordering::SeqCst);
         self.join_runner();
         lock(&self.inner.session).set_running(false);
@@ -146,10 +156,12 @@ impl Host {
                 limits::MAX_REALTIME_FRAMES
             )));
         }
-        // Claim the flag in ONE step. Calls run on separate blocking threads,
-        // so a load followed later by a store let two concurrent `resume`s
-        // both pass and start two runners on one timeline, the first one
-        // detached (CodeRabbit on #624).
+        // Every lifecycle change is serialised (see `Inner::lifecycle`), and
+        // the flag is still claimed in ONE step: calls run on separate
+        // blocking threads, and a load followed later by a store let two
+        // concurrent `resume`s both pass and start two runners on one
+        // timeline, the first one detached (CodeRabbit on #624).
+        let _lifecycle = lock(&self.inner.lifecycle);
         if self
             .inner
             .running

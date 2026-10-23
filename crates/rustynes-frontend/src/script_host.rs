@@ -1061,7 +1061,11 @@ fn ws_thread(
         }
         // 2. Back-pressure: while the frame thread has not drained enough,
         // leave inbound bytes in the kernel (the server's TCP window fills).
-        if pending.load(Ordering::Acquire) > WS_INBOUND_BUDGET {
+        // Not while closing: then every frame is read and data is discarded
+        // (step 3), or the peer's close frame would sit behind the unread
+        // data and every close over budget would wait out the full timeout
+        // (Antigravity on #624, round 2).
+        if closing_since.is_none() && pending.load(Ordering::Acquire) > WS_INBOUND_BUDGET {
             std::thread::sleep(Duration::from_millis(5));
             continue;
         }
@@ -1087,6 +1091,11 @@ fn ws_thread(
             }
             Err(_) => break,
         };
+        // After `ws_close` the script has asked for no more messages: data
+        // read while waiting for the close frame is dropped.
+        if closing_since.is_some() {
+            continue;
+        }
         // Counted before it is sent, so the drain's subtraction never runs
         // ahead of this addition.
         pending.fetch_add(text.len(), Ordering::AcqRel);
@@ -1700,6 +1709,59 @@ mod tests {
         assert!(
             host.ws_pending.load(Ordering::Acquire) > 0,
             "reading resumed"
+        );
+    }
+
+    /// A close requested while the inbound budget is full still completes
+    /// promptly: the socket thread reads (and drops) the data queued ahead of
+    /// the server's close frame instead of waiting out `WS_CONNECT_TIMEOUT`.
+    /// Mutation-checked by restoring back-pressure while closing, which makes
+    /// the close take the full 10 s.
+    #[test]
+    fn a_close_over_the_inbound_budget_completes_promptly() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut ws = tungstenite::accept(stream).unwrap();
+            let chunk = "x".repeat(64 * 1024);
+            // 8 MiB, twice the budget, then wait for the client's close.
+            for _ in 0..128 {
+                if ws
+                    .send(tungstenite::Message::Text(chunk.clone().into()))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            while ws.read().is_ok() {}
+            let _ = ws.flush();
+        });
+        let host = ScriptHost::with_allowlist(vec!["127.0.0.1".into()]);
+        host.submit(CommCmd::WsOpen {
+            id: 1,
+            url: format!("ws://127.0.0.1:{port}/"),
+        })
+        .unwrap();
+        // Undrained, so the budget fills and reading stops.
+        std::thread::sleep(Duration::from_millis(1000));
+        assert!(host.ws_pending.load(Ordering::Acquire) >= WS_INBOUND_BUDGET);
+        let asked = Instant::now();
+        host.submit(CommCmd::WsClose).unwrap();
+        let mut closed = false;
+        // Read the channel directly: `drain_results` would hand the bytes back
+        // to the budget and so release the back-pressure this test is about.
+        while !closed && asked.elapsed() < Duration::from_secs(9) {
+            while let Ok(r) = host.result_rx.try_recv() {
+                closed |= matches!(r, CommResult::WsState { open: false, .. });
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(closed, "the close waited out the timeout");
+        assert!(
+            asked.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
         );
     }
 

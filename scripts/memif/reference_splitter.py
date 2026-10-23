@@ -75,28 +75,39 @@ def owned_by_me(shm):
     return st.st_uid == os.geteuid() and st.st_mode & 0o077 == 0
 
 
+def _attach(name):
+    try:
+        return shared_memory.SharedMemory(name=name, track=False)
+    except TypeError:  # Python < 3.13 has no `track`
+        shm = shared_memory.SharedMemory(name=name)
+        try:
+            # Keep the resource tracker from unlinking a block this
+            # process did not create when it exits.
+            from multiprocessing import resource_tracker
+
+            resource_tracker.unregister(shm._name, "shared_memory")
+        except Exception:  # noqa: BLE001 - best effort, POSIX only
+            pass
+        return shm
+
+
 def open_block(name, timeout):
+    """Attach to the block once it exists AND is full size. On POSIX the
+    producer creates the object before it sizes it, so an attach in between
+    maps fewer than LAYOUT_SIZE bytes; that one is closed and retried."""
     name = os_name(name)
     deadline = time.monotonic() + timeout
     while True:
         try:
-            try:
-                return shared_memory.SharedMemory(name=name, track=False)
-            except TypeError:  # Python < 3.13 has no `track`
-                shm = shared_memory.SharedMemory(name=name)
-                try:
-                    # Keep the resource tracker from unlinking a block this
-                    # process did not create when it exits.
-                    from multiprocessing import resource_tracker
-
-                    resource_tracker.unregister(shm._name, "shared_memory")
-                except Exception:  # noqa: BLE001 - best effort, POSIX only
-                    pass
+            shm = _attach(name)
+            if shm.size >= LAYOUT_SIZE:
                 return shm
-        except FileNotFoundError:
-            if time.monotonic() > deadline:
-                return None
-            time.sleep(0.01)
+            shm.close()
+        except (FileNotFoundError, ValueError):  # absent, or still 0 bytes
+            pass
+        if time.monotonic() > deadline:
+            return None
+        time.sleep(0.01)
 
 
 def u32(b, at):

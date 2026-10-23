@@ -406,3 +406,53 @@ fn concurrent_resumes_start_one_runner() {
         assert_eq!(started, 1, "{started} resumes started a runner");
     }
 }
+
+/// `resume` and `pause` racing each other never leave a runner behind: after
+/// a storm of both from several threads, one final `pause` stops the machine,
+/// and the frame count no longer moves. A runner orphaned by the race would
+/// keep stepping (its handle overwritten, so `pause` could not join it).
+#[test]
+fn racing_resume_and_pause_leave_no_runner_behind() {
+    for _ in 0..10 {
+        let h = host();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        // Collected on purpose: every thread must be spawned before any is
+        // joined, or the first join waits on a barrier no other thread reaches.
+        #[allow(clippy::needless_collect)]
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let h = h.clone();
+                let b = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    b.wait();
+                    for _ in 0..20 {
+                        if i % 2 == 0 {
+                            let _ = call(&h, "resume", json!({ "max_frames": 600 }));
+                        } else {
+                            let _ = call(&h, "pause", Value::Null);
+                        }
+                    }
+                })
+            })
+            .collect();
+        // The storm must END: without the lifecycle lock, `pause` serially
+        // joins runners it was handed after a race (600 frames each), and the
+        // run takes many minutes instead of about two seconds. A deadline turns
+        // that into a failure rather than a hung test.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for t in handles {
+                t.join().expect("thread");
+            }
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(60))
+            .expect("the resume/pause storm did not finish within 60 s");
+        ok(&h, "pause", Value::Null);
+        let frame = |h: &rustynes_mcp::Host| h.with_session(|s| s.nes().frame());
+        let before = frame(&h);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(!h.is_running());
+        assert_eq!(frame(&h), before, "a runner kept stepping after pause");
+    }
+}

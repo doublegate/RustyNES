@@ -509,7 +509,8 @@ already uses), and the script still never holds the socket:
   order; and exactly one `open=false` when the socket ends, however it ends
   (`ws_close`, the server closing, an error, a refused destination, a second
   `ws_open`). A binary message is delivered as text with invalid UTF-8
-  replaced.
+  replaced. Messages that arrive after `ws_close` are read and dropped while
+  the close handshake completes; they are not delivered.
 - **Destinations** follow the HTTP rule above, on the addresses the socket
   connects to: the host resolves the name once, refuses it if any address is
   non-public and the host is not in `RUSTYNES_COMM_HTTP_ALLOW`, and dials one
