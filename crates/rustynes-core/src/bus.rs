@@ -350,6 +350,13 @@ pub struct SystemBus {
     /// `$8000-$FFFF` read path skips the per-read `cpu_read_unmapped`
     /// dispatch. Constant per mapper type; NOT part of the save-state.
     prg_may_unmap: bool,
+    /// v3.5.0 — [`Mapper::snoops_ppu_reads`], cached beside
+    /// [`Self::mapper_caps`] with the same refresh points and handed to every
+    /// [`PpuBusAdapter`]. When `false` (every board but the MMC5) the PPU's
+    /// per-read `notify_ppu_read` stops at one branch in the adapter instead
+    /// of a virtual call. Constant per mapper type; NOT part of the
+    /// save-state.
+    ppu_read_snoop: bool,
     /// The original iNES/NES-2.0 ROM bytes, kept so [`Self::power_cycle`] can
     /// rebuild the mapper to a true power-on state (fresh bank registers,
     /// cleared CHR-RAM + volatile PRG-RAM). `None` on the FDS path (which has
@@ -955,6 +962,7 @@ impl SystemBus {
         // mapper type); the per-cycle hot loop reads the copy.
         let mapper_caps = mapper.caps();
         let prg_may_unmap = mapper.may_unmap_prg_rom();
+        let ppu_read_snoop = mapper.snoops_ppu_reads();
         let mut bus = Self {
             ram: fresh_ram(),
             ppu: Ppu::new(region),
@@ -963,6 +971,7 @@ impl SystemBus {
             mapper,
             mapper_caps,
             prg_may_unmap,
+            ppu_read_snoop,
             // Set by `with_sample_rate` (iNES path); stays `None` for FDS.
             rom_bytes: None,
             controllers: [Controller::new(); 2],
@@ -1303,6 +1312,7 @@ impl SystemBus {
                 // the invariant mechanical).
                 self.mapper_caps = self.mapper.caps();
                 self.prg_may_unmap = self.mapper.may_unmap_prg_rom();
+                self.ppu_read_snoop = self.mapper.snoops_ppu_reads();
                 // v3.1.0: a fresh board starts on its header's MMC3 revision;
                 // the override is configuration and carries over.
                 if self.mmc3_revision_override.is_some() {
@@ -2415,6 +2425,19 @@ impl SystemBus {
         self.vs_service = pressed;
     }
 
+    /// v3.5.0 — the latched coin-insert bits (bit 0 = acceptor #1, bit 1 =
+    /// acceptor #2), for a movie recorder.
+    #[must_use]
+    pub const fn vs_coin(&self) -> u8 {
+        self.vs_coin
+    }
+
+    /// v3.5.0 — whether the service button is held, for a movie recorder.
+    #[must_use]
+    pub const fn vs_service(&self) -> bool {
+        self.vs_service
+    }
+
     /// v2.0.0 beta.5 (Vs. `DualSystem`): mark this console as the SUB half of a
     /// `DualSystem` pair (`$4016` reads return bit 7 = `0x80`). Wrapper-only.
     pub const fn set_vs_sub(&mut self, is_sub: bool) {
@@ -3465,6 +3488,7 @@ impl SystemBus {
                 let mut adapter = PpuBusAdapter {
                     mapper: self.mapper.as_mut(),
                     nt_override: self.nt_mirroring_override,
+                    snoop_reads: self.ppu_read_snoop,
                     sub_dot: 2,
                 };
                 let _ = self.ppu.cpu_read_register(2, &mut adapter);
@@ -3473,6 +3497,7 @@ impl SystemBus {
                 let mut adapter = PpuBusAdapter {
                     mapper: self.mapper.as_mut(),
                     nt_override: self.nt_mirroring_override,
+                    snoop_reads: self.ppu_read_snoop,
                     // CPU register replay (e.g. $2007 read-bug): treated as
                     // M2-high (sub_dot 2) since the 6502 drives its bus
                     // during φ2.
@@ -3893,6 +3918,7 @@ impl SystemBus {
         let mut adapter = PpuBusAdapter {
             mapper: self.mapper.as_mut(),
             nt_override: self.nt_mirroring_override,
+            snoop_reads: self.ppu_read_snoop,
             // CPU bus access happens during φ2 → sub_dot 2 (M2-high).
             sub_dot: 2,
         };
@@ -3908,6 +3934,7 @@ impl SystemBus {
         let mut adapter = PpuBusAdapter {
             mapper: self.mapper.as_mut(),
             nt_override: self.nt_mirroring_override,
+            snoop_reads: self.ppu_read_snoop,
             // CPU bus access happens during φ2 → sub_dot 2 (M2-high).
             sub_dot: 2,
         };
@@ -3933,6 +3960,10 @@ struct PpuBusAdapter<'a> {
     /// in at construction. When `Some`, `nametable_address` uses it instead of
     /// the mapper's mirroring.
     nt_override: Option<rustynes_mappers::Mirroring>,
+    /// v3.5.0 — the bus's cached [`Mapper::snoops_ppu_reads`]. The PPU
+    /// reports every read it makes; only when this is `true` does the
+    /// adapter forward it to the mapper (`notify_ppu_read`).
+    snoop_reads: bool,
     /// Current PPU sub-dot of the host CPU cycle (0, 1, or 2).  Set by
     /// the bus's tick loop before each `Ppu::tick` call so that
     /// `notify_a12_at_sub_dot` (C1 step B4-successor M2-phase plumbing)
@@ -3992,6 +4023,12 @@ impl PpuBus for PpuBusAdapter<'_> {
         // `notify_a12_at_sub_dot` impl falls back to plain `notify_a12`,
         // so this thread-through is invisible to NROM / UxROM / etc.
         self.mapper.notify_a12_at_sub_dot(level, self.sub_dot);
+    }
+    #[inline]
+    fn notify_ppu_read(&mut self, addr: u16) {
+        if self.snoop_reads {
+            self.mapper.notify_ppu_read(addr);
+        }
     }
     fn notify_scanline_start(&mut self) {
         self.mapper.notify_scanline_start();
@@ -4480,6 +4517,7 @@ impl Bus for SystemBus {
             let mut adapter = PpuBusAdapter {
                 mapper: self.mapper.as_mut(),
                 nt_override: self.nt_mirroring_override,
+                snoop_reads: self.ppu_read_snoop,
                 sub_dot,
             };
             // No per-dot /NMI sampling here: the CPU reads the live level

@@ -36,7 +36,17 @@ use thiserror::Error;
 pub const RNMPROJ_MAGIC: &[u8; 8] = b"RNMPROJ1";
 
 /// Current `.rnmproj` format version.
-pub const RNMPROJ_VERSION: u16 = 1;
+///
+/// - 1 (v1.6.0): each input log is 3 bytes per frame (P1, P2, expansion).
+/// - **2 (v3.5.0, `T-MOVIE-INPUT-STREAM`)**: each input log is
+///   `FrameInput::encode_log` as a length-prefixed blob -- the `.rnm` format 7
+///   input encoding -- so a project keeps players 3 and 4 and every
+///   non-controller input (`FrameInput::extra`: the Zapper, the disk swaps,
+///   the Vs. coins ...). Version 1 dropped all of them, so a project saved
+///   from a recorded Zapper or FDS movie reloaded into a different run.
+///   Version-1 projects still load (players 1 and 2, no extra input):
+///   a project is the user's work, and what it holds is still a valid edit.
+pub const RNMPROJ_VERSION: u16 = 2;
 
 /// Errors decoding a `.rnmproj` project file.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -59,6 +69,10 @@ pub enum RnmProjError {
     /// A UTF-8 marker label was malformed.
     #[error("rnmproj marker label is not valid UTF-8")]
     BadLabel,
+    /// v3.5.0 — a version-2 input log failed to decode (its INPUT EVENTS
+    /// block, or a truncated record); the message is the core's.
+    #[error("rnmproj input log is malformed: {0}")]
+    BadInputLog(String),
 }
 
 // --- `.rnmproj` binary codec helpers ------------------------------------- #
@@ -76,14 +90,10 @@ fn write_bytes(w: &mut Vec<u8>, b: &[u8]) {
     w.extend_from_slice(b);
 }
 
-/// Write a length-prefixed input log (3 bytes per frame: p1, p2, expansion).
+/// Write an input log as `.rnmproj` version 2 stores it: the `.rnm` input
+/// encoding ([`FrameInput::encode_log`]) as a length-prefixed blob.
 fn write_input_log(w: &mut Vec<u8>, log: &[FrameInput]) {
-    write_len(w, log.len());
-    for f in log {
-        w.push(f.p1.bits());
-        w.push(f.p2.bits());
-        w.push(f.expansion);
-    }
+    write_bytes(w, &FrameInput::encode_log(log));
 }
 
 /// Write a length-prefixed marker map (`frame` then a length-prefixed label).
@@ -141,15 +151,21 @@ impl<'a> Reader<'a> {
         self.b.len() - self.pos
     }
 
-    fn input_log(&mut self) -> Result<Vec<FrameInput>, RnmProjError> {
+    /// Read an input log in the file's `version` encoding.
+    fn input_log(&mut self, version: u16) -> Result<Vec<FrameInput>, RnmProjError> {
+        if version >= 2 {
+            let blob = self.bytes()?;
+            return FrameInput::decode_log(&blob)
+                .map_err(|e| RnmProjError::BadInputLog(e.to_string()));
+        }
         let n = self.len()?;
         // Each frame is 3 bytes; never pre-allocate beyond what the blob holds.
         let mut v = Vec::with_capacity(n.min(self.remaining() / 3));
         for _ in 0..n {
             let s = self.take(3)?;
-            // The project format keeps its own 3-byte, two-player record
-            // (TAStudio edits players 1 and 2); `FrameInput` is
-            // `#[non_exhaustive]` since v2.9.8, so it is built, then edited.
+            // Version 1 kept its own 3-byte, two-player record; `FrameInput`
+            // is `#[non_exhaustive]` since v2.9.8, so it is built, then
+            // edited. Such a frame carries no extra input (`extra: None`).
             let mut f = FrameInput::new(
                 Buttons::from_bits_truncate(s[0]),
                 Buttons::from_bits_truncate(s[1]),
@@ -392,9 +408,19 @@ impl TasEditor {
     /// v1.8.9 — stamp an input-macro pattern into the log starting at `start`
     /// (one [`Self::set_input`] per frame; each changed frame counts as a
     /// re-record). Returns the number of frames written.
+    ///
+    /// v3.5.0 — a macro frame that carries no non-controller input (every
+    /// macro the bank stores: it keeps buttons only) keeps the target frame's
+    /// [`FrameInput::extra`], so stamping a button pattern over a recorded
+    /// Zapper or FDS run does not drop its aim or its disk swaps.
     pub fn stamp_macro(&mut self, start: usize, frames: &[FrameInput]) -> usize {
         for (i, f) in frames.iter().enumerate() {
-            self.set_input(start.saturating_add(i), *f);
+            let at = start.saturating_add(i);
+            let mut f = *f;
+            if f.extra.is_none() {
+                f.extra = self.input_at(at).and_then(|t| t.extra);
+            }
+            self.set_input(at, f);
         }
         frames.len()
     }
@@ -624,7 +650,7 @@ impl TasEditor {
                 max: RNMPROJ_VERSION,
             });
         }
-        let input_log = r.input_log()?;
+        let input_log = r.input_log(version)?;
         let markers = r.markers()?;
         let branch_count = r.len()?;
         // Bound the pre-allocation against the blob size (each branch needs at
@@ -633,7 +659,7 @@ impl TasEditor {
         let mut branches = Vec::with_capacity(branch_count.min(r.remaining() / 16));
         for _ in 0..branch_count {
             let frame = r.len()?;
-            let b_input = r.input_log()?;
+            let b_input = r.input_log(version)?;
             let b_markers = r.markers()?;
             let state = r.bytes()?;
             branches.push(Branch {
@@ -1383,6 +1409,76 @@ mod tests {
         assert_eq!(b.branch_count(), 1);
         assert_eq!(b.branch(0), a.branch(0), "branch survives round-trip");
         assert_eq!(b.cursor(), 0, "cursor resets on load");
+    }
+
+    /// v3.5.0 — `.rnmproj` version 2 keeps the whole frame: players 3 and 4
+    /// and the non-controller inputs, in the main log and in a branch.
+    #[test]
+    fn rnmproj_v2_keeps_players_three_and_four_and_the_extra_input() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        nes.set_zapper(1, 40, 50, true);
+        nes.set_microphone(true);
+        let mut rich = FrameInput::held_on(&nes);
+        rich.p3 = Buttons::A;
+        rich.p4 = Buttons::B;
+        assert!(rich.extra.is_some());
+        let mut log = varied_inputs(6);
+        log[2] = rich;
+        let mut a = TasEditor::from_inputs(&nes, log, 1 << 24, 20);
+        a.create_branch(&nes);
+        let bytes = a.to_rnmproj();
+        assert_eq!(&bytes[8..10], &2u16.to_le_bytes(), "written as version 2");
+        let mut b = TasEditor::new(&nes, 1 << 24, 20);
+        b.load_rnmproj(&bytes).expect("round-trip");
+        assert_eq!(b.input_log(), a.input_log());
+        assert_eq!(b.input_at(2), Some(rich));
+        assert_eq!(b.branch(0), a.branch(0));
+    }
+
+    /// v3.5.0 — a version-1 project (v1.6.0 to v3.4.x) still loads, with
+    /// players 1 and 2 and no extra input.
+    #[test]
+    fn a_version_1_rnmproj_still_loads() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut v1 = RNMPROJ_MAGIC.to_vec();
+        v1.extend_from_slice(&1u16.to_le_bytes());
+        v1.extend_from_slice(&2u32.to_le_bytes()); // two frames
+        v1.extend_from_slice(&[Buttons::A.bits(), Buttons::B.bits(), 0]);
+        v1.extend_from_slice(&[0, Buttons::START.bits(), 0]);
+        v1.extend_from_slice(&0u32.to_le_bytes()); // no markers
+        v1.extend_from_slice(&0u32.to_le_bytes()); // no branches
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        ed.load_rnmproj(&v1).expect("a version-1 project loads");
+        assert_eq!(
+            ed.input_log(),
+            [
+                FrameInput::new(Buttons::A, Buttons::B),
+                FrameInput::new(Buttons::empty(), Buttons::START)
+            ]
+        );
+    }
+
+    /// v3.5.0 — stamping a button macro keeps each target frame's extra
+    /// input (a macro stores buttons only).
+    #[test]
+    fn stamping_a_macro_keeps_the_target_frames_extra_input() {
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.power_cycle();
+        nes.set_zapper(1, 7, 8, false);
+        let held = FrameInput::held_on(&nes);
+        let mut ed = TasEditor::from_inputs(&nes, vec![held; 4], 1 << 20, 16);
+        ed.stamp_macro(1, &[FrameInput::new(Buttons::A, Buttons::empty()); 2]);
+        for f in 1..3 {
+            let got = ed.input_at(f).unwrap();
+            assert_eq!(got.p1, Buttons::A);
+            assert_eq!(got.extra, held.extra, "frame {f} keeps its extra input");
+        }
     }
 
     #[test]

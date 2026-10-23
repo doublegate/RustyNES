@@ -87,6 +87,31 @@ pub struct Cli {
     #[arg(long, value_name = "WHEN", value_enum, default_value_t = ColorWhen::Auto, global = true)]
     pub color: ColorWhen,
 
+    /// Time the session against a speedrun splits file (RAM predicates in
+    /// the `RetroAchievements` condition grammar; see
+    /// `docs/memory-export-interface.md`).
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    pub splits: Option<PathBuf>,
+
+    /// Write a finished run's result (JSON) here.
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath, requires = "splits")]
+    pub splits_json: Option<PathBuf>,
+
+    /// Publish the speedrun memory-export block (shared memory) every frame.
+    /// Needs a `memif` build.
+    #[arg(long)]
+    pub memif: bool,
+
+    /// The memory-export block's name (default `rustynes-memif`; 1-21
+    /// characters of A-Z a-z 0-9 _ . -), for example to run two instances.
+    #[arg(
+        long,
+        value_name = "NAME",
+        default_value = "rustynes-memif",
+        requires = "memif"
+    )]
+    pub memif_name: String,
+
     /// Subcommands: `help [<topic>]`, `completions <shell>`.
     #[command(subcommand)]
     pub command: Option<CliCommand>,
@@ -155,6 +180,76 @@ pub enum CliCommand {
         /// hash stored in the movie.
         #[arg(long, value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
         rom: PathBuf,
+    },
+
+    /// Time a movie (or N input-free frames) against a speedrun splits file.
+    ///
+    /// v3.5.0 (`T-SPEEDRUN-MEMIF`). Headless like `verify`: the times are
+    /// master-clock cycles of the deterministic core, so the same movie gives
+    /// the same splits on every machine. Prints each event and a JSON result.
+    /// See `docs/memory-export-interface.md`.
+    ///
+    /// Exit codes: 0 the run finished, 5 the input ended first, 1 an error
+    /// (2 stays clap's usage error).
+    Speedrun {
+        /// The ROM.
+        #[arg(long, value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// The splits definition.
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        splits: PathBuf,
+
+        /// The `.rnm` movie to replay.
+        #[arg(long, value_name = "MOVIE", value_hint = clap::ValueHint::FilePath, conflicts_with = "frames")]
+        movie: Option<PathBuf>,
+
+        /// Without a movie: how many input-free frames to run (default 216000).
+        #[arg(long, value_name = "N")]
+        frames: Option<u64>,
+
+        /// Also write the JSON result here.
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        json: Option<PathBuf>,
+
+        /// Publish the memory-export block while it runs (a `memif` build).
+        #[arg(long)]
+        memif: bool,
+
+        /// The block's name.
+        #[arg(long, value_name = "NAME", default_value = "rustynes-memif")]
+        memif_name: String,
+
+        /// Keep the block published this many milliseconds after the run.
+        #[arg(long, value_name = "MS", default_value_t = 0)]
+        memif_hold_ms: u64,
+    },
+
+    /// Check a ROM dump: hashes, a No-Intro DAT, the NES 2.0 database,
+    /// overdumps, and the header against the board's behaviour.
+    ///
+    /// v3.5.0 (`T-PRESERVE-DUMP-VERIFY`). Headless. The DAT and the database
+    /// are files you supply; `RustyNES` ships neither. Without a DAT the dump is
+    /// reported as unverified, whatever else passes.
+    ///
+    /// Exit codes: 0 nothing found, 4 findings reported, 1 error (a file could
+    /// not be read, or a DAT / database did not parse).
+    DumpCheck {
+        /// The ROM image to check.
+        #[arg(value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// A No-Intro DAT (Logiqx XML, as DAT-o-MATIC exports it).
+        #[arg(long, value_name = "DAT", value_hint = clap::ValueHint::FilePath)]
+        dat: Option<PathBuf>,
+
+        /// The NES 2.0 database (`nes20db.xml`) to check the header against.
+        #[arg(long, value_name = "XML", value_hint = clap::ValueHint::FilePath)]
+        nes20db: Option<PathBuf>,
+
+        /// Frames to run for the behaviour check (0 skips it).
+        #[arg(long, value_name = "N", default_value_t = crate::dump_check::DEFAULT_FRAMES)]
+        frames: u32,
     },
 }
 
@@ -398,9 +493,13 @@ ADR 0012).
 See docs/scripting.md for the full API. Enable it with:
   cargo run -p rustynes-frontend --features scripting -- game.nes";
 
+// The heading underline is written `=\x3d=====` (it prints as seven `=`):
+// a source line that is exactly seven `=` is a git conflict marker to the
+// `check-merge-conflict` pre-commit hook, which then refuses every merge
+// commit that touches this file.
 const NETPLAY_BODY: &str = "\
 Netplay
-=======
+=\x3d=====
 
 GGPO-style rollback netcode for 2-4 players:
 
@@ -496,6 +595,42 @@ mod tests {
     }
 
     #[test]
+    fn dump_check_subcommand_parses() {
+        let cli = Cli::try_parse_from([
+            "rustynes",
+            "dump-check",
+            "g.nes",
+            "--dat",
+            "n.dat",
+            "--frames",
+            "5",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(CliCommand::DumpCheck {
+                rom,
+                dat,
+                nes20db,
+                frames,
+            }) => {
+                assert_eq!(rom, PathBuf::from("g.nes"));
+                assert_eq!(dat, Some(PathBuf::from("n.dat")));
+                assert_eq!(nes20db, None);
+                assert_eq!(frames, 5);
+            }
+            other => panic!("expected dump-check, got {other:?}"),
+        }
+        let cli = Cli::try_parse_from(["rustynes", "dump-check", "g.nes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::DumpCheck {
+                frames: crate::dump_check::DEFAULT_FRAMES,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn bad_argument_is_usage_error() {
         // An unknown flag must be a usage error → exit code 2 in main().
         let err = Cli::try_parse_from(["rustynes", "--definitely-not-a-flag"]).unwrap_err();
@@ -558,5 +693,13 @@ mod tests {
         for t in HELP_TOPICS {
             assert!(ids.contains(t.id), "{} missing from topic_ids()", t.id);
         }
+    }
+
+    /// `NETPLAY_BODY` spells its underline `=\x3d=====` to keep a bare
+    /// seven-`=` line out of the source (see the comment on the const); the
+    /// rendered heading must still be "Netplay" over seven `=`.
+    #[test]
+    fn netplay_heading_renders_seven_equals() {
+        assert!(NETPLAY_BODY.starts_with("Netplay\n=======\n\n"));
     }
 }

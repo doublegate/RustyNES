@@ -31,6 +31,8 @@ pub mod audio;
 /// needed: decided once, for the desktop `.sav` file and the browser's
 /// `IndexedDB` record alike, so the two cannot drift.
 pub mod battery_policy;
+// v3.5.0 (`FE-04`) — the Multi-Disk Bundler: `.rnbundle` manifests naming a
+// set of FDS disks (merged into one disk set) or cartridges (one per slot).
 /// v2.7.3 "Hearth" (FE-01) — cartridge battery RAM, persisted to disk.
 ///
 /// Files live at `<data_dir>/battery/<rom_sha256>.sav`. Until this release the
@@ -39,6 +41,8 @@ pub mod battery_policy;
 /// `web_battery` (an IndexedDB record, v2.9.7).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod battery_save;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bundle;
 /// v2.9.9 (NF-11) — which timeline-changing actions a running movie, netplay
 /// session or RA hardcore session refuses.
 ///
@@ -75,6 +79,8 @@ pub mod cheats;
 // color-print deps are gated out of the wasm target in `Cargo.toml`.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
+// v3.5.0 (T-PRESERVE-DUMP-VERIFY) — `rustynes dump-check`, the headless dump
+// verification report. Native-only, like the CLI that runs it.
 /// v2.3.3 — absolute `CLOCK_MONOTONIC` / `CLOCK_THREAD_CPUTIME_ID` readings,
 /// with the frontend's only `clock_gettime` call site.
 ///
@@ -84,11 +90,20 @@ pub mod cli;
 pub mod clock;
 pub mod config;
 pub mod debugger;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod dump_check;
 // v2.3.0 "Datum II" — true multi-viewport tool-window detach: each detached tool
 // panel gets its own real OS window with a private egui stack. Native-only (wasm
 // is single-canvas and keeps panels docked).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod detached;
+// v3.5.0 (`FE-05`) — what a dropped file is (ROM / movie / FDS BIOS), decided
+// once for the desktop's drop handler and both browser builds' drop zones.
+pub mod drop_route;
+// v3.5.0 (`FE-10`) — the Vs. `DualSystem` cabinet in the `wasm-canvas` embed:
+// the DOM-free half, compiled for that build and for the native unit tests.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-canvas")))]
+pub mod canvas_dual;
 // v2.8.0 Phase 5 — the emulation core extracted from `App` (per-frame
 // produce state; the boundary the emulation thread spawns onto).
 pub mod emu;
@@ -265,6 +280,24 @@ pub mod save_states_ui;
 // socket; off by default, disabled under a locked session. See ADR 0016.
 #[cfg(all(not(target_arch = "wasm32"), feature = "script-ipc"))]
 pub mod script_host;
+// v3.5.0 (CR-02, `T-SPEEDRUN-MEMIF`) — named OS shared memory (POSIX
+// `shm_open`, Windows named file mappings), the backing of `comm.mmf*` and of
+// the speedrun memory-export interface. Native-only, compiled only when a
+// feature that uses it is on.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(feature = "script-ipc", feature = "memif")
+))]
+pub mod shm;
+// v3.5.0 (`T-SPEEDRUN-MEMIF`) — the memory-export block (behind `memif`), the
+// speedrun timer's frontend glue, and the headless `rustynes speedrun` command.
+// Native-only: shared memory and the CLI do not exist in the browser.
+#[cfg(all(not(target_arch = "wasm32"), feature = "memif"))]
+pub mod memif;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod speedrun_cli;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod speedrun_host;
 // v1.4.0 Workstream D (D1) — debugger symbol/label file loading
 // (`.sym` / Mesen `.mlb` / FCEUX `.nl`). Frontend display aid only; the parsed
 // `address -> label` map annotates the disassembler / breakpoint / trace views
@@ -317,6 +350,10 @@ pub mod wasm_winit;
 // Shared Web Audio output for both wasm frontends (Sprint 1.4c).
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_audio;
+// v3.5.0 — one self-freeing `FileReader` read for every browser file picker
+// and drop zone (the forgotten per-read closures kept each file's bytes).
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_file;
 // v1.6.0 Sprint 4 — shared browser I/O: localStorage save-states, base64
 // codec, Blob downloads, file-picker triggers. Used by both wasm frontends.
 #[cfg(target_arch = "wasm32")]

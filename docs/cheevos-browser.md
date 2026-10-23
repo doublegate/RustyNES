@@ -101,7 +101,7 @@ the browser is routed through a small proxy that injects the header server-side.
 
 - **Request shape** the glue produces: the server-call trampoline forwards each
   rcheevos request **verbatim** — it takes the path + query of the rcheevos-built
-  URL and re-targets it at the proxy origin (`${RA_PROXY_BASE}<path?query>`),
+  URL and re-targets it at the proxy origin (`<proxy base><path?query>`),
   POSTing the `post_data` body with the rcheevos `content_type`. The proxy's one
   job is to re-target that path at upstream RA and inject the identifying
   `User-Agent` header (the reference stub forwards `self.path` to `upstream`
@@ -109,7 +109,7 @@ the browser is routed through a small proxy that injects the header server-side.
   through this same path; the glue never sends a password anywhere except as part
   of the rcheevos login request body, and only the returned token is persisted.
 
-**Where `RA_PROXY_BASE` comes from (v3.4.0).** The glue no longer carries a
+**Where the proxy base comes from (v3.4.0; read at `ra_init()` since v3.5.0).** The glue no longer carries a
 hard-coded constant to edit. The PAGE sets the base, in this order:
 `<meta name="rustynes-ra-proxy-base" content="https://…/ra">` in `index.html`,
 then `globalThis.RUSTYNES_RA_PROXY_BASE` (local development), then the glue's
@@ -117,15 +117,20 @@ then `globalThis.RUSTYNES_RA_PROXY_BASE` (local development), then the glue's
 deliberately not one of them, so a crafted link cannot send a user's password
 to someone else's proxy, and anything but `https://` (or `http://` to
 localhost / 127.0.0.1) is ignored, because the login request carries the
-password. `services/hosted/test/ra-glue.test.ts` pins all three rules. Until a
-base is set, `BrowserRaSession::proxy_configured()` is `false`, server calls
-fail closed, and the UI shows the "not configured" caveat.
+password. The glue reads these when `ra_init()` starts a session, not when it
+is imported (v3.5.0, `T-WEB-RA-PROXY-LAZY`: until v3.4.2 a module-level
+constant, so a page that set the base after the import got a proxy that failed
+closed); a live session keeps the base it started with until `ra_shutdown()`.
+`services/hosted/test/ra-glue.test.ts` pins all of these rules except the last:
+the test runtime has no `rcheevos.wasm`, so a live session never exists there.
+Until a base is set, `BrowserRaSession::proxy_configured()` is `false`, server
+calls fail closed, and the UI shows the "not configured" caveat.
 
 ## The hosted proxy (v3.4.0, `T-RA-PROXY`)
 
 The proxy now has a hosted implementation on the same Cloudflare Worker as the
 netplay lobby: `services/hosted/src/ra.ts`, at `<hosted base>/ra/dorequest.php`
-(so `RA_PROXY_BASE` is `<hosted base>/ra`). It implements the contract above
+(so the proxy base is `<hosted base>/ra`). It implements the contract above
 and is stricter than the reference stub:
 
 | Rule | Hosted proxy | Reference stub |

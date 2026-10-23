@@ -599,6 +599,12 @@ pub struct EmuCore {
     pub history: crate::history_viewer::HistoryViewer,
     /// Enabled raw RAM cheats, pulled from the cheat panel each frame.
     pub raw_cheats: Vec<RawCheat>,
+    /// v3.5.0 (`T-SPEEDRUN-MEMIF`) — the speedrun timer and memory-export
+    /// block (`--splits`, `--memif`). `None` unless asked for. Fed once per
+    /// persistent frame, after run-ahead's rollback, so it times and
+    /// publishes exactly the timeline a replay reproduces. Read-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub speedrun: Option<crate::speedrun_host::SpeedrunHost>,
     /// v1.7.0 "Forge" Workstream A1 — one-shot debugger writeback edits, queued
     /// by the editing-capable debugger panels (tile/CHR, palette, nametable,
     /// OAM, hex). Drained in the SAME gated post-frame stage as `raw_cheats`,
@@ -1059,10 +1065,14 @@ impl EmuCore {
         restored
     }
 
-    /// Insert FDS disk side `side`, or eject the disk with `None`, and start a
-    /// fresh history timeline (`T-HISTORY-DISK-SWAP`, v3.3.0). A swap is input
-    /// a `.rnm` does not record, so a history clip spanning one could not
-    /// replay it, as for a Reset (NF-13) or a Datach scan.
+    /// Insert FDS disk side `side`, or eject the disk with `None`.
+    ///
+    /// From v3.3.0 to v3.4.x this also cleared the history timeline
+    /// (`T-HISTORY-DISK-SWAP`), because a `.rnm` could not record a swap and
+    /// a clip spanning one could not replay it. v3.5.0 records it
+    /// (`ExtraInput::disk_side`, read by `FrameInput::held_on`, which the
+    /// history viewer captures with), so the timeline is kept and a clip
+    /// spanning the swap replays it (`a_history_clip_spanning_a_disk_swap_replays_it`).
     ///
     /// Returns the disk's side count when the swap happened, and `None` (with
     /// nothing changed) when no FDS game is loaded or `side` is past the last
@@ -1074,7 +1084,6 @@ impl EmuCore {
             return None;
         }
         nes.set_disk_side(side);
-        self.history.clear();
         Some(count)
     }
 
@@ -1102,6 +1111,16 @@ impl EmuCore {
         self.nes = None;
         self.dual = None;
         self.mapper_name.clear();
+        // v3.5.0 — the speedrun timer and the memory-export block describe
+        // the game that just went away: drop its timer and publish "no game"
+        // (flag bit 0 clear), as docs/memory-export-interface.md promises.
+        // `no_game` existed but nothing called it, so a closed game stayed
+        // published with its hash, RAM and timer (Antigravity on #624,
+        // round 4). The next game rebinds on its first frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(sr) = self.speedrun.as_mut() {
+            sr.no_game();
+        }
     }
 
     /// v2.9.9 (NF-12) — end the movie session because the game is going away.
@@ -1155,6 +1174,8 @@ impl EmuCore {
             hd_capture: false,
             history: crate::history_viewer::HistoryViewer::default(),
             raw_cheats: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            speedrun: None,
             debug_pokes: Vec::new(),
             writes_locked: false,
             overclock_scanlines: 0,
@@ -1784,6 +1805,20 @@ impl EmuCore {
             // input with the movie's recorded input for this frame. A
             // `false` return means the movie is exhausted — stop playback
             // and fall through to a normal live frame.
+            // v2.5.0 — Vs. System coin latch: a coin-insert (F10) holds the
+            // acceptor signal for a few frames, then auto-clears. v3.5.0:
+            // counted down BEFORE the movie hook, not after, because a
+            // recording now reads the coin off the machine
+            // (`ExtraInput::vs_coin`): released after the hook, the recording
+            // claimed the coin held one frame longer than the frame ran with.
+            // The live run is unchanged (the clear still lands before the
+            // frame).
+            if self.vs_coin_frames > 0 {
+                self.vs_coin_frames -= 1;
+                if self.vs_coin_frames == 0 {
+                    nes.clear_coin();
+                }
+            }
             if !self.movie.before_frame(nes) {
                 self.movie.stop_playback(Some(nes));
                 eprintln!("rustynes: movie playback finished");
@@ -1811,14 +1846,6 @@ impl EmuCore {
             // pre-frame save-state, so it never perturbs emulation. Skipped on
             // rewind (this branch is the non-rewind path).
             self.history.record_frame(nes);
-            // v2.5.0 — Vs. System coin latch: a coin-insert (F10) holds the
-            // acceptor signal for a few frames, then auto-clears.
-            if self.vs_coin_frames > 0 {
-                self.vs_coin_frames -= 1;
-                if self.vs_coin_frames == 0 {
-                    nes.clear_coin();
-                }
-            }
             // v2.8.0 Phase 3 — run-ahead (native): run the persistent frame
             // + N hidden/visible frames, harvest the VISIBLE frame's
             // framebuffer + audio, then roll back to the persistent frame.
@@ -1919,6 +1946,20 @@ impl EmuCore {
                 // the shared Web Audio ring.
                 #[cfg(target_arch = "wasm32")]
                 crate::wasm_audio::push_samples(&nes.drain_audio());
+            }
+
+            // v3.5.0 (`T-SPEEDRUN-MEMIF`) — time and publish the finished
+            // persistent frame (both paths above end on it), before any
+            // caller-side poke below changes RAM for the next one.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(sr) = self.speedrun.as_mut()
+                && let Some(event) = sr.after_frame(nes)
+                && let Some(timer) = sr.timer()
+            {
+                eprintln!(
+                    "rustynes speedrun: {}",
+                    crate::speedrun_host::describe(event, timer, nes)
+                );
             }
 
             // v1.7.0 — apply the enabled raw RAM cheats AFTER the frame,
@@ -2882,6 +2923,25 @@ mod tests {
     /// CHR) whose reset vector loops on itself, so `run_frame` advances without
     /// touching work RAM — leaving the queued-poke effect cleanly observable.
     #[cfg(not(target_arch = "wasm32"))]
+    /// Closing the ROM unbinds the speedrun host (and so publishes "no
+    /// game" on the memory-export block). Mutation-checked by removing the
+    /// `no_game` call from `clear_rom`.
+    #[test]
+    fn closing_the_rom_tells_the_speedrun_host() {
+        let mut core = EmuCore::new();
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        let mut host = crate::speedrun_host::SpeedrunHost::new(
+            &crate::speedrun_host::SpeedrunOptions::default(),
+        )
+        .unwrap();
+        let _ = host.after_frame(&mut nes);
+        assert!(host.game_bound());
+        core.nes = Some(nes);
+        core.speedrun = Some(host);
+        core.clear_rom();
+        assert!(!core.speedrun.as_ref().unwrap().game_bound());
+    }
+
     fn synth_nrom() -> Vec<u8> {
         let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
         rom[0..4].copy_from_slice(b"NES\x1A");
@@ -2961,6 +3021,89 @@ mod tests {
             MAX_OVERCLOCK_SCANLINES,
             "restored after the movie"
         );
+    }
+
+    /// v3.5.0 (`T-MOVIE-INPUT-STREAM`) — a coin inserted while a movie
+    /// records is recorded for exactly the frames it was held, and the movie
+    /// replays to the live machine.
+    ///
+    /// The hold countdown used to run AFTER the movie hook, so a recording
+    /// that reads the coin off the machine (`ExtraInput::vs_coin`) claimed it
+    /// held one frame longer than the frame ran with, and the replay diverges
+    /// on that frame: with the countdown moved back, this test fails both on
+    /// the recorded frames and (its assertion removed) on the replay.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_recorded_coin_replays_to_the_live_machine() {
+        // An NES 2.0 Vs. System NROM that ORs `$4016` (coin bits 5 and 6)
+        // into `$10` on every pass of its loop, all frame long, and at each
+        // vblank copies the accumulation to the backdrop and clears it. So
+        // a coin held during ANY part of a frame reaches RAM and the picture;
+        // a loop that read `$4016` only at vblank never saw the extra frame
+        // (measured: with such a loop the replay half of this test passed
+        // the mutant below).
+        let mut rom = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0x09];
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        let code: &[u8] = &[
+            0x78, 0xA9, 0x00, 0x8D, 0x00, 0x20, 0x8D, 0x01,
+            0x20, // SEI; NMI and rendering off
+            0xAD, 0x16, 0x40, 0x05, 0x10, 0x85, 0x10, // $C009: LDA $4016; ORA $10; STA $10
+            0x2C, 0x02, 0x20, 0x10, 0xF4, // BIT $2002; BPL $C009
+            0xA5, 0x10, 0x4A, 0x29, 0x3F, 0xAA, // LDA $10; LSR; AND #$3F; TAX
+            0xA9, 0x00, 0x85, 0x10, // LDA #0; STA $10
+            0xA9, 0x3F, 0x8D, 0x06, 0x20, 0xA9, 0x00, 0x8D, 0x06, 0x20, // $2006 = $3F00
+            0x8E, 0x07, 0x20, // STX $2007
+            0xA9, 0x00, 0x8D, 0x06, 0x20, 0x8D, 0x06, 0x20, // $2006 = $0000
+            0x4C, 0x09, 0xC0, // JMP $C009
+        ];
+        prg[..code.len()].copy_from_slice(code);
+        for v in [0x3FFA, 0x3FFC, 0x3FFE] {
+            prg[v + 1] = 0xC0;
+        }
+        rom.extend_from_slice(&prg);
+        rom.extend_from_slice(&[0u8; 8 * 1024]);
+
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = EmuCore::new();
+        core.nes = Some(Nes::from_rom(&rom).unwrap());
+        assert!(core.nes.as_ref().unwrap().is_vs_system());
+        let EmuCore { movie, nes, .. } = &mut core;
+        movie.start_recording_power_on(nes.as_mut().unwrap(), false);
+        let mut live = Vec::new();
+        for i in 0..20 {
+            if i == 6 {
+                // What the F10 handler does (`App::insert_vs_coin`).
+                core.nes.as_mut().unwrap().insert_coin(0);
+                core.vs_coin_frames = 3;
+            }
+            core.produce_one_frame(&inputs, &mut sinks);
+            live.push(core.nes.as_ref().unwrap().snapshot());
+        }
+        let movie = core.movie.finish_recording().expect("a recording");
+        let held: Vec<usize> = (0..movie.len())
+            .filter(|&i| movie.frames[i].extra.is_some_and(|e| e.vs_coin != 0))
+            .collect();
+        assert_eq!(held, [6, 7], "held for the frames it was latched before");
+
+        let mut replay = Nes::from_rom(&rom).unwrap();
+        movie.seek_to_start(&mut replay).expect("seek");
+        let mut player = rustynes_core::MoviePlayer::new(&movie);
+        let mut frame = 0;
+        while player.apply_next(&mut replay) {
+            replay.run_frame();
+            assert!(
+                replay.snapshot() == live[frame],
+                "the replay diverges from the live run at frame {frame}"
+            );
+            frame += 1;
+        }
+        assert_eq!(frame, live.len());
     }
 
     /// v3.1.0 (`T-PS-dual-runahead`) — rewind and run-ahead reach a cabinet
@@ -3768,22 +3911,24 @@ mod tests {
         assert!(core.history.is_empty(), "a rewind step left the timeline");
     }
 
-    /// `T-HISTORY-DISK-SWAP` (v3.3.0) — an FDS disk swap clears the history
-    /// timeline, as a state load, a rewind, a Reset and a Datach scan do: a
-    /// swap is not in a `.rnm`'s input stream, so a clip spanning one could
-    /// not replay. A refused swap (past the last side, or no FDS game)
+    /// v3.5.0 (`T-MOVIE-INPUT-STREAM`) — an FDS disk swap no longer clears
+    /// the history timeline (`T-HISTORY-DISK-SWAP` did, v3.3.0 to v3.4.x,
+    /// while a `.rnm` could not record one): the viewer captures the inserted
+    /// side with every frame, so a clip spanning a swap replays it, to the
+    /// same machine. A refused swap (past the last side, or no FDS game)
     /// changes nothing.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn a_disk_swap_clears_the_history_timeline() {
+    fn a_history_clip_spanning_a_disk_swap_replays_it() {
         let mut sinks = FrameSinks {
             audio: None,
             #[cfg(feature = "retroachievements")]
             ra: None,
         };
         let inputs = quiet_inputs();
+        let (disk, bios) = (synthetic_fds_disk(), synthetic_fds_bios());
         let mut core = EmuCore::new();
-        core.set_nes(Nes::from_disk(&synthetic_fds_disk(), &synthetic_fds_bios()).unwrap());
+        core.set_nes(Nes::from_disk(&disk, &bios).unwrap());
         for _ in 0..5 {
             core.produce_one_frame(&inputs, &mut sinks);
         }
@@ -3793,22 +3938,50 @@ mod tests {
             None,
             "a one-sided disk has no side 1"
         );
-        assert!(
-            !core.history.is_empty(),
-            "a refused swap keeps the timeline"
+        let before = core.history.len();
+        assert_eq!(core.swap_disk(None), Some(1), "eject");
+        for _ in 0..4 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert_eq!(core.swap_disk(Some(0)), Some(1), "re-insert side A");
+        for _ in 0..4 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert_eq!(
+            core.history.len(),
+            before + 8,
+            "the swaps kept the timeline"
         );
+        let live = core.nes.as_ref().unwrap().snapshot();
 
-        let next = core.next_disk_side().expect("an FDS game");
-        assert_eq!(core.swap_disk(next), Some(1));
-        assert!(core.history.is_empty(), "a disk swap left the timeline");
-        assert_eq!(core.nes.as_ref().unwrap().inserted_disk_side(), next);
+        let clip = core
+            .history
+            .export_last_seconds(10.0, 60.0)
+            .expect("export");
+        assert!(
+            clip.frames
+                .iter()
+                .any(|f| f.extra.is_some_and(|e| e.disk_side.is_none())),
+            "the clip spans the eject"
+        );
+        let clip = rustynes_core::Movie::deserialize(&clip.serialize()).expect("round-trips");
+        let mut replay = Nes::from_disk(&disk, &bios).unwrap();
+        clip.seek_to_start(&mut replay).expect("seek");
+        let mut player = rustynes_core::MoviePlayer::new(&clip);
+        while player.apply_next(&mut replay) {
+            replay.run_frame();
+        }
+        assert!(
+            replay.snapshot() == live,
+            "the clip replays the swap to the live machine"
+        );
 
         let mut nrom = EmuCore::new();
         nrom.set_nes(Nes::from_rom(&synth_nrom()).unwrap());
         nrom.produce_one_frame(&inputs, &mut sinks);
         assert_eq!(nrom.next_disk_side(), None);
         assert_eq!(nrom.swap_disk(None), None);
-        assert!(!nrom.history.is_empty(), "no disk, nothing to clear");
+        assert!(!nrom.history.is_empty(), "no disk, nothing changed");
     }
 
     /// v2.9.9 (NF-22) — `for_each_console` visits both consoles of a cabinet

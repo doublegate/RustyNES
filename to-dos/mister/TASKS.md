@@ -491,7 +491,7 @@ something as blocked, check the blocker applies to the WHOLE item.**
 
 ## v3.4.2 — carried from the v3.4.1 reviews
 
-- [ ] **`T-MISTER-SS-ABANDON-STATES`: make the save engine's cartridge-change
+- [x] **`T-MISTER-SS-ABANDON-STATES`: make the save engine's cartridge-change
       comment true, and abandon before the first save word.** `rtl/savestate.sv`'s
       abandonment block says it abandons "in any state that is not waiting on
       the DDR mover", but the condition lists only `E_FREEZE`, `E_CHAIN_OUT`,
@@ -510,7 +510,15 @@ something as blocked, check the blocker applies to the WHOLE item.**
       makes `release-rbf.sh` refuse the already-compiled bitstreams. Gate:
       `ss-engine-gate` gains a case 9d (cart change on the first `E_PUT`: the
       slot's previous state still loads), with its mutant caught.
-- [ ] **`T-MISTER-RTL-MUTANT-RUNS`: run the RTL mutation table as targets.**
+      **DONE v3.5.0** (sibling `0605802`): the comment names the listed
+      states and why each other one is safe; `E_PUT` with `widx == 0` now
+      withdraws that edge's write start and word and ends as an `E_FREEZE`
+      abandonment does. Case 9d failed against the v3.4.1 engine first
+      ("a save abandoned before word 0 wrote to the DDR") and passes now;
+      its first version missed mutant R10b (the gate stopped logging the DDR
+      at `done`, before the mover wrote the armed word), so 9d logs until
+      the next request and R10 / R10b are both CAUGHT.
+- [x] **`T-MISTER-RTL-MUTANT-RUNS`: run the RTL mutation table as targets.**
       Every row of the mutation table in the sibling's `docs/ddr3-savestates.md`
       (R1 onward; v3.4.1 added R8 and R9) is an RTL edit applied by hand, its
       result recorded in prose. Only `--break-rotate`, a testbench-side
@@ -522,3 +530,9 @@ something as blocked, check the blocker applies to the WHOLE item.**
       NOT CAUGHT or BUILD-FAILED); it exits non-zero on any NOT CAUGHT and on
       any patch, build or gate-execution error, reporting BUILD-FAILED (a
       mutant that does not compile proves nothing) apart from the others.
+      **DONE v3.5.0** (sibling `0605802`): `tb/run_mutants.py` over
+      `tb/ss_mutations.json` (a fresh copy of the tree per mutant, the
+      `find` text required exactly once, a build-only step so a mutant that
+      does not build is BUILD-FAILED, every gate first PASS unmutated).
+      Measured: 13 rows, R1 to R10 with R1a, R9d and R10b, all CAUGHT on
+      their expected lines.

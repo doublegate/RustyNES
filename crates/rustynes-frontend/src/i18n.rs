@@ -461,6 +461,16 @@ catalog! {
     RebindExportError => "export error: {0}", Some("error al exportar: {0}");
     RebindAllowOpposingHover => "Off: holding opposite directions together reads as neither, as on a real NES pad. On: both reach the game (some games glitch on it).", Some("Desactivado: mantener direcciones opuestas a la vez no se lee como ninguna, como en un control real de NES. Activado: ambas llegan al juego (algunos juegos fallan con ello).");
     RebindRebound => "Rebound {0} -> {1}", Some("Reasignado {0} -> {1}");
+    RebindKeyNotBindable => "{0}: the {1} key cannot be bound to a device; nothing changed", Some("{0}: la tecla {1} no se puede asignar a un dispositivo; no ha cambiado nada");
+    ShellMulticart => "Multicart", Some("Multicartucho");
+    MenuNewBundle => "New Multi-Disk Bundle\u{2026}", Some("Nuevo paquete multidisco\u{2026}");
+    RebindDeviceKeys => "Device keys (microphone, Power Pad, Family BASIC keyboard)", Some("Teclas de dispositivos (micrófono, Power Pad, teclado Family BASIC)");
+    RebindDeviceKeysReset => "Reset device keys", Some("Restablecer teclas de dispositivos");
+    RebindMicrophoneKey => "Microphone (hold)", Some("Micrófono (mantener)");
+    RebindMatButton => "Mat button {0}", Some("Botón del tapete {0}");
+    RebindFamilyPosition => "Position {0} (row {1}, bit {2})", Some("Posición {0} (fila {1}, bit {2})");
+    RebindUnbound => "(none)", Some("(ninguna)");
+    RebindClear => "clear", Some("borrar");
     RebindRowPlayer => "Player{0} {1}", Some("Jugador{0} {1}");
     RebindRowPad => "Pad{0} {1}", Some("Mando{0} {1}");
     RebindDirUp => "Up", Some("Arriba");
@@ -602,7 +612,7 @@ catalog! {
     ShellBarcodeTitle => "Datach Barcode Reader", Some("Lector de códigos de barras Datach");
     ShellBarcodePrompt => "Type the 13- or 8-digit number printed under the card's barcode, then press Scan.", Some("Escribe el número de 13 u 8 dígitos impreso bajo el código de barras de la tarjeta y pulsa Escanear.");
     ShellBarcodeScan => "Scan", Some("Escanear");
-    ShellBarcodeLocked => "Scanning is disabled while a movie records or plays, or during netplay: neither records a scan.", Some("El escaneo está desactivado mientras se graba o reproduce una película, o durante el juego en red: ninguno registra el escaneo.");
+    ShellBarcodeLocked => "Scanning is disabled while a movie plays (it scans what was recorded) and during netplay (which does not carry a scan).", Some("El escaneo está desactivado mientras se reproduce una película (escanea lo que se grabó) y durante el juego en red (que no transmite el escaneo).");
     ShellBarcodeNeedDigits => "Enter 13 or 8 digits.", Some("Introduce 13 u 8 dígitos.");
     ShellBarcodeNotDigit => "Character {0} ('{1}') is not a digit.", Some("El carácter {0} ('{1}') no es un dígito.");
     ShellBarcodeWrongLength => "{0} digits: a JAN/EAN barcode has 13 or 8.", Some("{0} dígitos: un código JAN/EAN tiene 13 u 8.");
@@ -632,6 +642,8 @@ catalog! {
     SetCrf => "CRF (lower = better)", Some("CRF (menor = mejor)");
     SetPreset => "Preset", Some("Preajuste");
     SetX264Only => "(x264/x265 only)", Some("(solo x264/x265)");
+    SetAudioOffset => "A/V sync offset", Some("Desfase A/V");
+    SetAudioOffsetHover => "Shifts the recorded audio against the video when the file is written: + makes the sound later, - makes it earlier. MP4 and MKV only.", Some("Desplaza el audio grabado respecto al vídeo al escribir el archivo: + retrasa el sonido, - lo adelanta. Solo MP4 y MKV.");
     SetGraphics => "Graphics", Some("Gráficos");
     SetPresentMode => "Present mode", Some("Modo de presentación");
     SetRestartToApply => "(restart to apply)", Some("(reinicia para aplicar)");

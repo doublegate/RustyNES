@@ -242,6 +242,128 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// notice a disconnect (set on the raw `TcpStream`, so it holds for `wss://`).
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// Where a signaling URL points, as [`parse_signaling_url`] reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignalingTarget {
+    /// The host, with the brackets around an IPv6 literal removed.
+    pub host: String,
+    /// The port: the URL's own, else 80 for `ws://` and 443 for `wss://`.
+    pub port: u16,
+    /// `true` for `wss://` (TLS), `false` for `ws://`.
+    pub tls: bool,
+}
+
+/// Parse a signaling relay URL exactly as [`SignalingClient::connect`] will
+/// dial it (v3.5.0, `T-MOBILE-RELAY-VALIDATE`).
+///
+/// This is the ONE parser: the connect path calls it, and so does
+/// [`validate_signaling_url`], which the Android and iOS apps reach through
+/// the `rustynes-mobile` bridge (`np_validate_relay_url`). Before v3.5.0 each
+/// app had its own check (a regex on Android, `URL(string:)` plus a host test
+/// on iOS) and both accepted URLs this parser then refused at connect time,
+/// such as a non-numeric port or an unclosed IPv6 literal, so a typo enabled
+/// the room-code buttons and failed only after the player pressed one.
+///
+/// The URL is parsed by `tungstenite`'s client request builder (the `http`
+/// crate's URI grammar), which is what the handshake sends. On top of that it
+/// refuses three things that grammar lets through but no relay can serve:
+///
+/// - a scheme other than `ws` / `wss` (`uri_mode`);
+/// - an empty host (`ws://:9000`, `wss://[]`);
+/// - a port that is not ASCII digits naming 1..=65535, or anything
+///   after an IPv6 literal's `]` but such a port. `http::Uri::port` returns
+///   `None` for `:notaport`, `:9000x`, `:99999`, a bare `:` and `[::1]x`
+///   alike, and the connect path before v3.5.0 then dialled the scheme's
+///   default port (80 or 443), a server the user never named, so the URL was
+///   neither refused nor honoured. The port text is therefore read from the
+///   authority itself. Port 0 is refused: it cannot be connected to.
+///
+/// Deliberately NOT judged here: whether the host is a valid DNS name
+/// (`wss://h..` parses and fails at resolution, as on every other client),
+/// and the scheme's case. The `http` grammar refuses `WSS://`, so the apps now
+/// refuse it too, where Android's case-insensitive regex used to accept a URL
+/// the connect path would then refuse.
+///
+/// # Errors
+/// A short reason, suitable for a log line or a settings-screen hint.
+pub fn parse_signaling_url(url: &str) -> Result<SignalingTarget, String> {
+    parse_request(url).map(|(_, target)| target)
+}
+
+/// Whether `url` is a signaling relay URL the connect path can dial: the
+/// verdict of [`parse_signaling_url`] without the parsed parts.
+///
+/// The URL is taken as given: callers trim user input first (both apps do),
+/// and surrounding whitespace is refused rather than silently stripped.
+///
+/// # Errors
+/// The same reasons as [`parse_signaling_url`].
+pub fn validate_signaling_url(url: &str) -> Result<(), String> {
+    parse_signaling_url(url).map(|_| ())
+}
+
+/// [`parse_signaling_url`], keeping the handshake request it built.
+fn parse_request(
+    url: &str,
+) -> Result<(tungstenite::handshake::client::Request, SignalingTarget), String> {
+    use tungstenite::client::{IntoClientRequest, uri_mode};
+    use tungstenite::stream::Mode;
+
+    let request = url.into_client_request().map_err(|e| e.to_string())?;
+    let uri = request.uri();
+    let mode = uri_mode(uri).map_err(|e| e.to_string())?;
+    let host = uri
+        .host()
+        .ok_or_else(|| "no host in signaling URL".to_string())?;
+    // Strip the brackets around an IPv6 literal before DNS resolution.
+    let host = host
+        .strip_prefix('[')
+        .map_or(host, |h| h.strip_suffix(']').unwrap_or(h));
+    if host.is_empty() {
+        return Err("no host in signaling URL".to_string());
+    }
+    let port = match authority_port_text(uri.authority().map_or("", |a| a.as_str())) {
+        Ok(None) => match mode {
+            Mode::Plain => 80,
+            Mode::Tls => 443,
+        },
+        Ok(Some(text)) => match text.parse::<u16>() {
+            Ok(n) if n != 0 && text.bytes().all(|b| b.is_ascii_digit()) => n,
+            _ => return Err(format!("invalid port {text:?} in signaling URL")),
+        },
+        Err(e) => return Err(e),
+    };
+    let target = SignalingTarget {
+        host: host.to_string(),
+        port,
+        tls: matches!(mode, Mode::Tls),
+    };
+    Ok((request, target))
+}
+
+/// The port text of a URI authority (`[userinfo@]host[:port]`), or `None` when
+/// it names no port. Errors on text after an IPv6 literal's `]` that is not a
+/// `:port`. The digits are checked by the caller.
+fn authority_port_text(authority: &str) -> Result<Option<&str>, String> {
+    // Userinfo may contain ':'; the host starts after the LAST '@'.
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, hp)| hp);
+    let after_host = if host_port.starts_with('[') {
+        let close = host_port
+            .find(']')
+            .ok_or_else(|| "unclosed IPv6 literal in signaling URL".to_string())?;
+        &host_port[close + 1..]
+    } else {
+        host_port.find(':').map_or("", |i| &host_port[i..])
+    };
+    match after_host.strip_prefix(':') {
+        Some(port) => Ok(Some(port)),
+        None if after_host.is_empty() => Ok(None),
+        None => Err(format!(
+            "unexpected {after_host:?} after the host in signaling URL"
+        )),
+    }
+}
+
 /// A bounded WebSocket connect: resolve the host, dial with `connect_timeout`,
 /// set a *generous* (`connect_timeout`) read/write timeout on the raw `TcpStream`
 /// for the WS (and, for `wss://`, TLS) handshake via `client_tls`, then let the
@@ -256,23 +378,9 @@ fn connect_bounded(
     connect_timeout: std::time::Duration,
 ) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, String>
 {
-    use tungstenite::client::{IntoClientRequest, uri_mode};
-    use tungstenite::stream::Mode;
-
-    let request = url.into_client_request().map_err(|e| e.to_string())?;
-    let uri = request.uri().clone();
-    let mode = uri_mode(&uri).map_err(|e| e.to_string())?;
-    let host = uri
-        .host()
-        .ok_or_else(|| "no host in signaling URL".to_string())?;
-    // Strip the brackets around an IPv6 literal before DNS resolution.
-    let host = host
-        .strip_prefix('[')
-        .map_or(host, |h| h.strip_suffix(']').unwrap_or(h));
-    let port = uri.port_u16().unwrap_or(match mode {
-        Mode::Plain => 80,
-        Mode::Tls => 443,
-    });
+    let (request, target) = parse_request(url)?;
+    let host = target.host.as_str();
+    let port = target.port;
 
     // Resolve + dial with a bounded connect; try each resolved address in turn.
     let addrs: Vec<std::net::SocketAddr> = (host, port)
@@ -352,5 +460,97 @@ mod tests {
             took < std::time::Duration::from_secs(1),
             "drop waited {took:?} for the network"
         );
+    }
+
+    /// The shared relay-URL table (`testdata/relay_urls.tsv`), parsed:
+    /// `(accept, url, why)` rows.
+    fn relay_url_table() -> Vec<(bool, String, String)> {
+        let rows: Vec<_> = include_str!("../testdata/relay_urls.tsv")
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+            .map(|l| {
+                let mut f = l.splitn(3, '\t');
+                let verdict = f.next().expect("verdict");
+                let url = f.next().expect("url");
+                let why = f.next().expect("why").to_string();
+                let accept = match verdict {
+                    "accept" => true,
+                    "refuse" => false,
+                    v => panic!("bad verdict {v:?} in {l:?}"),
+                };
+                let url = if url == "<empty>" {
+                    String::new()
+                } else {
+                    url.replace("\\n", "\n")
+                };
+                (accept, url, why)
+            })
+            .collect();
+        rows
+    }
+
+    /// v3.5.0 (`T-MOBILE-RELAY-VALIDATE`): the one parser gives every row of
+    /// the shared table its verdict. The mobile bridge runs the same table
+    /// through `np_validate_relay_url`.
+    #[test]
+    fn the_relay_url_table_matches_the_parser() {
+        let rows = relay_url_table();
+        let accepted = rows.iter().filter(|r| r.0).count();
+        // Non-zero on both sides, so an empty or one-sided table cannot pass.
+        assert!(
+            accepted >= 10 && rows.len() - accepted >= 20,
+            "{accepted} of {}",
+            rows.len()
+        );
+        let mut wrong = Vec::new();
+        for (accept, url, why) in &rows {
+            let got = validate_signaling_url(url);
+            if got.is_ok() != *accept {
+                wrong.push(format!(
+                    "{url:?} ({why}): want accept={accept}, got {got:?}"
+                ));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} of {} rows wrong:\n{}",
+            wrong.len(),
+            rows.len(),
+            wrong.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_parser_reports_the_port_and_host_the_connect_path_dials() {
+        let t = parse_signaling_url("ws://[::1]:9000").unwrap();
+        assert_eq!((t.host.as_str(), t.port, t.tls), ("::1", 9000, false));
+        let t = parse_signaling_url("wss://user:pw@h.example").unwrap();
+        assert_eq!((t.host.as_str(), t.port, t.tls), ("h.example", 443, true));
+        let t = parse_signaling_url("ws://h").unwrap();
+        assert_eq!(t.port, 80);
+    }
+
+    /// The connect path refuses a bad port BEFORE dialling. Until v3.5.0
+    /// `ws://127.0.0.1:notaport` dialled 127.0.0.1:80 (`http::Uri::port`
+    /// is `None` for non-numeric text) and failed, if at all, with an
+    /// unrelated connect error; on a host with a server on port 80 it would
+    /// have connected to it.
+    #[test]
+    fn connect_refuses_a_bad_port_without_dialling() {
+        let client = SignalingClient::connect("ws://127.0.0.1:notaport");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(ev) = client.poll().into_iter().next() {
+                match ev {
+                    SignalEvent::Closed(reason) => {
+                        assert!(reason.contains("invalid port"), "{reason}");
+                        break;
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert!(std::time::Instant::now() < deadline, "no Closed event");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }

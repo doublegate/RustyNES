@@ -98,7 +98,8 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// | 3 | v3.1.0 | a DMC load DMA refused by a write takes four cycles; sprite evaluation starts at OAMADDR as of dot 65 and keeps a misaligned OAMADDR when X is in range (AccuracyCoin re-sync to `f5f41dc2`) |
 /// | 4 | v3.2.0 | mapper 290's 32 KiB PRG mode maps both halves in order (*Asder 20-in-1* boots); a 24C02 keeps its word address across a START (mapper 16, 157); VRC4's IRQ mode bit reads 1 = cycle, 0 = scanline (mappers 21, 23, 25); VRC2 mirroring ignores bit 1, and 23 / 25 submapper 3 are built as VRC2; mapper 71 submapper 0 detects *Fire Hawk*'s `$9000` single-screen register |
 /// | 5 | v3.3.0 | a CHR-RAM write goes through the bank registers its read does (T-VRC4-CHRRAM-BANKING: mappers 19, 21-26, 34 NINA-001, 69, 75, 151); mapper 71's bank select answers only at `$C000-$FFFF`, and *Fire Hawk*'s (submapper 1) mirroring register at `$8000-$9FFF` (T-MAPPER71-DECODE) |
-pub const EMULATION_EPOCH: u32 = 5;
+/// | 6 | v3.5.0 | the MMC5 detects scanlines from the PPU's reads (`nesdev_wiki/MMC5.xhtml`): a `$5203` = N IRQ rises at line N dot 4, not line N - 1 dot 0, and nothing counts with rendering off (*Uchuu Keibitai SDF*'s playfield moves down one line; *Castlevania III*, *Gemfire* and *L'Empereur* audio) |
+pub const EMULATION_EPOCH: u32 = 6;
 
 /// Every host-settable option that changes what the emulated console does.
 ///

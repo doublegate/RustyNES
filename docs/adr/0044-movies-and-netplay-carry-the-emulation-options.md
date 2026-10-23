@@ -129,3 +129,28 @@ What is recorded and what is not, knob by knob, is the survey table in
   netplay, because it predates this ADR's carriage. The CPU overclock is
   recorded as set and replayed with it, and peers must match: the carriage
   this ADR exists for, applied as intended.
+
+## Amendment (2026-10-20, v3.5.0): the non-controller inputs, format 7
+
+The Neutral consequence "Inputs that are not controller buttons (expansion
+devices, the microphone, Vs. coins / service, FDS disk events) are still not in
+the input stream" no longer holds (`T-MOVIE-INPUT-STREAM`, backlog CR-03).
+
+- **`.rnm` format 7, minimum 7.** An INPUT EVENTS block after the input stream
+  records every input `Nes` accepts besides the controllers: each port's
+  expansion device and its host-set fields, the Famicom microphone, the Vs. coin
+  acceptors and service button, the inserted FDS disk side, and Datach barcode
+  scans. A format-6 movie is refused as too old, by this ADR's own rule.
+- **`FrameInput` gains `extra: Option<ExtraInput>`**, additive under decision
+  5's `#[non_exhaustive]`, as that decision foresaw. `None` keeps its pre-v3.5.0
+  meaning (controllers only), so decision 6's imports are unchanged.
+  `FrameInput::apply_to` and `held_on` stop being `const fn`.
+- **Netplay is unchanged** (`PROTOCOL_VERSION` stays 9): a session never feeds
+  these inputs to the core, so nothing diverges; they are unavailable in
+  netplay rather than unsynchronised.
+- **Still not recorded:** Reset and Power Cycle (refused during a movie), and
+  the disk's write protection (a property of the medium).
+- **The emulation is unchanged**, so `EMULATION_EPOCH` (ADR 0045) did not rise.
+
+The details are in `docs/frontend.md` § "The non-controller inputs (v3.5.0,
+format 7)".

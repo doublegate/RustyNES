@@ -26,6 +26,422 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-22 - "Chorus" (creator tools: the full movie input stream, Lua WebSockets and shared memory, an MCP server, speedrun timing and dump checks; and the MiSTer core's MMC5, VRC6, Namco 163, VRC7 and Bandai FCG boards, off the die)
+
+### Breaking
+
+- **`.rnm` movies are format 7; a format-6 movie (v3.1.0 to v3.4.x) is
+  refused** with the reason (`MovieError::FormatTooOld`: it "does not record
+  everything a faithful replay needs; re-record it"). Format 7 records every
+  input the core takes besides the controllers (`T-MOVIE-INPUT-STREAM`, backlog
+  CR-03, ADR 0044 amendment). The movie change alone moves no emulation, so
+  it raises neither the emulation epoch nor the netplay protocol (9); the
+  MMC5 scanline fix below raises the epoch to 6. `rustynes verify` attestations
+  are version 3 (a version-2 tail is not compared).
+- **`rustynes-core` API:** `FrameInput::apply_to` and `FrameInput::held_on`
+  are no longer `const fn`.
+- **`TAStudio` projects are written as `.rnmproj` version 2**, which a v3.4.x
+  build refuses as too new. Version-1 projects still load.
+- **The emulation epoch is 6** (ADR 0045): the MMC5 scanline fix under Fixed
+  moves frames and audio of MMC5 games, so a movie or netplay peer from
+  epoch 5 is refused with both epochs named. **An MMC5 save state from v3.4.x
+  is refused** (`MapperError::UnsupportedVersion(6)`; the board writes v7,
+  which carries the new detector's state).
+- **`rustynes-mappers` / `rustynes-ppu` API (additive):** `Mapper` gains
+  `snoops_ppu_reads` (default `false`) and `notify_ppu_read` (default
+  no-op), and `PpuBus` gains `notify_ppu_read` (default no-op). Every
+  existing implementation compiles unchanged.
+
+- **MiSTer core: a v3.4.x save state is refused on both builds.** The
+  Famicom peripherals and the Phase F3b boards lengthen the scan chain, so the
+  layout fingerprint each state carries moved (on the die `0CF5891F`, 4,097
+  bits; off the die `F27C2FF4`, 4,736 bits, with the MMC5) and the engine refuses
+  an older state by its header rather than loading it as garbage.
+- **MiSTer core: the OSD's Controllers option moved to status bits 23:21**, to
+  make room for the Power Pad and the Family BASIC keyboard. An older saved
+  configuration reads as Gamepads.
+
+### Added
+
+- **Movies record the Zapper, the other expansion devices, the microphone,
+  Vs. coins and service, FDS disk swaps and Datach barcode scans** (`.rnm`
+  format 7). `FrameInput` gains `extra: Option<ExtraInput>`; `ExtraInput` and
+  `DeviceInput` are new public types, enumerated from `Nes`'s own setters:
+  each port's device (Zapper aim and trigger, Vaus, Power Pad, Family Trainer,
+  SNES mouse, Family BASIC and Subor keyboards, both Hyper Shots), the
+  microphone, the two coin acceptors, the service button, the inserted disk
+  side, and a scan on the frame it preceded. Recorders read them off the
+  machine (`FrameInput::held_on`), so the desktop, browser, Android and iOS
+  record them with no change of their own; on disk they are an INPUT EVENTS
+  block of changes between frames (four bytes for a controller-only movie).
+  A frame with `extra: None` (an importer's, a `TAStudio` blank frame, an
+  input macro) drives the controllers only, as before. New `Nes` getters:
+  `vs_coin`, `vs_service`, `microphone`, `barcode_this_frame`, and
+  `scan_barcode_code`; `FrameInput::encode_log` / `decode_log`.
+  - **Gate** (`rustynes-test-harness/tests/movie_input_stream.rs`, default
+    build, synthetic ROMs and BIOS): a Zapper movie (with the microphone and
+    ten frames unplugged), a Vs. System movie (both acceptors, the service
+    button) and an FDS movie (eject, side B, back to side A) each replay
+    byte-identically per frame on the framebuffer, the audio and the full save
+    state, through the serialized `.rnm`; dropping each event kind makes the
+    replay differ; every device kind captures, applies and round-trips; a
+    barcode scan is recorded once and replays. 6 tests.
+  - **Mutations** (each run against the gate, then reverted): dropping the
+    device, microphone, coin, service, disk or barcode events from the writer
+    each fails it (Zapper / Vs. / FDS / barcode test, at frames 1, 1, 10, 50,
+    1, and the end state); applying every disk insert as side A, never
+    re-inserting, inserting every coin into acceptor #1, recording the trigger
+    released, recording the microphone released, not unplugging a device, and
+    carrying a barcode into the next frame each fail it. Two were first NOT
+    CAUGHT (stimulus blind): "never unplug" until the Zapper movie unplugged
+    the gun for ten frames, and "every insert is side A" until the gate
+    compared a per-frame state digest -- the synthetic BIOS's `$4032` reads
+    the same for either side, which is recorded in the test. Removing the
+    extra input from the attestation fails
+    `an_edited_extra_input_fails_verification`.
+- **A recording allows a disk swap, a barcode scan and a Vs. coin, and
+  records them** (`session_policy::recorded`). Playback and netplay still
+  refuse them, and Reset, Power Cycle and state loads are still refused during
+  a movie.
+- **`TAStudio` projects keep players 3 and 4 and the non-controller inputs**
+  (`.rnmproj` version 2 stores each log in the `.rnm` input encoding; version
+  1 dropped them), and stamping a button macro keeps each target frame's
+  non-controller input.
+
+- **Lua WebSockets (CR-01, `script-ipc`).** `comm.ws_open` / `ws_send` /
+  `ws_close` are a real WebSocket client (`ws://` and `wss://`); until now
+  `ws_open` reported a closed socket at once. Inbound messages arrive through
+  `comm.receive()` as `{kind="ws", id, open=true, message}`, and the end of
+  the socket, however it ends, as one `open=false`. The host still owns the
+  socket: destinations follow the HTTP rule (public addresses, or hosts the user
+  lists in `RUSTYNES_COMM_HTTP_ALLOW`), checked on the address it connects to;
+  a message is at most 1 MiB, and the socket stops being read while 4 MiB
+  waits to be drained. The Lua side and its budget are unchanged.
+- **Lua memory-mapped files are real shared memory (CR-02, `script-ipc`).**
+  `comm.mmfWrite(name, data)` writes the OS shared-memory region
+  `rnmf-<name>` (POSIX `shm_open` on Linux and macOS, a named file mapping
+  on Windows), so another program can open it by name, and `comm.mmfRead`
+  reads a region another program wrote. Each region starts with a small
+  documented header (length and a sequence counter, so a reader never takes a
+  half-written payload). Until now the "file" was a map inside the emulator
+  that nothing else could see. Regions are per user and owner-only: the OS
+  name carries the user (`.<uid>` on POSIX, `Local\` on Windows), they are
+  created mode `0600` (an owner-only DACL on Windows), and an existing object
+  that is not ours and owner-only is refused rather than used, so another
+  local user cannot pre-create a name to read or plant data.
+  `docs/scripting.md` has the layout and the threat model.
+- **Speedrun auto-timing and a memory-export interface (`T-SPEEDRUN-MEMIF`).**
+  A splits file names a start, splits and an optional reset as RAM conditions
+  in the RetroAchievements condition grammar (`start = 0xH0770=1_d0xH0770=0`,
+  `split = World 1 | 0xH075F=1`), and the run is timed in the console's
+  master-clock cycles, so the same movie gives the same splits on every
+  machine and replay. `rustynes speedrun --rom ... --splits ... --movie ...`
+  times a movie headlessly and prints a JSON result; `rustynes game.nes
+  --splits any.rnsplits` times a live session. With the `memif` feature
+  (part of `full`), `--memif` publishes a fixed-layout shared-memory block
+  every frame (RAM, frame and master clock, the timer and its splits) at
+  documented offsets that do not change between builds, so a LiveSplit-style
+  tool reads it by offset instead of hunting per-version addresses.
+  `docs/memory-export-interface.md` is the contract (ADR 0047), and
+  `scripts/memif/reference_splitter.py` a reader written from it alone.
+
+- **An MCP server over the headless core, `rustynes-mcp`** (`T-MCP-SERVER`,
+  D33; [ADR 0048](docs/adr/0048-an-mcp-server-over-the-headless-core.md),
+  [docs/mcp-server.md](docs/mcp-server.md)). A new binary that serves one ROM
+  to a Model Context Protocol client over stdio, built on the official Rust
+  SDK (`rmcp` 3.5.1, Apache-2.0). 25 declared tools: pause and real-time
+  resume, frame and instruction stepping, exec breakpoints, side-effect-free
+  memory reads, a work-RAM-only write, the observation layers (the frame as a
+  PNG, nametables as tile text, OAM, CPU), sandboxed read-only Lua, and
+  experiments: `fork_create` -> `fork_run(inputs)` -> `fork_diff`. Every fork
+  records its inputs as an ordinary `.rnm`, and `movie_verify` replays it on
+  a fresh machine and compares save state, RAM and framebuffer byte for byte;
+  the main machine keeps a journal segment that replays the same way. An
+  undeclared tool, an undeclared argument, a write outside `$0000-$07FF`, a
+  Lua write, and a file write outside the operator's `--out-dir` are all
+  refused. No network listener. Nothing in the emulation core changes (no
+  epoch, movie-format or protocol change).
+
+- **An A/V sync offset for recordings** (`FE-03`). Settings → Recording →
+  *A/V sync offset* shifts the recorded audio against the video by up to a
+  second either way when an `.mp4` or `.mkv` is written: positive makes the
+  sound later, negative earlier. It corrects latency added after the
+  emulator (a TV, a capture chain); the capture itself was already in step.
+  At 0, the default, recordings are made exactly as before.
+- **Drag-and-drop in the browser** (`FE-05`). Drop a `.nes`, `.fds`,
+  `.unf` or `.unif` onto the web page to load it, a `.rnm` to play the
+  movie, or (full web build) the 8 KiB `disksys.rom` to install the FDS
+  BIOS. Until now the browser opened a dropped file itself and only the file
+  picker loaded a game. The lightweight canvas embed takes ROMs and movies.
+- **Vs. DualSystem games in the lightweight browser embed** (`FE-10`). The
+  canvas embed now runs both consoles of a two-console Vs. cabinet (Tennis,
+  Mahjong, Wrecking Crew, Balloon Fight) and shows the two screens side by
+  side, as the full web build and the desktop do; before, it ran the main
+  console alone and the game stayed on its attract screen. `F10` inserts a
+  coin there, for single Vs. games too, which the embed could not do at
+  all. Save states cover both consoles; movies stay unavailable on a
+  cabinet, as everywhere.
+- **Multi-Disk bundles** (`FE-04`). A `.rnbundle` file names a set of disk
+  or cartridge images and opens like a ROM. A Famicom Disk System game dumped
+  as one file per disk plays as one disk set, its sides named in the Famicom
+  Disk System menu ("Disk 1 side A", ...), where before only the first file's
+  sides could be inserted. A bundle of cartridges adds an Emulation →
+  Multicart menu to switch between them. File → New Multi-Disk Bundle…
+  writes one from the files you pick.
+- **Rebindable microphone, Power Pad and Family BASIC keyboard keys**
+  (`FE-07`). Settings → Input → *Device keys* rebinds the Famicom
+  microphone's hold key, the 12 Power Pad / Family Trainer mat buttons and
+  the 72 Family BASIC keyboard positions, which were fixed until now. They
+  are saved as `[input.device_keys]`, written only once something differs
+  from the old layout, which stays the default.
+- **`rustynes dump-check`: is this ROM file the dump it claims to be?**
+  (`T-PRESERVE-DUMP-VERIFY`) A headless report on one file: its hashes; a
+  match against a No-Intro DAT you supply (RustyNES ships none); its header
+  compared field by field with the NES 2.0 database you supply, and with the
+  corrections RustyNES's own game database would make at load; a suspected
+  overdump (a ROM whose halves are identical); a truncated file or trailing
+  data; and the header against what the program actually does when run
+  (registers written on a board the header says has none, tiles uploaded to
+  memory the header says is read-only, work RAM used where the header
+  declares none). Exit code 0 means nothing was found, 4 that something was.
+  `docs/dump-check.md` says what it can and cannot establish.
+
+- **MiSTer core: the Lite tier.** `RustyNES_Lite` (the on-die build) keeps
+  exactly the boards it carried in v3.4.x, and every board added from v3.5.0
+  on is built off the die only, in the headline `RustyNES`; the Lite build
+  refuses such a board as an unsupported mapper. `tier-gate` asks the RTL's own
+  decision about every mapper and submapper at both builds' parameters and
+  compares it with the published table of which build carries which board.
+- **MiSTer core: the Bandai FCG boards (16, 153, 159) with their serial EEPROMs,
+  the Konami VRC6 (24, 26) with its audio, the Namco 163 (19) with its
+  wavetable audio, and the Konami VRC7's (85) banking, WRAM and IRQ**, all off
+  the die only (MiSTer Phase F3b). Each has bus, checkpoint and save-state
+  gates against the oracle, a module gate against the NESdev pages or the
+  EEPROM data sheets where the oracle departs from them (ledger 3.90, 3.91,
+  3.120-3.125), and commercial frame gates.
+- **MiSTer core: the MMC5 (5)**, off the die only: PRG and CHR banking to
+  1 MiB, 64 KiB of PRG-RAM, ExRAM, extended attributes, the fill and vertical
+  split, the multiplier, its two pulses and PCM (to the NESdev page, where the
+  oracle departs, ledger 3.104), and the scanline IRQ, which detects scanlines
+  from PPU reads as the oracle now does (the fix under Fixed; ledger 3.100,
+  closed). Bus, checkpoint, IRQ-rise, picture and save-state gates against
+  the oracle on five stimulus ROMs, and *Castlevania III*'s frame 440.
+- **MiSTer core: the Famicom peripherals** (FB-11): the Family BASIC keyboard
+  from a PS/2 keyboard, the Power Pad on port 2 (mat buttons on keys 1-4, Q-R
+  and A-F) and the second controller's microphone (a "Mic" button). They are
+  gated against the NESdev pages, because the oracle's golden export cannot
+  attach them; on the keyboard's register bits the oracle departs from the page
+  and the core follows the page (ledger 3.96).
+- **MiSTer core: `make -C tb mutants`** builds every row of the save engine's
+  mutation table from a patched copy of the RTL and fails unless each is
+  caught (`T-MISTER-RTL-MUTANT-RUNS`); 13 of 13 rows are caught.
+
+### Changed
+
+- **Provenance: the Power Pad serial layout is recorded as derived from
+  Mesen2** (`crates/rustynes-core/src/input_device.rs`, a `// Provenance:`
+  header, a section 1 row in `docs/originality-and-provenance.md` and a
+  `NOTICE` line). It was written in v1.1.0 citing "Mesen's implementation"
+  beside the NESdev "Power Pad" page; whether Mesen2's source was read then is
+  not recorded, so the maintainer chose the conservative reading (2026-10-21).
+  The layout itself is stated verbatim on the NESdev page. No code changes.
+
+- **The host warning codes live in the emulation core** (`FE-06`).
+  `HostWarning` (the codes the Android and iOS apps localise, with their
+  English text) moved from the mobile bridge to `rustynes-core`, which the
+  desktop and browser frontends share with it, so every frontend takes a
+  warning's code and wording from one place. The apps see no change: the
+  generated Kotlin and Swift differ only in documentation comments. The
+  desktop and browser never showed either warning (neither can occur
+  there), so nothing they display changes.
+- **The emulation thread runs at a raised priority on Windows and macOS too**
+  (`FE-08`). Windows sets it one step above normal
+  (`THREAD_PRIORITY_ABOVE_NORMAL`); macOS puts it in the `USER_INTERACTIVE`
+  quality-of-service class. Both affect that one thread only, need no
+  privileges, stay below the audio thread, and leave it at the default if the
+  system refuses. Linux was already elevated. The line the app prints at
+  start says which outcome applied.
+- **The hosted TURN relay is on again** (`T-HOSTED-TURN-EXPIRY`). It was
+  held off in v3.4.1 and v3.4.2 because Cloudflare kept relaying for expired
+  and revoked credentials; a stricter test on 2026-10-21 found that it still
+  relays for them but never bills that traffic, so the cost is bounded by
+  credentials within their three-hour lifetime, which the existing per-address
+  and daily limits already bound. Players whose networks cannot connect
+  directly can play online through the relay again. The privacy policy is
+  updated to say what is kept while the relay is on.
+
+### Fixed
+
+- **The desktop and mobile apps' RetroAchievements read the wrong memory
+  for cartridge RAM.** RetroAchievements addresses NES memory as the CPU bus
+  (the vendored rcheevos region table: system RAM at `0x0000` with its
+  mirrors, cartridge RAM at `0x6000`, ROM at `0x8000`), but the native client
+  mapped `0x0800-0x27FF` onto cartridge RAM and refused everything above, so a
+  condition on a cartridge-RAM address read nothing and one on a RAM mirror
+  read cartridge RAM. The address is now passed through unchanged, as the
+  browser build and the libretro core's memory map already did; the read is
+  side-effect-free. The speedrun timer's splits use the same mapping, and a
+  test now pins the two together. (`CodeRabbit` on #624, against the timer's
+  copy.)
+- **The browser builds kept every file they opened in memory.** Each file
+  picker and drop zone read through a `FileReader` callback that was never
+  freed and held the reader's result, so every ROM and movie a session opened
+  stayed as a whole buffer after it was replaced. One self-freeing read
+  (`wasm_file::read_file_once`, on `loadend`, so success, failure and abort
+  all release it) now serves all seven sites. The canvas embed also starts Web
+  Audio inside the pick or drop gesture rather than when the read ends, and
+  ends a movie session before a Vs. DualSystem cabinet replaces the console,
+  since a cabinet refuses every movie hotkey. (Copilot and `CodeRabbit` on
+  #624.)
+- **The MMC5's scanline IRQ came a whole line early, and counted with
+  rendering off.** The counter ticked from the PPU's line hook at dot 0 of
+  the pre-render line and of every visible line, rendering or not, so visible
+  line N read N + 1 and a `$5203` = N IRQ rose at dot 0 of line N - 1 (found
+  by the MiSTer sibling, its ledger 3.100). It now follows
+  `nesdev_wiki/MMC5.xhtml`, "Scanline Detection and Scanline IRQ": the chip
+  watches the PPU's reads, and the read after three consecutive reads of one
+  nametable address (a line's two dummy fetches and the next line's first) is
+  the detection, the attribute fetch at dot 4. Line 0 is the first detection
+  (in frame set, counter 0, IRQ acknowledged), line N reads N, `$00` never
+  matches. "In frame" clears after three CPU cycles with no PPU read (early on
+  line 240, or when rendering stops), on a `$2001` write with bits 3-4 clear,
+  and on a `$FFFA` / `$FFFB` read (which also acknowledges the IRQ and resets
+  the counter); the `$2001` off-to-on transition acknowledges and resets too.
+  blargg's 2005 hardware timings agree at line resolution. Where the page's
+  prose and diagram (detection at the attribute read) and its pseudocode (one
+  read earlier) disagree, the model takes the prose; the `$2002` / `$4014`
+  counter resets and pin 92 are not modelled. The PPU reports every read
+  through the new `PpuBus::notify_ppu_read`, which the core forwards only to a
+  board whose `snoops_ppu_reads` is true (the MMC5 alone), and the MMC5's
+  8x16 CHR-set choice keeps its old window, so no CHR fetch moves. A debugger
+  peek at `$5204` no longer acknowledges the IRQ (`Mmc5::cpu_peek`).
+  - **Gate:** `rustynes-test-harness/tests/mmc5_scanline_irq.rs` (default
+    build, a synthetic MMC5 cartridge through the public `Nes` API): `$5203`
+    = 1, 2, 20, 100, 239 each rise on line N near dot 4 with the counter at N;
+    in frame is clear on the pre-render line, set at line 0, clear early on
+    line 240; nothing counts with rendering off; `$00` never flags. 3 of its 4
+    tests fail on the old counter ("the flag rose on line 0 dot 2 with the
+    counter at 1"). Eleven unit tests in `m005_mmc5.rs` pin the detector read
+    by read (the attribute-read detection point, the idle rule, the `$2001`
+    and `$FFFA` rules, the compare-0/240 cases, the v7 state round trip and
+    v6 refusal, peeks without side effects), and
+    `only_the_mmc5_snoops_ppu_reads` pins the dispatch gate on every board.
+  - **Mutations:** the first detection setting the counter to 1 (the old line
+    numbering) fails 2 of the 4 gate tests and returns *Uchuu Keibitai SDF*'s
+    frame to its old hash; detecting at the third matching read (the
+    pseudocode's point, two dots early) fails 3 unit tests and moves *Bandit
+    Kings of Ancient China*'s audio, but is NOT CAUGHT by the gate file,
+    whose stimulus samples at instruction granularity (up to 9 dots), so the
+    unit tests are what guard the dot.
+  - **Moved baselines** (re-blessed, each inspected): *Uchuu Keibitai SDF*
+    (`external_real_games`, f600): the playfield grid below the game's raster
+    split near line 16 moves down one line, and its rows go from a 7-pixel seam (lines 7,
+    15, 22, 38, ...) to an even 8-pixel pitch (7, 15, 23, 39, ...), so the
+    game's split now lands where it draws a seamless grid. *Castlevania III*
+    (`external_real_games` and `external_coverage`), *Gemfire* and
+    *L'Empereur* (`external_coverage`): audio hash only, framebuffer and cycle
+    count identical. For *Castlevania III* it is not the line numbering (the
+    counter-1 mutant keeps the new hash), the detection dot, or any one of
+    the three acknowledgement rules (each reverted alone keeps it); the
+    remaining differences are the in-frame flag and no counting with
+    rendering off, not attributed further. *Gemfire* and *L'Empereur* were
+    not bisected. `EMULATION_EPOCH` 6.
+  - **What the evidence is, and is not.** No test ROM in the battery
+    measures MMC5 IRQ timing: AccuracyCoin, nestest, blargg, kevtris and
+    `mmc3_test_2` all still pass, which shows the fix breaks nothing they
+    cover, and the three MMC5 ROMs in `tests/roms/mmc5` check only that
+    games run. The new timing rests on the NESdev page (the rule stated
+    twice in prose and once as a state diagram), blargg's 2005 hardware
+    measurement (line resolution), and *Uchuu Keibitai SDF*'s grid becoming
+    even. The sources still disagree by two PPU dots on the detection point;
+    that question is left for hardware (a row in the MiSTer sibling's
+    `docs/HARDWARE_TESTING.md`). The fix is kept on that evidence, the epoch
+    break included (2026-10-21, under the maintainer's delegation).
+
+- **The Vs. coin hotkey desynced a netplay session.** `F10` (and the menu
+  item's dispatch) inserted a coin on one peer's console only, and nothing
+  released it, because the emulation thread that counts the coin down idles
+  during netplay. Inserting a coin is now refused during netplay and movie
+  playback (`TimelineAction::InsertCoin`), and the guard is held by
+  `every_timeline_action_route_asks_the_session_policy`. Found by reading the
+  code while checking whether netplay should carry the new inputs; not
+  reproduced in a live session.
+- **A recorded coin is held for the frames it ran with.** The desktop counted
+  the coin down after the movie hook, so a recording that reads the coin off
+  the machine would have claimed it one frame too long; the countdown now runs
+  before the hook (the live run is unchanged). `a_recorded_coin_replays_to_the_live_machine`
+  fails with the countdown moved back, on the recorded frames and, with that
+  assertion removed, on the replay at frame 8; the replay half was first blind
+  (its program read `$4016` only at vblank, so the extra frame's coin was never
+  sampled) until the program polled all frame. Restoring the history clear, or
+  dropping the disk events from the writer, fails
+  `a_history_clip_spanning_a_disk_swap_replays_it`.
+- **The history timeline survives a disk swap or a barcode scan**, which a
+  `.rnm` now records, so an exported clip spanning one replays it
+  (`T-HISTORY-DISK-SWAP` had cleared it since v3.3.0).
+- **Hosted TURN credentials with an empty username or password**
+  (`T-HOSTED-TURN-SANITIZE`). The Worker passed on a `turn:` or `turns:`
+  server whose username or credential was the empty string as if it were
+  usable, so a client would have failed only when it tried to relay. Such an
+  entry is now dropped, and an answer with no usable relay entry left
+  (a STUN-only one included) is treated as an upstream failure: the request
+  is not counted against the daily or per-address limits and the client is
+  told to connect directly. It landed while TURN was still switched off in
+  production, so it was in place before this release switched TURN back on
+  (`T-HOSTED-TURN-EXPIRY`, under Changed).
+- **Android and iOS: a disk swap or a coin no longer desyncs online play.**
+  Turning an FDS disk over or dropping a coin into a Vs. System machine
+  happened on one player's device only during a netplay session, so the two
+  games went out of step. Both are now refused during netplay and while a
+  movie plays back, with the reason shown, and still work otherwise
+  (including while recording a movie). The desktop refuses them the same way.
+- **Android and iOS: one check for a custom netplay relay address**
+  (`T-MOBILE-RELAY-VALIDATE`). The two apps each checked the address with
+  their own rules, and both accepted some the connection code then refused or
+  misread: a port that was not a number (`wss://host:notaport`), out of range
+  or empty was taken as no port at all, so the app connected to port 443 (or
+  80) instead of saying the address was wrong; Android also accepted an
+  unclosed IPv6 address and an upper-case `WSS://`. Both apps now ask the
+  emulator core, which uses the same parser it connects with, and the core
+  refuses those ports at connect time too.
+- **Browser RetroAchievements: the proxy address is read when a session
+  starts** (`T-WEB-RA-PROXY-LAZY`). The browser glue read the
+  RetroAchievements proxy address once, when the script was loaded, so a page
+  that set it later had every RetroAchievements call refused. It is now read
+  when RetroAchievements starts, as the location of the rcheevos module
+  already was. Browser RetroAchievements stays off on the public demo until
+  RetroAchievements answers the integration request.
+
+- **MiSTer core: a save interrupted by a cartridge change before its first
+  word keeps the slot's earlier state** (`T-MISTER-SS-ABANDON-STATES`). It used
+  to send the header word anyway, damaging the slot, which was then emptied.
+  The abandonment's comment now names the states it covers and why each other
+  state is safe.
+
+### Not changed, and why
+
+- **Netplay carries none of the new inputs** (protocol 9 unchanged). A session
+  exchanges one controller byte per player per frame and its tick drives
+  `set_buttons` only, so it never feeds an expansion device or the microphone,
+  and it refuses disk swaps, scans and (now) coins: nothing diverges, the
+  inputs are unavailable. Carrying them needs a wider input cell and a
+  prediction rule for an aim point, a feature rather than a fix.
+- **Reset and Power Cycle are still not recorded**, and still refused while a
+  movie records; the FDS write-protect flag is a property of the medium, not
+  recorded.
+- **Foreign imports** (`.fm2`, `.bk2`, `.fcm`, `.fmv`, `.vmv`) still carry
+  controllers only: their FDS and Vs. coin commands are not translated.
+- **The MiSTer core's VRC7 is silent.** Mapper 85 ships with its banking, WRAM
+  and IRQ; its FM synthesis moves to v3.8.0 (`T-MISTER-VRC7-OPLL`), because the
+  public documentation does not determine its modulation depth, envelope steps,
+  table resolution, tremolo depth, LFO shapes, key-on reset or percussive
+  release, and the oracle's `opll.rs` is a derived region.
+- **The MiSTer core's Namco 163 does not answer a CHR-ROM page as a nametable**
+  (a select below `$E0`, which *Mappy Kids* uses after its title screen), nor
+  use CIRAM as CHR-RAM or keep its chip RAM as battery RAM.
+- **No Miracle Piano** on either core: the oracle has no model of it, and its
+  NESdev page is too thin to gate one.
+
 ## [3.4.2] - 2026-10-20 - "Countersign" (the RetroArch core loads on Apple Silicon Macs again)
 
 A one-fix patch release. Nothing in the emulation core, the desktop or

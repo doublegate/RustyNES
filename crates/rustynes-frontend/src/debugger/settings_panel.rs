@@ -519,6 +519,16 @@ fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
             ui.weak(crate::t!(SetX264Only));
         });
         ui.add(egui::Slider::new(&mut rec.audio_bitrate_k, 32..=512).text("Audio kbit/s"));
+        // v3.5.0 (`FE-03`) — A/V sync offset, applied at mux time: + delays the
+        // audio, - advances it. The same ±1000 ms bound the recorder clamps to.
+        // Normalised first so an out-of-range hand-edited value shows clamped.
+        rec.audio_offset_ms = rec.audio_offset_ms.clamp(-1000, 1000);
+        ui.add(
+            egui::Slider::new(&mut rec.audio_offset_ms, -1000..=1000)
+                .suffix(" ms")
+                .text(crate::t!(SetAudioOffset)),
+        )
+        .on_hover_text(crate::t!(SetAudioOffsetHover));
     });
 }
 

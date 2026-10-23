@@ -42,6 +42,8 @@ appends a colored "Examples" + "Keyboard" footer (`color-print`'s `cstr!`).
 | `rustynes --help` / `-V` | clap-styled help / version (exit 0). |
 | `rustynes help [<topic>]` | Topic help (see below). |
 | `rustynes completions <bash\|zsh\|fish\|powershell>` | Print a shell-completion script (`clap_complete`). |
+| `rustynes verify <MOVIE> --rom <ROM>` | Replay an attested movie headless (`docs/pixel-provenance.md`). |
+| `rustynes dump-check <ROM> [--dat F] [--nes20db F] [--frames N]` | v3.5.0: a dump's verification report (`docs/dump-check.md`); exit 0 clean, 4 findings, 1 error. |
 
 Help topics (`controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
 `scripting`, `netplay`, `about`) come from a single structured registry
@@ -119,9 +121,16 @@ not the winit thread:
   stored knobs.
   Pinned by `every_load_path_configures_the_console_before_installing_it` and
   `configure_console_restores_what_a_power_cycle_drops`.
-- Best-effort Linux priority elevation runs on the emu thread (SCHED_RR →
-  `nice` → `PR_SET_TIMERSLACK`, degrading silently without the `realtime`
-  rlimit).
+- Best-effort priority elevation runs on the emu thread, per thread and
+  never for the process. Linux: SCHED_RR → `nice` → `PR_SET_TIMERSLACK`,
+  degrading silently without the `realtime` rlimit. Windows (v3.5.0):
+  `SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL)`, one step above normal and
+  below the MMCSS audio thread. macOS (v3.5.0): QoS class
+  `USER_INTERACTIVE` via `pthread_set_qos_class_self_np`, short of the Mach
+  real-time policy Core Audio's thread uses. Each logs its outcome once on
+  stderr. No test can observe an OS scheduler class: the Windows and macOS
+  variants are type-checked for their targets in CI and confirmed by hand
+  on those systems (the stderr line says which outcome applied).
 
 `cargo run --no-default-features` keeps the synchronous path (the emulator
 runs on the winit thread) for A/B comparison. The browser builds
@@ -559,13 +568,85 @@ the two newest upstream PPU tests are known gaps).
   is length-capped (8 KiB) and tolerant of malformed input (silently keeps
   defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
 
+### Drag-and-drop in the browser (v3.5.0, `FE-05`)
+
+Both browser builds accept a file dropped anywhere on the page. winit's web
+backend delivers no `WindowEvent::DroppedFile`, so each build registers DOM
+`dragover` / `drop` listeners on the document itself
+(`wasm_winit::install_drop_loader`, `wasm::install_drop_loader`); both cancel
+the default, or the browser would open the file instead. The first dropped file
+is routed by `drop_route::classify` (the rule is a pure function, unit-tested on
+native, and the desktop's `DroppedFile` handler reads its ROM list from the same
+`is_rom_name`):
+
+| dropped file | wasm-winit | wasm-canvas |
+|---|---|---|
+| `.nes` / `.fds` / `.unf` / `.unif` | `AppEvent::RomLoaded`, as the picker | `load_rom_bytes`, as the picker (no FDS: its parse fails and is logged) |
+| `.rnm` | `AppEvent::MovieLoaded`, as F7's picker | `start_movie_from_bytes`, as F7's picker |
+| `.rom` / `.bin` of exactly 8 KiB | `AppEvent::FdsBiosLoaded`, as the BIOS upload | refused (the embed has no FDS) |
+| anything else | refused, logged to the console by name | the same |
+
+The list is narrower than the desktop's File → Open on purpose: the browser load
+path extracts no `.zip` and plays no `.nsf`. A drop is a user gesture, so a
+dropped ROM starts Web Audio exactly as the picker's `change` handler does.
+No unit test can run the DOM events. On 2026-10-20 the wasm-winit debug build
+(`trunk build`) was driven in headless Chromium over the DevTools protocol,
+dispatching synthetic `dragover` / `drop` events whose `DataTransfer` held a
+real `File`: `notes.txt` logged "dropped file ignored", an 8 KiB `disksys.rom`
+reached the app ("FDS BIOS accepted (8192 bytes)"), a 24,592-byte NROM was read
+and delivered with Web Audio armed, and both events reported
+`defaultPrevented`. **Still manual:** a real mouse drag in a desktop browser,
+the `.rnm` route, and the canvas embed.
+
 ### Web battery saves and Vs. `DualSystem` (v2.9.7 "Tandem")
 
 The wasm-winit build persists battery saves to `IndexedDB` (see
 [Battery saves in the browser](#battery-saves-in-the-browser-indexeddb-wasm-winit-v297))
 and runs Vs. `DualSystem` cabinets with both screens (see the "Web
-`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed does
-neither: it has no battery store and warns that a cabinet runs main-only.
+`DualSystem`" paragraph under Rendering). The `wasm-canvas` embed has no
+battery store; it runs cabinets since v3.5.0 (below).
+
+**`DualSystem` in the `wasm-canvas` embed (v3.5.0, `FE-10`).** Until v3.5.0
+the embed ran a cabinet's main console alone and warned that it would not get
+past the attract screen. It now builds the cabinet by the same rule as the
+other frontends (`app::is_dual_system`). The DOM-free half is
+`canvas_dual.rs`, compiled for the embed and for the native tests:
+`build_cabinet` (both consoles get the game database's mirroring correction
+and the Vs. database's palette and DIP preset, as the embed's single path
+gives a Vs. game), `CabinetFrame::step` (P1 from the keyboard and Gamepad API
+on the main console's port 0, the touch overlay added to its chosen port so
+P3 / P4 reach the sub; the coin countdown; `VsDualSystem::run_frame`; the two
+screens side by side through the desktop's `gfx::compose_dual_into`), and
+`drain_audio` (the main console's samples played, the sub's drained and
+dropped, as on the desktop). `wasm.rs` sizes the canvas 512x240 with an
+inline `aspect-ratio: 1024 / 480` (the page's stylesheet fixes 512:480, which
+would stretch the pair to twice its height) and restores 256x240 and the
+page's rule for a single console. F1 / F4 save and load the cabinet's own
+"RVSD" snapshot under the ROM hash. F6-F8 and a dropped `.rnm` are refused
+with a console note (TAS is scoped out of dual mode, ADR 0032); there is no
+rewind, run-ahead or netplay, which the embed lacks for one console too.
+
+`F10` inserts a coin, the desktop's default Insert Coin key, into the
+cabinet's main acceptor or a single Vs. console's (before v3.5.0 the embed had
+no coin key at all, so no Vs. game could be started in it). The countdown is
+the desktop's: `VS_COIN_HOLD_FRAMES` = 3, and the latch is cleared at the top
+of the frame on which it reaches 0, so the coin reads on `$4016` through two
+emulated frames (`a_coin_reads_for_two_frames_then_is_released`; the
+desktop's comment calls this a three-frame hold).
+
+Verified: five `canvas_dual` tests (cabinet decision, frame-for-frame
+equality with a hand-driven cabinet and pixel-exact composition, port
+routing, the coin bit on `$4016`, the audio drain) and, on 2026-10-20, the
+embed's debug build in headless Chromium over the DevTools protocol: a
+dropped synthetic NROM ran at 256x240 with no inline style; the synthetic
+flashing cabinet (`runahead::tests::flashing_cabinet`) switched the canvas to
+512x240 with the inline aspect ratio, and three samples of the two halves
+showed different, changing colours (`218,109,0` / `255,182,0`, then
+`182,182,182` / `255,255,255`, then `0,109,218` / `109,182,255`); F7 logged
+the refusal; a second NROM restored 256x240 and removed the style. **Still
+manual:** a real `DualSystem` title (Tennis, Mahjong, Wrecking Crew, Balloon
+Fight) coined and played in a desktop browser, and the canvas layout at
+narrow widths.
 
 ### wasm size & startup + software blitter (v2.1.8 "Performance", A2 + A4)
 
@@ -1130,21 +1211,27 @@ reorganized the order and regrouped several items — see the per-menu notes):
   overhauled in v1.7.0 beta.5 #53 with word-wrap, colorization, navigable
   sub-pages, and intra-doc links), Keyboard Shortcuts, About.
 
-**Session lockout (v2.9.9, NF-11).** A movie and a netplay session both carry
-controller input only, so anything that changes the machine outside that
-stream breaks them: a Reset, a Power Cycle, an FDS disk change, a Datach
-barcode scan (v3.2.0) and a state load are refused while a movie records or
-plays, or a netplay session runs, and a state load is also refused in RA
-hardcore. For the scan the menu item is greyed with the reason on hover, the
-window keeps the field editable but disables Scan and says why, and the
-dispatch refuses with "Barcode scan disabled during movie / netplay"; a scan is
-not recorded in `.rnm` movies or carried by netplay, so allowing it would
-desynchronise them silently. The rule is one pure function,
-`session_policy::refusal`, and every route asks it — the menu (which greys the
-items), the hotkeys, the Save-States manager, the browser grid; a script's load
-honours the `writes_locked` gate its `SetInput` already did. The F8 movie
-branch refuses netplay, as record, play and import do. Until v2.9.9 only the
-menu enforced this, so a hotkey reached the same handler unguarded.
+**Session lockout (v2.9.9, NF-11; v3.5.0).** A netplay session carries
+controller input only, and a movie carries the controllers plus (since v3.5.0,
+`.rnm` format 7) the non-controller inputs: expansion devices, the microphone,
+Vs. coins, FDS disk changes and Datach barcode scans. So a Reset, a Power Cycle
+and a state load are refused while a movie records or plays or a netplay
+session runs, and a state load is also refused in RA hardcore; an FDS disk
+change, a barcode scan (v3.2.0) and a Vs. coin (v3.5.0) are refused during
+playback and netplay but **allowed while a movie records, which records them**.
+Until v3.5.0 a recording refused the disk change and the scan too, and the
+coin was asked about nowhere: the F10 hotkey inserted a coin on one netplay
+peer only, which nothing then released (the emulation thread that counts the
+coin down idles during netplay), so the session desynced. For the scan the
+menu item is greyed with the reason on hover, the window keeps the field
+editable but disables Scan and says why, and the dispatch refuses with
+"Barcode scan disabled during movie / netplay". The rule is one pure function,
+`session_policy::refusal` (with `session_policy::recorded` naming what a
+recording carries), and every route asks it — the menu (which greys the items),
+the hotkeys, the Save-States manager, the browser grid; a script's load honours
+the `writes_locked` gate its `SetInput` already did. The F8 movie branch
+refuses netplay, as record, play and import do. Until v2.9.9 only the menu
+enforced this, so a hotkey reached the same handler unguarded.
 
 **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only,
 determinism-neutral (the core stays byte-identical; AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps).
@@ -1593,8 +1680,21 @@ the default (no-device) input path stays byte-identical:
   power-cycle.
 - **Family BASIC keyboard.** The full `9 × 8` positional keyboard matrix
   (`FamilyKeyboardState`, and the Subor clone) is selectable as the port-2
-  expansion device; `input::family_keyboard_index` maps host keys 1:1 onto the
-  72-key matrix (row-select via the `$4016` strobe + column-half on `$4017`).
+  expansion device; host keys map onto the 72-key matrix (row-select via the
+  `$4016` strobe + column-half on `$4017`). The default layout is
+  `input::FAMILY_KEYBOARD_DEFAULT_KEYS` (`family_keyboard_index` looks a key up
+  in it); since v3.5.0 (`FE-07`) the live layout is the rebindable
+  `[input.device_keys] family_keyboard` (`InputState::family_keyboard_positions`),
+  and the microphone key and the 12 Power Pad mat keys are rebindable beside it
+  (`input::DeviceKeyMap`, Settings -> Input -> Device keys). The table is
+  `#[serde(default)]` and written only when it differs from the defaults, so an
+  untouched config loads and saves byte-identically. Tests:
+  `the_default_device_keys_are_the_old_fixed_layout`, the three rebound-key
+  tests in `input.rs`, `device_keys_load_partially_and_round_trip`,
+  `device_slots_write_and_clear_the_device_keys`. Not unit-reachable: the
+  `app.rs` key-event hunk that feeds `family_keyboard_positions` into the
+  matrix, and the panel's rendering (manual check: rebind a keyboard position
+  with Family BASIC selected and type the key in BASIC).
 - **Zapper light-timing.** The photodiode now integrates a **3×3 aperture**
   (field-of-view) around the aim point rather than a single pixel, asserting
   light only when ≥2 pixels cross the luma threshold (`ZAPPER_APERTURE_*`). This
@@ -2137,6 +2237,22 @@ compiled). Implemented in `src/av_record.rs`.
   crisp GIF); `.wav` = audio-only transcode of the mono `f32le` PCM to canonical
   16-bit PCM. The arg builders (`ffmpeg_args` → `gif_args` / `wav_args`) are pure
   and unit-tested.
+- **A/V sync offset (v3.5.0, `FE-03`).** Settings → Recording → *A/V sync
+  offset*, `-1000..=1000` ms, persisted as `recording.audio_offset_ms`
+  (`#[serde(default)]` = 0). It is applied once, at the stop-time mux, to the
+  `.mp4` / `.mkv` audio track: positive adds the output filter `adelay=<ms>`
+  (the sound comes later), negative puts `-ss <seconds>` on the audio input
+  (its first `|ms|` is dropped, so the sound comes earlier), and `0` adds no
+  argument at all, so the default mux is unchanged (the whole argument vector is
+  pinned by `a_zero_sync_offset_leaves_the_mux_arguments_unchanged`). The
+  capture needs no correction (each frame's audio is the audio produced for
+  that frame); the offset is for latency a TV, capture chain or editor adds
+  on playback. GIF and WAV ignore it. `the_sync_offset_moves_the_audio_in_a_real_encode`
+  encodes a click at 0.5 s with offsets 0 / +120 / -120 ms through the real
+  `ffmpeg`, decodes the track back and requires the click to move by the
+  offset within 3 ms (measured 2026-10-20, ffmpeg n9.0.2: 500.40 / 620.27 /
+  380.27 ms); it returns early, saying so, where `ffmpeg` is absent, as in the
+  CI images.
 
 - **Capture is a read-only tap on the already-produced output.** Inside
   `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the
@@ -2235,11 +2351,49 @@ separate OS window; v2.3.0's `detached.rs` replaced that embedding (the
 **Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
 controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,
 BasicBot (savestate-anchored brute-force search), A/V dump codec/sync depth,
-FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler, and a first-class
+FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler (shipped v3.5.0,
+`FE-04`; below), and a first-class
 headless Batch Runner. The shipped subset (spectator + Genie encoder + `.tbl` + `.srt`) is the
 self-contained, fully-tested core; the deferred items are larger and more
 cross-cutting (most touch `app.rs`/the emu thread heavily, which a parallel-merge
 cut keeps minimal).
+
+### Multi-Disk Bundler (v3.5.0, `FE-04`)
+
+`bundle.rs` (native-only). A `.rnbundle` TOML manifest names image slots
+(`[[slot]] name / path`, paths relative to the manifest, names defaulting to
+the file stem); every slot must be the same kind, by extension:
+
+- **FDS bundle** — `merge_fds` parses each slot with the core's `parse_fds` (so
+  fwNES, headerless and QD dumps are all accepted, as a single `.fds` load
+  accepts them) and concatenates the sides, in slot order, into one headerless
+  image; that image loads exactly as a `.fds` does (`build_fds_nes`, the BIOS,
+  the `.fds.sav` keyed by the merged image's pristine hash, which is stable for
+  a given manifest and images). Each side gets a name, `"<slot> side A"`, ...,
+  which the Famicom Disk System submenu shows instead of "Side N"
+  (`ShellFrame::disk_side_names`). More than 255 sides together is refused.
+- **Cartridge bundle** — slot `i`'s image is the ROM (`read_rom_or_bundle(path,
+  i)`, clamped); Emulation → Multicart (`ShellFrame::bundle_slots`,
+  `MenuAction::SelectBundleSlot`) reloads through the manifest with another
+  slot. Each slot is an ordinary ROM load (its own saves, cheats, overlay).
+
+`read_rom_or_bundle` replaces the `std::fs::read` of both ROM load paths
+(`load_rom_at`, behind `load_rom_from_path`, and the command line's
+`load_startup_rom`), so a bundle opens from the menu, Open Recent, a drop and
+argv alike; any other file reads as itself, unchanged. `App::bundle` holds the
+open bundle and every non-bundle load clears it. File → New Multi-Disk Bundle…
+(`new_bundle_dialog`) picks the images, then the manifest path, writes the
+manifest atomically (`manifest_text_for`: relative paths when the images sit
+under the manifest's directory) and opens it. Reads are bounded (manifest
+64 KiB, each image 16 MiB, at most 64 slots).
+
+Tests: eight in `bundle.rs` — manifest resolution and refusals (no slots, too
+many, mixed kinds, an unsupported image, bad TOML), the merge's side order and
+names, a bad disk and the 255-side bound, both kinds opened from real files, a
+written manifest round-tripping, and the merged set building a three-side
+console (`Nes::from_disk`, an 8 KiB zero image standing in for the BIOS).
+**Manual:** the dialogs and menus, and a real multi-disk game booting from a
+bundle with its BIOS.
 
 ### Game Genie code database + per-game nomination (v1.8.9 / v2.1.3)
 
@@ -2589,6 +2743,61 @@ overclock is recorded as set and replayed with it.
   the player had set; the cycle now keeps them itself, and the re-application
   guarantees the options whatever a cycle does.
 
+### The non-controller inputs (v3.5.0, format 7)
+
+`.rnm` format 7 (`MOVIE_FORMAT_VERSION` 7, minimum 7; `T-MOVIE-INPUT-STREAM`,
+backlog CR-03) records every input `Nes` accepts besides the controllers, in
+`FrameInput::extra` (`rustynes_core::ExtraInput`): each port's expansion device
+and the fields its host sets (`DeviceInput`: Zapper aim and trigger, Vaus
+position and fire, the Power Pad and Family Trainer masks, the SNES mouse's
+deltas, buttons and sensitivity, both keyboards' rows, both Hyper Shots), the
+Famicom microphone, the Vs. coin acceptors and service button, the inserted FDS
+disk side, and a Datach barcode scan. The set was enumerated from `Nes`'s
+setters; the survey table above gives the verdict for each.
+
+- **Captured from the machine, not from the host.** `FrameInput::held_on` reads
+  the levels the host has set (`ExtraInput::capture`), so every recorder --
+  desktop, browser, Android and iOS -- records them with no change of its own.
+  A barcode is an event, not a level: `Nes::barcode_this_frame` holds a scan
+  from `scan_barcode` until the next `run_frame` starts, which is exactly the
+  window a recorder reads in.
+- **Applied as the host applied them.** `FrameInput::apply_to` writes the
+  devices, microphone, coin and service every frame, as a host's per-frame call
+  does; it changes the disk only when the recorded side differs (an insert
+  resets the head and opens the not-ready window, so repeating it would not be
+  the same input); and it swipes a recorded barcode.
+- **Stored as changes.** On disk the levels are an INPUT EVENTS block after the
+  5-byte records: a `u32` count, then events of a `u32` frame, a kind byte and a
+  payload, written only where a frame differs from the one before (plus every
+  scan). A controller-only movie spends four bytes on it. The decoder is strict
+  (events in order and inside the movie, values a device can hold, no event
+  that changes nothing) so a parsed movie re-encodes to the same bytes.
+- **`None` means "leave it alone".** A frame from an importer, a TAStudio blank
+  frame or an input macro has `extra: None`, and playback drives its
+  controllers only, as before v3.5.0. The neutral `ExtraInput` is a real input
+  (no device, disk ejected), so a blank frame does not unplug the Zapper or
+  eject the disk.
+- **A format-6 movie is refused** as too old (`MovieError::FormatTooOld`, which
+  says the movie does not record everything a faithful replay needs and to
+  re-record it). The emulation is unchanged, so `EMULATION_EPOCH` did not rise.
+- **The attestation folds it in** (attestation version 3), so an edited
+  non-controller input fails `rustynes verify`.
+- **Netplay does not carry it, unchanged by design.** A session exchanges one
+  controller byte per player per frame, and the netplay tick drives
+  `set_buttons` only: it never feeds an expansion device or the microphone, and
+  disk swaps and barcode scans are refused during a session. So nothing diverges
+  -- the inputs are simply not available in netplay. Carrying them is a protocol
+  change (a wider input cell, and a prediction rule for an aim point) and is
+  left as a feature, not a fix. One exception was found while checking: the Vs.
+  coin (`F10`) was not refused during a desktop netplay session, so a coin
+  inserted on one peer reached only its own console. v3.5.0 refuses it there,
+  through `session_policy::refusal` (see "Session lockouts" above).
+- **The gate**: `crates/rustynes-test-harness/tests/movie_input_stream.rs`
+  records a Zapper, a Vs. System and an FDS movie (synthetic ROMs and a
+  synthetic BIOS, so it runs in the default build) and requires the replay to
+  match per frame on the framebuffer, the audio and the full save state; it
+  also requires that dropping each event kind makes the replay differ.
+
 ### Netplay
 
 The `Sync` handshake carries a `rustynes_netplay::SessionIdentity`: the
@@ -2660,10 +2869,13 @@ compared.
 | Region (header, after game-database correction) | yes: clock dividers | checked, not applied |
 | Cartridge header (mapper, submapper, mirroring, RAM, battery, trainer, console type) | yes: the machine built | checked (`BoardDescription`) |
 | `set_buttons` ports 0-3 | yes: input | the per-frame input stream |
-| `set_expansion_device`, `set_zapper`, `set_paddle`, `set_power_pad`, `set_snes_mouse`, keyboards, Family Trainer, Hyper Shots | yes: input | **not recorded**: per-frame device input a `.rnm` has no field for |
-| `set_microphone` | yes: `$4016` bit 2 | **not recorded** (input) |
-| `insert_coin` / `clear_coin` / `set_vs_service` | yes: Vs. inputs | **not recorded** (input) |
-| `set_disk_side` / `set_disk_write_protected` | yes: FDS drive state | **not recorded** (disk events during play) |
+| `set_expansion_device`, `set_zapper`, `set_paddle`, `set_power_pad`, `set_snes_mouse`, keyboards, Family Trainer, Hyper Shots | yes: input | the per-frame input stream (`ExtraInput::devices`, format 7; v3.5.0) |
+| `set_microphone` | yes: `$4016` bit 2 | the per-frame input stream (`ExtraInput::microphone`, format 7) |
+| `insert_coin` / `clear_coin` / `set_vs_service` | yes: Vs. inputs | the per-frame input stream (`ExtraInput::vs_coin` / `vs_service`, format 7) |
+| `set_disk_side` | yes: FDS drive state | the per-frame input stream (`ExtraInput::disk_side`, format 7) |
+| `scan_barcode` (Datach, mapper 157) | yes: the reader's bit stream | the per-frame input stream (`ExtraInput::barcode`, format 7: the frame the scan preceded) |
+| `set_disk_write_protected` | yes: `$4032` bit 2 and dropped writes | not recorded: a property of the medium the host sets at load, never during play |
+| Reset / Power Cycle (`reset`, `power_cycle`) | yes | not recorded; refused while a movie records or plays (`session_policy`) |
 | Raw RAM cheats (frontend) | yes: post-frame pokes | suspended while a movie records or plays |
 | `set_fast_dotloop` | no: byte-identical by proof (`fast_dotloop_diff`) | preserved across `power_on_for_movie`, not recorded |
 | `set_custom_palette` | no: presentation (the RGBA LUT) | not recorded |
@@ -2673,10 +2885,11 @@ compared.
 | Run-ahead, rewind capture, frame skip, pacing | no: frontend timeline orchestration | not recorded |
 | Breakpoints, tracing, event / access / exec / interrupt logging, pixel / audio / write provenance | no: observability | not recorded |
 
-Two caveats the table cannot hold: `Movie::verify` hashes the RGBA framebuffer,
+One caveat the table cannot hold: `Movie::verify` hashes the RGBA framebuffer,
 so a custom palette or Vs. palette on the verifier changes the hash without
-changing emulation; and a movie whose ROM needs an expansion device replays
-with the device's input absent.
+changing emulation. (Until v3.5.0 there was a second: a movie whose ROM needs
+an expansion device replayed with the device's input absent. Format 7 records
+it; see "The non-controller inputs" below.)
 
 ## ROM file handling
 

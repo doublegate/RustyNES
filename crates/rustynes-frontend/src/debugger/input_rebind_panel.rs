@@ -138,6 +138,13 @@ enum Slot {
     G4B,
     G4Select,
     G4Start,
+    // v3.5.0 (`FE-07`) — expansion-device keys (keyboard slots).
+    /// The Famicom microphone's hold-to-talk key.
+    Microphone,
+    /// Power Pad / Family Trainer mat button `n + 1` (`0..12`).
+    PowerPad(u8),
+    /// Family BASIC keyboard matrix position `n` (`0..72`).
+    FamilyKey(u8),
 }
 
 impl Slot {
@@ -483,9 +490,18 @@ fn pointer_scale_slider(ui: &mut egui::Ui, state: &mut InputPanelState, config: 
 pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
     // Apply any captured rebind from the previous input event.
     if let Some((slot, name)) = state.captured.take() {
-        apply_slot(config, slot, &name);
-        state.status = crate::tf!(RebindRebound, row_label(slot_label(slot)), name);
-        state.bindings_dirty = true;
+        // v3.5.0 — a device slot resolves its name through `parse_keycode`
+        // when the bindings are rebuilt, and an unknown name leaves the slot
+        // unbound; refuse such a key here rather than report a rebind that
+        // never takes effect (CodeRabbit on #624). Player slots are left as
+        // they were.
+        if refuses_capture(slot, &name) {
+            state.status = crate::tf!(RebindKeyNotBindable, slot_display(slot), name);
+        } else {
+            apply_slot(config, slot, &name);
+            state.status = crate::tf!(RebindRebound, slot_display(slot), name);
+            state.bindings_dirty = true;
+        }
     }
 
     {
@@ -701,6 +717,10 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
                 config,
             );
 
+            // v3.5.0 (`FE-07`) — the expansion-device keys.
+            ui.separator();
+            device_keys_ui(ui, state, config);
+
             // Gamepad rows: native only (no gilrs on wasm32).
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -822,9 +842,100 @@ fn row_label(label: &'static str) -> Cow<'static, str> {
     row_label_in(crate::i18n::current_locale(), label)
 }
 
+/// The displayed name of any slot: a table row's localised label, or a
+/// device slot's composed one (v3.5.0).
+fn slot_display(slot: Slot) -> Cow<'static, str> {
+    match slot {
+        Slot::Microphone => Cow::Borrowed(crate::t!(RebindMicrophoneKey)),
+        Slot::PowerPad(n) => Cow::Owned(crate::tf!(RebindMatButton, u32::from(n) + 1)),
+        Slot::FamilyKey(n) => Cow::Owned(crate::tf!(RebindFamilyPosition, n, n / 8, n % 8)),
+        other => row_label(slot_label(other)),
+    }
+}
+
+/// v3.5.0 (`FE-07`) — Settings -> Input -> Device keys: the microphone, the 12
+/// Power Pad / Family Trainer mat buttons and the 72 Family BASIC keyboard
+/// positions, each with the same capture-the-next-key "rebind" as the pad rows
+/// plus a "clear" that unbinds it, and one reset for the whole set. Every
+/// change flags `bindings_dirty`, which rebuilds the live layout and
+/// auto-saves, exactly as a pad rebind does.
+fn device_keys_ui(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
+    // Normalise once so every slot below can be indexed (a hand-edited list of
+    // the wrong length is padded with unbound slots or truncated).
+    let normalized = config.input.device_keys.normalized();
+    if normalized != config.input.device_keys {
+        config.input.device_keys = normalized;
+    }
+    egui::CollapsingHeader::new(crate::t!(RebindDeviceKeys)).show(ui, |ui| {
+        if ui.button(crate::t!(RebindDeviceKeysReset)).clicked() {
+            config.input.device_keys = crate::config::DeviceKeyBindings::default();
+            state.status = crate::t!(RebindDefaultsRestored).into();
+            state.bindings_dirty = true;
+        }
+        device_grid(ui, "dev-mic-grid", &[Slot::Microphone], state, config);
+        egui::CollapsingHeader::new(crate::t!(RebindPowerPad)).show(ui, |ui| {
+            let slots: Vec<Slot> = (0..12).map(Slot::PowerPad).collect();
+            device_grid(ui, "dev-pad-grid", &slots, state, config);
+        });
+        egui::CollapsingHeader::new(crate::t!(RebindFamilyKeyboard)).show(ui, |ui| {
+            let slots: Vec<Slot> = (0..72).map(Slot::FamilyKey).collect();
+            device_grid(ui, "dev-kbd-grid", &slots, state, config);
+        });
+    });
+}
+
+/// One grid of device-key rows (label, key, rebind, clear).
+fn device_grid(
+    ui: &mut egui::Ui,
+    id: &str,
+    slots: &[Slot],
+    state: &mut InputPanelState,
+    config: &mut Config,
+) {
+    egui::Grid::new(id)
+        .num_columns(4)
+        .striped(true)
+        .show(ui, |ui| {
+            for &slot in slots {
+                ui.label(slot_display(slot));
+                let key = read_slot(config, slot);
+                ui.monospace(if key.is_empty() {
+                    crate::t!(RebindUnbound)
+                } else {
+                    key.as_str()
+                });
+                if ui.button(crate::t!(RebindButton)).clicked() {
+                    state.pending = Some(slot);
+                    state.status.clear();
+                }
+                if ui
+                    .add_enabled(!key.is_empty(), egui::Button::new(crate::t!(RebindClear)))
+                    .clicked()
+                {
+                    apply_slot(config, slot, "");
+                    state.bindings_dirty = true;
+                }
+                ui.end_row();
+            }
+        });
+}
+
 fn read_slot(cfg: &Config, slot: Slot) -> String {
     let i = &cfg.input;
     match slot {
+        Slot::Microphone => i.device_keys.microphone.clone(),
+        Slot::PowerPad(n) => i
+            .device_keys
+            .power_pad
+            .get(usize::from(n))
+            .cloned()
+            .unwrap_or_default(),
+        Slot::FamilyKey(n) => i
+            .device_keys
+            .family_keyboard
+            .get(usize::from(n))
+            .cloned()
+            .unwrap_or_default(),
         Slot::P1Up => i.player1.up.clone(),
         Slot::P1Down => i.player1.down.clone(),
         Slot::P1Left => i.player1.left.clone(),
@@ -913,9 +1024,32 @@ fn read_slot(cfg: &Config, slot: Slot) -> String {
     }
 }
 
+/// The microphone, Power Pad and Family BASIC keyboard slots (v3.5.0
+/// `FE-07`), whose names must resolve through `parse_keycode`.
+const fn is_device_slot(slot: Slot) -> bool {
+    matches!(
+        slot,
+        Slot::Microphone | Slot::PowerPad(_) | Slot::FamilyKey(_)
+    )
+}
+
+/// Whether a captured key name is refused for `slot`: a device slot whose
+/// name the bindings cannot resolve.
+fn refuses_capture(slot: Slot, name: &str) -> bool {
+    is_device_slot(slot) && crate::input::parse_keycode(name).is_none()
+}
+
 fn apply_slot(cfg: &mut Config, slot: Slot, name: &str) {
     let i = &mut cfg.input;
+    // v3.5.0 (`FE-07`): device slots index lists, padded first so a short
+    // hand-edited list can still be written.
+    if matches!(slot, Slot::PowerPad(_) | Slot::FamilyKey(_)) {
+        i.device_keys = i.device_keys.normalized();
+    }
     let target: &mut String = match slot {
+        Slot::Microphone => &mut i.device_keys.microphone,
+        Slot::PowerPad(n) => &mut i.device_keys.power_pad[usize::from(n).min(11)],
+        Slot::FamilyKey(n) => &mut i.device_keys.family_keyboard[usize::from(n).min(71)],
         Slot::P1Up => &mut i.player1.up,
         Slot::P1Down => &mut i.player1.down,
         Slot::P1Left => &mut i.player1.left,
@@ -1008,6 +1142,18 @@ fn apply_slot(cfg: &mut Config, slot: Slot, name: &str) {
 
 #[cfg(test)]
 mod tests {
+    /// A device slot refuses a key the bindings cannot resolve, and keeps
+    /// one they can; player slots are not affected by the check.
+    #[test]
+    fn a_device_slot_refuses_an_unresolvable_key() {
+        assert!(crate::input::parse_keycode("Delete").is_none());
+        assert!(refuses_capture(Slot::Microphone, "Delete"));
+        assert!(refuses_capture(Slot::PowerPad(0), "Delete"));
+        assert!(refuses_capture(Slot::FamilyKey(3), "Delete"));
+        assert!(!refuses_capture(Slot::Microphone, "KeyN"));
+        assert!(!refuses_capture(Slot::P1A, "Delete"));
+    }
+
     use super::*;
 
     #[test]
@@ -1122,5 +1268,41 @@ mod tests {
         s.capture_button(gilrs::Button::North);
         assert!(s.captured.is_none());
         assert!(s.pending.is_some());
+    }
+
+    /// v3.5.0 (`FE-07`) — device slots write the device-key lists, and a short
+    /// hand-edited list is padded rather than written out of range.
+    #[test]
+    fn device_slots_write_and_clear_the_device_keys() {
+        let mut cfg = Config::default();
+        apply_slot(&mut cfg, Slot::PowerPad(3), "KeyZ");
+        assert_eq!(cfg.input.device_keys.power_pad[3], "KeyZ");
+        assert_eq!(read_slot(&cfg, Slot::PowerPad(3)), "KeyZ");
+        apply_slot(&mut cfg, Slot::Microphone, "KeyV");
+        assert_eq!(read_slot(&cfg, Slot::Microphone), "KeyV");
+        apply_slot(&mut cfg, Slot::FamilyKey(71), "Numpad9");
+        assert_eq!(cfg.input.device_keys.family_keyboard[71], "Numpad9");
+        apply_slot(&mut cfg, Slot::FamilyKey(0), "");
+        assert_eq!(read_slot(&cfg, Slot::FamilyKey(0)), "");
+
+        cfg.input.device_keys.family_keyboard.truncate(2);
+        apply_slot(&mut cfg, Slot::FamilyKey(40), "KeyQ");
+        assert_eq!(cfg.input.device_keys.family_keyboard.len(), 72);
+        assert_eq!(read_slot(&cfg, Slot::FamilyKey(40)), "KeyQ");
+        assert_eq!(
+            read_slot(&cfg, Slot::FamilyKey(5)),
+            "",
+            "padded slots are unbound"
+        );
+    }
+
+    #[test]
+    fn a_device_key_capture_is_a_keyboard_capture() {
+        let s = InputPanelState {
+            pending: Some(Slot::FamilyKey(9)),
+            ..Default::default()
+        };
+        assert!(s.is_capturing_keyboard());
+        assert_eq!(slot_display(Slot::PowerPad(0)), "Mat button 1");
     }
 }

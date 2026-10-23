@@ -116,6 +116,14 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
   during a movie (`np_*` return `Netplay`). Existing error variants, so the
   generated bindings are unchanged; the hosts should grey the controls to match.
   The desktop's rule (`docs/frontend.md`, "Session lockout"). Shared with iOS.
+  **v3.5.0:** an FDS disk swap (`set_disk_side`) and a Vs. coin (`insert_coin`)
+  are refused too, during a netplay session (`Netplay`) and during playback
+  (`Movie`), and allowed during a recording, which records them (`.rnm` format
+  7). Until v3.5.0 the bridge asked nothing before either, so a coin or a swap
+  happened on one peer only and the session desynced. Both now return a
+  `Result`, so the generated Kotlin `setDiskSide` / `insertCoin` throw
+  `MobileException` and the Swift ones `throws`; the Android media buttons show
+  the reason in a toast, the iOS ones in the warning alert.
 - **Per-game stores are keyed by the core's ROM identity (v2.9.9, NF-21).**
   `NesController.romIdentity()` returns `Nes::rom_sha256` as lowercase hex: the
   bytes after the 16-byte iNES header, of the UNPACKED image (the whole image for

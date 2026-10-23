@@ -485,6 +485,12 @@ const CHIPS: &[Chip] = &[
                  mapper re-instantiation in load_state, like mapper_caps",
             ),
             (
+                "ppu_read_snoop",
+                "board identity: Mapper::snoops_ppu_reads, a per-type constant \
+                 (true only for the MMC5), cached beside prg_may_unmap at the \
+                 same two points",
+            ),
+            (
                 "rom_bytes",
                 "board identity: the ROM image itself; a save state never carries it",
             ),

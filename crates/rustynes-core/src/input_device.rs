@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Power Pad's serial layout (`PowerPadState` and its `reload`, written in v1.1.0 citing "Mesen's implementation" beside the NESdev "Power Pad" page) is treated as derived from Mesen2 (GPL-3.0-or-later), by the maintainer's decision of 2026-10-21: whether Mesen2 source was read in June 2026 is not recorded, and the conservative reading was chosen. The layout itself is stated verbatim on `nesdev_wiki/Power_Pad.xhtml`. Only the Power Pad region is covered. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Optional non-standard input-device overlays for the `$4016`/`$4017`
 //! controller ports: the Arkanoid "Vaus" paddle and the NES Zapper light gun.
 //!
@@ -504,6 +508,9 @@ impl ZapperState {
 /// (Button numbers are 1-based here, matching the mat labels; the code uses
 /// 0-based indices.) Each read shifts both registers right and feeds `1`s in
 /// from the top, so post-shift reads settle to "no button".
+///
+/// Provenance: derived from Mesen2 (GPL-3.0-or-later); see this file's
+/// header and `docs/originality-and-provenance.md` Section 1.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PowerPadState {
     /// Live pressed-button mask: bit `i` (0..=11) set = mat button `i+1` held.
@@ -530,6 +537,8 @@ impl PowerPadState {
 
     /// Reload both shift registers from the live button mask (the parallel
     /// latch). The bit order matches the `NESdev` / Mesen serial layout.
+    ///
+    /// Provenance: the derived region (Mesen2); see this file's header.
     const fn reload(&mut self) {
         // bit(i) = (buttons >> i) & 1, as u8. Inlined (no closures in const fn).
         let p = self.buttons;

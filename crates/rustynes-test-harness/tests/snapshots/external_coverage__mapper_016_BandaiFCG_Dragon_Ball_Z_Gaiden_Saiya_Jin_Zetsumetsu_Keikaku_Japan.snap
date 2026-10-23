@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+assertion_line: 798
+expression: text
+---
+rom=mapper-016-BandaiFCG/Dragon Ball Z Gaiden - Saiya Jin Zetsumetsu Keikaku (Japan).nes
+rom_sha256=a6216f54d95dd5536183def1f6de5d3aa0f9b7106f924cf0b28a9aaa74c3f6ad
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=1a0b0159b611cd91
+checkpoint f900 fb_fnv1a64=87cc12a4b7d29680
+checkpoint f1100 fb_fnv1a64=91d22200cdc0701b

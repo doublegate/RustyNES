@@ -33,9 +33,15 @@
 //!   decoding the PPU's `$2000` / `$2001` itself
 //!   (`Mapper::notify_ppu_register_write`). `$5101` selects which registers
 //!   drive which window, and a value indexes banks of the selected size.
-//! - Scanline IRQ at PPU cycle 4 of each visible scanline. The scanline
-//!   counter ticks via `Mapper::notify_scanline_start`; the in-frame flag
-//!   is cleared on vertical blank (`Mapper::notify_vblank`).
+//! - Scanline IRQ at PPU cycle 4 of visible line N for `$5203` = N, from
+//!   the page's read-watching detector (v3.5.0): the chip watches the PPU's
+//!   reads (`Mapper::notify_ppu_read`), detects a scanline at the read after
+//!   three consecutive reads of one nametable address, and clears its
+//!   in-frame flag when three CPU cycles pass with no PPU read, on a `$2001`
+//!   write that disables rendering, and on a `$FFFA` / `$FFFB` read. Before
+//!   v3.5.0 the counter ticked at dot 0 of the pre-render line and of every
+//!   visible line, rendering or not, which put it one line ahead of the chip
+//!   (see "Scanline detection" on [`Mmc5`]).
 //! - 8x8 multiply unit at `$5205` / `$5206`.
 //!
 //! Implemented (continued):
@@ -119,7 +125,20 @@ const NAMETABLE_SIZE: usize = 0x0400;
 
 /// v6 (v2.9.9): the `$2000` / `$2001` snoop (`ppu_sprites_8x16`,
 /// `ppu_rendering`) follows `last_chr_write_was_sprite`.
-const SAVE_STATE_VERSION: u8 = 6;
+///
+/// v7 (v3.5.0): the read-watching scanline detector (`render_window`,
+/// `det_last_addr`, `det_match_count`, `det_armed`, `det_idle_cycles`,
+/// `det_read_this_cycle`) as a tail after the superset pages. A v6 state is
+/// refused: its `in_frame` / `scanline_counter` were the old line counter's,
+/// a line ahead of the detector's, and it carries no detector state.
+const SAVE_STATE_VERSION: u8 = 7;
+
+/// The detector's "no previous read" address (`lastAddress := undefined` in
+/// the page's pseudocode). PPU addresses are 14 bits, so no read matches it.
+const DET_NO_ADDR: u16 = 0xFFFF;
+
+/// Bytes in the v7 detector tail of a save-state.
+const DETECTOR_TAIL_LEN: usize = 7;
 
 /// The MMC5's two CHR bank-register sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -452,6 +471,58 @@ impl PrgSlot {
 }
 
 /// MMC5 mapper (iNES mapper 5).
+///
+/// # Scanline detection (v3.5.0)
+///
+/// The chip has no view of the PPU's timing. It watches the PPU's reads
+/// (`nesdev_wiki/MMC5.xhtml`, "Scanline Detection and Scanline IRQ"):
+///
+/// > The MMC5 detects scanlines by first looking for three consecutive PPU
+/// > reads from the same nametable address in the range $2xxx. Once this
+/// > has been seen, the next PPU read, regardless of address, is the point
+/// > at which the scanline is detected. This works because the PPU does two
+/// > matching dummy nametable byte reads at the end of each scanline,
+/// > followed by a third matching nametable byte read at the beginning of
+/// > the next scanline, followed by an attribute table byte read. So, the
+/// > scanline gets detected when the PPU does the attribute table byte
+/// > read, which is at PPU cycle 4.
+///
+/// At a detection, if "in frame" was clear it is set and the counter reset
+/// to 0; otherwise the counter is incremented and compared with `$5203`
+/// (`$00` never matches). The pre-render line's own reads follow the whole
+/// vertical blank, in which "3 CPU cycles pass without a PPU read" reset
+/// the matcher, and its first three nametable reads are not one address,
+/// so it is not detected: the first detection of a frame is visible line 0
+/// (its third matching read is line 0's first nametable fetch, after the
+/// pre-render line's two dummy reads), and visible line N reads N. With
+/// rendering off the PPU reads nothing, so nothing counts. blargg's 2005
+/// hardware measurement agrees at line resolution: in frame set at visible
+/// line 0, `$5203` = 1 at line 1, `$5203` = 239 at line 239.
+///
+/// Before v3.5.0 the counter ticked from `notify_scanline_start` at dot 0 of
+/// the pre-render line and of every visible line, rendering or not, so line
+/// N read N + 1, a `$5203` = N IRQ rose at dot 0 of line N - 1, and the
+/// counter ran with rendering off. Pinned by
+/// `crates/rustynes-test-harness/tests/mmc5_scanline_irq.rs`.
+///
+/// Where the page's own descriptions disagree, the model follows its prose:
+///
+/// - **The detection read.** The prose (twice: "at PPU cycle 4") and the
+///   state diagram detect at the read AFTER the third match; the pseudocode
+///   detects at the third match itself, two dots earlier. The model takes
+///   the prose.
+/// - **A `$FFFA` / `$FFFB` read** clears in frame, acknowledges the IRQ and
+///   resets the counter (the prose's list). The pseudocode also forgets the
+///   last address there; the diagram says the address matcher "is
+///   unaffected by reading V-blank interrupt vector". The model leaves the
+///   matcher alone, as the diagram says; the two differ only for a vector
+///   read inside the few dots between a line's dummy reads and its first
+///   fetch.
+///
+/// Not modelled: the `$2002`-read and `$4014`-write counter resets the
+/// register summary lists (the prose marks the `$4014` one "believed but
+/// not tested"; both normally fall in vertical blank, where nothing is in
+/// frame anyway), pin 92, and the MMC5A's `$5207`-`$520A`.
 pub struct Mmc5 {
     // === ROM / RAM storage ===
     prg_rom: Box<[u8]>,
@@ -552,11 +623,47 @@ pub struct Mmc5 {
     /// True when the IRQ "pending" latch is set (read at `$5204` bit 7,
     /// cleared by reading `$5204`).
     irq_pending: bool,
-    /// "In-frame" flag — set on the first rendered scanline after VBL,
-    /// cleared on VBL. Read at `$5204` bit 6.
+    /// "In-frame" flag, `$5204` bit 6 (v3.5.0: the page's flag). Set by
+    /// the first scanline detection of a frame (visible line 0, near PPU
+    /// cycle 4); cleared when three CPU cycles pass with no PPU read (early
+    /// on line 240, or soon after rendering stops), on a `$2001` write with
+    /// bits 3-4 clear, on a `$FFFA` / `$FFFB` read, on the off-to-on `$2001`
+    /// transition, and on a 241st detection.
     in_frame: bool,
-    /// Internal scanline counter; ticks each rendered scanline.
+    /// Internal 8-bit scanline counter: 0 at the first detection of a frame,
+    /// incremented at each later detection, so visible line N reads N.
     scanline_counter: u8,
+
+    // === Scanline detector (v3.5.0; `nesdev_wiki/MMC5.xhtml`, "Scanline
+    // Detection and Scanline IRQ") ===
+    /// The previous PPU read's address, or [`DET_NO_ADDR`] after the
+    /// detector is reset ("lastAddress := undefined").
+    det_last_addr: u16,
+    /// Consecutive repeats of one `$2000-$2FFF` address: 0 after a
+    /// non-matching read, 1 after the second identical read, 2 after the
+    /// third. Saturates at 2.
+    det_match_count: u8,
+    /// Three identical nametable reads have been seen, so the NEXT read,
+    /// whatever its address, is the detection point ("the next PPU read,
+    /// regardless of address, is the point at which the scanline is
+    /// detected" -- the attribute read at PPU cycle 4).
+    det_armed: bool,
+    /// CPU cycles in a row with no PPU read; at 3 "in frame" clears.
+    /// Saturates at 3.
+    det_idle_cycles: u8,
+    /// A PPU read happened since the last CPU cycle boundary (the page's
+    /// `ppuIsReading`).
+    det_read_this_cycle: bool,
+    /// The window in which a pattern fetch counts as a BACKGROUND fetch for
+    /// the 8x16 CHR-set choice ([`Mmc5::non_sprite_set`]): opened at dot 0 of
+    /// the pre-render and every visible line (`notify_scanline_start`),
+    /// closed at vertical blank (`notify_vblank`). This is exactly what
+    /// `in_frame` meant before v3.5.0; it was split off so the scanline-IRQ
+    /// fix moves no CHR-set choice. Whether the chip's own set choice follows
+    /// its detector instead (Fiskbit's hardware note that the first fetches
+    /// of a frame read the wrong extended-attribute data suggests it does)
+    /// is a separate, unmade change.
+    render_window: bool,
 
     // === Multiplier ===
     /// `$5205` factor 1.
@@ -678,6 +785,12 @@ impl Mmc5 {
             irq_pending: false,
             in_frame: false,
             scanline_counter: 0,
+            det_last_addr: DET_NO_ADDR,
+            det_match_count: 0,
+            det_armed: false,
+            det_idle_cycles: 0,
+            det_read_this_cycle: false,
+            render_window: false,
             mul_a: 0,
             mul_b: 0,
             current_mirroring_summary: initial_mirroring,
@@ -860,6 +973,54 @@ impl Mmc5 {
         }
     }
 
+    /// A scanline detection: the read after three consecutive reads of one
+    /// nametable address. "If the in-frame flag was clear, it becomes set,
+    /// and the internal 8-bit scanline counter is reset to zero; but if it
+    /// was already set, the scanline counter is incremented, then compared
+    /// against the value written to $5203."
+    fn scanline_detected(&mut self) {
+        if !self.in_frame {
+            self.in_frame = true;
+            self.scanline_counter = 0;
+            // "The scanline IRQ is acknowledged, but the 'in frame' flag is
+            // not cleared and the scanline counter is not reset [when]
+            // scanline 0 is detected."
+            self.irq_pending = false;
+            return;
+        }
+        self.scanline_counter = self.scanline_counter.wrapping_add(1);
+        if self.scanline_counter == 240 {
+            // "the 241st scanline is detected": in frame cleared, the IRQ
+            // acknowledged, the counter reset. Rendering never produces it
+            // (line 240 makes no reads); a game that keeps the PPU reading
+            // past line 239 could.
+            self.leave_frame_and_acknowledge();
+            return;
+        }
+        // "A $5203 value of $00 is a special case where the comparison is
+        // never true."
+        if self.scanline_counter == self.irq_compare && self.irq_compare != 0 {
+            self.irq_pending = true;
+        }
+    }
+
+    /// The page's second list: "The 'in frame' flag is cleared, scanline IRQ
+    /// is automatically acknowledged, and the internal scanline counter is
+    /// reset".
+    fn leave_frame_and_acknowledge(&mut self) {
+        self.in_frame = false;
+        self.irq_pending = false;
+        self.scanline_counter = 0;
+    }
+
+    /// Forget the address history ("lastAddress := undefined"), so the
+    /// next three matching nametable reads start a fresh run.
+    fn reset_matcher(&mut self) {
+        self.det_last_addr = DET_NO_ADDR;
+        self.det_match_count = 0;
+        self.det_armed = false;
+    }
+
     /// Resolve a sprite pattern fetch. Sprites always use the A set
     /// (`$5120-$5127`), in 8x8 and 8x16 mode alike, laid out by `$5101`
     /// exactly as the MMC5 page's "CHR select $5120-$512B" table gives it.
@@ -888,12 +1049,13 @@ impl Mmc5 {
     ///
     /// The MMC5 tells a rendering fetch from a `$2007` access by counting
     /// PPU reads since its last scanline detection. The model's equivalent is
-    /// its in-frame flag together with the snooped `$2001` render enables:
-    /// a fetch made while both say "rendering" is a background fetch.
+    /// its background-fetch window (`render_window`, the pre-v3.5.0 meaning
+    /// of `in_frame`) together with the snooped `$2001` render enables: a
+    /// fetch made while both say "rendering" is a background fetch.
     fn non_sprite_set(&self, read: bool) -> ChrSet {
         if !self.ppu_sprites_8x16 {
             ChrSet::A
-        } else if self.in_frame && self.ppu_rendering {
+        } else if self.render_window && self.ppu_rendering {
             ChrSet::B
         } else if self.last_chr_write_was_sprite || (read && self.exram_mode & 0x03 == 1) {
             ChrSet::A
@@ -1059,6 +1221,13 @@ impl Mapper for Mmc5 {
         // common path is one compare, not a walk of the `$5xxx` decision tree.
         // Byte-identical to the `0x8000..=0xFFFF` match arm below.
         if addr >= 0x8000 {
+            // v3.5.0 — a `$FFFA` / `$FFFB` read (the NMI vector fetch, or a
+            // program reading it): "The 'in frame' flag is cleared, scanline
+            // IRQ is automatically acknowledged, and the internal scanline
+            // counter is reset". One masked compare on the hot path.
+            if addr & 0xFFFE == 0xFFFA {
+                self.leave_frame_and_acknowledge();
+            }
             return self.read_prg_window(addr);
         }
         match addr {
@@ -1124,6 +1293,19 @@ impl Mapper for Mmc5 {
             0x8000..=0xFFFF => self.read_prg_window(addr),
 
             _ => 0,
+        }
+    }
+
+    /// The byte [`Self::cpu_read`] would return, without its side effects:
+    /// a debugger peek must neither acknowledge the scanline IRQ (`$5204`)
+    /// nor reset the scanline state (`$FFFA` / `$FFFB`, v3.5.0).
+    fn cpu_peek(&mut self, addr: u16) -> u8 {
+        match addr {
+            0x8000..=0xFFFF => self.read_prg_window(addr),
+            0x5204 => {
+                (if self.irq_pending { 0x80 } else { 0 }) | (if self.in_frame { 0x40 } else { 0 })
+            }
+            _ => self.cpu_read(addr),
         }
     }
 
@@ -1290,12 +1472,15 @@ impl Mapper for Mmc5 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        // MMC5 CHR / nametable reads have no side effect here: its scanline
-        // detection runs from `notify_scanline_start` / `notify_vblank`. A
-        // v3.2.0 import moved a nametable-snoop detector into this method,
-        // but the lockstep bus never routes nametable fetches through
-        // `ppu_read` (they go via `peek_nametable`), so the IRQ stopped
-        // firing in real play; reverted (`external_mmc5_*` caught it).
+        // MMC5 CHR / nametable reads have no side effect here. Since v3.5.0
+        // its scanline detection watches every PPU read through
+        // `notify_ppu_read` (the bus reports them because `snoops_ppu_reads`
+        // is true), not this method; `notify_scanline_start` /
+        // `notify_vblank` only bound the render window. A v3.2.0 import
+        // moved a nametable-snoop detector into this method, but the
+        // lockstep bus never routes nametable fetches through `ppu_read`
+        // (they go via `peek_nametable`), so the IRQ stopped firing in real
+        // play; reverted (`external_mmc5_*` caught it).
         self.ppu_peek(addr)
     }
 
@@ -1546,6 +1731,25 @@ impl Mapper for Mmc5 {
     }
 
     fn notify_cpu_cycle(&mut self) {
+        // v3.5.0 — the in-frame flag's idle rule, once per CPU cycle (M2):
+        // "This is detected when 3 CPU cycles pass without a PPU read having
+        // occurred (PPU /RD has not been low during the last 3 M2 rises)."
+        // While rendering, the PPU reads every second dot and a CPU cycle
+        // spans three (3.2 on PAL), so every cycle sees a read and the count
+        // stays 0; it reaches 3 a few dots into line 240, or three cycles
+        // after rendering stops. The pseudocode also forgets the last
+        // address ("lastAddress := undefined"), which is what keeps the
+        // pre-render line from being detected.
+        if self.det_read_this_cycle {
+            self.det_idle_cycles = 0;
+        } else if self.det_idle_cycles < 3 {
+            self.det_idle_cycles += 1;
+            if self.det_idle_cycles == 3 {
+                self.in_frame = false;
+                self.reset_matcher();
+            }
+        }
+        self.det_read_this_cycle = false;
         // No CPU-cycle IRQ for MMC5. However, the audio extension's two
         // pulse channels tick their 11-bit timer / duty sequencer every
         // *other* CPU cycle — same as the 2A03 pulses. Envelope &
@@ -1618,19 +1822,39 @@ impl Mapper for Mmc5 {
         i32::from((pulse_mix + pcm_mix) - MMC5_MIX_BIAS)
     }
 
-    fn notify_scanline_start(&mut self) {
-        // First rendered scanline after VBL: enter "in-frame" state and
-        // reset the scanline counter to 0.
-        if !self.in_frame {
-            self.in_frame = true;
-            self.scanline_counter = 0;
-            // The compare register can match scanline 0 too — handle below.
+    fn snoops_ppu_reads(&self) -> bool {
+        true
+    }
+
+    fn notify_ppu_read(&mut self, addr: u16) {
+        // v3.5.0 — the page's detector, one PPU read at a time ("On every PPU
+        // read -- PPU /RD falling edge").
+        self.det_read_this_cycle = true;
+        if self.det_armed {
+            // The read after the third match is the detection point, whatever
+            // its address: the attribute fetch at PPU cycle 4.
+            self.det_armed = false;
+            self.scanline_detected();
+        }
+        if (0x2000..=0x2FFF).contains(&addr) && addr == self.det_last_addr {
+            if self.det_match_count < 2 {
+                self.det_match_count += 1;
+                if self.det_match_count == 2 {
+                    self.det_armed = true;
+                }
+            }
         } else {
-            self.scanline_counter = self.scanline_counter.wrapping_add(1);
+            self.det_match_count = 0;
         }
-        if self.scanline_counter == self.irq_compare && self.irq_compare != 0 {
-            self.irq_pending = true;
-        }
+        self.det_last_addr = addr;
+    }
+
+    fn notify_scanline_start(&mut self) {
+        // Since v3.5.0 this no longer counts scanlines (the detector in
+        // `notify_ppu_read` does); it only opens the background-fetch window
+        // the 8x16 CHR-set choice uses, exactly where `in_frame` used to be
+        // set, so no CHR fetch moves.
+        self.render_window = true;
     }
 
     fn notify_ppu_register_write(&mut self, addr: u16, value: u8) {
@@ -1644,15 +1868,33 @@ impl Mapper for Mmc5 {
                     self.last_chr_write_was_sprite = true;
                 }
             }
-            0x2001 => self.ppu_rendering = value & 0x18 != 0,
+            0x2001 => {
+                let enabled = value & 0x18 != 0;
+                if !enabled {
+                    // "(On every CPU write) if address == $2001 and
+                    // (value & $18) == 0: inFrame := false, lastAddress :=
+                    // undefined."
+                    self.in_frame = false;
+                    self.reset_matcher();
+                } else if !self.ppu_rendering {
+                    // "when the MMC5 believes that $2001 bits 3 and 4 are
+                    // both clear and then either one of them gets set": in
+                    // frame cleared, IRQ acknowledged, counter reset. ("The
+                    // transition from disabled to enabled resets the scanline
+                    // counter.")
+                    self.leave_frame_and_acknowledge();
+                }
+                self.ppu_rendering = enabled;
+            }
             _ => {}
         }
     }
 
     fn notify_vblank(&mut self) {
-        // Vertical blank: clear the in-frame flag (the next rendered line
-        // re-enters "in-frame" via notify_scanline_start).
-        self.in_frame = false;
+        // Vertical blank closes the background-fetch window (the 8x16
+        // CHR-set choice). The `$5204` in-frame flag no longer follows this
+        // since v3.5.0: it clears on the idle rule, early on line 240.
+        self.render_window = false;
     }
 
     fn irq_pending(&self) -> bool {
@@ -1694,6 +1936,13 @@ impl Mapper for Mmc5 {
             .push(("pending".into(), format!("{}", self.irq_pending)));
         info.irq_state
             .push(("in_frame".into(), format!("{}", self.in_frame)));
+        info.irq_state.push((
+            "detector".into(),
+            format!(
+                "match={} armed={} idle={}",
+                self.det_match_count, self.det_armed, self.det_idle_cycles
+            ),
+        ));
         info.extra
             .push(("nt_map".into(), format!("{:#04x}", self.nametable_map)));
         info.extra
@@ -1778,6 +2027,13 @@ impl Mapper for Mmc5 {
         self.audio.write_tail(&mut out);
         // v5 tail (v2.7.2): the superset's extra PRG-RAM pages.
         out.extend_from_slice(&self.prg_ram_extra);
+        // v7 tail (v3.5.0): the scanline detector, DETECTOR_TAIL_LEN bytes.
+        out.extend_from_slice(&self.det_last_addr.to_le_bytes());
+        out.push(self.det_match_count);
+        out.push(u8::from(self.det_armed));
+        out.push(self.det_idle_cycles);
+        out.push(u8::from(self.det_read_this_cycle));
+        out.push(u8::from(self.render_window));
         out
     }
 
@@ -1804,12 +2060,16 @@ impl Mapper for Mmc5 {
         // tail) and v4 (no superset pages) used to load with those parts at
         // their defaults. v5 (v2.9.8, no `$2000` / `$2001` snoop) is refused
         // too: a v5 state restored with 8x8 assumed would draw an 8x16 game
-        // from the wrong bank set until its next `$2000` write.
+        // from the wrong bank set until its next `$2000` write. v6 (v3.4.x
+        // and earlier) is refused as well: its `in_frame` and
+        // `scanline_counter` are the old line counter's, a line ahead of the
+        // v3.5.0 detector's, and it carries no detector state.
         let version = if data.is_empty() { 0 } else { data[0] };
         if version != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(version));
         }
-        let expected = core_expected + 1 + Mmc5Audio::TAIL_LEN + self.prg_ram_extra.len();
+        let expected =
+            core_expected + 1 + Mmc5Audio::TAIL_LEN + self.prg_ram_extra.len() + DETECTOR_TAIL_LEN;
         if data.len() != expected {
             return Err(MapperError::WrongLength {
                 expected,
@@ -1937,6 +2197,16 @@ impl Mapper for Mmc5 {
         // v5 tail: the superset pages.
         let n = self.prg_ram_extra.len();
         self.prg_ram_extra.copy_from_slice(&data[cur..cur + n]);
+        cur += n;
+        // v7 tail: the scanline detector. The two counters are clamped to
+        // the ranges the detector itself can produce, so a hand-edited state
+        // cannot park them where no read or cycle would ever move them.
+        self.det_last_addr = u16::from_le_bytes([data[cur], data[cur + 1]]);
+        self.det_match_count = data[cur + 2].min(2);
+        self.det_armed = data[cur + 3] != 0;
+        self.det_idle_cycles = data[cur + 4].min(3);
+        self.det_read_this_cycle = data[cur + 5] != 0;
+        self.render_window = data[cur + 6] != 0;
         Ok(())
     }
 }
@@ -2429,37 +2699,249 @@ mod tests {
         assert_eq!(m.cpu_read(0x5206), 0xFE);
     }
 
-    #[test]
-    fn scanline_irq_enters_in_frame_and_increments() {
-        let mut m = fresh(8, 8);
-        // Compare value = 3, IRQ enabled.
-        m.cpu_write(0x5203, 3);
-        m.cpu_write(0x5204, 0x80);
-        // Pretend the PPU starts scanlines.
-        // First call -> in_frame=true, counter=0.
-        m.notify_scanline_start();
-        assert!(m.in_frame);
-        assert_eq!(m.scanline_counter, 0);
-        // Three more -> counter=3 -> match -> irq_pending.
-        m.notify_scanline_start();
-        m.notify_scanline_start();
-        m.notify_scanline_start();
-        assert_eq!(m.scanline_counter, 3);
-        assert!(m.irq_pending);
-        assert!(m.irq_pending());
+    // === v3.5.0: the read-watching scanline detector ===
+
+    /// Report PPU reads to the detector with a CPU cycle (M2) after every
+    /// second one: the PPU reads every second dot and a CPU cycle spans three,
+    /// so while rendering no cycle passes without a read.
+    fn ppu_reads(m: &mut Mmc5, addrs: &[u16], phase: &mut u32) {
+        for &a in addrs {
+            m.notify_ppu_read(a);
+            *phase += 1;
+            if (*phase).is_multiple_of(2) {
+                m.notify_cpu_cycle();
+            }
+        }
     }
 
+    fn nt(row: u16, col: u16) -> u16 {
+        0x2000 | ((row & 0x1F) << 5) | (col & 0x1F)
+    }
+
+    fn at(row: u16, col: u16) -> u16 {
+        0x23C0 | (((row & 0x1F) >> 2) << 3) | ((col & 0x1F) >> 2)
+    }
+
+    /// The reads of one rendered line, in the PPU's order: 32 background
+    /// fetch groups (NT, AT, pattern low, pattern high) for tile row `row`,
+    /// the sprite window's eight (garbage NT, garbage NT, pattern, pattern),
+    /// the next line's first two tiles of `next_row`, and the two dummy
+    /// nametable reads, which repeat the NEXT line's first fetch address.
+    fn line_reads(row: u16, next_row: u16) -> Vec<u16> {
+        let mut v = Vec::with_capacity(170);
+        for col in 2..34 {
+            v.extend([nt(row, col), at(row, col), 0x0000, 0x0008]);
+        }
+        for _ in 0..8 {
+            v.extend([nt(next_row, 2), nt(next_row, 2), 0x1FF0, 0x1FF8]);
+        }
+        for col in 0..2 {
+            v.extend([nt(next_row, col), at(next_row, col), 0x0000, 0x0008]);
+        }
+        v.extend([nt(next_row, 2), nt(next_row, 2)]);
+        v
+    }
+
+    /// Vertical blank: CPU cycles with no PPU read.
+    fn vblank_idle(m: &mut Mmc5) {
+        for _ in 0..20 {
+            m.notify_cpu_cycle();
+        }
+    }
+
+    /// Vertical blank, then the pre-render line (tile row 29 is whatever `v`
+    /// held; its prefetch is visible row 0).
+    fn start_frame(m: &mut Mmc5, phase: &mut u32) {
+        vblank_idle(m);
+        ppu_reads(m, &line_reads(29, 0), phase);
+    }
+
+    /// Visible line `line` in full (its prefetch is line + 1's row).
+    fn visible_line(m: &mut Mmc5, line: u16, phase: &mut u32) {
+        ppu_reads(m, &line_reads(line / 8, (line + 1) / 8), phase);
+    }
+
+    /// The pre-render line is never detected: its reads follow the idle
+    /// vertical blank, which forgets the last address, and its own first
+    /// three nametable reads are not one address.
     #[test]
-    fn vblank_clears_in_frame_flag() {
+    fn the_pre_render_line_is_not_detected() {
         let mut m = fresh(8, 8);
-        m.notify_scanline_start();
+        m.cpu_write(0x5203, 1);
+        let mut phase = 0;
+        start_frame(&mut m, &mut phase);
+        assert!(!m.in_frame, "in frame after the pre-render line");
+        assert!(!m.irq_pending);
+    }
+
+    /// Line 0 is the first detection (in frame, counter 0), at its second
+    /// read -- the attribute fetch, PPU cycle 4 -- and not at its first.
+    #[test]
+    fn line_0_is_detected_at_its_attribute_read() {
+        let mut m = fresh(8, 8);
+        let mut phase = 0;
+        start_frame(&mut m, &mut phase);
+        let line0 = line_reads(0, 0);
+        ppu_reads(&mut m, &line0[..1], &mut phase);
+        assert!(
+            !m.in_frame,
+            "detected at the third matching read, not the one after"
+        );
+        ppu_reads(&mut m, &line0[1..2], &mut phase);
+        assert!(m.in_frame, "not detected at line 0's attribute read");
+        assert_eq!(m.scanline_counter, 0);
+    }
+
+    /// `$5203` = N raises the flag at line N's attribute read, with the
+    /// counter at N -- not a line early.
+    #[test]
+    fn compare_n_flags_on_line_n_with_the_counter_at_n() {
+        for n in [1u16, 3, 9, 100, 239] {
+            let mut m = fresh(8, 8);
+            m.cpu_write(0x5203, n as u8);
+            m.cpu_write(0x5204, 0x80);
+            let mut phase = 0;
+            start_frame(&mut m, &mut phase);
+            for line in 0..n {
+                visible_line(&mut m, line, &mut phase);
+                assert!(!m.irq_pending, "compare {n}: flagged during line {line}");
+            }
+            assert_eq!(
+                m.scanline_counter,
+                (n - 1) as u8,
+                "compare {n}: counter before line {n}"
+            );
+            let reads = line_reads(n / 8, (n + 1) / 8);
+            ppu_reads(&mut m, &reads[..1], &mut phase);
+            assert!(
+                !m.irq_pending,
+                "compare {n}: flagged at line {n}'s first read"
+            );
+            ppu_reads(&mut m, &reads[1..2], &mut phase);
+            assert!(
+                m.irq_pending,
+                "compare {n}: not flagged at line {n}'s attribute read"
+            );
+            assert!(m.irq_pending(), "compare {n}: enabled, so /IRQ");
+            assert_eq!(m.scanline_counter, n as u8);
+        }
+    }
+
+    /// "If the IRQ scanline is set to 0 or 240-255, the IRQ flag never gets
+    /// set during the frame" (blargg's hardware result), and the counter of
+    /// a full frame ends at 239.
+    #[test]
+    fn compare_0_and_240_never_flag() {
+        for n in [0u8, 240, 255] {
+            let mut m = fresh(8, 8);
+            m.cpu_write(0x5203, n);
+            let mut phase = 0;
+            start_frame(&mut m, &mut phase);
+            for line in 0..240 {
+                visible_line(&mut m, line, &mut phase);
+            }
+            assert!(!m.irq_pending, "compare {n} flagged");
+            assert_eq!(m.scanline_counter, 239);
+        }
+    }
+
+    /// "3 CPU cycles pass without a PPU read" clears in frame -- the start
+    /// of line 240 -- and two do not.
+    #[test]
+    fn three_idle_cpu_cycles_leave_the_frame() {
+        let mut m = fresh(8, 8);
+        let mut phase = 0;
+        start_frame(&mut m, &mut phase);
+        for line in 0..240 {
+            visible_line(&mut m, line, &mut phase);
+        }
         assert!(m.in_frame);
-        m.notify_vblank();
-        assert!(!m.in_frame);
-        // Next scanline_start re-enters in_frame and resets counter.
-        m.notify_scanline_start();
+        // `line_reads` makes an even number of reads, so the cycle holding
+        // line 239's last read has already been clocked.
+        m.notify_cpu_cycle();
+        m.notify_cpu_cycle();
+        assert!(m.in_frame, "cleared after two idle cycles");
+        m.notify_cpu_cycle();
+        assert!(!m.in_frame, "still in frame after three idle cycles");
+        // The next frame starts again at counter 0.
+        start_frame(&mut m, &mut phase);
+        visible_line(&mut m, 0, &mut phase);
         assert!(m.in_frame);
         assert_eq!(m.scanline_counter, 0);
+    }
+
+    /// With rendering off the PPU reads nothing: nothing is detected.
+    #[test]
+    fn no_reads_no_detection() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x5203, 1);
+        for _ in 0..100_000 {
+            m.notify_cpu_cycle();
+            m.notify_scanline_start();
+        }
+        assert!(!m.in_frame);
+        assert!(!m.irq_pending);
+    }
+
+    /// A `$2001` write with bits 3-4 clear leaves the frame; the off-to-on
+    /// transition acknowledges the IRQ and resets the counter.
+    #[test]
+    fn ppumask_writes_leave_the_frame() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x5203, 2);
+        m.notify_ppu_register_write(0x2001, 0x18);
+        let mut phase = 0;
+        start_frame(&mut m, &mut phase);
+        for line in 0..3 {
+            visible_line(&mut m, line, &mut phase);
+        }
+        assert!(m.irq_pending && m.in_frame);
+        assert_eq!(m.scanline_counter, 2);
+        // A mirror is not snooped.
+        m.notify_ppu_register_write(0x2009, 0x00);
+        assert!(m.in_frame);
+        m.notify_ppu_register_write(0x2001, 0x00);
+        assert!(!m.in_frame, "a $2001 disable did not leave the frame");
+        assert!(m.irq_pending, "disabling does not acknowledge");
+        m.notify_ppu_register_write(0x2001, 0x08);
+        assert!(!m.irq_pending, "the off-to-on transition acknowledges");
+        assert_eq!(m.scanline_counter, 0);
+    }
+
+    /// A `$FFFA` / `$FFFB` read leaves the frame and acknowledges; a
+    /// debugger peek at it, or at `$5204`, changes nothing.
+    #[test]
+    fn nmi_vector_read_leaves_the_frame_and_a_peek_does_not() {
+        for vector in [0xFFFAu16, 0xFFFB] {
+            let mut m = fresh(8, 8);
+            m.cpu_write(0x5203, 1);
+            let mut phase = 0;
+            start_frame(&mut m, &mut phase);
+            visible_line(&mut m, 0, &mut phase);
+            visible_line(&mut m, 1, &mut phase);
+            assert!(m.irq_pending && m.in_frame);
+            let peeked = m.cpu_peek(vector);
+            assert_eq!(m.cpu_peek(0x5204), 0xC0);
+            assert!(
+                m.irq_pending && m.in_frame,
+                "a peek changed the scanline state"
+            );
+            assert_eq!(m.cpu_read(vector), peeked);
+            assert!(!m.in_frame && !m.irq_pending, "{vector:#06X} read");
+            assert_eq!(m.scanline_counter, 0);
+        }
+    }
+
+    /// The 8x16 background-fetch window still opens at
+    /// `notify_scanline_start` and closes at `notify_vblank` (what `in_frame`
+    /// meant before v3.5.0), independent of the detector.
+    #[test]
+    fn the_chr_set_window_still_follows_the_ppu_line_hooks() {
+        let mut m = fresh(8, 8);
+        m.notify_scanline_start();
+        assert!(m.render_window && !m.in_frame);
+        m.notify_vblank();
+        assert!(!m.render_window);
     }
 
     #[test]
@@ -2467,14 +2949,45 @@ mod tests {
         let mut m = fresh(8, 8);
         m.cpu_write(0x5203, 1);
         m.cpu_write(0x5204, 0x80);
-        m.notify_scanline_start(); // counter=0; not match
-        m.notify_scanline_start(); // counter=1; match
+        let mut phase = 0;
+        start_frame(&mut m, &mut phase);
+        visible_line(&mut m, 0, &mut phase); // counter 0; no match
+        let line1 = line_reads(0, 0);
+        ppu_reads(&mut m, &line1[..2], &mut phase); // counter 1; match
         assert!(m.irq_pending);
         let v = m.cpu_read(0x5204);
-        assert!((v & 0x80) != 0); // status bit was set
+        assert_eq!(v & 0xC0, 0xC0); // pending + in frame
         // Read should clear the pending latch.
         assert!(!m.irq_pending);
         assert!(!m.irq_pending());
+    }
+
+    /// The detector's state survives a save-state round trip mid-run: a
+    /// state taken between the third matching read and the detection read
+    /// must still detect on the next read.
+    #[test]
+    fn detector_state_survives_a_save_state_round_trip() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x5203, 1);
+        let mut phase = 0;
+        start_frame(&mut m, &mut phase);
+        visible_line(&mut m, 0, &mut phase);
+        let line1 = line_reads(0, 0);
+        ppu_reads(&mut m, &line1[..1], &mut phase);
+        assert!(m.det_armed);
+        let saved = m.save_state();
+        let mut other = fresh(8, 8);
+        other.load_state(&saved).expect("v7 loads");
+        assert_eq!(other.save_state(), saved);
+        other.notify_ppu_read(line1[1]);
+        assert!(
+            other.irq_pending,
+            "the restored detector lost its armed read"
+        );
+        // A v6 state is refused.
+        let mut old = saved;
+        old[0] = 6;
+        assert!(other.load_state(&old).is_err());
     }
 
     #[test]

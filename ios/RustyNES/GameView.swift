@@ -25,6 +25,17 @@ struct GameView: View {
     // the Android MENU pill toggling `controlsVisible`).
     @State private var menuVisible = true
 
+    /// v3.5.0 -- run a disk swap or a coin the bridge may refuse (during netplay
+    /// or movie playback, where it would desync the session) and surface the
+    /// refusal through the existing warning alert (`AppModel.warningMessage`).
+    private func refusable(_ action: () throws -> Void) {
+        do {
+            try action()
+        } catch {
+            model.warningMessage = "\(error)"
+        }
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -104,13 +115,13 @@ struct GameView: View {
                         onPower: { model.emulator?.powerCycle() },
                         // v2.9.7 "Tandem": FDS side, NSF track, Vs. cabinet screen + coin.
                         onFlipDisk: (model.emulator?.diskSideCount ?? 0) > 0
-                            ? { model.emulator?.flipDisk() } : nil,
+                            ? { refusable { try model.emulator?.flipDisk() } } : nil,
                         onNextTrack: (model.emulator?.nsfSongCount ?? 0) > 0
                             ? { model.emulator?.nextNsfSong() } : nil,
                         onSwapScreen: (model.emulator?.isDualSystem ?? false)
                             ? { if let core = model.emulator { core.showSubScreen.toggle() } } : nil,
                         onCoin: (model.emulator?.isVsSystem ?? false)
-                            ? { model.emulator?.insertCoin() } : nil
+                            ? { refusable { try model.emulator?.insertCoin() } } : nil
                     )
                     .padding(.trailing, 8)
                 }

@@ -5,19 +5,30 @@
 // this machine) is ignored, because the login request carries the password.
 
 import { afterEach, describe, expect, it } from "vitest";
-// @ts-expect-error -- a plain ES module without type declarations
-import { RA_PROXY_BASE, rcheevosBase, resolveProxyBase } from "../../../crates/rustynes-frontend/web/cheevos/ra_glue.js";
+import {
+  ra_init,
+  ra_proxy_configured,
+  ra_shutdown,
+  raProxyBase,
+  rcheevosBase,
+  resolveProxyBase,
+  // @ts-expect-error -- a plain ES module without type declarations
+} from "../../../crates/rustynes-frontend/web/cheevos/ra_glue.js";
 
 const g = globalThis as { RUSTYNES_RA_PROXY_BASE?: string };
 
 afterEach(() => {
   delete g.RUSTYNES_RA_PROXY_BASE;
+  ra_shutdown();
 });
 
 describe("ra_glue.js proxy base", () => {
-  it("is unset in the repository, so RA calls fail closed", () => {
-    expect(RA_PROXY_BASE).toBe("");
+  it("is unset in the repository, so RA calls fail closed", async () => {
+    expect(raProxyBase()).toBe("");
     expect(resolveProxyBase()).toBe("");
+    await ra_init();
+    expect(raProxyBase()).toBe("");
+    expect(ra_proxy_configured()).toBe(false);
   });
 
   it("takes the hosted base the page sets", () => {
@@ -32,6 +43,38 @@ describe("ra_glue.js proxy base", () => {
       g.RUSTYNES_RA_PROXY_BASE = bad;
       expect(resolveProxyBase(), bad).toBe("");
     }
+  });
+});
+
+// v3.5.0 (T-WEB-RA-PROXY-LAZY, Antigravity on #618): the proxy base is
+// resolved at ra_init(), as rcheevosBase() is resolved when the module loads,
+// not once at import. A page that sets it after the glue was imported (the
+// module graph is evaluated before any later <script> or wasm start code runs)
+// used to get a working rcheevos module and a proxy that failed closed. The
+// test runtime has no rcheevos.wasm, so ra_init() itself returns false here;
+// the base is resolved before the module load is attempted, which is what the
+// Rust bridge reads next (`ra_proxy_configured()` right after `ra_init()`).
+describe("ra_glue.js proxy base is resolved at ra_init, not at import", () => {
+  it("honours a base set after the module was imported", async () => {
+    // The module is already imported (top of this file), with no base set.
+    expect(ra_proxy_configured()).toBe(false);
+    g.RUSTYNES_RA_PROXY_BASE = "https://rustynes-hosted.example.workers.dev/ra";
+    // Not yet: nothing is read until ra_init().
+    expect(ra_proxy_configured()).toBe(false);
+    expect(await ra_init()).toBe(false); // no rcheevos.wasm in this runtime
+    expect(raProxyBase()).toBe("https://rustynes-hosted.example.workers.dev/ra");
+    expect(ra_proxy_configured()).toBe(true);
+  });
+
+  it("re-resolves after a shutdown, and refuses a bad base set late", async () => {
+    g.RUSTYNES_RA_PROXY_BASE = "http://127.0.0.1:8787/ra";
+    await ra_init();
+    expect(raProxyBase()).toBe("http://127.0.0.1:8787/ra");
+    ra_shutdown();
+    g.RUSTYNES_RA_PROXY_BASE = "http://example.com/ra"; // plain HTTP off-host
+    await ra_init();
+    expect(raProxyBase()).toBe("");
+    expect(ra_proxy_configured()).toBe(false);
   });
 });
 

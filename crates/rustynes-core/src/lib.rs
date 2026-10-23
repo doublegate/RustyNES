@@ -36,6 +36,9 @@ mod controller;
 pub mod cpu_boot_trace;
 pub mod debug;
 pub mod genie;
+// v3.5.0 (`FE-06`) — the host-facing warning codes every frontend shares
+// (moved from the mobile bridge, which re-exports them to Kotlin / Swift).
+pub mod host_warning;
 pub mod input_device;
 #[cfg(feature = "irq-timing-trace")]
 pub mod irq_trace;
@@ -46,11 +49,16 @@ pub mod legacy_movie;
 // v2.9.8 — the emulation options a movie or a netplay session must agree on.
 mod hardware_options;
 mod movie;
+// v3.5.0 (`T-MOVIE-INPUT-STREAM`) — the non-controller half of a movie frame.
+mod movie_extra;
 pub mod movie_interop;
 mod nes;
 mod rewind;
 pub mod save_state;
 pub mod scheduler;
+// v3.5.0 (`T-SPEEDRUN-MEMIF`) — speedrun auto-timing: RetroAchievements-
+// grammar RAM predicates, times in master-clock cycles. Read-only over `Nes`.
+pub mod speedrun;
 pub mod vs_db;
 // v2.0.0 beta.5 (Workstream C) — the Vs. DualSystem dual-core wrapper: two
 // complete Nes instances + the cabinet's $4016-bit-1 comms protocol, the
@@ -82,6 +90,7 @@ pub use genie::{GenieCode, GenieError};
 pub use hardware_options::{
     BoardDescription, EMULATION_EPOCH, HardwareOptions, OptionsDecodeError, config_digest,
 };
+pub use host_warning::HostWarning;
 pub use input_device::{
     BandaiHyperShotState, FamilyKeyboardState, InputDevice, KonamiHyperShotState, PowerPadState,
     SnesMouseState, VausState, ZapperState,
@@ -95,6 +104,7 @@ pub use movie::{
     MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie, MovieError, MoviePlayer, MovieRecorder, StartPoint,
     VerifyOutcome, power_on_for_movie, recorded_before_v2_timebase,
 };
+pub use movie_extra::{DeviceInput, ExtraInput};
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;
 pub use nes::{

@@ -443,6 +443,16 @@ as evidence. Folding the input in makes the claim the honest one: *these inputs,
 applied to this ROM, produced this output.*
 `flipped_input_fails_even_when_the_rom_ignores_input` keeps it folded in.
 
+**The input includes the non-controller inputs (v3.5.0, attestation version 3).**
+Since `.rnm` format 7 a frame also carries its expansion-device, microphone, Vs.
+coin / service, FDS disk and barcode inputs (`FrameInput::extra`), and each frame
+folds a fixed 39-byte canonical record of them in after the five controller
+bytes (all zeros for a frame that carries none). An edited Zapper aim or a
+removed coin therefore fails verification the way an edited button does, on a
+ROM that reads nothing (`an_edited_extra_input_fails_verification`; with the
+fold removed that test fails, measured). A version-2 tail is not compared, and
+every movie that carried one is format 6, which v3.5.0 refuses anyway.
+
 **Hashing the core snapshot instead** would be strictly stronger at detecting
 divergence, and was rejected: the snapshot schema is versioned and bumps between
 releases (`PPU_SNAPSHOT_VERSION` had reached 8 then, and is 12 at v3.0.0), so every bump would silently

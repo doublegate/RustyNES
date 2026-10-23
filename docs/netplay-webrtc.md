@@ -626,6 +626,18 @@ check, and the native blocking fetch.
   fills an empty signaling URL with the hosted lobby and, when no TURN trio was
   configured, fetches credentials and hands the first TURN-over-UDP endpoint to
   `NatConnect`'s relay fallback. User-supplied endpoints always win.
+  Whether a user-supplied signaling URL enables the room-code buttons is the
+  bridge's `np_validate_relay_url` (v3.5.0, `T-MOBILE-RELAY-VALIDATE`), which
+  is `signaling_client::validate_signaling_url`, the parser the connect path
+  dials with; neither app parses the URL itself. It refuses what the `http`
+  URI grammar refuses (no `ws`/`wss` scheme, including an upper-case one; no
+  host; whitespace; an unclosed IPv6 literal) and also a port that is not
+  digits in 1..=65535 or junk after an IPv6 literal's `]`, which the grammar
+  passes through as "no port": before v3.5.0 the connect then dialled 80 or
+  443 for `wss://h:notaport`, `wss://h:99999` or `wss://h:`. The verdicts are
+  pinned by `crates/rustynes-netplay/testdata/relay_urls.tsv`, run against
+  both the parser and the export. Host names are not judged (an invalid DNS
+  name fails at resolution).
 - **Desktop:** native desktop netplay is direct UDP host/join (§2.4) with no
   signalling or ICE, so there is nothing to wire; `hosted_base_url` is ignored
   there.

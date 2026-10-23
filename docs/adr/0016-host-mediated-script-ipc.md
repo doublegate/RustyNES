@@ -84,10 +84,10 @@ memory; the `client` mutators reuse the existing gated host paths).
 - A reproducible RL episode is possible: with `script-ipc` enabled and writes
   unlocked, an agent drives input via `emu.setInput` and exchanges observations
   over `comm.*`, while the deterministic core keeps the run replayable.
-- The WebSocket transport currently reports a clean closed/error state (the
-  host-owned contract + marshalling is in place); a full WS client (a `ws`
-  crate) and an OS shared-memory MMF backing are maintainer follow-ups. The
-  in-process named-buffer MMF works today for same-host single-process bridges.
+- Until v3.5.0 the WebSocket transport reported a clean closed/error state
+  over the host-owned contract, and the MMF was an in-process named buffer.
+  v3.5.0 replaced both with a real WebSocket client and OS shared memory (see
+  the 2026-10-20 amendment), under the same host-mediated contract.
 - The off-by-default + gated + host-mediated triad means the feature can never
   perturb the determinism oracle: with `script-ipc` off the builds are
   byte-identical, and with it on a locked session queues nothing.
@@ -126,3 +126,62 @@ How it holds:
 This uses ureq's `unversioned` resolver interface, which does not follow
 semver. A breaking change there fails to compile; it cannot silently remove the
 check.
+
+## Amendment (2026-10-20, v3.5.0): a real WebSocket and real shared memory
+
+The two follow-ups the Consequences above left open are done (CR-01, CR-02).
+The decision itself is unchanged: the host owns every connection and region,
+the script sees only marshalled values, the verbs are gated like `emu.write`,
+and the Lua side (the `comm` table, the per-request and per-frame bounds, the
+instruction budget) did not change at all.
+
+**WebSocket.** `comm.ws_open` connects with `tungstenite`, the crate and
+feature set the netplay signaling client already uses, so no crate entered the
+lock file. Choices made:
+
+- The host dials the TCP connection itself, to an address it has checked under
+  the SEC-04 rule, and hands the connected stream to `tungstenite`. Calling
+  `tungstenite::connect` would resolve the name a second time, out of the
+  check's sight, which is the DNS-rebinding hole the HTTP resolver hook was
+  written to close. The HTTP allowlist (`RUSTYNES_COMM_HTTP_ALLOW`) governs
+  WebSockets too, rather than a second variable a user would have to learn.
+- One socket at a time, because `ws_send` and `ws_close` name none; a second
+  `ws_open` closes the first. Each socket has its own thread, so a 10-second
+  handshake never stalls the HTTP queue.
+- Inbound text has a budget (4 MiB undrained, 1 MiB per message). Over it the
+  socket is simply not read, which pushes back through TCP instead of buffering.
+
+**Shared memory.** `comm.mmfWrite` / `mmfRead` use POSIX `shm_open` on Linux
+and macOS and named file mappings on Windows, through the platform APIs
+directly (`libc`, `windows-sys`, both already in the lock file) behind
+`// SAFETY:` notes in `crates/rustynes-frontend/src/shm.rs`. The maintained
+crates were considered and not taken: `shared_memory` is not in the tree and
+would bring its own dependency set (`nix` among them) for what is six calls per
+platform, and `memmap2` maps files, which a Windows named mapping is not. Choices
+made:
+
+- Every script name is prefixed `rnmf-` before it reaches the OS, so a
+  script can open only RustyNES's regions, never another program's (shared
+  memory is a per-user namespace that browsers, sound servers and Python all
+  use). Names are limited to the characters and length every platform accepts
+  (macOS allows 30 characters after the `/`).
+- Each region carries a 32-byte header (magic, version, capacity, length, a
+  sequence counter) in front of the payload, so a reader in another process
+  knows how much is valid and can detect a copy that raced a write. A raw
+  buffer would have matched BizHawk's Windows-only API more closely, but would
+  have left every reader guessing at the length and unable to tell a torn read.
+- The budget (16 MiB, 256 names) now counts the mapped bytes, since that is
+  what the OS holds.
+- Other local users are the threat (review of the first CR-02 commit: an
+  existing object under our name was adopted without checking who made it, so
+  a user who pre-created it could read or inject data). The OS name is per
+  user (`.<euid hex>` on POSIX, `Local\` on Windows), objects are created
+  owner-only (`0600` + `O_EXCL`; Windows DACL `D:P(A;;GA;;;OW)`), and an
+  existing object is refused unless it is owned by us and owner-only (POSIX
+  `fstat`: uid and `mode & 0o077 == 0`; Windows: owner SID equals the token
+  user SID). Denial of service by squatting remains; it fails loudly. The
+  name limit fell to 21 characters (16 for a script, under the `rnmf-` prefix)
+  to fit the suffix inside macOS's 31 bytes.
+
+The memory-export interface of `T-SPEEDRUN-MEMIF` is built on the same module
+(ADR 0047).

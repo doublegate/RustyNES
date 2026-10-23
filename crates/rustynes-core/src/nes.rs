@@ -302,6 +302,21 @@ pub struct Nes {
     /// `snapshot_schema_audit` test cannot see it, so nothing mechanical will
     /// notice if this reasoning is ever invalidated.
     timeline_generation: u64,
+    /// v3.5.0 (`T-MOVIE-INPUT-STREAM`) — the Datach barcode swiped since the
+    /// last [`Nes::run_frame`] began, if any.
+    ///
+    /// A scan is an *event*, not a held level: once [`Nes::scan_barcode`] has
+    /// handed the symbol to the reader, nothing in the machine's state says
+    /// "a scan was issued just now" (the reader only says one is in
+    /// progress). A movie recorder reads its input from the machine
+    /// ([`crate::FrameInput::held_on`]) between the host's input calls and
+    /// the frame, so this field keeps the scan visible exactly that long: set
+    /// by the scan, cleared as the next frame starts.
+    ///
+    /// Host-input staging, not emulation state: nothing reads it during a
+    /// frame, it is not serialized (a restore neither carries nor clears it),
+    /// and the determinism contract is unaffected.
+    barcode_this_frame: Option<rustynes_mappers::Barcode>,
 }
 
 impl Nes {
@@ -457,6 +472,7 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
             timeline_generation: 0,
+            barcode_this_frame: None,
         })
     }
 
@@ -499,6 +515,7 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
             timeline_generation: 0,
+            barcode_this_frame: None,
         })
     }
 
@@ -572,6 +589,7 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
             timeline_generation: 0,
+            barcode_this_frame: None,
         })
     }
 
@@ -640,6 +658,7 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
             timeline_generation: 0,
+            barcode_this_frame: None,
         })
     }
 
@@ -779,6 +798,9 @@ impl Nes {
         // MAX_CPU_OVERCLOCK times as many CPU cycles into one frame.
         const MAX_CYCLES_PER_FRAME: u64 = 150_000;
         let max_cycles = MAX_CYCLES_PER_FRAME * u64::from(self.bus.cpu_overclock());
+        // v3.5.0 — a barcode swiped before this frame has now been seen by any
+        // movie recorder that was going to see it (see the field).
+        self.barcode_this_frame = None;
         let start = self.bus.cycle();
         // v2.3.7 "Overtone" — anchor this frame's mix trace. The trace is
         // per-frame (the index IS the cycle offset from here); the REGISTER
@@ -1596,8 +1618,8 @@ impl Nes {
     /// state.
     ///
     /// Used by the TAS movie recorder (`crate::movie`) to capture the inputs
-    /// applied before each [`Self::run_frame`]. (Movies record players 1 & 2;
-    /// Four Score players 3/4 are not part of the `.rnm` stream.)
+    /// applied before each [`Self::run_frame`]. (Movies record all four
+    /// ports since v2.9.8, and the non-controller inputs since v3.5.0.)
     ///
     /// # Panics
     ///
@@ -1710,6 +1732,28 @@ impl Nes {
         self.bus.set_vs_service(pressed);
     }
 
+    /// v3.5.0 — the latched Vs. System coin-insert signals: bit 0 = acceptor
+    /// #1, bit 1 = acceptor #2 (what [`Self::insert_coin`] sets and
+    /// [`Self::clear_coin`] clears). Read by a movie recorder.
+    #[must_use]
+    pub const fn vs_coin(&self) -> u8 {
+        self.bus.vs_coin()
+    }
+
+    /// v3.5.0 — whether the Vs. System service button is held (what
+    /// [`Self::set_vs_service`] set). Read by a movie recorder.
+    #[must_use]
+    pub const fn vs_service(&self) -> bool {
+        self.bus.vs_service()
+    }
+
+    /// v3.5.0 — whether the Famicom microphone is asserted (what
+    /// [`Self::set_microphone`] set). Read by a movie recorder.
+    #[must_use]
+    pub const fn microphone(&self) -> bool {
+        self.bus.microphone()
+    }
+
     // --- Famicom Disk System disk control (Stage 2b) ---
 
     /// Number of disk sides in the inserted FDS image. Returns 0 for cartridge
@@ -1755,9 +1799,11 @@ impl Nes {
     /// the same frames, and a save state taken mid-scan restores mid-scan.
     /// A scan replaces any scan still in flight.
     ///
-    /// A scan is an input that changes emulation, and it is **not** recorded
-    /// by movies or carried by netplay: callers running either must refuse
-    /// it rather than desynchronise (the desktop frontend does).
+    /// A scan is an input that changes emulation. Since v3.5.0 a `.rnm` movie
+    /// records it ([`crate::ExtraInput::barcode`]: [`Self::barcode_this_frame`]
+    /// holds it until the next frame starts, so a recorder sees it). Netplay
+    /// still does not carry it: a caller running a netplay session must
+    /// refuse it rather than desynchronise (the desktop frontend does).
     ///
     /// # Errors
     ///
@@ -1766,11 +1812,35 @@ impl Nes {
     /// cartridge has no barcode reader.
     pub fn scan_barcode(&mut self, code: &str) -> Result<(), BarcodeScanError> {
         let code = rustynes_mappers::Barcode::parse(code).map_err(BarcodeScanError::Malformed)?;
-        if self.bus.scan_barcode(&code) {
+        self.scan_barcode_code(&code)
+    }
+
+    /// v3.5.0 — [`Self::scan_barcode`] for a code already validated (a
+    /// movie's recorded scan, or a host holding a parsed [`crate::Barcode`]).
+    ///
+    /// # Errors
+    ///
+    /// [`BarcodeScanError::NoReader`] when the cartridge has no barcode
+    /// reader.
+    pub fn scan_barcode_code(
+        &mut self,
+        code: &rustynes_mappers::Barcode,
+    ) -> Result<(), BarcodeScanError> {
+        if self.bus.scan_barcode(code) {
+            self.barcode_this_frame = Some(*code);
             Ok(())
         } else {
             Err(BarcodeScanError::NoReader)
         }
+    }
+
+    /// v3.5.0 — the barcode swiped since the current (or next) frame began,
+    /// if any: set by [`Self::scan_barcode`], cleared when [`Self::run_frame`]
+    /// starts. Read by [`crate::FrameInput::held_on`] so a movie records the
+    /// scan on the frame it was made before.
+    #[must_use]
+    pub const fn barcode_this_frame(&self) -> Option<rustynes_mappers::Barcode> {
+        self.barcode_this_frame
     }
 
     /// Whether a barcode scan is still being presented to the CPU.
@@ -2266,8 +2336,11 @@ impl Nes {
         self.bus.genie_codes()
     }
 
-    /// Drain into a slice; returns the count copied.  Excess samples are
-    /// dropped if `out` is smaller than the buffered count.
+    /// Drain into a slice; returns the count copied. Samples that do not fit
+    /// are KEPT for the next drain, so a caller discarding audio must loop
+    /// until a drain returns less than `out.len()`. Until v3.5.0 this comment
+    /// said the excess was dropped, which the buffer never did, and one
+    /// caller (`rustynes-mcp`) trusted it.
     pub fn drain_audio_into(&mut self, out: &mut [f32]) -> usize {
         self.bus.drain_audio_into(out)
     }
@@ -6523,7 +6596,7 @@ mod tests {
     /// be filled, while `docs/audio-provenance.md` and the `REG_COUNT` doc
     /// comment both stated they were "tracked anyway".
     ///
-    /// Caught by the Antigravity reviewer on PR #404. This test fails without
+    /// Caught by the `Antigravity` reviewer on PR #404. This test fails without
     /// `Apu::record_bus_handled_register_write` being called from both bus arms:
     /// remove either call and the corresponding `get()` returns `None`.
     #[cfg(feature = "debug-hooks")]

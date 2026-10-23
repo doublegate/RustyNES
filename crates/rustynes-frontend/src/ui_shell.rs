@@ -155,6 +155,12 @@ pub enum MenuAction {
     CycleDiskSide,
     /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`).
     SetDiskSide(Option<usize>),
+    /// v3.5.0 (`FE-04`) — load slot `i` of the open cartridge bundle
+    /// (Emulation → Multicart).
+    SelectBundleSlot(usize),
+    /// v3.5.0 (`FE-04`) — File → New Multi-Disk Bundle… (native only; the
+    /// variant stays un-gated so the dispatch match is exhaustive).
+    NewBundle,
     /// v3.2.0 — swipe this barcode (the digits as typed) through the Datach
     /// reader (mapper 157). Validated again at the core boundary.
     ScanBarcode(String),
@@ -419,6 +425,15 @@ pub struct ShellFrame<'a> {
     /// v1.8.9 — the currently inserted FDS disk side, or `None` when ejected, for
     /// the Multi-Disk submenu's radio state.
     pub inserted_disk_side: Option<usize>,
+    /// v3.5.0 (`FE-04`) — one name per disk side when the disk set came from a
+    /// Multi-Disk bundle (`"Disk 1 side A"`, ...); empty otherwise, and the
+    /// menu falls back to "Side N".
+    pub disk_side_names: &'a [String],
+    /// v3.5.0 (`FE-04`) — the open cartridge bundle's slot names (Emulation →
+    /// Multicart); empty when no cartridge bundle is open.
+    pub bundle_slots: &'a [String],
+    /// v3.5.0 — the loaded cartridge-bundle slot, for the radio state.
+    pub bundle_slot: Option<usize>,
     /// v1.0.0 — whether the loaded game is a Vs. System title (enables the
     /// "Insert Coin" item).
     pub vs_system: bool,
@@ -577,7 +592,10 @@ impl UiShell {
         // dispatch sites refuse the same cases (`session_policy`); this only
         // makes the menu say so before the click.
         let load_interactive = rom_interactive && !rom_change_restricted;
-        let disk_interactive = !replay_locked && !rom_change_restricted;
+        // v3.5.0 — a recording records the disk, a scan and a coin
+        // (`rustynes_core::ExtraInput`), so only playback and netplay grey
+        // them; `session_policy` refuses the same cases.
+        let disk_interactive = !frame.movie_playing && !rom_change_restricted;
         // egui-0.34 menu close model (BUG-3 investigation). The new `MenuBar`
         // builds each top item as a `MenuButton` that inherits the bar's
         // `MenuConfig::close_behavior`, which defaults to
@@ -610,6 +628,19 @@ impl UiShell {
                     .clicked()
                     {
                         out.action = Some(MenuAction::OpenRom);
+                        ui.close();
+                    }
+                    // v3.5.0 (`FE-04`) — write a `.rnbundle` from picked images
+                    // and open it.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui
+                        .add_enabled(
+                            !rom_change_restricted,
+                            egui::Button::new(ic(glyph::FOLDER_OPEN, crate::t!(MenuNewBundle))),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::NewBundle);
                         ui.close();
                     }
 
@@ -988,11 +1019,12 @@ impl UiShell {
                         )),
                     );
                     // (H1) Inserting a Vs. coin is a hardware action — locked
-                    // during netplay (the host drives arcade hardware).
+                    // during netplay (the host drives arcade hardware), and
+                    // (v3.5.0) during movie playback; a recording records it.
                     if frame.vs_system
                         && accel_enabled(
                             ui,
-                            rom && !rom_change_restricted,
+                            rom && disk_interactive,
                             &ic(glyph::COINS, crate::t!(ShellVsInsertCoin)),
                             &keys.insert_coin,
                         )
@@ -1003,8 +1035,8 @@ impl UiShell {
                     }
                     // v1.3.0 menu reorg — FDS disk controls (only meaningful for
                     // FDS games; moved here from the File menu). (H1) Disk-swap
-                    // mutates the running session — locked during a replay (it
-                    // would diverge the recorded timeline).
+                    // mutates the running session — locked during playback
+                    // and netplay; since v3.5.0 a recording records it.
                     if frame.disk_sides > 0 {
                         ui.separator();
                         // v2.3.6 menu reorg — the swap accelerator and the
@@ -1028,15 +1060,18 @@ impl UiShell {
                             ui.separator();
                             // v1.8.9 — Multi-Disk: insert a specific side directly (a
                             // multi-disk FDS game prompts "insert side N"), or eject.
-                            // Disabled during a replay (mutating the disk diverges the
-                            // recorded timeline), like the cycle item above.
+                            // Disabled during playback and netplay, like the cycle
+                            // item above (v3.5.0: a recording records the swap).
                             ui.add_enabled_ui(disk_interactive, |ui| {
                                 for i in 0..frame.disk_sides {
+                                    // v3.5.0 — a bundle's side names, else
+                                    // the numbered default.
+                                    let label = frame.disk_side_names.get(i).map_or_else(
+                                        || crate::tf!(ShellSideN, i + 1),
+                                        Clone::clone,
+                                    );
                                     if ui
-                                        .radio(
-                                            frame.inserted_disk_side == Some(i),
-                                            crate::tf!(ShellSideN, i + 1),
-                                        )
+                                        .radio(frame.inserted_disk_side == Some(i), label)
                                         .clicked()
                                     {
                                         out.action = Some(MenuAction::SetDiskSide(Some(i)));
@@ -1057,10 +1092,26 @@ impl UiShell {
                             });
                         });
                     }
+                    // v3.5.0 (`FE-04`) — the open cartridge bundle's slots. Each
+                    // is its own game, so picking one is a ROM load (locked
+                    // out with Open ROM while netplay forbids a ROM change).
+                    if !frame.bundle_slots.is_empty() {
+                        ui.separator();
+                        ui.menu_button(ic(glyph::FOLDER_OPEN, crate::t!(ShellMulticart)), |ui| {
+                            ui.add_enabled_ui(!rom_change_restricted, |ui| {
+                                for (i, name) in frame.bundle_slots.iter().enumerate() {
+                                    if ui.radio(frame.bundle_slot == Some(i), name).clicked() {
+                                        out.action = Some(MenuAction::SelectBundleSlot(i));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
+                    }
                     // v3.2.0 — the Datach barcode reader (mapper 157 only).
-                    // Locked like the disk controls: a scan changes the
-                    // machine outside the controller input a movie or a
-                    // netplay session carries. The window says why.
+                    // Locked like the disk controls: during playback (the
+                    // movie scans what it recorded) and netplay (which does
+                    // not carry a scan). The window says why.
                     if frame.barcode_reader {
                         ui.separator();
                         if ui
@@ -2517,7 +2568,8 @@ impl UiShell {
         if !self.show_barcode {
             return;
         }
-        let locked = frame.movie_recording || frame.movie_playing || frame.netplay_active;
+        // v3.5.0 — a recording records the scan; playback and netplay refuse it.
+        let locked = frame.movie_playing || frame.netplay_active;
         let mut open = self.show_barcode;
         let input = &mut self.barcode_input;
         egui::Window::new(crate::t!(ShellBarcodeTitle))
@@ -2843,6 +2895,9 @@ mod tests {
             netplay_active: false,
             disk_sides: 0,
             inserted_disk_side: None,
+            disk_side_names: &[],
+            bundle_slots: &[],
+            bundle_slot: None,
             vs_system: false,
             barcode_reader: false,
             mapper_label: "NROM (0)",
