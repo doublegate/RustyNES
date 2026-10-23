@@ -619,13 +619,25 @@ jobs:
       # grow-while-another-program-holds-it recovery, and no job ran them: the
       # `test` matrix runs Windows only on a full run and without `script-ipc`,
       # and the feature steps above are Linux only. This runs the store's tests
-      # and the script host's on Windows, on every ready PR. The name filter
-      # must match something: an empty filter exits 0.
+      # and the script host's on Windows, on every ready PR.
+      #
+      # `full`, not `script-ipc` alone: it is the feature set the step above
+      # just built, so the dependencies are reused rather than rebuilt under a
+      # second fingerprint, and it adds the `memif::` tests (Antigravity, #625).
+      # The checks after it exist because a passing summary proves too little:
+      # an empty filter exits 0, and libtest ORs its filters, so one group can
+      # carry the summary while another matches nothing (CodeRabbit and
+      # Antigravity, #625). So each group must show a passing test, and the
+      # Windows-only grow-recovery test must be among them by name.
       - if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo test -p rustynes-frontend --lib --features script-ipc --locked -- shm:: script_host:: 2>&1 | tee test.log
-          grep -E '^test result: ok\. [1-9][0-9]* passed' test.log
+          set -o pipefail
+          cargo test -p rustynes-frontend --lib --features full --locked -- shm:: script_host:: memif:: 2>&1 | tee test.log
+          for group in shm script_host memif; do
+            grep -qE "^test ${group}::[^ ]+ \.\.\. ok$" test.log || { echo "no passing ${group}:: test ran"; exit 1; }
+          done
+          grep -qE '^test script_host::tests::a_larger_write_with_a_reader_attached_is_refused_and_the_region_kept \.\.\. ok$' test.log
 
   test-roms:
     name: test (test-roms feature)
