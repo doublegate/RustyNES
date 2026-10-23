@@ -154,6 +154,13 @@ impl SpeedrunHost {
         event
     }
 
+    /// Whether a game is bound (its hash seen on a frame since the last
+    /// [`Self::no_game`]).
+    #[cfg(test)]
+    pub(crate) const fn game_bound(&self) -> bool {
+        self.rom.is_some()
+    }
+
     /// Publish "no game loaded" (the console was unloaded).
     pub fn no_game(&mut self) {
         self.rom = None;

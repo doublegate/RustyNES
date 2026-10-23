@@ -1267,7 +1267,10 @@ mod tests {
             assert!(length <= capacity && 32 + capacity <= region.len());
             let mut data = vec![0u8; length];
             region.read_bytes(32, &mut data);
-            if region.atomic_u32(16).load(Ordering::Acquire) == s1 {
+            // As the production reader (`mmf_read`): the fence keeps the
+            // payload reads before the re-check of the counter.
+            std::sync::atomic::fence(Ordering::Acquire);
+            if region.atomic_u32(16).load(Ordering::Relaxed) == s1 {
                 return data;
             }
         }

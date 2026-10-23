@@ -1111,6 +1111,15 @@ impl EmuCore {
         self.nes = None;
         self.dual = None;
         self.mapper_name.clear();
+        // v3.5.0 — the speedrun timer and the memory-export block describe
+        // the game that just went away: drop its timer and publish "no game"
+        // (flag bit 0 clear), as docs/memory-export-interface.md promises.
+        // `no_game` existed but nothing called it, so a closed game stayed
+        // published with its hash, RAM and timer (Antigravity on #624,
+        // round 4). The next game rebinds on its first frame.
+        if let Some(sr) = self.speedrun.as_mut() {
+            sr.no_game();
+        }
     }
 
     /// v2.9.9 (NF-12) — end the movie session because the game is going away.
@@ -2913,6 +2922,25 @@ mod tests {
     /// CHR) whose reset vector loops on itself, so `run_frame` advances without
     /// touching work RAM — leaving the queued-poke effect cleanly observable.
     #[cfg(not(target_arch = "wasm32"))]
+    /// Closing the ROM unbinds the speedrun host (and so publishes "no
+    /// game" on the memory-export block). Mutation-checked by removing the
+    /// `no_game` call from `clear_rom`.
+    #[test]
+    fn closing_the_rom_tells_the_speedrun_host() {
+        let mut core = EmuCore::new();
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        let mut host = crate::speedrun_host::SpeedrunHost::new(
+            &crate::speedrun_host::SpeedrunOptions::default(),
+        )
+        .unwrap();
+        let _ = host.after_frame(&mut nes);
+        assert!(host.game_bound());
+        core.nes = Some(nes);
+        core.speedrun = Some(host);
+        core.clear_rom();
+        assert!(!core.speedrun.as_ref().unwrap().game_bound());
+    }
+
     fn synth_nrom() -> Vec<u8> {
         let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
         rom[0..4].copy_from_slice(b"NES\x1A");

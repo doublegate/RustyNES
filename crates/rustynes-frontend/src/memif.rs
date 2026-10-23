@@ -283,7 +283,10 @@ mod tests {
                 }
                 let mut b = vec![0u8; 0x2B00];
                 self.0.read_bytes(0, &mut b);
-                if self.0.atomic_u32(0x14).load(Ordering::Acquire) == s1 {
+                // The fence keeps the copy before the counter's re-check, as
+                // the script host's production reader does.
+                std::sync::atomic::fence(Ordering::Acquire);
+                if self.0.atomic_u32(0x14).load(Ordering::Relaxed) == s1 {
                     return b;
                 }
             }
