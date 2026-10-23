@@ -222,9 +222,13 @@ All multi-byte fields are little-endian.
 | `0x0900` | 8192 | cartridge RAM window `$6000-$7FFF`, as the CPU would read it (side-effect-free) |
 | `0x2900` | 512 | split table: 64 entries of 8 bytes, the elapsed cycles at each completed split (0 for one not reached) |
 
-The two RAM blocks are the RetroAchievements flat space laid out contiguously:
-the byte at flat address `x` is at `0x0100 + x` for every `x` below `0x2800`.
-A splitter's RAM addresses are therefore the same numbers a condition uses.
+The two RAM blocks hold the two RAM windows of the CPU bus, which are also the
+RetroAchievements addresses a condition uses: RAM address `x` (`$0000-$1FFF`,
+with its mirrors) is at `0x0100 + (x & 0x07FF)`, and cartridge RAM address `x`
+(`$6000-$7FFF`) is at `0x0900 + (x - 0x6000)`. (Until v3.5.0's review this
+page said the block was the RA "flat space" at `0x0100 + x`, which held only
+under the earlier, wrong reading of RA's NES addresses; the layout itself has
+not changed.)
 
 When no game is loaded the header (magic to layout size, the publish count and
 the epoch) is written and every other byte is zero; check flag bit 0 before

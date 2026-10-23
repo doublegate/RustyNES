@@ -574,6 +574,10 @@ impl Session {
     }
 
     fn write_ram(&mut self, a: &WriteRamArgs) -> ToolResult {
+        // A write restarts the journal, so during a real-time run it would cut
+        // the run's recording mid-way; like every other timeline change it
+        // needs the machine paused (Antigravity on #624, round 3).
+        self.refuse_while_running("write_ram")?;
         let end = usize::from(a.addr) + a.bytes.len();
         if a.bytes.is_empty() || end > 0x800 {
             return Err(ToolError::Refused(format!(

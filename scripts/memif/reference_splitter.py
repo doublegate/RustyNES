@@ -100,7 +100,10 @@ def open_block(name, timeout):
     while True:
         try:
             shm = _attach(name)
-            if shm.size >= LAYOUT_SIZE:
+            # A block someone else owns is returned at once, whatever its
+            # size, so main() refuses it (exit 1) instead of this loop waiting
+            # out the timeout on a squatted name.
+            if shm.size >= LAYOUT_SIZE or not owned_by_me(shm):
                 return shm
             shm.close()
         except (FileNotFoundError, ValueError):  # absent, or still 0 bytes

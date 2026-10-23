@@ -46,9 +46,12 @@
 //! | `0x0900` | 8192 | cartridge RAM window `$6000-$7FFF` (as the CPU would read it, side-effect-free) |
 //! | `0x2900` | 512 | split table: 64 x `u64` elapsed cycles at each split (0 = not reached) |
 //!
-//! The RAM blocks are the `RetroAchievements` NES flat space laid out
-//! contiguously: RA address `x` is at `0x0100 + x` for both windows, so a
-//! condition's addresses index the block directly.
+//! The RAM blocks hold the CPU bus's two RAM windows, which are also the
+//! `RetroAchievements` addresses a condition uses: RAM address `x`
+//! (`$0000-$1FFF`, mirrors included) is at `0x0100 + (x & 0x07FF)`, and
+//! cartridge RAM address `x` (`$6000-$7FFF`) at `0x0900 + (x - 0x6000)`.
+//! (This said "`0x0100 + x` for both windows" until v3.5.0's review corrected
+//! RA's NES addresses to CPU addresses; the offsets did not move.)
 //!
 //! # Consistency
 //!
@@ -348,7 +351,8 @@ mod tests {
 
     /// A published frame, read through the document's offsets, equals the
     /// console's own state: counters, region fraction, hash, both RAM
-    /// windows (the RA flat address `x` at `0x0100 + x`), and the timer.
+    /// windows (RAM at `0x0100`, cartridge RAM `$6000` at `0x0900`), and the
+    /// timer.
     #[test]
     fn a_published_frame_matches_the_console() {
         use rustynes_core::speedrun::{SpeedrunTimer, SplitsDefinition};
@@ -396,11 +400,11 @@ mod tests {
         assert_eq!(&b[0x100..0x900], nes.wram());
         assert_ne!(b[0x100 + 5], 0, "the counter ran");
         assert_eq!(
-            b[0x100 + 0x0800 + 3],
+            b[0x0900 + 3],
             nes.peek(0x6003),
-            "RA 0x0803 is $6003"
+            "cartridge RAM $6003 is at 0x0903"
         );
-        assert_ne!(b[0x100 + 0x0800 + 3], 0, "the cartridge RAM window is live");
+        assert_ne!(b[0x0900 + 3], 0, "the cartridge RAM window is live");
     }
 
     /// A block with no game: magic, version, sizes, and flags 0.

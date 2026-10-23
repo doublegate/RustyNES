@@ -34,14 +34,19 @@ shared-memory layer in the frontend (ADR 0016's 2026-10-20 amendment).
    rewind or power cycle no longer measures one run).
 2. **Predicates are the RetroAchievements condition grammar**, a documented
    subset (sizes, `d`/`p`/`b`/`~`, comparisons, `S` groups, hit counts) over
-   RetroAchievements' NES flat address space, so a condition copied from an
+   RetroAchievements' NES addresses (the CPU bus; amended at v3.5.0's review,
+   which found the first text's "flat space" mapping wrong), so a condition
+   copied from an
    achievement set means the same here. Flags and arithmetic are refused with
    a message rather than misread; the splits file's own `reset` covers `R:`.
    The grammar was written from RetroAchievements' public description, not
    from an implementation.
 3. **A fixed, versioned block is published every frame** (`--memif`, the
-   `memif` feature, part of `full`): CPU RAM and the cartridge RAM window at
-   fixed offsets equal to `0x0100 +` the flat address, the frame and master
+   `memif` feature, part of `full`): CPU RAM at `0x0100` and the cartridge RAM
+   window `$6000-$7FFF` at `0x0900` (an address `x` in it at
+   `0x0900 + (x - 0x6000)`; amended at v3.5.0's review, which corrected RA's
+   NES addresses to CPU addresses, so "`0x0100 +` the flat address" no
+   longer describes it; the offsets did not move), the frame and master
    clock, the region's clock fraction, the ROM's hash, the epoch, and the
    timer's state and split table, under one sequence counter so a reader gets
    one frame's values. Within layout version 1 no field moves; reserved bytes

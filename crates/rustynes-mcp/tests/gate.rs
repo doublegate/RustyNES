@@ -351,6 +351,13 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
         ),
         "stepping while running is refused"
     );
+    assert!(
+        matches!(
+            call(&h, "write_ram", json!({ "addr": 0x10, "bytes": [1] })),
+            Err(rustynes_mcp::ToolError::Refused(_))
+        ),
+        "a RAM write while running is refused"
+    );
     // Observation still answers while running.
     ok(&h, "cpu_state", Value::Null);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);

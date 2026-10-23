@@ -730,7 +730,10 @@ pub fn attestation_bytes(extra: Option<&ExtraInput>) -> [u8; ATTESTATION_EXTRA_L
         at += 1 + DEVICE_PAYLOAD_MAX;
     }
     out[at] = u8::from(e.microphone);
-    out[at + 1] = e.vs_coin;
+    // Masked as the `.rnm` encoder masks it and as replay reads it (bits 0-1,
+    // the two acceptors), so an in-memory value with stray high bits attests
+    // as it will after a save and reload (Antigravity on #624, round 3).
+    out[at + 1] = e.vs_coin & 0b11;
     out[at + 2] = u8::from(e.vs_service);
     out[at + 3] = e.disk_side.unwrap_or(DISK_EJECTED);
     at += 4;
@@ -896,6 +899,20 @@ mod tests {
         }
         // None (twice), a, a, b, c, neutral: five distinct records.
         assert_eq!(seen.len(), 5);
+        // Only the two acceptor bits are input: stray high bits attest as the
+        // masked value, as they encode and replay.
+        let stray = ExtraInput {
+            vs_coin: 0b1111_0001,
+            ..ExtraInput::default()
+        };
+        let clean = ExtraInput {
+            vs_coin: 0b01,
+            ..ExtraInput::default()
+        };
+        assert_eq!(
+            attestation_bytes(Some(&stray)),
+            attestation_bytes(Some(&clean))
+        );
     }
 
     /// `FrameInput::encode_log` / `decode_log` (the `.rnmproj` version 2
