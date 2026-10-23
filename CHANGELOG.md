@@ -28,12 +28,13 @@ cycle-accurate core later replaced.
 
 ### Changed
 
-- **CI runs the shared-memory store's Windows tests**: the Lua IPC transports'
-  OS shared-memory code has a Windows implementation, and v3.5.0 added a
-  Windows test for growing a region another program still holds, but no CI job
-  built `script-ipc` on Windows. The `full-build` job's Windows leg now runs the
-  store's and the script host's tests with it, and fails if the filter matches
-  no test (`T-WIN-SCRIPT-IPC-CI`).
+- **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC
+  transports' OS shared-memory code has Windows and Apple implementations, and
+  v3.5.0 added a Windows test for growing a region another program still
+  holds. The `full-build` job compiled that code on both systems and no job ran
+  its tests. Both legs now run the store's, the script host's and `memif`'s
+  tests on the `full` build; each group must show a passing test, and on
+  Windows the grow test must pass by name (`T-WIN-SCRIPT-IPC-CI`).
 
 ### Documentation
 

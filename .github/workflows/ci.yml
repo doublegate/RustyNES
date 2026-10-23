@@ -614,12 +614,15 @@ jobs:
         with:
           cache-key: full-build
       - run: cargo build -p rustynes-frontend --features full --locked
-      # 2026-10-23 (after v3.5.0) — the OS shared-memory store (`shm.rs`, `script-ipc`) has a
-      # Windows implementation and `#[cfg(windows)]` tests, among them v3.5.0's
-      # grow-while-another-program-holds-it recovery, and no job ran them: the
-      # `test` matrix runs Windows only on a full run and without `script-ipc`,
-      # and the feature steps above are Linux only. This runs the store's tests
-      # and the script host's on Windows, on every ready PR.
+      # 2026-10-23 (after v3.5.0) — the OS shared-memory store (`shm.rs`,
+      # `script-ipc`) has a Windows implementation and an Apple one
+      # (`target_vendor = "apple"`: variadic `shm_open`, `PSHMNAMLEN`, a `u16`
+      # `st_mode`), each with its own tests, among them v3.5.0's Windows
+      # grow-while-another-program-holds-it recovery. This job built them and no
+      # job ran them: the `test` matrix reaches Windows and macOS only on a full
+      # run and without `script-ipc`, and the feature steps above are Linux only.
+      # This runs the store's, the script host's and memif's tests on both, on
+      # every ready PR (macOS: Antigravity, #625).
       #
       # `full`, not `script-ipc` alone: it is the feature set the step above
       # just built, so the dependencies are reused rather than rebuilt under a
@@ -629,15 +632,16 @@ jobs:
       # carry the summary while another matches nothing (CodeRabbit and
       # Antigravity, #625). So each group must show a passing test, and the
       # Windows-only grow-recovery test must be among them by name.
-      - if: runner.os == 'Windows'
-        shell: bash
+      - shell: bash
         run: |
           set -o pipefail
           cargo test -p rustynes-frontend --lib --features full --locked -- shm:: script_host:: memif:: 2>&1 | tee test.log
           for group in shm script_host memif; do
             grep -qE "^test ${group}::[^ ]+ \.\.\. ok$" test.log || { echo "no passing ${group}:: test ran"; exit 1; }
           done
-          grep -qE '^test script_host::tests::a_larger_write_with_a_reader_attached_is_refused_and_the_region_kept \.\.\. ok$' test.log
+          if [ "$RUNNER_OS" = Windows ]; then
+            grep -qE '^test script_host::tests::a_larger_write_with_a_reader_attached_is_refused_and_the_region_kept \.\.\. ok$' test.log
+          fi
 
   test-roms:
     name: test (test-roms feature)
