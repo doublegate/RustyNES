@@ -5951,9 +5951,14 @@ mod tests {
                     .unwrap_or_else(|| panic!("end of {start:?} not found"));
                 &rest[..j]
             }
+            // Line endings normalised first: a Windows checkout has CRLF, so
+            // the `"\n}\n"` end marker never matched there (Windows CI on
+            // #624, the same trap as v3.4.1's `release_anchor_audit`).
             let kt = include_str!(
                 "../../../android/app/src/main/java/com/doublegate/rustynes/Netplay.kt"
-            );
+            )
+            .replace("\r\n", "\n");
+            let kt = kt.as_str();
             let gate = body(kt, "fun onlineNetplayConfigured(", "\n}\n");
             assert!(
                 gate.contains("return npValidateRelayUrl(url)"),
@@ -5969,7 +5974,9 @@ mod tests {
             );
             assert!(kt.contains("import uniffi.rustynes_mobile.npValidateRelayUrl"));
 
-            let swift = include_str!("../../../ios/RustyNES/NetplayModel.swift");
+            let swift =
+                include_str!("../../../ios/RustyNES/NetplayModel.swift").replace("\r\n", "\n");
+            let swift = swift.as_str();
             let gate = body(swift, "var signalingConfigured: Bool {", "\n    }\n");
             assert!(
                 gate.contains("return npValidateRelayUrl(url: u)"),
