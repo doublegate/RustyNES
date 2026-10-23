@@ -929,6 +929,17 @@ mod tests {
             libc::close(fd);
             u32::from(st.st_mode) & 0o777
         };
+        // Both preconditions only bind on Apple, where the plant keeps the
+        // umask-reduced mode: an unusual umask such as 0700 leaves 0066, which
+        // passes the second check but which `open`/`create` cannot open read-
+        // write, so they would fail with an OS error before the owner check
+        // runs (CodeRabbit, #625).
+        assert_eq!(
+            mode & 0o600,
+            0o600,
+            "the plant is mode {mode:03o}: this process's umask removes owner \
+             read/write, so O_RDWR cannot reach the owner check"
+        );
         assert_ne!(
             mode & 0o077,
             0,
