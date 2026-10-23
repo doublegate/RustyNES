@@ -26,6 +26,31 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs the shared-memory store's Windows tests**: the Lua IPC transports'
+  OS shared-memory code has a Windows implementation, and v3.5.0 added a
+  Windows test for growing a region another program still holds, but no CI job
+  built `script-ipc` on Windows. The `full-build` job's Windows leg now runs the
+  store's and the script host's tests with it, and fails if the filter matches
+  no test (`T-WIN-SCRIPT-IPC-CI`).
+
+### Documentation
+
+- **v3.5.0's release notes file matches the published release**: the MiSTer
+  pin, bitstream and verification lines were placeholders in the merged file
+  and were filled in on the release page once the sibling had pinned the merge
+  and compiled the bitstreams; the file now carries the published text.
+- **v3.5.0's Linux download is the plain build**: the release's PGO gate did
+  not promote. The profile-guided build was byte-identical to the plain one on
+  the oracle check and measured 4.92% slower (the gate needs more than 3%
+  faster), as v3.4.1's measured 5.05% slower. The only promotion in the release
+  history is still v2.9.6's.
+- New tickets from the v3.5.0 reviews: `T-MMC5-LATCH-VBLANK` (the MMC5 split
+  and ExGrafix CHR latches survive VBlank in both cores; a documentation and
+  test-ROM question first), `T-WIN-SCRIPT-IPC-CI` and `T-V350-REVIEW-RESIDUE`
+  (suggestions not taken, to be confirmed or refuted).
+
 ## [3.5.0] - 2026-10-22 - "Chorus" (creator tools: the full movie input stream, Lua WebSockets and shared memory, an MCP server, speedrun timing and dump checks; and the MiSTer core's MMC5, VRC6, Namco 163, VRC7 and Bandai FCG boards, off the die)
 
 ### Breaking

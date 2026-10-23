@@ -614,6 +614,18 @@ jobs:
         with:
           cache-key: full-build
       - run: cargo build -p rustynes-frontend --features full --locked
+      # 2026-10-23 (after v3.5.0) — the OS shared-memory store (`shm.rs`, `script-ipc`) has a
+      # Windows implementation and `#[cfg(windows)]` tests, among them v3.5.0's
+      # grow-while-another-program-holds-it recovery, and no job ran them: the
+      # `test` matrix runs Windows only on a full run and without `script-ipc`,
+      # and the feature steps above are Linux only. This runs the store's tests
+      # and the script host's on Windows, on every ready PR. The name filter
+      # must match something: an empty filter exits 0.
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo test -p rustynes-frontend --lib --features script-ipc --locked -- shm:: script_host:: 2>&1 | tee test.log
+          grep -E '^test result: ok\. [1-9][0-9]* passed' test.log
 
   test-roms:
     name: test (test-roms feature)

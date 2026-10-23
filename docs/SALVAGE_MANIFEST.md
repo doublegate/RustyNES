@@ -364,3 +364,35 @@ ladder worktree copies; `live/turn1.json`, a short-lived TURN credential that
 must not be kept. Earlier the same evening, 10 GB of this session's regenerable
 build output (a cargo target directory and Verilator `obj_dir` trees) was
 deleted to recover a full `/tmp`.
+
+## 2026-10-23 — session f63c2db0, after the v3.5.0 release
+
+Scope set by the maintainer: this session's scratch, curated tier. The dry run
+found 60,331 files (4.9 GB) in the session scratchpad. The cut was made by
+kind, not by name: build output (cargo `target` / `base-target` trees, `.o`,
+`.dwo`, `.bc`, `.rmeta`, Verilator `obj_dir`, wasm `dist-*`), the CodeQL
+bundle, databases and repository copies (2.5 GB), downloaded release binaries
+and `.rbf` copies (on the GitHub releases and in `salvaged/evidence/v3.5.0-quartus/`),
+and any PNG, snapshot, CSV or binary over 256 KB, which takes the golden IRQ
+CSVs (`VERIFY=1` rebuilds them from the pinned oracle) and the 137 MB DUT dump.
+**Moved: 7,395 files (166 MB)** into `salvaged/tmp-scratch/f63c2db0/`, relative
+paths kept, no destination existed, no errors:
+
+- `v350/` (7,267): the v3.5.0 agent and merge work. Oracle worktree scratch
+  (`ora-mmc5irq`, `ora-desktop`, `ora-script`, `ora-movie`, `ora-mcp`,
+  `ora-small`), sibling board work (`sib-mmc5`, `sib-namco-vrc6`,
+  `sib-fcg-vrc7`, `sib-tier`, with the generated stimulus `.nes` files),
+  `m5det` / `m5merge` / `mmc5eq` (the MMC5 detector change and merge),
+  the mutation runs, gate logs, review replies for #624 and #69, the seed-sweep
+  logs in `quartus/`, and the cut, review and PR-body drafts.
+- loose files (90) and `mister/`, `v341/`, `cfdocs/`: v3.4.1 and v3.4.2 notes,
+  merge logs, CI workflow experiments, and a Worker tail record (no credential).
+
+Checked for credentials before writing this entry: the only hits are repository
+copies of the hosted service's docs and tests, Cloudflare's own credential
+documentation, and the tail record above.
+
+**Left in /tmp:** 53,776 files (5.1 GB) of the kinds above; the 181
+background-task output logs; the VeridianOS agent slug (37 files) and the
+`rusty2600-target`, `spectre-target` and `octollm-target` build trees, all of
+which belong to other projects; the zellij log and harness cache-state JSON.
