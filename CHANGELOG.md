@@ -26,6 +26,37 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC
+  transports' OS shared-memory code has Windows and Apple implementations, and
+  v3.5.0 added a Windows test for growing a region another program still
+  holds. The `full-build` job compiled that code on both systems and no job ran
+  its tests. Both legs now run the store's, the script host's and `memif`'s
+  tests on the `full` build; each group must show a passing test, and on
+  Windows the grow test must pass by name (`T-WIN-SCRIPT-IPC-CI`). Its first
+  run passed on Windows, including the grow test, and failed one test on
+  macOS: the test that plants a shared-memory object other users can read
+  changed the object's mode with `fchmod`, which macOS does not support on
+  such objects. The refusal itself works there; the test now plants with the
+  mode the system gives a new object and reads that mode back.
+
+### Documentation
+
+- **v3.5.0's release notes file matches the published release**: the MiSTer
+  pin, bitstream and verification lines were placeholders in the merged file
+  and were filled in on the release page once the sibling had pinned the merge
+  and compiled the bitstreams; the file now carries the published text.
+- **v3.5.0's Linux download is the plain build**: the release's PGO gate did
+  not promote. The profile-guided build was byte-identical to the plain one on
+  the oracle check and measured 4.92% slower (the gate needs more than 3%
+  faster), as v3.4.1's measured 5.05% slower. The only promotion in the release
+  history is still v2.9.6's.
+- New tickets from the v3.5.0 reviews: `T-MMC5-LATCH-VBLANK` (the MMC5 split
+  and ExGrafix CHR latches survive VBlank in both cores; a documentation and
+  test-ROM question first), `T-WIN-SCRIPT-IPC-CI` and `T-V350-REVIEW-RESIDUE`
+  (suggestions not taken, to be confirmed or refuted).
+
 ## [3.5.0] - 2026-10-22 - "Chorus" (creator tools: the full movie input stream, Lua WebSockets and shared memory, an MCP server, speedrun timing and dump checks; and the MiSTer core's MMC5, VRC6, Namco 163, VRC7 and Bandai FCG boards, off the die)
 
 ### Breaking

@@ -884,10 +884,22 @@ mod tests {
     #[test]
     fn a_squatted_object_with_open_permissions_is_refused() {
         use std::ffi::CString;
+        // Unlinks the planted name when dropped, so a failing assertion below
+        // does not leave the object in the system's namespace (Antigravity,
+        // #625); dropped explicitly before the fresh create at the end.
+        struct Plant(CString);
+        impl Drop for Plant {
+            fn drop(&mut self) {
+                // SAFETY: a valid C string naming the object planted below;
+                // unlinking a name that is already gone only returns ENOENT.
+                unsafe { libc::shm_unlink(self.0.as_ptr()) };
+            }
+        }
         let name = unique("sq");
         let c = CString::new(os_object_name(&name)).unwrap();
-        // SAFETY: a valid C string; a new object, mode 0666 (umask may clear
-        // some bits; the fchmod below sets them regardless).
+        // SAFETY: a valid C string; a new object, mode 0666 less the umask.
+        // Outside Apple the fchmod below then forces 0666; on Apple the plant
+        // keeps the reduced mode (see there).
         let fd = unsafe {
             libc::shm_open(
                 c.as_ptr(),
@@ -896,22 +908,54 @@ mod tests {
             )
         };
         assert!(fd >= 0, "plant: {}", io::Error::last_os_error());
+        let plant = Plant(c);
         // SAFETY: `fd` is the descriptor just opened.
-        unsafe {
-            assert_eq!(libc::ftruncate(fd, 4096), 0);
-            assert_eq!(libc::fchmod(fd, 0o666), 0);
+        assert_eq!(unsafe { libc::ftruncate(fd, 4096) }, 0);
+        // macOS does not implement `fchmod` on a POSIX shared-memory
+        // descriptor (it fails; found when CI first ran this test there, #625),
+        // so on Apple the plant keeps the mode `shm_open` gave it: 0666 less
+        // the umask, 0644 under the usual 022, which others can read and the
+        // check must refuse. The expected message is built from the mode
+        // actually read back rather than assumed.
+        #[cfg(not(target_vendor = "apple"))]
+        // SAFETY: `fd` is the descriptor just opened.
+        assert_eq!(unsafe { libc::fchmod(fd, 0o666) }, 0);
+        // `st_mode` is a u32 on Linux and a u16 on macOS, as in `check_owner`.
+        #[allow(clippy::useless_conversion)]
+        // SAFETY: `fd` is open; `st` is a valid out-pointer for `fstat`.
+        let mode = unsafe {
+            let mut st: libc::stat = std::mem::zeroed();
+            assert_eq!(libc::fstat(fd, &raw mut st), 0);
             libc::close(fd);
-        }
+            u32::from(st.st_mode) & 0o777
+        };
+        // Both preconditions only bind on Apple, where the plant keeps the
+        // umask-reduced mode: an unusual umask such as 0700 leaves 0066, which
+        // passes the second check but which `open`/`create` cannot open read-
+        // write, so they would fail with an OS error before the owner check
+        // runs (CodeRabbit, #625).
+        assert_eq!(
+            mode & 0o600,
+            0o600,
+            "the plant is mode {mode:03o}: this process's umask removes owner \
+             read/write, so O_RDWR cannot reach the owner check"
+        );
+        assert_ne!(
+            mode & 0o077,
+            0,
+            "the plant is mode {mode:03o}: this process's umask leaves the \
+             object private, so no squatted object can be planted to test"
+        );
+        let expected = format!("mode {mode:03o}");
         for err in [
             SharedRegion::open(&name).unwrap_err(),
             SharedRegion::create(&name, 4096).unwrap_err(),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
-            assert!(err.to_string().contains("mode 666"), "{err}");
+            assert!(err.to_string().contains(&expected), "{err}");
         }
         // Clean up the plant; then the normal path works again.
-        // SAFETY: a valid C string naming the object planted above.
-        unsafe { libc::shm_unlink(c.as_ptr()) };
+        drop(plant);
         let r = SharedRegion::create(&name, 4096).expect("a fresh create works");
         assert!(r.created());
         assert!(SharedRegion::open(&name).is_ok(), "and so does an open");
