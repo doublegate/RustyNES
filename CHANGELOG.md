@@ -95,6 +95,16 @@ cycle-accurate core later replaced.
 
 ### Documentation
 
+- **Switch, PS Vita and 3DS for the libretro core: no-go, recorded**
+  (`T-LIBRETRO-CONSOLES`, D28). The Switch's Rust target has no `std`, and a
+  `-Zbuild-std` build fails in `std` (the reason v2.9.8 dropped
+  `platform=libnx`, now checked by building). The Vita and 3DS staticlibs
+  compile with nightly `-Zbuild-std`, but the libretro buildbot has no Rust
+  template or image for a console, nothing was linked, and the core is
+  expected, not measured, to run well below full speed on those CPUs. No
+  buildbot job was added; `docs/libretro/architecture.md` records the checks
+  and what would reopen it.
+
 - **v3.5.0's release notes file matches the published release**: the MiSTer
   pin, bitstream and verification lines were placeholders in the merged file
   and were filled in on the release page once the sibling had pinned the merge
