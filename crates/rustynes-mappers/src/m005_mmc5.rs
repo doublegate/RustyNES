@@ -1588,7 +1588,12 @@ impl Mapper for Mmc5 {
         // marked as inside the alt region (split CHR bank latched), the
         // NT and AT bytes come from ExRAM regardless of the $5105 mapping
         // for the synthesized $2000-$23FF address the PPU passes in.
-        if self.split_chr_bank_latch.is_some() {
+        // Like the CHR half in `chr_offset`, this is a substitution to
+        // fetches made while the PPU renders: outside that predicate a
+        // `$2007` nametable read follows `$5105`, whatever the last tile
+        // latched (`T-MMC5-LATCH-VBLANK`; before v3.5.1 the latch applied
+        // whenever it was set).
+        if self.render_window && self.ppu_rendering && self.split_chr_bank_latch.is_some() {
             let local = (addr as usize) & (NAMETABLE_SIZE - 1);
             return Some(self.exram[local & (EXRAM_SIZE - 1)]);
         }
@@ -3339,6 +3344,7 @@ mod tests {
         m.cpu_write(0x5200, 0x80 | 31); // alt covers cols 0..=30
         m.cpu_write(0x5201, 16); // v-scroll 16 -> first alt scanline at row 16
         m.cpu_write(0x5202, 0);
+        rendering(&mut m);
         // Activate split for the tile at cx=5, scanline=0 (alt region).
         // y_in_region = (16 + 0) % 240 = 16; coarse_y = 2; NT addr =
         // $2000 | (2 << 5) | 5 = $2045 -> ExRAM index 0x45.
@@ -3441,6 +3447,36 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), 8, "rendering back on");
         m.notify_vblank();
         assert_eq!(m.ppu_read(0x0000), want, "vertical blank");
+    }
+
+    /// The nametable half of `T-MMC5-LATCH-VBLANK`, found by the MiSTer
+    /// sibling's `mapper5latch490` stimulus: the split region's nametable
+    /// and attribute bytes come from ExRAM "when the PPU is rendering in the
+    /// split region", so a `$2007` nametable read outside rendering follows
+    /// `$5105` like any other. Before this the split latch left by the last
+    /// tile of a frame kept substituting ExRAM in vertical blank and with
+    /// rendering switched off.
+    #[test]
+    fn a_split_latch_does_not_reach_a_nametable_read_outside_rendering() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x5200, 0x80 | 31);
+        m.cpu_write(0x5201, 16);
+        m.cpu_write(0x5202, 0);
+        m.exram[0x45] = 0xC3;
+        rendering(&mut m);
+        let _ = m.bg_split_state(0, 5).unwrap();
+        assert_eq!(m.nametable_fetch(0x2045), Some(0xC3), "while rendering");
+        // Default $5105 = 0 maps every table to CIRAM A: no substitution.
+        m.notify_ppu_register_write(0x2001, 0x00);
+        assert_eq!(m.nametable_fetch(0x2045), None, "rendering off mid-frame");
+        rendering(&mut m);
+        assert_eq!(m.nametable_fetch(0x2045), Some(0xC3), "rendering back on");
+        m.notify_vblank();
+        assert!(
+            m.split_chr_bank_latch.is_some(),
+            "the latch itself may stay"
+        );
+        assert_eq!(m.nametable_fetch(0x2045), None, "vertical blank");
     }
 
     #[test]
