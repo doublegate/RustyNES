@@ -41,6 +41,23 @@ cycle-accurate core later replaced.
   such objects. The refusal itself works there; the test now plants with the
   mode the system gives a new object and reads that mode back.
 
+### Fixed
+
+- **NSF files play again at the standard 60 Hz rate**: from v2.9.8 to v3.5.x
+  an NSF's `play` routine never ran, so a tune played only what its `init`
+  routine wrote (usually silence, or one held note). The player's driver
+  enabled the vblank NMI with its first `$2000` write, inside the PPU's
+  post-reset warm-up window that v2.9.8 began modelling, so the write was
+  dropped; and it enabled interrupts without inhibiting the APU frame IRQ, so
+  the CPU then spent the rest of the run servicing that IRQ. The driver now
+  writes `$40` to `$4017` before `init` and waits two vblanks before enabling
+  the NMI, as nesdev's "NSF" and "PPU power up state" pages describe. NSF
+  output changes (it now plays); cartridges and FDS are untouched. 50 Hz and
+  custom-rate NSFs used the timer driver, which already inhibited the frame
+  IRQ and needs no NMI, and were not affected. Found by the NSF ripper's
+  playback gate (`T-AUDIO-STEMS`); pinned by
+  `nsf_standard_rate_calls_play_every_frame`.
+
 ### Documentation
 
 - **v3.5.0's release notes file matches the published release**: the MiSTer
