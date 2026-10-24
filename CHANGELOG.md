@@ -61,6 +61,31 @@ cycle-accurate core later replaced.
   frontend, which today is every released one, gets the `int16_t` stream byte
   for byte as before; a C-ABI test compares both streams with a bare console's
   samples.
+- **A source-level debugger for homebrew, `rustynes-dap`** (`T-DEBUG-DAP`,
+  ADR 0049, `docs/dap-debugger.md`): a Debug Adapter Protocol server on stdio
+  that an editor launches, reading cc65's `ld65 --dbgfile` output and the
+  DWARF in llvm-mos's ELF. Breakpoints on source lines, functions and
+  addresses; `next`, `stepIn`, `stepOut`, instruction steps and `pause`; a
+  call stack recorded from frame hooks with each caller's call line;
+  parameters and locals per frame, globals, registers, hover evaluation and
+  `readMemory`. It drives the core's own exec breakpoints, and a stop adds no
+  cycle: a debugged machine equals the bare core byte for byte at the same
+  stop. With `--gdb 127.0.0.1:<port>` it is instead a GDB Remote Serial
+  Protocol stub, loopback only, with a target description in llvm-mos's DWARF
+  register order (`rcN` / `rsN` added from an ELF). Neither protocol can
+  write memory or registers. Gate: a scripted DAP client stops a cc65 and an
+  llvm-mos build of the new fixture `tests/roms/dap/dapdemo.c` (CC0-1.0,
+  built by `build.py`, ROMs and debug files committed) at a source
+  breakpoint, steps a line and reads `v == 5`, `r == 8`, `main`'s `local`
+  and the global `counter`; the new CI job `dap-fixtures` rebuilds the
+  fixtures with cc65 at commit `034f73a9e1` and the llvm-mos SDK v23.3.0 and
+  reruns the tests on that build. 14 mutants, all caught (three after the
+  tests were extended). Not done: no released GDB or LLDB has a MOS target,
+  so the stub has only been driven by the tests' protocol client; no VS Code
+  extension ships (the page has a `package.json` sketch, untried in VS Code);
+  cc65 records no C types, so cc65 variables show as one byte. New
+  dependencies `gimli` and `object` (MIT / Apache-2.0), reached only from
+  `rustynes-dap`.
 
 ### Changed
 
@@ -79,6 +104,37 @@ cycle-accurate core later replaced.
   OAM-decay ages differ ten frames on, with no option change); the game is
   unaffected, but a frontend comparing state CRCs would see a desync. A core
   issue, pinned by an ignored expected-fail probe in the libretro harness.
+- **The Android app targets Android 17 (API 37)** (`T-ANDROID-API37`). LAN and
+  direct-IP netplay now ask for the `ACCESS_LOCAL_NETWORK` permission (the
+  "Nearby devices" prompt) before hosting or joining, since Android 17 blocks
+  local-network traffic for an app that targets it; a refusal is explained in
+  the netplay sheet, and older devices and room-code play are never asked.
+  Audio plays only while the app is on screen or in picture-in-picture, which
+  Android 17 now requires of an app without a foreground service; a focus
+  request refused in the background no longer leaves the game muted when it
+  returns. Checked on two Android 17 emulators: the prompt, a refusal (no
+  socket opened) and a LAN session in game on both; not yet on a device
+  (run-sheet rows L1-L5).
+- **Android audio is written without blocking, with its own pacing**
+  (`T-ANDROID-AUDIO-NONBLOCKING`, audit AND-R2-01). The blocking `AudioTrack`
+  write that v3.2.0 kept was what paced the emulation loop; the loop now
+  sleeps, cancellably and off the shared worker pool, until the track is back
+  to about two frames of audio, keeps any bytes the track did not take, and
+  falls back to the wall clock when the play head stops. JVM tests run it
+  against a simulated sound card; drift on a real device is not measured yet
+  (row L4).
+- **iOS saves are written durably** (`T-IOS-DURABLE-WRITE`). Every file the
+  iOS app writes (FDS and battery saves, per-game overrides, movies, HD packs,
+  palettes, save states, the library) now goes through one helper that syncs
+  the file through the drive's cache before renaming it into place and then
+  syncs its folder, like the desktop's; Foundation's atomic write synced
+  neither, so a power loss could leave an empty or cut-short save. The Swift
+  has not been compiled on the machine that wrote it; a source audit pins the
+  wiring, and the device check is run-sheet row T13.
+- **iOS writes an FDS game's disk once a second** (`T-IOS-FDS-PERIODIC`), as
+  Android does; it was written only when the app went to the background or
+  switched games, so a crash or a kill while playing lost every in-game save
+  since. The device check is run-sheet row T14.
 
 ### Documentation
 
@@ -132,37 +188,6 @@ cycle-accurate core later replaced.
   changed the object's mode with `fchmod`, which macOS does not support on
   such objects. The refusal itself works there; the test now plants with the
   mode the system gives a new object and reads that mode back.
-- **The Android app targets Android 17 (API 37)** (`T-ANDROID-API37`). LAN and
-  direct-IP netplay now ask for the `ACCESS_LOCAL_NETWORK` permission (the
-  "Nearby devices" prompt) before hosting or joining, since Android 17 blocks
-  local-network traffic for an app that targets it; a refusal is explained in
-  the netplay sheet, and older devices and room-code play are never asked.
-  Audio plays only while the app is on screen or in picture-in-picture, which
-  Android 17 now requires of an app without a foreground service; a focus
-  request refused in the background no longer leaves the game muted when it
-  returns. Checked on two Android 17 emulators: the prompt, a refusal (no
-  socket opened) and a LAN session in game on both; not yet on a device
-  (run-sheet rows L1-L5).
-- **Android audio is written without blocking, with its own pacing**
-  (`T-ANDROID-AUDIO-NONBLOCKING`, audit AND-R2-01). The blocking `AudioTrack`
-  write that v3.2.0 kept was what paced the emulation loop; the loop now
-  sleeps, cancellably and off the shared worker pool, until the track is back
-  to about two frames of audio, keeps any bytes the track did not take, and
-  falls back to the wall clock when the play head stops. JVM tests run it
-  against a simulated sound card; drift on a real device is not measured yet
-  (row L4).
-- **iOS saves are written durably** (`T-IOS-DURABLE-WRITE`). Every file the
-  iOS app writes (FDS and battery saves, per-game overrides, movies, HD packs,
-  palettes, save states, the library) now goes through one helper that syncs
-  the file through the drive's cache before renaming it into place and then
-  syncs its folder, like the desktop's; Foundation's atomic write synced
-  neither, so a power loss could leave an empty or cut-short save. The Swift
-  has not been compiled on the machine that wrote it; a source audit pins the
-  wiring, and the device check is run-sheet row T13.
-- **iOS writes an FDS game's disk once a second** (`T-IOS-FDS-PERIODIC`), as
-  Android does; it was written only when the app went to the background or
-  switched games, so a crash or a kill while playing lost every in-game save
-  since. The device check is run-sheet row T14.
 
 ### Documentation
 
