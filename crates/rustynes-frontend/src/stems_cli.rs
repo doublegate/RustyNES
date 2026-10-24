@@ -98,9 +98,20 @@ pub fn parse_filter(s: &str) -> Result<FilterModel, String> {
 
 /// A mono 32-bit IEEE-float WAV written as it goes. The sizes in the header
 /// are patched by [`Self::finish`].
+///
+/// The samples stream into a staged sibling (`<name>.rustynes-partial`), and
+/// `finish` patches the header, syncs, and renames it over the target: an
+/// export cut short leaves the previous file (or none) under the real name,
+/// never a truncated WAV with placeholder sizes, the rule `atomic_write`
+/// applies to every other user file. It streams rather than buffering for
+/// `write_atomic` because an hour of one stem is about 690 MB and the export
+/// writes eight. A writer dropped unfinished deletes its staged file.
 pub struct WavWriter {
     out: BufWriter<File>,
     frames: u64,
+    staged: std::path::PathBuf,
+    target: std::path::PathBuf,
+    finished: bool,
 }
 
 /// `WAVE_FORMAT_IEEE_FLOAT`.
@@ -112,7 +123,10 @@ impl WavWriter {
     /// # Errors
     /// An I/O error.
     pub fn create(path: &Path, rate: u32) -> std::io::Result<Self> {
-        let mut out = BufWriter::new(File::create(path)?);
+        let mut staged = path.as_os_str().to_owned();
+        staged.push(".rustynes-partial");
+        let staged = std::path::PathBuf::from(staged);
+        let mut out = BufWriter::new(File::create(&staged)?);
         // RIFF header; the sizes are placeholders until `finish`.
         out.write_all(b"RIFF")?;
         out.write_all(&0u32.to_le_bytes())?;
@@ -134,7 +148,13 @@ impl WavWriter {
         out.write_all(&0u32.to_le_bytes())?;
         out.write_all(b"data")?;
         out.write_all(&0u32.to_le_bytes())?;
-        Ok(Self { out, frames: 0 })
+        Ok(Self {
+            out,
+            frames: 0,
+            staged,
+            target: path.to_path_buf(),
+            finished: false,
+        })
     }
 
     /// Append samples.
@@ -166,7 +186,20 @@ impl WavWriter {
         f.write_all(&frames.to_le_bytes())?;
         f.seek(SeekFrom::Start(54))?;
         f.write_all(&data.to_le_bytes())?;
-        f.flush()
+        f.flush()?;
+        f.sync_all()?;
+        std::fs::rename(&self.staged, &self.target)?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for WavWriter {
+    fn drop(&mut self) {
+        if !self.finished {
+            // Best effort: an unfinished export leaves no partial file behind.
+            let _ = std::fs::remove_file(&self.staged);
+        }
     }
 }
 
@@ -478,6 +511,31 @@ fn rip_inner(args: &RipArgs) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v3.6.0 integration (the `no_bare_fs_write` audit): the samples stream
+    /// into a staged sibling and only `finish` publishes the file, so an
+    /// interrupted export leaves the previous file intact and no partial one.
+    #[test]
+    fn a_wav_is_published_only_when_finished() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let p = dir.path().join("mix.wav");
+        let partial = dir.path().join("mix.wav.rustynes-partial");
+        std::fs::write(&p, b"the previous export").expect("seed");
+        let mut w = WavWriter::create(&p, 48_000).expect("create");
+        w.write(&[0.5; 64]).expect("write");
+        assert!(partial.exists(), "samples go to the staged file");
+        drop(w);
+        assert!(
+            !partial.exists(),
+            "an unfinished writer removes its staged file"
+        );
+        assert_eq!(std::fs::read(&p).expect("read"), b"the previous export");
+        let mut w = WavWriter::create(&p, 48_000).expect("create");
+        w.write(&[0.5; 64]).expect("write");
+        w.finish().expect("finish");
+        assert!(!partial.exists(), "finish renames the staged file away");
+        assert_eq!(std::fs::read(&p).expect("read").len(), 58 + 64 * 4);
+    }
 
     #[test]
     fn a_wav_header_describes_its_samples() {
