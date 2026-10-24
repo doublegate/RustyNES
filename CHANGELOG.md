@@ -40,6 +40,25 @@ cycle-accurate core later replaced.
   changed the object's mode with `fchmod`, which macOS does not support on
   such objects. The refusal itself works there; the test now plants with the
   mode the system gives a new object and reads that mode back.
+- **The Android app targets Android 17 (API 37)** (`T-ANDROID-API37`). LAN and
+  direct-IP netplay now ask for the `ACCESS_LOCAL_NETWORK` permission (the
+  "Nearby devices" prompt) before hosting or joining, since Android 17 blocks
+  local-network traffic for an app that targets it; a refusal is explained in
+  the netplay sheet, and older devices and room-code play are never asked.
+  Audio plays only while the app is on screen or in picture-in-picture, which
+  Android 17 now requires of an app without a foreground service; a focus
+  request refused in the background no longer leaves the game muted when it
+  returns. Checked on two Android 17 emulators: the prompt, a refusal (no
+  socket opened) and a LAN session in game on both; not yet on a device
+  (run-sheet rows L1-L5).
+- **Android audio is written without blocking, with its own pacing**
+  (`T-ANDROID-AUDIO-NONBLOCKING`, audit AND-R2-01). The blocking `AudioTrack`
+  write that v3.2.0 kept was what paced the emulation loop; the loop now
+  sleeps, cancellably and off the shared worker pool, until the track is back
+  to about two frames of audio, keeps any bytes the track did not take, and
+  falls back to the wall clock when the play head stops. JVM tests run it
+  against a simulated sound card; drift on a real device is not measured yet
+  (row L4).
 
 ### Documentation
 

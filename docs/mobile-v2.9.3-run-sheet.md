@@ -162,6 +162,39 @@ identity, returns a pre-v2.9.9 entry for the same file instead of adding one) an
 platform: cloud save-state records (Play Games snapshots, CloudKit), which the
 next upload writes under the new key.
 
+## Rows added for v3.6.0 (Android API 37, non-blocking audio)
+
+v3.6.0 moves the Android app to `targetSdk 37` (Android 17). LAN and direct-IP
+netplay now ask for `ACCESS_LOCAL_NETWORK` first (`LocalNetwork.kt`); the
+audio side plays only while the activity is started (`audioMayPlay`); and the
+`AudioTrack` write is non-blocking, paced by `AudioPacer` (`AudioPacing.kt`)
+instead of by the block. The decisions are under JVM test
+(`LocalNetworkAccessTest`, `AudioPacingTest`).
+
+**How L1 and L2 were run (2026-10-23, emulator, not a device).** Two
+`system-images;android-37.0;google_apis;x86_64` (r8) AVDs, headless
+(`emulator -no-window -no-audio -gpu swiftshader_indirect`, emulator
+37.2.12), the `fossDebug` APK of this branch, AccuracyCoin as
+`autoload.nes`, driven over adb with `uiautomator dump` + `input`. Two
+emulator traps, neither the app's: on this image and emulator every
+`surfaceflinger` aborted in its luma-sampling readback (`Assertion failed:
+!rcEnc->featureInfo()->hasReadColorBufferDma`, with `-gpu host` too), which
+`adb root; setprop debug.sf.luma_sampling 0; stop; start` stops (and `adb
+screencap` still aborts the same way, so there are no screenshots); and the
+emulators' only route to each other is the host, so A's UDP 7100 was
+forwarded (`adb emu redir add udp:7100:7100`) and B joined `10.0.2.2:7100`, a
+private address, so local-network traffic to the platform. The host was under
+other jobs' load (load average 35-56), which gave system ANR dialogs on
+emulator B; they were dismissed and are not the app's.
+
+| # | Platform | Step | Expect | Emulator | Device |
+| --- | --- | --- | --- | --- | --- |
+| L1 | Android 17 | Fresh install (permission never asked). Host a LAN game; on a second device, Join it | Hosting and joining each raise the system "Nearby devices" prompt once; after **Allow** the session reaches In game on both, frames advancing; a later host or join asks nothing | PASS: B's Join raised the prompt, **Allow**, then both In game (host frame 270 -> 2490, joiner 154 -> 2387 over about 40 s, confirmed frames 2-10 behind). A's grant came from `pm grant` (the Settings path) after L2 | |
+| L2 | Android 17 | **Don't allow** at the prompt; then host again; then **Don't allow** again; then host a third time | No socket is opened; the sheet shows "LAN play needs the Nearby devices permission ..."; the second ask prompts again; after the second refusal (the system then stops asking) a host attempt shows the same notice without a prompt | PASS: no UDP 7100 socket in `/proc/net/udp` after either refusal; the notice shown each time; after the second refusal `ACCESS_LOCAL_NETWORK` read `USER_FIXED` and the third attempt showed the notice with no prompt | |
+| L3 | Android 17 | Room-code host and join (a configured relay) on the same Wi-Fi, permission refused | Both connect: room-code play exchanges public addresses only and needs no permission | NOT RUN (no relay on the emulators) | |
+| L4 | Android 17 | Play a game with sound for ten minutes, then compare with v3.5.0 on the same device | No more underruns or drift than v3.5.0 (`dumpsys media.audio_flinger`: the track's Underruns column; listen for crackle); fast-forward and back; pause and resume | NOT A MEASUREMENT: a 10 s single-player window read 30,164 underrun frames against 457,260 consumed (6.6%), with the app at 128% CPU on a software GPU under the host load above; no v3.5.0 comparison was run | |
+| L5 | Android 17 | Home with a game running (PiP), then the screen off, then back | PiP keeps playing (it is visible); screen off and Home without PiP pause the game and its audio; returning resumes with sound (a focus request refused in the background used to leave it muted) | NOT RUN | |
+
 ## Rows folded in from the v1.8.x Android checklist (v3.1.0, decision D25)
 
 `to-dos/v1.8.x-on-device-verification.md` was the standing Android checklist
