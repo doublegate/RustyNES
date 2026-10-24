@@ -1122,16 +1122,28 @@ impl Mmc5 {
     /// In MMC5 ExGrafix mode (`$5104` mode 01) the per-tile CHR bank
     /// latched at the most recent NT-byte fetch overrides the standard
     /// BG bank decoding; we apply that override here.
+    ///
+    /// Both overrides are substitutions to background fetches made while the
+    /// PPU renders, so they apply only inside the model's rendering-fetch
+    /// predicate (the background-fetch window with `$2001` rendering on,
+    /// the same one [`Mmc5::non_sprite_set`] uses). Outside it a `$2007`
+    /// access reaches the bank set the page gives `$2007`, "the last set of
+    /// registers written to", whatever tile was latched last. The latches are
+    /// left set, as the next frame's fetches overwrite them before use.
+    /// Before v3.5.1 a latch applied whenever it was set
+    /// (`T-MMC5-LATCH-VBLANK`).
     fn chr_offset(&self, addr: u16, read: bool) -> usize {
-        // Vertical split-screen override: take precedence over both
-        // ExGrafix and standard BG bank decoding. 4 KiB bank from $5202
-        // (latched at NT-fetch time by `bg_split_state`).
-        if let Some(bank4k) = self.split_chr_bank_latch {
-            return self.chr_4k_offset(bank4k as usize, addr);
-        }
-        // ExGrafix override: per-tile 4 KiB bank from the latch.
-        if let Some(bank4k) = self.ex_chr_bank_latch {
-            return self.chr_4k_offset(bank4k as usize, addr);
+        if self.render_window && self.ppu_rendering {
+            // Vertical split-screen override: takes precedence over both
+            // ExGrafix and standard BG bank decoding. 4 KiB bank from $5202
+            // (latched at NT-fetch time by `bg_split_state`).
+            if let Some(bank4k) = self.split_chr_bank_latch {
+                return self.chr_4k_offset(bank4k as usize, addr);
+            }
+            // ExGrafix override: per-tile 4 KiB bank from the latch.
+            if let Some(bank4k) = self.ex_chr_bank_latch {
+                return self.chr_4k_offset(bank4k as usize, addr);
+            }
         }
 
         self.chr_set_offset(addr, self.non_sprite_set(read))
@@ -2381,7 +2393,9 @@ mod tests {
         }
         // The ExGrafix override indexes 4 KiB banks of the same image: six
         // of them, so 4 KiB bank 2 is 1 KiB bank 8 and bank 6 wraps to 0.
+        // A background fetch: the override applies only while rendering.
         m.cpu_write(0x5104, 1);
+        rendering(&mut m);
         for (bank4k, first_1k) in [(2u16, 8u8), (5, 20), (6, 0)] {
             m.ex_chr_bank_latch = Some(bank4k);
             assert_eq!(m.ppu_read(0x0000), first_1k, "ExGrafix 4 KiB bank {bank4k}");
@@ -2403,6 +2417,7 @@ mod tests {
         // 6 KiB under the 4 KiB ExGrafix override: 4 KiB bank 1 is 1 KiB 4.
         let mut m = fresh(8, 6);
         m.cpu_write(0x5104, 1);
+        rendering(&mut m);
         m.ex_chr_bank_latch = Some(1);
         assert_eq!(m.ppu_read(0x0000), 4, "4 KiB bank 1 starts at 1 KiB bank 4");
     }
@@ -3110,6 +3125,7 @@ mod tests {
         // Tile at coarse (0, 0): ExRAM[0] -> palette=0, bank low6=2 (4K bank 2).
         m.exram[0] = 0b00_000010;
         let v = 0u16;
+        rendering(&mut m);
         let _ = m.peek_ex_attribute(v); // sets ex_chr_bank_latch = Some(2)
         // BG fetch at $0000 -> chr_offset uses 4K bank 2 -> 1K bank 8 -> bank index 8.
         assert_eq!(m.ppu_read(0x0000), 8);
@@ -3280,7 +3296,8 @@ mod tests {
         // ExGrafix off; split on, left, split=16, bank=2 (4 KiB).
         m.cpu_write(0x5200, 0x80 | 16);
         m.cpu_write(0x5202, 2);
-        // Trigger split state at coarse_x=0 (alt region).
+        // Trigger split state at coarse_x=0 (alt region), while rendering.
+        rendering(&mut m);
         let _ = m.bg_split_state(0, 0).unwrap();
         assert_eq!(m.split_chr_bank_latch, Some(2));
         // BG fetch at $0000 -> 4 KiB bank 2 -> 1 KiB bank 8 -> first byte = 8.
@@ -3367,6 +3384,65 @@ mod tests {
         assert_eq!(other.split_chr_bank_latch, Some(6));
     }
 
+    /// Open the background-fetch window with rendering on, as a frame does.
+    fn rendering(m: &mut Mmc5) {
+        m.notify_ppu_register_write(0x2001, 0x18);
+        m.notify_scanline_start();
+    }
+
+    /// The byte a non-substituted CHR read at `addr` returns: the bank set
+    /// the page gives `$2007` ("the last set of registers written to").
+    fn unsubstituted(m: &Mmc5, addr: u16) -> u8 {
+        let off = m.chr_set_offset(addr, m.non_sprite_set(true));
+        m.chr[off % m.chr.len()]
+    }
+
+    /// `T-MMC5-LATCH-VBLANK` (v3.5.1). The page describes both substitutions
+    /// as made to background fetches while the PPU renders ("When the PPU is
+    /// rendering in the split region ..."; extended attributes change "CHR
+    /// banking ... when fetching background tiles"), and `$2007` reaching
+    /// CHR as using "the last set of registers written to". Before v3.5.1 the
+    /// last tile's latched 4 KiB bank stayed in force after the frame, so a
+    /// `$2007` read in vertical blank read the wrong bank: the Koei games keep
+    /// extended attributes on, and the page names Bandit Kings of Ancient
+    /// China as reading non-pattern data from CHR through `$2007`.
+    #[test]
+    fn an_exgrafix_latch_does_not_reach_a_vblank_chr_read() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5104, 0b01);
+        m.exram[0] = 0b00_000011; // tile 0: 4 KiB bank 3
+        rendering(&mut m);
+        let _ = m.peek_ex_attribute(0);
+        // During rendering the tile's bank applies: 1 KiB bank 12.
+        assert_eq!(m.ppu_read(0x0000), 12);
+        m.notify_vblank();
+        assert!(m.ex_chr_bank_latch.is_some(), "the latch itself may stay");
+        let want = unsubstituted(&m, 0x0000);
+        assert_ne!(want, 12, "the fixture must tell the two banks apart");
+        assert_eq!(m.ppu_read(0x0000), want);
+    }
+
+    /// The split half of `T-MMC5-LATCH-VBLANK`, and the mid-frame case:
+    /// with rendering switched off in `$2001` the fetch window is open but
+    /// no substitution is made either.
+    #[test]
+    fn a_split_latch_does_not_reach_a_chr_read_outside_rendering() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5200, 0x80 | 16);
+        m.cpu_write(0x5202, 2); // split: 4 KiB bank 2
+        rendering(&mut m);
+        let _ = m.bg_split_state(0, 0).unwrap();
+        assert_eq!(m.ppu_read(0x0000), 8);
+        m.notify_ppu_register_write(0x2001, 0x00);
+        let want = unsubstituted(&m, 0x0000);
+        assert_ne!(want, 8, "the fixture must tell the two banks apart");
+        assert_eq!(m.ppu_read(0x0000), want, "rendering off mid-frame");
+        rendering(&mut m);
+        assert_eq!(m.ppu_read(0x0000), 8, "rendering back on");
+        m.notify_vblank();
+        assert_eq!(m.ppu_read(0x0000), want, "vertical blank");
+    }
+
     #[test]
     fn split_takes_precedence_over_exgrafix() {
         let mut m = fresh(8, 16);
@@ -3376,7 +3452,8 @@ mod tests {
         // Also enable split, left, tile=16, bank=2.
         m.cpu_write(0x5200, 0x80 | 16);
         m.cpu_write(0x5202, 2);
-        // Activate split (cx=0).
+        // Activate split (cx=0), while rendering.
+        rendering(&mut m);
         let _ = m.bg_split_state(0, 0).unwrap();
         // Split CHR latch should win over the (otherwise-applied) ExGrafix latch.
         assert!(m.split_chr_bank_latch.is_some());
