@@ -12,6 +12,7 @@ members = [
     "crates/rustynes-gamedb",
     "crates/rustynes-probe",
     "crates/rustynes-mcp",
+    "crates/rustynes-dap",
     "crates/rustynes-frontend",
     "crates/rustynes-test-harness",
     "crates/rustynes-mobile",

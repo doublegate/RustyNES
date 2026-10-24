@@ -207,6 +207,10 @@ in `crates/rustynes-frontend/web`.
 - **An MCP server**, `rustynes-mcp`, serving the headless core to a Model
   Context Protocol client, with reproducible fork-and-diff experiments
   ([`docs/mcp-server.md`](docs/mcp-server.md)).
+- **A source-level debugger for homebrew**, `rustynes-dap`: debug cc65 and
+  llvm-mos C programs from an editor over the Debug Adapter Protocol
+  (breakpoints, line stepping, call stack, locals), or through a read-only
+  loopback GDB stub ([`docs/dap-debugger.md`](docs/dap-debugger.md)).
 - **Debugger:** breakpoints on expressions and conditions, R/W/X watchpoints, a
   trace logger, an event viewer, a hex editor, RAM search, a callstack, and
   `ca65` / `cc65` source maps. The inspectors become editors on request.
@@ -346,6 +350,7 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 | `rustynes-mobile`, `rustynes-android`, `rustynes-ios` | The mobile bridge and platform glue |
 | `rustynes-libretro` | The RetroArch core |
 | `rustynes-mcp` | A Model Context Protocol server over the headless core (`rustynes-mcp`) |
+| `rustynes-dap` | A Debug Adapter Protocol server and GDB stub for cc65 / llvm-mos homebrew (`rustynes-dap`) |
 | `rustynes-test-harness` | Integration tests and the accuracy oracles |
 
 ---

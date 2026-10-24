@@ -26,6 +26,34 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **A source-level debugger for homebrew, `rustynes-dap`** (`T-DEBUG-DAP`,
+  ADR 0049, `docs/dap-debugger.md`): a Debug Adapter Protocol server on stdio
+  that an editor launches, reading cc65's `ld65 --dbgfile` output and the
+  DWARF in llvm-mos's ELF. Breakpoints on source lines, functions and
+  addresses; `next`, `stepIn`, `stepOut`, instruction steps and `pause`; a
+  call stack recorded from frame hooks with each caller's call line;
+  parameters and locals per frame, globals, registers, hover evaluation and
+  `readMemory`. It drives the core's own exec breakpoints, and a stop adds no
+  cycle: a debugged machine equals the bare core byte for byte at the same
+  stop. With `--gdb 127.0.0.1:<port>` it is instead a GDB Remote Serial
+  Protocol stub, loopback only, with a target description in llvm-mos's DWARF
+  register order (`rcN` / `rsN` added from an ELF). Neither protocol can
+  write memory or registers. Gate: a scripted DAP client stops a cc65 and an
+  llvm-mos build of the new fixture `tests/roms/dap/dapdemo.c` (CC0-1.0,
+  built by `build.py`, ROMs and debug files committed) at a source
+  breakpoint, steps a line and reads `v == 5`, `r == 8`, `main`'s `local`
+  and the global `counter`; the new CI job `dap-fixtures` rebuilds the
+  fixtures with cc65 at commit `034f73a9e1` and the llvm-mos SDK v23.3.0 and
+  reruns the tests on that build. 14 mutants, all caught (three after the
+  tests were extended). Not done: no released GDB or LLDB has a MOS target,
+  so the stub has only been driven by the tests' protocol client; no VS Code
+  extension ships (the page has a `package.json` sketch, untried in VS Code);
+  cc65 records no C types, so cc65 variables show as one byte. New
+  dependencies `gimli` and `object` (MIT / Apache-2.0), reached only from
+  `rustynes-dap`.
+
 ### Changed
 
 - **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC
