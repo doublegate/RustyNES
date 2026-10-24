@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-10-23 - "Reprise" (the MMC5 outside rendering in both cores, and the v3.5.0 review's residue)
+
 ### Fixed
 
 - **MMC5 CHR reads outside rendering** (`T-MMC5-LATCH-VBLANK`): a split-screen
