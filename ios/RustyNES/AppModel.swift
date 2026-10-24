@@ -373,6 +373,9 @@ final class AppModel: ObservableObject {
             startWarningPoll()
             if let batteryNotice { errorMessage = batteryNotice }
             currentEntry = entry
+            // After `emulator` and `currentEntry` name the new game, so the
+            // first tick keys and reads its disk (v3.6.0).
+            startFdsPoll()
             library.markPlayed(entry.sha, info: core.info)
             // Apply this game's per-game overrides if any, else the global defaults
             // (filter + shader params + palette + HD-pack).
@@ -463,6 +466,8 @@ final class AppModel: ObservableObject {
         cloudSaveStates.setCurrentGame(sha: nil)
         warningTimer?.invalidate()
         warningTimer = nil
+        fdsTimer?.invalidate()
+        fdsTimer = nil
         emulator?.shutdown()
         emulator = nil
         currentEntry = nil
@@ -959,30 +964,37 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Disks whose last write failed: flushed again even though now clean.
-    private var fdsRetry: Set<String> = []
+    /// v3.6.0 (`T-IOS-FDS-PERIODIC`): the FDS disk writer (off the main actor,
+    /// retrying a failed write) and its once-a-second tick.
+    private let fdsSaver = FdsDiskSaver()
+    private var fdsTimer: Timer?
 
-    /// Write the running disk if the game changed it, atomically.
+    /// Write the running disk if the game changed it (or its last write failed),
+    /// durably (`DurableWrite`). `wait` false is the periodic tick; the session
+    /// endings (backgrounding, a game switch, closing) wait for it.
     ///
     /// The dirty flag is cleared BEFORE the image is copied: the three bridge
     /// calls are separately locked and the emulation thread keeps running, so
     /// clearing after the write discarded a disk write that landed in between
     /// (Cursor on #605, for Android; the same shape here). A write after the
-    /// clear sets the flag again; a failed file write is retried via `fdsRetry`.
-    private func flushFdsDiskIfDirty() {
+    /// clear sets the flag again; a failed file write is retried (`FdsDiskSaver`).
+    private func flushFdsDiskIfDirty(wait: Bool = true) {
         guard let core = emulator, let sha = currentEntry?.sha else { return }
-        guard core.diskIsDirty || fdsRetry.contains(sha) else { return }
-        core.clearDiskDirty()
-        let bytes = core.diskImageBytes()
-        let url = AppModel.fdsSaveUrl(forSha: sha)
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try bytes.write(to: url, options: .atomic)
-            fdsRetry.remove(sha)
-        } catch {
-            fdsRetry.insert(sha)
-            NSLog("RustyNES: FDS disk save failed: \(error)")
+        fdsSaver.flush(core, sha: sha, to: AppModel.fdsSaveUrl(forSha: sha), wait: wait)
+    }
+
+    /// v3.6.0 (`T-IOS-FDS-PERIODIC`): check the running disk once a second, as
+    /// Android does (#605's review), so a process killed between lifecycle
+    /// events keeps the game's disk writes. Until v3.6.0 iOS wrote the disk only
+    /// on backgrounding and game switches, and the 1 s timer existed only for
+    /// battery cartridges. Cheap for a cartridge: `diskIsDirty` is one bridge
+    /// call that answers false.
+    private func startFdsPoll() {
+        fdsTimer?.invalidate()
+        fdsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.flushFdsDiskIfDirty(wait: false)
+            }
         }
     }
 
@@ -1034,7 +1046,7 @@ final class AppModel: ObservableObject {
     /// is a few KiB, so it runs synchronously within the task rather than handing
     /// a mutable task id across threads.
     private func flushBatteryInBackground() {
-        if emulator?.diskIsDirty == true || !fdsRetry.isEmpty {
+        if emulator?.diskIsDirty == true || fdsSaver.hasRetries {
             let task = BackgroundTask(name: "RustyNES FDS save")
             defer { task.end() }
             flushFdsDiskIfDirty()
@@ -1143,7 +1155,7 @@ enum FdsBiosStore {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true
             )
-            try data.write(to: url, options: .atomic)
+            try DurableWrite.write(data, to: url)
             return true
         } catch {
             return false

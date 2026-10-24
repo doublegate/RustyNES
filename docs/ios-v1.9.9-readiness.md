@@ -109,6 +109,8 @@ carryover.
 > mobile bridge loads FDS (with a host-supplied BIOS), NSF and the Vs.
 > DualSystem cabinet. The Swift half has not been compiled, and the device rows
 > are T1-T12 of [`mobile-v2.9.3-run-sheet.md`](mobile-v2.9.3-run-sheet.md).
+> v3.6.0 added T13 (durable writes, `DurableWrite.swift`) and T14 (the
+> once-a-second FDS disk check) there, also uncompiled and not run.
 
 ## 4. Completeness-critic findings
 

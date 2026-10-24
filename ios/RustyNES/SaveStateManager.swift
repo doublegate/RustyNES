@@ -102,16 +102,16 @@ final class SaveStateManager: @unchecked Sendable {
     /// Write a `.rns` blob to a slot, plus its metadata and optional thumbnail PNG.
     func write(_ data: Data, sha: String, slot: Int, frame: UInt64 = 0, thumbnailPNG: Data? = nil) throws {
         try fileManager.createDirectory(at: dir(for: sha), withIntermediateDirectories: true)
-        try data.write(to: slotURL(sha: sha, slot: slot), options: .atomic)
+        try DurableWrite.write(data, to: slotURL(sha: sha, slot: slot))
 
         let meta = SlotMeta(frame: frame, savedAt: Date().timeIntervalSince1970)
         if let encoded = try? JSONEncoder().encode(meta) {
-            try? encoded.write(to: metaURL(sha: sha, slot: slot), options: .atomic)
+            try? DurableWrite.write(encoded, to: metaURL(sha: sha, slot: slot))
         }
 
         let thumb = thumbURL(sha: sha, slot: slot)
         if let png = thumbnailPNG {
-            try? png.write(to: thumb, options: .atomic)
+            try? DurableWrite.write(png, to: thumb)
         } else {
             try? fileManager.removeItem(at: thumb)
         }
@@ -139,16 +139,16 @@ final class SaveStateManager: @unchecked Sendable {
         frame: UInt64, savedAt: Date, thumbnailPNG: Data?
     ) throws {
         try fileManager.createDirectory(at: dir(for: sha), withIntermediateDirectories: true)
-        try stateData.write(to: slotURL(sha: sha, slot: slot), options: .atomic)
+        try DurableWrite.write(stateData, to: slotURL(sha: sha, slot: slot))
 
         let meta = SlotMeta(frame: frame, savedAt: savedAt.timeIntervalSince1970)
         if let encoded = try? JSONEncoder().encode(meta) {
-            try? encoded.write(to: metaURL(sha: sha, slot: slot), options: .atomic)
+            try? DurableWrite.write(encoded, to: metaURL(sha: sha, slot: slot))
         }
 
         let thumb = thumbURL(sha: sha, slot: slot)
         if let png = thumbnailPNG {
-            try? png.write(to: thumb, options: .atomic)
+            try? DurableWrite.write(png, to: thumb)
         } else {
             try? fileManager.removeItem(at: thumb)
         }

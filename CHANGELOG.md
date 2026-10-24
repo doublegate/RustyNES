@@ -59,6 +59,18 @@ cycle-accurate core later replaced.
   falls back to the wall clock when the play head stops. JVM tests run it
   against a simulated sound card; drift on a real device is not measured yet
   (row L4).
+- **iOS saves are written durably** (`T-IOS-DURABLE-WRITE`). Every file the
+  iOS app writes (FDS and battery saves, per-game overrides, movies, HD packs,
+  palettes, save states, the library) now goes through one helper that syncs
+  the file through the drive's cache before renaming it into place and then
+  syncs its folder, like the desktop's; Foundation's atomic write synced
+  neither, so a power loss could leave an empty or cut-short save. The Swift
+  has not been compiled on the machine that wrote it; a source audit pins the
+  wiring, and the device check is run-sheet row T13.
+- **iOS writes an FDS game's disk once a second** (`T-IOS-FDS-PERIODIC`), as
+  Android does; it was written only when the app went to the background or
+  switched games, so a crash or a kill while playing lost every in-game save
+  since. The device check is run-sheet row T14.
 
 ### Documentation
 

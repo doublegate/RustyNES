@@ -185,7 +185,7 @@ enum RomKeyMigration {
             try fm.createDirectory(
                 at: dst.deletingLastPathComponent(), withIntermediateDirectories: true
             )
-            try bytes.write(to: dst, options: .atomic)
+            try DurableWrite.write(bytes, to: dst)
         } catch {
             NSLog("RustyNES: key migration could not copy \(src.lastPathComponent): \(error)")
             return false

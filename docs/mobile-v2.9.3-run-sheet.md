@@ -162,14 +162,20 @@ identity, returns a pre-v2.9.9 entry for the same file instead of adding one) an
 platform: cloud save-state records (Play Games snapshots, CloudKit), which the
 next upload writes under the new key.
 
-## Rows added for v3.6.0 (Android API 37, non-blocking audio)
+## Rows added for v3.6.0 (Android API 37, non-blocking audio, iOS durable writes)
 
 v3.6.0 moves the Android app to `targetSdk 37` (Android 17). LAN and direct-IP
 netplay now ask for `ACCESS_LOCAL_NETWORK` first (`LocalNetwork.kt`); the
 audio side plays only while the activity is started (`audioMayPlay`); and the
 `AudioTrack` write is non-blocking, paced by `AudioPacer` (`AudioPacing.kt`)
 instead of by the block. The decisions are under JVM test
-(`LocalNetworkAccessTest`, `AudioPacingTest`).
+(`LocalNetworkAccessTest`, `AudioPacingTest`). On iOS every file write goes
+through `DurableWrite.swift` (scratch file, `F_FULLFSYNC`, `rename`, directory
+`fsync`) and an FDS disk is checked once a second (`FdsDiskSaver.swift`); a
+source audit (`crates/rustynes-test-harness/tests/ios_source_audit.rs`) pins
+the wiring. **None of the v3.6.0 Swift has been compiled** (no Swift toolchain
+on the Linux build host); the iOS workflow's Simulator build is the first
+compile.
 
 **How L1 and L2 were run (2026-10-23, emulator, not a device).** Two
 `system-images;android-37.0;google_apis;x86_64` (r8) AVDs, headless
@@ -194,6 +200,8 @@ emulator B; they were dismissed and are not the app's.
 | L3 | Android 17 | Room-code host and join (a configured relay) on the same Wi-Fi, permission refused | Both connect: room-code play exchanges public addresses only and needs no permission | NOT RUN (no relay on the emulators) | |
 | L4 | Android 17 | Play a game with sound for ten minutes, then compare with v3.5.0 on the same device | No more underruns or drift than v3.5.0 (`dumpsys media.audio_flinger`: the track's Underruns column; listen for crackle); fast-forward and back; pause and resume | NOT A MEASUREMENT: a 10 s single-player window read 30,164 underrun frames against 457,260 consumed (6.6%), with the app at 128% CPU on a software GPU under the host load above; no v3.5.0 comparison was run | |
 | L5 | Android 17 | Home with a game running (PiP), then the screen off, then back | PiP keeps playing (it is visible); screen off and Home without PiP pause the game and its audio; returning resumes with sound (a focus request refused in the background used to leave it muted) | NOT RUN | |
+| T13 | iOS | Save a state, change a per-game override, record a movie, then force a hard power-off (hold the buttons) within a second of each; reopen | Each file is either the new one or the previous one, never empty or truncated (`DurableWrite`) | | |
+| T14 | iOS | In an FDS game, save in game (a disk write); within two seconds kill the app from the debugger or the app switcher **while it is still in the foreground**; reopen | The in-game save is there (the once-a-second disk check; before v3.6.0 only backgrounding or a game switch wrote the disk) | | |
 
 ## Rows folded in from the v1.8.x Android checklist (v3.1.0, decision D25)
 
