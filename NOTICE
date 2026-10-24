@@ -176,6 +176,16 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
       https://www.apache.org/licenses/LICENSE-2.0, and each header carries
       its notice)
 
+* libretro.h (upstream, newer than the vendored copy) -- the
+  RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT command number and the two
+  declarations it uses (retro_audio_sample_batch_float_t, struct
+  retro_audio_sample_float_callback), transcribed as Rust declarations into
+  crates/rustynes-libretro/src/lib.rs (v3.6.0) from
+  libretro-common/include/libretro.h in libretro/RetroArch, where commit
+  28f4c9c6a361 (2026-06-29) added them. Interface definitions only.
+  https://github.com/libretro/RetroArch
+      Copyright (C) 2010-2024 The RetroArch team -- MIT
+
 * Lua 5.4.9 -- the pattern matcher and the string.find / match / gmatch /
   gsub drivers of lstrlib.c, re-expressed in Rust with step metering in
   crates/rustynes-script/src/lua_pattern.rs (v2.9.0, re-audit NF-02), so a
@@ -186,7 +196,7 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
       Copyright (C) 1994-2026 Lua.org, PUC-Rio -- MIT
 
 The MIT License text (for emu2413, TriCNES, rcheevos, rust-libretro-sys,
-Lua):
+libretro.h, Lua):
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal

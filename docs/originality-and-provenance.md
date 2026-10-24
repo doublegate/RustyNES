@@ -288,6 +288,7 @@ Genuinely incorporated, each GPL-compatible and attributed in `NOTICE`:
 | emu2413 v1.5.9 | MIT | 2020 Mitsutaka Okazaki | `crates/rustynes-apu/src/opll.rs` (Rust port; VRC7 audio, ADR 0006) |
 | TriCNES | MIT | 2025 Chris Siebert | `crates/rustynes-{ppu,cpu,core}` (models ported from commit `9199870`) + vendored golden oracle (commit `94f1b117`, re-synced 2026-09-19) |
 | rcheevos v12.5.0 | MIT | 2018 RetroAchievements.org | `crates/rustynes-cheevos/vendor/rcheevos/` (optional `retroachievements` feature) |
+| libretro.h (upstream `libretro/RetroArch`, commit `28f4c9c6a361`) | MIT | 2010-2024 The RetroArch team | `crates/rustynes-libretro/src/lib.rs`: the `GET_AUDIO_SAMPLE_BATCH_FLOAT` command number and its two declarations, transcribed as Rust (v3.6.0; interface definitions, newer than the vendored header) |
 | blip_buf | LGPL-2.1-or-later | Shay Green (Blargg) | `crates/rustynes-apu/src/blip.rs` (band-limited synthesis; GPLv3-compatible) |
 | Font Awesome Free / bundled fonts | their own licenses (OFL-1.1 etc.) | respective authors | `crates/rustynes-frontend/assets/fonts/` |
 

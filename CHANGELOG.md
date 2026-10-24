@@ -26,6 +26,72 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **The libretro core declares its options as Core Options v2**, with
+  categories, a sublabel per option and a label per value, when the frontend
+  reports core-options version 2 or more
+  (`RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION`); any other frontend gets
+  `SET_VARIABLES` as before (`T-LIBRETRO-OPTIONS-V2`). Both forms come from one
+  table, so their keys, values and defaults cannot differ, and the Four Score
+  option keeps its key and its v3.5.0 `SET_VARIABLES` string byte for byte: a
+  frontend stores the user's choice by key. The C-ABI harness answers versions
+  2, 1 and none and checks which command each gets, that the keys match the
+  v3.5.0 list, and that every v2 option has a category, a sublabel and labelled
+  values.
+- **Vs. System DIP switches as libretro core options** (LR-03): eight options,
+  `rustynes_vs_dip_1` to `_8`, each "Game default" (the Vs. database's factory
+  setting, which is what the core applied before and still applies by
+  default), Off or On. A forced switch replaces that bit of the factory bank on
+  a Vs. cartridge and on both consoles of a `DualSystem` cabinet, each against
+  its own bank. A C-ABI test reads the switches back through `$4016` / `$4017`
+  on a probe cartridge and compares with a bare console set to the same bank.
+- **The CPU overclock and the sprite-limit option in the libretro core**
+  (`T-LIBRETRO-EMU-OPTIONS`): `rustynes_cpu_overclock` (x1 to x4) and
+  `rustynes_remove_sprite_limit`, the desktop's v3.1.0 options, in an
+  "Emulation" category. A C-ABI test counts how far a counting cartridge gets
+  in ten frames (twice as far at x2, four times at x4) and counts the pixels of
+  sixteen sprites on one line (64 stock, 128 with the option); at their
+  defaults the frames are a bare console's, byte for byte.
+- **Float audio for libretro frontends that offer it**: the core asks for
+  `GET_AUDIO_SAMPLE_BATCH_FLOAT` (added to upstream `libretro.h` on 2026-06-29,
+  transcribed into the core because the vendored header predates it) at each
+  load, and when the frontend gives a float callback it sends the mixer's
+  samples unconverted, at the same full scale, for that game. Every other
+  frontend, which today is every released one, gets the `int16_t` stream byte
+  for byte as before; a C-ABI test compares both streams with a bare console's
+  samples.
+
+### Changed
+
+- **libretro save states record the emulation options** and a restore applies
+  them (`T-LIBRETRO-EMU-OPTIONS`). The desktop records the overclock, the
+  sprite limit, the Four Score and the Vs. DIP switches in a movie header and
+  the netplay handshake; RetroArch replays movies from a state and starts a
+  netplay peer from the host's state, so the core now ends every state with a
+  16-byte record of them (`retro_serialize_size` grows by 16 bytes) and a state
+  brings its options with it until a core option is changed. States written
+  before v3.6.0 have no record, still load, and leave the options alone; a
+  record holding a value no menu offers refuses the state. A state taken at x2
+  and restored into a core running stock goes on exactly as the x2 run did.
+- **Found, not fixed:** a Vs. `DualSystem` cabinet's state does not
+  round-trip byte for byte under the CPU overclock (64 bytes of inert
+  OAM-decay ages differ ten frames on, with no option change); the game is
+  unaffected, but a frontend comparing state CRCs would see a desync. A core
+  issue, pinned by an ignored expected-fail probe in the libretro harness.
+
+### Documentation
+
+- **Switch, PS Vita and 3DS for the libretro core: no-go, recorded**
+  (`T-LIBRETRO-CONSOLES`, D28). The Switch's Rust target has no `std`, and a
+  `-Zbuild-std` build fails in `std` (the reason v2.9.8 dropped
+  `platform=libnx`, now checked by building). The Vita and 3DS staticlibs
+  compile with nightly `-Zbuild-std`, but the libretro buildbot has no Rust
+  template or image for a console, nothing was linked, and the core is
+  expected, not measured, to run well below full speed on those CPUs. No
+  buildbot job was added; `docs/libretro/architecture.md` records the checks
+  and what would reopen it.
+
 ## [3.5.1] - 2026-10-23 - "Reprise" (the MMC5 outside rendering in both cores, and the v3.5.0 review's residue)
 
 ### Fixed
