@@ -49,7 +49,10 @@ cycle-accurate core later replaced.
   while the PPU renders, and `$2007` as using "the last set of registers
   written to"; the page names Bandit Kings of Ancient China and Uchuu Keibitai
   SDF as reading data from CHR through `$2007`, and the Koei games keep
-  extended attributes on throughout.
+  extended attributes on throughout. The split's nametable substitution had
+  the same defect: a `$2007` nametable read after a split frame returned the
+  split's ExRAM bytes instead of the table `$5105` maps there. It was found by
+  the MiSTer core's new `$2007` stimulus, and it is fixed the same way.
 - **A device key held while it is rebound no longer stays held**: rebinding a
   Power Pad, Hyper Shot, microphone, controller or Family BASIC key while it
   was down left its input pressed for good, because its release no longer
