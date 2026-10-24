@@ -28,6 +28,17 @@ cycle-accurate core later replaced.
 
 ## [3.5.1] - 2026-10-23 - "Reprise" (the MMC5 outside rendering in both cores, and the v3.5.0 review's residue)
 
+### Breaking
+
+- **Emulation epoch 7**: movies recorded on v3.5.0 (epoch 6) are refused,
+  and a v3.5.0 netplay peer is refused, each with a message naming both
+  epochs. The MMC5 fix below changes what a `$2007` CHR read in vertical
+  blank returns. No recorded test output moved, and a probe found no
+  affected read in the three MMC5 games measured, but a movie of a game that
+  makes that read would otherwise replay differently without warning (the
+  maintainer's call). Save states are unaffected; netplay protocol 9 and
+  `.rnm` format 7 are unchanged.
+
 ### Fixed
 
 - **MMC5 CHR reads outside rendering** (`T-MMC5-LATCH-VBLANK`): a split-screen
