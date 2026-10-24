@@ -300,8 +300,12 @@ pub mod shm;
 pub mod memif;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod speedrun_cli;
+// v3.6.0 (`T-AUDIO-STEMS`) — `rustynes stems` and `rustynes nsf-rip`, the
+// headless front ends to the core's stem capture and NSF ripper.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod speedrun_host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stems_cli;
 // v1.4.0 Workstream D (D1) — debugger symbol/label file loading
 // (`.sym` / Mesen `.mlb` / FCEUX `.nl`). Frontend display aid only; the parsed
 // `address -> label` map annotates the disassembler / breakpoint / trace views

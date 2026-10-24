@@ -1175,8 +1175,14 @@ write-only and read as open bus, per the NSF spec's readable-address list),
 8 KiB WRAM at `$6000`,
 and a tiny hand-assembled 6502 **driver** at `$5000`; the reset/NMI/IRQ vectors
 (`$FFFA-$FFFF`) are overridden to point at the driver. Reset runs `init` for the
-selected song. At the standard 60 Hz it enables vblank NMI and the ordinary 60 Hz
-NMI calls `play` each frame; at a **non-standard rate** (a PAL 50 Hz tune or any
+selected song. At the standard 60 Hz the driver first sets the frame counter to
+4-step mode with the frame IRQ inhibited (`$40` to `$4017`, before `init`, as
+nesdev's "NSF" page describes a player doing), runs `init`, waits two vblanks on
+`$2002` to clear the PPU's post-reset warm-up, then enables vblank NMI, and the
+ordinary 60 Hz NMI calls `play` each frame. (Until v3.6.0 it enabled the NMI at
+once, inside the warm-up window v2.9.8 had modelled, so the write was dropped
+and `play` never ran from v2.9.8 to v3.5.x; `nsf_standard_rate_calls_play_every_frame`
+pins the fix.) at a **non-standard rate** (a PAL 50 Hz tune or any
 custom µs divider from the header speed word, on the NTSC console) it instead
 disables the APU frame IRQ and arms a mapper **cycle-timer** that raises a
 `$5FF1`-acked IRQ every `period` CPU cycles, whose handler calls `play`. Because

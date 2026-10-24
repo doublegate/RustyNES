@@ -86,6 +86,33 @@ cycle-accurate core later replaced.
   cc65 records no C types, so cc65 variables show as one byte. New
   dependencies `gimli` and `object` (MIT / Apache-2.0), reached only from
   `rustynes-dap`.
+- **Audio stems** (`T-AUDIO-STEMS`): `rustynes stems <ROM>` writes pulse 1,
+  pulse 2, triangle, noise, DMC and the cartridge's expansion chip (VRC6, VRC7,
+  Namco 163, Sunsoft 5B, MMC5, FDS, or an NSF's chips) as separate 32-bit float
+  WAVs beside the console's mix, from one emulation pass. The stems are
+  re-rendered offline from the APU's existing per-cycle mix trace, each source
+  alone through the console's own mixer, band-limited buffer and filter, so
+  nothing is added to the APU's per-cycle work and a run without the capture
+  is unchanged. The 2A03 mixer is non-linear, so a seventh track carries its
+  interaction term and the seven sum to the mix (largest error measured
+  3.6e-7 over 650 frames of the VRC6 test ROM, f32 rounding). Every run checks
+  that its re-rendered mix equals the console's output bit for bit, and the
+  tests check each stem against the console with only that channel unmasked
+  (0 differing samples for all five 2A03 channels, the VRC6 and the FDS).
+  An NSF with several chips gets them summed into one expansion stem, and a
+  chip's own voices are not split. Library API: `rustynes_core::stems`
+  (`debug-hooks`). See `docs/audio-stems.md`.
+- **NSF ripping** (`T-AUDIO-STEMS`): `rustynes nsf-rip <ROM>` traces the run
+  with a shadow call stack, proposes the music driver's `play` (the innermost
+  routine enclosing every APU write of a frame) and `init` (the one enclosing
+  the writes made outside play) with the counts behind each, and with `--out`
+  writes a version 1 NSF, plays it back and reports it verified only when its
+  `play` calls make the game's APU writes, call for call. Boards without PRG
+  banking (mappers 0 and 3) only; a bank-switched board or a driver that runs
+  from RAM is refused with the reason. Library API: `rustynes_core::nsf_rip`.
+  Not done: a desktop menu entry for either tool (both are headless passes
+  over a fresh console; running them from the window would need their own
+  thread and progress UI, which was not cheap).
 
 ### Changed
 
@@ -135,6 +162,23 @@ cycle-accurate core later replaced.
   Android does; it was written only when the app went to the background or
   switched games, so a crash or a kill while playing lost every in-game save
   since. The device check is run-sheet row T14.
+
+### Fixed
+
+- **NSF files play again at the standard 60 Hz rate**: from v2.9.8 to v3.5.x
+  an NSF's `play` routine never ran, so a tune played only what its `init`
+  routine wrote (usually silence, or one held note). The player's driver
+  enabled the vblank NMI with its first `$2000` write, inside the PPU's
+  post-reset warm-up window that v2.9.8 began modelling, so the write was
+  dropped; and it enabled interrupts without inhibiting the APU frame IRQ, so
+  the CPU then spent the rest of the run servicing that IRQ. The driver now
+  writes `$40` to `$4017` before `init` and waits two vblanks before enabling
+  the NMI, as nesdev's "NSF" and "PPU power up state" pages describe. NSF
+  output changes (it now plays); cartridges and FDS are untouched. 50 Hz and
+  custom-rate NSFs used the timer driver, which already inhibited the frame
+  IRQ and needs no NMI, and were not affected. Found by the NSF ripper's
+  playback gate (`T-AUDIO-STEMS`); pinned by
+  `nsf_standard_rate_calls_play_every_frame`.
 
 ### Documentation
 

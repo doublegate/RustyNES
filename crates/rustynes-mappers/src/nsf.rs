@@ -479,21 +479,39 @@ impl NsfMapper {
     ///
     /// ```text
     /// INIT ($5000):  SEI; CLD; LDX #$FF; TXS
-    ///                LDA #song; LDX #region; JSR init_addr   ; song operand @ +6
-    ///                LDA #$80; STA $2000                      ; enable vblank NMI
-    ///                CLI; loop: JMP loop                      ; spin; NMI drives play
+    ///                LDA #song                                ; operand @ +6
+    ///                LDX #$40; STX $4017                      ; frame IRQ off
+    ///                LDX #region; JSR init_addr
+    ///                JMP $5024
     /// NMI  ($5015):  PHA; TXA; PHA; TYA; PHA; JSR play_addr
     ///                PLA; TAY; PLA; TAX; PLA; RTI
     /// IRQ  ($5023):  RTI                                      ; base-NSF stub
+    /// WAIT ($5024):  BIT $2002; BPL -5; BIT $2002; BPL -5     ; two vblanks
+    ///                LDA #$80; STA $2000                      ; enable vblank NMI
+    ///                CLI; loop: JMP loop                      ; spin; NMI drives play
     /// ```
+    ///
+    /// **v3.6.0** added the `$4017` write and the vblank wait. From v2.9.8,
+    /// which modelled the PPU's post-reset warm-up (writes to `$2000` are
+    /// dropped for the first 29,658 CPU cycles), the driver's immediate
+    /// `STA $2000` was dropped with it, so no NMI ever came and `play` never
+    /// ran; and its `CLI` with the APU frame IRQ still enabled (the power-on
+    /// `$4017` is `$00`) left the CPU servicing that IRQ through the `RTI`
+    /// stub forever. Both follow nesdev's "NSF" page: a player sets the frame
+    /// counter to 4-step mode with `$40` to `$4017` before `init`, and a
+    /// program waits out the warm-up with two `$2002` vblank polls (nesdev
+    /// "PPU power up state") before enabling the NMI. `init` itself is
+    /// unchanged and still runs first, so a tune that writes `$4017` keeps
+    /// its own choice. Pinned by `nsf_standard_rate_calls_play_every_frame`
+    /// in `rustynes-core`.
     fn build_driver(&mut self) {
         let il = (self.init_addr & 0xFF) as u8;
         let ih = (self.init_addr >> 8) as u8;
         let pl = (self.play_addr & 0xFF) as u8;
         let ph = (self.play_addr >> 8) as u8;
         let region = u8::from(self.pal);
-        let spin = DRIVER_BASE + 0x12;
-        let code: [u8; 0x24] = [
+        let spin = DRIVER_BASE + 0x34;
+        let code: [u8; 0x37] = [
             0x78, // 5000 SEI
             0xD8, // 5001 CLD
             0xA2,
@@ -502,24 +520,24 @@ impl NsfMapper {
             0xA9,
             self.current_song, // 5005 LDA #song   (operand @ 0x06)
             0xA2,
-            region, // 5007 LDX #region
+            0x40, // 5007 LDX #$40
+            0x8E,
+            0x17,
+            0x40, // 5009 STX $4017   (4-step, frame IRQ inhibited)
+            0xA2,
+            region, // 500C LDX #region
             0x20,
             il,
-            ih, // 5009 JSR init_addr
-            0xA9,
-            0x80, // 500C LDA #$80
-            0x8D,
-            0x00,
-            0x20, // 500E STA $2000
-            0x58, // 5011 CLI
+            ih, // 500E JSR init_addr
             0x4C,
-            (spin & 0xFF) as u8,
-            (spin >> 8) as u8, // 5012 JMP spin
-            0x48,              // 5015 PHA
-            0x8A,              // 5016 TXA
-            0x48,              // 5017 PHA
-            0x98,              // 5018 TYA
-            0x48,              // 5019 PHA
+            0x24,
+            0x50, // 5011 JMP $5024
+            0x00, // 5014 (unused)
+            0x48, // 5015 PHA
+            0x8A, // 5016 TXA
+            0x48, // 5017 PHA
+            0x98, // 5018 TYA
+            0x48, // 5019 PHA
             0x20,
             pl,
             ph,   // 501A JSR play_addr
@@ -530,6 +548,25 @@ impl NsfMapper {
             0x68, // 5021 PLA
             0x40, // 5022 RTI
             0x40, // 5023 RTI  (IRQ stub)
+            0x2C,
+            0x02,
+            0x20, // 5024 BIT $2002
+            0x10,
+            0xFB, // 5027 BPL $5024
+            0x2C,
+            0x02,
+            0x20, // 5029 BIT $2002
+            0x10,
+            0xFB, // 502C BPL $5029
+            0xA9,
+            0x80, // 502E LDA #$80
+            0x8D,
+            0x00,
+            0x20, // 5030 STA $2000
+            0x58, // 5033 CLI
+            0x4C,
+            (spin & 0xFF) as u8,
+            (spin >> 8) as u8, // 5034 JMP spin
         ];
         self.driver[..code.len()].copy_from_slice(&code);
         // Non-60-Hz files replace the standard vblank-NMI image with the
@@ -972,9 +1009,15 @@ mod tests {
         let lo = m.cpu_read(0xFFFA);
         let hi = m.cpu_read(0xFFFB);
         assert_eq!(u16::from(lo) | (u16::from(hi) << 8), DRIVER_NMI_ENTRY);
-        // The driver's JSR init operand encodes init_addr ($8000).
-        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0A), 0x00);
-        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0B), 0x80);
+        // The driver's JSR init operand encodes init_addr ($8000). At +$0E
+        // since v3.6.0, which put the `$4017` frame-IRQ write before it.
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0E), 0x20);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0F), 0x00);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x10), 0x80);
+        // ...and the frame IRQ is inhibited before init runs.
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x09), 0x8E);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0A), 0x17);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0B), 0x40);
     }
 
     #[test]
