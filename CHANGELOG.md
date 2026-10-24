@@ -165,6 +165,13 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **MMC5 NSF files play**: the NSF player's driver sat at `$5000-$504F` with
+  its NMI entry at `$5015`, which is also the MMC5's status port, and an NSF
+  declaring MMC5 audio answers that port before the driver, so the NMI ran the
+  status byte as an instruction and `play` was never called (2 calls in 120
+  frames, measured). The driver now sits at `$5100`, clear of every expansion
+  chip an NSF can declare; moving the whole page keeps its timing. Found while
+  reviewing the 60 Hz fix below; a test pins it.
 - **NSF files play again at the standard 60 Hz rate**: from v2.9.8 to v3.5.x
   an NSF's `play` routine never ran, so a tune played only what its `init`
   routine wrote (usually silence, or one held note). The player's driver

@@ -6575,6 +6575,29 @@ mod tests {
         );
     }
 
+    /// v3.6.0: the same 60 Hz NSF declaring MMC5 audio (header `$7B` bit 3).
+    /// The player's driver image sat at `$5000-$504F` with its NMI entry at
+    /// `$5015`, which is also the MMC5's status port; `NsfExpansion` answers
+    /// that port first, so the NMI fetched the status byte as its first
+    /// opcode and `play` never ran on any MMC5 NSF.
+    #[test]
+    fn an_mmc5_nsf_calls_play_every_frame() {
+        let mut f = synth_counting_nsf_50hz();
+        f[0x6E] = 0;
+        f[0x6F] = 0;
+        f[0x7B] = 0x08;
+        let mut nes = Nes::from_nsf(&f).expect("valid nsf");
+        for _ in 0..120 {
+            nes.run_frame();
+        }
+        let calls = nes.peek(0x0000);
+        assert!(
+            (114..=118).contains(&calls),
+            "play ran {calls} times in 120 frames on an MMC5 NSF"
+        );
+        assert!(!nes.is_jammed());
+    }
+
     /// A minimal non-60-Hz NSF whose `play` routine increments zero-page `$00`,
     /// so a test can count how many times the cycle-timer IRQ drove `play`.
     fn synth_counting_nsf_50hz() -> Vec<u8> {

@@ -45,10 +45,23 @@ const NSF_HEADER_LEN: usize = 0x80;
 /// `NESM\x1A` magic.
 const NSF_MAGIC: &[u8; 5] = b"NESM\x1A";
 
-/// Address the synthetic driver ("BIOS") is mapped at. `$5000` is in the
+/// Address the synthetic driver ("BIOS") is mapped at: page `$51`, in the
 /// `$4020-$5FFF` expansion window that base NSFs never touch (the only thing
-/// down here for a 2A03 tune is the `$5FF8-$5FFF` bank registers).
-const DRIVER_BASE: u16 = 0x5000;
+/// down here for a 2A03 tune is the `$5FF8-$5FFF` bank registers), and clear
+/// of every expansion chip an NSF can declare: the FDS (`$4040-$4092`), the
+/// Namco 163 (`$4800`), and the MMC5's audio (`$5000-$5015`), multiplier
+/// (`$5205-$5206`) and `ExRAM` (`$5C00-$5FF5`).
+///
+/// It was `$5000` until v3.6.0, which put the NMI entry (`+$15`) on the
+/// MMC5's status port `$5015`; [`NsfExpansion`] answers that port before the
+/// driver image, so on an MMC5 NSF the NMI fetched the status byte as an
+/// opcode and `play` never ran. Moving the whole page keeps every low byte of
+/// the image, so the driver's timing is unchanged.
+const DRIVER_BASE: u16 = 0x5100;
+
+/// The driver page, as the high byte its own jumps encode.
+#[allow(clippy::cast_possible_truncation)] // the shift leaves 8 bits
+const DRIVER_HI: u8 = (DRIVER_BASE >> 8) as u8;
 
 /// Offset of the song-number immediate operand inside the driver image (see the
 /// driver listing in [`NsfMapper::build_driver`]). Re-patched on track change.
@@ -475,18 +488,18 @@ impl NsfMapper {
     }
 
     /// Assemble the synthetic 6502 driver. Layout (addresses relative to
-    /// [`DRIVER_BASE`] = `$5000`):
+    /// [`DRIVER_BASE`] = `$5100`):
     ///
     /// ```text
-    /// INIT ($5000):  SEI; CLD; LDX #$FF; TXS
+    /// INIT ($5100):  SEI; CLD; LDX #$FF; TXS
     ///                LDA #song                                ; operand @ +6
     ///                LDX #$40; STX $4017                      ; frame IRQ off
     ///                LDX #region; JSR init_addr
-    ///                JMP $5024
-    /// NMI  ($5015):  PHA; TXA; PHA; TYA; PHA; JSR play_addr
+    ///                JMP $5124
+    /// NMI  ($5115):  PHA; TXA; PHA; TYA; PHA; JSR play_addr
     ///                PLA; TAY; PLA; TAX; PLA; RTI
-    /// IRQ  ($5023):  RTI                                      ; base-NSF stub
-    /// WAIT ($5024):  BIT $2002; BPL -5; BIT $2002; BPL -5     ; two vblanks
+    /// IRQ  ($5123):  RTI                                      ; base-NSF stub
+    /// WAIT ($5124):  BIT $2002; BPL -5; BIT $2002; BPL -5     ; two vblanks
     ///                LDA #$80; STA $2000                      ; enable vblank NMI
     ///                CLI; loop: JMP loop                      ; spin; NMI drives play
     /// ```
@@ -512,61 +525,61 @@ impl NsfMapper {
         let region = u8::from(self.pal);
         let spin = DRIVER_BASE + 0x34;
         let code: [u8; 0x37] = [
-            0x78, // 5000 SEI
-            0xD8, // 5001 CLD
+            0x78, // 5100 SEI
+            0xD8, // 5101 CLD
             0xA2,
-            0xFF, // 5002 LDX #$FF
-            0x9A, // 5004 TXS
+            0xFF, // 5102 LDX #$FF
+            0x9A, // 5104 TXS
             0xA9,
-            self.current_song, // 5005 LDA #song   (operand @ 0x06)
+            self.current_song, // 5105 LDA #song   (operand @ 0x06)
             0xA2,
-            0x40, // 5007 LDX #$40
+            0x40, // 5107 LDX #$40
             0x8E,
             0x17,
-            0x40, // 5009 STX $4017   (4-step, frame IRQ inhibited)
+            0x40, // 5109 STX $4017   (4-step, frame IRQ inhibited)
             0xA2,
-            region, // 500C LDX #region
+            region, // 510C LDX #region
             0x20,
             il,
-            ih, // 500E JSR init_addr
+            ih, // 510E JSR init_addr
             0x4C,
             0x24,
-            0x50, // 5011 JMP $5024
-            0x00, // 5014 (unused)
-            0x48, // 5015 PHA
-            0x8A, // 5016 TXA
-            0x48, // 5017 PHA
-            0x98, // 5018 TYA
-            0x48, // 5019 PHA
+            DRIVER_HI, // 5111 JMP $5124
+            0x00,      // 5114 (unused)
+            0x48,      // 5115 PHA
+            0x8A,      // 5116 TXA
+            0x48,      // 5117 PHA
+            0x98,      // 5118 TYA
+            0x48,      // 5119 PHA
             0x20,
             pl,
-            ph,   // 501A JSR play_addr
-            0x68, // 501D PLA
-            0xA8, // 501E TAY
-            0x68, // 501F PLA
-            0xAA, // 5020 TAX
-            0x68, // 5021 PLA
-            0x40, // 5022 RTI
-            0x40, // 5023 RTI  (IRQ stub)
+            ph,   // 511A JSR play_addr
+            0x68, // 511D PLA
+            0xA8, // 511E TAY
+            0x68, // 511F PLA
+            0xAA, // 5120 TAX
+            0x68, // 5121 PLA
+            0x40, // 5122 RTI
+            0x40, // 5123 RTI  (IRQ stub)
             0x2C,
             0x02,
-            0x20, // 5024 BIT $2002
+            0x20, // 5124 BIT $2002
             0x10,
-            0xFB, // 5027 BPL $5024
+            0xFB, // 5127 BPL $5124
             0x2C,
             0x02,
-            0x20, // 5029 BIT $2002
+            0x20, // 5129 BIT $2002
             0x10,
-            0xFB, // 502C BPL $5029
+            0xFB, // 512C BPL $5129
             0xA9,
-            0x80, // 502E LDA #$80
+            0x80, // 512E LDA #$80
             0x8D,
             0x00,
-            0x20, // 5030 STA $2000
-            0x58, // 5033 CLI
+            0x20, // 5130 STA $2000
+            0x58, // 5133 CLI
             0x4C,
             (spin & 0xFF) as u8,
-            (spin >> 8) as u8, // 5034 JMP spin
+            (spin >> 8) as u8, // 5134 JMP spin
         ];
         self.driver[..code.len()].copy_from_slice(&code);
         // Non-60-Hz files replace the standard vblank-NMI image with the
@@ -584,8 +597,8 @@ impl NsfMapper {
     /// `DRIVER_SONG_OPERAND` (@ +6) stay valid.
     fn build_timer_driver(&mut self, il: u8, ih: u8, pl: u8, ph: u8, region: u8) {
         self.driver = [0u8; 0x50];
-        // INIT @ $5000: run the tune's `init`, then jump PAST the fixed NMI
-        // ($5015) / IRQ ($5023) entries to the continuation @ $5034 — which
+        // INIT @ $5100: run the tune's `init`, then jump PAST the fixed NMI
+        // ($5115) / IRQ ($5123) entries to the continuation @ $5134 — which
         // MUST disable the APU frame-counter IRQ before arming, or that IRQ
         // shares this handler and drives `play` continuously.
         let init_block: [u8; 0x0F] = [
@@ -603,13 +616,13 @@ impl NsfMapper {
             ih, // JSR init
             0x4C,
             0x34,
-            0x50, // JMP $5034 (continuation)
+            DRIVER_HI, // JMP $5134 (continuation)
         ];
         self.driver[..init_block.len()].copy_from_slice(&init_block);
-        // NMI stub @ $5015 (never enabled in timer mode; the vector still points
+        // NMI stub @ $5115 (never enabled in timer mode; the vector still points
         // here, so keep a safe RTI).
         self.driver[0x15] = 0x40; // RTI
-        // IRQ play handler @ $5023: ack the timer ($5FF1), then `play`.
+        // IRQ play handler @ $5123: ack the timer ($5FF1), then `play`.
         let irq_block: [u8; 0x11] = [
             0x48, // PHA
             0x8A, // TXA
@@ -626,7 +639,7 @@ impl NsfMapper {
             0x40, // RTI
         ];
         self.driver[0x23..0x23 + irq_block.len()].copy_from_slice(&irq_block);
-        // Continuation @ $5034: disable the APU frame-counter IRQ ($4017 = $40,
+        // Continuation @ $5134: disable the APU frame-counter IRQ ($4017 = $40,
         // bit6 inhibit) ONCE (not per-`play`, so the APU frame sequencer isn't
         // disturbed), arm the play-timer ($5FF0), enable IRQ, spin.
         let cont_block: [u8; 0x0E] = [
@@ -635,7 +648,7 @@ impl NsfMapper {
             0xA9, 0x01, // LDA #$01
             0x8D, 0xF0, 0x5F, // STA $5FF0  (arm play-timer)
             0x58, // CLI
-            0x4C, 0x3F, 0x50, // JMP $503F (spin: self)
+            0x4C, 0x3F, DRIVER_HI, // JMP $513F (spin: self)
         ];
         self.driver[0x34..0x34 + cont_block.len()].copy_from_slice(&cont_block);
     }
@@ -1134,7 +1147,7 @@ mod tests {
         // INIT jumps past the fixed NMI/IRQ entries to the continuation @ $5034.
         assert_eq!(m.cpu_read(DRIVER_BASE + 0x0C), 0x4C); // JMP
         assert_eq!(m.cpu_read(DRIVER_BASE + 0x0D), 0x34);
-        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0E), 0x50);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0E), DRIVER_HI);
         // The continuation disables the APU frame IRQ (`STA $4017`) BEFORE it
         // arms the play-timer (`STA $5FF0`) — the ordering that stops the frame
         // IRQ from co-driving `play`.
