@@ -166,14 +166,14 @@ fn run_dump_check(
 fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitCode {
     use rustynes_core::{Movie, Nes, VerifyOutcome};
 
-    let movie_bytes = match std::fs::read(movie_path) {
+    let movie_bytes = match rustynes_frontend::bounded_read::read(movie_path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("rustynes: cannot read {}: {e}", movie_path.display());
             return ExitCode::from(1);
         }
     };
-    let rom_bytes = match std::fs::read(rom_path) {
+    let rom_bytes = match rustynes_frontend::bounded_read::read(rom_path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("rustynes: cannot read {}: {e}", rom_path.display());

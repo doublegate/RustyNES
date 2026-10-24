@@ -71,7 +71,7 @@ impl SpeedrunHost {
         let def = match &opts.splits {
             None => None,
             Some(path) => {
-                let text = std::fs::read_to_string(path)
+                let text = crate::bounded_read::read_to_string(path)
                     .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
                 Some(
                     SplitsDefinition::parse(&text)
