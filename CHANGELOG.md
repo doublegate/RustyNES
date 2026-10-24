@@ -26,6 +26,17 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Emulation epoch 8**: movies recorded on v3.5.1 (epoch 7) are refused,
+  and a v3.5.1 netplay peer is refused, each with a message naming both
+  epochs. The two NSF fixes below change what the core outputs for an NSF
+  from the same inputs: 60 Hz NSFs call `play` every frame again, and MMC5
+  NSFs play at all. No recorded test output moved (no golden or fingerprint
+  covers an NSF), but a movie of an NSF would otherwise replay differently
+  without warning (the maintainer's call, 2026-10-24). Cartridge and FDS
+  emulation is unchanged; save states are unaffected.
+
 ### Added
 
 - **The libretro core declares its options as Core Options v2**, with

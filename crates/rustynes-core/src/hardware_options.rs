@@ -100,7 +100,8 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// | 5 | v3.3.0 | a CHR-RAM write goes through the bank registers its read does (T-VRC4-CHRRAM-BANKING: mappers 19, 21-26, 34 NINA-001, 69, 75, 151); mapper 71's bank select answers only at `$C000-$FFFF`, and *Fire Hawk*'s (submapper 1) mirroring register at `$8000-$9FFF` (T-MAPPER71-DECODE) |
 /// | 6 | v3.5.0 | the MMC5 detects scanlines from the PPU's reads (`nesdev_wiki/MMC5.xhtml`): a `$5203` = N IRQ rises at line N dot 4, not line N - 1 dot 0, and nothing counts with rendering off (*Uchuu Keibitai SDF*'s playfield moves down one line; *Castlevania III*, *Gemfire* and *L'Empereur* audio) |
 /// | 7 | v3.5.1 | the MMC5's split-screen and extended-attribute CHR banks apply only to fetches made while the PPU renders (T-MMC5-LATCH-VBLANK): a `$2007` CHR read in vertical blank, or with rendering off, reads the bank registers, not the last tile's latched bank. No golden or snapshot moved and a probe found no affected access in three MMC5 games; raised anyway, by the maintainer's call (2026-10-23), because the bus value changes for software that makes that read |
-pub const EMULATION_EPOCH: u32 = 7;
+/// | 8 | v3.6.0 | NSF playback: a 60 Hz NSF's `play` routine runs every frame again (the driver inhibits the APU frame IRQ and enables the NMI after the PPU's warm-up, T-AUDIO-STEMS), and the driver moved from `$5000` to `$5100`, clear of the MMC5 status port, so an MMC5 NSF plays. No golden or fingerprint covers an NSF, so nothing recorded moved; raised by the maintainer's call (2026-10-24) because NSF audio and bus traffic change from the same inputs |
+pub const EMULATION_EPOCH: u32 = 8;
 
 /// Every host-settable option that changes what the emulated console does.
 ///
