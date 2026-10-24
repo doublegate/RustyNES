@@ -204,6 +204,10 @@ in `crates/rustynes-frontend/web`.
   with a fixed-layout memory interface for splitters
   ([`docs/memory-export-interface.md`](docs/memory-export-interface.md)), and
   `rustynes dump-check` to tell whether a ROM file is the dump it claims to be.
+- **Audio stems and NSF ripping:** `rustynes stems` writes each channel and the
+  expansion chip as its own WAV, sample-aligned with the mix they sum to, and
+  `rustynes nsf-rip` finds a game's music driver and writes a verified NSF
+  ([`docs/audio-stems.md`](docs/audio-stems.md)).
 - **An MCP server**, `rustynes-mcp`, serving the headless core to a Model
   Context Protocol client, with reproducible fork-and-diff experiments
   ([`docs/mcp-server.md`](docs/mcp-server.md)).

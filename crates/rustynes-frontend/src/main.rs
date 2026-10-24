@@ -84,6 +84,46 @@ fn main() -> ExitCode {
             nes20db,
             frames,
         }) => run_dump_check(&rom, dat.as_deref(), nes20db.as_deref(), frames),
+        Some(CliCommand::Stems {
+            rom,
+            out,
+            movie,
+            frames,
+            rate,
+            filter,
+            bios,
+        }) => ExitCode::from(rustynes_frontend::stems_cli::run_stems(
+            &rustynes_frontend::stems_cli::StemsArgs {
+                rom,
+                bios,
+                out,
+                movie,
+                frames: frames.unwrap_or(rustynes_frontend::stems_cli::DEFAULT_FRAMES),
+                rate,
+                filter,
+            },
+        )),
+        Some(CliCommand::NsfRip {
+            rom,
+            out,
+            movie,
+            frames,
+            name,
+            artist,
+            copyright,
+        }) => ExitCode::from(rustynes_frontend::stems_cli::run_rip(
+            &rustynes_frontend::stems_cli::RipArgs {
+                rom,
+                movie,
+                frames: frames.unwrap_or(rustynes_frontend::stems_cli::DEFAULT_FRAMES),
+                out,
+                info: rustynes_core::nsf_rip::NsfInfo {
+                    name,
+                    artist,
+                    copyright,
+                },
+            },
+        )),
         None => run_emulator(
             cli.rom,
             &rustynes_frontend::speedrun_host::SpeedrunOptions {

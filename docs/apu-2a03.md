@@ -364,6 +364,11 @@ output = pulse_table[(pulse1 + pulse2) as usize]
 
 After mixing, apply: 90 Hz first-order high-pass, 440 Hz first-order high-pass, 14 kHz first-order low-pass.
 
+Because the tables are concave, two channels together are quieter than the two
+alone added up. `rustynes stems` (v3.6.0, [`audio-stems.md`](audio-stems.md))
+renders each channel alone through this mixer and writes the difference as an
+interaction track, so its stems sum to the mix; the APU itself is unchanged.
+
 **Filter model (v2.1.3).** The three-stage chain above is the **NES front-loader**
 (RF/composite) circuit and is the default (`FilterModel::NesRf`, byte-identical to
 earlier builds — it matches ares/tetanes). Because that 440 Hz high-pass rolls off

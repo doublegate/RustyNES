@@ -44,6 +44,8 @@ appends a colored "Examples" + "Keyboard" footer (`color-print`'s `cstr!`).
 | `rustynes completions <bash\|zsh\|fish\|powershell>` | Print a shell-completion script (`clap_complete`). |
 | `rustynes verify <MOVIE> --rom <ROM>` | Replay an attested movie headless (`docs/pixel-provenance.md`). |
 | `rustynes dump-check <ROM> [--dat F] [--nes20db F] [--frames N]` | v3.5.0: a dump's verification report (`docs/dump-check.md`); exit 0 clean, 4 findings, 1 error. |
+| `rustynes stems <ROM> [--out DIR] [--frames N \| --movie M] [--rate HZ] [--filter M] [--bios F]` | v3.6.0: one WAV per channel, the expansion chip and the mixer's interaction term, beside the mix they sum to (`docs/audio-stems.md`); exit 0 written, 4 the mix check failed, 1 error. |
+| `rustynes nsf-rip <ROM> [--out F.nsf] [--frames N \| --movie M] [--name T] [--artist T] [--copyright T]` | v3.6.0: propose a game's music driver and write a verified NSF (`docs/audio-stems.md`); exit 0 done, 4 no driver / not imageable / not verified, 1 error. |
 
 Help topics (`controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
 `scripting`, `netplay`, `about`) come from a single structured registry
