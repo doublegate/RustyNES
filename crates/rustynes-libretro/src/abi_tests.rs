@@ -55,10 +55,69 @@ static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// `(port, id, description)` of every descriptor in the most recent
 /// `SET_INPUT_DESCRIPTORS`.
 static DESCRIBED: Mutex<Vec<(u32, u32, String)>> = Mutex::new(Vec::new());
-/// Keys the core declared with `SET_VARIABLES`.
+/// Keys the core declared in its most recent declaration, whichever form
+/// (`SET_VARIABLES` or `SET_CORE_OPTIONS_V2`).
 static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// How many times the core has called `SET_VARIABLES`.
 static SET_VARIABLES_CALLS: AtomicU32 = AtomicU32::new(0);
+/// How many times the core has called `SET_CORE_OPTIONS_V2`.
+static SET_OPTIONS_V2_CALLS: AtomicU32 = AtomicU32::new(0);
+/// `(key, value string)` of the most recent `SET_VARIABLES`.
+static DECLARED_V0: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// The definitions of the most recent `SET_CORE_OPTIONS_V2`.
+static DECLARED_V2: Mutex<Vec<V2Def>> = Mutex::new(Vec::new());
+/// `(key, label)` of the categories of the most recent `SET_CORE_OPTIONS_V2`.
+static DECLARED_CATEGORIES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// The core-options version the fake frontend reports
+/// (`GET_CORE_OPTIONS_VERSION`); 2, a current `RetroArch`, unless a test
+/// says otherwise. 0 refuses the query, as a frontend predating it does.
+static CORE_OPTIONS_VERSION: AtomicU32 = AtomicU32::new(2);
+/// The value the fake frontend reports for each option key it has one for
+/// (`GET_VARIABLE`); a key absent here is refused. Leaked C strings, so the
+/// pointer handed out stays valid after the lock is released.
+static OPTION_VALUES: Mutex<Vec<(String, &'static CStr)>> = Mutex::new(Vec::new());
+
+/// One `retro_core_option_v2_definition`, copied out of the call.
+#[derive(Clone, Debug)]
+struct V2Def {
+    key: String,
+    desc: String,
+    info: String,
+    category: String,
+    default: String,
+    /// `(value, label)`.
+    values: Vec<(String, String)>,
+}
+
+/// A C string the core handed over, or `""` for null.
+///
+/// # Safety
+///
+/// `p` is null or a NUL-terminated string valid for the call.
+unsafe fn text(p: *const std::ffi::c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        // SAFETY: the caller's contract.
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
+}
+
+/// Make the fake frontend report `value` for option `key`, and report a
+/// change at the next `GET_VARIABLE_UPDATE`.
+fn set_option(key: &str, value: &str) {
+    let value: &'static CStr = Box::leak(
+        std::ffi::CString::new(value)
+            .expect("no NUL")
+            .into_boxed_c_str(),
+    );
+    {
+        let mut values = held(&OPTION_VALUES);
+        values.retain(|(k, _)| k != key);
+        values.push((key.to_owned(), value));
+    }
+    VARS_CHANGED.store(true, SeqCst);
+}
 /// Whether the fake video callback copies each frame into `LAST_FRAME`
 /// (off by default: most tests do not look at the picture).
 static KEEP_FRAME: AtomicBool = AtomicBool::new(false);
@@ -192,8 +251,6 @@ fn dirs() -> &'static Dirs {
         }
     })
 }
-/// The value the fake frontend reports for `rustynes_four_score`.
-static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
 /// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
 static VARS_CHANGED: AtomicBool = AtomicBool::new(false);
 /// The descriptors of the most recent `SET_MEMORY_MAPS`, copied out.
@@ -372,16 +429,72 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         RETRO_ENVIRONMENT_SET_VARIABLES => {
             let mut keys = Vec::new();
+            let mut pairs = Vec::new();
             let mut v = data.cast::<retro_variable>().cast_const();
             // SAFETY: an array terminated by a null `key`, valid for the call.
             unsafe {
                 while !v.is_null() && !(*v).key.is_null() {
-                    keys.push(CStr::from_ptr((*v).key).to_string_lossy().into_owned());
+                    keys.push(text((*v).key));
+                    pairs.push((text((*v).key), text((*v).value)));
                     v = v.add(1);
                 }
             }
             *held(&DECLARED_VARS) = keys;
+            *held(&DECLARED_V0) = pairs;
             SET_VARIABLES_CALLS.fetch_add(1, SeqCst);
+            true
+        }
+        RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
+            let version = CORE_OPTIONS_VERSION.load(SeqCst);
+            if data.is_null() || version == 0 {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut c_uint`.
+            unsafe { *data.cast::<c_uint>() = version };
+            true
+        }
+        RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 => {
+            if data.is_null() || CORE_OPTIONS_VERSION.load(SeqCst) < 2 {
+                return false;
+            }
+            let mut categories = Vec::new();
+            let mut defs = Vec::new();
+            // SAFETY: the core passes a `*const retro_core_options_v2` whose
+            // two arrays are terminated by an entry with a null `key`, and each
+            // definition's values by an entry with a null `value`; all valid
+            // for the call.
+            unsafe {
+                let options = &*data.cast::<retro_core_options_v2>();
+                let mut c = options.categories.cast_const();
+                while !c.is_null() && !(*c).key.is_null() {
+                    categories.push((text((*c).key), text((*c).desc)));
+                    c = c.add(1);
+                }
+                let mut d = options.definitions.cast_const();
+                while !d.is_null() && !(*d).key.is_null() {
+                    let def = &*d;
+                    let values = def
+                        .values
+                        .iter()
+                        .take_while(|v| !v.value.is_null())
+                        .map(|v| (text(v.value), text(v.label)))
+                        .collect();
+                    defs.push(V2Def {
+                        key: text(def.key),
+                        desc: text(def.desc),
+                        info: text(def.info),
+                        category: text(def.category_key),
+                        default: text(def.default_value),
+                        values,
+                    });
+                    d = d.add(1);
+                }
+            }
+            *held(&DECLARED_VARS) = defs.iter().map(|d| d.key.clone()).collect();
+            *held(&DECLARED_V2) = defs;
+            *held(&DECLARED_CATEGORIES) = categories;
+            SET_OPTIONS_V2_CALLS.fetch_add(1, SeqCst);
+            // libretro.h: the return value says whether categories are shown.
             true
         }
         RETRO_ENVIRONMENT_GET_VARIABLE => {
@@ -389,17 +502,21 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 return false;
             }
             // SAFETY: the core passes a `*mut retro_variable` whose `key` is a
-            // NUL-terminated string; `value` is set to a `'static` literal.
+            // NUL-terminated string; `value` is set to a leaked C string.
             unsafe {
                 let var = &mut *data.cast::<retro_variable>();
-                if var.key.is_null() || CStr::from_ptr(var.key) != c"rustynes_four_score" {
+                if var.key.is_null() {
                     return false;
                 }
-                var.value = if FOUR_SCORE_ON.load(SeqCst) {
-                    c"enabled".as_ptr()
-                } else {
-                    c"disabled".as_ptr()
+                let key = text(var.key);
+                let Some(value) = held(&OPTION_VALUES)
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| *v)
+                else {
+                    return false;
                 };
+                var.value = value.as_ptr();
             }
             true
         }
@@ -498,6 +615,10 @@ fn frontend() -> MutexGuard<'static, ()> {
         pad.store(0, SeqCst);
     }
     KEEP_FRAME.store(false, SeqCst);
+    // No option set: the core reads every one as its default at the next
+    // load, whatever an earlier test chose.
+    held(&OPTION_VALUES).clear();
+    VARS_CHANGED.store(false, SeqCst);
     guard
 }
 
@@ -728,14 +849,12 @@ fn the_four_score_option_reads_players_three_and_four() {
             .any(|k| k == "rustynes_four_score"),
         "the core must declare the Four Score option"
     );
-    FOUR_SCORE_ON.store(true, SeqCst);
-    VARS_CHANGED.store(true, SeqCst);
+    set_option("rustynes_four_score", "enabled");
     assert!(load(NESTEST, true));
     JOYPAD_READS.store(0, SeqCst);
     run_frame();
     let with_four_score = JOYPAD_READS.load(SeqCst);
-    FOUR_SCORE_ON.store(false, SeqCst);
-    VARS_CHANGED.store(true, SeqCst);
+    set_option("rustynes_four_score", "disabled");
     JOYPAD_READS.store(0, SeqCst);
     run_frame();
     let without = JOYPAD_READS.load(SeqCst);
@@ -1529,7 +1648,10 @@ fn serialize_refuses_a_buffer_smaller_than_it_asked_for() {
 #[test]
 fn core_options_are_declared_again_after_deinit_and_init() {
     let _frontend = frontend();
-    let before = SET_VARIABLES_CALLS.load(SeqCst);
+    // Either form counts: since v3.6.0 a version-2 frontend (this one, by
+    // default) gets `SET_CORE_OPTIONS_V2` instead of `SET_VARIABLES`.
+    let declarations = || SET_VARIABLES_CALLS.load(SeqCst) + SET_OPTIONS_V2_CALLS.load(SeqCst);
+    let before = declarations();
     // SAFETY: plain lifecycle calls, in the order a frontend that reuses a
     // loaded library makes them (libretro.h: set_environment before init).
     unsafe {
@@ -1537,10 +1659,10 @@ fn core_options_are_declared_again_after_deinit_and_init() {
         rust_libretro::retro_set_environment(Some(environment));
         rust_libretro::retro_init();
     }
-    let after_cycle = SET_VARIABLES_CALLS.load(SeqCst);
+    let after_cycle = declarations();
     // SAFETY: as above; a second environment inside the same cycle.
     unsafe { rust_libretro::retro_set_environment(Some(environment)) };
-    let after_repeat = SET_VARIABLES_CALLS.load(SeqCst);
+    let after_repeat = declarations();
     assert_eq!(
         after_cycle,
         before + 1,
@@ -1556,6 +1678,92 @@ fn core_options_are_declared_again_after_deinit_and_init() {
         after_repeat, after_cycle,
         "a repeated set_environment within one cycle declares nothing new"
     );
+}
+
+/// The option keys v3.5.0 declared, and its `SET_VARIABLES` string for each.
+/// A frontend stores the user's choice under the key, so every one must
+/// still be declared, by both forms, with the same values.
+const V3_5_0_OPTIONS: [(&str, &str); 1] = [(
+    "rustynes_four_score",
+    "Four Score (players 3 and 4); disabled|enabled",
+)];
+
+/// Run one init cycle against a frontend reporting core-options `version`
+/// and return (`SET_VARIABLES` calls, `SET_CORE_OPTIONS_V2` calls) it made.
+fn declare_at(version: u32) -> (u32, u32) {
+    CORE_OPTIONS_VERSION.store(version, SeqCst);
+    let (v0, v2) = (
+        SET_VARIABLES_CALLS.load(SeqCst),
+        SET_OPTIONS_V2_CALLS.load(SeqCst),
+    );
+    deinit_and_reinit();
+    (
+        SET_VARIABLES_CALLS.load(SeqCst) - v0,
+        SET_OPTIONS_V2_CALLS.load(SeqCst) - v2,
+    )
+}
+
+/// v3.6.0 `T-LIBRETRO-OPTIONS-V2`. A frontend that reports core-options
+/// version 2 or more gets `SET_CORE_OPTIONS_V2` (categories, a sublabel per
+/// option, a label per value) and nothing else; a version-1 frontend, and
+/// one that does not answer the query, get `SET_VARIABLES` as every frontend
+/// did before v3.6.0. Both forms declare the same keys, every v3.5.0 key
+/// among them, with the same values and defaults, and the v0 string of a
+/// v3.5.0 option is unchanged byte for byte.
+#[test]
+fn core_options_v2_with_a_v0_fallback_keep_every_key() {
+    let _frontend = frontend();
+
+    assert_eq!(declare_at(2), (0, 1), "version 2: v2 only");
+    let v2 = held(&DECLARED_V2).clone();
+    let categories = held(&DECLARED_CATEGORIES).clone();
+    let v2_keys = held(&DECLARED_VARS).clone();
+
+    assert_eq!(declare_at(1), (1, 0), "version 1: SET_VARIABLES");
+    let v1_keys = held(&DECLARED_VARS).clone();
+    assert_eq!(declare_at(0), (1, 0), "no version answer: SET_VARIABLES");
+    let v0 = held(&DECLARED_V0).clone();
+    let v0_keys = held(&DECLARED_VARS).clone();
+
+    // Leave the shared core as the other tests expect it: a v2 frontend.
+    assert_eq!(declare_at(2), (0, 1));
+
+    assert_eq!(v2_keys, v0_keys, "both forms declare the same keys");
+    assert_eq!(v1_keys, v0_keys);
+    for (key, string) in V3_5_0_OPTIONS {
+        assert!(v2_keys.iter().any(|k| k == key), "v2 lost {key}");
+        assert!(
+            v0.iter().any(|(k, v)| k == key && v == string),
+            "v0 must declare {key} as v3.5.0 did ({string:?}): {v0:?}"
+        );
+    }
+    assert!(!categories.is_empty(), "v2 names its categories");
+    for def in &v2 {
+        assert!(
+            categories.iter().any(|(k, _)| *k == def.category),
+            "{} names an undeclared category {:?}",
+            def.key,
+            def.category
+        );
+        assert!(
+            !def.desc.is_empty() && !def.info.is_empty(),
+            "{} needs a label and a sublabel",
+            def.key
+        );
+        assert!(
+            def.values.iter().all(|(_, label)| !label.is_empty()),
+            "{}: every value is labelled",
+            def.key
+        );
+        // The same values and default as the v0 string, which takes the
+        // first value as the default.
+        let (_, string) = v0.iter().find(|(k, _)| *k == def.key).expect("in v0");
+        let list = string.split_once("; ").expect("v0 shape").1;
+        let v0_values: Vec<&str> = list.split('|').collect();
+        let v2_values: Vec<&str> = def.values.iter().map(|(v, _)| v.as_str()).collect();
+        assert_eq!(v0_values, v2_values, "{}: the same values", def.key);
+        assert_eq!(def.default, v0_values[0], "{}: the same default", def.key);
+    }
 }
 
 /// Re-send the environment, as a frontend does, with the disk-control

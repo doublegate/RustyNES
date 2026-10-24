@@ -26,6 +26,20 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **The libretro core declares its options as Core Options v2**, with
+  categories, a sublabel per option and a label per value, when the frontend
+  reports core-options version 2 or more
+  (`RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION`); any other frontend gets
+  `SET_VARIABLES` as before (`T-LIBRETRO-OPTIONS-V2`). Both forms come from one
+  table, so their keys, values and defaults cannot differ, and the Four Score
+  option keeps its key and its v3.5.0 `SET_VARIABLES` string byte for byte: a
+  frontend stores the user's choice by key. The C-ABI harness answers versions
+  2, 1 and none and checks which command each gets, that the keys match the
+  v3.5.0 list, and that every v2 option has a category, a sublabel and labelled
+  values.
+
 ### Changed
 
 - **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC

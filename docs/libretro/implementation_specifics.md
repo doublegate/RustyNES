@@ -26,8 +26,16 @@ test, the test is named; the tests are the spec.
 * **Controller info:** ports 1-2 offer the NES controller or the Zapper;
   ports 3-4 the controller only (Four Score players, or a Vs. cabinet's second
   console).
-* **Core option:** `rustynes_four_score` (`disabled|enabled`), declared with
-  `SET_VARIABLES` and read in `on_options_changed`.
+* **Core options:** one table (`crates/rustynes-libretro/src/options.rs`),
+  declared with `SET_CORE_OPTIONS_V2` (categories, sublabels, value labels)
+  when `GET_CORE_OPTIONS_VERSION` reports 2 or more, else with
+  `SET_VARIABLES` (v3.6.0); read by key in `on_options_changed` either way.
+  `SET_CORE_OPTIONS_V2`'s return value says only whether the frontend shows
+  categories (libretro.h), so `false` from it is not a refusal. A version-1
+  frontend gets `SET_VARIABLES`, not v1: v1 adds no categories and every v1
+  frontend accepts v0. Keys never change once shipped; the v3.5.0 key,
+  `rustynes_four_score` (`disabled|enabled`), keeps its v0 string byte for
+  byte (`core_options_v2_with_a_v0_fallback_keep_every_key`).
 * **Disk control:** registered, for FDS side swapping.
 
 ## Game Loading (`retro_load_game`)
