@@ -46,8 +46,31 @@ cycle-accurate core later replaced.
   a Vs. cartridge and on both consoles of a `DualSystem` cabinet, each against
   its own bank. A C-ABI test reads the switches back through `$4016` / `$4017`
   on a probe cartridge and compares with a bare console set to the same bank.
+- **The CPU overclock and the sprite-limit option in the libretro core**
+  (`T-LIBRETRO-EMU-OPTIONS`): `rustynes_cpu_overclock` (x1 to x4) and
+  `rustynes_remove_sprite_limit`, the desktop's v3.1.0 options, in an
+  "Emulation" category. A C-ABI test counts how far a counting cartridge gets
+  in ten frames (twice as far at x2, four times at x4) and counts the pixels of
+  sixteen sprites on one line (64 stock, 128 with the option); at their
+  defaults the frames are a bare console's, byte for byte.
 
 ### Changed
+
+- **libretro save states record the emulation options** and a restore applies
+  them (`T-LIBRETRO-EMU-OPTIONS`). The desktop records the overclock, the
+  sprite limit, the Four Score and the Vs. DIP switches in a movie header and
+  the netplay handshake; RetroArch replays movies from a state and starts a
+  netplay peer from the host's state, so the core now ends every state with a
+  16-byte record of them (`retro_serialize_size` grows by 16 bytes) and a state
+  brings its options with it until a core option is changed. States written
+  before v3.6.0 have no record, still load, and leave the options alone; a
+  record holding a value no menu offers refuses the state. A state taken at x2
+  and restored into a core running stock goes on exactly as the x2 run did.
+- **Found, not fixed:** a Vs. `DualSystem` cabinet's state does not
+  round-trip byte for byte under the CPU overclock (64 bytes of inert
+  OAM-decay ages differ ten frames on, with no option change); the game is
+  unaffected, but a frontend comparing state CRCs would see a desync. A core
+  issue, pinned by an ignored expected-fail probe in the libretro harness.
 
 - **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC
   transports' OS shared-memory code has Windows and Apple implementations, and

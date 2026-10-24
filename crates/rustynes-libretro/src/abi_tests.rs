@@ -2265,6 +2265,359 @@ fn a_restore_to_the_press_frame_drops_a_coin_the_replay_does_not_press() {
     assert_eq!(replay, ".....", "the replay never presses L, so no coin");
 }
 
+/// A 16 KiB NROM cartridge whose program counts as fast as it can: a 24-bit
+/// counter at `$00-$02`, eight CPU cycles per step of its low byte. What it
+/// reaches in a frame measures how much CPU time the frame had. `dual` puts
+/// it under a Vs. `DualSystem` header, so a cabinet runs it on both consoles.
+///
+/// ```text
+/// $C000  SEI / CLD / LDA #0 / STA $00 / STA $01 / STA $02
+/// $C00A  INC $00 / BNE $C00A / INC $01 / BNE $C00A / INC $02 / JMP $C00A
+/// ```
+fn counter_rom(dual: bool) -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    if dual {
+        rom[7] = 0x08 | 0x01;
+        rom[13] = 0x50;
+    }
+    let program = [
+        0x78, 0xD8, 0xA9, 0x00, 0x85, 0x00, 0x85, 0x01, 0x85, 0x02, // init
+        0xE6, 0x00, 0xD0, 0xFC, // $C00A INC $00, BNE $C00A
+        0xE6, 0x01, 0xD0, 0xF8, // INC $01, BNE $C00A
+        0xE6, 0x02, 0x4C, 0x0A, 0xC0, // INC $02, JMP $C00A
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The counter [`counter_rom`] keeps in WRAM.
+fn counter() -> u32 {
+    let ram = system_ram().cast::<u8>();
+    assert!(!ram.is_null());
+    // SAFETY: WRAM is 2 KiB and stays allocated while the game is loaded.
+    unsafe { u32::from_le_bytes([*ram, *ram.add(1), *ram.add(2), 0]) }
+}
+
+/// What the counter reaches in `frames` frames of a fresh load.
+fn count_over(frames: u32) -> u32 {
+    assert!(load(counter_rom(false), true));
+    for _ in 0..frames {
+        run_frame();
+    }
+    let n = counter();
+    unload();
+    n
+}
+
+/// v3.6.0 `T-LIBRETRO-EMU-OPTIONS`. The CPU overclock the desktop gained in
+/// v3.1.0 (`Nes::set_cpu_overclock`) was not reachable from a libretro
+/// frontend. `rustynes_cpu_overclock` = `k` must give the game `k` times the
+/// CPU time per frame: the counting cartridge must count about `k` times as
+/// far.
+#[test]
+fn the_cpu_overclock_option_gives_the_game_more_cpu_time() {
+    let _frontend = frontend();
+    let stock = count_over(10);
+    set_option("rustynes_cpu_overclock", "2");
+    let x2 = count_over(10);
+    set_option("rustynes_cpu_overclock", "4");
+    let x4 = count_over(10);
+    set_option("rustynes_cpu_overclock", "1");
+    let back = count_over(10);
+    assert!(stock > 30_000, "fixture: the cartridge counts ({stock})");
+    let ratio = |n: u32| f64::from(n) / f64::from(stock);
+    assert!(
+        (1.95..2.05).contains(&ratio(x2)),
+        "x2 counted {x2} against {stock}"
+    );
+    assert!(
+        (3.9..4.1).contains(&ratio(x4)),
+        "x4 counted {x4} against {stock}"
+    );
+    assert_eq!(back, stock, "x1 is stock again");
+}
+
+/// A 16 KiB NROM cartridge that puts sixteen sprites on scanlines 101-108,
+/// one every 16 pixels from x = 0, each a solid tile in white over a black
+/// backdrop, with the background off. Stock hardware draws the first eight
+/// on a line; the sprite-limit option draws all sixteen.
+fn sprite_rom() -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    #[rustfmt::skip]
+    let program = [
+        0x78, 0xD8, 0xA9, 0x00, 0x8D, 0x00, 0x20, 0x8D, 0x01, 0x20, // rendering off
+        0x2C, 0x02, 0x20, 0x10, 0xFB, // $C00A wait for vblank
+        0x2C, 0x02, 0x20, 0x10, 0xFB, // $C00F and again
+        0xA9, 0x3F, 0x8D, 0x06, 0x20, 0xA9, 0x00, 0x8D, 0x06, 0x20, // $3F00
+        0xA9, 0x0F, 0x8D, 0x07, 0x20, // black backdrop
+        0xA9, 0x3F, 0x8D, 0x06, 0x20, 0xA9, 0x11, 0x8D, 0x06, 0x20, // $3F11
+        0xA9, 0x30, 0x8D, 0x07, 0x20, // white
+        0xA9, 0x00, 0x8D, 0x03, 0x20, 0xA2, 0x00, // OAMADDR 0, X = 0
+        0xA9, 0x64, 0x8D, 0x04, 0x20, // $C039 Y = 100
+        0xA9, 0x00, 0x8D, 0x04, 0x20, 0x8D, 0x04, 0x20, // tile 0, attributes 0
+        0x8A, 0x0A, 0x0A, 0x0A, 0x0A, 0x8D, 0x04, 0x20, // X = 16 * index
+        0xE8, 0xE0, 0x10, 0xD0, 0xE6, // INX, CPX #16, BNE $C039
+        0xA9, 0xF0, 0xA0, 0xC0, // the other 48 sprites below the screen
+        0x8D, 0x04, 0x20, 0x88, 0xD0, 0xFA, // $C057 STA $2004, DEY, BNE $C057
+        0xA9, 0x00, 0x8D, 0x05, 0x20, 0x8D, 0x05, 0x20, // scroll 0
+        0xA9, 0x14, 0x8D, 0x01, 0x20, // sprites on, including the left 8 pixels
+        0x4C, 0x6A, 0xC0, // $C06A JMP $C06A
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    // Tile 0: low plane solid, high plane clear, so every pixel is colour 1.
+    rom[16 + 16 * 1024..16 + 16 * 1024 + 8].fill(0xFF);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The frame the sprite cartridge presents after five frames.
+fn sprite_frame() -> Vec<u8> {
+    KEEP_FRAME.store(true, SeqCst);
+    assert!(load(sprite_rom(), true));
+    for _ in 0..5 {
+        run_frame();
+    }
+    let frame = held(&LAST_FRAME).clone();
+    unload();
+    KEEP_FRAME.store(false, SeqCst);
+    frame
+}
+
+/// The lit pixels of scanline `y` of an XRGB8888 frame `NES_W` wide.
+fn lit_on(frame: &[u8], y: usize) -> usize {
+    let row = &frame[y * NES_W * 4..(y + 1) * NES_W * 4];
+    let backdrop = &row[NES_W * 4 - 4..];
+    row.chunks(4).filter(|px| px[..3] != backdrop[..3]).count()
+}
+
+/// v3.6.0 `T-LIBRETRO-EMU-OPTIONS`. The desktop's v3.1.0 sprite-limit
+/// option (`Nes::set_sprite_limit_disabled`) as `rustynes_remove_sprite_limit`:
+/// with sixteen sprites on a line, stock draws eight (64 pixels), the
+/// option sixteen (128).
+#[test]
+fn the_sprite_limit_option_draws_every_sprite_on_a_line() {
+    let _frontend = frontend();
+    let stock = sprite_frame();
+    set_option("rustynes_remove_sprite_limit", "enabled");
+    let all = sprite_frame();
+    assert_eq!(lit_on(&stock, 104), 64, "stock: eight 8-pixel sprites");
+    assert_eq!(lit_on(&all, 104), 128, "the option: all sixteen");
+    assert_eq!(lit_on(&all, 90), 0, "and nothing off their lines");
+}
+
+/// Every option at its default, whether the frontend reports the default or
+/// reports nothing, leaves the core as it was before the options existed:
+/// the frames are a bare console's, byte for byte.
+#[test]
+fn the_default_options_leave_the_output_byte_identical() {
+    let _frontend = frontend();
+    let unset = sprite_frame();
+    let unset_count = count_over(10);
+    for spec in &crate::options::OPTIONS {
+        set_option(
+            spec.key.to_str().expect("ASCII"),
+            spec.default_value().to_str().expect("ASCII"),
+        );
+    }
+    let explicit = sprite_frame();
+    let explicit_count = count_over(10);
+    let oracle = oracle_frame(Nes::from_rom(sprite_rom()).expect("parses"), 5);
+    assert!(
+        unset == oracle,
+        "no option answered: a bare console's frame"
+    );
+    assert!(
+        explicit == oracle,
+        "every option at its default: the same frame"
+    );
+    let mut bare = Nes::from_rom(counter_rom(false)).expect("parses");
+    for _ in 0..10 {
+        bare.run_frame();
+    }
+    let w = bare.wram();
+    let bare_count = u32::from_le_bytes([w[0], w[1], w[2], 0]);
+    assert_eq!((unset_count, explicit_count), (bare_count, bare_count));
+}
+
+/// The options record at the end of a state, decoded.
+fn recorded(state: &[u8]) -> crate::options::OptionValues {
+    crate::options::split_state(state)
+        .expect("a valid record")
+        .1
+        .expect("a record")
+}
+
+/// v3.6.0 `T-LIBRETRO-EMU-OPTIONS`, the half that makes the options
+/// "recorded": they change what a movie replays and what a netplay peer
+/// runs, and a libretro frontend carries both in save states, so every
+/// state ends with the options it was made under and a restore applies
+/// them. Restored into a core running stock, a state taken at x2 must go on
+/// exactly as the x2 run did, cycle pattern included: ten frames later the
+/// cartridge's state matches the straight run's byte for byte. A cabinet's
+/// must match in what the game computed (the counter in WRAM): its state
+/// does not round-trip byte for byte under the overclock even with no option
+/// change at all, which is a core finding of its own
+/// (`a_cabinet_state_round_trips_byte_for_byte_under_the_overclock`).
+#[test]
+fn a_state_carries_its_emulation_options() {
+    let _frontend = frontend();
+    for dual in [false, true] {
+        set_option("rustynes_cpu_overclock", "2");
+        set_option("rustynes_remove_sprite_limit", "enabled");
+        assert!(load(counter_rom(dual), true));
+        let size = serialize_size();
+        for _ in 0..9 {
+            run_frame();
+        }
+        let mut s10 = vec![0_u8; size];
+        assert!(serialize(&mut s10));
+        for _ in 0..10 {
+            run_frame();
+        }
+        let mut straight = vec![0_u8; size];
+        assert!(serialize(&mut straight));
+        let straight_count = counter();
+
+        // The user turns both off; the core runs stock again.
+        set_option("rustynes_cpu_overclock", "1");
+        set_option("rustynes_remove_sprite_limit", "disabled");
+        run_frame();
+        let mut stock = vec![0_u8; size];
+        assert!(serialize(&mut stock));
+        assert_eq!(recorded(&stock).cpu_overclock, 1);
+
+        #[cfg(target_arch = "x86_64")]
+        held(&LOGGED).clear();
+        assert!(unserialize(&s10), "the x2 state loads into a stock core");
+        #[cfg(target_arch = "x86_64")]
+        assert!(
+            held(&LOGGED)
+                .iter()
+                .any(|l| l.contains("CPU overclock x2") && l.contains("sprite limit removed")),
+            "the log says the state brought its options: {:?}",
+            held(&LOGGED)
+        );
+        for _ in 0..10 {
+            run_frame();
+        }
+        let mut replayed = vec![0_u8; size];
+        assert!(serialize(&mut replayed));
+        let replayed_count = counter();
+        unload();
+        let r = recorded(&s10);
+        assert_eq!(
+            (r.cpu_overclock, r.sprite_limit_disabled),
+            (2, true),
+            "dual {dual}"
+        );
+        assert_eq!(
+            replayed_count, straight_count,
+            "dual {dual}: the restored x2 timeline computed something else"
+        );
+        assert!(
+            dual || replayed == straight,
+            "the restored x2 timeline differs from the straight x2 run"
+        );
+    }
+}
+
+/// FOUND by v3.6.0 `T-LIBRETRO-EMU-OPTIONS`, not caused by it: a Vs.
+/// `DualSystem` cabinet's state, saved and restored at CPU overclock x2 with
+/// no option change at all, runs on to a state ten frames later that differs
+/// from the straight run's in 64 bytes, every one inside the two consoles'
+/// PPU sections where the OAM-decay ages are encoded (`now - timestamp`,
+/// `now` = `dot_counter / 3`; each age is one larger after the restore). At
+/// x1 the same round trip is exact, and the cartridge path (slim states) is
+/// exact at x2. The decay model is off, so the ages are inert and the game
+/// computes the same thing (`a_state_carries_its_emulation_options`), but a
+/// frontend comparing state CRCs (RetroArch netplay) would see a desync.
+/// Ignored: an expected-fail probe for the core, outside the libretro
+/// wrapper; run with `--ignored`.
+#[test]
+#[ignore = "expected-fail probe: cabinet state round trip under the overclock (core finding)"]
+fn a_cabinet_state_round_trips_byte_for_byte_under_the_overclock() {
+    let _frontend = frontend();
+    set_option("rustynes_cpu_overclock", "2");
+    assert!(load(counter_rom(true), true));
+    let size = serialize_size();
+    for _ in 0..9 {
+        run_frame();
+    }
+    let mut saved = vec![0_u8; size];
+    assert!(serialize(&mut saved));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut straight = vec![0_u8; size];
+    assert!(serialize(&mut straight));
+    assert!(unserialize(&saved));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut again = vec![0_u8; size];
+    assert!(serialize(&mut again));
+    unload();
+    let differ = (0..size).filter(|&i| again[i] != straight[i]).count();
+    assert_eq!(differ, 0, "{differ} bytes differ after a round trip at x2");
+}
+
+/// A state with no options record -- every state before v3.6.0 -- loads as
+/// before and leaves the options as the menu has them; a record holding a
+/// value no menu offers refuses the whole state; and a refused restore that
+/// would have changed the multiplier puts the machine and the multiplier
+/// back.
+#[test]
+fn states_without_a_record_load_and_bad_records_refuse() {
+    let _frontend = frontend();
+    set_option("rustynes_cpu_overclock", "3");
+    assert!(load(counter_rom(false), true));
+    let size = serialize_size();
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut x3 = vec![0_u8; size];
+    assert!(serialize(&mut x3));
+    set_option("rustynes_cpu_overclock", "1");
+    run_frame();
+    let mut before = vec![0_u8; size];
+    assert!(serialize(&mut before));
+
+    // No record: the last 16 bytes are zero, as an older core left them.
+    let mut old = x3.clone();
+    let at = old.len() - crate::options::STATE_TRAILER_LEN;
+    old[at..].fill(0);
+    assert!(unserialize(&old), "a state without a record still loads");
+    let mut after_old = vec![0_u8; size];
+    assert!(serialize(&mut after_old));
+    assert_eq!(
+        recorded(&after_old).cpu_overclock,
+        1,
+        "and keeps the menu's options"
+    );
+
+    assert!(unserialize(&before));
+    let mut bad = x3.clone();
+    bad[at + 10] = 9;
+    assert!(!unserialize(&bad), "an overclock of 9 is refused");
+    let mut damaged = x3;
+    reject_last_cpu_section(&mut damaged);
+    assert!(!unserialize(&damaged), "a damaged x3 state is refused");
+    let mut after = vec![0_u8; size];
+    assert!(serialize(&mut after));
+    unload();
+    assert!(
+        after == before,
+        "refusals leave the machine, and its x1 multiplier, as they were"
+    );
+}
+
 /// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).
 fn oracle_frame(mut nes: Nes, frames: u32) -> Vec<u8> {
     for _ in 0..frames {

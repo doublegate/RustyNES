@@ -77,6 +77,7 @@
 #![allow(clippy::ptr_as_ptr)]
 #![warn(missing_docs)]
 
+use options::STATE_TRAILER_LEN;
 use rust_libretro::{
     contexts::*,
     core::{Core, CoreOptions},
@@ -931,17 +932,26 @@ fn sample_to_i16(sample: f32) -> i16 {
     (sample * 32767.0).clamp(-32768.0, 32767.0) as i16
 }
 
-/// Hold one console to the core options that change what it does (v3.6.0).
+/// Hold one console to the core options that change what it does (v3.6.0):
+/// the CPU overclock and the sprite limit (`T-LIBRETRO-EMU-OPTIONS`, the
+/// desktop's v3.1.0 options) and the Vs. DIP switches (LR-03).
 ///
 /// Each setting is compared first and set only when it differs, so calling
 /// this every frame costs a few comparisons, and a console at the defaults
 /// is never written to: the default build's output is byte-identical to a
-/// core without the options. `dip_base` is the DIP-switch setting the game
-/// database gave this console at load ([`apply_vs_database`]; 0 for a Vs.
-/// game it does not list); the `rustynes_vs_dip_*` options replace the
-/// switches they force (LR-03). The bank is written only on a Vs. System
-/// console, the only kind that reads it.
+/// core without the options. The desktop applies the overclock and the
+/// sprite limit the same way, every frame (`EmuCore::produce_frame`).
+/// `dip_base` is the DIP-switch setting the game database gave this console
+/// at load ([`apply_vs_database`]; 0 for a Vs. game it does not list); the
+/// `rustynes_vs_dip_*` options replace the switches they force. The bank is
+/// written only on a Vs. System console, the only kind that reads it.
 fn apply_console_options(nes: &mut Nes, options: options::OptionValues, dip_base: u8) {
+    if nes.cpu_overclock() != options.cpu_overclock {
+        nes.set_cpu_overclock(options.cpu_overclock);
+    }
+    if nes.sprite_limit_disabled() != options.sprite_limit_disabled {
+        nes.set_sprite_limit_disabled(options.sprite_limit_disabled);
+    }
     if nes.is_vs_system() {
         let dip = options.dip_for(dip_base);
         if nes.vs_dip() != dip {
@@ -960,6 +970,62 @@ fn apply_cabinet_options(
 ) {
     apply_console_options(dual.main_mut(), options, dip_base[0]);
     apply_console_options(dual.sub_mut(), options, dip_base[1]);
+}
+
+/// Restore `state` into `nes` under the CPU overclock `overclock` (the
+/// state's record), or under the running one when the state has none.
+///
+/// The multiplier goes in first because the restore keeps the state's
+/// position in the overclocked cycle pattern only under a multiplier that
+/// could have produced it. When the multiplier changes and the restore is
+/// refused, both are put back from a backup of the running machine, taken
+/// only in that case (a different multiplier is a user's load, not run-ahead's
+/// per-frame restore, so the copy is not on a hot path).
+fn restore_console(
+    nes: &mut Nes,
+    state: &[u8],
+    overclock: Option<u8>,
+) -> Result<(), rustynes_core::save_state::SnapshotError> {
+    let running = nes.cpu_overclock();
+    let Some(k) = overclock.filter(|&k| k != running) else {
+        return nes.restore_quiet(state);
+    };
+    let mut backup = Vec::new();
+    nes.snapshot_core_into(&mut backup);
+    nes.set_cpu_overclock(k);
+    let result = nes.restore_quiet(state);
+    if result.is_err() {
+        nes.set_cpu_overclock(running);
+        let rolled_back = nes.restore_quiet(&backup);
+        debug_assert!(rolled_back.is_ok(), "own snapshot refused: {rolled_back:?}");
+    }
+    result
+}
+
+/// [`restore_console`] for a Vs. `DualSystem` cabinet: both consoles take
+/// the state's multiplier before the restore, and get the running one back
+/// with the backup if it is refused.
+fn restore_cabinet(
+    dual: &mut VsDualSystem,
+    state: &[u8],
+    overclock: Option<u8>,
+) -> Result<(), rustynes_core::save_state::SnapshotError> {
+    let running = dual.main().cpu_overclock();
+    let Some(k) = overclock.filter(|&k| k != running) else {
+        return dual.restore(state);
+    };
+    let mut backup = Vec::new();
+    dual.snapshot_into(&mut backup);
+    dual.main_mut().set_cpu_overclock(k);
+    dual.sub_mut().set_cpu_overclock(k);
+    let result = dual.restore(state);
+    if result.is_err() {
+        dual.main_mut().set_cpu_overclock(running);
+        dual.sub_mut().set_cpu_overclock(running);
+        let rolled_back = dual.restore(&backup);
+        debug_assert!(rolled_back.is_ok(), "own snapshot refused: {rolled_back:?}");
+    }
+    result
 }
 
 /// Hand one frame's pad state to a single console: players 1-2 always, and
@@ -1323,6 +1389,73 @@ impl RustyNesLibretro {
         Ok(())
     }
 
+    /// `retro_unserialize`, run inside [`Self::contained`].
+    ///
+    /// Restores the console's (or the cabinet's two consoles') state from
+    /// the blob. A refused state leaves the machine as it was (NL-01); the
+    /// reason goes to the frontend's log (NL-11).
+    ///
+    /// # The options record (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`)
+    ///
+    /// A state written since v3.6.0 ends with the emulation options it was
+    /// made under ([`options::split_state`]), and they are applied with it,
+    /// replacing the menu's until the frontend next reports an option
+    /// change. The desktop records the same options in a movie header and
+    /// a netplay handshake (`rustynes_core::HardwareOptions`); a libretro
+    /// frontend replays a movie from a state and starts a netplay peer from
+    /// the host's state, so the state is where the record has to be for
+    /// either to run the machine it was made on. RetroArch's netplay also
+    /// compares state CRCs, which now differ when the peers' options do.
+    ///
+    /// The overclock is set BEFORE the restore: the state carries the
+    /// position inside the overclocked cycle pattern, and the core keeps a
+    /// restored position only if the multiplier already running could have
+    /// produced it (`SystemBus::restore`), while changing the multiplier
+    /// afterwards resets it. If the restore is then refused, the multiplier
+    /// and the machine are both put back. A state without a record (every
+    /// state from before v3.6.0) restores exactly as it did.
+    fn unserialize(&mut self, slice: &[u8]) -> bool {
+        let (state, recorded) = match options::split_state(slice) {
+            Ok(split) => split,
+            Err(why) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_WARN,
+                    &format!("save state refused: its RustyNES options record holds {why}."),
+                );
+                return false;
+            }
+        };
+        let overclock = recorded.map(|r| r.cpu_overclock);
+        let result = if let Some(nes) = self.nes.as_mut() {
+            restore_console(nes, state, overclock)
+        } else if let Some(dual) = self.dual.as_mut() {
+            restore_cabinet(dual, state, overclock)
+        } else {
+            return false;
+        };
+        if let Err(err) = result {
+            self.log(
+                retro_log_level::RETRO_LOG_WARN,
+                &refused_state_message(&err),
+            );
+            return false;
+        }
+        if let Some(recorded) = recorded
+            && recorded != self.options
+        {
+            self.log(
+                retro_log_level::RETRO_LOG_INFO,
+                &format!(
+                    "the loaded state was made with other emulation options ({}); \
+                     running with them until a core option is changed.",
+                    recorded.describe()
+                ),
+            );
+            self.options = recorded;
+        }
+        true
+    }
+
     /// Answer `retro_serialize_size` for the console `load_game` just
     /// installed, and leave `serialize_buffer` ready for `on_serialize`.
     ///
@@ -1359,12 +1492,12 @@ impl RustyNesLibretro {
         if let Some(nes) = self.nes.as_ref() {
             self.serialize_buffer.clear();
             nes.snapshot_core_into_slim(&mut self.serialize_buffer);
-            self.serialize_size = self.serialize_buffer.len() + HEADROOM;
+            self.serialize_size = self.serialize_buffer.len() + HEADROOM + STATE_TRAILER_LEN;
             self.serialize_buffer.reserve(HEADROOM);
         } else if let Some(dual) = self.dual.as_mut() {
             // `snapshot_into` clears the buffer itself.
             dual.snapshot_into(&mut self.serialize_buffer);
-            self.serialize_size = self.serialize_buffer.len();
+            self.serialize_size = self.serialize_buffer.len() + STATE_TRAILER_LEN;
         }
     }
 
@@ -2750,7 +2883,14 @@ impl Core for RustyNesLibretro {
             if core.serialize_buffer.capacity() != capacity {
                 SERIALIZE_BUFFER_GROWTHS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            let Some((payload, tail)) = slice.split_at_mut_checked(core.serialize_buffer.len())
+            // The last `STATE_TRAILER_LEN` bytes of the frontend's buffer
+            // carry the emulation options (v3.6.0, see `options::split_state`);
+            // the core's state goes at the front.
+            let Some(body_len) = slice.len().checked_sub(STATE_TRAILER_LEN) else {
+                return false;
+            };
+            let (body, record) = slice.split_at_mut(body_len);
+            let Some((payload, tail)) = body.split_at_mut_checked(core.serialize_buffer.len())
             else {
                 return false;
             };
@@ -2759,33 +2899,13 @@ impl Core for RustyNesLibretro {
             // `on_load_game`). The frontend's buffer may be reused and hold anything,
             // and `SectionIter` recognises padding only by its being all zero.
             tail.fill(0);
+            record.copy_from_slice(&core.options.trailer());
             true
         })
     }
 
     fn on_unserialize(&mut self, slice: &mut [u8], _ctx: &mut UnserializeContext) -> bool {
-        self.contained("retro_unserialize", false, |core| {
-            // Restores the console's (or the cabinet's two consoles') state
-            // from the serialized blob. A refused state leaves the machine as
-            // it was (NL-01); the reason goes to the frontend's log (NL-11).
-            let result = if let Some(nes) = core.nes.as_mut() {
-                nes.restore_quiet(slice)
-            } else if let Some(dual) = core.dual.as_mut() {
-                dual.restore(slice)
-            } else {
-                return false;
-            };
-            match result {
-                Ok(()) => true,
-                Err(err) => {
-                    core.log(
-                        retro_log_level::RETRO_LOG_WARN,
-                        &refused_state_message(&err),
-                    );
-                    false
-                }
-            }
-        })
+        self.contained("retro_unserialize", false, |core| core.unserialize(slice))
     }
 
     // --- Disk control (FDS multi-side swap) ---------------------------------------
@@ -3295,6 +3415,105 @@ mod tests {
         apply_pads(&mut nes, [Buttons::A, Buttons::B], None);
         assert!(!nes.four_score(), "turning the option off unplugs it");
         assert_eq!(nes.buttons(0), Buttons::A);
+    }
+
+    /// Set the version byte of the last `CPU ` section, so a restore refuses
+    /// the blob partway through.
+    fn damage_cpu_section(state: &mut [u8]) {
+        let at = state
+            .windows(4)
+            .rposition(|w| w == b"CPU ")
+            .expect("a CPU section");
+        state[at + 4] = state[at + 4].wrapping_add(1);
+    }
+
+    /// `T-LIBRETRO-EMU-OPTIONS`: a state whose record names another
+    /// multiplier is restored under that multiplier, and when the restore is
+    /// refused, the console gets its own multiplier and its own machine back,
+    /// at every point in the overclocked cycle pattern. Below the C ABI
+    /// because the multiplier itself is configuration, not state: the next
+    /// frame's `apply_console_options` would set it again, hiding a wrong one
+    /// from any serialize the frontend can make.
+    #[test]
+    fn a_refused_restore_under_a_new_multiplier_puts_the_console_back() {
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut donor = Nes::from_rom(rom).expect("parses");
+        donor.set_cpu_overclock(2);
+        for _ in 0..3 {
+            donor.run_frame();
+        }
+        let mut x2 = Vec::new();
+        donor.snapshot_core_into_slim(&mut x2);
+        let mut damaged = x2.clone();
+        damage_cpu_section(&mut damaged);
+
+        let mut nes = Nes::from_rom(rom).expect("parses");
+        nes.set_cpu_overclock(3);
+        for frame in 0..12 {
+            nes.run_frame();
+            let mut before = Vec::new();
+            nes.snapshot_core_into(&mut before);
+            assert!(restore_console(&mut nes, &damaged, Some(2)).is_err());
+            assert_eq!(
+                nes.cpu_overclock(),
+                3,
+                "frame {frame}: the multiplier is put back"
+            );
+            let mut after = Vec::new();
+            nes.snapshot_core_into(&mut after);
+            assert!(after == before, "frame {frame}: the machine is put back");
+        }
+        assert!(restore_console(&mut nes, &x2, Some(2)).is_ok());
+        assert_eq!(
+            nes.cpu_overclock(),
+            2,
+            "an accepted restore runs at the state's"
+        );
+    }
+
+    /// The cabinet half: both consoles take the state's multiplier before
+    /// the restore (each keeps its place in the cycle pattern only under a
+    /// multiplier that could have produced it), and both get theirs back
+    /// when it is refused.
+    #[test]
+    fn a_cabinet_restores_under_the_state_multiplier_on_both_consoles() {
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        rom[7] = 0x08 | 0x01;
+        rom[13] = 0x50;
+        let cabinet = || match Emu::from_rom(&rom) {
+            Ok(Emu::Dual(dual)) => dual,
+            _ => panic!("fixture: a DualSystem cabinet"),
+        };
+        let mut donor = cabinet();
+        donor.main_mut().set_cpu_overclock(2);
+        donor.sub_mut().set_cpu_overclock(2);
+        for _ in 0..3 {
+            donor.run_frame();
+        }
+        let mut x2 = Vec::new();
+        donor.snapshot_into(&mut x2);
+        let mut damaged = x2.clone();
+        damage_cpu_section(&mut damaged);
+
+        let mut dual = cabinet();
+        dual.run_frame();
+        let mut before = Vec::new();
+        dual.snapshot_into(&mut before);
+        assert!(restore_cabinet(&mut dual, &damaged, Some(2)).is_err());
+        let mut after = Vec::new();
+        dual.snapshot_into(&mut after);
+        assert!(after == before, "a refused restore puts the cabinet back");
+        assert_eq!(
+            (dual.main().cpu_overclock(), dual.sub().cpu_overclock()),
+            (1, 1),
+            "a refused restore puts both multipliers back"
+        );
+        assert!(restore_cabinet(&mut dual, &x2, Some(2)).is_ok());
+        assert_eq!(
+            (dual.main().cpu_overclock(), dual.sub().cpu_overclock()),
+            (2, 2),
+            "both consoles restore under the state's multiplier"
+        );
     }
 
     /// LR-03: a cabinet's two consoles each get the DIP options, against

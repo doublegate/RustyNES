@@ -26,6 +26,15 @@ test, the test is named; the tests are the spec.
 * **Controller info:** ports 1-2 offer the NES controller or the Zapper;
   ports 3-4 the controller only (Four Score players, or a Vs. cabinet's second
   console).
+* **Emulation options (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`):**
+  `rustynes_cpu_overclock` (`1`-`4`, labelled x1 (stock) to x4) and
+  `rustynes_remove_sprite_limit` (`disabled|enabled`), in the "Emulation"
+  category: the desktop's v3.1.0 options (`Nes::set_cpu_overclock`,
+  `Nes::set_sprite_limit_disabled`). Applied at the top of every frame,
+  compare-then-set, to the console or both consoles of a cabinet, as the
+  desktop applies them (`apply_console_options`), and recorded in every save
+  state (see "Save States"). At their defaults nothing is written, and the
+  frames equal a bare console's (`the_default_options_leave_the_output_byte_identical`).
 * **Core options:** one table (`crates/rustynes-libretro/src/options.rs`),
   declared with `SET_CORE_OPTIONS_V2` (categories, sublabels, value labels)
   when `GET_CORE_OPTIONS_VERSION` reports 2 or more, else with
@@ -100,6 +109,42 @@ save-state reader treats an all-zero tail as padding. The snapshot that
 measures the size at load is taken into the buffer `retro_serialize` reuses,
 with that headroom reserved for a single console, so no serialize reallocates it (v2.9.2 audit
 AUD-17; `no_serialize_reallocates_the_buffer_sized_at_load`).
+
+**The options record (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`).** The last 16 bytes
+of every state the core writes record the options that change what the
+console does: `RNLROPTS`, a layout version (1), a flags byte (bit 0 Four
+Score, bit 1 sprite limit removed), the CPU overclock (1-4), the Vs. DIP
+switches forced and their positions, three zero bytes
+(`options::OptionValues::trailer`). `retro_serialize_size` includes them. The
+desktop records the same options in a movie's header and a netplay
+handshake (`HardwareOptions`, `config_digest`); a libretro frontend replays a
+movie from a state and starts a netplay peer from the host's state, so the
+state is where they have to be. `retro_unserialize` applies a state's record
+with it, replacing the menu's values until the frontend next reports an
+option change, and says so in the log when they differ. The overclock goes in
+before the restore, because the state holds the position inside the
+overclocked cycle pattern and the core keeps a restored position only under a
+multiplier that could have produced it; a refused restore puts the
+multiplier and the machine back. A state without a record (every state from
+before v3.6.0: its last 16 bytes are zero padding, or a cabinet's section
+data) loads as before and leaves the options alone; a record with a value no
+menu offers (an overclock of 9, a DIP position outside its mask, a non-zero
+reserved byte) refuses the state. Tests: `a_state_carries_its_emulation_options`,
+`states_without_a_record_load_and_bad_records_refuse`,
+`tests::a_refused_restore_under_a_new_multiplier_puts_the_console_back`,
+`tests::a_cabinet_restores_under_the_state_multiplier_on_both_consoles`.
+
+**Found, not fixed: a cabinet's state under the overclock.** A Vs.
+`DualSystem` state saved and restored at x2, with no option change at all,
+runs on to a state ten frames later that differs from the straight run's in
+64 bytes: the two consoles' OAM-decay ages (32 `u64` each, encoded as
+`dot_counter / 3 - timestamp`), each one larger after the restore. At x1 the
+round trip is exact, and a single console's (slim) state is exact at x2. The
+decay model is off by default, so the ages are inert and the game computes
+the same thing, but RetroArch's netplay compares state CRCs and would report
+a desync. It is a core issue, outside this wrapper; the expected-fail probe
+`a_cabinet_state_round_trips_byte_for_byte_under_the_overclock` (`#[ignore]`)
+pins it.
 
 `retro_unserialize` refuses a state, returns `false`, and leaves the running
 game exactly as it was (re-audit NL-01;

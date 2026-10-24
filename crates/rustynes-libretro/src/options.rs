@@ -1,6 +1,8 @@
 //! The core options: one table, declared in whichever form the frontend
 //! speaks, and read back into one [`OptionValues`] (v3.6.0,
-//! `T-LIBRETRO-OPTIONS-V2`; the Vs. DIP switches, LR-03).
+//! `T-LIBRETRO-OPTIONS-V2`; the Vs. DIP switches, LR-03; the CPU overclock
+//! and the sprite limit, `T-LIBRETRO-EMU-OPTIONS`), and the record of them a
+//! save state carries ([`split_state`]).
 //!
 //! # Two declarations from one table
 //!
@@ -50,6 +52,11 @@ use std::sync::OnceLock;
 /// The Four Score option's key (v2.8.1). Unchanged since: a frontend stores
 /// the user's setting under it.
 pub const FOUR_SCORE_KEY: &CStr = c"rustynes_four_score";
+/// The CPU-multiplier overclock (`Nes::set_cpu_overclock`), v3.6.0.
+pub const CPU_OVERCLOCK_KEY: &CStr = c"rustynes_cpu_overclock";
+/// Draw the sprites beyond the eighth on a line
+/// (`Nes::set_sprite_limit_disabled`), v3.6.0.
+pub const SPRITE_LIMIT_KEY: &CStr = c"rustynes_remove_sprite_limit";
 /// The eight Vs. System DIP switches (LR-03), switch `n` =
 /// `rustynes_vs_dip_<n>` = bit `n - 1` of `Nes::set_vs_dip`.
 pub const VS_DIP_KEYS: [&CStr; 8] = [
@@ -88,11 +95,16 @@ impl OptionSpec {
 }
 
 /// `(key, label, sublabel)` of each category.
-pub const CATEGORIES: [(&CStr, &CStr, &CStr); 2] = [
+pub const CATEGORIES: [(&CStr, &CStr, &CStr); 3] = [
     (
         c"input",
         c"Input",
         c"Controllers and adapters plugged into the console.",
+    ),
+    (
+        c"emulation",
+        c"Emulation",
+        c"Changes to what the console does. A save state records them, so a loaded state, a netplay peer and a replay run with the setting it was made with.",
     ),
     (
         c"vs_system",
@@ -113,6 +125,19 @@ const DIP_VALUES: &[(&CStr, &CStr)] = &[
     (c"on", c"On"),
 ];
 
+/// The values of the CPU overclock, `1..=MAX_CPU_OVERCLOCK`.
+const OVERCLOCK_VALUES: &[(&CStr, &CStr)] = &[
+    (c"1", c"x1 (stock)"),
+    (c"2", c"x2"),
+    (c"3", c"x3"),
+    (c"4", c"x4"),
+];
+
+// The option offers exactly the multipliers the core accepts: a fifth value
+// would be clamped to four by `Nes::set_cpu_overclock`, and a missing one
+// would be unreachable.
+const _: () = assert!(OVERCLOCK_VALUES.len() == rustynes_core::MAX_CPU_OVERCLOCK as usize);
+
 /// A Vs. DIP-switch option.
 const fn dip(
     key: &'static CStr,
@@ -130,7 +155,7 @@ const fn dip(
 }
 
 /// Every option the core declares, in menu order.
-pub const OPTIONS: [OptionSpec; 9] = [
+pub const OPTIONS: [OptionSpec; 11] = [
     OptionSpec {
         key: FOUR_SCORE_KEY,
         // The v0 description, unchanged from v3.5.0 so that frontend's
@@ -140,6 +165,22 @@ pub const OPTIONS: [OptionSpec; 9] = [
         info: c"Plugs in the Four Score adapter, so controllers 3 and 4 reach the game. Off by default, as on the console: a game that does not expect the adapter can read its signature.",
         category: c"input",
         values: &[(c"disabled", c"Off"), (c"enabled", c"On")],
+    },
+    OptionSpec {
+        key: CPU_OVERCLOCK_KEY,
+        desc: c"CPU Overclock",
+        desc_categorized: c"CPU Overclock",
+        info: c"Runs the CPU 2 to 4 times faster against an unchanged picture and sound, so a game that slows down gets more time per frame. No real console does this. It changes how a game plays, so a save state records it.",
+        category: c"emulation",
+        values: OVERCLOCK_VALUES,
+    },
+    OptionSpec {
+        key: SPRITE_LIMIT_KEY,
+        desc: c"Remove Sprite Limit",
+        desc_categorized: c"Remove Sprite Limit",
+        info: c"Draws the sprites beyond the eighth on a line, removing flicker. Picture only: the game sees the stock behaviour. Boards whose pattern reads have effects (MMC2, MMC4 and a few others) keep the limit.",
+        category: c"emulation",
+        values: &[(c"disabled", c"Off (8 per line)"), (c"enabled", c"On")],
     },
     dip(VS_DIP_KEYS[0], c"Vs. DIP Switch 1", c"DIP Switch 1"),
     dip(VS_DIP_KEYS[1], c"Vs. DIP Switch 2", c"DIP Switch 2"),
@@ -157,6 +198,10 @@ pub const OPTIONS: [OptionSpec; 9] = [
 pub struct OptionValues {
     /// `rustynes_four_score`.
     pub four_score: bool,
+    /// `rustynes_cpu_overclock`, `1..=MAX_CPU_OVERCLOCK`.
+    pub cpu_overclock: u8,
+    /// `rustynes_remove_sprite_limit`.
+    pub sprite_limit_disabled: bool,
     /// The switches forced by `rustynes_vs_dip_*`; bit `n` = switch `n + 1`.
     pub dip_mask: u8,
     /// The forced switches' positions, under `dip_mask` (bits outside it are
@@ -175,6 +220,8 @@ impl OptionValues {
     /// instance is built in a `static`).
     pub const STOCK: Self = Self {
         four_score: false,
+        cpu_overclock: 1,
+        sprite_limit_disabled: false,
         dip_mask: 0,
         dip_value: 0,
     };
@@ -185,6 +232,11 @@ impl OptionValues {
     pub fn read(mut get: impl FnMut(&CStr) -> Option<String>) -> Self {
         let mut out = Self::STOCK;
         out.four_score = get(FOUR_SCORE_KEY).as_deref() == Some("enabled");
+        out.cpu_overclock = get(CPU_OVERCLOCK_KEY)
+            .and_then(|v| v.parse::<u8>().ok())
+            .filter(|k| (1..=rustynes_core::MAX_CPU_OVERCLOCK).contains(k))
+            .unwrap_or(1);
+        out.sprite_limit_disabled = get(SPRITE_LIMIT_KEY).as_deref() == Some("enabled");
         for (bit, key) in VS_DIP_KEYS.iter().enumerate() {
             match get(key).as_deref() {
                 Some("off") => out.dip_mask |= 1 << bit,
@@ -198,11 +250,133 @@ impl OptionValues {
         out
     }
 
+    /// The emulation options in words, for the log: the ones away from
+    /// their defaults, or "stock".
+    pub fn describe(self) -> String {
+        let mut parts = Vec::new();
+        if self.cpu_overclock != 1 {
+            parts.push(format!("CPU overclock x{}", self.cpu_overclock));
+        }
+        if self.sprite_limit_disabled {
+            parts.push("sprite limit removed".to_owned());
+        }
+        if self.four_score {
+            parts.push("Four Score".to_owned());
+        }
+        if self.dip_mask != 0 {
+            parts.push(format!(
+                "Vs. DIP switches forced {:#04x} of {:#04x}",
+                self.dip_value, self.dip_mask
+            ));
+        }
+        if parts.is_empty() {
+            "stock".to_owned()
+        } else {
+            parts.join(", ")
+        }
+    }
+
     /// The DIP-switch byte a cartridge whose database setting is `base` runs
     /// with: `base`, with the forced switches replaced.
     pub const fn dip_for(self, base: u8) -> u8 {
         (base & !self.dip_mask) | (self.dip_value & self.dip_mask)
     }
+}
+
+/// Bytes the options record adds to the end of a save state.
+pub const STATE_TRAILER_LEN: usize = 16;
+
+/// The record's first eight bytes. Chosen to be unlike anything the core's
+/// state ends with: a single console's state ends in zero padding, and a
+/// cabinet's in section bytes.
+const TRAILER_MAGIC: &[u8; 8] = b"RNLROPTS";
+
+/// The record's layout version, refused when unknown.
+const TRAILER_VERSION: u8 = 1;
+
+impl OptionValues {
+    /// The record of the options that change what the console does, as the
+    /// last [`STATE_TRAILER_LEN`] bytes of a save state:
+    ///
+    /// | bytes | content |
+    /// | --- | --- |
+    /// | 0-7 | `RNLROPTS` |
+    /// | 8 | layout version, 1 |
+    /// | 9 | bit 0: Four Score, bit 1: sprite limit removed; others 0 |
+    /// | 10 | CPU overclock, 1-4 |
+    /// | 11 | Vs. DIP switches forced (mask) |
+    /// | 12 | their positions (within the mask) |
+    /// | 13-15 | 0 |
+    ///
+    /// Every field is an option a netplay peer or a replay must share: what
+    /// `rustynes_core::HardwareOptions` records for the desktop's movies and
+    /// netplay handshake, restricted to what this core lets a user set.
+    pub fn trailer(self) -> [u8; STATE_TRAILER_LEN] {
+        let mut out = [0u8; STATE_TRAILER_LEN];
+        out[..8].copy_from_slice(TRAILER_MAGIC);
+        out[8] = TRAILER_VERSION;
+        out[9] = u8::from(self.four_score) | (u8::from(self.sprite_limit_disabled) << 1);
+        out[10] = self.cpu_overclock;
+        out[11] = self.dip_mask;
+        out[12] = self.dip_value;
+        out
+    }
+
+    /// Decode a record [`Self::trailer`] wrote, refusing any value the
+    /// options cannot hold: the record comes from a file, or a netplay
+    /// peer, and a value no menu offers is not one to run with.
+    fn from_trailer(t: &[u8; STATE_TRAILER_LEN]) -> Result<Self, &'static str> {
+        if t[8] != TRAILER_VERSION {
+            return Err("an unknown options-record version");
+        }
+        if t[9] & !0b11 != 0 {
+            return Err("an unknown options flag");
+        }
+        if !(1..=rustynes_core::MAX_CPU_OVERCLOCK).contains(&t[10]) {
+            return Err("a CPU overclock outside 1-4");
+        }
+        if t[12] & !t[11] != 0 {
+            return Err("a DIP switch position outside the forced mask");
+        }
+        if t[13..] != [0, 0, 0] {
+            return Err("non-zero reserved bytes");
+        }
+        Ok(Self {
+            four_score: t[9] & 1 != 0,
+            sprite_limit_disabled: t[9] & 2 != 0,
+            cpu_overclock: t[10],
+            dip_mask: t[11],
+            dip_value: t[12],
+        })
+    }
+}
+
+/// Split a save state into the core's own state and the options record at
+/// its end.
+///
+/// `Ok((state, None))` for a state with no record, which is every state
+/// written before v3.6.0: the whole slice is handed to the core, as before,
+/// and the options stay as the menu has them. A record is recognised by its
+/// magic in the last [`STATE_TRAILER_LEN`] bytes; an old single-console
+/// state ends in zero padding there and a cabinet's in section data, so
+/// neither can be mistaken for one. A record that is recognised but invalid
+/// refuses the whole state.
+///
+/// # Errors
+///
+/// What is wrong with a recognised but invalid record.
+pub fn split_state(slice: &[u8]) -> Result<(&[u8], Option<OptionValues>), &'static str> {
+    let Some(at) = slice.len().checked_sub(STATE_TRAILER_LEN) else {
+        return Ok((slice, None));
+    };
+    let (state, tail) = slice.split_at(at);
+    let Ok(tail) = <&[u8; STATE_TRAILER_LEN]>::try_from(tail) else {
+        return Ok((slice, None));
+    };
+    if &tail[..8] != TRAILER_MAGIC {
+        return Ok((slice, None));
+    }
+    OptionValues::from_trailer(tail).map(|o| (state, Some(o)))
 }
 
 /// A `'static` table of raw pointers. The pointers lead only to `'static`
@@ -450,5 +624,54 @@ mod tests {
             "the unforced switches keep the database's"
         );
         assert_eq!(OptionValues::STOCK.dip_for(0xA5), 0xA5);
+    }
+
+    #[test]
+    fn the_overclock_reads_only_values_the_core_accepts() {
+        for (text, k) in [("1", 1), ("2", 2), ("4", 4), ("0", 1), ("5", 1), ("x2", 1)] {
+            let v = OptionValues::read(|key| (key == CPU_OVERCLOCK_KEY).then(|| text.to_owned()));
+            assert_eq!(v.cpu_overclock, k, "{text:?}");
+        }
+        let v = OptionValues::read(|key| (key == SPRITE_LIMIT_KEY).then(|| "enabled".to_owned()));
+        assert!(v.sprite_limit_disabled);
+    }
+
+    #[test]
+    fn the_state_record_round_trips_and_refuses_what_no_menu_offers() {
+        let options = OptionValues {
+            four_score: true,
+            cpu_overclock: 3,
+            sprite_limit_disabled: true,
+            dip_mask: 0x81,
+            dip_value: 0x01,
+        };
+        let mut state = vec![7u8; 40];
+        state.extend_from_slice(&options.trailer());
+        let (core, back) = split_state(&state).expect("valid");
+        assert_eq!(
+            core,
+            &[7u8; 40][..],
+            "the core gets everything before the record"
+        );
+        assert_eq!(back, Some(options));
+
+        // A state with no record, as every state before v3.6.0: untouched.
+        let old = vec![0u8; 64];
+        assert_eq!(split_state(&old), Ok((&old[..], None)));
+        assert_eq!(split_state(&[1, 2, 3]), Ok((&[1u8, 2, 3][..], None)));
+
+        for (byte, value, why) in [
+            (8, 2, "version"),
+            (9, 4, "flag"),
+            (10, 0, "overclock"),
+            (10, 5, "overclock"),
+            (12, 0x02, "DIP position"),
+            (15, 1, "reserved"),
+        ] {
+            let mut bad = state.clone();
+            let at = bad.len() - STATE_TRAILER_LEN + byte;
+            bad[at] = value;
+            assert!(split_state(&bad).is_err(), "{why}: byte {byte} = {value}");
+        }
     }
 }
