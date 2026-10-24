@@ -2,7 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Hardware gamepads are supported but not required; the on-screen touch
-         overlay is always available. No network, storage, or sensor permissions:
+         overlay is always available. No storage or sensor permissions (network:
+         INTERNET and, for LAN netplay, ACCESS_LOCAL_NETWORK, below):
          ROM access is mediated entirely by the Storage Access Framework document
          picker (no broad storage permission needed), and the app collects nothing. -->
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -25,6 +26,13 @@
 
     <!-- RetroAchievements (v1.8.6, opt-in) talks to the RA servers over HTTPS. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- v3.6.0 (T-ANDROID-API37): LAN / direct-IP netplay. Android 17 blocks
+         local-network traffic for an app targeting API 37 unless it holds this
+         runtime permission (NEARBY_DEVICES group). Requested only when the user
+         hosts or joins a LAN game (LocalNetworkAccess.kt); room-code play goes
+         through public addresses and does not need it. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
     <application
         android:allowBackup="true"

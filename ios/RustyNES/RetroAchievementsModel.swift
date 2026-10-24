@@ -253,6 +253,6 @@ final class RetroAchievementsModel: ObservableObject {
 
     private func writeSidecar(_ data: Data, sha: String) {
         try? fileManager.createDirectory(at: sidecarDir, withIntermediateDirectories: true)
-        try? data.write(to: sidecarURL(sha: sha), options: .atomic)
+        try? DurableWrite.write(data, to: sidecarURL(sha: sha))
     }
 }

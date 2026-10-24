@@ -135,7 +135,7 @@ enum CrashReporter {
         body += "Reason:  \(exception.reason ?? "(none)")\n\n"
         body += exception.callStackSymbols.joined(separator: "\n")
         let url = dir.appendingPathComponent("crash-\(stamp).txt")
-        try? body.write(to: url, atomically: true, encoding: .utf8)
+        try? DurableWrite.write(Data(body.utf8), to: url)
     }
 
     /// `yyyyMMdd-HHmmss` in a fixed (US-POSIX) locale so filenames sort chronologically.
