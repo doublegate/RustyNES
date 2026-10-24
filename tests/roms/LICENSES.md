@@ -283,10 +283,28 @@ none is commercial software.
 - `AccuracyCoin/sub-tests/` (33 `.nes`): the boot-into-one-test derivatives of
   `AccuracyCoin.asm` described above, all MIT (inheriting upstream).
 
-The authoritative running total is 338 committed `.nes` files under
+The authoritative running total is 341 committed `.nes` files under
 `tests/roms/` (per `git ls-files`; excluding the gitignored `tests/roms/external/`
 and any untracked clone contents); no commercial
-ROM is among them.
+ROM is among them. (This line said 338 while `git ls-files` counted 339; the
+v3.6.0 recount is 339 plus the two `dap/` fixtures below.)
+
+## `dap/`: the source-level debugger fixtures (RustyNES, v3.6.0)
+
+`dap/dapdemo.c` and `dap/build.py` were written for RustyNES (`T-DEBUG-DAP`)
+and are dedicated to the public domain under **CC0-1.0**. `build.py` compiles
+the C file twice; the outputs are committed so the `rustynes-dap` tests run
+without either toolchain installed:
+
+| File | Built by | Contains, besides `dapdemo.c`'s code | Licence of that code |
+| --- | --- | --- | --- |
+| `dap/dapdemo_cc65.nes`, `dap/dapdemo_cc65.dbg` | cc65 (`cl65 -t nes -g`), commit `034f73a9e1` | the cc65 NES runtime library and its CHR font (`nes.lib`: `crt0`, the C stack routines, `neschar`) | zlib (cc65) |
+| `dap/dapdemo_llvm_mos.nes`, `dap/dapdemo_llvm_mos.elf` | the llvm-mos SDK v23.3.0 (`mos-nes-nrom-clang -O0 -g`) | the SDK's NES-NROM startup and runtime | Apache-2.0 WITH LLVM-exception (llvm-mos SDK) |
+
+The `.dbg` file records, as ld65 writes it, the absolute paths cc65's library
+was built from, source file sizes and modification times, and the name of
+cl65's temporary assembler file. The ELF records no build path
+(`-fdebug-prefix-map`).
 
 ## Notes
 
