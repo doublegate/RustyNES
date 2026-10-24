@@ -469,6 +469,12 @@ pub struct RustyNesLibretro {
     /// The Vs. System coin and service inputs (libretro re-audit NL-08).
     vs_panel: VsPanel,
 
+    /// The DIP-switch setting the game database gave each console at load
+    /// (index 0: the cartridge, or a cabinet's main console; 1: its sub
+    /// console), which the `rustynes_vs_dip_*` options override switch by
+    /// switch (LR-03, [`apply_console_options`]).
+    vs_dip_base: [u8; 2],
+
     /// Whether the input descriptors currently name the Vs. panel, so
     /// unloading (or loading a non-Vs. game) sends the standard table back.
     vs_descriptors: bool,
@@ -507,6 +513,7 @@ impl Default for RustyNesLibretro {
             fds_save_path: None,
             fds_flush_countdown: 0,
             vs_panel: VsPanel::new(),
+            vs_dip_base: [0; 2],
             vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
@@ -850,8 +857,9 @@ impl VsPanel {
 /// the database only to recognise a `DualSystem` cabinet, so every Vs. dump
 /// in the database rendered in the wrong colours (7 of 7 local dumps
 /// measured by the re-audit). The database's factory DIP-switch setting is
-/// applied too; the desktop lets a config file override it, which this core
-/// has no equivalent of (a DIP core option is not implemented).
+/// applied too; the desktop lets a config file override it, and since v3.6.0
+/// (LR-03) the `rustynes_vs_dip_*` core options override it here, switch by
+/// switch, through [`apply_console_options`].
 ///
 /// Both setters are no-ops on a cartridge that is not a Vs. System, and the
 /// palette changes only the colour table the PPU emits through, never game
@@ -921,6 +929,37 @@ fn sample_to_i16(sample: f32) -> i16 {
     // The clamp keeps a stray out-of-range sample (or a NaN, which `as`
     // maps to 0) from wrapping; it is saturation, not normal operation.
     (sample * 32767.0).clamp(-32768.0, 32767.0) as i16
+}
+
+/// Hold one console to the core options that change what it does (v3.6.0).
+///
+/// Each setting is compared first and set only when it differs, so calling
+/// this every frame costs a few comparisons, and a console at the defaults
+/// is never written to: the default build's output is byte-identical to a
+/// core without the options. `dip_base` is the DIP-switch setting the game
+/// database gave this console at load ([`apply_vs_database`]; 0 for a Vs.
+/// game it does not list); the `rustynes_vs_dip_*` options replace the
+/// switches they force (LR-03). The bank is written only on a Vs. System
+/// console, the only kind that reads it.
+fn apply_console_options(nes: &mut Nes, options: options::OptionValues, dip_base: u8) {
+    if nes.is_vs_system() {
+        let dip = options.dip_for(dip_base);
+        if nes.vs_dip() != dip {
+            nes.set_vs_dip(dip);
+        }
+    }
+}
+
+/// [`apply_console_options`] for both consoles of a Vs. `DualSystem`
+/// cabinet, each against its own database setting (`dip_base[0]` main,
+/// `[1]` sub): the two sides of a real cabinet have a bank each.
+fn apply_cabinet_options(
+    dual: &mut VsDualSystem,
+    options: options::OptionValues,
+    dip_base: [u8; 2],
+) {
+    apply_console_options(dual.main_mut(), options, dip_base[0]);
+    apply_console_options(dual.sub_mut(), options, dip_base[1]);
 }
 
 /// Hand one frame's pad state to a single console: players 1-2 always, and
@@ -1239,6 +1278,9 @@ impl RustyNesLibretro {
             Emu::Single(nes) => {
                 let mut nes = *nes;
                 apply_vs_database(&mut nes);
+                // The options themselves are applied at the top of every
+                // frame (`run_single`), before the console runs at all.
+                self.vs_dip_base = [nes.vs_dip(), 0];
                 self.nes = Some(nes);
                 self.dual = None;
                 self.log(
@@ -1251,6 +1293,7 @@ impl RustyNesLibretro {
                 // database to both too.
                 apply_vs_database(dual.main_mut());
                 apply_vs_database(dual.sub_mut());
+                self.vs_dip_base = [dual.main().vs_dip(), dual.sub().vs_dip()];
                 self.dual = Some(dual);
                 self.nes = None;
                 self.log(
@@ -1651,6 +1694,8 @@ impl RustyNesLibretro {
         let jp1 = read_joypad(ctx, 1);
         let pads = [nes_buttons(jp0), nes_buttons(jp1)];
         let four_score = self.options.four_score;
+        let options = self.options;
+        let dip_base = self.vs_dip_base[0];
         let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
@@ -1668,6 +1713,7 @@ impl RustyNesLibretro {
             let Some(nes) = self.nes.as_mut() else {
                 return;
             };
+            apply_console_options(nes, options, dip_base);
             if let Some(frame) = vs {
                 VsPanel::apply_single(frame, nes);
             }
@@ -1735,10 +1781,13 @@ impl RustyNesLibretro {
             read_joypad(ctx, 3),
         ];
         // Both panels of the cabinet: coins and service on L and R.
+        let options = self.options;
+        let dip_base = self.vs_dip_base;
         {
             let Some(dual) = self.dual.as_mut() else {
                 return;
             };
+            apply_cabinet_options(dual, options, dip_base);
             // The pulse is timed on the MAIN console's frame counter; the two
             // consoles advance together, one frame each per call.
             let vs = self.vs_panel.step(pads, 4, dual.main().frame());
@@ -2885,6 +2934,7 @@ retro_core!(RustyNesLibretro {
     fds_save_path: None,
     fds_flush_countdown: 0,
     vs_panel: VsPanel::new(),
+    vs_dip_base: [0; 2],
     vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });
@@ -3245,6 +3295,33 @@ mod tests {
         apply_pads(&mut nes, [Buttons::A, Buttons::B], None);
         assert!(!nes.four_score(), "turning the option off unplugs it");
         assert_eq!(nes.buttons(0), Buttons::A);
+    }
+
+    /// LR-03: a cabinet's two consoles each get the DIP options, against
+    /// their own database setting. Below the C ABI because the frontend sees
+    /// only the main console's memory, so no ABI test can read the sub's bank.
+    #[test]
+    fn both_consoles_of_a_cabinet_get_the_dip_options() {
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        rom[7] = 0x08 | 0x01; // NES 2.0, Vs. System
+        rom[13] = 0x50; // Vs. DualSystem
+        let Ok(Emu::Dual(mut dual)) = Emu::from_rom(&rom) else {
+            panic!("fixture: a DualSystem cabinet");
+        };
+        let options = options::OptionValues::read(|key| {
+            (key == options::VS_DIP_KEYS[1]).then(|| "on".to_owned())
+        });
+        apply_cabinet_options(&mut dual, options, [0x10, 0x01]);
+        assert_eq!(
+            dual.main().vs_dip(),
+            0x12,
+            "main: its base with switch 2 on"
+        );
+        assert_eq!(
+            dual.sub().vs_dip(),
+            0x03,
+            "sub: its own base with switch 2 on"
+        );
     }
 
     #[test]

@@ -39,6 +39,13 @@ cycle-accurate core later replaced.
   2, 1 and none and checks which command each gets, that the keys match the
   v3.5.0 list, and that every v2 option has a category, a sublabel and labelled
   values.
+- **Vs. System DIP switches as libretro core options** (LR-03): eight options,
+  `rustynes_vs_dip_1` to `_8`, each "Game default" (the Vs. database's factory
+  setting, which is what the core applied before and still applies by
+  default), Off or On. A forced switch replaces that bit of the factory bank on
+  a Vs. cartridge and on both consoles of a `DualSystem` cabinet, each against
+  its own bank. A C-ABI test reads the switches back through `$4016` / `$4017`
+  on a probe cartridge and compares with a bare console set to the same bank.
 
 ### Changed
 

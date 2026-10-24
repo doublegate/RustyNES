@@ -1,6 +1,6 @@
 //! The core options: one table, declared in whichever form the frontend
 //! speaks, and read back into one [`OptionValues`] (v3.6.0,
-//! `T-LIBRETRO-OPTIONS-V2`).
+//! `T-LIBRETRO-OPTIONS-V2`; the Vs. DIP switches, LR-03).
 //!
 //! # Two declarations from one table
 //!
@@ -50,6 +50,18 @@ use std::sync::OnceLock;
 /// The Four Score option's key (v2.8.1). Unchanged since: a frontend stores
 /// the user's setting under it.
 pub const FOUR_SCORE_KEY: &CStr = c"rustynes_four_score";
+/// The eight Vs. System DIP switches (LR-03), switch `n` =
+/// `rustynes_vs_dip_<n>` = bit `n - 1` of `Nes::set_vs_dip`.
+pub const VS_DIP_KEYS: [&CStr; 8] = [
+    c"rustynes_vs_dip_1",
+    c"rustynes_vs_dip_2",
+    c"rustynes_vs_dip_3",
+    c"rustynes_vs_dip_4",
+    c"rustynes_vs_dip_5",
+    c"rustynes_vs_dip_6",
+    c"rustynes_vs_dip_7",
+    c"rustynes_vs_dip_8",
+];
 
 /// One option, in the form both declarations are generated from.
 pub struct OptionSpec {
@@ -76,14 +88,49 @@ impl OptionSpec {
 }
 
 /// `(key, label, sublabel)` of each category.
-pub const CATEGORIES: [(&CStr, &CStr, &CStr); 1] = [(
-    c"input",
-    c"Input",
-    c"Controllers and adapters plugged into the console.",
-)];
+pub const CATEGORIES: [(&CStr, &CStr, &CStr); 2] = [
+    (
+        c"input",
+        c"Input",
+        c"Controllers and adapters plugged into the console.",
+    ),
+    (
+        c"vs_system",
+        c"Vs. System",
+        c"The arcade cabinet's DIP switches. Only Vs. System games read them.",
+    ),
+];
+
+/// The values of a Vs. DIP-switch option: the game database's factory
+/// setting (the default, and what every release before v3.6.0 applied), or
+/// the switch forced off or on. Three values per switch rather than one
+/// 256-value list: a list is capped at 127 values
+/// (`RETRO_NUM_CORE_OPTION_VALUES_MAX` less its terminator), and a menu of
+/// eight on/off switches is how the cabinet's own bank reads.
+const DIP_VALUES: &[(&CStr, &CStr)] = &[
+    (c"database", c"Game default"),
+    (c"off", c"Off"),
+    (c"on", c"On"),
+];
+
+/// A Vs. DIP-switch option.
+const fn dip(
+    key: &'static CStr,
+    desc: &'static CStr,
+    desc_categorized: &'static CStr,
+) -> OptionSpec {
+    OptionSpec {
+        key,
+        desc,
+        desc_categorized,
+        info: c"What each switch does depends on the game (its manual or operator card lists them). A game may read the switches only when it starts, so restart it after a change.",
+        category: c"vs_system",
+        values: DIP_VALUES,
+    }
+}
 
 /// Every option the core declares, in menu order.
-pub const OPTIONS: [OptionSpec; 1] = [
+pub const OPTIONS: [OptionSpec; 9] = [
     OptionSpec {
         key: FOUR_SCORE_KEY,
         // The v0 description, unchanged from v3.5.0 so that frontend's
@@ -94,6 +141,14 @@ pub const OPTIONS: [OptionSpec; 1] = [
         category: c"input",
         values: &[(c"disabled", c"Off"), (c"enabled", c"On")],
     },
+    dip(VS_DIP_KEYS[0], c"Vs. DIP Switch 1", c"DIP Switch 1"),
+    dip(VS_DIP_KEYS[1], c"Vs. DIP Switch 2", c"DIP Switch 2"),
+    dip(VS_DIP_KEYS[2], c"Vs. DIP Switch 3", c"DIP Switch 3"),
+    dip(VS_DIP_KEYS[3], c"Vs. DIP Switch 4", c"DIP Switch 4"),
+    dip(VS_DIP_KEYS[4], c"Vs. DIP Switch 5", c"DIP Switch 5"),
+    dip(VS_DIP_KEYS[5], c"Vs. DIP Switch 6", c"DIP Switch 6"),
+    dip(VS_DIP_KEYS[6], c"Vs. DIP Switch 7", c"DIP Switch 7"),
+    dip(VS_DIP_KEYS[7], c"Vs. DIP Switch 8", c"DIP Switch 8"),
 ];
 
 /// What the options say, parsed. `Default` is every option at its default,
@@ -102,6 +157,11 @@ pub const OPTIONS: [OptionSpec; 1] = [
 pub struct OptionValues {
     /// `rustynes_four_score`.
     pub four_score: bool,
+    /// The switches forced by `rustynes_vs_dip_*`; bit `n` = switch `n + 1`.
+    pub dip_mask: u8,
+    /// The forced switches' positions, under `dip_mask` (bits outside it are
+    /// zero).
+    pub dip_value: u8,
 }
 
 impl Default for OptionValues {
@@ -113,15 +173,35 @@ impl Default for OptionValues {
 impl OptionValues {
     /// Every option at its default, as a `const` (the `retro_core!`
     /// instance is built in a `static`).
-    pub const STOCK: Self = Self { four_score: false };
+    pub const STOCK: Self = Self {
+        four_score: false,
+        dip_mask: 0,
+        dip_value: 0,
+    };
 
     /// Read every option through `get`, which answers a key with the
     /// frontend's value or `None`. An unknown value reads as the option's
     /// default rather than as something the menu never offered.
     pub fn read(mut get: impl FnMut(&CStr) -> Option<String>) -> Self {
-        Self {
-            four_score: get(FOUR_SCORE_KEY).as_deref() == Some("enabled"),
+        let mut out = Self::STOCK;
+        out.four_score = get(FOUR_SCORE_KEY).as_deref() == Some("enabled");
+        for (bit, key) in VS_DIP_KEYS.iter().enumerate() {
+            match get(key).as_deref() {
+                Some("off") => out.dip_mask |= 1 << bit,
+                Some("on") => {
+                    out.dip_mask |= 1 << bit;
+                    out.dip_value |= 1 << bit;
+                }
+                _ => {}
+            }
         }
+        out
+    }
+
+    /// The DIP-switch byte a cartridge whose database setting is `base` runs
+    /// with: `base`, with the forced switches replaced.
+    pub const fn dip_for(self, base: u8) -> u8 {
+        (base & !self.dip_mask) | (self.dip_value & self.dip_mask)
     }
 }
 
@@ -353,5 +433,22 @@ mod tests {
             OptionValues::default()
         );
         assert!(OptionValues::read(|_| Some("enabled".to_owned())).four_score);
+    }
+
+    #[test]
+    fn dip_overrides_replace_only_the_forced_switches() {
+        let v = OptionValues::read(|key| {
+            (key == VS_DIP_KEYS[0])
+                .then(|| "on".to_owned())
+                .or_else(|| (key == VS_DIP_KEYS[7]).then(|| "off".to_owned()))
+        });
+        assert_eq!((v.dip_mask, v.dip_value), (0x81, 0x01));
+        assert_eq!(v.dip_for(0x80), 0x01, "switch 8 forced off, 1 forced on");
+        assert_eq!(
+            v.dip_for(0x7E),
+            0x7F,
+            "the unforced switches keep the database's"
+        );
+        assert_eq!(OptionValues::STOCK.dip_for(0xA5), 0xA5);
     }
 }

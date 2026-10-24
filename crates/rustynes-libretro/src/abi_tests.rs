@@ -2071,6 +2071,79 @@ fn vs_dual_system_coins_reach_the_main_console() {
     );
 }
 
+/// Load the Vs. probe cartridge, run two frames, and return what the game
+/// read from `$4016` / `$4017` (main console for a cabinet).
+fn vs_probe_reads(dual: bool) -> (u8, u8) {
+    assert!(load(vs_probe_rom(dual), true));
+    run_frame();
+    run_frame();
+    let head = wram_head();
+    unload();
+    head
+}
+
+/// The same two frames of the probe cartridge on a bare console with DIP
+/// bank `dip`: the oracle the options are checked against.
+fn vs_probe_oracle(dip: u8) -> (u8, u8) {
+    let mut nes = Nes::from_rom(vs_probe_rom(false)).expect("the probe parses");
+    nes.set_vs_dip(dip);
+    nes.run_frame();
+    nes.run_frame();
+    (nes.wram()[0], nes.wram()[1])
+}
+
+/// v3.6.0 LR-03. The core applied the Vs. database's factory DIP switches
+/// and nothing could change them: the desktop has a config override, the
+/// libretro core had no option. `rustynes_vs_dip_<n>` now forces switch `n`
+/// off or on (default: the database's setting), on a cartridge and on both
+/// consoles of a cabinet, and the game reads it: switches 1-2 at `$4016`
+/// bits 3-4, switches 3-8 at `$4017` bits 2-7. The probe cartridge is in no
+/// database, so its factory bank is 0.
+#[test]
+fn a_vs_dip_option_reaches_the_cabinet() {
+    let _frontend = frontend();
+    let stock = vs_probe_reads(false);
+    let stock_dual = vs_probe_reads(true);
+    set_option("rustynes_vs_dip_1", "on");
+    set_option("rustynes_vs_dip_2", "off");
+    set_option("rustynes_vs_dip_3", "on");
+    set_option("rustynes_vs_dip_8", "on");
+    let forced = vs_probe_reads(false);
+    let forced_dual = vs_probe_reads(true);
+    for n in 1..=8 {
+        set_option(&format!("rustynes_vs_dip_{n}"), "database");
+    }
+    let database = vs_probe_reads(false);
+
+    assert_eq!(stock, vs_probe_oracle(0), "no option: the factory bank");
+    assert_eq!(database, stock, "every switch at \"database\": unchanged");
+    assert_eq!(
+        forced,
+        vs_probe_oracle(0x85),
+        "switches 1, 3 and 8 on, 2 off: the bank the game reads"
+    );
+    assert_eq!(
+        forced.0 & 0x18,
+        0x08,
+        "switch 1 on, 2 off at $4016: {forced:02x?}"
+    );
+    assert_eq!(
+        forced.1 & 0x84,
+        0x84,
+        "switches 3 and 8 at $4017: {forced:02x?}"
+    );
+    assert_eq!(
+        (forced_dual.0 & 0x18, forced_dual.1 & 0xFC),
+        (0x08, 0x84),
+        "a cabinet's main console reads the same switches: {forced_dual:02x?}"
+    );
+    assert_eq!(
+        (stock_dual.0 & 0x18, stock_dual.1 & 0xFC),
+        (0, 0),
+        "and none without the option: {stock_dual:02x?}"
+    );
+}
+
 /// Drive the Vs. probe cartridge for `real` presented frames with L held on
 /// port 1 for frames 5 and 6, the way `RetroArch` run-ahead of `ahead` frames
 /// drives a core: each presented frame is one `retro_run`, a
