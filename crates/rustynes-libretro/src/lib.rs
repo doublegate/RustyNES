@@ -403,6 +403,17 @@ pub struct RustyNesLibretro {
     /// Pre-allocated to avoid heap allocations when draining audio batches.
     audio_float_buffer: Vec<f32>,
 
+    /// The stereo interleave of `audio_float_buffer` for the float callback
+    /// (v3.6.0), pre-allocated as `audio_buffer` is.
+    audio_stereo_float: Vec<f32>,
+
+    /// The frontend's float sample-batch callback, when it offered one at
+    /// `retro_load_game` (`GET_AUDIO_SAMPLE_BATCH_FLOAT`); the core then
+    /// sends every sample of the loaded game through it and none through the
+    /// `int16_t` callback, as libretro.h requires. Cleared at unload, where
+    /// the pointer stops being valid.
+    float_audio: Option<AudioSampleBatchFloat>,
+
     /// Intermediate buffer for the video framebuffer.
     ///
     /// Pre-allocated to hold 256x240 RGBA8 pixels. Used to swap R and B channels
@@ -498,6 +509,8 @@ impl Default for RustyNesLibretro {
             // needs 2x the capacity to stay allocation-free on the hot path.
             audio_buffer: Vec::with_capacity(4096 * 2),
             audio_float_buffer: Vec::with_capacity(4096),
+            audio_stereo_float: Vec::with_capacity(4096 * 2),
+            float_audio: None,
             // Sized for the widest present (512x240 Vs. DualSystem side-by-side)
             // so the hot path never reallocates even in dual mode.
             video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
@@ -911,6 +924,75 @@ const fn apply_vs_entry(nes: &mut Nes, entry: Option<rustynes_core::vs_db::VsDbE
     if let Some(entry) = entry {
         nes.set_vs_ppu_type(entry.vs_ppu_type);
         nes.set_vs_dip(entry.vs_dip);
+    }
+}
+
+/// `RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT`: the frontend offers a
+/// float sample-batch callback in place of the `int16_t` one (v3.6.0).
+///
+/// Not in the vendored `libretro.h` (`vendor/rust-libretro-sys`, the
+/// 2020-era header `rust-libretro-sys` 0.3.2 ships), so the command number
+/// and the two types below are transcribed from upstream's header:
+/// `libretro-common/include/libretro.h` in `libretro/RetroArch`, added by
+/// commit `28f4c9c6a361` ("audio: add RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT
+/// float output negotiation", 2026-06-29), read at `master` on 2026-10-23.
+/// That header is MIT-licensed ("Copyright (C) 2010-2024 The RetroArch
+/// team"), as is the vendored one; these are interface definitions a core
+/// must match, written here as Rust declarations, and credited in `NOTICE`
+/// and `docs/originality-and-provenance.md` section 5.
+/// The command is in the experimental range (`RETRO_ENVIRONMENT_EXPERIMENTAL`
+/// set), and no RetroArch release offers it yet (1.22.2, 2025-11, predates
+/// it), so on every frontend in use today the query returns `false` and the
+/// `int16_t` path runs unchanged.
+/// (`85 | RETRO_ENVIRONMENT_EXPERIMENTAL` in the header; 85 is `0x55`.)
+const RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT: u32 = 0x55 | RETRO_ENVIRONMENT_EXPERIMENTAL;
+
+/// `retro_audio_sample_batch_float_t`: interleaved stereo `float` frames,
+/// normalised to `[-1.0, 1.0]`; returns the frames processed, as
+/// `retro_audio_sample_batch_t` does.
+type AudioSampleBatchFloat = unsafe extern "C" fn(data: *const f32, frames: usize) -> usize;
+
+/// `struct retro_audio_sample_float_callback`: the frontend sets `batch`.
+#[repr(C)]
+struct AudioSampleFloatCallback {
+    batch: Option<AudioSampleBatchFloat>,
+}
+
+/// Ask the frontend for its float sample-batch callback. `None` when it
+/// does not recognise the command (every released frontend today), refuses
+/// it, or answers `true` without setting the pointer.
+///
+/// libretro.h: negotiate once, during `retro_load_game`, and commit to one
+/// format for the loaded game; the pointer is valid until
+/// `retro_unload_game`.
+///
+/// # Safety
+///
+/// `cb` must be the frontend's environment callback, valid for the call.
+unsafe fn negotiate_float_audio(cb: retro_environment_t) -> Option<AudioSampleBatchFloat> {
+    let cb = cb?;
+    let mut answer = AudioSampleFloatCallback { batch: None };
+    // SAFETY: the caller guarantees `cb`; `answer` is a live, writable
+    // `struct retro_audio_sample_float_callback` for the duration of the
+    // call, which is all the command's `data` contract asks.
+    let offered = unsafe {
+        cb(
+            RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT,
+            std::ptr::addr_of_mut!(answer).cast::<std::os::raw::c_void>(),
+        )
+    };
+    if offered { answer.batch } else { None }
+}
+
+/// One mixer sample for the float callback: the same full scale as
+/// [`sample_to_i16`] (`1.0`), clamped to the `[-1.0, 1.0]` libretro.h
+/// requires, and `0.0` for a NaN, which the `i16` cast also gives.
+#[inline]
+const fn sample_to_f32(sample: f32) -> f32 {
+    if sample.is_nan() {
+        0.0
+    } else {
+        sample.clamp(-1.0, 1.0)
     }
 }
 
@@ -1386,7 +1468,23 @@ impl RustyNesLibretro {
         // callback is the frontend's own, valid for this call.
         let cb = unsafe { *generic_ctx.environment_callback() };
         self.describe_inputs(cb, vs_table);
+        self.negotiate_audio(cb);
         Ok(())
+    }
+
+    /// Choose the loaded game's audio format: float when the frontend
+    /// offers it (`GET_AUDIO_SAMPLE_BATCH_FLOAT`, v3.6.0), else `int16_t`.
+    /// Called once per load, at its end, as libretro.h asks.
+    fn negotiate_audio(&mut self, cb: retro_environment_t) {
+        // SAFETY: `cb` is the frontend's callback, valid for the
+        // `retro_load_game` this runs inside.
+        self.float_audio = unsafe { negotiate_float_audio(cb) };
+        if self.float_audio.is_some() {
+            self.log(
+                retro_log_level::RETRO_LOG_INFO,
+                "audio: the frontend takes float samples; sending them unconverted.",
+            );
+        }
     }
 
     /// `retro_unserialize`, run inside [`Self::contained`].
@@ -1785,6 +1883,24 @@ impl RustyNesLibretro {
     /// is a belt-and-suspenders no-op that keeps that guarantee true even if the
     /// mono drain buffer is ever grown past 4096.
     fn push_audio(&mut self, ctx: &mut RunContext, produced: usize) {
+        if let Some(batch) = self.float_audio {
+            // v3.6.0: the frontend negotiated float samples at load, so they
+            // go out as the mixer made them, at the `i16` path's scale and
+            // clamped to libretro's `[-1.0, 1.0]`, with no `i16` call at all.
+            self.audio_stereo_float.clear();
+            self.audio_stereo_float.reserve(produced * 2);
+            for &sample in &self.audio_float_buffer[..produced] {
+                let s = sample_to_f32(sample);
+                self.audio_stereo_float.push(s);
+                self.audio_stereo_float.push(s);
+            }
+            // SAFETY: `batch` is the frontend's float callback, valid until
+            // `retro_unload_game` (which clears it); the pointer covers
+            // `produced` stereo frames, `2 * produced` `f32`s, alive for the
+            // call.
+            unsafe { batch(self.audio_stereo_float.as_ptr(), produced) };
+            return;
+        }
         self.audio_buffer.clear();
         // No-op while capacity already covers `2 * produced` (the common case);
         // only ever allocates if a future change enlarges `audio_float_buffer`.
@@ -2733,6 +2849,8 @@ impl Core for RustyNesLibretro {
         self.serialize_size = 0;
         self.audio_buffer = Vec::new();
         self.audio_float_buffer = Vec::new();
+        self.audio_stereo_float = Vec::new();
+        self.float_audio = None;
         self.video_buffer = Vec::new();
         self.serialize_buffer = Vec::new();
     }
@@ -2780,6 +2898,9 @@ impl Core for RustyNesLibretro {
         // have to grow them again.
         self.audio_buffer.clear();
         self.audio_float_buffer.clear();
+        self.audio_stereo_float.clear();
+        // libretro.h: the float callback is valid until `retro_unload_game`.
+        self.float_audio = None;
         self.video_buffer.clear();
     }
 
@@ -3042,6 +3163,8 @@ retro_core!(RustyNesLibretro {
     dual: None,
     audio_buffer: Vec::with_capacity(4096 * 2),
     audio_float_buffer: Vec::with_capacity(4096),
+    audio_stereo_float: Vec::with_capacity(4096 * 2),
+    float_audio: None,
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,
     serialize_buffer: Vec::new(),

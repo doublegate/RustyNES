@@ -124,6 +124,29 @@ static KEEP_FRAME: AtomicBool = AtomicBool::new(false);
 /// The last frame presented, as tightly packed XRGB8888 rows.
 static LAST_FRAME: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
+/// Whether the fake frontend offers float audio
+/// (`GET_AUDIO_SAMPLE_BATCH_FLOAT`); off, as in every released frontend.
+static OFFER_FLOAT_AUDIO: AtomicBool = AtomicBool::new(false);
+/// A frontend that fills in the callback and then answers `false`: the core
+/// must take the answer, not the pointer.
+static REFUSE_FLOAT_AFTER_FILLING: AtomicBool = AtomicBool::new(false);
+/// Whether the audio callbacks record what they are sent.
+static KEEP_AUDIO: AtomicBool = AtomicBool::new(false);
+/// Samples sent through the `int16_t` batch callback while recording.
+static I16_AUDIO: Mutex<Vec<i16>> = Mutex::new(Vec::new());
+/// Samples sent through the float batch callback while recording.
+static F32_AUDIO: Mutex<Vec<f32>> = Mutex::new(Vec::new());
+
+/// The fake frontend's float batch callback.
+unsafe extern "C" fn audio_batch_float(data: *const f32, frames: usize) -> usize {
+    if KEEP_AUDIO.load(SeqCst) && !data.is_null() {
+        // SAFETY: libretro.h: `data` holds `frames` stereo frames for the call.
+        let samples = unsafe { std::slice::from_raw_parts(data, frames * 2) };
+        held(&F32_AUDIO).extend_from_slice(samples);
+    }
+    frames
+}
+
 /// The RetroPad buttons held on each port, as a `RETRO_DEVICE_ID_JOYPAD_MASK`
 /// bitmask (bit n = `RETRO_DEVICE_ID_JOYPAD_*` n).
 static PADS: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
@@ -444,6 +467,15 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             SET_VARIABLES_CALLS.fetch_add(1, SeqCst);
             true
         }
+        c if c == RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT => {
+            let refuse = REFUSE_FLOAT_AFTER_FILLING.load(SeqCst);
+            if data.is_null() || !(OFFER_FLOAT_AUDIO.load(SeqCst) || refuse) {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut retro_audio_sample_float_callback`.
+            unsafe { (*data.cast::<AudioSampleFloatCallback>()).batch = Some(audio_batch_float) };
+            !refuse
+        }
         RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
             let version = CORE_OPTIONS_VERSION.load(SeqCst);
             if data.is_null() || version == 0 {
@@ -561,7 +593,12 @@ unsafe extern "C" fn video(data: *const c_void, width: c_uint, height: c_uint, p
     }
     *held(&LAST_FRAME) = out;
 }
-unsafe extern "C" fn audio_batch(_: *const i16, frames: usize) -> usize {
+unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
+    if KEEP_AUDIO.load(SeqCst) && !data.is_null() {
+        // SAFETY: libretro.h: `data` holds `frames` stereo frames for the call.
+        let samples = unsafe { std::slice::from_raw_parts(data, frames * 2) };
+        held(&I16_AUDIO).extend_from_slice(samples);
+    }
     frames
 }
 unsafe extern "C" fn audio_sample(_: i16, _: i16) {}
@@ -615,6 +652,9 @@ fn frontend() -> MutexGuard<'static, ()> {
         pad.store(0, SeqCst);
     }
     KEEP_FRAME.store(false, SeqCst);
+    OFFER_FLOAT_AUDIO.store(false, SeqCst);
+    REFUSE_FLOAT_AFTER_FILLING.store(false, SeqCst);
+    KEEP_AUDIO.store(false, SeqCst);
     // No option set: the core reads every one as its default at the next
     // load, whatever an earlier test chose.
     held(&OPTION_VALUES).clear();
@@ -2616,6 +2656,150 @@ fn states_without_a_record_load_and_bad_records_refuse() {
         after == before,
         "refusals leave the machine, and its x1 multiplier, as they were"
     );
+}
+
+/// A 16 KiB NROM cartridge that starts a square wave on pulse 1 and idles,
+/// so the audio stream carries a tone rather than silence.
+///
+/// ```text
+/// $C000  LDA #$01 / STA $4015       pulse 1 on
+///        LDA #$BF / STA $4000       duty 50%, constant volume 15
+///        LDA #$FD / STA $4002 / LDA #$00 / STA $4003   ~440 Hz
+///        JMP *
+/// ```
+fn tone_rom() -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    let program = [
+        0xA9, 0x01, 0x8D, 0x15, 0x40, 0xA9, 0xBF, 0x8D, 0x00, 0x40, 0xA9, 0xFD, 0x8D, 0x02, 0x40,
+        0xA9, 0x00, 0x8D, 0x03, 0x40, 0x4C, 0x14, 0xC0,
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The mono samples a bare console produces over `frames` frames of `rom`,
+/// drained per frame as the core drains them.
+fn oracle_audio(rom: &[u8], frames: u32) -> Vec<f32> {
+    let mut nes = Nes::from_rom(rom).expect("parses");
+    let mut out = Vec::new();
+    let mut buf = vec![0.0_f32; 4096];
+    for _ in 0..frames {
+        nes.run_frame();
+        let n = nes.drain_audio_into(&mut buf);
+        out.extend_from_slice(&buf[..n]);
+    }
+    out
+}
+
+/// Load `rom`, run `frames` frames recording the audio, and return
+/// (`int16_t` samples, float samples) as the frontend received them.
+fn recorded_audio(rom: &'static [u8], frames: u32) -> (Vec<i16>, Vec<f32>) {
+    held(&I16_AUDIO).clear();
+    held(&F32_AUDIO).clear();
+    KEEP_AUDIO.store(true, SeqCst);
+    assert!(load(rom, true));
+    for _ in 0..frames {
+        run_frame();
+    }
+    unload();
+    KEEP_AUDIO.store(false, SeqCst);
+    (held(&I16_AUDIO).clone(), held(&F32_AUDIO).clone())
+}
+
+/// v3.6.0, plan row 2. `GET_AUDIO_SAMPLE_BATCH_FLOAT` (upstream libretro.h,
+/// 2026-06-29) lets a frontend take float samples; the mixer is float, so
+/// the core sends them as made. A frontend that does not offer it (every
+/// released one) gets exactly the `int16_t` stream it got before: the
+/// samples a bare console makes, at full scale `1.0`, duplicated to stereo.
+/// One that offers it gets the same samples as floats and no `int16_t`
+/// call, for the whole loaded game, as libretro.h's contract requires; the
+/// next load negotiates again.
+#[test]
+fn float_audio_when_offered_and_the_int16_stream_unchanged_when_not() {
+    const FRAMES: u32 = 20;
+    let _frontend = frontend();
+    let mono = oracle_audio(tone_rom(), FRAMES);
+    assert!(
+        mono.iter().any(|s| s.abs() > 0.05),
+        "fixture: the cartridge makes a tone"
+    );
+    let stereo =
+        |f: fn(f32) -> f32| -> Vec<f32> { mono.iter().flat_map(|&s| [f(s), f(s)]).collect() };
+
+    let (i16s, floats) = recorded_audio(tone_rom(), FRAMES);
+    let expected_i16: Vec<i16> = mono
+        .iter()
+        .flat_map(|&s| [sample_to_i16(s), sample_to_i16(s)])
+        .collect();
+    assert!(floats.is_empty(), "not offered: no float call");
+    assert!(
+        i16s == expected_i16,
+        "not offered: the int16 stream is unchanged"
+    );
+
+    // libretro.h: "If this returns false the core must keep using the int16
+    // callbacks", whatever the frontend left in the struct.
+    REFUSE_FLOAT_AFTER_FILLING.store(true, SeqCst);
+    let (i16s, floats) = recorded_audio(tone_rom(), FRAMES);
+    REFUSE_FLOAT_AFTER_FILLING.store(false, SeqCst);
+    assert!(floats.is_empty(), "refused: no float call");
+    assert!(
+        i16s == expected_i16,
+        "refused: the int16 stream is unchanged"
+    );
+
+    OFFER_FLOAT_AUDIO.store(true, SeqCst);
+    let (i16s, floats) = recorded_audio(tone_rom(), FRAMES);
+    assert!(i16s.is_empty(), "offered: no int16 call");
+    assert!(
+        floats == stereo(|s| s),
+        "offered: the mixer's samples, as made"
+    );
+
+    // Committed for the loaded game: withdrawing the offer mid-game changes
+    // nothing until the next load, which negotiates again.
+    held(&I16_AUDIO).clear();
+    held(&F32_AUDIO).clear();
+    KEEP_AUDIO.store(true, SeqCst);
+    assert!(load(tone_rom(), true));
+    run_frame();
+    OFFER_FLOAT_AUDIO.store(false, SeqCst);
+    run_frame();
+    unload();
+    let (mid_i16, mid_f32) = (held(&I16_AUDIO).clone(), held(&F32_AUDIO).clone());
+    KEEP_AUDIO.store(false, SeqCst);
+    assert!(
+        mid_i16.is_empty() && !mid_f32.is_empty(),
+        "one format per loaded game"
+    );
+    let (i16s, floats) = recorded_audio(tone_rom(), 2);
+    assert!(
+        !i16s.is_empty() && floats.is_empty(),
+        "the next load is int16 again"
+    );
+}
+
+/// The float path's scale and saturation: full scale `1.0`, as the `int16_t`
+/// path's; out-of-range samples clamp to libretro's `[-1.0, 1.0]`; a NaN is
+/// `0.0`, as the `int16_t` cast makes it.
+#[test]
+fn float_samples_keep_the_int16_scale_and_saturate_the_same_way() {
+    for s in [0.0_f32, 0.5, -0.385, 0.87, 1.0, -1.0] {
+        assert_eq!(sample_to_f32(s), s);
+        assert_eq!(
+            sample_to_i16(sample_to_f32(s)),
+            sample_to_i16(s),
+            "{s}: one scale for both paths"
+        );
+    }
+    assert_eq!(sample_to_f32(1.5), 1.0);
+    assert_eq!(sample_to_f32(-7.0), -1.0);
+    assert_eq!(sample_to_f32(f32::NAN), 0.0);
+    assert_eq!(sample_to_i16(f32::NAN), 0);
 }
 
 /// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).

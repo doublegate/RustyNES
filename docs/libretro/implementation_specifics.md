@@ -98,6 +98,28 @@ spans about `-0.385..0.223` and expansion audio reaches further (Namco 163,
 (`expansion_audio_is_not_clipped`). The frontend's dynamic rate control
 resamples. While RetroArch fast-forwards, the conversion is skipped.
 
+**Float audio (v3.6.0).** At the end of `retro_load_game` the core asks
+`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT` (`85 |
+RETRO_ENVIRONMENT_EXPERIMENTAL`). The command is newer than the vendored
+`libretro.h`, so its number and the two types it uses
+(`retro_audio_sample_batch_float_t`, `struct
+retro_audio_sample_float_callback`) are transcribed in `lib.rs` from upstream's
+header (`libretro/RetroArch`, `libretro-common/include/libretro.h`, added by
+commit `28f4c9c6a361` on 2026-06-29; MIT, read at `master` on 2026-10-23). When
+the frontend answers `true` with a callback, every sample of that game goes
+through it as the mixer made it (`sample_to_f32`: the same full scale `1.0`,
+clamped to libretro's `[-1.0, 1.0]`, NaN as `0.0`), duplicated to stereo, and
+no sample goes through the `int16_t` callback, as libretro.h requires ("must
+not mix int16 and float batch calls"). The choice holds for the loaded game;
+the next load asks again, and unloading drops the callback, which libretro.h
+says is valid only until `retro_unload_game`. A frontend that answers `false`,
+whatever it left in the struct, or does not know the command, gets the
+`int16_t` stream byte for byte as before: no RetroArch release offers the
+command yet (1.22.2, 2025-11, predates it). Tests:
+`float_audio_when_offered_and_the_int16_stream_unchanged_when_not` (a tone
+cartridge against a bare console's samples, for each kind of frontend) and
+`float_samples_keep_the_int16_scale_and_saturate_the_same_way`.
+
 ## Save States (`retro_serialize` / `retro_unserialize`)
 
 For a single console, `retro_serialize_size` is the loaded state's size plus

@@ -53,6 +53,14 @@ cycle-accurate core later replaced.
   in ten frames (twice as far at x2, four times at x4) and counts the pixels of
   sixteen sprites on one line (64 stock, 128 with the option); at their
   defaults the frames are a bare console's, byte for byte.
+- **Float audio for libretro frontends that offer it**: the core asks for
+  `GET_AUDIO_SAMPLE_BATCH_FLOAT` (added to upstream `libretro.h` on 2026-06-29,
+  transcribed into the core because the vendored header predates it) at each
+  load, and when the frontend gives a float callback it sends the mixer's
+  samples unconverted, at the same full scale, for that game. Every other
+  frontend, which today is every released one, gets the `int16_t` stream byte
+  for byte as before; a C-ABI test compares both streams with a bare console's
+  samples.
 
 ### Changed
 
