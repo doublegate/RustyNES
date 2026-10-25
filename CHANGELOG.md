@@ -34,8 +34,10 @@ cycle-accurate core later replaced.
   from the same inputs: 60 Hz NSFs call `play` every frame again, and MMC5
   NSFs play at all. No recorded test output moved (no golden or fingerprint
   covers an NSF), but a movie of an NSF would otherwise replay differently
-  without warning (the maintainer's call, 2026-10-24). Cartridge and FDS
-  emulation is unchanged; save states are unaffected.
+  without warning (the maintainer's call, 2026-10-24). The noise-channel
+  fix below changes the sound of every game that uses the noise channel,
+  which the epoch also covers. Pictures and timing are unchanged; save
+  states are unaffected.
 
 ### Added
 
@@ -175,6 +177,16 @@ cycle-accurate core later replaced.
   since. The device check is run-sheet row T14.
 
 ### Fixed
+
+- **The noise channel plays at its documented pitch.** The NESdev page gives
+  each noise period in CPU cycles between shifts of the noise generator, and
+  RustyNES loaded that number into a timer that counts every other CPU
+  cycle, so since v1.0.0 the noise ran at about half its rate, roughly an
+  octave low, on every region; PAL's second period also read 7 where the
+  page gives 8. Both are corrected, with a test of every period in both
+  tables. Found by the MiSTer core's PAL work (its ledger findings 9.1 and
+  9.2). Every game that uses the noise channel sounds different: 112
+  recorded audio checksums moved, and no picture or cycle count.
 
 - **MMC5 NSF files play**: the NSF player's driver sat at `$5000-$504F` with
   its NMI entry at `$5015`, which is also the MMC5's status port, and an NSF

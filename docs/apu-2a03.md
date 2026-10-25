@@ -169,7 +169,7 @@ Per `ref-docs/research-report.md` §APU:
 | $400A | TRI_LLLL.LLLL | Timer low |
 | $400B | TRI_lllL.LHHH | Length counter load + timer high |
 | $400C | NOISE___LC.NNNN | Length halt (L), constant volume (C), volume / envelope period (NNNN) |
-| $400E | NOISE_M___.PPPP | Mode (M, 0=15-bit / 1=6-bit), period index (PPPP) |
+| $400E | NOISE_M___.PPPP | Mode (M, 0=15-bit / 1=6-bit), period index (PPPP); the period tables give CPU cycles between LFSR shifts, so the APU-clocked timer reloads with `N / 2 - 1` (NESdev "APU Noise": "The period determines how many CPU cycles happen between shift register clocks"; until v3.6.0 the entry was the reload, an LFSR rate about half the documented one, and PAL index 1 read 7 where the page gives 8) |
 | $400F | NOISE_lllL.L___ | Length counter load |
 | $4010 | DMC_IL__.RRRR | IRQ enable (I), loop (L), rate index (RRRR) |
 | $4011 | DMC_.DDDD.DDDD | Direct DAC value (7-bit) |

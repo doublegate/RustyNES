@@ -2,4 +2,4 @@
 source: crates/rustynes-test-harness/tests/audio_expansion.rs
 expression: snap
 ---
-rom=audio-tests/sweep_5b.nes frames=5400 fb_bytes=245760 fb_fnv1a64=89ee4c476c97a325 cycles=160785819 audio_samples=3961744 audio_fnv1a64=a274d89470dbfe08
+rom=audio-tests/sweep_5b.nes frames=5400 fb_bytes=245760 fb_fnv1a64=89ee4c476c97a325 cycles=160785819 audio_samples=3961744 audio_fnv1a64=458e76f7d16c741a
