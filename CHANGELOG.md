@@ -38,6 +38,10 @@ cycle-accurate core later replaced.
   fix below changes the sound of every game that uses the noise channel,
   which the epoch also covers. Pictures and timing are unchanged; save
   states are unaffected.
+- **MiSTer core: a v3.5.x save state is refused on both builds.** PAL and
+  Dendy need a wider PPU access counter, so the save-state chain is one bit
+  longer (4,098 bits on the die, 4,737 off it) and the layout fingerprint
+  moved; an older state is refused for its header rather than misread.
 
 ### Added
 
@@ -126,6 +130,19 @@ cycle-accurate core later replaced.
   Not done: a desktop menu entry for either tool (both are headless passes
   over a fresh console; running them from the window would need their own
   thread and progress UI, which was not cheap).
+- **MiSTer core: PAL and Dendy consoles, at full speed** (FB-7,
+  `T-MISTER-VMODE`, MiSTer Phase F4a), on both builds. An OSD "Region" option
+  (Auto, NTSC, PAL, Dendy; Auto follows the image's header) selects the console:
+  the 2C07's 312 lines and 3.2 dots per CPU cycle, the Dendy's 312 lines at
+  NTSC's 3 dots, the 2A07's APU tables, each console's video timing, and
+  `new_vmode` so the framework re-reads the video mode. A 50 Hz console runs at
+  its own 26.6017125 MHz master clock with the SDRAM at exactly 3x, switched at
+  run time through a reconfigurable PLL ([ADR 0050](docs/adr/0050-a-50-hz-console-runs-at-its-own-master-clock.md),
+  amending ADR 0039); without it a 50 Hz game would have run at 80.7 % speed.
+  NTSC is unchanged bit for bit. Every console and region table is checked
+  against the oracle's PAL and Dendy exports cycle for cycle, and the clock
+  plan is checked in simulation (frame rate and tone pitch timed against the
+  programmed clock). No board has run it.
 
 ### Changed
 
@@ -186,7 +203,12 @@ cycle-accurate core later replaced.
   page gives 8. Both are corrected, with a test of every period in both
   tables. Found by the MiSTer core's PAL work (its ledger findings 9.1 and
   9.2). Every game that uses the noise channel sounds different: 112
-  recorded audio checksums moved, and no picture or cycle count.
+  recorded audio checksums moved, and no picture or cycle count. Checked
+  against Nestopia, run as a black box through its libretro core: with the
+  noise channel held in its short (periodic) mode, RustyNES and Nestopia
+  both shift every 160, 202, 380 and 762 CPU cycles at periods 7, 8, 10 and
+  12, the page's values; v3.5.1 shifted every 322, 406, 762 and 1,526. The
+  MiSTer core had the same defect and takes the same fix on both builds.
 
 - **MMC5 NSF files play**: the NSF player's driver sat at `$5000-$504F` with
   its NMI entry at `$5015`, which is also the MMC5's status port, and an NSF
