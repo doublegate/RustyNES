@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-10-28 - "Octave" (the noise channel at its documented pitch, PAL and Dendy at full speed on the MiSTer core, a source-level debugger, audio stems and NSF ripping, and libretro Core Options v2)
+
 ### Breaking
 
 - **Emulation epoch 8**: movies recorded on v3.5.1 (epoch 7) are refused,
